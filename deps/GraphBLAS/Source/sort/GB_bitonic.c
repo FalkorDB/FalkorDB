@@ -18,7 +18,6 @@ GrB_Info GB_bitonic
     int nthreads
 )
 {
-    // printf ("GB_bitonic: n %ld, nthreads %d\n", n, nthreads) ;
 
 //  for CUDA variant:
 //  int tid = blockIdx.x * blockDim.x + threadIdx.x ;
@@ -76,7 +75,6 @@ GrB_Info GB_bitonic
         }
     }
 
-    // printf ("oops: %ld\n", oops) ;
     return (GrB_SUCCESS) ;
 }
 

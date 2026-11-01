@@ -29,28 +29,42 @@ GrB_Info GB_cuda_select_sparse
 )
 {
 
+    //--------------------------------------------------------------------------
     // check inputs
+    //--------------------------------------------------------------------------
+
     GrB_Info info = GrB_NO_VALUE ;
+    cudaStream_t stream = nullptr ;
     ASSERT (C != NULL) ;
     ASSERT (A != NULL) ;
 
-    GBURBLE ("(select sparse on cuda) ") ;
-    printf ("\nblockdim1: %d chunksize1: %d\n",
-        GB_CUDA_SELECT_SPARSE_BLOCKDIM1,
-        GB_CUDA_SELECT_SPARSE_CHUNKSIZE1) ;
-    printf ("blockdim2: %d chunksize2: %d\n",
-        GB_CUDA_SELECT_SPARSE_BLOCKDIM2,
-        GB_CUDA_SELECT_SPARSE_CHUNKSIZE2) ;
+    int data_arena = C->data_arena ;
+    int device = data_arena - GxB_NARENAS ;
 
-    cudaStream_t stream = nullptr ;
-    GB_OK (GB_cuda_stream_pool_acquire (&stream)) ;
+    GBURBLE ("(select sparse on cuda) ") ;
+
+    //--------------------------------------------------------------------------
+    // initializations
+    //--------------------------------------------------------------------------
+
+    GB_OK (GB_cuda_stream_pool_acquire (device, &stream)) ;
+
+    GB_OK (GB_wait_arenas (C)) ;
+    GB_OK (GB_wait_arenas (A)) ;
 
     int64_t anz = GB_nnz_held (A) ;
 
-    int32_t number_of_sms = GB_Global_gpu_sm_get (0) ;
+    int32_t number_of_sms = GB_Global_gpu_sm_get (device) ;
     int64_t raw_gridsz = GB_ICEIL (anz, GB_CUDA_SELECT_SPARSE_CHUNKSIZE1) ;
     int32_t gridsz = std::min (raw_gridsz, (int64_t) (number_of_sms * 256)) ;
     gridsz = std::max (gridsz, 1) ;
+
+    GBURBLE ("(cuda select sparse, device %d, sms: %d, gridsz: %d) ",
+        device, number_of_sms, gridsz) ;
+
+    //--------------------------------------------------------------------------
+    // allocate the output matrix C
+    //--------------------------------------------------------------------------
 
     // determine the p_is_32, j_is_32, and i_is_32 settings for the new matrix
     int csparsity = GxB_HYPERSPARSE ;
@@ -64,18 +78,20 @@ GrB_Info GB_cuda_select_sparse
     GB_OK (GB_new (&C, // sparse or hyper (from A), existing header
         A->type, A->vlen, A->vdim, GB_ph_calloc, A->is_csc,
         csparsity, A->hyper_switch, /* C->plen: revised later: */ 1,
-        Cp_is_32, Cj_is_32, Ci_is_32, GB_ARENA_RMM, GB_ARENA_RMM)) ;
+        Cp_is_32, Cj_is_32, Ci_is_32, data_arena, data_arena)) ;
 
     C->iso = C_iso ;
 
-    CUDA_OK (cudaGetLastError ( )) ;    //fixme: remove
-    CUDA_OK (cudaStreamSynchronize (stream)) ;  //fixme: remove
-    CUDA_OK (cudaGetLastError ( )) ;    //fixme: remove
-    CUDA_OK (cudaStreamSynchronize (stream)) ;  //fixme: remove
-    CUDA_OK (cudaGetLastError ( )) ;    //fixme: remove
+    //--------------------------------------------------------------------------
+    // C = select (A)
+    //--------------------------------------------------------------------------
 
-    GB_OK (GB_cuda_select_sparse_jit (C, A,
-        flipij, ythunk, op, stream, gridsz)) ;
+    GB_OK (GB_cuda_select_sparse_jit (C, A, flipij, ythunk, op,
+        device, stream, gridsz)) ;
+
+    //--------------------------------------------------------------------------
+    // release the stream and finalize C
+    //--------------------------------------------------------------------------
 
     GB_OK (GB_cuda_stream_pool_release (&stream)) ;
 
@@ -93,6 +109,10 @@ GrB_Info GB_cuda_select_sparse
         // C hypersparse with all vectors present; quick convert to sparse
         GB_FREE_MEMORY (&(C->h), C->h_mem) ;
     }
+
+    //--------------------------------------------------------------------------
+    // return result
+    //--------------------------------------------------------------------------
 
     ASSERT_MATRIX_OK (C, "C output of cuda_select_sparse", GB0) ;
     return GrB_SUCCESS ;

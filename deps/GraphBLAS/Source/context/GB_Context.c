@@ -261,7 +261,7 @@ void GB_Context_chunk_set
 int32_t GB_Context_gpu_ids_get          // return # of GPUs to use
 (
     GxB_Context Context,
-    int32_t gpu_ids [GB_MAX_NGPUS]      // list of GPU ids to use
+    int32_t gpu_ids [GxB_NARENAS_GPU]      // list of GPU ids to use
 )
 {
     if (GB_Context_disabled)
@@ -280,7 +280,7 @@ int32_t GB_Context_gpu_ids_get          // return # of GPUs to use
     }
 
     int32_t ngpus = Context->ngpus ;
-    ngpus = GB_IMIN (ngpus, GB_MAX_NGPUS) ;
+    ngpus = GB_IMIN (ngpus, GxB_NARENAS_GPU) ;
     ngpus = GB_IMAX (ngpus, 0) ;
     if (gpu_ids != NULL)
     {
@@ -300,7 +300,7 @@ int32_t GB_Context_gpu_ids_get          // return # of GPUs to use
 // GB_Context_gpu_ids: get list of GPUs from the current Context
 int32_t GB_Context_gpu_ids              // return # of GPUs to use
 (
-    int32_t gpu_ids [GB_MAX_NGPUS]      // list of GPU ids to use
+    int32_t gpu_ids [GxB_NARENAS_GPU]      // list of GPU ids to use
 )
 {
     // FUTURE: use this in all CUDA kernels
@@ -319,7 +319,7 @@ int32_t GB_Context_gpu_ids              // return # of GPUs to use
 GrB_Info GB_Context_gpu_ids_set
 (
     GxB_Context Context,
-    int32_t gpu_ids [GB_MAX_NGPUS],     // list of GPU ids to use
+    int32_t gpu_ids [GxB_NARENAS_GPU],     // list of GPU ids to use
     int32_t ngpus                       // # of GPUs to use (if <0 use all)
 )
 {

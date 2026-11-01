@@ -459,6 +459,33 @@ uint64_t nzombies ;     // number of zombies marked for deletion
 float hyper_switch ;    // controls conversion hyper to/from sparse
 float bitmap_switch ;   // controls conversion sparse to/from bitmap
 
+//------------------------------------------------------------------------------
+// arena control
+//------------------------------------------------------------------------------
+
+// The A->[p,h,Y,b,i,x,Pending] data is allocated in A->data_arena by default.
+// A->data_arena and the A->Y->data_arena values will always be identical.
+// These arrays can temporarily appear on other arenas, which may occur if they
+// are transplanted from other matrices.  GrB_wait will move them to the
+// desired arena (A->data_arena) if they are not already there.  Thus, in
+// matrix with no pending work, A->data_arena, GB_arena (A->[p,etc]_mem),
+// GB_arena (A->Y->[p...header]_mem), and GB_arena (A->Pending->[*]_mem)
+// state will all match.
+
+// The header of the matrix (in GB_arena (A->header_mem)) and A->data_arena
+// can differ, and this is not revised by GrB_wait.  Changing the arena of
+// the header requires a malloc/copy/free, and thus changes the pointer *A.
+
+// GrB_get can return the header_arena = GB_arena (A->header_mem) and the
+// A->data_arena.  GrB_set can only modify A->data_arena.  GxB_*_set_arenas can
+// modify both.
+
+int32_t data_arena ;
+
+//------------------------------------------------------------------------------
+// bool / uint8 content
+//------------------------------------------------------------------------------
+
 // the remaining content of this struct is 18 bytes
 
 // 5 bytes:
@@ -537,29 +564,6 @@ bool iso ;          // true if all entries have the same value and only a
 bool p_is_32 ;  // true if A->p is 32-bit, false if 64
 bool j_is_32 ;  // true if A->h and A->Y->[pix] are 32-bit, false if 64
 bool i_is_32 ;  // true if A->i is 32-bit, false if 64
-
-//------------------------------------------------------------------------------
-// arena control
-//------------------------------------------------------------------------------
-
-// The A->[p,h,Y,b,i,x,Pending] data is allocated in A->data_arena by default.
-// A->data_arena and the A->Y->data_arena values will always be identical.
-// These arrays can temporarily appear on other arenas, which may occur if they
-// are transplanted from other matrices.  GrB_wait will move them to the
-// desired arena (A->data_arena) if they are not already there.  Thus, in
-// matrix with no pending work, A->data_arena, GB_arena (A->[p,etc]_mem),
-// GB_arena (A->Y->[p...header]_mem), and GB_arena (A->Pending->[*]_mem)
-// state will all match.
-
-// The header of the matrix (in GB_arena (A->header_mem)) and A->data_arena
-// can differ, and this is not revised by GrB_wait.  Changing the arena of
-// the header requires a malloc/copy/free, and thus changes the pointer *A.
-
-// GrB_get can return the header_area = GB_area (A->header_mem) and the
-// A->data_arena.  GrB_set can only modify A->data_arena.  GxB_*_set_arenas can
-// modify both.
-
-uint8_t data_arena ;
 
 //------------------------------------------------------------------------------
 // iterating through a matrix

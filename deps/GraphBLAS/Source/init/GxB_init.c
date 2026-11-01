@@ -43,12 +43,6 @@
 //      GxB_init (mode, scalable_malloc, scalable_calloc, scalable_realloc,
 //          scalable_free) ;
 //
-// To use CUDA and its RMM memory manager in arena 0:
-//
-//      GxB_init (mode, GB_rmm_malloc, NULL, NULL, GB_rmm_free) ;
-//
-//          where mode is GxB_BLOCKING_GPU or GxB_NONBLOCKING_GPU
-//
 // To use user-provided malloc and free functions, but not calloc/realloc:
 //
 //      GxB_init (mode, my_malloc, NULL, NULL, my_free) ;
@@ -81,16 +75,6 @@ GrB_Info GxB_init           // start up GraphBLAS and also define malloc, etc
     //--------------------------------------------------------------------------
     // initialize GraphBLAS
     //--------------------------------------------------------------------------
-
-#if defined ( GRAPHBLAS_HAS_CUDA )
-    // fixme for CUDA arena: CUDA will have GB_rmm_malloc etc in GxB_ARENA_RMM
-    if (mode == GxB_BLOCKING_GPU || mode == GxB_NONBLOCKING_GPU)
-    {
-        return (GB_init (mode,              // blocking or non-blocking mode
-            // thread-safe RMM C memory management functions:
-            GB_rmm_malloc, NULL, NULL, GB_rmm_free, Werk)) ;
-    }
-#endif
 
     return (GB_init
         (mode,                          // blocking or non-blocking mode

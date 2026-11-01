@@ -11,6 +11,7 @@
 #define GB_EMULT_H
 #include "GB.h"
 #include "math/GB_math.h"
+#include "emult/GB_emult_iso.h"
 #include "assign/GB_bitmap_assign_methods.h"
 
 #define GB_EMULT_METHOD1_ADD 1      /* use GB_add instead of emult */
@@ -223,17 +224,6 @@ GrB_Info GB_emult_bitmap    // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
     const GrB_BinaryOp op,  // op to perform C = op (A,B)
     const bool flipij,      // if true, i,j must be flipped
     GB_Werk Werk
-) ;
-
-bool GB_emult_iso           // c = op(a,b), return true if C is iso
-(
-    // output
-    GB_void *restrict c,    // output scalar of iso array
-    // input
-    GrB_Type ctype,         // type of c
-    GrB_Matrix A,           // input matrix
-    GrB_Matrix B,           // input matrix
-    GrB_BinaryOp op         // binary operator
 ) ;
 
 GrB_Info GB_emult_generic       // generic emult

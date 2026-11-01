@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GB_cuda_reduce.hpp: CPU definitions for CUDA reductions
+// CUDA/reduce/GB_cuda_reduce.hpp: CPU definitions for CUDA reductions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,10 +20,11 @@ GrB_Info GB_cuda_reduce_to_scalar_jit   // z = reduce_to_scalar (A) via CUDA JIT
     // input:
     const GrB_Monoid monoid,    // monoid to do the reduction
     const GrB_Matrix A,         // matrix to reduce
+    int32_t *terminal_flag,     // early-exit flag; NULL for non-terminal
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
-    int32_t gridsz,
-    int32_t blocksz
+    int32_t gridsz
 ) ;
 
 #endif

@@ -292,8 +292,8 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
         {
             // the output Cx is aliased with C->x in GB_apply_op.
             GB_iso_code C_code_iso = GB_unop_code_iso (C, op, binop_bind1st) ;
-            info = GrB_SUCCESS ;
-            if (C_code_iso == GB_NON_ISO && C->iso)
+            info = GB_wait_arenas (C) ;
+            if (info == GrB_SUCCESS && C_code_iso == GB_NON_ISO && C->iso)
             { 
                 // expand C to non-iso; initialize C->x unless the op
                 // is positional
@@ -302,8 +302,8 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
             if (info == GrB_SUCCESS)
             { 
                 // C->x = op (C->x) in place
-                info = GB_apply_op ((GB_void *) C->x, C->type, C_code_iso,
-                    op, scalar, binop_bind1st, flipij, C, data_arena, Werk) ;
+                info = GB_apply_op ((GB_void *) C->x, data_arena, C->type,
+                    C_code_iso, op, scalar, binop_bind1st, flipij, C, Werk) ;
             }
             if (info == GrB_SUCCESS && C_code_iso != GB_NON_ISO)
             { 

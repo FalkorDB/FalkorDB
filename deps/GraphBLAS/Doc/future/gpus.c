@@ -2,17 +2,6 @@
 // init with GPUs
 //------------------------------------------------------------------------------
 
-    GrB_init (mode) ; // where mode is one of:
-
-        GrB_BLOCKING            // blocking, no GPU(s)
-        GrB_NONBLOCKING         // nonblocking, no GPU(s)
-        GxB_BLOCKING_GPU        // blocking, with GPU(s)
-        GxB_NONBLOCKING_GPU     // nonblocking with GPU(s)
-
-    // By default: if GrB_init is called with a GxB_*_GPU mode, then any
-    // call to GraphBLAS may choose to use none, 1, or all GPUs in the system.
-    // No GrB_get/set (below) is required.
-
     // GrB_init numbers the GPUs it can see from 0 to ngpus-1.  The actual
     // GPUs can be set in the environment variable CUDA_VISIBLE_DEVICES but
     // that is outside the scope of GraphBLAS.

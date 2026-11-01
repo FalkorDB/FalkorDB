@@ -176,7 +176,7 @@ GrB_Info GB_emult_02_phase1 // symbolic analysis for GB_emult_02 and GB_emult_03
                         int64_t pB = pB_start + i ;
                         bool mij = GBb_M (Mb, pB) && GB_MCAST (Mx, pB, msize) ;
                         mij = mij ^ Mask_comp ;
-                        cjnz += (mij && GBb_M (Bb, pB)) ;
+                        cjnz += (mij && GBb_B (Bb, pB)) ;
                     }
                     if (k == kfirst)
                     { 

@@ -25,18 +25,16 @@
 // pending, and are computed only when needed.
 
 // GxB_init is the same as GrB_init except that it also defines the
-// malloc/calloc/realloc/free functions to use.
+// malloc/calloc/realloc/free to use for the default memory arena.  (0).
 
 // The realloc function pointer is optional and can be NULL.  If realloc is
 // NULL, it is not used, and malloc/memcpy/free are used instead.
 
-// The calloc function pointer is also optional and can be NULL.
+// The calloc function pointer is also optional and can be NULL.  It is
+// currently never used by GraphBLAS itself, except to return to the user
+// application with GrB_get.
 
-// If the mode is GxB_BLOCKING_GPU or GxB_NONBLOCKING_GPU, the 4 function
-// pointers are ignored, and GB_rmm_malloc/GB_rmm_free are used instead.
-
-#define GB_FREE_ALL                                         \
-    GrB_finalize ( ) ;
+#define GB_FREE_ALL GrB_finalize ( ) ;
 
 #include "GB.h"
 #include "init/GB_init.h"
@@ -56,7 +54,7 @@ GrB_Info GB_init            // start up GraphBLAS
     GB_realloc_function_t realloc_function,         // optional, can be NULL
     GB_free_function_t free_function,               // required
 
-    GB_Werk Werk      // from GrB_init or GxB_init
+    GB_Werk Werk            // from GrB_init or GxB_init
 )
 {
 
@@ -76,11 +74,16 @@ GrB_Info GB_init            // start up GraphBLAS
     // check inputs
     //--------------------------------------------------------------------------
 
-    if (!(mode == GrB_NONBLOCKING || mode == GrB_BLOCKING ||
-          mode == GxB_NONBLOCKING_GPU || mode == GxB_BLOCKING_GPU))
+    if (!(mode == GrB_NONBLOCKING || mode == GrB_BLOCKING))
     { 
         // invalid mode
         return (GrB_INVALID_VALUE) ;
+    }
+
+    if (malloc_function == NULL || free_function == NULL)
+    { 
+        // only malloc and free required.  calloc and/or realloc may be NULL
+        return (GrB_NULL_POINTER) ;
     }
 
     //--------------------------------------------------------------------------
@@ -93,36 +96,9 @@ GrB_Info GB_init            // start up GraphBLAS
     // establish malloc/calloc/realloc/free
     //--------------------------------------------------------------------------
 
-    #if defined ( GRAPHBLAS_HAS_CUDA )
-    // fixme arena for CUDA: use GB_rmm_malloc etc for GxB_ARENA_RMM,
-    // which is reserved and cannot be modified by the user.
-    GB_Global_gpu_count_set (true) ;
-    int gpu_count = GB_Global_gpu_count_get ( ) ;
-    printf ("GB_init: gpu_count: %d\n", gpu_count) ;
-    if (gpu_count > 0)
-    {
-        mode = GxB_NONBLOCKING_GPU ;    // HACK fixme for CUDA: force GPU
-        if (mode == GxB_NONBLOCKING_GPU || mode == GxB_BLOCKING_GPU)
-        {
-            // ignore the memory management function pointers and use GB_rmm_*
-            malloc_function  = GB_rmm_malloc ;
-            calloc_function  = NULL ;           // using malloc_function
-            realloc_function = NULL ;           // using malloc/free instead
-            free_function    = GB_rmm_free ;
-        }
-    }
-    #else
-    GB_Global_gpu_count_set (false) ;
-    #endif
-
-    if (malloc_function == NULL || free_function == NULL)
-    { 
-        // only malloc and free required.  calloc and/or realloc may be NULL
-        return (GrB_NULL_POINTER) ;
-    }
-
     // GrB_init passes in the C11 malloc/calloc/realloc/free; these methods
     // are used for arena 0 (GrB_DEFAULT)
+    GB_Global_default_arenas ( ) ;
     GB_Global_malloc_function_set  (malloc_function , GrB_DEFAULT) ;
     GB_Global_calloc_function_set  (calloc_function , GrB_DEFAULT) ;
     GB_Global_realloc_function_set (realloc_function, GrB_DEFAULT) ;
@@ -166,19 +142,13 @@ GrB_Info GB_init            // start up GraphBLAS
     //--------------------------------------------------------------------------
 
     #if defined ( GRAPHBLAS_HAS_CUDA )
-    if (mode == GxB_BLOCKING_GPU || mode == GxB_NONBLOCKING_GPU)
-    {
-        // initialize the GPUs
-        GB_OK (GB_cuda_init ( )) ;
-    }
+    // initialize the GPUs
+    GB_OK (GB_cuda_init ( )) ;
     #endif
 
     //--------------------------------------------------------------------------
     // set the global default format
     //--------------------------------------------------------------------------
-
-    // set the default hyper_switch and the default format (by-row);  any thread
-    // can do this later as well, so there is no race condition danger.
 
     GB_Global_hyper_switch_set (GB_HYPER_SWITCH_DEFAULT) ;
     GB_Global_bitmap_switch_default ( ) ;
@@ -211,9 +181,12 @@ GrB_Info GB_init            // start up GraphBLAS
     #pragma omp flush
     #if defined ( GRAPHBLAS_HAS_CUDA )
 //  this hack_get setting is used by GB_ngpus_to_use:
-//  GB_Global_hack_set (2,0) ;  // HACK fixme for CUDA: default: GPU for big enough probs
-    GB_Global_hack_set (2,1) ;  // HACK fixme for CUDA: force the GPU always to be used
-//  GB_Global_hack_set (2,2) ;  // HACK fixme for CUDA: force the GPU never to be used
+//  GB_Global_hack_set (2,0) ;  // HACK : default: GPU for big enough probs
+    GB_Global_hack_set (2,1) ;  // HACK : force the GPU always to be used
+    int device = 0 ;            // HACK : use arena 8 for everything
+    GB_Context_data_arena_set (NULL, GxB_NARENAS + device) ;
+    GB_Context_header_arena_set (NULL, GxB_NARENAS + device) ;
+//  GB_Global_hack_set (2,2) ;  // HACK : force the GPU never to be used
     #endif
 
     //--------------------------------------------------------------------------

@@ -77,7 +77,7 @@ void mexFunction
 
     size_t size = 0 ;
     OK (GrB_Global_get_SIZE (GrB_GLOBAL, &size, GxB_GPU_IDS)) ;
-    CHECK (size == sizeof (int32_t) * GB_MAX_NGPUS) ;
+    CHECK (size == sizeof (int32_t) * GxB_NARENAS_GPU) ;
 
     int expected = GrB_INVALID_VALUE ;
     ERR (GrB_Global_set_VOID  (GrB_GLOBAL, (void *) gpu_ids, GxB_GPU_IDS,

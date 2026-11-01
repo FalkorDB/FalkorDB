@@ -316,18 +316,6 @@ static GrB_Info GB_import_worker   // import a matrix of any type
     ASSERT_MATRIX_OK (*A, "A imported", GB0) ;
 
     //--------------------------------------------------------------------------
-    // determine if A is iso
-    //--------------------------------------------------------------------------
-
-    if (GB_all_entries_are_iso (*A))
-    { 
-        // All entries in A are the same; convert A to iso
-        GBURBLE ("(import post iso) ") ;
-        (*A)->iso = true ;
-        GB_OK (GB_convert_any_to_iso (*A, NULL)) ;      // OK
-    }
-
-    //--------------------------------------------------------------------------
     // conform the matrix to its desired sparsity and return result
     //--------------------------------------------------------------------------
 

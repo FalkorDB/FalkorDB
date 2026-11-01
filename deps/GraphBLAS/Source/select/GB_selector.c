@@ -103,8 +103,16 @@ GrB_Info GB_selector
     // determine if C is iso for a non-iso A
     //--------------------------------------------------------------------------
 
+    // For VALUEEQ, C is iso with the thunk as its value only if op->xtype is
+    // the type of A.  Otherwise A(i,j) is typecast to op->xtype before it is
+    // compared, and entries with different values can be kept (if A is double
+    // and op->xtype is int64, a thunk of 1 keeps both 1.0 and 1.5).  The
+    // VALUEEQ factory kernels require C to be iso, but they are not used when
+    // op->xtype is not the type of A.
+
     bool C_iso = A_iso ||                       // C iso value is Ax [0]
-        (opcode == GB_VALUEEQ_idxunop_code) ;   // C iso value is thunk
+        (opcode == GB_VALUEEQ_idxunop_code      // C iso value is thunk
+            && op->xtype == A->type) ;
     if (C_iso)
     { 
         GB_BURBLE_MATRIX (A, "(iso select) ") ;
@@ -198,8 +206,6 @@ GrB_Info GB_selector
         // the use_select_bitmap test above (the DIAG operator). The CUDA
         // select_sparse kernel will not work in this case, so make this go to
         // the CPU.
-        // fixme for CUDA: put the test of sparse(A) or hypersparse(A) in
-        // GB_cuda_select_branch.
         info = GB_cuda_select_sparse (C, C_iso, op, flipij, A, athunk, ythunk,
             Werk) ;
     }

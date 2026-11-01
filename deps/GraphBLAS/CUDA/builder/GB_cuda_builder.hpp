@@ -41,6 +41,7 @@ GrB_Info GB_cuda_builder_jit
     bool known_no_duplicates,   // true if tuples known to have no duplicates
     bool known_sorted,          // true if tuples known to be sorted on input
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
     int32_t gridsz
 ) ;

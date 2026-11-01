@@ -1,3 +1,12 @@
+//------------------------------------------------------------------------------
+// GB_cuda_apply_bind2nd_jit: JIT kernel for apply, bind2nd case
+//------------------------------------------------------------------------------
+
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
+
 #include "apply/GB_cuda_apply.hpp"
 
 extern "C"
@@ -16,9 +25,9 @@ GrB_Info GB_cuda_apply_bind2nd_jit
     const GrB_Matrix A,
     const GB_void *scalarx,
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
-    int32_t gridsz,
-    int32_t blocksz
+    int32_t gridsz
 )
 {
     //--------------------------------------------------------------------------
@@ -28,7 +37,7 @@ GrB_Info GB_cuda_apply_bind2nd_jit
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
-        GB_JIT_CUDA_KERNEL_APPLYBIND2, /* is_eWiseMult: */ false,
+        GB_JIT_CUDA_KERNEL_APPLYBIND2,
         /* C_iso: */ false, /* C_in_iso: */ false, GxB_FULL, ctype,
         /* pji is_32: ignored; there is no C matrix: */ false, false, false,
         /* M: */ NULL, /* Mask_struct: */ false, /* Mask_comp: */ false,
@@ -50,6 +59,7 @@ GrB_Info GB_cuda_apply_bind2nd_jit
     //--------------------------------------------------------------------------
 
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (Cx, A, scalarx, stream, gridsz, blocksz,
+    return (GB_jit_kernel (Cx, A, scalarx, device, stream, gridsz,
         &GB_callback)) ;
 }
+

@@ -280,6 +280,7 @@ GrB_Info GB_build               // build matrix
         // TODO: should be able to construct T with C->type
         info = GB_cuda_builder (
             &T,         // create T using a dynamic header
+            data_arena, // arena of T
             ttype,      // the type of T
             C->vlen,    // T->vlen = C->vlen
             C->vdim,    // T->vdim = C->vdim
@@ -380,28 +381,6 @@ GrB_Info GB_build               // build matrix
         GB_FREE_ALL ;
         GB_ERROR (GrB_INVALID_VALUE, "Duplicates appear (" GBd ") but dup "
             "is NULL", ((int64_t) nvals) - tnvals) ;
-    }
-
-    //--------------------------------------------------------------------------
-    // determine if T can be converted to iso, for non-iso build
-    //--------------------------------------------------------------------------
-
-    // GxB_Matrix_build_Scalar and GxB_Vector_build_Scalar always build an iso
-    // matrix T, so this test is skipped (X_iso is true in that case).
-    // GrB_Matrix_build_[TYPE] and GrB_Vector_build_[TYPE] may have just
-    // created an iso-valued matrix T, but this is not yet known.  X_iso is
-    // false for these methods.  Since it has not yet been conformed to its
-    // final sparsity structure, the matrix T is hypersparse, not bitmap.  It
-    // has no zombies or pending tuples, so GB_all_entries_are_iso does not
-    // need to handle those cases.  T->x [0] is the new iso value of T.
-
-    // TODO: move this into CUDA kernel or write a CUDA kernel for it
-    if (!X_iso && GB_all_entries_are_iso (T))
-    { 
-        // All entries in T are the same; convert T to iso
-        GBURBLE ("(post iso) ") ;
-        T->iso = true ;
-        GB_OK (GB_convert_any_to_iso (T, NULL)) ;   // OK
     }
 
     //--------------------------------------------------------------------------

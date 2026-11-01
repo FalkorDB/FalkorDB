@@ -1,16 +1,15 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/template/GB_cuda_threadblock_sum_uint64.cuh
+// CUDA/cumsum/template/GB_cuda_threadblock_sum_uint64.cuh
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
-// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // Sum across an entire threadblock a single uint64_t scalar.
 
-// Compare with template/GB_cuda_threadblock_reduce_ztype.
+// Compare with CUDA/reduce/template/GB_cuda_threadblock_reduce_ztype.
 
 // On input, there is no need for this_thread_block().sync(), because the first
 // reduction is across a single tile.  The creation of the tile with
@@ -26,7 +25,7 @@ __inline__ __device__ uint64_t GB_cuda_threadblock_sum_uint64
 )
 {
     // The thread_block g that calls this method has a number of threads
-    // defined by the kernel launch geometry (dim3 block (blocksz)).
+    // defined by the kernel launch geometry (dim3 block (...)).
     thread_block g = this_thread_block ( ) ;
     // here, g.sync() is not needed (see comments above).
 
@@ -52,7 +51,9 @@ __inline__ __device__ uint64_t GB_cuda_threadblock_sum_uint64
 
     if (threadId_in_tile == 0)
     {
-        shared [tile_id] = val ;    // Write reduced value to shared memory
+        // the first thread in each tile writes the result of its entire tile
+        // to shared memory
+        shared [tile_id] = val ;
     }
 
     // This g.sync() is essential:  All tiles must finish their work so that
@@ -60,7 +61,7 @@ __inline__ __device__ uint64_t GB_cuda_threadblock_sum_uint64
     g.sync() ;                      // Wait for all partial reductions
 
     // This method requires blockDim.x <= GB_CUDA_TILE_SIZE^2 = 1024, but this
-    // is always enforced in the CUDA standard since the our geometry is 1D.
+    // is always enforced in the CUDA standard since our geometry is 1D.
 
     // Final reduce within first tile
     if (tile_id == 0)
@@ -71,9 +72,10 @@ __inline__ __device__ uint64_t GB_cuda_threadblock_sum_uint64
         val = GB_cuda_tile_sum_uint64 (tile, val) ;
     }
 
-    // The following sync is not necessary because only tile zero will have the
-    // final result in val anyway.  Other tiles (aka warps) will have garbage
-    // in val, even with the g.sync().
+    // The following g.sync() is not necessary because only tile zero will have
+    // the final result in val anyway.  Other tiles (aka warps) will have
+    // garbage in val, even with the g.sync().
+
     // g.sync() ;
     return (val) ;
 }

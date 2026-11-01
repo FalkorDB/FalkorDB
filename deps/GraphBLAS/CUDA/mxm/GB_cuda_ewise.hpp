@@ -21,9 +21,9 @@ GrB_Info GB_cuda_rowscale_jit
     GrB_BinaryOp binaryop,
     bool flipxy,
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
-    int32_t gridsz,
-    int32_t blocksz
+    int32_t gridsz
 ) ;
 
 GrB_Info GB_cuda_colscale_jit
@@ -36,9 +36,9 @@ GrB_Info GB_cuda_colscale_jit
     GrB_BinaryOp binaryop,
     bool flipxy,
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
-    int32_t gridsz,
-    int32_t blocksz
+    int32_t gridsz
 ) ;
 
 #endif

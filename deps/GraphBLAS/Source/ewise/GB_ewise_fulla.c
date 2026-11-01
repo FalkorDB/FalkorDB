@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_ewise_fulla: C += A+B where all 3 matries are full
+// GB_ewise_fulla: C += A+B where all 3 matrices are full
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.

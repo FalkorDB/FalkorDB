@@ -50,6 +50,8 @@ bool     GB_Global_is_csc_get (void) ;
 void     GB_Global_abort_set (void (* abort_function) (void)) ;
 void     GB_Global_abort (void) ;
 
+void     GB_Global_default_arenas (void) ;
+
 void     GB_Global_malloc_function_set (GB_malloc_function_t malloc_function, int arena) ;
 void  *  GB_Global_malloc_function_get (int arena) ;
 void  *  GB_Global_malloc_function (uint64_t memsize, int arena) ;
@@ -92,14 +94,10 @@ bool     GB_Global_print_one_based_get (void) ;
 void     GB_Global_stats_mem_shallow_set (bool mem_shallow) ;
 bool     GB_Global_stats_mem_shallow_get (void) ;
 
-void     GB_Global_gpu_count_set (bool enable_cuda) ;
+void     GB_Global_gpu_count_set (void) ;
 int      GB_Global_gpu_count_get (void) ;
 uint64_t GB_Global_gpu_memorysize_get (int device) ;
 int      GB_Global_gpu_sm_get (int device) ;
-bool     GB_Global_gpu_device_pool_memsize_set (int device, uint64_t gpusize) ;
-bool     GB_Global_gpu_device_max_pool_memsize_set (int device, uint64_t gpusize) ;
-bool     GB_Global_gpu_device_memory_resource_set (int device, void *resource) ;
-void*    GB_Global_gpu_device_memory_resource_get (int device) ;
 bool     GB_Global_gpu_device_properties_get (int device) ;
 int      GB_Global_gpu_compute_capability_major_get (int device) ;
 int      GB_Global_gpu_compute_capability_minor_get (int device) ;

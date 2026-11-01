@@ -107,7 +107,7 @@ GrB_Info GB_transpose_builder       // T=A', T=(ctype)A' or T=op(A')
 
     //--------------------------------------------------------------------------
     // allocate the output matrix and additional space (jwork and Swork)
-    //------------------------------------------------------------------
+    //--------------------------------------------------------------------------
 
     // T is created using the requested integers of C.
     GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
@@ -193,8 +193,8 @@ GrB_Info GB_transpose_builder       // T=A', T=(ctype)A' or T=op(A')
     else if (op != NULL)
     { 
         // Swork = op (A)
-        info = GB_apply_op (Swork, ctype, C_code_iso, op, scalar,
-            binop_bind1st, flipij, A, data_arena, Werk) ;
+        info = GB_apply_op (Swork, data_arena, ctype, C_code_iso, op, scalar,
+            binop_bind1st, flipij, A, Werk) ;
         ASSERT (info == GrB_SUCCESS) ;
         // GB_builder will not need to typecast Swork to T->x, and it
         // may choose to transplant it into T->x

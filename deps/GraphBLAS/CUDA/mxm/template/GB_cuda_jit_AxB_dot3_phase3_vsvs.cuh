@@ -60,11 +60,11 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
     const GB_Mj_TYPE *__restrict__ Mh = (GB_Mj_TYPE *) M->h ;
     #endif
 
-    ASSERT (GB_A_IS_HYPER || GB_A_IS_SPARSE) ;
+    // ASSERT (GB_A_IS_HYPER || GB_A_IS_SPARSE) ;
     const GB_Ai_TYPE *__restrict__ Ai = (GB_Ai_TYPE *) A->i ;
     const GB_Ap_TYPE *__restrict__ Ap = (GB_Ap_TYPE *) A->p ;
 
-    ASSERT (GB_B_IS_HYPER || GB_B_IS_SPARSE) ;
+    // ASSERT (GB_B_IS_HYPER || GB_B_IS_SPARSE) ;
     const GB_Bi_TYPE *__restrict__ Bi = (GB_Bi_TYPE *) B->i ;
     const GB_Bp_TYPE *__restrict__ Bp = (GB_Bp_TYPE *) B->p ;
 
@@ -140,7 +140,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
                 if (ia == ib)
                 { 
                     // A(k,i) and B(k,j) are the next entries to merge
-                    GB_DOT_MERGE (pA, pB) ;
+                    // cij += A(ia,i) * B(ia,j)
+                    GB_DOT_MERGE (pA, pB, ia) ;
                     GB_DOT_TERMINAL (cij) ;   // break if cij == terminal
                 }
             #endif
@@ -150,9 +151,6 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
 
 
         GB_CIJ_EXIST_POSTCHECK ;
-
-// HACK
-// cij_exists = false ;
 
         if (cij_exists)
         {

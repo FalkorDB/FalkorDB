@@ -83,6 +83,9 @@
 // quick js runtime stack max size
 #define JS_STACK_SIZE "JS_STACK_SIZE"
 
+// milliseconds a writer waits for the graph lock before yielding the GIL
+#define WRITE_LOCK_POLL_INTERVAL "WRITE_LOCK_POLL_INTERVAL"
+
 //------------------------------------------------------------------------------
 // Configuration defaults
 //------------------------------------------------------------------------------
@@ -97,6 +100,7 @@
 #define TEMP_DIR_DEFAULT "/tmp"
 #define JS_HEAP_SIZE_DEFAULT  (256 * 1024 * 1024)  // 256 MB
 #define JS_STACK_SIZE_DEFAULT (1024 * 1024)  // 1MB
+#define WRITE_LOCK_POLL_INTERVAL_DEFAULT 5  // ms
 
 // configuration object
 typedef struct
@@ -122,6 +126,7 @@ typedef struct
 	char *temp_folder;				   // path to temp folder, used for storing temporary files
 	size_t js_heap_size;               // quickjs runtime max heap size;
 	size_t js_stack_size;              // quickjs runtime max stack size;
+	int64_t write_lock_poll_interval;  // ms a writer waits for the graph lock before yielding the GIL
 	Config_on_change cb;			   // callback function which being called when config param changed
 } RG_Config;
 
@@ -426,6 +431,21 @@ static uint64_t Config_node_creation_buffer_get(void)
 }
 
 //------------------------------------------------------------------------------
+// write lock poll interval
+//------------------------------------------------------------------------------
+
+static void Config_write_lock_poll_interval_set(
+	int64_t interval_ms)
+{
+	config.write_lock_poll_interval = interval_ms;
+}
+
+static int64_t Config_write_lock_poll_interval_get(void)
+{
+	return config.write_lock_poll_interval;
+}
+
+//------------------------------------------------------------------------------
 // cmd info
 //------------------------------------------------------------------------------
 
@@ -629,6 +649,10 @@ bool Config_Contains_field(
 	{
 		f = Config_NODE_CREATION_BUFFER;
 	}
+	else if (!(strcasecmp(field_str, WRITE_LOCK_POLL_INTERVAL)))
+	{
+		f = Config_WRITE_LOCK_POLL_INTERVAL;
+	}
 	else if (!(strcasecmp(field_str, ASYNC_DELETE)))
 	{
 		f = Config_ASYNC_DELETE;
@@ -719,6 +743,9 @@ SIType Config_Field_type(
 		return T_INT64;
 
 	case Config_NODE_CREATION_BUFFER:
+		return T_INT64;
+
+	case Config_WRITE_LOCK_POLL_INTERVAL:
 		return T_INT64;
 
 	case Config_CMD_INFO:
@@ -815,6 +842,10 @@ const char *Config_Field_name(
 		name = NODE_CREATION_BUFFER;
 		break;
 
+	case Config_WRITE_LOCK_POLL_INTERVAL:
+		name = WRITE_LOCK_POLL_INTERVAL;
+		break;
+
 	case Config_CMD_INFO:
 		name = CMD_INFO;
 		break;
@@ -908,6 +939,9 @@ static void _Config_SetToDefaults(void)
 
 	// the amount of empty space to reserve for node creations in matrices
 	config.node_creation_buffer = NODE_CREATION_BUFFER_DEFAULT;
+
+	// ms a writer waits for the graph lock before yielding the GIL and retrying
+	config.write_lock_poll_interval = WRITE_LOCK_POLL_INTERVAL_DEFAULT;
 
 	// GRAPH.INFO command on/off.
 	config.cmd_info_on = CMD_INFO_DEFAULT;
@@ -1213,6 +1247,21 @@ bool Config_Option_get(
 
 		ASSERT(node_creation_buffer != NULL);
 		(*node_creation_buffer) = Config_node_creation_buffer_get();
+	}
+	break;
+
+		//----------------------------------------------------------------------
+		// ms a writer waits for the graph lock before yielding the GIL
+		//----------------------------------------------------------------------
+
+	case Config_WRITE_LOCK_POLL_INTERVAL:
+	{
+		va_start(ap, field);
+		int64_t *write_lock_poll_interval = va_arg(ap, int64_t *);
+		va_end(ap);
+
+		ASSERT(write_lock_poll_interval != NULL);
+		(*write_lock_poll_interval) = Config_write_lock_poll_interval_get();
 	}
 	break;
 
@@ -1618,6 +1667,28 @@ bool Config_Option_set
 			}
 			if (Config_node_creation_buffer_get () != node_creation_buffer) {
 				Config_node_creation_buffer_set (node_creation_buffer) ;
+				updated = true ;
+			}
+		}
+		break ;
+
+		//----------------------------------------------------------------------
+		// ms a writer waits for the graph lock before yielding the GIL
+		//----------------------------------------------------------------------
+
+		case Config_WRITE_LOCK_POLL_INTERVAL:
+		{
+			// non-negative integer: a writer parks on the graph lock for at
+			// most this many ms before releasing the GIL and retrying.
+			// 0 restores the legacy behavior: a single blocking acquire that
+			// holds the GIL until the lock is granted (no slicing / yielding)
+			long long poll_interval ;
+			if (!_Config_ParseNonNegativeInteger (val, &poll_interval)) {
+				return false ;
+			}
+
+			if (Config_write_lock_poll_interval_get () != poll_interval) {
+				Config_write_lock_poll_interval_set (poll_interval) ;
 				updated = true ;
 			}
 		}

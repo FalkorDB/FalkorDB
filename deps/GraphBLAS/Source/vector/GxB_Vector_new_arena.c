@@ -37,6 +37,8 @@ GrB_Info GxB_Vector_new_arena  // create a new vector with no entries
     GB_RETURN_IF_NULL (v) ;
     (*v) = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (type) ;
+    GB_OK (GB_check_arena (header_arena)) ;
+    GB_OK (GB_check_arena (data_arena)) ;
 
     if (n > GB_NMAX)
     { 

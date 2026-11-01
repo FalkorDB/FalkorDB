@@ -25,8 +25,8 @@
 #include "../Source/include/GB_dev.h"
 
 // The MATLAB test code in GraphBLAS/Test test uses mxMalloc/mxFree only, in
-// the arena 2, established after calling GrB_init.
-#define MXARENA 2
+// the arena 1, established after calling GrB_init.
+#define MXARENA 1
 #define GB_ARENA_TEST MXARENA
 
 #define SIMPLE_RAND_MAX 32767

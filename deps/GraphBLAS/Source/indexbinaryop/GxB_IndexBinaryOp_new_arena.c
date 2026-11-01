@@ -23,6 +23,8 @@
 #include "GB.h"
 #include "jitifyer/GB_stringify.h"
 
+#define GB_FREE_ALL GB_Op_free ((GB_Operator *) &op) ;
+
 GrB_Info GxB_IndexBinaryOp_new_arena
 (
     GxB_IndexBinaryOp *op_handle,   // handle for the new index binary operator
@@ -41,13 +43,16 @@ GrB_Info GxB_IndexBinaryOp_new_arena
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (op_handle) ;
     (*op_handle) = NULL ;
+    GxB_IndexBinaryOp op = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (ztype) ;
     GB_RETURN_IF_NULL_OR_FAULTY (xtype) ;
     GB_RETURN_IF_NULL_OR_FAULTY (ytype) ;
     GB_RETURN_IF_NULL_OR_FAULTY (theta_type) ;
+    GB_OK (GB_check_arena (header_arena)) ;
 
     //--------------------------------------------------------------------------
     // allocate the index_binary op
@@ -55,8 +60,7 @@ GrB_Info GxB_IndexBinaryOp_new_arena
 
     uint64_t mem = GB_mem (header_arena, 0) ;
     uint64_t header_mem = mem ;
-    GxB_IndexBinaryOp
-        op = GB_CALLOC_MEMORY (1, sizeof (struct GB_IndexBinaryOp_opaque),
+    op = GB_CALLOC_MEMORY (1, sizeof (struct GB_IndexBinaryOp_opaque),
             &header_mem) ;
     if (op == NULL)
     { 
@@ -95,17 +99,11 @@ GrB_Info GxB_IndexBinaryOp_new_arena
         (ytype->hash != UINT64_MAX) &&
         (theta_type->hash != UINT64_MAX) ;
 
-    GrB_Info info = GB_op_name_and_defn (
+    GB_OK (GB_op_name_and_defn (
         // output:
         op->name, &(op->name_len), &(op->hash), &(op->defn), &(op->defn_mem),
         // input:
-        idxop_name, idxop_defn, true, jitable, header_arena) ;
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory
-        GB_FREE_MEMORY (&op, header_mem) ;
-        return (info) ;
-    }
+        idxop_name, idxop_defn, true, jitable, header_arena)) ;
 
     //--------------------------------------------------------------------------
     // create the function pointer, if NULL
@@ -119,7 +117,7 @@ GrB_Info GxB_IndexBinaryOp_new_arena
         if (info != GrB_SUCCESS)
         { 
             // unable to construct the function pointer
-            GB_Op_free ((GB_Operator *) &op) ;
+            GB_FREE_ALL ;
             // If the JIT fails, it returns GrB_NO_VALUE or GxB_JIT_ERROR.
             // Convert GrB_NO_VALUE to GrB_NULL_POINTER (the function is NULL
             // and cannot be compiled by the JIT).

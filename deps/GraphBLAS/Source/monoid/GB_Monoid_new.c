@@ -23,6 +23,8 @@
 #include "monoid/GB_Monoid_new.h"
 #include "jitifyer/GB_jitifyer.h"
 
+#define GB_FREE_ALL ;
+
 GrB_Info GB_Monoid_new          // create a monoid
 (
     GrB_Monoid *monoid,         // handle of monoid to create
@@ -39,10 +41,12 @@ GrB_Info GB_Monoid_new          // create a monoid
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     GB_RETURN_IF_NULL (monoid) ;
     (*monoid) = NULL ;
     GB_RETURN_IF_NULL (identity) ;
     GB_RETURN_IF_NULL_OR_FAULTY (op) ;
+    GB_OK (GB_check_arena (header_arena)) ;
 
     ASSERT_BINARYOP_OK (op, "op for monoid", GB0) ;
     ASSERT (idcode <= GB_UDT_code) ;
@@ -91,7 +95,7 @@ GrB_Info GB_Monoid_new          // create a monoid
     // allocate the monoid
     uint64_t mem = GB_mem (header_arena, 0) ;
     uint64_t header_mem = mem ;
-    (*monoid) = GB_MALLOC_MEMORY (1, sizeof (struct GB_Monoid_opaque),
+    (*monoid) = GB_CALLOC_MEMORY (1, sizeof (struct GB_Monoid_opaque),
         &header_mem) ;
     if (*monoid == NULL)
     { 

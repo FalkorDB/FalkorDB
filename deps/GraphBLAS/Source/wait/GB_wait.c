@@ -72,10 +72,7 @@ GrB_Info GB_wait                // finish all pending computations
     // align the data arenas with A->data_arena
     //--------------------------------------------------------------------------
 
-    if (GB_arenas_will_wait (A))
-    { 
-        GB_OK (GB_wait_arenas (A)) ;
-    }
+    GB_OK (GB_wait_arenas (A)) ;
 
     //--------------------------------------------------------------------------
     // quick return for bitmap/full matrices

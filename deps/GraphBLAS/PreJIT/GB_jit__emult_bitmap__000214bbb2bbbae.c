@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__emult_bitmap__000214bbb2bbbae.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.4.0, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.2, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -9,6 +9,8 @@
 //------------------------------------------------------------------------------
 
 #include "include/GB_jit_kernel.h"
+
+#define GB_SET_INTERSECTION 1
 
 // op: (div, double)
 
@@ -19,8 +21,6 @@
 
 // binary operator:
 #define GB_BINOP(z,x,y,i,j) z = (x) / (y)
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
-#define GB_COPY_B_to_C(Cx,pC,Bx,pB,B_iso)
 
 // C matrix: bitmap
 #define GB_C_IS_HYPER  0
@@ -133,7 +133,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0x54e2a290cf696eeb ;
-    v [0] = 10 ; v [1] = 4 ; v [2] = 0 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 2 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

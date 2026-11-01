@@ -45,9 +45,7 @@ static inline bool _should_populate_edge
 ) {
 	ASSERT(e != NULL);
 	return (_referred_entity(e->alias) ||
-			QGEdge_VariableLength(e)   ||
-			QGEdge_GhostEdge(e)        ||
-			!QGEdge_SingleHop(e));
+			QGEdge_RequiresVarLenTraversal(e));
 }
 
 // checks if given expression contains a variable length edge
@@ -73,7 +71,7 @@ static bool _AlgebraicExpression_ContainsVariableLengthEdge
 	case AL_OPERAND:
 		if(exp->operand.edge) {
 			QGEdge *e = QueryGraph_GetEdgeByAlias(qg, exp->operand.edge);
-			return QGEdge_VariableLength(e) || QGEdge_GhostEdge(e) || !QGEdge_SingleHop(e);
+			return QGEdge_RequiresVarLenTraversal(e);
 		}
 		break;
 	default:
@@ -340,12 +338,8 @@ static AlgebraicExpression *_AlgebraicExpression_OperandFromEdge
 
 	// variable-length traversal is required whenever the edge is not a simple
 	// single hop: true variable ranges (minHops != maxHops), zero-length ghost
-	// edges, and fixed multi-hop ranges like *8..8 where minHops == maxHops > 1.
-	// Expanding *n..n into n matrix multiplications bypasses the var-len
-	// traversal op, which is the only path that enforces the no-repeated-edges
-	// constraint.
-	bool var_len_traversal = (QGEdge_VariableLength(e) || QGEdge_GhostEdge(e) ||
-							  !QGEdge_SingleHop(e));
+	// edges, and fixed multi-hop ranges like *8..8 where minHops == maxHops > 1
+	bool var_len_traversal = QGEdge_RequiresVarLenTraversal(e);
 
 	// use original `src` and `dest` for algebraic operands
 	const char *src  = (transpose)              ? dest_node->alias : src_node->alias;

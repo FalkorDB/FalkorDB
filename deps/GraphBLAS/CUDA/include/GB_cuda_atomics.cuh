@@ -182,6 +182,8 @@ template<> __device__ __inline__ void GB_cuda_atomic_write<GxB_FC32_t>
 // GB_cuda_atomic_add for built-in types
 //------------------------------------------------------------------------------
 
+// fixme:  return the old value from GB_cuda_atomic_add, do not return void.
+
 // types: int and uint [32,64], float, double, GxB_FC32_t, complex double
 
 template<> __device__ __inline__ void GB_cuda_atomic_add<int32_t>

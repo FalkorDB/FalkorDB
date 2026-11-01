@@ -118,7 +118,6 @@ uint64_t GB_encodify_ewise      // encode an ewise problem
     char **suffix,              // suffix for user-defined kernel
     // input:
     const GB_jit_kcode kcode,   // kernel to encode
-    const bool is_eWiseMult,    // if true, method is emult
     // C matrix:
     const bool C_iso,
     const bool C_in_iso,
@@ -145,17 +144,14 @@ void GB_enumify_ewise       // enumerate a GrB_eWise problem
     // output:
     uint64_t *method_code,  // unique encoding of the entire operation
     // input:
-    bool is_eWiseMult,      // if true, method is emult
-    bool is_eWiseUnion,     // if true, method is eWiseUnion
-    bool is_kron,           // if true, method is kron
-    bool can_copy_to_C,     // if true C(i,j)=A(i,j) can bypass the op
+    const GB_jit_kcode kcode,   // kernel to encode
     // C matrix:
     bool C_iso,             // if true, C is iso on output
     bool C_in_iso,          // if true, C is iso on input
     int C_sparsity,         // sparse, hyper, bitmap, or full
     GrB_Type ctype,         // C=((ctype) T) is the final typecast
     bool Cp_is_32,          // if true, Cp is 32-bit; else 64-bit
-    bool Cj_is_32,          // if true, Ch is 32-bit; else 64-bit
+    bool Cj_is_32,          // if true, Cj is 32-bit; else 64-bit
     bool Ci_is_32,          // if true, Ci is 32-bit; else 64-bit
     // M matrix:
     GrB_Matrix M,           // may be NULL

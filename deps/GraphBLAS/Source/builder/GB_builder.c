@@ -49,16 +49,13 @@
 //      the work for Step 3.  Step 2 and 3 are skipped.  Step 4 does O(e/p)
 //      reads per thread (J_input only).  Then I_work is transplanted into
 //      T->i.  Step 5 does O(e/p) read/writes per thread to copy Sx into T->x.
-//      After the matrix is built, GB_all_entries_are_iso is called to
-//      determine if the matrix is iso.
 
 // For GrB_Vector_build: as GrB_Matrix_build, Step 1 does O(e/p) read/writes
 //      per thread.  The input is always a vector, so vdim == 1 always holds,
 //      and J_input is NULL.  Step 2 is skipped if the indices are already
 //      sorted, and Step 3 does no work at all unless duplicates appear.  Step
 //      4 takes no time, for any vector. Step 5 does O(e/p) reads/writes per
-//      thread.  After the vector is built, GB_all_entries_are_iso is called to
-//      determine if the vector is iso.
+//      thread.
 
 // For GB_wait:  the pending tuples are provided as I_work, J_work, and S_work,
 //      so Step 1 is skipped (no need to check for invalid indices).  The input

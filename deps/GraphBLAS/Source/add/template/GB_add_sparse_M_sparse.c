@@ -118,11 +118,9 @@
                 ASSERT (GB_MCAST (Mx, pM, msize)) ;
                 ASSERT (GBi_A (Ai, pA_offset + i, vlen) == i) ;
                 ASSERT (GBi_B (Bi, pM, vlen) == i) ;
-                #ifndef GB_ISO_ADD
-                GB_LOAD_A (aij, Ax, pA_offset + i, A_iso) ;
-                GB_LOAD_B (bij, Bx, pM, B_iso) ;
-                GB_EWISEOP (Cx, pC, aij, bij, i, j) ;
-                #endif
+                // C (i,j) = A (i,j) + B (i,j)
+                GB_ADD_AIJ_PLUS_BIJ (Cx, pC, Ax, pA_offset+i, A_iso,
+                    Bx, pM, B_iso, i, j) ;
             }
 
         }
@@ -143,11 +141,10 @@
                 ASSERT (GB_MCAST (Mx, pM, msize)) ;
                 ASSERT (GBi_A (Ai, pM, vlen) == i) ;
                 ASSERT (GBi_B (Bi, pB_offset + i, vlen) == i) ;
-                #ifndef GB_ISO_ADD
-                GB_LOAD_A (aij, Ax, pM, A_iso) ;
-                GB_LOAD_B (bij, Bx, pB_offset + i, B_iso) ;
-                GB_EWISEOP (Cx, pC, aij, bij, i, j) ;
-                #endif
+
+                // C (i,j) = A (i,j) + B (i,j)
+                GB_ADD_AIJ_PLUS_BIJ (Cx, pC, Ax, pM, A_iso,
+                    Bx, pB_offset+i, B_iso, i, j) ;
             }
 
         }
@@ -280,16 +277,13 @@
 
             if (afound && bfound)
             { 
-                // C (i,j) = A (i,j) + B (i,j)
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
                 GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
-                #ifndef GB_ISO_ADD
-                GB_LOAD_A (aij, Ax, pA, A_iso) ;
-                GB_LOAD_B (bij, Bx, pB, B_iso) ;
-                GB_EWISEOP (Cx, pC, aij, bij, i, j) ;
-                #endif
+                // C (i,j) = A (i,j) + B (i,j)
+                GB_ADD_AIJ_PLUS_BIJ (Cx, pC, Ax, pA, A_iso, Bx, pB, B_iso,
+                    i, j) ;
                 pC++ ;
                 #endif
             }
@@ -299,20 +293,9 @@
                 cjnz++ ;
                 #else
                 GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
-                #ifndef GB_ISO_ADD
-                #if GB_IS_EWISEUNION
-                { 
-                    // C (i,j) = A(i,j) + beta
-                    GB_LOAD_A (aij, Ax, pA, A_iso) ;
-                    GB_EWISEOP (Cx, pC, aij, beta_scalar, i, j) ;
-                }
-                #else
-                { 
-                    // C (i,j) = A (i,j)
-                    GB_COPY_A_to_C (Cx, pC, Ax, pA, A_iso) ;
-                }
-                #endif
-                #endif
+                // C (i,j) = A (i,j) or C (i,j) = A(i,j) + beta
+                GB_ADD_AIJ_PLUS_BETA (Cx, pC, Ax, pA, A_iso, beta_scalar,
+                    i, j) ;
                 pC++ ;
                 #endif
             }
@@ -322,20 +305,9 @@
                 cjnz++ ;
                 #else
                 GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
-                #ifndef GB_ISO_ADD
-                #if GB_IS_EWISEUNION
-                { 
-                    // C (i,j) = alpha + B(i,j)
-                    GB_LOAD_B (bij, Bx, pB, B_iso) ;
-                    GB_EWISEOP (Cx, pC, alpha_scalar, bij, i, j) ;
-                }
-                #else
-                { 
-                    // C (i,j) = B (i,j)
-                    GB_COPY_B_to_C (Cx, pC, Bx, pB, B_iso) ;
-                }
-                #endif
-                #endif
+                // C (i,j) = B (i,j), or C (i,j) = alpha + B(i,j)
+                GB_ADD_ALPHA_PLUS_BIJ (Cx, pC, alpha_scalar, Bx, pB, B_iso,
+                    i, j) ;
                 pC++ ;
                 #endif
             }

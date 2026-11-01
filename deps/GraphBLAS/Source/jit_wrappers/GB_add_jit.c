@@ -51,7 +51,7 @@ GrB_Info GB_add_jit      // C=A+B, C<#M>=A+B, add, via the JIT
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
-        GB_JIT_KERNEL_ADD, false,
+        GB_JIT_KERNEL_ADD,
         false, false, C_sparsity, C->type, C->p_is_32, C->j_is_32, C->i_is_32,
         M, Mask_struct, Mask_comp, binaryop, flipij, false, A, B) ;
 

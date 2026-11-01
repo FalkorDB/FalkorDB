@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__AxB_dot2__0380400eb94eb9b7__LG_MSF_tupleMin_double_LG_MSF_combine_double.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.4.0, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.2, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -172,7 +172,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0xe8a77eadee398bc9 ;
-    v [0] = 10 ; v [1] = 4 ; v [2] = 0 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 2 ;
     defn [0] = GB_LG_MSF_tupleMin_double_USER_DEFN ;
     defn [1] = GB_LG_MSF_combine_double_USER_DEFN ;
     defn [2] = GB_LG_MSF_tuple_double_USER_DEFN ;

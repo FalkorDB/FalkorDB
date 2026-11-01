@@ -129,55 +129,7 @@ GrB_Info GB_reduce_to_vector        // C<M> = accum (C,reduce(A))
     //--------------------------------------------------------------------------
 
     struct GB_BinaryOp_opaque op_header ;
-    GrB_BinaryOp op ;
-    info = GrB_SUCCESS ;        // GB_binop_new cannot fail
-
-    switch (ztype->code)
-    {
-        case GB_BOOL_code   : op = GrB_FIRST_BOOL   ; break ;
-        case GB_INT8_code   : op = GrB_FIRST_INT8   ; break ;
-        case GB_INT16_code  : op = GrB_FIRST_INT16  ; break ;
-        case GB_INT32_code  : op = GrB_FIRST_INT32  ; break ;
-        case GB_INT64_code  : op = GrB_FIRST_INT64  ; break ;
-        case GB_UINT8_code  : op = GrB_FIRST_UINT8  ; break ;
-        case GB_UINT16_code : op = GrB_FIRST_UINT16 ; break ;
-        case GB_UINT32_code : op = GrB_FIRST_UINT32 ; break ;
-        case GB_UINT64_code : op = GrB_FIRST_UINT64 ; break ;
-        case GB_FP32_code   : op = GrB_FIRST_FP32   ; break ;
-        case GB_FP64_code   : op = GrB_FIRST_FP64   ; break ;
-        case GB_FC32_code   : op = GxB_FIRST_FC32   ; break ;
-        case GB_FC64_code   : op = GxB_FIRST_FC64   ; break ;
-        default : 
-            // Create a FIRST_UDT binary operator.  The function pointer for
-            // the FIRST_UDT op is NULL; it is not needed by FIRST.  The
-            // function defn is also NULL.  In the JIT, the FIRST multiply
-            // operator is a simple assignment so there's no need for a
-            // function definition.  This binary op will not be treated as a
-            // builtin operator, however, since its data type is not builtin.
-            // Its hash, op->hash, will be nonzero.  The name of FIRST_UDT is
-            // just "1st", which is not itself unique, but it will only be used
-            // in combination with the monoid, which must be user-defined.  No
-            // typecasting is allowed between user-defined types, so the
-            // user-defined monoid must be specific this particular
-            // user-defined type and this "reduce_1st" will be a unique name
-            // for the constructed semiring (if "reduce" is the name of the
-            // monoid).  In addition, it is not possible for the user to create
-            // a jitifyable operator with the name "1st", because of the
-            // leading "1" character in its name.  So "reduce_1st" must be
-            // unique.
-            op = &op_header ;
-            op->header_mem = 0 ;        // static header for binary op
-            info = GB_binop_new (op, NULL, // op->binop_func. NULL for FIRST_UDT
-                ztype, ztype, ztype,    // ztype is user-defined
-                "1st",                  // a simple name for FIRST_UDT
-                NULL,                   // no op->defn for FIRST_UDT
-                GB_FIRST_binop_code,    // using a built-in opcode
-                0) ;                    // arena not used (static header)
-            break ;
-    }
-
-    // GB_binop_new cannot fail since it doesn't allocate the function defn.
-    ASSERT (info == GrB_SUCCESS) ;
+    GrB_BinaryOp op = GB_binop_first (ztype, &op_header) ;
     ASSERT_BINARYOP_OK (op, "op for reduce-to-vector", GB0) ;
 
     //--------------------------------------------------------------------------

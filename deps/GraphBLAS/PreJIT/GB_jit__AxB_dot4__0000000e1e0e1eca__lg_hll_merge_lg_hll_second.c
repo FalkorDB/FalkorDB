@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__AxB_dot4__0000000e1e0e1eca__lg_hll_merge_lg_hll_second.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.4.0, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.2, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -155,7 +155,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0x98881923cee46324 ;
-    v [0] = 10 ; v [1] = 4 ; v [2] = 0 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 2 ;
     defn [0] = GB_lg_hll_merge_USER_DEFN ;
     defn [1] = GB_lg_hll_second_USER_DEFN ;
     defn [2] = GB_HLL_USER_DEFN ;

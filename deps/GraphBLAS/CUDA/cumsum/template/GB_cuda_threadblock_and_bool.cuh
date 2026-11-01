@@ -26,7 +26,7 @@ __inline__ __device__ bool GB_cuda_threadblock_and_bool
 )
 {
     // The thread_block g that calls this method has a number of threads
-    // defined by the kernel launch geometry (dim3 block (blocksz)).
+    // defined by the kernel launch geometry (dim3 block (...)).
     thread_block g = this_thread_block ( ) ;
     // here, g.sync() is not needed (see comments above).
 

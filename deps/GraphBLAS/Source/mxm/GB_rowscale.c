@@ -150,9 +150,10 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
                 default:  ;
             }
         }
-        GB_OK (GB_apply_op (C->x, C->type, GB_NON_ISO,
+        GB_OK (GB_wait_arenas (C)) ;
+        GB_OK (GB_apply_op (C->x, data_arena, C->type, GB_NON_ISO,
             (GB_Operator) op,   // positional op
-            NULL, false, false, B, data_arena, Werk)) ;
+            NULL, false, false, B, Werk)) ;
         ASSERT_MATRIX_OK (C, "rowscale positional: C = D*B output", GB0) ;
         info = GrB_SUCCESS ;
 
@@ -213,7 +214,7 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
         info = GrB_NO_VALUE ;
 
         #if defined ( GRAPHBLAS_HAS_CUDA )
-        if (GB_cuda_rowscale_branch (D, B, semiring, flipxy))
+        if (GB_cuda_mxm_branch (C, NULL, D, B, semiring))
         {
             info = GB_cuda_rowscale (C, D, B, semiring, flipxy) ;
         }

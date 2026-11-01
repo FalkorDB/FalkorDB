@@ -149,19 +149,7 @@
     #else
 
         // phase2: numerical phase
-
-        #ifdef GB_BUILTIN_POSITIONAL_OP
-            // op doesn't depend aij, bij, alpha_scalar, or beta_scalar
-            #define GB_LOAD_A(aij, Ax,pA,A_iso)
-            #define GB_LOAD_B(bij, Bx,pB,B_iso)
-        #else
-            #define GB_LOAD_A(aij, Ax,pA,A_iso) \
-                GB_DECLAREA (aij) ;             \
-                GB_GETA (aij, Ax,pA,A_iso)
-            #define GB_LOAD_B(bij, Bx,pB,B_iso) \
-                GB_DECLAREB (bij) ;             \
-                GB_GETB (bij, Bx,pB,B_iso)
-        #endif
+        #include "include/GB_add_shared_definitions.h"
 
         #ifdef GB_JIT_KERNEL
         {
@@ -203,8 +191,12 @@
     #endif
 }
 
+#undef GB_C_ISO
 #undef GB_ISO_ADD
 #undef GB_LOAD_A
 #undef GB_LOAD_B
+#undef GB_ADD_AIJ_PLUS_BETA
+#undef GB_ADD_ALPHA_PLUS_BIJ
+#undef GB_ADD_AIJ_PLUS_BIJ
 #undef GB_IS_EWISEUNION
 

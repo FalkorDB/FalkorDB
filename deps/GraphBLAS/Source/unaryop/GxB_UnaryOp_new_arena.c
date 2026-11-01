@@ -15,6 +15,8 @@
 #include "unaryop/GB_unop.h"
 #include "jitifyer/GB_stringify.h"
 
+#define GB_FREE_ALL GB_Op_free ((GB_Operator *) &op) ;
+
 GrB_Info GxB_UnaryOp_new_arena     // create a new user-defined unary operator
 (
     GrB_UnaryOp *op_handle,         // handle for the new unary operator
@@ -31,11 +33,14 @@ GrB_Info GxB_UnaryOp_new_arena     // create a new user-defined unary operator
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (op_handle) ;
     (*op_handle) = NULL ;
+    GrB_UnaryOp op = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (ztype) ;
     GB_RETURN_IF_NULL_OR_FAULTY (xtype) ;
+    GB_OK (GB_check_arena (header_arena)) ;
 
     //--------------------------------------------------------------------------
     // create the unary op
@@ -44,8 +49,7 @@ GrB_Info GxB_UnaryOp_new_arena     // create a new user-defined unary operator
     // allocate the unary operator
     uint64_t mem = GB_mem (header_arena, 0) ;
     uint64_t header_mem = mem ;
-    GrB_UnaryOp op = GB_CALLOC_MEMORY (1, sizeof (struct GB_UnaryOp_opaque),
-        &header_mem) ;
+    op = GB_CALLOC_MEMORY (1, sizeof (struct GB_UnaryOp_opaque), &header_mem) ;
     if (op == NULL)
     { 
         // out of memory
@@ -54,15 +58,8 @@ GrB_Info GxB_UnaryOp_new_arena     // create a new user-defined unary operator
 
     op->header_mem = header_mem ;
 
-    GrB_Info info = GB_unop_new (op, function, ztype, xtype, unop_name,
-        unop_defn, GB_USER_unop_code, header_arena) ;
-
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory
-        GB_FREE_MEMORY (&op, header_mem) ;
-        return (info) ;
-    }
+    GB_OK (GB_unop_new (op, function, ztype, xtype, unop_name,
+        unop_defn, GB_USER_unop_code, header_arena)) ;
 
     //--------------------------------------------------------------------------
     // create the function pointer, if NULL
@@ -76,7 +73,7 @@ GrB_Info GxB_UnaryOp_new_arena     // create a new user-defined unary operator
         if (info != GrB_SUCCESS)
         { 
             // unable to construct the function pointer
-            GB_Op_free ((GB_Operator *) &op) ;
+            GB_FREE_ALL ;
             // If the JIT fails, it returns GrB_NO_VALUE or GxB_JIT_ERROR,
             // Convert GrB_NO_VALUE to GrB_NULL_POINTER (the function is NULL
             // and cannot be compiled by the JIT).

@@ -24,6 +24,7 @@
 #include "../serializers/graphcontext_type.h"
 
 #include <time.h>
+#include <errno.h>
 #include <pthread.h>
 #include <sys/param.h>
 #include <stdatomic.h>
@@ -157,6 +158,13 @@ static void _CreateRWLocks
 
 	res = pthread_rwlock_init (&gc->rwlock, &attr) ;
 	ASSERT (res == 0) ;
+
+	// writer gate: reader-queries park here while a writer waits for the lock
+	res = pthread_mutex_init (&gc->writer_gate_mutex, NULL) ;
+	ASSERT (res == 0) ;
+	res = pthread_cond_init (&gc->writer_gate_cond, NULL) ;
+	ASSERT (res == 0) ;
+	gc->writer_waiting = false ;
 }
 
 // update graph context hash
@@ -418,7 +426,7 @@ void GraphContext_AcquireWriteLock
 int GraphContext_TimeAcquireWriteLock
 (
 	GraphContext *gc,  // graph to lock
-	int timeout_ms     // maximum time in milliseconds to wait for the lock:
+	int64_t timeout_ms // maximum time in milliseconds to wait for the lock:
                        // - timeout_ms < 0 : block until the lock is acquired
                        // - timeout_ms = 0 : non-blocking attempt (try-lock)
                        // - timeout_ms > 0 : wait up to timeout_ms milliseconds
@@ -480,6 +488,121 @@ bool GraphContext_IsWriteLocked
 ) {
 	ASSERT (gc != NULL) ;
 	return gc->writelocked ;
+}
+
+//------------------------------------------------------------------------------
+// writer gate
+//------------------------------------------------------------------------------
+// keeps new reader-queries from acquiring the read lock while a writer on this
+// graph is waiting for the write lock, so readers can't slip in during the
+// writer's GIL hand-off and starve it. state is per-graph, so this never
+// couples writers / readers across different graphs
+
+// mark that a writer has begun waiting for the write lock on this graph
+void GraphContext_WriterGateEnter
+(
+	GraphContext *gc
+) {
+	ASSERT (gc != NULL) ;
+
+	pthread_mutex_lock (&gc->writer_gate_mutex) ;
+	gc->writer_waiting = true ;
+	pthread_mutex_unlock (&gc->writer_gate_mutex) ;
+}
+
+// mark that the writer finished acquiring the write lock (or gave up) and wake
+// every reader parked at the gate
+void GraphContext_WriterGateLeave
+(
+	GraphContext *gc
+) {
+	ASSERT (gc != NULL) ;
+
+	pthread_mutex_lock (&gc->writer_gate_mutex) ;
+	gc->writer_waiting = false ;
+	pthread_cond_broadcast (&gc->writer_gate_cond) ;
+	pthread_mutex_unlock (&gc->writer_gate_mutex) ;
+}
+
+// acquire the graph READ lock for a reader query. first wait out any writer on
+// this graph that is currently acquiring the write lock (the writer gate), so
+// the reader can't slip in during the writer's GIL hand-off and starve it, then
+// acquire the read lock. the gate wait and the lock wait share one deadline, so
+// the total wait never exceeds `timeout_ms`. timeout_ms <= 0 waits indefinitely
+//
+// returns 0 on success, ETIMEDOUT if the deadline elapsed before acquiring, or
+// another errno on unexpected failure
+int GraphContext_TimeAcquireReadLock
+(
+	GraphContext *gc,   // graph to lock
+	int64_t timeout_ms  // max total time to wait, <= 0 to block
+) {
+	ASSERT (gc != NULL) ;
+
+	// no timeout: wait out the gate, then block for the read lock
+	if (timeout_ms <= 0) {
+		pthread_mutex_lock (&gc->writer_gate_mutex) ;
+		while (gc->writer_waiting) {
+			pthread_cond_wait (&gc->writer_gate_cond, &gc->writer_gate_mutex) ;
+		}
+		pthread_mutex_unlock (&gc->writer_gate_mutex) ;
+
+		int rc = pthread_rwlock_rdlock (&gc->rwlock) ;
+		if (rc == 0) {
+			gc->writelocked = false ;
+		}
+		return rc ;
+	}
+
+	// bounded: one absolute deadline shared by the gate wait and the lock wait
+	// (CLOCK_REALTIME is pthread_cond_timedwait's default clock)
+	struct timespec deadline ;
+	clock_gettime (CLOCK_REALTIME, &deadline) ;
+	deadline.tv_sec  += timeout_ms / 1000 ;
+	deadline.tv_nsec += (timeout_ms % 1000) * 1000000 ;
+	if (deadline.tv_nsec >= 1000000000L) {
+		deadline.tv_sec++ ;
+		deadline.tv_nsec -= 1000000000L ;
+	}
+
+	// 1. wait out any pending writer, bounded by the deadline. evaluate the
+	// outcome once, after releasing the mutex, and re-check the predicate:
+	// pthread_cond_timedwait can report ETIMEDOUT in the same wakeup that the
+	// gate cleared, in which case we should proceed rather than spuriously
+	// report a timeout
+	pthread_mutex_lock (&gc->writer_gate_mutex) ;
+	int wait_rc = 0 ;
+	while (gc->writer_waiting && wait_rc != ETIMEDOUT) {
+		wait_rc = pthread_cond_timedwait (&gc->writer_gate_cond,
+				&gc->writer_gate_mutex, &deadline) ;
+	}
+	bool gate_timed_out = (gc->writer_waiting && wait_rc == ETIMEDOUT) ;
+	pthread_mutex_unlock (&gc->writer_gate_mutex) ;
+
+	if (gate_timed_out) {
+		return ETIMEDOUT ;
+	}
+
+	// 2. acquire the read lock within the time remaining to the deadline.
+	// measure the remaining budget at nanosecond precision and round a positive
+	// remainder up to whole milliseconds: truncating toward zero would turn a
+	// sub-millisecond budget into 0, which rwlock_timedrdlock treats as a single
+	// non-blocking try - inconsistent with the bounded wait promised here
+	struct timespec now ;
+	clock_gettime (CLOCK_REALTIME, &now) ;
+	int64_t remaining_ns =
+		(int64_t)(deadline.tv_sec - now.tv_sec) * 1000000000L +
+		(deadline.tv_nsec - now.tv_nsec) ;
+	if (remaining_ns <= 0) {
+		return ETIMEDOUT ;
+	}
+	int64_t remaining_ms = (remaining_ns + 999999) / 1000000 ;  // round up
+
+	int rc = rwlock_timedrdlock (&gc->rwlock, remaining_ms) ;
+	if (rc == 0) {
+		gc->writelocked = false ;
+	}
+	return rc ;
 }
 
 // mark graph key as "dirty" for Redis to pick up on
@@ -1882,6 +2005,9 @@ void GraphContext_Free
 
 	int res = pthread_rwlock_destroy (&gc->rwlock) ;
 	ASSERT (res == 0) ;
+
+	pthread_mutex_destroy (&gc->writer_gate_mutex) ;
+	pthread_cond_destroy  (&gc->writer_gate_cond) ;
 
 	rm_free (gc->graph_name) ;
 	rm_free (gc) ;

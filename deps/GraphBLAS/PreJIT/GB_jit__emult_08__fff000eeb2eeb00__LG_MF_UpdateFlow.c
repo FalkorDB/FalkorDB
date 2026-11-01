@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__emult_08__fff000eeb2eeb00__LG_MF_UpdateFlow.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.4.0, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.2, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -9,6 +9,8 @@
 //------------------------------------------------------------------------------
 
 #include "include/GB_jit_kernel.h"
+
+#define GB_SET_INTERSECTION 1
 
 // op: LG_MF_UpdateFlow, ztype: LG_MF_flowEdge, xtype: LG_MF_flowEdge, ytype: double
 
@@ -30,8 +32,6 @@ void LG_MF_UpdateFlow(LG_MF_flowEdge *z, const LG_MF_flowEdge *x, const double *
 "void LG_MF_UpdateFlow(LG_MF_flowEdge *z, const LG_MF_flowEdge *x, const double *y) { z->capacity = x->capacity; z->flow = x->flow + (*y); }"
 #endif
 #define GB_BINOP(z,x,y,i,j)  LG_MF_UpdateFlow (&(z), &(x), &(y))
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
-#define GB_COPY_B_to_C(Cx,pC,Bx,pB,B_iso)
 
 // C matrix: hypersparse
 #define GB_C_IS_HYPER  1
@@ -144,7 +144,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0xec24c5453ec15f52 ;
-    v [0] = 10 ; v [1] = 4 ; v [2] = 0 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 2 ;
     defn [0] = GB_LG_MF_UpdateFlow_USER_DEFN ;
     defn [1] = NULL ;
     defn [2] = GB_LG_MF_flowEdge_USER_DEFN ;

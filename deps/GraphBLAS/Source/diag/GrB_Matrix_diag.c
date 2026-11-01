@@ -22,7 +22,7 @@ GrB_Info GrB_Matrix_diag        // construct a diagonal matrix from a vector
     const GrB_Vector v,         // input vector
     int64_t k
 )
-{
+{ 
 
     //--------------------------------------------------------------------------
     // check inputs

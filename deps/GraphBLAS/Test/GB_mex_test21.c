@@ -128,7 +128,7 @@ void mexFunction
     HEADER ;
     fprintf (fp, "GB_enumify_ewise / GB_macrofy_ewise, C iso\n") ;
     printf ("GB_enumify_ewise / GB_macrofy_ewise, C iso\n") ;
-    GB_enumify_ewise (&method_code, false, false, false, true,
+    GB_enumify_ewise (&method_code, GB_JIT_KERNEL_ADD,
         /* C_iso: */ true, /* C_in_iso: */ false, GxB_SPARSE, GrB_BOOL,
         /* is32: */ false, false, false,
         /* M: */ NULL, false, false, GrB_LAND, false, false, A, B) ;
@@ -138,7 +138,7 @@ void mexFunction
     HEADER ;
     fprintf (fp, "GB_enumify_ewise / GB_macrofy_ewise, C non iso\n") ;
     printf ("GB_enumify_ewise / GB_macrofy_ewise, C non iso\n") ;
-    GB_enumify_ewise (&method_code, false, false, false, true,
+    GB_enumify_ewise (&method_code, GB_JIT_KERNEL_ADD,
         /* C_iso: */ false, /* C_in_iso: */ false, GxB_SPARSE, GrB_BOOL,
         /* is32: */ false, false, false,
         /* M: */ NULL, false, false, GrB_LAND, false, false, A, B) ;

@@ -59,12 +59,13 @@ is only $O(1)$.  The method still must spend $O(e)$ or $O(e \log e)$ time
 on the integer arrays that represent the sparsity pattern, but the reduction
 in time and work on the numerical part of the matrix will improve performance.
 
-The use of \verb'GxB_Matrix_build_Scalar' is optional.  Matrices can also be
-constructed with \verb'GrB*' methods.  In particular, \verb'GrB_Matrix_build_*'
-can be used.  It first builds a non-iso matrix and then checks if all of the
-values are the same, after assembling any duplicate entries.  This does not
-save time or memory for the construction of the matrix itself, but it will
-lead to savings in time and memory later on, when the matrix is used.
+% This feature is removed in v10.5.0:
+% The use of \verb'GxB_Matrix_build_Scalar' is optional.  Matrices can also be
+% constructed with \verb'GrB*' methods.  In particular, \verb'GrB_Matrix_build_*'
+% can be used.  It first builds a non-iso matrix and then checks if all of the
+% values are the same, after assembling any duplicate entries.  This does not
+% save time or memory for the construction of the matrix itself, but it will
+% lead to savings in time and memory later on, when the matrix is used.
 
 To ensure a matrix \verb'C' is iso-valued, simply use \verb'GrB_assign' to
 compute \verb'C<C,struct>=1', or assign whatever value of scalar you wish.
@@ -435,14 +436,26 @@ the value of the scalar for scalar assignment.
 \verb'GxB_Matrix_build_Scalar' and \verb'GxB_Vector_build_Scalar'
 always construct an iso matrix/vector.
 
-\verb'GrB_Matrix_build' and \verb'GrB_Vector_build' can also construct iso
-matrices and vectors.  A non-iso matrix/vector is constructed first, and then
-the entries are checked to see if they are all equal.  The resulting iso-valued
-matrix/vector will be efficient to use and will use less memory than a non-iso
-matrix/vector.  However, constructing an iso matrix/vector with
-\verb'GrB_Matrix_build' and \verb'GrB_Vector_build' will take more time
-and memory than constructing the matrix/vector with
-\verb'GxB_Matrix_build_Scalar' or \verb'GxB_Vector_build_Scalar'.
+\verb'GrB_Matrix_build' and \verb'GrB_Vector_build'
+% This is now how these methods work in v10.5.0 and later:
+do not construct iso-valued matrices.  They always leave their output matrices
+in non-iso format, even if all numerical values are the same.
+
+Version 10.4.0 and earlier did a post-check after building the matrix or
+vector with \verb'GrB_Matrix_build' or \verb'GrB_Vector_build'.  This has been
+removed in version 10.5.0 and later.  To accomplish this, simply follow the
+call to \verb'GrB_Matrix_build' to \verb'GrB_Vector_build' with call to
+\verb'GrB_set (A, true, GxB_ISO)'.
+
+% This feature is removed in v10.5.0:
+% can also construct iso
+% matrices and vectors.  A non-iso matrix/vector is constructed first, and then
+% the entries are checked to see if they are all equal.  The resulting iso-valued
+% matrix/vector will be efficient to use and will use less memory than a non-iso
+% matrix/vector.  However, constructing an iso matrix/vector with
+% \verb'GrB_Matrix_build' and \verb'GrB_Vector_build' will take more time
+% and memory than constructing the matrix/vector with
+% \verb'GxB_Matrix_build_Scalar' or \verb'GxB_Vector_build_Scalar'.
 
 %-------------------------------------------------------------------------------
 \subsection{Iso matrices from other methods}

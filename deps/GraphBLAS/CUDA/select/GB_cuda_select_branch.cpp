@@ -2,7 +2,7 @@
 // GraphBLAS/CUDA/select/GB_cuda_select_branch
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,47 +15,25 @@ bool GB_cuda_select_branch
     const GrB_IndexUnaryOp op
 )
 {
+//  printf ("HACK: turn off cuda select\n") ; return (false) ;
 
-    int jit_control = GB_jitifyer_get_control ( ) ;
-    if (jit_control <= GxB_JIT_PAUSE)
-    { 
-        // JIT is off or paused
-        return (false) ;
-    }
+    if (GB_ngpus_to_use (1) == 0) return (false) ;
 
-    ASSERT (A != NULL && op != NULL) ;
+    int data_arena = A->data_arena ;
+    int header_arena = GB_arena (A->header_mem) ;
+    int dev = data_arena - GxB_NARENAS ;
 
-    if (op->hash == UINT64_MAX)
-    {
-        return false ;
-    }
+    bool use_cuda =
+           (dev >= 0 && dev <= GB_Global_gpu_count_get ( )) // data on GPU
+        && (data_arena == header_arena)                 // header on same GPU
+        && (GB_jitifyer_get_control ( ) >= GxB_JIT_RUN) // JIT is running
+        && (op->hash != UINT64_MAX)                     // op is jitable
+        && GB_cuda_type_branch (A->type)                // types OK for CUDA
+        && GB_cuda_type_branch (op->xtype)
+        && GB_cuda_type_branch (op->ytype)
+        && GB_cuda_type_branch (op->ztype)
+        && GB_shallow_arenas_ok (A) ;       // shallow data on same GPU
 
-    if (A->header_mem == 0)
-    {
-        // fixme arena: check all of A
-        return (false) ;
-    }
-
-    bool ok = (GB_cuda_type_branch (A->type)) ;
-
-    if (op->xtype != NULL)
-    {
-        ok = ok && (GB_cuda_type_branch (op->xtype)) ;
-    }
-    if (op->ytype != NULL)
-    {
-        ok = ok && (GB_cuda_type_branch (op->ytype)) ;
-    }
-    if (op->ztype != NULL)
-    {
-        ok = ok && (GB_cuda_type_branch (op->ztype)) ;
-    }
-
-    double work = GB_nnz_held (A) ;
-    int gpu_count = GB_ngpus_to_use (work) ;
-    int ngpus_max = GB_Context_gpu_ids (NULL) ;     // fixme: get gpu_ids
-    gpu_count = std::min (gpu_count, ngpus_max) ;
-    ok = ok && (gpu_count > 0);
-    return ok ;
+    return (use_cuda) ;
 }
 

@@ -169,7 +169,8 @@ GrB_Info isequal            // return GrB_SUCCESS if successful
     if (!(info == GrB_SUCCESS || info == GrB_NO_VALUE))                 \
     {                                                                   \
         printf ("GraphBLAS error: %d\n", info) ;                        \
-        fprintf (stderr, "GraphBLAS error: %d\n", info) ;               \
+        fprintf (stderr, "GraphBLAS error: %d, file %s, line %d\n",     \
+            info, __FILE__, __LINE__) ;                                 \
         CHECK (false, info) ;                                           \
     }                                                                   \
 }

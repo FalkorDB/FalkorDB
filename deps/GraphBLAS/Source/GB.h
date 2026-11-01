@@ -21,7 +21,7 @@
 #include "print/GB_printf.h"
 #include "ok/GB_assert_library.h"
 #if defined ( GRAPHBLAS_HAS_CUDA )
-#include "rmm_wrap.h"
+#include "GB_rmm_wrap.h"
 #endif
 #include "positional/GB_positional.h"
 #include "math/GB_bitwise.h"

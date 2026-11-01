@@ -9,6 +9,8 @@
 
 #include "GB.h"
 
+#define GB_FREE_ALL ;
+
 // GxB_BinaryOp_new_IndexOp: create a new binary op from an index binary op
 GrB_Info GxB_BinaryOp_new_IndexOp_arena
 (
@@ -29,6 +31,7 @@ GrB_Info GxB_BinaryOp_new_IndexOp_arena
     (*binop_handle) = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (idxbinop) ;
     GB_RETURN_IF_NULL_OR_INVALID (theta) ;
+    GB_OK (GB_check_arena (header_arena)) ;
 
     if (!GB_Type_compatible (idxbinop->theta_type, theta->type))
     { 

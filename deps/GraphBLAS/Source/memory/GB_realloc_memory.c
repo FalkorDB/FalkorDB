@@ -16,8 +16,8 @@
 // is returned, and ok is returned as true.  If the allocation fails, ok is set
 // to false and a pointer to the old (unmodified) object is returned.
 
-// GB_memsize(*p_mem) on input can differ from nitems_old*size_of_item, and the
-// GB_memsize(*p_mem) on output can be larger than nitems_new*size_of_item.
+// GB_memsize (*p_mem) on input can differ from nitems_old*size_of_item.
+// GB_memsize (*p_mem) on output can be larger than nitems_new*size_of_item.
 
 // Usage:
 
@@ -71,8 +71,9 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
     // make sure at least one byte is allocated
     size_of_item = GB_IMAX (1, size_of_item) ;
 
-    uint64_t oldsize_allocated = GB_memsize (*p_mem) ;
-    int arena = GB_arena (*p_mem) ;
+    uint64_t old_p_mem = (*p_mem) ;
+    uint64_t oldsize_allocated = GB_memsize (old_p_mem) ;
+    int arena = GB_arena (old_p_mem) ;
     MEMTABLE_ASSERT (oldsize_allocated == GB_Global_memtable_memsize (p)) ;
 
     // make sure at least one item is allocated
@@ -129,7 +130,7 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
             int nthreads_max = GB_Context_nthreads_max ( ) ;
             GB_memcpy (pnew, p, GB_IMIN (oldsize, newsize), nthreads_max) ;
             // free the old block
-            GB_free_memory (&p, oldsize_allocated) ;
+            GB_free_memory (&p, old_p_mem) ;
         }
     }
     else

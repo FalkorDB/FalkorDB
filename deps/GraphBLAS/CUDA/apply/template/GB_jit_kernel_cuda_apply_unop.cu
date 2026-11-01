@@ -1,12 +1,19 @@
-#define GB_FREE_ALL ;
+//------------------------------------------------------------------------------
+// CUDA/apply/template/GB_jit_kernel_cuda_apply_unop
+//------------------------------------------------------------------------------
 
-using namespace cooperative_groups ;
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
+
+#define GB_FREE_ALL ;
 
 #include "template/GB_cuda_ek_slice.cuh"
 
-// fixme: use GB_geometry.hpp for these parameters:
-#define log2_chunk_size 10
-#define chunk_size 1024
+//------------------------------------------------------------------------------
+// GB_cuda_apply_unop_kernel: device kernel for unary apply
+//------------------------------------------------------------------------------
 
 __global__ void GB_cuda_apply_unop_kernel
 (
@@ -15,6 +22,11 @@ __global__ void GB_cuda_apply_unop_kernel
     GrB_Matrix A
 )
 {
+
+    //--------------------------------------------------------------------------
+    // get A, Cx, and thunk
+    //--------------------------------------------------------------------------
+
     GB_A_NHELD (anz) ;
 
     #if ( GB_DEPENDS_ON_X )
@@ -47,9 +59,16 @@ __global__ void GB_cuda_apply_unop_kernel
         GB_Y_TYPE thunk_value = * ((GB_Y_TYPE *) thunk) ;
     #endif
 
+    //--------------------------------------------------------------------------
+    // apply the unary operator
+    //--------------------------------------------------------------------------
+
     #if ( GB_A_IS_BITMAP || GB_A_IS_FULL )
 
+        //----------------------------------------------------------------------
         // bitmap/full case
+        //----------------------------------------------------------------------
+
         int tid = blockDim.x * blockIdx.x + threadIdx.x ;
         int nthreads = blockDim.x * gridDim.x ;
         #if ( GB_DEPENDS_ON_I ) || ( GB_DEPENDS_ON_J )
@@ -59,53 +78,67 @@ __global__ void GB_cuda_apply_unop_kernel
         {
             if (!GBb_A (Ab, p)) { continue ; }
             #if ( GB_DEPENDS_ON_I )
-            int64_t row_idx = p % avlen ;
+            int64_t i = p % avlen ;
             #endif
             #if ( GB_DEPENDS_ON_J )
-            int64_t col_idx = p / avlen ;
+            int64_t j = p / avlen ;
             #endif
-            GB_UNOP (Cx, p, Ax, p, A_iso, row_idx, col_idx, thunk_value) ;
+            GB_UNOP (Cx, p, Ax, p, A_iso, i, j, thunk_value) ;
         }
 
     #else
 
+        //----------------------------------------------------------------------
         // sparse/hypersparse case
+        //----------------------------------------------------------------------
+
         #if ( GB_DEPENDS_ON_J )
+            // operator depends on j; need to do ek_slice method
             const int64_t anvec = A->nvec ;
-            // need to do ek_slice method
-            for (int64_t pfirst = blockIdx.x << log2_chunk_size ;
-                        pfirst < anz ;
-                        pfirst += gridDim.x << log2_chunk_size )
+            const int64_t anvec1 = anvec - 1 ;
+            for (int64_t pfirst = blockIdx.x << GB_CUDA_APPLY_CHUNKSIZE_LOG2 ;
+                         pfirst < anz ;
+                         pfirst += gridDim.x << GB_CUDA_APPLY_CHUNKSIZE_LOG2 )
+            {
+                int64_t my_chunk_size, kfirst ;
+                float slope ;
+                GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst,
+                    GB_CUDA_APPLY_CHUNKSIZE, &kfirst, &my_chunk_size, &slope) ;
+                for (int64_t pdelta = threadIdx.x ;
+                             pdelta < my_chunk_size ;
+                             pdelta += blockDim.x)
                 {
-                    int64_t my_chunk_size, anvec_sub1, kfirst, klast ;
-                    float slope ;
-                    GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst, chunk_size,
-                        &kfirst, &klast, &my_chunk_size, &anvec_sub1, &slope) ;
-                    for (int64_t pdelta = threadIdx.x ; pdelta < my_chunk_size ; pdelta += blockDim.x)
-                    {
-                        int64_t p = pfirst + pdelta ;
-                        int64_t k = GB_cuda_ek_slice_entry<GB_Ap_TYPE> (p, pdelta, Ap, anvec_sub1, kfirst, slope) ;
-                        int64_t col_idx = GBh_A (Ah, k) ;
-                        #if ( GB_DEPENDS_ON_I )
-                        int64_t row_idx = Ai [p] ;
-                        #endif
-                        GB_UNOP (Cx, p, Ax, p, A_iso, row_idx, col_idx, thunk_value) ;
-                    }
+                    int64_t p = pfirst + pdelta ;
+                    int64_t k = GB_cuda_ek_slice_entry<GB_Ap_TYPE> (p, pdelta,
+                        Ap, anvec1, kfirst, slope) ;
+                    int64_t j = GBh_A (Ah, k) ;
+                    #if ( GB_DEPENDS_ON_I )
+                    int64_t i = Ai [p] ;
+                    #endif
+                    GB_UNOP (Cx, p, Ax, p, A_iso, i, j, thunk_value) ;
                 }
+            }
+
         #else
-            // can do normal method
+
+            // operator does not require j
             int tid = blockDim.x * blockIdx.x + threadIdx.x ;
             int nthreads = blockDim.x * gridDim.x ;
             for (int64_t p = tid ; p < anz ; p += nthreads)
             {
                 #if ( GB_DEPENDS_ON_I )
-                int64_t row_idx = Ai [p] ;
+                int64_t i = Ai [p] ;
                 #endif
-                GB_UNOP (Cx, p, Ax, p, A_iso, row_idx, /* col_idx unused */, thunk_value) ;
+                GB_UNOP (Cx, p, Ax, p, A_iso, i, /* j unused */, thunk_value) ;
             }
+
         #endif
     #endif
 }
+
+//------------------------------------------------------------------------------
+// host CUDA JIT kernel for unary apply
+//------------------------------------------------------------------------------
 
 extern "C" {
     GB_JIT_CUDA_KERNEL_APPLY_UNOP_PROTO (GB_jit_kernel) ;
@@ -114,8 +147,10 @@ extern "C" {
 GB_JIT_CUDA_KERNEL_APPLY_UNOP_PROTO (GB_jit_kernel)
 {
     GB_GET_CALLBACKS ;
+
+    CUDA_OK (cudaSetDevice (device)) ;
     dim3 grid (gridsz) ;
-    dim3 block (blocksz) ;
+    dim3 block (GB_CUDA_APPLY_BLOCKDIM) ;
 
     GB_A_NHELD (anz) ;
     if (anz == 0) return (GrB_SUCCESS) ;
@@ -128,3 +163,4 @@ GB_JIT_CUDA_KERNEL_APPLY_UNOP_PROTO (GB_jit_kernel)
 
     return (GrB_SUCCESS) ;
 }
+

@@ -38,7 +38,7 @@ GrB_Info GB_emult_04_jit      // C<M>=A.*B, emult_04, via the JIT
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
-        GB_JIT_KERNEL_EMULT4, true,
+        GB_JIT_KERNEL_EMULT4,
         false, false, C_sparsity, C->type, C->p_is_32, C->j_is_32, C->i_is_32,
         M, Mask_struct, false, binaryop, flipij, false, A, B) ;
 

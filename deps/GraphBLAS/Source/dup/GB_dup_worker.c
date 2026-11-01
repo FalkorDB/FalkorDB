@@ -54,11 +54,17 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
+    char *C_user_name = NULL ;
+    uint64_t C_user_name_mem = 0 ;
     ASSERT_MATRIX_OK (A, "A to duplicate", GB0) ;
     ASSERT (Chandle != NULL) ;
+    GrB_Matrix C = (*Chandle) ;
+    bool preexisting_header = (C != NULL) ;
     ASSERT (GB_PENDING_OK (A)) ;
     ASSERT (GB_JUMBLED_OK (A)) ;
     ASSERT (GB_ZOMBIES_OK (A)) ;
+    GB_OK (GB_check_arena (header_arena)) ;
+    GB_OK (GB_check_arena (data_arena)) ;
 
     uint64_t mem = GB_mem (data_arena, 0) ;
 
@@ -71,9 +77,6 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
     //--------------------------------------------------------------------------
     // get A and C
     //--------------------------------------------------------------------------
-
-    GrB_Matrix C = (*Chandle) ;
-    bool preexisting_header = (C != NULL) ;
 
     int64_t anz = GB_nnz_held (A) ;
     int64_t anvec = A->nvec ;
@@ -89,8 +92,7 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
     // copy the user_name of A, if present
     //--------------------------------------------------------------------------
 
-    char *C_user_name = NULL ;
-    uint64_t C_user_name_mem = mem ;
+    C_user_name_mem = mem ;
     if (A->user_name != NULL)
     { 
         GB_OK (GB_user_name_set (&C_user_name, &C_user_name_mem,

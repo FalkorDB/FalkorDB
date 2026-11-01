@@ -37,6 +37,8 @@ GrB_Info GxB_Matrix_deserialize_arena // deserialize blob into a GrB_Matrix
     GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (blob) ;
     GB_RETURN_IF_NULL (C) ;
+    (*C) = NULL ;
+
     GB_BURBLE_START ("GxB_Matrix_deserialize") ;
 
     GrB_Info info ;

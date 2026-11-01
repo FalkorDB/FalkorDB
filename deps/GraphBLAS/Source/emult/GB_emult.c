@@ -52,7 +52,8 @@
 
 GrB_Info GB_emult           // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
 (
-    GrB_Matrix C,           // output matrix, existing header
+    GrB_Matrix C,           // output matrix, existing header with no content;
+                            // on input created by GB_matrix_header_new
     const GrB_Type ctype,   // type of output matrix C
     const bool C_is_csc,    // format of output matrix C
     const GrB_Matrix M,     // optional mask, unused if NULL
@@ -115,6 +116,34 @@ GrB_Info GB_emult           // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
     int ewise_method ;          // method to use
     int C_sparsity = GB_emult_sparsity (&apply_mask, &ewise_method,
         M, Mask_comp, A, B) ;
+
+    //--------------------------------------------------------------------------
+    // use CUDA if possible
+    //--------------------------------------------------------------------------
+
+    #if defined ( GRAPHBLAS_HAS_CUDA )
+    if (M == NULL &&        // fixme
+        GB_cuda_add_branch (C, ctype, NULL, false, false, A, B, op))
+    {
+        // Note: using GB_cuda_add_branch, for CUDA eWiseMult.
+        // CUDA cannot yet apply the mask, so if GB_add_sparsity decides the
+        // mask should be applied in GB_add, then do not use CUDA.
+        info = GB_cuda_emult (C, ctype, C_is_csc, A, B, op, flipij, Werk) ;
+        if (info == GrB_SUCCESS)
+        {
+            // CUDA handled the emult
+            GB_FREE_WORKSPACE ;
+            ASSERT_MATRIX_OK (C, "C output for emult using CUDA", GB0) ;
+            return (info) ;
+        }
+        if (info != GrB_NO_VALUE)
+        {
+            // out-of-memory, JIT error, or other error occured
+            GB_FREE_ALL ;
+            return (info) ;
+        }
+    }
+    #endif
 
     //--------------------------------------------------------------------------
     // get the opcode and determine if f(x,y) == f(y,x)

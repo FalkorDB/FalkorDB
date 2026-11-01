@@ -154,13 +154,6 @@ GB_CALLBACK_CALLOC_MEMORY_PROTO (GB_calloc_memory)
     if (p != NULL)
     {
         MEMTABLE_ASSERT (memsize == GB_Global_memtable_memsize (p)) ;
-        #ifdef GB_MEMTABLE_DEBUG
-        if (arena != GB_Global_memtable_arena (p))
-        {
-            printf ("\narena: (%d,%d)!!\n", arena,
-                GB_Global_memtable_arena (p)) ;
-        }
-        #endif
         MEMTABLE_ASSERT (arena == GB_Global_memtable_arena (p)) ;
     }
     (*mem) = GB_mem (arena, memsize) ;

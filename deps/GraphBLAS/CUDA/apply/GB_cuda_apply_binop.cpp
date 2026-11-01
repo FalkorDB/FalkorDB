@@ -1,5 +1,10 @@
 //------------------------------------------------------------------------------
-// ...
+// CUDA/apply/GB_cuda_apply_binop: apply a binary op
+//------------------------------------------------------------------------------
+
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 //------------------------------------------------------------------------------
 
 #include "apply/GB_cuda_apply.hpp"
@@ -17,12 +22,10 @@
     GB_cuda_stream_pool_release (&stream) ;                 \
 }
 
-#define BLOCK_SIZE 512
-#define LOG2_BLOCK_SIZE 9
-
 GrB_Info GB_cuda_apply_binop
 (
     GB_void *Cx,
+    const int Cx_arena,
     const GrB_Type ctype,
     const GrB_BinaryOp op,
     const GrB_Matrix A,
@@ -30,12 +33,15 @@ GrB_Info GB_cuda_apply_binop
     const bool bind1st
 )
 {
+
     GrB_Info info ;
     GB_void *scalarx_cuda = NULL ;
-    uint64_t scalarx_cuda_mem = GB_mem (GB_ARENA_RMM, 0) ;
-
     cudaStream_t stream = nullptr ;
-    GB_OK (GB_cuda_stream_pool_acquire (&stream)) ;
+    int device = Cx_arena - GxB_NARENAS ;
+    uint64_t scalarx_cuda_mem = GB_mem (Cx_arena, 0) ;
+
+    GB_OK (GB_cuda_stream_pool_acquire (device, &stream)) ;
+    GB_OK (GB_wait_arenas (A)) ;
 
     ASSERT (scalarx != NULL) ;
 
@@ -57,27 +63,31 @@ GrB_Info GB_cuda_apply_binop
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
-    memcpy (scalarx_cuda, scalarx, scalarx_cuda_mem) ;
+    memcpy (scalarx_cuda, scalarx, GB_memsize (scalarx_cuda_mem)) ;
 
     GrB_Index anz = GB_nnz_held (A) ;
 
-    int32_t number_of_sms = GB_Global_gpu_sm_get (0) ;
-    int64_t raw_gridsz = GB_ICEIL (anz, BLOCK_SIZE) ;
+    int32_t number_of_sms = GB_Global_gpu_sm_get (device) ;
+    int64_t raw_gridsz = GB_ICEIL (anz, GB_CUDA_APPLY_CHUNKSIZE) ;
     // cap #of blocks to 256 * #of sms
     int32_t gridsz = std::min (raw_gridsz, (int64_t) (number_of_sms * 256)) ;
+
+    GBURBLE ("(cuda apply binop, device %d, sms: %d, gridsz: %d) ",
+        device, number_of_sms, gridsz) ;
 
     if (bind1st)
     {
         GB_OK (GB_cuda_apply_bind1st_jit (Cx, ctype, op, A, 
-            scalarx_cuda, stream, gridsz, BLOCK_SIZE)) ;
+            scalarx_cuda, device, stream, gridsz)) ;
     }
     else
     {
         GB_OK (GB_cuda_apply_bind2nd_jit (Cx, ctype, op, A,
-            scalarx_cuda, stream, gridsz, BLOCK_SIZE)) ;
+            scalarx_cuda, device, stream, gridsz)) ;
     }
 
     GB_FREE_WORKSPACE ;
     GB_OK (GB_cuda_stream_pool_release (&stream)) ;
     return GrB_SUCCESS ; 
 }
+

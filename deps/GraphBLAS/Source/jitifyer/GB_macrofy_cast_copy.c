@@ -43,7 +43,7 @@ void GB_macrofy_cast_copy
     if (ctype == NULL || atype == NULL)
     { 
         // empty macro if atype or ctype are NULL (value not needed)
-        fprintf (fp, "\n") ;
+        fprintf (fp, "/* atype or ctype null */\n") ;
         return ;
     }
 

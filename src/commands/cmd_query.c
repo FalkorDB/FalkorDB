@@ -223,49 +223,87 @@ static void _ExecuteQuery
 		CommandCtx_ThreadSafeContextUnlock (command_ctx) ;
 	}
 
-	// acquire graph READ lock to protect match phase from concurrent
-	// memory modifications by defrag or GRAPH.EFFECT on main thread
-	QueryCtx_AcquireReadLock () ;
-
-	if(exec_type == EXECUTION_TYPE_QUERY) {  // query operation
-		// set policy after lock acquisition,
-		// avoid resetting policies between readers and writers
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
-
-		ExecutionPlan_PreparePlan (plan) ;
-		if (profile) {
-			ExecutionPlan_Profile (plan) ;
-			if (abort_and_check_timeout (gq_ctx, plan)) {
-				query_ctx->status = QueryExecutionStatus_TIMEDOUT ;
-			}
-
-			if (!ErrorCtx_EncounteredError ()) {
-				// transition the query from executing reporting
-				QueryCtx_AdvanceStage (query_ctx) ;
-				ExecutionPlan_Print (plan, rm_ctx) ;
-			}
-		}
-		else {
-			result_set = ExecutionPlan_Execute (plan) ;
-			if (abort_and_check_timeout (gq_ctx, plan)) {
-				query_ctx->status = QueryExecutionStatus_TIMEDOUT ;
-			}
-		}
-
-		ExecutionPlan_Free (plan) ;
-		exec_ctx->plan = NULL ;
-	} else if (exec_type == EXECUTION_TYPE_INDEX_CREATE ||
-			exec_type == EXECUTION_TYPE_INDEX_DROP) {
-		IndexOperation_Run (gc, ast, exec_type) ;
+	// acquire the graph READ lock to protect the match phase from concurrent
+	// memory modifications by defrag or GRAPH.EFFECT on the main thread.
+	//
+	// reader-pool queries acquire it through the writer gate: they wait out any
+	// writer on this graph that is acquiring the write lock (so they can't slip
+	// in during the writer's GIL hand-off and starve it), then take the read
+	// lock - the whole wait bounded by the query's own timeout so neither the
+	// gate nor writer-preference can block them past their deadline. if that
+	// budget is exhausted the query times out, exactly like a timeout during
+	// execution. writers (EXEC_THREAD_WRITER) and main-thread reads
+	// (EXEC_THREAD_MAIN, which hold the GIL) acquire blocking
+	bool have_read_lock = true ;
+	if (command_ctx->thread == EXEC_THREAD_READER) {
+		have_read_lock = QueryCtx_TimeAcquireReadLock (command_ctx->timeout) ;
 	} else {
-		ASSERT ("Unhandled query type" && false) ;
+		QueryCtx_AcquireReadLock () ;
+	}
+
+	if (!have_read_lock) {
+		// couldn't acquire the read lock within the query timeout; report it
+		// like any other query timeout and skip execution.
+		//
+		// cancel the query-timeout cron task armed before execution: skipping
+		// the execution block skips abort_and_check_timeout, so otherwise the
+		// task fires later on the already-freed plan (SIGSEGV in
+		// ExecutionPlan_Drain via Cron_Run)
+		if (gq_ctx->timeout != 0) {
+			Cron_AbortTask (gq_ctx->timeout) ;
+		}
+		ErrorCtx_SetError (EMSG_QUERY_TIMEOUT) ;
+		query_ctx->status = QueryExecutionStatus_TIMEDOUT ;
+	} else {
+
+		if(exec_type == EXECUTION_TYPE_QUERY) {  // query operation
+			// set policy after lock acquisition,
+			// avoid resetting policies between readers and writers
+			Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
+
+			ExecutionPlan_PreparePlan (plan) ;
+			if (profile) {
+				ExecutionPlan_Profile (plan) ;
+				if (abort_and_check_timeout (gq_ctx, plan)) {
+					query_ctx->status = QueryExecutionStatus_TIMEDOUT ;
+				}
+
+				if (!ErrorCtx_EncounteredError ()) {
+					// transition the query from executing reporting
+					QueryCtx_AdvanceStage (query_ctx) ;
+					ExecutionPlan_Print (plan, rm_ctx) ;
+				}
+			}
+			else {
+				result_set = ExecutionPlan_Execute (plan) ;
+				if (abort_and_check_timeout (gq_ctx, plan)) {
+					query_ctx->status = QueryExecutionStatus_TIMEDOUT ;
+				}
+			}
+
+			ExecutionPlan_Free (plan) ;
+			exec_ctx->plan = NULL ;
+		} else if (exec_type == EXECUTION_TYPE_INDEX_CREATE ||
+				exec_type == EXECUTION_TYPE_INDEX_DROP) {
+			IndexOperation_Run (gc, ast, exec_type) ;
+		} else {
+			ASSERT ("Unhandled query type" && false) ;
+		}
 	}
 
 	// in case of an error, rollback any modifications
 	if (ErrorCtx_EncounteredError ()) {
-		QueryCtx_Rollback () ;
-		// the mutations were undone; discard any pending CCH index maintenance
-		GraphContext_CCHClearDirty (gc) ;
+		// only a write has anything to undo. a read reserves no nodes and writes
+		// no undo log, yet QueryCtx_Rollback() unconditionally calls
+		// Graph_ResetReservedNode(), zeroing the GRAPH-GLOBAL reserved-node
+		// counter - so rolling back a read (one that timed out at the writer
+		// gate, or errored mid-execution) would wipe a concurrent CREATE's
+		// reservation and underflow its commit. skip the rollback for reads
+		if (!readonly) {
+			QueryCtx_Rollback () ;
+			// the mutations were undone; discard any pending CCH maintenance
+			GraphContext_CCHClearDirty (gc) ;
+		}
 		// clear resultset statistics, avoiding commnad being replicated
 		ResultSet_Clear (result_set) ;
 		if (query_ctx->status != QueryExecutionStatus_TIMEDOUT) {

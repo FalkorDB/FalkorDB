@@ -17,6 +17,7 @@
 {                                                       \
     if ((cudaMethod) != cudaSuccess)                    \
     {                                                   \
+        /* FIXME: remove printf */                      \
         printf ("cuda failed, file: %s, line: %d\n", __FILE__, __LINE__) ; \
         return (false) ;   \
     }   \
@@ -26,7 +27,7 @@
 // GB_cuda_get_device: get the current GPU
 //------------------------------------------------------------------------------
 
-bool GB_cuda_get_device (int *device)
+bool GB_cuda_get_device (int *device)       // Fixme; return GrB_SUCCESS, etc
 {
     if (device == NULL)
     {
@@ -41,7 +42,7 @@ bool GB_cuda_get_device (int *device)
 // GB_cuda_set_device: set the current GPU
 //------------------------------------------------------------------------------
 
-bool GB_cuda_set_device (int device)
+bool GB_cuda_set_device (int device)        // Fixme; return GrB_SUCCESS, etc
 {
     if (device < 0)
     {
@@ -102,8 +103,7 @@ bool GB_cuda_get_device_properties  // true if OK, false if failure
     prop->compute_capability_major = compute_capability_major ;
     prop->compute_capability_minor = compute_capability_minor ;
 
-    // fixme: remove this printf
-    printf ("\nDevice: %d: memory: %ld SMs: %d compute: %d.%d\n",
+    printf ("\nDevice: %d: memory: %ld SMs: %d compute: %d.%d\n",   // FIXME
         device, prop->total_global_memory, prop->number_of_sms,
         prop->compute_capability_major, prop->compute_capability_minor) ;
 
@@ -111,6 +111,6 @@ bool GB_cuda_get_device_properties  // true if OK, false if failure
     // return result
     //--------------------------------------------------------------------------
 
-    return (true) ;
+    return (true) ; // Fixme return GrB_SUCCESS, etc
 }
 

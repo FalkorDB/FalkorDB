@@ -11,6 +11,7 @@
 #define GB_ADD_H
 #include "GB.h"
 #include "math/GB_math.h"
+#include "add/GB_add_iso.h"
 
 GrB_Info GB_add             // C=A+B, C<M>=A+B, or C<!M>=A+B
 (
@@ -112,21 +113,6 @@ int GB_add_sparsity         // return the sparsity structure for C
     const bool Mask_comp,   // if true, use !M
     const GrB_Matrix A,     // input A matrix
     const GrB_Matrix B      // input B matrix
-) ;
-
-bool GB_add_iso             // c = op(a,b), return true if C is iso
-(
-    // output
-    GB_void *restrict c,    // output scalar of iso array
-    // input
-    GrB_Type ctype,         // type of c
-    GrB_Matrix A,           // input matrix
-    const GB_void *restrict alpha_scalar,   // of type op->xtype
-    GrB_Matrix B,           // input matrix
-    const GB_void *restrict beta_scalar,    // of type op->ytype
-    GrB_BinaryOp op,        // binary operator
-    const bool A_and_B_are_disjoint,
-    const bool is_eWiseUnion
 ) ;
 
 #endif

@@ -18,6 +18,7 @@ GrB_Info GB_cuda_transpose_prep_jit
     // input:
     bool Key_is_32,
     const GrB_Matrix A,
+    int device,
     cudaStream_t stream,
     int32_t gridsz
 )
@@ -59,6 +60,6 @@ GrB_Info GB_cuda_transpose_prep_jit
 
     #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (Key_input, A, stream, gridsz)) ;
+    return (GB_jit_kernel (Key_input, A, device, stream, gridsz)) ;
 }
 

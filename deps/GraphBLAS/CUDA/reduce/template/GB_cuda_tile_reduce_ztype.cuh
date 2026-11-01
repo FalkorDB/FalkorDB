@@ -1,10 +1,9 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/template/GB_cuda_tile_reduce_ztype.cuh:  warp-level reductions
+// CUDA/reduce/template/GB_cuda_tile_reduce_ztype.cuh:  warp-level reductions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
-// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
-// SPDX-License-Identifier: BSD-3-Clause
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 

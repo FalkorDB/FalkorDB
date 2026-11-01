@@ -550,7 +550,7 @@ static void GB_SORT (vector)    // sort the pair of arrays A_0, A_1
     { 
         int64_t leaf = Slice [tid] ;
         int64_t leafsize = Slice [tid+1] - leaf ;
-        uint64_t seed = tid ;
+        uint64_t seed = ((uint64_t) tid) + 1 ;  /* bug fix; see Issue 461 */
         GB_SORT (quicksort) (GB_ADDR (A_0, leaf), A_1 + leaf, leafsize, &seed
             #if GB_SORT_UDT
             , csize, xsize, flt, fcast
@@ -769,7 +769,7 @@ static GrB_Info GB_SORT (mtx)
             const int64_t cknz = pC_end - pC_start ;
             if (cknz <= GB_SORT_BASECASE || nthreads == 1)
             { 
-                uint64_t seed = k ;
+                uint64_t seed = ((uint64_t) k) + 1 ;  /* bug fix; Issue 461 */
                 GB_SORT (quicksort) (GB_ADDR (Cx, pC_start), Ci + pC_start,
                     cknz, &seed
                     #if GB_SORT_UDT

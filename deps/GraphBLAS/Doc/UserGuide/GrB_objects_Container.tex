@@ -251,7 +251,7 @@ read-only, or as modifiable by GraphBLAS), use the following:
     GxB_Vector_load (V, &X, type, n, X_size, handling, NULL) ; \end{verbatim}}
 
 This API is admittedly a bit awkward, but it is used to ensure backward
-compatibility.  Tf no memory arenas are used except the default arena, then the
+compatibility.  If no memory arenas are used except the default arena, then the
 APIs of \verb'GxB_Vector_unload' and \verb'GxB_Vector_load' are identical to
 GraphBLAS 10.3.2, prior to the introduction of memory arenas in GraphBLAS
 10.4.0.  Thus, GraphBLAS 10.4.0 is backward-compatible to prior versions of

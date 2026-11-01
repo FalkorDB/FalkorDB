@@ -10,12 +10,12 @@
 // Constructs the Key_in data structure to pass to GB_cuda_builder, as part of
 // the CUDA tranpose process in GB_cuda_transpose.
 
+// Roi:: FUTURE: the extractTuples kernel will be nearly identical to this method,
+// when A is sparse or hypersparse.
+
 //------------------------------------------------------------------------------
 // declarations
 //------------------------------------------------------------------------------
-
-// fixme: place this "using ..." in GB_cuda_kernel.cuh
-using namespace cooperative_groups ;
 
 #include "template/GB_cuda_ek_slice.cuh"
 
@@ -56,6 +56,7 @@ __global__ void GB_cuda_transpose_prep_kernel
     //--------------------------------------------------------------------------
 
     const int64_t anvec = A->nvec ;
+    const int64_t anvec1 = anvec - 1 ;
     const GB_Ap_TYPE *__restrict__ Ap = (GB_Ap_TYPE *) A->p ;
     const GB_Ai_SIGNED_TYPE *__restrict__ Ai = (GB_Ai_SIGNED_TYPE *) A->i ;
     #if ( GB_A_IS_HYPER )
@@ -85,20 +86,18 @@ __global__ void GB_cuda_transpose_prep_kernel
         //----------------------------------------------------------------------
 
         int64_t pfirst = chunk << LOG2_CHUNKSIZE ;
-        int64_t my_chunk_size ;
-        // detemine the slope, for computing Ak and j
-        int64_t anvec1, kfirst, klast ;
+        int64_t my_chunk_size, kfirst ;
         float slope ;
         GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst,
-            CHUNKSIZE, &kfirst, &klast, &my_chunk_size, &anvec1, &slope) ;
+            CHUNKSIZE, &kfirst, &my_chunk_size, &slope) ;
 
         //----------------------------------------------------------------------
         // find the kA-th vector that contains each entry p = pfirst:plast-1
         //----------------------------------------------------------------------
 
-        int64_t pdelta = threadIdx.x ;
-        for ( ; pdelta < my_chunk_size ;
-                pdelta += blockDim.x)       // block-stride loop
+        for (int64_t pdelta = threadIdx.x ;
+                     pdelta < my_chunk_size ;
+                     pdelta += blockDim.x)       // block-stride loop
         {
 
             //------------------------------------------------------------------
@@ -135,8 +134,10 @@ GB_JIT_CUDA_KERNEL_TRANSPOSE_PREP_PROTO (GB_jit_kernel)
     // get inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (GB_A_IS_HYPER || GB_A_IS_SPARSE) ;
+    // ASSERT (GB_A_IS_HYPER || GB_A_IS_SPARSE) ;
     GB_key_t *Key_in = ((GB_key_t *) Key_input) + 1 ;
+
+    CUDA_OK (cudaSetDevice (device)) ;
     dim3 grid (gridsz) ;        // = min (ceil (anz/CHUNKSIZE), 256*(#sms))
     dim3 block (BLOCKDIM) ;
 

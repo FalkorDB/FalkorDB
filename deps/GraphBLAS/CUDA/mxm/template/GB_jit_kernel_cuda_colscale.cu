@@ -1,12 +1,19 @@
-#define GB_FREE_ALL ;
+//------------------------------------------------------------------------------
+// CUDA/mxm/template/GB_jit_kernel_cuda_colscale.cu
+//------------------------------------------------------------------------------
 
-using namespace cooperative_groups ;
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
+
+#define GB_FREE_ALL ;
 
 #include "template/GB_cuda_ek_slice.cuh"
 
-// fixme: add these to GB_cuda_geometry:
-#define CHUNKSIZE 1024
-#define LOG2_CHUNKSIZE 10
+//------------------------------------------------------------------------------
+// GB_cuda_colscale_kernel: device kernel for C=A*D
+//------------------------------------------------------------------------------
 
 __global__ void GB_cuda_colscale_kernel
 (
@@ -15,6 +22,10 @@ __global__ void GB_cuda_colscale_kernel
     GrB_Matrix D
 )
 {
+
+    //--------------------------------------------------------------------------
+    // get A and C
+    //--------------------------------------------------------------------------
 
     const GB_A_TYPE *__restrict__ Ax = (GB_A_TYPE *) A->x ;
     const GB_B_TYPE *__restrict__ Dx = (GB_B_TYPE *) D->x ;
@@ -34,6 +45,11 @@ __global__ void GB_cuda_colscale_kernel
     GB_A_NHELD (anz) ;
 
     #if (GB_A_IS_BITMAP || GB_A_IS_FULL)
+
+        //----------------------------------------------------------------------
+        // A is bitmap or full
+        //----------------------------------------------------------------------
+
         const int64_t avlen = A->vlen ;
         // bitmap/full case
         int nthreads_in_entire_grid = blockDim.x * gridDim.x ;
@@ -42,10 +58,10 @@ __global__ void GB_cuda_colscale_kernel
         {
             if (!GBb_A (Ab, p)) continue ;
             // the pth entry in A is A(i,j) where i = p%avlen and j = p/avlen
-            int64_t col_idx = p / avlen ;
-    //      int64_t row_idx = p % avlen ;
+            int64_t j = p / avlen ;     // not accessed if D is iso
+//          int64_t i = p % avlen ;
             GB_DECLAREB (djj) ;
-            GB_GETB (djj, Dx, col_idx, ) ;
+            GB_GETB (djj, Dx, j, ) ;
             GB_DECLAREA (aij) ;
             GB_GETA (aij, Ax, p, ) ;
             // C has same sparsity as A; ewise op code does not change
@@ -53,35 +69,46 @@ __global__ void GB_cuda_colscale_kernel
         }
 
     #else
+
+        //----------------------------------------------------------------------
+        // A is sparse or hypersparse
+        //----------------------------------------------------------------------
+
         const int64_t anvec = A->nvec ;
-        // sparse/hypersparse case (cuda_ek_slice only works for sparse/hypersparse)
-        for (int64_t pfirst = blockIdx.x << LOG2_CHUNKSIZE ;
+        const int64_t anvec1 = anvec - 1 ;
+        for (int64_t pfirst = blockIdx.x << GB_CUDA_SCALE_CHUNKSIZE_LOG2 ;
                      pfirst < anz ;
-                     pfirst += gridDim.x << LOG2_CHUNKSIZE )
+                     pfirst += gridDim.x << GB_CUDA_SCALE_CHUNKSIZE_LOG2 )
+        {
+            int64_t my_chunk_size, kfirst ;
+            float slope ;
+            GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst,
+                GB_CUDA_SCALE_CHUNKSIZE, &kfirst, &my_chunk_size, &slope) ;
+
+            for (int64_t pdelta = threadIdx.x ;
+                         pdelta < my_chunk_size ;
+                         pdelta += blockDim.x)
             {
-                int64_t my_chunk_size, anvec_sub1, kfirst, klast ;
-                float slope ;
-                GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst, CHUNKSIZE,
-                    &kfirst, &klast, &my_chunk_size, &anvec_sub1, &slope) ;
-
-                for (int64_t pdelta = threadIdx.x ; pdelta < my_chunk_size ; pdelta += blockDim.x)
-                {
-                    int64_t p = pfirst + pdelta ;
-                    int64_t k = GB_cuda_ek_slice_entry<GB_Ap_TYPE> (p, pdelta, Ap, anvec_sub1, kfirst, slope) ;
-                    int64_t j = GBh_A (Ah, k) ;
-
-                    GB_DECLAREB (djj) ;
-                    GB_GETB (djj, Dx, j, ) ;
-                    GB_DECLAREA (aij) ;
-                    GB_GETA (aij, Ax, p, ) ;
-                    GB_EWISEOP (Cx, p, aij, djj, 0, 0) ;
-                }
+                int64_t p = pfirst + pdelta ;
+                int64_t k = GB_cuda_ek_slice_entry<GB_Ap_TYPE> (p, pdelta, Ap,
+                    anvec1, kfirst, slope) ;
+                int64_t j = GBh_A (Ah, k) ;     // not accessed if D is iso
+                GB_DECLAREB (djj) ;
+                GB_GETB (djj, Dx, j, ) ;
+                GB_DECLAREA (aij) ;
+                GB_GETA (aij, Ax, p, ) ;
+                GB_EWISEOP (Cx, p, aij, djj, 0, 0) ;
             }
+        }
     #endif
 
     // not needed because threads do entirely independent work:
     // this_thread_block ( ).sync( ) ;
 }
+
+//------------------------------------------------------------------------------
+// host JIT kernel for colscale, C=A*D
+//------------------------------------------------------------------------------
 
 extern "C" {
     GB_JIT_CUDA_KERNEL_COLSCALE_PROTO (GB_jit_kernel) ;
@@ -90,15 +117,16 @@ extern "C" {
 GB_JIT_CUDA_KERNEL_COLSCALE_PROTO (GB_jit_kernel)
 {
     GB_GET_CALLBACKS ;
-    ASSERT (GB_JUMBLED_OK (C)) ;
-    ASSERT (GB_JUMBLED_OK (A)) ;
-    ASSERT (!GB_JUMBLED (D)) ;
-    ASSERT (!GB_IS_BITMAP (D)) ;
-    ASSERT (!GB_IS_FULL (D)) ;
-    ASSERT (!C->iso) ;
+    // ASSERT (GB_JUMBLED_OK (C)) ;
+    // ASSERT (GB_JUMBLED_OK (A)) ;
+    // ASSERT (!GB_JUMBLED (D)) ;
+    // ASSERT (!GB_IS_BITMAP (D)) ;
+    // ASSERT (!GB_IS_FULL (D)) ;
+    // ASSERT (!C->iso) ;
 
+    CUDA_OK (cudaSetDevice (device)) ;
     dim3 grid (gridsz) ;
-    dim3 block (blocksz) ;
+    dim3 block (GB_CUDA_SCALE_BLOCKDIM) ;
 
     CUDA_OK (cudaGetLastError ( )) ;
     CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -108,3 +136,4 @@ GB_JIT_CUDA_KERNEL_COLSCALE_PROTO (GB_jit_kernel)
 
     return (GrB_SUCCESS) ;
 }
+

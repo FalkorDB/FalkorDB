@@ -60,7 +60,9 @@ GB_STATIC_INLINE_BOTH void GB_trim_binary_search_32
     }
     // binary search is narrowed down to a single item
     // or it has found the list is empty
+    #ifndef GB_CUDA_KERNEL
     ASSERT (*pleft == *pright || *pleft == *pright + 1) ;
+    #endif
 }
 
 GB_STATIC_INLINE_BOTH void GB_trim_binary_search_64
@@ -95,7 +97,9 @@ GB_STATIC_INLINE_BOTH void GB_trim_binary_search_64
     }
     // binary search is narrowed down to a single item
     // or it has found the list is empty
+    #ifndef GB_CUDA_KERNEL
     ASSERT (*pleft == *pright || *pleft == *pright + 1) ;
+    #endif
 }
 
 GB_STATIC_INLINE_BOTH void GB_trim_binary_search
@@ -291,7 +295,9 @@ GB_STATIC_INLINE_BOTH void GB_trim_binary_search_zombie_32
     }
     // binary search is narrowed down to a single item
     // or it has found the list is empty
+    #ifndef GB_CUDA_KERNEL
     ASSERT (*pleft == *pright || *pleft == *pright + 1) ;
+    #endif
 }
 
 GB_STATIC_INLINE_BOTH void GB_trim_binary_search_zombie_64
@@ -330,7 +336,9 @@ GB_STATIC_INLINE_BOTH void GB_trim_binary_search_zombie_64
     }
     // binary search is narrowed down to a single item
     // or it has found the list is empty
+    #ifndef GB_CUDA_KERNEL
     ASSERT (*pleft == *pright || *pleft == *pright + 1) ;
+    #endif
 }
 
 //------------------------------------------------------------------------------

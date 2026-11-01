@@ -522,3 +522,62 @@ class testVarLengthTraversal(FlowTestsBase):
         self.assert_range_split_invariant(0, n=3)
         self.assert_traversal_union_invariant(0, n=4)
 
+
+    def test09_fixed_length_filtered_far_endpoint(self):
+        """A fixed multi-hop edge (*2..2) whose far endpoint is labeled and
+        filtered must not become the traversal entry point.
+
+        *n..n with n > 1 is evaluated by a variable length traversal, its
+        expression holds only the edge operand. Traversal ordering scored it
+        as if it resolved its endpoints labels, so a filter on the far
+        endpoint tied it with that endpoint's label expression and the edge
+        expression won. The label scan then read the edge operand's label:
+        NULL for an untyped edge (SIGSEGV), the relationship type for a typed
+        edge (a scan of a non-existing node label, wrong count).
+        See https://github.com/FalkorDB/FalkorDB/issues/2542
+        """
+
+        self.graph.query(
+            "CREATE (:A {id:0})-[:R]->(:M {id:1})-[:R]->(:B {id:2})"
+        )
+
+        queries = [
+            # untyped, inline filter on the far endpoint
+            "MATCH (a:A)-[*2..2]-(b:B {id:2}) RETURN count(*)",
+            # untyped, filter in WHERE
+            "MATCH (a:A)-[*2..2]-(b:B) WHERE b.id = 2 RETURN count(*)",
+            # filtered endpoint written first
+            "MATCH (b:B {id:2})-[*2..2]-(a:A) RETURN count(*)",
+            # typed
+            "MATCH (a:A)-[:R*2..2]-(b:B {id:2}) RETURN count(*)",
+            # typed and directed
+            "MATCH (a:A)-[:R*2..2]->(b:B {id:2}) RETURN count(*)",
+            # control, the same path spelled as two single hops
+            "MATCH (a:A)-[]-()-[]-(b:B {id:2}) RETURN count(*)",
+        ]
+
+        for q in queries:
+            # the traversal must start from a node label scan, never from the
+            # variable length edge
+            plan = str(self.graph.explain(q))
+            self.env.assertIn("Node By Label Scan | (b:B)", plan,
+                              message=f"unexpected entry point for: {q}\n{plan}")
+
+            count = self.graph.query(q).result_set[0][0]
+            self.env.assertEqual(count, 1, message=f"wrong count for: {q}")
+
+        # original repro: both endpoints labeled and filtered
+        self.conn.delete(GRAPH_ID)
+        self.graph.query("CREATE (:N {id:1})-[:R]->(:N {id:2})")
+        self.graph.query("MATCH (a:N {id:2}), (b:N {id:1}) CREATE (a)-[:R]->(b)")
+        self.graph.query("MATCH (a:N {id:1}) CREATE (a)-[:R]->(a)")
+
+        # n1 -r1-> n2 -r2-> n1 and n1 -r2-> n2 -r1-> n1
+        # the self-loop can't be taken twice
+        q = "MATCH p=(a:N {id:1})-[*2..2]-(b:N {id:1}) RETURN count(*)"
+        plan = str(self.graph.explain(q))
+        self.env.assertIn("Node By Label Scan | (a:N)", plan,
+                          message=f"unexpected entry point for: {q}\n{plan}")
+
+        count = self.graph.query(q).result_set[0][0]
+        self.env.assertEqual(count, 2, message=f"wrong count for: {q}")

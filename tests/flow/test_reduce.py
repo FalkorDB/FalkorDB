@@ -137,6 +137,32 @@ class testReduce():
         actual = self.graph.query(q).result_set[0][0]
         self.env.assertEquals(actual, expected)
 
+    def test_shadowed_iterator_reduction(self):
+        # regression, issue #265 (Record_Clone / AR_REDUCE SIGSEGV family)
+        # the iterator shadows an alias already bound and live in the record
+        # (`n` from the MATCH) while the accumulator (`s`) is a fresh name
+        # pre-fix _PopulateReduceCtx computed an out-of-bounds entry index for
+        # the accumulator -> heap overflow -> crash (SIGSEGV in release,
+        # assertion in debug)
+        self.graph.query("CREATE (:L {v: 42})")
+
+        q = "MATCH (n) RETURN n.v AS v, reduce(s = 0, n IN [1,2,3] | s + n) AS r"
+        res = self.graph.query(q).result_set
+        # outer `n` is untouched and the reduce evaluates correctly
+        self.env.assertEquals(res[0][0], 42)
+        self.env.assertEquals(res[0][1], 6)
+
+        # customer shape: string accumulator folding nodes() of a
+        # variable-length path, iterator shadows the path's start node `n`
+        self.graph.query("MATCH (a:L) CREATE (a)-[:R]->(:L {v: 7})")
+        q = """MATCH (n:L {v: 42})
+               MATCH p = (n)-[:R*0..5]->(m)
+               RETURN reduce(s = '', n IN nodes(p) | s + toString(n.v) + ' ') AS sig
+               ORDER BY sig"""
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], "42 ")
+        self.env.assertEquals(res[1][0], "42 7 ")
+
     def test_empty_reduction(self):
         # 1 + nothing is 1
         q = "RETURN reduce(sum=1, n in [] | sum + n)"

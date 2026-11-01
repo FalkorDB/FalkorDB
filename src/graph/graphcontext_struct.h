@@ -22,6 +22,14 @@ typedef struct GraphContext {
 	bool writelocked;                      // true if the read-write lock was
 										   // acquired by a writer
 
+	// writer gate: while a writer on this graph is waiting for the write lock,
+	// new reader-queries park here instead of taking the read lock, so they
+	// can't slip in during the writer's GIL hand-off and starve it. per-graph,
+	// so writers / readers on other graphs are unaffected
+	pthread_mutex_t writer_gate_mutex;     // guards writer_waiting
+	pthread_cond_t  writer_gate_cond;      // signaled when writer_waiting clears
+	bool            writer_waiting;        // a writer is acquiring the write lock
+
 	int ref_count;                         // number of active references
 	char **attributes;                     // graph's attributes, attribute id
 										   // is its position within the array

@@ -35,6 +35,8 @@
 #include "GB.h"
 #include "serialize/GB_serialize.h"
 
+#define GB_FREE_ALL ;
+
 GrB_Info GxB_Matrix_serialize_arena // serialize a GrB_Matrix to a blob
 (
     // output:
@@ -57,6 +59,7 @@ GrB_Info GxB_Matrix_serialize_arena // serialize a GrB_Matrix to a blob
     GB_RETURN_IF_NULL (blob_memsize_handle) ;
     GB_RETURN_IF_NULL (A) ;
     GB_WHERE_1 (A, "GxB_Matrix_serialize (&blob, &blob_memsize, A, desc)") ;
+    GB_OK (GB_check_arena (data_arena)) ;
     GB_BURBLE_START ("GxB_Matrix_serialize") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;

@@ -73,33 +73,25 @@ QGEdge *QGEdge_Clone
 	return e;
 }
 
-// returns true if edge represents a variable length path
-// e.g. ()-[*]->()
-bool QGEdge_VariableLength
-(
-	const QGEdge *e  // edge to check
-) {
-	ASSERT(e != NULL);
-
-	return e->minHops != e->maxHops;
-}
-
-// determine whether this is a "ghost" edge
-// an edge of length zero
-// e.g. ()-[*0]->()
-bool QGEdge_GhostEdge
-(
-	const QGEdge *e
-) {
-	return (e->minHops == e->maxHops && e->minHops == 0);
-}
-
 bool QGEdge_SingleHop
 (
 	const QGEdge *e
 ) {
 	ASSERT(e);
 	return (e->minHops == 1 && e->maxHops == 1);
+}
+
+// expanding a fixed multi-hop edge *n..n into n matrix multiplications would
+// bypass the variable length traversal op, which is the only path that
+// enforces the no-repeated-edges constraint
+// as such every edge other than a single hop is a variable length traversal
+bool QGEdge_RequiresVarLenTraversal
+(
+	const QGEdge *e  // edge to check
+) {
+	ASSERT(e != NULL);
+
+	return !QGEdge_SingleHop(e);
 }
 
 bool QGEdge_IsShortestPath

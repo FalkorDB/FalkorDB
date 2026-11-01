@@ -141,9 +141,26 @@ void ijgauss (int64_t *z, const gauss *x, GrB_Index i, GrB_Index j,
 // not recommended for large matrices.  However, it looks nice for this demo
 // since the matrix is small.
 
+int64_t gauss_print
+(
+    // output
+    char *string,
+    // input
+    size_t string_size,
+    const void *value,
+    int verbose
+)
+{
+    gauss *c = (gauss *) value ;
+    return ((int64_t) snprintf (string, string_size, "(%d, %d)",
+        c->real, c->imag)) ;
+}
+
 void printgauss (GrB_Matrix A, char *name)
 {
     // print the matrix
+    GxB_Matrix_fprint (A, name, 5, stdout) ;
+    #if 0
     GrB_Info info = GrB_SUCCESS ;
     GrB_Index m, n ;
     GrB_Matrix_nrows (&m, A) ;
@@ -172,6 +189,7 @@ void printgauss (GrB_Matrix A, char *name)
         printf ("\n") ;
     }
     printf ("\n") ;
+    #endif
 }
 
 //------------------------------------------------------------------------------
@@ -298,6 +316,14 @@ int main (void)
         CHECK (sizeof_gauss == sizeof (gauss), GrB_PANIC) ;
         OK_JIT
     }
+
+    // allow GraphBLAS to print the Gauss type
+    fprintf (stderr, "size of GxB_print_function: %d\n",
+        (int) sizeof (GxB_print_function)) ;
+    fprintf (stderr, "size of gauss: %d\n",
+        (int) sizeof (gauss)) ;
+    OK (GrB_Type_set_VOID (Gauss, (GxB_print_function) &gauss_print,
+        GxB_PRINT_FUNCTION, sizeof (GxB_print_function))) ;
 
     printf ("JIT: off\n") ;
     OK (GrB_Global_set_INT32 (GrB_GLOBAL, GxB_JIT_OFF, GxB_JIT_C_CONTROL)) ;
@@ -485,6 +511,7 @@ int main (void)
     OK_JIT
 
     // C = ciso+A
+    printf ("\n###### do apply bind1st: gauss scalar &ciso is (%p)\n", &ciso) ;
     OK (GrB_Matrix_apply_BinaryOp1st_UDT (C, NULL, NULL, AddGauss,
         (void *) &ciso, A, NULL)) ;
     printgauss (C, "\n=============== Gauss C = (1,-2) + A:\n") ;
@@ -544,7 +571,9 @@ int main (void)
     OK (GrB_Matrix_extractTuples_FP64 (I, J, X, &rnvals, R)) ;
     for (int k = 0 ; k < rnvals ; k++)
     { 
+        fflush (stdout) ;
         printf ("R (%d,%d) = %g\n", (int) I [k], (int) J [k], X [k]) ;
+        fflush (stdout) ;
     }
     OK_JIT
 

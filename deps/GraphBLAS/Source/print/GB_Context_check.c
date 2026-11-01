@@ -52,7 +52,7 @@ GrB_Info GB_Context_check       // check a GraphBLAS Context
     double chunk = GB_Context_chunk_get (Context) ;
     GBPR0 ("    Context.chunk:    %g\n", chunk) ;
 
-    int32_t ngpus, gpu_ids [GB_MAX_NGPUS] ;
+    int32_t ngpus, gpu_ids [GxB_NARENAS_GPU] ;
     ngpus = GB_Context_gpu_ids_get (Context, gpu_ids) ;
     if (ngpus >= 0)
     {

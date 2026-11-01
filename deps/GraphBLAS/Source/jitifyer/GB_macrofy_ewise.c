@@ -80,8 +80,61 @@ void GB_macrofy_ewise           // construct all macros for GrB_eWise
     // get the method
     //--------------------------------------------------------------------------
 
-    bool is_eadd = (kcode == GB_JIT_KERNEL_ADD) ;
-    bool is_kron = (kcode == GB_JIT_KERNEL_KRONER) ;
+    bool is_eadd = (
+        kcode == GB_JIT_KERNEL_ADD ||
+        kcode == GB_JIT_CUDA_KERNEL_ADD_SPARSE
+        // add all eWiseAdd kernels here
+    ) ;
+    bool is_kron = (
+        kcode == GB_JIT_KERNEL_KRONER
+        // add all Kronecker kerners here
+        ) ;
+    bool is_eWiseUnion = (
+        kcode == GB_JIT_KERNEL_UNION
+        // add all eWiseUnion kernels here
+        ) ;
+    // only used for CUDA kernels:
+    bool is_mask_assign = (kcode == GB_JIT_CUDA_KERNEL_MASK_ASSIGN_SPARSE) ;
+
+    bool is_emult = (
+        kcode == GB_JIT_KERNEL_EMULT2 ||
+        kcode == GB_JIT_KERNEL_EMULT3 ||
+        kcode == GB_JIT_KERNEL_EMULT4 ||
+        kcode == GB_JIT_KERNEL_EMULT_BITMAP ||
+        kcode == GB_JIT_KERNEL_EMULT8 ||
+        kcode == GB_JIT_CUDA_KERNEL_EMULT_SPARSE
+        ) ;
+
+    if (is_eWiseUnion)
+    { 
+        fprintf (fp, "#define GB_IS_EWISEUNION 1\n\n") ;
+    }
+
+    #if defined ( GRAPHBLAS_HAS_CUDA )
+    if (is_mask_assign)
+    {
+        fprintf (fp, "#define GB_IS_MASK_ASSIGN 1\n\n") ;
+    }
+    #endif
+
+    if (is_eadd || is_eWiseUnion)
+    { 
+        fprintf (fp, "#define GB_SET_UNION 1\n\n") ;
+    }
+
+    bool Mask_comp = (mask_ecode & 0x1) ;
+
+    if (is_emult || (is_mask_assign && !Mask_comp))
+    { 
+        fprintf (fp, "#define GB_SET_INTERSECTION 1\n\n") ;
+    }
+
+    #if defined ( GRAPHBLAS_HAS_CUDA )
+    if (is_mask_assign && Mask_comp)
+    {
+        fprintf (fp, "#define GB_SET_DIFFERENCE 1\n\n") ;
+    }
+    #endif
 
     //--------------------------------------------------------------------------
     // describe the operator
@@ -187,11 +240,20 @@ void GB_macrofy_ewise           // construct all macros for GrB_eWise
         fprintf (fp, "#define GB_OP_IS_SECOND 1\n") ;
     }
 
-    GB_macrofy_cast_copy (fp, "C", "A", (C_iso || !is_eadd) ? NULL : ctype,
-            (acode == 0 || acode == 15) ? NULL : atype, A_iso) ;
-
-    GB_macrofy_cast_copy (fp, "C", "B", (C_iso || !is_eadd) ? NULL : ctype,
-            (bcode == 0 || bcode == 15) ? NULL : btype, B_iso) ;
+    if (is_eadd || is_mask_assign)
+    {
+        // GB_COPY_A_to_C macro is created for eWiseAdd and CUDA mask_assign
+        // kernels, which are the only ewise kernels that can skip the operator
+        // and typecast entries directly from into C:
+        GB_macrofy_cast_copy (fp, "C", "A", (C_iso) ? NULL : ctype,
+                (acode == 0 || acode == 15) ? NULL : atype, A_iso) ;
+    }
+    if (is_eadd)
+    {
+        // GB_COPY_B_to_C macro is created for eWiseAdd only
+        GB_macrofy_cast_copy (fp, "C", "B", (C_iso) ? NULL : ctype,
+                (bcode == 0 || bcode == 15) ? NULL : btype, B_iso) ;
+    }
 
     //--------------------------------------------------------------------------
     // macros for the C matrix
