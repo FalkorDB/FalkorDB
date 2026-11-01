@@ -66,7 +66,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     graph::graph::Graph,
@@ -75,7 +75,7 @@ use crate::{
 };
 
 use super::super::IR;
-use super::{collect_expr_variables, collect_subtree_variables};
+use super::collect_expr_variables;
 
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
 ///
@@ -465,6 +465,37 @@ fn resolve_path(
         node = node.get_child(pos)?;
     }
     Some(node.idx())
+}
+
+/// The variables the rows leaving `node` carry, as opposed to every variable
+/// mentioned somewhere below it.
+///
+/// `Project` and `Aggregate` reset the environment, so what lies below them is
+/// hidden, and its ids belong to the old scope: they may equal ids of the new
+/// scope's variables. `SemiApply`, `AntiSemiApply` and `OrApplyMultiplexer`
+/// pass their input row through, so only child 0 contributes; their predicate
+/// branches bind nothing visible. Every other operator carries its own
+/// variables plus those of its children.
+fn exposed_variables(node: &DynNode<IR>) -> HashSet<u32> {
+    use crate::runtime::runtime::GetVariables;
+    // `get_variables` walks the whole subtree, so ask it about the operator
+    // alone, as a tree of one node.
+    let own = DynTree::new(node.data().clone());
+    let mut vars: HashSet<u32> = own.root().get_variables().iter().map(|v| v.id).collect();
+    match node.data() {
+        IR::Project { .. } | IR::Aggregate { .. } => {}
+        IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_) => {
+            if node.num_children() > 0 {
+                vars.extend(exposed_variables(&node.child(0)));
+            }
+        }
+        _ => {
+            for child in node.children() {
+                vars.extend(exposed_variables(&child));
+            }
+        }
+    }
+    vars
 }
 
 /// Does the subtree *beneath* `scan_idx` provably bind `alias`?
@@ -983,7 +1014,7 @@ pub(super) fn select_scan_node(
         // read an unbound variable.
         let initial_bound: HashSet<u32> = existing_child.as_ref().map_or_else(
             || HashSet::from([best_node.alias.id]),
-            |child| collect_subtree_variables(&child.root()),
+            |child| exposed_variables(&child.root()),
         );
         let mut bound = initial_bound.clone();
         // Hops still to be placed, in pattern order. Each round removes the
