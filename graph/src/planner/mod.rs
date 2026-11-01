@@ -767,23 +767,45 @@ const LEVELS_PER_CP_BRANCH: usize = 3;
 /// A pass can make a plan far taller than it came in: a wide `CartesianProduct`
 /// of N connected patterns becomes a chain of nested levels, one set per
 /// branch, and the passes after it recurse once per level. Only a
-/// `CartesianProduct` branch deepens a plan this way, so the bound is the input's
-/// height plus [`LEVELS_PER_CP_BRANCH`] levels for each of those, and a plan
-/// that is wide for any other reason (`UNION` branches, say) stays as short as it
-/// is. The walk is iterative.
+/// `CartesianProduct` branch deepens a plan this way, so the bound is the
+/// input's height plus [`LEVELS_PER_CP_BRANCH`] levels for each branch of the
+/// `CartesianProduct`s on the deepest root-to-leaf path. Sibling subtrees (the
+/// branches of a `UNION`, the sub-plans of an `Apply`) are independent, so only
+/// the worst of them counts, and a plan that is wide for any other reason stays
+/// as short as it is. The walk is iterative.
 fn optimizer_depth_bound(plan: &DynTree<IR>) -> usize {
-    let mut branches = 0;
-    let mut stack = vec![plan.root().idx()];
-    while let Some(idx) = stack.pop() {
+    // Pre-order (by pop), so every node comes after its parent; `parent[i]` is
+    // the position of node `i`'s parent.
+    let mut parent: Vec<usize> = Vec::new();
+    let mut extra: Vec<usize> = Vec::new();
+    let mut leaf: Vec<bool> = Vec::new();
+    let mut stack = vec![(plan.root().idx(), usize::MAX)];
+    while let Some((idx, parent_pos)) = stack.pop() {
         let node = plan.node(idx);
-        if matches!(node.data(), IR::CartesianProduct) {
-            branches += node.num_children();
-        }
-        for i in 0..node.num_children() {
-            stack.push(node.child(i).idx());
+        let n = node.num_children();
+        let pos = extra.len();
+        parent.push(parent_pos);
+        extra.push(if matches!(node.data(), IR::CartesianProduct) {
+            LEVELS_PER_CP_BRANCH * n
+        } else {
+            0
+        });
+        leaf.push(n == 0);
+        for i in 0..n {
+            stack.push((node.child(i).idx(), pos));
         }
     }
-    plan.root().height() + LEVELS_PER_CP_BRANCH * branches
+    // Children before parents: fold each subtree's worst path into its parent.
+    let mut below = vec![0usize; extra.len()];
+    for i in (0..extra.len()).rev() {
+        let depth = extra[i] + if leaf[i] { 0 } else { 1 + below[i] };
+        if parent[i] != usize::MAX {
+            below[parent[i]] = below[parent[i]].max(depth);
+        } else {
+            return depth;
+        }
+    }
+    0
 }
 
 /// Runs `optimize`, the optimizer passes over `plan`, on a stack sized for the
@@ -944,6 +966,15 @@ impl Planner {
     /// get here fine; the height walk itself is iterative too.
     pub fn check_depth(plan: &DynTree<IR>) -> Result<(), String> {
         if optimizer_depth_bound(plan) > MAX_PLAN_DEPTH {
+            return Err(format!("{TOO_DEEP} {MAX_PLAN_DEPTH}"));
+        }
+        Ok(())
+    }
+
+    /// Rejects an optimized plan taller than [`MAX_PLAN_DEPTH`]: its actual
+    /// height, the optimizer's growth allowance having been spent already.
+    pub fn check_height(plan: &DynTree<IR>) -> Result<(), String> {
+        if plan.root().height() > MAX_PLAN_DEPTH {
             return Err(format!("{TOO_DEEP} {MAX_PLAN_DEPTH}"));
         }
         Ok(())
@@ -3633,6 +3664,22 @@ mod stack_tests {
         let before = stacker::remaining_stack().unwrap();
         let during = with_optimizer_stack(&plan, || stacker::remaining_stack().unwrap());
         assert!(during <= before, "ran on a new stack: {during} > {before}");
+    }
+
+    #[test]
+    fn sibling_cartesian_products_are_not_summed() {
+        // 2000 UNION branches, each a two-way CartesianProduct: independent
+        // plans, so the worst one (height + 6) is the bound, not 12000.
+        let branches: Vec<DynTree<IR>> = (0..2000)
+            .map(|_| wide_plan(IR::CartesianProduct, 2))
+            .collect();
+        let plan = tree!(IR::Union; branches);
+        assert_eq!(optimizer_depth_bound(&plan), 2 + 3 * 2);
+        assert!(Planner::check_depth(&plan).is_ok());
+        // nested ones on one path do add up
+        let inner = wide_plan(IR::CartesianProduct, 4);
+        let outer = tree!(IR::CartesianProduct, inner, tree!(IR::Argument(None)));
+        assert_eq!(optimizer_depth_bound(&outer), 2 + 3 * 2 + 3 * 4);
     }
 
     #[test]
