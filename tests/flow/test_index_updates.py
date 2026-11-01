@@ -2,6 +2,7 @@ import string
 import random
 from common import *
 from index_utils import *
+from constraint_utils import create_mandatory_node_constraint
 
 GRAPH_ID = "G"
 labels = ["label_a", "label_b"]
@@ -334,6 +335,7 @@ class testIndexUpdatesFlow(FlowTestsBase):
 
         # ... as a full scan does
         query = "MATCH (s)-[r:R]->(t) WHERE r.w + 0 = 1 RETURN s.n, id(r), t.n"
+        self.env.assertNotContains("Edge By Index Scan", str(g.explain(query)))
         self.env.assertEqual(g.query(query).result_set, expected)
 
         # the id reused by an edge of another type, between the same endpoints:
@@ -354,6 +356,25 @@ class testIndexUpdatesFlow(FlowTestsBase):
         query = "MATCH (s)-[r:S]->(t) WHERE r.w = 1 RETURN s.n, id(r), t.n"
         self.env.assertContains("Edge By Index Scan", str(g.explain(query)))
         self.env.assertEqual(g.query(query).result_set, [])
+
+        # the replacement edge is deleted again by the segment that then fails: the
+        # failure comes from the Commit itself, before that deletion is published,
+        # so the rollback must still know the key the replacement was published under
+        create_mandatory_node_constraint(g, 'K', 'q', sync=True)
+        try:
+            g.query("""MATCH ()-[r:R]->() DELETE r
+                       WITH 1 AS x
+                       MATCH (c:C), (d:D) CREATE (c)-[:R {w: 1}]->(d)
+                       WITH 1 AS x
+                       MATCH ()-[r:R]->() DELETE r
+                       CREATE (:K)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("mandatory constraint violation", str(e))
+
+        query = "MATCH (s)-[r:R]->(t) WHERE r.w = 1 RETURN s.n, id(r), t.n"
+        self.env.assertContains("Edge By Index Scan", str(g.explain(query)))
+        self.env.assertEqual(g.query(query).result_set, expected)
         g.delete()
 
 class testNativeOnlyFeedFlow(FlowTestsBase):

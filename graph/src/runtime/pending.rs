@@ -394,6 +394,12 @@ pub struct Pending {
     /// `Commit`: the undo has to cover the whole query, not just the last `Commit`.
     /// Per-query state — `Pending` belongs to one `Runtime`.
     published: IndexDocs,
+    /// `(type slot, edge id, (src, dst))` of every edge document in
+    /// `published.edge_adds`, as keyed when published: an id the query reused is
+    /// published under more than one key, and a later segment can delete the edge
+    /// (and fail before publishing that), so the discarded version no longer knows
+    /// the endpoints a rollback has to delete.
+    published_edge_keys: Vec<(u64, u64, (u64, u64))>,
     /// Schema baseline: number of labels when the current commit window started.
     pub(crate) schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
@@ -534,6 +540,7 @@ impl Pending {
             remove_labels: FxHashMap::default(),
             index_docs: IndexDocs::default(),
             published: IndexDocs::default(),
+            published_edge_keys: Vec::new(),
             deferred_docs: IndexDocs::default(),
             schema_label_count: 0,
             schema_rel_type_count: 0,
@@ -1734,6 +1741,13 @@ impl Pending {
         private: &Graph,
     ) {
         let (nodes, edges) = std::mem::take(&mut self.published).ids_by_slot();
+        let mut edge_keys: FxHashMap<(u64, u64), Vec<(u64, u64)>> = FxHashMap::default();
+        for (slot, id, endpoints) in std::mem::take(&mut self.published_edge_keys) {
+            let keys = edge_keys.entry((slot, id)).or_default();
+            if !keys.contains(&endpoints) {
+                keys.push(endpoints);
+            }
+        }
         if nodes.is_empty() && edges.is_empty() {
             return;
         }
@@ -1741,7 +1755,9 @@ impl Pending {
         let mut node_adds: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
         let mut node_removes: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
         let mut edge_adds: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
-        let mut edge_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>> = FxHashMap::default();
+        // A removal map holds one key per edge id, so an id with several keys to
+        // delete spreads over rounds.
+        let mut edge_removes: Vec<EdgeDocRemovals> = vec![EdgeDocRemovals::default()];
         {
             let g = committed.borrow();
             for (slot, ids) in &nodes {
@@ -1771,10 +1787,24 @@ impl Pending {
                     if live.is_some() {
                         edge_adds.entry(*slot).or_default().insert(id);
                     }
-                    if let Some(endpoints) = p.endpoints_for_edge(id)
-                        && live != Some(endpoints)
-                    {
-                        edge_removes.entry(*slot).or_default().insert(id, endpoints);
+                    // The version's own endpoints cover an edge it still has; the
+                    // recorded keys cover one a later segment deleted again.
+                    let published_keys = edge_keys.get(&(*slot, id)).into_iter().flatten();
+                    for endpoints in p.endpoints_for_edge(id).iter().chain(published_keys) {
+                        if live == Some(*endpoints) {
+                            continue;
+                        }
+                        let round = edge_removes
+                            .iter()
+                            .position(|r| r.get(slot).is_none_or(|m| !m.contains_key(&id)))
+                            .unwrap_or_else(|| {
+                                edge_removes.push(EdgeDocRemovals::default());
+                                edge_removes.len() - 1
+                            });
+                        edge_removes[round]
+                            .entry(*slot)
+                            .or_default()
+                            .insert(id, *endpoints);
                     }
                 }
             }
@@ -1790,7 +1820,12 @@ impl Pending {
         let edge_guard = edge_lock.lock();
         let mut g = committed.borrow_mut();
         g.commit_index_locked(&node_guard, &mut node_adds, &mut node_removes);
-        g.commit_edge_index_locked(&edge_guard, &mut edge_adds, &mut edge_removes);
+        // Removals first, so the rewrite of a committed edge's document wins.
+        let mut first = edge_removes.remove(0);
+        for mut round in edge_removes {
+            g.commit_edge_index_locked(&edge_guard, &mut FxHashMap::default(), &mut round);
+        }
+        g.commit_edge_index_locked(&edge_guard, &mut edge_adds, &mut first);
     }
 
     /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
@@ -1804,6 +1839,13 @@ impl Pending {
         // DELETE must get its document back, or the entity silently disappears from
         // the index.
         self.published.merge(&deferred);
+        for (slot, ids) in &deferred.edge_adds {
+            for id in ids {
+                if let Some(endpoints) = g.endpoints_for_edge(id) {
+                    self.published_edge_keys.push((*slot, id, endpoints));
+                }
+            }
+        }
         deferred.commit(g);
     }
 
