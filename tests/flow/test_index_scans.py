@@ -1318,6 +1318,10 @@ class testIndexScanFlow():
             q = "MATCH (n:L) WHERE n.a IN [1, 2] RETURN n.k"
             self.env.assertContains('Node By Index Scan', str(with_idx.explain(q)))
             self.env.assertEqual(sorted(with_idx.query(q).result_set), [[1], [3]])
+            # ... also when parenthesized
+            q = "MATCH (n:L) WHERE (n.a) IN [1, 2] RETURN n.k"
+            self.env.assertContains('Node By Index Scan', str(with_idx.explain(q)), message=q)
+            self.env.assertEqual(sorted(with_idx.query(q).result_set), [[1], [3]])
         finally:
             with_idx.delete()
             no_idx.delete()

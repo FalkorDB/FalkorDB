@@ -362,12 +362,18 @@ fn bare_property_of(
     idx: NodeIdx<Dyn<ExprIR<Variable>>>,
     alias: &Variable,
 ) -> Option<Arc<String>> {
-    let node = tree.node(idx);
+    let mut node = tree.node(idx);
+    while matches!(node.data(), ExprIR::Paren) {
+        node = node.get_child(0)?;
+    }
     let ExprIR::Property(attr) = node.data() else {
         return None;
     };
+    // `Variable` equality is by id only; ids repeat across scopes.
     match node.get_child(0).map(|c| c.data()) {
-        Some(ExprIR::Variable(v)) if v == alias => Some(attr.clone()),
+        Some(ExprIR::Variable(v)) if v.id == alias.id && v.scope_id == alias.scope_id => {
+            Some(attr.clone())
+        }
         _ => None,
     }
 }
