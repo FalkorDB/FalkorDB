@@ -1068,3 +1068,29 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
             self.env.assertEqual(g.query(q).result_set[0][0], 3000)
         finally:
             g.delete()
+
+    # A LIMIT above a bound-endpoint edge index scan keeps the answer equal to
+    # the unindexed graph (the hit cache is off under a record cap).
+    def test_bound_endpoint_hit_cache_under_limit(self):
+        with_idx = self.db.select_graph("edge_idx_bound_cache_lim")
+        no_idx = self.db.select_graph("edge_idx_bound_cache_lim_plain")
+        setup = """UNWIND range(1, 40) AS i CREATE (:N {id: i})
+                   WITH DISTINCT 1 AS _ UNWIND range(1, 600) AS k
+                   MATCH (x:N {id: (k * 7) % 40 + 1}), (y:N {id: (k * 13) % 40 + 1})
+                   CREATE (x)-[:P {v: k}]->(y)"""
+        try:
+            create_edge_range_index(with_idx, 'P', 'v', sync=True)
+            with_idx.query(setup)
+            no_idx.query(setup)
+            q = ("MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 "
+                 "RETURN count(r) AS c LIMIT 1")
+            self.env.assertEqual(with_idx.query(q).result_set, no_idx.query(q).result_set)
+            q = ("MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 "
+                 "RETURN id(r) LIMIT 5")
+            full = {row[0] for row in no_idx.query(q.replace(" LIMIT 5", "")).result_set}
+            got = [row[0] for row in with_idx.query(q).result_set]
+            self.env.assertEqual(len(got), 5)
+            self.env.assertTrue(set(got) <= full)
+        finally:
+            with_idx.delete()
+            no_idx.delete()

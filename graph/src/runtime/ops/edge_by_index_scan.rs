@@ -52,8 +52,25 @@ type EdgeHit = (NodeId, NodeId, RelationshipId);
 /// maps built on first use. Keys are the pattern's `from` / `to` node ids.
 struct IndexedHits {
     all: Vec<EdgeHit>,
-    by_from: std::cell::OnceCell<HashMap<u64, Vec<EdgeHit>>>,
-    by_to: std::cell::OnceCell<HashMap<u64, Vec<EdgeHit>>>,
+    by_from: std::cell::OnceCell<HashMap<u64, Arc<[EdgeHit]>>>,
+    by_to: std::cell::OnceCell<HashMap<u64, Arc<[EdgeHit]>>>,
+}
+
+/// The kept hits for one endpoint, shared with the cache and walked in place, so a
+/// row never copies a high-degree bucket before filtering its other endpoint.
+struct Bucket {
+    items: Option<Arc<[EdgeHit]>>,
+    pos: usize,
+}
+
+impl Iterator for Bucket {
+    type Item = EdgeHit;
+
+    fn next(&mut self) -> Option<EdgeHit> {
+        let hit = *self.items.as_ref()?.get(self.pos)?;
+        self.pos += 1;
+        Some(hit)
+    }
 }
 
 /// True when evaluating `expr` can not depend on the input row or change
@@ -162,7 +179,8 @@ fn indexed_edges<'r>(
 /// hit.
 struct HitCache {
     /// True when the index query reads no input row (constants, parameters,
-    /// list/map literals only), so every row asks the index the same question.
+    /// list/map literals only), so every row asks the index the same question,
+    /// and no downstream LIMIT could stop a streamed scan early.
     row_invariant: bool,
     /// Input rows that ran the index query with a bound endpoint so far. The
     /// first such row streams (a one-row input pays no setup); the second makes
@@ -187,7 +205,7 @@ impl HitCache {
         q: &mut Option<IndexQuery<Value>>,
         bound_from: Option<NodeId>,
         bound_to: Option<NodeId>,
-    ) -> Result<Option<Vec<EdgeHit>>, String> {
+    ) -> Result<Option<Bucket>, String> {
         if runtime.write || !self.row_invariant || (bound_from.is_none() && bound_to.is_none()) {
             return Ok(None);
         }
@@ -230,11 +248,12 @@ impl HitCache {
             for h in &hits.all {
                 m.entry(endpoint(h, key.1)).or_default().push(*h);
             }
-            m
+            m.into_iter().map(|(k, v)| (k, Arc::from(v))).collect()
         });
-        Ok(Some(
-            map.get(&u64::from(key.0)).cloned().unwrap_or_default(),
-        ))
+        Ok(Some(Bucket {
+            items: map.get(&u64::from(key.0)).cloned(),
+            pos: 0,
+        }))
     }
 }
 
@@ -280,8 +299,9 @@ impl<'a> EdgeByIndexScanOp<'a> {
         query: &'a IndexQuery<QueryExpr<Variable>>,
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
-        // Kept in the signature, unused for now: see the emitter below.
-        _record_cap: Option<usize>,
+        // Unused by the emitter (see below); a downstream LIMIT keeps the index
+        // streaming instead of building the full hit set.
+        record_cap: Option<usize>,
     ) -> Self {
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
         // endpoints; bind it once (via `from`) and skip the `to` column so the
@@ -308,7 +328,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
             transposed,
             all_edges_cache: std::cell::RefCell::new(None),
             hit_cache: HitCache {
-                row_invariant: query_is_row_invariant(query),
+                row_invariant: query_is_row_invariant(query) && record_cap.is_none(),
                 bound_rows: std::cell::Cell::new(0),
                 hits: std::cell::RefCell::new(None),
                 transposed,
@@ -558,7 +578,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                         .hit_cache
                         .lookup(runtime, label, cache, &mut q, bound_from, bound_to)?
                 {
-                    return Ok(Some(RowIter::many(Box::new(hits.into_iter().filter(
+                    return Ok(Some(RowIter::many(Box::new(hits.filter(
                         move |(src, dst, _)| {
                             let (from_id, to_id) = if transposed {
                                 (*dst, *src)
