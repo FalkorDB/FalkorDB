@@ -936,16 +936,20 @@ class testGraphMergeFlow():
         # scan reads: a node whose indexed value changed in this query is
         # still found, and one the index scan already yields is not repeated.
         g.delete()
-        g.query("CREATE INDEX FOR (n:A) ON (n.v)")
+        create_node_range_index(g, "A", "v", sync=True)
         g.query("CREATE (:A {v: 0})")
-        res = g.query("MATCH (n:A) SET n:A, n.v = 1 MERGE (m:A {v: 1}) RETURN id(m) = id(n)")
+        q = "MATCH (n:A) SET n:A, n.v = 1 MERGE (m:A {v: 1}) RETURN id(m) = id(n)"
+        self.env.assertContains("Node By Index Scan", str(g.explain(q)))
+        res = g.query(q)
         self.env.assertEqual(res.result_set, [[True]])
         self.env.assertEqual(res.nodes_created, 0)
 
         g.delete()
-        g.query("CREATE INDEX FOR (n:A) ON (n.v)")
+        create_node_range_index(g, "A", "v", sync=True)
         g.query("CREATE (:A {v: 1})")
-        res = g.query("MATCH (n:A) SET n:B MERGE (m:A:B {v: 1}) RETURN id(m) = id(n)")
+        q = "MATCH (n:A) SET n:B MERGE (m:A:B {v: 1}) RETURN id(m) = id(n)"
+        self.env.assertContains("Node By Index Scan", str(g.explain(q)))
+        res = g.query(q)
         self.env.assertEqual(res.result_set, [[True]])
         self.env.assertEqual(res.nodes_created, 0)
         g.delete()

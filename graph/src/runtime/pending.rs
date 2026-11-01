@@ -1038,12 +1038,11 @@ impl Pending {
     /// (`(committed \ remove_labels) ∪ set_labels`, `set_labels` alone for a
     /// created node).
     ///
-    /// This includes committed nodes whose labels already match: an indexed
-    /// scan reads the committed index, which can omit such a node (its
-    /// indexed property changed) or, because secondary labels are checked
-    /// pending-aware, already emit it. The caller therefore takes every
-    /// returned node from here only, skipping them in the wrapped scan, so
-    /// each is enumerated exactly once. When `label_ids` is empty, returns all
+    /// Only nodes with a staged label that is part of the pattern count. That
+    /// includes committed nodes whose labels already match: an indexed scan
+    /// checks secondary labels pending-aware, so it may already emit one. The
+    /// caller therefore takes every returned node from here only, skipping
+    /// them in the wrapped scan, so each is enumerated exactly once. When `label_ids` is empty, returns all
     /// pending-created nodes.
     #[must_use]
     pub fn get_pending_nodes_with_labels(
@@ -1059,6 +1058,14 @@ impl Pending {
         // have it staged, so `set_labels` holds every candidate.
         for (&node_id, staged) in &self.set_labels {
             if self.deleted_nodes.contains(node_id) {
+                continue;
+            }
+            // Staged labels outside the pattern leave the committed scan's
+            // verdict (and an index's) as it was.
+            if !label_ids
+                .iter()
+                .any(|&l| staged.contains(&(usize::from(l) as u64)))
+            {
                 continue;
             }
             let created = self.created_nodes.contains(node_id);

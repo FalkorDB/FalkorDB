@@ -108,9 +108,6 @@ impl<'a> IncludePendingOp<'a> {
         drop(pending);
         drop(g);
 
-        self.pending_extra = Some(Box::new(
-            pending_nodes.clone().into_iter().map(NodeId::from),
-        ));
         self.extra_nodes = pending_nodes;
     }
 
@@ -211,6 +208,10 @@ impl<'a> Iterator for IncludePendingOp<'a> {
                     Some(Err(e)) => return Some(Err(e)),
                     None => {
                         self.child_exhausted = true;
+                        // The child is done, so the skip-set becomes the
+                        // emission queue without a second copy.
+                        let extra = std::mem::take(&mut self.extra_nodes);
+                        self.pending_extra = Some(Box::new(extra.into_iter().map(NodeId::from)));
                         break;
                     }
                 }
