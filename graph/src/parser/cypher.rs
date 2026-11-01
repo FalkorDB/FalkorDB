@@ -437,6 +437,15 @@ impl<'a> Parser<'a> {
             return Ok(value);
         }
         self.restore_state(state);
+        // A parameter takes at most the sign the expression grammar took before
+        // runs of them parsed (`+`, `-` or `+-`). `parse_expr` folds a run to its
+        // parity, and `---1` or `--9223372036854775808` would come out accepted.
+        optional_match_token!(self.lexer, Plus);
+        optional_match_token!(self.lexer, Dash);
+        if let Ok(token @ (Token::Plus | Token::Dash)) = self.lexer.current() {
+            return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
+        }
+        self.restore_state(state);
         evaluate_param(&self.parse_expr(false)?.root())
     }
 
@@ -3990,7 +3999,17 @@ mod tests {
         // Unnegated, those digits are i64::MAX + 1 and must still be refused.
         assert!(param_of("9223372036854775808").is_err());
         // A second `-` is not part of a literal, and never parsed before.
-        assert!(param_of("--1").is_err());
+        assert_eq!(format!("{:?}", param_of("+-1").unwrap()), "Int(-1)");
+        for value in [
+            "--1",
+            "---1",
+            "----1",
+            "--9223372036854775808",
+            "-+-1",
+            "++1",
+        ] {
+            assert!(param_of(value).is_err(), "accepted parameter {value}");
+        }
     }
 
     // A value that is not a literal falls back to the expression path, so it
