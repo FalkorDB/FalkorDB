@@ -98,7 +98,7 @@ MONITOR_MARK_KEY = "__effects_mark__"
 
 
 class _EffectsBase():
-    """A primary/replica pair with v3 selected, plus the waiting helpers.
+    """A primary/replica pair with the current effects version selected, plus the waiting helpers.
 
     Not discovered as a test: RLTest only collects module-level names starting
     with "test".
@@ -146,7 +146,7 @@ class _EffectsBase():
         self.replica_graph = Graph(self.replica, self.GRAPH_ID)
 
     def set_effects_config(self, compression=0):
-        # Effects are the only replication mechanism and v3 the only format, so
+        # Effects are the only replication mechanism and the one format (v4), so
         # compression is the one thing left to choose.
         self.db.config_set("EFFECTS_COMPRESSION", compression)
 
@@ -406,10 +406,10 @@ class _EffectsBase():
             self.env.assertEqual(seen, count)
         return window
 
-    # A v3 buffer opens with `u8 version · u8 flags`, and bit 0 of the flags
+    # A v3 or v4 buffer opens with `u8 version · u8 flags`, and bit 0 of the flags
     # byte is FLAG_COMPRESSED. MONITOR renders the two as escape sequences.
-    HEADER_PLAIN      = r'\x03\x00'
-    HEADER_COMPRESSED = r'\x03\x01'
+    HEADER_PLAIN      = r'\x04\x00'
+    HEADER_COMPRESSED = r'\x04\x01'
 
     # v3 opcodes, from `graph/src/effects/v3/mod.rs`. Named here so a failure
     # reads as "got CREATE_NODE, wanted CREATE_CONSTRAINT" rather than "got 3,

@@ -1,4 +1,6 @@
-//! Wire format **v3** — see `docs/effects-v3.md`.
+//! Wire format **v3 and v4** — see `docs/effects-v3.md`. This build writes v4;
+//! v3 differs only in how `T_DURATION` is laid out (see [`EFFECTS_VERSION`]) and
+//! is still read.
 //!
 //! Every record is `u32 opcode · u32 count · blocks…`, built from five shared
 //! blocks. There is no separate "batch" record type: a record with `count == 1`
@@ -67,10 +69,21 @@ use crate::{
     index::IndexType,
 };
 
-/// Buffer header. C accepts any version `<= EFFECTS_VERSION` and branches per
-/// version, so raising this is its established mechanism rather than a break —
-/// but C must be raised to 3 as well before it can read what we write.
-pub const EFFECTS_VERSION: u8 = 3;
+/// Buffer header: the version this build **writes**. C accepts any version
+/// `<= its own` and branches per version, so raising this is its established
+/// mechanism rather than a break — but C must be raised to match before it can
+/// read what we write.
+///
+/// 4 differs from 3 in one place: `T_DURATION` carries three `i64`s (months,
+/// days, seconds) instead of one epoch offset. Nothing else changed, which is
+/// why this module holds both versions: the encoders write 4, and the decoders
+/// are generic over the version so a replica can still apply a payload a
+/// not-yet-upgraded primary sent.
+pub const EFFECTS_VERSION: u8 = 4;
+
+/// The previous version, still **read**: `T_DURATION` is one `i64` epoch offset
+/// (what the C engine writes). No encoder produces it any more.
+pub const EFFECTS_VERSION_V3: u8 = 3;
 
 pub mod apply;
 pub mod blocks;
@@ -493,7 +506,6 @@ mod tests {
             ("T_DATE", si_type::T_DATE),
             ("T_TIME", si_type::T_TIME),
             ("T_DURATION", si_type::T_DURATION),
-            ("T_DURATION_V2", si_type::T_DURATION_V2),
             ("T_STRING", si_type::T_STRING),
             ("T_BOOL", si_type::T_BOOL),
             ("T_INT64", si_type::T_INT64),

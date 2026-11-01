@@ -12,8 +12,8 @@
 //! - 5 (LONG_DOUBLE): not used in Rust
 //! - 6 (BLOB):    sentinel, next Redis chunk is standalone blob data
 
-use graph::graph::graphblas::serialization::Reader;
 use graph::graph::graphblas::serialization::Writer;
+use graph::graph::graphblas::serialization::{ENCODING_VERSION, Reader};
 use redis_module::raw;
 use redis_module::raw::RedisModuleIO;
 
@@ -168,12 +168,18 @@ impl Writer for BufferedWriter {
 /// Buffered reader that loads 256KB chunks from Redis and consumes
 /// type-tagged values from them.
 pub struct BufferedReader {
+    /// Encoding version of the stream, as Redis reports it on load.
+    encver: u64,
     rdb: *mut RedisModuleIO,
     buf: Vec<u8>,
     pos: usize,
 }
 
 impl Reader for BufferedReader {
+    fn encver(&self) -> u64 {
+        self.encver
+    }
+
     fn read_unsigned(&mut self) -> Result<u64, String> {
         self.read_unsigned()
     }
@@ -192,16 +198,55 @@ impl Reader for BufferedReader {
 }
 
 impl BufferedReader {
-    pub const fn new(rdb: *mut RedisModuleIO) -> Self {
+    /// A reader over a Redis RDB stream written at `encver`.
+    pub const fn new(
+        rdb: *mut RedisModuleIO,
+        encver: u64,
+    ) -> Self {
         Self {
+            encver,
             rdb,
             buf: Vec::new(),
             pos: 0,
         }
     }
 
+    /// A reader over bytes this build wrote, at the current encoding version.
+    #[cfg(test)]
     pub fn from_slice(data: &[u8]) -> Self {
+        Self::from_slice_at(data, ENCODING_VERSION)
+    }
+
+    /// A reader over a `GRAPH.RESTORE` blob, whichever build wrote it.
+    ///
+    /// A blob names its encoding version up front (`VecWriter` is handed it by
+    /// `vec_save_graph`): a tagged unsigned, which no older blob can start
+    /// with, since those open with the graph name's `TYPE_BYTES` buffer. Such
+    /// an older blob is what a not-yet-upgraded primary replicates and is read
+    /// at [`UNVERSIONED_BLOB_ENCVER`]. A version this build does not know is
+    /// refused rather than parsed as the one it does.
+    pub fn from_blob(data: &[u8]) -> Result<Self, String> {
+        if data.first() != Some(&TYPE_UNSIGNED) {
+            return Ok(Self::from_slice_at(data, UNVERSIONED_BLOB_ENCVER));
+        }
+        let mut r = Self::from_slice_at(data, ENCODING_VERSION);
+        let encver = r.read_unsigned()?;
+        if encver > ENCODING_VERSION {
+            return Err(format!(
+                "graph blob is encoding version {encver}, this build reads up to {ENCODING_VERSION}"
+            ));
+        }
+        r.encver = encver;
+        Ok(r)
+    }
+
+    /// A reader over `data` as an RDB of version `encver` would carry it.
+    pub fn from_slice_at(
+        data: &[u8],
+        encver: u64,
+    ) -> Self {
         Self {
+            encver,
             rdb: std::ptr::null_mut(),
             buf: data.to_vec(),
             pos: 0,
@@ -563,6 +608,10 @@ impl PipeReader {
 // ---------------------------------------------------------------------------
 // Vec-based Writer / Reader for GRAPH.RESTORE replication
 // ---------------------------------------------------------------------------
+
+/// Encoding version of a `GRAPH.RESTORE` blob that does not state one: what
+/// every build wrote before blobs carried a version prefix.
+pub const UNVERSIONED_BLOB_ENCVER: u64 = 19;
 
 /// Writer that appends type-tagged values to a `Vec<u8>`.
 ///

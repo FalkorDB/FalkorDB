@@ -264,7 +264,8 @@ class testEffects_02_VerbatimCommands(_EffectsBase):
         self.set_effects_config()
         src, dst = self.GRAPH_ID, self.GRAPH_ID + "_copy"
         self.query_and_sync(
-            "CREATE (:P {a: 1, b: 'x'})-[:E {w: 2}]->(:Q {c: 3})")
+            "CREATE (:P {a: 1, b: 'x', d: duration({months: 1, days: -1})})"
+            "-[:E {w: 2, ed: duration({days: -2, hours: 3})}]->(:Q {c: 3})")
 
         full_before = self.master.info()["sync_full"]
         diverged_before = self.replica_log_diverged()
@@ -288,8 +289,11 @@ class testEffects_02_VerbatimCommands(_EffectsBase):
                 ("MATCH (n) RETURN count(n)", [[2]]),
                 ("MATCH ()-[e]->() RETURN count(e), sum(e.w)", [[1, 2]]),
                 ("CALL db.labels() YIELD label RETURN label", [['P'], ['Q']]),
+                # signed durations survive the COPY -> RESTORE blob
+                ("MATCH (n:P) RETURN toString(n.d)", [['P1M-1D']]),
+                ("MATCH ()-[e]->() RETURN toString(e.ed)", [['P-2DT3H']]),
                 ("CALL db.propertyKeys() YIELD propertyKey RETURN propertyKey",
-                 [['a'], ['b'], ['c'], ['w']])):
+                 [['a'], ['b'], ['d'], ['c'], ['w'], ['ed']])):
             mv = m_dst.ro_query(q).result_set
             self.env.assertEqual(mv, expected)
             self.env.assertEqual(r_dst.ro_query(q).result_set, mv)

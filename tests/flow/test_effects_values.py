@@ -277,10 +277,31 @@ class testEffects_02_ValueTypes(_EffectsBase):
                                              c: duration({hours: -1, minutes: -30}),
                                              d: duration({years: 1, days: 1}),
                                              e: duration({hours: 600000}),
-                                             f: duration({months: -10000, days: 200000, seconds: -2000000000})})""")
+                                             f: duration({months: -10000, days: 200000, seconds: -2000000000}),
+                                             g: duration({months: 1, days: -1})})""")
         self.assert_effect_emitted()
         self.assert_agree(
-            "MATCH (n:Dur) RETURN toString(n.a), toString(n.b), toString(n.c), toString(n.d), toString(n.e), toString(n.f)",
+            "MATCH (n:Dur) RETURN toString(n.a), toString(n.b), toString(n.c), toString(n.d), toString(n.e), toString(n.f), toString(n.g)",
             [['P-1D', 'P1M-3D', 'PT-1H-30M', 'P1Y1D', 'PT600000H',
-              'P-833Y-4M200000DT-555555H-33M-20S']])
+              'P-833Y-4M200000DT-555555H-33M-20S', 'P1M-1D']])
+        self.assert_graph_eq()
+
+    def test04_durations_travel_in_every_effect_shape(self):
+        # The value codec is shared by every record that carries a property:
+        # created and updated nodes, created and updated edges, and a batch of
+        # many rows (one record, many values), canonical and signed alike.
+        self.query_and_sync("""CREATE (a:DurN {v: duration({days: -1})})-[:DurE {v: duration({months: 1, days: -1})}]->(b:DurN {v: duration({hours: 5})})""")
+        self.query_and_sync("""MATCH (n:DurN) SET n.w = duration({months: -1, days: 1})""")
+        self.query_and_sync("""MATCH ()-[e:DurE]->() SET e.v = duration({seconds: -2000000000})""")
+        self.query_and_sync("""UNWIND range(1, 200) AS i CREATE (:DurBatch {i: i, d: duration({days: i - 100, seconds: i * 7 - 300})})""")
+        self.assert_effect_emitted()
+        self.assert_agree(
+            "MATCH (n:DurN) RETURN toString(n.v), toString(n.w) ORDER BY toString(n.v)",
+            [['P-1D', 'P-1M1D'], ['PT5H', 'P-1M1D']])
+        self.assert_agree(
+            "MATCH ()-[e:DurE]->() RETURN toString(e.v)",
+            [["PT-555555H-33M-20S"]])
+        m, r = self.probe("MATCH (n:DurBatch) RETURN count(n), toString(min(n.d)), toString(max(n.d))")
+        self.env.assertEqual(m[0][0], 200)
+        self.env.assertEqual(r, m)
         self.assert_graph_eq()

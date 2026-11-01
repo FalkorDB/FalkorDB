@@ -147,7 +147,7 @@ fn take_opt<T>(
     }
 }
 
-impl EffectEncodeSized<3> for IndexFieldOptions {
+impl EffectEncodeSized<4> for IndexFieldOptions {
     /// The statement's `field_type`, the same context `decode_sized` takes.
     type Size = u32;
 
@@ -210,7 +210,7 @@ impl EffectEncodeSized<3> for IndexFieldOptions {
     }
 }
 
-impl EffectDecodeSized<3> for IndexFieldOptions {
+impl<const VERSION: u8> EffectDecodeSized<VERSION> for IndexFieldOptions {
     /// The statement's `field_type`, which says whether a vector block follows.
     type Size = u32;
 
@@ -320,7 +320,7 @@ pub struct AttrRef<S> {
 /// `AttrRef<&str>`, and neither should have to allocate to be written.
 pub struct IndexFields<S>(pub S);
 
-impl<T: AsRef<str>> EffectEncode<3> for IndexFields<&[AttrRef<T>]> {
+impl<T: AsRef<str>> EffectEncode<4> for IndexFields<&[AttrRef<T>]> {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
@@ -342,7 +342,7 @@ impl<T: AsRef<str>> EffectEncode<3> for IndexFields<&[AttrRef<T>]> {
     }
 }
 
-impl EffectDecode<3> for IndexFields<Vec<AttrRef<String>>> {
+impl<const VERSION: u8> EffectDecode<VERSION> for IndexFields<Vec<AttrRef<String>>> {
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
         let n = r.u16()?;
         let n = r.guard_count(u64::from(n), MIN_ATTR_REF_BYTES)?;
@@ -384,7 +384,7 @@ pub struct SchemaRef<S> {
 /// reason [`IndexFields`] is: owned and borrowed callers both avoid allocating.
 pub struct IndexSchemas<S>(pub S);
 
-impl<T: AsRef<str>> EffectEncode<3> for IndexSchemas<&[SchemaRef<T>]> {
+impl<T: AsRef<str>> EffectEncode<4> for IndexSchemas<&[SchemaRef<T>]> {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
@@ -417,7 +417,7 @@ impl<T: AsRef<str>> EffectEncode<3> for IndexSchemas<&[SchemaRef<T>]> {
     }
 }
 
-impl EffectDecode<3> for IndexSchemas<Vec<SchemaRef<String>>> {
+impl<const VERSION: u8> EffectDecode<VERSION> for IndexSchemas<Vec<SchemaRef<String>>> {
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
         let n = r.u16()?;
         let n = r.guard_count(u64::from(n), MIN_SCHEMA_REF_BYTES)?;
@@ -608,7 +608,10 @@ pub enum Record {
 }
 
 /// Read one record, whatever its opcode.
-pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
+pub fn read_record<const VERSION: u8>(r: &mut Reader<'_>) -> Result<Record, DecodeError>
+where
+    Value: EffectDecode<VERSION>,
+{
     let opcode = Opcode::try_from(r.u32()?)?;
 
     // The singular records carry no count, so one is only read for the records
@@ -645,10 +648,14 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             // The opcode already says which form this is, so each builds its
             // own variant and neither can end up holding the other's key.
             if entity == EntityType::Node {
-                let labels = LabelSet::decode(r)?.0;
-                let attr_ids = AttrIds::decode(r)?.0;
-                let ids = IdList::decode_sized(r, count)?;
-                let rows = AttrValues::decode_sized(r, (count, attr_ids.len()))?.0;
+                let labels = <LabelSet as EffectDecode<VERSION>>::decode(r)?.0;
+                let attr_ids = <AttrIds as EffectDecode<VERSION>>::decode(r)?.0;
+                let ids = <IdList as EffectDecodeSized<VERSION>>::decode_sized(r, count)?;
+                let rows = <AttrValues as EffectDecodeSized<VERSION>>::decode_sized(
+                    r,
+                    (count, attr_ids.len()),
+                )?
+                .0;
                 Record::UpdateNode {
                     ids,
                     labels,
@@ -656,10 +663,14 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
                     rows,
                 }
             } else {
-                let relation_id = RelType::decode(r)?.0;
-                let attr_ids = AttrIds::decode(r)?.0;
-                let ids = IdList::decode_sized(r, count)?;
-                let rows = AttrValues::decode_sized(r, (count, attr_ids.len()))?.0;
+                let relation_id = <RelType as EffectDecode<VERSION>>::decode(r)?.0;
+                let attr_ids = <AttrIds as EffectDecode<VERSION>>::decode(r)?.0;
+                let ids = <IdList as EffectDecodeSized<VERSION>>::decode_sized(r, count)?;
+                let rows = <AttrValues as EffectDecodeSized<VERSION>>::decode_sized(
+                    r,
+                    (count, attr_ids.len()),
+                )?
+                .0;
                 Record::UpdateEdge {
                     ids,
                     relation_id,
@@ -669,10 +680,14 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             }
         }
         Opcode::CreateNode => {
-            let labels = LabelSet::decode(r)?.0;
-            let attr_ids = AttrIds::decode(r)?.0;
-            let ids = IdList::decode_sized(r, count)?;
-            let rows = AttrValues::decode_sized(r, (count, attr_ids.len()))?.0;
+            let labels = <LabelSet as EffectDecode<VERSION>>::decode(r)?.0;
+            let attr_ids = <AttrIds as EffectDecode<VERSION>>::decode(r)?.0;
+            let ids = <IdList as EffectDecodeSized<VERSION>>::decode_sized(r, count)?;
+            let rows = <AttrValues as EffectDecodeSized<VERSION>>::decode_sized(
+                r,
+                (count, attr_ids.len()),
+            )?
+            .0;
             Record::CreateNode {
                 ids,
                 labels,
@@ -681,12 +696,16 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             }
         }
         Opcode::CreateEdge => {
-            let relation_id = RelType::decode(r)?.0;
-            let attr_ids = AttrIds::decode(r)?.0;
-            let ids = IdList::decode_sized(r, count)?;
-            let src = IdList::decode_sized(r, count)?;
-            let dst = IdList::decode_sized(r, count)?;
-            let rows = AttrValues::decode_sized(r, (count, attr_ids.len()))?.0;
+            let relation_id = <RelType as EffectDecode<VERSION>>::decode(r)?.0;
+            let attr_ids = <AttrIds as EffectDecode<VERSION>>::decode(r)?.0;
+            let ids = <IdList as EffectDecodeSized<VERSION>>::decode_sized(r, count)?;
+            let src = <IdList as EffectDecodeSized<VERSION>>::decode_sized(r, count)?;
+            let dst = <IdList as EffectDecodeSized<VERSION>>::decode_sized(r, count)?;
+            let rows = <AttrValues as EffectDecodeSized<VERSION>>::decode_sized(
+                r,
+                (count, attr_ids.len()),
+            )?
+            .0;
             Record::CreateEdge {
                 ids,
                 relation_id,
@@ -697,17 +716,17 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             }
         }
         Opcode::DeleteNode => {
-            let labels = LabelSet::decode(r)?.0;
+            let labels = <LabelSet as EffectDecode<VERSION>>::decode(r)?.0;
             Record::DeleteNode {
                 labels,
-                ids: IdList::decode_sized(r, count)?,
+                ids: <IdList as EffectDecodeSized<VERSION>>::decode_sized(r, count)?,
             }
         }
         Opcode::DeleteEdge => {
-            let relation_id = RelType::decode(r)?.0;
-            let ids = IdList::decode_sized(r, count)?;
-            let src = IdList::decode_sized(r, count)?;
-            let dst = IdList::decode_sized(r, count)?;
+            let relation_id = <RelType as EffectDecode<VERSION>>::decode(r)?.0;
+            let ids = <IdList as EffectDecodeSized<VERSION>>::decode_sized(r, count)?;
+            let src = <IdList as EffectDecodeSized<VERSION>>::decode_sized(r, count)?;
+            let dst = <IdList as EffectDecodeSized<VERSION>>::decode_sized(r, count)?;
             Record::DeleteEdge {
                 ids,
                 relation_id,
@@ -719,8 +738,8 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             // Field order in a struct literal is evaluation order, and the
             // label set now precedes the ids on the wire — so these must not be
             // written in declaration order.
-            let labels = LabelSet::decode(r)?.0;
-            let ids = IdList::decode_sized(r, count)?;
+            let labels = <LabelSet as EffectDecode<VERSION>>::decode(r)?.0;
+            let ids = <IdList as EffectDecodeSized<VERSION>>::decode_sized(r, count)?;
             if opcode == Opcode::SetLabels {
                 Record::SetLabels { ids, labels }
             } else {
@@ -745,7 +764,8 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
         }
         Opcode::CreateIndex | Opcode::DropIndex => {
             let schema_type = entity_from_schema_tag(r.u32()?)?;
-            let schemas = IndexSchemas::decode(r)?.0;
+            let schemas =
+                <IndexSchemas<Vec<SchemaRef<String>>> as EffectDecode<VERSION>>::decode(r)?.0;
             let field_type = r.u32()?;
             // Before the options block, because that block is what an unknown
             // bit desynchronises — and before the drop path too, which has no
@@ -755,11 +775,12 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             // is exactly one `index_type_of` can name a kind for. The kind
             // itself is the apply layer's business, so it is discarded here.
             index_type_of(field_type)?;
-            let fields = IndexFields::decode(r)?.0;
+            let fields = <IndexFields<Vec<AttrRef<String>>> as EffectDecode<VERSION>>::decode(r)?.0;
             // A drop stops here — zero option bytes, not an empty block — and
             // the variant it becomes has no field for any.
             if opcode == Opcode::CreateIndex {
-                let options = IndexFieldOptions::decode_sized(r, field_type)?;
+                let options =
+                    <IndexFieldOptions as EffectDecodeSized<VERSION>>::decode_sized(r, field_type)?;
                 Record::CreateIndex {
                     schema_type,
                     schemas,
@@ -913,7 +934,7 @@ fn write_constraint_tail<W: EffectWrite + ?Sized>(
 /// parameter list and this dispatch, three things that had to agree with
 /// nothing checking that they did. Two adjacent `&[u32]` arguments transpose
 /// silently; two named fields do not.
-impl EffectEncode<3> for Record {
+impl EffectEncode<4> for Record {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
@@ -1182,9 +1203,12 @@ impl EffectEncode<3> for Record {
 /// `encode` is total — every variant has a shape — while `decode` reads the
 /// opcode first and dispatches, so the pair is not symmetric in signature even
 /// though it is in effect.
-impl EffectDecode<3> for Record {
+impl<const VERSION: u8> EffectDecode<VERSION> for Record
+where
+    Value: EffectDecode<VERSION>,
+{
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
-        read_record(r)
+        read_record::<VERSION>(r)
     }
 }
 
@@ -1201,7 +1225,11 @@ impl EffectDecode<3> for Record {
 /// variants written out again. The wrapper keeps the domain name and gives
 /// `records` somewhere to live; `Deref` below means nothing else has to match
 /// on which case it holds.
-pub struct Payload<'a>(Cow<'a, [u8]>);
+pub struct Payload<'a> {
+    bytes: Cow<'a, [u8]>,
+    /// The version the header declared, which [`Payload::records`] decodes in.
+    version: u8,
+}
 
 impl Deref for Payload<'_> {
     type Target = [u8];
@@ -1209,7 +1237,7 @@ impl Deref for Payload<'_> {
     /// The plaintext, whichever case it came from — which is what every reader
     /// of a payload actually wants.
     fn deref(&self) -> &[u8] {
-        &self.0
+        &self.bytes
     }
 }
 
@@ -1219,7 +1247,8 @@ impl Payload<'_> {
     pub fn records(&self) -> Records<'_> {
         Records {
             failed: false,
-            r: Reader::new(&self.0),
+            r: Reader::new(&self.bytes),
+            version: self.version,
         }
     }
 }
@@ -1234,6 +1263,9 @@ impl Payload<'_> {
 pub struct Records<'a> {
     r: Reader<'a>,
     failed: bool,
+    /// Header's version, checked by `open_payload` to be one of the two this
+    /// build reads.
+    version: u8,
 }
 
 impl Iterator for Records<'_> {
@@ -1243,7 +1275,14 @@ impl Iterator for Records<'_> {
         if self.failed || self.r.is_empty() {
             return None;
         }
-        let record = <Record as EffectDecode<3>>::decode(&mut self.r);
+        // The one place the runtime version meets the compile-time one. The
+        // two arms are the same decoder instantiated twice; they differ only
+        // in how a `T_DURATION` value is read.
+        let record = if self.version == EFFECTS_VERSION_V3 {
+            <Record as EffectDecode<EFFECTS_VERSION_V3>>::decode(&mut self.r)
+        } else {
+            <Record as EffectDecode<EFFECTS_VERSION>>::decode(&mut self.r)
+        };
         self.failed = record.is_err();
         Some(record)
     }
@@ -1261,7 +1300,7 @@ impl Iterator for Records<'_> {
 pub fn open_payload(buf: &[u8]) -> Result<Payload<'_>, DecodeError> {
     let mut r = Reader::new(buf);
     let version = r.u8()?;
-    if version != EFFECTS_VERSION {
+    if version != EFFECTS_VERSION && version != EFFECTS_VERSION_V3 {
         return Err(DecodeError::UnsupportedVersion(version));
     }
     let flags = r.u8()?;
@@ -1270,7 +1309,10 @@ pub fn open_payload(buf: &[u8]) -> Result<Payload<'_>, DecodeError> {
     }
 
     if flags & FLAG_COMPRESSED == 0 {
-        return Ok(Payload(Cow::Borrowed(r.rest())));
+        return Ok(Payload {
+            bytes: Cow::Borrowed(r.rest()),
+            version,
+        });
     }
 
     // A frame has to be whole before any of it can be read, so this is the one
@@ -1318,7 +1360,10 @@ pub fn open_payload(buf: &[u8]) -> Result<Payload<'_>, DecodeError> {
             actual,
         });
     }
-    Ok(Payload(Cow::Owned(plain)))
+    Ok(Payload {
+        bytes: Cow::Owned(plain),
+        version,
+    })
 }
 
 /// Compress a finished payload in place, if that makes it smaller.
@@ -1452,7 +1497,7 @@ mod tests {
         assert_eq!(
             format!("{buf:02x?}"),
             concat!(
-                "[03, 00, ",                                       // version, flags
+                "[04, 00, ",                                       // version, flags
                 "03, 00, 00, 00, 01, 00, 00, 00, ",                // CREATE_NODE, count = 1
                 "01, 00, 07, 00, 00, 00, ",                        // LabelSet: n = 1, label 7
                 "01, 00, 00, 00, ",                                // AttrIds: n = 1, attr 0
@@ -2146,7 +2191,10 @@ mod tests {
         };
         ok.encode(&mut buf).expect("the right shape encodes");
         let mut r = Reader::new(&buf[2..]);
-        assert_eq!(read_record(&mut r).expect("and reads back"), ok);
+        assert_eq!(
+            read_record::<EFFECTS_VERSION>(&mut r).expect("and reads back"),
+            ok
+        );
     }
 
     #[test]
@@ -2608,7 +2656,11 @@ mod tests {
         );
 
         let mut r = Reader::new(&buf);
-        let back = IndexFieldOptions::decode_sized(&mut r, INDEX_FLD_FULLTEXT).unwrap();
+        let back = <IndexFieldOptions as EffectDecodeSized<EFFECTS_VERSION>>::decode_sized(
+            &mut r,
+            INDEX_FLD_FULLTEXT,
+        )
+        .unwrap();
         assert!(r.is_empty(), "the block is exactly as long as it says");
         assert_eq!(back, opts, "what was stated comes back stated, and only it");
     }
@@ -2648,8 +2700,11 @@ mod tests {
         for (code, name) in [(0_u64, "euclidean"), (1, "ip"), (2, "cosine")] {
             let buf = block(code);
             let mut r = Reader::new(&buf);
-            let opts = IndexFieldOptions::decode_sized(&mut r, INDEX_FLD_VECTOR)
-                .unwrap_or_else(|e| panic!("code {code} must decode: {e}"));
+            let opts = <IndexFieldOptions as EffectDecodeSized<EFFECTS_VERSION>>::decode_sized(
+                &mut r,
+                INDEX_FLD_VECTOR,
+            )
+            .unwrap_or_else(|e| panic!("code {code} must decode: {e}"));
             assert!(r.is_empty(), "code {code}: bytes left over");
             assert_eq!(
                 opts.vector.as_ref().unwrap().similarity_function.as_deref(),
@@ -2670,7 +2725,10 @@ mod tests {
         let unknown = block(7);
         let mut r = Reader::new(&unknown);
         assert_eq!(
-            IndexFieldOptions::decode_sized(&mut r, INDEX_FLD_VECTOR),
+            <IndexFieldOptions as EffectDecodeSized<EFFECTS_VERSION>>::decode_sized(
+                &mut r,
+                INDEX_FLD_VECTOR
+            ),
             Err(DecodeError::BadSimilarityFunction { value: 7 })
         );
     }
@@ -2702,7 +2760,11 @@ mod tests {
         );
 
         let mut r = Reader::new(&buf);
-        let back = IndexFieldOptions::decode_sized(&mut r, INDEX_FLD_VECTOR).unwrap();
+        let back = <IndexFieldOptions as EffectDecodeSized<EFFECTS_VERSION>>::decode_sized(
+            &mut r,
+            INDEX_FLD_VECTOR,
+        )
+        .unwrap();
         assert!(r.is_empty());
         assert_eq!(back, opts);
     }
@@ -2903,6 +2965,104 @@ mod tests {
         .unwrap();
         buf[0] = 2;
         assert_eq!(read_buffer(&buf), Err(DecodeError::UnsupportedVersion(2)));
+    }
+
+    #[test]
+    fn a_future_version_is_refused_and_both_readable_ones_are_not() {
+        let mut buf = new_buffer();
+        Record::DeleteNode {
+            ids: IdList::from([1]),
+            labels: vec![7],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        // What an old replica does with this build's output: the version byte
+        // alone decides, before any record is read.
+        for version in [0, 1, 2, 5, 255] {
+            buf[0] = version;
+            assert_eq!(
+                read_buffer(&buf).map(|_| ()),
+                Err(DecodeError::UnsupportedVersion(version))
+            );
+        }
+        for version in [EFFECTS_VERSION_V3, EFFECTS_VERSION] {
+            buf[0] = version;
+            assert_eq!(read_buffer(&buf).map(|r| r.len()), Ok(1), "v{version}");
+        }
+        assert_eq!(
+            DecodeError::UnsupportedVersion(5).to_string(),
+            "effects buffer is version 5, this build reads 3 and 4"
+        );
+    }
+
+    /// One node record whose single property is `value`.
+    fn node_with(value: Value) -> Record {
+        Record::CreateNode {
+            ids: IdList::from([0]),
+            labels: vec![7],
+            attr_ids: vec![0],
+            rows: vec![value],
+        }
+    }
+
+    #[test]
+    fn durations_round_trip_in_v4_as_three_components() {
+        use crate::graph::graphblas::serialization::si_type;
+        use crate::runtime::functions::temporal::Dur;
+        for (m, d, s) in [
+            (0, -1, 0),
+            (1, -3, 0),
+            (-13, 40, -5400),
+            (0, 0, 9_000_000_000_000_000),
+            (-20_000, 300_000, -5_000_000_000),
+            (0, 0, 0),
+        ] {
+            let dur = Dur::new(m, d, s).unwrap();
+            let mut buf = new_buffer();
+            node_with(Value::Duration(dur.clone()))
+                .encode(&mut buf)
+                .unwrap();
+            // The last 28 bytes: C's tag, then months, days, seconds.
+            let tail = &buf[buf.len() - 28..];
+            assert_eq!(&tail[..4], &(si_type::T_DURATION as u32).to_le_bytes());
+            for (i, c) in [m, d, s].into_iter().enumerate() {
+                assert_eq!(tail[4 + 8 * i..12 + 8 * i], c.to_le_bytes());
+            }
+            assert_eq!(
+                read_buffer(&buf).unwrap(),
+                vec![node_with(Value::Duration(dur))]
+            );
+        }
+    }
+
+    /// What a not-yet-upgraded primary sends: a v3 buffer, whose `T_DURATION`
+    /// is the single epoch offset C writes.
+    #[test]
+    fn a_v3_buffer_reads_its_duration_as_the_legacy_offset() {
+        use crate::runtime::functions::temporal::{Dur, duration_to_legacy};
+        let dur = Dur::new(14, 3, 14_400).unwrap();
+        let legacy = duration_to_legacy(&dur);
+        // Start from the v4 encoding and swap the 24-byte payload for the
+        // 8-byte offset; the duration is the record's last field.
+        let mut buf = new_buffer();
+        node_with(Value::Duration(dur.clone()))
+            .encode(&mut buf)
+            .unwrap();
+        buf.truncate(buf.len() - 24);
+        buf.extend_from_slice(&legacy.to_le_bytes());
+        buf[0] = EFFECTS_VERSION_V3;
+        assert_eq!(
+            read_buffer(&buf).unwrap(),
+            vec![node_with(Value::Duration(dur))]
+        );
+
+        // The same bytes under the v4 header are read as three components and
+        // run out: the version byte, not the shape, says which it is.
+        buf[0] = EFFECTS_VERSION;
+        assert!(matches!(
+            read_buffer(&buf),
+            Err(DecodeError::UnexpectedEof { .. })
+        ));
     }
 
     #[test]
@@ -3232,7 +3392,10 @@ mod tests {
 
         let mut r = Reader::new(&buf[2..]);
         assert!(
-            matches!(read_record(&mut r), Err(DecodeError::EmptyRecord { .. })),
+            matches!(
+                read_record::<EFFECTS_VERSION>(&mut r),
+                Err(DecodeError::EmptyRecord { .. })
+            ),
             "a zero-count record must be refused at the header"
         );
 
@@ -3247,7 +3410,7 @@ mod tests {
         ok.bytes(&[0_u8, 7, 1]); // header, base 7, len 1
         let mut r = Reader::new(&ok[2..]);
         assert!(
-            read_record(&mut r).is_ok(),
+            read_record::<EFFECTS_VERSION>(&mut r).is_ok(),
             "count 1 with an empty label set must still decode"
         );
     }
@@ -3394,7 +3557,7 @@ mod tests {
     fn buffer_header_is_the_version() {
         assert_eq!(
             new_buffer(),
-            vec![3_u8, 0],
+            vec![4_u8, 0],
             "version, then the reserved flags byte"
         );
     }

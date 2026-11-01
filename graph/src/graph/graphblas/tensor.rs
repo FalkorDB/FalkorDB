@@ -132,7 +132,7 @@ use crate::graph::{
 
 use super::{
     matrix::{Descriptor, Dup, Matrix},
-    serialization::{Decode, Encode, Reader, Writer},
+    serialization::{Decode, ENCODING_VERSION, Encode, Reader, Writer},
     vector::Vector,
     versioned_matrix::{
         self, Delta, VersionedMatrix, delta_dominates_base, should_fold, should_fold_read,
@@ -1469,7 +1469,7 @@ impl Tensor {
 /// UINT64 forward matrix.
 const MSB_MASK: u64 = 1u64 << 63;
 
-impl Encode<19> for Tensor {
+impl Encode<{ ENCODING_VERSION }> for Tensor {
     #[allow(clippy::similar_names)]
     fn encode(
         &self,
@@ -1549,7 +1549,7 @@ impl Encode<19> for Tensor {
     }
 }
 
-impl Decode<19> for Tensor {
+impl Decode<{ ENCODING_VERSION }> for Tensor {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         // On-disk forward layers (base, delta-plus, delta-minus). Encode folds
         // the deltas into the base, but merge defensively: `(fwd_m ∖ fwd_dm) ∪

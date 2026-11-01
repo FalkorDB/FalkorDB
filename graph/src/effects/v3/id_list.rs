@@ -1200,7 +1200,7 @@ impl IdList {
 ///
 /// Nothing is decided here. The segments already are the encoding, so this is a
 /// straight write of what the pushes built.
-impl EffectEncode<3> for IdList {
+impl EffectEncode<4> for IdList {
     ///
     /// Nothing is decided here. The segments already are the encoding, so this
     /// is a straight write of what the pushes built.
@@ -1230,7 +1230,7 @@ impl EffectEncode<3> for IdList {
 /// [`crate::effects::EffectDecodeSized`] rather than
 /// [`crate::effects::EffectDecode`]: the count is the
 /// record's, stated once in its header, and the list does not repeat it.
-impl EffectDecodeSized<3> for IdList {
+impl<const VERSION: u8> EffectDecodeSized<VERSION> for IdList {
     type Size = u32;
 
     fn decode_sized(

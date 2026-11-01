@@ -714,27 +714,6 @@ pub fn duration_to_legacy(dur: &Dur) -> i64 {
         .wrapping_add(seconds)
 }
 
-/// How a duration goes on the wire (RDB and effects).
-pub enum DurationWire {
-    /// The C engine's epoch-offset `time_t`, under `T_DURATION`.
-    Legacy(i64),
-    /// Signed (months, days, seconds), under `T_DURATION_V2`.
-    V2(i64, i64, i64),
-}
-
-/// A duration the legacy encoding holds losslessly is written in it, byte for
-/// byte what the C engine writes; any other (negative components, a day count
-/// past the month length, ...) is written as its components.
-pub fn duration_wire(dur: &Dur) -> DurationWire {
-    let legacy = duration_to_legacy(dur);
-    if duration_from_legacy(legacy).as_ref() == Ok(dur) {
-        DurationWire::Legacy(legacy)
-    } else {
-        let (m, d, s) = dur.components();
-        DurationWire::V2(m, d, s)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Pure (Runtime-free) constructors used by the optimizer's constant-folding
 // pass. The Runtime-bound versions registered below delegate to these for the
@@ -1275,10 +1254,7 @@ mod compact_parser_rejects_junk_tests {
 
 #[cfg(test)]
 mod duration_tests {
-    use super::{
-        Dur, DurationWire, construct_duration, duration_from_legacy, duration_to_legacy,
-        duration_wire,
-    };
+    use super::{Dur, construct_duration, duration_from_legacy, duration_to_legacy};
     use crate::runtime::value::Value;
     use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -1468,7 +1444,7 @@ mod duration_tests {
     }
 
     #[test]
-    fn legacy_encoding_converts_losslessly_where_canonical() {
+    fn legacy_offset_round_trips_where_canonical() {
         for p in [
             dur(0, 0, 0),
             dur(13, 2, 3_661),
@@ -1477,17 +1453,8 @@ mod duration_tests {
         ] {
             let legacy = duration_to_legacy(&p);
             assert_eq!(duration_from_legacy(legacy), Ok(p.clone()));
-            assert!(matches!(duration_wire(&p), DurationWire::Legacy(l) if l == legacy));
         }
         assert_eq!(duration_from_legacy(86_400), Ok(dur(0, 1, 0)));
-        for p in [
-            dur(0, -1, 0),
-            dur(0, 40, 0),
-            dur(0, 0, 90_000),
-            dur(0, 0, 3_000_000_000),
-        ] {
-            assert!(matches!(duration_wire(&p), DurationWire::V2(..)), "{p:?}");
-        }
     }
 
     #[test]

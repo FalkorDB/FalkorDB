@@ -119,7 +119,7 @@ use std::sync::Arc;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
-use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
+use super::graphblas::serialization::{Decode, ENCODING_VERSION, Encode, Reader, Writer};
 use crate::runtime::value::Value;
 
 /// Highest `u16`, reserved as "no attribute" — C's `ATTRIBUTE_ID_NONE`
@@ -1467,7 +1467,7 @@ impl AttributeStore {
     }
 }
 
-impl Decode<19> for AttributeStore {
+impl Decode<{ ENCODING_VERSION }> for AttributeStore {
     fn decode(_r: &mut dyn Reader) -> Result<Self, String> {
         unimplemented!("use decode_with_count for AttributeStore")
     }

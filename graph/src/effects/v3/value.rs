@@ -4,12 +4,15 @@ use std::sync::Arc;
 
 use thin_vec::ThinVec;
 
-use crate::runtime::functions::temporal::{Dur, DurationWire, duration_from_legacy, duration_wire};
+use crate::runtime::functions::temporal::{Dur, duration_from_legacy};
 use crate::runtime::value::{Point, Value};
 
 use crate::graph::graphblas::serialization::si_type;
 
-use super::{DecodeError, EffectDecode, EffectEncode, EffectWrite, EncodeError, Reader};
+use super::{
+    DecodeError, EFFECTS_VERSION, EFFECTS_VERSION_V3, EffectDecode, EffectEncode, EffectWrite,
+    EncodeError, Reader,
+};
 
 /// The smallest a `SIValue` can encode to: the 4-byte type tag, payload empty.
 ///
@@ -21,7 +24,7 @@ pub(super) const MIN_VALUE_BYTES: usize = 4;
 
 /// The effects encoding of a `SIValue`.
 ///
-/// `Value` already carries `Encode<19>` for the RDB path; this is the same type
+/// `Value` already carries `Encode<{ ENCODING_VERSION }>` for the RDB path; this is the same type
 /// on a different wire, and the two disagree in every way that matters. The RDB
 /// stream is self-describing: `write_unsigned` emits a `TYPE_UNSIGNED` byte and
 /// a fixed 8-byte LE value, so a tag costs 9 bytes there and 4 here, and every
@@ -31,7 +34,7 @@ pub(super) const MIN_VALUE_BYTES: usize = 4;
 /// stops one being mistaken for the other.
 ///
 /// `T_NULL` has no payload at all — not a zero byte.
-impl EffectEncode<3> for Value {
+impl EffectEncode<4> for Value {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
@@ -113,18 +116,16 @@ impl EffectEncode<3> for Value {
                 buf.u32(si_type::T_TIME as u32);
                 buf.i64(*ts);
             }
-            Value::Duration(d) => match duration_wire(d) {
-                DurationWire::Legacy(t) => {
-                    buf.u32(si_type::T_DURATION as u32);
-                    buf.i64(t);
-                }
-                DurationWire::V2(months, days, seconds) => {
-                    buf.u32(si_type::T_DURATION_V2 as u32);
-                    buf.i64(months);
-                    buf.i64(days);
-                    buf.i64(seconds);
-                }
-            },
+            // Three `i64`s under C's own tag, from v4. v3 wrote C's single
+            // epoch offset here, which cannot hold a negative component or
+            // keep (months, days, seconds) apart; `decode` still reads it.
+            Value::Duration(d) => {
+                let (months, days, seconds) = d.components();
+                buf.u32(si_type::T_DURATION as u32);
+                buf.i64(months);
+                buf.i64(days);
+                buf.i64(seconds);
+            }
             // Nodes, edges and paths are never property values, so they cannot reach
             // an effect. Encoding one as NULL would corrupt the stream silently.
             other => panic!("value cannot appear in an effect: {other:?}"),
@@ -142,69 +143,90 @@ enum Frame {
     List { items: ThinVec<Value>, left: usize },
 }
 
-impl EffectDecode<3> for Value {
-    /// Iterative, not recursive, and that is a requirement rather than a style.
-    ///
-    /// `Reader::guard_count` bounds how *wide* a container is, because every
-    /// element costs bytes. Depth does not work that way: one nesting level is a
-    /// 4-byte tag and a 4-byte count, so a few hundred KB of nested tags was
-    /// tens of thousands of stack frames and a SIGSEGV — exactly what `Reader`
-    /// exists to prevent. The previous answer was a depth ceiling, which cannot
-    /// be right for the same reason a ceiling was wrong for ids: it refuses
-    /// legitimate input to bound a hostile one.
-    ///
-    /// With an explicit stack, depth costs heap instead — one `Frame` per open
-    /// container — so the decoder itself has no depth limit and needs none.
-    ///
-    /// There is deliberately no cap. A depth ceiling here refused values the
-    /// primary had already built, stored and read back: at 256 a legitimate
-    /// `CREATE (:Deep {v: reduce(acc = [], x IN range(1, 300) | [acc])})`
-    /// reached the replica, failed to decode, and started a forced-resync loop
-    /// that failed again identically. The primary surviving construction *is*
-    /// the validation — a value it cannot hold never gets encoded, because it
-    /// takes the process down first.
-    ///
-    /// `Value` is still recursive and still overflows the stack when dropped
-    /// deep enough, on either side. That bound belongs where the value is built,
-    /// not where it is read; see the issue on unbounded nesting.
-    ///
-    /// Width is bounded against the whole stack, not one level. A container's
-    /// children share the remaining bytes with every sibling its ancestors
-    /// still owe, so `owed` carries those siblings into the next level's
-    /// check. Bounded per level alone, each level of `[[[…` could claim the
-    /// whole remainder, and the reservations summed to the square of the
-    /// payload.
+/// v3: `T_DURATION` is one `i64` epoch offset, the layout the C engine writes.
+impl EffectDecode<EFFECTS_VERSION_V3> for Value {
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
-        let mut stack: Vec<Frame> = Vec::new();
-        // Children the open frames still owe beyond the one being read now:
-        // the sum of `left - 1` over the stack.
-        let mut owed = 0_usize;
+        decode_value(r, true)
+    }
+}
 
+/// v4: `T_DURATION` is three `i64`s. Every other tag is read exactly as in v3.
+impl EffectDecode<EFFECTS_VERSION> for Value {
+    fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
+        decode_value(r, false)
+    }
+}
+
+/// The decoder both versions share; `legacy_duration` is the only difference.
+///
+/// A flag rather than a const generic: it is read once per `T_DURATION` value,
+/// so there is nothing to specialise, and the two `EffectDecode` impls above
+/// are what fix which versions exist.
+///
+/// Iterative, not recursive, and that is a requirement rather than a style.
+///
+/// `Reader::guard_count` bounds how *wide* a container is, because every
+/// element costs bytes. Depth does not work that way: one nesting level is a
+/// 4-byte tag and a 4-byte count, so a few hundred KB of nested tags was
+/// tens of thousands of stack frames and a SIGSEGV — exactly what `Reader`
+/// exists to prevent. The previous answer was a depth ceiling, which cannot
+/// be right for the same reason a ceiling was wrong for ids: it refuses
+/// legitimate input to bound a hostile one.
+///
+/// With an explicit stack, depth costs heap instead — one `Frame` per open
+/// container — so the decoder itself has no depth limit and needs none.
+///
+/// There is deliberately no cap. A depth ceiling here refused values the
+/// primary had already built, stored and read back: at 256 a legitimate
+/// `CREATE (:Deep {v: reduce(acc = [], x IN range(1, 300) | [acc])})`
+/// reached the replica, failed to decode, and started a forced-resync loop
+/// that failed again identically. The primary surviving construction *is*
+/// the validation — a value it cannot hold never gets encoded, because it
+/// takes the process down first.
+///
+/// `Value` is still recursive and still overflows the stack when dropped
+/// deep enough, on either side. That bound belongs where the value is built,
+/// not where it is read; see the issue on unbounded nesting.
+///
+/// Width is bounded against the whole stack, not one level. A container's
+/// children share the remaining bytes with every sibling its ancestors
+/// still owe, so `owed` carries those siblings into the next level's
+/// check. Bounded per level alone, each level of `[[[…` could claim the
+/// whole remainder, and the reservations summed to the square of the
+/// payload.
+fn decode_value(
+    r: &mut Reader<'_>,
+    legacy_duration: bool,
+) -> Result<Value, DecodeError> {
+    let mut stack: Vec<Frame> = Vec::new();
+    // Children the open frames still owe beyond the one being read now:
+    // the sum of `left - 1` over the stack.
+    let mut owed = 0_usize;
+
+    loop {
+        // Produce one value. A container opens a frame and yields nothing
+        // yet, so the next turn reads its first child.
+        let Some(mut value) = read_one(r, &mut stack, &mut owed, legacy_duration)? else {
+            continue;
+        };
+
+        // Hand it to whatever is waiting, closing frames as they fill. A
+        // closed container is itself a value, so this repeats.
         loop {
-            // Produce one value. A container opens a frame and yields nothing
-            // yet, so the next turn reads its first child.
-            let Some(mut value) = read_one(r, &mut stack, &mut owed)? else {
-                continue;
-            };
-
-            // Hand it to whatever is waiting, closing frames as they fill. A
-            // closed container is itself a value, so this repeats.
-            loop {
-                match stack.last_mut() {
-                    None => return Ok(value),
-                    Some(Frame::List { items, left }) => {
-                        items.push(value);
-                        *left -= 1;
-                        if *left > 0 {
-                            // The next child is the one being read now.
-                            owed -= 1;
-                            break;
-                        }
-                        let Some(Frame::List { items, .. }) = stack.pop() else {
-                            unreachable!("just matched a list frame")
-                        };
-                        value = Value::List(Arc::new(items));
+            match stack.last_mut() {
+                None => return Ok(value),
+                Some(Frame::List { items, left }) => {
+                    items.push(value);
+                    *left -= 1;
+                    if *left > 0 {
+                        // The next child is the one being read now.
+                        owed -= 1;
+                        break;
                     }
+                    let Some(Frame::List { items, .. }) = stack.pop() else {
+                        unreachable!("just matched a list frame")
+                    };
+                    value = Value::List(Arc::new(items));
                 }
             }
         }
@@ -222,6 +244,7 @@ fn read_one(
     r: &mut Reader<'_>,
     stack: &mut Vec<Frame>,
     owed: &mut usize,
+    legacy_duration: bool,
 ) -> Result<Option<Value>, DecodeError> {
     // Four bytes on the wire, widened so the arms below can be the shared
     // `si_type` constants themselves rather than casts of them.
@@ -284,10 +307,11 @@ fn read_one(
         si_type::T_DATETIME => Value::Datetime(r.i64()?),
         si_type::T_DATE => Value::Date(r.i64()?),
         si_type::T_TIME => Value::Time(r.i64()?),
-        si_type::T_DURATION => Value::Duration(
+        // v3 carried one epoch offset; v4 carries the components themselves.
+        si_type::T_DURATION if legacy_duration => Value::Duration(
             duration_from_legacy(r.i64()?).map_err(|_| DecodeError::BadValueType(t as u32))?,
         ),
-        si_type::T_DURATION_V2 => {
+        si_type::T_DURATION => {
             let (months, days, seconds) = (r.i64()?, r.i64()?, r.i64()?);
             Value::Duration(
                 Dur::new(months, days, seconds).map_err(|_| DecodeError::BadValueType(t as u32))?,
@@ -303,6 +327,7 @@ fn read_one(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::effects::v3::EFFECTS_VERSION;
 
     // ── SIValue ──
 
@@ -387,7 +412,10 @@ mod tests {
             let mut buf = Vec::new();
             case.encode(&mut buf).unwrap();
             let mut r = Reader::new(&buf);
-            assert_eq!(Value::decode(&mut r).unwrap(), case);
+            assert_eq!(
+                <Value as EffectDecode<EFFECTS_VERSION>>::decode(&mut r).unwrap(),
+                case
+            );
             assert!(r.is_empty(), "{case:?} left {} bytes", r.remaining());
         }
     }
@@ -408,7 +436,7 @@ mod tests {
             let mut buf = Vec::new();
             Value::Float(f).encode(&mut buf).unwrap();
             let mut r = Reader::new(&buf);
-            let decoded = Value::decode(&mut r).unwrap();
+            let decoded = <Value as EffectDecode<EFFECTS_VERSION>>::decode(&mut r).unwrap();
             let Value::Float(back) = decoded else {
                 panic!("{f} decoded as {decoded:?}, not a float");
             };
@@ -437,7 +465,8 @@ mod tests {
         buf.bytes(&(si_type::T_NULL as u32).to_le_bytes());
 
         let mut r = Reader::new(&buf);
-        let v = Value::decode(&mut r).expect("depth is not the decoder's business");
+        let v = <Value as EffectDecode<EFFECTS_VERSION>>::decode(&mut r)
+            .expect("depth is not the decoder's business");
         assert!(r.is_empty());
 
         let mut depth = 0_usize;
@@ -469,7 +498,7 @@ mod tests {
         // it is an error and not a partial value, which is the property here.
         let mut r = Reader::new(&buf);
         assert!(matches!(
-            Value::decode(&mut r),
+            <Value as EffectDecode<EFFECTS_VERSION>>::decode(&mut r),
             Err(DecodeError::ImplausibleCount { .. } | DecodeError::UnexpectedEof { .. })
         ));
     }
@@ -490,7 +519,7 @@ mod tests {
             buf.u32(2 * (levels - k - 1));
         }
         let mut r = Reader::new(&buf);
-        let err = Value::decode(&mut r).unwrap_err();
+        let err = <Value as EffectDecode<EFFECTS_VERSION>>::decode(&mut r).unwrap_err();
         assert!(
             matches!(err, DecodeError::ImplausibleCount { .. }),
             "expected the claim to be refused up front, got {err:?}"
@@ -508,7 +537,7 @@ mod tests {
         buf.u32(si_type::T_MAP as u32);
         buf.u32(1);
         assert!(matches!(
-            Value::decode(&mut Reader::new(&buf)),
+            <Value as EffectDecode<EFFECTS_VERSION>>::decode(&mut Reader::new(&buf)),
             Err(DecodeError::BadValueType(t)) if t == si_type::T_MAP as u32
         ));
     }
@@ -524,14 +553,58 @@ mod tests {
         let mut buf = Vec::new();
         case.encode(&mut buf).unwrap();
         let mut r = Reader::new(&buf);
-        assert_eq!(Value::decode(&mut r).unwrap(), case);
+        assert_eq!(
+            <Value as EffectDecode<EFFECTS_VERSION>>::decode(&mut r).unwrap(),
+            case
+        );
         assert!(r.is_empty());
+    }
+
+    /// v4 pins the layout: C's tag, then months, days, seconds, little-endian.
+    #[test]
+    fn a_duration_is_the_c_tag_then_three_components() {
+        let mut buf = Vec::new();
+        Value::Duration(Dur::new(-2, 3, -4).unwrap())
+            .encode(&mut buf)
+            .unwrap();
+        let mut want = (si_type::T_DURATION as u32).to_le_bytes().to_vec();
+        for c in [-2_i64, 3, -4] {
+            want.extend_from_slice(&c.to_le_bytes());
+        }
+        assert_eq!(buf, want);
+    }
+
+    /// v3 carried C's one epoch offset under the same tag; it is still read,
+    /// as exactly what the C engine meant by it.
+    #[test]
+    fn a_v3_duration_is_the_legacy_offset() {
+        // P1Y1M1DT1H1M1S: 1970-01-01 plus 1y 1m 1d 1h 1m 1s.
+        let legacy: i64 = 31_536_000 + 31 * 86_400 + 86_400 + 3661;
+        let mut buf = (si_type::T_DURATION as u32).to_le_bytes().to_vec();
+        buf.extend_from_slice(&legacy.to_le_bytes());
+
+        let mut r = Reader::new(&buf);
+        let v3 = <Value as EffectDecode<EFFECTS_VERSION_V3>>::decode(&mut r).unwrap();
+        assert!(r.is_empty());
+        assert_eq!(v3, Value::Duration(duration_from_legacy(legacy).unwrap()));
+        let Value::Duration(d) = &v3 else { panic!() };
+        assert_eq!(Value::format_duration(d), "P1Y1M1DT1H1M1S");
+
+        // Under v4 the same eight bytes are the first of three: not a duration.
+        let mut r = Reader::new(&buf);
+        assert!(matches!(
+            <Value as EffectDecode<EFFECTS_VERSION>>::decode(&mut r),
+            Err(DecodeError::UnexpectedEof { .. })
+        ));
     }
 
     #[test]
     fn an_unknown_value_tag_is_rejected() {
         let buf = 0x0000_0002_u32.to_le_bytes();
         let mut r = Reader::new(&buf);
-        assert_eq!(Value::decode(&mut r), Err(DecodeError::BadValueType(2)));
+        assert_eq!(
+            <Value as EffectDecode<EFFECTS_VERSION>>::decode(&mut r),
+            Err(DecodeError::BadValueType(2))
+        );
     }
 }

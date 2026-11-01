@@ -3,7 +3,7 @@ use std::sync::Arc;
 use graph::entity_type::EntityType;
 use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, Reader};
+use graph::graph::graphblas::serialization::{Decode, ENCODING_VERSION, Reader};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::IndexInfo;
@@ -45,8 +45,17 @@ pub fn rdb_load_graph(
     rdb: *mut RedisModuleIO,
     key_name: &str,
     cache_size: usize,
+    encver: u64,
 ) -> Result<LoadedKey, String> {
-    let mut r = BufferedReader::new(rdb);
+    // Redis hands every version to the module, newer than its own included, and
+    // reading one as the layout this build knows misparses it. The C engine
+    // refuses the same way (`encver > GRAPH_ENCODING_LATEST_V`).
+    if encver > ENCODING_VERSION {
+        return Err(format!(
+            "RDB encoding version {encver} is newer than this build's {ENCODING_VERSION}"
+        ));
+    }
+    let mut r = BufferedReader::new(rdb, encver);
 
     // --- Header ---
     let hdr = Header::decode(&mut r)?;
@@ -416,14 +425,13 @@ pub fn pipe_load_graph(
 
 /// Decode a graph from a byte buffer (for GRAPH.RESTORE on replicas).
 ///
-/// Uses `BufferedReader::from_slice` to read the v19-encoded data produced by
-/// `vec_save_graph`.
+/// Reads what `vec_save_graph` produced, from this build or an older one.
 pub fn vec_load_graph(
     data: &[u8],
     cache_size: usize,
     dest_name: &str,
 ) -> Result<Graph, String> {
-    let mut r = BufferedReader::from_slice(data);
+    let mut r = BufferedReader::from_blob(data)?;
     load_graph_from_reader(&mut r, cache_size, dest_name)
 }
 

@@ -40,12 +40,14 @@ use thin_vec::{ThinVec, thin_vec};
 use crate::{
     graph::{
         graph::{LabelId, NodeId, RelationshipId},
-        graphblas::serialization::{Decode, Encode, Reader, Writer, si_type},
+        graphblas::serialization::{
+            Decode, ENCODING_VERSION, ENCVER_DURATION_COMPONENTS, Encode, Reader, Writer, si_type,
+        },
     },
     runtime::{
         functions::{
             Type,
-            temporal::{Dur, DurationWire, duration_from_legacy, duration_wire},
+            temporal::{Dur, duration_from_legacy},
         },
         ordermap::OrderMap,
         runtime::Runtime,
@@ -2064,7 +2066,7 @@ impl ValuesDeduper {
     }
 }
 
-impl Encode<19> for Value {
+impl Encode<{ ENCODING_VERSION }> for Value {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -2131,18 +2133,16 @@ impl Encode<19> for Value {
                 w.write_unsigned(si_type::T_TIME);
                 w.write_signed(*ts);
             }
-            Self::Duration(dur) => match duration_wire(dur) {
-                DurationWire::Legacy(t) => {
-                    w.write_unsigned(si_type::T_DURATION);
-                    w.write_signed(t);
-                }
-                DurationWire::V2(months, days, seconds) => {
-                    w.write_unsigned(si_type::T_DURATION_V2);
-                    w.write_signed(months);
-                    w.write_signed(days);
-                    w.write_signed(seconds);
-                }
-            },
+            // Components, not C's epoch offset: that cannot hold a negative one.
+            // A stream at an older encoding version (the C engine's, or this
+            // engine's before 21) is read by `decode_value`.
+            Self::Duration(dur) => {
+                let (months, days, seconds) = dur.components();
+                w.write_unsigned(si_type::T_DURATION);
+                w.write_signed(months);
+                w.write_signed(days);
+                w.write_signed(seconds);
+            }
             // Map, Node, Relationship, Path are not stored as properties
             Self::Null => {
                 w.write_unsigned(si_type::T_NULL);
@@ -2158,7 +2158,7 @@ impl Encode<19> for Value {
     }
 }
 
-impl Decode<19> for Value {
+impl Decode<{ ENCODING_VERSION }> for Value {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         decode_value(r, 0)
     }
@@ -2235,8 +2235,10 @@ fn decode_value(
         si_type::T_DATETIME => Ok(Value::Datetime(r.read_signed()?)),
         si_type::T_DATE => Ok(Value::Date(r.read_signed()?)),
         si_type::T_TIME => Ok(Value::Time(r.read_signed()?)),
-        si_type::T_DURATION => Ok(Value::Duration(duration_from_legacy(r.read_signed()?)?)),
-        si_type::T_DURATION_V2 => {
+        si_type::T_DURATION if r.encver() < ENCVER_DURATION_COMPONENTS => {
+            Ok(Value::Duration(duration_from_legacy(r.read_signed()?)?))
+        }
+        si_type::T_DURATION => {
             let months = r.read_signed()?;
             let days = r.read_signed()?;
             let seconds = r.read_signed()?;
@@ -2747,7 +2749,9 @@ mod sort_cmp_tests {
 #[cfg(test)]
 mod nesting_tests {
     use super::{MAX_VALUE_NESTING, Value, value_nesting_error};
-    use crate::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, si_type};
+    use crate::graph::graphblas::serialization::{
+        Decode, ENCODING_VERSION, ENCVER_DURATION_COMPONENTS, Encode, Reader, Writer, si_type,
+    };
     use std::{collections::VecDeque, sync::Arc};
     use thin_vec::thin_vec;
 
@@ -2880,28 +2884,66 @@ mod nesting_tests {
             v.encode(&mut t);
             assert_eq!(Value::decode(&mut t).unwrap(), v);
         }
-        // Canonical (non-negative, within the month) stays on the C tag.
-        let mut t = Tape::default();
-        Value::Duration(construct_duration(1, 1, 0, 1, 1, 1, 1).unwrap()).encode(&mut t);
-        assert_eq!(t.read_unsigned(), Ok(si_type::T_DURATION));
-        // Negative components need the packed tag.
+        // One tag, then the three components, whatever their signs.
         let mut t = Tape::default();
         Value::Duration(construct_duration(0, 0, 0, -1, 0, 0, 0).unwrap()).encode(&mut t);
-        assert_eq!(t.read_unsigned(), Ok(si_type::T_DURATION_V2));
+        assert_eq!(t.read_unsigned(), Ok(si_type::T_DURATION));
+        assert_eq!(
+            (t.read_signed(), t.read_signed(), t.read_signed()),
+            (Ok(0), Ok(-1), Ok(0))
+        );
+        assert!(t.0.is_empty());
     }
 
-    /// A duration written by an earlier build (legacy epoch-offset encoding)
-    /// loads as the same calendar components it printed before.
+    /// A stream at an encoding version before the components, read as one.
+    struct OlderStream {
+        tape: Tape,
+        encver: u64,
+    }
+
+    impl Reader for OlderStream {
+        fn encver(&self) -> u64 {
+            self.encver
+        }
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            self.tape.read_unsigned()
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            self.tape.read_signed()
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            self.tape.read_double()
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            self.tape.read_buffer()
+        }
+    }
+
+    /// A duration written before the components (the C engine's epoch offset)
+    /// loads as the same calendar components it printed before, for every
+    /// version the offset was in use, and a tape of three values at the same
+    /// version is not mistaken for it.
     #[test]
     fn rdb_decode_reads_legacy_duration() {
         // P1Y1M1DT1H1M1S as the C engine / old Rust stored it.
         let legacy = 31_536_000 + 31 * 86_400 + 86_400 + 3661;
-        let mut t = Tape::default();
-        t.write_unsigned(si_type::T_DURATION);
-        t.write_signed(legacy);
-        let v = Value::decode(&mut t).unwrap();
-        let Value::Duration(p) = v else { panic!() };
-        assert_eq!(Value::format_duration(&p), "P1Y1M1DT1H1M1S");
+        for encver in [14, 19, 20, ENCVER_DURATION_COMPONENTS - 1] {
+            let mut tape = Tape::default();
+            tape.write_unsigned(si_type::T_DURATION);
+            tape.write_signed(legacy);
+            let mut r = OlderStream { tape, encver };
+            let Value::Duration(p) = Value::decode(&mut r).unwrap() else {
+                panic!()
+            };
+            assert_eq!(Value::format_duration(&p), "P1Y1M1DT1H1M1S", "{encver}");
+            assert!(r.tape.0.is_empty());
+        }
+        // The same bytes at the new version are three components: the first
+        // read takes the offset as months, then runs out.
+        let mut tape = Tape::default();
+        tape.write_unsigned(si_type::T_DURATION);
+        tape.write_signed(legacy);
+        assert!(Value::decode(&mut tape).is_err());
     }
 
     #[test]

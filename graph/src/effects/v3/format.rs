@@ -1,4 +1,4 @@
-//! v3 as a [`EffectsFormat`]: what a whole payload is, sent and applied.
+//! v3 and v4 as a [`EffectsFormat`]: what a whole payload is, sent and applied.
 //!
 //! The version-specific half of `effects::EffectsPayload`. It lives here rather
 //! than beside the trait so that adding v4 means adding a directory and one arm
@@ -50,10 +50,14 @@ impl EffectsFormat<EFFECTS_VERSION> for EffectsPayload {
         // a flags byte with a bit v3 does not define is exactly the case where
         // knowing what the byte was matters.
         let flags = buf.get(1).copied().unwrap_or_default();
+        // The header's own, not this build's: a v3 payload is described as v3.
+        let version = buf.first().copied().unwrap_or_default();
         let payload = match open_payload(buf) {
             Ok(payload) => payload,
             Err(e) => {
-                out.push(format!("v3, flags {flags:#04x}: header unreadable: {e}"));
+                out.push(format!(
+                    "v{version}, flags {flags:#04x}: header unreadable: {e}"
+                ));
                 return;
             }
         };
@@ -98,7 +102,7 @@ impl EffectsFormat<EFFECTS_VERSION> for EffectsPayload {
             ", all of which decode"
         };
         out.push(format!(
-            "v3, flags {flags:#04x}{compressed}, {decoded} records{ending}"
+            "v{version}, flags {flags:#04x}{compressed}, {decoded} records{ending}"
         ));
         out.extend(lines);
     }
@@ -207,7 +211,7 @@ mod tests {
     fn describe_names_every_record_and_the_bytes() {
         let lines = EffectsPayload::describe(&payload());
         assert_eq!(lines[0], "42 bytes on the wire");
-        assert_eq!(lines[1], "v3, flags 0x00, 2 records, all of which decode");
+        assert_eq!(lines[1], "v4, flags 0x00, 2 records, all of which decode");
         assert!(lines[2].starts_with("record[0] AddAttribute"), "{lines:?}");
         assert!(lines[3].starts_with("record[1] DeleteNode"), "{lines:?}");
         // The name is in there in the clear, which is half the point of the
@@ -215,7 +219,7 @@ mod tests {
         assert!(lines[2].contains("\"name\""), "{lines:?}");
         assert_eq!(
             lines[4],
-            "bytes[0x0000] 03000a000000070005000000000000006e616d65000500000002000000010001"
+            "bytes[0x0000] 04000a000000070005000000000000006e616d65000500000002000000010001"
         );
         assert_eq!(lines[5], "bytes[0x0020] 00000001000000000402");
     }
@@ -229,7 +233,7 @@ mod tests {
         let lines = EffectsPayload::describe(&buf);
         assert_eq!(
             lines[1],
-            "v3, flags 0x00, 1 records, then one that does not"
+            "v4, flags 0x00, 1 records, then one that does not"
         );
         assert!(lines[2].starts_with("record[0] AddAttribute"), "{lines:?}");
         assert!(
@@ -263,7 +267,7 @@ mod tests {
         buf[1] = 0x80;
         let lines = EffectsPayload::describe(&buf);
         assert!(
-            lines[1].starts_with("v3, flags 0x80: header unreadable:"),
+            lines[1].starts_with("v4, flags 0x80: header unreadable:"),
             "{lines:?}"
         );
     }
@@ -287,7 +291,7 @@ mod tests {
         let lines = EffectsPayload::describe(&buf);
         assert_eq!(
             lines[1],
-            "v3, flags 0x01, compressed, 760 bytes of records, 40 records, all of which decode"
+            "v4, flags 0x01, compressed, 760 bytes of records, 40 records, all of which decode"
         );
         assert!(lines[2].starts_with("record[0] AddAttribute"), "{lines:?}");
         // And the record cap, which this payload is the only one long enough

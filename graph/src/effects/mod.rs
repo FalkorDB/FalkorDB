@@ -204,7 +204,8 @@ pub(crate) trait EffectsFormat<const VERSION: u8> {
 /// which is not the same set and is not meant to be: a rolling upgrade runs a
 /// new primary against old replicas and an old primary against new ones, so a
 /// build that could only read its own output could never be deployed without
-/// downtime. Today the two coincide because v3 is the only version that exists.
+/// downtime. They differ now: this build writes 4 and still applies 3 — the
+/// two differ only in how a `T_DURATION` value is laid out.
 pub const WIRE_VERSION: u8 = v3::EFFECTS_VERSION;
 
 /// How much of a diverged payload the log reproduces in hex.
@@ -247,7 +248,7 @@ impl EffectsPayload {
         match buf.first() {
             // Not a payload at all. The line above already said so.
             None => return out,
-            Some(&v3::EFFECTS_VERSION) => {
+            Some(&(v3::EFFECTS_VERSION | v3::EFFECTS_VERSION_V3)) => {
                 <Self as EffectsFormat<{ v3::EFFECTS_VERSION }>>::describe(buf, &mut out);
             }
             Some(&other) => out.push(format!(
@@ -298,7 +299,10 @@ impl EffectsPayload {
             return Ok(());
         };
         match version {
-            v3::EFFECTS_VERSION => {
+            // One impl reads both: the header names the version and the codec
+            // decodes in it, so there is no second `EffectsFormat` to write for
+            // a version nothing sends any more.
+            v3::EFFECTS_VERSION | v3::EFFECTS_VERSION_V3 => {
                 <Self as EffectsFormat<{ v3::EFFECTS_VERSION }>>::apply(graph, buf)
             }
             other => Err(DecodeError::UnsupportedVersion(other).into()),
