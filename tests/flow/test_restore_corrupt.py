@@ -119,3 +119,19 @@ class testRestoreCorrupt():
         self.conn.execute_command("GRAPH.RESTORE", "x", payload)
         res = self.db.select_graph("x").query("MATCH (n:A) RETURN count(n)")
         self.env.assertEqual(res.result_set, [[7]])
+
+    def test_zero_dimension_vector_index_round_trips(self):
+        # `OPTIONS {dimension:0}` is accepted at creation and kept by the
+        # index, so a payload carrying it is valid and must restore.
+        self.conn.flushall()
+        g = self.db.select_graph("src")
+        g.query("CREATE (:V {v: vecf32([1.0, 2.0])})")
+        try:
+            g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
+                    "OPTIONS {dimension:0, similarityFunction:'euclidean'}")
+        except redis.exceptions.ResponseError:
+            self.env.skip()
+            return
+        payload = capture_restore_payload(self.conn, "src", "dst")
+        self.conn.flushall()
+        self.env.assertTrue(self.restore(payload))

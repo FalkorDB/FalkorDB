@@ -684,8 +684,9 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Vec<Field>), S
         // The index is rebuilt from these, and they size its graph and its
         // vectors. A real index never nears these; a corrupted one must not
         // reach the vector library with them.
-        if dimension == 0
-            || dimension > MAX_VECTOR_DIMENSION
+        // Zero is kept: `OPTIONS {dimension:0}` is accepted at creation and the
+        // index retains it, so it has to round-trip.
+        if dimension > MAX_VECTOR_DIMENSION
             || m > MAX_VECTOR_GRAPH_PARAM
             || ef_construction > MAX_VECTOR_GRAPH_PARAM
             || ef_runtime > MAX_VECTOR_GRAPH_PARAM

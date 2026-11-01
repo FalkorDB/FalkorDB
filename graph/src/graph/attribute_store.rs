@@ -1507,6 +1507,14 @@ impl Decode<19> for AttributeStore {
                 ));
             }
             let attr_count = r.read_unsigned()?;
+            // A span's length is a u16, so an entity cannot hold more attributes
+            // than there are ids. Past that `set_span` would truncate the length
+            // to zero and the restore would silently lose the entity's attributes.
+            if attr_count > MAX_ATTRIBUTES as u64 {
+                return Err(format!(
+                    "entity {entity_id} declares {attr_count} attributes, more than the {MAX_ATTRIBUTES} allowed"
+                ));
+            }
 
             let mut entries: Vec<(u16, Value)> = Vec::with_capacity(decode_capacity(attr_count));
             for _ in 0..attr_count {
@@ -2103,6 +2111,21 @@ mod tests {
         Replay {
             ops: rec.ops.into(),
         }
+    }
+
+    #[test]
+    fn decode_with_count_rejects_more_attributes_than_ids_exist() {
+        let mut store = AttributeStore::default();
+        // 65_536 entries for one valid id: the span length is a u16, so storing
+        // them would wrap it to zero and silently drop the entity's attributes.
+        let attrs: Vec<(u64, Value)> = (0..=MAX_ATTRIBUTES as u64)
+            .map(|_| (0, Value::Int(1)))
+            .collect();
+        let mut r = raw_span_stream(3, &attrs);
+        let err = store
+            .decode_with_count(&mut r, 1, MAX_ATTRIBUTES)
+            .expect_err("an entity with more attributes than ids was accepted");
+        assert!(err.contains("attributes"), "{err}");
     }
 
     #[test]

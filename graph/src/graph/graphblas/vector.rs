@@ -368,13 +368,17 @@ fn check_blob_header(blob: &[u8]) -> Result<(), String> {
                         vlen.saturating_mul(vdim).saturating_mul(typesize)
                     }
         }
-        // full
+        // full: every cell is held, so its dimensions are its cardinality and an
+        // iso blob (one stored value) must not be allowed to claim more than the
+        // graph can have
         8 => {
-            cx >= if iso {
-                typesize
-            } else {
-                vlen.saturating_mul(vdim).saturating_mul(typesize)
-            }
+            vlen.saturating_mul(vdim) <= max_dim
+                && cx
+                    >= if iso {
+                        typesize
+                    } else {
+                        vlen.saturating_mul(vdim).saturating_mul(typesize)
+                    }
         }
         _ => false,
     };
@@ -1121,6 +1125,30 @@ mod decode_tests {
         // The size in the header disagreeing with the blob's.
         let err = patch(0, &1u64.to_le_bytes());
         assert!(err.contains("size"), "{err}");
+    }
+
+    /// A full iso blob stores one value however many cells it claims, so its
+    /// own arrays cannot vouch for its dimensions: they are held to the graph's.
+    #[test]
+    fn decode_blob_rejects_a_full_iso_vector_claiming_huge_dimensions() {
+        let mut blob = blob_of_a_vector();
+        let mut put = |at: usize, bytes: &[u8]| blob[at..at + bytes.len()].copy_from_slice(bytes);
+        put(super::blob_at::VLEN, &(1i64 << 60).to_le_bytes());
+        put(super::blob_at::VDIM, &1i64.to_le_bytes());
+        put(super::blob_at::NVEC, &1i64.to_le_bytes());
+        put(super::blob_at::NVEC_NONEMPTY, &1i64.to_le_bytes());
+        put(super::blob_at::NVALS, &1i64.to_le_bytes());
+        // full (8) << 2, iso
+        put(super::blob_at::SPARSITY_ISO_CSC, &34i32.to_le_bytes());
+        let _limits = DecodeLimits {
+            node_bound: 10,
+            edge_bound: 10,
+        }
+        .scope();
+        let err = decode_blob_of(blob)
+            .err()
+            .expect("a full vector of 2^60 cells was accepted");
+        assert!(err.contains("shorter than its counts"), "{err}");
     }
 
     /// Every byte of a blob, overwritten in turn, must decode or be refused:

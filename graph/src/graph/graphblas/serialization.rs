@@ -207,7 +207,11 @@ thread_local! {
 
 /// Matrices are saved at the node capacity, which runs past the highest id by
 /// the growth slop and the creation chunk. Allowed on top of the id bound.
-const DIM_SLOP: u64 = 1 << 24;
+///
+/// `NODE_CREATION_BUFFER` is at most 2^30 and the saving server's setting may
+/// differ from this one's, so the allowance covers two chunks of that size: a
+/// capacity is the id bound grown by 25% and rounded up to a chunk.
+const DIM_SLOP: u64 = 1 << 31;
 
 impl DecodeLimits {
     /// Install `self` until the returned guard drops.
@@ -344,6 +348,24 @@ impl Decode<19> for RoaringTreemap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A server with the largest `NODE_CREATION_BUFFER` (2^30) saves a one-node
+    /// graph at a 2^30 capacity, and growing past it gives 2^31 (#3643).
+    #[test]
+    fn max_dim_covers_the_largest_creation_chunk_capacity() {
+        let small = DecodeLimits {
+            node_bound: 16_385,
+            edge_bound: 0,
+        };
+        assert!(small.max_dim() >= 1 << 31);
+        // 25% growth from the id bound, rounded up to two 2^30 chunks.
+        let bound = 3u64 << 30;
+        let big = DecodeLimits {
+            node_bound: bound,
+            edge_bound: 0,
+        };
+        assert!(big.max_dim() >= bound + bound / 4 + (2 << 30));
+    }
 
     struct OneBuffer(Option<Vec<u8>>);
 
