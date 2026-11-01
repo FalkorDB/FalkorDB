@@ -1417,11 +1417,12 @@ impl<'a> Runtime<'a> {
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         vars: &R,
     ) -> Result<Option<RoaringTreemap>, String> {
-        // Bounded by where the id space ends rather than by `max_node_id`,
-        // whose 0 for a graph with no nodes reads as "id 0 was handed out": on
-        // a graph that never held one, that sought a phantom node 0. For an
-        // empty id space `max` saturates to 0 and the `node_count() == 0` check
-        // below returns nothing, after the predicates have been type-checked.
+        // Bound the seek by where the id space ends, not by `max_node_id`.
+        // `max_node_id` is 0 both when id 0 is the only id and when no id was
+        // ever handed out, so it would make an empty graph seek a node 0 that
+        // does not exist. With an empty id space `max` is 0 here, and the
+        // `node_count() == 0` check below returns no ids once every predicate
+        // has been type-checked.
         let mut max = self.graph().node_id_bound().saturating_sub(1);
         let mut min = 0u64;
         for (expr, op) in filter {
@@ -1472,8 +1473,8 @@ impl<'a> Runtime<'a> {
                 }
             }
         }
-        // A graph with no live nodes has nothing to seek, even when ids were
-        // handed out before (every node since deleted).
+        // No live nodes means nothing to seek, including the case where ids
+        // were handed out before but every node has since been deleted.
         if self.graph().node_count() == 0 {
             return Ok(None);
         }
