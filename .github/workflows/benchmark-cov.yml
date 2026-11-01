@@ -158,9 +158,16 @@ jobs:
                           | sort_by(.run_number) | last | .id // empty')
             if [ -n "$RUN" ]; then
               # `build-rc-image` calls a reusable workflow, so its jobs surface as
-              # "build-rc-image / build (...)" — match on the prefix.
+              # "build-rc-image / build (...)" — and rust-pr.yml now reaches it
+              # through `_ci-pipeline.yml`, which adds one more caller prefix:
+              # "ci-pipeline / build-rc-image / build (...)". Match it as a path
+              # segment, so the wait survives being nested one level deeper (or
+              # less) again. A bare prefix match on the old name found nothing,
+              # read that as "not scheduled yet", and polled to the timeout with
+              # the image already published (#3472). The segment form does not
+              # match `build-rc-asan-image`, a different image.
               STATES=$(gh api "repos/$REPO/actions/runs/$RUN/jobs?per_page=100" --paginate \
-                         --jq '[.jobs[] | select(.name | startswith("build-rc-image"))
+                         --jq '[.jobs[] | select(.name | test("(^|/ )build-rc-image / "))
                                 | .conclusion // "pending"] | join(",")')
               case "$STATES" in
                 "")            echo "run $RUN has not scheduled build-rc-image yet" ;;
@@ -264,7 +271,7 @@ jobs:
           json.dump(d, open(p, "w"), indent=2)
           PY
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: provenance
           path: provenance.json
@@ -321,7 +328,7 @@ jobs:
           grep -c SKIPPED "measure-$SIDE.log" \
             | sed 's/^/queries the engine skipped: /' || true
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: measure-${{ matrix.side }}
@@ -415,7 +422,7 @@ jobs:
               --module-args THREAD_COUNT --module-args 1 \
               --out "/w/cg-$SIDE-$SHARD.csv"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: callgrind-${{ matrix.side }}-${{ matrix.shard }}
@@ -430,9 +437,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
+      # Submodules: this job compiles the engine, and native-deps builds
+      # GraphBLAS/LAGraph/RediSearch from deps/ whenever the toolchain image's
+      # prebuilt archives do not match the current key — e.g. after a dep bump.
+      # Without them it panics "deps/GraphBLAS is empty" before any query runs.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: recursive
 
       # coverage is the one job that cannot use the prebaked measurement image: it
       # needs cargo and llvm-tools to build an instrumented module, which only the
@@ -457,7 +469,13 @@ jobs:
           # `rustup default stable`: the toolchain image ships rustup without a
           # default, so a bare `cargo` fails with "could not choose a version of
           # cargo to run".
-          docker run --rm -e CXX=clang++ -v "$PWD:/w" -w /w "$TOOLCHAIN" bash -c '
+          #
+          # No `-e CXX`: the image sets CC/CXX to its versioned LLVM
+          # (clang-23 / clang++-23, build/Dockerfile) and ships no bare
+          # `clang++`. Overriding it to `clang++` broke the first build that had
+          # to compile a native dep from source: LAGraph's CMake could not find
+          # the C++ compiler.
+          docker run --rm -v "$PWD:/w" -w /w "$TOOLCHAIN" bash -c '
             set -e
             # /w/.bin, not /w: prepending the checkout root would put every
             # root-level script ahead of /usr/bin for cargo and all its children.
@@ -467,7 +485,7 @@ jobs:
             uv run --project bench --frozen bench coverage
           ' 2>&1 | tee coverage.txt | tail -30
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: coverage
@@ -500,7 +518,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: art
           merge-multiple: true

@@ -109,6 +109,33 @@ class TestQuerySet:
         # And an unrelated selection is not dragged into building 200k edges.
         assert [q.name for q in _select(("RETURN 1",))] == ["RETURN 1"]
 
+    def test_rows_that_delete_what_they_did_not_create_drain(self):
+        """A row that matches existing entities and deletes them, creating none, empties its pool
+        run after run. `profile` repeats one query until it stops sampling, so an unmarked one
+        would profile a query that deletes nothing once its pool is gone."""
+        for q in qs.QUERIES:
+            deletes_found = (
+                q.cypher.startswith("MATCH") and "DELETE" in q.cypher and "CREATE" not in q.cypher
+            )
+            assert q.drains == deletes_found, q.name
+
+    def test_profile_refuses_a_row_that_drains(self):
+        from click.testing import CliRunner
+
+        from falkorbench.cli import cli
+
+        # `--reuse` on a port nothing listens on: whatever gets past the check fails at once,
+        # instead of starting a server.
+        reuse = ["profile", "--reuse", "--port", "1"]
+        refused = CliRunner().invoke(cli, [*reuse, "delete indexed node"])
+        assert refused.exit_code != 0
+        assert "deletes from a finite pool" in refused.output
+
+        # A row that does not drain gets past the check, to the next one: nothing on the port.
+        allowed = CliRunner().invoke(cli, [*reuse, "RETURN 1"])
+        assert allowed.exit_code != 0
+        assert "nothing answers on :1" in allowed.output
+
     def test_edge_rows_come_after_the_sized_writes(self):
         """The edge rows must not slip in front of `write 1m`.
 
