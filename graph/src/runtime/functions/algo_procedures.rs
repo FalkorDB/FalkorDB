@@ -1233,9 +1233,11 @@ fn register_bfs(funcs: &mut Functions) {
             // rather than a sparse vector re-sorted on every level, at the cost
             // of one O(n) allocation. Estimated as avg_degree^max_level
             // reaching n/64; an unbounded BFS is assumed to.
-            // An empty adjacency matrix reaches nothing, so it never
+            // A traversal reaches at most nvals + 1 nodes, so a relationship
+            // with fewer than n/64 edges (an empty one included) never
             // qualifies: the sparse path avoids the O(n) bitmap.
-            let many_expected = nvals > 0
+            let many_expected = nvals as f64 + 1.0 >= n as f64 / 64.0
+                && nvals > 0
                 && (max_depth < 0 || {
                     let avg_degree = nvals as f64 / n.max(1) as f64;
                     avg_degree.powi(max_depth.min(64) as i32) >= n as f64 / 64.0
