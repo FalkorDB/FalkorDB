@@ -2656,9 +2656,23 @@ fn replace_projected_subtrees_rec(
 
     // Not a matching projection — reconstruct this node with recursively
     // processed children.
+    // Children from `local_from` on are evaluated with names the node binds
+    // (a comprehension or quantifier variable, a reduce accumulator, a
+    // pattern's variables), which can shadow a projected alias: leave them
+    // alone. The iterable / init / list children are still in the outer scope.
+    let local_from = match node.data() {
+        ExprIR::Quantifier { .. } | ExprIR::ListComprehension(_) => 1,
+        ExprIR::Reduce(_) => 2,
+        ExprIR::PatternComprehension(_) => 0,
+        _ => usize::MAX,
+    };
     let mut new_tree = DynTree::new(node.data().clone());
-    for child in node.children() {
-        let child_tree = replace_projected_subtrees_rec(&child, exprs, shadowed);
+    for (i, child) in node.children().enumerate() {
+        let child_tree = if i >= local_from {
+            child.clone_as_tree()
+        } else {
+            replace_projected_subtrees_rec(&child, exprs, shadowed)
+        };
         new_tree.root_mut().push_child_tree(child_tree);
     }
     new_tree
@@ -2683,7 +2697,13 @@ fn is_alias_rewritable(
                 has_variable = true;
             }
             ExprIR::FuncInvocation(f) => {
-                if f.is_aggregate() || f.non_deterministic || f.write {
+                // A UDF may keep state in its JavaScript library, so a second
+                // call need not return what the projected one did.
+                if f.is_aggregate()
+                    || f.non_deterministic
+                    || f.write
+                    || matches!(f.fn_type, FnType::Udf)
+                {
                     return false;
                 }
             }
@@ -2743,11 +2763,17 @@ fn raw_exprs_structurally_equal(
         let a_node = a.node(a_idx);
         let b_node = b.node(b_idx);
 
+        // Only an aggregate call carries the parser's placeholder child; a
+        // user expression that happens to use the name keeps it.
+        let skip_placeholder = |node: &DynNode<ExprIR<Arc<String>>>, i: usize| {
+            matches!(node.data(), ExprIR::FuncInvocation(f) if f.is_aggregate())
+                && is_agg_placeholder(node.child(i).data())
+        };
         let a_children: Vec<_> = (0..a_node.num_children())
-            .filter(|&i| !is_agg_placeholder(a_node.child(i).data()))
+            .filter(|&i| !skip_placeholder(&a_node, i))
             .collect();
         let b_children: Vec<_> = (0..b_node.num_children())
-            .filter(|&i| !is_agg_placeholder(b_node.child(i).data()))
+            .filter(|&i| !skip_placeholder(&b_node, i))
             .collect();
 
         if a_children.len() != b_children.len() {
@@ -2863,9 +2889,40 @@ mod tests {
             "MATCH (n:N) RETURN n.i ORDER BY n.j",
             // non-deterministic: a second call is not the projected value
             "MATCH (n:N) RETURN n.i + rand() AS r ORDER BY n.i + rand()",
+            // the parser's aggregate placeholder is not a user expression's
+            "MATCH (n:N) RETURN [n] AS l ORDER BY [n, __agg_order_by_placeholder__]",
+            // a comprehension variable shadows the projected alias in its body
+            "MATCH (n:N) RETURN n.i AS x ORDER BY [x IN [1, 2] | n.i]",
+            "MATCH (n:N) RETURN n.i AS x ORDER BY reduce(x = 0, y IN [1, 2] | n.i)",
         ] {
             assert_eq!(project_copies(q), vec![String::from("n")], "{q}");
         }
+    }
+
+    /// The iterable of a comprehension is still in the outer scope, so a
+    /// projection repeated there is read from its alias.
+    #[test]
+    fn order_by_comprehension_iterable_reads_the_alias() {
+        assert!(project_copies("MATCH (n:N) RETURN n.i AS x ORDER BY [y IN [n.i] | y]").is_empty());
+    }
+
+    /// A UDF call is not rewritten to the projected alias: the library may
+    /// keep state, so a second call can return something else.
+    #[test]
+    fn udf_call_is_not_alias_rewritable() {
+        use std::{collections::HashSet, sync::Arc};
+
+        use orx_tree::{DynTree, NodeRef};
+
+        use super::is_alias_rewritable;
+        use crate::parser::ast::ExprIR;
+        use crate::runtime::functions::GraphFn;
+
+        let tree = DynTree::new(ExprIR::FuncInvocation(Arc::new(GraphFn::new_udf("lib.f"))));
+        let mut root = tree;
+        root.root_mut()
+            .push_child_tree(DynTree::new(ExprIR::Variable(Arc::new(String::from("n")))));
+        assert!(!is_alias_rewritable(&root.root(), &HashSet::new()));
     }
 
     /// The bound IR of `query`, rendered with `Debug`.
