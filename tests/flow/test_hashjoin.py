@@ -157,3 +157,25 @@ class testHashJoin(FlowTestsBase):
                          MATCH (a:C {w: x}), (b:C) WHERE b.v = a.v AND b.w <= 20
                          RETURN count(*)""")
         self.env.assertEqual(res.result_set, [[6000]])
+
+    def test_join_inside_batched_subplan_with_mixed_key_types(self):
+        # The integer fast path and the general (Value) table are chosen per
+        # outer row: one outer row may build integer keys only while another
+        # builds a string key and promotes its own table.
+        g = self.graph
+        g.query("UNWIND [1, 2] AS i CREATE (:M {k: i}), (:M {k: toString(i)}), (:N {k: i}), (:N {k: toString(i)})")
+        q = """UNWIND [1, 2] AS x
+               OPTIONAL MATCH (a:M), (b:N)
+               WHERE a.k = b.k AND (a.k = x OR a.k = toString(x))
+               RETURN x, count(b) ORDER BY x"""
+        self.env.assertContains("Value Hash Join", str(g.explain(q)))
+        res = g.query(q)
+        self.env.assertEqual(res.result_set, [[1, 2], [2, 2]])
+
+        # only the second outer row has a string key on the build side
+        q = """UNWIND [1, 2] AS x
+               OPTIONAL MATCH (a:M), (b:N)
+               WHERE a.k = b.k AND a.k = x
+               RETURN x, count(b) ORDER BY x"""
+        res = g.query(q)
+        self.env.assertEqual(res.result_set, [[1, 1], [2, 1]])
