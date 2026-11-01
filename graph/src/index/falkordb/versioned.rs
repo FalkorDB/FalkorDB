@@ -462,15 +462,20 @@ impl Graph {
     }
 
     /// Whether [`Self::rebase_onto_indexer_batches`] has anything to do: whether an indexer batch
-    /// moved on, in `published`, an index still `Building` here.
+    /// moved on, in `published`, an index still `Building` here. Every escalating write asks, so it
+    /// looks no index up unless a batch was published since this version was made.
     pub(crate) fn overtaken_by_indexer_batches(
         &self,
         published: &Self,
     ) -> bool {
-        self.falkordb_index
-            .column_names()
-            .iter()
-            .any(|name| self.overtaken::<IndexColumn>(published, name))
+        published
+            .falkordb_index
+            .batch_published_since(&self.falkordb_index)
+            && self
+                .falkordb_index
+                .column_names()
+                .iter()
+                .any(|name| self.overtaken::<IndexColumn>(published, name))
     }
 
     /// Whether an indexer batch moved on, in `published`, index `name`, still `Building` here: the
