@@ -775,6 +775,22 @@ impl<T> Decode<19> for Matrix<T> {
                 return Err(format!("GxB_load_Matrix_from_Container failed: {info:?}"));
             }
 
+            // The container import takes the payload's orientation over the
+            // row-major hint `pin_sparse` set, and row iterators (every reader of
+            // a decoded matrix) refuse a column-major one. Convert it; a row-major
+            // payload, which is every one this engine writes, pays nothing.
+            if header.orientation == GrB_Orientation::GrB_COLMAJOR as i32 {
+                let info = GrB_Matrix_set_INT32(
+                    m,
+                    GrB_Orientation::GrB_ROWMAJOR as i32,
+                    GxB_Option_Field::GrB_STORAGE_ORIENTATION_HINT as _,
+                );
+                if info != GrB_Info::GrB_SUCCESS {
+                    GrB_Matrix_free(&raw mut m);
+                    return Err(format!("matrix could not be stored by row: {info:?}"));
+                }
+            }
+
             // The element type is whatever the payload's value vector said.
             // Readers of a `Matrix<T>` take `size_of::<T>()` bytes per entry
             // straight from the array, so a narrower type would be read past
@@ -2175,7 +2191,7 @@ mod tests {
 
     use super::super::serialization::{Decode, DecodeLimits, Encode, Reader, Writer};
     use super::super::test_init::ensure_init;
-    use super::{Matrix, OFF_FORMAT};
+    use super::{GrB_Orientation, Matrix, OFF_FORMAT};
 
     /// The buffers a matrix writes, kept in order so a test can edit one and
     /// replay the stream into [`Matrix::decode`]. A matrix writes only buffers,
@@ -2295,6 +2311,22 @@ mod tests {
                 "{what}: {err}"
             );
         }
+    }
+
+    /// A payload may declare column-major storage. Row iterators refuse it, and
+    /// `Tensor::decode` iterates every matrix by row, so it is stored row-major.
+    #[test]
+    fn decode_stores_a_column_major_payload_row_major() {
+        ensure_init();
+        let mut ops = encoded();
+        let Op::Buffer(header) = &mut ops[0] else {
+            panic!("not a buffer");
+        };
+        let at = OFF_FORMAT + 4;
+        header[at..at + 4].copy_from_slice(&(GrB_Orientation::GrB_COLMAJOR as i32).to_le_bytes());
+        let m = decode_u64(ops).unwrap();
+        assert_eq!((m.nrows(), m.ncols(), m.nvals()), (64, 64, 128));
+        assert_eq!(m.iter(0, u64::MAX).count(), 128);
     }
 
     #[test]
