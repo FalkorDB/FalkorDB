@@ -116,6 +116,9 @@ class testBoundVariables(FlowTestsBase):
                     g.query(f"MATCH (a:n), (b:n) WHERE id(b) = (id(a) * 7 + {k * 5 + 1}) % 60 "
                             f"AND id(a) % {n_types} = {k} CREATE (a)-[:R{k}]->(b)")
                 g.query("MATCH (a:n {id: 'test0'}), (b:n {id: 'test7'}) CREATE (a)-[:R0]->(b), (b)-[:R1]->(a)")
+                # Parallel edges of different types between the same pair: the
+                # hop must still return that pair once.
+                g.query("MATCH (a:n {id: 'test7'}), (b:n {id: 'test0'}) CREATE (a)-[:R2]->(b), (a)-[:R2]->(b)")
                 for i in range(0, 60, 7):
                     for tail in ("", "WHERE x.id <> 'none'"):
                         q = (f"MATCH (:n {{id: 'test{i}'}})-[]->(m)<-[]-(x:n) {tail} "
@@ -128,6 +131,8 @@ class testBoundVariables(FlowTestsBase):
                             want |= {tuple(r) for r in g.query(
                                 f"MATCH (:n {{id: 'test{i}'}})-[]->(m)<-[:R{k}]-(x:n) "
                                 "RETURN id(m), id(x)").result_set}
-                        self.env.assertEqual(sorted(set(map(tuple, got))), sorted(want))
+                        # No dedup of `got`: the union must not repeat a pair
+                        # that several types share.
+                        self.env.assertEqual([tuple(r) for r in got], sorted(want))
             finally:
                 g.delete()
