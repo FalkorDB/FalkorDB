@@ -454,7 +454,7 @@ pub struct Graph {
     /// 6 bytes per edge on a graph of millions of nodes rather than a flat 8 —
     /// and it has no ceiling, where the previous `(src << 32) | dst` packing
     /// refused any node id past 2^32.
-    edge_endpoints: Arc<EndpointIndex>,
+    pub(crate) edge_endpoints: Arc<EndpointIndex>,
     /// The graph's one attribute-name dictionary: name → id and id → name, shared by
     /// both stores below so an id means the same attribute everywhere it appears — in a
     /// span, the RDB, a `GRAPH.EFFECT`, or a compact reply.
@@ -1140,17 +1140,6 @@ impl Graph {
         let mut version = self.new_version();
         version.version = self.version;
         version
-    }
-
-    /// Where entity `id` sits in an index's build order in this version: a node by its id, an
-    /// edge by its endpoints, which an edge this version deleted no longer has (`None`).
-    #[cfg(feature = "index-falkordb")]
-    pub(crate) fn build_place(
-        &self,
-        entity: EntityType,
-        id: u64,
-    ) -> Option<BuildCursor> {
-        build_place(&self.edge_endpoints, entity, id)
     }
 
     #[must_use]
@@ -3896,7 +3885,7 @@ impl Graph {
             // A `Building` column asks where a written entity sits in build order.
             let endpoints = &self.edge_endpoints;
             self.falkordb_index.apply(&mut docs.native, |entity, id| {
-                build_place(endpoints, entity, id)
+                BuildCursor::from_id(entity, id, endpoints)
             });
         }
         #[cfg(not(feature = "index-falkordb"))]
@@ -5273,23 +5262,6 @@ impl Graph {
     /// Always — unimplemented until #3212. Nothing calls it yet.
     pub fn rebuild_cch_indexes(&mut self) -> Result<(), CchError> {
         unimplemented!("Graph API, #3212")
-    }
-}
-
-/// [`Graph::build_place`], over the endpoints index alone, so a caller that holds the index
-/// mutably can still ask.
-#[cfg(feature = "index-falkordb")]
-fn build_place(
-    endpoints: &EndpointIndex,
-    entity: EntityType,
-    id: u64,
-) -> Option<BuildCursor> {
-    match entity {
-        EntityType::Node => Some(BuildCursor::Node(NodeId::from(id))),
-        EntityType::Relationship => endpoints.get(id).map(|(src, dst)| BuildCursor::Edge {
-            src: NodeId::from(src),
-            dst: NodeId::from(dst),
-        }),
     }
 }
 

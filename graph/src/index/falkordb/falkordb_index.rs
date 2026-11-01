@@ -15,6 +15,7 @@ use std::sync::Arc;
 use roaring::RoaringTreemap;
 
 use crate::entity_type::EntityType;
+use crate::graph::endpoint_index::EndpointIndex;
 use crate::graph::graph::{Graph, NodeId};
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
@@ -177,7 +178,7 @@ impl IndexColumn {
         graph_writes::entity_tuples(to, *entity, key, written, self, &mut adds);
         if let BuildState::Building { next } = state {
             adds.scalar.retain(|&(_, id)| {
-                to.build_place(*entity, id)
+                BuildCursor::from_id(*entity, id, &to.edge_endpoints)
                     .is_some_and(|at| at.precedes(next))
             });
         }
@@ -363,6 +364,23 @@ impl BuildCursor {
                 },
             ) => (u64::from(src), u64::from(dst)) < (u64::from(nsrc), u64::from(ndst)),
             _ => unreachable!("a node and an edge are never in one column"),
+        }
+    }
+
+    /// Where entity `id` sits in build order, as a cursor: a node by its id, an edge by its
+    /// endpoints in `endpoints`, a version's edge endpoints. An edge that version deleted has none
+    /// (`None`).
+    pub(crate) fn from_id(
+        entity: EntityType,
+        id: u64,
+        endpoints: &EndpointIndex,
+    ) -> Option<Self> {
+        match entity {
+            EntityType::Node => Some(Self::Node(NodeId::from(id))),
+            EntityType::Relationship => endpoints.get(id).map(|(src, dst)| Self::Edge {
+                src: NodeId::from(src),
+                dst: NodeId::from(dst),
+            }),
         }
     }
 
