@@ -114,4 +114,38 @@ mod tests {
             assert_eq!(emitted.first(), Some(&true), "{query}: {emitted:?}");
         }
     }
+
+    /// Operators whose own arguments read `r`: a procedure call, `LOAD CSV`,
+    /// and the scans that take their label / query / vector as expressions.
+    #[test]
+    fn edge_read_by_an_operators_arguments_is_emitted() {
+        for query in [
+            "MATCH (a:A)-[r:R]->(b) CALL db.idx.fulltext.queryNodes('A', toString(id(r))) YIELD node RETURN count(*)",
+            "MATCH (a:A)-[r:R]->(b) CALL algo.BFS(a, id(r), 'R') YIELD nodes RETURN count(*)",
+            "MATCH (a:A)-[r:R]->(b) LOAD CSV FROM toString(id(r)) AS row RETURN count(*)",
+            "MATCH (a:A)-[r:R]->(b) LOAD CSV WITH HEADERS FROM toString(id(r)) AS row RETURN count(*)",
+        ] {
+            let emitted = emitted_edges(query);
+            assert_eq!(emitted.first(), Some(&true), "{query}: {emitted:?}");
+        }
+    }
+
+    /// `UNION` branches are independent plans, and a fresh binder gives each
+    /// branch's `r` the same `(id, scope_id)`. A read of `r` in one branch must
+    /// not keep the other branch's unread edge per-edge.
+    #[test]
+    fn edge_read_in_another_union_branch_is_not_a_read() {
+        assert_eq!(
+            emitted_edges(
+                "MATCH (a:A)-[r:R]->(b) RETURN count(*) AS c UNION ALL MATCH (x:A)-[r:R]->(y) RETURN id(r) AS c"
+            ),
+            vec![false, true]
+        );
+        assert_eq!(
+            emitted_edges(
+                "MATCH (x:A)-[r:R]->(y) RETURN id(r) AS c UNION ALL MATCH (a:A)-[r:R]->(b) RETURN count(*) AS c"
+            ),
+            vec![true, false]
+        );
+    }
 }

@@ -197,6 +197,22 @@ pub(super) fn ir_references_variable(
     }
 }
 
+/// Whether the rows the child `cur` of `parent` produces are handed to the
+/// parent's other children. `Apply`-like operators run their body children once
+/// per row of their input (first) child, and nothing flows from a body back to
+/// the input. `Union`, `CartesianProduct` and the hash join run independent
+/// children: a variable the other branch binds is a different variable even when
+/// a fresh binder gave it the same `(id, scope_id)`.
+fn row_reaches_siblings(
+    parent: &IR,
+    is_input_child: bool,
+) -> bool {
+    match parent {
+        IR::Union | IR::CartesianProduct | IR::ValueHashJoin { .. } => false,
+        _ => is_input_child,
+    }
+}
+
 /// True when an operator outside the subtree rooted at `idx` reads the
 /// variable `(var_id, scope_id)` that the operator at `idx` binds.
 ///
@@ -206,10 +222,10 @@ pub(super) fn ir_references_variable(
 /// `Argument`. So the readers are not only the ancestors but every node outside
 /// `idx`'s own subtree (whose nodes only produce its input): the body of
 /// `CALL {}`, the right side of an `OPTIONAL MATCH` or pattern-predicate Apply,
-/// a pattern comprehension sub-plan, a `FOREACH` body. Nodes that cannot see
-/// the row (e.g. the other side of a `CartesianProduct`) are included too: they
-/// can only mention the variable if they bind it themselves, which makes the
-/// answer conservative, never wrong.
+/// a pattern comprehension sub-plan, a `FOREACH` body. Only the branches that
+/// receive the row count (see [`row_reaches_siblings`]): the other side of a
+/// `Union` or `CartesianProduct`, or an `Apply` input reached from its body,
+/// never sees it.
 pub(super) fn variable_read_outside(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
@@ -221,13 +237,15 @@ pub(super) fn variable_read_outside(
         if ir_references_variable(parent.data(), var_id, scope_id) {
             return true;
         }
-        for sibling in parent.children() {
-            if sibling.idx() != cur.idx()
-                && sibling
-                    .walk::<Bfs>()
-                    .any(|ir| ir_references_variable(ir, var_id, scope_id))
-            {
-                return true;
+        if row_reaches_siblings(parent.data(), parent.child(0).idx() == cur.idx()) {
+            for sibling in parent.children() {
+                if sibling.idx() != cur.idx()
+                    && sibling
+                        .walk::<Bfs>()
+                        .any(|ir| ir_references_variable(ir, var_id, scope_id))
+                {
+                    return true;
+                }
             }
         }
         cur = parent;

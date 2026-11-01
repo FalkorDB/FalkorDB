@@ -2075,6 +2075,19 @@ def test_parallel_edges_written_outside_traverse_ancestors(q, created):
     assert res.result_set == [[created]]
 
 
+# UNION branches are independent plans: an `r` read in one branch must not keep
+# the other branch's unread `r` per-edge, whose result would change from 1 to 2
+# (an unread edge variable counts one row per (src, dst) pair).
+def test_edge_read_in_another_union_branch_is_not_a_read():
+    query("CREATE (a:A {v: 0})-[:R]->(b:B {v: 0}) CREATE (a)-[:R]->(b)", write=True)
+    unread = "MATCH (a:A)-[r:R]->(b) RETURN count(*) AS c"
+    read = "MATCH (x:A)-[r:R]->(y) RETURN id(r) AS c"
+    alone = query(unread).result_set
+    assert alone == [[1]]
+    for q in (unread + " UNION ALL " + read, read + " UNION ALL " + unread):
+        assert sorted(query(q).result_set) == sorted(alone + [[0], [1]])
+
+
 def test_parallel_edges_deleted_inside_call_subquery():
     query("CREATE (a:A)-[:R]->(b:B) CREATE (a)-[:R]->(b)", write=True)
     res = query("MATCH (a:A)-[r:R]->(b) CALL { WITH r DELETE r }", write=True)
