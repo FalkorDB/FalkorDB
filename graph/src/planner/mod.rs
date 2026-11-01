@@ -796,7 +796,15 @@ impl PatternMode {
         self,
         parent: &ExprIR<Variable>,
     ) -> Self {
-        if self == Self::SemiApply && !matches!(parent, ExprIR::And | ExprIR::Or | ExprIR::Not) {
+        // `size(pattern)` counts the matched paths, in a predicate as much as
+        // in a projection, so its argument is a list wherever it appears.
+        if matches!(parent, ExprIR::Length)
+            || matches!(parent, ExprIR::FuncInvocation(f) if f.name == "size")
+        {
+            Self::Collect
+        } else if self == Self::SemiApply
+            && !matches!(parent, ExprIR::And | ExprIR::Or | ExprIR::Not)
+        {
             Self::Exists
         } else {
             self
@@ -1381,7 +1389,7 @@ impl Planner {
         ) -> bool {
             match node.data() {
                 ExprIR::PatternComprehension(_) => true,
-                ExprIR::Pattern(_) => mode == PatternMode::Exists,
+                ExprIR::Pattern(_) => mode != PatternMode::SemiApply,
                 other => {
                     let child_mode = mode.descend(other);
                     node.children().any(|c| needs_extraction(&c, child_mode))

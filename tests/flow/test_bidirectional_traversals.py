@@ -350,3 +350,8 @@ class testBidirectionalTraversals(FlowTestsBase):
         # as a predicate it is still just an existence check
         result = g.query("MATCH (a:A) WHERE (a)--() RETURN count(a)")
         self.env.assertEqual(result.result_set, [[1]])
+        # but size() of a pattern counts paths in a predicate too
+        result = g.query("MATCH (a:A) WHERE size((a)--()) = 3 RETURN count(a)")
+        self.env.assertEqual(result.result_set, [[1]])
+        result = g.query("MATCH (a:A) WHERE size((a)--()) > 1 AND size((a)-->()) = 2 RETURN count(a)")
+        self.env.assertEqual(result.result_set, [[1]])
