@@ -1340,11 +1340,20 @@ impl Graph {
         edge_id: RelationshipId,
         type_name: &str,
     ) -> bool {
-        self.get_type_id(type_name).is_some_and(|type_id| {
-            self.relationship_type_matrix
-                .get(edge_id.0, type_id.0 as u64)
-                .is_some()
-        })
+        self.get_type_id(type_name)
+            .is_some_and(|type_id| self.edge_has_type_id(edge_id, type_id))
+    }
+
+    /// Check if an edge has a specific relationship type by id (no string lookup).
+    #[must_use]
+    pub fn edge_has_type_id(
+        &self,
+        edge_id: RelationshipId,
+        type_id: TypeId,
+    ) -> bool {
+        self.relationship_type_matrix
+            .get(edge_id.0, type_id.0 as u64)
+            .is_some()
     }
 
     /// Get-or-create a relationship type by name, returning its `TypeId`.

@@ -459,12 +459,14 @@ pub(crate) fn entity_tuples(
             }
         }
         EntityType::Relationship => {
-            let Some(idx) = g.get_relationship_attribute_id(attr) else {
+            let (Some(type_id), Some(idx)) =
+                (g.get_type_id(label), g.get_relationship_attribute_id(attr))
+            else {
                 return;
             };
             for id in ids {
                 let edge = RelationshipId::from(id);
-                if g.edge_has_type(edge, label)
+                if g.edge_has_type_id(edge, type_id)
                     && let Some(value) = g.get_relationship_attribute_by_idx(edge, idx as u16)
                 {
                     column.push_encoded(&value, id, out);
