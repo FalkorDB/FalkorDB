@@ -469,14 +469,18 @@ class testPathFilter(FlowTestsBase):
         # https://github.com/FalkorDB/FalkorDB/issues/1334
         self.graph.query("CREATE (:L {x:'a'})-[:R]->(:L {x:'b'})")
 
-        for query in ["MATCH (n0) WITH * WHERE () -- (n1) RETURN *",
-                      "MATCH (n) WHERE (n)-[:R]->(m) RETURN n",
-                      "MATCH (n) WHERE (n)-[r:R]->() RETURN n",
-                      "MATCH (n) WHERE NOT (n)<-[:R]-(m) RETURN n",
-                      "MATCH (n) WHERE n.x = 'a' OR (n)-[:R]->(m) RETURN n",
-                      "MATCH (n) RETURN [x IN [1] WHERE (n)-->(m)]"]:
+        for query, name in [("MATCH (n0) WITH * WHERE () -- (n1) RETURN *", "n1"),
+                            ("MATCH (n) WHERE (n)-[:R]->(m) RETURN n", "m"),
+                            ("MATCH (n) WHERE (n)-[r:R]->() RETURN n", "r"),
+                            ("MATCH (n) WHERE NOT (n)<-[:R]-(m) RETURN n", "m"),
+                            ("MATCH (n) WHERE n.x = 'a' OR (n)-[:R]->(m) RETURN n", "m"),
+                            ("MATCH (n) RETURN [x IN [1] WHERE (n)-->(m)]", "m"),
+                            # user-written names that look like the parser's
+                            # anonymous aliases are still variables
+                            ("MATCH (n0) WITH * WHERE ()--(_anonymous) RETURN *", "_anonymous"),
+                            ("MATCH (n) WHERE (n)-[_anon_x:R]->() RETURN n", "_anon_x")]:
             msg = assert_error_reply(self.env, self.conn, "GRAPH.QUERY", GRAPH_ID, query)
-            self.env.assertContains("not defined", msg or "")
+            self.env.assertContains(f"'{name}' not defined", msg or "")
 
         # anonymous aliases, and names bound by the query, a list
         # comprehension or a pattern comprehension are fine

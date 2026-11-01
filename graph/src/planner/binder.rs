@@ -91,6 +91,14 @@ enum ProjectionKind {
     Return,
 }
 
+/// True for the aliases the parser generates for unnamed pattern entities
+/// (`_anon_<counter>`), as opposed to a user-written name that happens to
+/// start with `_anon`.
+fn is_generated_anon_alias(name: &str) -> bool {
+    name.strip_prefix("_anon_")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
 impl Binder {
     /// Binds a raw query IR, resolving all variable references.
     ///
@@ -1367,7 +1375,7 @@ impl Binder {
         // Bind relationships, binding any referenced nodes that weren't in the graph
         for relationship in graph.relationships() {
             if relationship.min_hops.is_some()
-                && !relationship.alias.starts_with("_anon")
+                && !is_generated_anon_alias(&relationship.alias)
                 && named_path_names.contains(&relationship.alias)
             {
                 return Err(format!(
@@ -1581,7 +1589,7 @@ impl Binder {
 
         // Validate nodes - only check nodes that are NOT purely endpoints of relationships
         for node in pattern.nodes() {
-            if node.alias.starts_with("_anon") {
+            if is_generated_anon_alias(&node.alias) {
                 continue; // Skip anonymous nodes
             }
 
@@ -1628,7 +1636,7 @@ impl Binder {
 
         // Check relationships for redeclaration
         for rel in pattern.relationships() {
-            if rel.alias.starts_with("_anon") {
+            if is_generated_anon_alias(&rel.alias) {
                 continue; // Skip anonymous relationships
             }
 
@@ -1683,7 +1691,7 @@ impl Binder {
         entity_alias: &Arc<String>,
         attrs: &QueryExpr<Arc<String>>,
     ) -> Result<(), String> {
-        if entity_alias.starts_with("_anon") {
+        if is_generated_anon_alias(entity_alias) {
             return Ok(());
         }
         for idx in attrs.root().indices::<Dfs>() {
@@ -1881,7 +1889,7 @@ impl Binder {
                 // `bind_graph` reuses them and the cleanup below keeps them.
                 if self.use_parent_scope {
                     for name in graph.variables() {
-                        if !name.starts_with("_anon")
+                        if !is_generated_anon_alias(&name)
                             && !self.current_env().contains_key(&name)
                             && !locals.iter().any(|scope| scope.contains_key(&name))
                         {
@@ -1920,7 +1928,7 @@ impl Binder {
                 // fresh and their IDs must be visible to scope_vars so the planner
                 // can avoid ID collisions.
                 self.current_env_mut().retain(|name, _| {
-                    outer_scope_names.contains(name) || name.starts_with("_anon")
+                    outer_scope_names.contains(name) || is_generated_anon_alias(name)
                 });
 
                 let mut new_tree =
@@ -2090,8 +2098,11 @@ impl Binder {
                         // plain variable reference is, so an unknown one is
                         // "not defined", and a parent-scope one is copied in
                         // before the snapshot below and so is kept.
+                        // Only the parser's own `_anon_<n>` aliases are
+                        // exempt; a user-written name that merely starts
+                        // with `_anon` is a variable like any other.
                         for name in pattern.variables() {
-                            if !name.starts_with("_anon") {
+                            if !is_generated_anon_alias(&name) {
                                 self.resolve_name(&name, locals)?;
                             }
                         }
@@ -2120,7 +2131,7 @@ impl Binder {
                         // the outer scope.  Keep anonymous variables (_anon_*)
                         // since their IDs must remain visible in scope_vars.
                         self.current_env_mut().retain(|name, _| {
-                            outer_scope_names.contains(name) || name.starts_with("_anon")
+                            outer_scope_names.contains(name) || is_generated_anon_alias(name)
                         });
 
                         ExprIR::Pattern(Box::new(result?))
@@ -2180,7 +2191,7 @@ impl Binder {
         allow_reuse: bool,
     ) -> Result<Variable, String> {
         // Anonymous variables (_anon_*) should always be fresh, never reused
-        if !name.starts_with("_anon")
+        if !is_generated_anon_alias(&name)
             && let Some(existing) = self.current_env().get(&name)
         {
             if !allow_reuse {
@@ -2222,7 +2233,7 @@ impl Binder {
         }
 
         // Anonymous variables should also create fresh variables
-        if name.starts_with("_anon") {
+        if is_generated_anon_alias(name) {
             let scope_id = self.env_stack.len() as u32 - 1;
             let var = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
             // Insert with the anon name (unique by construction) to reserve
