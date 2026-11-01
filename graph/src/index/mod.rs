@@ -45,6 +45,7 @@
 //! - [`IndexResultsIter`] -- lazy pull-based iterator over C query results.
 
 pub mod falkordb;
+pub mod index_docs;
 pub mod indexer;
 pub mod redisearch;
 pub mod text_index_options;
@@ -720,9 +721,21 @@ impl Document {
         value: &Value,
     ) {
         unsafe {
-            // Vector fields only accept VecF32 values; skip everything else.
+            // Vector fields only accept VecF32 values of the index's dimension;
+            // skip everything else, including a field whose dimension is unknown
+            // (no vector options, or dimension 0): such a field is created in
+            // RediSearch without vector params. RediSearch rejects a whole
+            // document whose vector it cannot index, so adding it would drop the
+            // entity from every other index on the label too (C skips it the
+            // same way: `index.c` "vector dimension mis-match, can't index this
+            // vector").
             if field.ty == IndexType::Vector {
-                if let Value::VecF32(vec) = value {
+                if let Value::VecF32(vec) = value
+                    && field
+                        .vector_options
+                        .as_ref()
+                        .is_some_and(|o| o.dimension != 0 && o.dimension == vec.len() as u64)
+                {
                     RediSearch_DocumentAddFieldVector(
                         self.rs_doc,
                         field.name.as_ptr().cast::<c_char>(),
@@ -783,14 +796,13 @@ impl Document {
                         RSFLDTYPE_TAG,
                     );
                 }
-                Value::Datetime(ts) | Value::Date(ts) | Value::Time(ts) | Value::Duration(ts) => {
-                    RediSearch_DocumentAddFieldNumber(
-                        self.rs_doc,
-                        field.name.as_ptr().cast::<c_char>(),
-                        *ts as f64,
-                        RSFLDTYPE_NUMERIC,
-                    );
-                }
+                // Temporals are not indexed. Stored as their raw number in the
+                // numeric field they would match numeric queries (`n.v > 0`
+                // returned dates), and no index query is ever built for a
+                // temporal value: the scan ops refuse them (`can_utilize_index`), so
+                // a temporal predicate is answered by a label scan and its
+                // retained filter.
+                Value::Datetime(_) | Value::Date(_) | Value::Time(_) | Value::Duration(_) => {}
                 Value::List(items) => {
                     // Index array elements in separate fields for contains queries.
                     // Numeric elements go to "range:{attr}:numeric:arr",
@@ -902,7 +914,10 @@ struct PendingSlots {
     /// in between would overwrite a writer's document with the value the writer
     /// just replaced. Batches skip these ids: the writer's document is newer.
     /// Only tracked while `current_pending > 0`, and reset with the generation.
-    written: RoaringTreemap,
+    ///
+    /// Behind an `Arc` so a batch snapshots it without copying the bitmap;
+    /// a writer only copies it (`Arc::make_mut`) while a batch holds one.
+    written: Arc<RoaringTreemap>,
 }
 
 /// RAII handle for a RediSearch index spec (`RefManager`). Owns one strong
@@ -1019,7 +1034,7 @@ impl Default for Index {
                 current_generation: id,
                 current_pending: 0,
                 stale_pending: 0,
-                written: RoaringTreemap::new(),
+                written: Arc::default(),
             })),
             progress: AtomicU64::new(0),
             total: AtomicU64::new(0),
@@ -1052,7 +1067,7 @@ impl Index {
         slots.stale_pending += slots.current_pending;
         slots.current_generation = self.id;
         slots.current_pending = 0;
-        slots.written.clear();
+        slots.written = Arc::default();
     }
 
     /// Copy this `Index` for a clone-and-swap schema update.
@@ -1240,11 +1255,11 @@ impl Index {
                             if options.nostem.unwrap_or(false) {
                                 field_options_flag |= RSFLDOPT_TXTNOSTEM;
                             }
-                            // Any non-empty code turns phonetic matching on.
-                            // RediSearch takes a flag, not an algorithm, so
-                            // which code it is cannot reach it — see
-                            // `TextIndexOptions::phonetic`.
-                            if options.phonetic.as_deref().is_some_and(|p| !p.is_empty()) {
+                            // Any code but empty or C's "no" turns phonetic
+                            // matching on. RediSearch takes a flag, not an
+                            // algorithm, so which code it is cannot reach it —
+                            // see `TextIndexOptions::phonetic`.
+                            if options.phonetic_enabled() {
                                 field_options_flag |= RSFLDOPT_TXTPHONETIC;
                             }
                         }
@@ -1396,6 +1411,10 @@ impl Index {
         let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
             return std::ptr::null_mut();
         };
+        // An absent bound is unbounded, so it must include the infinity
+        // that stands in for it: `n.v > 0` selects a stored `+inf`.
+        let include_min = include_min || min.is_none();
+        let include_max = include_max || max.is_none();
         unsafe {
             RediSearch_CreateNumericNode(
                 self.rs_ptr(),
@@ -1421,6 +1440,16 @@ impl Index {
         let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
             return std::ptr::null_mut();
         };
+
+        // Equal bounds with an exclusive side (`> 'a' AND < 'a'`, `>= 'a'
+        // AND < 'a'`) select nothing; the exact-match shortcut below is
+        // only right when both sides are inclusive.
+        if let (Some(lo), Some(hi)) = (min, max)
+            && lo == hi
+            && !(include_min && include_max)
+        {
+            return unsafe { RediSearch_CreateEmptyNode(self.rs_ptr()) };
+        }
 
         let root = unsafe { RediSearch_CreateTagNode(self.rs_ptr(), field.name.as_ptr()) };
 
@@ -2121,7 +2150,7 @@ impl Index {
                 slots.current_pending -= 1;
             }
             if slots.current_pending == 0 {
-                slots.written.clear();
+                slots.written = Arc::default();
             }
             prev
         } else {
@@ -2155,7 +2184,7 @@ impl Index {
     ) {
         let mut slots = self.pending_slots.lock();
         if slots.current_pending > 0 {
-            slots.written.extend(ids);
+            Arc::make_mut(&mut slots.written).extend(ids);
         }
     }
 
@@ -2165,10 +2194,10 @@ impl Index {
     pub fn written_during_population(
         &self,
         generation_id: u64,
-    ) -> Option<RoaringTreemap> {
+    ) -> Option<Arc<RoaringTreemap>> {
         let slots = self.pending_slots.lock();
         (generation_id == slots.current_generation && !slots.written.is_empty())
-            .then(|| slots.written.clone())
+            .then(|| Arc::clone(&slots.written))
     }
 
     /// Get the current pending changes count.
