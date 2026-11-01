@@ -271,11 +271,11 @@ impl Binder {
         let scope_id = self.env_stack.len() - 1;
         for name in names {
             if let Some(var) = self.env_stack[scope_id].remove(&name) {
-                // `#` cannot appear in an unquoted alias, so a query cannot
-                // spell this key later and be handed the hidden variable. A
-                // backtick-quoted alias could already hold it: take a free key
-                // rather than overwrite it.
-                let mut key = format!("_slot_#{scope_id}_{}", var.id);
+                // A backtick cannot appear in any alias, quoted or not (the
+                // lexer ends a quoted identifier at the next one), so no query
+                // can spell this key later and be handed the hidden variable.
+                // An entry already under it is not overwritten all the same.
+                let mut key = format!("_slot_`{scope_id}_{}", var.id);
                 while self.env_stack[scope_id].contains_key(&key) {
                     key.push('_');
                 }

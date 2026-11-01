@@ -457,6 +457,10 @@ class testWithClause(FlowTestsBase):
             res = g.query("""MATCH (n) WITH n.v AS k, n.v + 0 AS o WHERE n.v = 0
                              MATCH (_slot_1_2)-->(y) RETURN k, y.v""")
             self.env.assertEqual(res.result_set, [[0, 0]])
+            for alias in ("_slot_#1_2", "_slot_1_2_"):
+                res = g.query(f"""MATCH (n) WITH n.v AS k, n.v + 0 AS o WHERE n.v = 0
+                                  MATCH (`{alias}`)-->(y) RETURN k, y.v""")
+                self.env.assertEqual(res.result_set, [[0, 0]], depth=1)
 
             # A `_`-prefixed local of a pattern predicate is not visible after it,
             # like any other local.
