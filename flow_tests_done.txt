@@ -53,6 +53,7 @@ tests/flow/test_index_create
 tests/flow/test_index_delete.py
 tests/flow/test_index_scans.py
 tests/flow/test_index_updates.py
+tests/flow/test_inline_pattern_attributes.py
 tests/flow/test_intern_string.py
 tests/flow/test_keyspace_accesses.py
 tests/flow/test_label_update
@@ -64,6 +65,7 @@ tests/flow/test_maxflow.py
 tests/flow/test_memory_usage.py
 tests/flow/test_meta_stats.py
 tests/flow/test_mix_labels
+tests/flow/test_module_args.py
 tests/flow/test_msf.py
 tests/flow/test_multi_exec.py
 tests/flow/test_multi_label.py
