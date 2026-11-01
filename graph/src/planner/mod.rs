@@ -965,7 +965,9 @@ impl Planner {
     /// to match. Parsing, binding and planning are iterative over clauses and
     /// get here fine; the height walk itself is iterative too.
     pub fn check_depth(plan: &DynTree<IR>) -> Result<(), String> {
-        if optimizer_depth_bound(plan) > MAX_PLAN_DEPTH {
+        // O(1): a plan this short cannot reach the cap, so a shallow query
+        // never pays for the walk.
+        if plan.len() > SHALLOW_PLAN && optimizer_depth_bound(plan) > MAX_PLAN_DEPTH {
             return Err(format!("{TOO_DEEP} {MAX_PLAN_DEPTH}"));
         }
         Ok(())
