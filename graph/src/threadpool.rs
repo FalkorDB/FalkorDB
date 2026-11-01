@@ -28,10 +28,18 @@
 //!
 //! The pool is stored in a global `OnceCell` and must be initialized once
 //! via [`init_thread_pool`] before any calls to [`spawn`].
+//!
+//! ## Other instances
+//!
+//! [`ThreadPool`] is also a type of its own, for work that must not take a
+//! query thread. An instance can name its workers ([`ThreadPool::named`]),
+//! and can stop without waiting forever for a job that blocks
+//! ([`ThreadPool::shutdown_within`]).
 
 use std::{
     sync::atomic::{AtomicU64, Ordering},
     thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
 use crossfire::{MRx, MTx, mpmc::List};
@@ -43,7 +51,7 @@ use parking_lot::Mutex;
 type Job = Option<Box<dyn FnOnce() + Send + 'static>>;
 
 /// A pool of worker threads for executing jobs.
-struct ThreadPool {
+pub struct ThreadPool {
     /// Interior mutability only: the pool lives in a `&'static OnceCell`,
     /// so reaching the workers via `&self` from `shutdown` needs a lock
     /// to call `drain(..).join()`. Never touched by `spawn` — the hot
@@ -57,6 +65,21 @@ unsafe impl Sync for ThreadPool {}
 
 impl ThreadPool {
     pub fn new(size: usize) -> Self {
+        Self::with_names(size, None)
+    }
+
+    /// [`Self::new`], its workers named `{name}-0`, `{name}-1`, ….
+    pub fn named(
+        size: usize,
+        name: &str,
+    ) -> Self {
+        Self::with_names(size, Some(name))
+    }
+
+    fn with_names(
+        size: usize,
+        name: Option<&str>,
+    ) -> Self {
         let mut workers = Vec::with_capacity(size);
         // Unlimited channel, bounded by admission: `spawn` runs on the Redis
         // main thread, which holds the GIL, so a send that could wait on a full
@@ -65,9 +88,13 @@ impl ThreadPool {
         // [`QueueSlot`], taken before dispatch, which is what bounds this queue.
         let (sender, receiver): (MTx<List<Job>>, MRx<List<Job>>) =
             crossfire::mpmc::unbounded_blocking();
-        for _ in 0..size {
+        for i in 0..size {
             let rx = receiver.clone();
-            let worker = thread::spawn(move || {
+            let mut builder = thread::Builder::new();
+            if let Some(name) = name {
+                builder = builder.name(format!("{name}-{i}"));
+            }
+            let worker = builder.spawn(move || {
                 while let Ok(job) = rx.recv() {
                     match job {
                         Some(j) => {
@@ -85,7 +112,7 @@ impl ThreadPool {
                     }
                 }
             });
-            workers.push(worker);
+            workers.push(worker.expect("spawn a pool worker"));
         }
         Self {
             workers: Mutex::new(workers),
@@ -124,6 +151,32 @@ impl ThreadPool {
         for worker in workers.drain(..) {
             let _ = worker.join();
         }
+    }
+
+    /// [`Self::shutdown`], waiting at most `timeout` for the workers: one still running a job by
+    /// then is left behind, detached, to exit when its job returns. For jobs that may block on
+    /// what the caller holds. Whether every worker exited in time.
+    pub fn shutdown_within(
+        &self,
+        timeout: Duration,
+    ) -> bool {
+        for _ in 0..self.size {
+            let _ = self.sender.send(None);
+        }
+        let deadline = Instant::now() + timeout;
+        let mut workers = self.workers.lock();
+        while Instant::now() < deadline && !workers.iter().all(JoinHandle::is_finished) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        let mut all_exited = true;
+        for worker in workers.drain(..) {
+            if worker.is_finished() {
+                let _ = worker.join();
+            } else {
+                all_exited = false;
+            }
+        }
+        all_exited
     }
 }
 
@@ -211,6 +264,56 @@ impl Drop for QueueSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::mpsc;
+
+    /// A bounded shutdown returns on time with a worker blocked in a job, and reports it.
+    #[test]
+    fn shutdown_within_leaves_a_blocked_job_behind() {
+        let pool = Arc::new(ThreadPool::new(1));
+        let (release, blocked) = mpsc::channel::<()>();
+        let (started, has_started) = mpsc::channel();
+        pool.spawn(
+            move || {
+                started.send(()).unwrap();
+                let _ = blocked.recv();
+            },
+            None,
+        );
+        has_started.recv().unwrap();
+        let (done, shutdown) = mpsc::channel();
+        let stopping = Arc::clone(&pool);
+        thread::spawn(move || {
+            done.send(stopping.shutdown_within(Duration::from_millis(50)))
+                .unwrap();
+        });
+        let exited = shutdown.recv_timeout(Duration::from_secs(2));
+        drop(release);
+        assert_eq!(
+            exited,
+            Ok(false),
+            "returned in time, the blocked worker left behind"
+        );
+    }
+
+    /// A named pool's workers carry the name, numbered from 0.
+    #[test]
+    fn named_workers_carry_the_name() {
+        let pool = ThreadPool::named(1, "named-pool");
+        let (tx, rx) = mpsc::channel();
+        pool.spawn(
+            move || {
+                tx.send(thread::current().name().map(str::to_owned))
+                    .unwrap();
+            },
+            None,
+        );
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(2)),
+            Ok(Some("named-pool-0".to_owned()))
+        );
+        assert!(pool.shutdown_within(Duration::from_secs(2)));
+    }
 
     #[test]
     fn queue_slot_bounds_and_releases() {
