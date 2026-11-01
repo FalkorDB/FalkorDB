@@ -1835,6 +1835,9 @@ def test_boolean_operator_static_operand_type_3293():
         ("RETURN false AND ([1] + [2])", "List"),
         ("RETURN false AND ([1] + 2)", "List"),
         ("RETURN false AND ([1] + {a: 1})", "List"),
+        # an ORDER BY expression is checked like a projection
+        ("UNWIND [1, 2] AS x RETURN x ORDER BY false AND 1", "Integer"),
+        ("UNWIND [1, 2] AS x WITH x ORDER BY true OR (1+2) RETURN x", "Integer"),
         ("RETURN false AND ([{a: 1}] + [2])", "List"),
     ]:
         query_exception(q, f"Type mismatch: expected Boolean or Null but was {t}")

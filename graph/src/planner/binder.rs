@@ -1216,7 +1216,11 @@ impl Binder {
 
         let orderby = orderby
             .iter()
-            .map(|(expr, desc)| Ok((self.bind_expr(expr)?, *desc)))
+            .map(|(expr, desc)| {
+                let bound = self.bind_expr(expr)?;
+                Self::validate_boolean_operands(&bound)?;
+                Ok((bound, *desc))
+            })
             .collect::<Result<Vec<_>, String>>()?;
 
         // Reject aggregation functions inside ORDER BY expressions
