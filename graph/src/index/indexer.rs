@@ -344,6 +344,22 @@ impl Indexer {
 
         label_indexes.set_progress(0, total);
 
+        // Every field added to an existing entry starts a new population
+        // generation, not only the vector rebuild above. A populate job still
+        // running for the previous generation holds a field snapshot without
+        // the new field. Bumping makes that job bail at its next batch
+        // (`is_ticket_current`), and the job `populate_index` spawns for this
+        // generation indexes everything from the start. Without the bump both
+        // jobs share one generation: the new job can see two pending tickets
+        // and bail first, and the old job then finishes with its stale
+        // snapshot, so the index goes OPERATIONAL with the new field never
+        // populated. The bump comes after every fallible step because the
+        // pending counters are shared with the published entry, and a bump
+        // on an entry that is never published would desynchronize them.
+        if existing.is_some() {
+            label_indexes.bump_id();
+        }
+
         let mut new_map = (*map).clone();
         new_map.insert(label.clone(), Arc::new(label_indexes));
         self.index.store(Arc::new(new_map));

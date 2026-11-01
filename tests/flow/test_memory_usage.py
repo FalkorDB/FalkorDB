@@ -136,8 +136,12 @@ class testGraphMemoryUsage(FlowTestsBase):
         try:
             res = self.conn.execute_command(cmd)
             self.env.assertTrue(False)
-        except:
-            pass
+        except ResponseError as e:
+            self.env.assertContains("SAMPLES must be a non-negative integer", str(e))
+
+        # zero samples is accepted, as in C (clamped to one sample)
+        res = self.conn.execute_command(f"GRAPH.MEMORY USAGE {GRAPH_ID} SAMPLES 0")
+        self.env.assertTrue(len(res) > 0)
 
         self.conn.set("x", 2)
 
