@@ -1032,17 +1032,18 @@ impl Pending {
         self.created_nodes.contains(id.into())
     }
 
-    /// The nodes that carry ALL of `label_ids` once this query's pending
-    /// changes apply, among those the query staged labels on: live (not
-    /// pending-deleted), with every label in the node's effective set
+    /// The nodes that GAIN a pattern label in this query and carry ALL of
+    /// `label_ids` once the pending changes apply: live (not pending-deleted),
+    /// with every label in the node's effective set
     /// (`(committed \ remove_labels) ∪ set_labels`, `set_labels` alone for a
-    /// created node).
+    /// created node), and with at least one of them only staged. A node whose
+    /// pattern labels are all committed (and none pending removal) is left to
+    /// the wrapped scan: re-setting a label it already has changes nothing.
     ///
-    /// Only nodes with a staged label that is part of the pattern count. That
-    /// includes committed nodes whose labels already match: an indexed scan
-    /// checks secondary labels pending-aware, so it may already emit one. The
-    /// caller therefore takes every returned node from here only, skipping
-    /// them in the wrapped scan, so each is enumerated exactly once. When `label_ids` is empty, returns all
+    /// A returned node may also be emitted by an indexed scan, which checks
+    /// secondary labels pending-aware. The caller therefore takes every
+    /// returned node from here only, skipping them in the wrapped scan, so
+    /// each is enumerated exactly once. When `label_ids` is empty, returns all
     /// pending-created nodes.
     #[must_use]
     pub fn get_pending_nodes_with_labels(
@@ -1054,30 +1055,24 @@ impl Pending {
             return self.created_nodes.clone();
         }
         let mut result = RoaringTreemap::new();
-        // A node outside the committed scan that gains a pattern label must
-        // have it staged, so `set_labels` holds every candidate.
+        // A node that gains a pattern label must have it staged, so
+        // `set_labels` holds every candidate.
         for (&node_id, staged) in &self.set_labels {
             if self.deleted_nodes.contains(node_id) {
                 continue;
             }
-            // Staged labels outside the pattern leave the committed scan's
-            // verdict (and an index's) as it was.
-            if !label_ids
-                .iter()
-                .any(|&l| staged.contains(&(usize::from(l) as u64)))
-            {
-                continue;
-            }
             let created = self.created_nodes.contains(node_id);
             let removed = self.remove_labels.get(&node_id);
+            let mut all_committed = !created;
             let matches = label_ids.iter().all(|&label| {
                 let lid = usize::from(label) as u64;
                 let committed = !created
                     && !removed.is_some_and(|r| r.contains(&lid))
                     && g.node_has_label_id(NodeId::from(node_id), label);
+                all_committed &= committed;
                 committed || staged.contains(&lid)
             });
-            if matches {
+            if matches && !all_committed {
                 result.insert(node_id);
             }
         }

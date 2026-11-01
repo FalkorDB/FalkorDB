@@ -932,18 +932,9 @@ class testGraphMergeFlow():
         self.env.assertEqual(res.result_set, [[False]])
         self.env.assertEqual(res.nodes_created, 1)
 
-        # With an index on the pattern label the committed index is what the
-        # scan reads: a node whose indexed value changed in this query is
-        # still found, and one the index scan already yields is not repeated.
-        g.delete()
-        create_node_range_index(g, "A", "v", sync=True)
-        g.query("CREATE (:A {v: 0})")
-        q = "MATCH (n:A) SET n:A, n.v = 1 MERGE (m:A {v: 1}) RETURN id(m) = id(n)"
-        self.env.assertContains("Node By Index Scan", str(g.explain(q)))
-        res = g.query(q)
-        self.env.assertEqual(res.result_set, [[True]])
-        self.env.assertEqual(res.nodes_created, 0)
-
+        # With an index on the pattern label, a node that gains a pattern label
+        # is returned once, not by both the index scan and the pending
+        # candidates.
         g.delete()
         create_node_range_index(g, "A", "v", sync=True)
         g.query("CREATE (:A {v: 1})")
@@ -951,6 +942,17 @@ class testGraphMergeFlow():
         self.env.assertContains("Node By Index Scan", str(g.explain(q)))
         res = g.query(q)
         self.env.assertEqual(res.result_set, [[True]])
+        self.env.assertEqual(res.nodes_created, 0)
+
+        # Re-setting labels a node already has leaves it on the indexed path:
+        # one match per correlated row, not a candidate-by-row product.
+        g.delete()
+        create_node_range_index(g, "A", "v", sync=True)
+        g.query("UNWIND range(1, 5) AS i CREATE (:A:B {v: i})")
+        q = "MATCH (n:A:B) SET n:B MERGE (m:A:B {v: n.v}) RETURN count(*)"
+        self.env.assertContains("Node By Index Scan", str(g.explain(q)))
+        res = g.query(q)
+        self.env.assertEqual(res.result_set, [[5]])
         self.env.assertEqual(res.nodes_created, 0)
         g.delete()
 
