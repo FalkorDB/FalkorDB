@@ -81,11 +81,15 @@ class testGraphMemoryUsage(FlowTestsBase):
         # First line of the server's raw RESP reply to `args`.
         kw = self.conn.connection_pool.connection_kwargs
         req = f"*{len(args)}\r\n" + "".join(f"${len(a)}\r\n{a}\r\n" for a in args)
-        with socket.create_connection((kw.get("host", "localhost"), kw["port"])) as sock:
+        with socket.create_connection((kw.get("host", "localhost"), kw["port"]),
+                                      timeout=SOCKET_TIMEOUT) as sock:
             sock.sendall(req.encode())
             buf = b""
             while b"\r\n" not in buf:
-                buf += sock.recv(4096)
+                chunk = sock.recv(4096)
+                if not chunk:
+                    raise ConnectionError(f"connection closed before a full reply line: {buf!r}")
+                buf += chunk
         return buf.split(b"\r\n")[0].decode()
 
     def test_invalid_call(self):

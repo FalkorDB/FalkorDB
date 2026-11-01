@@ -905,6 +905,9 @@ class testIndexCreationFlow():
         self.env.assertEqual(res.indices_created, 1)
         res = graph.query("CREATE FULLTEXT INDEX FOR (n:D) ON (n.t) OPTIONS {weight:2, nostem:true}")
         self.env.assertEqual(res.indices_created, 1)
+        # `ip` (inner product) is accepted, a Rust extension over C
+        res = graph.query("CREATE VECTOR INDEX FOR (n:F) ON (n.v) OPTIONS {dimension:2, similarityFunction:'ip'}")
+        self.env.assertEqual(res.indices_created, 1)
         # dimension 0 is accepted, as in C
         res = graph.query("CREATE VECTOR INDEX FOR (n:E) ON (n.v) OPTIONS {dimension:0, similarityFunction:'cosine'}")
         self.env.assertEqual(res.indices_created, 1)
