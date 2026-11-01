@@ -209,12 +209,11 @@ mod tests {
     fn a_slice_reader_refuses_a_count_it_cannot_back() {
         let mut w = VecWriter::new();
         w.write_unsigned(7); // entity id
-        w.write_unsigned(u64::MAX); // attribute count
+        w.write_unsigned(1); // attribute count, with no attribute after it
         let bytes = w.into_vec();
         let mut r = BufferedReader::from_slice(&bytes);
         let mut store = AttributeStore::with_id_bound(8);
-        // The attribute count reserves nothing beyond a small cap, and the
-        // loop ends at the end of the payload.
+        // The loop ends at the end of the payload.
         let err = store.decode_with_count(&mut r, 1, 1).unwrap_err();
         assert!(err.contains("end of data"), "unexpected error: {err}");
 

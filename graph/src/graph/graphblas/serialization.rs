@@ -226,6 +226,13 @@ impl DecodeLimits {
         DECODE_LIMITS.with(std::cell::Cell::get)
     }
 
+    /// Most cells a full vector may hold. Every cell of a full vector is an
+    /// entity, so unlike a dimension this has no capacity allowance.
+    #[must_use]
+    pub fn max_full_cells(&self) -> u64 {
+        self.node_bound.max(self.edge_bound)
+    }
+
     /// Largest matrix dimension a payload with these limits may carry.
     #[must_use]
     pub fn max_dim(&self) -> u64 {

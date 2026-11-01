@@ -265,7 +265,9 @@ fn check_blob_header(blob: &[u8]) -> Result<(), String> {
         return Err("blob size does not match its header".to_string());
     }
     let field = |at: usize| blob_i64(blob, at);
-    let max_dim = DecodeLimits::current().map_or(1 << 60, |l| l.max_dim().min(1 << 60));
+    let limits = DecodeLimits::current();
+    let max_dim = limits.map_or(1 << 60, |l| l.max_dim().min(1 << 60));
+    let max_full_cells = limits.map_or(1 << 60, |l| l.max_full_cells().min(1 << 60));
     let (vlen, vdim, nvec, nvals, typesize) = (
         field(blob_at::VLEN),
         field(blob_at::VDIM),
@@ -372,7 +374,7 @@ fn check_blob_header(blob: &[u8]) -> Result<(), String> {
         // iso blob (one stored value) must not be allowed to claim more than the
         // graph can have
         8 => {
-            vlen.saturating_mul(vdim) <= max_dim
+            vlen.saturating_mul(vdim) <= max_full_cells
                 && cx
                     >= if iso {
                         typesize
@@ -1133,7 +1135,8 @@ mod decode_tests {
     fn decode_blob_rejects_a_full_iso_vector_claiming_huge_dimensions() {
         let mut blob = blob_of_a_vector();
         let mut put = |at: usize, bytes: &[u8]| blob[at..at + bytes.len()].copy_from_slice(bytes);
-        put(super::blob_at::VLEN, &(1i64 << 60).to_le_bytes());
+        // Within the matrix dimension allowance, but far past the graph's ids.
+        put(super::blob_at::VLEN, &(1i64 << 31).to_le_bytes());
         put(super::blob_at::VDIM, &1i64.to_le_bytes());
         put(super::blob_at::NVEC, &1i64.to_le_bytes());
         put(super::blob_at::NVEC_NONEMPTY, &1i64.to_le_bytes());
@@ -1141,13 +1144,13 @@ mod decode_tests {
         // full (8) << 2, iso
         put(super::blob_at::SPARSITY_ISO_CSC, &34i32.to_le_bytes());
         let _limits = DecodeLimits {
-            node_bound: 10,
-            edge_bound: 10,
+            node_bound: 2,
+            edge_bound: 2,
         }
         .scope();
         let err = decode_blob_of(blob)
             .err()
-            .expect("a full vector of 2^60 cells was accepted");
+            .expect("a full vector of 2^31 cells was accepted");
         assert!(err.contains("shorter than its counts"), "{err}");
     }
 
