@@ -347,9 +347,21 @@ class testBidirectionalTraversals(FlowTestsBase):
                              [[1, 2], [1, 4], [2, 1], [2, 3], [2, 5], [3, 2],
                               [3, 4], [4, 1], [4, 3], [4, 5], [5, 2], [5, 4]])
 
-        # a start node whose first hop spans several batches
+        # a start node whose first hop spans several batches (more than the
+        # runtime's 1024-row batch)
         g = self.db.select_graph("bidir_chain_wide")
         g.query("""CREATE (u:U {id:1}), (v:U {id:2}) WITH u, v UNWIND range(1,3000) AS i
                    CREATE (u)-[:R]->(:L {id:i})<-[:R]-(v)""")
         result = g.query("MATCH (a:U)-[]-()-[]-(b:U) RETURN a.id, b.id, count(*) ORDER BY a.id, b.id")
         self.env.assertEqual(result.result_set, [[1, 1, 1], [1, 2, 1], [2, 1, 1], [2, 2, 1]])
+
+    def test16_chained_anonymous_undirected_hops_from_far_end(self):
+        # the planner starts at the selective label at the far end and
+        # transposes the hops; two distinct 2-paths from it to the same node
+        # still yield one row, like the untransposed chain
+        g = self.db.select_graph("bidir_chain_transposed")
+        g.query("""CREATE (a:N {id:1}), (b1:N {id:2}), (b2:N {id:5}), (c:Z {id:3}),
+                   (a)-[:R]->(b1), (a)-[:R]->(b2), (b1)-[:R]->(c), (b2)-[:R]->(c)""")
+        for q in ("MATCH (a:N)-[]-()-[]-(c:Z) RETURN a.id, c.id",
+                  "MATCH (c:Z)-[]-()-[]-(a:N) RETURN a.id, c.id"):
+            self.env.assertEqual(g.query(q).result_set, [[1, 3]])

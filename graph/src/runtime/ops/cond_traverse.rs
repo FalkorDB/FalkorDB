@@ -126,9 +126,10 @@ type Lineage = (u64, u64);
 /// Seen `(record, source, destination)` keys of a bidirectional-chain dedup.
 ///
 /// The rows of one record reach the dedup contiguously, so keys of earlier
-/// records are dead once a new one starts; the set is cleared at a record
-/// change once it has grown, bounding its memory without paying a clear per
-/// record.
+/// records are never queried again once a new one starts. They are kept until
+/// the set has grown and then cleared at a record change, which bounds its
+/// memory without paying a clear per record. Correctness does not depend on
+/// the clearing: the record is part of every key.
 #[derive(Default)]
 struct BidirDedup {
     record: u64,
@@ -321,7 +322,9 @@ impl<'a> CondTraverseOp<'a> {
                     && intermediate_is_anon
                     && !child_ct.emit_relationship
                     && child_ct.relationship_pattern.bidirectional
-                    && child_ct.relationship_pattern.to.alias.id == rp.from.alias.id =>
+                    && child_ct.relationship_pattern.to.alias.id == rp.from.alias.id
+                    && child_ct.relationship_pattern.to.alias.scope_id
+                        == rp.from.alias.scope_id =>
             {
                 child_ct.track_lineage = true;
                 child_ct.emitter.record_parent_rows();
@@ -1079,6 +1082,10 @@ impl<'a> CondTraverseOp<'a> {
         parent_rows: &[usize],
     ) {
         out_lineage.clear();
+        debug_assert!(
+            parent_rows.len() >= out.len(),
+            "lineage tracking needs the emitter to record parent rows"
+        );
         if let Some(in_lineage) = forward {
             let in_lineage = in_lineage.borrow();
             out_lineage.extend(parent_rows.iter().map(|&r| in_lineage[r]));
