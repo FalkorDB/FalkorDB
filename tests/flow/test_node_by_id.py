@@ -286,6 +286,12 @@ class testNodeByIDFlow(FlowTestsBase):
         self.env.assertEqual(res.result_set, [[["Q"], {}]])
         g.delete()
 
+        # Nodes created earlier in the same query are still found by an id seek.
+        g = self.db.select_graph("node_by_id_same_query")
+        res = g.query("UNWIND range(0, 2) AS i CREATE (:A) WITH i MATCH (n) WHERE id(n) = i RETURN i, id(n)")
+        self.env.assertEqual(res.result_set, [[0, 0], [1, 1], [2, 2]])
+        g.delete()
+
         # A non-integer bound is still rejected when no node was ever created.
         g = self.db.select_graph("node_by_id_empty_type")
         try:
