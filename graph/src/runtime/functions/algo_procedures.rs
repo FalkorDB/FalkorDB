@@ -1104,7 +1104,12 @@ unsafe fn bfs_levels_push_pull(
         return fail(v, q, e);
     }
     let sparsity = GxB_Option_Field::GxB_SPARSITY_CONTROL as i32;
-    GxB_Vector_Option_set_INT32(v, sparsity, GxB_BITMAP as i32);
+    if let Err(e) = check(
+        GxB_Vector_Option_set_INT32(v, sparsity, GxB_BITMAP as i32),
+        "level sparsity",
+    ) {
+        return fail(v, q, e);
+    }
     // An out-of-range source fails here, as it fails LAGraph
     // (GrB_INVALID_INDEX), rather than yielding an empty traversal.
     if let Err(e) = check(GrB_Vector_setElement_INT64(v, 0, src), "source")
@@ -1136,18 +1141,25 @@ unsafe fn bfs_levels_push_pull(
         } else if nq < last_nq && (nq as f64) < n as f64 / beta {
             push = true;
         }
+        let want = if push { GxB_SPARSE } else { GxB_BITMAP };
+        if let Err(e) = check(
+            GxB_Vector_Option_set_INT32(q, sparsity, want as i32),
+            "frontier sparsity",
+        ) {
+            return fail(v, q, e);
+        }
         let info = if push {
-            GxB_Vector_Option_set_INT32(q, sparsity, GxB_SPARSE as i32);
             GrB_vxm(q, v, null_mut(), GxB_ANY_PAIR_BOOL, q, a, GrB_DESC_RSC)
         } else {
-            GxB_Vector_Option_set_INT32(q, sparsity, GxB_BITMAP as i32);
             GrB_mxv(q, v, null_mut(), GxB_ANY_PAIR_BOOL, at, q, GrB_DESC_RSC)
         };
         if let Err(e) = check(info, "step") {
             return fail(v, q, e);
         }
         last_nq = nq;
-        GrB_Vector_nvals(&raw mut nq, q);
+        if let Err(e) = check(GrB_Vector_nvals(&raw mut nq, q), "frontier nvals") {
+            return fail(v, q, e);
+        }
         if nq == 0 {
             break;
         }
@@ -1221,10 +1233,13 @@ fn register_bfs(funcs: &mut Functions) {
             // rather than a sparse vector re-sorted on every level, at the cost
             // of one O(n) allocation. Estimated as avg_degree^max_level
             // reaching n/64; an unbounded BFS is assumed to.
-            let many_expected = max_depth < 0 || {
-                let avg_degree = nvals as f64 / n.max(1) as f64;
-                avg_degree.powi(max_depth.min(64) as i32) >= n as f64 / 64.0
-            };
+            // An empty adjacency matrix reaches nothing, so it never
+            // qualifies: the sparse path avoids the O(n) bitmap.
+            let many_expected = nvals > 0
+                && (max_depth < 0 || {
+                    let avg_degree = nvals as f64 / n.max(1) as f64;
+                    avg_degree.powi(max_depth.min(64) as i32) >= n as f64 / 64.0
+                });
 
             // Parent tracking is only needed to reconstruct edges; skip it
             // (like the C implementation passes pPI = NULL) when the edges

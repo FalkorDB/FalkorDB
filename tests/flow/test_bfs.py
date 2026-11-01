@@ -271,3 +271,34 @@ class testBFSEdgeChanges(FlowTestsBase):
         g.query("MATCH (a:N {v: 1}), (b:N {v: 3}) CREATE (a)-[:E]->(b)")
         self.env.assertEqual(self.reach(), [1, 3, 4])
         self.env.assertEqual(self.reach(2), [1, 3])
+
+    def test02_push_pull_push_transitions(self):
+        # A wide layer (300 nodes) between a single source and a narrow tail
+        # drives the direction-optimizing BFS push -> pull -> push, with
+        # converging edges (every mid node reaches the hub) and a cycle back
+        # to the source. A reload leaves the transpose clean so pull is used.
+        g = self.db.select_graph("proc_bfs_push_pull")
+        g.query("UNWIND range(0, 331) AS i CREATE (:N {v: i})")
+        g.query("""MATCH (s:N {v: 0}), (m:N) WHERE 1 <= m.v <= 300
+                   CREATE (s)-[:E]->(m)""")
+        g.query("""MATCH (m:N), (h:N {v: 301}) WHERE 1 <= m.v <= 300
+                   CREATE (m)-[:E]->(h)""")
+        g.query("""UNWIND range(301, 330) AS i
+                   MATCH (a:N {v: i}), (b:N {v: i + 1})
+                   CREATE (a)-[:E]->(b)""")
+        g.query("MATCH (a:N {v: 331}), (b:N {v: 0}) CREATE (a)-[:E]->(b)")
+        self.env.dumpAndReload()
+
+        def reach(depth, edges=False):
+            y = "nodes, edges" if edges else "nodes"
+            q = f"""MATCH (s:N {{v: 0}})
+                    CALL algo.BFS(s, {depth}, 'E') YIELD {y}
+                    RETURN [n IN nodes | n.v]"""
+            return sorted(g.query(q).result_set[0][0])
+
+        everything = list(range(1, 332))
+        for edges in (False, True):
+            self.env.assertEqual(reach(-1, edges), everything)
+            self.env.assertEqual(reach(4, edges), list(range(1, 304)))
+            self.env.assertEqual(reach(2, edges), list(range(1, 302)))
+            self.env.assertEqual(reach(1, edges), list(range(1, 301)))
