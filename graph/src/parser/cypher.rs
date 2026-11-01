@@ -1450,7 +1450,7 @@ impl<'a> Parser<'a> {
                                     relationship.max_hops,
                                 );
                                 new_rel.all_shortest_paths = if !relationship.bidirectional
-                                    && relationship.from.alias != left_alias
+                                    && (relationship.from.alias != left_alias || is_incoming)
                                 {
                                     AllShortestPaths::Reversed
                                 } else {
