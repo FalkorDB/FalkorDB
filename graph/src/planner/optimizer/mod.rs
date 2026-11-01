@@ -114,7 +114,7 @@ pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet
     let mut own = Vec::new();
     while let Some(node) = stack.pop() {
         match node.data() {
-            IR::Project { exprs, copies } => {
+            IR::Project { exprs, copies, .. } => {
                 vars.extend(exprs.iter().map(|(v, _)| v.id));
                 vars.extend(copies.iter().map(|(v, _)| v.id));
             }
