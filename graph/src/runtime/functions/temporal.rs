@@ -68,6 +68,7 @@ fn map_components<'a>(
     map: &'a OrderMap<Arc<String>, Value>,
     keys: &[&str],
     extra: &[&str],
+    numeric: bool,
 ) -> Result<Components<'a>, String> {
     let mut out: Components = [None; MAX_SLOTS];
     let mut unknown = false;
@@ -93,8 +94,18 @@ fn map_components<'a>(
         }
     }
     if unknown {
-        // A bad value is reported before the unknown key, as in C.
-        int_components(&out[..keys.len()], keys)?;
+        // A bad value is reported before the unknown key, as in C: an integer
+        // for a date or time component, any number for a duration's.
+        for (v, key) in out.iter().zip(keys) {
+            match v {
+                None | Some(Value::Int(_)) => {}
+                Some(Value::Float(_)) if numeric => {}
+                Some(_) if numeric => return Err(format!("{key} must be a numerical value")),
+                Some(v) => {
+                    int_component(v, key)?;
+                }
+            }
+        }
         return Err(UNKNOWN_KEY.to_string());
     }
     Ok(out)
@@ -627,7 +638,7 @@ pub const fn decompose_duration(dur_secs: i64) -> Result<(i32, i32, i64), String
 pub fn date_pure(args: &[Value]) -> Result<Value, String> {
     match args.first() {
         Some(Value::Map(map)) => {
-            let d = date_from_values(&map_components(map, &DATE_SLOTS, &[])?)?;
+            let d = date_from_values(&map_components(map, &DATE_SLOTS, &[], false)?)?;
             let ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
             Ok(Value::Date(ts))
         }
@@ -644,7 +655,12 @@ pub fn date_pure(args: &[Value]) -> Result<Value, String> {
 pub fn localtime_pure(args: &[Value]) -> Result<Value, String> {
     match args.first() {
         Some(Value::Map(map)) => {
-            let t = time_from_values(&map_components(map, &LOCALTIME_SLOTS, SUBSECOND_KEYS)?)?;
+            let t = time_from_values(&map_components(
+                map,
+                &LOCALTIME_SLOTS,
+                SUBSECOND_KEYS,
+                false,
+            )?)?;
             let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
             let dt = NaiveDateTime::new(epoch, t);
             Ok(Value::Time(dt.and_utc().timestamp()))
@@ -663,7 +679,7 @@ pub fn localtime_pure(args: &[Value]) -> Result<Value, String> {
 pub fn localdatetime_pure(args: &[Value]) -> Result<Value, String> {
     match args.first() {
         Some(Value::Map(map)) => {
-            let vals = map_components(map, &LOCALDATETIME_SLOTS, SUBSECOND_KEYS)?;
+            let vals = map_components(map, &LOCALDATETIME_SLOTS, SUBSECOND_KEYS, false)?;
             let d = date_from_values(&vals)?;
             let t = time_from_values(&vals[7..])?;
             let dt = NaiveDateTime::new(d, t);
@@ -680,7 +696,9 @@ pub fn localdatetime_pure(args: &[Value]) -> Result<Value, String> {
 
 pub fn duration_pure(args: &[Value]) -> Result<Value, String> {
     match args.first() {
-        Some(Value::Map(map)) => duration_from_values(&map_components(map, &DURATION_SLOTS, &[])?),
+        Some(Value::Map(map)) => {
+            duration_from_values(&map_components(map, &DURATION_SLOTS, &[], true)?)
+        }
         Some(Value::String(s)) => {
             let (years, months, weeks, days, hours, minutes, seconds) = parse_duration_string(s)?;
             let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
