@@ -772,7 +772,9 @@ fn shift_months(
     let new_month_raw = i64::from(m) + i64::from(months);
     let adj_year = i64::from(y) + i64::from(years) + (new_month_raw - 1).div_euclid(12);
     let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
-    if adj_year.abs() > i64::from(MAX_DATE_YEAR) {
+    // One year of slack: the days applied afterwards can still bring the final
+    // date back inside the range; `check_date_range` has the last word.
+    if adj_year.abs() > i64::from(MAX_DATE_YEAR) + 1 {
         return Err("Date out of range".to_string());
     }
     let adj_year = adj_year as i32;

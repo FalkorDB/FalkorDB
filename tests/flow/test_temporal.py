@@ -437,6 +437,17 @@ class testTemporalLocalDateTime(FlowTestsBase):
             "RETURN toString(date('1970-01-01') + duration({days: 783831531156}))")
         self.env.assertEqual(res.result_set[0][0], '2146059811-06-15')
 
+        # the endpoints: an intermediate year just past the range is fine when
+        # the days that follow bring the date back inside it
+        for expr, expected in [
+            ("date('1970-01-01') + duration({days: 784350846290}) - duration({days: -1})",
+             '2147481647-12-31'),
+            ("date('1970-01-01') + duration({days: -784352284981}) + duration({days: -1})",
+             '-2147481647-01-01'),
+        ]:
+            res = self.graph.query(f"RETURN toString({expr})")
+            self.env.assertEqual(res.result_set[0][0], expected)
+
         # beyond what the year can hold is an error, not a wrapped date --
         # also when it is reached by repeated addition or subtraction
         for expr in [
@@ -444,6 +455,8 @@ class testTemporalLocalDateTime(FlowTestsBase):
             "date('1970-01-01') + duration({days: 438291000000}) + duration({days: 438291000000})",
             "date('1970-01-01') - duration({days: 438291000000}) - duration({days: 438291000000})",
             "date('2026-01-01') + duration({days: 783000000000}) + duration({years: 10000000})",
+            "date('1970-01-01') + duration({days: 784350846291}) + duration({days: 1})",
+            "date('1970-01-01') + duration({days: -784352284982}) + duration({days: -1})",
         ]:
             try:
                 self.graph.query(f"RETURN toString({expr})")
