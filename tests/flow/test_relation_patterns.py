@@ -427,3 +427,21 @@ class testRelationPattern(FlowTestsBase):
                                   ("(a:A)-[]->()<-[]-(c)", 6)]:
             res = g.query(f"MATCH {pattern} RETURN count(*)")
             self.env.assertEqual(res.result_set, [[expected]])
+
+    # Uniqueness among same-type anonymous edges holds on every path: batched
+    # (compared by node), per-row, and with parallel edges (compared by id).
+    def test17_converging_edges_are_distinct(self):
+        g = self.db.select_graph("converging_distinct")
+        g.query("CREATE (a:A)-[:R]->(m:M)<-[:R]-(c:A), (a)-[:R]->(a), (m)-[:R]->(m)")
+        for query, expected in [
+            ("MATCH (a)-[:R]->(m)<-[:R]-(c) RETURN count(*)", 6),
+            ("MATCH (a)-[r1:R]->(m)<-[r2:R]-(c) RETURN count(*)", 6),
+            ("MATCH (a)-[:R]->(m)-[:R]->(c) RETURN count(*)", 3),
+            ("MATCH (a)-[:R]->(m)<-[:R]-(c)-[:R]->(d) RETURN count(*)", 2),
+            ("MATCH (a)<-[:R]-(m)-[:R]->(c) RETURN count(*)", 2),
+        ]:
+            self.env.assertEqual(g.query(query).result_set, [[expected]])
+        # a parallel edge makes the same node pair two different edges
+        g.query("MATCH (a:A)-[:R]->(m:M) CREATE (a)-[:R]->(m)")
+        res = g.query("MATCH (a)-[:R]->(m)<-[:R]-(c) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[20]])
