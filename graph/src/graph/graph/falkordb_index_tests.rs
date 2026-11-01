@@ -1961,6 +1961,71 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
     }
 }
 
+/// A final indexer batch, which reaches the end of its column and flips it `Ready`, and a writer
+/// that re-values a node the batch read and creates one past the batch's last, commit in either
+/// order. Writer first: the batch catches up on the writer's changes. Batch first: the writer
+/// rebases onto the `Ready` column as it escalates. Either way the column is `Ready` and holds
+/// exactly what the final graph does, the new node included.
+#[test]
+fn a_writer_creating_past_a_final_batch_is_indexed_in_either_commit_order() {
+    for writer_first in [true, false] {
+        let what = if writer_first {
+            "writer, then batch"
+        } else {
+            "batch, then writer"
+        };
+        let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let fork = mvcc.fork();
+        set_attr(&mut fork.borrow_mut(), ids[1], &attr, Value::Int(25));
+        let created = add_person(&mut fork.borrow_mut(), &attr, 50);
+        assert!(ids.iter().all(|&id| id < created), "{what}: past the batch");
+        let (prepared, batch) = prepare(&mvcc, &id, ids.len() + 1);
+        assert_eq!(
+            cursor(&prepared.borrow(), EntityType::Node, &label, &attr),
+            None,
+            "{what}: the batch is the last"
+        );
+
+        if writer_first {
+            assert_eq!(escalate(&mvcc, &fork), Ok(()), "{what}");
+            mvcc.commit(fork).expect("the write commits");
+            assert_eq!(
+                mvcc.commit_indexer_batch(&prepared, &batch),
+                Ok(IndexerCommit::CatchUp(CatchUp::Refresh)),
+                "{what}"
+            );
+        } else {
+            assert_eq!(
+                mvcc.commit_indexer_batch(&prepared, &batch),
+                Ok(IndexerCommit::Same),
+                "{what}"
+            );
+            assert_eq!(escalate(&mvcc, &fork), Ok(()), "{what}");
+            mvcc.commit(fork).expect("the write commits");
+        }
+
+        let published = mvcc.read();
+        let g = published.borrow();
+        assert_eq!(
+            cursor(&g, EntityType::Node, &label, &attr),
+            None,
+            "{what}: Ready"
+        );
+        assert_eq!(
+            range_scan(&g, &label, &attr, 50, 50),
+            vec![created],
+            "{what}: the new node"
+        );
+        let values = [10, 20, 25, 30, 40, 50];
+        assert_eq!(
+            contents(&g, EntityType::Node, &label, &attr, &values),
+            one_pass(&g, EntityType::Node, &label, &attr, &values),
+            "{what}"
+        );
+    }
+}
+
 /// Two indexer batches read from one version on the same column: the first publishes, the second
 /// finds the first in its way and publishes nothing. One chain of batches per column rules this
 /// out; the commit says so, for the builder to report.
