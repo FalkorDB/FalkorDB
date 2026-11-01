@@ -292,15 +292,15 @@ class testEffects_02_ValueTypes(_EffectsBase):
         # many rows (one record, many values), canonical and signed alike.
         self.query_and_sync("""CREATE (a:DurN {v: duration({days: -1})})-[:DurE {v: duration({months: 1, days: -1})}]->(b:DurN {v: duration({hours: 5})})""")
         self.query_and_sync("""MATCH (n:DurN) SET n.w = duration({months: -1, days: 1})""")
-        self.query_and_sync("""MATCH ()-[e:DurE]->() SET e.v = duration({seconds: -2000000000})""")
+        self.query_and_sync("""MATCH ()-[e:DurE]->() SET e.w = duration({seconds: -2000000000})""")
         self.query_and_sync("""UNWIND range(1, 200) AS i CREATE (:DurBatch {i: i, d: duration({days: i - 100, seconds: i * 7 - 300})})""")
         self.assert_effect_emitted()
         self.assert_agree(
             "MATCH (n:DurN) RETURN toString(n.v), toString(n.w) ORDER BY toString(n.v)",
             [['P-1D', 'P-1M1D'], ['PT5H', 'P-1M1D']])
         self.assert_agree(
-            "MATCH ()-[e:DurE]->() RETURN toString(e.v)",
-            [["PT-555555H-33M-20S"]])
+            "MATCH ()-[e:DurE]->() RETURN toString(e.v), toString(e.w)",
+            [["P1M-1D", "PT-555555H-33M-20S"]])
         m, r = self.probe("MATCH (n:DurBatch) RETURN count(n), toString(min(n.d)), toString(max(n.d))")
         self.env.assertEqual(m[0][0], 200)
         self.env.assertEqual(r, m)

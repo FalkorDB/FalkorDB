@@ -517,12 +517,9 @@ impl Dur {
         }
         // The components must also be addable to a timestamp, and their legacy
         // epoch offset (the calendar offset of the months plus days and seconds)
-        // must fit an `i64`, so that form never wraps. Both are signed sums:
-        // opposite-sign components may cancel.
+        // must fit an `i64`, so that form never wraps. It is checked as one signed
+        // sum, not part by part: opposite-sign components may cancel.
         let offset = i128::from(days) * 86400 + i128::from(seconds);
-        if offset.unsigned_abs() > i64::MAX as u128 {
-            return Err(err());
-        }
         let year = 1970 + months.div_euclid(12) as i32;
         let month_offset =
             i128::from(days_from_civil(year, (months.rem_euclid(12) + 1) as u32, 1)) * 86400;
@@ -1481,6 +1478,15 @@ mod duration_tests {
         // nothing cancels: each is in range on its own
         assert!((Value::Datetime(0) + v(12_000_000, 0, 0)).is_ok());
         assert!((Value::Datetime(0) + v(i64::from(i32::MIN), 0, 0)).is_ok());
+    }
+
+    /// The legacy offset is checked as one sum: a day-and-second offset past
+    /// `i64::MAX` is fine when a negative month brings the whole back in.
+    #[test]
+    fn a_negative_month_may_offset_an_oversized_day_and_second_offset() {
+        let d = dur(-1, 1, i64::MAX);
+        assert_eq!(d.components(), (-1, 1, i64::MAX));
+        assert!(Dur::new(0, 1, i64::MAX).is_err(), "nothing brings it back");
     }
 
     #[test]

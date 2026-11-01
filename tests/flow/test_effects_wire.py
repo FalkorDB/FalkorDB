@@ -12,6 +12,7 @@ from constraint_utils import (create_mandatory_node_constraint, create_unique_no
 from graph_utils import graph_eq
 from index_utils import (create_node_range_index, wait_for_indices_to_sync)
 
+import zlib
 from effects_common import _EffectsBase, zstd_raw_frame
 
 
@@ -55,9 +56,9 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
         return bytes([version, flags]) + body
 
     @staticmethod
-    def _compressed(plain_len, checksum, frame, comp_len=None):
-        """A payload that *claims* to be a compressed v3 frame:
-        `u8 4 · u8 FLAG_COMPRESSED · u32 plain_len · u32 comp_len · u32 crc32 · frame`.
+    def _compressed(plain_len, checksum, frame, comp_len=None, version=4):
+        """A payload that *claims* to be a compressed frame, v4 unless said otherwise:
+        `u8 version · u8 FLAG_COMPRESSED · u32 plain_len · u32 comp_len · u32 crc32 · frame`.
 
         `comp_len` defaults to the frame's real length, so a caller that wants
         to corrupt one field corrupts only that one. Lying about it instead is
@@ -65,7 +66,7 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
         bytes and rejects anything after them."""
         if comp_len is None:
             comp_len = len(frame)
-        return (b"\x04\x01"
+        return (bytes([version, 1])
                 + plain_len.to_bytes(4, "little")
                 + comp_len.to_bytes(4, "little")
                 + checksum.to_bytes(4, "little")
@@ -256,6 +257,29 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
 
         self._still_healthy(full_before)
         self.assert_agree("MATCH (n:U) RETURN count(n), sum(n.v)", [[2, 3]])
+
+    def test06b_a_valid_compressed_frame_applies_in_both_readable_versions(self):
+        # What the refusals above are the negative of: a well-formed compressed
+        # payload is applied, as v4 and as v3, the version an older primary
+        # still sends. Without the v3 half, a decompression regression in the
+        # legacy path would pass every test here.
+        self.set_effects_config()
+        key = "effects_unreadable_compressed"
+        g = Graph(self.master, key)
+        g.query("CREATE (:Anchor)")
+        self.wait_for_replica_offset()
+        for version, label_id in ((3, 1), (4, 2)):
+            plain = self._add_schema_record(label_id, f"Packed{version}")
+            frame = zstd_raw_frame(plain)
+            crc = zlib.crc32(plain)
+            self.env.assertEqual(
+                self.master.execute_command(
+                    "GRAPH.EFFECT", key,
+                    self._compressed(len(plain), crc, frame, version=version)),
+                "OK")
+        self.env.assertEqual(
+            g.ro_query("CALL db.labels() YIELD label RETURN label ORDER BY label"
+                       ).result_set, [['Anchor'], ['Packed3'], ['Packed4']])
 
     def test07_a_client_cannot_send_an_effect_to_a_replica_at_all(self):
         # The whole reason `is_replayed` can afford to be lenient: reaching a

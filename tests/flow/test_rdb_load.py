@@ -352,7 +352,7 @@ class testRdbLoad():
                 self.conn.restore("future", 0, with_encver(dumped, encver))
                 self.env.assertTrue(False, message=f"an encoding version {encver} payload restored")
             except redis.exceptions.ResponseError:
-                pass
+                pass  # expected: a newer encoding version is refused, never read as this layout
             self.env.assertEqual(self.conn.exists("future"), 0)
             self.env.assertTrue(self.conn.ping())
         # Control: the same bytes at the version they were written at restore.

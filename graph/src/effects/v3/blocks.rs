@@ -1,9 +1,12 @@
 //! The blocks a record composes from, other than its ids.
 //!
-//! Each is a type with an `EffectEncode<4>` / `EffectDecode<3>` impl rather than
-//! a pair of free functions, so the wire version is stated on the block itself.
-//! A v4 that shares a block re-implements it for 4; one that does not, cannot
-//! reach this one by accident.
+//! Each is a type with an `EffectEncode<4>` / `EffectDecode<VERSION>` impl rather
+//! than a pair of free functions, so the wire version is stated on the block
+//! itself. Writing is v4 only. Reading is generic over the versions this build
+//! reads, because none of these blocks changed between 3 and 4: a copy per
+//! version would be the same bytes twice. `AttrValues` is bounded by what
+//! `Value` can decode, which is what fixes the set of versions that exist.
+//! A later version that changes a block gives it its own `EffectDecode` impl.
 //!
 //! The types are thin wrappers, generic over their storage so writing borrows
 //! and reading owns — the same shape `AttrRef<S>` already uses in `records`.

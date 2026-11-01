@@ -1,9 +1,10 @@
 //! v3 and v4 as a [`EffectsFormat`]: what a whole payload is, sent and applied.
 //!
 //! The version-specific half of `effects::EffectsPayload`. It lives here rather
-//! than beside the trait so that adding v4 means adding a directory and one arm
-//! to the dispatch, and touching nothing else — the trait's module stays free
-//! of any single version's rules.
+//! than beside the trait so the trait's module stays free of any single
+//! version's rules. This impl is the version this build writes (4); it also
+//! applies a v3 payload, since the two differ only in how `T_DURATION` is read
+//! and the header names which.
 
 use super::emit::{build_constraint_buffer, build_index_buffer, for_each_record};
 use super::{
