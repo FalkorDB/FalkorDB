@@ -294,23 +294,21 @@ class testOrderBy(FlowTestsBase):
         bind their own names (#2925)"""
         g = self.db.select_graph("order_by_projection_repeat")
         try:
-            g.query("UNWIND [2, 3, 1] AS i CREATE (:N {i: i})")
-            desc = [[3], [2], [1]]
-            for q in [
+            # not monotone in i, so a wrongly rewritten key changes the order
+            g.query("UNWIND [2, -3, 1] AS i CREATE (:N {i: i})")
+            for q, expected in [
                 # the whole expression, the expression inside a larger one
-                "MATCH (n:N) RETURN n.i AS x ORDER BY n.i DESC",
-                "MATCH (n:N) RETURN n.i + 1 AS x ORDER BY n.i + 1 DESC",
-                "MATCH (n:N) RETURN n.i AS x ORDER BY n.i * 2 + 1 DESC",
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY n.i DESC", [[2], [1], [-3]]),
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY n.i * n.i DESC", [[-3], [2], [1]]),
+                ("MATCH (n:N) RETURN n.i * n.i AS x ORDER BY n.i * n.i + 1 DESC", [[9], [4], [1]]),
                 # the comprehension variable shadows the projected alias `x`
                 # in the body, but not in the iterable
-                "MATCH (n:N) RETURN n.i AS x ORDER BY [x IN [1] | n.i][0] DESC",
-                "MATCH (n:N) RETURN n.i AS x ORDER BY reduce(x = 0, y IN [1] | n.i) DESC",
-                "MATCH (n:N) RETURN n.i AS x ORDER BY [y IN [n.i] | y][0] DESC",
-                "MATCH (n:N) RETURN n.i AS x ORDER BY head([x IN [n.i] | x]) DESC",
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY [x IN [1] | n.i * n.i][0] DESC", [[-3], [2], [1]]),
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY reduce(x = 0, y IN [1] | n.i * n.i) DESC", [[-3], [2], [1]]),
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY [y IN [n.i * n.i] | y][0] DESC", [[-3], [2], [1]]),
+                ("MATCH (n:N) RETURN n.i AS x ORDER BY head([x IN [n.i * n.i] | x]) DESC", [[-3], [2], [1]]),
             ]:
-                res = g.query(q).result_set
-                expected = [[r[0] + 1] for r in desc] if "+ 1 AS x" in q else desc
-                self.env.assertEqual(res, expected, message=q)
+                self.env.assertEqual(g.query(q).result_set, expected, message=q)
 
             res = g.query("MATCH (n:N) RETURN count(n) AS c ORDER BY count(n)").result_set
             self.env.assertEqual(res, [[3]])
