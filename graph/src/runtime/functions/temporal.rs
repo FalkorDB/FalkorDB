@@ -384,11 +384,8 @@ fn parse_datetime_string(s: &str) -> Result<NaiveDateTime, String> {
     Ok(NaiveDateTime::new(date, time))
 }
 
-/// Parse ISO 8601 duration string: P[nY][nM][nD][T[nH][nM][nS]]
-///
-/// `Ok(None)` means the string is malformed (a trailing number with no unit);
-/// `Err` is an overflow or an unsupported component.
-fn parse_duration_string(s: &str) -> Result<Option<(i64, i64, i64, i64, i64, i64, i64)>, String> {
+// Parse ISO 8601 duration string: P[nY][nM][nD][T[nH][nM][nS]]
+fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64), String> {
     let s = s
         .strip_prefix('P')
         .ok_or_else(|| format!("Duration string must start with 'P': {s}"))?;
@@ -435,7 +432,7 @@ fn parse_duration_string(s: &str) -> Result<Option<(i64, i64, i64, i64, i64, i64
 
     // A trailing number with no unit (`P5`, `P1Y5`, `P-`) is not a duration.
     if !num_buf.is_empty() {
-        return Ok(None);
+        return Err(format!("Duration component has no unit: {num_buf}"));
     }
 
     // Parse time part
@@ -461,11 +458,11 @@ fn parse_duration_string(s: &str) -> Result<Option<(i64, i64, i64, i64, i64, i64
             }
         }
         if !num_buf.is_empty() {
-            return Ok(None);
+            return Err(format!("Duration component has no unit: {num_buf}"));
         }
     }
 
-    Ok(Some((years, months, 0, days, hours, minutes, seconds)))
+    Ok((years, months, 0, days, hours, minutes, seconds))
 }
 
 /// Days from 1970-01-01 to the given (year, month, day) — Howard Hinnant's civil-from-days.
@@ -630,12 +627,7 @@ pub fn duration_pure(args: &[Value]) -> Result<Value, String> {
             Ok(Value::Duration(ts))
         }
         Some(Value::String(s)) => {
-            // A malformed string (a number with no unit) is null, as in C.
-            let Some((years, months, weeks, days, hours, minutes, seconds)) =
-                parse_duration_string(s)?
-            else {
-                return Ok(Value::Null);
-            };
+            let (years, months, weeks, days, hours, minutes, seconds) = parse_duration_string(s)?;
             let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
             Ok(Value::Duration(ts))
         }
