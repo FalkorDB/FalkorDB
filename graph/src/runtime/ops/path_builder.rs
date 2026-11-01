@@ -80,6 +80,14 @@ impl<'a> Iterator for PathBuilderOp<'a> {
                             return Err(format!("Variable {} not found", var.as_str()));
                         }
                         let val = batch.value_at(var.id, row_idx).unwrap_or(Value::Null);
+                        // `p = (n)` over a variable that holds something other
+                        // than a node (null is filtered out by the planner).
+                        if path.vars.len() == 1 && !matches!(val, Value::Node(_) | Value::Null) {
+                            return Err(format!(
+                                "Type mismatch: expected Node but was {}",
+                                val.name()
+                            ));
+                        }
                         // Variable-length relationship: the VLT operator stores
                         // the result as a Path in alternating [Node, Rel, Node, ...]
                         // format. Incorporate it directly, skipping the leading

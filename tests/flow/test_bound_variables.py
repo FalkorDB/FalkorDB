@@ -167,6 +167,15 @@ class testBoundVariables(FlowTestsBase):
         self.env.assertEqual(res.result_set, [])
         g2.delete()
 
+        # a scalar is not a node: a type error, not a malformed path
+        for q in ["WITH 1 AS n MATCH p = (n) RETURN p",
+                  "WITH 1 AS n OPTIONAL MATCH p = (n) RETURN p"]:
+            try:
+                g.query(q)
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Type mismatch: expected Node but was Integer", str(e))
+
         # mixed bound and unbound components, no WITH in between
         res = g.query("MATCH (n:A) MATCH p = (n), (m:B) RETURN n.id, m.id, length(p)")
         self.env.assertEqual(res.result_set, [[1, 2, 0]])
