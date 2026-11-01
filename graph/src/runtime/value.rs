@@ -40,7 +40,7 @@ use thin_vec::{ThinVec, thin_vec};
 use crate::{
     graph::{
         graph::{LabelId, NodeId, RelationshipId},
-        graphblas::serialization::{Decode, Encode, Reader, Writer, si_type},
+        graphblas::serialization::{Decode, Encode, Reader, Writer, decode_capacity, si_type},
     },
     runtime::{
         functions::{
@@ -2203,7 +2203,7 @@ fn decode_value(
         }
         si_type::T_ARRAY => {
             let len = r.read_unsigned()?;
-            let mut items = ThinVec::with_capacity(len as usize);
+            let mut items = ThinVec::with_capacity(decode_capacity(len));
             for _ in 0..len {
                 items.push(decode_value(r, depth + 1)?);
             }
@@ -2223,6 +2223,11 @@ fn decode_value(
                 return Err("vector buffer too short".into());
             }
             let dim = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+            // dim comes from the buffer itself, so check it against the
+            // bytes that are actually there before reserving for it
+            if dim > (bytes.len() - 4) / 4 {
+                return Err(format!("vector dim {dim} exceeds its buffer"));
+            }
             let mut v = ThinVec::with_capacity(dim);
             for i in 0..dim {
                 let off = 4 + i * 4;
