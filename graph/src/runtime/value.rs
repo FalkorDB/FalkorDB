@@ -290,7 +290,7 @@ impl Value {
     pub fn format_datetime(timestamp_secs: i64) -> String {
         let days = timestamp_secs.div_euclid(86400);
         let secs = timestamp_secs.rem_euclid(86400) as u32;
-        let (y, m, d) = civil_from_days(days);
+        let (y, m, d) = civil_from_days_wide(days);
         let mut s = String::with_capacity(19);
         push_date(&mut s, y, m, d);
         let mut buf = [0u8; 9];
@@ -309,7 +309,7 @@ impl Value {
     #[must_use]
     pub fn format_date(timestamp_secs: i64) -> String {
         let days = timestamp_secs.div_euclid(86400);
-        let (y, m, d) = civil_from_days(days);
+        let (y, m, d) = civil_from_days_wide(days);
         let mut s = String::with_capacity(10);
         push_date(&mut s, y, m, d);
         s
@@ -819,8 +819,19 @@ pub const fn days_from_civil(
 }
 
 /// Howard Hinnant's `civil_from_days`: days since 1970-01-01 -> (y, m, d).
+///
+/// The year is cut to `i32`; use [`civil_from_days_wide`] for an arbitrary
+/// persisted timestamp.
 #[must_use]
 pub const fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    let (y, m, d) = civil_from_days_wide(z);
+    (y as i32, m, d)
+}
+
+/// [`civil_from_days`] with the year kept as `i64`, so every day number an
+/// `i64` of seconds can hold (year about +-2.9e11) keeps its real year.
+#[must_use]
+pub const fn civil_from_days_wide(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097); // [0, 146096]
@@ -831,14 +842,14 @@ pub const fn civil_from_days(z: i64) -> (i32, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
     let y = if m <= 2 { y + 1 } else { y };
-    (y as i32, m, d)
+    (y, m, d)
 }
 
 /// Append a date as "YYYY-MM-DD". Years outside 0..=9999 keep all their
 /// digits and a leading '-' when negative ("12345-01-01", "-0005-01-01").
 fn push_date(
     s: &mut String,
-    y: i32,
+    y: i64,
     m: u32,
     d: u32,
 ) {
@@ -2915,5 +2926,26 @@ mod nesting_tests {
             drop(back);
             drop(v);
         });
+    }
+}
+
+#[cfg(test)]
+mod date_format_tests {
+    use super::Value;
+
+    // A persisted timestamp is any i64 of seconds; its year (about 2.9e11 at
+    // the ends) must not be cut to an i32 on its way to the text.
+    #[test]
+    fn extreme_timestamps_keep_their_full_year() {
+        assert_eq!(Value::format_date(i64::MAX), "292277026596-12-04");
+        assert_eq!(
+            Value::format_datetime(i64::MAX),
+            "292277026596-12-04T15:30:07"
+        );
+        assert_eq!(Value::format_date(i64::MIN), "-292277022657-01-27");
+        assert_eq!(
+            Value::format_datetime(i64::MIN),
+            "-292277022657-01-27T08:29:52"
+        );
     }
 }
