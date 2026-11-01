@@ -222,10 +222,15 @@ class testEffects_01_Shapes(_EffectsBase):
         self.env.assertEqual(res.nodes_deleted, 1)
         self.wait_for_replica_offset()
 
-        # The primary kept exactly one node, on the recycled id 0.
+        # The primary kept exactly one node. It is on a fresh id, not the freed
+        # 0: a query never reissues an id it freed itself (#3164), because a
+        # row may still hold the old node. So the primary no longer emits the
+        # create/delete/create-of-one-id shape this test was written to hand
+        # the replica; the replica's handling of it stays covered by the id
+        # space unit tests, and what is checked here is that both sides agree.
         self.env.assertEqual(
             m.ro_query("MATCH (n) RETURN count(n), labels(n)[0], ID(n)").result_set,
-            [[1, "Reborn", 0]])
+            [[1, "Reborn", 1]])
         # And the replica must hold the same. Refusing the recreate discards the
         # whole payload, so the failure here is an empty graph, not a wrong one.
         self.env.assertEqual(
