@@ -2088,6 +2088,14 @@ def test_edge_read_in_another_union_branch_is_not_a_read():
         assert sorted(query(q).result_set) == sorted(alone + [[0], [1]])
 
 
+def test_edge_bound_by_a_union_branch_in_a_call_body_is_not_a_read():
+    query("CREATE (a:A {v: 0})-[:R]->(b:B {v: 0}) CREATE (a)-[:R]->(b)", write=True)
+    # The outer `r` is not imported by the body; the second branch binds its own.
+    q = ("MATCH (a:A)-[r:R]->(b) CALL { WITH a RETURN 1 AS x UNION ALL "
+         "MATCH (x:A)-[r:R]->(y) RETURN id(r) AS x } RETURN count(*)")
+    assert query(q).result_set == [[3]]
+
+
 def test_parallel_edges_deleted_inside_call_subquery():
     query("CREATE (a:A)-[:R]->(b:B) CREATE (a)-[:R]->(b)", write=True)
     res = query("MATCH (a:A)-[r:R]->(b) CALL { WITH r DELETE r }", write=True)

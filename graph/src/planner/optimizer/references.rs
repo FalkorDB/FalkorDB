@@ -213,6 +213,58 @@ fn row_reaches_siblings(
     }
 }
 
+/// Whether the operator binds the variable itself: a traverse's edge or path.
+fn ir_binds_variable(
+    ir: &IR,
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    let is_it = |v: &Variable| v.id == var_id && v.scope_id == scope_id;
+    match ir {
+        IR::CondTraverse { relationship, .. } | IR::ExpandInto { relationship, .. } => {
+            is_it(&relationship.alias)
+        }
+        IR::CondVarLenTraverse {
+            relationship,
+            path_var,
+            ..
+        } => is_it(&relationship.alias) || path_var.as_ref().is_some_and(is_it),
+        IR::AllShortestPaths(relationship) => is_it(&relationship.alias),
+        _ => false,
+    }
+}
+
+/// Whether any operator in the subtree rooted at `idx` reads the variable. The
+/// branches of a nested `Union` are independent plans that a fresh binder gives
+/// the same `(id, scope_id)` numbers, so a branch that binds the variable itself
+/// reads its own, not the outer one, and is skipped.
+fn subtree_reads_variable(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    // An explicit stack: plans nest as deep as the query's subqueries do.
+    let mut pending = vec![idx];
+    while let Some(idx) = pending.pop() {
+        let node = plan.node(idx);
+        if ir_references_variable(node.data(), var_id, scope_id) {
+            return true;
+        }
+        let is_union = matches!(node.data(), IR::Union);
+        for child in node.children() {
+            let own = is_union
+                && child
+                    .walk::<Bfs>()
+                    .any(|ir| ir_binds_variable(ir, var_id, scope_id));
+            if !own {
+                pending.push(child.idx());
+            }
+        }
+    }
+    false
+}
+
 /// True when an operator outside the subtree rooted at `idx` reads the
 /// variable `(var_id, scope_id)` that the operator at `idx` binds.
 ///
@@ -240,9 +292,7 @@ pub(super) fn variable_read_outside(
         if row_reaches_siblings(parent.data(), parent.child(0).idx() == cur.idx()) {
             for sibling in parent.children() {
                 if sibling.idx() != cur.idx()
-                    && sibling
-                        .walk::<Bfs>()
-                        .any(|ir| ir_references_variable(ir, var_id, scope_id))
+                    && subtree_reads_variable(plan, sibling.idx(), var_id, scope_id)
                 {
                     return true;
                 }

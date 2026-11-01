@@ -148,4 +148,26 @@ mod tests {
             vec![true, false]
         );
     }
+
+    /// The same, one level down: the `r` a nested `UNION` branch of a `CALL {}`
+    /// body binds for itself is not a read of the outer `r` the body never
+    /// imports.
+    #[test]
+    fn edge_bound_by_a_union_branch_in_a_call_body_is_not_a_read() {
+        assert_eq!(
+            emitted_edges(
+                "MATCH (a:A)-[r:R]->(b) CALL { WITH a RETURN 1 AS x UNION ALL MATCH (x:A)-[r:R]->(y) RETURN id(r) AS x } RETURN count(*)"
+            )
+            .first(),
+            Some(&false)
+        );
+        // The body that does import `r` still reads it.
+        assert_eq!(
+            emitted_edges(
+                "MATCH (a:A)-[r:R]->(b) CALL { WITH r RETURN id(r) AS x UNION ALL MATCH (x:A)-[r2:R]->(y) RETURN id(r2) AS x } RETURN count(*)"
+            )
+            .first(),
+            Some(&true)
+        );
+    }
 }
