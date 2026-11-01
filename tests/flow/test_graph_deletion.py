@@ -1027,15 +1027,20 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEqual(res.relationships_created, 1)
         self.env.assertEqual(res.relationships_deleted, 1)
 
-        # mixed with a committed edge deleted and a created edge kept
+        # mixed with a committed edge deleted and a created edge kept. The
+        # degrees are computed in SET, before the query commits, so they read
+        # the pending state: committed-edge subtraction, the surviving pending
+        # edge's addition, and the created-then-deleted edge left out.
         self.graph.delete()
         self.graph.query("CREATE (:A)-[:R]->(:B)")
         res = self.graph.query("""MATCH (a:A)-[old:R]->(b:B)
                                   CREATE (a)-[gone:R]->(b), (a)-[kept:S]->(b)
                                   DELETE old, gone
-                                  RETURN outdegree(a), indegree(b),
-                                         outdegree(a, 'R'), indegree(b, 'S')""")
-        self.env.assertEqual(res.result_set, [[1, 1, 0, 1]])
+                                  SET a.o = outdegree(a), b.i = indegree(b),
+                                      a.r = outdegree(a, 'R'), b.s = indegree(b, 'S'),
+                                      a.rs = outdegree(a, 'R', 'S')
+                                  RETURN a.o, b.i, a.r, b.s, a.rs""")
+        self.env.assertEqual(res.result_set, [[1, 1, 0, 1, 1]])
 
         res = self.graph.query("MATCH (a:A) RETURN outdegree(a), outdegree(a, 'S')")
         self.env.assertEqual(res.result_set, [[1, 1]])

@@ -1135,7 +1135,7 @@ impl Pending {
 
     /// Count pending-created relationships whose destination is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
-    /// An edge created and deleted in this query is not counted, here or in
+    /// An edge created and deleted since the last commit is not counted, here or in
     /// [`Self::pending_deleted_indegree`].
     #[must_use]
     pub fn pending_indegree(
@@ -1161,7 +1161,7 @@ impl Pending {
 
     /// Count pending-created relationships whose source is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
-    /// An edge created and deleted in this query is not counted, here or in
+    /// An edge created and deleted since the last commit is not counted, here or in
     /// [`Self::pending_deleted_outdegree`].
     #[must_use]
     pub fn pending_outdegree(
@@ -1187,8 +1187,8 @@ impl Pending {
 
     /// Count pending-deleted relationships whose destination is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Only committed edges are counted: an edge created in this query has no
-    /// endpoints in the graph yet, and is already left out of
+    /// Only committed edges are counted: an edge created since the last commit
+    /// has no endpoints in the graph yet, and is already left out of
     /// [`Self::pending_indegree`].
     #[must_use]
     pub fn pending_deleted_indegree(
@@ -1217,8 +1217,8 @@ impl Pending {
 
     /// Count pending-deleted relationships whose source is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Only committed edges are counted: an edge created in this query has no
-    /// endpoints in the graph yet, and is already left out of
+    /// Only committed edges are counted: an edge created since the last commit
+    /// has no endpoints in the graph yet, and is already left out of
     /// [`Self::pending_outdegree`].
     #[must_use]
     pub fn pending_deleted_outdegree(
