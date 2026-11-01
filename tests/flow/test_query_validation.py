@@ -1169,3 +1169,47 @@ class testQueryValidationFlow(FlowTestsBase):
             self.env.assertEqual(actual, [['a', 1], ['b', 0]])
         finally:
             g.delete()
+
+    # An error reply used to be built one `char` at a time with `c as u8`, so any
+    # code point whose low byte is 0 -- '一' (U+4E00), 'Ā' (U+0100) -- became a NUL,
+    # and the `CString::new(..).unwrap()` that followed panicked and took Redis down
+    # (#3185); every other non-ASCII character came back as a garbage byte. An error
+    # reply must keep its message's UTF-8 verbatim and never take the server down.
+    def test52_error_reply_keeps_utf8_and_never_crashes(self):
+        con = self.redis_con
+        for cmd in ("GRAPH.QUERY", "GRAPH.RO_QUERY", "GRAPH.EXPLAIN"):
+            msg = assert_error_reply(self.env, con, cmd, GRAPH_ID,
+                                     "MATCH (n:Person {name:'一'}) RETURN n +")
+            self.env.assertContains("'一'", msg)
+            msg = assert_error_reply(self.env, con, cmd, GRAPH_ID, "RETURN 'Ā中文' +")
+            self.env.assertContains("Ā中文", msg)
+
+    def test54_query_cannot_conclude_with_with(self):
+        # a query, or a CALL subquery body, may not end with WITH
+        # https://github.com/FalkorDB/FalkorDB/issues/3271
+        g = self.fresh_graph("conclude_with_with")
+        try:
+            queries = [
+                "MATCH (n) WITH n",
+                "UNWIND [1] AS x WITH x",
+                "WITH 1 AS x",
+                "CREATE (a) WITH a",
+                "MATCH (n) CALL { WITH n MATCH (m) WITH m } RETURN 1",
+                "MATCH (n) CALL { WITH n } RETURN 1",
+            ]
+            for query in queries:
+                try:
+                    g.query(query)
+                    self.env.assertTrue(False, message=query)
+                except redis.ResponseError as e:
+                    self.env.assertContains("Query cannot conclude with WITH", str(e))
+
+            # the rejected CREATE did not run
+            self.env.assertEqual(g.query("MATCH (n) RETURN count(n)").result_set, [[0]])
+
+            # WITH followed by a RETURN or an update clause is fine
+            self.env.assertEqual(g.query("WITH 1 AS x RETURN x").result_set, [[1]])
+            g.query("WITH 1 AS x CREATE (:N {x: x})")
+            self.env.assertEqual(g.query("MATCH (n:N) RETURN n.x").result_set, [[1]])
+        finally:
+            g.delete()
