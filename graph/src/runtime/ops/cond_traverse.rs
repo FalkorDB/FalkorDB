@@ -29,6 +29,8 @@
 //!   cloning the parent env per result).
 
 use std::collections::VecDeque;
+
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use crate::graph::graph::{LabelId, NodeId, RelationshipId};
@@ -201,6 +203,10 @@ struct CtState {
     /// more than one edge. Collapsing to one row per pair then changes the row
     /// count, so `emit_relationship: false` is only honoured when this is false.
     multi_edge: bool,
+    /// Edges per pair, for the pairs of the requested types that hold more than
+    /// one. Empty unless `multi_edge`. Lets a traverse that needs no edge id
+    /// emit the right number of rows without reading the tensor per pair.
+    multi_counts: Arc<FxHashMap<(u64, u64), u32>>,
     /// Parallel edges beyond the first per pair, for the first hop of the
     /// batched path; `None` when it has none. Built with `batched_matrix`.
     batched_surplus: Option<Matrix<u64>>,
@@ -772,9 +778,13 @@ impl<'a> CondTraverseOp<'a> {
                 .collect()
         };
 
-        let multi_edge = edge_type_indices
-            .iter()
-            .any(|&tidx| g.relationship_tensors()[tidx].has_multi_edge());
+        let mut multi_counts: FxHashMap<(u64, u64), u32> = FxHashMap::default();
+        for &tidx in &edge_type_indices {
+            for (src, dst, _) in g.relationship_tensors()[tidx].iter_multi_edges() {
+                *multi_counts.entry((src, dst)).or_default() += 1;
+            }
+        }
+        let multi_edge = !multi_counts.is_empty();
 
         CtState {
             fwd_iter: std::cell::RefCell::new(fwd_iter),
@@ -787,6 +797,7 @@ impl<'a> CondTraverseOp<'a> {
             rev_dst_label_ids,
             edge_type_indices,
             multi_edge,
+            multi_counts: Arc::new(multi_counts),
             batched_surplus: None,
             batched_added: Vec::new(),
             chain_added: Vec::new(),
@@ -1275,6 +1286,7 @@ impl<'a> CondTraverseOp<'a> {
         // Collapsing parallel edges to one row per pair is only exact when the
         // relation has none.
         let emit_relationship = emit_relationship || state.multi_edge;
+        let id_free = (!need_edge_id).then(|| Arc::clone(&state.multi_counts));
         let bidir_dedup = bidir_dedup.filter(|_| !state.multi_edge);
         // Siblings compared by node (the caller filters the results) need no id
         // check here.
@@ -1318,7 +1330,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
-                need_edge_id,
+                id_free.as_deref(),
             );
         } else {
             let need_bwd_rev =
@@ -1367,7 +1379,7 @@ impl<'a> CondTraverseOp<'a> {
                     out,
                     emit_relationship,
                     sibling_edges,
-                    need_edge_id,
+                    id_free.as_deref(),
                     &state.edge_type_indices,
                     &state.fwd_src_label_ids,
                     &state.fwd_dst_label_ids,
@@ -1412,7 +1424,7 @@ impl<'a> CondTraverseOp<'a> {
                     out,
                     emit_relationship,
                     sibling_edges,
-                    need_edge_id,
+                    id_free.as_deref(),
                     &state.edge_type_indices,
                     &state.rev_src_label_ids,
                     &state.rev_dst_label_ids,
@@ -1471,7 +1483,7 @@ impl<'a> CondTraverseOp<'a> {
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
         emit_relationship: bool,
         sibling_edges: &[u32],
-        need_edge_id: bool,
+        id_free: Option<&FxHashMap<(u64, u64), u32>>,
     ) {
         let iters = state.union.as_deref_mut().expect("multi-type state");
         let need_bwd_rev = iters.rev.is_some() && rev_src_id.is_none() && rev_dst_id.is_some();
@@ -1519,7 +1531,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
-                need_edge_id,
+                id_free,
                 &state.edge_type_indices,
                 &state.fwd_src_label_ids,
                 &state.fwd_dst_label_ids,
@@ -1564,7 +1576,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
-                need_edge_id,
+                id_free,
                 &state.edge_type_indices,
                 &state.rev_src_label_ids,
                 &state.rev_dst_label_ids,
@@ -1586,7 +1598,7 @@ impl<'a> CondTraverseOp<'a> {
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
         emit_relationship: bool,
         sibling_edges: &[u32],
-        need_edge_id: bool,
+        id_free: Option<&FxHashMap<(u64, u64), u32>>,
         edge_type_indices: &[usize],
         src_label_ids: &[LabelId],
         dst_label_ids: &[LabelId],
@@ -1623,7 +1635,7 @@ impl<'a> CondTraverseOp<'a> {
             let mat_src = u64::from(src);
             let mat_dst = u64::from(dst);
             if !emit_relationship {
-                if !need_edge_id {
+                if id_free.is_some() {
                     // Nothing reads the edge and nothing compares ids: the pair
                     // is the match, so skip the tensor lookup for a
                     // representative.
@@ -1650,6 +1662,15 @@ impl<'a> CondTraverseOp<'a> {
             }
 
             // Scan edges
+            if let Some(counts) = id_free {
+                // No id is read or compared: a pair holds one edge unless it is
+                // in `counts`, and each edge is one row.
+                let edges = counts.get(&(mat_src, mat_dst)).copied().unwrap_or(1);
+                for _ in 0..edges {
+                    out.push((from_node, to_node, RelationshipId::from(0u64)));
+                }
+                continue;
+            }
             let env = BatchRow::new(batch, row_idx);
             for &tidx in edge_type_indices {
                 for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
