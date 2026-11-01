@@ -757,6 +757,31 @@ pub fn with_plan_stack<R>(
     stacker::grow(STACK_BASE + height * STACK_PER_LEVEL, f)
 }
 
+/// Runs `optimize`, the optimizer passes over `plan`, on a stack sized for the
+/// tallest plan they can build from it.
+///
+/// A pass can make a plan far taller than it came in: `push_filters_down` turns
+/// a wide `CartesianProduct` of N connected patterns into a chain of N nested
+/// Filter/`CartesianProduct` (then hash-join) levels, and the passes after it
+/// recurse once per level. The input's height says nothing about that, but its
+/// node count bounds it: a pass rearranges the nodes it is given, so the height
+/// it can reach is no more than their number. Sized from that bound, the stack
+/// is reserved address space, of which only the pages a query touches are
+/// committed.
+///
+/// The result is checked against [`MAX_PLAN_DEPTH`] by the caller, since the
+/// plan this returns is the one the runtime recurses over.
+pub fn with_optimizer_stack<R>(
+    plan: &DynTree<IR>,
+    f: impl FnOnce() -> R,
+) -> R {
+    let bound = plan.len();
+    if bound <= SHALLOW_PLAN {
+        return f();
+    }
+    stacker::grow(STACK_BASE + bound * STACK_PER_LEVEL, f)
+}
+
 /// Converts a bound Cypher AST into a logical execution plan (IR tree).
 ///
 /// The planner maintains state across clauses:
@@ -3542,5 +3567,37 @@ impl Planner {
                 res
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod stack_tests {
+    use super::*;
+
+    /// A wide, shallow plan: one `CartesianProduct` over `n` leaves.
+    fn wide_plan(n: usize) -> DynTree<IR> {
+        let leaves: Vec<DynTree<IR>> = (0..n).map(|_| tree!(IR::Argument(None))).collect();
+        tree!(IR::CartesianProduct; leaves)
+    }
+
+    #[test]
+    fn optimizer_stack_is_sized_by_node_count_not_height() {
+        // Height 2, but the passes can nest its 5000 branches into a chain
+        // 5000 levels tall, so the optimizer gets the stack for that.
+        let plan = wide_plan(5000);
+        assert!(plan.root().height() <= SHALLOW_PLAN);
+        let remaining = with_optimizer_stack(&plan, stacker::remaining_stack);
+        assert!(
+            remaining.is_some_and(|r| r >= plan.len() * STACK_PER_LEVEL),
+            "remaining stack {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn small_plan_runs_in_place() {
+        let plan = wide_plan(8);
+        let before = stacker::remaining_stack().unwrap();
+        let during = with_optimizer_stack(&plan, || stacker::remaining_stack().unwrap());
+        assert!(during <= before);
     }
 }

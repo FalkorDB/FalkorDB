@@ -107,7 +107,7 @@ use crate::{
         indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
     },
     parser::cypher::Parser,
-    planner::{IR, Planner, binder::Binder, optimizer::optimize, with_plan_stack},
+    planner::{IR, Planner, binder::Binder, optimizer::optimize, with_optimizer_stack},
     runtime::{orderset::OrderSet, value::Value, vec_distance},
     threadpool::spawn,
 };
@@ -1321,7 +1321,8 @@ impl Graph {
                 let plan = plan.clone();
                 drop(cache);
                 let optimize_plan =
-                    with_plan_stack(&plan.plan, || optimize(&plan.plan, self, &param_values));
+                    with_optimizer_stack(&plan.plan, || optimize(&plan.plan, self, &param_values));
+                Planner::check_depth(&optimize_plan)?;
                 return Ok(Plan::new(
                     Arc::new(optimize_plan),
                     true,
@@ -1344,7 +1345,8 @@ impl Graph {
         let plan = planner.plan(ir);
         let plan = planner.finish(plan);
         Planner::check_depth(&plan)?;
-        let optimize_plan = with_plan_stack(&plan, || optimize(&plan, self, &param_values));
+        let optimize_plan = with_optimizer_stack(&plan, || optimize(&plan, self, &param_values));
+        Planner::check_depth(&optimize_plan)?;
         plan_duration = start.elapsed();
 
         // Only cache the plan if UDF version hasn't changed during planning.
