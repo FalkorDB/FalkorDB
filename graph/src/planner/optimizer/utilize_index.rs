@@ -793,7 +793,7 @@ fn pushed_needs_post_filter<T: IndexSubject>(
     let is_array_contains = matches!(pushed.root().data(), ExprIR::In)
         && !subtree_has_property_of(pushed, pushed.root().child(0).idx(), subject.alias())
         && subtree_has_property_of(pushed, pushed.root().child(1).idx(), subject.alias());
-    is_array_contains || needs_post_filter(pushed, subject.alias().id)
+    is_array_contains || needs_post_filter(pushed, subject.alias())
 }
 
 /// Whether a filter contains runtime values that might evaluate to
@@ -815,7 +815,7 @@ fn pushed_needs_post_filter<T: IndexSubject>(
 /// handle the list natively, so that subtree is whitelisted.
 fn needs_post_filter(
     filter: &DynTree<ExprIR<Variable>>,
-    scan_alias_id: u32,
+    scan_alias: &Variable,
 ) -> bool {
     // Whitelist the RHS subtree of `property IN [literal, ...]` only
     // when the list is non-empty *and* every direct element is a
@@ -866,12 +866,12 @@ fn needs_post_filter(
         ) && node
             .children()
             .any(|c| matches!(c.data(), ExprIR::Constant(Value::Bool(_))));
-        bool_range_bound || is_non_indexable_subexpr(node.data(), Some(scan_alias_id))
+        bool_range_bound || is_non_indexable_subexpr(node.data(), Some(scan_alias))
     })
 }
 
 /// Returns true when the given `ExprIR` describes a value that the
-/// index may not be able to resolve. `scan_alias_id`, when `Some`,
+/// index may not be able to resolve. `scan_alias`, when `Some`,
 /// tolerates `Variable` references to the scan target itself (the
 /// property-access side), so only *other* variables count as runtime
 /// dependencies.
@@ -885,10 +885,11 @@ fn needs_post_filter(
 /// and the scan then falls back to every entity of the label.
 fn is_non_indexable_subexpr(
     expr: &ExprIR<Variable>,
-    scan_alias_id: Option<u32>,
+    scan_alias: Option<&Variable>,
 ) -> bool {
     match expr {
-        ExprIR::Variable(v) => scan_alias_id.is_none_or(|id| v.id != id),
+        // Ids are allocated per scope, so the scan target is the pair.
+        ExprIR::Variable(v) => scan_alias.is_none_or(|a| (v.id, v.scope_id) != (a.id, a.scope_id)),
         ExprIR::Constant(v) => !is_exact_index_literal(v),
         ExprIR::And
         | ExprIR::Or
@@ -910,7 +911,10 @@ fn is_non_indexable_subexpr(
 const fn is_exact_index_literal(v: &Value) -> bool {
     match v {
         Value::Int(i) => !Index::int_loses_f64_precision(*i),
-        Value::Null | Value::Bool(_) | Value::Float(_) | Value::String(_) => true,
+        // The native numeric column stores a Bool as 1/0, so it cannot tell
+        // `= true` from `= 1`: keep the filter there.
+        Value::Bool(_) => !cfg!(feature = "index-falkordb"),
+        Value::Null | Value::Float(_) | Value::String(_) => true,
         _ => false,
     }
 }

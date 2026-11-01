@@ -296,7 +296,10 @@ impl IndexQuery<Value> {
         const fn is_indexable(v: &Value) -> bool {
             match v {
                 Value::Int(i) => !Index::int_loses_f64_precision(*i),
-                Value::Float(_) | Value::String(_) | Value::Bool(_) | Value::Null => true,
+                // The native numeric column stores a Bool as 1/0, so it cannot
+                // tell `= true` from `= 1`: it is not exact there.
+                Value::Bool(_) => !cfg!(feature = "index-falkordb"),
+                Value::Float(_) | Value::String(_) | Value::Null => true,
                 _ => false,
             }
         }

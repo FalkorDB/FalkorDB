@@ -247,31 +247,29 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 // the predicate is not index-shaped (e.g. non-indexable value types), which the
                 // planner keeps a filter for. That is not a capability gap, so it may not error
                 // even under the no-fallback flag.
-                let indexed: Option<Box<dyn Iterator<Item = NodeId>>> =
-                    if q.can_be_served() {
-                        let g = self.runtime.graph();
-                        // Under `index-falkordb` the native index is the ONLY index: a predicate
-                        // it cannot serve is an error, not a quiet detour to RediSearch. Falling
-                        // back would hide every unimplemented kind behind correct-looking
-                        // results, which is exactly what the xfail ledger exists to prevent — a
-                        // gap has to be visible to be closed. The message names the predicate so
-                        // the failure is diagnosable rather than a bare "no rows".
-                        #[cfg(feature = "index-falkordb")]
-                        let it: Option<Box<dyn Iterator<Item = NodeId>>> = match g
-                            .query_index_numeric_nodes(self.index, &q)
-                        {
-                            Some(Ok(rows)) => Some(Box::new(rows)),
-                            // The column exists and will serve this once its build reaches
-                            // every entity. Until then scan the label for what it will answer:
-                            // the planner dropped the predicate it handed this op, so the scan
-                            // must check it itself.
-                            Some(Err(scan_filter)) => {
-                                let runtime = self.runtime;
-                                // Resolved once per scan. No node holds a name the graph has
-                                // never seen.
-                                let nodes: Box<dyn Iterator<Item = NodeId>> = match g
-                                    .get_node_attribute_id(scan_filter.attribute())
-                                {
+                let indexed: Option<Box<dyn Iterator<Item = NodeId>>> = if q.can_be_served() {
+                    let g = self.runtime.graph();
+                    // Under `index-falkordb` the native index is the ONLY index: a predicate
+                    // it cannot serve is an error, not a quiet detour to RediSearch. Falling
+                    // back would hide every unimplemented kind behind correct-looking
+                    // results, which is exactly what the xfail ledger exists to prevent — a
+                    // gap has to be visible to be closed. The message names the predicate so
+                    // the failure is diagnosable rather than a bare "no rows".
+                    #[cfg(feature = "index-falkordb")]
+                    let it: Option<Box<dyn Iterator<Item = NodeId>>> = match g
+                        .query_index_numeric_nodes(self.index, &q)
+                    {
+                        Some(Ok(rows)) => Some(Box::new(rows)),
+                        // The column exists and will serve this once its build reaches
+                        // every entity. Until then scan the label for what it will answer:
+                        // the planner dropped the predicate it handed this op, so the scan
+                        // must check it itself.
+                        Some(Err(scan_filter)) => {
+                            let runtime = self.runtime;
+                            // Resolved once per scan. No node holds a name the graph has
+                            // never seen.
+                            let nodes: Box<dyn Iterator<Item = NodeId>> =
+                                match g.get_node_attribute_id(scan_filter.attribute()) {
                                     Some(attr) => {
                                         let attr = attr as u16;
                                         Box::new(g.get_nodes(&self.node_pattern.labels, 0).filter(
@@ -282,19 +280,19 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                                     }
                                     None => Box::new(std::iter::empty()),
                                 };
-                                Some(nodes)
-                            }
-                            None => {
-                                return Err(unsupported_by_native_index("node", self.index, &q));
-                            }
-                        };
-                        #[cfg(not(feature = "index-falkordb"))]
-                        let it: Option<Box<dyn Iterator<Item = NodeId>>> =
-                            Some(Box::new(g.get_indexed_nodes(self.index, q)));
-                        it
-                    } else {
-                        None
+                            Some(nodes)
+                        }
+                        None => {
+                            return Err(unsupported_by_native_index("node", self.index, &q));
+                        }
                     };
+                    #[cfg(not(feature = "index-falkordb"))]
+                    let it: Option<Box<dyn Iterator<Item = NodeId>>> =
+                        Some(Box::new(g.get_indexed_nodes(self.index, q)));
+                    it
+                } else {
+                    None
+                };
                 let base: Box<dyn Iterator<Item = NodeId>> = match indexed {
                     Some(it) => it,
                     None => Box::new(self.runtime.graph().get_nodes(&self.node_pattern.labels, 0)),
@@ -362,7 +360,10 @@ mod tests {
         let unservable = Value::List(Arc::new(vec![Value::Int(1)].into_iter().collect()));
         let cases: [(&[Value], bool); 7] = [
             (&[Value::Int(1), Value::Float(2.5), Value::Null], true),
-            (&[Value::Int(1), Value::Bool(true)], true),
+            (
+                &[Value::Int(1), Value::Bool(true)],
+                !cfg!(feature = "index-falkordb"),
+            ),
             (
                 &[Value::Int(1), Value::String(Arc::new("a".to_string()))],
                 true,

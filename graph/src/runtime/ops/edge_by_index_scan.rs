@@ -293,27 +293,25 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 };
                 // `None` means "scan instead": an index-unshaped predicate, which the planner
                 // keeps a filter for. Mirrors `NodeByIndexScanOp`.
-                let indexed: Option<Box<dyn Iterator<Item = EdgeRow>>> =
-                    if q.can_be_served() {
-                        let g = self.runtime.graph();
-                        // Edge index: a numeric Equal/Range on a column we own is served
-                        // by the CoW B-tree (endpoints recovered from the graph's reverse index);
-                        // anything else is an error under the flag. #51, mirrors
+                let indexed: Option<Box<dyn Iterator<Item = EdgeRow>>> = if q.can_be_served() {
+                    let g = self.runtime.graph();
+                    // Edge index: a numeric Equal/Range on a column we own is served
+                    // by the CoW B-tree (endpoints recovered from the graph's reverse index);
+                    // anything else is an error under the flag. #51, mirrors
+                    // `NodeByIndexScanOp`.
+                    #[cfg(feature = "index-falkordb")]
+                    let it: Option<Box<dyn Iterator<Item = EdgeRow>>> = match g
+                        .query_index_numeric_edges(label, &q)
+                    {
+                        Some(Ok(rows)) => Some(Box::new(rows)),
+                        // Still building: scan the type for what the column will answer,
+                        // checking the predicate the planner dropped. See
                         // `NodeByIndexScanOp`.
-                        #[cfg(feature = "index-falkordb")]
-                        let it: Option<Box<dyn Iterator<Item = EdgeRow>>> = match g
-                            .query_index_numeric_edges(label, &q)
-                        {
-                            Some(Ok(rows)) => Some(Box::new(rows)),
-                            // Still building: scan the type for what the column will answer,
-                            // checking the predicate the planner dropped. See
-                            // `NodeByIndexScanOp`.
-                            Some(Err(scan_filter)) => {
-                                // Resolved once per scan. No edge holds a name the graph has
-                                // never seen.
-                                let edges: Box<dyn Iterator<Item = EdgeRow>> = match g
-                                    .get_relationship_attribute_id(scan_filter.attribute())
-                                {
+                        Some(Err(scan_filter)) => {
+                            // Resolved once per scan. No edge holds a name the graph has
+                            // never seen.
+                            let edges: Box<dyn Iterator<Item = EdgeRow>> =
+                                match g.get_relationship_attribute_id(scan_filter.attribute()) {
                                     Some(attr) => {
                                         let attr = attr as u16;
                                         Box::new(scan_type().filter(move |&(_, _, edge)| {
@@ -326,21 +324,21 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                                     }
                                     None => Box::new(std::iter::empty()),
                                 };
-                                Some(edges)
-                            }
-                            None => {
-                                // See node_by_index_scan: native is the only index under this
-                                // flag, so an unserviceable predicate is a loud error.
-                                return Err(unsupported_by_native_index("relationship", label, &q));
-                            }
-                        };
-                        #[cfg(not(feature = "index-falkordb"))]
-                        let it: Option<Box<dyn Iterator<Item = EdgeRow>>> =
-                            Some(Box::new(g.get_indexed_edges(label, q)));
-                        it
-                    } else {
-                        None
+                            Some(edges)
+                        }
+                        None => {
+                            // See node_by_index_scan: native is the only index under this
+                            // flag, so an unserviceable predicate is a loud error.
+                            return Err(unsupported_by_native_index("relationship", label, &q));
+                        }
                     };
+                    #[cfg(not(feature = "index-falkordb"))]
+                    let it: Option<Box<dyn Iterator<Item = EdgeRow>>> =
+                        Some(Box::new(g.get_indexed_edges(label, q)));
+                    it
+                } else {
+                    None
+                };
                 let base: Box<dyn Iterator<Item = EdgeRow>> = indexed.unwrap_or_else(scan_type);
 
                 // An undirected pattern matches each edge in both
@@ -445,7 +443,10 @@ mod tests {
         let unservable = Value::List(Arc::new(vec![Value::Int(1)].into_iter().collect()));
         let cases: [(&[Value], bool); 7] = [
             (&[Value::Int(1), Value::Float(2.5), Value::Null], true),
-            (&[Value::Int(1), Value::Bool(true)], true),
+            (
+                &[Value::Int(1), Value::Bool(true)],
+                !cfg!(feature = "index-falkordb"),
+            ),
             (
                 &[Value::Int(1), Value::String(Arc::new("a".to_string()))],
                 true,

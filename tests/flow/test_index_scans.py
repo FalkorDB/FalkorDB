@@ -1446,6 +1446,17 @@ class testIndexScanFlow():
             "CREATE (:L {v:1, k:'int'}), (:L {v:true, k:'bool'}), (:L {v:false, k:'false'})",
             ["MATCH (n:L) WHERE n.v >= false RETURN n.k",
              "MATCH (n:L) WHERE n.v < true RETURN n.k"])
+        # A Bool inside a value expression, or a property of the scanned node on the
+        # value side, keeps the filter whatever the index decides.
+        self._index_vs_scan(
+            [('L', 'v'), ('L', 'age')],
+            "CREATE (:L {v:1, w:date('2020-01-01'), age:1, k:'a'}), (:L {v:true, w:true, age:true, k:'b'}),"
+            " (:L {v:5, w:5, age:7, k:'c'}), (:L {v:date('2020-01-01'), w:date('2020-01-01'), k:'d'})",
+            ["MATCH (n:L) WHERE n.v = n.w RETURN n.k",
+             "MATCH (n:L) WHERE n.age = (1 < 2) RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= (false) RETURN n.k"],
+            expect_index=False,
+            expected_rows=[[['b'], ['c'], ['d']], [['b']], [['b']]])
         self._index_vs_scan(
             [('L', 'arr')],
             "CREATE (:L {k:4, arr:[true,'X']}), (:L {k:5, arr:[1,'x']})",
