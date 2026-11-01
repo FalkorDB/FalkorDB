@@ -798,9 +798,7 @@ impl PatternMode {
     ) -> Self {
         // `size(pattern)` counts the matched paths, in a predicate as much as
         // in a projection, so its argument is a list wherever it appears.
-        if matches!(parent, ExprIR::Length)
-            || matches!(parent, ExprIR::FuncInvocation(f) if f.name == "size")
-        {
+        if matches!(parent, ExprIR::FuncInvocation(f) if f.name == "size") {
             Self::Collect
         } else if self == Self::SemiApply
             && !matches!(parent, ExprIR::And | ExprIR::Or | ExprIR::Not)
