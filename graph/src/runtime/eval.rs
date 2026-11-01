@@ -375,7 +375,8 @@ impl<'v, 't> ListLoop<'v, 't> {
 /// Collects the variables `node` reads into `reads`. Returns `false` for a
 /// body the columnar path must not take: one that reads the whole row (a
 /// nested plan), aggregates, or writes — the last so that a write keeps
-/// happening in per-element order — or binds variables of its own (a nested
+/// happening in per-element order, as does a call to a UDF or a
+/// non-deterministic function — or binds variables of its own (a nested
 /// comprehension, quantifier or `reduce`), so that the only variable a
 /// columnar body binds is the loop variable, which every batch row holds.
 fn collect_body_vars(
@@ -391,8 +392,16 @@ fn collect_body_vars(
         | ExprIR::Pattern(_)
         | ExprIR::PatternComprehension(_)
         | ExprIR::Distinct => return false,
+        // A UDF may keep state in its JavaScript globals, and `rand()` and the
+        // like draw a value per call: both depend on the per-element order of
+        // calls, and a chunk replayed after a failure would repeat them.
         ExprIR::FuncInvocation(func)
-            if func.write || matches!(func.fn_type, FnType::Aggregation { .. }) =>
+            if func.write
+                || func.non_deterministic
+                || matches!(
+                    func.fn_type,
+                    FnType::Aggregation { .. } | FnType::Udf | FnType::Procedure(_)
+                ) =>
         {
             return false;
         }
@@ -1047,6 +1056,16 @@ impl<'a> ExprEval<'a> {
                 }
                 ExprIR::CompiledRegex(rf) => {
                     res.push(self.eval_compiled_regex(rf, &node, env, agg_group_key)?);
+                }
+                // `size([x IN l | ...])` inside a list literal or another
+                // function's arguments counts too, as in `eval_node`.
+                ExprIR::FuncInvocation(_) if counts_comprehension(&node) => {
+                    res.push(self.eval_list_comprehension(
+                        &node.child(0),
+                        env,
+                        agg_group_key,
+                        true,
+                    )?);
                 }
                 ExprIR::FuncInvocation(func) => {
                     let rt = self.rt()?;

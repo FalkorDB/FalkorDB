@@ -1917,6 +1917,32 @@ mod tests {
         assert_eq!(out, vec![Value::Int(1), Value::Null, Value::Null]);
     }
 
+    #[test]
+    fn batch_get_ints_reports_nulls_and_stops_at_a_non_int() {
+        let store = store_with(&[
+            (1, &[("a", Value::Int(7))]),
+            (2, &[("a", Value::Null)]),
+            (3, &[("b", Value::Int(2))]),
+            (4, &[("a", Value::Int(-9))]),
+            (5, &[("a", Value::Float(1.5))]),
+        ]);
+        let idx = store.get_attr_id(&name("a")).unwrap() as u16;
+
+        // An integer run, a null value, a missing attribute and an absent key:
+        // each of the last three calls `on_null` and leaves a 0 placeholder.
+        let (mut out, mut nulls) = (Vec::new(), Vec::new());
+        assert!(
+            store.get_int_attrs_by_idx_batch_into(&[1, 2, 3, 4, 99], idx, &mut out, |i| nulls
+                .push(i))
+        );
+        assert_eq!(out, vec![7, 0, 0, -9, 0]);
+        assert_eq!(nulls, vec![1, 2, 4]);
+
+        // A value that is neither an integer nor null ends the batch.
+        let mut out = Vec::new();
+        assert!(!store.get_int_attrs_by_idx_batch_into(&[1, 5, 4], idx, &mut out, |_| {}));
+    }
+
     /// First id of block `block_idx` under the default grain.
     fn id_in_block(block_idx: u64) -> u64 {
         block_idx * BLOCK_CAP as u64

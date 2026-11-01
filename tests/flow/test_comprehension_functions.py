@@ -825,3 +825,14 @@ class testComprehensionFunctions(FlowTestsBase):
                     self.env.assertContains(error, str(e))
         finally:
             g.delete()
+
+    def test26_size_of_comprehension_inside_a_list(self):
+        # `size([...])` counts inside a list literal and a function's arguments
+        # too, where the expression is not evaluated on its own.
+        for query, expected in [
+            ("RETURN [size([x IN range(1, 5) WHERE x > 2])]", [3]),
+            ("RETURN [size([x IN range(1, 5) | x * 2]), size([x IN [1, 2] WHERE x > 1])]", [5, 1]),
+            ("RETURN coalesce(null, size([x IN range(1, 4) WHERE x % 2 = 0])) + 1", 3),
+            ("RETURN [[size([x IN range(1, 3) | x])]]", [[3]]),
+        ]:
+            self.env.assertEqual(self.graph.query(query).result_set[0][0], expected, depth=1)
