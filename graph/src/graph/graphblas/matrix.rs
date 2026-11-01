@@ -2129,6 +2129,54 @@ mod tests {
         assert_eq!(reach(&[1, 2]), None, "both paths deleted");
     }
 
+    /// The weighted delta product: `f * (m + dp - dm)` counting paths. Frontier
+    /// row 0 holds node 1 with 2 partial paths and node 2 with 1, base edges are
+    /// 1→3, 2→3 and 1→4, so before any delta 3 is reached 2 + 1 = 3 times and 4
+    /// twice.
+    #[test]
+    fn count_lmxm_layers_weights_deleted_and_added_edges() {
+        ensure_init();
+        let n = 8;
+        let mut m = Matrix::<bool>::new(n, n);
+        m.build(&[1, 2, 1], &[3, 3, 4]);
+        m.wait();
+        let paths = |dp: &[(u64, u64)], deleted: &[(u64, u64)]| {
+            let layer = |edges: &[(u64, u64)]| {
+                let mut l = Matrix::<bool>::new(n, n);
+                let (r, c): (Vec<u64>, Vec<u64>) = edges.iter().copied().unzip();
+                l.build(&r, &c);
+                l.wait();
+                l
+            };
+            let (dp, dm) = (layer(dp), layer(deleted));
+            let added = dp.pattern_outside(&m);
+            let mut f = Matrix::<u64>::new(n, n);
+            f.build(&[0, 0], &[1, 2], &[2, 1]);
+            f.wait();
+            f.count_lmxm_layers(&m, added.as_ref(), &dm, false);
+            f.wait();
+            (f.get(0, 3), f.get(0, 4))
+        };
+        assert_eq!(paths(&[], &[]), (Some(3), Some(2)), "no delta");
+        // Deleting one of the two edges into 3 removes that edge's weight only.
+        assert_eq!(paths(&[], &[(1, 3)]), (Some(1), Some(2)), "1→3 deleted");
+        assert_eq!(paths(&[], &[(2, 3)]), (Some(2), Some(2)), "2→3 deleted");
+        // Deleting every edge into 3 leaves no entry, not an explicit 0.
+        assert_eq!(
+            paths(&[], &[(1, 3), (2, 3)]),
+            (None, Some(2)),
+            "all deleted"
+        );
+        // A delta-plus entry that shadows a base edge adds nothing, and a new one
+        // adds its weight.
+        assert_eq!(paths(&[(1, 3)], &[]), (Some(3), Some(2)), "shadowing entry");
+        assert_eq!(
+            paths(&[(1, 3), (2, 4)], &[]),
+            (Some(3), Some(3)),
+            "new edge 2→4"
+        );
+    }
+
     #[test]
     #[should_panic(expected = "grown must not shrink")]
     fn grown_rejects_shrinking() {

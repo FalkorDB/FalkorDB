@@ -821,20 +821,14 @@ impl<'a> CondTraverseOp<'a> {
     ) -> u64 {
         let v = u64::from(v);
         let tensors = g.relationship_tensors();
-        let entry: Vec<u64> = state
+        // An edge has exactly one type, so the edges both hops can bind are the
+        // self-loops of the types they share.
+        state
             .edge_type_indices
             .iter()
-            .flat_map(|&t| tensors[t].get(v, v))
-            .collect();
-        if entry.is_empty() {
-            return 0;
-        }
-        state
-            .chain_type_indices
-            .iter()
-            .flat_map(|&t| tensors[t].get(v, v))
-            .filter(|id| entry.contains(id))
-            .count() as u64
+            .filter(|t| state.chain_type_indices.contains(t))
+            .map(|&t| tensors[t].get(v, v).count() as u64)
+            .sum()
     }
 
     /// Batched F·A traversal — mirrors C FalkorDB's `_traverse` in
@@ -1159,6 +1153,10 @@ impl<'a> CondTraverseOp<'a> {
                 let before = out_indices.len();
                 for &tidx in &state.edge_type_indices {
                     for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
+                        // The cap may fall inside one pair's parallel edges.
+                        if cap_left.is_some_and(|left| emitted + out_indices.len() >= left) {
+                            break;
+                        }
                         out_indices.push(row_idx);
                         out_dest_ids.push(dest_id);
                         out_edge_ids.push(RelationshipId::from(raw_id));

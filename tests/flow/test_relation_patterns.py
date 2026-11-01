@@ -482,3 +482,15 @@ class testRelationPattern(FlowTestsBase):
         self.env.assertEqual(res.result_set, [[0]])
         res = g.query(base + "RETURN c.v LIMIT 5")
         self.env.assertEqual(res.result_set, [[2]] * 5)
+
+    # A traverse drops the rows whose edges the pattern already used, so a LIMIT
+    # above it cannot cap the traverse beneath it: the first row of the lower
+    # traverse is a->b, which the converging pattern has no match for.
+    def test20_limit_does_not_cap_a_row_dropping_traverse(self):
+        g = self.db.select_graph("limit_through_traverse")
+        g.query("CREATE (a:P)-[:R]->(b:P), (c:P)-[:R]->(m:P), (d:P)-[:R]->(m), (m)-[:S]->(z:P)")
+        for query in [
+            "MATCH (x)-[:R]->(y)<-[:R]-(z) RETURN 1 LIMIT 1",
+            "MATCH (x)-[r1:R]->(y)<-[r2:R]-(z) RETURN 1 LIMIT 1",
+        ]:
+            self.env.assertEqual(g.query(query).result_set, [[1]], depth=1)
