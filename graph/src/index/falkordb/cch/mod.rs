@@ -405,6 +405,12 @@ impl VersionedIndex for CchIndex {
     ) {
         unreachable!("CCH is not dispatched through IndexId until the background build")
     }
+
+    /// Never called: [`FalkorDbIndex::memory_usage`] counts the node and edge columns only, since
+    /// the hierarchy holds no arrays until #3208 and #3209.
+    fn memory_usage(&self) -> usize {
+        unreachable!("GRAPH.MEMORY USAGE counts no CCH index until the hierarchy holds arrays")
+    }
 }
 
 /// What a unit of work's writes touched that the graph's CCH indexes might care about. The
