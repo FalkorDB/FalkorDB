@@ -1991,6 +1991,8 @@ class testUDFShutdown():
         try:
             self.conn.execute_command("SHUTDOWN", "NOSAVE")
         except Exception:
+            # SHUTDOWN closes the socket before any reply is read; the exit
+            # status checked below is what proves the shutdown was clean.
             pass
 
         deadline = time.time() + 30
