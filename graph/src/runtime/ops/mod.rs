@@ -187,27 +187,46 @@ impl Parallel<'_> {
         let Some((src, dst)) = g.endpoints_for_edge(raw) else {
             return false;
         };
-        let tensors: Vec<usize> = match types {
-            Matching::Tensors(tensors) => tensors.to_vec(),
-            Matching::TypeOfEdge => g
-                .relationship_type_matrix_iter(raw, raw)
-                .next()
-                .map(|(_, tidx)| tidx as usize)
-                .into_iter()
-                .collect(),
-            Matching::AnyType => (0..g.relationship_tensors().len()).collect(),
-        };
-        // Only the stored direction: an undirected pattern reaches an edge
+        // Live edges of the pair in tensor `tidx`; stops counting at two. Only
+        // the stored direction counts: an undirected pattern reaches an edge
         // stored the other way round through its own row (the reversed pair),
         // not as a stand-in for this one.
-        tensors
-            .iter()
-            .filter_map(|&tidx| g.relationship_tensors().get(tidx))
-            .flat_map(|tensor| tensor.get(src, dst))
-            .filter(|&other| !(self.deleted)(RelationshipId::from(other)))
-            .take(2)
-            .count()
-            > 1
+        let live = |tidx: usize| -> usize {
+            g.relationship_tensors().get(tidx).map_or(0, |tensor| {
+                tensor
+                    .get(src, dst)
+                    .filter(|&other| !(self.deleted)(RelationshipId::from(other)))
+                    .take(2)
+                    .count()
+            })
+        };
+        // No allocation: this runs on every uniqueness collision of a
+        // collapsed edge.
+        let mut total = 0;
+        match types {
+            Matching::Tensors(tensors) => {
+                for &tidx in tensors {
+                    total += live(tidx);
+                    if total > 1 {
+                        break;
+                    }
+                }
+            }
+            Matching::TypeOfEdge => {
+                if let Some((_, tidx)) = g.relationship_type_matrix_iter(raw, raw).next() {
+                    total = live(tidx as usize);
+                }
+            }
+            Matching::AnyType => {
+                for tidx in 0..g.relationship_tensors().len() {
+                    total += live(tidx);
+                    if total > 1 {
+                        break;
+                    }
+                }
+            }
+        }
+        total > 1
     }
 }
 
