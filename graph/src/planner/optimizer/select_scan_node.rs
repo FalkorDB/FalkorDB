@@ -842,20 +842,33 @@ pub(super) fn select_scan_node(
         // (`UNWIND $ids AS i MATCH (d:L {id: i})-[r:R]->() ...`), so the scan
         // goes between the traverse and that child instead, as it does for a
         // bare `Argument`. The child rides beneath the new scan.
+        //
+        // A chain with no label and no predicate on any endpoint keeps the
+        // edge-driven plan: a scan per row would cost every node, where the
+        // bare traverse costs only the edges of its type.
+        let constrained = candidates
+            .iter()
+            .any(|(node, _, _)| score_endpoint(node, &filtered_vars, &bound_vars, graph).0 > 0);
         let transparent_child: Option<DynTree<IR>> =
-            if is_leaf || has_planner_scan || arg_transparent {
+            if is_leaf || has_planner_scan || arg_transparent || !constrained {
                 None
             } else {
                 let child = optimized_plan.node(bottom_idx).child(0);
                 let opaque = child
                     .walk::<Bfs>()
                     .any(|ir| matches!(ir, IR::Argument(None)));
-                let bound_here = child.get_variables();
-                let binds_chain = |alias: &Variable| {
-                    bound_here
-                        .iter()
-                        .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
-                };
+                // Everything the child binds or carries: its own variables
+                // plus every operator's outputs (a known `Argument`'s
+                // bindings, a `Project`/`Aggregate`'s aliases), so a wrapped
+                // or projected endpoint is never mistaken for a bare row
+                // source. Compared by id: coarser than id+scope, so only ever
+                // more conservative.
+                let mut bound_here: HashSet<u32> =
+                    child.get_variables().iter().map(|v| v.id).collect();
+                for ir in child.walk::<Bfs>() {
+                    bound_here.extend(collect_output_aliases(ir));
+                }
+                let binds_chain = |alias: &Variable| bound_here.contains(&alias.id);
                 let chain_aliases_bound = chain.iter().any(|&ct_idx| {
                     matches!(
                         optimized_plan.node(ct_idx).data(),
@@ -1027,6 +1040,14 @@ pub(super) fn select_scan_node(
             b.insert(best_node.alias.id);
             if let Some(child) = &existing_child {
                 b.extend(collect_subtree_variables(&child.root()));
+            }
+            // The outer subtree moved beneath the new scan binds its
+            // variables too (`UNWIND ... AS x` feeding `{id: x}` filters).
+            if let Some(outer) = &preserved_argument {
+                for ir in outer.root().walk::<Bfs>() {
+                    b.extend(collect_output_aliases(ir));
+                }
+                b.extend(collect_subtree_variables(&outer.root()));
             }
             b
         };

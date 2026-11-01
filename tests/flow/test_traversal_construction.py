@@ -578,7 +578,7 @@ class testTraversalConstruction():
     # `UNWIND $ids AS i MATCH (d:L {id: i})-[r:R]->() DELETE r` quadratic (#2134).
     def test_traverse_after_unwind_scans_start_node(self):
         g = self.db.select_graph("TraverseAfterUnwind")
-        g.query("CREATE INDEX FOR (d:Doc) ON (d.id)")
+        create_node_range_index(g, "Doc", "id", sync=True)
         g.query("UNWIND range(0, 49) AS i CREATE (:Doc {id: i})")
         g.query("UNWIND range(0, 199) AS i CREATE (:Other {id: i})")
         g.query("""UNWIND range(0, 49) AS i UNWIND range(0, 3) AS k
@@ -608,5 +608,22 @@ class testTraversalConstruction():
 
         # A variable the earlier clause binds is not rescanned.
         q = "MATCH (d:Doc {id: 20}) WITH d MATCH (d)-[r:LINK]->() RETURN count(r)"
+        self.env.assertEqual(str(g.explain(q)).count("Node By"), 1)
         self.env.assertEqual(g.query(q).result_set, [[4]])
+
+        # An unconstrained chain keeps the edge-driven plan: a scan per row
+        # would cost every node, the bare traverse only the edges of its type.
+        q = "UNWIND [1, 2, 3] AS x MATCH (a)-[r:LINK]->(b) RETURN count(r)"
+        plan = str(g.explain(q))
+        self.env.assertNotContains("Scan", plan)
+        self.env.assertEqual(g.query(q).result_set, [[480]])
+
+        # Variables the outer clause carries into the chain (an endpoint held
+        # by a WITH or a CALL {} argument, or the UNWIND variable feeding a
+        # later hop's predicate) are not rebound by the inserted scan.
+        for q, expected in [
+                ("MATCH (d:Doc {id: 20}) WITH d UNWIND [1, 2] AS x MATCH (d)-[r:LINK]->() RETURN count(r)", 8),
+                ("MATCH (d:Doc {id: 20}) CALL { WITH d UNWIND [1, 2] AS x MATCH (d)-[r:LINK]->() RETURN r } RETURN count(r)", 8),
+                ("UNWIND [20, 21] AS x MATCH (d:Doc)-[:LINK]->(o:Other) WHERE d.id = x AND o.id = x * 4 RETURN count(d)", 2)]:
+            self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
         g.delete()
