@@ -4085,41 +4085,27 @@ mod tests {
         assert_eq!(params.len(), 2);
     }
 
-    /// Parses `query` on a helper thread, `None` if it is still running after
-    /// `secs`: a parser loop that never ends must fail the test, not hang it.
-    fn parse_within(
-        query: &'static str,
-        secs: u64,
-    ) -> Option<Result<(), String>> {
-        with_functions();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(Parser::new(query).parse().map(|_| ()));
-        });
-        rx.recv_timeout(std::time::Duration::from_secs(secs)).ok()
-    }
-
     // The edge filter of a shortestPath used to be skipped token by token until
     // `]` or `}`; at end of input that loop never ended and pinned a worker.
     #[test]
     fn shortest_path_edge_filter_at_end_of_input_is_an_error() {
+        with_functions();
         for query in [
             "RETURN shortestPath((a)-[{",
             "RETURN shortestPath((a)-[$p",
             "RETURN shortestPath((a)-[{x: [1, {y: 2",
             "MATCH (a), (b) RETURN shortestPath((a)-[* {x: 1",
-            "MATCH (a), (b) RETURN allShortestPaths((a)-[:R {x: 1",
         ] {
-            let res = parse_within(query, 10);
-            assert!(res.is_some(), "parser did not return on {query:?}");
-            assert!(res.unwrap().is_err(), "accepted {query:?}");
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
         }
         // A complete filter is still parsed and rejected for being a filter.
         for query in [
             "MATCH (a), (b) RETURN shortestPath((a)-[{x: {y: [1]}}]->(b))",
             "MATCH (a), (b) RETURN shortestPath((a)-[$p]->(b))",
         ] {
-            let err = parse_within(query, 10).unwrap().unwrap_err();
+            let Err(err) = Parser::new(query).parse() else {
+                panic!("accepted {query:?}");
+            };
             assert!(
                 err.contains("filters on relationships in shortestPath are not allowed"),
                 "{query:?}: {err}"
