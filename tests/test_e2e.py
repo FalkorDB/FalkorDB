@@ -2068,6 +2068,19 @@ def test_call_optional_match_filter_not_pushed_with_outer_variable_ids():
     assert res.result_set == []
 
 
+def test_call_optional_match_filter_wrapped_aggregate_inherits_only_outputs():
+    """An aggregate under a wrapper (`LIMIT`) in the left branch exposes only
+    its own outputs to the OPTIONAL MATCH, so the filter on `n` must not be
+    pushed onto an Argument that carries a discarded variable's id."""
+    query("UNWIND range(1, 3) AS i CREATE (:A:B {id: i})", write=True)
+
+    res = query(
+        "UNWIND [1] AS a UNWIND [1] AS b WITH count(*) AS k LIMIT 1"
+        " OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id"
+    )
+    assert res.result_set == [[3]]
+
+
 def test_union_branch_optional_match_filter_keeps_anonymous_scan():
     """A `WHERE` on an OPTIONAL MATCH inside a UNION branch of a CALL {} stays
     above the anonymous node's scan: the branch's `_anon_0` shares its id with

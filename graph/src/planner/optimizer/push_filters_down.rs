@@ -78,6 +78,22 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
     }
 }
 
+/// Variables a branch makes visible to the right branch of an `Apply` or
+/// `Optional`: every variable of the subtree, except those hidden beneath a
+/// `Project`/`Aggregate`, which only exposes the variables it names (ids are
+/// per scope, so a hidden variable's id may belong to a different variable
+/// further up).
+fn visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
+    if let Some(outputs) = branch_output_variables(node) {
+        return outputs;
+    }
+    let mut vars = collect_subtree_variables(&DynTree::new(node.data().clone()).root());
+    for child in node.children() {
+        vars.extend(visible_variables(&child));
+    }
+    vars
+}
+
 /// Pushes filter conjuncts down through nodes.
 ///
 /// Transforms:
@@ -239,9 +255,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                         };
                         if !filter_in_left {
                             let left = parent.child(0);
-                            let left_vars = branch_output_variables(&left)
-                                .unwrap_or_else(|| collect_subtree_variables(&left));
-                            inherited.extend(left_vars);
+                            inherited.extend(visible_variables(&left));
                         }
                         break;
                     }
