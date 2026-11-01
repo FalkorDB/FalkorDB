@@ -69,7 +69,7 @@ use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     marker::PhantomData,
     sync::Arc,
     time::{Duration, Instant},
@@ -193,6 +193,11 @@ pub struct Runtime<'a> {
     pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
     /// Cache of deleted relationships for result consistency
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
+    /// Ids in `deleted_relationships` that a later `CREATE` of this query
+    /// reissued to a new relationship: the snapshot describes the previous
+    /// owner, so it must not make a write to the new one look deleted. A
+    /// delete of the new relationship records a fresh snapshot and clears it.
+    pub reissued_relationships: RefCell<HashSet<RelationshipId>>,
     /// Cache for MERGE pattern matching — stores only the created entity
     /// bindings (variable id → value), keyed by the MERGE operator's plan node
     /// and the pattern hash. Per operator, like C's `unique_entities`: another
@@ -506,6 +511,7 @@ impl<'a> Runtime<'a> {
             import_folder,
             deleted_nodes: RefCell::new(HashMap::new()),
             deleted_relationships: RefCell::new(HashMap::new()),
+            reissued_relationships: RefCell::new(HashSet::new()),
             merge_pattern_cache: RefCell::new(HashMap::new()),
             node_attr_id_memo: RefCell::new(Vec::new()),
             rel_attr_id_memo: RefCell::new(Vec::new()),
@@ -1653,7 +1659,9 @@ impl<'a> Runtime<'a> {
     /// segment's explicit deletes, and the snapshot map, which is the only
     /// place an edge cascaded by `DETACH DELETE` of its endpoint is recorded
     /// before commit. The graph and snapshot records both describe the edge
-    /// that used to own the id, so neither applies to a reissued id.
+    /// that used to own the id, so neither applies to a reissued id (the
+    /// graph's is told apart by the pending-created marker, which lasts to the
+    /// next commit; the snapshot's by `reissued_relationships`).
     pub fn is_relationship_deleted(
         &self,
         id: RelationshipId,
@@ -1662,7 +1670,30 @@ impl<'a> Runtime<'a> {
         pending.is_relationship_deleted(id)
             || (self.graph().is_relationship_deleted(id) && !pending.is_relationship_created(id))
             || (!pending.is_relationship_created(id)
+                && !self.reissued_relationships.borrow().contains(&id)
                 && self.deleted_relationships.borrow().contains_key(&id))
+    }
+
+    /// Snapshots a relationship this query deleted. The id now names that
+    /// relationship again, even if it had been reissued before.
+    pub fn record_deleted_relationship(
+        &self,
+        id: RelationshipId,
+        snapshot: DeletedRelationship,
+    ) {
+        self.reissued_relationships.borrow_mut().remove(&id);
+        self.deleted_relationships.borrow_mut().insert(id, snapshot);
+    }
+
+    /// Notes that `id` was just created. If the query had deleted an edge
+    /// with that id, the snapshot no longer speaks for the id.
+    pub fn note_relationship_created(
+        &self,
+        id: RelationshipId,
+    ) {
+        if self.deleted_relationships.borrow().contains_key(&id) {
+            self.reissued_relationships.borrow_mut().insert(id);
+        }
     }
 
     /// Materializes a property column for a batch of node IDs.

@@ -313,6 +313,21 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[r]->() RETURN r.v")
         self.env.assertEqual(res.result_set, [[5]])
 
+        # ... also after a later segment boundary has cleared the pending
+        # creation marker
+        res = self.graph.query("MATCH ()-[r]->() DELETE r WITH 1 AS x "
+                               "CREATE ()-[r2:R {v:1}]->() WITH r2 SET r2.v = 7 RETURN id(r2)")
+        self.env.assertEqual(res.result_set, [[0]])
+        res = self.graph.query("MATCH ()-[r]->() RETURN r.v")
+        self.env.assertEqual(res.result_set, [[7]])
+
+        # a reissued edge the query deletes again is still skipped
+        res = self.graph.query("MATCH ()-[r]->() DELETE r WITH 1 AS x "
+                               "CREATE ()-[r2:R {v:1}]->() WITH r2 DELETE r2 WITH r2 SET r2.v = 9")
+        self.env.assertEqual(res.properties_set, 1)
+        res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set, [[0]])
+
     def test16_repeated_entity_deletion(self):
         # create 2 nodes cyclically connected by 2 edges
         actual_result = self.graph.query("CREATE (x1:A)-[r:R]->(n2:B)-[t:T]->(x1)")

@@ -290,6 +290,7 @@ impl Runtime<'_> {
                 let mut pending = self.pending.borrow_mut();
                 for (&id, &(from, to)) in ids.iter().zip(endpoints.iter()) {
                     pending.created_relationship(id, from, to, type_name.clone());
+                    self.note_relationship_created(id);
                 }
             }
 
