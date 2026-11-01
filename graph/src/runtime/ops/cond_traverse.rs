@@ -949,27 +949,38 @@ impl<'a> CondTraverseOp<'a> {
     }
 
     /// Remove from `out[fwd_end..]` (reverse-scan results) every `(from, to)`
-    /// pair already present in `out[start..fwd_end]` (forward-scan results).
+    /// pair already present in `out[start..fwd_end]` (forward-scan results),
+    /// keeping the retained reverse results in scan order.
     /// The forward results of one row come off a row-major matrix iterator, so
-    /// they are normally sorted and a binary search suffices.
+    /// they are normally sorted and are binary-searched in place; only an
+    /// unsorted slice pays for a sorted copy.
     fn drop_reverse_duplicates(
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
         start: usize,
         fwd_end: usize,
     ) {
         let key = |t: &(NodeId, NodeId, RelationshipId)| (u64::from(t.0), u64::from(t.1));
-        let mut fwd: Vec<(u64, u64)> = out[start..fwd_end].iter().map(key).collect();
-        if !fwd.is_sorted() {
-            fwd.sort_unstable();
-        }
-        let mut w = fwd_end;
-        for r in fwd_end..out.len() {
-            if fwd.binary_search(&key(&out[r])).is_err() {
-                out.swap(w, r);
+        let (head, rev) = out.split_at_mut(fwd_end);
+        let fwd = &head[start..];
+        let sorted_copy: Option<Vec<(u64, u64)>> = if fwd.is_sorted_by_key(key) {
+            None
+        } else {
+            let mut v: Vec<(u64, u64)> = fwd.iter().map(key).collect();
+            v.sort_unstable();
+            Some(v)
+        };
+        let mut w = 0;
+        for r in 0..rev.len() {
+            let seen = match &sorted_copy {
+                Some(v) => v.binary_search(&key(&rev[r])).is_ok(),
+                None => fwd.binary_search_by_key(&key(&rev[r]), key).is_ok(),
+            };
+            if !seen {
+                rev.swap(w, r);
                 w += 1;
             }
         }
-        out.truncate(w);
+        out.truncate(fwd_end + w);
     }
 
     /// Processes relationship pairs from an iterator without materializing them.
