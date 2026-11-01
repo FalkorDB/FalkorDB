@@ -127,7 +127,7 @@ const TOO_DEEP: &str = "Query nesting exceeds the maximum depth of";
 
 /// A place where a pattern comprehension cannot be planned as a sub-plan, so
 /// the parser rejects one found there (#2308).
-#[derive(Debug, Clone, Copy, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
 enum ForbiddenPatternComprehension {
     /// A pattern's inline property map; worded as FalkorDB C words it, and
     /// also the rejection for any other map the parser cannot accept there.
@@ -216,6 +216,21 @@ pub struct Parser<'a> {
     /// Set while parsing where a pattern comprehension cannot be planned as
     /// a sub-plan, to the rejection to raise if one is found there.
     forbidden_pattern_comprehension: Option<ForbiddenPatternComprehension>,
+    /// `[` positions already tried, and failed, as a pattern comprehension,
+    /// with everything else that decides whether the attempt can succeed.
+    /// See [`Parser::parse_list_literal_or_comprehension`].
+    not_pattern_comprehension: HashSet<PatternComprehensionAttempt>,
+}
+
+/// Where and in what context [`Parser::parse_list_literal_or_comprehension`]
+/// tried to read a pattern comprehension: the position after the `[`, and the
+/// parser state the attempt's outcome depends on besides the input.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PatternComprehensionAttempt {
+    pos: usize,
+    allow_pattern_predicate: bool,
+    forbidden: Option<ForbiddenPatternComprehension>,
+    depth: u32,
 }
 
 impl<'a> Parser<'a> {
@@ -267,6 +282,7 @@ impl<'a> Parser<'a> {
             expr_height: 0,
             max_child_height: 0,
             forbidden_pattern_comprehension: None,
+            not_pattern_comprehension: HashSet::new(),
         }
     }
 
@@ -1397,6 +1413,9 @@ impl<'a> Parser<'a> {
                             if !matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
                                 break;
                             }
+                            // `<-` is lost once from/to are swapped when both
+                            // ends share one alias (`(a)<-[*]-(a)`); note it here.
+                            let is_incoming = self.lexer.current()? == Token::LessThan;
                             let (relationship, right) =
                                 self.parse_relationship_pattern(prev_node, clause)?;
 
@@ -1432,7 +1451,7 @@ impl<'a> Parser<'a> {
                                     relationship.max_hops,
                                 );
                                 new_rel.all_shortest_paths = if !relationship.bidirectional
-                                    && relationship.from.alias != left_alias
+                                    && (relationship.from.alias != left_alias || is_incoming)
                                 {
                                     AllShortestPaths::Reversed
                                 } else {
@@ -1770,18 +1789,11 @@ impl<'a> Parser<'a> {
             let _alias = self.try_parse_ident();
 
             // Relationship types
-            let mut types = Vec::new();
-            if optional_match_token!(self.lexer, Colon) {
-                loop {
-                    types.push(self.parse_ident()?);
-                    let pipe = optional_match_token!(self.lexer, Pipe);
-                    let colon = optional_match_token!(self.lexer, Colon);
-                    if pipe || colon {
-                        continue;
-                    }
-                    break;
-                }
-            }
+            let types = if optional_match_token!(self.lexer, Colon) {
+                self.parse_relationship_types()?
+            } else {
+                vec![]
+            };
 
             // Variable length * and range
             let (min, max) = if optional_match_token!(self.lexer, Star) {
@@ -2119,24 +2131,33 @@ impl<'a> Parser<'a> {
     // match one of those kind [..4], [4..], [4..5], [6]
     fn parse_list_operator_expression(
         &mut self,
-        mut lhs: DynTree<ExprIR<Arc<String>>>,
+        lhs: DynTree<ExprIR<Arc<String>>>,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        let from = self.parse_expr(false);
-        if optional_match_token!(self.lexer, DotDot) {
-            let to = self.parse_expr(false);
-            match_token!(self.lexer, RBrace);
-            lhs = tree!(
-                ExprIR::GetElements,
-                lhs,
-                from.unwrap_or_else(|_| tree!(ExprIR::Constant(Value::Int(0)))),
-                to.unwrap_or_else(|_| tree!(ExprIR::Constant(Value::Int(i64::MAX))))
-            );
+        // A bound is left out only when `..` or `]` comes where it would
+        // start; one that is there but fails to parse is an error.
+        let from = if self.lexer.current()? == Token::DotDot {
+            None
         } else {
-            match_token!(self.lexer, RBrace);
-            lhs = tree!(ExprIR::GetElement, lhs, from?);
-        }
-
-        Ok(lhs)
+            let from = self.parse_expr(false)?;
+            if self.lexer.current()? != Token::DotDot {
+                match_token!(self.lexer, RBrace);
+                return Ok(tree!(ExprIR::GetElement, lhs, from));
+            }
+            Some(from)
+        };
+        match_token!(self.lexer, DotDot);
+        let to = if self.lexer.current()? == Token::RBrace {
+            None
+        } else {
+            Some(self.parse_expr(false)?)
+        };
+        match_token!(self.lexer, RBrace);
+        Ok(tree!(
+            ExprIR::GetElements,
+            lhs,
+            from.unwrap_or_else(|| tree!(ExprIR::Constant(Value::Int(0)))),
+            to.unwrap_or_else(|| tree!(ExprIR::Constant(Value::Int(i64::MAX))))
+        ))
     }
 
     fn parse_property_lookup(
@@ -2807,26 +2828,49 @@ impl<'a> Parser<'a> {
         }
         self.restore_state(saved);
 
-        // 2) Try named pattern comprehension: [var = (pattern) ... | expr]
-        if let Some(var) = self.try_parse_ident()
-            && optional_match_token!(self.lexer, Equal)
-            && self.lexer.current()? == Token::LParen
-            && let Ok(result) = self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
+        // 2) and 3) re-read what follows the `[` from the start, so when they
+        // fail, whatever nests inside is parsed twice, and a list like this
+        // one inside it twice again: exponential in the nesting. So they are
+        // only tried where they can succeed - after `(` or a name, with a `|`
+        // before the closing `]` - and never twice in the same place: an
+        // attempt's outcome depends only on the input and the context kept
+        // in `attempt`.
+        let attempt = PatternComprehensionAttempt {
+            pos: saved.pos,
+            allow_pattern_predicate,
+            forbidden: self.forbidden_pattern_comprehension,
+            depth: self.depth,
+        };
+        if matches!(
+            self.lexer.current(),
+            Ok(Token::LParen | Token::IdentifierOrKeyword { .. })
+        ) && !self.not_pattern_comprehension.contains(&attempt)
+            && self.list_has_top_level_pipe()
         {
-            self.reject_forbidden_pattern_comprehension()?;
-            self.reject_aggregate(&result)?;
-            return Ok((result, false));
-        }
-        self.restore_state(saved);
-
-        // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
-        if self.lexer.current()? == Token::LParen {
-            if let Ok(result) = self.parse_pattern_comprehension(None, allow_pattern_predicate) {
+            // 2) Try named pattern comprehension: [var = (pattern) ... | expr]
+            if let Some(var) = self.try_parse_ident()
+                && optional_match_token!(self.lexer, Equal)
+                && self.lexer.current()? == Token::LParen
+                && let Ok(result) =
+                    self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
+            {
                 self.reject_forbidden_pattern_comprehension()?;
                 self.reject_aggregate(&result)?;
                 return Ok((result, false));
             }
             self.restore_state(saved);
+
+            // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
+            if self.lexer.current()? == Token::LParen {
+                if let Ok(result) = self.parse_pattern_comprehension(None, allow_pattern_predicate)
+                {
+                    self.reject_forbidden_pattern_comprehension()?;
+                    self.reject_aggregate(&result)?;
+                    return Ok((result, false));
+                }
+                self.restore_state(saved);
+            }
+            self.not_pattern_comprehension.insert(attempt);
         }
 
         // 4) Default: list literal
@@ -2834,6 +2878,34 @@ impl<'a> Parser<'a> {
             tree!(ExprIR::List),
             !optional_match_token!(self.lexer, RBrace),
         ))
+    }
+
+    /// Whether a `|` comes before the `]` that closes the list whose `[` was
+    /// just consumed, outside any bracket nested in it, and before any `,`
+    /// there. A pattern comprehension has such a `|` and no such `,`; a list
+    /// literal cannot have the `|`. Brackets are only counted, not parsed,
+    /// and the position is left where it was.
+    fn list_has_top_level_pipe(&mut self) -> bool {
+        let state = self.save_state();
+        let mut open = 0usize;
+        let found = loop {
+            match self.lexer.current() {
+                Ok(Token::Pipe) if open == 0 => break true,
+                Ok(Token::Comma) if open == 0 => break false,
+                Ok(Token::LParen | Token::LBrace | Token::LBracket) => open += 1,
+                Ok(Token::RParen | Token::RBrace | Token::RBracket) => {
+                    if open == 0 {
+                        break false;
+                    }
+                    open -= 1;
+                }
+                Ok(Token::EndOfFile) | Err(_) => break false,
+                Ok(_) => {}
+            }
+            self.lexer.next();
+        };
+        self.restore_state(state);
+        found
     }
 
     fn parse_list_comprehension(
@@ -2965,6 +3037,18 @@ impl<'a> Parser<'a> {
         Ok(Arc::new(QueryNode::new(alias, labels, Arc::new(attrs))))
     }
 
+    /// The type alternatives after a relationship's `:`: `A|B`, with the
+    /// legacy `A|:B` spelling. `A:B` is not one of them: an edge has exactly
+    /// one type, so a second `:` is left for the caller to reject.
+    fn parse_relationship_types(&mut self) -> Result<Vec<Arc<String>>, String> {
+        let mut types = vec![self.parse_ident()?];
+        while optional_match_token!(self.lexer, Pipe) {
+            optional_match_token!(self.lexer, Colon);
+            types.push(self.parse_ident()?);
+        }
+        Ok(types)
+    }
+
     #[allow(clippy::too_many_lines)]
     fn parse_relationship_pattern(
         &mut self,
@@ -2990,15 +3074,7 @@ impl<'a> Parser<'a> {
             };
             let mut types = HashSet::new();
             if optional_match_token!(self.lexer, Colon) {
-                loop {
-                    types.insert(self.parse_ident()?);
-                    let pipe = optional_match_token!(self.lexer, Pipe);
-                    let colon = optional_match_token!(self.lexer, Colon);
-                    if pipe || colon {
-                        continue;
-                    }
-                    break;
-                }
+                types.extend(self.parse_relationship_types()?);
             }
             let var_len = if optional_match_token!(self.lexer, Star) {
                 let start = if let Token::Integer(i) = self.lexer.current()? {
@@ -3253,6 +3329,7 @@ impl<'a> Parser<'a> {
                 self.reject_unparenthesized_target(&expr)?;
                 expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
+                self.expect_property_after_paren()?;
             }
             if self.lexer.current()? == Token::Dot {
                 while self.lexer.current()? == Token::Dot {
@@ -3312,6 +3389,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// A parenthesized `SET`/`REMOVE` target is only allowed as the subject
+    /// of a property lookup, `(n).x`: the grammar has no `(n) = {..}`,
+    /// `(n):L` or `(n.x) = 5`, and C rejects them.
+    fn expect_property_after_paren(&self) -> Result<(), String> {
+        if self.lexer.current()? == Token::Dot {
+            Ok(())
+        } else {
+            Err(self.lexer.format_error(&format!(
+                "Invalid input '{}': expected '.'",
+                self.lexer.current_str()
+            )))
+        }
+    }
+
     fn parse_remove_clause(&mut self) -> Result<QueryIR<Arc<String>>, String> {
         let mut remove_items = vec![];
         self.parse_remove_items(&mut remove_items)?;
@@ -3334,6 +3425,7 @@ impl<'a> Parser<'a> {
                 self.reject_unparenthesized_target(&expr)?;
                 expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
+                self.expect_property_after_paren()?;
             }
             if self.lexer.current()? == Token::Dot {
                 while self.lexer.current()? == Token::Dot {
@@ -3898,6 +3990,86 @@ mod tests {
         }
     }
 
+    // `[` followed by `(` is tried as a pattern comprehension before it is
+    // parsed as a list literal. When the property map inside held another such
+    // list, every level parsed its inside twice: 20 levels (228 bytes) took
+    // 12 s, each level doubling it. The attempt is now skipped where no `|`
+    // closes the list, and never repeated where it already failed.
+    #[test]
+    fn nested_pattern_comprehension_attempts_are_not_exponential() {
+        with_functions();
+        let nest = |wrap: fn(String) -> String| {
+            let mut e = String::from("1");
+            for _ in 0..40 {
+                e = wrap(e);
+            }
+            e
+        };
+        let queries = [
+            format!("RETURN {}", nest(|e| format!("[(x {{k: {e}}})]"))),
+            format!("RETURN {}", nest(|e| format!("[(x {{k: {e}}}) - 1]"))),
+            format!("RETURN {}", nest(|e| format!("[p = (x {{k: {e}}})]"))),
+            format!(
+                "MATCH (x) WHERE {} RETURN x",
+                nest(|e| format!("(x {{k: [{e}]}})"))
+            ),
+        ];
+        for query in queries {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let q = query.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(Parser::new(&q).parse().map(|_| ()));
+            });
+            let res = rx.recv_timeout(std::time::Duration::from_secs(10));
+            assert!(res.is_ok(), "still parsing after 10 s: {query}");
+            assert!(res.unwrap().is_ok(), "rejected {query}");
+        }
+        // What is tried must still be found where it is there to find, and
+        // still refused where it was refused.
+        assert!(
+            Parser::new("MATCH (a) RETURN [(x {k: [(a)-->(b) | b]}) | x]")
+                .parse()
+                .is_err()
+        );
+        for query in [
+            "MATCH (a) RETURN [(x {k: [1]})-->(y) | [(y)-->(z) | z]]",
+            "MATCH (a) RETURN {k: [(a)-->(b) | b]}",
+            "MATCH (a) RETURN [p = (a)-->(b) WHERE [(b)-->(c) | c] <> [] | p]",
+        ] {
+            assert!(
+                Parser::new(query).parse().is_ok(),
+                "failed to parse: {query}"
+            );
+        }
+    }
+
+    // The `|` lookahead counts brackets without matching their kinds, so it
+    // can say yes to a list whose brackets are mismatched. That only decides
+    // which parse is tried first: the parse itself still rejects the input.
+    #[test]
+    fn mismatched_brackets_in_a_list_are_still_rejected() {
+        with_functions();
+        for query in [
+            "RETURN [([)] | 1]",
+            "MATCH (a) RETURN [(a)-->(b) WHERE ([)] | 1]",
+            "RETURN [(1]), 2]",
+            "RETURN [(1) | 2]",
+            "RETURN [(]",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query}");
+        }
+        for query in [
+            "MATCH (a) RETURN [(a)-->(b) WHERE b.v IN [(1), 2] | b.v]",
+            "MATCH (a) RETURN [(a)-->(b) | [b.v, (1)]]",
+            "RETURN [(1), 2]",
+        ] {
+            assert!(
+                Parser::new(query).parse().is_ok(),
+                "failed to parse: {query}"
+            );
+        }
+    }
+
     // Malformed literals are parse errors, named by the parameter that failed.
     #[test]
     fn malformed_params_name_the_parameter() {
@@ -3907,6 +4079,32 @@ mod tests {
                 err.starts_with("Failed to parse the value of parameter 'p'"),
                 "parameter `{value}` gave: {err}",
             );
+        }
+    }
+
+    // A slice bound that fails to parse is an error, not a missing bound:
+    // `[1,2,3][abs()..2]` used to run as `[1,2,3][..2]`.
+    #[test]
+    fn slice_bound_errors_are_reported() {
+        with_functions();
+        for query in [
+            "RETURN [1,2,3][1+..2]",
+            "RETURN [1,2,3][1..2+]",
+            "RETURN [1,2,3][abs()..2]",
+            "RETURN [1,2,3][1..abs()]",
+            "RETURN [1,2,3][(1..2]",
+            "RETURN [1,2,3][1..(2]",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        for query in [
+            "RETURN [1,2,3][..2]",
+            "RETURN [1,2,3][1..]",
+            "RETURN [1,2,3][..]",
+            "RETURN [1,2,3][1..2]",
+            "RETURN [1,2,3][abs(-1)..-1]",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
         }
     }
 
@@ -3938,6 +4136,38 @@ mod tests {
                 Parser::new(query).parse().is_ok(),
                 "failed to parse: {query}"
             );
+        }
+    }
+
+    // A parenthesized SET/REMOVE target only opens a property lookup, and
+    // an edge's type alternatives are joined by `|`, never by a bare `:`.
+    #[test]
+    fn paren_update_targets_and_colon_joined_types_are_rejected() {
+        with_functions();
+        for query in [
+            "MATCH (n) SET (n.x) = 5",
+            "MATCH (n) SET (n) = {a: 1}",
+            "MATCH (n) SET (n) += {a: 1}",
+            "MATCH (n) SET (n):L",
+            "MATCH (n) REMOVE (n):L",
+            "MATCH ()-[:A:B]->() RETURN 1",
+            "MATCH ()-[r:A:B]->() RETURN 1",
+            "MATCH ()-[:A|B:C]->() RETURN 1",
+            "MATCH (a), (b) RETURN shortestPath((a)-[:A:B*]->(b))",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        for query in [
+            "MATCH (n) SET (n).x = 5",
+            "MATCH (n) SET (n).x.y = 5",
+            "MATCH (n) REMOVE (n).x",
+            "MATCH (n) SET n = {a: 1}, n:L",
+            "MATCH ()-[:A]->() RETURN 1",
+            "MATCH ()-[:A|B]->() RETURN 1",
+            "MATCH ()-[:A|:B|C]->() RETURN 1",
+            "MATCH (a), (b) RETURN shortestPath((a)-[:A|:B*]->(b))",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
         }
     }
 }

@@ -1005,11 +1005,7 @@ fn apply_filter_pushdown<T: IndexSubject>(
         // positives through).
         *plan.node_mut(filter_idx).data_mut() = IR::Filter(original_filter.clone());
     } else {
-        let remaining_filter = if remaining.len() == 1 {
-            Arc::new(remaining.into_iter().next().unwrap())
-        } else {
-            Arc::new(tree!(ExprIR::And; remaining))
-        };
+        let remaining_filter = Arc::new(ExprIR::and_of(remaining));
         *plan.node_mut(filter_idx).data_mut() = IR::Filter(remaining_filter);
     }
 }

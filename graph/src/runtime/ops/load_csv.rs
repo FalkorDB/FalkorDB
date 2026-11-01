@@ -184,7 +184,8 @@ impl<R: std::io::Read> std::io::Read for EnforcingReader<R> {
 
 /// Resolver used for one LOAD CSV fetch. It returns the pre-validated
 /// `SocketAddr`s from `validate_remote_url`, ignoring the URI ureq passes
-/// in (this agent is built for exactly one request).
+/// in: the agent makes exactly one request, since `http_config` follows no
+/// redirects.
 #[derive(Debug)]
 struct PinnedResolver {
     addrs: Vec<SocketAddr>,
@@ -214,13 +215,19 @@ impl ureq::unversioned::resolver::Resolver for PinnedResolver {
     }
 }
 
-/// Build the shared base config (timeouts) once.
+/// Build the shared base config once: timeouts, https only, and no
+/// redirects. A redirect would be resolved by `PinnedResolver` to the
+/// addresses validated for the first URL's host, whatever host it names
+/// (#3443); like C (libcurl without `CURLOPT_FOLLOWLOCATION`) none is
+/// followed, and the 3xx is reported by `open_csv_records`.
 fn http_config() -> &'static ureq::config::Config {
     static CFG: OnceLock<ureq::config::Config> = OnceLock::new();
     CFG.get_or_init(|| {
         ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(30)))
             .timeout_recv_body(Some(Duration::from_mins(1)))
+            .https_only(true)
+            .max_redirects(0)
             .build()
     })
 }
@@ -372,11 +379,24 @@ impl<'a> LoadCsvOp<'a> {
                 PinnedResolver { addrs },
             );
 
-            let body = agent
+            let response = agent
                 .get(path)
                 .call()
-                .map_err(|e| format!("Failed to fetch CSV file: {e}"))?
-                .into_body();
+                .map_err(|e| format!("Failed to fetch CSV file: {e}"))?;
+            // With no redirects followed the 3xx itself comes back; its body
+            // is not the CSV.
+            if response.status().is_redirection() {
+                let location = response
+                    .headers()
+                    .get(ureq::http::header::LOCATION)
+                    .and_then(|l| l.to_str().ok())
+                    .unwrap_or("");
+                return Err(format!(
+                    "LOAD CSV does not follow redirects (HTTP {} to {location})",
+                    response.status().as_u16()
+                ));
+            }
+            let body = response.into_body();
             // Enforce the content-length cap to prevent memory-exhaustion DoS.
             // EnforcingReader returns an explicit error rather than silently
             // truncating, so a payload longer than the limit fails the query.
