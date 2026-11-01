@@ -55,17 +55,9 @@ static void _ExtractTensors
 			MSB_MASK, GrB_DESC_SC) ;
 	ASSERT(info == GrB_SUCCESS);
 
-	// expecting at least a single tensor was extracted
-	GrB_Index tm_nvals;
-	GrB_Index tdp_nvals;
-
-	info = GrB_Matrix_nvals (&tm_nvals, *TM) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	info = GrB_Matrix_nvals (&tdp_nvals, *TDP) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	ASSERT ((tm_nvals + tdp_nvals) > 0) ;
+	// no tensor may be extracted: Graph_RelationshipContainsMultiEdge compares
+	// the matrix's entry count with the relation's edge count statistic, and
+	// the two can disagree without any tensor; _EncodeTensors handles that
 }
 
 // encode tensors
@@ -114,7 +106,15 @@ static void _EncodeTensors
 	ASSERT (info == GrB_SUCCESS) ;
 
 	GrB_Index nvals = tm_nvals + tdp_nvals ;
-	ASSERT (nvals > 0) ;
+
+	if (nvals == 0) {
+		// a relation can be flagged multi-edge yet hold no tensor (see
+		// _ExtractTensors); encode it as "no tensors", the lone 0 the decoder
+		// expects. writing the M and DP counts as well would leave two stray
+		// zeros in front of the next relation id and make the RDB unloadable
+		SerializerIO_WriteUnsigned (rdb, 0) ;
+		return;
+	}
 
 	// encode number of tensors in matrix R
 	SerializerIO_WriteUnsigned (rdb, nvals) ;
