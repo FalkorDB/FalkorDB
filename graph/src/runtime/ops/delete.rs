@@ -232,8 +232,11 @@ impl Runtime<'_> {
                 for (src, dst, rel) in incident {
                     // An edge between two deleted nodes is reached from both ends,
                     // and one already snapshotted by an earlier batch must keep
-                    // that snapshot — it holds the pre-delete data.
-                    if self.deleted_relationships.borrow().contains_key(&rel) {
+                    // that snapshot — it holds the pre-delete data. A snapshot
+                    // of a reissued id belongs to the id's previous owner.
+                    if self.deleted_relationships.borrow().contains_key(&rel)
+                        && !self.reissued_relationships.borrow().contains(&rel)
+                    {
                         continue;
                     }
                     let type_name = self.get_relationship_type(rel).unwrap();
