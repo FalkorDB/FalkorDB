@@ -699,6 +699,13 @@ unsafe extern "C" fn on_keyspace_event(
                 telemetry::delete_stream(&context, &old_name);
             }
         }
+        "move_from" => {
+            // `ctx` has the source database selected. The stream is named after
+            // the graph and lives in the graph's database; the graph now lives
+            // elsewhere, and a graph created here under the name must not append
+            // to its history.
+            telemetry::delete_stream(&Context::new(ctx), &key_name);
+        }
         "move_to" => {
             // `ctx` has the destination database selected.
             unsafe { relocate_graph_at_key(ctx, key, &key_name) };

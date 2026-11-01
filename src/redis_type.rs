@@ -41,7 +41,7 @@
 //! ```
 
 use crate::config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_VKEY_MAX_ENTITY_COUNT};
-use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, graph_free, register_graph_at};
+use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, graph_free, graph_id, register_graph_at};
 use crate::serializers;
 use crate::serializers::decoder::LoadedKey;
 use crate::serializers::encoder::build_multi_key_payloads;
@@ -232,14 +232,15 @@ unsafe extern "C" fn graph_rdb_save(
     unsafe {
         let key_name = io_key_name(rdb);
 
-        // The graph's own key of a multi-key save carries key 0's slice.
-        if save_key_slice(rdb, io_db(rdb), &key_name) {
+        let graph_arc = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
+        // The graph's own key of a multi-key save carries key 0's slice -- of the
+        // graph this key holds: a key of another graph can have the same lossy name.
+        if save_key_slice(rdb, io_db(rdb), &key_name, Some(graph_id(graph_arc))) {
             return;
         }
 
         // Direct encoding: use data_ptr() to bypass parking_lot RwLock which
         // deadlocks in the BGSAVE fork child when the write loop holds the write lock.
-        let graph_arc = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
         let tg: &ThreadedGraph = &*graph_arc.data_ptr();
         let g = tg.graph.read();
         let graph = g.borrow();
@@ -249,11 +250,14 @@ unsafe extern "C" fn graph_rdb_save(
 
 /// Encode the slice of a multi-key graph `create_virtual_keys` assigned to
 /// key `key_name` of database `db` -- the graph's own key or one of its virtual
-/// keys. Returns `false` when this save assigned that key no slice.
+/// keys. Returns `false` when this save assigned that key no slice, or when
+/// `owner` -- the graph the key holds, for a graph's own key -- is not the graph
+/// the slice belongs to.
 unsafe fn save_key_slice(
     rdb: *mut RedisModuleIO,
     db: i32,
     key_name: &str,
+    owner: Option<usize>,
 ) -> bool {
     unsafe {
         let vkey_state = VKEY_STATE.lock();
@@ -265,6 +269,9 @@ unsafe fn save_key_slice(
         let Some(slice) = vkey_state.vkey_map.get(&(db, key_name.to_owned())) else {
             return false;
         };
+        if owner.is_some_and(|id| id != slice.graph_id) {
+            return false;
+        }
         let key_count = 1 + vkey_state
             .graph_vkeys
             .get(&(db, slice.graph_name.clone()))
@@ -1056,7 +1063,7 @@ unsafe extern "C" fn graphmeta_rdb_save(
 ) {
     unsafe {
         let key_name = io_key_name(rdb);
-        save_key_slice(rdb, io_db(rdb), &key_name);
+        save_key_slice(rdb, io_db(rdb), &key_name, None);
     }
 }
 

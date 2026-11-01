@@ -1,4 +1,5 @@
 import re
+import time
 import redis
 from common import Env, SANITIZER
 
@@ -26,6 +27,15 @@ class testMultiDb():
 
     def con(self, db):
         return redis.Redis(host=self.host, port=self.port, db=db)
+
+    def scan_type(self, db, key_type):
+        # Every key of the type, across all pages of the scan.
+        con, cursor, found = self.con(db), 0, []
+        while True:
+            cursor, keys = con.execute_command("SCAN", cursor, "TYPE", key_type)
+            found += keys
+            if int(cursor) == 0:
+                return found
 
     def query(self, db, key, q):
         return self.con(db).execute_command("GRAPH.QUERY", key, q)
@@ -129,6 +139,7 @@ class testMultiDb():
             return
 
         # small virtual-key threshold so both graphs are split across keys
+        vkey_max = self.conn.execute_command("GRAPH.CONFIG", "GET", "VKEY_MAX_ENTITY_COUNT")[1]
         self.conn.execute_command("GRAPH.CONFIG", "SET", "VKEY_MAX_ENTITY_COUNT", 10)
         try:
             self.query(0, "g", "UNWIND range(1, 100) AS i CREATE (:A {v: i})-[:R {v: i}]->(:A {v: -i})")
@@ -153,7 +164,7 @@ class testMultiDb():
                 self.env.assertEqual(keys(0), [b'g'])
                 self.env.assertEqual(keys(1), [b'g', b'solo'])
                 for db in range(16):
-                    self.env.assertEqual(self.con(db).execute_command("SCAN", 0, "TYPE", "graphmeta")[1], [])
+                    self.env.assertEqual(self.scan_type(db, "graphmeta"), [])
 
             check()
             self.conn.execute_command("SAVE")
@@ -166,4 +177,24 @@ class testMultiDb():
             self.assert_writable(1, "solo", "C")
             self.assert_alive()
         finally:
-            self.conn.execute_command("GRAPH.CONFIG", "SET", "VKEY_MAX_ENTITY_COUNT", 100000)
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "VKEY_MAX_ENTITY_COUNT", vkey_max)
+
+    def test07_move_takes_the_telemetry_stream_with_the_graph(self):
+        # The stream is named after the graph and sits in its database: moving the
+        # graph leaves none behind, so a new graph of the name starts its own.
+        self.query(0, "mv", "CREATE (:Moved)")
+        stream = "telemetry{mv}"
+        deadline = time.time() + 10
+        while not self.con(0).exists(stream) and time.time() < deadline:
+            time.sleep(0.05)
+        self.env.assertEqual(self.con(0).exists(stream), 1)
+
+        self.env.assertEqual(self.con(0).move("mv", 1), True)
+        self.env.assertEqual(self.con(0).exists(stream), 0)
+        self.assert_writable(1, "mv", "Moved")
+
+        self.query(0, "mv", "CREATE (:Fresh)")
+        time.sleep(0.5)  # past the flusher's window
+        self.env.assertEqual(self.scalar(0, "mv", "MATCH (n:Moved) RETURN count(n)"), 0)
+        self.env.assertEqual(self.con(0).xlen(stream), 1)
+        self.assert_alive()

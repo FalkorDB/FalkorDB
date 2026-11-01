@@ -1212,8 +1212,14 @@ fn flusher_loop() {
                 // up in one run, and being stable it keeps arrival order within a graph,
                 // which is the order consumers read.
                 // By database too: two databases can each hold a graph of one name.
-                deferred.sort_by(|a, b| (a.db, &a.graph_name).cmp(&(b.db, &b.graph_name)));
-                for run in deferred.chunk_by(|a, b| a.db == b.db && a.graph_name == b.graph_name) {
+                // And by graph: two keys whose bytes differ can share a lossy name.
+                let identity = |e: &PendingEntry| (e.db, e.graph.as_ptr() as usize);
+                deferred.sort_by(|a, b| {
+                    (identity(a), &a.graph_name).cmp(&(identity(b), &b.graph_name))
+                });
+                for run in deferred
+                    .chunk_by(|a, b| identity(a) == identity(b) && a.graph_name == b.graph_name)
+                {
                     let name = &run[0].graph_name;
                     // The stream is written into the graph's database; this
                     // context is detached, so it is selected per run.

@@ -71,8 +71,10 @@ pub static DECODE_STATE: LazyLock<Mutex<DecodeState>> =
     LazyLock::new(|| Mutex::new(DecodeState::new()));
 
 /// Tracks pending multi-key graph loads.
-/// All keyed by (db, graph name): an RDB holding the same graph name in two
-/// databases must not fold their slices into one graph.
+/// Every map is keyed by a database and a name, so that an RDB holding the same
+/// name in two databases does not fold their slices into one graph: the graph's
+/// name for `pending` and `finalized`, the Redis key's for `placeholders` and
+/// `meta_keys`.
 pub struct DecodeState {
     pub pending: HashMap<DbKey, PendingGraph>,
     /// Placeholder `Arc<RwLock<ThreadedGraph>>` values returned by `graph_rdb_load`
