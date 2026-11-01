@@ -657,6 +657,7 @@ class testTemporalDuration(FlowTestsBase):
     def test_duration_out_of_range_component_errors(self):
         for q in ["RETURN duration({days: 9223372036854775807})",
                   "RETURN duration({months: 9223372036854775807})",
+                  "RETURN duration({months: 1, seconds: 9223372036854775807})",
                   "RETURN duration({seconds: 9223372036854775807}) + duration({seconds: 1})"]:
             try:
                 self.graph.query(q)

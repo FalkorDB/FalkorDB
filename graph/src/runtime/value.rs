@@ -685,28 +685,22 @@ fn sub_duration_from_timestamp(
 }
 
 /// Move a timestamp by a duration, forwards or (with `subtract`) backwards.
-/// Subtracting never negates the seconds component, which may be `i64::MIN`.
+/// The day and second offsets are combined in `i128`, so that offsets which
+/// cancel (a large day count against negative seconds, or `i64::MIN` seconds)
+/// do not overflow on the way; only the final timestamp is range-checked.
 fn shift_timestamp(
     ts: i64,
     dur: &Dur,
     subtract: bool,
 ) -> Result<i64, String> {
     let (months, dur_days, secs) = dur.components();
-    let out_of_range = || "Duration out of range".to_string();
     let sign = if subtract { -1 } else { 1 };
-    // Months and days are bounded well below `i64::MIN`, so negating is safe.
+    // Months are bounded by an `i32`, so negating is safe.
     let (days, time_of_day) = shift_months(ts, sign * months)?;
-    let shifted = days
-        .checked_add(sign * dur_days)
-        .and_then(|d| d.checked_mul(86400))
-        .and_then(|t| t.checked_add(time_of_day))
-        .ok_or_else(out_of_range)?;
-    let moved = if subtract {
-        shifted.checked_sub(secs)
-    } else {
-        shifted.checked_add(secs)
-    };
-    moved.ok_or_else(out_of_range)
+    let total = (i128::from(days) + i128::from(sign) * i128::from(dur_days)) * 86400
+        + i128::from(time_of_day)
+        + i128::from(sign) * i128::from(secs);
+    i64::try_from(total).map_err(|_| "Duration out of range".to_string())
 }
 
 /// Order two durations by their approximate total length (a month counts as

@@ -516,11 +516,14 @@ impl Dur {
         if months.unsigned_abs() > DUR_LIMIT_MONTHS as u64 {
             return Err(err());
         }
-        // The components must also be addable to a timestamp.
-        days.checked_mul(86400)
-            .and_then(|d| d.checked_add(seconds))
-            .and_then(|t| t.checked_abs())
-            .ok_or_else(err)?;
+        // The components must also be addable to a timestamp: the total length
+        // (a month counted as its longest, 31 days) has to fit an `i64`, so the
+        // legacy epoch-offset form of a duration never wraps.
+        let total = i128::from(months.unsigned_abs()) * 31 * 86400
+            + (i128::from(days) * 86400 + i128::from(seconds)).abs();
+        if total > i128::from(i64::MAX) {
+            return Err(err());
+        }
         if months.unsigned_abs() <= DUR_MAX_MONTHS as u64
             && days.unsigned_abs() <= DUR_MAX_DAYS as u64
             && seconds.unsigned_abs() <= DUR_MAX_SECONDS as u64
@@ -676,14 +679,20 @@ pub fn duration_from_legacy(legacy: i64) -> Result<Dur, String> {
     let days = legacy.div_euclid(86400);
     let time_of_day = legacy.rem_euclid(86400);
     let (y, m, d) = crate::runtime::value::civil_from_days(days);
-    let months = i64::from(y - 1970) * 12 + i64::from(m) - 1;
+    let months = (i64::from(y) - 1970) * 12 + i64::from(m) - 1;
     let remaining = (i64::from(d) - 1) * 86400 + time_of_day;
-    // A value far past the calendar (`duration({seconds: 9e15})` was storable)
-    // has more months than a duration holds. Keep its length as plain seconds
-    // rather than refusing to load it.
+    // Accept the calendar components only when they reproduce the stored
+    // offset: far past the calendar `civil_from_days` narrows the year, and a
+    // value like `duration({seconds: 9e15})` (storable before) has more months
+    // than a duration holds. Then keep its length as plain seconds rather than
+    // changing it or refusing to load it.
     Dur::new(months, remaining / 86400, remaining % 86400)
-        .or_else(|_| Dur::new(0, 0, legacy))
-        .or_else(|_| Dur::new(0, days, time_of_day))
+        .ok()
+        .filter(|dur| duration_to_legacy(dur) == legacy)
+        .map_or_else(
+            || Dur::new(0, 0, legacy).or_else(|_| Dur::new(0, days, time_of_day)),
+            Ok,
+        )
 }
 
 /// Encode a duration in the legacy epoch-offset form (what the compact
@@ -1525,5 +1534,41 @@ mod duration_tests {
         let shared = big.clone();
         assert_eq!(big.amortized_heap_size(), 20);
         drop(shared);
+    }
+
+    #[test]
+    fn legacy_year_past_i32_keeps_its_seconds() {
+        // The year of this offset is 4294969266, which `civil_from_days` narrows
+        // to 1970: it must not decode to zero.
+        let big = 135_536_076_801_504_000;
+        let p = duration_from_legacy(big).unwrap();
+        assert_eq!(p.components(), (0, 0, big));
+        assert_eq!(
+            duration_from_legacy(-big).unwrap().components(),
+            (0, 0, -big)
+        );
+    }
+
+    #[test]
+    fn months_count_toward_the_range_check() {
+        assert!(Dur::new(1, 0, i64::MAX).is_err());
+        assert!(Dur::new(-1, 0, i64::MIN + 1).is_err());
+        assert!(Dur::new(1, 0, i64::MAX - 31 * 86400).is_ok());
+        let p = dur(1, 0, 86_400);
+        assert!(duration_to_legacy(&p) > 0);
+    }
+
+    #[test]
+    fn cancelling_offsets_do_not_overflow_a_timestamp() {
+        // 1970-01-02 + (106751991167300 days - 9223372036854720000 s) is unchanged.
+        let d = v(0, 106_751_991_167_300, -9_223_372_036_854_720_000);
+        let Ok(Value::Date(t)) = Value::Date(86_400) + d.clone() else {
+            panic!("date + d is in range")
+        };
+        assert_eq!(t, 86_400);
+        let Ok(Value::Date(t)) = Value::Date(86_400) - d else {
+            panic!("date - d is in range")
+        };
+        assert_eq!(t, 86_400);
     }
 }
