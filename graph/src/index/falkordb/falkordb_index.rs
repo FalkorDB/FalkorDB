@@ -210,7 +210,7 @@ impl IndexColumn {
                 graph_writes::entity_tuples(to, *entity, key, written, self, &mut adds);
             }
             BuildState::Building { next, .. } => {
-                let below = placed_below(written, *entity, *next, to);
+                let below = placed_in(written, *entity, None, Some(*next), to);
                 graph_writes::entity_tuples(to, *entity, key, &below, self, &mut adds);
             }
         }
@@ -219,27 +219,35 @@ impl IndexColumn {
     }
 }
 
-/// The entities of `written` that `version` places below `next`, a column's cursor: the nodes
-/// below it, one range of the set, or the edges whose endpoints come before it, one lookup each. An
-/// edge `version` no longer has is not below it.
-fn placed_below(
+/// The entities of `written` that `version` places from `from` up to `next` in a column's build
+/// order, an end left open where it is `None`: the nodes in that range, one or two cuts of the
+/// set, or the edges whose endpoints fall in it, one lookup each. An edge `version` no longer has
+/// is in no range.
+fn placed_in(
     written: &RoaringTreemap,
     entity: EntityType,
-    next: BuildCursor,
+    from: Option<BuildCursor>,
+    next: Option<BuildCursor>,
     version: &Graph,
 ) -> RoaringTreemap {
-    match next {
-        BuildCursor::Node(next) => {
-            let mut below = written.clone();
-            below.remove_range(u64::from(next)..);
-            below
+    match entity {
+        EntityType::Node => {
+            let mut placed = written.clone();
+            if let Some(BuildCursor::Node(from)) = from {
+                placed.remove_range(..u64::from(from));
+            }
+            if let Some(BuildCursor::Node(next)) = next {
+                placed.remove_range(u64::from(next)..);
+            }
+            placed
         }
-        BuildCursor::Edge { .. } => written
+        EntityType::Relationship => written
             .iter()
             .filter(|&id| {
-                version
-                    .build_place(entity, id)
-                    .is_some_and(|at| at.precedes(next))
+                version.build_place(entity, id).is_some_and(|at| {
+                    from.is_none_or(|from| !at.precedes(from))
+                        && next.is_none_or(|next| at.precedes(next))
+                })
             })
             .collect(),
     }
@@ -364,15 +372,8 @@ impl VersionedIndex for IndexColumn {
         );
         // The written entities in the batch's range, as the published version has them. Those
         // below `from` are right in this copy already. Placed before they are read, so a write
-        // outside the range costs a place lookup under the host's locks, not an attribute read.
-        let in_range: RoaringTreemap = written
-            .iter()
-            .filter(|&id| {
-                published.build_place(*entity, id).is_some_and(|at| {
-                    !at.precedes(from) && next.is_none_or(|next| at.precedes(next))
-                })
-            })
-            .collect();
+        // outside the range costs a place, not an attribute read, under the host's locks.
+        let in_range = placed_in(written, *entity, Some(from), next, published);
         graph_writes::entity_tuples(published, *entity, key, &in_range, self, &mut adds);
         self.add_encoded(&mut adds);
     }
