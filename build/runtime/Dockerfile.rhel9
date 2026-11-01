@@ -5,7 +5,11 @@
 # scripts the Debian toolchain uses — so the produced .so has a glibc-2.34
 # baseline and the single-.so self-containment contract still holds.
 #
-# Exported via:  docker build --target artifact --output type=local,dest=<dir>
+# Two targets:
+#   artifact  the .so alone:  docker build --target artifact --output type=local,dest=<dir>
+#   server    a UBI9 server image (redhat/ubi9-minimal): Redis built from
+#             source on this OS, plus that same .so. The counterpart of the
+#             Debian image's `server` target; no browser.
 # Package set mirrors the C repo's build/docker/builder/Dockerfile.rhel9, minus
 # the C-only peg/libcypher-parser bits the Rust port doesn't use.
 
@@ -14,6 +18,8 @@ ARG CXX=clang++
 # BUILD_IMAGE uniformly without a "not consumed" warning; self-contained OSes
 # don't use a toolchain base image.
 ARG BUILD_IMAGE
+# Same Redis release as build/runtime/Dockerfile.
+ARG REDIS_VERSION=8.10.2
 
 # ---------------------------------------------------------------------------
 # Toolchain + dependency build.
@@ -53,35 +59,51 @@ RUN LLVMORG_VERSION=$(clang --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head
     CC=clang CXX=clang++ /tmp/libomp.sh "${LLVMORG_VERSION}" && \
     rm -f /tmp/libomp.sh
 
-# GraphBLAS + LAGraph (static) → /usr/local/lib/libgraphblas.a + /data/lagraph_lib
-COPY graphblas.sh /data/graphblas.sh
-COPY build/graphblas /data/build/graphblas
-RUN CC=clang CXX=clang++ LAGRAPH_INSTALL_DIR=/data/lagraph_lib /data/graphblas.sh && \
-    rm -rf /data/graphblas.sh /data/build
+# GraphBLAS + LAGraph + RediSearch, built by the native-deps crate.
+# It owns the recipes AND a content-addressed cache keyed on the submodule
+# revisions, the GB_control patch, the vendored PreJIT kernels, $CC/$CXX and the
+# OpenMP flavour -- so the key computed by `cargo build` below matches what is
+# published here. CC/CXX/LIBOMP_PREFIX are pinned as ENV rather than passed per
+# RUN because they are cache-key inputs: cmake probing a different `cc` would
+# silently produce a different key and rebuild everything.
+#
+# The submodule sources come from the build context, so this needs
+# `submodules: recursive` on actions/checkout. native-deps handles the missing
+# `.git` itself (recipes::ensure_git_root), so no marker directory here.
+# Declared HERE, above the dep build, and exported as ENV so the dep build and
+# the `cargo build` below observe identical values. They are cache-key inputs:
+# if they disagreed, the key computed by graph/build.rs would miss what was just
+# published and rebuild all three deps from source.
+ARG CC=clang
+ARG CXX=clang++
+ENV CC=${CC}
+ENV CXX=${CXX}
+ENV LIBOMP_PREFIX=/opt/libomp
+COPY native-deps           /data/native-deps
+COPY deps/native-deps.lock /data/deps/native-deps.lock
+COPY build/graphblas       /data/build/graphblas
+COPY deps/GraphBLAS        /data/deps/GraphBLAS
+COPY deps/LAGraph          /data/deps/LAGraph
+COPY deps/RediSearch       /data/deps/RediSearch
+RUN cd /data && \
+    cargo run --locked --manifest-path native-deps/Cargo.toml && \
+    rm -rf /data/native-deps /data/build
 
-# RediSearch (static) → /data/deps/RediSearch/bin
-# Source comes from the deps/RediSearch submodule in the build context (git owns
-# the pin; redisearch.sh only builds). Needs `submodules: recursive` on checkout.
-COPY redisearch.sh /data/redisearch.sh
-COPY deps/RediSearch /data/deps/RediSearch
-# RediSearch's redisearch_rs build scripts find their source root by walking up
-# for a `.git` entry (build_utils::git_root; existence check only, never invokes
-# git). All git metadata is .dockerignore'd, so create an empty marker -- see
-# .dockerignore for why this is a marker rather than the real gitlink.
-RUN mkdir -p /data/deps/RediSearch/.git && \
-    CC=clang CXX=clang++ bash /data/redisearch.sh && \
-    rm -f /data/redisearch.sh
+# Link the cdylib with clang, not rustc's default `cc` (the system gcc 11).
+# RHEL9's clang compiles C++ against the gcc-toolset's newer libstdc++ headers,
+# while the runtime stays the system libstdc++.so.6. The toolset bridges that
+# gap with libstdc++_nonshared.a, which only a link through its own driver
+# pulls in; via `cc`, symbols such as basic_string::_M_replace_cold stay
+# undefined and the module fails to load.
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=clang
 
-# Build the cdylib from the repo source. Deps resolve via graph/build.rs's
-# absolute fallbacks (/data/lagraph_lib, /data/deps/RediSearch/bin),
-# GRAPHBLAS_LIB_DIR (/usr/local/lib default) and LIBOMP_PREFIX (/opt/libomp).
-ARG CXX
+# Build the cdylib from the repo source. graph/build.rs calls native_deps::ensure(),
+# which recomputes the same keys and hits the entries published above -- no path
+# probing, no GRAPHBLAS_LIB_DIR, no lagraph_lib.
 WORKDIR /src
 COPY . .
-RUN GBDIR="$(dirname "$(find /usr/local /usr /opt -name libgraphblas.a 2>/dev/null | head -1)")" && \
-    test -n "$GBDIR" || { echo "FAIL: libgraphblas.a not found"; exit 1; } && \
-    echo "Using GRAPHBLAS_LIB_DIR=$GBDIR" && \
-    CXX="$CXX" LIBOMP_PREFIX=/opt/libomp GRAPHBLAS_LIB_DIR="$GBDIR" cargo build --release && \
+RUN cargo build --release && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so && \
     echo "=== verify single-.so contract on libfalkordb.so ===" && \
     deps="$(ldd /out/falkordb.so | awk '{print $1}' | sort -u)" && \
@@ -91,6 +113,8 @@ RUN GBDIR="$(dirname "$(find /usr/local /usr /opt -name libgraphblas.a 2>/dev/nu
     fi && \
     undef="$(nm -D --undefined-only /out/falkordb.so 2>/dev/null | grep -E 'omp_|GOMP_|__kmpc_' || true)" && \
     if [ -n "$undef" ]; then echo "FAIL: OpenMP symbols undefined in .so:"; echo "$undef"; exit 1; fi && \
+    unresolved="$(ldd -r /out/falkordb.so 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
+    if [ -n "$unresolved" ]; then echo "FAIL: libraries or symbols this OS cannot resolve (the module would not load):"; echo "$unresolved"; exit 1; fi && \
     echo "OK: libfalkordb.so is self-contained ($(du -h /out/falkordb.so | cut -f1))"
 
 # ---------------------------------------------------------------------------
@@ -98,3 +122,111 @@ RUN GBDIR="$(dirname "$(find /usr/local /usr /opt -name libgraphblas.a 2>/dev/nu
 # ---------------------------------------------------------------------------
 FROM scratch AS artifact
 COPY --from=builder /out/falkordb.so /falkordb.so
+
+# ---------------------------------------------------------------------------
+# Redis, built on this OS so redis-server runs against the image's own glibc
+# and OpenSSL. Same recipe as build/runtime/Dockerfile's redis-builder stage:
+# protected-mode off by default, as in the upstream redis image, and the same
+# jemalloc page sizes.
+# ---------------------------------------------------------------------------
+FROM redhat/ubi9 AS redis-builder
+
+ARG REDIS_VERSION
+
+RUN yum install -y git gcc gcc-c++ make openssl-devel && \
+    yum clean all
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+
+WORKDIR /tmp/redis-src
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64 | i?86) lgPage=12 ;; \
+        *) lgPage=16 ;; \
+    esac; \
+    extraJemallocConfigureFlags="--build=${arch}-linux-gnu --with-lg-page=${lgPage} --with-lg-hugepage=21"; \
+    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version; \
+    /redis-install/bin/redis-cli --version
+
+# ---------------------------------------------------------------------------
+# Server image. Mirrors build/runtime/Dockerfile's `server` stage -- same
+# paths, user, entrypoint and environment -- on redhat/ubi9-minimal.
+# ---------------------------------------------------------------------------
+FROM redhat/ubi9-minimal AS server
+
+# BuildKit auto-ARGs must be re-declared in each stage that consumes them.
+ARG TARGETPLATFORM
+
+ENV FALKORDB_HOME=/var/lib/falkordb \
+    FALKORDB_DATA_PATH=/var/lib/falkordb/data \
+    FALKORDB_BIN_PATH=/var/lib/falkordb/bin \
+    FALKORDB_IMPORT_PATH=/var/lib/falkordb/import \
+    FALKORDB_TLS_PATH=/var/lib/falkordb/tls
+
+# Required at runtime:
+#   libstdc++       : falkordb.so
+#   openssl-libs    : redis-server with BUILD_TLS=yes
+#   openssl, bash   : gen-certs.sh (TLS=1)
+#   findutils       : run.sh's data-dir ownership fix-up
+#   util-linux      : setpriv(1), behind the gosu that run.sh calls
+#   shadow-utils    : groupadd/useradd for the falkordb user
+# falkordb is uid/gid 999, as in the Debian image, so a data volume moves
+# between the two images without an ownership change.
+RUN microdnf update -y && \
+    microdnf install -y --setopt=install_weak_deps=0 \
+      libstdc++ openssl-libs openssl bash findutils util-linux shadow-utils && \
+    groupadd -r -g 999 falkordb && useradd -r -g falkordb -u 999 falkordb && \
+    microdnf clean all
+
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
+COPY ./build/runtime/gosu-setpriv.sh /usr/local/bin/gosu
+# The sentinel/check-* entry points are symlinks, as in the Debian image.
+RUN chmod 0755 /usr/local/bin/gosu && \
+    ln -s redis-server /usr/local/bin/redis-sentinel && \
+    ln -s redis-server /usr/local/bin/redis-check-rdb && \
+    ln -s redis-server /usr/local/bin/redis-check-aof
+
+# root:falkordb 0775, for the reasons given in build/runtime/Dockerfile.
+RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_BIN_PATH} ${FALKORDB_IMPORT_PATH} ${FALKORDB_TLS_PATH} && \
+    chown root:falkordb ${FALKORDB_DATA_PATH} ${FALKORDB_TLS_PATH} && \
+    chmod 0775 ${FALKORDB_DATA_PATH} ${FALKORDB_TLS_PATH} && \
+    ln -s ${FALKORDB_DATA_PATH} /data
+
+WORKDIR ${FALKORDB_HOME}
+
+COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
+COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
+RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
+COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
+
+# The builder checked the module against the builder's packages; this image
+# installs far fewer, so check it again here. Then every redis entry point,
+# and that gosu really switches to falkordb.
+RUN unresolved="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
+    if [ -n "$unresolved" ]; then echo "FAIL: libraries or symbols this image cannot resolve:"; echo "$unresolved"; exit 1; fi && \
+    redis-server --version && \
+    redis-cli --version && \
+    redis-sentinel --version && \
+    redis-check-rdb --version && \
+    redis-check-aof --version && \
+    test "$(gosu falkordb id -u):$(gosu falkordb id -g)" = "999:999"
+
+ENV ARCH=${TARGETPLATFORM} \
+    TLS=0 \
+    BROWSER=0 \
+    FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000"
+
+EXPOSE 6379/tcp
+
+# run.sh execs redis-server itself and ignores container args (no CMD).
+ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]
