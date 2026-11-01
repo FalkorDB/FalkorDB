@@ -170,4 +170,19 @@ mod tests {
             Some(&true)
         );
     }
+    /// A body that imports `r` and also matches it again (a bound relationship)
+    /// still reads the outer `r`, in any branch, even though that branch has a
+    /// traverse with `r` as its alias.
+    #[test]
+    fn imported_and_rematched_edge_is_still_a_read() {
+        for query in [
+            "MATCH (a:A)-[r:R]->(b) CALL { WITH r MATCH ()-[r]->() RETURN 1 AS x UNION ALL WITH r MATCH ()-[r]->() RETURN 2 AS x } RETURN count(*)",
+            "MATCH (a:A)-[r:R]->(b) CALL { WITH r MATCH ()-[r]->() RETURN 1 AS x UNION ALL WITH a RETURN 2 AS x } RETURN count(*)",
+            "MATCH (a:A)-[r:R]->(b) CALL { WITH a RETURN 2 AS x UNION ALL WITH r MATCH ()-[r]->() RETURN 1 AS x } RETURN count(*)",
+            "MATCH (a:A)-[r:R]->(b) CALL { WITH r MATCH ()-[r]->() RETURN count(*) AS x } RETURN count(*)",
+        ] {
+            let emitted = emitted_edges(query);
+            assert_eq!(emitted.first(), Some(&true), "{query}: {emitted:?}");
+        }
+    }
 }
