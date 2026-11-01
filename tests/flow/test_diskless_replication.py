@@ -2,6 +2,7 @@
 import os
 
 from common import *
+from index_utils import *
 from time import sleep, time
 
 GRAPH_ID = "diskless"
@@ -76,12 +77,14 @@ class testDisklessReplication(FlowTestsBase):
         for con in (self.master, self.replica):
             try:
                 con.config_set("repl-rdb-channel", "no")
-            except Exception:
+            except ResponseError:
                 pass
 
         self.graph = self.db.select_graph(GRAPH_ID)
         self.graph.query(
             f"UNWIND range(1, {PAIRS}) AS i CREATE (:N {{v: i}})-[:R]->(:M {{v: i}})")
+        self.graph.create_node_range_index("N", "v")
+        wait_for_indices_to_sync(self.graph)
         for name in SMALL_GRAPHS:
             self.db.select_graph(name).query("CREATE ()")
         self.master.execute_command("GRAPH.UDF", "LOAD", "REPLACE", UDF_LIB, _udf(1))
@@ -144,13 +147,35 @@ class testDisklessReplication(FlowTestsBase):
             for name in graphs if name != GRAPH_ID
         }
         udf = Graph(con, GRAPH_ID).ro_query(f"RETURN {UDF_LIB}.f()").result_set
-        return [graphs, counts, self._contents(con), udf]
+        return [graphs, counts, self._contents(con), udf, self._index_reads(con)]
+
+    def _index_reads(self, con):
+        """The indexes of the graphs a snapshot carries, and what they answer."""
+        out = []
+        for name in sorted(con.execute_command("GRAPH.LIST")):
+            g = Graph(con, name)
+            indexes = g.ro_query("CALL db.indexes() YIELD label, status RETURN label, status")
+            out.append([name, indexes.result_set])
+        for name, query in [(GRAPH_ID, "MATCH (n:N) WHERE n.v = 7 RETURN count(n)"),
+                            (GRAPH_ID, "MATCH (n:N) WHERE n.v > 1990 RETURN count(n)")]:
+            out.append(Graph(con, name).ro_query(query).result_set)
+        for name in sorted(con.execute_command("GRAPH.LIST")):
+            if name.startswith("added_"):
+                query = "MATCH (a:A) WHERE a.v = 1 RETURN count(a)"
+                out.append(Graph(con, name).ro_query(query).result_set)
+        return out
 
     def _change_master(self, version):
         """Give the primary a snapshot the replica's differs from in every way
         it can: a graph modified, one added, one removed, the UDF replaced."""
         self.graph.query(f"CREATE (:N {{v: {version}}})")
-        self.db.select_graph(f"added_{version}").query("CREATE ()")
+        added = self.db.select_graph(f"added_{version}")
+        added.query("CREATE (:A {v: 1})")
+        try:
+            added.create_node_range_index("A", "v")
+        except ResponseError:
+            pass  # a version changed twice
+        wait_for_indices_to_sync(added)
         for name in self.master.execute_command("GRAPH.LIST"):
             if name.startswith("added_") and name != f"added_{version}":
                 self.db.select_graph(name).delete()
@@ -166,8 +191,8 @@ class testDisklessReplication(FlowTestsBase):
         self._wait_for_sync()
 
         log = self._wait_for_log(SYNC_DONE, since)
-        self.env.assertFalse(SKIPPED in log, message="replica refused to load off the socket")
-        self.env.assertTrue(DISKLESS_LOAD in log, message="replica did not load off the socket")
+        self.env.assertNotContains(SKIPPED, log, message="replica refused to load off the socket")
+        self.env.assertContains(DISKLESS_LOAD, log, message="replica did not load off the socket")
         self.env.assertEqual(self._state(self.replica), self._state(self.master))
 
     def test02_aborted_multi_key_load_is_discarded(self):
@@ -195,7 +220,7 @@ class testDisklessReplication(FlowTestsBase):
             log = self._wait_for_log(LOAD_FAILED, since)
             self._wait_for_sync()
             log = self._wait_for_log(SYNC_DONE, since + log.index(LOAD_FAILED))
-            self.env.assertTrue(DISKLESS_LOAD in log, message="retry did not load off the socket")
+            self.env.assertContains(DISKLESS_LOAD, log, message="retry did not load off the socket")
 
             self.env.assertEqual(self._state(self.replica), self._state(self.master))
         finally:
@@ -212,9 +237,9 @@ class testDisklessReplication(FlowTestsBase):
         self._wait_for_sync()
 
         log = self._wait_for_log(SYNC_DONE, since)
-        self.env.assertFalse(SKIPPED in log, message="replica refused to load off the socket")
-        self.env.assertTrue(DISKLESS_LOAD in log, message="replica did not load off the socket")
-        self.env.assertTrue(SWAPPED in log, message="replica did not load into a temporary db")
+        self.env.assertNotContains(SKIPPED, log, message="replica refused to load off the socket")
+        self.env.assertContains(DISKLESS_LOAD, log, message="replica did not load off the socket")
+        self.env.assertContains(SWAPPED, log, message="replica did not load into a temporary db")
         self.env.assertEqual(self._state(self.replica), self._state(self.master))
 
     def test04_swapdb_aborted_load_keeps_live_data(self):
@@ -242,7 +267,7 @@ class testDisklessReplication(FlowTestsBase):
                 self.master.execute_command("CLIENT", "KILL", "TYPE", "replica"), 1)
 
             log = self._wait_for_log(DISCARDED_TEMP, since)
-            self.env.assertTrue(LOAD_FAILED in log)
+            self.env.assertContains(LOAD_FAILED, log)
             # The temporary database is gone; the live one and its UDFs are
             # exactly what they were before the load began.
             self.env.assertEqual(self._state(self.replica), live)
@@ -254,6 +279,11 @@ class testDisklessReplication(FlowTestsBase):
             self.replica.replicaof("no", "one")
             for name in live[0]:
                 Graph(self.replica, name).query("CREATE (:Written)")
+            # An indexed graph takes writes through its index too.
+            g = Graph(self.replica, GRAPH_ID)
+            g.query("CREATE (:N {v: 99999})")
+            self.env.assertEqual(
+                g.query("MATCH (n:N) WHERE n.v = 99999 RETURN count(n)").result_set, [[1]])
 
             self.master.config_set("repl-diskless-sync-delay", "0")
             self._attach()
@@ -270,6 +300,9 @@ class testDisklessReplication(FlowTestsBase):
         # Serve clients every KB the load reads rather than every 2MB, so the
         # replica answers throughout this (small) snapshot's load.
         self.replica.config_set("loading-process-events-interval-bytes", "1024")
+        # Start from a snapshot with the graph this test deletes, whichever tests
+        # ran before.
+        self._change_master(4)
         self._wait_for_sync()
         live = self._state(self.replica)
 
@@ -284,7 +317,8 @@ class testDisklessReplication(FlowTestsBase):
             pipe = self.master.pipeline(transaction=True)
             pipe.execute_command("CLIENT", "KILL", "TYPE", "replica")
             pipe.execute_command("GRAPH.QUERY", GRAPH_ID, "CREATE (:N {v: 5})")
-            pipe.execute_command("GRAPH.QUERY", "added_5", "CREATE ()")
+            pipe.execute_command("GRAPH.QUERY", "added_5", "CREATE (:A {v: 1})")
+            pipe.execute_command("GRAPH.QUERY", "added_5", "CREATE INDEX FOR (a:A) ON (a.v)")
             pipe.execute_command("GRAPH.DELETE", "added_4")
             pipe.execute_command("GRAPH.UDF", "LOAD", "REPLACE", UDF_LIB, _udf(5))
             pipe.execute_command("GRAPH.DEBUG", "AUX", "START")
@@ -308,13 +342,15 @@ class testDisklessReplication(FlowTestsBase):
                     break
                 sleep(0.05)
 
-            self.env.assertTrue(len(seen) > 0, message="replica never async loaded")
+            self.env.assertGreater(len(seen), 0, message="replica never async loaded")
             for state in seen:
                 self.env.assertEqual(state, live)
 
             self._wait_for_sync()
             log = self._wait_for_log(SYNC_DONE, since)
-            self.env.assertTrue(SWAPPED in log, message="replica did not load into a temporary db")
+            self.env.assertContains(SWAPPED, log, message="replica did not load into a temporary db")
+            wait_for_indices_to_sync(Graph(self.master, "added_5"))
+            wait_for_indices_to_sync(Graph(self.replica, "added_5"))
             self.env.assertEqual(self._state(self.replica), self._state(self.master))
         finally:
             self.master.config_set("rdb-key-save-delay", "0")

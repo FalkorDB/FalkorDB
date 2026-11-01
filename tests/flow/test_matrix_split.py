@@ -69,7 +69,7 @@ IMMUTABLE_MODULE_ARGS = (
     "TIMEOUT",
 )
 
-# Explicit opt-in: a `# flow-matrix: spawn` line anywhere in the file.
+# Explicit opt-in: a `# flow-matrix: spawn` comment line, starting at column 0.
 SPAWN_MARKER_RE = re.compile(r"^#\s*flow-matrix:\s*spawn\b", re.MULTILINE)
 
 # `Env(...moduleArgs="...string...")` — capture the literal string content.

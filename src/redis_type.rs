@@ -846,7 +846,8 @@ pub fn begin_swap_load() {
 
 /// `REPL_ASYNC_LOAD_COMPLETED`: the loaded database is now the live one, so its
 /// graphs become the registry -- every name the previous snapshot held and
-/// this one does not goes with it -- and its UDFs replace the live ones.
+/// this one does not goes with it -- and its UDFs replace the live ones (none
+/// when the snapshot has no UDF record).
 pub fn commit_swap_load() {
     let SwapLoad::Loading { graphs, udfs } =
         std::mem::replace(&mut *SWAP_LOAD.lock(), SwapLoad::Idle)
@@ -858,9 +859,9 @@ pub fn commit_swap_load() {
     // `graph_free` finds nothing left to unregister. Drop the registry's own
     // references off the main thread (see `register_graph`).
     std::thread::spawn(move || drop(previous));
-    if let Some(udfs) = udfs {
-        install_udfs(udfs);
-    }
+    // The snapshot is the whole dataset: a primary whose snapshot carries no
+    // UDF record has none, and the replica must not keep the previous ones.
+    install_udfs(udfs.unwrap_or_default());
 }
 
 /// `REPL_ASYNC_LOAD_ABORTED`: Redis discards the temporary database; drop what
