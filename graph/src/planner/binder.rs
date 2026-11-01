@@ -1218,7 +1218,7 @@ impl Binder {
             .iter()
             .map(|(expr, desc)| {
                 let bound = self.bind_expr(expr)?;
-                Self::validate_boolean_operands(&bound)?;
+                Self::validate_order_by_boolean_operands(&bound)?;
                 Ok((bound, *desc))
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -2308,7 +2308,15 @@ impl Binder {
     /// has operands that can return boolean.  Produces a "Type mismatch"
     /// error for non-filter contexts (e.g. RETURN expressions).
     fn validate_boolean_operands(expr: &QueryExpr<Variable>) -> Result<(), String> {
-        Self::validate_boolean_operands_impl(&expr.root(), false)
+        Self::validate_boolean_operands_impl(&expr.root(), false, true)
+    }
+
+    /// The check for an ORDER BY expression: only operands whose static type
+    /// is known not to be Boolean or Null are rejected. The coarser
+    /// `expr_may_return_boolean` shape check is not applied there, so a
+    /// runtime-typed operand such as `xs[0]` keeps working as before.
+    fn validate_order_by_boolean_operands(expr: &QueryExpr<Variable>) -> Result<(), String> {
+        Self::validate_boolean_operands_impl(&expr.root(), false, false)
     }
 
     /// `in_filter` is true while walking the predicate of a list
@@ -2318,6 +2326,7 @@ impl Binder {
     fn validate_boolean_operands_impl(
         node: &DynNode<ExprIR<Variable>>,
         in_filter: bool,
+        check_shape: bool,
     ) -> Result<(), String> {
         let logical = matches!(
             node.data(),
@@ -2334,7 +2343,7 @@ impl Binder {
                         "Type mismatch: expected Boolean or Null but was {name}"
                     ));
                 }
-                if !Self::expr_may_return_boolean(child) {
+                if check_shape && !Self::expr_may_return_boolean(child) {
                     return Err(String::from("Type mismatch: expected Boolean or Null"));
                 }
             }
@@ -2348,7 +2357,7 @@ impl Binder {
             // predicate and starts at a comprehension/quantifier predicate
             // (child 1); any other operand is a value context again.
             let child_in_filter = (logical && in_filter) || (predicate_scope && i == 1);
-            Self::validate_boolean_operands_impl(&child, child_in_filter)?;
+            Self::validate_boolean_operands_impl(&child, child_in_filter, check_shape)?;
         }
         Ok(())
     }

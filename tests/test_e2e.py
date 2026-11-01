@@ -1842,6 +1842,10 @@ def test_boolean_operator_static_operand_type_3293():
     ]:
         query_exception(q, f"Type mismatch: expected Boolean or Null but was {t}")
 
+    # ORDER BY only rejects operands whose static type is known: a runtime-typed
+    # subscript result is still accepted there.
+    assert query("UNWIND [[true], [false]] AS xs RETURN xs ORDER BY xs[0] AND true").result_set == [[[False]], [[True]]]
+
     # A Null-valued constant expression is still a valid operand.
     res = query("RETURN false AND (null+1), true OR (1+null), false AND (null = 1)")
     assert res.result_set == [[False, True, False]]
