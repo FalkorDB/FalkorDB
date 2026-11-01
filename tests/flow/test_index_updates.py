@@ -353,6 +353,53 @@ class testIndexUpdatesFlow(FlowTestsBase):
             g.query("DROP INDEX FOR (n:PW) ON (n.v)")
         g.delete()
 
+    def test13_concurrent_edge_writes_during_index_population(self):
+        # The edge counterpart of test12: edge population resumes from
+        # (src, dst, edge id) cursors, and a deleted edge's id is reused by a
+        # later CREATE, so a stale or resurrected document is easy to leave.
+        import threading
+        g = self.db.select_graph('idx_pop_edge_writes')
+        n = 100000
+        g.query("UNWIND range(0, $n - 1) AS k CREATE (:PE)-[:PR {k: k, v: 0}]->(:PE)", {'n': n})
+
+        for _ in range(3):
+            stop = threading.Event()
+            errors = []
+
+            def writer():
+                try:
+                    wg = _db_handle(self.env.host, self.env.port).select_graph('idx_pop_edge_writes')
+                    i = 0
+                    while not stop.is_set():
+                        wg.query("MATCH ()-[r:PR]->() WHERE r.k % 50 = $m SET r.v = (r.v + 1) % 8", {'m': i % 50})
+                        k = i % 1000
+                        wg.query("MATCH ()-[r:PR {k: $k}]->() DELETE r", {'k': k})
+                        wg.query("CREATE (:PE)-[:PR {k: $k, v: 0}]->(:PE)", {'k': k})
+                        i += 1
+                except Exception as e:
+                    errors.append(e)
+
+            t = threading.Thread(target=writer)
+            t.start()
+            try:
+                create_edge_range_index(g, 'PR', 'v', sync=True)
+            finally:
+                stop.set()
+                t.join(timeout=60)
+            self.env.assertFalse(t.is_alive(), message="writer thread did not stop")
+            self.env.assertEqual(errors, [])
+
+            # every value's index count agrees with an edge scan
+            for v, expected in g.ro_query(
+                    "MATCH ()-[r:PR]->() RETURN r.v, count(r) ORDER BY r.v").result_set:
+                q = "MATCH ()-[r:PR]->() WHERE r.v = $v RETURN count(r)"
+                self.env.assertIn("Edge By Index Scan", str(g.explain(q, {'v': v})))
+                actual = g.ro_query(q, {'v': v}).result_set[0][0]
+                self.env.assertEqual(actual, expected, message=f"v = {v}")
+
+            drop_edge_range_index(g, 'PR', 'v')
+        g.delete()
+
 class testNativeOnlyFeedFlow(FlowTestsBase):
     # Under `index-falkordb` the native index is the only Range index, so nothing may also feed
     # Range fields to RediSearch: not a write, not the build after CREATE INDEX, not the build

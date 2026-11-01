@@ -798,6 +798,12 @@ fn populate_index_batch(
                     }
                 }
 
+                // Release the snapshot before the lock is handed over: while this
+                // batch holds it, the first writer to run would have to copy the
+                // whole bitmap (`Arc::make_mut`) under the write lock.
+                drop(skip);
+                drop(written);
+
                 exhausted = scanned_count < BATCH_SIZE;
 
                 if !batch.is_empty() {
