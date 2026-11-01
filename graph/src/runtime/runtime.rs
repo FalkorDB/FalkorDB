@@ -358,6 +358,9 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     names: variables, ..
                 } => {
                     vars.extend(variables.iter().cloned());
+                    // Like `Project`, it resets the environment: what lies
+                    // below is hidden, and its ids belong to the old scope.
+                    break;
                 }
                 IR::Project { exprs: items, .. } => {
                     vars.extend(items.iter().map(|v| v.0.clone()));
