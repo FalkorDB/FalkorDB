@@ -3083,7 +3083,9 @@ updating clause.")
         res = self.graph.query("""UNWIND range(1, 3000) AS i
                                   CALL { WITH i RETURN i % 2 AS v LIMIT 1 }
                                   RETURN count(DISTINCT v), collect(DISTINCT v)""")
-        self.env.assertEqual(res.result_set, [[2, [1, 0]]])
+        # collect(DISTINCT) has no order guarantee
+        self.env.assertEqual(
+            [res.result_set[0][0], sorted(res.result_set[0][1])], [2, [0, 1]])
 
         # grouped outer aggregate
         res = self.graph.query("""UNWIND range(1, 3000) AS i
@@ -3097,6 +3099,18 @@ updating clause.")
                                          RETURN count(DISTINCT x) AS c }
                                   RETURN min(c), max(c), count(DISTINCT i)""")
         self.env.assertEqual(res.result_set, [[2, 2, 3000]])
+
+        # a sub-plan with several groups: every group's state starts fresh
+        # for every row, while the enclosing grouped aggregate keeps its own
+        res = self.graph.query("""UNWIND range(1, 2000) AS i
+                                  CALL { WITH i UNWIND [1, 1, 2, 2, 3] AS x
+                                         RETURN x % 3 AS k, count(DISTINCT x) AS c }
+                                  RETURN i % 3 AS g, k, min(c), max(c), count(DISTINCT i)
+                                  ORDER BY g, k""")
+        self.env.assertEqual(
+            res.result_set,
+            [[g, k, 1, 1, n] for g, n in [(0, 666), (1, 667), (2, 667)]
+             for k in range(3)])
 
         # the shape from the report: 5000 rows, three distinct values
         self.get_res_and_assertEquals(

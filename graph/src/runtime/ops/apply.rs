@@ -109,7 +109,7 @@ pub struct ApplyOp<'a> {
     /// The `DISTINCT` aggregate arguments inside the sub-plan. Per-row mode
     /// resets their entries in [`Runtime::value_dedupers`] after each
     /// invocation; entries of enclosing aggregates must survive.
-    sub_plan_distincts: Vec<NodeIdx<Dyn<ExprIR<Variable>>>>,
+    sub_plan_distincts: Vec<(NodeIdx<Dyn<IR>>, Vec<NodeIdx<Dyn<ExprIR<Variable>>>>)>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -354,10 +354,16 @@ impl<'a> ApplyOp<'a> {
                             // enclosing `count(DISTINCT ..)` is still
                             // accumulating.
                             if !self.sub_plan_distincts.is_empty() {
-                                self.runtime
-                                    .value_dedupers
-                                    .borrow_mut()
-                                    .retain(|(idx, _), _| !self.sub_plan_distincts.contains(idx));
+                                let mut dedupers = self.runtime.value_dedupers.borrow_mut();
+                                let mut counts = self.runtime.aggregate_group_counts.borrow_mut();
+                                for (aggregate, distincts) in &self.sub_plan_distincts {
+                                    let groups = counts.remove(aggregate).unwrap_or(0);
+                                    for distinct in distincts {
+                                        for group in 0..groups {
+                                            dedupers.remove(&(*distinct, group));
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -437,13 +443,13 @@ impl<'a> Iterator for ApplyOp<'a> {
     }
 }
 
-/// The `DISTINCT` nodes of every aggregate expression in the plan subtree
-/// rooted at `root`: the keys, together with a group id, under which those
-/// aggregates keep their state in [`Runtime::value_dedupers`].
+/// For every `Aggregate` in the plan subtree rooted at `root`, its plan node
+/// and the `DISTINCT` nodes of its aggregate expressions: the keys, together
+/// with a group id, under which it keeps state in [`Runtime::value_dedupers`].
 fn sub_plan_distincts(
     runtime: &Runtime<'_>,
     root: NodeIdx<Dyn<IR>>,
-) -> Vec<NodeIdx<Dyn<ExprIR<Variable>>>> {
+) -> Vec<(NodeIdx<Dyn<IR>>, Vec<NodeIdx<Dyn<ExprIR<Variable>>>>)> {
     let mut out = Vec::new();
     for ir in runtime
         .plan
@@ -451,13 +457,18 @@ fn sub_plan_distincts(
         .walk_with(&mut Traversal.bfs().over_nodes())
     {
         if let IR::Aggregate { aggregations, .. } = ir.data() {
-            for (_, tree) in aggregations {
-                out.extend(
+            let distincts: Vec<_> = aggregations
+                .iter()
+                .flat_map(|(_, tree)| {
                     tree.root()
                         .walk_with(&mut Traversal.bfs().over_nodes())
                         .filter(|n| matches!(n.data(), ExprIR::Distinct))
-                        .map(|n| n.idx()),
-                );
+                        .map(|n| n.idx())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            if !distincts.is_empty() {
+                out.push((ir.idx(), distincts));
             }
         }
     }
