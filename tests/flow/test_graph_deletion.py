@@ -300,6 +300,19 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
         self.env.assertEqual(res.result_set, [[0]])
 
+    def test15_2_writes_to_a_reissued_relationship_id_apply(self):
+        # an id freed by an earlier segment of the same query and reissued to
+        # a new relationship belongs to the new relationship: SET on it must
+        # not be skipped as a write to the deleted one
+        self.graph.delete()
+        self.graph.query("CREATE ()-[:R {v:1}]->()")
+        res = self.graph.query("MATCH ()-[r]->() DELETE r WITH 1 AS x "
+                               "CREATE ()-[r2:R {v:1}]->() SET r2.v = 5 RETURN id(r2)")
+        # the freed id is the one reissued; the SET on it lands on the new edge
+        self.env.assertEqual(res.result_set, [[0]])
+        res = self.graph.query("MATCH ()-[r]->() RETURN r.v")
+        self.env.assertEqual(res.result_set, [[5]])
+
     def test16_repeated_entity_deletion(self):
         # create 2 nodes cyclically connected by 2 edges
         actual_result = self.graph.query("CREATE (x1:A)-[r:R]->(n2:B)-[t:T]->(x1)")

@@ -1652,7 +1652,8 @@ impl<'a> Runtime<'a> {
     /// unless the id was reissued to an edge this segment created), the
     /// segment's explicit deletes, and the snapshot map, which is the only
     /// place an edge cascaded by `DETACH DELETE` of its endpoint is recorded
-    /// before commit.
+    /// before commit. The graph and snapshot records both describe the edge
+    /// that used to own the id, so neither applies to a reissued id.
     pub fn is_relationship_deleted(
         &self,
         id: RelationshipId,
@@ -1660,7 +1661,8 @@ impl<'a> Runtime<'a> {
         let pending = self.pending.borrow();
         pending.is_relationship_deleted(id)
             || (self.graph().is_relationship_deleted(id) && !pending.is_relationship_created(id))
-            || self.deleted_relationships.borrow().contains_key(&id)
+            || (!pending.is_relationship_created(id)
+                && self.deleted_relationships.borrow().contains_key(&id))
     }
 
     /// Materializes a property column for a batch of node IDs.
