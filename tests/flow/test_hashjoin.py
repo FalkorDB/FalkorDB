@@ -184,3 +184,14 @@ class testHashJoin(FlowTestsBase):
         q = "MATCH (q:Q), (p:P) WHERE q.x = p.x RETURN p.id"
         self.env.assertContains("Value Hash Join", str(g.explain(q)))
         self.env.assertEqual(g.query(q).result_set, [[1], [2], [3]])
+
+    def test_signed_zero_in_point_and_vector_keys(self):
+        # `=` treats +0.0 and -0.0 as equal inside a point or a vector, so the
+        # join must find them in the same bucket
+        g = self.graph
+        g.query("CREATE (:A {p: point({latitude: 0.0, longitude: 1.0}), v: vecf32([0.0, 1.0])}), "
+                "(:B {p: point({latitude: -0.0, longitude: 1.0}), v: vecf32([-0.0, 1.0])})")
+        for col in ["p", "v"]:
+            q = f"MATCH (a:A), (b:B) WHERE a.{col} = b.{col} RETURN count(*)"
+            self.env.assertContains("Value Hash Join", str(g.explain(q)))
+            self.env.assertEqual(g.query(q).result_set, [[1]], message=q)

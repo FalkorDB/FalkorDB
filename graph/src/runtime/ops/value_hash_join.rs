@@ -167,8 +167,33 @@ impl Hash for JoinKey<'_> {
                     JoinKey(v).hash(state);
                 }
             }
+            // `=` treats `+0.0` and `-0.0` as equal in a point or a vector,
+            // while `Value::hash` keeps the sign bit.
+            Value::VecF32(items) => {
+                9.hash(state);
+                for f in items.iter() {
+                    f32_join_bits(*f).hash(state);
+                }
+            }
+            Value::Point(p) => {
+                10.hash(state);
+                f32_join_bits(p.latitude).hash(state);
+                f32_join_bits(p.longitude).hash(state);
+            }
             other => other.hash(state),
         }
+    }
+}
+
+/// The bits a join key hashes an `f32` component to: one for every NaN and one
+/// for both zeros.
+fn f32_join_bits(f: f32) -> u32 {
+    if f.is_nan() {
+        f32::NAN.to_bits()
+    } else if f == 0.0 {
+        0
+    } else {
+        f.to_bits()
     }
 }
 
@@ -405,10 +430,12 @@ impl<'a> ValueHashJoinOp<'a> {
 
     /// Populate `right_match_envs` with the build-side rows whose key equals
     /// `key`, preserving build insertion order, and reset `right_match_pos`.
-    /// Build groups all rows for a given key under a single entry, so usually
-    /// one entry matches (several only for the non-transitive `Int`/`Float`
-    /// case, merged back into build order); its `RightRowRef`s are materialised straight into
-    /// `right_match_envs` from `right_batches` with no intermediate ref copy.
+    /// Build groups all rows for a given key under a single entry, so almost
+    /// always one entry matches and its `RightRowRef`s are materialised
+    /// straight into `right_match_envs` from `right_batches`, with no
+    /// intermediate ref copy. Several entries match only for the
+    /// non-transitive `Int`/`Float` case above 2^53; that path copies their
+    /// refs once to merge them back into build order.
     fn fill_matches(
         &mut self,
         key: &Value,
