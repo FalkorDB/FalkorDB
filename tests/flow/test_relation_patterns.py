@@ -494,3 +494,62 @@ class testRelationPattern(FlowTestsBase):
             "MATCH (x)-[r1:R]->(y)<-[r2:R]-(z) RETURN 1 LIMIT 1",
         ]:
             self.env.assertEqual(g.query(query).result_set, [[1]], depth=1)
+
+    # The parallel-edge counts and pending-delta structures a traversal reuses
+    # must follow writes: the fused count, the unfused named count and the
+    # edge total agree after every kind of change.
+    def test18_counts_follow_writes(self):
+        g = self.db.select_graph("counts_follow_writes")
+        g.query("UNWIND range(0, 9) AS i CREATE (:W {i: i})")
+        g.query("MATCH (a:W), (b:W) WHERE b.i = (a.i + 1) % 10 CREATE (a)-[:R]->(b)")
+
+        def check():
+            fused = g.query("MATCH (a:W)-[:R]->()-[:R]->(c) RETURN count(*)").result_set[0][0]
+            named = g.query("MATCH (a:W)-[r1:R]->(m)-[r2:R]->(c) RETURN count(r1) + 0 * count(r2)").result_set[0][0]
+            single = g.query("MATCH (a:W)-[:R]->(b) RETURN count(*)").result_set[0][0]
+            total = g.query("MATCH ()-[r:R]->() RETURN count(r)").result_set[0][0]
+            self.env.assertEqual(fused, named)
+            self.env.assertEqual(single, total)
+            return fused, total
+
+        self.env.assertEqual(check(), (10, 10))
+        # a second edge on a committed pair promotes it to a multi-edge pair
+        g.query("MATCH (a:W {i: 0}), (b:W {i: 1}) CREATE (a)-[:R]->(b)")
+        # out(0) and in(1) are now 2: 8 single-edge middles + 2 + 2
+        self.env.assertEqual(check(), (12, 11))
+        # more parallel edges, and an edge into a node that has none
+        g.query("MATCH (a:W {i: 0}), (b:W {i: 1}) CREATE (a)-[:R]->(b), (a)-[:R]->(b)")
+        g.query("MATCH (a:W {i: 5}), (b:W {i: 5}) CREATE (a)-[:R]->(b)")
+        fused, total = check()
+        self.env.assertEqual(total, 14)
+        # deleting one of the parallel edges and a single-edge pair
+        g.query("MATCH (a:W {i: 0})-[r:R]->(b:W {i: 1}) WITH r LIMIT 1 DELETE r")
+        g.query("MATCH (a:W {i: 7})-[r:R]->(b:W {i: 8}) DELETE r")
+        fused, total = check()
+        self.env.assertEqual(total, 12)
+
+    # A LIMIT must still return rows when the first sources have no match and
+    # when a later traverse drops what an earlier one produced (a label check, a
+    # uniqueness check): no cap may be pushed below an operator that can drop.
+    def test20_limit_under_dropping_traverses(self):
+        g = self.db.select_graph("limit_dropping")
+        # 300 isolated sources first, then chains whose only D is far away
+        g.query("UNWIND range(1, 300) AS i CREATE (:S {id: i})")
+        g.query("UNWIND range(1, 300) AS i CREATE (:S {id: 1000 + i})-[:E]->(:X {id: i})")
+        g.query("MATCH (x:X {id: 300}) CREATE (x)-[:E]->(:D {id: 99})")
+        for q in ["MATCH (s:S)-[]-()-[]-(d:D) RETURN d.id LIMIT 1",
+                  "MATCH (s:S)-[:E]->()-[:E]->(d:D) RETURN d.id LIMIT 1",
+                  "MATCH (s:S)-[:E]->(x)-[:E]->(d:D) RETURN d.id LIMIT 1"]:
+            self.env.assertEqual(g.query(q).result_set, [[99]])
+        # converging edges: the first rows reuse one edge and are dropped
+        g2 = self.db.select_graph("limit_dropping_converge")
+        g2.query("CREATE (a:A)-[:R]->(m:M)<-[:R]-(c:A)")
+        res = g2.query("MATCH (x)-[:R]->(y)<-[:R]-(z) RETURN 1 LIMIT 1")
+        self.env.assertEqual(len(res.result_set), 1)
+        # a fused chain under a small LIMIT returns exactly that many rows
+        g3 = self.db.select_graph("limit_fused")
+        g3.query("UNWIND range(1, 500) AS i CREATE (:N {id: i})")
+        g3.query("MATCH (a:N), (b:N) WHERE b.id = a.id % 500 + 1 CREATE (a)-[:R]->(b)")
+        for lim in (1, 10, 100):
+            res = g3.query(f"MATCH (a:N)-[:R]->()-[:R]->(c) RETURN c.id LIMIT {lim}")
+            self.env.assertEqual(len(res.result_set), lim)

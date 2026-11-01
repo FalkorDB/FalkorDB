@@ -124,6 +124,7 @@ use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 use std::collections::hash_map::Entry;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use crate::graph::{
     cow::Cow,
@@ -292,6 +293,23 @@ pub struct Tensor {
     /// Whether the fold decisions latched on `dp`/`dm` are executable now; see
     /// `VersionedMatrix`'s field of the same name.
     needs_flush: AtomicBool,
+    /// Structures derived from the layers above that a traversal reuses, built
+    /// on first use. Shared by shallow clones (a query's snapshot), replaced
+    /// by every method that can change the layers, and fresh in a new MVCC
+    /// version, so a cached entry never outlives the layers it was built from.
+    derived: Arc<Derived>,
+}
+
+/// See [`Tensor`]'s `derived` field.
+#[derive(Default)]
+struct Derived {
+    /// Pending additions that are not already in the base: `dp` minus `m`.
+    added: OnceLock<Option<Matrix<bool>>>,
+    /// Edges beyond the first of every pair that holds more than one.
+    surplus: OnceLock<Option<Matrix<u64>>>,
+    /// The effective pattern, when the pending layers are large next to the
+    /// base; see [`Tensor::merged_layer`].
+    merged: OnceLock<Option<Matrix<bool>>>,
 }
 
 /// Sentinel stored as the inline forward value of a pair with more than one
@@ -329,6 +347,7 @@ impl Clone for Tensor {
             mt: self.mt.clone(),
             me: self.me.clone(),
             needs_flush: AtomicBool::new(self.needs_flush.load(Ordering::Relaxed)),
+            derived: Arc::clone(&self.derived),
         }
     }
 }
@@ -349,6 +368,7 @@ impl Tensor {
                 VersionedMatrix::<bool>::new(ME_DIM, ME_NARROW_NCOLS)
             )],
             needs_flush: AtomicBool::new(false),
+            derived: Arc::default(),
         }
     }
 
@@ -500,6 +520,7 @@ impl Tensor {
         dsts: &[u64],
         ids: &[u64],
     ) {
+        self.derived = Arc::default();
         debug_assert_eq!(srcs.len(), dsts.len());
         debug_assert_eq!(srcs.len(), ids.len());
         if srcs.is_empty() {
@@ -631,6 +652,7 @@ impl Tensor {
         rels: &[(u64, u64, u64)],
     ) -> Vec<(u64, u64)> {
         if rels.is_empty() {
+            self.derived = Arc::default();
             return Vec::new();
         }
         self.flush();
@@ -825,6 +847,7 @@ impl Tensor {
         nrows: u64,
         ncols: u64,
     ) {
+        self.derived = Arc::default();
         debug_assert!(
             nrows >= self.m.nrows() && ncols >= self.m.ncols(),
             "Tensor::resize never shrinks ({}x{} -> {nrows}x{ncols})",
@@ -888,6 +911,7 @@ impl Tensor {
     /// decision `wait_fwd` latched) or by `fold_latched`, so calling this on
     /// every write is a single atomic load in the common case.
     pub fn flush(&mut self) {
+        self.derived = Arc::default();
         if self.needs_flush.load(Ordering::Relaxed) {
             // The layers may be shared with the committed snapshot and carry
             // pending work; nvals/eWiseAdd/select below materialize it (a
@@ -945,6 +969,7 @@ impl Tensor {
     /// Only safe once a transaction has finished mutating — e.g. the end of
     /// a GRAPH.BULK command; see [`VersionedMatrix::fold_latched`].
     pub fn fold_latched(&mut self) {
+        self.derived = Arc::default();
         self.wait_fwd();
         if self.dp.folding() || self.dm.folding() {
             self.needs_flush.store(true, Ordering::Relaxed);
@@ -963,6 +988,7 @@ impl Tensor {
     /// edge leaves a `dm` tombstone shadowing a base entry, so the tensor
     /// holds both copies until the next transaction touching it.
     pub fn fold_oversized(&mut self) {
+        self.derived = Arc::default();
         let base = self.m.nvals();
         // Only the escape hatch arms the flush; a decision `wait_fwd` left
         // latched stays deferred (see `VersionedMatrix::fold_oversized`).
@@ -1006,6 +1032,7 @@ impl Tensor {
     /// forward matrix carries a shadowed in-place update (`dp ∩ m ≠ ∅`),
     /// which would break the bool disjointness invariants `mt` relies on.
     pub fn rebuild_backward(&mut self) {
+        self.derived = Arc::default();
         self.mt = VersionedMatrix::from_matrix(self.extract().transpose());
     }
 
@@ -1027,6 +1054,7 @@ impl Tensor {
             mt: self.mt.dup(),
             me: self.me.iter().map(|(b, me)| (*b, me.dup())).collect(),
             needs_flush: AtomicBool::new(fold_dp || fold_dm),
+            derived: Arc::default(),
         }
     }
 
@@ -1323,6 +1351,59 @@ impl Tensor {
     /// first, as a matrix the size of the tensor; `None` when no pair has any.
     /// A traversal stores a pair once, so a path count over it is short by
     /// exactly this much per pair. Costs `O(multi)`.
+    /// The part of the pending additions that is new, `dp` minus the base, as a
+    /// pattern; `None` when there is none. Built once per version of the
+    /// tensor, since it costs a pass over `dp`.
+    #[must_use]
+    pub fn added_layer(&self) -> Option<Matrix<bool>> {
+        self.derived
+            .added
+            .get_or_init(|| {
+                let added = self.dp.pattern_outside(&self.m);
+                if let Some(a) = &added {
+                    a.wait();
+                }
+                added
+            })
+            .clone()
+    }
+
+    /// The effective pattern `(m - dm) + dp` as one matrix, when the pending
+    /// layers are large enough that a product over three layers costs more than
+    /// the merge once; `None` otherwise (use the layers). Built once per
+    /// version of the tensor.
+    #[must_use]
+    pub fn merged_layer(&self) -> Option<Matrix<bool>> {
+        self.derived
+            .merged
+            .get_or_init(|| {
+                self.wait_fwd();
+                let pending = self.dp.nvals() + self.dm.nvals();
+                if pending == 0 || pending.saturating_mul(8) <= self.m.nvals() {
+                    return None;
+                }
+                let merged = self.extract();
+                merged.wait();
+                Some(merged)
+            })
+            .clone()
+    }
+
+    /// [`Self::parallel_edge_surplus`], built once per version of the tensor.
+    #[must_use]
+    pub fn parallel_edge_surplus_cached(&self) -> Option<Matrix<u64>> {
+        self.derived
+            .surplus
+            .get_or_init(|| {
+                let surplus = self.parallel_edge_surplus();
+                if let Some(s) = &surplus {
+                    s.wait();
+                }
+                surplus
+            })
+            .clone()
+    }
+
     #[must_use]
     pub fn parallel_edge_surplus(&self) -> Option<Matrix<u64>> {
         if !self.has_multi_edge() {
@@ -1732,6 +1813,7 @@ impl Decode<19> for Tensor {
             mt: VersionedMatrix::<bool>::new(0, 0),
             me,
             needs_flush: AtomicBool::new(false),
+            derived: Arc::default(),
         })
     }
 }

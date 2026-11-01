@@ -89,12 +89,14 @@ impl TraversalMatrix {
     /// operator, since it costs a pass over the pending additions.
     fn added_layers(&self) -> Vec<Option<Matrix<bool>>> {
         match self {
-            Self::Bool(vm) => vec![vm.dp().pattern_outside(vm.m())],
-            Self::U64(t) => vec![t.fwd_dp().pattern_outside(t.fwd_m())],
-            Self::Union(ts) => ts
-                .iter()
-                .map(|t| t.fwd_dp().pattern_outside(t.fwd_m()))
-                .collect(),
+            // A `bool` matrix keeps `dp` disjoint from `m`, so `dp` is the part
+            // that is new.
+            Self::Bool(vm) => {
+                vm.dp().wait();
+                vec![(vm.dp().nvals() > 0).then(|| vm.dp().clone())]
+            }
+            Self::U64(t) => vec![t.added_layer()],
+            Self::Union(ts) => ts.iter().map(Tensor::added_layer).collect(),
         }
     }
 
@@ -110,9 +112,7 @@ impl TraversalMatrix {
     ) {
         match self {
             Self::Bool(vm) => f.count_lmxm_layers(vm.m(), added[0].as_ref(), vm.dm(), first_hop),
-            Self::U64(t) => {
-                f.count_lmxm_layers(t.fwd_m(), added[0].as_ref(), t.fwd_dm(), first_hop);
-            }
+            Self::U64(t) => Self::count_tensor(f, t, added[0].as_ref(), first_hop),
             Self::Union(ts) => {
                 // `f` is the frontier: keep a copy as the left operand of the
                 // remaining products, then add them to the first one. A pair
@@ -121,15 +121,29 @@ impl TraversalMatrix {
                     return;
                 };
                 let frontier = (!rest.is_empty()).then(|| f.dup());
-                f.count_lmxm_layers(first.fwd_m(), added[0].as_ref(), first.fwd_dm(), first_hop);
+                Self::count_tensor(f, first, added[0].as_ref(), first_hop);
                 if let Some(frontier) = frontier {
                     for (t, added) in rest.iter().zip(&added[1..]) {
                         let mut ft = frontier.dup();
-                        ft.count_lmxm_layers(t.fwd_m(), added.as_ref(), t.fwd_dm(), first_hop);
+                        Self::count_tensor(&mut ft, t, added.as_ref(), first_hop);
                         f.add_counts(&ft);
                     }
                 }
             }
+        }
+    }
+
+    /// `f = f * t`, counting paths: against the merged pattern when the tensor
+    /// has one, else layer by layer.
+    fn count_tensor(
+        f: &mut Matrix<u64>,
+        t: &Tensor,
+        added: Option<&Matrix<bool>>,
+        first_hop: bool,
+    ) {
+        match t.merged_layer() {
+            Some(merged) => f.count_lmxm(&merged, first_hop),
+            None => f.count_lmxm_layers(t.fwd_m(), added, t.fwd_dm(), first_hop),
         }
     }
 }
@@ -156,7 +170,6 @@ fn parallel_surplus(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
 ) -> Option<Matrix<u64>> {
-    let mut total: Option<Matrix<u64>> = None;
     let tensors: Vec<&Tensor> = if types.is_empty() {
         g.relationship_tensors().iter().collect()
     } else {
@@ -165,16 +178,21 @@ fn parallel_surplus(
             .filter_map(|t| g.get_relationship_matrix(t))
             .collect()
     };
-    for t in tensors {
-        let Some(s) = t.parallel_edge_surplus() else {
-            continue;
-        };
-        match total.as_mut() {
-            Some(acc) => acc.add_counts(&s),
-            None => total = Some(s),
-        }
+    let mut surpluses = tensors
+        .into_iter()
+        .filter_map(Tensor::parallel_edge_surplus_cached);
+    let first = surpluses.next()?;
+    // A tensor's cached surplus is shared by every query, so a sum starts from
+    // a copy.
+    let Some(second) = surpluses.next() else {
+        return Some(first);
+    };
+    let mut total = first.dup();
+    total.add_counts(&second);
+    for s in surpluses {
+        total.add_counts(&s);
     }
-    total
+    Some(total)
 }
 
 /// Lazily resolved state — built on first `expand_row`, after any sibling
@@ -842,6 +860,54 @@ impl<'a> CondTraverseOp<'a> {
     /// ops. State-level eligibility (matrix existence) is checked here and
     /// returns `false` to signal "fall back to slow path for this batch".
     fn expand_batch(
+        &self,
+        batch: &Batch<'a>,
+        active_subset: &[usize],
+        out_pending: &mut VecDeque<Batch<'a>>,
+    ) -> bool {
+        // Under a small record cap (`LIMIT 10`) the product over a whole input
+        // batch is mostly wasted: run it over a few rows at a time and stop once
+        // enough rows are out. Only when every row has its source bound to a
+        // node, so no slice can fall back to the per-row path after another
+        // has emitted.
+        const SLICE: usize = 64;
+        let rp = self.relationship_pattern;
+        let seed_alias = if self.transposed {
+            &rp.to.alias
+        } else {
+            &rp.from.alias
+        };
+        let cap_left = self.record_cap.map(|c| c.saturating_sub(self.produced));
+        if let Some(cap) = cap_left
+            && cap <= 256
+            && !self.optional
+            && active_subset.len() > SLICE
+            && active_subset
+                .iter()
+                .all(|&r| bound_node(batch, seed_alias.id, r).is_some())
+        {
+            let mut emitted = 0usize;
+            for rows in active_subset.chunks(SLICE) {
+                let before = out_pending.len();
+                if !self.expand_batch_rows(batch, rows, out_pending) {
+                    return false;
+                }
+                emitted += out_pending
+                    .iter()
+                    .skip(before)
+                    .map(Batch::active_len)
+                    .sum::<usize>();
+                if emitted >= cap {
+                    break;
+                }
+            }
+            return true;
+        }
+        self.expand_batch_rows(batch, active_subset, out_pending)
+    }
+
+    /// [`Self::expand_batch`] over `active_subset` as one product.
+    fn expand_batch_rows(
         &self,
         batch: &Batch<'a>,
         active_subset: &[usize],
