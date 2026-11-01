@@ -1311,7 +1311,7 @@ class testIndexScanFlow():
                       "MATCH (n:L) WHERE n.a + 1 IN [2] RETURN n.k",
                       "MATCH (n:L) WHERE 2 IN [n.a, n.b] RETURN n.k",
                       "MATCH (n:L) WHERE -1 IN [n.a] RETURN n.k"]:
-                self.env.assertNotContains('Node By Index Scan', str(with_idx.explain(q)))
+                self.env.assertNotContains('Node By Index Scan', str(with_idx.explain(q)), message=q)
                 self.env.assertEqual(sorted(with_idx.query(q).result_set),
                                      sorted(no_idx.query(q).result_set), message=q)
             # the bare property is still served by the index

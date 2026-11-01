@@ -354,6 +354,24 @@ fn build_op_query(
     }
 }
 
+/// The attribute name when the subtree at `idx` is exactly `alias.attr`
+/// (a property access directly on the variable), `None` for any other
+/// shape that merely contains such a property.
+fn bare_property_of(
+    tree: &DynTree<ExprIR<Variable>>,
+    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    alias: &Variable,
+) -> Option<Arc<String>> {
+    let node = tree.node(idx);
+    let ExprIR::Property(attr) = node.data() else {
+        return None;
+    };
+    match node.get_child(0).map(|c| c.data()) {
+        Some(ExprIR::Variable(v)) if v == alias => Some(attr.clone()),
+        _ => None,
+    }
+}
+
 fn extract_attribute_from_subtree(
     tree: &DynTree<ExprIR<Variable>>,
     root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
@@ -626,15 +644,7 @@ fn try_in_filter_scan<T: IndexSubject>(
     // The index side must be the scanned property itself. `abs(n.a) IN
     // [1]` or `2 IN [n.a, n.b]` only *contain* `n.a`; pushing them as
     // `n.a IN [...]` or as an array-contains on `n.a` selects other rows.
-    let attr_node = filter.node(attr_side);
-    let ExprIR::Property(attr) = attr_node.data() else {
-        return None;
-    };
-    if !matches!(attr_node.get_child(0).map(|c| c.data()), Some(ExprIR::Variable(v)) if v == subject.alias())
-    {
-        return None;
-    }
-    let attr = attr.clone();
+    let attr = bare_property_of(filter, attr_side, subject.alias())?;
     let label = subject
         .all_labels()
         .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
