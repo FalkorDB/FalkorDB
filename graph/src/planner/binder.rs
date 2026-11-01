@@ -2388,6 +2388,18 @@ impl Binder {
                 }
                 Some(Value::List(Arc::new(elements)))
             }
+            // Entries are key nodes holding their value as the only child.
+            ExprIR::Map => {
+                let mut entries: Vec<(Arc<String>, Value)> =
+                    Vec::with_capacity(node.num_children());
+                for entry in node.children() {
+                    let ExprIR::Constant(Value::String(key)) = entry.data() else {
+                        return None;
+                    };
+                    entries.push((key.clone(), Self::constant_value(&entry.get_child(0)?)?));
+                }
+                Some(Value::Map(Arc::new(entries.into_iter().collect())))
+            }
             ExprIR::Negate => match Self::constant_value(&node.get_child(0)?)? {
                 Value::Int(i) => i.checked_neg().map(Value::Int),
                 Value::Float(f) => Some(Value::Float(-f)),

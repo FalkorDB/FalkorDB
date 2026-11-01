@@ -1834,6 +1834,8 @@ def test_boolean_operator_static_operand_type_3293():
         ("RETURN true OR (-1.5 * 2)", "Float"),
         ("RETURN false AND ([1] + [2])", "List"),
         ("RETURN false AND ([1] + 2)", "List"),
+        ("RETURN false AND ([1] + {a: 1})", "List"),
+        ("RETURN false AND ([{a: 1}] + [2])", "List"),
     ]:
         query_exception(q, f"Type mismatch: expected Boolean or Null but was {t}")
 
