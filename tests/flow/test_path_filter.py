@@ -475,6 +475,7 @@ class testPathFilter(FlowTestsBase):
             ("NOT (NOT (a.v > 1 OR (a)-->()))", 2),
             ("NOT (a.v = 0 OR NOT (a)-->())", 0),
             ("NOT ((a)-->() OR NOT (a.v < 3 AND (a)<--()))", 0),
+            ("NOT ((a)-->() XOR a.v > 1)", 1),
         ]
         for predicate, expected in cases:
             query = f"MATCH (a:N) WHERE {predicate} RETURN count(a)"
