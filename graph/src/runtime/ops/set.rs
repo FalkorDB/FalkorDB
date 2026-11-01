@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use once_cell::unsync::OnceCell;
 
-use crate::graph::graph::LabelId;
+use crate::graph::graph::{LabelId, NodeId, RelationshipId};
 use crate::parser::ast::{ExprIR, SetItem, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
@@ -104,7 +104,7 @@ impl Runtime<'_> {
                     var: var.clone(),
                     labels: labels
                         .iter()
-                        .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                        .map(|l| self.graph_mut().get_label_id_mut(l.as_str()))
                         .collect(),
                 },
                 SetItem::Attribute {
@@ -118,6 +118,33 @@ impl Runtime<'_> {
                 },
             })
             .collect()
+    }
+
+    /// First step of `SET n = …`: drop every property `n` has as this query
+    /// sees it — the ones staged earlier in the query and the committed ones.
+    fn clear_node_attrs_for_replace(
+        &self,
+        id: NodeId,
+    ) -> Result<(), String> {
+        self.pending.borrow_mut().clear_node_attributes(id);
+        let keys: Vec<Arc<String>> = self.graph().get_node_attrs(id).collect();
+        for key in keys {
+            self.set_pending_node_attr(id, &key, Value::Null)?;
+        }
+        Ok(())
+    }
+
+    /// [`Self::clear_node_attrs_for_replace`] for `SET r = …`.
+    fn clear_relationship_attrs_for_replace(
+        &self,
+        id: RelationshipId,
+    ) -> Result<(), String> {
+        self.pending.borrow_mut().clear_relationship_attributes(id);
+        let keys: Vec<Arc<String>> = self.graph().get_relationship_attrs(id).collect();
+        for key in keys {
+            self.set_pending_relationship_attr(id, &key, Value::Null)?;
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_lines)]
@@ -167,7 +194,7 @@ impl Runtime<'_> {
                     match entity {
                         Value::Node(id) => {
                             if !skip_delete_checks
-                                && ((self.g.borrow().is_node_deleted(id)
+                                && ((self.graph().is_node_deleted(id)
                                     && !self.pending.borrow().is_node_created(id))
                                     || self.pending.borrow().is_node_deleted(id))
                             {
@@ -190,12 +217,7 @@ impl Runtime<'_> {
                                 match run_expr {
                                     Value::Map(map) => {
                                         if *replace {
-                                            self.pending.borrow_mut().clear_node_attributes(id);
-                                            let keys: Vec<Arc<String>> =
-                                                self.g.borrow().get_node_attrs(id).collect();
-                                            for key in keys {
-                                                self.set_pending_node_attr(id, &key, Value::Null)?;
-                                            }
+                                            self.clear_node_attrs_for_replace(id)?;
                                         }
                                         for (key, value) in map.iter() {
                                             let existing = if skip_delete_checks {
@@ -217,11 +239,7 @@ impl Runtime<'_> {
                                         }
                                         let attrs = self.get_node_attrs(tid);
                                         if *replace {
-                                            let keys: Vec<Arc<String>> =
-                                                self.g.borrow().get_node_attrs(id).collect();
-                                            for key in keys {
-                                                self.set_pending_node_attr(id, &key, Value::Null)?;
-                                            }
+                                            self.clear_node_attrs_for_replace(id)?;
                                         }
                                         for (key, value) in attrs {
                                             if let Some(v) = self.get_node_attribute(id, &key)
@@ -235,11 +253,7 @@ impl Runtime<'_> {
                                     Value::Relationship(rel) => {
                                         let attrs = self.get_relationship_attrs(rel);
                                         if *replace {
-                                            let keys: Vec<Arc<String>> =
-                                                self.g.borrow().get_node_attrs(id).collect();
-                                            for key in keys {
-                                                self.set_pending_node_attr(id, &key, Value::Null)?;
-                                            }
+                                            self.clear_node_attrs_for_replace(id)?;
                                         }
                                         for (key, value) in attrs {
                                             if let Some(v) = self.get_node_attribute(id, &key)
@@ -258,7 +272,7 @@ impl Runtime<'_> {
                         }
                         Value::Relationship(target_rel) => {
                             if !skip_delete_checks
-                                && ((self.g.borrow().is_relationship_deleted(target_rel)
+                                && ((self.graph().is_relationship_deleted(target_rel)
                                     && !self.pending.borrow().is_relationship_created(target_rel))
                                     || self.pending.borrow().is_relationship_deleted(target_rel))
                             {
@@ -283,18 +297,7 @@ impl Runtime<'_> {
                                 match run_expr {
                                     Value::Map(map) => {
                                         if *replace {
-                                            let keys: Vec<Arc<String>> = self
-                                                .g
-                                                .borrow()
-                                                .get_relationship_attrs(target_rel)
-                                                .collect();
-                                            for key in keys {
-                                                self.set_pending_relationship_attr(
-                                                    target_rel,
-                                                    &key,
-                                                    Value::Null,
-                                                )?;
-                                            }
+                                            self.clear_relationship_attrs_for_replace(target_rel)?;
                                         }
                                         for (key, value) in map.iter() {
                                             let existing = if skip_delete_checks {
@@ -319,18 +322,7 @@ impl Runtime<'_> {
                                     Value::Node(sid) => {
                                         let attrs = self.get_node_attrs(sid);
                                         if *replace {
-                                            let keys: Vec<Arc<String>> = self
-                                                .g
-                                                .borrow()
-                                                .get_relationship_attrs(target_rel)
-                                                .collect();
-                                            for key in keys {
-                                                self.set_pending_relationship_attr(
-                                                    target_rel,
-                                                    &key,
-                                                    Value::Null,
-                                                )?;
-                                            }
+                                            self.clear_relationship_attrs_for_replace(target_rel)?;
                                         }
                                         for (key, value) in attrs {
                                             if let Some(v) =
@@ -350,18 +342,7 @@ impl Runtime<'_> {
                                         }
                                         let attrs = self.get_relationship_attrs(source_rel);
                                         if *replace {
-                                            let keys: Vec<Arc<String>> = self
-                                                .g
-                                                .borrow()
-                                                .get_relationship_attrs(target_rel)
-                                                .collect();
-                                            for key in keys {
-                                                self.set_pending_relationship_attr(
-                                                    target_rel,
-                                                    &key,
-                                                    Value::Null,
-                                                )?;
-                                            }
+                                            self.clear_relationship_attrs_for_replace(target_rel)?;
                                         }
                                         for (key, value) in attrs {
                                             if let Some(v) =
@@ -394,7 +375,7 @@ impl Runtime<'_> {
                     match run_expr {
                         Some(Value::Node(id)) => {
                             if !skip_delete_checks
-                                && ((self.g.borrow().is_node_deleted(id)
+                                && ((self.graph().is_node_deleted(id)
                                     && !self.pending.borrow().is_node_created(id))
                                     || self.pending.borrow().is_node_deleted(id))
                             {

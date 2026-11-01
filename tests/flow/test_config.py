@@ -325,6 +325,26 @@ class testConfig(FlowTestsBase):
         expected_response = config_value
         self.env.assertEqual(response, expected_response)
 
+        # #3413: any non-negative i64 is accepted, as in C. FalkorDB Cloud loads
+        # the module with VKEY_MAX_ENTITY_COUNT 4611686000000000000, and
+        # CONFIG REWRITE saves it as a native `graph.` line; on restart Redis
+        # applies that line through the same range check `CONFIG SET` uses, so
+        # a narrower range aborted the server.
+        # 0 means no limit (one key); GRAPH.CONFIG SET already accepted it,
+        # so the native config must too, or CONFIG REWRITE saves a line the
+        # restart rejects.
+        for value in [0, 4611686000000000000, 9223372036854775807]:
+            self.env.assertEqual(self.redis_con.execute_command(
+                "CONFIG", "SET", "graph.VKEY_MAX_ENTITY_COUNT", str(value)), "OK")
+            # config_get returns a dict under both RESP2 and RESP3
+            self.env.assertEqual(
+                self.redis_con.config_get("graph.VKEY_MAX_ENTITY_COUNT"),
+                {"graph.VKEY_MAX_ENTITY_COUNT": str(value)})
+            self.env.assertEqual(self.db.config_set(config_name, value), "OK")
+            self.env.assertEqual(self.db.config_get(config_name), value)
+
+        self.env.assertEqual(self.db.config_set(config_name, 100000), "OK")
+
     def test11_set_get_node_creation_buffer(self):
         # flush and stop is needed for memcheck for clean shutdown
         self.graph.delete()

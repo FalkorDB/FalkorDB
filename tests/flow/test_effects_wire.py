@@ -321,6 +321,45 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
         self.env.assertEqual(
             g.ro_query("MATCH ()-[r]->() RETURN count(r)").result_set, [[3]])
 
+    @staticmethod
+    def _id_list(*ids):
+        """An `IdList` of one single-id Range segment per id, repeats included."""
+        return len(ids).to_bytes(4, "little") + b"".join(
+            b"\x0c" + int(id).to_bytes(8, "little") + b"\x01" for id in ids)
+
+    def test09_a_repeated_id_in_one_create_record_is_refused(self):
+        # #3247. A record naming the same id twice says it creates two entities
+        # and could only create one. CREATE_EDGE has refused that since #2846;
+        # CREATE_NODE folded the ids into a set first and applied one node.
+        key = "effects_repeated_ids"
+        g = Graph(self.master, key)
+        g.query("CREATE (:A)-[:R]->(:A)")
+        self.wait_for_replica_offset()
+        full_before = self.master.info()["sync_full"]
+
+        # Nodes 2 and 3 are the next free ids, so the repeat is all that is wrong.
+        node = (b"\x03\x00\x00\x00" + b"\x03\x00\x00\x00"   # opcode, count 3
+                + b"\x00\x00" + b"\x00\x00"                 # no labels, no attrs
+                + self._id_list(2, 3, 2))
+        msg = self._refused(b"\x03\x00" + node, "a node id repeated", key)
+        self.env.assertContains("distinct", msg)
+
+        edge = (b"\x04\x00\x00\x00" + b"\x02\x00\x00\x00"   # opcode, count 2
+                + b"\x00\x00\x00\x00" + b"\x00\x00"         # type R, no attrs
+                + self._id_list(1, 1) + self._id_list(0, 0) + self._id_list(1, 1))
+        msg = self._refused(b"\x03\x00" + edge, "an edge id repeated", key)
+        self.env.assertContains("distinct", msg)
+
+        self._still_healthy(full_before)
+        self.env.assertEqual(
+            g.ro_query("MATCH (n) RETURN count(n)").result_set, [[2]])
+        self.env.assertEqual(
+            g.ro_query("MATCH ()-[r]->() RETURN count(r)").result_set, [[1]])
+        # The ids the refused records named are still free to the next write.
+        g.query("CREATE (:A), (:A)")
+        self.env.assertEqual(
+            g.ro_query("MATCH (n) RETURN max(id(n))").result_set, [[3]])
+
 
 #-----------------------------------------------------------------------------
 # 6. compression must be transparent

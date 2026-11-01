@@ -1413,6 +1413,9 @@ impl<'a> Parser<'a> {
                             if !matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
                                 break;
                             }
+                            // `<-` is lost once from/to are swapped when both
+                            // ends share one alias (`(a)<-[*]-(a)`); note it here.
+                            let is_incoming = self.lexer.current()? == Token::LessThan;
                             let (relationship, right) =
                                 self.parse_relationship_pattern(prev_node, clause)?;
 
@@ -1448,7 +1451,7 @@ impl<'a> Parser<'a> {
                                     relationship.max_hops,
                                 );
                                 new_rel.all_shortest_paths = if !relationship.bidirectional
-                                    && relationship.from.alias != left_alias
+                                    && (relationship.from.alias != left_alias || is_incoming)
                                 {
                                     AllShortestPaths::Reversed
                                 } else {
@@ -1786,18 +1789,11 @@ impl<'a> Parser<'a> {
             let _alias = self.try_parse_ident();
 
             // Relationship types
-            let mut types = Vec::new();
-            if optional_match_token!(self.lexer, Colon) {
-                loop {
-                    types.push(self.parse_ident()?);
-                    let pipe = optional_match_token!(self.lexer, Pipe);
-                    let colon = optional_match_token!(self.lexer, Colon);
-                    if pipe || colon {
-                        continue;
-                    }
-                    break;
-                }
-            }
+            let types = if optional_match_token!(self.lexer, Colon) {
+                self.parse_relationship_types()?
+            } else {
+                vec![]
+            };
 
             // Variable length * and range
             let (min, max) = if optional_match_token!(self.lexer, Star) {
@@ -2135,24 +2131,33 @@ impl<'a> Parser<'a> {
     // match one of those kind [..4], [4..], [4..5], [6]
     fn parse_list_operator_expression(
         &mut self,
-        mut lhs: DynTree<ExprIR<Arc<String>>>,
+        lhs: DynTree<ExprIR<Arc<String>>>,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        let from = self.parse_expr(false);
-        if optional_match_token!(self.lexer, DotDot) {
-            let to = self.parse_expr(false);
-            match_token!(self.lexer, RBrace);
-            lhs = tree!(
-                ExprIR::GetElements,
-                lhs,
-                from.unwrap_or_else(|_| tree!(ExprIR::Constant(Value::Int(0)))),
-                to.unwrap_or_else(|_| tree!(ExprIR::Constant(Value::Int(i64::MAX))))
-            );
+        // A bound is left out only when `..` or `]` comes where it would
+        // start; one that is there but fails to parse is an error.
+        let from = if self.lexer.current()? == Token::DotDot {
+            None
         } else {
-            match_token!(self.lexer, RBrace);
-            lhs = tree!(ExprIR::GetElement, lhs, from?);
-        }
-
-        Ok(lhs)
+            let from = self.parse_expr(false)?;
+            if self.lexer.current()? != Token::DotDot {
+                match_token!(self.lexer, RBrace);
+                return Ok(tree!(ExprIR::GetElement, lhs, from));
+            }
+            Some(from)
+        };
+        match_token!(self.lexer, DotDot);
+        let to = if self.lexer.current()? == Token::RBrace {
+            None
+        } else {
+            Some(self.parse_expr(false)?)
+        };
+        match_token!(self.lexer, RBrace);
+        Ok(tree!(
+            ExprIR::GetElements,
+            lhs,
+            from.unwrap_or_else(|| tree!(ExprIR::Constant(Value::Int(0)))),
+            to.unwrap_or_else(|| tree!(ExprIR::Constant(Value::Int(i64::MAX))))
+        ))
     }
 
     fn parse_property_lookup(
@@ -3032,6 +3037,18 @@ impl<'a> Parser<'a> {
         Ok(Arc::new(QueryNode::new(alias, labels, Arc::new(attrs))))
     }
 
+    /// The type alternatives after a relationship's `:`: `A|B`, with the
+    /// legacy `A|:B` spelling. `A:B` is not one of them: an edge has exactly
+    /// one type, so a second `:` is left for the caller to reject.
+    fn parse_relationship_types(&mut self) -> Result<Vec<Arc<String>>, String> {
+        let mut types = vec![self.parse_ident()?];
+        while optional_match_token!(self.lexer, Pipe) {
+            optional_match_token!(self.lexer, Colon);
+            types.push(self.parse_ident()?);
+        }
+        Ok(types)
+    }
+
     #[allow(clippy::too_many_lines)]
     fn parse_relationship_pattern(
         &mut self,
@@ -3057,15 +3074,7 @@ impl<'a> Parser<'a> {
             };
             let mut types = HashSet::new();
             if optional_match_token!(self.lexer, Colon) {
-                loop {
-                    types.insert(self.parse_ident()?);
-                    let pipe = optional_match_token!(self.lexer, Pipe);
-                    let colon = optional_match_token!(self.lexer, Colon);
-                    if pipe || colon {
-                        continue;
-                    }
-                    break;
-                }
+                types.extend(self.parse_relationship_types()?);
             }
             let var_len = if optional_match_token!(self.lexer, Star) {
                 let start = if let Token::Integer(i) = self.lexer.current()? {
@@ -3320,6 +3329,7 @@ impl<'a> Parser<'a> {
                 self.reject_unparenthesized_target(&expr)?;
                 expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
+                self.expect_property_after_paren()?;
             }
             if self.lexer.current()? == Token::Dot {
                 while self.lexer.current()? == Token::Dot {
@@ -3379,6 +3389,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// A parenthesized `SET`/`REMOVE` target is only allowed as the subject
+    /// of a property lookup, `(n).x`: the grammar has no `(n) = {..}`,
+    /// `(n):L` or `(n.x) = 5`, and C rejects them.
+    fn expect_property_after_paren(&self) -> Result<(), String> {
+        if self.lexer.current()? == Token::Dot {
+            Ok(())
+        } else {
+            Err(self.lexer.format_error(&format!(
+                "Invalid input '{}': expected '.'",
+                self.lexer.current_str()
+            )))
+        }
+    }
+
     fn parse_remove_clause(&mut self) -> Result<QueryIR<Arc<String>>, String> {
         let mut remove_items = vec![];
         self.parse_remove_items(&mut remove_items)?;
@@ -3401,6 +3425,7 @@ impl<'a> Parser<'a> {
                 self.reject_unparenthesized_target(&expr)?;
                 expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
+                self.expect_property_after_paren()?;
             }
             if self.lexer.current()? == Token::Dot {
                 while self.lexer.current()? == Token::Dot {
@@ -4057,6 +4082,32 @@ mod tests {
         }
     }
 
+    // A slice bound that fails to parse is an error, not a missing bound:
+    // `[1,2,3][abs()..2]` used to run as `[1,2,3][..2]`.
+    #[test]
+    fn slice_bound_errors_are_reported() {
+        with_functions();
+        for query in [
+            "RETURN [1,2,3][1+..2]",
+            "RETURN [1,2,3][1..2+]",
+            "RETURN [1,2,3][abs()..2]",
+            "RETURN [1,2,3][1..abs()]",
+            "RETURN [1,2,3][(1..2]",
+            "RETURN [1,2,3][1..(2]",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        for query in [
+            "RETURN [1,2,3][..2]",
+            "RETURN [1,2,3][1..]",
+            "RETURN [1,2,3][..]",
+            "RETURN [1,2,3][1..2]",
+            "RETURN [1,2,3][abs(-1)..-1]",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
+        }
+    }
+
     // Several parameters, later ones shadowing earlier ones, and the query
     // text that follows must all survive being read straight into values.
     #[test]
@@ -4085,6 +4136,38 @@ mod tests {
                 Parser::new(query).parse().is_ok(),
                 "failed to parse: {query}"
             );
+        }
+    }
+
+    // A parenthesized SET/REMOVE target only opens a property lookup, and
+    // an edge's type alternatives are joined by `|`, never by a bare `:`.
+    #[test]
+    fn paren_update_targets_and_colon_joined_types_are_rejected() {
+        with_functions();
+        for query in [
+            "MATCH (n) SET (n.x) = 5",
+            "MATCH (n) SET (n) = {a: 1}",
+            "MATCH (n) SET (n) += {a: 1}",
+            "MATCH (n) SET (n):L",
+            "MATCH (n) REMOVE (n):L",
+            "MATCH ()-[:A:B]->() RETURN 1",
+            "MATCH ()-[r:A:B]->() RETURN 1",
+            "MATCH ()-[:A|B:C]->() RETURN 1",
+            "MATCH (a), (b) RETURN shortestPath((a)-[:A:B*]->(b))",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        for query in [
+            "MATCH (n) SET (n).x = 5",
+            "MATCH (n) SET (n).x.y = 5",
+            "MATCH (n) REMOVE (n).x",
+            "MATCH (n) SET n = {a: 1}, n:L",
+            "MATCH ()-[:A]->() RETURN 1",
+            "MATCH ()-[:A|B]->() RETURN 1",
+            "MATCH ()-[:A|:B|C]->() RETURN 1",
+            "MATCH (a), (b) RETURN shortestPath((a)-[:A|:B*]->(b))",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
         }
     }
 }
