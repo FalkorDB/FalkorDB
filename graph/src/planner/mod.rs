@@ -625,9 +625,9 @@ fn pattern_attrs_read_visited(
     visited: &HashSet<(u32, u32)>,
 ) -> bool {
     let reads = |attrs: &QueryExpr<Variable>| {
-        attrs.root().walk::<Bfs>().any(|data| {
-            matches!(data, ExprIR::Variable(v) if visited.contains(&(v.id, v.scope_id)))
-        })
+        attrs.root().walk::<Bfs>().any(
+            |data| matches!(data, ExprIR::Variable(v) if visited.contains(&(v.id, v.scope_id))),
+        )
     };
     pattern.nodes().iter().any(|n| reads(&n.attrs))
         || pattern.relationships().iter().any(|r| reads(&r.attrs))
@@ -3091,10 +3091,13 @@ impl Planner {
         bound: &HashSet<(u32, u32)>,
     ) {
         let mut idx = plan.root().idx();
-        while matches!(
+        // A WHERE pattern comprehension adds a saturated Apply above the
+        // pattern, as `plan_query` also steps through.
+        while (matches!(
             plan.node(idx).data(),
             IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
-        ) && plan.node(idx).num_children() > 0
+        ) && plan.node(idx).num_children() > 0)
+            || Self::is_saturated_apply(plan, idx)
         {
             idx = plan.node(idx).child(0).idx();
         }
@@ -3112,10 +3115,13 @@ impl Planner {
     /// below any filters a Cartesian Product?
     fn joins_components(plan: &DynTree<IR>) -> bool {
         let mut idx = plan.root().idx();
-        while matches!(
+        // A WHERE pattern comprehension adds a saturated Apply above the
+        // pattern, as `plan_query` also steps through.
+        while (matches!(
             plan.node(idx).data(),
             IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
-        ) && plan.node(idx).num_children() > 0
+        ) && plan.node(idx).num_children() > 0)
+            || Self::is_saturated_apply(plan, idx)
         {
             idx = plan.node(idx).child(0).idx();
         }

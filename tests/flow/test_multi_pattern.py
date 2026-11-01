@@ -140,10 +140,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         # one of another pattern part or of an earlier MATCH clause,
         # and must be checked where that variable is bound (#2923).
         g = self.db.select_graph("multi_pattern_inline_attrs")
-        try:
-            g.delete()
-        except Exception:
-            pass
+        self.env.cmd("DEL", g.name)
         g.query("CREATE (:A {v:1})-[:R {w:2}]->(:B {v:0}), (:B {v:5})")
         cases = [
             ("MATCH (a)-[r]->(b) MATCH (c:B {v: id(r)*0}) RETURN c.v", [[0]]),
@@ -159,6 +156,9 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
             # only an inline attr reads the earlier clause's variable
             ("MATCH (a:A) MATCH (x:B {v: a.v-1}), (z:B) RETURN count(*)", [[2]]),
             ("MATCH (a:A) MATCH (z:B), (x:B {v: a.v-1}) RETURN count(*)", [[2]]),
+            ("MATCH (a:A) MATCH (x:B {v: a.v-1}), (z:B) WHERE size([(a)-->(c) | c]) > 0 RETURN count(*)", [[2]]),
+            ("MATCH (a:A) MATCH (z:B), (x:B {v: a.v-1}) WHERE size([(x)<--(c) | c]) > 0 RETURN count(*)", [[2]]),
+            ("MATCH (a:A) MATCH (b:B), (c:B) WHERE size([(a)-->(d) | d]) > 0 RETURN count(*)", [[4]]),
         ]
         for q, expected in cases:
             self.env.assertEqual(g.query(q).result_set, expected, message=q)
@@ -242,20 +242,18 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         # component is checked above the traversal, which must then emit each
         # parallel edge instead of one representative per (src, dst).
         g = self.db.select_graph("multi_pattern_parallel_edges")
-        try:
-            g.delete()
-        except Exception:
-            pass
+        self.env.cmd("DEL", g.name)
         g.query("CREATE (a:A)-[:R {w:0}]->(b:B), (a)-[:R {w:2}]->(b), (:C)-[:S {w:2}]->(:D)")
         q = "MATCH (c)-[s:S]->(d), (x)-[:R {w: s.w}]->(y) RETURN count(*)"
         self.env.assertEqual(g.query(q).result_set, [[1]])
 
-        # An endpoint's predicate is applied once: a non-deterministic one
-        # must not be squared (0.5 per edge, so 2 edges give 1 on average).
+        # Lifting an endpoint's predicate must not evaluate it once more than
+        # the plan did before: main averages 0.5 here, and lifting it from both
+        # copies of the endpoint dropped that to 0.25.
         g.delete()
         g.query("CREATE (a:A {v:1})-[:E]->(b:B {v:1}), (a)-[:E]->(b)")
         total = 0
-        runs = 300
+        runs = 600
         q = "MATCH (a)-[r:E]->(b {v: a.v + toInteger(rand() * 2)}) RETURN count(*)"
         for _ in range(runs):
             total += g.query(q).result_set[0][0]
