@@ -1022,7 +1022,7 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
         with_idx = self.db.select_graph("edge_idx_bound_cache")
         no_idx = self.db.select_graph("edge_idx_bound_cache_plain")
         setup = """UNWIND range(1, 40) AS i CREATE (:N {id: i})
-                   WITH 1 AS _ UNWIND range(1, 600) AS k
+                   WITH DISTINCT 1 AS _ UNWIND range(1, 600) AS k
                    MATCH (x:N {id: (k * 7) % 40 + 1}), (y:N {id: (k * 13) % 40 + 1})
                    CREATE (x)-[:P {v: k}]->(y)"""
         try:
@@ -1054,3 +1054,17 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
         finally:
             with_idx.delete()
             no_idx.delete()
+
+    # A write query's upstream CALL {} commits new edges between batches, so the
+    # hit set must not be kept across them: every node sees its own new edge.
+    def test_bound_endpoint_hit_cache_skipped_by_write_query(self):
+        g = self.db.select_graph("edge_idx_bound_cache_write")
+        try:
+            g.query("UNWIND range(1, 3000) AS i CREATE (:N {id: i})")
+            create_edge_range_index(g, 'P', 'v', sync=True)
+            q = ("MATCH (a:N) CALL { WITH a CREATE (a)-[:P {v: 5}]->(a) } "
+                 "WITH a MATCH (a)-[r:P]->(b) WHERE r.v = 5 RETURN count(r)")
+            self.env.assertContains('Edge By Index Scan', str(g.explain(q)))
+            self.env.assertEqual(g.query(q).result_set[0][0], 3000)
+        finally:
+            g.delete()
