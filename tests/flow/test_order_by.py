@@ -314,3 +314,24 @@ class testOrderBy(FlowTestsBase):
             self.env.assertEqual(res, [[3]])
         finally:
             g.delete()
+
+    def test_order_by_alias_named_like_the_internal_aggregate_slot(self):
+        """The slot the parser gives every aggregate call is not a name: a
+        query's own alias, backquoted or not, may be called anything,
+        including what the slot used to be called."""
+        g = self.db.select_graph("order_by_slot_name")
+        try:
+            g.query("UNWIND [2, -3, 1, 1] AS i CREATE (:N {i: i})")
+            name = "__agg_order_by_placeholder__"
+            for q, expected in [
+                (f"MATCH (n:N) RETURN n.i AS {name} ORDER BY {name} DESC", [[2], [1], [1], [-3]]),
+                (f"MATCH (n:N) RETURN n.i AS `{name}` ORDER BY n.i", [[-3], [1], [1], [2]]),
+                (f"MATCH (n:N) RETURN n.i AS `{name}`, count(*) AS c ORDER BY c DESC, `{name}`",
+                 [[1, 2], [-3, 1], [2, 1]]),
+                (f"MATCH (n:N) WITH n.i AS x WITH x, 7 AS `{name}` RETURN DISTINCT `{name}`", [[7]]),
+                (f"MATCH (n:N) RETURN count(n) AS c, n.i < 2 AS `{name}` ORDER BY count(n), `{name}`",
+                 [[1, False], [3, True]]),
+            ]:
+                self.env.assertEqual(g.query(q).result_set, expected, message=q)
+        finally:
+            g.delete()

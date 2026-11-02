@@ -1757,6 +1757,16 @@ impl Binder {
                 let var = self.resolve_name(name, locals)?;
                 Ok(tree!(ExprIR::Variable(var)))
             }
+            ExprIR::AggOrderByPlaceholder => {
+                // Always a fresh variable, in a slot of its own.
+                let scope_id = self.env_stack.len() as u32 - 1;
+                let var = self.fresh_var(None, Type::Any, scope_id);
+                // Insert with a unique key so each placeholder occupies its own
+                // slot in the env (keeping env.len() == next available ID).
+                let key = Arc::new(format!("__agg_placeholder_{}", var.id));
+                self.env_stack[scope_id as usize].insert(key, var.clone());
+                Ok(tree!(ExprIR::Variable(var)))
+            }
             ExprIR::Quantifier {
                 quantifier_type: qt,
                 var: name,
@@ -2077,6 +2087,7 @@ impl Binder {
                     ExprIR::CompiledRegex(_) => {
                         unreachable!("produced only by the binder itself")
                     }
+                    ExprIR::AggOrderByPlaceholder => unreachable!("handled above"),
                     ExprIR::Pattern(pattern) => {
                         // Snapshot outer scope so pattern-local aliases can be
                         // cleaned up after binding (they must not leak outward).
@@ -2192,17 +2203,6 @@ impl Binder {
         name: &Arc<String>,
         locals: &[HashMap<Arc<String>, Variable>],
     ) -> Result<Variable, String> {
-        // Special placeholder for aggregate function ordering - always create a fresh variable
-        if name.as_str() == "__agg_order_by_placeholder__" {
-            let scope_id = self.env_stack.len() as u32 - 1;
-            let var = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
-            // Insert with a unique key so each placeholder occupies its own
-            // slot in the env (keeping env.len() == next available ID).
-            let key = Arc::new(format!("__agg_placeholder_{}", var.id));
-            self.env_stack[scope_id as usize].insert(key, var.clone());
-            return Ok(var);
-        }
-
         // Anonymous variables should also create fresh variables
         if name.starts_with("_anon") {
             let scope_id = self.env_stack.len() as u32 - 1;
@@ -2383,6 +2383,9 @@ impl Binder {
             // All regex kinds may return Null (and Matches returns Bool),
             // matching the original functions' declared return types
             ExprIR::CompiledRegex(_) => true,
+
+            // Replaced by a variable when the aggregate is bound
+            ExprIR::AggOrderByPlaceholder => false,
         }
     }
 
@@ -2442,6 +2445,7 @@ impl Binder {
             | ExprIR::Quantifier { .. }
             | ExprIR::ShortestPath(_)
             | ExprIR::CompiledRegex(_)
+            | ExprIR::AggOrderByPlaceholder
             | ExprIR::Pattern(_) => false,
 
             // Pre-evaluated constant – only Null and entity values count
@@ -2743,15 +2747,14 @@ fn is_alias_rewritable(
     has_variable
 }
 
-/// Compare two raw (pre-bind) expression trees structurally, ignoring
-/// internal `__agg_order_by_placeholder__` variables that the parser
-/// appends to aggregate functions.
+/// Compare two raw (pre-bind) expression trees structurally, ignoring the
+/// placeholder the parser appends to aggregate functions.
 fn raw_exprs_structurally_equal(
     a: &DynTree<ExprIR<Arc<String>>>,
     b: &DynTree<ExprIR<Arc<String>>>,
 ) -> bool {
     fn is_agg_placeholder(node: &ExprIR<Arc<String>>) -> bool {
-        matches!(node, ExprIR::Variable(v) if v.as_str() == "__agg_order_by_placeholder__")
+        matches!(node, ExprIR::AggOrderByPlaceholder)
     }
 
     fn nodes_eq(
@@ -2889,14 +2892,22 @@ mod tests {
             "MATCH (n:N) RETURN n.i ORDER BY n.j",
             // non-deterministic: a second call is not the projected value
             "MATCH (n:N) RETURN n.i + rand() AS r ORDER BY n.i + rand()",
-            // the parser's aggregate placeholder is not a user expression's
-            "MATCH (n:N) RETURN [n] AS l ORDER BY [n, __agg_order_by_placeholder__]",
             // a comprehension variable shadows the projected alias in its body
             "MATCH (n:N) RETURN n.i AS x ORDER BY [x IN [1, 2] | n.i]",
             "MATCH (n:N) RETURN n.i AS x ORDER BY reduce(x = 0, y IN [1, 2] | n.i)",
         ] {
             assert_eq!(project_copies(q), vec![String::from("n")], "{q}");
         }
+    }
+
+    /// The slot the parser appends to aggregate calls has no name, so an
+    /// alias that spells the old reserved one is an ordinary alias.
+    #[test]
+    fn alias_named_like_the_aggregate_slot_is_ordinary() {
+        let q = "MATCH (n:N) RETURN n.i AS __agg_order_by_placeholder__ \
+                 ORDER BY __agg_order_by_placeholder__";
+        // `project_copies` binds and plans the query, and panics if either fails
+        assert!(project_copies(q).is_empty());
     }
 
     /// The iterable of a comprehension is still in the outer scope, so a

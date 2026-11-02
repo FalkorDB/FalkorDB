@@ -290,6 +290,12 @@ pub enum ExprIR<TVar> {
     /// of being rebuilt per row.
     /// Children: the remaining runtime arguments (text [, replacement]).
     CompiledRegex(RegexFn),
+    /// The slot the parser appends as the last argument of every aggregate
+    /// call, for ORDER BY to find the aggregate's value by. It is a variant of
+    /// its own, not a [`Self::Variable`] with a reserved name, so no name a
+    /// query spells (not even a backquoted one) can collide with it. The
+    /// binder turns it into a fresh variable; it never survives binding.
+    AggOrderByPlaceholder,
 }
 
 /// Payload of [`ExprIR::CompiledRegex`].
@@ -452,6 +458,7 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
                 RegexFnKind::Replace => write!(f, "string.replaceRegEx()"),
             },
             Self::Case { .. } => write!(f, "CASE"),
+            Self::AggOrderByPlaceholder => write!(f, "<aggregate order-by slot>"),
         }
     }
 }
