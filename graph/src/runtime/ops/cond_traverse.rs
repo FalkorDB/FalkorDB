@@ -363,6 +363,14 @@ fn build_transposed_union_iter(
 }
 
 impl<'a> CondTraverseOp<'a> {
+    /// Forgets the (source, destination) pairs already emitted by the
+    /// bidirectional dedup, for a new argument batch.
+    pub fn clear_bidir_dedup(&mut self) {
+        if let Some(dedup) = &self.bidir_dedup {
+            dedup.borrow_mut().clear();
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: &'a Runtime<'a>,
@@ -419,11 +427,9 @@ impl<'a> CondTraverseOp<'a> {
                 (None, None)
             };
 
-        // The dedup set is cleared per input batch, so a LIMIT hint must not split the
-        // child's output at a small batch boundary: the same (source, destination)
-        // pair reached through intermediates on both sides of it would be emitted
-        // twice, and the LIMIT would count the duplicate. Let the child pack full
-        // batches, as it does without a LIMIT.
+        // The dedup set outlives input batches, but keep the child packing full
+        // batches under a LIMIT hint as it does without one, so the dedup work per
+        // batch is not multiplied by tiny batches.
         if bidir_dedup.is_some()
             && let BatchOp::CondTraverse(child_ct) = &mut *child
         {
@@ -1476,11 +1482,11 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     // child batch and decide fast vs. per-row path for it.
                     match self.child.next() {
                         Some(Ok(b)) => {
-                            // Reset bidirectional dedup for each new input batch
-                            // so Apply/Optional scopes see fresh state.
-                            if let Some(ref dedup) = self.bidir_dedup {
-                                dedup.borrow_mut().clear();
-                            }
+                            // The bidirectional dedup set is kept across input
+                            // batches: a (source, destination) pair reached through
+                            // intermediates in two batches is one result. It is
+                            // cleared when a new argument batch is installed
+                            // (`set_argument_batch`), the Apply/Optional boundary.
                             // Try the batched mxm path on the whole batch. When it
                             // fully handles the batch (`true`) its output is
                             // queued on `pending_batches` and the emitter is left

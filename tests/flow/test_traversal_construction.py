@@ -712,3 +712,19 @@ class testTraversalConstruction():
                 self.env.assertEqual(len(got), min(limit, 25), message=f"LIMIT {limit}")
         finally:
             g.delete()
+
+    # The bidirectional dedup must outlive an input batch: with more than one
+    # batch of intermediates (here 3000 > 1024) the same (source, destination)
+    # pair was emitted once per batch, with or without a LIMIT.
+    def test_bidirectional_dedup_across_input_batches(self):
+        g = self.db.select_graph("BidirDedupBatches")
+        self.env.cmd("DEL", g.name)
+        try:
+            g.query("CREATE (:A {id:1}), (:B {id:2})")
+            g.query("""UNWIND range(1, 3000) AS i MATCH (a:A), (b:B)
+                       CREATE (m:M {i: i}), (a)-[:R]->(m), (m)-[:R]->(b)""")
+            for limit in ["", "LIMIT 1", "LIMIT 5", "LIMIT 100"]:
+                q = f"MATCH (a:A)-[]-()-[]-(b:B) RETURN a.id, b.id {limit}"
+                self.env.assertEqual(g.query(q).result_set, [[1, 2]], message=q)
+        finally:
+            g.delete()
