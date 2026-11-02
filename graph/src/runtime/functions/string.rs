@@ -8,8 +8,8 @@
 //! ────────────────────────────────────────────────────────────────
 //!  substring(s, start [,len]) substring()            0-based index
 //!  split(s, delim)            split()                returns [String]
-//!  toLower(s)                 string_to_lower()      rejects U+FFFD
-//!  toUpper(s)                 string_to_upper()      rejects U+FFFD
+//!  toLower(s)                 string_to_lower()
+//!  toUpper(s)                 string_to_upper()
 //!  replace(s, search, repl)   string_replace()
 //!  left(s, n)                 string_left()          first n chars
 //!  lTrim(s)                   string_ltrim()         trims spaces
@@ -20,15 +20,12 @@
 //!  string.matchRegEx(s, re)   string_match_reg_ex()  returns [[String]]
 //!  string.replaceRegEx(...)   string_replace_reg_ex()
 //! ```
-//!
-//! `toLower` / `toUpper` detect the Unicode replacement character
-//! (`U+FFFD`) and return an error, mirroring the C implementation's
-//! behaviour on invalid UTF-8 input.
 
 #![allow(clippy::unnecessary_wraps)]
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, string_pool, value::Value};
+use regex::NoExpand;
 use std::sync::Arc;
 use thin_vec::thin_vec;
 
@@ -142,12 +139,6 @@ pub fn register(funcs: &mut Functions) {
         fn string_to_lower(_runtime, args) {
             match args.first() {
                 Some(Value::String(s)) => {
-                    // Match C behavior: detect replacement character which indicates invalid UTF-8
-                    // In the C version, str_tolower returns NULL on invalid UTF-8 (c == -1)
-                    // In Rust, we check for the replacement character
-                    if s.contains('\u{FFFD}') {
-                        return Err(String::from("Invalid UTF8 string"));
-                    }
                     let lower = s.to_lowercase();
                     Ok(Value::String(Arc::new(lower)))
                 }
@@ -164,12 +155,6 @@ pub fn register(funcs: &mut Functions) {
         fn string_to_upper(_runtime, args) {
             match args.first() {
                 Some(Value::String(s)) => {
-                    // Match C behavior: detect replacement character which indicates invalid UTF-8
-                    // In the C version, str_toupper returns NULL on invalid UTF-8 (c == -1)
-                    // In Rust, we check for the replacement character
-                    if s.contains('\u{FFFD}') {
-                        return Err(String::from("Invalid UTF8 string"));
-                    }
                     let upper = s.to_uppercase();
                     Ok(Value::String(Arc::new(upper)))
                 }
@@ -466,7 +451,7 @@ pub fn register(funcs: &mut Functions) {
                         Some(Value::Null) => Ok(Value::Null),
                         // Use provided string
                         Some(Value::String(repl)) => {
-                            let replaced_text = re.replace_all(text.as_str(), repl.as_str()).into_owned();
+                            let replaced_text = re.replace_all(text.as_str(), NoExpand(repl.as_str())).into_owned();
                             Ok(Value::String(Arc::new(replaced_text)))
                         }
                         // All other types should have been caught by type checking
