@@ -209,3 +209,27 @@ class testMultiDb():
         self.env.assertEqual(con.move("k", 1), True)
         self.env.assertEqual(con.get("telemetry{k}"), b"keep")
         self.assert_alive()
+
+    def test09_move_of_a_key_with_a_lossy_twin_name_leaves_the_graph_stream(self):
+        # Key names are bytes, the module's records render them lossily: the
+        # plain key b"g\xff" reads "g\ufffd", which is also the (valid UTF-8) name
+        # of a graph. Moving the plain key must not delete that graph's
+        # telemetry stream.
+        con = self.con(0)
+        graph_key, plain_key = "g\ufffd".encode(), b"g\xff"
+        con.execute_command("GRAPH.QUERY", graph_key, "CREATE (:T)")
+        stream = "telemetry{g\ufffd}".encode()
+        deadline = time.time() + 10
+        while not con.exists(stream) and time.time() < deadline:
+            time.sleep(0.05)
+        self.env.assertEqual(con.exists(stream), 1)
+
+        con.set(plain_key, "value")
+        self.env.assertEqual(con.move(plain_key, 1), True)
+        self.env.assertEqual(con.exists(stream), 1)
+        self.env.assertEqual(self.con(1).get(plain_key), b"value")
+
+        # the graph itself still moves with its history removed
+        self.env.assertEqual(con.move(graph_key, 1), True)
+        self.env.assertEqual(con.exists(stream), 0)
+        self.assert_alive()

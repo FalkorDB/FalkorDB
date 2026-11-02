@@ -228,17 +228,19 @@ pub fn registered_db(arc: &Arc<RwLock<ThreadedGraph>>) -> Option<i32> {
     GRAPH_REGISTRY.lock().get(&graph_id(arc)).map(|e| e.db)
 }
 
-/// Move the registry entry of the graph identified by `id` to key `name` of `db`.
-/// A no-op for a graph that is not registered.
+/// Move the registry entry of the graph identified by `id` to key `name` of `db`,
+/// returning where it was. `None` for a graph that is not registered.
 pub fn relocate_graph(
     id: usize,
     db: i32,
     name: &str,
-) {
-    if let Some(e) = GRAPH_REGISTRY.lock().get_mut(&id) {
-        e.db = db;
-        name.clone_into(&mut e.name);
-    }
+) -> Option<(i32, String)> {
+    let mut reg = GRAPH_REGISTRY.lock();
+    let e = reg.get_mut(&id)?;
+    let old = (e.db, std::mem::take(&mut e.name));
+    e.db = db;
+    name.clone_into(&mut e.name);
+    Some(old)
 }
 
 /// `SWAPDB a b`: every graph in `a` is now in `b`, and the other way round.

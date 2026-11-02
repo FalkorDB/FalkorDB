@@ -609,12 +609,14 @@ unsafe extern "C" fn on_loading(
 }
 
 /// Point the registry entry of the graph now stored at `key`, in the database
-/// `ctx` has selected, at that key. A no-op when the key holds no graph.
+/// `ctx` has selected, at that key. Returns where the graph was registered
+/// before, or `None` when the key holds no registered graph: the value, not the
+/// key's name, says whether a graph moved.
 unsafe fn relocate_graph_at_key(
     ctx: *mut RedisModuleCtx,
     key: *mut raw::RedisModuleString,
     key_name: &str,
-) {
+) -> Option<(i32, String)> {
     unsafe {
         let k = raw::RedisModule_OpenKey.unwrap()(
             ctx,
@@ -622,16 +624,18 @@ unsafe fn relocate_graph_at_key(
             raw::KeyMode::READ.bits() | raw::REDISMODULE_OPEN_KEY_NOTOUCH as i32,
         );
         if k.is_null() {
-            return;
+            return None;
         }
+        let mut old = None;
         if raw::RedisModule_ModuleTypeGetType.unwrap()(k) == *GRAPH_TYPE.raw_type.borrow() {
             let value = raw::RedisModule_ModuleTypeGetValue.unwrap()(k);
             if !value.is_null() {
                 let graph = &*value.cast::<Arc<parking_lot::RwLock<ThreadedGraph>>>();
-                relocate_graph(graph_id(graph), selected_db(&Context::new(ctx)), key_name);
+                old = relocate_graph(graph_id(graph), selected_db(&Context::new(ctx)), key_name);
             }
         }
         raw::RedisModule_CloseKey.unwrap()(k);
+        old
     }
 }
 
@@ -700,27 +704,29 @@ unsafe extern "C" fn on_keyspace_event(
             }
         }
         "move_from" => {
-            // `ctx` has the source database selected. The stream is named after
-            // the graph and lives in the graph's database; the graph now lives
-            // elsewhere, and a graph created here under the name must not append
-            // to its history.
-            //
-            // Only a graph has one: the event reaches every key that moves, and
-            // `telemetry{k}` of a string `k` is nobody's history. The registry
-            // still has the graph where it was (`move_to` relocates it).
-            let context = Context::new(ctx);
-            let db = selected_db(&context);
-            let moved_graph = GRAPH_REGISTRY
-                .lock()
-                .values()
-                .any(|e| e.db == db && e.name == key_name);
-            if moved_graph {
-                telemetry::delete_stream(&context, &key_name);
-            }
+            // Nothing to do here: the event reaches every key that moves, and
+            // whether the key is a graph is decided by its value, which `move_to`
+            // can open. Matching `key_name` against the registry here compared two
+            // lossy renderings, so a plain key whose lossy name equalled a graph's
+            // (`b"g\xff"` and `b"g\xfe"` both read `g\u{fffd}`) deleted that graph's
+            // telemetry stream.
         }
         "move_to" => {
-            // `ctx` has the destination database selected.
-            unsafe { relocate_graph_at_key(ctx, key, &key_name) };
+            // `ctx` has the destination database selected. A graph that moved
+            // leaves its history behind: the stream is named after the graph and
+            // lives in the graph's database, and a graph created at the old place
+            // under the same name must not append to it. The registry entry, found
+            // by the value now at the destination, says exactly where the graph
+            // was; a plain key, or a graph the registry does not know, has no
+            // entry and nothing is deleted.
+            if let Some((src_db, src_name)) = unsafe { relocate_graph_at_key(ctx, key, &key_name) }
+            {
+                let context = Context::new(ctx);
+                let dst_db = selected_db(&context);
+                if src_db != dst_db {
+                    unsafe { telemetry::delete_stream_in_db(&context, src_db, &src_name) };
+                }
+            }
         }
         _ => {}
     }

@@ -345,6 +345,24 @@ pub fn delete_stream(
     let _ = ctx.call("DEL", args.iter().collect::<Vec<_>>().as_slice());
 }
 
+/// [`delete_stream`] in database `db`, leaving `ctx`'s selected database as it was.
+///
+/// # Safety
+/// `ctx` must be a live module context.
+pub unsafe fn delete_stream_in_db(
+    ctx: &Context,
+    db: i32,
+    graph_name: &str,
+) {
+    unsafe {
+        let orig = raw::RedisModule_GetSelectedDb.unwrap()(ctx.get_raw());
+        if raw::RedisModule_SelectDb.unwrap()(ctx.get_raw(), db) == raw::REDISMODULE_OK as i32 {
+            delete_stream(ctx, graph_name);
+            raw::RedisModule_SelectDb.unwrap()(ctx.get_raw(), orig);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Running / Waiting query registry
 // ---------------------------------------------------------------------------
