@@ -185,4 +185,81 @@ mod tests {
             assert_eq!(emitted.first(), Some(&true), "{query}: {emitted:?}");
         }
     }
+
+    /// A `UNION` branch inside a `CALL {}` body (nested one or two levels, with
+    /// OPTIONAL MATCH / UNWIND / WITH before it) that binds a variable through
+    /// an operator other than a traverse (UNWIND, a procedure YIELD, a scan, a
+    /// WITH projection, LOAD CSV, a named path), possibly under the outer
+    /// edge's own name, must neither hide a read of the outer edge nor make an
+    /// unread one look read.
+    #[test]
+    fn non_traversal_binders_in_union_branches_do_not_change_edge_reads() {
+        let (mut checked, mut unplannable) = (0, 0);
+        for (outer, tail) in [
+            ("MATCH (a:A)-[r:R]->(b) CALL {", "} RETURN count(*)"),
+            (
+                "MATCH (a:A)-[r:R]->(b) OPTIONAL MATCH (a)-[:S]->(m) CALL {",
+                "} RETURN count(*)",
+            ),
+            (
+                "CALL { MATCH (a:A)-[r:R]->(b) CALL {",
+                "} RETURN count(*) AS n } RETURN n",
+            ),
+            (
+                "CALL { CALL { MATCH (a:A)-[r:R]->(b) CALL {",
+                "} RETURN count(*) AS n } RETURN n } RETURN n",
+            ),
+        ] {
+            for v in ["r", "x", "n"] {
+                let binders = [
+                    format!("UNWIND [1, 2] AS {v} RETURN {v} AS c"),
+                    format!("MATCH (x0), (x1) UNWIND [1, 2] AS {v} RETURN {v} AS c"),
+                    format!("MATCH ({v}:B) RETURN id({v}) AS c"),
+                    format!("MATCH (x0) MATCH ({v}:B) RETURN id({v}) AS c"),
+                    format!("CALL db.labels() YIELD label AS {v} RETURN count({v}) AS c"),
+                    format!(
+                        "MATCH (x0) CALL db.labels() YIELD label AS {v} RETURN count({v}) AS c"
+                    ),
+                    format!("WITH 1 AS {v} RETURN {v} AS c"),
+                    format!("MATCH (x0) WITH x0 AS {v} RETURN count({v}) AS c"),
+                    format!("MATCH (x0:A) OPTIONAL MATCH (x0)-[{v}:S]->(y) RETURN count({v}) AS c"),
+                    format!("MATCH (x0:A) MATCH p = (x0)-[{v}:R*1..2]->(y) RETURN count(p) AS c"),
+                    format!("MATCH (x0:A) MATCH {v} = (x0)-[:R]->(y) RETURN count({v}) AS c"),
+                    format!("LOAD CSV FROM 'x' AS {v} RETURN count({v}) AS c"),
+                ];
+                for binder in &binders {
+                    for (query, read) in [
+                        (
+                            format!("{outer} WITH a RETURN 1 AS c UNION ALL {binder} {tail}"),
+                            false,
+                        ),
+                        (
+                            format!("{outer} {binder} UNION ALL WITH a RETURN 1 AS c {tail}"),
+                            false,
+                        ),
+                        (
+                            format!("{outer} WITH r RETURN id(r) AS c UNION ALL {binder} {tail}"),
+                            true,
+                        ),
+                        (
+                            format!("{outer} {binder} UNION ALL WITH r RETURN id(r) AS c {tail}"),
+                            true,
+                        ),
+                    ] {
+                        // A name clash (`WITH 1 AS r` after importing `r`) does not plan.
+                        let Ok(emitted) = std::panic::catch_unwind(|| emitted_edges(&query)) else {
+                            unplannable += 1;
+                            continue;
+                        };
+                        checked += 1;
+                        assert_eq!(emitted.first(), Some(&read), "{query}: {emitted:?}");
+                    }
+                }
+            }
+        }
+        assert!(
+            checked > 10 * unplannable,
+            "{checked} checked, {unplannable} unplannable"
+        );
+    }
 }
