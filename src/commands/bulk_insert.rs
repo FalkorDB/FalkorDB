@@ -843,7 +843,7 @@ pub fn graph_bulk_insert(
             .iter()
             .map(redis_module::RedisString::as_slice)
             .collect();
-        let mut tg = graph.write();
+        let tg = graph.write();
         let g_arc = tg.graph.fork();
         let mut docs = IndexDocs::default();
         let result = {
