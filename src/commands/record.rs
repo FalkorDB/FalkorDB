@@ -71,15 +71,10 @@ fn record_mut(
         )
     });
     // Writes build a private version instead of mutating the published one in
-    // place (the MVCC write slot is claimed when the query escalates); reads run
-    // on the committed snapshot.
+    // place (checked against the published graph when the query escalates);
+    // reads run on the committed snapshot.
     let g = if is_write {
-        let Ok(g) = session.write_version() else {
-            return Err(RedisError::String(
-                "ERR another write is in progress, retry the query".to_string(),
-            ));
-        };
-        g
+        session.write_version()
     } else {
         session.with_graph(|tg| tg.graph.read())
     };

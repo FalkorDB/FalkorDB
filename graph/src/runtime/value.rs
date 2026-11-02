@@ -45,7 +45,9 @@ use crate::{
     runtime::{
         functions::{
             Type,
-            temporal::{construct_duration_secs, decompose_duration},
+            temporal::{
+                MAX_DATE_YEAR, check_date_range, construct_duration_secs, decompose_duration,
+            },
         },
         ordermap::OrderMap,
         runtime::Runtime,
@@ -732,8 +734,8 @@ fn add_duration_to_timestamp(
     dur_secs: i64,
 ) -> Result<i64, String> {
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let (days, time_of_day) = shift_months(ts, years, months);
-    Ok(days * 86400 + time_of_day + remaining_secs)
+    let (days, time_of_day) = shift_months(ts, years, months)?;
+    check_date_range(days * 86400 + time_of_day + remaining_secs)
 }
 
 /// Subtract a duration from a timestamp.
@@ -742,8 +744,8 @@ fn sub_duration_from_timestamp(
     dur_secs: i64,
 ) -> Result<i64, String> {
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let (days, time_of_day) = shift_months(ts, -years, -months);
-    Ok(days * 86400 + time_of_day - remaining_secs)
+    let (days, time_of_day) = shift_months(ts, -years, -months)?;
+    check_date_range(days * 86400 + time_of_day - remaining_secs)
 }
 
 /// Move `ts` by whole years and months, returning (days since epoch, time of
@@ -755,15 +757,22 @@ fn shift_months(
     ts: i64,
     years: i32,
     months: i32,
-) -> (i64, i64) {
+) -> Result<(i64, i64), String> {
     let days = ts.div_euclid(86400);
     let time_of_day = ts.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
 
-    let new_year = y + years;
-    let new_month_raw = m as i32 + months;
-    let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
+    // Widened, and range-checked before narrowing back to `i32`: a chain of
+    // additions near the limit must be an error, not a wrapped year.
+    let new_month_raw = i64::from(m) + i64::from(months);
+    let adj_year = i64::from(y) + i64::from(years) + (new_month_raw - 1).div_euclid(12);
     let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
+    // One year of slack: the days applied afterwards can still bring the final
+    // date back inside the range; `check_date_range` has the last word.
+    if adj_year.abs() > i64::from(MAX_DATE_YEAR) + 1 {
+        return Err("Date out of range".to_string());
+    }
+    let adj_year = adj_year as i32;
     let max_day = days_in_month(adj_year, adj_month);
     let (final_year, final_month, final_day) = if d > max_day {
         let overflow = d - max_day;
@@ -778,10 +787,10 @@ fn shift_months(
         (adj_year, adj_month, d)
     };
 
-    (
+    Ok((
         days_from_civil(final_year, final_month, final_day),
         time_of_day,
-    )
+    ))
 }
 
 const fn days_in_month(

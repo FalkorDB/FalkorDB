@@ -544,7 +544,7 @@ fn process_edge_token(
 ///
 /// `docs` collects the index documents for the whole insert; the caller publishes them once, on
 /// the success path only. RediSearch is not versioned, so anything published into it cannot be
-/// undone by the MVCC rollback that a later failing token triggers — a batch that published as it
+/// undone by dropping the MVCC fork, which a later failing token does — a batch that published as it
 /// went and failed midway would leave documents behind for entities that were never committed
 /// (and whose ids may be handed to different entities later). Bulk only ever adds, so it fills
 /// only `node_adds` and `edge_adds`, plus the native index's changes, which each token applies to
@@ -844,11 +844,7 @@ pub fn graph_bulk_insert(
             .map(redis_module::RedisString::as_slice)
             .collect();
         let mut tg = graph.write();
-        let Some(g_arc) = tg.graph.write() else {
-            return Err(redis_module::RedisError::String(
-                "ERR another write is in progress, retry the query".to_string(),
-            ));
-        };
+        let g_arc = tg.graph.fork();
         let mut docs = IndexDocs::default();
         let result = {
             let mut g = g_arc.borrow_mut();
@@ -876,7 +872,8 @@ pub fn graph_bulk_insert(
         // document wants its src and dst (`IndexDocs::edge_removes`), which bulk
         // does not collect. Asking first costs one walk of a roaring
         // bitmap on a path that has just parsed a whole payload, and is the only
-        // ordering where a refusal leaves nothing behind.
+        // ordering where a refusal leaves nothing behind. (`commit` cannot find
+        // this version stale: it was forked under the write lock held here.)
         //
         // Still published before the swap rather than after it: `g_arc` is the
         // un-published fork here, and after the swap a concurrent reader can
@@ -893,7 +890,6 @@ pub fn graph_bulk_insert(
                 Ok(RedisValue::SimpleString(reply))
             }
             Err(e) => {
-                tg.graph.rollback();
                 drop(tg);
                 if begin {
                     discard_created_graph(ctx, &key_str);
@@ -950,13 +946,11 @@ pub fn graph_bulk_insert(
             let result: Result<(), String> = 'phase: loop {
                 let session = QuerySession::begin_with(&graph, facts);
                 // Phase 1: build the new version as a reader, GIL-free, into a private
-                // fork. The MVCC write slot is claimed only when phase 2 escalates, so
-                // an inline writer is never refused because this insert is building.
-                let Ok(g_arc) = session.write_version() else {
-                    break 'phase Err(
-                        "ERR another write is in progress, retry the query".to_string()
-                    );
-                };
+                // fork. Forking takes nothing, so an inline writer is never refused
+                // because this insert is building; phase 2's escalation checks whether
+                // one committed meanwhile. Every early exit below drops the fork with
+                // the session — there is nothing else to release.
+                let g_arc = session.write_version();
                 let mut docs = IndexDocs::default();
                 let inserted = {
                     let mut g = g_arc.borrow_mut();
@@ -973,15 +967,12 @@ pub fn graph_bulk_insert(
                     )
                 };
                 if let Err(e) = inserted {
-                    session.release_slot();
                     break 'phase Err(format!("ERR bulk insert failed: {e}"));
                 }
                 // Phase 2: commit + replicate as a writer, so the commit Arc-swap
                 // happens under the GIL and stays fork-safe (#452). Escalation takes
                 // the global lock before the write lock, never the reverse (#726).
                 if let Err(e) = session.upgrade_to_write() {
-                    // Drop the phase 1 fork (and the slot, if it was claimed).
-                    session.release_slot();
                     // An inline writer committed while phase 1 built: nothing was
                     // published, so build again on top of its version.
                     if session.is_stale() {
@@ -1006,7 +997,6 @@ pub fn graph_bulk_insert(
                 // published here outlives the fork that `commit` would refuse,
                 // and nothing can take it back.
                 if let Err(e) = g_arc.borrow().validate() {
-                    session.release_slot();
                     break 'phase Err(e.to_string());
                 }
                 g_arc.borrow_mut().commit_index_docs(&mut docs);
