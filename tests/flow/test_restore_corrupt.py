@@ -147,6 +147,27 @@ class testRestoreCorrupt():
         self.env.assertEqual(options["v"]["dimension"], 0)
         self.env.assertEqual(options["v"]["similarityFunction"], "euclidean")
 
+    def test_vector_index_options_accepted_at_creation_survive_restore(self):
+        # Creation and load hold to the same limits: an option too large for the
+        # vector library is refused when the index is created, so no saved graph
+        # carries one that RDB load, COPY and RESTORE would refuse.
+        self.conn.flushall()
+        g = self.db.select_graph("src")
+        g.query("CREATE (:V {v: vecf32([1.0, 2.0])})")
+        for opt in ("efRuntime:1048577", "M:1048577", "efConstruction:1048577"):
+            with self.env.assertResponseError():
+                g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
+                        "OPTIONS {dimension:2, similarityFunction:'cosine', %s}" % opt)
+        with self.env.assertResponseError():
+            g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
+                    "OPTIONS {dimension:16777217, similarityFunction:'cosine'}")
+        # at the limit it is accepted and round-trips
+        g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
+                "OPTIONS {dimension:0, similarityFunction:'cosine', efRuntime:1048576}")
+        payload = capture_restore_payload(self.conn, "src", "dst")
+        self.conn.flushall()
+        self.env.assertTrue(self.restore(payload))
+
     def test_restore_refuses_an_unknown_vector_similarity_function(self):
         # The word after the three graph parameters of a vector index entry
         # picks the metric: 0, 1, 2 are the ones C writes. Anything else used

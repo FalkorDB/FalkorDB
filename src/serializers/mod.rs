@@ -22,6 +22,7 @@ use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
 use crate::serializers::decoder::validate::MAX_SCHEMAS;
+use graph::index::vector_index_options::{MAX_VECTOR_DIMENSION, MAX_VECTOR_GRAPH_PARAM};
 
 use graph::graph::graphblas::serialization::check_count_fits;
 
@@ -641,12 +642,6 @@ fn decode_schema_entry(
     Ok((schema_name, index, constraints))
 }
 
-/// Most dimensions a persisted vector index may declare.
-const MAX_VECTOR_DIMENSION: u64 = 1 << 24;
-
-/// Most a persisted vector index's `M`, `EF_CONSTRUCTION` or `EF_RUNTIME` may be.
-const MAX_VECTOR_GRAPH_PARAM: usize = 1 << 20;
-
 /// Decode one persisted index field into the fields it stands for.
 ///
 /// The type word is a bitmask. Ours writes one entry per type, but C writes one
@@ -698,10 +693,13 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Vec<Field>), S
         // reach the vector library with them.
         // Zero is kept: `OPTIONS {dimension:0}` is accepted at creation and the
         // index retains it, so it has to round-trip.
+        // A zero-dimension index is never configured in the vector library, so
+        // its graph parameters reach nothing and are kept as they were saved.
         if dimension > MAX_VECTOR_DIMENSION
-            || m > MAX_VECTOR_GRAPH_PARAM
-            || ef_construction > MAX_VECTOR_GRAPH_PARAM
-            || ef_runtime > MAX_VECTOR_GRAPH_PARAM
+            || (dimension > 0
+                && (m > MAX_VECTOR_GRAPH_PARAM
+                    || ef_construction > MAX_VECTOR_GRAPH_PARAM
+                    || ef_runtime > MAX_VECTOR_GRAPH_PARAM))
         {
             return Err(format!(
                 "invalid vector index options for attribute {name}: dimension {dimension}, \
@@ -953,6 +951,31 @@ mod tests {
                 "dim {dim} with {floats} floats was accepted"
             );
         }
+    }
+
+    /// Graph parameters of a vector index that reach the vector library are
+    /// bounded, and creation holds to the same bounds, so a saved graph reloads;
+    /// a zero-dimension index never reaches the library and keeps what it was saved with.
+    #[test]
+    fn vector_index_parameter_limits_match_creation_and_spare_zero_dimension() {
+        let encode = |dimension: u64, ef_runtime: u64| {
+            let mut w = VecWriter::new();
+            w.write_buffer(&null_terminated("v"));
+            w.write_unsigned(INDEX_FLD_VECTOR);
+            w.write_double(2.0);
+            w.write_unsigned(1);
+            w.write_buffer(&null_terminated("dm:en"));
+            for v in [dimension, 16, 200, ef_runtime, 1] {
+                w.write_unsigned(v);
+            }
+            w.into_vec()
+        };
+        let load = |bytes: &[u8]| decode_index_field(&mut BufferedReader::from_slice(bytes));
+        let over = MAX_VECTOR_GRAPH_PARAM as u64 + 1;
+        assert!(load(&encode(4, MAX_VECTOR_GRAPH_PARAM as u64)).is_ok());
+        assert!(load(&encode(4, over)).is_err());
+        assert!(load(&encode(0, over)).is_ok());
+        assert!(load(&encode(MAX_VECTOR_DIMENSION + 1, 10)).is_err());
     }
 
     #[test]

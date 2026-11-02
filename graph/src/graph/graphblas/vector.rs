@@ -267,6 +267,7 @@ fn check_blob_header(blob: &[u8]) -> Result<u64, String> {
     let field = |at: usize| blob_i64(blob, at);
     let limits = DecodeLimits::current();
     let max_dim = limits.map_or(1 << 60, |l| l.max_dim().min(1 << 60));
+    let max_entries = limits.map_or(1 << 60, |l| l.edge_bound.min(1 << 60));
     let (vlen, vdim, nvec, nvals, typesize) = (
         field(blob_at::VLEN),
         field(blob_at::VDIM),
@@ -282,6 +283,9 @@ fn check_blob_header(blob: &[u8]) -> Result<u64, String> {
         || !in_range(vdim, 1 << 60)
         || !in_range(nvec, max_dim)
         || !in_range(nvals, max_dim)
+        // What a vector holds is edge ids, each at most once: no more than the
+        // graph has. Otherwise a small graph's blob could claim millions.
+        || !in_range(nvals, max_entries)
     {
         return Err("blob dimensions are out of range".to_string());
     }
@@ -394,7 +398,7 @@ fn check_blob_header(blob: &[u8]) -> Result<u64, String> {
         return Err("blob block table runs past its end".to_string());
     }
     // Entries the index array can hold: no more may be read from it.
-    Ok(if sparsity == 4 { vlen } else { ci / iw })
+    Ok((if sparsity == 4 { vlen } else { ci / iw }).min(max_entries))
 }
 
 /// `GxB_Vector_deserialize` of an untrusted blob, as the type `ty`.
@@ -1134,6 +1138,26 @@ mod decode_tests {
         // The size in the header disagreeing with the blob's.
         let err = patch(0, &1u64.to_le_bytes());
         assert!(err.contains("size"), "{err}");
+    }
+
+    /// A vector holds edge ids, each once, so a blob for a graph with two edge ids
+    /// cannot carry more than two entries (the entry count was only held to the
+    /// matrix dimension allowance, which is in the billions).
+    #[test]
+    fn decode_blob_rejects_more_entries_than_the_graph_has_edges() {
+        let _limits = DecodeLimits {
+            node_bound: 2,
+            edge_bound: 2,
+        }
+        .scope();
+        // The vector of the fixture holds two entries: it fits.
+        assert!(decode_blob_of(blob_of_a_vector()).is_ok());
+        let mut blob = blob_of_a_vector();
+        blob[super::blob_at::NVALS..super::blob_at::NVALS + 8].copy_from_slice(&3i64.to_le_bytes());
+        let err = decode_blob_of(blob)
+            .err()
+            .expect("three entries in a graph of two edges were accepted");
+        assert!(err.contains("out of range"), "{err}");
     }
 
     /// A full iso blob stores one value however many cells it claims, so its
