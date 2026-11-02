@@ -1852,6 +1852,11 @@ impl<'a> Parser<'a> {
                             // `]` - stop before consuming it
                             break;
                         }
+                        Token::EndOfFile => {
+                            return Err(self
+                                .lexer
+                                .format_error("Unterminated shortestPath relationship filter"));
+                        }
                         _ => {
                             self.lexer.next();
                         }
@@ -4239,6 +4244,26 @@ mod tests {
             "MATCH (a), (b) RETURN shortestPath((a)-[:A|:B*]->(b))",
         ] {
             assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
+        }
+    }
+
+    #[test]
+    fn truncated_shortest_path_relationship_filters_return_errors() {
+        with_functions();
+        for query in [
+            "MATCH (a), (b) RETURN shortestPath((a)-[r:A* {x: 1",
+            "MATCH (a), (b) RETURN shortestPath((a)-[r:A* $filter",
+        ] {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let query = query.to_owned();
+            let query_for_parser = query.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(Parser::new(&query_for_parser).parse().map(|_| ()));
+            });
+            let result = rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap_or_else(|_| panic!("parser stalled on {query:?}"));
+            assert!(result.is_err(), "accepted {query:?}");
         }
     }
 }
