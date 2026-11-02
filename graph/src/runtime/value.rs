@@ -45,7 +45,9 @@ use crate::{
     runtime::{
         functions::{
             Type,
-            temporal::{construct_duration_secs, decompose_duration},
+            temporal::{
+                MAX_DATE_YEAR, check_date_range, construct_duration_secs, decompose_duration,
+            },
         },
         ordermap::OrderMap,
         runtime::Runtime,
@@ -172,37 +174,6 @@ impl Point {
         // Earth's radius in meters
         EARTH_RADIUS * c
     }
-
-    /// Validates that the point coordinates are within valid ranges
-    pub fn validate(&self) -> Result<(), String> {
-        // Check for NaN or infinite values first
-        if !self.latitude.is_finite() {
-            return Err(format!(
-                "latitude must be a finite number, got {}",
-                self.latitude
-            ));
-        }
-        if !self.longitude.is_finite() {
-            return Err(format!(
-                "longitude must be a finite number, got {}",
-                self.longitude
-            ));
-        }
-        // Then check range bounds
-        if self.latitude < -90.0 || self.latitude > 90.0 {
-            return Err(format!(
-                "latitude should be within the range -90.0 to 90.0, got {}",
-                self.latitude
-            ));
-        }
-        if self.longitude < -180.0 || self.longitude > 180.0 {
-            return Err(format!(
-                "longitude should be within the range -180.0 to 180.0, got {}",
-                self.longitude
-            ));
-        }
-        Ok(())
-    }
 }
 
 /// Runtime value type representing all possible Cypher values.
@@ -307,10 +278,17 @@ impl Value {
     pub fn format_date(timestamp_secs: i64) -> String {
         let days = timestamp_secs.div_euclid(86400);
         let (y, m, d) = civil_from_days(days);
-        let mut buf = [0u8; 10];
-        write_date_into(&mut buf, y, m, d);
-        // Safe: ASCII digits and '-'
-        unsafe { String::from_utf8_unchecked(buf.to_vec()) }
+        // Fast path: a year that fits the fixed `YYYY-MM-DD` layout.
+        if (0..=9999).contains(&y) {
+            let mut buf = [0u8; 10];
+            write_date_into(&mut buf, y, m, d);
+            // Safe: ASCII digits and '-'
+            return unsafe { String::from_utf8_unchecked(buf.to_vec()) };
+        }
+        // Years past 9999 keep every digit (C's `%Y` does the same: 10000-01-01,
+        // 2739933-01-03); a negative year keeps its sign.
+        let sign = if y < 0 { "-" } else { "" };
+        format!("{sign}{:04}-{m:02}-{d:02}", y.unsigned_abs())
     }
 
     // Format time as ISO-8601: "06:08:21"
@@ -730,8 +708,8 @@ fn add_duration_to_timestamp(
     dur_secs: i64,
 ) -> Result<i64, String> {
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let (days, time_of_day) = shift_months(ts, years, months);
-    Ok(days * 86400 + time_of_day + remaining_secs)
+    let (days, time_of_day) = shift_months(ts, years, months)?;
+    check_date_range(days * 86400 + time_of_day + remaining_secs)
 }
 
 /// Subtract a duration from a timestamp.
@@ -740,8 +718,8 @@ fn sub_duration_from_timestamp(
     dur_secs: i64,
 ) -> Result<i64, String> {
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let (days, time_of_day) = shift_months(ts, -years, -months);
-    Ok(days * 86400 + time_of_day - remaining_secs)
+    let (days, time_of_day) = shift_months(ts, -years, -months)?;
+    check_date_range(days * 86400 + time_of_day - remaining_secs)
 }
 
 /// Move `ts` by whole years and months, returning (days since epoch, time of
@@ -753,15 +731,22 @@ fn shift_months(
     ts: i64,
     years: i32,
     months: i32,
-) -> (i64, i64) {
+) -> Result<(i64, i64), String> {
     let days = ts.div_euclid(86400);
     let time_of_day = ts.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
 
-    let new_year = y + years;
-    let new_month_raw = m as i32 + months;
-    let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
+    // Widened, and range-checked before narrowing back to `i32`: a chain of
+    // additions near the limit must be an error, not a wrapped year.
+    let new_month_raw = i64::from(m) + i64::from(months);
+    let adj_year = i64::from(y) + i64::from(years) + (new_month_raw - 1).div_euclid(12);
     let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
+    // One year of slack: the days applied afterwards can still bring the final
+    // date back inside the range; `check_date_range` has the last word.
+    if adj_year.abs() > i64::from(MAX_DATE_YEAR) + 1 {
+        return Err("Date out of range".to_string());
+    }
+    let adj_year = adj_year as i32;
     let max_day = days_in_month(adj_year, adj_month);
     let (final_year, final_month, final_day) = if d > max_day {
         let overflow = d - max_day;
@@ -776,10 +761,10 @@ fn shift_months(
         (adj_year, adj_month, d)
     };
 
-    (
+    Ok((
         days_from_civil(final_year, final_month, final_day),
         time_of_day,
-    )
+    ))
 }
 
 const fn days_in_month(
