@@ -1848,6 +1848,11 @@ impl Planner {
         // sits underneath. Components of this clause are independent of each
         // other, so what they bind does not count.
         let bound_before_clause = !self.visited.is_empty();
+        // Computed once: the decomposition is a graph walk.
+        let single_component = pattern.connected_components().len() == 1
+            && !filter
+                .as_ref()
+                .is_some_and(|f| Self::has_pattern_expr(&f.root()));
         for component in pattern.connected_components() {
             let relationships = component.relationships();
             // Endpoints already bound by earlier clauses may carry labels
@@ -1920,9 +1925,10 @@ impl Planner {
             // traversals), so a predicate is only visible to it when the
             // component is the clause's only one (no CartesianProduct between)
             // and is a tree (a cycle or self-loop plans an `ExpandInto`, which
-            // hides it). Otherwise only the inline attributes count here.
-            let where_visible = pattern.connected_components().len() == 1
-                && relationships.len() + 1 == component.nodes().len();
+            // hides it), and the WHERE holds no pattern (that plans an `Apply`
+            // between). Otherwise only the inline attributes count here.
+            let where_visible =
+                single_component && relationships.len() + 1 == component.nodes().len();
             let scan_score = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
                 endpoint_scan_score(
                     n.attrs.root().num_children() > 0

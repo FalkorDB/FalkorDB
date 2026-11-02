@@ -545,15 +545,14 @@ fn select_var_len_scan_node(
             continue;
         }
         // The edge attributes are evaluated per edge, before the walk binds
-        // anything: one that reads an endpoint sees it bound only when that end
-        // is the one scanned. Reversing would flip which one that is.
+        // anything: one that reads an endpoint sees it bound only when that
+        // end is the one scanned (or bound by an input). Dropping the `from`
+        // scan unbinds `from`; rescanning `to` flips which end is bound.
         let attr_vars = collect_expr_scoped_variables(&relationship.attrs);
-        if [&relationship.from, &relationship.to]
-            .iter()
-            .any(|n| attr_vars.contains(&(n.alias.scope_id, n.alias.id)))
-        {
-            continue;
-        }
+        let attrs_read_from =
+            attr_vars.contains(&(relationship.from.alias.scope_id, relationship.from.alias.id));
+        let attrs_read_to =
+            attr_vars.contains(&(relationship.to.alias.scope_id, relationship.to.alias.id));
         // Only rewrite when the planner put its own scan for `from` here.
         if node.num_children() != 1 {
             continue;
@@ -606,7 +605,10 @@ fn select_var_len_scan_node(
             }
             ok
         };
-        if wrapper_ok && child_subtree_binds(optimized_plan, scan_idx, &to.alias) {
+        if wrapper_ok
+            && !attrs_read_from
+            && child_subtree_binds(optimized_plan, scan_idx, &to.alias)
+        {
             let kept: Vec<DynTree<IR>> = optimized_plan
                 .node(scan_idx)
                 .children()
@@ -625,6 +627,9 @@ fn select_var_len_scan_node(
             }
         }
 
+        if attrs_read_from || attrs_read_to {
+            continue;
+        }
         // A correlated sub-plan may already bind `to` from its outer context;
         // scanning it here would rebind it. `Argument(None)` is opaque about
         // what it carries, so treat it as binding everything.

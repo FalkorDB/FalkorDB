@@ -826,10 +826,27 @@ class testTraversalConstruction():
         for q in ["""MATCH (x:X), (a:A)-[:R*1..2]->(b:B), (a)-[:S]->(c:C)
                      WHERE b.id = 1 RETURN count(*)""",
                   """MATCH (a:A)-[:R*1..2]->(b:B), (a)-[:S]->(c:C), (c)-[:S]->(c)
-                     WHERE b.id = 1 RETURN count(*)"""]:
+                     WHERE b.id = 1 RETURN count(*)""",
+                  # a pattern in the WHERE plans an Apply between the clause and it
+                  """MATCH (a:A)-[:R*1..2]->(b:B), (a)-[:S]->(c:C)
+                     WHERE b.id = 1 AND size([(c)-[:X]->() | 1]) > 0 RETURN count(*)"""]:
             plan = str(g.explain(q))
             # the fixed hop keeps leading: its traverse sits below the walk
             walk = plan.index("Variable Length Traverse")
             self.env.assertTrue(plan.index("Conditional Traverse") > walk, message=plan)
             self.env.assertEqual(g.query(q).result_set, [[1]] if "(x:X)" in q else [[0]], message=q)
+        g.delete()
+
+    # An input that already binds the walk's `to` endpoint lets the planner's
+    # scan of `from` go even when the edge attributes read `to`: the walk runs
+    # backwards from the bound node instead of from every `a`.
+    def test_var_len_walk_from_bound_endpoint_with_attr_dependency(self):
+        g = self.db.select_graph("VarLenBoundEndpointAttrs")
+        g.query("UNWIND range(1, 100) AS i CREATE (:A {id: i})-[:R {w: 1}]->(:M {id: i})")
+        g.query("CREATE (:A {id: 0})-[:R {w: 1}]->(:B {id: 1})")
+        q = """MATCH (b:B {id: 1}) WITH b MATCH (a:A)-[:R*1..2 {w: b.id}]->(b)
+               RETURN count(*)"""
+        plan = str(g.explain(q))
+        self.env.assertNotContains("Node By Label Scan | (a:A)", plan)
+        self.env.assertEqual(g.query(q).result_set, [[1]], message=q)
         g.delete()
