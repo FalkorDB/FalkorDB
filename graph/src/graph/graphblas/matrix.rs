@@ -25,8 +25,8 @@
 //!
 //! ## Thread Safety
 //!
-//! [`Matrix`] uses `Arc<GrB_Matrix>` for shared ownership and reference-counted
-//! cleanup. A `Mutex` guards operations that require serialization (e.g., `wait`).
+//! [`Matrix`] shares an owned `GrB_Matrix` handle through an `Arc` for
+//! reference-counted cleanup. A `Mutex` guards operations that require serialization (e.g., `wait`).
 //! `Clone` is shallow (Arc clone); use [`Dup`] for a deep copy.
 //!
 //! ## Initialization
@@ -101,6 +101,9 @@ use super::{
     GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_kount,
     GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
     GxB_unload_Matrix_into_Container,
+};
+use super::{
+    GrB_GT_UINT64, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_select_BOOL, GrB_VALUEEQ_BOOL,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -352,6 +355,30 @@ impl From<Descriptor> for GrB_Descriptor {
     }
 }
 
+/// Sole owner of a `GrB_Matrix` handle, freeing it on drop.
+///
+/// Clones of a [`Matrix`] (and its [`Iter`]s) share one of these through an
+/// `Arc`, so the free runs exactly once, when the `Arc`'s own atomic count
+/// reaches zero. Freeing from `Matrix::drop` behind `Arc::get_mut` instead
+/// raced: two clones dropped concurrently could each see the other still
+/// alive, skip the free, and then both decrement — leaking the matrix.
+///
+/// No `Deref`: code reads the raw handle through [`Matrix::inner`] (or
+/// `Iter::matrix`), so call sites never write `**x.m`.
+struct Handle(GrB_Matrix);
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        unsafe {
+            let info = GrB_Matrix_free(&raw mut self.0);
+            // debug_assert in Drop: panicking while unwinding aborts the
+            // process. A GrB_*_free failure is logically a leak, not
+            // state corruption — surface in debug, swallow in release.
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+}
+
 /// A wrapper around a GraphBLAS matrix.
 ///
 /// The type parameter `T` is a compile-time tag for the element type the matrix
@@ -361,7 +388,7 @@ impl From<Descriptor> for GrB_Descriptor {
 /// type-checks intent; it does not change the runtime representation.
 pub struct Matrix<T> {
     /// The underlying GraphBLAS matrix.
-    m: Arc<GrB_Matrix>,
+    m: Arc<Handle>,
     lock: Arc<Mutex<()>>,
     /// Set to `true` by every mutating op; `wait()` short-circuits when `false`
     /// to skip the lock + GrB_Matrix_wait FFI under read-heavy contention.
@@ -385,20 +412,6 @@ impl<T> Clone for Matrix<T> {
 
 unsafe impl<T> Send for Matrix<T> {}
 unsafe impl<T> Sync for Matrix<T> {}
-
-impl<T> Drop for Matrix<T> {
-    fn drop(&mut self) {
-        if let Some(m) = Arc::get_mut(&mut self.m) {
-            unsafe {
-                let info = GrB_Matrix_free(m);
-                // debug_assert in Drop: panicking while unwinding aborts the
-                // process. A GrB_*_free failure is logically a leak, not
-                // state corruption — surface in debug, swallow in release.
-                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            }
-        }
-    }
-}
 
 /// Pin a matrix to (hyper)sparse storage, like the C implementation's delta
 /// matrices. Without this GraphBLAS auto-converts dense-ish matrices (e.g.
@@ -588,7 +601,7 @@ impl<T> Decode<19> for Matrix<T> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             Ok(Self {
-                m: Arc::new(m),
+                m: Arc::new(Handle(m)),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(false)),
                 phantom: PhantomData,
@@ -664,7 +677,7 @@ impl<T> Matrix<T> {
     pub(super) fn into_hyper(self) -> Self {
         unsafe {
             let info = GrB_Matrix_set_INT32(
-                *self.m,
+                self.inner(),
                 GxB_HYPERSPARSE as i32,
                 GxB_Option_Field::GxB_SPARSITY_CONTROL as _,
             );
@@ -674,7 +687,7 @@ impl<T> Matrix<T> {
             // O(nvec) sort that grows with the accumulating delta — measured
             // as the dominant cost of small repeated creates. Without A->Y,
             // lookups binary-search A->h, which is fine at delta sizes.
-            let info = GrB_Matrix_set_INT32(*self.m, 0, GxB_Option_Field::GxB_HYPER_HASH as _);
+            let info = GrB_Matrix_set_INT32(self.inner(), 0, GxB_Option_Field::GxB_HYPER_HASH as _);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self
@@ -708,7 +721,7 @@ impl<T> Matrix<T> {
         let mut sparsity: i32 = 0;
         let info = unsafe {
             GrB_Matrix_get_INT32(
-                *self.m,
+                self.inner(),
                 &raw mut sparsity,
                 GxB_Option_Field::GxB_SPARSITY_STATUS as _,
             )
@@ -721,7 +734,7 @@ impl<T> Matrix<T> {
             let mut it: GxB_Iterator = null_mut();
             let info = GxB_Iterator_new(&raw mut it);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            let info = GxB_rowIterator_attach(it, *self.m, null_mut());
+            let info = GxB_rowIterator_attach(it, self.inner(), null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             let kount = GxB_rowIterator_kount(it);
             let info = GxB_Iterator_free(&raw mut it);
@@ -739,7 +752,7 @@ impl<T> Matrix<T> {
     pub fn transpose(&self) -> Self {
         unsafe {
             let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
-            let info = GxB_Matrix_type(type_.as_mut_ptr(), *self.m);
+            let info = GxB_Matrix_type(type_.as_mut_ptr(), self.inner());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
             let info = GrB_Matrix_new(
@@ -756,12 +769,18 @@ impl<T> Matrix<T> {
             let m = m.assume_init();
             pin_sparse(m);
             let transpose = Self {
-                m: Arc::new(m),
+                m: Arc::new(Handle(m)),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(true)),
                 phantom: PhantomData,
             };
-            let info = GrB_transpose(*transpose.m, null_mut(), null_mut(), *self.m, null_mut());
+            let info = GrB_transpose(
+                transpose.inner(),
+                null_mut(),
+                null_mut(),
+                self.inner(),
+                null_mut(),
+            );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             transpose
         }
@@ -824,7 +843,7 @@ impl<T> Matrix<T> {
     /// The caller must NOT free the returned handle.
     #[must_use]
     pub fn inner(&self) -> GrB_Matrix {
-        *self.m
+        self.m.0
     }
 
     /// Whether an entry is stored at `(i, j)`, for **any** element type — a
@@ -839,7 +858,7 @@ impl<T> Matrix<T> {
         i: u64,
         j: u64,
     ) -> bool {
-        unsafe { GxB_Matrix_isStoredElement(*self.m, i, j) == GrB_Info::GrB_SUCCESS }
+        unsafe { GxB_Matrix_isStoredElement(self.inner(), i, j) == GrB_Info::GrB_SUCCESS }
     }
 
     /// Number of positions stored in both `self` and `b` (structural
@@ -853,12 +872,12 @@ impl<T> Matrix<T> {
         let t = Matrix::<bool>::new(self.nrows(), self.ncols());
         unsafe {
             let info = GrB_Matrix_eWiseMult_Semiring(
-                *t.m,
+                t.inner(),
                 null_mut(),
                 null_mut(),
                 GxB_ANY_PAIR_BOOL,
-                *self.m,
-                *b.m,
+                self.inner(),
+                b.inner(),
                 null_mut(),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -887,7 +906,7 @@ impl<T> Matrix<T> {
                 null_mut(),
                 null_mut(),
                 GxB_PLUS_PAIR_UINT64,
-                *self.m,
+                self.inner(),
                 rows.ptr(),
                 GrB_DESC_T0,
             );
@@ -901,7 +920,7 @@ impl<T> Matrix<T> {
         unsafe {
             let mut pending = MaybeUninit::uninit();
             let info = GrB_Matrix_get_INT32(
-                *self.m,
+                self.inner(),
                 pending.as_mut_ptr(),
                 GxB_Option_Field::GxB_WILL_WAIT as _,
             );
@@ -924,7 +943,7 @@ impl<T> Matrix<T> {
             return;
         }
         unsafe {
-            let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
+            let info = GrB_Matrix_wait(self.inner(), GrB_WaitMode::GrB_MATERIALIZE as _);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(false, Ordering::Release);
@@ -943,7 +962,7 @@ impl<T> Matrix<T> {
     pub fn memory_usage(&self) -> usize {
         unsafe {
             let mut usage = 0usize;
-            let info = GxB_Matrix_memoryUsage(&raw mut usage, *self.m);
+            let info = GxB_Matrix_memoryUsage(&raw mut usage, self.inner());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             usage
         }
@@ -961,13 +980,13 @@ impl<T> Matrix<T> {
             // reporting "0-bit indices" would read as a result rather than an
             // error.
             let ri = GrB_Matrix_get_INT32(
-                *self.m,
+                self.inner(),
                 &raw mut r,
                 GxB_Option_Field::GxB_ROWINDEX_INTEGER_BITS as i32,
             );
             assert_eq!(ri, GrB_Info::GrB_SUCCESS, "row index bits: {ri:?}");
             let ci = GrB_Matrix_get_INT32(
-                *self.m,
+                self.inner(),
                 &raw mut c,
                 GxB_Option_Field::GxB_COLINDEX_INTEGER_BITS as i32,
             );
@@ -983,12 +1002,12 @@ impl<T> Matrix<T> {
     pub(super) fn hint_32bit_indices_for_test(&mut self) -> (i32, i32) {
         unsafe {
             let r = GrB_Matrix_set_INT32(
-                *self.m,
+                self.inner(),
                 32,
                 GxB_Option_Field::GxB_ROWINDEX_INTEGER_HINT as i32,
             );
             let c = GrB_Matrix_set_INT32(
-                *self.m,
+                self.inner(),
                 32,
                 GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT as i32,
             );
@@ -1017,7 +1036,7 @@ impl<T> Matrix<T> {
 
     pub fn clear(&mut self) {
         unsafe {
-            let info = GrB_Matrix_clear(*self.m);
+            let info = GrB_Matrix_clear(self.inner());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(false, Ordering::Relaxed);
@@ -1028,7 +1047,13 @@ impl<T> Matrix<T> {
         b: &Matrix<U>,
     ) {
         unsafe {
-            let info = GrB_transpose(*self.m, *b.m, null_mut(), *self.m, GrB_DESC_RCT0);
+            let info = GrB_transpose(
+                self.inner(),
+                b.inner(),
+                null_mut(),
+                self.inner(),
+                GrB_DESC_RCT0,
+            );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
@@ -1040,7 +1065,13 @@ impl<T> Matrix<T> {
         a: &Self,
     ) {
         unsafe {
-            let info = GrB_transpose(*self.m, *mask.m, null_mut(), *a.m, GrB_DESC_RCT0);
+            let info = GrB_transpose(
+                self.inner(),
+                mask.inner(),
+                null_mut(),
+                a.inner(),
+                GrB_DESC_RCT0,
+            );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
@@ -1062,12 +1093,12 @@ impl<T> Matrix<T> {
     {
         unsafe {
             let info = GrB_Matrix_eWiseAdd_BinaryOp(
-                *self.m,
-                mask.map_or(null_mut(), |m| *m.m),
+                self.inner(),
+                mask.map_or(null_mut(), |m| m.inner()),
                 null_mut(),
                 T::add_op(),
-                a.map_or(*self.m, |a| *a.m),
-                b.map_or(*self.m, |b| *b.m),
+                a.map_or(self.inner(), |a| a.inner()),
+                b.map_or(self.inner(), |b| b.inner()),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1084,12 +1115,12 @@ impl<T> Matrix<T> {
     ) {
         unsafe {
             let info = GrB_Matrix_eWiseMult_Semiring(
-                *self.m,
-                mask.map_or(null_mut(), |m| *m.m),
+                self.inner(),
+                mask.map_or(null_mut(), |m| m.inner()),
                 null_mut(),
                 GxB_ANY_PAIR_BOOL,
-                a.map_or(*self.m, |a| *a.m),
-                b.map_or(*self.m, |b| *b.m),
+                a.map_or(self.inner(), |a| a.inner()),
+                b.map_or(self.inner(), |b| b.inner()),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1113,11 +1144,11 @@ impl<T> Matrix<T> {
     ) {
         unsafe {
             let info = GrB_Matrix_apply(
-                *self.m,
-                mask.map_or(null_mut(), |m| *m.m),
+                self.inner(),
+                mask.map_or(null_mut(), |m| m.inner()),
                 GxB_ANY_BOOL,
                 GxB_ONE_BOOL,
-                *a.m,
+                a.inner(),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1135,12 +1166,12 @@ impl<T> Matrix<T> {
     ) {
         unsafe {
             let info = GrB_mxm(
-                *self.m,
+                self.inner(),
                 null_mut(),
                 null_mut(),
                 GxB_ANY_PAIR_BOOL,
-                *self.m,
-                *b.m,
+                self.inner(),
+                b.inner(),
                 null_mut(),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1156,12 +1187,12 @@ impl<T> Matrix<T> {
     ) {
         unsafe {
             let info = GrB_mxm(
-                *self.m,
+                self.inner(),
                 null_mut(),
                 null_mut(),
                 GxB_ANY_PAIR_BOOL,
-                *b.m,
-                *self.m,
+                b.inner(),
+                self.inner(),
                 null_mut(),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1173,7 +1204,7 @@ impl<T> Matrix<T> {
     pub fn nrows(&self) -> u64 {
         unsafe {
             let mut nrows = 0u64;
-            let info = GrB_Matrix_nrows(&raw mut nrows, *self.m);
+            let info = GrB_Matrix_nrows(&raw mut nrows, self.inner());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             nrows
         }
@@ -1183,7 +1214,7 @@ impl<T> Matrix<T> {
     pub fn ncols(&self) -> u64 {
         unsafe {
             let mut ncols = 0u64;
-            let info = GrB_Matrix_ncols(&raw mut ncols, *self.m);
+            let info = GrB_Matrix_ncols(&raw mut ncols, self.inner());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             ncols
         }
@@ -1195,7 +1226,7 @@ impl<T> Matrix<T> {
         ncols: u64,
     ) {
         unsafe {
-            let info = GrB_Matrix_resize(*self.m, nrows, ncols);
+            let info = GrB_Matrix_resize(self.inner(), nrows, ncols);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
@@ -1209,7 +1240,7 @@ impl<T> Matrix<T> {
         let mut sparsity: i32 = 0;
         let info = unsafe {
             GrB_Matrix_get_INT32(
-                *self.m,
+                self.inner(),
                 &raw mut sparsity,
                 GxB_Option_Field::GxB_SPARSITY_STATUS as _,
             )
@@ -1228,7 +1259,7 @@ impl<T> Matrix<T> {
     pub fn nvals(&self) -> u64 {
         unsafe {
             let mut nvals = 0u64;
-            let info = GrB_Matrix_nvals(&raw mut nvals, *self.m);
+            let info = GrB_Matrix_nvals(&raw mut nvals, self.inner());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             nvals
         }
@@ -1240,7 +1271,7 @@ impl<T> Matrix<T> {
         j: u64,
     ) {
         unsafe {
-            let info = GrB_Matrix_removeElement(*self.m, i, j);
+            let info = GrB_Matrix_removeElement(self.inner(), i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
@@ -1251,7 +1282,7 @@ impl<T> Matrix<T> {
         level: GxB_Print_Level,
     ) {
         unsafe {
-            let info = GxB_Matrix_fprint(*self.m, null_mut(), level as _, null_mut());
+            let info = GxB_Matrix_fprint(self.inner(), null_mut(), level as _, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
@@ -1282,9 +1313,9 @@ impl<T> Dup<Self> for Matrix<T> {
             false
         };
         Self {
-            m: Arc::new(unsafe {
+            m: Arc::new(Handle(unsafe {
                 let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
-                let info = GrB_Matrix_dup(m.as_mut_ptr(), *self.m);
+                let info = GrB_Matrix_dup(m.as_mut_ptr(), self.inner());
                 assert_eq!(
                     info,
                     GrB_Info::GrB_SUCCESS,
@@ -1297,7 +1328,7 @@ impl<T> Dup<Self> for Matrix<T> {
                 // dup — carry the opt-out over explicitly.
                 let mut hyper_hash: i32 = 1;
                 let info = GrB_Matrix_get_INT32(
-                    *self.m,
+                    self.inner(),
                     &raw mut hyper_hash,
                     GxB_Option_Field::GxB_HYPER_HASH as _,
                 );
@@ -1307,7 +1338,7 @@ impl<T> Dup<Self> for Matrix<T> {
                     debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
                 }
                 m
-            }),
+            })),
             lock: Arc::new(Mutex::new(())),
             has_pending: Arc::new(AtomicBool::new(dup_pending)),
             phantom: PhantomData,
@@ -1326,11 +1357,11 @@ impl Matrix<u64> {
         let out = Self::new(self.nrows(), self.ncols());
         unsafe {
             let info = GrB_Matrix_select_UINT64(
-                *out.m,
+                out.inner(),
                 null_mut(),
                 null_mut(),
                 GrB_VALUEEQ_UINT64,
-                *self.m,
+                self.inner(),
                 value,
                 null_mut(),
             );
@@ -1356,7 +1387,7 @@ impl Matrix<u64> {
             let m = m.assume_init();
             pin_sparse(m);
             Self {
-                m: Arc::new(m),
+                m: Arc::new(Handle(m)),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(false)),
                 phantom: PhantomData,
@@ -1372,7 +1403,7 @@ impl Matrix<u64> {
         value: u64,
     ) {
         unsafe {
-            let info = GrB_Matrix_setElement_UINT64(*self.m, value, i, j);
+            let info = GrB_Matrix_setElement_UINT64(self.inner(), value, i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
@@ -1387,7 +1418,7 @@ impl Matrix<u64> {
     ) -> Option<u64> {
         unsafe {
             let mut val: MaybeUninit<u64> = MaybeUninit::uninit();
-            let info = GrB_Matrix_extractElement_UINT64(val.as_mut_ptr(), *self.m, i, j);
+            let info = GrB_Matrix_extractElement_UINT64(val.as_mut_ptr(), self.inner(), i, j);
             if info == GrB_Info::GrB_SUCCESS {
                 Some(val.assume_init())
             } else {
@@ -1422,7 +1453,7 @@ impl Matrix<u64> {
         let nvals = rows.len() as u64;
         unsafe {
             let info = GrB_Matrix_build_UINT64(
-                *self.m,
+                self.inner(),
                 rows.as_ptr(),
                 cols.as_ptr(),
                 vals.as_ptr(),
@@ -1451,7 +1482,7 @@ impl Matrix<bool> {
             let m = m.assume_init();
             pin_sparse(m);
             Self {
-                m: Arc::new(m),
+                m: Arc::new(Handle(m)),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(false)),
                 phantom: PhantomData,
@@ -1477,7 +1508,7 @@ impl Matrix<bool> {
     ) -> Option<bool> {
         unsafe {
             let mut m: MaybeUninit<bool> = MaybeUninit::uninit();
-            let info = GrB_Matrix_extractElement_BOOL(m.as_mut_ptr(), *self.m, i, j);
+            let info = GrB_Matrix_extractElement_BOOL(m.as_mut_ptr(), self.inner(), i, j);
             if info == GrB_Info::GrB_SUCCESS {
                 Some(m.assume_init())
             } else {
@@ -1493,7 +1524,7 @@ impl Matrix<bool> {
         value: bool,
     ) {
         unsafe {
-            let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
+            let info = GrB_Matrix_setElement_BOOL(self.inner(), value, i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
@@ -1520,7 +1551,7 @@ impl Matrix<bool> {
         }
         unsafe {
             let info = GrB_Matrix_assign_BOOL(
-                *self.m,
+                self.inner(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 true,
@@ -1555,7 +1586,8 @@ impl Matrix<bool> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             info = GrB_Scalar_setElement_BOOL(scalar, true);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            info = GxB_Matrix_build_Scalar(*self.m, rows.as_ptr(), cols.as_ptr(), scalar, nvals);
+            info =
+                GxB_Matrix_build_Scalar(self.inner(), rows.as_ptr(), cols.as_ptr(), scalar, nvals);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             info = GrB_Scalar_free(&raw mut scalar);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1600,23 +1632,72 @@ impl Matrix<bool> {
         let nrows = self.nrows();
         let ncols = m.ncols();
 
-        let mut mask: Option<Matrix<bool>> = None;
+        // `self * dm`, counted: how many deleted base edges reach each output.
+        // Its pattern is the mask; the counts are what make the mask exact.
+        //
+        // The mask alone is exact only for a row of `self` with one entry. A
+        // row with several (a fused chain's frontier) reaches an output through
+        // several base edges, and one of them being deleted masked the output
+        // even when another was live: `x→z` deleted and `y→z` live, with `x`
+        // and `y` in one row, lost `z`. Since `dm ⊆ m`, an output under the
+        // mask is live exactly when `self * m` reaches it by more paths than
+        // `self * dm` does, so those are counted at the masked positions only
+        // and added back.
+        let mut mask: Option<Matrix<u64>> = None;
+        let mut restored: Option<Matrix<bool>> = None;
         if dm_nvals > 0 {
-            let mut mk = Matrix::<bool>::new(nrows, ncols);
+            let dm_paths = Matrix::<u64>::new(nrows, ncols);
             unsafe {
                 let info = GrB_mxm(
-                    *mk.m,
+                    dm_paths.inner(),
                     null_mut(),
                     null_mut(),
-                    GxB_ANY_PAIR_BOOL,
-                    *self.m,
-                    *dm.m,
+                    GxB_PLUS_PAIR_UINT64,
+                    self.inner(),
+                    dm.inner(),
                     null_mut(),
                 );
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
-            if mk.nvals() > 0 {
-                mask = Some(mk);
+            if dm_paths.nvals() > 0 {
+                let m_paths = Matrix::<u64>::new(nrows, ncols);
+                let live = Matrix::<bool>::new(nrows, ncols);
+                unsafe {
+                    let info = GrB_mxm(
+                        m_paths.inner(),
+                        dm_paths.inner(),
+                        null_mut(),
+                        GxB_PLUS_PAIR_UINT64,
+                        self.inner(),
+                        m.inner(),
+                        GrB_DESC_S,
+                    );
+                    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                    let info = GrB_Matrix_eWiseMult_BinaryOp(
+                        live.inner(),
+                        null_mut(),
+                        null_mut(),
+                        GrB_GT_UINT64,
+                        m_paths.inner(),
+                        dm_paths.inner(),
+                        null_mut(),
+                    );
+                    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                    let info = GrB_Matrix_select_BOOL(
+                        live.inner(),
+                        null_mut(),
+                        null_mut(),
+                        GrB_VALUEEQ_BOOL,
+                        live.inner(),
+                        true,
+                        null_mut(),
+                    );
+                    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                }
+                if live.nvals() > 0 {
+                    restored = Some(live);
+                }
+                mask = Some(dm_paths);
             }
         }
 
@@ -1625,12 +1706,12 @@ impl Matrix<bool> {
             let mut ac = Matrix::<bool>::new(nrows, ncols);
             unsafe {
                 let info = GrB_mxm(
-                    *ac.m,
+                    ac.inner(),
                     null_mut(),
                     null_mut(),
                     GxB_ANY_PAIR_BOOL,
-                    *self.m,
-                    *dp.m,
+                    self.inner(),
+                    dp.inner(),
                     null_mut(),
                 );
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1643,19 +1724,22 @@ impl Matrix<bool> {
         unsafe {
             let (mask_ptr, desc) = mask
                 .as_ref()
-                .map_or((null_mut(), null_mut()), |m| (*m.m, GrB_DESC_RSC));
+                .map_or((null_mut(), null_mut()), |m| (m.inner(), GrB_DESC_RSC));
             let info = GrB_mxm(
-                *self.m,
+                self.inner(),
                 mask_ptr,
                 null_mut(),
                 GxB_ANY_PAIR_BOOL,
-                *self.m,
-                *m.m,
+                self.inner(),
+                m.inner(),
                 desc,
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
 
+        if let Some(live) = restored {
+            self.element_wise_add(None, None, Some(&live), None);
+        }
         if let Some(ac) = accum {
             self.element_wise_add(None, None, Some(&ac), None);
         }
@@ -1730,7 +1814,7 @@ impl IterExtract for Uint64Extract {
 }
 
 pub struct Iter<E: IterExtract = BoolExtract> {
-    m: Arc<GrB_Matrix>,
+    m: Arc<Handle>,
     /// The underlying GraphBLAS iterator.
     inner: GxB_Iterator,
     /// Indicates whether the iterator is depleted.
@@ -1744,14 +1828,11 @@ unsafe impl<E: IterExtract> Send for Iter<E> {}
 unsafe impl<E: IterExtract> Sync for Iter<E> {}
 
 impl<E: IterExtract> Drop for Iter<E> {
-    /// Frees the GraphBLAS iterator when the `Iter` is dropped.
+    /// Frees the GraphBLAS iterator when the `Iter` is dropped. The matrix
+    /// is freed by its [`Handle`] if this was the last reference, after the
+    /// iterator attached to it (fields drop after this body).
     fn drop(&mut self) {
         unsafe {
-            if let Some(m) = Arc::get_mut(&mut self.m) {
-                let info = GrB_Matrix_free(m);
-                // debug_assert: don't panic in Drop (see Matrix::drop above).
-                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            }
             if !self.inner.is_null() {
                 GxB_Iterator_free(&raw mut self.inner);
             }
@@ -1760,6 +1841,11 @@ impl<E: IterExtract> Drop for Iter<E> {
 }
 
 impl<E: IterExtract> Iter<E> {
+    /// The matrix this iterator walks.
+    fn matrix(&self) -> GrB_Matrix {
+        self.m.0
+    }
+
     /// Creates a new iterator for traversing all elements in a matrix.
     ///
     /// # Parameters
@@ -1812,7 +1898,7 @@ impl<E: IterExtract> Iter<E> {
                 "GxB_Iterator_new failed: {info:?}"
             );
             let iter = iter.assume_init();
-            let info = GxB_rowIterator_attach(iter, *self.m, null_mut());
+            let info = GxB_rowIterator_attach(iter, self.matrix(), null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             self.inner = iter;
         }
@@ -1950,6 +2036,33 @@ mod tests {
         }
     }
 
+    /// A frontier row holding two nodes that both reach `z` keeps `z` when
+    /// only one of the two edges is deleted: the deletion layer masks an
+    /// output only if every base path to it is deleted. With node 1 = x,
+    /// 2 = y, 3 = z, frontier row 0 = {x, y}, base edges x→z and y→z.
+    #[test]
+    fn delta_lmxm_keeps_an_output_one_live_edge_still_reaches() {
+        ensure_init();
+        let n = 8;
+        let mut m = Matrix::<bool>::new(n, n);
+        m.build(&[1, 2], &[3, 3]);
+        m.wait();
+        let dp = Matrix::<bool>::new(n, n);
+        let reach = |deleted: &[u64]| {
+            let mut dm = Matrix::<bool>::new(n, n);
+            dm.build(deleted, &vec![3; deleted.len()]);
+            dm.wait();
+            let mut f = Matrix::<bool>::new(n, n);
+            f.build(&[0, 0], &[1, 2]);
+            f.wait();
+            f.delta_lmxm(&m, &dp, &dm);
+            f.wait();
+            f.get(0, 3)
+        };
+        assert_eq!(reach(&[1]), Some(true), "y→z is live");
+        assert_eq!(reach(&[1, 2]), None, "both paths deleted");
+    }
+
     #[test]
     #[should_panic(expected = "grown must not shrink")]
     fn grown_rejects_shrinking() {
@@ -2004,7 +2117,7 @@ mod tests {
         scalar_built.wait();
 
         let mut iso = false;
-        let info = unsafe { GxB_Matrix_iso(&raw mut iso, *scalar_built.m) };
+        let info = unsafe { GxB_Matrix_iso(&raw mut iso, scalar_built.inner()) };
         assert_eq!(info, GrB_Info::GrB_SUCCESS);
         assert!(
             iso,

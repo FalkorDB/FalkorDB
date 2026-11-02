@@ -81,7 +81,7 @@ impl<'a> IncludePendingOp<'a> {
 
     /// Initialize pending state (deleted/removed sets and extra nodes to emit).
     fn init_pending_state(&mut self) {
-        let g = self.runtime.g.borrow();
+        let g = self.runtime.graph();
         let label_ids: Vec<_> = self
             .node_pattern
             .labels

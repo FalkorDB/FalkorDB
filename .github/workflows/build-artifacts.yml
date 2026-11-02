@@ -1,19 +1,20 @@
-# Manually-triggerable build of the shared-library (.so) artifacts for every
-# wired architecture, so a maintainer can verify all platforms build correctly
-# BEFORE a release. Uploads workflow artifacts only (no Release upload).
+# Build the shared-library (.so) artifacts for every release platform, and the
+# rhel9/amazonlinux2023 server images, WITHOUT releasing anything, so a broken
+# platform shows up on the pull request that broke it instead of at release
+# time. The images are started and queried, never pushed; only the .so files
+# are uploaded, as workflow artifacts.
 #
 # Triggers:
-#   - workflow_dispatch  → the long-term manual trigger (works once this file is
-#     on the default branch; also usable against any branch/tag thereafter).
-#   - pull_request (labeled/synchronize/reopened), gated by the `verify-artifacts`
-#     label → the path that makes this usable on a PR BEFORE it is merged.
-#     workflow_dispatch cannot reach a workflow that exists only on a feature
-#     branch, so to verify a PR that *introduces* this workflow, add the
-#     `verify-artifacts` label: the build runs at the PR head and re-runs on each
-#     push while the label is present. Remove + re-add the label to force a re-run.
+#   - pull_request → runs when the PR changes something the artifact builds
+#     depend on (PATTERN below), or carries the `verify-artifacts` label. The
+#     per-OS cells (rhel9, amazonlinux2023) build their own toolchain from
+#     source and nothing else in PR CI exercises them, so without this a change
+#     that breaks them (as #3163 did) surfaces only at release time.
+#     Re-runs on each push while either holds.
+#   - workflow_dispatch → a maintainer's check against any branch or tag, with an
+#     optional subset of platforms.
 #
-# Additional Linux platforms (alpine/musl, rhel8, rhel9, amazonlinux2023) land in
-# the cell list below as their per-OS toolchain images are added — see issue #608.
+# The platform list lives in _build-artifacts.yml.
 
 name: Build artifacts (verify)
 
@@ -25,70 +26,77 @@ on:
         required: false
         default: "all"
   pull_request:
-    types: [labeled, synchronize, reopened]
+    types: [opened, labeled, synchronize, reopened]
 
 permissions:
   contents: read
-  packages: read
 
 concurrency:
   group: build-artifacts-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  prepare:
-    # Run on manual dispatch, OR on a PR carrying the `verify-artifacts` label.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.pull_request.labels.*.name, 'verify-artifacts')
+  decide:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      cells: ${{ steps.derive.outputs.cells }}
-      commit_sha: ${{ steps.derive.outputs.commit_sha }}
+      run: ${{ steps.decide.outputs.run }}
+      commit_sha: ${{ steps.decide.outputs.commit_sha }}
     steps:
-      - name: Derive cells + commit SHA
-        id: derive
+      - name: Decide whether to build
+        id: decide
         env:
           EVENT: ${{ github.event_name }}
-          ARCHS: ${{ github.event.inputs.archs }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'verify-artifacts') }}
           GH_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # Master list of cells. Keep in sync with release-artifacts.yml.
-          ALL='[
-            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23"},
-            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23"},
-            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++"},
-            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19"}
-          ]'
-          if [ "$EVENT" = "workflow_dispatch" ] && [ -n "${ARCHS:-}" ] && [ "$ARCHS" != "all" ]; then
-            FILTER=$(printf '%s' "$ARCHS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | jq -R . | jq -s -c .)
-            CELLS=$(printf '%s' "$ALL" | jq -c --argjson f "$FILTER" '[ .[] | select(.suffix as $s | $f | index($s)) ]')
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "commit_sha=$GH_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "commit_sha=$PR_SHA" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_LABEL" = "true" ]; then
+            echo "verify-artifacts label present"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # What the artifact Dockerfiles consume beyond ordinary Rust source:
+          # the Cargo manifests, lockfile, build scripts and cargo config (how
+          # new native code and link flags arrive), their own files, the libomp
+          # and native-deps builds, the submodules those build, and the scripts
+          # the per-OS server images run. Plain .rs changes are left out.
+          # build/Dockerfile (the Debian toolchain) is not here: the x64/arm64v8
+          # cells build on the PUBLISHED toolchain, and rust-pr.yml already
+          # rebuilds it when it changes.
+          PATTERN='^(Cargo\.(toml|lock)|graph/Cargo\.toml|(graph/)?build\.rs|\.cargo/config\.toml|build/libomp\.sh|build/runtime/Dockerfile(\.rhel9|\.amazonlinux2023)?|build/runtime/(run|gen-certs|gosu-setpriv)\.sh|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/(_build-artifacts|build-artifacts)\.yml)$'
+          # Materialise the list first: `gh ... | grep -q` under pipefail
+          # reports 141 on an early match (see rust-pr.yml).
+          gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename' > /tmp/changed-files.txt
+          if grep -E "$PATTERN" /tmp/changed-files.txt; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
           else
-            CELLS=$(printf '%s' "$ALL" | jq -c .)
+            echo "No artifact build inputs changed and no verify-artifacts label; skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
           fi
-          if [ "$(printf '%s' "$CELLS" | jq 'length')" = "0" ]; then
-            echo "::error::no platforms selected for archs='${ARCHS:-}'"; exit 1
-          fi
-          if [ "$EVENT" = "pull_request" ]; then SHA="$PR_SHA"; else SHA="$GH_SHA"; fi
-          {
-            echo "cells=$CELLS"
-            echo "commit_sha=$SHA"
-          } >> "$GITHUB_OUTPUT"
-          echo "Selected cells: $CELLS"
-          echo "Commit SHA: $SHA"
 
   build:
-    needs: prepare
-    if: ${{ needs.prepare.outputs.cells != '[]' }}
+    needs: decide
+    if: ${{ needs.decide.outputs.run == 'true' }}
     uses: ./.github/workflows/_build-artifacts.yml
     permissions:
       contents: read
       packages: read
     with:
-      cells: ${{ needs.prepare.outputs.cells }}
-      revision: ${{ needs.prepare.outputs.commit_sha }}
+      platforms: ${{ github.event.inputs.archs || 'all' }}
+      revision: ${{ needs.decide.outputs.commit_sha }}
       # On a `pull_request` run the revision is the PR head — untrusted code, so
       # the build may not write any cache. Only a maintainer dispatch (which can
       # only target a ref already in this repo) is treated as trusted.
