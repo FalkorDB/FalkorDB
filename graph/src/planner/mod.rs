@@ -716,17 +716,31 @@ fn has_labels_filter(
 /// that.
 pub const MAX_PLAN_DEPTH: usize = 10_000;
 
+/// Whether this build's frames are far larger than an optimized one's: the
+/// dev profile (what the sanitizer image is built with) has `debug_assertions`
+/// on and, under AddressSanitizer, redzones around every frame. A plan level
+/// then costs about 19 KiB of stack instead of 7, measured on the ASan image:
+/// 1000 chained `OPTIONAL MATCH`es overflowed a segment sized at 16 KiB a
+/// level, 600 did not.
+const INSTRUMENTED_FRAMES: bool = cfg!(debug_assertions);
+
 /// Plans no taller than this run on the calling thread's own stack.
 ///
 /// The costliest plan levels measured (`OPTIONAL MATCH ... WHERE`,
 /// `CALL {}`, `MERGE` per clause) take about 7 KiB of stack each through the
-/// optimizer and the runtime, so 128 of them fit a 2 MiB pool worker with
-/// room to spare. Nearly every query is far below it.
-const SHALLOW_PLAN: usize = 128;
+/// optimizer and the runtime in a release build, so 128 of them fit a 2 MiB
+/// pool worker with room to spare; with instrumented frames (about 19 KiB)
+/// only 32 do. Nearly every query is far below it.
+const SHALLOW_PLAN: usize = if INSTRUMENTED_FRAMES { 32 } else { 128 };
 
 /// Stack [`with_plan_stack`] reserves per plan level: about twice the
-/// costliest level measured.
-const STACK_PER_LEVEL: usize = 16 * 1024;
+/// costliest level measured in a release build, and 3.4 times in an
+/// instrumented one.
+const STACK_PER_LEVEL: usize = if INSTRUMENTED_FRAMES {
+    64 * 1024
+} else {
+    16 * 1024
+};
 
 /// Stack [`with_plan_stack`] reserves on top of the per-level share, for what
 /// runs below and above the plan's own recursion.
