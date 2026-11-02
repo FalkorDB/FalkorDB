@@ -3,6 +3,7 @@ import os
 
 from common import *
 from index_utils import *
+from constraint_utils import *
 from time import sleep, time
 
 GRAPH_ID = "diskless"
@@ -85,6 +86,10 @@ class testDisklessReplication(FlowTestsBase):
             f"UNWIND range(1, {PAIRS}) AS i CREATE (:N {{v: i}})-[:R]->(:M {{v: i}})")
         self.graph.create_node_range_index("N", "v")
         wait_for_indices_to_sync(self.graph)
+        # A unique and a mandatory constraint: a snapshot carries them, and a
+        # replica promoted after a load must enforce them.
+        create_unique_node_constraint(self.graph, "N", "v", sync=True)
+        create_mandatory_node_constraint(self.graph, "N", "v", sync=True)
         for name in SMALL_GRAPHS:
             self.db.select_graph(name).query("CREATE ()")
         self.master.execute_command("GRAPH.UDF", "LOAD", "REPLACE", UDF_LIB, _udf(1))
@@ -147,7 +152,35 @@ class testDisklessReplication(FlowTestsBase):
             for name in graphs if name != GRAPH_ID
         }
         udf = Graph(con, GRAPH_ID).ro_query(f"RETURN {UDF_LIB}.f()").result_set
-        return [graphs, counts, self._contents(con), udf, self._index_reads(con)]
+        return [graphs, counts, self._contents(con), udf, self._index_reads(con),
+                self._constraints(con)]
+
+    def _constraints(self, con):
+        """The constraints each graph of the snapshot carries."""
+        out = []
+        for name in sorted(con.execute_command("GRAPH.LIST")):
+            res = Graph(con, name).ro_query(
+                "CALL db.constraints() YIELD type, label, properties, entitytype, status "
+                "RETURN type, label, properties, entitytype, status")
+            out.append([name, sorted(res.result_set)])
+        return out
+
+    def _assert_enforced(self, con, name):
+        """A promoted replica enforces the snapshot's constraints on `name`."""
+        g = Graph(con, name)
+        if name == GRAPH_ID:
+            for q in ["CREATE (:N {v: 1})", "CREATE (:N)"]:  # unique / mandatory
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False, message=f"{q} was accepted")
+                except ResponseError:
+                    pass
+        elif name.startswith("added_"):
+            try:
+                g.query("CREATE (:A)")  # mandatory on A.v
+                self.env.assertTrue(False, message="CREATE (:A) was accepted")
+            except ResponseError:
+                pass
 
     def _index_reads(self, con):
         """The indexes of the graphs a snapshot carries, and what they answer."""
@@ -168,7 +201,8 @@ class testDisklessReplication(FlowTestsBase):
     def _change_master(self, version):
         """Give the primary a snapshot the replica's differs from in every way
         it can: a graph modified, one added, one removed, the UDF replaced."""
-        self.graph.query(f"CREATE (:N {{v: {version}}})")
+        # MERGE: unique on v, and a version may be applied twice
+        self.graph.query(f"MERGE (:N {{v: {PAIRS + version}}})")
         added = self.db.select_graph(f"added_{version}")
         added.query("CREATE (:A {v: 1})")
         try:
@@ -176,6 +210,10 @@ class testDisklessReplication(FlowTestsBase):
         except ResponseError:
             pass  # a version changed twice
         wait_for_indices_to_sync(added)
+        try:
+            create_mandatory_node_constraint(added, "A", "v", sync=True)
+        except ResponseError:
+            pass  # a version changed twice
         for name in self.master.execute_command("GRAPH.LIST"):
             if name.startswith("added_") and name != f"added_{version}":
                 self.db.select_graph(name).delete()
@@ -241,6 +279,12 @@ class testDisklessReplication(FlowTestsBase):
         self.env.assertContains(DISKLESS_LOAD, log, message="replica did not load off the socket")
         self.env.assertContains(SWAPPED, log, message="replica did not load into a temporary db")
         self.env.assertEqual(self._state(self.replica), self._state(self.master))
+        # promoted, the replica enforces what the swap brought in
+        self.replica.replicaof("no", "one")
+        for name in (GRAPH_ID, "added_3"):
+            self._assert_enforced(self.replica, name)
+        self._attach()
+        self._wait_for_sync()
 
     def test04_swapdb_aborted_load_keeps_live_data(self):
         self.replica.config_set("repl-diskless-load", "swapdb")
@@ -284,6 +328,8 @@ class testDisklessReplication(FlowTestsBase):
             g.query("CREATE (:N {v: 99999})")
             self.env.assertEqual(
                 g.query("MATCH (n:N) WHERE n.v = 99999 RETURN count(n)").result_set, [[1]])
+            # ...and the constraints of the live snapshot still hold
+            self._assert_enforced(self.replica, GRAPH_ID)
 
             self.master.config_set("repl-diskless-sync-delay", "0")
             self._attach()
@@ -316,7 +362,7 @@ class testDisklessReplication(FlowTestsBase):
         try:
             pipe = self.master.pipeline(transaction=True)
             pipe.execute_command("CLIENT", "KILL", "TYPE", "replica")
-            pipe.execute_command("GRAPH.QUERY", GRAPH_ID, "CREATE (:N {v: 5})")
+            pipe.execute_command("GRAPH.QUERY", GRAPH_ID, f"CREATE (:N {{v: {PAIRS + 5}}})")
             pipe.execute_command("GRAPH.QUERY", "added_5", "CREATE (:A {v: 1})")
             pipe.execute_command("GRAPH.QUERY", "added_5", "CREATE INDEX FOR (a:A) ON (a.v)")
             pipe.execute_command("GRAPH.DELETE", "added_4")
