@@ -623,6 +623,17 @@ class testGraphMergeFlow():
             # Expecting an error.
             assert("can't be redeclared in a MERGE clause" in str(e))
 
+    def test31b_relationship_alias_redeclared(self):
+        # a relationship variable repeated inside one MERGE pattern must be
+        # rejected, not silently merged into a single edge
+        for query in ["MERGE (a)-[r:R]->(b)-[r:R]->(c)",
+                      "MERGE p=(a)-[r:R]->(b)-[r:R]->(c) RETURN p"]:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("The bound variable 'r' can't be redeclared in a MERGE clause", str(e))
+
     def test32_reset_op(self):
         # MERGE operation register a reset function validate that it works as expected
         res = self.graph.query("CREATE (a:A), (b:B)")
@@ -861,6 +872,27 @@ class testGraphMergeFlow():
                                   MERGE (b:U {v: 1}) RETURN b.v AS v""")
         self.env.assertEqual(res.result_set, [[2], [1]])
         self.env.assertEqual(res.nodes_created, 2)
+        g.delete()
+
+    def test41_merge_result_does_not_depend_on_batch_boundaries(self):
+        # MERGE matched batch by batch and created in between, so a row in a
+        # later batch saw an earlier batch's creation (after ON CREATE SET)
+        # while a row of the same batch did not (#3039). Like C, every row is
+        # now matched before anything is created.
+        g = self.db.select_graph("merge_batch_boundaries")
+        for last in [2, 1025, 3000]:
+            res = g.query(f"""UNWIND range(1, {last}) AS x WITH x WHERE x = 1 OR x = {last}
+                              MERGE (n:L {{v: CASE x WHEN 1 THEN 1 ELSE 2 END}})
+                              ON CREATE SET n.v = 2""")
+            self.env.assertEqual(res.nodes_created, 2)
+            g.delete()
+
+        # duplicates across batches still resolve to one node per pattern
+        res = g.query("""UNWIND range(1, 3000) AS x
+                         MERGE (n:Q {v: x % 7}) ON CREATE SET n.c = x
+                         RETURN count(*), count(DISTINCT n)""")
+        self.env.assertEqual(res.result_set, [[3000, 7]])
+        self.env.assertEqual(res.nodes_created, 7)
         g.delete()
 
     def test42_merge_edge_of_detach_deleted_node(self):
