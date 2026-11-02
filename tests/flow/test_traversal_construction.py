@@ -1,6 +1,9 @@
 from common import *
 from index_utils import *
 import re
+import random
+from collections import Counter
+from redis import ResponseError
 
 GRAPH_ID = "TraversalConstruction"
 
@@ -619,5 +622,70 @@ class testTraversalConstruction():
             for limit in ["", "LIMIT 1", "LIMIT 2", "LIMIT 3", "LIMIT 100"]:
                 q = f"MATCH (a:A)-[]-()-[]-(b:B) RETURN a.id, b.id {limit}"
                 self.env.assertEqual(g.query(q).result_set, [[1, 2]], message=q)
+        finally:
+            g.delete()
+
+    # row_budget evaluates the LIMIT/SKIP expressions once and the Limit/Skip
+    # operators evaluate them again, so they must always agree: anything that
+    # is not a constant or parameter is rejected before planning.
+    def test_limit_skip_must_be_constant(self):
+        g = self.db.select_graph("LimitSkipConstant")
+        try:
+            for clause in ["LIMIT toInteger(rand() * 10)", "SKIP toInteger(rand() * 10)",
+                           "LIMIT timestamp()", "SKIP rand()"]:
+                q = f"UNWIND range(1, 10) AS x RETURN x {clause}"
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False, message=q)
+                except ResponseError as e:
+                    self.env.assertContains("invalid type", str(e), message=q)
+        finally:
+            g.delete()
+
+    # A record cap may pass below an operator only when every row that operator
+    # emits reaches the Limit. Compare LIMIT/SKIP against the same query without
+    # them, over traversal shapes that drop rows (destination label checks,
+    # dedup, edge uniqueness, filters, OPTIONAL, var-length).
+    def test_limit_skip_matches_full_result(self):
+        g = self.db.select_graph("LimitSkipDifferential")
+        try:
+            rng = random.Random(2957)
+            n = 120
+            g.query("UNWIND range(0, $n - 1) AS i CREATE (:N {id: i, v: i % 7, "
+                    "l: CASE i % 3 WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END})", {"n": n})
+            g.query("MATCH (x:N) WHERE x.l = 'A' SET x:A")
+            g.query("MATCH (x:N) WHERE x.l = 'B' SET x:B")
+            g.query("MATCH (x:N) WHERE x.l = 'C' SET x:C")
+            for _ in range(300):
+                a, b = rng.randrange(n), rng.randrange(n)
+                if rng.random() < 0.05:
+                    b = a
+                t = rng.choice(["R", "R", "S"])
+                g.query(f"MATCH (a:N {{id: {a}}}), (b:N {{id: {b}}}) CREATE (a)-[:{t}]->(b)")
+            shapes = [
+                "MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN a.id, b.id, c.id",
+                "MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id, b.id",
+                "MATCH (a)-[:R]->(b:B)-[:S]->(c:C) RETURN a.id, b.id, c.id",
+                "MATCH (a:A)-[:R]-(b)-[:R]-(c) RETURN a.id, c.id",
+                "MATCH (a)-[r1:R]->(b)<-[r2:R]-(c) RETURN a.id, id(r1), b.id, id(r2), c.id",
+                "MATCH (a)-[:R]->(b)-[:R]->(c) WHERE c.v > 3 AND a.id <> c.id RETURN a.id, b.id, c.id",
+                "MATCH (a)-[:R]->(b)-[:R]->(c) RETURN DISTINCT a.id, c.id",
+                "MATCH (a:A) OPTIONAL MATCH (a)-[:R]->(b)-[:S]->(c) RETURN a.id, b.id, c.id",
+                "MATCH (a:A)-[:R*1..3]->(b) RETURN a.id, b.id",
+                "MATCH (a:A) WITH a ORDER BY a.id MATCH (a)-[:R]->(b) RETURN a.id, b.id",
+                "MATCH (a)-[r1:R]->(b) MATCH (a)-[r2:R]->(b) RETURN a.id, id(r1), b.id, id(r2)",
+            ]
+            for body in shapes:
+                cols = body.split("RETURN", 1)[1].replace("DISTINCT", "")
+                order = " ORDER BY " + cols.strip()
+                full = g.query(body + order).result_set
+                full_set = Counter(map(tuple, full))
+                for k, s in [(1, 0), (2, 0), (1, 1), (3, 2), (7, 0), (len(full), 0), (len(full) + 5, 0), (5, 3)]:
+                    got = g.query(f"{body}{order} SKIP {s} LIMIT {k}").result_set
+                    self.env.assertEqual(got, full[s:s + k], message=f"{body} ordered k={k} s={s}")
+                    got = g.query(f"{body} SKIP {s} LIMIT {k}").result_set
+                    self.env.assertEqual(len(got), max(0, min(k, len(full) - s)), message=f"{body} count k={k} s={s}")
+                    got_set = Counter(map(tuple, got))
+                    self.env.assertTrue(all(got_set[x] <= full_set[x] for x in got_set), message=f"{body} subset k={k} s={s}")
         finally:
             g.delete()
