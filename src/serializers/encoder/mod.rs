@@ -1,11 +1,13 @@
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Encode, EncodeState, PayloadEntry, Writer};
+use graph::graph::graphblas::serialization::{
+    ENCODING_VERSION, Encode, EncodeState, PayloadEntry, Writer,
+};
 use redis_module::raw::RedisModuleIO;
 
 use super::buffered_io::BufferedWriter;
 use super::{Header, Schema};
 
-/// Encode a full graph into a single RDB key (v19 format, single-key mode).
+/// Encode a full graph into a single RDB key (single-key mode).
 ///
 /// This is the backward-compatible entry point used when `key_count == 1`.
 pub fn rdb_save_graph(
@@ -54,11 +56,14 @@ pub fn pipe_save_graph(
 
 /// Encode a full graph into a `Vec<u8>` (for GRAPH.RESTORE replication).
 ///
-/// Uses the same v19 format as RDB, with `VecWriter` instead of `BufferedWriter`.
-/// The returned bytes can be decoded with `BufferedReader::from_vec()`.
+/// The RDB stream layout, with `VecWriter` instead of `BufferedWriter`, behind a
+/// leading encoding version: unlike an RDB key, a blob arrives as a command
+/// argument with no version beside it, and a replica on another build has to
+/// know how to read its durations. Decoded with `BufferedReader::from_blob`.
 pub fn vec_save_graph(graph: &Graph) -> Vec<u8> {
     let payloads = build_payloads(graph);
     let mut w = super::buffered_io::VecWriter::new();
+    w.write_unsigned(ENCODING_VERSION);
     let global_attrs = graph.build_global_attrs();
     encode_graph(&mut w, graph, graph.name(), &payloads, 1, &global_attrs);
     w.into_vec()

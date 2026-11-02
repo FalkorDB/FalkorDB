@@ -29,6 +29,19 @@ pub trait Writer {
     );
 }
 
+/// The RDB encoding version this build writes.
+///
+/// 19 is the layout both engines shared; the C engine has since moved to 20 for
+/// its own additions (path indexes, UDFs) and refuses anything above that, so
+/// this build's own change takes the next number rather than 20, whose meaning
+/// there is a different layout. See [`ENCVER_DURATION_COMPONENTS`].
+pub const ENCODING_VERSION: u64 = 21;
+
+/// First RDB encoding version whose `T_DURATION` carries three signed values
+/// (months, days, seconds) instead of one epoch offset. Older streams —
+/// including everything the C engine writes — still load.
+pub const ENCVER_DURATION_COMPONENTS: u64 = 21;
+
 /// Types that can serialize themselves into a [`Writer`].
 pub trait Encode<const VERSION: u64> {
     fn encode(
@@ -53,6 +66,16 @@ pub trait Encode<const VERSION: u64> {
 /// The root crate implements this for `BufferedReader` (v19 buffered IO).
 /// The graph crate uses it via `Decode` impls without knowing about Redis.
 pub trait Reader {
+    /// The encoding version of the stream being read, which the decoders that
+    /// changed between versions branch on.
+    ///
+    /// Defaults to [`ENCODING_VERSION`]: a reader over bytes this build just
+    /// wrote (an in-process copy, a pipe from its own child, a test tape) has
+    /// no other version to report. Only a reader over a Redis RDB stream, whose
+    /// version arrives from the file, overrides it.
+    fn encver(&self) -> u64 {
+        ENCODING_VERSION
+    }
     fn read_unsigned(&mut self) -> Result<u64, String>;
     fn read_signed(&mut self) -> Result<i64, String>;
     fn read_double(&mut self) -> Result<f64, String>;
@@ -110,6 +133,11 @@ pub mod si_type {
     pub const T_DATETIME: u64 = 1 << 5;
     pub const T_DATE: u64 = 1 << 7;
     pub const T_TIME: u64 = 1 << 8;
+    /// Duration. The payload depends on the stream's version, never on the tag:
+    /// before [`ENCVER_DURATION_COMPONENTS`](super::ENCVER_DURATION_COMPONENTS)
+    /// (RDB) and effects v4, one signed epoch offset (the C engine's `time_t`,
+    /// which cannot hold a negative component); from there on, three signed
+    /// values — months, days, seconds (`temporal::Dur`).
     pub const T_DURATION: u64 = 1 << 10;
     pub const T_STRING: u64 = 1 << 11;
     pub const T_BOOL: u64 = 1 << 12;
@@ -169,7 +197,7 @@ pub struct PayloadEntry {
     pub offset: u64,
 }
 
-impl Encode<19> for RoaringTreemap {
+impl Encode<{ ENCODING_VERSION }> for RoaringTreemap {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -191,7 +219,7 @@ impl Encode<19> for RoaringTreemap {
     }
 }
 
-impl Decode<19> for RoaringTreemap {
+impl Decode<{ ENCODING_VERSION }> for RoaringTreemap {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let bytes = r.read_buffer()?;
         if bytes.len() % 8 != 0 {

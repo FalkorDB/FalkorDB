@@ -75,7 +75,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use super::{
     GxB_Print_Level,
     matrix::{self, Dup, Matrix},
-    serialization::{Decode, Encode, Reader, Writer},
+    serialization::{Decode, ENCODING_VERSION, Encode, Reader, Writer},
     vector::Vector,
 };
 use crate::graph::{
@@ -1315,7 +1315,7 @@ impl VersionedMatrix<bool> {
     }
 }
 
-impl<V> Encode<19> for VersionedMatrix<V> {
+impl<V> Encode<{ ENCODING_VERSION }> for VersionedMatrix<V> {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -1326,7 +1326,7 @@ impl<V> Encode<19> for VersionedMatrix<V> {
     }
 }
 
-impl<V> Decode<19> for VersionedMatrix<V> {
+impl<V> Decode<{ ENCODING_VERSION }> for VersionedMatrix<V> {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let m = Matrix::<V>::decode(r)?;
         let dp = Matrix::<V>::decode(r)?;

@@ -1,9 +1,12 @@
 //! The blocks a record composes from, other than its ids.
 //!
-//! Each is a type with an `EffectEncode<3>` / `EffectDecode<3>` impl rather than
-//! a pair of free functions, so the wire version is stated on the block itself.
-//! A v4 that shares a block re-implements it for 4; one that does not, cannot
-//! reach this one by accident.
+//! Each is a type with an `EffectEncode<4>` / `EffectDecode<VERSION>` impl rather
+//! than a pair of free functions, so the wire version is stated on the block
+//! itself. Writing is v4 only. Reading is generic over the versions this build
+//! reads, because none of these blocks changed between 3 and 4: a copy per
+//! version would be the same bytes twice. `AttrValues` is bounded by what
+//! `Value` can decode, which is what fixes the set of versions that exist.
+//! A later version that changes a block gives it its own `EffectDecode` impl.
 //!
 //! The types are thin wrappers, generic over their storage so writing borrows
 //! and reading owns — the same shape `AttrRef<S>` already uses in `records`.
@@ -25,7 +28,7 @@ use super::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RelType(pub u32);
 
-impl EffectEncode<3> for RelType {
+impl EffectEncode<4> for RelType {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
@@ -35,7 +38,7 @@ impl EffectEncode<3> for RelType {
     }
 }
 
-impl EffectDecode<3> for RelType {
+impl<const VERSION: u8> EffectDecode<VERSION> for RelType {
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
         Ok(Self(r.u32()?))
     }
@@ -51,7 +54,7 @@ impl EffectDecode<3> for RelType {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LabelSet<S = Vec<u32>>(pub S);
 
-impl<S: AsRef<[u32]>> EffectEncode<3> for LabelSet<S> {
+impl<S: AsRef<[u32]>> EffectEncode<4> for LabelSet<S> {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
@@ -73,7 +76,7 @@ impl<S: AsRef<[u32]>> EffectEncode<3> for LabelSet<S> {
     }
 }
 
-impl EffectDecode<3> for LabelSet {
+impl<const VERSION: u8> EffectDecode<VERSION> for LabelSet {
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
         let n = r.u16()?;
         Ok(Self(r.take_n(u64::from(n), u32::from_le_bytes)?))
@@ -97,7 +100,7 @@ impl EffectDecode<3> for LabelSet {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttrIds<S = Vec<u16>>(pub S);
 
-impl<S: AsRef<[u16]>> EffectEncode<3> for AttrIds<S> {
+impl<S: AsRef<[u16]>> EffectEncode<4> for AttrIds<S> {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
@@ -116,7 +119,7 @@ impl<S: AsRef<[u16]>> EffectEncode<3> for AttrIds<S> {
     }
 }
 
-impl EffectDecode<3> for AttrIds {
+impl<const VERSION: u8> EffectDecode<VERSION> for AttrIds {
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
         let n = r.u16()?;
         Ok(Self(r.take_n(u64::from(n), u16::from_le_bytes)?))
@@ -151,7 +154,7 @@ impl EffectDecode<3> for AttrIds {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AttrValues<S = Vec<Value>>(pub S);
 
-impl<S: AsRef<[Value]>> EffectEncode<3> for AttrValues<S> {
+impl<S: AsRef<[Value]>> EffectEncode<4> for AttrValues<S> {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
@@ -168,7 +171,10 @@ impl<S: AsRef<[Value]>> EffectEncode<3> for AttrValues<S> {
     }
 }
 
-impl EffectDecodeSized<3> for AttrValues {
+impl<const VERSION: u8> EffectDecodeSized<VERSION> for AttrValues
+where
+    Value: EffectDecode<VERSION>,
+{
     /// `(count, attrs_per_row)`. The second is a *number of attributes*, not a
     /// byte width — the two sit next to each other here and used to share the
     /// name `width`.
@@ -191,6 +197,7 @@ impl EffectDecodeSized<3> for AttrValues {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::effects::v3::EFFECTS_VERSION;
 
     /// A count off the wire reaches `Vec::with_capacity` before a single item is
     /// read. Without the guard these allocate from the claim rather than from
@@ -207,7 +214,10 @@ mod tests {
         let mut r = Reader::new(&buf);
         assert!(
             matches!(
-                AttrValues::decode_sized(&mut r, (u32::MAX, 1)),
+                <AttrValues as EffectDecodeSized<EFFECTS_VERSION>>::decode_sized(
+                    &mut r,
+                    (u32::MAX, 1)
+                ),
                 Err(DecodeError::ImplausibleCount { .. })
             ),
             "a row count the buffer cannot hold must be refused"
@@ -218,7 +228,10 @@ mod tests {
         let mut r = Reader::new(&buf);
         assert!(
             matches!(
-                AttrValues::decode_sized(&mut r, (u32::MAX, usize::MAX)),
+                <AttrValues as EffectDecodeSized<EFFECTS_VERSION>>::decode_sized(
+                    &mut r,
+                    (u32::MAX, usize::MAX)
+                ),
                 Err(DecodeError::ImplausibleCount { .. })
             ),
             "count x attrs_per_row must saturate, not wrap to a small read"
@@ -233,7 +246,10 @@ mod tests {
         RelType(7).encode(&mut buf).unwrap();
         assert_eq!(format!("{buf:02x?}"), "[07, 00, 00, 00]");
         let mut r = Reader::new(&buf);
-        assert_eq!(RelType::decode(&mut r).unwrap(), RelType(7));
+        assert_eq!(
+            <RelType as EffectDecode<EFFECTS_VERSION>>::decode(&mut r).unwrap(),
+            RelType(7)
+        );
     }
 
     #[test]
@@ -245,7 +261,12 @@ mod tests {
             "[02, 00, 07, 00, 00, 00, 09, 00, 00, 00]"
         );
         let mut r = Reader::new(&buf);
-        assert_eq!(LabelSet::decode(&mut r).unwrap().0, vec![7, 9]);
+        assert_eq!(
+            <LabelSet as EffectDecode<EFFECTS_VERSION>>::decode(&mut r)
+                .unwrap()
+                .0,
+            vec![7, 9]
+        );
     }
 
     #[test]
@@ -270,12 +291,19 @@ mod tests {
         );
 
         let mut r = Reader::new(&ids);
-        assert_eq!(AttrIds::decode(&mut r).unwrap().0, vec![0]);
+        assert_eq!(
+            <AttrIds as EffectDecode<EFFECTS_VERSION>>::decode(&mut r)
+                .unwrap()
+                .0,
+            vec![0]
+        );
         assert!(r.is_empty());
 
         let mut r = Reader::new(&vals);
         assert_eq!(
-            AttrValues::decode_sized(&mut r, (2, 1)).unwrap().0,
+            <AttrValues as EffectDecodeSized<EFFECTS_VERSION>>::decode_sized(&mut r, (2, 1))
+                .unwrap()
+                .0,
             vec![Value::Int(1), Value::Int(2)]
         );
         assert!(r.is_empty());
@@ -289,7 +317,9 @@ mod tests {
             .encode(&mut buf)
             .unwrap();
         let mut r = Reader::new(&buf);
-        let rows = AttrValues::decode_sized(&mut r, (2, 2)).unwrap().0;
+        let rows = <AttrValues as EffectDecodeSized<EFFECTS_VERSION>>::decode_sized(&mut r, (2, 2))
+            .unwrap()
+            .0;
         assert_eq!(rows[1], Value::Null);
         assert_eq!(rows[3], Value::Int(2));
     }

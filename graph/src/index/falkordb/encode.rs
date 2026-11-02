@@ -133,7 +133,7 @@ mod tests {
             Value::Date(18_262),
             Value::Datetime(1_577_836_800),
             Value::Time(3_600),
-            Value::Duration(-7),
+            Value::Duration(crate::runtime::functions::temporal::Dur::new(0, 0, -7).unwrap()),
         ] {
             assert_eq!(encode_numeric(&v), None, "{v:?} must not be encoded");
         }

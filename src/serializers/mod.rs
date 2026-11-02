@@ -10,7 +10,9 @@ use graph::entity_type::EntityType;
 use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::constraint::{Constraint, ConstraintStatus, ConstraintType};
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, index_field_type};
+use graph::graph::graphblas::serialization::{
+    Decode, ENCODING_VERSION, Encode, Reader, Writer, index_field_type,
+};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::text_index_options::PHONETIC_OFF;
@@ -19,10 +21,6 @@ use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
-
-/// RDB encoding version. Matches C FalkorDB v19 format (buffered IO with type tags).
-#[allow(dead_code)]
-pub const ENCODING_VERSION: u64 = 19;
 
 /// Global state for virtual key management during RDB save.
 pub static VKEY_STATE: std::sync::LazyLock<Mutex<VirtualKeyState>> =
@@ -132,7 +130,7 @@ pub struct Header {
     pub key_count: u64,
 }
 
-impl Encode<19> for Header {
+impl Encode<{ ENCODING_VERSION }> for Header {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -161,7 +159,7 @@ impl Encode<19> for Header {
     }
 }
 
-impl Decode<19> for Header {
+impl Decode<{ ENCODING_VERSION }> for Header {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let name_bytes = r.read_buffer()?;
         let graph_name = if name_bytes.last() == Some(&0) {
@@ -258,7 +256,7 @@ fn strip_null_terminator(buf: &[u8]) -> String {
     }
 }
 
-impl Encode<19> for Schema {
+impl Encode<{ ENCODING_VERSION }> for Schema {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -469,7 +467,7 @@ fn encode_constraint_block(
     }
 }
 
-impl Decode<19> for Schema {
+impl Decode<{ ENCODING_VERSION }> for Schema {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         // --- Attribute keys ---
         let attr_count = r.read_unsigned()?;
@@ -780,6 +778,45 @@ mod tests {
             assert_eq!(name.as_str(), "g");
             fields
         })
+    }
+
+    /// A `GRAPH.RESTORE` blob names the encoding version it was written at; a
+    /// blob from a build that predates the prefix is read as the version it
+    /// was written at, and one from a newer build is refused.
+    #[test]
+    fn restore_blob_version_prefix() {
+        let blob = |first: Option<u64>| {
+            let mut w = VecWriter::new();
+            if let Some(v) = first {
+                w.write_unsigned(v);
+            }
+            w.write_buffer(b"g\0");
+            w.into_vec()
+        };
+
+        let current = blob(Some(ENCODING_VERSION));
+        let mut r = BufferedReader::from_blob(&current).unwrap();
+        assert_eq!(r.encver(), ENCODING_VERSION);
+        // The prefix is consumed: what follows is the graph's own header.
+        assert_eq!(r.read_buffer().unwrap(), b"g\0");
+
+        // An older build wrote no prefix; its first value is the name buffer.
+        let old = blob(None);
+        let mut r = BufferedReader::from_blob(&old).unwrap();
+        assert_eq!(r.encver(), 19);
+        assert_eq!(r.read_buffer().unwrap(), b"g\0");
+
+        // A prefix naming an older version is honoured, a newer one refused.
+        let mid = blob(Some(20));
+        assert_eq!(BufferedReader::from_blob(&mid).unwrap().encver(), 20);
+        let future = blob(Some(ENCODING_VERSION + 1));
+        let err = BufferedReader::from_blob(&future).err().unwrap();
+        assert!(err.contains("this build reads up to"), "{err}");
+
+        assert!(
+            BufferedReader::from_blob(&[]).is_ok(),
+            "empty is a read error later, not here"
+        );
     }
 
     fn types(fields: &[Field]) -> Vec<IndexType> {

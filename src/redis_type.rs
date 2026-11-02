@@ -46,6 +46,7 @@ use crate::serializers;
 use crate::serializers::decoder::LoadedKey;
 use crate::serializers::encoder::build_multi_key_payloads;
 use crate::serializers::{DECODE_STATE, VKEY_STATE};
+use graph::graph::graphblas::serialization::ENCODING_VERSION;
 use graph::graph::mvcc_graph::MvccGraph;
 use graph::runtime::functions::{GraphFn, register_udf};
 use graph::udf::get_udf_repo;
@@ -96,12 +97,18 @@ unsafe fn io_key_name(rdb: *mut RedisModuleIO) -> String {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graph_rdb_load(
     rdb: *mut RedisModuleIO,
-    _encver: i32,
+    encver: i32,
 ) -> *mut c_void {
     // Get the key name for looking up finalized graphs.
     let key_name = unsafe { io_key_name(rdb) };
 
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
+    match serializers::decoder::rdb_load_graph(
+        rdb,
+        &key_name,
+        unsafe { io_cache_size(rdb) },
+        // A negative version cannot be Redis's; refuse it like a future one.
+        u64::try_from(encver).unwrap_or(u64::MAX),
+    ) {
         Ok(LoadedKey::Graph(graph)) => {
             // Single-key load (key_count == 1) -- graph is fully loaded.
             let mvcc = MvccGraph::from_graph(*graph);
@@ -894,7 +901,7 @@ const _: () = {
 
 pub static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
-    19,
+    ENCODING_VERSION as i32,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graph_rdb_load),
@@ -935,10 +942,16 @@ pub static GRAPH_TYPE: RedisType = RedisType::new(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graphmeta_rdb_load(
     rdb: *mut RedisModuleIO,
-    _encver: i32,
+    encver: i32,
 ) -> *mut c_void {
     let key_name = unsafe { io_key_name(rdb) };
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
+    match serializers::decoder::rdb_load_graph(
+        rdb,
+        &key_name,
+        unsafe { io_cache_size(rdb) },
+        // A negative version cannot be Redis's; refuse it like a future one.
+        u64::try_from(encver).unwrap_or(u64::MAX),
+    ) {
         Ok(_) => {
             // Return a non-null dummy value. Redis needs non-null for successful load.
             Box::into_raw(Box::new(0u8)).cast()
@@ -992,7 +1005,7 @@ unsafe extern "C" fn graphmeta_aux_load(
 
 pub static GRAPHMETA_TYPE: RedisType = RedisType::new(
     "graphmeta",
-    19,
+    ENCODING_VERSION as i32,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graphmeta_rdb_load),

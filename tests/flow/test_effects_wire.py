@@ -12,6 +12,7 @@ from constraint_utils import (create_mandatory_node_constraint, create_unique_no
 from graph_utils import graph_eq
 from index_utils import (create_node_range_index, wait_for_indices_to_sync)
 
+import zlib
 from effects_common import _EffectsBase, zstd_raw_frame
 
 
@@ -20,7 +21,8 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
     the graph exactly as it was, and take nothing down.
 
     With v2 deleted, "version 2" is no longer an old format — it is a version
-    this build has never heard of, and so is anything else that is not 3. The
+    this build has never heard of, and so is anything else that is not 3 or 4
+    (4 is what this build writes; 3 is what it still reads). The
     same goes for a flags bit outside `KNOWN_FLAGS`: `open_payload` refuses
     both rather than decoding the records it happens to recognise, because a
     reader that guesses corrupts itself with the rest of the buffer.
@@ -54,9 +56,9 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
         return bytes([version, flags]) + body
 
     @staticmethod
-    def _compressed(plain_len, checksum, frame, comp_len=None):
-        """A payload that *claims* to be a compressed v3 frame:
-        `u8 3 · u8 FLAG_COMPRESSED · u32 plain_len · u32 comp_len · u32 crc32 · frame`.
+    def _compressed(plain_len, checksum, frame, comp_len=None, version=4):
+        """A payload that *claims* to be a compressed frame, v4 unless said otherwise:
+        `u8 version · u8 FLAG_COMPRESSED · u32 plain_len · u32 comp_len · u32 crc32 · frame`.
 
         `comp_len` defaults to the frame's real length, so a caller that wants
         to corrupt one field corrupts only that one. Lying about it instead is
@@ -64,7 +66,7 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
         bytes and rejects anything after them."""
         if comp_len is None:
             comp_len = len(frame)
-        return (b"\x03\x01"
+        return (bytes([version, 1])
                 + plain_len.to_bytes(4, "little")
                 + comp_len.to_bytes(4, "little")
                 + checksum.to_bytes(4, "little")
@@ -98,9 +100,9 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
 
         # 2 is the interesting one: it is what every shipped C engine writes,
         # so this is the exact payload a mixed-version pair produces.
-        for version in (2, 4, 0, 255, 1):
+        for version in (2, 5, 0, 255, 1):
             msg = self._refused(
-                # a body that would be a well-formed record at v3, so the
+                # a body that would be a well-formed record at v4, so the
                 # refusal is the version byte and nothing else
                 self._framed(version, 0, b"\x03\x00\x00\x00\x01\x00\x00\x00"),
                 f"a version-{version} buffer")
@@ -150,18 +152,26 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
             g.ro_query("CALL db.labels() YIELD label RETURN label ORDER BY label"
                        ).result_set, [['Anchor'], ['Injected']])
 
-        # And now the same shape at a version this build cannot read. Id 2 this
-        # time, since 'Injected' took 1.
+        # v4, the version this build writes, is accepted the same way.
+        self.env.assertEqual(
+            self.master.execute_command(
+                "GRAPH.EFFECT", key, b"\x04\x00" + self._add_schema_record(2, "InjectedV4")),
+            "OK")
+
+        # And now the same shape at a version this build cannot read. Id 3 this
+        # time, since 'InjectedV4' took 2. 5 is the interesting one: it is what
+        # a build newer than this one would send, and what this build's own
+        # predecessor (which reads only 3) answers to the 4 this one sends.
         full_before = self.master.info()["sync_full"]
-        for version in (2, 4):
+        for version in (2, 5):
             self._refused(
-                bytes([version, 0]) + self._add_schema_record(2, f"Future{version}"),
+                bytes([version, 0]) + self._add_schema_record(3, f"Future{version}"),
                 f"a valid record announced as version {version}", key=key)
 
         # Nothing was applied — the assertion a wrong error message cannot make.
         self.env.assertEqual(
             g.ro_query("CALL db.labels() YIELD label RETURN label ORDER BY label"
-                       ).result_set, [['Anchor'], ['Injected']])
+                       ).result_set, [['Anchor'], ['Injected'], ['InjectedV4']])
         self._still_healthy(full_before)
 
     def test03_a_flags_bit_this_build_does_not_know_is_refused(self):
@@ -173,7 +183,7 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
         # of a payload whose framing it does not understand.
         for flags in (0x02, 0x04, 0x80, 0xff):
             msg = self._refused(
-                self._framed(3, flags, b"\x03\x00\x00\x00\x01\x00\x00\x00"),
+                self._framed(4, flags, b"\x03\x00\x00\x00\x01\x00\x00\x00"),
                 f"a buffer with flags 0x{flags:02x}")
             self.env.assertContains("flag", msg.lower())
 
@@ -190,6 +200,9 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
         # "reject short buffers" from breaking every write that changed
         # nothing.
         self._refused(self._framed(3, 0)[:1], "a one-byte buffer")
+        self.env.assertEqual(
+            self.master.execute_command("GRAPH.EFFECT", self.GRAPH_ID, b"\x04\x00"),
+            "OK")
         self.env.assertEqual(
             self.master.execute_command("GRAPH.EFFECT", self.GRAPH_ID, b"\x03\x00"),
             "OK")
@@ -244,6 +257,29 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
 
         self._still_healthy(full_before)
         self.assert_agree("MATCH (n:U) RETURN count(n), sum(n.v)", [[2, 3]])
+
+    def test06b_a_valid_compressed_frame_applies_in_both_readable_versions(self):
+        # What the refusals above are the negative of: a well-formed compressed
+        # payload is applied, as v4 and as v3, the version an older primary
+        # still sends. Without the v3 half, a decompression regression in the
+        # legacy path would pass every test here.
+        self.set_effects_config()
+        key = "effects_unreadable_compressed"
+        g = Graph(self.master, key)
+        g.query("CREATE (:Anchor)")
+        self.wait_for_replica_offset()
+        for version, label_id in ((3, 1), (4, 2)):
+            plain = self._add_schema_record(label_id, f"Packed{version}")
+            frame = zstd_raw_frame(plain)
+            crc = zlib.crc32(plain)
+            self.env.assertEqual(
+                self.master.execute_command(
+                    "GRAPH.EFFECT", key,
+                    self._compressed(len(plain), crc, frame, version=version)),
+                "OK")
+        self.env.assertEqual(
+            g.ro_query("CALL db.labels() YIELD label RETURN label ORDER BY label"
+                       ).result_set, [['Anchor'], ['Packed3'], ['Packed4']])
 
     def test07_a_client_cannot_send_an_effect_to_a_replica_at_all(self):
         # The whole reason `is_replayed` can afford to be lenient: reaching a
@@ -301,13 +337,13 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
 
         huge = [(1 << 60) - 1, 1 << 60, 1 << 61, (1 << 64) - 2, (1 << 64) - 1]
         for id in huge:
-            msg = self._refused(b"\x03\x00" + self._create_node_record(id),
+            msg = self._refused(b"\x04\x00" + self._create_node_record(id),
                                 f"a node with id {id}", key)
             self.env.assertContains("past the end of the id space", msg)
             # `R` is relationship type 0, and nodes 0 and 1 exist, so the
             # edge id is the only thing wrong with this record.
             msg = self._refused(
-                b"\x03\x00" + self._create_edge_record(id, 0, 0, 1),
+                b"\x04\x00" + self._create_edge_record(id, 0, 0, 1),
                 f"an edge with id {id}", key)
             self.env.assertContains("past the end of the id space", msg)
 
@@ -341,13 +377,13 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
         node = (b"\x03\x00\x00\x00" + b"\x03\x00\x00\x00"   # opcode, count 3
                 + b"\x00\x00" + b"\x00\x00"                 # no labels, no attrs
                 + self._id_list(2, 3, 2))
-        msg = self._refused(b"\x03\x00" + node, "a node id repeated", key)
+        msg = self._refused(b"\x04\x00" + node, "a node id repeated", key)
         self.env.assertContains("distinct", msg)
 
         edge = (b"\x04\x00\x00\x00" + b"\x02\x00\x00\x00"   # opcode, count 2
                 + b"\x00\x00\x00\x00" + b"\x00\x00"         # type R, no attrs
                 + self._id_list(1, 1) + self._id_list(0, 0) + self._id_list(1, 1))
-        msg = self._refused(b"\x03\x00" + edge, "an edge id repeated", key)
+        msg = self._refused(b"\x04\x00" + edge, "an edge id repeated", key)
         self.env.assertContains("distinct", msg)
 
         self._still_healthy(full_before)

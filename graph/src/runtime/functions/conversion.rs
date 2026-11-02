@@ -139,7 +139,7 @@ pub fn register(funcs: &mut Functions) {
                 Some(&Value::Datetime(ts)) => Ok(Value::String(Arc::new(Value::format_datetime(ts)))),
                 Some(&Value::Date(ts)) => Ok(Value::String(Arc::new(Value::format_date(ts)))),
                 Some(&Value::Time(ts)) => Ok(Value::String(Arc::new(Value::format_time(ts)))),
-                Some(&Value::Duration(dur)) => Ok(Value::String(Arc::new(Value::format_duration(dur)))),
+                Some(Value::Duration(dur)) => Ok(Value::String(Arc::new(Value::format_duration(dur)))),
                 Some(_) => Ok(Value::Null),
                 None => unreachable!(),
             }

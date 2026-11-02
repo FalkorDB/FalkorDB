@@ -69,7 +69,7 @@ use parking_lot::Mutex;
 
 use crate::graph::graphblas::{
     lagraph_bindings::{LAGraph_Finalize, LAGraph_Init},
-    serialization::{Decode, Encode, Reader, Writer},
+    serialization::{Decode, ENCODING_VERSION, Encode, Reader, Writer},
 };
 
 /// Size of the `GxB_Container_struct` in bytes.
@@ -440,7 +440,7 @@ unsafe fn pin_sparse(m: GrB_Matrix) {
     debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 }
 
-impl<T> Decode<19> for Matrix<T> {
+impl<T> Decode<{ ENCODING_VERSION }> for Matrix<T> {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let container_bytes = r.read_buffer()?;
 
@@ -520,7 +520,7 @@ impl<T> Decode<19> for Matrix<T> {
     }
 }
 
-impl<T> Encode<19> for Matrix<T> {
+impl<T> Encode<{ ENCODING_VERSION }> for Matrix<T> {
     fn encode(
         &self,
         w: &mut dyn Writer,
