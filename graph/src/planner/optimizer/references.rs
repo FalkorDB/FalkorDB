@@ -249,6 +249,7 @@ mod tests {
     ) -> QueryExpr<Variable> {
         Arc::new(DynTree::new(ExprIR::Variable(Variable {
             name: None,
+            anon: None,
             id,
             scope_id,
             ty: Type::Any,
