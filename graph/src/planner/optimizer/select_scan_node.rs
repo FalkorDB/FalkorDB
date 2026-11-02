@@ -389,7 +389,7 @@ fn swap_relationship(
 }
 
 /// Adds the `(id, scope_id)` of the variables a projection or a known
-/// `Argument` writes, and nothing it merely reads: a copy `(new, old)` writes
+/// `Argument` writes, and nothing it merely reads: a copy `(old, new)` writes
 /// `new`, and an aggregation writes its `names` and the `new` of its
 /// projections. The one list [`collect_output_pairs`] and
 /// [`collect_output_aliases`] both start from, so they cannot disagree about
@@ -401,13 +401,13 @@ fn projected_outputs(
     match ir {
         IR::Project { exprs, copies } => {
             out.extend(exprs.iter().map(|(v, _)| (v.id, v.scope_id)));
-            out.extend(copies.iter().map(|(new, _)| (new.id, new.scope_id)));
+            out.extend(copies.iter().map(|(_, new)| (new.id, new.scope_id)));
         }
         IR::Aggregate {
             names, projections, ..
         } => {
             out.extend(names.iter().map(|v| (v.id, v.scope_id)));
-            out.extend(projections.iter().map(|(new, _)| (new.id, new.scope_id)));
+            out.extend(projections.iter().map(|(_, new)| (new.id, new.scope_id)));
         }
         IR::Argument(Some(vars)) => out.extend(vars.iter().copied()),
         _ => {}
@@ -426,10 +426,10 @@ fn collect_output_pairs(
     projected_outputs(ir, out);
     match ir {
         IR::Project { copies, .. } => {
-            out.extend(copies.iter().map(|(_, old)| (old.id, old.scope_id)));
+            out.extend(copies.iter().map(|(old, _)| (old.id, old.scope_id)));
         }
         IR::Aggregate { projections, .. } => {
-            out.extend(projections.iter().map(|(_, old)| (old.id, old.scope_id)));
+            out.extend(projections.iter().map(|(old, _)| (old.id, old.scope_id)));
         }
         _ => {}
     }
@@ -1491,21 +1491,21 @@ mod tests {
     }
 
     /// The variables a projection writes are the ones a traverse above it can
-    /// start from. A copy is `(new, old)` and an aggregation carries its copies
+    /// start from. A copy is `(old, new)` and an aggregation carries its copies
     /// too; both helpers must report the `new` end, whatever the operator.
     #[test]
     fn output_aliases_cover_copies_of_projections_and_aggregations() {
         let (new, old) = (var(7, 1), var(3, 0));
         let project = IR::Project {
             exprs: vec![],
-            copies: vec![(new.clone(), old.clone())],
+            copies: vec![(old.clone(), new.clone())],
         };
         assert!(collect_output_aliases(&project).contains(&new.id));
         let aggregate = IR::Aggregate {
             names: vec![var(9, 1)],
             keys: vec![],
             aggregations: vec![],
-            projections: vec![(new.clone(), old.clone())],
+            projections: vec![(old.clone(), new.clone())],
         };
         let aliases = collect_output_aliases(&aggregate);
         assert!(aliases.contains(&new.id), "copy through an aggregation");

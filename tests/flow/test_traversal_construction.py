@@ -596,7 +596,10 @@ class testTraversalConstruction():
         self.env.assertContains("Node By Index Scan | (d:Doc)", str(g.explain(q)))
         self.env.assertEqual(g.query(q).result_set, [[8]], message=q)
         q = "WITH 3 AS pid MATCH (d:Doc {id: pid})-[r:LINK]->() RETURN count(r)"
-        self.env.assertContains("Node By Index Scan | (d:Doc)", str(g.explain(q)))
+        plan = str(g.explain(q))
+        self.env.assertContains("Node By Index Scan | (d:Doc)", plan)
+        # one scan of d, and none under the traverse for the bound pid
+        self.env.assertEqual(plan.count("Scan"), 1, message=plan)
         self.env.assertEqual(g.query(q).result_set, [[4]])
 
         # No predicate: still one scan of the labelled start per row, so the
