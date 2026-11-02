@@ -2083,6 +2083,33 @@ def test_call_optional_match_filter_wrapped_aggregate_inherits_only_outputs():
     assert res.result_set == [[3]]
 
 
+def test_call_optional_match_filter_after_pattern_predicate():
+    """A pattern predicate (SemiApply / AntiSemiApply) in the left branch
+    contributes only its input's variables; its existence sub-plan's anonymous
+    entities must not pass for the body's variables (#2728)."""
+    query(
+        "CREATE (a:A:B {id: 1})-[:R]->(:A:B {id: 2}), (:A:B {id: 3})", write=True
+    )
+
+    for pred in ["(x)-[:R]->()", "NOT (x)-[:R]->()", "(x)-[:R]->(:B) OR x.id > 2"]:
+        res = query(
+            f"MATCH (x:A:B) WHERE {pred} CALL {{ OPTIONAL MATCH (n:A:B {{id: 3}})"
+            " RETURN n.id AS nid } RETURN x.id, nid ORDER BY x.id"
+        )
+        expected = {
+            "(x)-[:R]->()": [[1, 3]],
+            "NOT (x)-[:R]->()": [[2, 3], [3, 3]],
+            "(x)-[:R]->(:B) OR x.id > 2": [[1, 3], [3, 3]],
+        }[pred]
+        assert res.result_set == expected
+
+        res = query(
+            f"MATCH (x:A:B) WHERE {pred} OPTIONAL MATCH (n:A:B) WHERE n.id = 3"
+            " RETURN x.id, n.id ORDER BY x.id"
+        )
+        assert res.result_set == [[r[0], 3] for r in expected]
+
+
 def test_union_branch_optional_match_filter_keeps_anonymous_scan():
     """A `WHERE` on an OPTIONAL MATCH inside a UNION branch of a CALL {} stays
     above the anonymous node's scan: the branch's `_anon_0` shares its id with
