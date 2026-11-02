@@ -304,7 +304,20 @@ fn float_to_string(f: f64) -> String {
     if !f.is_finite() {
         return format!("{f}");
     }
-    let sci = format!("{f:e}");
+    let mut sci = format!("{f:e}");
+    // Rust's shortest formatter breaks an exact decimal tie toward the larger
+    // digit; Java picks the even one. The correctly rounded value at the same
+    // digit count (round-half-even on the exact binary value) is the closest
+    // candidate, so use it whenever it still round-trips.
+    let digits = sci
+        .split_once('e')
+        .map_or(0, |(m, _)| m.bytes().filter(u8::is_ascii_digit).count());
+    if digits > 1 {
+        let exact = format!("{f:.prec$e}", prec = digits - 1);
+        if exact.parse::<f64>() == Ok(f) {
+            sci = exact;
+        }
+    }
     let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
     if mantissa.contains('.') {
         return format!("{mantissa}E{exp}");
@@ -341,6 +354,8 @@ mod float_to_string_tests {
             (0.001, "0.001"),
             (1e-4, "1.0E-4"),
             (1e-7, "1.0E-7"),
+            // An exact decimal tie: Java picks the even last digit.
+            (562949953421312.25, "5.629499534213122E14"),
             (1.25e-5, "1.25E-5"),
             (5e-324, "4.9E-324"),
             (1e-323, "9.9E-324"),
