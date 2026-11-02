@@ -86,6 +86,9 @@ struct Scope {
     names: HashMap<Arc<String>, Variable>,
     /// Variables whose ids stay taken but that no name reaches.
     reserved: Vec<Variable>,
+    /// The ids in `reserved`, so a variable is never listed twice: an id is
+    /// one slot, and a second entry would take a second id for nothing.
+    reserved_ids: HashSet<u32>,
 }
 
 impl Scope {
@@ -94,12 +97,40 @@ impl Scope {
         self.names.len() + self.reserved.len()
     }
 
-    /// Keeps `var`'s id taken without making it reachable by name.
+    /// Keeps `var`'s id taken without making it reachable by name. A variable
+    /// already reserved (a list comprehension's loop variable that a nested
+    /// pattern comprehension briefly put back under its name, say) is not
+    /// listed again.
     fn reserve(
         &mut self,
         var: Variable,
     ) {
-        self.reserved.push(var);
+        if self.reserved_ids.insert(var.id) {
+            self.reserved.push(var);
+        }
+    }
+
+    /// Takes the variable with this id out of the reserved list.
+    fn unreserve(
+        &mut self,
+        id: u32,
+    ) {
+        if self.reserved_ids.remove(&id) {
+            self.reserved.retain(|r| r.id != id);
+        }
+    }
+
+    /// Puts `var` under `name` so a nested pattern can resolve it, taking it
+    /// out of the reserved list for as long as it is named: an id is one slot,
+    /// and listing the variable twice would count it twice in [`Self::len`].
+    /// [`Binder::hide_names`] reserves it again.
+    fn lift(
+        &mut self,
+        name: Arc<String>,
+        var: Variable,
+    ) {
+        self.unreserve(var.id);
+        self.names.insert(name, var);
     }
 
     /// Every variable of the scope, named or not.
@@ -328,7 +359,53 @@ impl Binder {
         let scope = self.current_env_mut();
         for name in names {
             if let Some(var) = scope.names.remove(&name) {
-                scope.reserved.push(var);
+                scope.reserve(var);
+            }
+        }
+    }
+
+    /// Makes the enclosing comprehensions' variables resolvable by name while a
+    /// nested pattern is bound, and returns what they replaced.
+    ///
+    /// A variable of the scope with the same name is shadowed, not lost: its
+    /// slot is still taken, and after the pattern the name means it again
+    /// ([`Self::restore_shadowed`]).
+    fn lift_locals(
+        &mut self,
+        locals: &[HashMap<Arc<String>, Variable>],
+    ) -> Vec<(Arc<String>, Option<Variable>)> {
+        let mut shadowed = Vec::new();
+        for scope in locals {
+            for (name, var) in scope {
+                let previous = self.current_env().get(name).cloned();
+                if let Some(previous) = &previous {
+                    // Still a live variable: keep its slot taken while its name
+                    // points at the local.
+                    self.current_env_mut().reserve(previous.clone());
+                }
+                self.current_env_mut().lift(name.clone(), var.clone());
+                shadowed.push((name.clone(), previous));
+            }
+        }
+        shadowed
+    }
+
+    /// Undoes [`Self::lift_locals`], after [`Self::hide_names_except`] has
+    /// hidden the pattern's own aliases: a lifted variable that still sits
+    /// under a name (because the scope had a variable of that name) goes back
+    /// to the reserved list, and the variable it shadowed gets its name back.
+    fn restore_shadowed(
+        &mut self,
+        shadowed: Vec<(Arc<String>, Option<Variable>)>,
+    ) {
+        for (name, previous) in shadowed.into_iter().rev() {
+            let scope = self.current_env_mut();
+            if let Some(lifted) = scope.names.remove(&name) {
+                scope.reserve(lifted);
+            }
+            if let Some(previous) = previous {
+                scope.unreserve(previous.id);
+                scope.names.insert(name, previous);
             }
         }
     }
@@ -735,14 +812,13 @@ impl Binder {
                         }
                     } else {
                         // Create a variable with the original name (for procedure map lookup)
-                        // but store it in scope under a `_`-prefixed key so RETURN * doesn't see it.
+                        // but reserve it nameless, so no alias reaches it and RETURN * doesn't see it.
                         let var = self.fresh_var(
                             Some(name.clone()),
                             Type::Any,
                             self.env_stack.len() as u32 - 1,
                         );
-                        let hidden_name = Arc::new(format!("_hidden_{}_{name}", var.id));
-                        self.current_env_mut().insert(hidden_name, var.clone());
+                        self.current_env_mut().reserve(var.clone());
                         bound_vars.push(var);
                         bound_aliases.push(None);
                     }
@@ -1979,11 +2055,7 @@ impl Binder {
                 // Temporarily inject local comprehension variables into
                 // the current env so bind_graph can resolve them (e.g.
                 // a list comprehension variable used in the pattern).
-                for scope in locals.iter() {
-                    for (name, var) in scope {
-                        self.current_env_mut().insert(name.clone(), var.clone());
-                    }
-                }
+                let shadowed = self.lift_locals(locals);
 
                 // bind_graph uses define_name_in_scope which reuses
                 // outer-scope variables (e.g. 'n' from MATCH) and creates
@@ -2000,6 +2072,7 @@ impl Binder {
                 // fresh and their IDs must be visible to scope_vars so the planner
                 // can avoid ID collisions.
                 self.hide_names_except(&outer_scope_names);
+                self.restore_shadowed(shadowed);
 
                 let mut new_tree =
                     DynTree::new(ExprIR::PatternComprehension(Box::new(bound_graph)));
@@ -2161,11 +2234,7 @@ impl Binder {
 
                         // Temporarily inject local comprehension variables into
                         // the current env so bind_graph can resolve them.
-                        for scope in locals.iter() {
-                            for (name, var) in scope {
-                                self.current_env_mut().insert(name.clone(), var.clone());
-                            }
-                        }
+                        let shadowed = self.lift_locals(locals);
 
                         // Save node_labels so labels from pattern predicates
                         // (e.g. in WHERE clause OR branches) don't leak into
@@ -2178,6 +2247,7 @@ impl Binder {
                         // the outer scope.  Keep anonymous variables (_anon_*)
                         // since their IDs must remain visible in scope_vars.
                         self.hide_names_except(&outer_scope_names);
+                        self.restore_shadowed(shadowed);
 
                         ExprIR::Pattern(Box::new(result?))
                     }
@@ -2801,6 +2871,54 @@ mod tests {
         let raw = parser.parse().expect("parse");
         let (ir, _) = Binder::default().bind(raw).expect("bind");
         format!("{ir:?}")
+    }
+
+    /// Every scope table lists each variable once, ids dense from 0: the
+    /// planner mints ids as the table's length, so a variable listed twice
+    /// wastes ids and, nested, made the table grow with every level.
+    #[test]
+    fn scope_tables_list_each_variable_once() {
+        let _ = crate::runtime::functions::init_functions();
+        let nested = |depth: usize| {
+            let mut q = String::from("MATCH (n) RETURN ");
+            for i in 0..depth {
+                q.push_str(&format!("[x{i} IN [1] | "));
+            }
+            q.push_str("[(x0)-->(y) | y]");
+            q.push_str(&"]".repeat(depth));
+            q
+        };
+        let foreach = format!(
+            "MATCH (n) WITH n.v AS k WHERE n.v >= 0 {} RETURN k",
+            (0..40)
+                .map(|i| format!("FOREACH (i{i} IN [1] | CREATE (:T {{x: i{i}}}))"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let queries = [
+            "RETURN CASE WHEN [()-[]-() | 1] THEN [()-[]-() | 0] END AS v3".to_string(),
+            "RETURN [x IN [1] | [(x)-->(y) | y]]".to_string(),
+            // a comprehension variable shadowing a variable of the scope
+            "MATCH x=(a) RETURN [x IN nodes(x) | [e IN range(1, 2) | size(({v: 1})-[]->(x))]]"
+                .to_string(),
+            nested(2),
+            nested(8),
+            "MATCH (n) WHERE all(x IN [1] WHERE (n)-->(:A)) RETURN n".to_string(),
+            "MATCH (n) WITH n.v AS k WHERE n.v >= 0 RETURN k, [(n)-->(m) | m]".to_string(),
+            "MATCH (n) RETURN reduce(a = 0, i IN [1] | a + size([(n)-->(m) | m]))".to_string(),
+            foreach,
+        ];
+        for q in queries {
+            let mut parser = Parser::new(&q);
+            parser.parse_parameters().expect("parse parameters");
+            let raw = parser.parse().expect("parse");
+            let (_, scope_vars) = Binder::default().bind(raw).expect("bind");
+            for (scope, vars) in scope_vars.iter().enumerate() {
+                let ids: Vec<u32> = vars.iter().map(|v| v.id).collect();
+                let dense: Vec<u32> = (0..vars.len() as u32).collect();
+                assert_eq!(ids, dense, "scope {scope} of {q}");
+            }
+        }
     }
 
     /// Parentheses group the parse; once bound, `(x)` is the same tree as
