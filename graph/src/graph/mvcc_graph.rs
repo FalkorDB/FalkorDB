@@ -207,6 +207,10 @@ impl MvccGraph {
     ///
     /// [`CommitError::Stale`] if `new_graph` no longer extends the published
     /// graph, [`CommitError::Invalid`] if [`Graph::validate`] refuses it.
+    /// Also [`CommitError::Stale`], in a release build, for a fork indexer
+    /// batches overtook that was not rebased onto them
+    /// ([`Self::rebase_onto_indexer_batches`]), which is a bug a debug build
+    /// stops on.
     pub fn commit(
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
@@ -272,6 +276,22 @@ impl MvccGraph {
         // onto the published one, at its data version ([`Graph::indexer_fit`]): only a writer's
         // can be stale.
         if writer && self.is_stale(&new_graph) {
+            return Err(CommitError::Stale);
+        }
+        // A writer that forked before an indexer batch was published is rebased onto it as it
+        // escalates ([`Self::rebase_onto_indexer_batches`]); published as it is, its fork would
+        // take the batch's progress back. Only a writer that forks without the write lock can be
+        // overtaken, and its escalation rebases it: a fork that was not rebased is a bug, which a
+        // debug build stops on.
+        #[cfg(feature = "index-falkordb")]
+        if writer
+            && new_graph
+                .borrow()
+                .overtaken_by_indexer_batches(&self.graph.borrow())
+        {
+            if cfg!(debug_assertions) {
+                panic!("a writer commits a fork that indexer batches overtook");
+            }
             return Err(CommitError::Stale);
         }
         debug_assert!(writer || self.graph.borrow().version == new_graph.borrow().version);

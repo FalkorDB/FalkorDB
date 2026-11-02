@@ -1804,6 +1804,37 @@ fn a_borrowed_fork_to_rebase_stops_a_debug_build() {
     let _ = escalate(&mvcc, &fork);
 }
 
+/// A writer's commit refuses a fork an indexer batch overtook that was not rebased onto it:
+/// published as it is, the fork would take the batch's progress back. The host's escalation
+/// rebases every such fork, so one that was not is a bug: a debug build stops on it, and a release
+/// build refuses it as stale. Either way nothing is published.
+#[test]
+fn a_writer_commit_without_its_rebase_is_refused() {
+    let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let fork = mvcc.fork();
+    set_attr(&mut fork.borrow_mut(), ids[0], &attr, Value::Int(15));
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    mvcc.commit_indexer_batch(&prepared, &batch)
+        .expect("the batch commits");
+    let before = mvcc.read();
+
+    let committed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mvcc.commit(fork)));
+    if cfg!(debug_assertions) {
+        let stop = committed.expect_err("a debug build stops");
+        assert_eq!(
+            stop.downcast_ref::<&str>(),
+            Some(&"a writer commits a fork that indexer batches overtook")
+        );
+    } else {
+        assert_eq!(
+            committed.expect("a release build refuses"),
+            Err(CommitError::Stale)
+        );
+    }
+    assert!(Arc::ptr_eq(&mvcc.read(), &before), "nothing published");
+}
+
 /// A writer whose fork an indexer batch overtook on a `Building` column rebases onto it as it
 /// escalates, and commits over it: the column keeps the batch's progress, and the writer's changes
 /// below its cursor are in it.
