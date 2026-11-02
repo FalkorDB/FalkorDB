@@ -455,6 +455,11 @@ class testWithClause(FlowTestsBase):
             ]:
                 self.env.assertEqual(g.query(q).result_set, [[1], [2], [5]], message=q)
 
+            # A name a WHERE read from before the projection is not visible to
+            # the next clause: `n` in the MATCH is a new node (5 rows x 1 :S edge).
+            q = "MATCH (n:L) WITH n.id AS k WHERE n.id > 0 MATCH (n)-[:S]->(z) RETURN count(*)"
+            self.env.assertEqual(g.query(q).result_set, [[5]], message=q)
+
             # The name the predicate used does not become a projected column.
             res = g.query("MATCH (n:L) WITH n.id AS k WHERE (n)-[:R]->() RETURN *")
             self.env.assertEqual(res.header[0][1], "k")

@@ -1268,9 +1268,8 @@ impl Binder {
             .filter(|name| !env_keys_before_filter.contains(*name))
             .cloned()
             .collect();
-        for key in &filter_only_keys {
-            self.current_env_mut().remove(key);
-        }
+        // Re-keyed, not dropped: a fresh variable's id is the table's size.
+        self.hide_names(&filter_only_keys);
 
         let copy_from_parent = self
             .copy_from_parent
@@ -2222,11 +2221,13 @@ impl Binder {
             let Some(var) = self.current_env_mut().remove(name) else {
                 continue;
             };
-            let mut key = format!("_slot_hidden_{name}_{}", var.id);
+            // The lexer never yields a name containing a backtick, so no query
+            // can spell this key. The leading `_` keeps it out of `RETURN *`.
+            let mut key = format!("_slot_hidden`{name}`{}", var.id);
             let mut n = 0;
             while self.current_env().contains_key(&key) {
                 n += 1;
-                key = format!("_slot_hidden_{name}_{}_{n}", var.id);
+                key = format!("_slot_hidden`{name}`{}`{n}", var.id);
             }
             self.current_env_mut().insert(Arc::new(key), var);
         }
