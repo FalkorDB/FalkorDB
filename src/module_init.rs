@@ -653,9 +653,6 @@ unsafe extern "C" fn on_swapdb(
     swap_graph_dbs(info.dbnum_first, info.dbnum_second);
 }
 
-/// Tracks the old key name during a two-phase RENAME notification.
-static RENAME_OLD_NAME: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
-
 /// Keyspace event callback for handling graph key renames.
 /// Redis RENAME fires two sequential events on the same thread:
 /// 1. `rename_from` with the old key name
@@ -683,9 +680,14 @@ unsafe extern "C" fn on_keyspace_event(
     let key_name = String::from_utf8_lossy(key_bytes);
 
     match event_str {
-        "rename_from" => {
-            // The old name, for the telemetry stream named after it below.
-            *RENAME_OLD_NAME.lock() = Some(key_name.to_string());
+        // Nothing to do on `rename_from`: the old name comes from the registry entry
+        // `rename_to` finds by the renamed value, exact where the key name is lossy.
+        "rename_from" | "move_from" => {
+            // (`move_from`: the event reaches every key that moves, and whether the key
+            // is a graph is decided by its value, which `move_to` can open. Matching
+            // `key_name` against the registry here compared two lossy renderings, so a
+            // plain key whose lossy name equalled a graph's — `b"g\xff"` and the graph
+            // `g\u{fffd}` — deleted that graph's telemetry stream.)
         }
         "rename_to" => {
             // Keys, not names: the registry entry is the module's record of where
@@ -694,22 +696,14 @@ unsafe extern "C" fn on_keyspace_event(
             // they find there — so it has to follow the key bytes Redis itself
             // now holds. Found through the value now at the new key, which is
             // exact even when another database holds a graph of the old name.
-            unsafe { relocate_graph_at_key(ctx, key, &key_name) };
-            let old = RENAME_OLD_NAME.lock().take();
-            if let Some(old_name) = old {
-                let context = Context::new(ctx);
-                // The stream, in contrast, is named after the *graph*, and
-                // `telemetry::stream_name` truncates to it.
-                telemetry::delete_stream(&context, &old_name);
+            //
+            // The stream, in contrast, is named after the *graph*, and
+            // `telemetry::stream_name` truncates to it. Only a graph has one: the event
+            // reaches every key that is renamed, and `telemetry{k}` of a plain key `k`
+            // is nobody's history.
+            if let Some((_, old_name)) = unsafe { relocate_graph_at_key(ctx, key, &key_name) } {
+                telemetry::delete_stream(&Context::new(ctx), &old_name);
             }
-        }
-        "move_from" => {
-            // Nothing to do here: the event reaches every key that moves, and
-            // whether the key is a graph is decided by its value, which `move_to`
-            // can open. Matching `key_name` against the registry here compared two
-            // lossy renderings, so a plain key whose lossy name equalled a graph's
-            // (`b"g\xff"` and `b"g\xfe"` both read `g\u{fffd}`) deleted that graph's
-            // telemetry stream.
         }
         "move_to" => {
             // `ctx` has the destination database selected. A graph that moved

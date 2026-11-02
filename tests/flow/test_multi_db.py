@@ -233,3 +233,23 @@ class testMultiDb():
         self.env.assertEqual(con.move(graph_key, 1), True)
         self.env.assertEqual(con.exists(stream), 0)
         self.assert_alive()
+
+    def test10_rename_of_a_plain_key_leaves_other_keys_alone(self):
+        con = self.con(0)
+        con.set("k", "value")
+        con.set("telemetry{k}", "keep")
+        self.env.assertEqual(con.rename("k", "k2"), True)
+        self.env.assertEqual(con.get("telemetry{k}"), b"keep")
+        self.assert_alive()
+
+    def test11_rename_of_a_graph_takes_its_telemetry_stream(self):
+        self.query(0, "old", "CREATE (:R)")
+        stream = "telemetry{old}"
+        deadline = time.time() + 10
+        while not self.con(0).exists(stream) and time.time() < deadline:
+            time.sleep(0.05)
+        self.env.assertEqual(self.con(0).exists(stream), 1)
+        self.env.assertEqual(self.con(0).rename("old", "new"), True)
+        self.env.assertEqual(self.con(0).exists(stream), 0)
+        self.assert_writable(0, "new", "R")
+        self.assert_alive()
