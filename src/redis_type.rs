@@ -40,7 +40,7 @@
 //!                        Redis invokes `free` callback -> graph_free()
 //! ```
 
-use crate::config::CONFIGURATION_VKEY_MAX_ENTITY_COUNT;
+use crate::config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_VKEY_MAX_ENTITY_COUNT};
 use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, graph_free, register_graph};
 use crate::serializers;
 use crate::serializers::decoder::LoadedKey;
@@ -56,14 +56,21 @@ use redis_module::raw::{
     save_unsigned,
 };
 use redis_module::{
-    REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, native_types::RedisType,
+    Context, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, native_types::RedisType,
 };
 use std::ffi::CString;
 use std::sync::Arc;
 use std::{os::raw::c_void, ptr::null_mut};
 
-/// Default cache size used when loading from RDB (no Redis context available).
-const DEFAULT_CACHE_SIZE: usize = 25;
+/// The configured `CACHE_SIZE`, for a graph an RDB callback is building.
+///
+/// Load callbacks run on the main thread, so the module's GIL-guarded config can
+/// be read through the context Redis attaches to the IO handle.
+unsafe fn io_cache_size(rdb: *mut RedisModuleIO) -> usize {
+    let ctx = unsafe { raw::RedisModule_GetContextFromIO.unwrap()(rdb) };
+    let context = Context::new(ctx);
+    *CONFIGURATION_CACHE_SIZE.lock(&context) as usize
+}
 
 // ---------------------------------------------------------------------------
 // graphdata rdb_load / rdb_save
@@ -94,7 +101,7 @@ unsafe extern "C" fn graph_rdb_load(
     // Get the key name for looking up finalized graphs.
     let key_name = unsafe { io_key_name(rdb) };
 
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, DEFAULT_CACHE_SIZE) {
+    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
         Ok(LoadedKey::Graph(graph)) => {
             // Single-key load (key_count == 1) -- graph is fully loaded.
             let mvcc = MvccGraph::from_graph(*graph);
@@ -138,7 +145,7 @@ unsafe extern "C" fn graph_rdb_load(
 
             // Graph not yet finalized - more keys still need to load.
             // Return a placeholder that will be replaced later.
-            let tg = ThreadedGraph::new(DEFAULT_CACHE_SIZE, "__placeholder__");
+            let tg = ThreadedGraph::new(unsafe { io_cache_size(rdb) }, "__placeholder__");
             let arc = Arc::new(RwLock::new(tg));
 
             // Store an Arc clone keyed by graph name for later finalization.
@@ -421,7 +428,7 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
         let mut vkey_state = VKEY_STATE.lock();
         vkey_state.clear();
 
-        let context = redis_module::Context::new(ctx);
+        let context = Context::new(ctx);
         let vkey_max = *CONFIGURATION_VKEY_MAX_ENTITY_COUNT.lock(&context);
 
         for (graph_name, graph_ref) in &graphs {
@@ -789,19 +796,97 @@ fn uuid_v4() -> String {
         .unwrap_or_default()
         .as_nanos();
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let a = (t as u64) ^ seq;
-    let b = a
+    let [f1, f2, f3, f4, f5] = uuid_fields(t as u64, seq);
+    format!("{f1:08x}-{f2:04x}-4{f3:03x}-{f4:04x}-{f5:012x}")
+}
+
+/// The five printed fields of the name [`uuid_v4`] gives for clock reading `t`
+/// and call number `seq`.
+///
+/// The clock and the counter go in separate fields rather than being mixed:
+/// `t ^ seq` gave two calls the same name whenever the clock moved by exactly
+/// the bits the counter did (`4 ^ 2 == 5 ^ 3`), and the second virtual key then
+/// replaced the first one's slice of the graph. The last 48 bits are `seq` times
+/// an odd constant, a bijection modulo 2^48, so names differ for every call in
+/// a process whatever the clock does; the clock keeps them apart across restarts.
+const fn uuid_fields(
+    t: u64,
+    seq: u64,
+) -> [u64; 5] {
+    let a = t;
+    let b = seq
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
-    format!(
-        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
-        (a >> 32) as u32,
-        (a >> 16) as u16,
-        (a & 0xFFF) as u16,
-        (0x8000 | (b & 0x3FFF)) as u16,
-        b & 0xFFFF_FFFF_FFFF
-    )
+    [
+        a >> 32,
+        (a >> 16) & 0xFFFF,
+        a & 0xFFF,
+        0x8000 | (b & 0x3FFF),
+        b & 0xFFFF_FFFF_FFFF,
+    ]
 }
+
+/// Names must stay distinct, checked at compile time because this crate's unit
+/// tests cannot run outside Redis: its global allocator is Redis's.
+///
+/// Consecutive calls can share a clock reading, so the invariant the fix relies
+/// on is the counter's: the last field must be a bijection of `seq` modulo 2^48.
+/// It is checked by recovering `seq` from that field (`f5 - add` times the
+/// multiplier's inverse) at several clock readings, including counters past
+/// 2^47; an even multiplier, a narrower mask or mixing the clock back in all
+/// break the round trip.
+const _: () = {
+    const fn same_fields(
+        a: [u64; 5],
+        b: [u64; 5],
+    ) -> bool {
+        let mut i = 0;
+        let mut same = true;
+        while i < 5 {
+            same &= a[i] == b[i];
+            i += 1;
+        }
+        same
+    }
+    const MASK: u64 = 0xFFFF_FFFF_FFFF;
+    // The counter field is `seq * MUL + ADD` (mod 2^48): MUL and ADD read back
+    // from `uuid_fields` itself, so the check follows the code.
+    let add = uuid_fields(0, 0)[4];
+    let mul = uuid_fields(0, 1)[4].wrapping_sub(add) & MASK;
+    // Inverse of `mul` modulo 2^64 by Newton's iteration; only exists if odd.
+    let mut inv = mul;
+    let mut k = 0;
+    while k < 6 {
+        inv = inv.wrapping_mul(2u64.wrapping_sub(mul.wrapping_mul(inv)));
+        k += 1;
+    }
+    let clocks = [0u64, 4, 5, 1_700_000_000_000_000_000, u64::MAX];
+    let seqs = [0u64, 1, 2, 3, 1 << 20, (1 << 47) + 1, MASK];
+    let mut c = 0;
+    while c < clocks.len() {
+        let mut s = 0;
+        while s < seqs.len() {
+            let f5 = uuid_fields(clocks[c], seqs[s])[4];
+            assert!(
+                f5.wrapping_sub(add).wrapping_mul(inv) & MASK == seqs[s],
+                "the counter field is not a bijection of seq modulo 2^48"
+            );
+            s += 1;
+        }
+        c += 1;
+    }
+    let t = 1_700_000_000_000_000_000u64;
+    assert!(
+        !same_fields(uuid_fields(t, 0), uuid_fields(t, 1))
+            && !same_fields(uuid_fields(t, 1), uuid_fields(t, 2)),
+        "virtual key names collide for consecutive seq at one clock reading"
+    );
+    // The reported regression pair still differs.
+    assert!(
+        !same_fields(uuid_fields(4, 2), uuid_fields(5, 3)),
+        "virtual key names collide for (t=4, seq=2) and (t=5, seq=3)"
+    );
+};
 
 // ---------------------------------------------------------------------------
 // Type statics
@@ -853,7 +938,7 @@ unsafe extern "C" fn graphmeta_rdb_load(
     _encver: i32,
 ) -> *mut c_void {
     let key_name = unsafe { io_key_name(rdb) };
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, DEFAULT_CACHE_SIZE) {
+    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
         Ok(_) => {
             // Return a non-null dummy value. Redis needs non-null for successful load.
             Box::into_raw(Box::new(0u8)).cast()

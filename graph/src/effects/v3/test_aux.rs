@@ -18,13 +18,13 @@
 
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use crate::effects::DecodeError;
 use crate::effects::v3::{self as v3, EffectEncode, Record, emit::for_each_record, open_payload};
 use crate::graph::graph::Graph;
 use crate::graph::graphblas::test_init::ensure_init;
+use crate::index::index_docs::IndexDocs;
 use crate::runtime::pending::Pending;
 
 // ── graphs ──
@@ -83,8 +83,9 @@ pub(crate) fn live_node(
         cols.push(graph.get_label_id_mut(name).0 as u64);
     }
     if !rows.is_empty() {
-        let mut docs = FxHashMap::default();
+        let mut docs = IndexDocs::default();
         graph.set_nodes_labels_bulk(&rows, &cols, &mut docs, true);
+        graph.apply_index_writes(&mut docs);
     }
 }
 
@@ -103,7 +104,7 @@ pub(crate) fn digest(
     g: &AtomicRefCell<Graph>,
 ) -> Vec<Record> {
     let mut out = Vec::new();
-    for_each_record(p, g, |record| out.push(record));
+    for_each_record(p, &g.borrow(), |record| out.push(record));
     out
 }
 
@@ -114,7 +115,7 @@ pub(crate) fn encode_all(
     g: &AtomicRefCell<Graph>,
     buf: &mut Vec<u8>,
 ) {
-    for_each_record(p, g, |record| record.encode(buf).unwrap());
+    for_each_record(p, &g.borrow(), |record| record.encode(buf).unwrap());
 }
 
 /// Encode, then decode: what a replica would see.

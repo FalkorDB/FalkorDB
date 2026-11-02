@@ -45,6 +45,7 @@
 //! - [`IndexResultsIter`] -- lazy pull-based iterator over C query results.
 
 pub mod falkordb;
+pub mod index_docs;
 pub mod indexer;
 pub mod redisearch;
 pub mod text_index_options;
@@ -1241,11 +1242,11 @@ impl Index {
                             if options.nostem.unwrap_or(false) {
                                 field_options_flag |= RSFLDOPT_TXTNOSTEM;
                             }
-                            // Any non-empty code turns phonetic matching on.
-                            // RediSearch takes a flag, not an algorithm, so
-                            // which code it is cannot reach it — see
-                            // `TextIndexOptions::phonetic`.
-                            if options.phonetic.as_deref().is_some_and(|p| !p.is_empty()) {
+                            // Any code but empty or C's "no" turns phonetic
+                            // matching on. RediSearch takes a flag, not an
+                            // algorithm, so which code it is cannot reach it —
+                            // see `TextIndexOptions::phonetic`.
+                            if options.phonetic_enabled() {
                                 field_options_flag |= RSFLDOPT_TXTPHONETIC;
                             }
                         }
