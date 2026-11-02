@@ -1316,7 +1316,6 @@ impl Pending {
         // states it by id, and so does the cancelled pair the effects carry to
         // the replica. Register it, as C does when the edge is created.
         if !self.cancelled_relationships.is_empty() {
-            let mut g = g.borrow_mut();
             for r in &self.cancelled_relationships {
                 g.get_type_id_mut(&r.type_name);
             }
