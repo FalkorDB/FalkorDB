@@ -710,30 +710,6 @@ impl<'a> Runtime<'a> {
         None
     }
 
-    /// True when a `Limit` sits above `idx` with only streaming operators between
-    /// them (a `Filter` included, unlike [`effective_limit`](Self::effective_limit)),
-    /// so the rows can stop being pulled early. A hint for operators that would
-    /// otherwise materialize a whole input up front; it carries no row count.
-    fn has_streaming_limit_above(
-        &self,
-        idx: NodeIdx<Dyn<IR>>,
-    ) -> bool {
-        let mut cur = idx;
-        while let Some(parent) = self.plan.node(cur).parent() {
-            match parent.data() {
-                IR::Limit(_) => return true,
-                IR::Project { .. }
-                | IR::Skip(_)
-                | IR::Filter(_)
-                | IR::CondTraverse { .. }
-                | IR::ExpandInto { .. } => {}
-                _ => return false,
-            }
-            cur = parent.idx();
-        }
-        false
-    }
-
     /// Walk IR ancestors from `idx` upward to find the effective skip.
     /// Returns 0 if a row-reducing or eager operation is encountered before
     /// a Skip node, or if no Skip ancestor exists.
@@ -1112,7 +1088,7 @@ impl<'a> Runtime<'a> {
                 transposed,
             } => {
                 let child = pop_or_once(&mut children);
-                let limited = self.record_cap(idx).is_some() || self.has_streaming_limit_above(idx);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::EdgeByIndexScan(EdgeByIndexScanOp::new(
                     self,
                     Box::new(child),
@@ -1120,7 +1096,7 @@ impl<'a> Runtime<'a> {
                     query,
                     *transposed,
                     idx,
-                    limited,
+                    record_cap,
                 )))
             }
             IR::CartesianProduct => {

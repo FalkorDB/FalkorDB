@@ -174,14 +174,42 @@ fn indexed_edges<'r>(
     Ok(it)
 }
 
+/// Most hits (both orientations of an undirected pattern counted) a hit cache may
+/// keep. A kept hit costs about 48 bytes (the list plus its place in an endpoint
+/// bucket), so this is some 50 MB; a query with more hits streams the index per
+/// row, as it did before the cache, and its memory stays that of a scan.
+const MAX_CACHED_HITS: usize = 1 << 20;
+
+/// `hits`, oriented as the pattern matches them (an undirected pattern lists an edge
+/// in both orientations, a self-loop once), or `None` when there are more than `max`.
+fn collect_hits(
+    hits: impl Iterator<Item = EdgeHit>,
+    bidirectional: bool,
+    max: usize,
+) -> Option<Vec<EdgeHit>> {
+    let mut all = Vec::new();
+    for (src, dst, edge) in hits {
+        all.push((src, dst, edge));
+        if bidirectional && src != dst {
+            all.push((dst, src, edge));
+        }
+        if all.len() > max {
+            return None;
+        }
+    }
+    Some(all)
+}
+
 /// The hits of a row-invariant index query, kept so each bound input row looks
 /// its endpoint up instead of re-running the index query and filtering every
 /// hit.
 struct HitCache {
     /// True when the index query reads no input row (constants, parameters,
-    /// list/map literals only), so every row asks the index the same question,
-    /// and no downstream LIMIT could stop a streamed scan early.
+    /// list/map literals only), so every row asks the index the same question.
     row_invariant: bool,
+    /// Set once the hits did not fit in [`MAX_CACHED_HITS`]: the operator streams
+    /// the index per row, as before the cache existed.
+    over_budget: std::cell::Cell<bool>,
     /// Input rows that ran the index query with a bound endpoint so far. The
     /// first such row streams (a one-row input pays no setup); the second makes
     /// the hits worth keeping.
@@ -206,7 +234,11 @@ impl HitCache {
         bound_from: Option<NodeId>,
         bound_to: Option<NodeId>,
     ) -> Result<Option<Bucket>, String> {
-        if runtime.write || !self.row_invariant || (bound_from.is_none() && bound_to.is_none()) {
+        if runtime.write
+            || !self.row_invariant
+            || self.over_budget.get()
+            || (bound_from.is_none() && bound_to.is_none())
+        {
             return Ok(None);
         }
         let seen = self.bound_rows.get();
@@ -218,14 +250,18 @@ impl HitCache {
         let bidirectional = self.bidirectional;
         let mut slot = self.hits.borrow_mut();
         if slot.is_none() {
-            let mut all = Vec::new();
             let built = q.take().expect("held until built");
-            for (src, dst, edge) in indexed_edges(runtime, label, all_edges_cache, built)? {
-                all.push((src, dst, edge));
-                if bidirectional && src != dst {
-                    all.push((dst, src, edge));
-                }
-            }
+            let Some(all) = collect_hits(
+                indexed_edges(runtime, label, all_edges_cache, built.clone())?,
+                bidirectional,
+                MAX_CACHED_HITS,
+            ) else {
+                // More hits than the budget: not kept, and the operator goes back to
+                // streaming the index per row, so its memory stays that of a scan.
+                self.over_budget.set(true);
+                *q = Some(built);
+                return Ok(None);
+            };
             *slot = Some(Arc::new(IndexedHits {
                 all,
                 by_from: std::cell::OnceCell::new(),
@@ -299,10 +335,8 @@ impl<'a> EdgeByIndexScanOp<'a> {
         query: &'a IndexQuery<QueryExpr<Variable>>,
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
-        // A LIMIT above (see `Runtime::has_streaming_limit_above`) keeps the index
-        // streaming instead of building the full hit set. The emitter is
-        // uncapped (see below).
-        limited: bool,
+        // Kept in the signature, unused for now: see the emitter below.
+        _record_cap: Option<usize>,
     ) -> Self {
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
         // endpoints; bind it once (via `from`) and skip the `to` column so the
@@ -329,8 +363,9 @@ impl<'a> EdgeByIndexScanOp<'a> {
             transposed,
             all_edges_cache: std::cell::RefCell::new(None),
             hit_cache: HitCache {
-                row_invariant: query_is_row_invariant(query) && !limited,
+                row_invariant: query_is_row_invariant(query),
                 bound_rows: std::cell::Cell::new(0),
+                over_budget: std::cell::Cell::new(false),
                 hits: std::cell::RefCell::new(None),
                 transposed,
                 bidirectional: relationship_pattern.bidirectional,
@@ -680,6 +715,37 @@ mod tests {
                 })
                 .collect(),
         )
+    }
+
+    /// The hit cache keeps at most `max` hits and says so by returning `None`, so a
+    /// query with more hits streams instead of holding them all.
+    #[test]
+    fn collect_hits_respects_its_budget_and_orients_undirected_hits() {
+        let hits = |n: u64| {
+            (0..n).map(|i| {
+                (
+                    NodeId::from(i),
+                    NodeId::from(i + 1),
+                    RelationshipId::from(i),
+                )
+            })
+        };
+        assert_eq!(collect_hits(hits(5), false, 5).map(|v| v.len()), Some(5));
+        assert!(collect_hits(hits(6), false, 5).is_none());
+        // an undirected pattern counts both orientations against the budget
+        assert_eq!(collect_hits(hits(3), true, 6).map(|v| v.len()), Some(6));
+        assert!(collect_hits(hits(4), true, 6).is_none());
+        // a self-loop is one hit
+        let one_loop = std::iter::once((
+            NodeId::from(7u64),
+            NodeId::from(7u64),
+            RelationshipId::from(0u64),
+        ));
+        assert_eq!(collect_hits(one_loop, true, 1).map(|v| v.len()), Some(1));
+        assert_eq!(
+            collect_hits(std::iter::empty(), false, 0).map(|v| v.len()),
+            Some(0)
+        );
     }
 
     /// An `IN` list reaches the index only when it is non-empty and every member is one the index
