@@ -37,6 +37,7 @@ use crate::index::falkordb::{
     falkordb_index::EqualCandidates,
     unique::{ReadOnce, native_unique_query},
 };
+use crate::index::population_hooks;
 #[cfg(not(feature = "index-falkordb"))]
 use crate::index::{
     Index,
@@ -503,6 +504,7 @@ impl IndexDocs {
         // for the published version, where the order has to be the other way round.
         g.commit_index(&mut self.node_adds, &mut self.node_removes);
         g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
+        population_hooks::after_publish();
     }
 }
 

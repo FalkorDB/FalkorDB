@@ -91,6 +91,7 @@ use crate::index::falkordb::{
     graph_writes,
 };
 use crate::index::index_docs::IndexDocs;
+use crate::index::population_hooks;
 use crate::{
     entity_type::EntityType,
     graph::{
@@ -601,7 +602,8 @@ fn populate_index_batch(
 ) {
     spawn(
         move || {
-            const BATCH_SIZE: usize = 10_000;
+            let batch_size = population_hooks::batch_size(10_000);
+            population_hooks::before_batch();
 
             let exhausted;
             let mut next_cursor = cursor;
@@ -659,7 +661,7 @@ fn populate_index_batch(
                 // `(src, dst)` where `src == cursor.row` and
                 // `dst <= within_row_dst` — those were already
                 // processed in a prior batch that ran out of
-                // BATCH_SIZE mid-row. Matches C's `(prev_src, prev_dst)`
+                // the batch size mid-row. Matches C's `(prev_src, prev_dst)`
                 // skip in `_Index_PopulateEdgeIndex`.
                 let ids: Vec<u64>;
                 let edge_triples: Vec<(u64, u64, u64)>;
@@ -672,7 +674,7 @@ fn populate_index_batch(
                                 .get_label_matrix(&label)
                                 .map(|lm| {
                                     lm.iter(cursor.row, u64::MAX)
-                                        .take(BATCH_SIZE)
+                                        .take(batch_size)
                                         .map(|(n, _)| n)
                                         .collect()
                                 })
@@ -705,7 +707,7 @@ fn populate_index_batch(
                                                 _ => true,
                                             }
                                         })
-                                        .take(BATCH_SIZE)
+                                        .take(batch_size)
                                         .collect()
                                 })
                                 .unwrap_or_default();
@@ -801,10 +803,9 @@ fn populate_index_batch(
                 // Release the snapshot before the lock is handed over: while this
                 // batch holds it, the first writer to run would have to copy the
                 // whole bitmap (`Arc::make_mut`) under the write lock.
-                drop(skip);
                 drop(written);
 
-                exhausted = scanned_count < BATCH_SIZE;
+                exhausted = scanned_count < batch_size;
 
                 if !batch.is_empty() {
                     progress += batch.len() as u64;
@@ -813,6 +814,7 @@ fn populate_index_batch(
                     indexer.commit(&mut add_docs, &mut HashMap::new());
                     indexer.update_progress(&label, progress);
                 }
+                population_hooks::after_batch();
 
                 if exhausted {
                     indexer.release_population_ticket(&ticket);

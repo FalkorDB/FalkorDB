@@ -47,6 +47,7 @@
 pub mod falkordb;
 pub mod index_docs;
 pub mod indexer;
+pub mod population_hooks;
 pub mod redisearch;
 pub mod text_index_options;
 pub mod vector_index_options;

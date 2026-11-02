@@ -88,3 +88,6 @@ index-falkordb = ["graph/index-falkordb"]
 # matrix.rs and forwarded by `native-deps prejit`; never enable in shipped builds —
 # the runtime image has no compiler and no on-disk cache.
 prejit_harvest = ["graph/prejit_harvest"]
+# Test-only index population hooks (`GRAPH.DEBUG INDEX_POPULATION ...`); see
+# graph/src/index/population_hooks.rs. Never enable in shipped builds.
+index-population-hooks = ["graph/index-population-hooks"]

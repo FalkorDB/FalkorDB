@@ -14,6 +14,8 @@ pub fn graph_debug(
 
     match subcmd.to_uppercase().as_str() {
         "AUX" => debug_aux(ctx, args_iter),
+        #[cfg(feature = "index-population-hooks")]
+        "INDEX_POPULATION" => debug_index_population(args_iter),
         _ => Err(RedisError::String(format!(
             "Unknown DEBUG subcommand: {subcmd}"
         ))),
@@ -40,4 +42,48 @@ fn debug_aux(
     };
     ctx.replicate_verbatim();
     result
+}
+
+/// `GRAPH.DEBUG INDEX_POPULATION <action> [n]`, only in builds with the
+/// `index-population-hooks` feature (see `graph::index::population_hooks`):
+///
+/// * `BATCH_SIZE n`: entities per population batch (0 restores the default);
+/// * `PAUSE` / `RESUME`: gate population; while paused a batch waits for a token;
+/// * `STEP [n]`: let `n` (default 1) batches through;
+/// * `BATCHES`: batches completed so far;
+/// * `WINDOW n`: arm the next writer: after it publishes its index documents and
+///   before it commits, `n` population batches run (and are waited for, up to
+///   2 s); `WINDOW 0` disarms.
+#[cfg(feature = "index-population-hooks")]
+fn debug_index_population(mut args: impl Iterator<Item = RedisString>) -> RedisResult {
+    use graph::index::population_hooks as hooks;
+
+    let action = args.next_str()?.to_uppercase();
+    let mut number = || -> Result<u64, RedisError> { args.next_u64() };
+    match action.as_str() {
+        "BATCH_SIZE" => {
+            hooks::set_batch_size(number()? as usize);
+            Ok(RedisValue::SimpleStringStatic("OK"))
+        }
+        "PAUSE" => {
+            hooks::set_paused(true);
+            Ok(RedisValue::SimpleStringStatic("OK"))
+        }
+        "RESUME" => {
+            hooks::set_paused(false);
+            Ok(RedisValue::SimpleStringStatic("OK"))
+        }
+        "STEP" => {
+            hooks::step(number().unwrap_or(1));
+            Ok(RedisValue::SimpleStringStatic("OK"))
+        }
+        "BATCHES" => Ok(RedisValue::Integer(hooks::batches_done() as i64)),
+        "WINDOW" => {
+            hooks::set_window_batches(number()?);
+            Ok(RedisValue::SimpleStringStatic("OK"))
+        }
+        _ => Err(RedisError::String(format!(
+            "Unknown INDEX_POPULATION action: {action}"
+        ))),
+    }
 }
