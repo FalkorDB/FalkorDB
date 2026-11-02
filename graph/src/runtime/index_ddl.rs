@@ -68,8 +68,7 @@ pub(crate) fn create_index<'a>(
     // same contract as `CommitOp`.
     runtime.write_escalation().upgrade_to_write()?;
     runtime
-        .g
-        .borrow_mut()
+        .graph_mut()
         .create_index(index_type, entity_type, label, attrs, index_options)?;
     runtime.stats.borrow_mut().indexes_created += attrs.len();
     emit_effect(
@@ -100,8 +99,7 @@ pub(crate) fn drop_index<'a>(
     // See `create_index`: DDL runs in writer mode.
     runtime.write_escalation().upgrade_to_write()?;
     let dropped = runtime
-        .g
-        .borrow_mut()
+        .graph_mut()
         .drop_index(index_type, entity_type, label, attrs)?;
     runtime.stats.borrow_mut().indexes_dropped += dropped;
     emit_effect(runtime, false, label, attrs, index_type, entity_type, None)?;
@@ -129,7 +127,7 @@ fn emit_effect(
     let buf = buf_ref.get_or_insert_with(EffectsBuffer::new);
     buf.build_index(
         &runtime.pending.borrow(),
-        &runtime.g,
+        &runtime.graph(),
         create,
         &AnnouncedIndex {
             entity_type: *entity_type,

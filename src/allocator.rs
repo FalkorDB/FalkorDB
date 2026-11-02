@@ -45,6 +45,10 @@ unsafe impl GlobalAlloc for ThreadCountingAllocator {
         &self,
         layout: Layout,
     ) -> *mut u8 {
+        // Unit tests run outside Redis, where its allocator does not exist.
+        #[cfg(test)]
+        let ptr = unsafe { std::alloc::System.alloc(layout) };
+        #[cfg(not(test))]
         let ptr = unsafe {
             redis_module::alloc::RedisAlloc::alloc(&redis_module::alloc::RedisAlloc, layout)
         };
@@ -63,6 +67,11 @@ unsafe impl GlobalAlloc for ThreadCountingAllocator {
         ptr: *mut u8,
         layout: Layout,
     ) {
+        #[cfg(test)]
+        unsafe {
+            std::alloc::System.dealloc(ptr, layout);
+        };
+        #[cfg(not(test))]
         unsafe {
             redis_module::alloc::RedisAlloc::dealloc(&redis_module::alloc::RedisAlloc, ptr, layout);
         };
