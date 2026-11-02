@@ -368,39 +368,53 @@ class testBFSConcurrentWrites(FlowTestsBase):
 
     def run_readers(self, name, writer, valid, depths):
         """Run `writer(g)` while READERS threads run BFS in a loop; every
-        result must satisfy valid(depth, sorted_nodes)."""
+        result must satisfy valid(depth, sorted_nodes). The writer starts once
+        every reader has completed a BFS, and the reads that began after it
+        started and ended before it finished are counted: the test fails if
+        there were none, so it cannot pass without reader-writer overlap."""
+        ready = threading.Barrier(self.READERS + 1)
+        writing = threading.Event()
         done = threading.Event()
         errors = []
-        counts = [0] * self.READERS
+        overlapped = [0] * self.READERS
 
         def reader(i):
             g = self.db.select_graph(name)
             n = 0
             try:
-                while not done.is_set() or n < 20:
+                while not done.is_set() or n < 5:
                     depth = depths[n % len(depths)]
                     edges = (n // len(depths)) % 2 == 1
+                    began_during = writing.is_set() and not done.is_set()
                     got = sorted(self.reach(g, depth, edges))
                     if not valid(depth, got):
                         errors.append((depth, edges, got[:5], len(got)))
-                        return
+                        break
+                    if began_during and not done.is_set():
+                        overlapped[i] += 1
                     n += 1
+                    if n == 1:
+                        ready.wait(timeout=60)
             except Exception as e:
                 errors.append(repr(e))
-            counts[i] = n
+                ready.abort()
 
         threads = [threading.Thread(target=reader, args=(i,)) for i in range(self.READERS)]
         for t in threads:
             t.start()
         try:
+            ready.wait(timeout=60)
+            writing.set()
             writer(self.db.select_graph(name))
         finally:
             done.set()
             for t in threads:
                 t.join()
         self.env.assertEqual(errors, [])
-        # the readers really ran alongside the writer
-        self.env.assertGreater(sum(counts), 20 * self.READERS - 1)
+        self.env.assertGreaterEqual(min(overlapped), 1,
+                                    message="a reader never ran while the writer did")
+        self.env.assertGreaterEqual(sum(overlapped), 4 * self.READERS,
+                                    message=f"too little overlap: {overlapped}")
 
     def test01_tail_and_bulk_rewrites(self):
         # The writer shrinks and regrows the hub's tail one edge per
