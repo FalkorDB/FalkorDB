@@ -350,6 +350,56 @@ void RdbSaveLabelMatrices_v20
 	}
 }
 
+// a relation flagged multi-edge yet holding no tensor means its matrix's entry
+// count and its edge count statistic disagree; how a graph gets there is not
+// known yet, so log what may help track it down
+static void _LogEmptyTensors
+(
+	const Graph *g,  // graph
+	RelationID r,    // relation
+	GrB_Matrix TM,   // M's tensors
+	GrB_Matrix TDP   // DP's tensors
+) {
+	GrB_Info info;
+
+	GrB_Index tm_nvals;
+	info = GrB_Matrix_nvals (&tm_nvals, TM) ;
+	ASSERT (info == GrB_SUCCESS) ;
+
+	GrB_Index tdp_nvals;
+	info = GrB_Matrix_nvals (&tdp_nvals, TDP) ;
+	ASSERT (info == GrB_SUCCESS) ;
+
+	// tensors found, statistic and matrix are consistent
+	// RedisModule_Log is unset outside of Redis (unit tests)
+	if (tm_nvals + tdp_nvals > 0 || RedisModule_Log == NULL) {
+		return ;
+	}
+
+	Delta_Matrix R = Graph_GetRelationMatrix (g, r, false) ;
+
+	GrB_Index nvals;
+	GrB_Index m_nvals;
+	GrB_Index dp_nvals;
+	GrB_Index dm_nvals;
+
+	info = Delta_Matrix_nvals (&nvals, R) ;
+	ASSERT (info == GrB_SUCCESS) ;
+	info = GrB_Matrix_nvals (&m_nvals, Delta_Matrix_M (R)) ;
+	ASSERT (info == GrB_SUCCESS) ;
+	info = GrB_Matrix_nvals (&dp_nvals, Delta_Matrix_DP (R)) ;
+	ASSERT (info == GrB_SUCCESS) ;
+	info = GrB_Matrix_nvals (&dm_nvals, Delta_Matrix_DM (R)) ;
+	ASSERT (info == GrB_SUCCESS) ;
+
+	RedisModule_Log (NULL, "warning", "relation %d is flagged multi-edge but "
+			"holds no tensor: edge count statistic %llu, matrix entries %llu "
+			"(M %llu, DP %llu, DM %llu)", (int) r,
+			(unsigned long long) Graph_RelationEdgeCount (g, r),
+			(unsigned long long) nvals, (unsigned long long) m_nvals,
+			(unsigned long long) dp_nvals, (unsigned long long) dm_nvals) ;
+}
+
 // encode relationship matrices to rdb
 void RdbSaveRelationMatrices_v20
 (
@@ -380,6 +430,7 @@ void RdbSaveRelationMatrices_v20
 		bool encode_tensors = Graph_RelationshipContainsMultiEdge (g, i) ;
 		if (encode_tensors) {
 			_ExtractTensors (R, &TM, &TDP) ;
+			_LogEmptyTensors (g, i, TM, TDP) ;
 		}
 
 		_Encode_Delta_Matrix (rdb, R, reload) ;
