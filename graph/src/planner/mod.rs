@@ -3337,6 +3337,9 @@ impl Planner {
                         .variables()
                         .any(|v| self.visited.contains(&(v.id, v.scope_id)))
                         || pattern_attrs_read_visited(&pattern, &self.visited);
+                    // Taken before `plan_match` adds the pattern's own variables
+                    // to `visited`: the Argument rows bind only these.
+                    let bound: Vec<(u32, u32)> = self.visited.iter().copied().collect();
                     let match_plan = self.plan_match(&pattern, filter);
                     // If all pattern variables are already bound, we need
                     // Apply so each incoming row feeds the inner plan via
@@ -3348,9 +3351,15 @@ impl Planner {
                     // otherwise make the earlier clause one more Cartesian
                     // Product branch, and the components would rebind that
                     // variable on their own instead of reading it.
+                    //
+                    // Passing the bound variables lets the scan-selection pass see
+                    // that a component sharing none of them is uncorrelated and
+                    // needs a scan of its own, instead of expanding from the
+                    // Argument row over every edge of its type.
                     if all_visited || (any_visited && Self::joins_components(&match_plan)) {
                         let mut inner = match_plan;
-                        Self::add_argument_to_leaves(&mut inner, None);
+                        let argument_vars = if all_visited { None } else { Some(bound) };
+                        Self::add_argument_to_leaves(&mut inner, argument_vars);
                         tree!(IR::Apply, inner)
                     } else {
                         match_plan

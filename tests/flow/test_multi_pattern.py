@@ -259,3 +259,59 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
             total += g.query(q).result_set[0][0]
         self.env.assertGreater(total / runs, 0.35)
         g.delete()
+
+    def test14_earlier_clause_predicate_stays_with_its_node(self):
+        # `MATCH (n0 {v: 1})` is its own clause, so its predicate must not move
+        # onto the scan of a node that a later clause chooses to start from.
+        # The WHERE form lost its row on main as well.
+        g = self.db.select_graph("multi_pattern_stitched_filter")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (:A {v:0}), (b:B {v:0})-[:R {w:0}]->(:A {v:1})")
+        for q in [
+            "MATCH (n0 {v: 1}) MATCH (n0)<-[:R]-(n1 {v: 0}) RETURN n0.v, n1.v",
+            "MATCH (n0) WHERE n0.v = 1 MATCH (n0)<-[:R]-(n1) WHERE n1.v = 0 RETURN n0.v, n1.v",
+            "MATCH (n0 {v: 1}) MATCH (n1:B {v: 0})-[:R]->(n0) RETURN n0.v, n1.v",
+        ]:
+            self.env.assertEqual(g.query(q).result_set, [[1, 0]], message=q)
+        g.delete()
+
+    def test15_hash_join_does_not_pair_rows_of_different_outer_rows(self):
+        # A hash join keyed only on `y.v = x.v` would pair branch rows of
+        # different outer rows (x2 here: two `n0`). C and the Cartesian
+        # Product plan give 18 on every form.
+        g = self.db.select_graph("multi_pattern_apply_join")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (:B {v:1}), (:B {v:1}), (:A {v:1})")
+        for q in [
+            "MATCH (n0:B) MATCH (x {v: n0.v}), (y) WHERE y.v = x.v RETURN count(*)",
+            "MATCH (n0:B) OPTIONAL MATCH (x {v: n0.v}), (y) WHERE y.v = x.v RETURN count(*)",
+            "MATCH (n0:B) WITH n0 MATCH (x), (y) WHERE y.v = x.v AND x.v = n0.v RETURN count(*)",
+            "MATCH (n0:B) CALL { WITH n0 MATCH (x {v: n0.v}), (y) WHERE y.v = x.v RETURN x, y } RETURN count(*)",
+        ]:
+            self.env.assertEqual(g.query(q).result_set, [[18]], message=q)
+        # an uncorrelated join is still a hash join
+        plan = g.explain("MATCH (x), (y) WHERE y.v = x.v RETURN count(*)")
+        self.env.assertContains("Value Hash Join", str(plan))
+        g.delete()
+
+    def test16_relationship_variable_cannot_be_named_by_a_later_match(self):
+        # C rejects it; accepting it bound a second, unrelated edge to the
+        # name (and, with an inline attr on the first, dropped its predicate).
+        g = self.db.select_graph("multi_pattern_rel_reuse")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (a:A {v:1})-[:R {w:0}]->(b:A {v:5}), (b)-[:R {w:1}]->(a)")
+        for q in [
+            "MATCH ()-[r]->() MATCH (a)-[r]->(b) RETURN count(*)",
+            "MATCH (a)-[r]->(b) WHERE true MATCH (c)-[r]->(d) RETURN count(*)",
+            "MATCH (a)-[r]->(b) OPTIONAL MATCH (c)-[r]->(d) RETURN count(*)",
+            "MATCH (a)-[r:R {w: a.v}]->(b) MATCH (c)-[r:R]-(d) RETURN count(*)",
+        ]:
+            try:
+                g.query(q)
+                self.env.assertTrue(False, message=q)
+            except ResponseError as e:
+                self.env.assertContains("Cannot use the same relationship variable", str(e), message=q)
+        # a projected relationship is a new binding and stays usable
+        res = g.query("MATCH ()-[r]->() WITH r MATCH (a)-[r]->(b) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[4]])
+        g.delete()
