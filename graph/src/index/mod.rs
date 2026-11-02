@@ -879,8 +879,9 @@ impl Document {
                 return;
             }
             match value {
-                // A Bool is a TAG key of its own. Stored as 1/0 in the numeric
-                // field it matched `= 1` / `= 0` and numeric ranges (#2963, #363).
+                // A Bool is written only as a TAG key of its own and never to the
+                // numeric field. A numeric 1/0 there would match `= 1` / `= 0` and
+                // numeric ranges (#2963, #363).
                 Value::Bool(_) => {
                     let enc = tag_key(value).unwrap_or_default();
                     RediSearch_DocumentAddFieldString(
