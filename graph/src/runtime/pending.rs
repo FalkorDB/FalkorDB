@@ -1097,20 +1097,47 @@ impl Pending {
         self.created_nodes.contains(id.into())
     }
 
-    /// Returns pending-created node IDs that have ALL of the given labels.
-    /// When `label_ids` is empty, returns all pending-created nodes.
+    /// The nodes that GAIN a pattern label in this query and carry ALL of
+    /// `label_ids` once the pending changes apply: live (not pending-deleted),
+    /// with every label in the node's effective set
+    /// (`(committed \ remove_labels) ∪ set_labels`, `set_labels` alone for a
+    /// created node), and with at least one of them only staged. A node whose
+    /// pattern labels are all committed (and none pending removal) is left to
+    /// the wrapped scan: re-setting a label it already has changes nothing.
+    ///
+    /// A returned node may also be emitted by an indexed scan, which checks
+    /// secondary labels pending-aware. The caller therefore takes every
+    /// returned node from here only, skipping them in the wrapped scan, so
+    /// each is enumerated exactly once. When `label_ids` is empty, returns all
+    /// pending-created nodes.
     #[must_use]
     pub fn get_pending_nodes_with_labels(
         &self,
         label_ids: &[LabelId],
+        g: &Graph,
     ) -> RoaringTreemap {
         if label_ids.is_empty() {
             return self.created_nodes.clone();
         }
-        let label_ids_u64: Vec<u64> = label_ids.iter().map(|l| usize::from(*l) as u64).collect();
         let mut result = RoaringTreemap::new();
-        for (&node_id, node_labels) in &self.set_labels {
-            if label_ids_u64.iter().all(|lid| node_labels.contains(lid)) {
+        // A node that gains a pattern label must have it staged, so
+        // `set_labels` holds every candidate.
+        for (&node_id, staged) in &self.set_labels {
+            if self.deleted_nodes.contains(node_id) {
+                continue;
+            }
+            let created = self.created_nodes.contains(node_id);
+            let removed = self.remove_labels.get(&node_id);
+            let mut all_committed = !created;
+            let matches = label_ids.iter().all(|&label| {
+                let lid = usize::from(label) as u64;
+                let committed = !created
+                    && !removed.is_some_and(|r| r.contains(&lid))
+                    && g.node_has_label_id(NodeId::from(node_id), label);
+                all_committed &= committed;
+                committed || staged.contains(&lid)
+            });
+            if matches && !all_committed {
                 result.insert(node_id);
             }
         }
