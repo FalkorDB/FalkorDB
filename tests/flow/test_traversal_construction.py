@@ -622,20 +622,24 @@ class testTraversalConstruction():
                    MATCH (a:Person {id: i}), (b:Person {id: (i * d + d) % 200})
                    CREATE (a)-[:KNOWS]->(b)""")
 
-        # A bidirectional walk anchored only on its `to` endpoint cannot be
-        # started from it, so it does not lead; the City scan does.
-        q = """MATCH (friend)-[:KNOWS*2..2]-(person:Person {id: 5}),
-                     (friend)-[:LIVES]->(city:City) RETURN count(*)"""
+        # A walk anchored on its `to` endpoint leads too, bidirectional or
+        # directed: the runtime runs it backwards from the bound end, so the
+        # index scan on `person` starts the plan and no City scan precedes it.
         single = "MATCH (person:Person {id: 5})-[:KNOWS*2..2]-(friend) RETURN count(*)"
-        self.env.assertContains("Node By Label Scan | (city:City)", str(g.explain(q)))
-        self.env.assertEqual(g.query(q).result_set, g.query(single).result_set)
-
-        # So does a directed walk anchored only on its `to` endpoint, which
-        # would have to be reversed to start there.
+        for q in ["""MATCH (friend)-[:KNOWS*2..2]-(person:Person {id: 5}),
+                           (friend)-[:LIVES]->(city:City) RETURN count(*)""",
+                  """MATCH (friend)-[:KNOWS*2..2]-(person:Person), (friend)-[:LIVES]->(city:City)
+                     WHERE person.id = 5 RETURN count(*)"""]:
+            plan = str(g.explain(q))
+            scans = [l.strip() for l in plan.splitlines() if "Scan" in l]
+            self.env.assertEqual(scans, ["Node By Index Scan | (person:Person)"], message=plan)
+            self.env.assertEqual(g.query(q).result_set, g.query(single).result_set, message=q)
         q = """MATCH (friend)-[:LIVES]->(city:City),
                      (friend)-[:KNOWS*2..2]->(person:Person {id: 5}) RETURN count(*)"""
         single = "MATCH (friend)-[:KNOWS*2..2]->(person:Person {id: 5}) RETURN count(*)"
-        self.env.assertContains("Node By Label Scan | (city:City)", str(g.explain(q)))
+        plan = str(g.explain(q))
+        scans = [l.strip() for l in plan.splitlines() if "Scan" in l]
+        self.env.assertEqual(scans, ["Node By Index Scan | (person:Person)"], message=plan)
         self.env.assertEqual(g.query(q).result_set, g.query(single).result_set)
         g.delete()
 
@@ -700,4 +704,88 @@ class testTraversalConstruction():
         q = "MATCH (a:A)-[:R*1..1]-(b:B)-[:T*1..1]->(d:D {id: 2}) RETURN count(*)"
         self.env.assertContains("Node By Label Scan | (d:D)", str(g.explain(q)))
         self.env.assertEqual(g.query(q).result_set, [[200]])
+        g.delete()
+
+    # An undirected walk reverses like a directed one: with only its `to`
+    # endpoint bound it starts there. Emitted endpoints and the path keep the
+    # pattern's from -> to orientation.
+    def test_undirected_var_len_runs_from_bound_to(self):
+        g = self.db.select_graph("UndirectedVarLenReversed")
+        g.query("CREATE (:A {id: 1})-[:R {w: 1}]->(:M {id: 2})<-[:R {w: 2}]-(:B {id: 3})")
+        g.query("CREATE (:A {id: 10})-[:R]->(:A {id: 11}), (:A {id: 11})-[:R]->(:A {id: 12})")
+        # the bound end is the pattern's `to`, bound by an earlier clause
+        q = """MATCH (b:B) WITH b MATCH p = (a:A)-[:R*2..2]-(b)
+               RETURN a.id, b.id, [e IN relationships(p) | e.w]"""
+        res = g.query(q).result_set
+        self.env.assertEqual(res, [[1, 3, [1, 2]]])
+        # the path reads from `a` to `b`, whichever end the walk started at
+        q = """MATCH (b:B) WITH b MATCH p = (a:A)-[:R*2..2]-(b) RETURN [n IN nodes(p) | n.id]"""
+        self.env.assertEqual(g.query(q).result_set, [[[1, 2, 3]]])
+        # zero-length and unconstrained ends
+        q = "MATCH (b:B) WITH b MATCH (a)-[:R*0..1]-(b) RETURN a.id ORDER BY a.id"
+        self.env.assertEqual(g.query(q).result_set, [[2], [3]])
+        g.delete()
+
+    # A walk whose `to` endpoint is the more selective one is scanned from
+    # there. Rebuilding the scan must keep whatever an earlier clause put under
+    # the walk: its WHERE, its rows' multiplicity and the variables it binds.
+    def test_var_len_reversal_keeps_earlier_clause(self):
+        g = self.db.select_graph("VarLenReversalKeepsEarlier")
+        g.query("CREATE INDEX FOR (n:B) ON (n.id)")
+        wait_for_indices_to_sync(g)
+        g.query("""CREATE (:A {id: 1})-[:R]->(:B {id: 1}), (:A {id: 99})-[:R]->(:B {id: 1}),
+                          (:A {id: 5})-[:R]->(:C {id: 1})""")
+        for q, expected in [
+                ("MATCH (a) WHERE a.id = 99 MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 1),
+                ("MATCH (a) WHERE a.id = 99 MATCH (a)-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 1),
+                ("MATCH (a:A) WHERE a.id = 99 MATCH (a)<-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 0),
+                ("UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 4),
+                ("UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 4),
+                ("MATCH (x:A) WHERE x.id = 5 MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 2)]:
+            self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
+        res = g.query("""UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]->(b:B {id: 1})
+                         RETURN x, a.id ORDER BY x, a.id""").result_set
+        self.env.assertEqual(res, [[1, 1], [1, 99], [2, 1], [2, 99]])
+        g.delete()
+
+    # Several walks in one component: the anchored walk leads and the others
+    # follow outward from what it binds, each one with a bound endpoint. A DAG
+    # keeps edge uniqueness out of the count, so it can be computed directly.
+    def test_var_len_anchor_with_several_walks(self):
+        g = self.db.select_graph("VarLenAnchorSeveralWalks")
+        g.query("CREATE INDEX FOR (p:Person) ON (p.id)")
+        wait_for_indices_to_sync(g)
+        n = 120
+        g.query(f"UNWIND range(0, {n - 1}) AS i CREATE (:Person {{id: i}})")
+        g.query("UNWIND range(0, 4) AS i CREATE (:City {id: i})")
+        g.query(f"""UNWIND range(0, {n - 1}) AS i
+                    MATCH (p:Person {{id: i}}), (c:City {{id: i % 5}}) CREATE (p)-[:LIVES]->(c)""")
+        g.query(f"""UNWIND range(0, {n - 1}) AS i UNWIND [1, 3] AS d
+                    MATCH (a:Person {{id: i}}), (b:Person {{id: i + d}}) CREATE (a)-[:KNOWS]->(b)""")
+        out = {i: [j for j in (i + 1, i + 3) if j < n] for i in range(n)}
+
+        def reach(src):
+            level, res = {src: 1}, {}
+            for _ in range(2):
+                nxt = {}
+                for u, c in level.items():
+                    for v in out[u]:
+                        nxt[v] = nxt.get(v, 0) + c
+                for v, c in nxt.items():
+                    res[v] = res.get(v, 0) + c
+                level = nxt
+            return res
+        # (p)-[*1..2]->(f)-[*1..2]->(g)-[:LIVES]->(city), one city per person
+        expected = sum(c1 * c2 for f, c1 in reach(5).items() for g_, c2 in reach(f).items())
+
+        for q in ["""MATCH (p:Person {id: 5})-[:KNOWS*1..2]->(f), (f)-[:KNOWS*1..2]->(g),
+                           (g)-[:LIVES]->(c:City) RETURN count(*)""",
+                  """MATCH (c:City)<-[:LIVES]-(g)<-[:KNOWS*1..2]-(f)<-[:KNOWS*1..2]-(p:Person {id: 5})
+                     RETURN count(*)""",
+                  """MATCH (g)-[:LIVES]->(c:City), (f)-[:KNOWS*1..2]->(g), (p:Person)-[:KNOWS*1..2]->(f)
+                     WHERE p.id = 5 RETURN count(*)"""]:
+            plan = str(g.explain(q))
+            scans = [l.strip() for l in plan.splitlines() if "Scan" in l]
+            self.env.assertEqual(scans, ["Node By Index Scan | (p:Person)"], message=plan)
+            self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
         g.delete()

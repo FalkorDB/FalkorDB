@@ -155,6 +155,28 @@ pub(crate) fn collect_single_variable_conjuncts(
     out
 }
 
+/// The part of a scan endpoint's score known before the plan is built: a
+/// predicate that mentions the node (inline attributes included) counts 2, a
+/// label 1. `select_scan_node` adds the bound-variable bonus and breaks ties on
+/// label cardinality; the planner has neither, so it uses this alone.
+pub(crate) fn endpoint_scan_score(
+    filtered: bool,
+    labelled: bool,
+) -> u32 {
+    u32::from(filtered) * 2 + u32::from(labelled)
+}
+
+/// Which end of a variable-length walk `select_var_len_scan_node` scans: the
+/// `to` end only when it strictly outscores `from`, a tie keeps the pattern's
+/// own direction. The planner asks the same question to decide whether a walk
+/// can lead its component, so both read this one rule.
+pub(crate) fn walk_scans_to_endpoint(
+    from_score: u32,
+    to_score: u32,
+) -> bool {
+    to_score > from_score
+}
+
 /// Collects all variable IDs provided by a plan subtree.
 pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
     use crate::runtime::runtime::GetVariables;
