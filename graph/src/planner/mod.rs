@@ -636,9 +636,8 @@ fn pattern_attrs_read_visited(
 /// Takes the inline-attribute entries that read another variable of the same
 /// pattern out of `pattern` and appends them to `lifted` as filters.
 ///
-/// `(b), (c {v: b.v})` or `(a)-[r]->(b) MATCH (c {v: id(r)})` (consecutive
-/// MATCH clauses are one pattern) are planned as separate components joined
-/// by a Cartesian product, and `(a {v: b.v})-->(b)` may be scanned from
+/// `(b), (c {v: b.v})` (one clause, two components) is planned as separate
+/// components joined by a Cartesian product, and `(a {v: b.v})-->(b)` may be scanned from
 /// either end. Checked inline, `c.v = b.v` would run where `b` is not bound
 /// yet, and no row would pass. Applied above the whole pattern, like `WHERE`,
 /// it sees every variable, and the optimizer can still push it down or turn
