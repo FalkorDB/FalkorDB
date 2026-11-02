@@ -36,6 +36,7 @@ use crate::runtime::value::{Value, ValueTypeOf};
 use crate::tree;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 /// The binder performs semantic analysis on parsed Cypher queries.
@@ -44,7 +45,7 @@ use std::sync::Arc;
 /// (with string names) into a bound AST (with numeric variable IDs and types).
 pub struct Binder {
     /// Stack of variable environments (name → Variable mapping)
-    env_stack: Vec<HashMap<Arc<String>, Variable>>,
+    env_stack: Vec<Scope>,
     /// Whether to look up variables in parent scope
     use_parent_scope: bool,
     /// Variables copied from parent scope to current scope
@@ -70,10 +71,65 @@ pub struct Binder {
     retired_scope_vars: Vec<Vec<Variable>>,
 }
 
+/// One scope table of the binder: the variables a query can name, plus the
+/// ones it cannot.
+///
+/// Variable ids are minted as the table's size, so every variable that is
+/// live in the bound IR must stay in the table even once its name has gone
+/// out of scope (a hidden `WITH ... WHERE` copy, a pattern comprehension's
+/// local, a list comprehension's loop variable, a FOREACH body's locals).
+/// Those are kept in `reserved`, a plain list with no key, so no alias a
+/// query writes (quoted or not) can resolve to one or overwrite one.
+#[derive(Clone, Default)]
+struct Scope {
+    /// Variables a query can refer to by name.
+    names: HashMap<Arc<String>, Variable>,
+    /// Variables whose ids stay taken but that no name reaches.
+    reserved: Vec<Variable>,
+}
+
+impl Scope {
+    /// Number of ids taken: the id of the next variable minted here.
+    fn len(&self) -> usize {
+        self.names.len() + self.reserved.len()
+    }
+
+    /// Keeps `var`'s id taken without making it reachable by name.
+    fn reserve(
+        &mut self,
+        var: Variable,
+    ) {
+        self.reserved.push(var);
+    }
+
+    /// Every variable of the scope, named or not.
+    fn variables(&self) -> impl Iterator<Item = &Variable> {
+        self.names.values().chain(&self.reserved)
+    }
+
+    fn into_variables(self) -> impl Iterator<Item = Variable> {
+        self.names.into_values().chain(self.reserved)
+    }
+}
+
+impl Deref for Scope {
+    type Target = HashMap<Arc<String>, Variable>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.names
+    }
+}
+
+impl DerefMut for Scope {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.names
+    }
+}
+
 impl Default for Binder {
     fn default() -> Self {
         Self {
-            env_stack: vec![HashMap::new()],
+            env_stack: vec![Scope::default()],
             use_parent_scope: false,
             parent_to_child_scope: HashMap::new(),
             copy_from_parent: HashMap::new(),
@@ -236,20 +292,20 @@ impl Binder {
         }
     }
 
-    fn current_env(&self) -> &HashMap<Arc<String>, Variable> {
+    fn current_env(&self) -> &Scope {
         self.env_stack
             .last()
             .expect("env_stack should never be empty")
     }
 
-    fn current_env_mut(&mut self) -> &mut HashMap<Arc<String>, Variable> {
+    fn current_env_mut(&mut self) -> &mut Scope {
         self.env_stack
             .last_mut()
             .expect("env_stack should never be empty")
     }
 
     fn push_scope(&mut self) {
-        self.env_stack.push(HashMap::new());
+        self.env_stack.push(Scope::default());
         self.use_parent_scope = true;
     }
 
@@ -262,32 +318,25 @@ impl Binder {
     /// reserved. Ids are minted as the scope table's length (here and in the
     /// planner), so removing an entry whose id the bound IR still uses would
     /// let the next variable of this scope reuse that id, and the two would
-    /// share one record slot. The entry stays under a hidden `_slot_` key
-    /// that RETURN * and CALL {} skip, made unique against the aliases in scope.
+    /// share one record slot. The variable moves to the scope's reserved
+    /// list, which has no name at all: no alias a query can write finds it, and
+    /// RETURN * and CALL {} never see it.
     fn hide_names(
         &mut self,
         names: impl IntoIterator<Item = Arc<String>>,
     ) {
-        let scope_id = self.env_stack.len() - 1;
+        let scope = self.current_env_mut();
         for name in names {
-            if let Some(var) = self.env_stack[scope_id].remove(&name) {
-                // A backtick cannot appear in any alias, quoted or not (the
-                // lexer ends a quoted identifier at the next one), so no query
-                // can spell this key later and be handed the hidden variable.
-                // An entry already under it is not overwritten all the same.
-                let mut key = format!("_slot_`{scope_id}_{}", var.id);
-                while self.env_stack[scope_id].contains_key(&key) {
-                    key.push('_');
-                }
-                self.env_stack[scope_id].insert(Arc::new(key), var);
+            if let Some(var) = scope.names.remove(&name) {
+                scope.reserved.push(var);
             }
         }
     }
 
     /// Hides every name of the current scope that is not in `keep`, leaving
-    /// the generated anonymous entries (`_anon*`) and the already hidden ones
-    /// as they are. Other `_`-prefixed names are legal aliases and go out of
-    /// scope like any other.
+    /// the generated anonymous entries (`_anon*`) as they are. Other
+    /// `_`-prefixed names are legal aliases and go out of scope like any
+    /// other.
     fn hide_names_except(
         &mut self,
         keep: &HashSet<Arc<String>>,
@@ -295,9 +344,7 @@ impl Binder {
         let hidden: Vec<Arc<String>> = self
             .current_env()
             .keys()
-            .filter(|name| {
-                !keep.contains(*name) && !name.starts_with("_anon") && !name.starts_with("_slot_")
-            })
+            .filter(|name| !keep.contains(*name) && !name.starts_with("_anon"))
             .cloned()
             .collect();
         self.hide_names(hidden);
@@ -731,20 +778,17 @@ impl Binder {
                     bound_body.push(self.bind_ir(clause)?);
                 }
                 // Restore the outer scope, but keep every ID slot allocated
-                // inside the FOREACH reserved under a unique key.  IDs are
+                // inside the FOREACH reserved, nameless.  IDs are
                 // handed out as `env.len()`, so dropping those entries would
                 // let a later variable in this scope — including the
                 // planner's own fresh variables — reuse an ID the FOREACH
                 // still uses, silently aliasing two variables in the record.
-                let scope_id = self.env_stack.len() as u32 - 1;
                 let inner_env = std::mem::replace(self.current_env_mut(), saved_env);
                 let restored: HashSet<u32> = self.current_env().values().map(|v| v.id).collect();
-                for v in inner_env.into_values() {
-                    if restored.contains(&v.id) {
-                        continue;
+                for v in inner_env.into_variables() {
+                    if !restored.contains(&v.id) {
+                        self.current_env_mut().reserve(v);
                     }
-                    let key = Arc::new(format!("_foreach_{}_{}", scope_id, v.id));
-                    self.current_env_mut().insert(key, v);
                 }
                 Ok(QueryIR::ForEach {
                     list: bound_list,
@@ -799,29 +843,11 @@ impl Binder {
         let mut remap = Vec::new();
         if is_returning {
             for name in subquery_env.keys() {
-                // Filter out internal slot reservations
-                if name.starts_with("_slot_")
-                    || name.starts_with("__agg_placeholder_")
-                    || name.starts_with("_quant_")
-                    || name.starts_with("_lc_")
-                    || name.starts_with("_reduce_")
-                {
-                    continue;
-                }
                 if self.current_env().contains_key(name) {
                     return Err(format!("Variable `{name}` already declared in outer scope"));
                 }
             }
-            for (name, inner_var) in &subquery_env {
-                // Skip internal slot reservations
-                if name.starts_with("_slot_")
-                    || name.starts_with("__agg_placeholder_")
-                    || name.starts_with("_quant_")
-                    || name.starts_with("_lc_")
-                    || name.starts_with("_reduce_")
-                {
-                    continue;
-                }
+            for (name, inner_var) in &subquery_env.names {
                 // Allocate a fresh outer-scope ID for this returned variable
                 let outer_var = self.project_name(name, inner_var.ty.clone());
                 remap.push((inner_var.clone(), outer_var));
@@ -887,7 +913,7 @@ impl Binder {
 
                 // Create a new scope for the CALL body (NOT via push_scope —
                 // the CALL body is isolated, not a child scope)
-                self.env_stack.push(HashMap::new());
+                self.env_stack.push(Scope::default());
 
                 // Allocate fresh inner IDs for imported variables and build
                 // projection pairs that map outer → inner. Emitted even when
@@ -923,7 +949,7 @@ impl Binder {
                 // that may have its own import WITH. Create binders with imported env.
                 let mut bound_branches = Vec::with_capacity(branches.len());
                 let mut first_columns: Option<Vec<String>> = None;
-                let mut last_binder_env: Option<HashMap<Arc<String>, Variable>> = None;
+                let mut last_binder_env: Option<Scope> = None;
                 for branch in branches {
                     let (has_import, imported) = match &branch {
                         QueryIR::Query { clauses, .. } => {
@@ -945,7 +971,7 @@ impl Binder {
                     // body starts, above the outer scopes, which stay empty
                     // placeholders here.
                     let mut binder = Self {
-                        env_stack: vec![HashMap::new(); self.env_stack.len() + 1],
+                        env_stack: vec![Scope::default(); self.env_stack.len() + 1],
                         use_parent_scope: false,
                         parent_to_child_scope: HashMap::new(),
                         copy_from_parent: HashMap::new(),
@@ -1008,7 +1034,7 @@ impl Binder {
                 if let Some(env) = last_binder_env {
                     *self.current_env_mut() = env;
                 } else {
-                    *self.current_env_mut() = HashMap::new();
+                    *self.current_env_mut() = Scope::default();
                 }
                 Ok(QueryIR::Union {
                     branches: bound_branches,
@@ -1016,7 +1042,7 @@ impl Binder {
                 })
             }
             other => {
-                *self.current_env_mut() = HashMap::new();
+                *self.current_env_mut() = Scope::default();
                 self.bind_ir(other)
             }
         }
@@ -1803,15 +1829,23 @@ impl Binder {
                 let var = self.resolve_name(name, locals)?;
                 Ok(tree!(ExprIR::Variable(var)))
             }
+            ExprIR::AggOrderPlaceholder => {
+                // Always a fresh variable, in a nameless slot of its own
+                // (keeping the scope's length == the next available id).
+                let scope_id = self.env_stack.len() as u32 - 1;
+                let name = Arc::new(String::from("__agg_order_by_placeholder__"));
+                let var = self.fresh_var(Some(name), Type::Any, scope_id);
+                self.env_stack[scope_id as usize].reserve(var.clone());
+                Ok(tree!(ExprIR::Variable(var)))
+            }
             ExprIR::Quantifier {
                 quantifier_type: qt,
                 var: name,
             } => {
                 let scope_id = self.env_stack.len() as u32 - 1;
                 let bound_var: Variable = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
-                // Reserve the ID slot in env_stack with a unique key.
-                let key = Arc::new(format!("_quant_{}_{}", scope_id, bound_var.id));
-                self.env_stack[scope_id as usize].insert(key, bound_var.clone());
+                // Reserve the ID slot, nameless.
+                self.env_stack[scope_id as usize].reserve(bound_var.clone());
 
                 // Bind child[0] (the iterable) BEFORE introducing the
                 // quantifier variable so it resolves in the outer scope.
@@ -1843,9 +1877,8 @@ impl Binder {
             ExprIR::ListComprehension(name) => {
                 let scope_id = self.env_stack.len() as u32 - 1;
                 let bound_var: Variable = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
-                // Reserve the ID slot in env_stack with a unique key.
-                let key = Arc::new(format!("_lc_{}_{}", scope_id, bound_var.id));
-                self.env_stack[scope_id as usize].insert(key, bound_var.clone());
+                // Reserve the ID slot, nameless.
+                self.env_stack[scope_id as usize].reserve(bound_var.clone());
 
                 // Bind child[0] (the iterable) BEFORE introducing the
                 // comprehension variable so that e.g. `[x IN nodes(x) | ...]`
@@ -1886,12 +1919,10 @@ impl Binder {
                 let scope_id = self.env_stack.len() as u32 - 1;
                 let bound_acc: Variable =
                     self.fresh_var(Some(acc_name.clone()), Type::Any, scope_id);
-                let key = Arc::new(format!("_reduce_acc_{}_{}", scope_id, bound_acc.id));
-                self.env_stack[scope_id as usize].insert(key, bound_acc.clone());
+                self.env_stack[scope_id as usize].reserve(bound_acc.clone());
                 let bound_iter: Variable =
                     self.fresh_var(Some(iter_name.clone()), Type::Any, scope_id);
-                let key = Arc::new(format!("_reduce_iter_{}_{}", scope_id, bound_iter.id));
-                self.env_stack[scope_id as usize].insert(key, bound_iter.clone());
+                self.env_stack[scope_id as usize].reserve(bound_iter.clone());
 
                 let mut children_iter = node_ref.children();
 
@@ -2114,6 +2145,7 @@ impl Binder {
                         ExprIR::ShortestPath(info)
                     }
                     ExprIR::Variable(_)
+                    | ExprIR::AggOrderPlaceholder
                     | ExprIR::Quantifier { .. }
                     | ExprIR::ListComprehension(_)
                     | ExprIR::Reduce(_)
@@ -2234,17 +2266,6 @@ impl Binder {
         name: &Arc<String>,
         locals: &[HashMap<Arc<String>, Variable>],
     ) -> Result<Variable, String> {
-        // Special placeholder for aggregate function ordering - always create a fresh variable
-        if name.as_str() == "__agg_order_by_placeholder__" {
-            let scope_id = self.env_stack.len() as u32 - 1;
-            let var = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
-            // Insert with a unique key so each placeholder occupies its own
-            // slot in the env (keeping env.len() == next available ID).
-            let key = Arc::new(format!("__agg_placeholder_{}", var.id));
-            self.env_stack[scope_id as usize].insert(key, var.clone());
-            return Ok(var);
-        }
-
         // Anonymous variables should also create fresh variables
         if name.starts_with("_anon") {
             let scope_id = self.env_stack.len() as u32 - 1;
@@ -2414,6 +2435,7 @@ impl Binder {
             | ExprIR::Quantifier { .. }
             | ExprIR::Reduce(_)
             | ExprIR::Variable(_)
+            | ExprIR::AggOrderPlaceholder
             | ExprIR::Parameter(_)
             | ExprIR::Property(_)
             | ExprIR::ShortestPath(_)
@@ -2446,6 +2468,9 @@ impl Binder {
             ExprIR::Distinct => node.get_child(0).is_some_and(Self::expr_may_return_entity),
 
             ExprIR::Paren => unreachable!("the binder removes every Paren"),
+            ExprIR::AggOrderPlaceholder => {
+                unreachable!("the binder turns every AggOrderPlaceholder into a variable")
+            }
 
             // Subscript and property access could produce entities at runtime
             ExprIR::GetElement | ExprIR::Property(_) | ExprIR::Parameter(_) | ExprIR::Reduce(_) => {
@@ -2686,7 +2711,7 @@ fn raw_exprs_structurally_equal(
     b: &DynTree<ExprIR<Arc<String>>>,
 ) -> bool {
     fn is_agg_placeholder(node: &ExprIR<Arc<String>>) -> bool {
-        matches!(node, ExprIR::Variable(v) if v.as_str() == "__agg_order_by_placeholder__")
+        matches!(node, ExprIR::AggOrderPlaceholder)
     }
 
     fn nodes_eq(
@@ -2740,8 +2765,8 @@ fn raw_exprs_structurally_equal(
 }
 
 /// One scope's variables, ordered by id.
-fn sorted_scope_vars(env: &HashMap<Arc<String>, Variable>) -> Vec<Variable> {
-    let mut vars = env.values().cloned().collect::<Vec<_>>();
+fn sorted_scope_vars(env: &Scope) -> Vec<Variable> {
+    let mut vars = env.variables().cloned().collect::<Vec<_>>();
     vars.sort_by_key(|v| v.id);
     vars
 }
