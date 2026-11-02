@@ -1078,3 +1078,35 @@ class testEffects_07_RefusedBufferIndexDDL(_EffectsBase):
         self.env.assertEqual(
             g.ro_query("CALL db.idx.fulltext.queryNodes('F', 'seed') "
                        "YIELD node RETURN count(node)").result_set, [[1]])
+
+    def test07_a_refused_buffer_on_a_new_key_leaves_a_usable_index(self):
+        # As test06, but the target key did not exist: the buffer is its first
+        # write, so no earlier commit ever gave the indexer a committed graph to
+        # populate from, and a later statement's refusal left the index of the
+        # first one UNDER CONSTRUCTION for good. The records carry the schema
+        # too (ADD_SCHEMA F, ADD_ATTRIBUTE body), as the source key is new as
+        # well.
+        p = f"{self.GRAPH_ID}_n"
+        src, dst = f"{p}_src", f"{p}_dst"
+        create = self._records_of(src, "CREATE FULLTEXT INDEX FOR (n:F) ON (n.body)")
+
+        try:
+            self.master.execute_command(
+                "GRAPH.EFFECT", dst, b"\x03\x00" + create + create)
+        except ResponseError as e:
+            self.env.assertContains("already indexed", str(e))
+        else:
+            raise AssertionError("the buffer was accepted; it must be refused")
+
+        g = self.db.select_graph(dst)
+        # returns only once every index is operational; a population stuck
+        # waiting for a commit that never comes times out here
+        wait_for_indices_to_sync(g)
+        indexes = self._indexes(dst, self.db)
+        self.env.assertEqual(len(indexes), 1)
+        self.env.assertEqual(indexes[0][0], 'F')
+        # and the index indexes what is written afterwards
+        g.query("CREATE (:F {body: 'late'})")
+        self.env.assertEqual(
+            g.ro_query("CALL db.idx.fulltext.queryNodes('F', 'late') "
+                       "YIELD node RETURN count(node)").result_set, [[1]])

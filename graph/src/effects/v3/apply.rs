@@ -103,7 +103,10 @@ pub fn apply_effects(
     // When one is refused, the indexes the earlier ones created or changed are
     // repopulated from the committed graph: their population waits for this
     // version, which is not going to be published.
-    let mut touched = Vec::with_capacity(index_ddl.len());
+    // Each index once, however many statements changed it: a rebuild
+    // re-registers every field of the surviving spec, so repeating it per
+    // statement would be quadratic in the buffer and spawn redundant jobs.
+    let mut touched: Vec<(EntityType, Arc<String>)> = Vec::new();
     for ddl in index_ddl {
         let target = ddl.target();
         if let Err(e) = ddl.run(g) {
@@ -112,7 +115,9 @@ pub fn apply_effects(
             }
             return Err(e);
         }
-        touched.push(target);
+        if !touched.contains(&target) {
+            touched.push(target);
+        }
     }
 
     // Both indexes once for the whole buffer: the native index's staged changes, then

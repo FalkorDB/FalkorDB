@@ -92,18 +92,24 @@ impl MvccGraph {
         cache_size: usize,
         name: &str,
     ) -> Self {
-        Self {
-            graph: Arc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0, name))),
-            write: AtomicBool::new(false),
-        }
+        Self::from_graph(Graph::new(n, e, cache_size, 0, name))
     }
 
     /// Create an `MvccGraph` from an already-constructed `Graph`.
     /// Used by the RDB load path.
     #[must_use]
     pub fn from_graph(graph: Graph) -> Self {
+        let graph = Arc::new(AtomicRefCell::new(graph));
+        // The indexers always have a committed graph to read, from the moment
+        // the key exists, instead of only after its first commit. Index
+        // population and the recovery of an index whose buffer was refused read
+        // the committed graph and, with none, reschedule every millisecond; on
+        // a key whose first buffer is refused no later commit ever arrives to
+        // end that (#3023). Every `commit` replaces it with the version it
+        // publishes.
+        graph.borrow().set_indexer_graph(graph.clone());
         Self {
-            graph: Arc::new(AtomicRefCell::new(graph)),
+            graph,
             write: AtomicBool::new(false),
         }
     }
