@@ -2265,7 +2265,7 @@ mod tests {
         use super::Decode;
         ensure_init();
         let clean = encoded();
-        let (mut ok, mut err) = (0usize, 0usize);
+        let (mut ok, mut err, mut wait_refused) = (0usize, 0usize, 0usize);
         for op in 0..clean.ops.len() {
             let len = match &clean.ops[op] {
                 TapeOp::Buffer(b) => b.len().min(700),
@@ -2291,13 +2291,20 @@ mod tests {
                             }
                             ok += 1;
                         }
-                        Err(_) => err += 1,
+                        Err(e) => {
+                            err += 1;
+                            wait_refused += usize::from(e.contains("GrB_Matrix_wait failed"));
+                        }
                     }
                 }
             }
         }
-        eprintln!("corrupted payloads: {ok} decoded, {err} refused");
+        eprintln!(
+            "corrupted payloads: {ok} decoded, {err} refused ({wait_refused} by the final wait)"
+        );
         assert!(err > 0);
+        // the corruption that used to trip the debug_assert after the load
+        assert!(wait_refused > 0, "no corruption reached the final wait");
     }
 
     /// The encoded container header must not carry this process's heap
