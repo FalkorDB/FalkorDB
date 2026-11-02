@@ -1915,12 +1915,24 @@ impl Planner {
                         .into_iter()
                         .any(|attrs| !collect_expr_scoped_variables(attrs).is_empty())
                 };
+            // The WHERE sits above everything the clause plans. Scan selection
+            // reads the Filters directly above the component (through its own
+            // traversals), so a predicate is only visible to it when the
+            // component is the clause's only one (no CartesianProduct between)
+            // and is a tree (a cycle or self-loop plans an `ExpandInto`, which
+            // hides it). Otherwise only the inline attributes count here.
+            let where_visible = pattern.connected_components().len() == 1
+                && relationships.len() + 1 == component.nodes().len();
             let scan_score = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
                 endpoint_scan_score(
                     n.attrs.root().num_children() > 0
-                        || filter_vars.contains(&(n.alias.scope_id, n.alias.id)),
+                        || (where_visible && filter_vars.contains(&(n.alias.scope_id, n.alias.id))),
                     !n.labels.is_empty(),
                 )
+            };
+            let is_anchored_end = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+                n.attrs.root().num_children() > 0
+                    || (where_visible && anchor_vars.contains(&(n.alias.scope_id, n.alias.id)))
             };
             let leads_from_anchor = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
                 let lead = if walk_scans_to_endpoint(scan_score(&r.from), scan_score(&r.to)) {
@@ -1928,14 +1940,15 @@ impl Planner {
                 } else {
                     &r.from
                 };
-                is_constrained(lead)
+                is_anchored_end(lead)
             };
-            // Every walk must be free to move: none reads a variable some other
-            // hop binds, and none is an allShortestPaths (which needs both ends).
-            let walks_can_move = relationships.iter().all(|r| {
-                r.all_shortest_paths == AllShortestPaths::No
-                    && (r.min_hops.is_none() || !references_variable(r))
-            });
+            // Every hop must be free to move: none reads a variable some other
+            // hop binds (a fixed hop's edge filter or an endpoint's attrs would
+            // run before the hop that binds it), and none is an allShortestPaths
+            // (which needs both ends).
+            let walks_can_move = relationships
+                .iter()
+                .all(|r| r.all_shortest_paths == AllShortestPaths::No && !references_variable(r));
             let leading_walk = if var_len_anchor_leads && walks_can_move {
                 relationships
                     .iter()

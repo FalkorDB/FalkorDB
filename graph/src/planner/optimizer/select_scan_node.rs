@@ -76,7 +76,8 @@ use crate::{
 
 use super::super::IR;
 use super::{
-    collect_expr_variables, collect_subtree_variables, endpoint_scan_score, walk_scans_to_endpoint,
+    collect_expr_scoped_variables, collect_expr_variables, collect_subtree_variables,
+    endpoint_scan_score, walk_scans_to_endpoint,
 };
 
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
@@ -540,6 +541,16 @@ fn select_var_len_scan_node(
         if *expand_into
             || relationship.all_shortest_paths != AllShortestPaths::No
             || relationship.from.alias.id == relationship.to.alias.id
+        {
+            continue;
+        }
+        // The edge attributes are evaluated per edge, before the walk binds
+        // anything: one that reads an endpoint sees it bound only when that end
+        // is the one scanned. Reversing would flip which one that is.
+        let attr_vars = collect_expr_scoped_variables(&relationship.attrs);
+        if [&relationship.from, &relationship.to]
+            .iter()
+            .any(|n| attr_vars.contains(&(n.alias.scope_id, n.alias.id)))
         {
             continue;
         }

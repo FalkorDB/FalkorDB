@@ -789,3 +789,47 @@ class testTraversalConstruction():
             self.env.assertEqual(scans, ["Node By Index Scan | (p:Person)"], message=plan)
             self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
         g.delete()
+
+    # Hops that read a variable another hop binds keep their order: moving the
+    # walk first must not run a fixed hop's edge filter before the hop that
+    # binds what it reads, and reversing a walk must not unbind an endpoint its
+    # own edge attributes read.
+    def test_var_len_anchor_keeps_attribute_dependencies(self):
+        g = self.db.select_graph("VarLenAnchorAttrDeps")
+        g.query("""CREATE (a:A {id: 1})-[:R]->(b)-[:S {weight: 5}]->(e),
+                          (b)-[:U]->(c)-[:T]->(d {limit: 5})""")
+        q = """MATCH (c)-[:T]->(d), (b)-[:S {weight: d.limit}]->(e), (a:A)-[:R*1..2]->(b)-[:U*1..2]->(c)
+               WHERE a.id = 1 RETURN count(*)"""
+        self.env.assertEqual(g.query(q).result_set, [[1]], message=q)
+        g.delete()
+
+        g = self.db.select_graph("VarLenAnchorEdgeAttrEndpoint")
+        g.query("CREATE INDEX FOR (b:B) ON (b.id)")
+        wait_for_indices_to_sync(g)
+        g.query("CREATE (:A {id: 1})-[:R {w: 1}]->(:B {id: 1}), (:A {id: 2})-[:R {w: 7}]->(:B {id: 2})")
+        for q in ["MATCH (a:A)-[:R*1..2 {w: a.id}]-(b:B {id: 1}) RETURN count(*)",
+                  "MATCH (a:A)-[:R*1..2 {w: a.id}]->(b:B {id: 1}) RETURN count(*)"]:
+            self.env.assertEqual(g.query(q).result_set, [[1]], message=q)
+        g.delete()
+
+    # The WHERE sits above the whole clause: with another component (a
+    # CartesianProduct) or a cycle (an ExpandInto) between, scan selection does
+    # not see it, so it cannot make an endpoint the walk's starting scan and
+    # the walk keeps its place instead of expanding from every `a`.
+    def test_var_len_anchor_where_hidden_by_barrier(self):
+        g = self.db.select_graph("VarLenAnchorWhereBarrier")
+        g.query("CREATE INDEX FOR (b:B) ON (b.id)")
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(1, 100) AS i CREATE (:A {id: i})-[:R]->(:B {id: i})")
+        g.query("UNWIND range(1, 100) AS i MATCH (a:A {id: i}) CREATE (a)-[:S]->(:C {id: i})")
+        g.query("CREATE (:X)")
+        for q in ["""MATCH (x:X), (a:A)-[:R*1..2]->(b:B), (a)-[:S]->(c:C)
+                     WHERE b.id = 1 RETURN count(*)""",
+                  """MATCH (a:A)-[:R*1..2]->(b:B), (a)-[:S]->(c:C), (c)-[:S]->(c)
+                     WHERE b.id = 1 RETURN count(*)"""]:
+            plan = str(g.explain(q))
+            # the fixed hop keeps leading: its traverse sits below the walk
+            walk = plan.index("Variable Length Traverse")
+            self.env.assertTrue(plan.index("Conditional Traverse") > walk, message=plan)
+            self.env.assertEqual(g.query(q).result_set, [[1]] if "(x:X)" in q else [[0]], message=q)
+        g.delete()
