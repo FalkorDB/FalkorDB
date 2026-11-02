@@ -139,8 +139,8 @@ def _multi_write(r):
     # Before the #726 fix this DEADLOCKED against the pool write loop (query_sync
     # holds the GIL and waits for L1; the write loop holds L1 and waits for the
     # GIL). It also used to fail with "another write is in progress" when it ran
-    # while a queued write was still matching (#3093): the MVCC write slot is now
-    # claimed only under the write lock, which this write holds, so it must succeed.
+    # while a queued write was still matching (#3093): forking an MVCC version
+    # takes nothing, so a matching write cannot refuse this one; it must succeed.
     p = r.pipeline(transaction=True)
     p.execute_command("GRAPH.QUERY", "test", "CREATE (:Node {id: -2})")
     p.execute()
@@ -298,7 +298,7 @@ def test_bulk_insert_not_starved_by_inline_writers(tmp_path):
         except Exception as e:
             errors.append(e)
 
-    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    threads = [threading.Thread(target=hammer, daemon=True) for _ in range(8)]
     for t in threads:
         t.start()
     result = {}
@@ -317,8 +317,12 @@ def test_bulk_insert_not_starved_by_inline_writers(tmp_path):
         elapsed = time.time() - start
     finally:
         stop.set()
+        # One deadline for all hammers: each finishes its in-flight MULTI and
+        # sees `stop`, so a hammer still alive after it means a stalled server.
+        deadline = time.time() + 30
         for t in threads:
-            t.join()
+            t.join(timeout=max(0, deadline - time.time()))
+    assert not any(t.is_alive() for t in threads)
     # Bounded: a stalled load fails the test rather than hanging it.
     loader.join(timeout=30)
     assert not loader.is_alive()
