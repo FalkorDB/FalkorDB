@@ -814,13 +814,14 @@ fn populate_index_batch(
                     indexer.commit(&mut add_docs, &mut HashMap::new());
                     indexer.update_progress(&label, progress);
                 }
-                population_hooks::after_batch();
-
                 if exhausted {
                     indexer.release_population_ticket(&ticket);
                 } else {
                     do_recurse = true;
                 }
+                // After the ticket is released, so a test that sees the count
+                // advance sees the index operational when that was the last batch.
+                population_hooks::after_batch();
                 // Hand the lock to a waiter, if any. The next batch re-takes it at once,
                 // and parking_lot (0.13+) lets a plain unlock's next locker barge ahead of
                 // a parked CREATE/DROP INDEX or index commit, which then waits out the

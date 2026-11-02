@@ -502,9 +502,15 @@ impl IndexDocs {
         // This is the query's own private version, which nothing else can borrow, so
         // graph-then-indexer is safe here — see `Pending::resync_published_indexes`
         // for the published version, where the order has to be the other way round.
+        // Known before the commit drains the maps; folded away without the hooks.
+        let published = cfg!(feature = "index-population-hooks")
+            && !(self.node_adds.is_empty()
+                && self.node_removes.is_empty()
+                && self.edge_adds.is_empty()
+                && self.edge_removes.is_empty());
         g.commit_index(&mut self.node_adds, &mut self.node_removes);
         g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
-        population_hooks::after_publish();
+        population_hooks::after_publish(published);
     }
 }
 

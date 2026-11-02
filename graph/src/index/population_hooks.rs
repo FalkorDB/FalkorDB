@@ -25,8 +25,12 @@ mod imp {
     static TOKENS: AtomicU64 = AtomicU64::new(0);
     /// Batches that ran to completion.
     static BATCHES_DONE: AtomicU64 = AtomicU64::new(0);
-    /// Batches the next writer waits for after publishing its documents.
+    /// Batches the next writer that publishes documents waits for.
     static WINDOW_BATCHES: AtomicU64 = AtomicU64::new(0);
+    /// Windows in which every awaited batch ran.
+    static WINDOWS_FIRED: AtomicU64 = AtomicU64::new(0);
+    /// Windows that gave up waiting (no batch left to run, or population stuck).
+    static WINDOWS_TIMED_OUT: AtomicU64 = AtomicU64::new(0);
 
     pub fn batch_size(default: usize) -> usize {
         match BATCH_SIZE.load(Ordering::Relaxed) {
@@ -53,6 +57,16 @@ mod imp {
 
     pub fn batches_done() -> u64 {
         BATCHES_DONE.load(Ordering::SeqCst)
+    }
+
+    /// `(fired, timed_out)`: windows that saw their batches run, and windows
+    /// that gave up. A test asserts the second is zero, so it cannot pass
+    /// without having exercised the interleaving.
+    pub fn windows() -> (u64, u64) {
+        (
+            WINDOWS_FIRED.load(Ordering::SeqCst),
+            WINDOWS_TIMED_OUT.load(Ordering::SeqCst),
+        )
     }
 
     /// Arms the window: the next writer to publish index documents lets `n`
@@ -83,10 +97,15 @@ mod imp {
         BATCHES_DONE.fetch_add(1, Ordering::SeqCst);
     }
 
-    /// Called by a writer after its index documents are published and before
-    /// its graph version is committed. Runs on the Redis main thread while the
-    /// query holds the write lock, so it must not wait for a command.
-    pub fn after_publish() {
+    /// Called by a writer that published index documents, before its graph
+    /// version is committed (`published` is false for a commit with no index
+    /// documents, which leaves an armed window for the next writer). Runs on
+    /// the Redis main thread while the query holds the write lock, so it must
+    /// not wait for a command.
+    pub fn after_publish(published: bool) {
+        if !published {
+            return;
+        }
         let n = WINDOW_BATCHES.swap(0, Ordering::SeqCst);
         if n == 0 {
             return;
@@ -98,6 +117,11 @@ mod imp {
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         while BATCHES_DONE.load(Ordering::SeqCst) < target && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_micros(200));
+        }
+        if BATCHES_DONE.load(Ordering::SeqCst) >= target {
+            WINDOWS_FIRED.fetch_add(1, Ordering::SeqCst);
+        } else {
+            WINDOWS_TIMED_OUT.fetch_add(1, Ordering::SeqCst);
         }
     }
 }
@@ -120,7 +144,7 @@ mod stubs {
     pub const fn after_batch() {}
 
     #[inline(always)]
-    pub const fn after_publish() {}
+    pub const fn after_publish(_published: bool) {}
 }
 
 #[cfg(not(feature = "index-population-hooks"))]

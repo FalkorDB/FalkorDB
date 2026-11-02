@@ -51,6 +51,7 @@ fn debug_aux(
 /// * `PAUSE` / `RESUME`: gate population; while paused a batch waits for a token;
 /// * `STEP [n]`: let `n` (default 1) batches through;
 /// * `BATCHES`: batches completed so far;
+/// * `WINDOWS`: `[fired, timed_out]` windows (see `WINDOW`);
 /// * `WINDOW n`: arm the next writer: after it publishes its index documents and
 ///   before it commits, `n` population batches run (and are waited for, up to
 ///   2 s); `WINDOW 0` disarms.
@@ -59,10 +60,9 @@ fn debug_index_population(mut args: impl Iterator<Item = RedisString>) -> RedisR
     use graph::index::population_hooks as hooks;
 
     let action = args.next_str()?.to_uppercase();
-    let mut number = || -> Result<u64, RedisError> { args.next_u64() };
     match action.as_str() {
         "BATCH_SIZE" => {
-            hooks::set_batch_size(number()? as usize);
+            hooks::set_batch_size(args.next_u64()? as usize);
             Ok(RedisValue::SimpleStringStatic("OK"))
         }
         "PAUSE" => {
@@ -74,12 +74,24 @@ fn debug_index_population(mut args: impl Iterator<Item = RedisString>) -> RedisR
             Ok(RedisValue::SimpleStringStatic("OK"))
         }
         "STEP" => {
-            hooks::step(number().unwrap_or(1));
+            // `STEP` alone is one batch; a bad count is an error, not a default.
+            let n = match args.next() {
+                None => 1,
+                Some(n) => n.parse_unsigned_integer()?,
+            };
+            hooks::step(n);
             Ok(RedisValue::SimpleStringStatic("OK"))
         }
         "BATCHES" => Ok(RedisValue::Integer(hooks::batches_done() as i64)),
+        "WINDOWS" => {
+            let (fired, timed_out) = hooks::windows();
+            Ok(RedisValue::Array(vec![
+                RedisValue::Integer(fired as i64),
+                RedisValue::Integer(timed_out as i64),
+            ]))
+        }
         "WINDOW" => {
-            hooks::set_window_batches(number()?);
+            hooks::set_window_batches(args.next_u64()?);
             Ok(RedisValue::SimpleStringStatic("OK"))
         }
         _ => Err(RedisError::String(format!(

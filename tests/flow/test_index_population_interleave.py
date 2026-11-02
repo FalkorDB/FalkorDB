@@ -41,12 +41,14 @@ class testIndexPopulationInterleave(FlowTestsBase):
     def dbg(self, *args):
         return self.env.cmd("GRAPH.DEBUG", "INDEX_POPULATION", *args)
 
-    def wait_batches(self, target, timeout=1.0):
+    def wait_batches(self, target, timeout=10.0):
         deadline = time.time() + timeout
         while time.time() < deadline:
             if int(self.dbg("BATCHES")) >= target:
                 return
             time.sleep(0.0005)
+        self.env.assertGreaterEqual(int(self.dbg("BATCHES")), target,
+                                    message="a population batch did not run", depth=1)
 
     def operational(self, g):
         statuses = g.query("CALL db.indexes() YIELD status RETURN status").result_set
@@ -100,12 +102,15 @@ class testIndexPopulationInterleave(FlowTestsBase):
 
         def write(window):
             q = self.write_query(rng, g, kind, [r[0] for r in g.query(ents_q).result_set], counter, n)
+            fails = "1 / (n.k - n.k)" in q
             if window:
                 self.dbg("WINDOW", 1)
             try:
                 g.query(q)
-            except ResponseError:
-                pass  # the failing writer
+                self.env.assertFalse(fails, message="the write built to fail succeeded", depth=1)
+            except ResponseError as e:
+                # only the write built to fail may fail
+                self.env.assertTrue(fails, message=f"unexpected error: {e}", depth=1)
             if window:
                 self.dbg("WINDOW", 0)
 
@@ -142,16 +147,28 @@ class testIndexPopulationInterleave(FlowTestsBase):
             self.env.assertEqual(got, want, message=f"{kind} seed {seed}, value {x}", depth=1)
         g.delete()
 
+    def check_windows(self, fired_before):
+        # every window must have seen its population batch run, and a good
+        # share of the cases must have had one at all, or the schedule did not
+        # exercise the interleaving
+        fired, timed_out = (int(x) for x in self.dbg("WINDOWS"))
+        self.env.assertEqual(timed_out, 0, message="a window gave up waiting for a batch")
+        self.env.assertGreaterEqual(fired - fired_before, CASES // 2, depth=1)
+
     def test01_node_index_matches_scan(self):
         if not self.hooks:
             self.env.skip()
             return
+        fired_before = int(self.dbg("WINDOWS")[0])
         for seed in range(CASES):
             self.run_case("node", seed)
+        self.check_windows(fired_before)
 
     def test02_edge_index_matches_scan(self):
         if not self.hooks:
             self.env.skip()
             return
+        fired_before = int(self.dbg("WINDOWS")[0])
         for seed in range(CASES):
             self.run_case("edge", seed)
+        self.check_windows(fired_before)
