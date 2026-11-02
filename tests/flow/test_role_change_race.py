@@ -30,7 +30,6 @@ _EXPECTED_WRITE_ERRORS = (
     "You can't write against a read only replica",
     "replica traffic is currently paused",
     "Max pending queries exceeded",
-    "another write is in progress, retry the query",
     "graph was deleted or replaced while the query was running",
 )
 
