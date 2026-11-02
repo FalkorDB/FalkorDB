@@ -244,15 +244,15 @@ impl QuerySession {
     /// mode only, so nothing can commit between this check and this session's
     /// own commit.
     fn check_fork(&self) -> Result<(), WriteAbort> {
-        let mut version = self.version.borrow_mut();
-        let Version::Unchecked(fork) = &*version else {
+        let mut state = self.version.borrow_mut();
+        let Version::Unchecked(fork) = &*state else {
             return Ok(());
         };
         if self.with_graph(|tg| tg.graph.is_stale(fork)) {
-            *version = Version::Stale;
+            *state = Version::Stale;
             return Err(WriteAbort::Stale);
         }
-        *version = Version::Current;
+        *state = Version::Current;
         Ok(())
     }
 
