@@ -1464,6 +1464,40 @@ class testIndexScanFlow():
              "MATCH (n:L) WHERE true IN n.arr RETURN n.k"],
             expected_rows=[[[5]], [[4]]])
 
+    def test_46_range_does_not_return_points_or_serve_a_bool_valued_operand(self):
+        # RediSearch keeps a geo field's geohashes in the numeric tree of the same
+        # name, so a numeric range on the index returned every Point-valued node.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:1, k:'one'}), (:L {v:5, k:'five'}), (:L {v:1.5, k:'f'}),"
+            " (:L {v:point({latitude:1.0, longitude:2.0}), k:'p'}), (:L {v:'s', k:'s'})",
+            ["MATCH (n:L) WHERE n.v > 1 RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 0.0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 100 RETURN n.k",
+             "MATCH (n:L) WHERE n.v > 1.5 OR n.v IN [1] RETURN n.k"],
+            expected_rows=[[['five'], ['f']], [['one'], ['five'], ['f']],
+                           [['one'], ['five'], ['f']], [['one'], ['five']]])
+        # a radius query still finds the point
+        g = self.db.select_graph('point_radius_index')
+        g.create_node_range_index('L', 'v')
+        wait_for_indices_to_sync(g)
+        g.query("CREATE (:L {v:point({latitude:1.0, longitude:2.0}), k:'p'}), (:L {v:5, k:'five'})")
+        q = ("MATCH (n:L) WHERE distance(n.v, point({latitude:1.0, longitude:2.0})) < 1000"
+             " RETURN n.k")
+        self.env.assertEqual(g.query(q).result_set, [['p']])
+        g.delete()
+        # A comparison below a range has a Bool value: no backend serves a Bool
+        # bound, so the filter stays.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:1, k:'one'}), (:L {v:true, k:'t'}), (:L {v:false, k:'f'}),"
+            " (:L {v:'a', k:'a'})",
+            ["MATCH (n:L) WHERE n.v < (1 < 2) RETURN n.k",
+             "MATCH (n:L) WHERE n.v <= (1 < 2) AND n.v IN [true, ''] RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= (1 = 1) RETURN n.k"],
+            expect_index=False,
+            expected_rows=[[['f']], [['t']], [['t']]])
+
     def test_45_string_range_follows_byte_order(self):
         # The TAG key encoding must be order-preserving: ' ' (0x20) sorts
         # before 'A', whatever the escape looks like (#2963).

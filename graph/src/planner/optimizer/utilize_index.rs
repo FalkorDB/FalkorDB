@@ -868,13 +868,17 @@ fn needs_post_filter(
         ) && node
             .children()
             .any(|c| matches!(c.data(), ExprIR::Constant(Value::Bool(_))));
-        // Where a Bool is not exact, a comparison or boolean operator below a
-        // comparison can evaluate to the Bool the scan then cannot serve.
-        let bool_valued_operand = cfg!(feature = "index-falkordb")
-            && is_boolean_operator(node.data())
+        // A comparison or boolean operator below a comparison can evaluate to a
+        // Bool the scan cannot serve: always under a range (no backend serves
+        // a Bool bound), and under an equality or IN where the backend does not
+        // key a Bool apart from numbers.
+        let bool_valued_operand = is_boolean_operator(node.data())
             && std::iter::successors(node.parent(), |p| p.parent())
                 .find(|p| !matches!(p.data(), ExprIR::Paren))
-                .is_some_and(|p| is_comparison(p.data()));
+                .is_some_and(|p| {
+                    matches!(p.data(), ExprIR::Lt | ExprIR::Gt | ExprIR::Le | ExprIR::Ge)
+                        || (cfg!(feature = "index-falkordb") && is_comparison(p.data()))
+                });
         bool_range_bound
             || bool_valued_operand
             || is_non_indexable_subexpr(node.data(), Some(scan_alias))

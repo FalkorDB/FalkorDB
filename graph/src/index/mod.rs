@@ -116,21 +116,27 @@ pub struct Field {
     /// Precomputed name for string array sub-field (e.g. "range:attr:string:arr").
     /// Only set for Range fields.
     string_arr_name: Option<CString>,
+    /// Precomputed name for the geo sub-field (e.g. "range:attr:geo"). Only set
+    /// for Range fields. RediSearch keeps a geo field's geohashes in the same
+    /// numeric tree as a numeric field of that name, so a Point stored under
+    /// the field's own name would be returned by a numeric range on it.
+    geo_name: Option<CString>,
 }
 
 impl Field {
     fn make_arr_names(
         name: &CString,
         ty: &IndexType,
-    ) -> (Option<CString>, Option<CString>) {
+    ) -> (Option<CString>, Option<CString>, Option<CString>) {
         if *ty == IndexType::Range {
             let base = name.to_str().unwrap_or("");
             (
                 CString::new(format!("{base}:numeric:arr")).ok(),
                 CString::new(format!("{base}:string:arr")).ok(),
+                CString::new(format!("{base}:geo")).ok(),
             )
         } else {
-            (None, None)
+            (None, None, None)
         }
     }
 
@@ -140,7 +146,7 @@ impl Field {
         ty: IndexType,
         options: Option<TextIndexOptions>,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name, geo_name) = Self::make_arr_names(&name, &ty);
         Self {
             name,
             ty,
@@ -148,6 +154,7 @@ impl Field {
             vector_options: None,
             numeric_arr_name,
             string_arr_name,
+            geo_name,
         }
     }
 
@@ -157,7 +164,7 @@ impl Field {
         ty: IndexType,
         vector_options: VectorIndexOptions,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name, geo_name) = Self::make_arr_names(&name, &ty);
         Self {
             name,
             ty,
@@ -165,6 +172,7 @@ impl Field {
             vector_options: Some(vector_options),
             numeric_arr_name,
             string_arr_name,
+            geo_name,
         }
     }
 
@@ -186,6 +194,11 @@ impl Field {
     #[must_use]
     pub const fn string_arr_name(&self) -> Option<&CString> {
         self.string_arr_name.as_ref()
+    }
+
+    #[must_use]
+    pub const fn geo_name(&self) -> Option<&CString> {
+        self.geo_name.as_ref()
     }
 }
 
@@ -970,9 +983,11 @@ impl Document {
                 }
                 Value::VecF32(_) => {} // Only for vector fields
                 Value::Point(p) => {
+                    // Range fields keep their points under the geo sub-field.
+                    let name = field.geo_name().unwrap_or(&field.name);
                     RediSearch_DocumentAddFieldGeo(
                         self.rs_doc,
-                        field.name.as_ptr().cast::<c_char>(),
+                        name.as_ptr().cast::<c_char>(),
                         f64::from(p.latitude),
                         f64::from(p.longitude),
                         RSFLDTYPE_GEO,
@@ -1308,7 +1323,7 @@ impl Index {
             for field in fields.values().flat_map(|f| f.iter()) {
                 match field.ty {
                     IndexType::Range => {
-                        let types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
+                        let types = RSFLDTYPE_NUMERIC | RSFLDTYPE_TAG;
                         let field_id = RediSearch_CreateField(
                             self.rs_ptr(),
                             field.name.as_ptr(),
@@ -1318,6 +1333,15 @@ impl Index {
 
                         RediSearch_TagFieldSetSeparator(self.rs_ptr(), field_id, 1 as c_char);
                         RediSearch_TagFieldSetCaseSensitive(self.rs_ptr(), field_id, 1);
+
+                        if let Some(geo_name) = field.geo_name() {
+                            RediSearch_CreateField(
+                                self.rs_ptr(),
+                                geo_name.as_ptr(),
+                                RSFLDTYPE_GEO,
+                                RSFLDOPT_NONE,
+                            );
+                        }
 
                         // Array sub-fields: numeric and string array elements
                         // are indexed in separate fields for array-contains queries.
@@ -1680,7 +1704,7 @@ impl Index {
                 unsafe {
                     RediSearch_CreateGeoNode(
                         self.rs_ptr(),
-                        field.name.as_ptr(),
+                        field.geo_name().unwrap_or(&field.name).as_ptr(),
                         f64::from(point.latitude),
                         f64::from(point.longitude),
                         r,
