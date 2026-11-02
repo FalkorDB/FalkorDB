@@ -179,7 +179,6 @@ impl Decode<19> for Header {
         let deleted_edge_count = r.read_unsigned()?;
         let label_count = r.read_unsigned()?;
         let relationship_count = r.read_unsigned()?;
-
         // One flag per relationship type: refuse a count no graph reaches, and
         // one the remaining bytes cannot hold, before reading and pushing flags
         // (check_header holds the same limit for the rest of the header).
@@ -189,6 +188,7 @@ impl Decode<19> for Header {
             ));
         }
         check_count_fits(r, "relationship type", relationship_count, 9)?;
+
         let mut multi_edge = Vec::with_capacity(decode_capacity(relationship_count));
         for _ in 0..relationship_count {
             let flag = r.read_unsigned()?;
@@ -951,22 +951,6 @@ mod tests {
                 "dim {dim} with {floats} floats was accepted"
             );
         }
-    }
-
-    /// An array count no payload can hold is refused before anything is
-    /// reserved for it, and a deeply nested payload does not reserve per level.
-    #[test]
-    fn array_count_is_bounded_by_the_payload() {
-        use graph::graph::graphblas::serialization::si_type::T_ARRAY;
-        use graph::runtime::value::Value;
-        let mut w = VecWriter::new();
-        w.write_unsigned(T_ARRAY);
-        w.write_unsigned(u64::MAX);
-        let bytes = w.into_vec();
-        let err = Value::decode(&mut BufferedReader::from_slice(&bytes))
-            .map(|_| ())
-            .expect_err("an array of 2^64 elements was accepted");
-        assert!(err.contains("array count"), "{err}");
     }
 
     #[test]

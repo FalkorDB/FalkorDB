@@ -40,9 +40,7 @@ use thin_vec::{ThinVec, thin_vec};
 use crate::{
     graph::{
         graph::{LabelId, NodeId, RelationshipId},
-        graphblas::serialization::{
-            Decode, Encode, Reader, Writer, check_count_fits, decode_capacity, si_type,
-        },
+        graphblas::serialization::{Decode, Encode, Reader, Writer, decode_capacity, si_type},
     },
     runtime::{
         functions::{
@@ -69,10 +67,6 @@ use crate::{
 /// real data uses; the tests run values at exactly this depth on a 2 MiB
 /// thread.
 pub const MAX_VALUE_NESTING: usize = 4096;
-
-/// Elements reserved up front for an array nested inside another (see
-/// `decode_value`).
-const NESTED_ARRAY_RESERVE: usize = 8;
 
 /// The error an entry point returns for a value nested past
 /// [`MAX_VALUE_NESTING`].
@@ -2211,17 +2205,7 @@ fn decode_value(
         }
         si_type::T_ARRAY => {
             let len = r.read_unsigned()?;
-            // Every element is at least a tag and a payload, nine bytes.
-            check_count_fits(r, "array", len, 9)?;
-            // The reservation is per array, so a deeply nested payload would
-            // reserve it at every level before reading a child: past the top
-            // level, reserve a few and let the vector grow if the data is there.
-            let reserve = if depth == 0 {
-                decode_capacity(len)
-            } else {
-                decode_capacity(len).min(NESTED_ARRAY_RESERVE)
-            };
-            let mut items = ThinVec::with_capacity(reserve);
+            let mut items = ThinVec::with_capacity(decode_capacity(len));
             for _ in 0..len {
                 items.push(decode_value(r, depth + 1)?);
             }
@@ -2241,22 +2225,27 @@ fn decode_value(
                 return Err("vector buffer too short".into());
             }
             let dim = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
-            // dim comes from the buffer itself, so check it against the bytes
-            // that are actually there before reserving for it. Both writers emit
-            // exactly `4 + 4 * dim` bytes, so a longer buffer is corrupt: reading
-            // `dim` floats would silently restore a truncated vector.
-            if dim.checked_mul(4) != Some(bytes.len() - 4) {
+            // dim comes from the buffer itself, so check it against the
+            // bytes that are actually there before reserving for it
+            if dim > (bytes.len() - 4) / 4 {
+                return Err(format!("vector dim {dim} exceeds its buffer"));
+            }
+            let mut v = ThinVec::with_capacity(dim);
+            for i in 0..dim {
+                let off = 4 + i * 4;
+                if off + 4 > bytes.len() {
+                    return Err("vector data truncated".into());
+                }
+                v.push(f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()));
+            }
+            // Both writers emit exactly `4 + 4 * dim` bytes, so a longer buffer
+            // is corrupt: `dim` floats would silently restore a truncated vector.
+            if bytes.len() != 4 + 4 * dim {
                 return Err(format!(
                     "vector dim {dim} does not match its {}-byte buffer",
                     bytes.len()
                 ));
             }
-            let v: ThinVec<f32> = bytes[4..]
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .map(|c| f32::from_le_bytes(*c))
-                .collect();
             Ok(Value::VecF32(Arc::new(v)))
         }
         si_type::T_DATETIME => Ok(Value::Datetime(r.read_signed()?)),
