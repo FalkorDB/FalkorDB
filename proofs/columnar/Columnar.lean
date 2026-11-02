@@ -37,7 +37,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 | --- | --- |
 | `Column` | `Column`, `classify_*`, `NullBitmap`, `extend_active_slice` (`batch.rs:90-414`) |
 | `Batch` | `Batch` selection / gather / compaction / `set_column` / `write_column` (`batch.rs:805-1394`), selection producers `filter.rs`, `limit.rs`, `skip.rs`, `runtime.rs:529` |
-| `Row` | `Row` (`row.rs`), `BatchRow::value_at` / `to_owned_row` (`batch.rs:1415-1447`) |
+| `Row`, `Row.pushSlot` | `Row` (`row.rs`), `Row::push_slot` (`row.rs:224`), `BatchRow::value_at` / `to_owned_row` (`batch.rs:1422-1457`) |
 | `Concat` | `Batch::concat`, `concat_typed_column` vs `BatchBuilder` (`batch.rs:525-797`, `:979-1151`) |
 | `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:487-787`), ExpandInto trim (`expand_into.rs:285-294`) |
 | `VectorExpr` | `CmpOp`, comparison kernels, `ExprColumn`, `union_nulls`, `compare_columns` |
@@ -106,22 +106,25 @@ Lean↔Rust tables are in each file's header; per-function buckets in
   `compare_value == (Equal, None)`), scalar function folding, `eval_variable`
   (in the column space), and the Filter mask agree with the per-row evaluator.
 * `Row::insert_by_id` / `take` / `merge` (overlay of bound slots only);
-  `to_owned_row` agrees with `BatchRow::value_at` on every bound slot.
+  `to_owned_row` agrees with `BatchRow::value_at` on every slot (`toOwned_get_eq_view`, #3059) and
+  `Batch::concat` equals the per-row concat for every list of batches (`concat_obs_eq`).
 
 ## Findings
-Confirmed on the real code (pub API; no Cypher trigger found, so latent):
-1. `Batch::concat` (`batch.rs:1008-1015`) takes `bound_anywhere` from batches with
-   no active rows: a slot bound only in an empty batch comes out bound
-   (`Some(Null)`) where the per-row definition leaves it unbound (`None`).
-   Lean `empty_batch_binds`; test `latent_concat_empty_batch_binds_column`
-   (concat: bound true / `Some(null)`; per-row: false / `None`). Fix: skip
-   `active_len() == 0` batches in the fallback loop, as `concat_typed_column` does.
-2. `BatchRow::to_owned_row` (`batch.rs:1432`) drops trailing Unbound columns, so
-   `view.value_at(i) = Some(Null)` but `to_owned_row().value_at(i) = None`
-   ("Variable not found" in `resolve_var`). Lean `toOwned_trailing_unbound`; test
-   `latent_to_owned_row_drops_trailing_unbound_slot`. Same shape: `eval_variable`
-   reads Null beyond the column space where the per-row view errors
-   (`evalVariable_beyond`). 12 OPTIONAL/CALL/comprehension queries tried: all correct.
+Both were confirmed on the real code (pub API; no Cypher trigger found, so latent) and are
+**fixed by #3059** (`d2cd1ad01`), whose tests are `concat_ignores_bindings_of_empty_batch` and
+`to_owned_row_keeps_trailing_unbound_slots_in_scope`:
+1. `Batch::concat` (`batch.rs:1008-1015` before the fix) took `bound_anywhere` from batches with
+   no active rows: a slot bound only in an empty batch came out bound (`Some(Null)`) where the
+   per-row definition leaves it unbound (`None`). Now the fallback loop skips `active_len() == 0`
+   batches (`batch.rs:1008-1012`), as `concat_typed_column` does. Lean `empty_batch_ignored`;
+   `concat_obs_eq` no longer needs every batch non-empty (`concatGeneric` skips empty batches).
+2. `BatchRow::to_owned_row` dropped trailing Unbound columns, so `view.value_at(i) = Some(Null)`
+   but `to_owned_row().value_at(i) = None` ("Variable not found" in `resolve_var`). Now it builds
+   the owned row with `Row::with_capacity` and one `Row::push_slot` per column (`Unbound` is an
+   unbound `Null`, a value-only column keeps its value unbound). Lean `Row.pushSlot`, `pushSlots_spec`,
+   `toOwned_get_eq_view` (the owned row's `value_at` equals the view's on every slot),
+   `toOwned_trailing_unbound`. What remains: `eval_variable` reads Null beyond the column space where
+   the per-row view errors (`evalVariable_beyond`). 12 OPTIONAL/CALL/comprehension queries tried: all correct.
 
 Hazards (not bugs today): selection `u16` casts need `len ≤ 65536`, guaranteed
 only by `BATCH_SIZE` caps — exactly the guard #2922's miscompile drops (this
@@ -179,14 +182,23 @@ proofs/ops_aggregate.
   `has_origins` arm of `start_batch`. The per-row origin argument is in
   `CallBoundary.lean` (`Pr2845.emit_origin_sound`, folded in from the retired pr2845_review).
 
+## Re-target to 80c776385 (2026-11-02): #3059
+
+#3059 (`d2cd1ad01`, "keep columnar unbound-slot semantics in `Batch::concat` and
+`to_owned_row`") fixed both latent findings. `Row.lean`: `Row.pushSlot` (`Row::push_slot`,
+`row.rs:224`), `slotOf`/`pushSlots` (the loop of `to_owned_row`), `toOwned` rebuilt on them,
+`pushSlots_spec`, `toOwned_unbound_slot` re-proved, new `toOwned_get_eq_view`; the old counterexample
+`toOwned_trailing_unbound` now states the fixed behaviour. `Concat.lean`: `concatGeneric`'s
+`boundAny` requires `0 < b.activeLen`, `perRow_anyBound`/`perRow_present`/`concat_obs_eq` lost the
+"every batch non-empty" hypothesis, `empty_batch_binds` became `empty_batch_ignored`.
+
 ## Re-target to 289c201fe
 Re-checked at origin/main `289c201fe`. Only #3294 (`2db1f22df`) touches a file here: the
 generic AND/OR path of `eval_and_or` (`vector_expr.rs:456-459`) now reports
 "Type mismatch: expected Boolean or Null but was <type>" (C's text). That row is covered by
 proofs/functions_temporal `VExpr.colEval_eq`, which keeps errors abstract, so no model or
 theorem changes. COVERAGE.tsv `vector_expr.rs` lines after `:456` re-cited (+3); `batch.rs`,
-`row.rs`, `vectorized.rs` and `batched_result_emitter.rs` are unchanged. Bug 1
-(`empty_batch_binds`) is still present.
+`row.rs`, `vectorized.rs` and `batched_result_emitter.rs` are unchanged.
 
 ## Wave 6 (`Dispatch`)
 Re-checked at origin/main `0f45a8685`: #3335 (`b8321be81`) removed `VectorEval::eval`'s

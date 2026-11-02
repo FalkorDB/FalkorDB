@@ -21,7 +21,7 @@ expression must be closed by `)`. -/
 inductive GTarget : PS → ET → PS → Prop
   | plain {s t s1} : o.pp s = .ok (t, false) s1 → GTarget s t s1
   | paren {s t0 s1 t s2} : o.pp s = .ok (t0, true) s1 → s.cur = .lparen →
-      o.pe false s1 = .ok t s2 → s2.cur = .rparen → GTarget s t s2.adv
+      o.pe false s1 = .ok t s2 → s2.cur = .rparen → s2.adv.cur = .dot → GTarget s t s2.adv
 
 theorem targetP_sound (hpp : o.PPRec) (s : PS) t s' (h : targetP o s = .ok t s') :
     GTarget o s t s' := by
@@ -40,12 +40,20 @@ theorem targetP_sound (hpp : o.PPRec) (s : PS) t s' (h : targetP o s = .ok t s')
       peel h => e s2 h2
       peel h => u s3 h3
       obtain ⟨hr, rfl⟩ := tok_ok h3
-      obtain ⟨rfl, rfl⟩ := pure_ok h
-      have hlp : s.cur = .lparen := by
-        rcases hpp _ _ _ h1 with ⟨h, _⟩ | ⟨_, h⟩
-        · exact h
-        · rw [h] at hroot; cases hroot
-      exact .paren h1 hlp h2 hr
+      peel h => u4 s4 h4
+      unfold expectDotP at h4
+      peel h4 => c4 s5 h5
+      obtain ⟨hc4, rfl⟩ := peek_ok h5
+      split at h4
+      · rename_i hd
+        obtain ⟨-, rfl⟩ := pure_ok h4
+        obtain ⟨rfl, rfl⟩ := pure_ok h
+        have hlp : s.cur = .lparen := by
+          rcases hpp _ _ _ h1 with ⟨h, _⟩ | ⟨_, h⟩
+          · exact h
+          · rw [h] at hroot; cases hroot
+        exact .paren h1 hlp h2 hr (by rw [hc4] at hd; exact hd)
+      · simp [fail] at h4
     · simp [fail] at h0
 
 /-- `( SP? oC_PropertyLookup )*` (Cypher.g4:273). -/

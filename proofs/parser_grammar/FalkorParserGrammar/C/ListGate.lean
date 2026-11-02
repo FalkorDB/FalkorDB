@@ -338,8 +338,7 @@ theorem cn_typesP : ∀ n acc d, Cn (typesP n acc) (d + 1) (d + 1)
     unfold typesP
     refine cn_bind (cn_ident _) fun t => ?_
     refine cn_bind (cn_opt_gen (by decide) (step_inner (.inl rfl) d)) fun p => ?_
-    refine cn_bind (cn_opt_atom rfl _) fun c => ?_
-    exact cn_ite (cn_typesP n _ d) (cn_pure _ _)
+    exact cn_ite (cn_bind (cn_opt_atom rfl _) fun _ => cn_typesP n _ d) (cn_pure _ _)
 
 theorem cn_hopP (d : Nat) : Cn hopP d d := by
   unfold hopP
@@ -407,7 +406,7 @@ theorem cn_pcChain (F : Nat) : ∀ n left g d, Cn (pcChain o F n left g) d d
 /-- **A pattern comprehension that parses opens the gate**: given `Oracle.Bal`,
 `parse_pattern_comprehension` succeeds only if `list_has_top_level_pipe` holds
 where it started. -/
-theorem patCompP_pipe (F : Nat) (pv : Option Nat) (s : PS) (t : ET) (s' : PS)
+theorem patCompP_pipe (F : Nat) (pv : Option Nat) (s : PS) (t : ET × Bool) (s' : PS)
     (h : patCompP o F pv s = .ok t s') : pipeScan 0 s.1 = true := by
   unfold patCompP at h
   peel h => first s1 h1
@@ -491,7 +490,8 @@ theorem listLitRest_lit (o : Oracle) (hs : o.Safe) (F : Nat) (forb : Bool) (save
       let c3 ← peek
       let r3 ← (if c3 = .lparen then attempt (patCompP o F none) else pure none)
       match r3 with
-      | some t => do
+      | some (t, rep) => do
+        if rep then fail else do
         if forb then fail else do
         rejectAggregate t
         pure (t, false)
@@ -504,7 +504,8 @@ theorem listLitRest_lit (o : Oracle) (hs : o.Safe) (F : Nat) (forb : Bool) (save
       let c3 ← peek
       let r3 ← (if c3 = .lparen then attempt (patCompP o F none) else pure none)
       match r3 with
-      | some t => do
+      | some (t, rep) => do
+        if rep then fail else do
         if forb then fail else do
         rejectAggregate t
         pure (t, false)

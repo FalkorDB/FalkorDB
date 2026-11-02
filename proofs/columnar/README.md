@@ -48,7 +48,7 @@ There was a suspicion that ExpandInto's `set_selection(0..remaining)` trim could
 
 **5. Is `Batch::concat` the same as pushing the rows one at a time?**
 
-Only when no input batch is empty. `concat_obs_eq` proves that, if every input batch has an active row, then the value and the bound bit at every (row, slot) equal those of the per-row `BatchBuilder` concat. Row counts and origins also match (`concat_len`, `concat_origins`). With an empty batch in the input it differs (`empty_batch_binds`, bug 1 below).
+Yes, for every list of batches, since #3059 (`d2cd1ad01`). `concat_obs_eq` proves that the value and the bound bit at every (row, slot) equal those of the per-row `BatchBuilder` concat, empty batches included (the fallback loop now skips a batch with no active rows, as `concat_typed_column` always did: `empty_batch_ignored`). Row counts and origins also match (`concat_len`, `concat_origins`).
 
 ## The headline theorems
 
@@ -81,12 +81,12 @@ Only when no input batch is empty. `concat_obs_eq` proves that, if every input b
 
 ## Bugs found
 
-Both bugs were confirmed on the real code through the public API. No Cypher query has triggered either of them yet, so they are **latent**. They are recorded in [`Columnar.lean`](Columnar.lean), not in [`../FINDINGS.md`](../FINDINGS.md).
+Both bugs were confirmed on the real code through the public API and were **latent** (no Cypher query triggered either). Both were fixed by #3059 (`d2cd1ad01`, merged 2026-11-02). They are recorded in [`Columnar.lean`](Columnar.lean), not in [`../FINDINGS.md`](../FINDINGS.md).
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `empty_batch_binds` | `Batch::concat`'s fallback loop (`batch.rs` ~1008) sets `bound_anywhere` from batches with **no active rows**. A slot bound only in an empty batch comes out bound (`Some(Null)`), where the per-row concat leaves it unbound (`None`). The fix is to skip `active_len() == 0` batches, as `concat_typed_column` already does | **Open**, latent (still present at 289c201fe) |
-| 2 | `toOwned_trailing_unbound`, `evalVariable_beyond` | `BatchRow::to_owned_row` drops trailing unbound columns, so `value_at(i)` is `Some(Null)` on the view but `None` on the owned row ("Variable not found"). `eval_variable` reads Null past the column space where the per-row view errors. 12 OPTIONAL/CALL/comprehension queries were tried and all were correct | **Open**, latent |
+| 1 | `empty_batch_ignored`, `concat_obs_eq` (counterexample `empty_batch_binds` replaced) | `Batch::concat`'s fallback loop set `bound_anywhere` from batches with **no active rows**, so a slot bound only in an empty batch came out bound (`Some(Null)`), where the per-row concat leaves it unbound (`None`) | **Fixed by #3059**: the loop skips `active_len() == 0` batches (`batch.rs:1008-1012`) |
+| 2 | `toOwned_get_eq_view`, `toOwned_trailing_unbound` (counterexample replaced) | `BatchRow::to_owned_row` dropped trailing unbound columns, so `value_at(i)` was `Some(Null)` on the view but `None` on the owned row ("Variable not found") | **Fixed by #3059**: one `Row::push_slot` per column (`batch.rs:1437-1457`), so the owned row answers `value_at` on every slot exactly like the view (`toOwned_get_eq_view`; `Row.pushSlot`, `pushSlots_spec`). Still modelled, not a Rust change: `evalVariable_beyond` (the vectorised `eval_variable` reads Null past the column space where the per-row view errors) |
 | — | removed (17ccc5412) | #2922: LLVM dropped the `cap < BATCH_SIZE` guard of the pack-ceiling `match` on aarch64-apple-darwin, so a cap above a batch came out as the ceiling itself (`miscompiled_differs`). #2973 rewrote it as `cap.clamp(1, BATCH_SIZE)`; the two forms compute the same ceiling for every cap | Fixed by #2973 (a source-form change; the model is the clamp, the guarded arm is history) |
 | — | `skip_u16_wraps` | Selection vectors are `u16`. Past 65536 rows the cast wraps, a row is lost and another duplicated. Batches are kept small only by the `BATCH_SIZE` caps, which is exactly the guard the LLVM miscompile in #2922 dropped on macOS arm64 (`miscompiled_differs`) | Hazard, not a bug today |
 | — | `finishLen_drops` | A no-alias emitter over a zero-column parent with no origins emits a 0-row batch. Since #2845 a parent that carries origins is gathered (`finishLen_origins_kept`) | Hazard, unreachable: ExpandInto always has columns |

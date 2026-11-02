@@ -39,7 +39,7 @@ graph/src/runtime/functions/internal.rs	internal_regex_matches	107	PROVEN	regex_
 graph/src/runtime/functions/internal.rs	internal_case	130	PROVEN	Misc.internalCase: internal_stubs
 graph/src/runtime/functions/internal.rs	internal_add	145	PROVEN	Misc.internalAdd: internal_stubs
 graph/src/runtime/functions/entity.rs	register	36	PROVEN	Entity.registered: register_nodup
-graph/src/runtime/functions/entity.rs	labels	40	PROVEN	Entity.labels/RT.labels: deleteNode_labels_iff, labels_lost_after_delete (BUG), deleteNode_preserves_all, entity_null
+graph/src/runtime/functions/entity.rs	labels	40	PROVEN	Entity.labels/RT.labels: deleteNode_labels_preserved, staged_set_kept_after_delete, staged_remove_kept_after_delete (fixed by #3288), deleteNode_preserves_all, entity_null
 graph/src/runtime/functions/entity.rs	type_of	56	PROVEN	Entity.typeOf/typeName: typeOf_total, typeName_eq_valueName (#2954: type_of returns Value::name)
 graph/src/runtime/functions/entity.rs	has_labels	68	PROVEN	Entity.hasLabels/hasLabelsLoop/valueName: hasLabels_all, hasLabels_typecheck, hasLabels_mismatch_names, hasLabels_null_label (#3127), deleteNode_preserves_all
 graph/src/runtime/functions/entity.rs	id	117	PROVEN	Entity.id: id_small, deleteNode_preserves

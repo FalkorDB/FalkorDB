@@ -12,17 +12,14 @@ namespace FalkorParserGrammar.C
 
 /-- Places where the Rust parser accepts more than Cypher.g4. -/
 structure Ext where
-  /-- `[:A:B]`: a type list separated by `:` alone (cypher.rs:3072-3075;
-  Cypher.g4:255 needs `|`). C rejects it. -/
-  typeColon : Bool
   /-- `MATCH a MATCH b` / `CREATE a CREATE b`: the next clause's keyword
   continues the same pattern (cypher.rs:1571-1576, W2-binder-1). -/
   fold : Bool
   /-- `p = allShortestPaths(...)` in MATCH (Neo4j syntax, not in Cypher.g4). -/
   asp : Bool
 
-def Ext.g4 : Ext := ⟨false, false, false⟩
-def Ext.rust : Ext := ⟨true, true, true⟩
+def Ext.g4 : Ext := ⟨false, false⟩
+def Ext.rust : Ext := ⟨true, true⟩
 
 /-- `( oC_Variable SP? )?` with the fresh-name action for an absent one. -/
 inductive GOptVar : PS → Nat → PS → Prop
@@ -99,15 +96,14 @@ theorem nodeP_sound (o : Oracle) (F : Nat) (s : PS) n s' (h : nodeP o F s = .ok 
   exact .mk hc1 (optVar_sound h2 h3) (labelsP_sound _ _ _ _ _ h4) (propsP_sound o _ _ _ h5) hc6
 
 /-- `oC_RelationshipTypes` (Cypher.g4:254-255): `:` already consumed. After a
-name, `|` then an optional `:` continues; with `typeColon`, `:` alone does. -/
+name, `|` then an optional `:` continues. Since #3300 a `:` alone does not (`[:A:B]` is refused,
+`typesP_colon_refused`). -/
 inductive GTypes (x : Ext) : PS → List Nat → List Nat → PS → Prop
   | last {s acc t} : identOf s.cur = some t → GTypes x s acc (sins t acc) s.adv
   | pipe {s acc t out s'} : identOf s.cur = some t → s.adv.cur = .pipe →
       GTypes x s.adv.adv (sins t acc) out s' → GTypes x s acc out s'
   | pipeColon {s acc t out s'} : identOf s.cur = some t → s.adv.cur = .pipe →
       s.adv.adv.cur = .colon → GTypes x s.adv.adv.adv (sins t acc) out s' → GTypes x s acc out s'
-  | colon {s acc t out s'} : x.typeColon = true → identOf s.cur = some t → s.adv.cur = .colon →
-      GTypes x s.adv.adv (sins t acc) out s' → GTypes x s acc out s'
 
 theorem opt_eq {t s b s'} (h : opt t s = .ok b s') : (b = true → s.cur = t ∧ s' = s.adv) ∧
     (b = false → s' = s) := by
@@ -120,23 +116,28 @@ theorem typesP_sound : ∀ (n : Nat) (acc : List Nat) (s : PS) out s',
     unfold typesP at h
     peel h => t s1 h1
     peel h => p s2 h2
-    peel h => c s3 h3
     obtain ⟨ht, rfl⟩ := ident_ok h1
     have ih := typesP_sound n
-    cases p <;> cases c <;> simp only [Bool.or_false, Bool.or_true, Bool.false_or, ite_true] at h
-    · obtain ⟨rfl, rfl⟩ := pure_ok h
+    cases p
+    · simp only [Bool.false_eq_true, ite_false] at h
+      obtain ⟨rfl, rfl⟩ := pure_ok h
       have := (opt_eq h2).2 rfl; subst this
-      have := (opt_eq h3).2 rfl; subst this
       exact .last ht
-    · have := (opt_eq h2).2 rfl; subst this
-      obtain ⟨hc, rfl⟩ := (opt_eq h3).1 rfl
-      exact .colon rfl ht hc (ih _ _ _ _ h)
-    · obtain ⟨hp, rfl⟩ := (opt_eq h2).1 rfl
-      have := (opt_eq h3).2 rfl; subst this
-      exact .pipe ht hp (ih _ _ _ _ h)
-    · obtain ⟨hp, rfl⟩ := (opt_eq h2).1 rfl
-      obtain ⟨hc, rfl⟩ := (opt_eq h3).1 rfl
-      exact .pipeColon ht hp hc (ih _ _ _ _ h)
+    · simp only [ite_true] at h
+      obtain ⟨hp, rfl⟩ := (opt_eq h2).1 rfl
+      peel h => u s3 h3
+      cases u
+      · have := (opt_eq h3).2 rfl; subst this
+        exact .pipe ht hp (ih _ _ _ _ h)
+      · obtain ⟨hc, rfl⟩ := (opt_eq h3).1 rfl
+        exact .pipeColon ht hp hc (ih _ _ _ _ h)
+
+/-- **`[:A:B]` is refused** (#3300, `parse_relationship_types`): after a name, a bare `:` ends the
+list instead of continuing it, so the caller (which wants `-` or `]`) fails. Historical
+(before #3300, `type_colon_accepted`): it was accepted; C rejects it. -/
+theorem typesP_colon_refused :
+    typesP 3 [] ([CT.ident 1, .colon, .ident 2], 0) = .ok [1] ([.colon, .ident 2], 0) := by
+  rfl
 
 /-- `oC_IntegerLiteral?` inside a range. -/
 inductive GHop : PS → Option Int → PS → Prop

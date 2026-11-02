@@ -5,6 +5,7 @@
 import FalkorParserGrammar.C.Index
 import FalkorParserGrammar.C.Oracle0
 import FalkorParserGrammar.C.PatternBugs
+import FalkorParserGrammar.C.ExprC2
 
 namespace FalkorParserGrammar.C
 
@@ -77,12 +78,36 @@ theorem call_trailing_comma_refused :
     (q [.kw .call, .ident 77, .lparen, .int 1, .comma, .rparen, .kw .yield_, .ident 5,
         .kw .return_, .ident 5]).isOk = false := by decide
 
-/-- `SET (n.x) = 5` is accepted as a replace-assignment to a property
-(cypher.rs:3352-3366: the `=` arm takes any primary as target). Live:
-`CREATE (n {a:1}) SET (n.x) = 5 RETURN n` sets x; C: syntax error. -/
-theorem set_paren_property_accepted :
+/-- **`SET (n.x) = 5`, `SET (n) = {..}`, `SET (n) += {..}`, `SET (n):L` and `REMOVE (n):L` are
+refused** (#3300, W4-parse-4; C: syntax error): `expect_property_after_paren` (cypher.rs:3406)
+lets a parenthesised target open only a property lookup, `(n).x`. Before it the `=` arm took any
+primary, so `CREATE (n {a:1}) SET (n.x) = 5 RETURN n` set x. `SET (n).x = 5` and
+`REMOVE (n).x` still parse. -/
+theorem set_paren_target_refused :
     (q [.kw .create, .lparen, .ident 1, .rparen, .kw .set, .lparen, .ident 1, .dot, .ident 2,
-        .rparen, .eq, .int 5]).isOk = true := by decide
+        .rparen, .eq, .int 5]).isOk = false ∧
+    (q [.kw .create, .lparen, .ident 1, .rparen, .kw .set, .lparen, .ident 1, .rparen,
+        .colon, .ident 3]).isOk = false ∧
+    (q [.kw .create, .lparen, .ident 1, .rparen, .kw .remove, .lparen, .ident 1, .rparen,
+        .colon, .ident 3]).isOk = false ∧
+    (q [.kw .create, .lparen, .ident 1, .rparen, .kw .remove, .lparen, .ident 1, .rparen,
+        .dot, .ident 2]).isOk = true := by decide
+
+/-- **A pattern comprehension that repeats a relationship variable is refused** (#3289):
+`RETURN [(a)-[r]->(b)-[r]->(c) | r]` is the error "Cannot use the same relationship variable 'r'
+for multiple patterns", not a pattern comprehension and not a fallback list literal
+(`repeated.map_or(Ok(()), Err)?` runs after the speculative attempt succeeded, so the attempt's
+`Err`-to-`None` fallback does not swallow it). Distinct variables still parse. Before #3289
+`graph.add_relationship(rel)` ignored the repeat and the query returned rows. -/
+theorem pattern_comprehension_repeated_rel_refused :
+    (run (listLitP o0 40 false)
+      [.lparen, .ident 1, .rparen, .dash, .lbrack, .ident 5, .rbrack, .dash, .gt, .lparen, .ident 2,
+       .rparen, .dash, .lbrack, .ident 5, .rbrack, .dash, .gt, .lparen, .ident 3, .rparen, .pipe,
+       .ident 5, .rbrack]).isOk = false ∧
+    (run (listLitP o0 40 false)
+      [.lparen, .ident 1, .rparen, .dash, .lbrack, .ident 5, .rbrack, .dash, .gt, .lparen, .ident 2,
+       .rparen, .dash, .lbrack, .ident 6, .rbrack, .dash, .gt, .lparen, .ident 3, .rparen, .pipe,
+       .ident 5, .rbrack]).isOk = true := by decide
 
 /-- `DELETE a DETACH DELETE b` is folded into one clause with `detach`
 (cypher.rs:1188-1203); the folded IR is a single DELETE. -/

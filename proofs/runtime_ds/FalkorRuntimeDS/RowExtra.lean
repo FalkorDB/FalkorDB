@@ -7,6 +7,7 @@ import FalkorRuntimeDS.Cow
 | --- | --- |
 | `RowView`          | `trait RowView { value_at; to_owned_row }` (row.rs:44-57) |
 | `withCapacity`     | `Row::with_capacity` (row.rs:82) |
+| `pushSlot`         | `Row::push_slot` (row.rs:224, #3059): append one slot after the last, bound bit as given |
 | `fromRaw`          | `Row::from_raw` (row.rs:92) |
 | `lenR` / `isEmptyR`| `Row::len` / `Row::is_empty` (row.rs:169, :175) |
 | `hasBindings`      | `Row::has_bindings` (row.rs:181) |
@@ -48,6 +49,46 @@ theorem new_spec (i : Nat) : getById (Row.new : Row β) i = none ∧ isBound (Ro
 /-- row.rs:82 — capacity only, no slots, no bindings. -/
 def withCapacity (_n : Nat) : Row β := Row.new
 theorem withCapacity_eq (n : Nat) : withCapacity n = (Row.new : Row β) := rfl
+
+/-- row.rs:224 — `Row::push_slot(value, bound)`: `if bound { self.bound.set(self.values.len()) }`,
+then `self.values.push(value)`. -/
+def pushSlot (r : Row β) (v : Option β) (b : Bool) : Row β :=
+  { values := r.values ++ [v], bound := if b then set r.bound r.values.length else r.bound }
+
+/-- **`push_slot` appends exactly one slot**: the new slot (at the old length) reads `v`, every
+earlier slot is untouched, and the row grows by one. -/
+theorem getById_pushSlot (r : Row β) (v : Option β) (b : Bool) (i : Nat) :
+    getById (pushSlot r v b) i = if i = r.values.length then some v else getById r i := by
+  unfold getById pushSlot
+  by_cases h : i = r.values.length
+  · subst h; simp
+  · rw [if_neg h]
+    by_cases h2 : i < r.values.length
+    · simp [List.getElem?_append_left h2]
+    · have h3 : r.values.length ≤ i := by omega
+      rw [List.getElem?_append_right h3, List.getElem?_eq_none h3]
+      simp
+      intro h5; omega
+
+theorem length_pushSlot (r : Row β) (v : Option β) (b : Bool) :
+    (pushSlot r v b).values.length = r.values.length + 1 := by
+  simp [pushSlot]
+
+/-- The bound bit: `bound = true` sets the new slot's bit (every other bit is kept), `bound =
+false` leaves the bitmap alone, so a fresh slot stays unbound. -/
+theorem isBound_pushSlot (r : Row β) (v : Option β) (b : Bool) (i : Nat) :
+    isBound (pushSlot r v b) i = if b then (isBound r i || decide (i = r.values.length)) else isBound r i := by
+  unfold isBound pushSlot
+  cases b <;> simp [test_set]
+
+/-- On a row whose bitmap has no stale bit at the new index (e.g. one built only by
+`withCapacity` + `pushSlot`), an unbound push leaves the slot in scope but unbound: `Some Null`
+and not bound. -/
+theorem pushSlot_unbound (r : Row β) (hfree : isBound r r.values.length = false) :
+    getById (pushSlot r none false) r.values.length = some none ∧
+    isBound (pushSlot r none false) r.values.length = false := by
+  refine ⟨by simp [getById_pushSlot], ?_⟩
+  rw [isBound_pushSlot]; simpa using hfree
 
 /-- row.rs:92 -/
 def fromRaw (values : List (Option β)) (bound : BitSet) : Row β := ⟨values, bound⟩

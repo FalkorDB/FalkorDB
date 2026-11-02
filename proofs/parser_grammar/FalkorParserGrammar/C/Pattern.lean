@@ -58,15 +58,18 @@ def nodeP (o : Oracle) (F : Nat) : P (QNode Nat) := do
   tok .rparen
   pure ⟨alias, ls, attrs⟩
 
-/-- The relationship-type loop (cypher.rs:3068-3078): after each type an
-optional `|` and then an optional `:`; either one continues. -/
+/-- The relationship-type list (`parse_relationship_types`, cypher.rs:3054-3064, #3300): a name, then
+while there is a `|` an optional `:` (the legacy `A|:B`) and another name. A bare `:` between
+two names (`A:B`) is not a separator: it is left for the caller, which expects `-` or `]`. -/
 def typesP : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
   | n + 1, acc => do
     let t ← ident
     let p ← opt .pipe
-    let c ← opt .colon
-    if p || c then typesP n (sins t acc) else pure (sins t acc)
+    if p then do
+      let _ ← opt .colon
+      typesP n (sins t acc)
+    else pure (sins t acc)
 
 /-- An optional integer hop bound (cypher.rs:3080-3076, 3087-3092). -/
 def hopP : P (Option Int) := do
@@ -136,7 +139,9 @@ def addPatNode (clause : CK) (gs : QG Nat × List Nat) (n : QNode Nat) : QG Nat 
   if n.alias ∈ gs.2 then (if clause = .match_ then gs.1.mergeNode n else gs.1, gs.2)
   else ((gs.1.addNode n).2, gs.2 ++ [n.alias])
 
-/-- The anonymous-path chain (cypher.rs:1545-1565). -/
+/-- The anonymous-path chain (cypher.rs:1559-1561). Every relationship goes through
+`add_pattern_relationship` (cypher.rs:1380), which rejects an alias the pattern already holds
+whatever the clause (#3289); before it only MATCH and CREATE did. -/
 def chainA (o : Oracle) (F : Nat) (clause : CK) : Nat → QNode Nat → QG Nat × List Nat →
     P (QG Nat × List Nat)
   | 0, _, _ => fuelP
@@ -145,12 +150,12 @@ def chainA (o : Oracle) (F : Nat) (clause : CK) : Nat → QNode Nat → QG Nat �
     if c = .dash ∨ c = .lt then do
       let rr ← relP o F clause left
       let ag := gs.1.addRel rr.1
-      if !ag.1 && (clause = .match_ || clause = .create) then fail
+      if !ag.1 then fail
       else chainA o F clause n rr.2 (addPatNode clause (ag.2, gs.2) rr.2)
     else pure gs
 
-/-- The named-path chain (cypher.rs:1520-1543). A repeated relationship
-variable is an error only in MATCH. -/
+/-- The named-path chain (cypher.rs:1535-1545). A repeated relationship variable is an error in
+every clause (#3289; it was MATCH only). -/
 def chainN (o : Oracle) (F : Nat) (clause : CK) (p : Nat) : Nat → QNode Nat → List Nat →
     QG Nat × List Nat → P (QG Nat × List Nat)
   | 0, _, _, _ => fuelP
@@ -159,7 +164,7 @@ def chainN (o : Oracle) (F : Nat) (clause : CK) (p : Nat) : Nat → QNode Nat �
     if c = .dash ∨ c = .lt then do
       let rr ← relP o F clause left
       let ag := gs.1.addRel rr.1
-      if !ag.1 && clause = .match_ then fail
+      if !ag.1 then fail
       else
         let gs' := addPatNode clause (ag.2, gs.2) rr.2
         chainN o F clause p n rr.2 (vars ++ [rr.1.alias, rr.2.alias]) gs'
@@ -203,13 +208,13 @@ def aspLoop (o : Oracle) (F : Nat) (clause : CK) (leftAlias : Nat) : Nat → QNo
         else
           let r' := aspRel r leftAlias (decide (c = .lt))
           let ag := gs.1.addRel r'
-          if !ag.1 && clause = .match_ then fail
+          if !ag.1 then fail
           else
             let gs' := addPatNode clause (ag.2, gs.2) rr.2
             aspLoop o F clause leftAlias n rr.2 true (vars ++ [r'.alias, rr.2.alias]) gs'
       else
         let ag := gs.1.addRel r
-        if !ag.1 && clause = .match_ then fail
+        if !ag.1 then fail
         else
           let gs' := addPatNode clause (ag.2, gs.2) rr.2
           aspLoop o F clause leftAlias n rr.2 found (vars ++ [r.alias, rr.2.alias]) gs'

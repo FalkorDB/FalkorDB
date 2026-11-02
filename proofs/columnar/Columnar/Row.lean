@@ -13,8 +13,8 @@ import Columnar.Batch
 | `Row.cloneWith` | `Row::clone_with` (`row.rs:187-195`) |
 | `fillRow` | the shared loop shape of `Row::merge` and `BatchRow::to_owned_row` |
 | `Row.merge` | `Row::merge` (`row.rs:209-218`) |
-| `viewAt` | `BatchRow::value_at` (`batch.rs:1417-1430`) |
-| `toOwned` | `BatchRow::to_owned_row` (`batch.rs:1432-1446`) |
+| `viewAt` | `BatchRow::value_at` (`batch.rs:1422-1435`) |
+| `toOwned`, `pushSlots`, `Row.pushSlot` | `BatchRow::to_owned_row` (`batch.rs:1437-1457`), `Row::push_slot` (`row.rs:224`) |
 -/
 
 namespace Columnar
@@ -266,20 +266,79 @@ def viewAt (b : Batch F) (r i : Nat) : Option (V F) :=
   | some v => some v
   | none => if i < b.cols.length then some .null else none
 
-/-- `BatchRow::to_owned_row`: insert every non-`Unbound` column's value, unbind
-value-only slots, copy the origin tag. -/
+/-- `Row::push_slot` (`row.rs:224`, #3059): append one slot after the last, holding `v`, with the
+bound bit set to `b` (a `false` leaves the bitmap alone). -/
+def Row.pushSlot (r : Row F) (v : V F) (b : Bool) : Row F :=
+  { r with values := r.values ++ [v],
+           bound := if b then (fun j => if j = r.values.length then true else r.bound j) else r.bound }
+
+/-- The slot `to_owned_row` pushes for column `id` (`batch.rs:1442-1449`): an `Unbound` column
+is an unbound `Null`; any other keeps its value, bound unless the column is value-only. -/
+def slotOf (b : Batch F) (r id : Nat) : V F × Bool :=
+  if (b.column id).isUnbound then (.null, false)
+  else (((b.column id).get? r).getD .null, !(b.vo id))
+
+/-- The loop of `to_owned_row`: `Row::with_capacity(n)` then one `push_slot` per column. -/
+def pushSlots (b : Batch F) (r : Nat) (n : Nat) : Row F :=
+  (List.range n).foldl (fun acc id => acc.pushSlot (slotOf b r id).1 (slotOf b r id).2) Row.empty
+
+theorem pushSlots_succ (b : Batch F) (r n : Nat) :
+    pushSlots b r (n + 1) = (pushSlots b r n).pushSlot (slotOf b r n).1 (slotOf b r n).2 := by
+  simp [pushSlots, List.range_succ, List.foldl_append]
+
+/-- **`pushSlots` spec**: exactly `n` slots; slot `i < n` reads `slotOf`'s value and bound bit,
+everything past `n` is absent and unbound. -/
+theorem pushSlots_spec (b : Batch F) (r : Nat) : ∀ n,
+    (pushSlots b r n).values.length = n ∧
+    (∀ i, (pushSlots b r n).get i = if i < n then some (slotOf b r i).1 else none) ∧
+    (∀ i, (pushSlots b r n).bound i = (decide (i < n) && (slotOf b r i).2))
+  | 0 => by
+    refine ⟨rfl, fun i => ?_, fun i => ?_⟩ <;> simp [pushSlots, Row.empty, Row.get]
+  | n + 1 => by
+    obtain ⟨hl, hg, hb⟩ := pushSlots_spec b r n
+    rw [pushSlots_succ]
+    refine ⟨by simp [Row.pushSlot, hl], fun i => ?_, fun i => ?_⟩
+    · have hgi := hg i
+      simp only [Row.get] at hgi ⊢
+      simp only [Row.pushSlot, hl]
+      by_cases h2 : i < n
+      · rw [List.getElem?_append_left (by omega), hgi, if_pos h2, if_pos (by omega)]
+      · by_cases hi : i = n
+        · subst hi
+          rw [List.getElem?_append_right (by omega), hl]; simp
+        · rw [List.getElem?_append_right (by omega), List.getElem?_eq_none (by simp; omega),
+            if_neg (by omega)]
+    · have hbi := hb i
+      have key : (slotOf b r n).2 = true ∨ (slotOf b r n).2 = false := by cases (slotOf b r n).2 <;> simp
+      by_cases hi : i = n
+      · subst hi
+        have h0 : (pushSlots b r i).bound i = false := by rw [hb i]; simp
+        rcases key with hs | hs <;> simp [Row.pushSlot, hs, hl, h0]
+      · rcases key with hs | hs
+        · simp only [Row.pushSlot, hs, hl, if_true, if_neg hi]
+          rw [hbi]
+          by_cases h2 : i < n
+          · simp [h2, show i < n + 1 by omega]
+          · simp [h2, show ¬ i < n + 1 by omega]
+        · simp only [Row.pushSlot, hs, hl, Bool.false_eq_true, if_false]
+          rw [hbi]
+          by_cases h2 : i < n
+          · simp [h2, show i < n + 1 by omega]
+          · simp [h2, show ¬ i < n + 1 by omega]
+
+theorem pushSlots_origin (b : Batch F) (r : Nat) : ∀ n, (pushSlots b r n).origin = 0
+  | 0 => rfl
+  | n + 1 => by rw [pushSlots_succ]; exact pushSlots_origin b r n
+
+/-- `BatchRow::to_owned_row`: one slot per column (`pushSlots`), the origin tag copied. -/
 def toOwned (b : Batch F) (r : Nat) : Row F :=
-  let row := fillRow b.cols.length
-    (fun id => if (b.column id).isUnbound then none
-      else some (((b.column id).get? r).getD .null, !(b.vo id))) Row.empty
+  let row := pushSlots b r b.cols.length
   match b.origins with
   | some o => { row with origin := o[r]?.getD 0 }
   | none => row
 
 theorem toOwned_row (b : Batch F) (r : Nat) :
-    ∃ o, toOwned b r = { fillRow b.cols.length
-      (fun id => if (b.column id).isUnbound then none
-        else some (((b.column id).get? r).getD .null, !(b.vo id))) Row.empty with origin := o } := by
+    ∃ o, toOwned b r = { pushSlots b r b.cols.length with origin := o } := by
   unfold toOwned
   cases b.origins with
   | some o => exact ⟨_, rfl⟩
@@ -300,36 +359,68 @@ theorem toOwned_bound_slot {b : Batch F} (h : b.WF) {r i : Nat} (hr : r ∈ b.ac
     · rw [column_isUnbound_of_ge h'] at hu; simp at hu
   obtain ⟨v, hv⟩ := Option.isSome_iff_exists.mp (Batch.valueAt_isSome h hr hu)
   have hget : (b.column i).get? r = some v := by simpa [Batch.valueAt, hu] using hv
-  obtain ⟨-, hf, -⟩ := fillRow_spec
-    (fun id => if (b.column id).isUnbound then none
-      else some (((b.column id).get? r).getD .null, !(b.vo id))) Row.empty b.cols.length i
-  obtain ⟨g, bnd⟩ := hf v (!(b.vo i)) hi (by simp [hu, hget])
   obtain ⟨o, ho⟩ := toOwned_row b r
+  obtain ⟨-, hg, hb⟩ := pushSlots_spec b r b.cols.length
   rw [ho]
-  exact ⟨by simp only [Row.get] at g ⊢; rw [g]; simp [viewAt, hv], bnd⟩
+  refine ⟨?_, ?_⟩
+  · simp only [Row.get] at hg ⊢
+    rw [hg i, if_pos hi]; simp [slotOf, hu, hget, viewAt, hv]
+  · simp only [] at hb ⊢
+    rw [hb i]; simp [slotOf, hu, hi]
 
-/-- An unbound slot is never bound in the snapshot, and reads `Null` or nothing. -/
+/-- An unbound slot is never bound in the snapshot, and reads `Null` (or nothing past the
+column space). -/
 theorem toOwned_unbound_slot (b : Batch F) (r i : Nat) (hu : (b.column i).isUnbound = true) :
     (toOwned b r).bound i = false ∧
       ((toOwned b r).get i = none ∨ (toOwned b r).get i = some .null) := by
-  obtain ⟨-, -, hu'⟩ := fillRow_spec
-    (fun id => if (b.column id).isUnbound then none
-      else some (((b.column id).get? r).getD .null, !(b.vo id))) Row.empty b.cols.length i
-  obtain ⟨-, u2, u3⟩ := hu' (fun _ => by simp [hu])
   obtain ⟨o, ho⟩ := toOwned_row b r
+  obtain ⟨-, hg, hb⟩ := pushSlots_spec b r b.cols.length
   rw [ho]
-  refine ⟨by simpa [Row.empty] using u3, ?_⟩
-  rcases u2 with g | g
-  · left; simpa [Row.empty, Row.get] using g
-  · right; exact g
+  refine ⟨?_, ?_⟩
+  · simp only [] at hb ⊢
+    rw [hb i]; simp [slotOf, hu]
+  · simp only [Row.get] at hg ⊢
+    rw [hg i]
+    by_cases hi : i < b.cols.length
+    · right; simp [hi, slotOf, hu]
+    · left; simp [hi]
 
-/-- **Contract divergence (latent)**: for a trailing `Unbound` column the view
-answers `Some(Null)` but the owned snapshot answers `None`, which
-`ExprEval::resolve_var` (`eval.rs:287`) turns into "Variable not found".
-Test `latent_to_owned_row_drops_trailing_unbound_slot`. -/
-theorem toOwned_trailing_unbound :
-    let b : Batch F := { len := 1, sel := none, cols := [.ints [1], .unbound], origins := none,
-                         vo := fun _ => false }
-    viewAt b 0 1 = some .null ∧ (toOwned b 0).get 1 = none := ⟨rfl, rfl⟩
+/-- **The owned snapshot answers `value_at` exactly like the view on every slot**, trailing
+`Unbound` columns included (#3059: `to_owned_row` pushes one slot per column, so an unbound
+column stays in scope as `Some(Null)` and a slot past the column space is `None`). -/
+theorem toOwned_get_eq_view {b : Batch F} (h : b.WF) {r : Nat} (hr : r ∈ b.active) (i : Nat) :
+    (toOwned b r).get i = viewAt b r i := by
+  cases hu : (b.column i).isUnbound
+  · exact (toOwned_bound_slot h hr hu).1
+  · obtain ⟨o, ho⟩ := toOwned_row b r
+    obtain ⟨-, hg, -⟩ := pushSlots_spec b r b.cols.length
+    rw [ho]
+    simp only [Row.get] at hg ⊢
+    rw [hg i]
+    simp only [viewAt, Batch.valueAt, hu]
+    by_cases hi : i < b.cols.length
+    · simp [hi, slotOf, hu]
+    · simp [hi]
+
+/-- The former latent divergence, now closed: for a trailing `Unbound` column the view
+answers `Some(Null)` and so does the owned snapshot (it used to answer `None`, which
+`ExprEval::resolve_var` (`eval.rs:287`) turned into "Variable not found"). -/
+def trailingEx (F : Type) : Batch F :=
+  { len := 1, sel := none, cols := [.ints [1], .unbound, .unbound], origins := none, vo := fun _ => false }
+
+theorem toOwned_trailing_unbound (F : Type) [FloatModel F] :
+    viewAt (trailingEx F) 0 2 = some .null ∧ (toOwned (trailingEx F) 0).get 2 = some .null ∧
+    viewAt (trailingEx F) 0 3 = none ∧ (toOwned (trailingEx F) 0).get 3 = none ∧
+    (toOwned (trailingEx F) 0).bound 0 = true ∧ (toOwned (trailingEx F) 0).bound 1 = false ∧
+    (toOwned (trailingEx F) 0).bound 2 = false := by
+  obtain ⟨-, hg, hb⟩ := pushSlots_spec (trailingEx F) 0 3
+  have e : (toOwned (trailingEx F) 0) = pushSlots (trailingEx F) 0 3 := rfl
+  rw [e]
+  refine ⟨rfl, ?_, rfl, ?_, ?_, ?_, ?_⟩
+  · simp only [Row.get] at hg ⊢; rw [hg 2]; simp [slotOf, trailingEx, Batch.column, Column.isUnbound]
+  · simp only [Row.get] at hg ⊢; rw [hg 3]; simp
+  · rw [hb]; simp [slotOf, trailingEx, Batch.column, Column.isUnbound]
+  · rw [hb]; simp [slotOf, trailingEx, Batch.column, Column.isUnbound]
+  · rw [hb]; simp [slotOf, trailingEx, Batch.column, Column.isUnbound]
 
 end Columnar

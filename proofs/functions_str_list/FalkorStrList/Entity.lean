@@ -4,14 +4,16 @@
 The runtime accessors entity.rs calls (`runtime.rs:1661-1880`) are modelled with the order
 they use: **deleted-entity snapshot > pending (this query's writes) > committed graph**.
 `deleteNode` / `deleteRel` model the snapshot the DELETE operator takes
-(`ops/delete.rs:228-292, :417-502`; #3462 `5e475e6c9` makes the DeleteOp snapshot flag `runtime.inspect || snapshot_required(..)` — `deleteNode`/`deleteRel` below are the `snapshot = true` case).
+(`ops/delete.rs:197-210, :228-292, :417-502`; #3462 `5e475e6c9` makes the DeleteOp snapshot flag `runtime.inspect || snapshot_required(..)` — `deleteNode`/`deleteRel` below are the `snapshot = true` case).
 
 House decision (2026-09-25): a deleted entity keeps returning *all* its details for the rest
-of the query. `deleteRel_preserves` and `deleteNode_preserves` prove it for every accessor
-except node labels; `deleteNode_labels_iff` shows labels are preserved exactly when the
-query staged no label change on the node before deleting it — the snapshot reads the
-*committed* label ids (`g.get_node_label_ids(id)`, ops/delete.rs:286 and :466), not the
-pending view. Confirmed live and in `lean_functions_str_list::bug_deleted_node_labels_*`.
+of the query. `deleteRel_preserves`, `deleteNode_preserves` and `deleteNode_labels_preserved`
+prove it for every accessor, node labels included. Labels were the one exception until #3288
+(`7fd3c12a0`, fixes #3245): the snapshot used to copy the *committed* label ids
+(`g.get_node_label_ids(id)`), so labels staged by `SET`/`REMOVE` earlier in the same query were
+lost; it now takes `Runtime::staged_label_ids` (ops/delete.rs:197: the committed ids with the
+query's staged adds and removes applied — the same view `get_node_labels` gives a live node;
+proofs/pending_commit `stagedLabelIds_eq_overlay`), which `pendingLabels` models.
 -/
 namespace FalkorStrList.Entity
 
@@ -87,11 +89,14 @@ def RT.inDegree (r : RT) (id : Nat) (ts : List String) : Nat :=
 def RT.outDegree (r : RT) (id : Nat) (ts : List String) : Nat :=
   if (r.delNodes id).isSome || r.pendingDeleted id then 0 else r.outdeg id ts
 
-/-- DELETE of a node with `snapshot` (ops/delete.rs:281-290 / :462-467): labels from the
-COMMITTED graph, attrs through `get_node_attrs` (pending applied). -/
+/-- DELETE of a node with `snapshot` (ops/delete.rs:303-306 / :486-487): labels through
+`staged_label_ids` (committed ids with this query's staged changes applied, #3288), attrs through
+`get_node_attrs` (pending applied). -/
 def deleteNode (r : RT) (id : Nat) : RT :=
   { r with
-    delNodes := fun x => if x = id then some ⟨r.committedLabels id, r.getNodeAttrs id⟩ else r.delNodes x
+    delNodes := fun x =>
+      if x = id then some ⟨(r.pendingLabels id).getD (r.committedLabels id), r.getNodeAttrs id⟩
+      else r.delNodes x
     pendingDeleted := fun x => if x = id then true else r.pendingDeleted x }
 
 /-- DELETE of a relationship (ops/delete.rs:487-502): type, attrs, endpoints through the
@@ -302,31 +307,40 @@ theorem deleteNode_preserves (r : RT) (n : Nat) :
     (deleteNode r n).inDegree n [] = 0 ∧ (deleteNode r n).outDegree n [] = 0 := by
   simp [properties, keys, id, deleteNode, RT.getNodeAttrs, RT.inDegree, RT.outDegree]
 
-/-- Labels survive the DELETE exactly when the snapshot's committed labels equal what
-`labels(n)` showed before: i.e. iff this query staged no (net) label change on `n`. -/
-theorem deleteNode_labels_iff (r : RT) (n : Nat) (hnd : r.delNodes n = none) :
-    (deleteNode r n).labels n = r.labels n ↔
-      (r.pendingLabels n).getD (r.committedLabels n) = r.committedLabels n := by
-  simp [RT.labels, deleteNode, hnd, eq_comm]
+/-- **Fixed by #3288 (closes #3245, W4-fn-1): labels survive the DELETE, staged changes
+included.** For a node not yet deleted, the snapshot's labels are exactly what `labels(n)` /
+`n:L` showed before the DELETE, whatever this query staged on it. -/
+theorem deleteNode_labels_preserved (r : RT) (n : Nat) (hnd : r.delNodes n = none) :
+    (deleteNode r n).labels n = r.labels n ∧
+    (∀ l, (deleteNode r n).hasLabel n l = r.hasLabel n l) := by
+  have h : (deleteNode r n).labels n = r.labels n := by
+    simp [RT.labels, deleteNode, hnd]
+  exact ⟨h, fun l => by simp [RT.hasLabel, h]⟩
 
-/-- Concrete counterexample: `MATCH (n:A) SET n:C DELETE n RETURN labels(n)` — before the
-DELETE `labels(n) = [A, C]`, after it `[A]`. -/
+/-- `MATCH (n:A) SET n:C DELETE n RETURN labels(n), n:C`: before and after the DELETE
+`labels(n) = [A, C]` and `n:C` holds (it was `[A]` and false before #3288). -/
 def exRT : RT :=
   { committedLabels := fun _ => ["A"], pendingLabels := fun _ => some ["A", "C"],
     nodeAttrs := fun _ => [], relAttrs := fun _ => [], relType := fun _ => none,
     relEnds := fun _ => (0, 0), indeg := fun _ _ => 0, outdeg := fun _ _ => 0,
     pendingDeleted := fun _ => false, delNodes := fun _ => none, delRels := fun _ => none }
 
-theorem labels_lost_after_delete :
-    exRT.labels 0 = ["A", "C"] ∧ (deleteNode exRT 0).labels 0 = ["A"] := by
-  simp [exRT, RT.labels, deleteNode]
+theorem staged_set_kept_after_delete :
+    exRT.labels 0 = ["A", "C"] ∧ (deleteNode exRT 0).labels 0 = ["A", "C"] ∧
+    (deleteNode exRT 0).hasLabel 0 "C" = true := by
+  decide
 
-/-- With no staged label change, every node accessor survives the DELETE. -/
-theorem deleteNode_preserves_all (r : RT) (n : Nat) (hnd : r.delNodes n = none)
-    (hp : r.pendingLabels n = none) :
+/-- `MATCH (n:A) REMOVE n:A DELETE n RETURN labels(n)`: `[]` before and after. -/
+theorem staged_remove_kept_after_delete :
+    let r : RT := { exRT with pendingLabels := fun _ => some [] }
+    r.labels 0 = [] ∧ (deleteNode r 0).labels 0 = [] := by
+  decide
+
+/-- Every node accessor survives the DELETE (labels no longer need "no staged change"). -/
+theorem deleteNode_preserves_all (r : RT) (n : Nat) (hnd : r.delNodes n = none) :
     labels (deleteNode r n) [.node n] = labels r [.node n] ∧
     (∀ l, (deleteNode r n).hasLabel n l = r.hasLabel n l) := by
-  have h := (deleteNode_labels_iff r n hnd).mpr (by simp [hp])
+  have h := (deleteNode_labels_preserved r n hnd).1
   simp [labels, RT.hasLabel, h]
 
 /-- `hasLabels` with all-string labels is "every label is in `labels(n)`". -/

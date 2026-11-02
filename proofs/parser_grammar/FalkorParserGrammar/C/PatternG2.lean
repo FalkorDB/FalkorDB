@@ -7,13 +7,14 @@ namespace FalkorParserGrammar.C
 
 /-- Extensions specific to the pattern *graph* (as opposed to its syntax). -/
 structure GExt where
-  /-- A repeated relationship variable inside one pattern is silently
-  dropped instead of rejected: MERGE, and CREATE in a named path
-  (cypher.rs:1530-1538 checks MATCH only). -/
+  /-- A repeated relationship variable inside one pattern is silently dropped instead of
+  rejected. It was the case for MERGE, and for CREATE in a named path, until #3289
+  (`add_pattern_relationship`, cypher.rs:1380, rejects it in every clause): no extension is left,
+  so `GExt.rust = GExt.g4`. -/
   dupDrop : Bool
 
 def GExt.g4 : GExt := ⟨false⟩
-def GExt.rust : GExt := ⟨true⟩
+def GExt.rust : GExt := ⟨false⟩
 
 /-- Adding a relationship: fresh, or (with `dupDrop`) silently skipped. -/
 def RelOk (y : GExt) (g : QG Nat) (r : QRel Nat) : Prop := (g.addRel r).1 = true ∨ y.dupDrop = true
@@ -36,15 +37,11 @@ inductive GChainN (o : Oracle) (x : Ext) (y : GExt) (cl : CK) (p : Nat) :
         (addPatNode cl ((gs.1.addRel rr.1).2, gs.2) rr.2) s1 out s' →
       GChainN o x y cl p left vars gs s out s'
 
-theorem relOk_of {y : GExt} {cl : CK} {g : QG Nat} {r : QRel Nat}
-    (h : ¬((!(g.addRel r).1 && (cl = .match_ || cl = .create)) = true)) (hc : cl = .match_ ∨ cl = .create ∨ y.dupDrop = true) :
-    RelOk y g r := by
+theorem relOk_of {y : GExt} {g : QG Nat} {r : QRel Nat}
+    (h : ¬((!(g.addRel r).1) = true)) : RelOk y g r := by
   unfold RelOk
   cases e : (g.addRel r).1
-  · rcases hc with rfl | rfl | hd
-    · simp [e] at h
-    · simp [e] at h
-    · exact .inr hd
+  · simp [e] at h
   · exact .inl rfl
 
 theorem chainA_sound (o : Oracle) (F : Nat) (cl : CK) : ∀ (n : Nat) left gs (s : PS) out s',
@@ -59,7 +56,7 @@ theorem chainA_sound (o : Oracle) (F : Nat) (cl : CK) : ∀ (n : Nat) left gs (s
       split at h
       · simp at h
       · rename_i hd
-        exact .cons (relP_sound o F cl left _ _ _ h2) (relOk_of hd (.inr (.inr rfl)))
+        exact .cons (relP_sound o F cl left _ _ _ h2) (relOk_of hd)
           (chainA_sound o F cl n _ _ _ _ _ h)
     · obtain ⟨rfl, rfl⟩ := pure_ok h; exact .nil
 
@@ -76,8 +73,8 @@ theorem chainN_sound (o : Oracle) (F : Nat) (cl : CK) (p : Nat) :
       split at h
       · simp at h
       · rename_i hd
-        refine .cons (relP_sound o F cl left _ _ _ h2) ?_ (chainN_sound o F cl p n _ _ _ _ _ _ h)
-        exact .inr rfl
+        exact .cons (relP_sound o F cl left _ _ _ h2) (relOk_of hd)
+          (chainN_sound o F cl p n _ _ _ _ _ _ h)
     · obtain ⟨rfl, rfl⟩ := pure_ok h; exact .nil
 
 /-- The allShortestPaths relationship loop (extension `asp`). -/
@@ -120,12 +117,12 @@ theorem aspLoop_sound (o : Oracle) (F : Nat) (cl : CK) (la : Nat) :
           · rename_i hm
             split at h
             · simp at h
-            · exact .varLen gr hv (by simpa using hf) (by simpa using hm) (.inr rfl)
+            · exact .varLen gr hv (by simpa using hf) (by simpa using hm) (relOk_of ‹_›)
                 (aspLoop_sound o F cl la n _ _ _ _ _ _ _ h)
       · rename_i hv
         split at h
         · simp at h
-        · exact .fixed gr (by simpa using hv) (.inr rfl) (aspLoop_sound o F cl la n _ _ _ _ _ _ _ h)
+        · exact .fixed gr (by simpa using hv) (relOk_of ‹_›) (aspLoop_sound o F cl la n _ _ _ _ _ _ _ h)
     · obtain ⟨rfl, rfl⟩ := pure_ok h; exact .nil
 
 /-- One `oC_PatternPart` (Cypher.g4:217-228), with how the Rust loop goes on. -/

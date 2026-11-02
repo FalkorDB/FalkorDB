@@ -43,13 +43,14 @@ theorem skipFilter_prefix_diverges (n : Nat) (d : Int) :
   | 0 | 1 | 2 | 3 | 4 => rfl
   | k + 5 => simp only [skipFilter, cur, adv]; exact skipFilter_eof_diverges k _
 
-/-! ## `parse_set_items` / `parse_remove_items` targets (cypher.rs:3326-3323, 3408-3413)
+/-! ## `parse_set_items` / `parse_remove_items` targets (cypher.rs:3341-3347, 3439-3445)
 
 ```rust
 let (mut expr, recurse) = self.parse_primary_expr(false)?;
 if recurse {
     self.reject_unparenthesized_target(&expr)?;     // #3060
     expr = self.parse_expr(false)?; match_token!(self.lexer, RParen);
+    self.expect_property_after_paren()?;            // #3300: the `)` must be followed by `.`
 }
 ```
 `recurse` is also `true` for a list literal `[` (2880-2884); since #3060
@@ -66,7 +67,7 @@ def setTarget (pe : List Tok → Out) (fuel : Nat) (ts : List Tok) : Res RT :=
     match rejectUnparen e r with
     | .ok () r =>
       match pe r with
-      | .ok e (.rparen :: r') => .ok e r'
+      | .ok e (.rparen :: r') => if cur r' = .dot then .ok e r' else .err r'
       | .ok _ r' => .err r'
       | .err e => .err e
       | .panic => .panic
@@ -87,6 +88,15 @@ theorem set_bracket_paren_refused :
     setTarget (parseExpr 100) 100 [.lparen, .ident 3, .rparen, .dot, .ident 4] =
       .ok (lf (.var 3)) [.dot, .ident 4] := by
   refine ⟨⟨_, rfl⟩, rfl⟩
+
+/-- **A parenthesised target must be followed by `.`** (#3300, `expect_property_after_paren`):
+`SET (n).x = 5` reads the target, `SET (n) = {..}` / `SET (n):L` / `SET (n.x) = 5` are refused. -/
+theorem set_paren_needs_dot :
+    setTarget (parseExpr 100) 100 [.lparen, .ident 3, .rparen, .dot, .ident 4] =
+      .ok (lf (.var 3)) [.dot, .ident 4] ∧
+    (∃ e, setTarget (parseExpr 100) 100 [.lparen, .ident 3, .rparen, .eq, .int 5] = .err e) ∧
+    (∃ e, setTarget (parseExpr 100) 100 [.lparen, .ident 3, .rparen, .colon, .ident 4] = .err e) := by
+  refine ⟨rfl, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
 
 /-- Only a `(` opens a nested target: whenever `recurse` holds for a non-`Paren`
 primary, the target is refused before anything after it is read. -/

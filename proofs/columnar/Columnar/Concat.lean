@@ -13,16 +13,17 @@ answer and the `is_bound_at` bit.
 | here | there |
 | --- | --- |
 | `builderCol` | `BatchBuilder::push_row_with` (`batch.rs:577-651`, empty `extra`) + `finish` (`:750-796`), one slot |
-| `rowVals` | the fallback loop `for r in b.active_indices() { col.get(r) }` (`batch.rs:1008-1021`) |
-| `concatGeneric` | the fallback branch of `Batch::concat` (`batch.rs:994-1035`) |
-| `typedScan`, `concatTyped` | `Batch::concat_typed_column` (`batch.rs:1064-1151`) |
-| `concatCol` | one column of `Batch::concat` (`batch.rs:989-993`) |
-| `concatOrigins` | the origin loop (`batch.rs:1039-1047`) |
+| `rowVals` | the fallback loop `for r in b.active_indices() { col.get(r) }` (`batch.rs:1019-1027`) |
+| `concatGeneric` | the fallback branch of `Batch::concat` (`batch.rs:1000-1048`) |
+| `typedScan`, `concatTyped` | `Batch::concat_typed_column` (`batch.rs:1076-1163`) |
+| `concatCol` | one column of `Batch::concat` (`batch.rs:995-999`) |
+| `concatOrigins` | the origin loop (`batch.rs:1051-1060`) |
 
-Result: equal whenever every input batch has an active row
-(`concat_obs_eq`); a batch with no active rows that binds a slot makes
-`concat` bind it where the per-row definition leaves it unbound
-(`empty_batch_binds`) — test `latent_concat_empty_batch_binds_column`.
+Result: equal for every list of batches (`concat_obs_eq`). Since #3059 the fallback loop
+skips a batch with no active rows (`batch.rs:1008-1012`), as `concat_typed_column` always did,
+so an empty batch that binds a slot no longer makes `concat` bind it
+(`empty_batch_ignored`; before #3059 it came out bound, `Some(Null)`, where the per-row
+definition left it unbound).
 -/
 
 namespace Columnar
@@ -95,7 +96,7 @@ def rowVals (b : Batch F) (i : Nat) : List (V F) :=
 /-- `concat`'s fallback column. -/
 def concatGeneric (bs : List (Batch F)) (i : Nat) : Column F × Bool :=
   let vals := bs.flatMap (rowVals · i)
-  let boundAny := bs.any (fun b => !(b.column i).isUnbound && !b.vo i)
+  let boundAny := bs.any (fun b => 0 < b.activeLen && !(b.column i).isUnbound && !b.vo i)
   let nonnull := vals.any (fun v => !v.isNull)
   if boundAny then (classifyStored vals, false)
   else if nonnull then (.values vals, true) else (.unbound, false)
@@ -281,13 +282,13 @@ theorem concatCol_obs_generic {bs : List (Batch F)} (hw : ∀ b ∈ bs, b.WF) (i
       obtain ⟨-, hex, hall⟩ := typedScan_spec i bs none kd hs
       have hv := buildTyped_toValues hw (fun b hb hp => (hall b hb hp).2)
       obtain ⟨b0, hb0, hp0⟩ := hex rfl
-      have hbound : bs.any (fun b => !(b.column i).isUnbound && !b.vo i) = true := by
+      have hbound : bs.any (fun b => 0 < b.activeLen && !(b.column i).isUnbound && !b.vo i) = true := by
         rw [List.any_eq_true]
         refine ⟨b0, hb0, ?_⟩
         obtain ⟨hvo, hkd⟩ := hall b0 hb0 hp0
         have : (b0.column i).isUnbound = false := by
           cases hc : b0.column i <;> rw [hc] at hkd <;> simp [kindOf] at hkd <;> rfl
-        simp [this, hvo]
+        simp [this, hvo, hp0]
       have hbu : (buildTyped bs i kd).isUnbound = false := by
         rcases kd with _ | _ | _ | kd <;> rfl
       simp only [colObs, concatGeneric, hbound, if_true, hbu, classifyStored_isUnbound,
@@ -325,47 +326,55 @@ theorem perRow_vals (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat) :
   intro r hr
   exact (toOwned_slot (hw b hb) hr i).1
 
-theorem perRow_anyBound (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (hne : ∀ b ∈ bs, 0 < b.activeLen)
-    (i : Nat) :
+theorem perRow_anyBound (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat) :
     (perRowRows bs).any (fun r => (r.get i).isSome && r.bound i) =
-      bs.any (fun b => !(b.column i).isUnbound && !b.vo i) := by
+      bs.any (fun b => 0 < b.activeLen && !(b.column i).isUnbound && !b.vo i) := by
   simp only [perRowRows, List.any_flatMap, List.any_map]
   apply any_congr'
   intro b hb
-  have hne' : b.active ≠ [] := by
-    have := hne b hb; intro e; simp [Batch.activeLen, e] at this
-  rw [← any_const_of_ne_nil hne' (!(b.column i).isUnbound && !b.vo i)]
-  apply any_congr'
-  intro r hr
-  exact (toOwned_slot (hw b hb) hr i).2.1
+  by_cases hne' : b.active = []
+  · have h0 : b.activeLen = 0 := by simp [Batch.activeLen, hne']
+    simp [hne', h0]
+  · have hpos : 0 < b.activeLen := by
+      simp only [Batch.activeLen]; exact List.length_pos_iff.mpr hne'
+    rw [← any_const_of_ne_nil hne' (0 < b.activeLen && !(b.column i).isUnbound && !b.vo i)]
+    apply any_congr'
+    intro r hr
+    have := (toOwned_slot (hw b hb) hr i).2.1
+    simp only [Function.comp] at this ⊢
+    rw [this]; simp [hpos, Bool.and_assoc]
 
-theorem perRow_present (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (hne : ∀ b ∈ bs, 0 < b.activeLen)
-    (i : Nat) :
+theorem perRow_present (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat) :
     (perRowRows bs).any (fun r => match r.get i with
       | some v => r.bound i || !v.isNull
       | none => false) =
-      (bs.any (fun b => !(b.column i).isUnbound && !b.vo i) ||
+      (bs.any (fun b => 0 < b.activeLen && !(b.column i).isUnbound && !b.vo i) ||
         (bs.flatMap (rowVals · i)).any (fun v => !v.isNull)) := by
   simp only [perRowRows, List.any_flatMap, List.any_map, rowVals]
   rw [← any_or']
   apply any_congr'
   intro b hb
-  have hne' : b.active ≠ [] := by
-    have := hne b hb; intro e; simp [Batch.activeLen, e] at this
-  rw [← any_const_of_ne_nil hne' (!(b.column i).isUnbound && !b.vo i), ← any_or']
-  apply any_congr'
-  intro r hr
-  exact (toOwned_slot (hw b hb) hr i).2.2
+  by_cases hne' : b.active = []
+  · have h0 : b.activeLen = 0 := by simp [Batch.activeLen, hne']
+    simp [hne', h0]
+  · have hpos : 0 < b.activeLen := by
+      simp only [Batch.activeLen]; exact List.length_pos_iff.mpr hne'
+    rw [← any_const_of_ne_nil hne' (0 < b.activeLen && !(b.column i).isUnbound && !b.vo i), ← any_or']
+    apply any_congr'
+    intro r hr
+    have := (toOwned_slot (hw b hb) hr i).2.2
+    simp only [Function.comp] at this ⊢
+    rw [this]; simp [hpos, Bool.and_assoc]
 
-/-- **`concat` = per-row concat** (every slot, every row: value and bound bit),
-provided every input batch has at least one active row. -/
-theorem concat_obs_eq {bs : List (Batch F)} (hw : ∀ b ∈ bs, b.WF) (hne : ∀ b ∈ bs, 0 < b.activeLen)
+/-- **`concat` = per-row concat** (every slot, every row: value and bound bit), for any list
+of well-formed batches, empty ones included (#3059). -/
+theorem concat_obs_eq {bs : List (Batch F)} (hw : ∀ b ∈ bs, b.WF)
     (i k : Nat) : colObs (concatCol bs i) k = colObs (builderCol (perRowRows bs) i) k := by
   rw [concatCol_obs_generic hw]
   unfold concatGeneric builderCol
   simp only
-  rw [perRow_vals bs hw i, perRow_anyBound bs hw hne i, perRow_present bs hw hne i]
-  cases bs.any (fun b => !(b.column i).isUnbound && !b.vo i) <;> simp
+  rw [perRow_vals bs hw i, perRow_anyBound bs hw i, perRow_present bs hw i]
+  cases bs.any (fun b => 0 < b.activeLen && !(b.column i).isUnbound && !b.vo i) <;> simp
 
 /-- Row count: both have `Σ active_len` rows. -/
 theorem concat_len (bs : List (Batch F)) :
@@ -385,19 +394,18 @@ theorem concat_origins (bs : List (Batch F)) :
   simp only [Function.comp, toOwned, Batch.originRow]
   cases b.origins with
   | some o => rfl
-  | none => simp only; rw [fillRow_origin]; rfl
+  | none => simp only [pushSlots_origin]
 
-/-- **Empty batches break the equality**: a batch whose rows are all filtered
-out but which binds slot 1 makes `concat` report slot 1 bound (reading
-`Some(Null)`), where the per-row concat leaves it unbound (`None`). -/
-theorem empty_batch_binds (s : V F) :
+/-- **Empty batches no longer bind a slot** (#3059): a batch whose rows are all filtered out
+but which binds slot 1 leaves `concat` reporting slot 1 unbound (`None`), as the per-row
+concat does (before #3059 `concat` made it bound, reading `Some(Null)`). -/
+theorem empty_batch_ignored (s : V F) :
     let a : Batch F := { len := 1, sel := none, cols := [.ints [1]], origins := none,
                          vo := fun _ => false }
     let b : Batch F := { len := 1, sel := some [], cols := [.ints [2], .values [s]],
                          origins := none, vo := fun _ => false }
-    (colObs (concatCol [a, b] 1) 0).2 = true ∧ (colObs (builderCol (perRowRows [a, b]) 1) 0).2 = false := by
-  constructor
-  · rfl
-  · rfl
+    (colObs (concatCol [a, b] 1) 0).2 = false ∧ (colObs (builderCol (perRowRows [a, b]) 1) 0).2 = false ∧
+    (colObs (concatCol [a, b] 1) 0).1 = none := by
+  refine ⟨rfl, rfl, rfl⟩
 
 end Columnar

@@ -13,6 +13,12 @@ never interact, so one node is modelled; `C` is the committed label set.
   currently has (`overlay`) — modelled as `removeOp`.
 * `nodeHas` — `node_has_label` (pending.rs:569): removal first, then add, else
   `None` (ask the matrix).
+* `stagedNodeLabels` — `Pending::staged_node_labels` (pending.rs:826, #3288): the two staged
+  lists as they are, `(set_labels, remove_labels)`; `update_node_labels` (:806) is now
+  written over it.
+* `stagedLabelIds` — `Runtime::staged_label_ids` (ops/delete.rs:197, #3288): the committed
+  ids, plus the staged adds, minus the staged removes. The deleted-node snapshot
+  (`delete_nodes_bulk` :306, `delete_entity` :486) is built from it.
 * `commitLabels` — `set_nodes_labels_bulk` then `remove_nodes_labels`
   (pending.rs:1105-1122): `(C ∪ set) \ remove`.
 
@@ -45,6 +51,21 @@ def nodeHas (s : St) (l : Nat) : Option Bool :=
 /-- `ops/remove.rs`: only labels the node currently carries are staged. -/
 def removeOp (C : Nat → Bool) (s : St) (ls : List Nat) : St :=
   removeLabels s (ls.filter (overlay C s))
+
+/-- `Pending::staged_node_labels`: the lists as staged. -/
+def stagedNodeLabels (s : St) : List Nat × List Nat := (s.setL, s.remL)
+
+/-- `Pending::update_node_labels` after #3288: insert every staged add, then remove every
+staged removal, both read through `staged_node_labels`. -/
+def updateNodeLabels (C : Nat → Bool) (s : St) (l : Nat) : Bool :=
+  let (added, removed) := stagedNodeLabels s
+  (C l || added.contains l) && !removed.contains l
+
+/-- `Runtime::staged_label_ids` (ops/delete.rs:197): `g.get_node_label_ids(id)` collected into a
+set, then `labels.extend(added)`, then `labels.remove(l)` for each removed label. -/
+def stagedLabelIds (C : Nat → Bool) (s : St) (l : Nat) : Bool :=
+  let (added, removed) := stagedNodeLabels s
+  (C l || added.contains l) && !removed.contains l
 
 /-- The committed label set after `Pending::commit`. -/
 def commitLabels (C : Nat → Bool) (s : St) (l : Nat) : Bool :=
@@ -174,6 +195,34 @@ theorem nodeHas_eq_ref (C : Nat → Bool) (ops : List Op) (l : Nat) :
     (nodeHas (run C ops) l).getD (C l) = refHas C ops l := by
   rw [← overlay_eq_ref]; unfold nodeHas overlay
   split <;> (try split) <;> simp_all
+
+/-- **The #3288 refactor of `update_node_labels` keeps the overlay**: reading the staged lists
+through `staged_node_labels`, adds first and removals second, is `overlay` (removal wins). -/
+theorem updateNodeLabels_eq_overlay (C : Nat → Bool) (s : St) (l : Nat) :
+    updateNodeLabels C s l = overlay C s l := by
+  simp only [updateNodeLabels, stagedNodeLabels, overlay]
+  cases h1 : s.remL.contains l <;> cases h2 : s.setL.contains l <;> cases C l <;> simp
+
+/-- **#3288 (fixes #3245, W4-fn-1): the deleted-node snapshot's label set is the query's view.**
+`staged_label_ids` equals `update_node_labels`/`node_has_label` over the committed set, so a node
+deleted after `SET n:C` keeps `C` and one deleted after `REMOVE n:A` does not keep `A`. -/
+theorem stagedLabelIds_eq_overlay (C : Nat → Bool) (s : St) (l : Nat) :
+    stagedLabelIds C s l = overlay C s l := by
+  unfold stagedLabelIds; exact updateNodeLabels_eq_overlay C s l
+
+/-- After any sequence of `SET n:…` / `REMOVE n:…` the snapshot a `DELETE` takes holds exactly
+the labels the last clause that mentioned each label left (`overlay_eq_ref`), i.e. the labels
+`labels(n)` showed just before the DELETE. -/
+theorem stagedLabelIds_run (C : Nat → Bool) (ops : List Op) (l : Nat) :
+    stagedLabelIds C (run C ops) l = refHas C ops l := by
+  rw [stagedLabelIds_eq_overlay, overlay_eq_ref]
+
+/-- The two shapes of #3245: `MATCH (n:A) SET n:C DELETE n` keeps `C` (and `A`); `MATCH (n:A)
+REMOVE n:A DELETE n` keeps nothing (label 1 = A, 2 = C, committed `{A}`). -/
+theorem deleted_snapshot_examples :
+    (let C : Nat → Bool := fun l => l == 1
+     stagedLabelIds C (run C [.add [2]]) 2 = true ∧ stagedLabelIds C (run C [.add [2]]) 1 = true ∧
+     stagedLabelIds C (run C [.rem [1]]) 1 = false) := by decide
 
 /-- **`removeOp_nodup`**: because REMOVE stages only labels the node currently
 has, `remove_labels` never holds a label twice — so the commit's

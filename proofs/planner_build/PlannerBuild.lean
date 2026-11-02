@@ -218,10 +218,10 @@ C 0. The binder half (`node_labels`) is in proofs/binder `RemoveLabels.lean`.
 ## Deviations vs openCypher (and C)
 * (FIXED by #2829, `eab2722c4`) `CREATE p=(…) RETURN p` → Rust `null` (the Create arm added no
   PathBuilder); now the path (openCypher), live `[(0), [0], (1)]`; C rejects (`'p' not defined`).
-  Lean `create_loop_correct`. Interplay with parser_grammar's
-  `create_named_path_drops_dup_rel` (W4-parse-2): `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d) RETURN p, q`
-  now returns `q = [(2), [0], (3)]`, a path through edge 0, whose endpoints are (0)→(1) — the dropped
-  duplicate `r` is now visible as an inconsistent path (C rejects the query).
+  Lean `create_loop_correct`. The parser's old silent drop of a repeated relationship variable
+  (parser_grammar W4-parse-2: `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d) RETURN p, q` returned an
+  inconsistent path `q = [(2), [0], (3)]`) is fixed by #3289: the parser rejects the query
+  (`create_named_path_dup_rel_rejected`), as C does.
 * `SET n.v = 10, n.w = n.v` → Rust `n.w = 10` (items in order, openCypher/Neo4j), C uses the old value.
 * `Labels added` counts differ (C counts per node) — known (#2655).
 

@@ -44,7 +44,7 @@ The project has two layers:
 **3. Is every accepted query grammatical, with the grammar's tree?**
 
 - **Yes, apart from listed extensions.** For every clause parser, an accepted input is derivable in a transcription of the matching `Cypher.g4` rule, and the tree returned is that derivation's. The top-level theorems are `parseP_sound` and `queryP_sound`, with `patternP_sound`, `primaryC_sound`, `shortestP_sound`, `listLitP_sound` and `lit_sound` for the pieces.
-- The extensions are explicit flags (`Ext`, `GExt`, `CExt`), not silent. They include `[:A:B]`, keyword folding (`MATCH … MATCH`), allShortestPaths, and FalkorDB-only constructs: index DDL, LOAD CSV, FOREACH, `CALL {}`, reduce and shortestPath.
+- The extensions are explicit flags (`Ext`, `GExt`, `CExt`), not silent. They include keyword folding (`MATCH … MATCH`), allShortestPaths, and FalkorDB-only constructs: index DDL, LOAD CSV, FOREACH, `CALL {}`, reduce and shortestPath.
 - Completeness is **not** claimed: the parser rejects some grammatical inputs on purpose, for example aggregates in WHERE, `SKIP 1+1`, mixed UNION / UNION ALL, and undirected CREATE.
 
 **4. Is the #3104 pattern-comprehension gate safe?**
@@ -103,9 +103,9 @@ Each bug was confirmed against the Rust (`graph/tests/lean_parser_grammar.rs`, n
 | — | `sign_sequences` | `+-1` is accepted, `- -1` and `-+1` are rejected; the grammar allows one sign (`- -1` is #2309) | **Open** |
 | W4-plan-4 | `call_validates_rest`, `match_last_after_call_rejected` | Nothing after a procedure CALL was validated: `… MERGE ()-[:R\|S]->()` created an edge, `… UNWIND [1] AS x` was accepted; C rejects all | **Fixed by #3297** (b774fdfad, main b84473a7f); the `parent().unwrap()` in `utilize_node_by_id` remains as a hazard |
 | W4-parse-1 | `anon_name_collides` | Anonymous entities are named `_anon_N`, a name users can write: `MATCH (_anon_0:A), (:B) RETURN count(*)` → Rust 0, C 1 | **Open** |
-| W4-parse-2 | `create_named_path_drops_dup_rel` | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` creates 1 relationship (C: "already declared"); since #2829 `RETURN p, q` also returns an inconsistent path | **Open** |
-| W4-parse-3 | `merge_dup_rel_dropped` | `MERGE (a)-[r:R]->(b)-[r:R]->(c)` creates 1 relationship (C: error) | **Open** |
-| W4-parse-4 | `set_paren_property_accepted`, `type_colon_accepted` | `SET (n.x) = 5` and `[:A:B]` are accepted (C: syntax error) | **Open** |
+| W4-parse-2 | `create_named_path_dup_rel_rejected` | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` created 1 relationship (C: "already declared") | **Fixed by #3289** (`d15d38a10`) |
+| W4-parse-3 | `merge_dup_rel_rejected`, `pattern_comprehension_repeated_rel_refused` | `MERGE (a)-[r:R]->(b)-[r:R]->(c)` created 1 relationship (C: error); pattern comprehensions ignored a repeat | **Fixed by #3289** |
+| W4-parse-4 | `set_paren_target_refused`, `set_paren_needs_dot`, `type_colon_refused` | `SET (n.x) = 5` and `[:A:B]` were accepted (C: syntax error) | **Fixed by #3300** (`f680bb9f2`) |
 | #2502 | `bug2502_pred_swallows_match`, `bug2502_where_match_merged` (property `PredEndsBeforeClause`) | A WHERE pattern predicate is parsed by `parse_pattern(&Keyword::Match)` (cypher.rs:2119), whose separator (1562-1579) continues on `MATCH`, so the next MATCH clause is folded into the predicate: `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` → Rust `'m' not defined`, C returns the rows; with `RETURN count(*)` Rust 1, C 2 | **Open** |
 | W3-parser-9 | removed (17ccc5412) | Exponential backtracking in nested `[(...)]` lists: 206 bytes took 49 s | Fixed by #3104 |
 | #3057 | `not_not_kept`, `is_null_then_predicate`, `call_trailing_comma_refused`, `set_bracket_paren_refused`, `match_match_refused`, `load_csv_with_from_refused` | `NOT NOT x` was parsed as `x`; `1 IS NULL IN [false]` was rejected; `abs(-1,)`, `SET [n).x = 5`, `MATCH MATCH` and `LOAD CSV WITH FROM` were accepted | Fixed by #3060 (the theorems are now the correct behaviour) |

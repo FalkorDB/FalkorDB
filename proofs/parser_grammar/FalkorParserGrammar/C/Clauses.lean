@@ -185,13 +185,20 @@ def dotChain : Nat → ET → P ET
 that opened a nested expression must have opened it with `(` — the tree is a `Paren`. -/
 def rejectUnparenP (t : ET) : P Unit := if t.root = .paren then pure () else fail
 
-/-- The target of a SET / REMOVE item (cypher.rs:3327-3323, 3408-3413). -/
+/-- `expect_property_after_paren` (cypher.rs:3406-3418, #3300): a parenthesised target is only
+the subject of a property lookup, `(n).x`, so the `)` must be followed by `.`. -/
+def expectDotP : P Unit := do
+  let c ← peek
+  if c = .dot then pure () else fail
+
+/-- The target of a SET / REMOVE item (cypher.rs:3341-3347, 3439-3445). -/
 def targetP (o : Oracle) : P ET := do
   let r ← o.pp
   if r.2 then do
     rejectUnparenP r.1
     let e ← o.pe false
     tok .rparen
+    expectDotP
     pure e
   else pure r.1
 

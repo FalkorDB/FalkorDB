@@ -9,11 +9,13 @@ namespace FalkorParserGrammar.C
 section
 variable (o : Oracle)
 
-/-- `oC_RelationshipsPattern` chain inside a pattern comprehension. -/
-inductive GPcChain (F : Nat) : QNode Nat → QG Nat → PS → QG Nat → PS → Prop
+/-- `oC_RelationshipsPattern` chain inside a pattern comprehension. The graph carries the
+`repeated` flag: set once a relationship alias was already in the pattern (#3289). -/
+inductive GPcChain (F : Nat) : QNode Nat → QG Nat × Bool → PS → QG Nat × Bool → PS → Prop
   | nil {left g s} : GPcChain F left g s g s
   | cons {left g s rr s1 out s'} : GRel o Ext.rust left s rr s1 →
-      GPcChain F rr.2 ((g.addNode rr.2).2.addRel rr.1).2 s1 out s' → GPcChain F left g s out s'
+      GPcChain F rr.2 (((g.1.addNode rr.2).2.addRel rr.1).2,
+        g.2 || !((g.1.addNode rr.2).2.addRel rr.1).1) s1 out s' → GPcChain F left g s out s'
 
 theorem pcChain_sound (F : Nat) : ∀ n left g (s : PS) out s', pcChain o F n left g s = .ok out s' →
     GPcChain o F left g s out s'
@@ -27,16 +29,17 @@ theorem pcChain_sound (F : Nat) : ∀ n left g (s : PS) out s', pcChain o F n le
       exact .cons (relP_sound o F _ left _ _ _ h2) (pcChain_sound F n _ _ _ _ _ h)
     · obtain ⟨rfl, rfl⟩ := pure_ok h; exact .nil
 
-/-- `oC_PatternComprehension` after `[` and the optional `p =`. -/
-inductive GPatComp (F : Nat) : PS → ET → PS → Prop
+/-- `oC_PatternComprehension` after `[` and the optional `p =`; `rep` is the repeated-relationship
+flag the parse reports with the tree. -/
+inductive GPatComp (F : Nat) : PS → ET → Bool → PS → Prop
   | mk {s first s1 g s2 cond s3 res s4} : GNode o s first s1 → (s1.cur = .dash ∨ s1.cur = .lt) →
-      GPcChain o F first (QG.empty.addNode first).2 s1 g s2 →
+      GPcChain o F first ((QG.empty.addNode first).2, false) s1 g s2 →
       (s2.cur = .kw .where_ ∧ o.pe false s2.adv = .ok cond s3 ∨ cond = leaf (.bool true) ∧ s3 = s2) →
       s3.cur = .pipe → o.pe false s3.adv = .ok res s4 → s4.cur = .rbrack →
-      GPatComp F s (.node .patComp [cond, res]) s4.adv
+      GPatComp F s (.node .patComp [cond, res]) g.2 s4.adv
 
-theorem patCompP_sound (F : Nat) (pv : Option Nat) (s : PS) t s' (h : patCompP o F pv s = .ok t s') :
-    GPatComp o F s t s' := by
+theorem patCompP_sound (F : Nat) (pv : Option Nat) (s : PS) t rep s' (h : patCompP o F pv s = .ok (t, rep) s') :
+    GPatComp o F s t rep s' := by
   unfold patCompP at h
   peel h => first s1 h1
   peel h => c s2 h2
@@ -50,7 +53,8 @@ theorem patCompP_sound (F : Nat) (pv : Option Nat) (s : PS) t s' (h : patCompP o
     peel h => u s6 h6; obtain ⟨hp, rfl⟩ := tok_ok h6
     peel h => res s7 h7
     peel h => u s8 h8; obtain ⟨hr, rfl⟩ := tok_ok h8
-    obtain ⟨rfl, rfl⟩ := pure_ok h
+    obtain ⟨he, rfl⟩ := pure_ok h
+    simp only [Prod.mk.injEq] at he; obtain ⟨rfl, rfl⟩ := he
     have gw : s3.cur = .kw .where_ ∧ o.pe false s3.adv = .ok cond s5 ∨ cond = leaf (.bool true) ∧ s5 = s3 := by
       cases w
       · have := (optK_eq h4).2 rfl; subst s4
@@ -71,8 +75,8 @@ inductive GBracket (F : Nat) (forb : Bool) : PS → ET × Bool → PS → Prop
   | comp {s v t s'} : identOf s.cur = some v → s.adv.cur = .kw .in_ →
       GListComp (o.pe false) v s.adv.adv t s' → GBracket F forb s (t, false) s'
   | namedPC {s v t s'} : identOf s.cur = some v → s.adv.cur = .eq → s.adv.adv.cur = .lparen →
-      GPatComp o F s.adv.adv t s' → forb = false → ¬ HasAgg t → GBracket F forb s (t, false) s'
-  | anonPC {s t s'} : s.cur = .lparen → GPatComp o F s t s' → forb = false → ¬ HasAgg t →
+      GPatComp o F s.adv.adv t false s' → forb = false → ¬ HasAgg t → GBracket F forb s (t, false) s'
+  | anonPC {s t s'} : s.cur = .lparen → GPatComp o F s t false s' → forb = false → ¬ HasAgg t →
       GBracket F forb s (t, false) s'
   | empty {s} : s.cur = .rbrack → GBracket F forb s (leaf .list, false) s.adv
   | elems {s} : s.cur ≠ .rbrack → GBracket F forb s (leaf .list, true) s
@@ -137,27 +141,32 @@ theorem listLitP_sound (F : Nat) (forb : Bool) (s : PS) r s' (h : listLitP o F f
     peel h => r2 s8 h8
     -- branch 2 succeeded?
     cases r2 with
-    | some t =>
+    | some tr =>
+      obtain ⟨t, rep⟩ := tr
       dsimp only at h
       split at h
       · simp at h
-      · rename_i hf
-        peel h => u s9 h9
-        obtain ⟨hna, rfl⟩ := rejectAggregate_ok h9
-        obtain ⟨rfl, rfl⟩ := pure_ok h
-        rcases tryIdent_ok h5 with ⟨v, rfl, hv, rfl⟩ | ⟨rfl, _, rfl⟩
-        · cases eq
+      · rename_i hrep
+        split at h
+        · simp at h
+        · rename_i hf
+          peel h => u s9 h9
+          obtain ⟨hna, rfl⟩ := rejectAggregate_ok h9
+          obtain ⟨rfl, rfl⟩ := pure_ok h
+          obtain rfl : rep = false := by simpa using hrep
+          rcases tryIdent_ok h5 with ⟨v, rfl, hv, rfl⟩ | ⟨rfl, _, rfl⟩
+          · cases eq
+            · simp at h8
+            · obtain ⟨he, rfl⟩ := (opt_eq h6).1 rfl
+              generalize hcc : s.adv.adv.cur = cc at h8
+              cases cc
+              case lparen =>
+                rcases attempt_ok h8 with ⟨t', ht, h8'⟩ | ⟨ht, _⟩
+                · cases ht
+                  exact .namedPC hv he hcc (patCompP_sound o F _ _ _ _ _ h8') (by simpa using hf) hna
+                · cases ht
+              all_goals simp at h8
           · simp at h8
-          · obtain ⟨he, rfl⟩ := (opt_eq h6).1 rfl
-            generalize hcc : s.adv.adv.cur = cc at h8
-            cases cc
-            case lparen =>
-              rcases attempt_ok h8 with ⟨t', ht, h8'⟩ | ⟨ht, _⟩
-              · cases ht
-                exact .namedPC hv he hcc (patCompP_sound o F _ _ _ _ h8') (by simpa using hf) hna
-              · cases ht
-            all_goals simp at h8
-        · simp at h8
     | none =>
       dsimp only at h
       peel h => u s9 h9
@@ -166,21 +175,26 @@ theorem listLitP_sound (F : Nat) (forb : Bool) (s : PS) r s' (h : listLitP o F f
       obtain ⟨hc0, hs⟩ := peek_ok h10; subst hc0; subst s10
       peel h => r3 s11 h11
       cases r3 with
-      | some t =>
+      | some tr =>
+        obtain ⟨t, rep⟩ := tr
         dsimp only at h
         split at h
         · simp at h
-        · rename_i hf
-          peel h => u s12 h12
-          obtain ⟨hna, rfl⟩ := rejectAggregate_ok h12
-          obtain ⟨rfl, rfl⟩ := pure_ok h
-          split at h11
-          · rename_i hl
-            rcases attempt_ok h11 with ⟨t', ht, h11'⟩ | ⟨ht, _⟩
-            · cases ht
-              exact .anonPC hl (patCompP_sound o F _ _ _ _ h11') (by simpa using hf) hna
-            · cases ht
-          · simp at h11
+        · rename_i hrep
+          split at h
+          · simp at h
+          · rename_i hf
+            peel h => u s12 h12
+            obtain ⟨hna, rfl⟩ := rejectAggregate_ok h12
+            obtain ⟨rfl, rfl⟩ := pure_ok h
+            obtain rfl : rep = false := by simpa using hrep
+            split at h11
+            · rename_i hl
+              rcases attempt_ok h11 with ⟨t', ht, h11'⟩ | ⟨ht, _⟩
+              · cases ht
+                exact .anonPC hl (patCompP_sound o F _ _ _ _ _ h11') (by simpa using hf) hna
+              · cases ht
+            · simp at h11
       | none =>
         dsimp only at h
         peel h => u s12 h12

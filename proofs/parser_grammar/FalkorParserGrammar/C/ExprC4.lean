@@ -5,13 +5,14 @@ import FalkorParserGrammar.C.ExprC3
 
 namespace FalkorParserGrammar.C
 
-/-- shortestPath's type list: pushed in order (cypher.rs:1788-1796). -/
+/-- shortestPath's type list: pushed in order (`parse_relationship_types`, cypher.rs:3054-3064,
+#3300): a name, then a `|` (with an optional `:` after it) and another name. A bare `:` after a
+name does not continue the list. -/
 inductive GSpTypes : PS → List Nat → List Nat → PS → Prop
-  | last {s acc t} : identOf s.cur = some t → s.adv.cur ≠ .pipe → s.adv.cur ≠ .colon →
+  | last {s acc t} : identOf s.cur = some t → s.adv.cur ≠ .pipe →
       GSpTypes s acc (acc ++ [t]) s.adv
-  | more {s acc t s1 out s'} : identOf s.cur = some t →
-      (s.adv.cur = .pipe ∧ (s.adv.adv.cur = .colon ∧ s1 = s.adv.adv.adv ∨ s.adv.adv.cur ≠ .colon ∧ s1 = s.adv.adv) ∨
-       s.adv.cur ≠ .pipe ∧ s.adv.cur = .colon ∧ s1 = s.adv.adv) →
+  | more {s acc t s1 out s'} : identOf s.cur = some t → s.adv.cur = .pipe →
+      (s.adv.adv.cur = .colon ∧ s1 = s.adv.adv.adv ∨ s.adv.adv.cur ≠ .colon ∧ s1 = s.adv.adv) →
       GSpTypes s1 (acc ++ [t]) out s' → GSpTypes s acc out s'
 
 /-- shortestPath's `*` range (cypher.rs:1800-1823). -/

@@ -27,27 +27,27 @@ graph/src/runtime/ops/mod.rs	drain_pending	127	PROVEN	ForEach.drainP (used in go
 graph/src/runtime/ops/union.rs	UnionOp::new	43	PROVEN	Union.St initial state in union_drain
 graph/src/runtime/ops/union.rs	UnionOp::store_argument_batch	57	PROVEN	Ctors.storeArg: storeArg_spec
 graph/src/runtime/ops/union.rs	UnionOp::next	68	PROVEN	Union.next; next_spec; drain_eq; union_drain; stream_all_ok; next_none_stays
-graph/src/runtime/batch.rs	Batch::clone_active_rows_seq_origin	1162	MODELLED	Correlated.tag (sequential origins; n<=1 sidecar omission equals tag 0)
+graph/src/runtime/batch.rs	Batch::clone_active_rows_seq_origin	1168	MODELLED	Correlated.tag (sequential origins; n<=1 sidecar omission equals tag 0)
 graph/src/runtime/batch.rs	Batch::merge_over_input	942	MODELLED	Correlated.applyBatched (abstract merge x y); column-level is_bound_at(id,0) test not modelled
-graph/src/runtime/batch.rs	Batch::origin_row	1297	MODELLED	Correlated.SubPlan origin tag
+graph/src/runtime/batch.rs	Batch::origin_row	1303	MODELLED	Correlated.SubPlan origin tag
 graph/src/runtime/batch.rs	Batch::gather	896	MODELLED	Correlated.optionalBatched fallback (gather by unmatched origins)
-graph/src/runtime/batch.rs	BatchRow::to_owned_row	1431	MODELLED	MergeSlot.Row.ofCells (value_only column -> stored but unbound); BUGs #3368/#3369 fixed for the filed repro by #3050 (bug3368_filed_repro_fixed_by_3050; residual same_op_leftover_shares_entry); no general theorem
-graph/src/runtime/batch.rs	BatchOp::set_argument_batch	1589	AXIOMATISED	Correlated.Separable is a hypothesis on the sub-plan (not an axiom): argument leaves + per-row ops; ValueHashJoin arm shown non-separable (vhj_not_separable)
+graph/src/runtime/batch.rs	BatchRow::to_owned_row	1437	MODELLED	MergeSlot.Row.ofCells (value_only column -> stored but unbound); BUGs #3368/#3369 fixed for the filed repro by #3050 (bug3368_filed_repro_fixed_by_3050; residual same_op_leftover_shares_entry); no general theorem
+graph/src/runtime/batch.rs	BatchOp::set_argument_batch	1601	AXIOMATISED	Correlated.Separable is a hypothesis on the sub-plan (not an axiom): argument leaves + per-row ops; ValueHashJoin arm shown non-separable (vhj_not_separable)
 graph/src/runtime/ops/create.rs	build_attr_template	55	PROVEN	CreateAttrs.tplSet/tplBuild/rank: tplBuild_nodup, tplSet_ids, tplSet_lookup, tplBuild_lookup, rank_strict, rank_lt
 graph/src/runtime/ops/create.rs	resolve_map_attrs	84	PROVEN	CreateAttrs.resolveMap: resolveMap_spec
 graph/src/runtime/ops/create.rs	new	102	PROVEN	CreateBatch.CreateSt.new: createNew_spec
 graph/src/runtime/ops/create.rs	next	121	PROVEN	CreateBatch.createNext: createNext_spec; RowWrites.pipeline/step: PartitionInvariant refuted by bug2729_batch_split_flips_endpoint_check (streams per batch against pending deletes)
 graph/src/runtime/ops/create.rs	create_batch	139	PROVEN	CreateBatch.createBatch/createNode/createRel: createNode_spec, createRel_spec, createRel_gone, endpoint_spec, setAttrs_prefix
 graph/src/runtime/ops/create.rs	resolve_pattern	353	PROVEN	CreateAttrs.resolveLabels/resolveNodes: resolveLabels_spec, resolveLabels_length, resolveNodes_shape
-graph/src/runtime/ops/delete.rs	node_attrs_to_map	38	PROVEN	Delete.attrsToMap: attrsToMap_spec
-graph/src/runtime/ops/delete.rs	rel_attrs_to_map	49	PROVEN	Delete.attrsToMap: attrsToMap_spec
-graph/src/runtime/ops/delete.rs	snapshot_required	69	PROVEN	Delete.snapshotRequired: snapshotRequired_spec
-graph/src/runtime/ops/delete.rs	new	93	PROVEN	Delete.DeleteSt.new: deleteNew_spec, deleteNew_inspect_snapshots, deleteNew_no_inspect (inspect || snapshot_required since #3462)
-graph/src/runtime/ops/delete.rs	next	115	PROVEN	Delete.deleteNext: deleteNext_spec; RowWrites.pipeline/step: PartitionInvariant refuted by bug2729_batch_split_flips_endpoint_check
-graph/src/runtime/ops/delete.rs	delete_batch	129	PROVEN	Delete.deleteBatch/scan: deleteBatch_vars, scan_nodes, deleteBatch_mismatch; DeleteCancel.deleteBatchE/scanE: deleteBatchE_ok, scanE_ok
-graph/src/runtime/ops/delete.rs	delete_nodes_bulk	193	PROVEN	Delete.delNodesBulk/bulkScan: delNodesBulk_spec, bulkScan_spec; DeleteCancel.delNodesBulkE/bulkScanE/markCommitted: delNodesBulkE_ok, bulkScanE_ok, markCommitted_ok
-graph/src/runtime/ops/delete.rs	delete_relationships_bulk	299	PROVEN	Delete.delRelsBulk/relScan: delRelsBulk_spec, relScan_cls, foldl_delRel
-graph/src/runtime/ops/delete.rs	delete_entity	395	PROVEN	Delete.delEntity/delNode/delRel: delEntity_spec, delNode_gone, delNode_other, delRel_gone; DeleteCancel.delEntityE/delNodeE: delEntityE_ok, delNodeE_ok, delNodeE_gone, delNodeE_refusedP, delNodeE_refusedC
+graph/src/runtime/ops/delete.rs	node_attrs_to_map	39	PROVEN	Delete.attrsToMap: attrsToMap_spec
+graph/src/runtime/ops/delete.rs	rel_attrs_to_map	50	PROVEN	Delete.attrsToMap: attrsToMap_spec
+graph/src/runtime/ops/delete.rs	snapshot_required	70	PROVEN	Delete.snapshotRequired: snapshotRequired_spec
+graph/src/runtime/ops/delete.rs	new	94	PROVEN	Delete.DeleteSt.new: deleteNew_spec, deleteNew_inspect_snapshots, deleteNew_no_inspect (inspect || snapshot_required since #3462)
+graph/src/runtime/ops/delete.rs	next	116	PROVEN	Delete.deleteNext: deleteNext_spec; RowWrites.pipeline/step: PartitionInvariant refuted by bug2729_batch_split_flips_endpoint_check
+graph/src/runtime/ops/delete.rs	delete_batch	130	PROVEN	Delete.deleteBatch/scan: deleteBatch_vars, scan_nodes, deleteBatch_mismatch; DeleteCancel.deleteBatchE/scanE: deleteBatchE_ok, scanE_ok
+graph/src/runtime/ops/delete.rs	delete_nodes_bulk	213	PROVEN	Delete.delNodesBulk/bulkScan: delNodesBulk_spec, bulkScan_spec; DeleteCancel.delNodesBulkE/bulkScanE/markCommitted: delNodesBulkE_ok, bulkScanE_ok, markCommitted_ok
+graph/src/runtime/ops/delete.rs	delete_relationships_bulk	319	PROVEN	Delete.delRelsBulk/relScan: delRelsBulk_spec, relScan_cls, foldl_delRel
+graph/src/runtime/ops/delete.rs	delete_entity	415	PROVEN	Delete.delEntity/delNode/delRel: delEntity_spec, delNode_gone, delNode_other, delRel_gone; DeleteCancel.delEntityE/delNodeE: delEntityE_ok, delNodeE_ok, delNodeE_gone, delNodeE_refusedP, delNodeE_refusedC
 graph/src/runtime/ops/set.rs	new	40	PROVEN	SetRemove.SetSt.new: setNew_spec
 graph/src/runtime/ops/set.rs	next	59	PROVEN	SetRemove.opNext: opNext_spec
 graph/src/runtime/ops/set.rs	set_batch	76	PROVEN	SetRemove.perRow: perRow_spec

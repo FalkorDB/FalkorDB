@@ -101,9 +101,11 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 * #2769 — **still present**: `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b), a.o =
   outdegree(a) RETURN b.d, a.o` panics `relationship 0 not found` at graph.rs:3365
   (server killed); C `0|0` (`deg_panics_on_pending_deleted`).
-* W4-fn-1 (labels staged before DELETE) — **still present**: `MATCH (n:A) SET n:C DELETE n
-  RETURN labels(n), n:C` Rust `[A]|false` (the snapshot copies the committed labels,
-  ops/delete.rs:286, :464); note C answers `[]|false` here.
+* W4-fn-1 (labels staged before DELETE) — **fixed by #3288** (`7fd3c12a0`, closes #3245): the
+  deleted-node snapshot is built by `Runtime::staged_label_ids` (ops/delete.rs:197), the committed
+  ids with the staged adds and removes applied (`Labels.stagedLabelIds_eq_overlay`,
+  `stagedLabelIds_run`, `deleted_snapshot_examples`); `MATCH (n:A) SET n:C DELETE n RETURN
+  labels(n), n:C` now gives `[A, C]|true`. The pre-fix counterexample is replaced by these.
 
 ## Modelled here ↔ there
 
@@ -118,7 +120,8 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 | `Arena.retire/resize/grow`        | `retire_span` (:535), `resize_span_slack` (:548), `grow_slots` (:560) |
 | `Arena.setSpan/freeSpan/mergeSpan`| `Block::set_span` (:573), `free_span` (:616), `merge_span` slot effects |
 | `Arena.compact`, `live`           | `Block::compact` (:798) and its `debug_assert_eq!` (:821) |
-| `Labels.stage/removeLabels/nodeHas/overlay` | `stage_node_labels` (pending.rs:667), `remove_node_labels` (:705), `node_has_label` (:731), `update_node_labels` (:760) |
+| `Labels.stage/removeLabels/nodeHas/overlay` | `stage_node_labels` (pending.rs:691), `remove_node_labels` (:729), `node_has_label` (:755), `update_node_labels` (:806) |
+| `Labels.stagedNodeLabels/updateNodeLabels/stagedLabelIds` | `staged_node_labels` (pending.rs:826), `update_node_labels` over it, `Runtime::staged_label_ids` (ops/delete.rs:197), #3288 |
 | `Labels.removeOp`                 | `Runtime::remove` label branch (ops/remove.rs:128-138) |
 | `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1262-1273) |
 | `Props.upsert`, `stageAll`        | `set_node_attribute` / `set_relationship_attribute` (pending.rs:571, :948) |
@@ -181,10 +184,8 @@ Wave-4 findings:
   stored, reads return the second (binary search), `attr_count` says 2. C
   stores duplicates too (`AttributeSet_AddNoClone` only asserts in debug); not
   reproduced live.
-* Labels staged before a `DELETE` are missing from the deleted snapshot
-  (ops/delete.rs:286, :464) — confirmed by another agent; the repro tests
-  `bug_deleted_snapshot_*` / `bug_detach_deleted_snapshot_*` are in the test
-  file.
+* Labels staged before a `DELETE` were missing from the deleted snapshot: fixed by #3288
+  (`stagedLabelIds_eq_overlay`).
 
 ## Proven (earlier waves)
 

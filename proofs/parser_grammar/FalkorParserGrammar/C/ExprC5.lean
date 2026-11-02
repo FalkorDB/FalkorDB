@@ -13,29 +13,23 @@ theorem spTypes_sound : ∀ n acc (s : PS) out s', spTypes n acc s = .ok out s' 
     unfold spTypes at h
     peel h => t s1 h1; obtain ⟨ht, rfl⟩ := ident_ok h1
     peel h => p s2 h2
-    peel h => c s3 h3
     cases p
-    · rcases opt_ok h2 with ⟨h0, _⟩ | ⟨_, hnp, e2⟩
+    · simp only [Bool.false_eq_true, ite_false] at h
+      obtain ⟨rfl, rfl⟩ := pure_ok h
+      rcases opt_ok h2 with ⟨h0, _⟩ | ⟨_, hnp, e2⟩
       · cases h0
       subst e2
+      exact .last ht hnp
+    · simp only [ite_true] at h
+      obtain ⟨hpp, rfl⟩ := (opt_eq h2).1 rfl
+      peel h => c s3 h3
       cases c
       · rcases opt_ok h3 with ⟨h0, _⟩ | ⟨_, hnc, e3⟩
         · cases h0
         subst e3
-        simp only [Bool.or_false, Bool.false_eq_true, ite_false] at h
-        obtain ⟨rfl, rfl⟩ := pure_ok h; exact .last ht hnp hnc
+        exact .more ht hpp (.inr ⟨hnc, rfl⟩) (spTypes_sound n _ _ _ _ h)
       · obtain ⟨hcc, rfl⟩ := (opt_eq h3).1 rfl
-        simp only [Bool.false_or, ite_true] at h
-        exact .more ht (.inr ⟨hnp, hcc, rfl⟩) (spTypes_sound n _ _ _ _ h)
-    · obtain ⟨hpp, rfl⟩ := (opt_eq h2).1 rfl
-      simp only [Bool.true_or, ite_true] at h
-      cases c
-      · rcases opt_ok h3 with ⟨h0, _⟩ | ⟨_, hnc, e3⟩
-        · cases h0
-        subst e3
-        exact .more ht (.inl ⟨hpp, .inr ⟨hnc, rfl⟩⟩) (spTypes_sound n _ _ _ _ h)
-      · obtain ⟨hcc, rfl⟩ := (opt_eq h3).1 rfl
-        exact .more ht (.inl ⟨hpp, .inl ⟨hcc, rfl⟩⟩) (spTypes_sound n _ _ _ _ h)
+        exact .more ht hpp (.inl ⟨hcc, rfl⟩) (spTypes_sound n _ _ _ _ h)
 
 /-- The range part of shortestPath's detail. -/
 theorem spRange_sound (s : PS) mm s' (h : spRangeP s = .ok mm s') : GSpRange s mm s' := by

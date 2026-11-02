@@ -61,10 +61,11 @@ graph/src/runtime/row.rs	Row::has_bindings	181	PROVEN	hasBindings: hasBindings_i
 graph/src/runtime/row.rs	Row::clone_with	187	PROVEN	cloneWith: cloneWith_get
 graph/src/runtime/row.rs	Row::is_bound_by_id	199	PROVEN	isBound: isBound_insertById, isBound_unbind
 graph/src/runtime/row.rs	Row::merge	209	PROVEN	merge: mergeFrom_preserve, mergeFrom_get, merge_get_bound
-graph/src/runtime/row.rs	Row::unbind_by_id	222	PROVEN	unbind: isBound_unbind, getById_unbind
-graph/src/runtime/row.rs	Row::value_at	231	PROVEN	getById: getById_insertById
-graph/src/runtime/row.rs	Row::to_owned_row	238	PROVEN	toOwnedRow: toOwnedRow_eq
-graph/src/runtime/row.rs	Row::hash	244	PROVEN	hashed (key/value sequence fed to the hasher): hashed_pad; hasher abstract
+graph/src/runtime/row.rs	Row::push_slot	224	PROVEN	pushSlot: getById_pushSlot, length_pushSlot, isBound_pushSlot, pushSlot_unbound
+graph/src/runtime/row.rs	Row::unbind_by_id	237	PROVEN	unbind: isBound_unbind, getById_unbind
+graph/src/runtime/row.rs	Row::value_at	246	PROVEN	getById: getById_insertById
+graph/src/runtime/row.rs	Row::to_owned_row	253	PROVEN	toOwnedRow: toOwnedRow_eq
+graph/src/runtime/row.rs	Row::hash	259	PROVEN	hashed (key/value sequence fed to the hasher): hashed_pad; hasher abstract
 graph/src/identifier_limits.rs	validate_identifier_len	26	PROVEN	validate: validate_ok_iff
 graph/src/identifier_limits.rs	is_identifier_too_long	42	PROVEN	isTooLong: isTooLong_of_validate
 graph/src/narrow_int.rs	width_for	19	PROVEN	widthFor: widthFor_fits, widthFor_minimal, widthFor_mono, narrow_lossless

@@ -63,7 +63,7 @@ On every input, for these:
 
 **5. What does a deleted entity return later in the same query?**
 
-The team decided on 2026-09-25 that a deleted entity keeps returning *all* its details for the rest of the query. `deleteRel_preserves`, `deleteNode_preserves` and `deleteNode_preserves_all` prove this holds for type, endpoints, properties, keys and id. For node labels it holds only when the query didn't change the labels first (`deleteNode_labels_iff`), which is bug W4-fn-1 below.
+The team decided on 2026-09-25 that a deleted entity keeps returning *all* its details for the rest of the query. `deleteRel_preserves`, `deleteNode_preserves` and `deleteNode_preserves_all` prove this holds for type, endpoints, properties, keys and id, and `deleteNode_labels_preserved` for node labels, including labels the query staged before the DELETE (bug W4-fn-1, fixed by #3288).
 
 ## The headline theorems
 
@@ -80,7 +80,7 @@ The team decided on 2026-09-25 that a deleted entity keeps returning *all* its d
 | `joinLen_correct` | `string.join`'s precomputed length is exact | `FalkorStrList.lean` |
 | `toLower_total`, `case_agrees_C_if_simple` | `toLower`/`toUpper` never error, and equal C under a one-to-one mapping (#2953) | `FalkorStrList.lean` |
 | `listSort_float_cmp_antisymmetric`, `listSort_perm` | `list.sort`'s float comparison is antisymmetric (#2912), and the sort returns a permutation | `FalkorStrList.lean`, `Misc.lean` |
-| `deleteNode_preserves_all`, `deleteNode_labels_iff` | Deleted entities keep their details; labels only when unchanged in the query | `Entity.lean` |
+| `deleteNode_preserves_all`, `deleteNode_labels_preserved` | Deleted entities keep their details, labels staged earlier in the query included (#3288) | `Entity.lean` |
 | `startEndNode_null`, `startEndNode_total` | `startNode(null)`/`endNode(null)` is `null` (#3132) | `Entity.lean` |
 | `comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err` | `[x IN src \| …]` equals C on every source: null gives `null`, a scalar a type error, list/`range` sources unchanged (#2954) | `FalkorStrList.lean` |
 | `typeName_eq_valueName`, `comprehensionSourceCheck_err` | `typeOf()` is `Value::name` (`Edge`, `Vectorf32`), the name the comprehension type error prints (#2954) | `Entity.lean` |
@@ -106,7 +106,7 @@ Each bug has a Rust repro test (`graph/tests/lean_functions_str_list.rs`, run lo
 | D (W2-strlist-4) | removed (17ccc5412) | `toLower('A�')` errored with "Invalid UTF8 string"; a Rust `String` is always valid UTF-8, so the check could only misfire. C returns `'a�'` | Fixed by #2953 (`toLower_total`, `case_agrees_C_if_simple`) |
 | E (W2-strlist-5) | `replaceRegex_literal`, `spliceLit_single` | `string.replaceRegEx('abc', 'b', '$0x')` returned `'ac'` because `$` was expanded; C copies the replacement literally (`'a$0xc'`) | **Fixed by #3604** (53d694496; `NoExpand`) |
 | F (W2-strlist-6) | removed (17ccc5412) | `[x IN null \| x]` returned `[]` (C: `null`); `[x IN 5 \| x]` returned `[5]` (C: type error) | Fixed by #2954 (`b6567cb97`, closes #2928; `comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err`) |
-| W4-fn-1 | `labels_lost_after_delete`, `deleteNode_labels_iff` | `MATCH (n:A) SET n:C DELETE n RETURN labels(n)` returns `['A']` instead of `['A','C']`: the DELETE snapshot copies the *committed* labels (`ops/delete.rs:286`, `:466`), not the pending ones | **Open** |
+| W4-fn-1 | `staged_set_kept_after_delete`, `staged_remove_kept_after_delete`, `deleteNode_labels_preserved` | `MATCH (n:A) SET n:C DELETE n RETURN labels(n)` returned `['A']` instead of `['A','C']`: the DELETE snapshot copied the *committed* labels | **Fixed by #3288** (`7fd3c12a0`; closes #3245): the snapshot takes `staged_label_ids` (`ops/delete.rs:197`) |
 | — | removed (17ccc5412) | `UNWIND range(10, 0, i64::MIN)` panicked in debug ("attempt to negate with overflow"); release was correct | Fixed by #2899 (`e63165cb5`; `rangeIter_eq_range`, `rangeIter_examples`) |
 
 C bugs recorded for comparison:
@@ -167,4 +167,4 @@ bash proofs/coverage.sh                       # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-When you fix one of the open bugs (C, E, W4-fn-1), rename its counterexample to `pre<PR>_…`, add the correctness theorem, and move the row to PROVEN. Any change to `ops/delete.rs`'s snapshot also affects `Entity.lean`.
+When you fix one of the open bugs (C), rename its counterexample to `pre<PR>_…`, add the correctness theorem, and move the row to PROVEN. Any change to `ops/delete.rs`'s snapshot also affects `Entity.lean`.

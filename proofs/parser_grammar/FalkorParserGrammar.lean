@@ -38,6 +38,33 @@ are in `proofs/lexer`, which this project does not repeat.
 * **`parse_deterministic`**: the parse is a function of the input
   (backtracking restores the saved position and anonymous counter).
 
+## Re-target to 80c776385 (2026-11-02): #3289 and #3300
+
+Two parser PRs changed the model; all proofs were re-done on the new code.
+* **#3289 (`d15d38a10`)** `add_pattern_relationship` (cypher.rs:1380) replaces five copies of
+  `if !query_graph.add_relationship(..) && clause == Match` (named path, anonymous path, both
+  allShortestPaths arms) and the pattern-comprehension chain. It rejects a repeated alias in every
+  clause (MATCH/MERGE/CREATE messages). `chainA`, `chainN` and `aspLoop` now `fail` whenever
+  `addRel` reports a repeat; `GExt.rust := ⟨false⟩` (no extension left); `relOk_of` lost its
+  clause hypotheses. A pattern comprehension collects the first repeat and goes on
+  (`repeated.get_or_insert`), the caller reports it after the speculative attempt succeeded, so the
+  `Err`-to-fallback of `attempt` cannot swallow it: `pcChain` carries `(graph, repeated)`,
+  `patCompP : P (ET × Bool)`, `listLitRest` fails on a `true` flag, `GPatComp` takes the flag and
+  `GBracket.namedPC/anonPC` require it `false`. `listLitRest_lit` / `listLitP_eq_ungated` /
+  `patCompP_pipe` / the `np_*` proofs are re-proved on the new shape.
+  Theorems: `create_named_path_dup_rel_rejected`, `create_named_path_distinct_rels_ok`,
+  `merge_dup_rel_rejected`, `pattern_comprehension_repeated_rel_refused`.
+* **#3300 (`f680bb9f2`)** `parse_relationship_types` (cypher.rs:3054; used by
+  `parse_relationship_pattern` and shortestPath) is `ident (| :? ident)*`: a bare `:` no longer
+  continues the list. `typesP` and `spTypes` are re-modelled, `GTypes` lost its `colon` constructor
+  and `Ext` its `typeColon` field (`typesP_sound` re-proved), `GSpTypes` lost the `:`-only case.
+  `expect_property_after_paren` (cypher.rs:3406) makes a parenthesised SET/REMOVE target require a
+  following `.`: `expectDotP` in `targetP`, `GTarget.paren` carries `s2.adv.cur = .dot`.
+  Theorems: `typesP_colon_refused`, `type_colon_refused`, `set_paren_target_refused`,
+  `set_paren_needs_dot`.
+The three old counterexamples (`create_named_path_drops_dup_rel`, `merge_dup_rel_dropped`,
+`type_colon_accepted`, `set_paren_property_accepted`) are gone; W4-parse-2/3/4 are fixed.
+
 ## Re-target to ee21013d6: #3112 (same-alias allShortestPaths arrow)
 
 `parse_pattern` now records `is_incoming` (the leading `<`, cypher.rs:1416-1418) before
@@ -116,10 +143,10 @@ extension flags (`CExt`); `GArgsE`/`GArgs` now demand an expression after every 
 | --- | --- | --- |
 | `call_validates_rest`, `call_transparent`, `match_last_after_call_rejected` | **Fixed by #3297** (b774fdfad; main b84473a7f): `inner_validate`'s CALL arm used to return `Ok(())` without validating the clauses after it (ast.rs:1167-1201 at b6567cb97); it now continues with `iter.next().map_or(Ok(()), …)` (ast.rs:1262-1263). | Before the fix `CALL db.labels() YIELD label MATCH (n)` and `CALL db.labels() YIELD label CREATE ()-[r]->() RETURN label` **crashed the server** (panic at planner/optimizer/utilize_node_by_id.rs:118), `... MERGE ()-[:R\|S]->()` created an edge, `... UNWIND [1] AS x` was accepted. C rejects all four; so does main (flow `test_procedures.py`). |
 | `anon_name_collides` | Anonymous entities are named `_anon_N` (cypher.rs:3017, 3054, 3134), a name the user can write; `add_pattern_node` then merges the two nodes. | `CREATE (:A), (:B)` then `MATCH (_anon_0:A), (:B) RETURN count(*)`: Rust 0, C 1. |
-| `create_named_path_drops_dup_rel` | In a named path a repeated relationship variable is rejected only for MATCH (cypher.rs:1533-1541). | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)`: Rust creates 4 nodes, 1 relationship; C: "Variable `r` already declared". |
-| `merge_dup_rel_dropped` | Same for MERGE in an anonymous path (cypher.rs:1554-1567). | `MERGE (a)-[r:R]->(b)-[r:R]->(c)`: Rust 3 nodes, 1 relationship; C: "can't be redeclared in a MERGE clause". |
-| `set_paren_property_accepted` | The `=` arm of `parse_set_items` takes any primary as target (cypher.rs:3352-3366). | `CREATE (n {a:1}) SET (n.x) = 5 RETURN n` sets x; C: syntax error. |
-| `type_colon_accepted` | `[:A:B]` (cypher.rs:3068-3078 continues on `:` alone). | Rust matches; C: syntax error. |
+| `create_named_path_dup_rel_rejected` | **Fixed by #3289** (`d15d38a10`): every relationship goes through `add_pattern_relationship` (cypher.rs:1380), which rejects a repeated alias in every clause. It was rejected only for MATCH in a named path (cypher.rs:1533-1541 at b02266c2b). | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` is now "The bound variable 'r' can't be redeclared in a CREATE clause" (was 4 nodes, 1 relationship; C: "Variable `r` already declared"). |
+| `merge_dup_rel_rejected` | **Fixed by #3289**: same, for MERGE (it used to drop the repeat, cypher.rs:1554-1567 at b02266c2b). Pattern comprehensions too: `pattern_comprehension_repeated_rel_refused`. | `MERGE (a)-[r:R]->(b)-[r:R]->(c)` is now "can't be redeclared in a MERGE clause" (was 3 nodes, 1 relationship; C: same error). |
+| `set_paren_target_refused`, `set_paren_needs_dot` | **Fixed by #3300** (`f680bb9f2`): `expect_property_after_paren` (cypher.rs:3406) lets a parenthesised SET/REMOVE target open only `(n).x`. The `=` arm used to take any primary (cypher.rs:3352-3366 at b02266c2b). | `SET (n.x) = 5`, `SET (n) = {..}`, `SET (n):L`, `REMOVE (n):L` are now syntax errors (as in C); `SET (n).x = 5` still works. |
+| `type_colon_refused`, `typesP_colon_refused` | **Fixed by #3300**: `parse_relationship_types` (cypher.rs:3054) continues only on `\|` (with an optional `:` after it). It used to continue on `:` alone (cypher.rs:3068-3078 at b02266c2b). | `[:A:B]` is now a syntax error (as in C); `[:A\|B]` and `[:A\|:B]` still parse; shortestPath types use the same function. |
 
 Out of this project's files but seen while probing: 2000 chained
 `UNWIND [1] AS xN` clauses crash the Rust server (parse, validate and bind
@@ -153,8 +180,9 @@ Outside this project's scope, seen along the way: `true CONTAINS 'c'` and
   an accepted input is derivable in a transcription of the Cypher.g4 rule
   (lines 30-264, 361-426) with its semantic action, and the IR / tree
   returned is the derivation's. Implementation extensions are explicit flags
-  (`Ext`, `GExt`, `CExt`): `[:A:B]`, MATCH/CREATE keyword folding,
-  allShortestPaths, dropped duplicate relationship variables,
+  (`Ext`, `GExt`, `CExt`): MATCH/CREATE keyword folding,
+  allShortestPaths (`[:A:B]` and dropped duplicate relationship variables were extensions until
+  #3300 and #3289: `Ext` lost `typeColon`, and `GExt.rust = GExt.g4`),
   DELETE/SET/REMOVE folding, a SET/REMOVE target that is not a variable or property,
   implicit CALL, queries without RETURN; plus the
   FalkorDB-only constructs (index DDL, LOAD CSV, FOREACH, CALL {}, reduce,

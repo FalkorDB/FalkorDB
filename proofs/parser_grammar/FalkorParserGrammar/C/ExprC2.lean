@@ -51,30 +51,36 @@ theorem inlineErr_spec (u : String → Bool) (msg : String) (r : Except String E
     (∀ e, r = .error e → inlineErr u msg r = .error (if u e then e else msg)) := by
   constructor <;> intro x h <;> subst h <;> rfl
 
-/-! ## Pattern comprehension (cypher.rs:2958-3004; Cypher.g4:397-398) -/
+/-! ## Pattern comprehension (cypher.rs:2958-3013; Cypher.g4:397-398) -/
 
-def pcChain (o : Oracle) (F : Nat) : Nat → QNode Nat → QG Nat → P (QG Nat)
+/-- The chain of a pattern comprehension (cypher.rs:2974-2985). The state is the graph and
+`repeated`: whether some relationship alias was already in it. Since #3289 a repeat does not stop
+the loop (`repeated.get_or_insert(e)`): the parse goes on, and the caller reports it once the whole
+comprehension has parsed. -/
+def pcChain (o : Oracle) (F : Nat) : Nat → QNode Nat → QG Nat × Bool → P (QG Nat × Bool)
   | 0, _, _ => fuelP
   | n + 1, left, g => do
     let c ← peek
     if c = .dash ∨ c = .lt then do
       let rr ← relP o F .match_ left
-      let g := ((g.addNode rr.2).2.addRel rr.1).2
-      pcChain o F n rr.2 g
+      let ag := (g.1.addNode rr.2).2.addRel rr.1
+      pcChain o F n rr.2 (ag.2, g.2 || !ag.1)
     else pure g
 
-/-- `parse_pattern_comprehension(path_var)`, after `[` (and `p =`). -/
-def patCompP (o : Oracle) (F : Nat) (pv : Option Nat) : P ET := do
+/-- `parse_pattern_comprehension(path_var)`, after `[` (and `p =`). Returns the tree and the
+`repeated` flag (cypher.rs:2960-3010, #3289): `Some(error)` for a repeated relationship alias,
+which the caller turns into a hard error after the attempt succeeded. -/
+def patCompP (o : Oracle) (F : Nat) (pv : Option Nat) : P (ET × Bool) := do
   let first ← nodeP o F
   let c ← peek
   if !(c = .dash ∨ c = .lt) then fail else do
-  let _g ← pcChain o F F first (QG.empty.addNode first).2
+  let g ← pcChain o F F first ((QG.empty.addNode first).2, false)
   let w ← optK .where_
   let cond ← (if w then o.pe false else pure (leaf (.bool true)))
   tok .pipe
   let res ← o.pe false
   tok .rbrack
-  pure (.node .patComp [cond, res])
+  pure (.node .patComp [cond, res], g.2)
 
 /-! ## `parse_list_literal_or_comprehension` (cypher.rs:2818-2885) -/
 
@@ -98,7 +104,8 @@ def listLitRest (o : Oracle) (F : Nat) (forb : Bool) (saved : PS) : P (ET × Boo
     | some v, true, .lparen => attempt (patCompP o F (some v))
     | _, _, _ => pure none)
   match r2 with
-  | some t => do
+  | some (t, rep) => do
+    if rep then fail else do
     if forb then fail else do
     rejectAggregate t
     pure (t, false)
@@ -108,7 +115,8 @@ def listLitRest (o : Oracle) (F : Nat) (forb : Bool) (saved : PS) : P (ET × Boo
     let c3 ← peek
     let r3 ← (if c3 = .lparen then attempt (patCompP o F none) else pure none)
     match r3 with
-    | some t => do
+    | some (t, rep) => do
+      if rep then fail else do
       if forb then fail else do
       rejectAggregate t
       pure (t, false)
@@ -174,13 +182,16 @@ def listLitPU (o : Oracle) (F : Nat) (forb : Bool) : P (ET × Bool) := do
 
 /-! ## shortestPath (cypher.rs:1753-1940) -/
 
+/-- shortestPath's types: the same `parse_relationship_types` (cypher.rs:3054-3064) as a pattern's. -/
 def spTypes : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
   | n + 1, acc => do
     let t ← ident
     let p ← opt .pipe
-    let c ← opt .colon
-    if p || c then spTypes n (acc ++ [t]) else pure (acc ++ [t])
+    if p then do
+      let _ ← opt .colon
+      spTypes n (acc ++ [t])
+    else pure (acc ++ [t])
 
 /-- The edge-filter skipper (cypher.rs:1835-1862): `{` deepens, `}`
 shallows and stops at depth ≤ 0, `]` stops before it; at end of input it

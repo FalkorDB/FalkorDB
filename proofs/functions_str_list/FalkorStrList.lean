@@ -163,17 +163,18 @@ F. **List comprehension over null / scalar — FIXED by #2954 (b6567cb97, closes
 entity.rs (all 15 fns) over an accessor model (deleted snapshot > pending > committed),
 plus the remaining string.rs / list.rs / internal.rs fns: all PROVEN. House decision
 (deleted entities keep all details): `deleteRel_preserves`, `deleteNode_preserves`,
-`deleteNode_preserves_all`; **CONFIRMED BUG** `deleteNode_labels_iff` /
-`labels_lost_after_delete`: the DELETE snapshot copies committed labels
-(ops/delete.rs:286, :466 `g.get_node_label_ids(id)`), so labels staged by SET/REMOVE earlier
-in the same query are lost/resurrected. Repro: `lean_functions_str_list::
-bug_deleted_node_labels_ignore_staged_set` (`MATCH (n:A) SET n:C DELETE n RETURN labels(n), n:C`
-→ Rust `['A']|false`, expected `['A','C']|true`; C returns `[]`) and
-`..._staged_remove` (`REMOVE n:A … DELETE n RETURN labels(n)` → Rust `['A']`, expected `[]`).
-Re-checked at origin/main 5e475e6c9: no modelled function changed. #3436 only swaps `rt.g.borrow()` for `rt.graph()` (borrow plumbing,
-same graph); #3462 makes `DeleteOp`'s snapshot flag `runtime.inspect || snapshot_required(..)` (`Entity.lean`'s `deleteNode` /
-`deleteRel` are the `snapshot = true` case, so unchanged) and delete.rs pins moved to :286/:466, so W4-fn-1 is still open (the
-snapshot still copies the committed label ids); #2988 is `temporal.rs` (functions_temporal). COVERAGE.tsv rows unchanged.
+`deleteNode_labels_preserved`, `deleteNode_preserves_all`. W4-fn-1 (the DELETE snapshot copied
+the committed labels, so labels staged by SET/REMOVE earlier in the same query were lost) is
+**fixed by #3288** (`7fd3c12a0`, closes #3245): the snapshot takes `Runtime::staged_label_ids`
+(ops/delete.rs:197), the committed ids with the staged adds and removes applied.
+`deleteNode_labels_preserved` proves the snapshot's labels equal what `labels(n)` / `n:L` showed
+before the DELETE, with `staged_set_kept_after_delete` (`MATCH (n:A) SET n:C DELETE n RETURN
+labels(n), n:C` is `['A','C']|true`) and `staged_remove_kept_after_delete` as the two shapes
+(the pre-fix counterexample `labels_lost_after_delete` is gone). proofs/pending_commit
+`stagedLabelIds_eq_overlay` shows `staged_label_ids` is the overlay `pendingLabels` models.
+Earlier re-check at 5e475e6c9: #3436 only swapped `rt.g.borrow()` for `rt.graph()` (borrow plumbing); #3462 made
+`DeleteOp`'s snapshot flag `runtime.inspect || snapshot_required(..)` (`Entity.lean`'s `deleteNode` /
+`deleteRel` are the `snapshot = true` case); #2988 is `temporal.rs` (functions_temporal).
 
 Re-targeted to e8f8a3017: #3127 (`d739765e1`) received-type names in the `hasLabels` /
 `parse_degree_args` errors (`hasLabels_mismatch_names`, `parseDegreeArgs_mismatch_names`,
