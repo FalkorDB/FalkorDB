@@ -752,7 +752,9 @@ pub fn finalize_pending_graphs() {
 
         match serializers::decoder::finalize_pending_graph(pg) {
             Ok(graph) => install_graph(graph_name, graph, placeholder),
-            Err(e) => eprintln!("FalkorDB: failed to finalize graph '{graph_name}': {e}"),
+            Err(e) => log_warning(format!(
+                "FalkorDB: failed to finalize graph '{graph_name}': {e}"
+            )),
         }
     }
 

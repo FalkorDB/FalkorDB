@@ -1,4 +1,5 @@
-from common import *
+import redis
+from common import Env
 from test_rdb_load import capture_restore_payload
 
 # `GRAPH.RESTORE` takes bytes from the client, so nothing in them can be
@@ -126,12 +127,46 @@ class testRestoreCorrupt():
         self.conn.flushall()
         g = self.db.select_graph("src")
         g.query("CREATE (:V {v: vecf32([1.0, 2.0])})")
-        try:
-            g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
-                    "OPTIONS {dimension:0, similarityFunction:'euclidean'}")
-        except redis.exceptions.ResponseError:
-            self.env.skip()
-            return
+        g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
+                "OPTIONS {dimension:0, similarityFunction:'euclidean'}")
         payload = capture_restore_payload(self.conn, "src", "dst")
         self.conn.flushall()
         self.env.assertTrue(self.restore(payload))
+
+        # The index is on the restored graph, not just tolerated: it keeps its
+        # zero dimension and its metric.
+        self.conn.execute_command("GRAPH.RESTORE", "x", payload)
+        res = self.db.select_graph("x").query(
+            "CALL db.indexes() YIELD label, properties, types, options "
+            "RETURN label, properties, types, options")
+        self.env.assertEqual(len(res.result_set), 1)
+        label, props, types, options = res.result_set[0]
+        self.env.assertEqual(label, "V")
+        self.env.assertEqual(props, ["v"])
+        self.env.assertContains("VECTOR", str(types))
+        self.env.assertEqual(options["v"]["dimension"], 0)
+        self.env.assertEqual(options["v"]["similarityFunction"], "euclidean")
+
+    def test_restore_refuses_an_unknown_vector_similarity_function(self):
+        # The word after the three graph parameters of a vector index entry
+        # picks the metric: 0, 1, 2 are the ones C writes. Anything else used
+        # to become euclidean silently.
+        self.conn.flushall()
+        g = self.db.select_graph("src")
+        g.query("CREATE (:V {v: vecf32([1.0, 2.0])})")
+        g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
+                "OPTIONS {dimension:2, similarityFunction:'cosine'}")
+        payload = capture_restore_payload(self.conn, "src", "dst")
+        self.conn.flushall()
+        self.env.assertTrue(self.restore(payload))
+        # dimension, M, EF_CONSTRUCTION, EF_RUNTIME, then sim_func (cosine = 2)
+        marker = bytes([TYPE_UNSIGNED]) + (2).to_bytes(8, "little")
+        offsets = [i for i in range(len(payload) - 8)
+                   if payload[i:i + 9] == marker]
+        refused = 0
+        for off in offsets:
+            bad = payload[:off + 1] + (7).to_bytes(8, "little") + payload[off + 9:]
+            refused += not self.restore(bad)
+        # at least the sim_func word (and the dimension) refuse
+        self.env.assertGreaterEqual(refused, 1)
+        self.env.assertTrue(self.conn.ping())

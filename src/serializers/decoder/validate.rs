@@ -15,10 +15,10 @@ use crate::serializers::{Header, Schema};
 
 /// Most node ids (live plus deleted) a payload may declare, and the same for
 /// edge ids. The id space is dense, so the id bound is also how far the
-/// attribute directory and the node matrices must stretch; 2^36 is some 68
-/// billion, orders beyond any graph that fits in memory, and keeps that stretch
-/// in the tens of megabytes.
-pub const MAX_ID_BOUND: u64 = 1 << 36;
+/// attribute directory must stretch: its root takes 8 bytes per 4096 ids, so
+/// one attribute on an entity near the bound costs a 32 MiB root at 2^34 (17
+/// billion ids, beyond any graph that fits in memory); 2^36 would be 128 MiB.
+pub const MAX_ID_BOUND: u64 = 1 << 34;
 
 /// Most labels, relationship types or payload sections a header may declare.
 pub const MAX_SCHEMAS: u64 = 1 << 20;

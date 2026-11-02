@@ -11,7 +11,7 @@ use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::constraint::{Constraint, ConstraintStatus, ConstraintType};
 use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{
-    Decode, Encode, Reader, Writer, decode_capacity, index_field_type,
+    Decode, Encode, Reader, Writer, check_count_fits, decode_capacity, index_field_type,
 };
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
@@ -21,6 +21,7 @@ use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
+use crate::serializers::decoder::validate::MAX_SCHEMAS;
 
 /// RDB encoding version. Matches C FalkorDB v19 format (buffered IO with type tags).
 #[allow(dead_code)]
@@ -179,6 +180,15 @@ impl Decode<19> for Header {
         let label_count = r.read_unsigned()?;
         let relationship_count = r.read_unsigned()?;
 
+        // One flag per relationship type: refuse a count no graph reaches, and
+        // one the remaining bytes cannot hold, before reading and pushing flags
+        // (check_header holds the same limit for the rest of the header).
+        if relationship_count > MAX_SCHEMAS {
+            return Err(format!(
+                "relationship type count {relationship_count} is out of range"
+            ));
+        }
+        check_count_fits(r, "relationship type", relationship_count, 9)?;
         let mut multi_edge = Vec::with_capacity(decode_capacity(relationship_count));
         for _ in 0..relationship_count {
             let flag = r.read_unsigned()?;
@@ -699,9 +709,14 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Vec<Field>), S
         // Inverse of the VecSimMetric encoding above; spellings match what
         // `map_to_index_options` accepts so a rebuilt index round-trips.
         let similarity_function = match sim_func {
+            0 => Some("euclidean".to_string()), // VecSimMetric_L2
             1 => Some("ip".to_string()),
             2 => Some("cosine".to_string()),
-            _ => Some("euclidean".to_string()), // VecSimMetric_L2 = 0
+            other => {
+                return Err(format!(
+                    "invalid vector index options for attribute {name}: unknown similarity function {other}"
+                ));
+            }
         };
         Some(VectorIndexOptions {
             dimension,
@@ -854,6 +869,104 @@ mod tests {
         let text = fields[0].options().expect("fulltext options");
         assert!(!text.phonetic_enabled());
         assert_eq!(text.phonetic.as_deref(), Some(""));
+    }
+
+    /// An unknown `sim_func` used to fall through to euclidean, so a corrupted
+    /// word silently changed the index's metric.
+    #[test]
+    fn unknown_vector_similarity_function_is_refused() {
+        for (sim, expected) in [(0, "euclidean"), (1, "ip"), (2, "cosine")] {
+            let mut w = VecWriter::new();
+            w.write_buffer(&null_terminated("v"));
+            w.write_unsigned(INDEX_FLD_VECTOR);
+            w.write_double(2.0);
+            w.write_unsigned(1);
+            w.write_buffer(&null_terminated("dm:en"));
+            for v in [4, 16, 200, 10, sim] {
+                w.write_unsigned(v);
+            }
+            let bytes = w.into_vec();
+            let (_, fields) = decode_index_field(&mut BufferedReader::from_slice(&bytes)).unwrap();
+            let options = fields[0].vector_options().expect("vector options");
+            assert_eq!(options.similarity_function.as_deref(), Some(expected));
+        }
+        for sim in [3, 255, u64::MAX] {
+            let mut w = VecWriter::new();
+            write_c_field(&mut w, "v", INDEX_FLD_VECTOR);
+            let mut bytes = w.into_vec();
+            // the last unsigned on the wire is the similarity function
+            let n = bytes.len();
+            bytes[n - 8..].copy_from_slice(&sim.to_le_bytes());
+            let err = decode_index_field(&mut BufferedReader::from_slice(&bytes))
+                .map(|_| ())
+                .expect_err("an unknown similarity function was accepted");
+            assert!(err.contains("similarity function"), "{err}");
+        }
+    }
+
+    /// The header's relationship count sizes the flag list: refuse one beyond
+    /// the limit, or beyond the bytes that are left, before reading any flag.
+    #[test]
+    fn header_refuses_a_relationship_count_the_payload_cannot_hold() {
+        for count in [MAX_SCHEMAS + 1, u64::MAX, 1000] {
+            let mut w = VecWriter::new();
+            w.write_buffer(&null_terminated("g"));
+            for v in [1, 1, 0, 0, 0, count] {
+                w.write_unsigned(v);
+            }
+            w.write_unsigned(0); // a single flag, far fewer than `count`
+            let bytes = w.into_vec();
+            let err = Header::decode(&mut BufferedReader::from_slice(&bytes))
+                .map(|_| ())
+                .expect_err("an impossible relationship count was accepted");
+            assert!(err.contains("relationship type"), "{err}");
+        }
+    }
+
+    fn vecf32_payload(
+        dim: u32,
+        floats: usize,
+    ) -> Vec<u8> {
+        let mut w = VecWriter::new();
+        w.write_unsigned(graph::graph::graphblas::serialization::si_type::T_VECTOR_F32);
+        let mut buf = dim.to_le_bytes().to_vec();
+        for i in 0..floats {
+            buf.extend_from_slice(&(i as f32).to_le_bytes());
+        }
+        w.write_buffer(&buf);
+        w.into_vec()
+    }
+
+    /// The buffer is `4 + 4 * dim` bytes exactly: more floats than `dim` says
+    /// used to restore silently as a truncated vector.
+    #[test]
+    fn vector_value_buffer_must_match_its_dimension() {
+        use graph::runtime::value::Value;
+        let decode = |bytes: &[u8]| Value::decode(&mut BufferedReader::from_slice(bytes));
+        assert!(matches!(decode(&vecf32_payload(3, 3)), Ok(Value::VecF32(v)) if v.len() == 3));
+        assert!(decode(&vecf32_payload(0, 0)).is_ok());
+        for (dim, floats) in [(2, 3), (3, 2), (0, 1), (u32::MAX, 3)] {
+            assert!(
+                decode(&vecf32_payload(dim, floats)).is_err(),
+                "dim {dim} with {floats} floats was accepted"
+            );
+        }
+    }
+
+    /// An array count no payload can hold is refused before anything is
+    /// reserved for it, and a deeply nested payload does not reserve per level.
+    #[test]
+    fn array_count_is_bounded_by_the_payload() {
+        use graph::graph::graphblas::serialization::si_type::T_ARRAY;
+        use graph::runtime::value::Value;
+        let mut w = VecWriter::new();
+        w.write_unsigned(T_ARRAY);
+        w.write_unsigned(u64::MAX);
+        let bytes = w.into_vec();
+        let err = Value::decode(&mut BufferedReader::from_slice(&bytes))
+            .map(|_| ())
+            .expect_err("an array of 2^64 elements was accepted");
+        assert!(err.contains("array count"), "{err}");
     }
 
     #[test]

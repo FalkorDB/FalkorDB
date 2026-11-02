@@ -49,12 +49,12 @@ use crate::graph::graphblas::{
 use super::serialization::{Decode, DecodeLimits, Encode, Reader, Writer};
 use super::{
     GrB_BOOL, GrB_Info, GrB_Type, GrB_Type_get_String, GrB_Vector, GrB_Vector_free, GrB_Vector_new,
-    GrB_Vector_removeElement, GrB_Vector_resize, GrB_Vector_setElement_BOOL, GrB_Vector_size,
-    GrB_Vector_wait, GrB_WaitMode, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64,
-    GxB_Iterator_new, GxB_MAX_NAME_LEN, GxB_Option_Field, GxB_Print_Level, GxB_Type_from_name,
-    GxB_Type_size, GxB_Vector_Iterator_attach, GxB_Vector_Iterator_getIndex,
-    GxB_Vector_Iterator_next, GxB_Vector_Iterator_seek, GxB_Vector_deserialize, GxB_Vector_fprint,
-    GxB_Vector_load, GxB_Vector_serialize, GxB_Vector_unload,
+    GrB_Vector_nvals, GrB_Vector_removeElement, GrB_Vector_resize, GrB_Vector_setElement_BOOL,
+    GrB_Vector_size, GrB_Vector_wait, GrB_WaitMode, GxB_Iterator, GxB_Iterator_free,
+    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_MAX_NAME_LEN, GxB_Option_Field,
+    GxB_Type_from_name, GxB_Type_size, GxB_Vector_Iterator_attach, GxB_Vector_Iterator_getIndex,
+    GxB_Vector_Iterator_next, GxB_Vector_Iterator_seek, GxB_Vector_deserialize, GxB_Vector_load,
+    GxB_Vector_serialize, GxB_Vector_unload,
 };
 
 /// A sparse vector backed by GraphBLAS.
@@ -256,7 +256,7 @@ fn blob_i64(
 /// uncompressed length before decompressing, and indexes the block-size table
 /// by a declared block count. Both come straight from an untrusted payload, so
 /// they are checked here, against the blob and against the graph's own limits.
-fn check_blob_header(blob: &[u8]) -> Result<(), String> {
+fn check_blob_header(blob: &[u8]) -> Result<u64, String> {
     if blob.len() < BLOB_HEADER_SIZE {
         return Err(format!("blob of {} bytes has no header", blob.len()));
     }
@@ -267,7 +267,6 @@ fn check_blob_header(blob: &[u8]) -> Result<(), String> {
     let field = |at: usize| blob_i64(blob, at);
     let limits = DecodeLimits::current();
     let max_dim = limits.map_or(1 << 60, |l| l.max_dim().min(1 << 60));
-    let max_full_cells = limits.map_or(1 << 60, |l| l.max_full_cells().min(1 << 60));
     let (vlen, vdim, nvec, nvals, typesize) = (
         field(blob_at::VLEN),
         field(blob_at::VDIM),
@@ -370,17 +369,12 @@ fn check_blob_header(blob: &[u8]) -> Result<(), String> {
                         vlen.saturating_mul(vdim).saturating_mul(typesize)
                     }
         }
-        // full: every cell is held, so its dimensions are its cardinality and an
-        // iso blob (one stored value) must not be allowed to claim more than the
-        // graph can have
+        // full: refused outright. The only vectors decoded here are edge-id
+        // vectors, whose length is the largest index GraphBLAS allows: no
+        // writer can have a full one, and an iso full blob would claim any
+        // number of cells for one stored value.
         8 => {
-            vlen.saturating_mul(vdim) <= max_full_cells
-                && cx
-                    >= if iso {
-                        typesize
-                    } else {
-                        vlen.saturating_mul(vdim).saturating_mul(typesize)
-                    }
+            return Err("a full vector is not a valid edge-id vector".to_string());
         }
         _ => false,
     };
@@ -399,20 +393,21 @@ fn check_blob_header(blob: &[u8]) -> Result<(), String> {
     if (BLOB_HEADER_SIZE as u64).saturating_add(table.saturating_mul(8)) > blob_len {
         return Err("blob block table runs past its end".to_string());
     }
-    Ok(())
+    // Entries the index array can hold: no more may be read from it.
+    Ok(if sparsity == 4 { vlen } else { ci / iw })
 }
 
 /// `GxB_Vector_deserialize` of an untrusted blob, as the type `ty`.
 ///
-/// The header is checked first (see [`check_blob_header`]) and the vector that
-/// comes out is run through GraphBLAS's own consistency check — indices in
-/// range and sorted, pointers monotone — so that nothing downstream iterates a
-/// vector whose structure is not what its header claims.
+/// The header is checked first (see [`check_blob_header`]), and the vector that
+/// comes out is held to the index array it was given, so that iterating it
+/// cannot leave the arrays. The indices themselves are untrusted.
 fn deserialize_untrusted(
     blob: &[u8],
     ty: GrB_Type,
 ) -> Result<GrB_Vector, String> {
-    check_blob_header(blob).map_err(|e| format!("GxB_Vector_deserialize refused: {e}"))?;
+    let capacity =
+        check_blob_header(blob).map_err(|e| format!("GxB_Vector_deserialize refused: {e}"))?;
     unsafe {
         let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
         let info = GxB_Vector_deserialize(
@@ -430,10 +425,22 @@ fn deserialize_untrusted(
             return Err(format!("GxB_Vector_deserialize failed: {info:?}"));
         }
         let mut v = v.assume_init();
-        let info = GxB_Vector_fprint(v, null_mut(), GxB_Print_Level::GxB_SILENT as _, null_mut());
-        if info != GrB_Info::GrB_SUCCESS {
+        // The entry count is the pointer array's last word, which the blob sets,
+        // and iterating reads that many indices. Held to the index array that was
+        // allocated, an iteration cannot leave it; what the indices say is the
+        // caller's to check, as it must for any index it reads.
+        //
+        // GraphBLAS has a full consistency check (`GxB_Vector_fprint` at
+        // `GxB_SILENT`), but it costs 10 to 35 ns an entry, and added some 8% to
+        // loading a graph of two million edges (measured, see the PR); this
+        // check is constant-time.
+        let mut nvals = 0u64;
+        let info = GrB_Vector_nvals(&raw mut nvals, v);
+        if info != GrB_Info::GrB_SUCCESS || nvals > capacity {
             GrB_Vector_free(addr_of_mut!(v));
-            return Err(format!("GxB_Vector_deserialize: corrupt vector: {info:?}"));
+            return Err(format!(
+                "GxB_Vector_deserialize: corrupt vector: {nvals} entries, room for {capacity}"
+            ));
         }
         Ok(v)
     }
@@ -1130,7 +1137,9 @@ mod decode_tests {
     }
 
     /// A full iso blob stores one value however many cells it claims, so its
-    /// own arrays cannot vouch for its dimensions: they are held to the graph's.
+    /// own arrays cannot vouch for its dimensions; and no writer produces a full
+    /// edge-id vector, so the format is refused at any size, with or without
+    /// decode limits in force.
     #[test]
     fn decode_blob_rejects_a_full_iso_vector_claiming_huge_dimensions() {
         let mut blob = blob_of_a_vector();
@@ -1151,7 +1160,7 @@ mod decode_tests {
         let err = decode_blob_of(blob)
             .err()
             .expect("a full vector of 2^31 cells was accepted");
-        assert!(err.contains("shorter than its counts"), "{err}");
+        assert!(err.contains("full vector"), "{err}");
     }
 
     /// Every byte of a blob, overwritten in turn, must decode or be refused:
@@ -1181,7 +1190,16 @@ mod decode_tests {
                 for value in [0x00, 0x01, 0x02, 0x7F, 0x80, 0x94, 0xFE, 0xFF] {
                     let mut bad = blob.clone();
                     bad[at] = value;
-                    refused += decode_blob_of(bad).is_err() as usize;
+                    match decode_blob_of(bad) {
+                        Err(_) => refused += 1,
+                        // What was accepted is iterated, as `Tensor::decode`
+                        // does: it must stay inside the arrays whatever the
+                        // indices say (the values read are the caller's to
+                        // range-check).
+                        Ok(v) => {
+                            let _ = v.iter().take(1 << 20).count();
+                        }
+                    }
                 }
             }
         }

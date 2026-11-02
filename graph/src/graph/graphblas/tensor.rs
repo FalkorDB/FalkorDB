@@ -132,7 +132,7 @@ use crate::graph::{
 
 use super::{
     matrix::{Descriptor, Dup, Matrix},
-    serialization::{Decode, Encode, Reader, Writer},
+    serialization::{Decode, DecodeLimits, Encode, Reader, Writer},
     vector::Vector,
     versioned_matrix::{
         self, Delta, VersionedMatrix, delta_dominates_base, should_fold, should_fold_read,
@@ -1616,6 +1616,7 @@ impl Decode<19> for Tensor {
         // ids (checked at the end by counting `me`'s pairs).
         let markers = m.count_value_eq(MULTI_EDGE);
 
+        let limits = DecodeLimits::current();
         let total_tensor_count = r.read_unsigned()?;
         if total_tensor_count > 0 {
             // Two groups: base (TM) then delta-plus (TDP). Every id of a
@@ -1650,6 +1651,13 @@ impl Decode<19> for Tensor {
                     // gathered for is a compare that fires at most once in the
                     // life of the tensor.
                     for edge_id in v.iter() {
+                        // The ids are the blob's indices, which nothing has
+                        // checked: one past the graph's edge ids is corrupt.
+                        if limits.is_some_and(|l| edge_id >= l.edge_bound) {
+                            return Err(format!(
+                                "Tensor decode: edge id {edge_id} for ({src}, {dst}) is out of range"
+                            ));
+                        }
                         if edge_id >= me_ncols {
                             me_ncols = ME_DIM;
                             for (_, b) in &mut me {

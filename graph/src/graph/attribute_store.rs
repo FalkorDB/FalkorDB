@@ -1507,9 +1507,10 @@ impl Decode<19> for AttributeStore {
                 ));
             }
             let attr_count = r.read_unsigned()?;
-            // A span's length is a u16, so an entity cannot hold more attributes
-            // than there are ids. Past that `set_span` would truncate the length
-            // to zero and the restore would silently lose the entity's attributes.
+            // A span's length is a u16 (`set_span`): past MAX_ATTRIBUTES entries it
+            // would be truncated to zero and the restore would silently lose the
+            // entity's attributes. The decoder does not dedupe attribute ids, so
+            // the dictionary size alone does not imply this bound.
             if attr_count > MAX_ATTRIBUTES as u64 {
                 return Err(format!(
                     "entity {entity_id} declares {attr_count} attributes, more than the {MAX_ATTRIBUTES} allowed"

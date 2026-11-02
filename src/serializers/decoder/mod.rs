@@ -16,7 +16,7 @@ use super::Schema;
 use super::buffered_io::BufferedReader;
 use super::{DECODE_STATE, PendingGraph};
 
-mod validate;
+pub(crate) mod validate;
 use validate::{check_assembled, check_directory, check_header, label_matrix_count, tensor_count};
 
 /// What one RDB key turned out to hold.

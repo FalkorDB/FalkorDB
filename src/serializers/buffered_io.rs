@@ -226,6 +226,11 @@ impl BufferedReader {
         }
         let chunk = raw::load_string_buffer(self.rdb)
             .map_err(|e| format!("BufferedReader: load chunk: {e}"))?;
+        // The writer never flushes an empty chunk, and every caller indexes the
+        // next byte after loading, so an empty one is a corrupt payload.
+        if chunk.as_ref().is_empty() {
+            return Err("BufferedReader: unexpected empty chunk".to_string());
+        }
         self.buf = chunk.as_ref().to_vec();
         self.pos = 0;
         Ok(())
