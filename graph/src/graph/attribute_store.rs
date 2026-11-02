@@ -118,9 +118,10 @@ use std::sync::Arc;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
-use super::graphblas::serialization::check_count_fits;
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer, decode_capacity};
 use crate::runtime::value::Value;
+
+use super::graphblas::serialization::check_count_fits;
 
 /// Highest `u16`, reserved as "no attribute" — C's `ATTRIBUTE_ID_NONE`
 /// (`USHRT_MAX`, `src/graph/entities/attribute_set.h`). Never a valid id, so an id

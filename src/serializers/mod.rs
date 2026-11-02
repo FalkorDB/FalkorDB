@@ -11,7 +11,7 @@ use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::constraint::{Constraint, ConstraintStatus, ConstraintType};
 use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{
-    Decode, Encode, Reader, Writer, check_count_fits, decode_capacity, index_field_type,
+    Decode, Encode, Reader, Writer, decode_capacity, index_field_type,
 };
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
@@ -22,6 +22,8 @@ use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
 use crate::serializers::decoder::validate::MAX_SCHEMAS;
+
+use graph::graph::graphblas::serialization::check_count_fits;
 
 /// RDB encoding version. Matches C FalkorDB v19 format (buffered IO with type tags).
 #[allow(dead_code)]
