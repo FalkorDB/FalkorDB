@@ -985,6 +985,14 @@ impl Tensor {
     /// place of [`Self::extract`]'s copy. The values are edge ids; a
     /// structural consumer ignores them. `None` while either delta holds
     /// entries.
+    ///
+    /// Lending the base to a lock-free reader is sound for the same reason
+    /// [`Self::fwd_m`] is: the base of a committed snapshot is synced at MVCC
+    /// commit (`wait_base`), so a GraphBLAS read of it finishes no pending
+    /// work, and a writer never writes it in place: its version copies the
+    /// base on first mutation (`Cow`) or folds into a fresh matrix (`flush`),
+    /// leaving the snapshot's base untouched until the last reader drops it.
+    /// `testBFSConcurrentWrites` exercises this under concurrent writers.
     #[must_use]
     pub fn clean_fwd(&self) -> Option<&Matrix<u64>> {
         self.wait_fwd();
