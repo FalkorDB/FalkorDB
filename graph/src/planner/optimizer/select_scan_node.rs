@@ -272,48 +272,71 @@ fn in_merge_match_branch(
 }
 
 /// The variables an outer-context child of a traversal binds: the child's own
-/// outputs and, when it is an earlier clause's scan subtree (`Filter → Scan →
-/// …`, the shape `plan_query` stitches under a traversal), every scan's node
-/// down to the first operator that is neither a scan nor a variable-preserving
-/// wrapper (filter, limit, skip, sort, distinct, commit).
+/// outputs and, when it is an earlier clause's subtree (`Filter → Scan → …`,
+/// the shape `plan_query` stitches under a traversal), the variables of every
+/// operator down to the first one that starts a new environment. Passes
+/// through the variable-preserving wrappers (filter, limit, skip, sort,
+/// distinct, commit), through `UNWIND` (it keeps its input's variables and adds
+/// one), and into every branch of a `CartesianProduct` / `ValueHashJoin`; a
+/// vector scan binds its node and score like a fulltext one.
 fn outer_child_bound_vars(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
 ) -> HashSet<u32> {
     let mut vars = HashSet::new();
-    let mut node = plan.node(idx);
-    loop {
-        match node.data() {
-            // Operators that pass their input's variables through unchanged.
-            IR::Filter(_)
-            | IR::IncludePending { .. }
-            | IR::Limit(_)
-            | IR::Skip(_)
-            | IR::Sort(_)
-            | IR::Distinct
-            | IR::Commit
-                if node.num_children() == 1 =>
-            {
-                node = node.child(0);
-            }
-            data @ (IR::AllNodeScan(_)
-            | IR::NodeByLabelScan { .. }
-            | IR::NodeByIndexScan { .. }
-            | IR::NodeByLabelAndIdScan { .. }
-            | IR::NodeByIdSeek { .. }
-            | IR::NodeByFulltextScan { .. }) => {
-                vars.extend(collect_output_aliases(data));
-                if node.num_children() != 1 {
-                    return vars;
+    let mut branches = vec![idx];
+    while let Some(idx) = branches.pop() {
+        let mut node = plan.node(idx);
+        loop {
+            match node.data() {
+                // Operators that pass their input's variables through unchanged.
+                IR::Filter(_)
+                | IR::IncludePending { .. }
+                | IR::Limit(_)
+                | IR::Skip(_)
+                | IR::Sort(_)
+                | IR::Distinct
+                | IR::Commit
+                    if node.num_children() == 1 =>
+                {
+                    node = node.child(0);
                 }
-                node = node.child(0);
-            }
-            data => {
-                vars.extend(collect_output_aliases(data));
-                return vars;
+                // The branches of a product each bind their own variables.
+                IR::CartesianProduct | IR::ValueHashJoin { .. } => {
+                    branches.extend(node.children().map(|c| c.idx()));
+                    break;
+                }
+                data @ (IR::AllNodeScan(_)
+                | IR::NodeByLabelScan { .. }
+                | IR::NodeByIndexScan { .. }
+                | IR::NodeByLabelAndIdScan { .. }
+                | IR::NodeByIdSeek { .. }
+                | IR::NodeByFulltextScan { .. }
+                | IR::Unwind { .. }) => {
+                    vars.extend(collect_output_aliases(data));
+                    if node.num_children() != 1 {
+                        break;
+                    }
+                    node = node.child(0);
+                }
+                IR::NodeByVectorScan {
+                    node: bound, score, ..
+                } => {
+                    vars.insert(bound.id);
+                    vars.extend(score.iter().map(|s| s.id));
+                    if node.num_children() != 1 {
+                        break;
+                    }
+                    node = node.child(0);
+                }
+                data => {
+                    vars.extend(collect_output_aliases(data));
+                    break;
+                }
             }
         }
     }
+    vars
 }
 
 /// Returns the alias id of the scan at the bottom of a planner-added scan

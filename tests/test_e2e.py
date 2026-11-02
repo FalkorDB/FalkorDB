@@ -2118,6 +2118,41 @@ def test_vector_scan_kept_under_traverse():
         assert sorted(query(q).result_set) == sorted(expected), q
 
 
+def test_outer_child_bindings_through_unwind_product_and_vector_scan():
+    """A traversal after an `UNWIND`, a cross product or a vector scan starts
+    from what that clause bound, not from the chain's most selective endpoint:
+    the results keep the earlier clause's rows and variables (#2972)."""
+    query(
+        "CREATE VECTOR INDEX FOR (n:P) ON (n.emb) "
+        "OPTIONS {dimension: 2, similarityFunction: 'euclidean'}",
+        write=True,
+    )
+    query(
+        "CREATE (:P {id: 1, emb: vecf32([1.0, 0.0])})-[:R]->(:M {id: 1})-[:S]->(:T {id: 1}), "
+        "(:P {id: 2, emb: vecf32([0.0, 1.0])})-[:R]->(:M {id: 2})-[:S]->(:T {id: 2}), "
+        "(:Q {id: 7, v: [1.0, 0.0]}), (:Q {id: 8, v: [0.0, 1.0]}), "
+        "(a:A {id: 1})-[:R]->(b:B)-[:S]->(c:C {v: 1}), (:A {id: 2})-[:R]->(:B)-[:S]->(:C {v: 2})",
+        write=True,
+    )
+    call = "CALL db.idx.vector.queryNodes('P', 'emb', 1, vecf32(q.v)) YIELD node "
+    cases = [
+        ("MATCH (a:A) UNWIND [1, 2] AS i MATCH (a)-[:R]->(b:B)-[:S]->(c:C {v: 1}) RETURN a.id, i, c.v",
+         [[1, 1, 1], [1, 2, 1]]),
+        ("MATCH (a:A) UNWIND [1, 2] AS i MATCH (c:C {v: 1})<-[:S]-(b:B)<-[:R]-(a) RETURN a.id, i",
+         [[1, 1], [1, 2]]),
+        ("MATCH (a:A), (z:Q) MATCH (a)-[:R]->(b:B)-[:S]->(c:C {v: 1}) RETURN a.id, z.id, c.v",
+         [[1, 7, 1], [1, 8, 1]]),
+        ("MATCH (a:A) WITH a, 1 AS k UNWIND [1, 2] AS i MATCH (a)-[:R]->(b:B)-[:S]->(c:C {v: 2}) RETURN a.id, i, k",
+         [[2, 1, 1], [2, 2, 1]]),
+        ("MATCH (q:Q) " + call + "MATCH (node)-[:R]->(m)-[:S]->(t:T {id: 1}) RETURN q.id, node.id, t.id",
+         [[7, 1, 1]]),
+        ("MATCH (q:Q) " + call + "MATCH (m)-[:S]->(t:T {id: 2}), (node)-[:R]->(m) RETURN q.id, node.id, t.id",
+         [[8, 2, 2]]),
+    ]
+    for q, expected in cases:
+        assert sorted(query(q).result_set) == sorted(expected), q
+
+
 def test_self_loop_hop_after_other_hops_keeps_them():
     """A fixed-length self-loop whose node is reached only through a later
     (var-length) hop must not drop the hops planned before it (#2999)."""
