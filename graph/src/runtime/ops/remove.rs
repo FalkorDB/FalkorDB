@@ -138,11 +138,9 @@ impl Runtime<'_> {
                             .filter_map(|l| self.graph_mut().get_label_id(l.as_str()))
                             .filter(|l| current_labels.contains(l))
                             .collect::<Vec<_>>();
-                        self.pending.borrow_mut().remove_node_labels(
-                            node,
-                            &labels,
-                            &self.g.borrow(),
-                        );
+                        self.pending
+                            .borrow_mut()
+                            .remove_node_labels(node, &labels, &self.graph());
                     }
                 }
                 Value::Relationship(rel) => {
