@@ -189,14 +189,16 @@ fn untyped_traversal_matrix(g: &crate::graph::graph::Graph) -> TraversalMatrix {
     }
 }
 
-/// For each pair with parallel edges, the edges beyond the first, summed over
-/// the types a hop matches (all of them when `types` is empty). `None` when no
-/// pair has any.
+/// For each type a hop matches (all of them when `types` is empty), the pairs
+/// with parallel edges and the edges each holds beyond the first. Empty when no
+/// pair has any. Kept per type, each a cached matrix shared by every query: a
+/// sum would be rebuilt per query, a pass over every parallel pair that a
+/// point query must not pay.
 fn parallel_surplus(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
     back: bool,
-) -> Option<Matrix<u64>> {
+) -> Vec<Matrix<u64>> {
     let tensors: Vec<&Tensor> = if types.is_empty() {
         g.relationship_tensors().iter().collect()
     } else {
@@ -205,25 +207,16 @@ fn parallel_surplus(
             .filter_map(|t| g.get_relationship_matrix(t))
             .collect()
     };
-    let mut surpluses = tensors.into_iter().filter_map(|t| {
-        if back {
-            t.parallel_edge_surplus_t_cached()
-        } else {
-            t.parallel_edge_surplus_cached()
-        }
-    });
-    let first = surpluses.next()?;
-    // A tensor's cached surplus is shared by every query, so a sum starts from
-    // a copy.
-    let Some(second) = surpluses.next() else {
-        return Some(first);
-    };
-    let mut total = first.dup();
-    total.add_counts(&second);
-    for s in surpluses {
-        total.add_counts(&s);
-    }
-    Some(total)
+    tensors
+        .into_iter()
+        .filter_map(|t| {
+            if back {
+                t.parallel_edge_surplus_t_cached()
+            } else {
+                t.parallel_edge_surplus_cached()
+            }
+        })
+        .collect()
 }
 
 /// Lazily resolved state — built on first `expand_row`, after any sibling
@@ -260,7 +253,7 @@ struct CtState {
     multi_counts_built: bool,
     /// Parallel edges beyond the first per pair, for the first hop of the
     /// batched path; `None` when it has none. Built with `batched_matrix`.
-    batched_surplus: Option<Matrix<u64>>,
+    batched_surplus: Vec<Matrix<u64>>,
     /// Whether `batched_matrix` walks the backward adjacency; see
     /// `CondTraverseOp::walks_backward`.
     batched_back: bool,
@@ -270,7 +263,7 @@ struct CtState {
     /// The same for each fused chain hop.
     chain_added: Vec<Vec<Option<Matrix<bool>>>>,
     /// The same for each fused chain hop, parallel to `chain_matrices`.
-    chain_surplus: Vec<Option<Matrix<u64>>>,
+    chain_surplus: Vec<Vec<Matrix<u64>>>,
     /// Indices of the relationship types of `chain[0]`, for the self-loop
     /// correction of a two-hop chain; empty `Vec` for all types.
     chain_type_indices: Vec<usize>,
@@ -346,15 +339,6 @@ pub struct CondTraverseOp<'a> {
     /// by this CT may be created by a sibling Commit earlier in the same
     /// query, so capturing them at construction would miss them.
     state: std::cell::RefCell<Option<CtState>>,
-    /// For bidirectional anonymous-edge CTs, tracks (source, dest) pairs
-    /// already emitted to deduplicate rows that reach the same pair via
-    /// different intermediate nodes — matching C FalkorDB's matrix-multiply
-    /// semantics.
-    bidir_dedup: Option<std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
-    /// When the child is also an anonymous bidir CT, stores the child's
-    /// from-alias so the dedup key uses the original scan source (not the
-    /// intermediate node).  When None, dedup uses this CT's own from-alias.
-    dedup_source_alias: Option<Variable>,
     /// Structural eligibility for the batched F·A path. Computed once at
     /// construction. Variants like emit_relationship, bidir, sibling-edge
     /// uniqueness, and non-empty inline attribute predicates fall back to
@@ -630,47 +614,6 @@ impl<'a> CondTraverseOp<'a> {
     ) -> Self {
         let rp = relationship_pattern;
 
-        // When this CT and its child CT are both anonymous bidirectional
-        // edges, enable cross-row (from, to) deduplication to replicate
-        // C FalkorDB's matrix-multiply semantics.  Use the child's
-        // from-alias as the dedup source so we deduplicate by
-        // (original_scan_source, final_destination).
-        //
-        // Only enable when the intermediate node (this CT's from-alias,
-        // which is the child CT's to-alias) is anonymous.  If the
-        // intermediate is a user-named variable it may be referenced by
-        // downstream operators (e.g. ExpandInto), so collapsing rows
-        // with different intermediate values would lose valid results.
-        let intermediate_is_anon = rp
-            .from
-            .alias
-            .name
-            .as_ref()
-            .is_some_and(|n| n.starts_with("_anon"));
-        let (bidir_dedup, dedup_source_alias) = if !emit_relationship
-            && sibling_edges.is_empty()
-            && rp.bidirectional
-            && intermediate_is_anon
-        {
-            if let BatchOp::CondTraverse(ref child_ct) = *child {
-                if !child_ct.emit_relationship && child_ct.relationship_pattern.bidirectional {
-                    (
-                        Some(std::cell::RefCell::new(std::collections::HashSet::<(
-                            u64,
-                            u64,
-                        )>::new())),
-                        Some(child_ct.relationship_pattern.from.alias.clone()),
-                    )
-                } else {
-                    (None, None)
-                }
-            } else {
-                (None, None)
-            }
-        } else {
-            (None, None)
-        };
-
         // For fused chains the batched path is the ONLY correct path —
         // expand_row only handles single-hop.
         //
@@ -692,7 +635,6 @@ impl<'a> CondTraverseOp<'a> {
             .flatten();
         let batched_eligible = !emit_relationship
             && !rp.bidirectional
-            && bidir_dedup.is_none()
             && (sibling_edges.is_empty()
                 || node_unique.is_some()
                 || (chain.len() == 1
@@ -735,8 +677,6 @@ impl<'a> CondTraverseOp<'a> {
             record_cap,
             produced: 0,
             state: std::cell::RefCell::new(None),
-            bidir_dedup,
-            dedup_source_alias,
             batched_eligible,
             node_unique,
         }
@@ -849,7 +789,7 @@ impl<'a> CondTraverseOp<'a> {
             multi_edge,
             multi_counts: Arc::new(FxHashMap::default()),
             multi_counts_built: false,
-            batched_surplus: None,
+            batched_surplus: Vec::new(),
             batched_back: false,
             batched_added: Vec::new(),
             chain_added: Vec::new(),
@@ -1183,10 +1123,12 @@ impl<'a> CondTraverseOp<'a> {
             .zip(&state.chain_added)
             .map(|((m, s), a)| (m, s, a));
         for (hop, (hop_m, surplus, added)) in std::iter::once(first).chain(rest).enumerate() {
-            let prev = surplus.as_ref().map(|_| f.dup());
+            let prev = (!surplus.is_empty()).then(|| f.dup());
             hop_m.count_lmxm_into(&mut f, added, hop == 0);
-            if let (Some(surplus), Some(prev)) = (surplus, prev) {
-                f.add_counted_product(&prev, surplus);
+            if let Some(prev) = prev {
+                for surplus in surplus {
+                    f.add_counted_product(&prev, surplus);
+                }
             }
         }
 
@@ -1451,8 +1393,6 @@ impl<'a> CondTraverseOp<'a> {
         node_unique: Option<&[SiblingEnds]>,
         transposed: bool,
         state_cell: &std::cell::RefCell<Option<CtState>>,
-        bidir_dedup: Option<&std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
-        dedup_source_alias: Option<&Variable>,
         batch: &Batch<'a>,
         row_idx: usize,
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
@@ -1511,7 +1451,6 @@ impl<'a> CondTraverseOp<'a> {
             state.multi_counts_built = true;
         }
         let id_free = (!need_edge_id).then(|| Arc::clone(&state.multi_counts));
-        let bidir_dedup = bidir_dedup.filter(|_| !state.multi_edge);
         // Siblings compared by node (the caller filters the results) need no id
         // check here.
         let sibling_edges = if node_unique.is_some() {
@@ -1537,9 +1476,7 @@ impl<'a> CondTraverseOp<'a> {
         // (quadratic across input rows). Build the shared transposed
         // iterator once, lazily.
         let need_bwd_fwd = fwd_src_id.is_none() && fwd_dst_id.is_some();
-        let start;
         if state.union.is_some() {
-            start = out.len();
             Self::expand_union_row(
                 state,
                 &g,
@@ -1567,7 +1504,6 @@ impl<'a> CondTraverseOp<'a> {
 
             // Reuse the persistent forward iterator: seek the row range
             // instead of allocating a fresh GxB_Iterator per input row.
-            start = out.len();
             {
                 let mut fwd_borrow;
                 let mut bwd_borrow;
@@ -1653,32 +1589,6 @@ impl<'a> CondTraverseOp<'a> {
                     &state.rev_src_label_ids,
                     &state.rev_dst_label_ids,
                 );
-            }
-        }
-
-        // When both this CT and its child are anonymous bidirectional,
-        // deduplicate output rows by (scan_source, final_dest) across
-        // expand_row calls — matching C FalkorDB's matrix-multiply semantics.
-        if let Some(dedup) = bidir_dedup {
-            let source_alias = dedup_source_alias.unwrap();
-            // The scan source is a parent-carried column, constant for every
-            // result of this row, so read it once.
-            let src_key = match batch.value_at(source_alias.id, row_idx) {
-                Some(Value::Node(id)) => Some(u64::from(id)),
-                _ => None,
-            };
-            let mut seen = dedup.borrow_mut();
-            let mut i = start;
-            while i < out.len() {
-                // `out[i].1` is the `to` endpoint bound on the produced row.
-                let key = src_key.map(|s| (s, u64::from(out[i].1)));
-                if let Some(k) = key
-                    && !seen.insert(k)
-                {
-                    out.swap_remove(i);
-                    continue;
-                }
-                i += 1;
             }
         }
 
@@ -1994,8 +1904,6 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         let need_edge_id = node_unique.is_none();
         let transposed = self.transposed;
         let state_cell = &self.state;
-        let bidir_dedup = self.bidir_dedup.as_ref();
-        let dedup_source_alias = self.dedup_source_alias.as_ref();
         let record_cap = self.record_cap;
         let optional = self.optional;
         let unmatched_cell = &self.optional_unmatched;
@@ -2023,8 +1931,6 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     node_unique,
                     transposed,
                     state_cell,
-                    bidir_dedup,
-                    dedup_source_alias,
                     batch,
                     row_idx,
                     &mut expanded,
@@ -2086,11 +1992,6 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     // child batch and decide fast vs. per-row path for it.
                     match self.child.next() {
                         Some(Ok(b)) => {
-                            // Reset bidirectional dedup for each new input batch
-                            // so Apply/Optional scopes see fresh state.
-                            if let Some(ref dedup) = self.bidir_dedup {
-                                dedup.borrow_mut().clear();
-                            }
                             // Try the batched mxm path on the whole batch. When it
                             // fully handles the batch (`true`) its output is
                             // queued on `pending_batches` and the emitter is left

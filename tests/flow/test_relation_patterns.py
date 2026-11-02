@@ -609,3 +609,15 @@ class testRelationPattern(FlowTestsBase):
         edges += [(1, 3, "R")] * 2
         res = g.query("MATCH (a:L)-[:R]->(m)<-[:R]-(b) RETURN count(*)")
         self.env.assertEqual(res.result_set, [[paths({"R"})]])
+
+    # Undirected anonymous hops over disjoint types are not deduplicated by
+    # (source, destination): each pair of edges is its own path.
+    def test23_undirected_disjoint_types_count_every_edge_pair(self):
+        g = self.db.select_graph("undirected_disjoint")
+        g.query("CREATE (n0:P {id: 0}), (n1:P {id: 1}), (n2:P {id: 2}), "
+                "(n2)-[:T]->(n0), (n2)-[:T]->(n0), (n0)-[:R]->(n0), (n0)-[:R]->(n1)")
+        res = g.query("MATCH (a:P {id: 2})-[:T]-()-[:R]-(b) RETURN a.id, b.id ORDER BY b.id")
+        # via n0: 2 T edges x (the R self-loop, and the R to n1)
+        self.env.assertEqual(sorted(res.result_set), sorted([[2, 0]] * 2 + [[2, 1]] * 2))
+        res = g.query("MATCH (a:P {id: 2})-[:T]-(m)-[:R]-(b) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[4]])
