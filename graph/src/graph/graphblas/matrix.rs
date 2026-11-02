@@ -102,6 +102,9 @@ use super::{
     GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
     GxB_unload_Matrix_into_Container,
 };
+use super::{
+    GrB_GT_UINT64, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_select_BOOL, GrB_VALUEEQ_BOOL,
+};
 
 /// Initializes the GraphBLAS library in non-blocking mode.
 ///
@@ -1539,23 +1542,72 @@ impl Matrix<bool> {
         let nrows = self.nrows();
         let ncols = m.ncols();
 
-        let mut mask: Option<Matrix<bool>> = None;
+        // `self * dm`, counted: how many deleted base edges reach each output.
+        // Its pattern is the mask; the counts are what make the mask exact.
+        //
+        // The mask alone is exact only for a row of `self` with one entry. A
+        // row with several (a fused chain's frontier) reaches an output through
+        // several base edges, and one of them being deleted masked the output
+        // even when another was live: `x→z` deleted and `y→z` live, with `x`
+        // and `y` in one row, lost `z`. Since `dm ⊆ m`, an output under the
+        // mask is live exactly when `self * m` reaches it by more paths than
+        // `self * dm` does, so those are counted at the masked positions only
+        // and added back.
+        let mut mask: Option<Matrix<u64>> = None;
+        let mut restored: Option<Matrix<bool>> = None;
         if dm_nvals > 0 {
-            let mut mk = Matrix::<bool>::new(nrows, ncols);
+            let dm_paths = Matrix::<u64>::new(nrows, ncols);
             unsafe {
                 let info = GrB_mxm(
-                    mk.inner(),
+                    dm_paths.inner(),
                     null_mut(),
                     null_mut(),
-                    GxB_ANY_PAIR_BOOL,
+                    GxB_PLUS_PAIR_UINT64,
                     self.inner(),
                     dm.inner(),
                     null_mut(),
                 );
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
-            if mk.nvals() > 0 {
-                mask = Some(mk);
+            if dm_paths.nvals() > 0 {
+                let m_paths = Matrix::<u64>::new(nrows, ncols);
+                let live = Matrix::<bool>::new(nrows, ncols);
+                unsafe {
+                    let info = GrB_mxm(
+                        m_paths.inner(),
+                        dm_paths.inner(),
+                        null_mut(),
+                        GxB_PLUS_PAIR_UINT64,
+                        self.inner(),
+                        m.inner(),
+                        GrB_DESC_S,
+                    );
+                    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                    let info = GrB_Matrix_eWiseMult_BinaryOp(
+                        live.inner(),
+                        null_mut(),
+                        null_mut(),
+                        GrB_GT_UINT64,
+                        m_paths.inner(),
+                        dm_paths.inner(),
+                        null_mut(),
+                    );
+                    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                    let info = GrB_Matrix_select_BOOL(
+                        live.inner(),
+                        null_mut(),
+                        null_mut(),
+                        GrB_VALUEEQ_BOOL,
+                        live.inner(),
+                        true,
+                        null_mut(),
+                    );
+                    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                }
+                if live.nvals() > 0 {
+                    restored = Some(live);
+                }
+                mask = Some(dm_paths);
             }
         }
 
@@ -1595,6 +1647,9 @@ impl Matrix<bool> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
 
+        if let Some(live) = restored {
+            self.element_wise_add(None, None, Some(&live), None);
+        }
         if let Some(ac) = accum {
             self.element_wise_add(None, None, Some(&ac), None);
         }
@@ -1889,6 +1944,33 @@ mod tests {
         for (i, j) in [(0u64, 0u64), (5, 7), (31, 31)] {
             assert_eq!(g.get(i, j), Some(true), "({i}, {j}) lost or turned false");
         }
+    }
+
+    /// A frontier row holding two nodes that both reach `z` keeps `z` when
+    /// only one of the two edges is deleted: the deletion layer masks an
+    /// output only if every base path to it is deleted. With node 1 = x,
+    /// 2 = y, 3 = z, frontier row 0 = {x, y}, base edges x→z and y→z.
+    #[test]
+    fn delta_lmxm_keeps_an_output_one_live_edge_still_reaches() {
+        ensure_init();
+        let n = 8;
+        let mut m = Matrix::<bool>::new(n, n);
+        m.build(&[1, 2], &[3, 3]);
+        m.wait();
+        let dp = Matrix::<bool>::new(n, n);
+        let reach = |deleted: &[u64]| {
+            let mut dm = Matrix::<bool>::new(n, n);
+            dm.build(deleted, &vec![3; deleted.len()]);
+            dm.wait();
+            let mut f = Matrix::<bool>::new(n, n);
+            f.build(&[0, 0], &[1, 2]);
+            f.wait();
+            f.delta_lmxm(&m, &dp, &dm);
+            f.wait();
+            f.get(0, 3)
+        };
+        assert_eq!(reach(&[1]), Some(true), "y→z is live");
+        assert_eq!(reach(&[1, 2]), None, "both paths deleted");
     }
 
     #[test]
