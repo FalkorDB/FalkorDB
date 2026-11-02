@@ -1857,6 +1857,20 @@ def test_boolean_operator_static_operand_type_3293():
     assert query("UNWIND [1] AS x RETURN x ORDER BY false AND toString(null)").result_set == [[1]]
     assert query("UNWIND [1] AS x RETURN x ORDER BY false AND toString(1)").result_set == [[1]]
 
+    # Shapes that are Null when their input is (slice, list comprehension, map
+    # projection) are valid operands, in ORDER BY as in C; with a non-null input
+    # the slice still is a List.
+    for q in [
+        "WITH null AS xs RETURN 1 ORDER BY xs[0..1] AND true",
+        "WITH null AS xs RETURN 1 ORDER BY [y IN xs | y] AND true",
+        "WITH null AS m RETURN 1 ORDER BY m{.a} AND true",
+    ]:
+        assert query(q).result_set == [[1]], q
+    query_exception(
+        "WITH [1] AS xs RETURN 1 ORDER BY xs[0..1] AND true",
+        "Type mismatch: expected Boolean or Null",
+    )
+
     # A Null-valued constant expression is still a valid operand.
     res = query("RETURN false AND (null+1), true OR (1+null), false AND (null = 1)")
     assert res.result_set == [[False, True, False]]

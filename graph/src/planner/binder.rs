@@ -2381,12 +2381,12 @@ impl Binder {
     /// them (or its type is only known at runtime).
     fn non_boolean_operand_type(node: &DynNode<ExprIR<Variable>>) -> Option<&'static str> {
         match node.data() {
-            ExprIR::List
-            | ExprIR::ListComprehension(_)
-            | ExprIR::PatternComprehension(_)
-            | ExprIR::GetElements => Some("List"),
-            ExprIR::Map | ExprIR::MapProjection => Some("Map"),
-            ExprIR::Length => Some("Integer"),
+            // A literal list or map, and a pattern comprehension, are never Null.
+            // A slice, a list comprehension, a map projection and `size` of a
+            // runtime value are Null when their input is, which is a valid
+            // operand, so they stay runtime-checked (C accepts `null[0..1] AND true`).
+            ExprIR::List | ExprIR::PatternComprehension(_) => Some("List"),
+            ExprIR::Map => Some("Map"),
             ExprIR::Constant(v) if !matches!(v, Value::Bool(_) | Value::Null) => Some(v.name()),
             // A negated constant, like a negative literal, is a number.
             ExprIR::Negate => Self::constant_value(node)
