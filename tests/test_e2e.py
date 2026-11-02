@@ -2083,6 +2083,19 @@ def test_call_optional_match_filter_wrapped_aggregate_inherits_only_outputs():
     assert res.result_set == [[3]]
 
 
+def test_optional_match_filter_after_projection_copy_to_another_slot():
+    """`WITH 1 AS k ORDER BY c` carries `c` through the projection from one
+    slot to another. The OPTIONAL MATCH after it inherits the slot the copy is
+    written to, not the one it was read from, which the next scan reuses."""
+    query("CREATE (:A:B {id: 3})", write=True)
+
+    res = query(
+        "UNWIND [1] AS a UNWIND [1] AS b UNWIND [1] AS c WITH 1 AS k ORDER BY c"
+        " OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id"
+    )
+    assert res.result_set == [[3]]
+
+
 def test_call_optional_match_filter_after_pattern_predicate():
     """A pattern predicate (SemiApply / AntiSemiApply) in the left branch
     contributes only its input's variables; its existence sub-plan's anonymous

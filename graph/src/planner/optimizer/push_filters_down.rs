@@ -56,13 +56,26 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// enclosing `Apply` propagates through `Argument`. Returns `None` for
 /// operators that pass their input environment through unchanged, where the
 /// subtree's variables are the right answer.
-fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>> {
+fn branch_output_variables(
+    node: &orx_tree::DynNode<IR>,
+    include_copies: bool,
+) -> Option<HashSet<u32>> {
+    // A copy is `(read from, written to)`: a later reader finds it in the
+    // written-to slot. The same-clause WHERE / ORDER BY reads it there, but no
+    // later clause can name it, so `visible_variables` leaves copies out.
+    let copied = |copies: &[(Variable, Variable)]| -> Vec<u32> {
+        if include_copies {
+            copies.iter().map(|(_, v)| v.id).collect()
+        } else {
+            vec![]
+        }
+    };
     match node.data() {
         IR::Project { exprs, copies } => Some(
             exprs
                 .iter()
                 .map(|(v, _)| v.id)
-                .chain(copies.iter().map(|(v, _)| v.id))
+                .chain(copied(copies))
                 .collect(),
         ),
         IR::Aggregate {
@@ -71,7 +84,7 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
             names
                 .iter()
                 .map(|v| v.id)
-                .chain(projections.iter().map(|(v, _)| v.id))
+                .chain(copied(projections))
                 .collect(),
         ),
         _ => None,
@@ -84,7 +97,7 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
 /// per scope, so a hidden variable's id may belong to a different variable
 /// further up). A `SemiApply`/`AntiSemiApply` contributes only its left child.
 fn visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
-    if let Some(outputs) = branch_output_variables(node) {
+    if let Some(outputs) = branch_output_variables(node, false) {
         return outputs;
     }
     let mut vars = collect_subtree_variables(&DynTree::new(node.data().clone()).root());
@@ -199,7 +212,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 for grandchild in child.children() {
                     // `resets_env` branches expose only their named outputs, so
                     // they must not inherit Argument-propagated variables below.
-                    let (vars, resets_env) = match branch_output_variables(&grandchild) {
+                    let (vars, resets_env) = match branch_output_variables(&grandchild, true) {
                         Some(outputs) => (outputs, true),
                         None => (collect_subtree_variables(&grandchild), false),
                     };
