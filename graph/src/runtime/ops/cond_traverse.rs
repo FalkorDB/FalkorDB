@@ -71,6 +71,10 @@ enum TraversalMatrix {
     /// even when `F` held one row; the per-type products are only as large as
     /// the frontier. Shallow clones, like `U64`.
     Union(Vec<Tensor>),
+    /// Several relationship types walked backward: the transposed pair-level
+    /// adjacency of each (`dst -> src`), so the frontier follows incoming
+    /// edges. Kept apart like `Union`.
+    BoolUnion(Vec<VersionedMatrix<bool>>),
 }
 
 impl TraversalMatrix {
@@ -81,6 +85,7 @@ impl TraversalMatrix {
             // Every relationship tensor is sized to the node capacity, so any
             // one of them has the shared column count.
             Self::Union(ts) => ts.first().map_or(0, |t| t.fwd_m().ncols()),
+            Self::BoolUnion(vs) => vs.first().map_or(0, VersionedMatrix::ncols),
         }
     }
 
@@ -97,6 +102,13 @@ impl TraversalMatrix {
             }
             Self::U64(t) => vec![t.added_layer()],
             Self::Union(ts) => ts.iter().map(Tensor::added_layer).collect(),
+            Self::BoolUnion(vs) => vs
+                .iter()
+                .map(|vm| {
+                    vm.dp().wait();
+                    (vm.dp().nvals() > 0).then(|| vm.dp().clone())
+                })
+                .collect(),
         }
     }
 
@@ -113,6 +125,20 @@ impl TraversalMatrix {
         match self {
             Self::Bool(vm) => f.count_lmxm_layers(vm.m(), added[0].as_ref(), vm.dm(), first_hop),
             Self::U64(t) => Self::count_tensor(f, t, added[0].as_ref(), first_hop),
+            Self::BoolUnion(vs) => {
+                let Some((first, rest)) = vs.split_first() else {
+                    return;
+                };
+                let frontier = (!rest.is_empty()).then(|| f.dup());
+                f.count_lmxm_layers(first.m(), added[0].as_ref(), first.dm(), first_hop);
+                if let Some(frontier) = frontier {
+                    for (vm, added) in rest.iter().zip(&added[1..]) {
+                        let mut ft = frontier.dup();
+                        ft.count_lmxm_layers(vm.m(), added.as_ref(), vm.dm(), first_hop);
+                        f.add_counts(&ft);
+                    }
+                }
+            }
             Self::Union(ts) => {
                 // `f` is the frontier: keep a copy as the left operand of the
                 // remaining products, then add them to the first one. A pair
@@ -169,6 +195,7 @@ fn untyped_traversal_matrix(g: &crate::graph::graph::Graph) -> TraversalMatrix {
 fn parallel_surplus(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
+    back: bool,
 ) -> Option<Matrix<u64>> {
     let tensors: Vec<&Tensor> = if types.is_empty() {
         g.relationship_tensors().iter().collect()
@@ -178,9 +205,13 @@ fn parallel_surplus(
             .filter_map(|t| g.get_relationship_matrix(t))
             .collect()
     };
-    let mut surpluses = tensors
-        .into_iter()
-        .filter_map(Tensor::parallel_edge_surplus_cached);
+    let mut surpluses = tensors.into_iter().filter_map(|t| {
+        if back {
+            t.parallel_edge_surplus_t_cached()
+        } else {
+            t.parallel_edge_surplus_cached()
+        }
+    });
     let first = surpluses.next()?;
     // A tensor's cached surplus is shared by every query, so a sum starts from
     // a copy.
@@ -230,6 +261,9 @@ struct CtState {
     /// Parallel edges beyond the first per pair, for the first hop of the
     /// batched path; `None` when it has none. Built with `batched_matrix`.
     batched_surplus: Option<Matrix<u64>>,
+    /// Whether `batched_matrix` walks the backward adjacency; see
+    /// `CondTraverseOp::walks_backward`.
+    batched_back: bool,
     /// New pending additions of each type of the first hop, parallel to its
     /// layers; see `TraversalMatrix::added_layers`.
     batched_added: Vec<Option<Matrix<bool>>>,
@@ -816,6 +850,7 @@ impl<'a> CondTraverseOp<'a> {
             multi_counts: Arc::new(FxHashMap::default()),
             multi_counts_built: false,
             batched_surplus: None,
+            batched_back: false,
             batched_added: Vec::new(),
             chain_added: Vec::new(),
             chain_surplus: Vec::new(),
@@ -849,6 +884,30 @@ impl<'a> CondTraverseOp<'a> {
             .sum()
     }
 
+    /// Whether the batched path should walk the backward adjacency for this
+    /// input: a traverse the planner transposed (`rel.from` is the node it
+    /// starts from, the edge is stored `to -> from`) whose start is bound and
+    /// whose end is not. The frontier then follows incoming edges, which is
+    /// `F * A^T` over the maintained transpose. Anything else keeps the
+    /// forward product (and, for a transposed traverse, the per-row path when
+    /// its start is not the pattern's `to`).
+    fn walks_backward(
+        &self,
+        batch: &Batch<'a>,
+        active_subset: &[usize],
+    ) -> bool {
+        let rp = self.relationship_pattern;
+        let Some(&row) = active_subset.first() else {
+            return false;
+        };
+        self.transposed
+            && self.chain.is_empty()
+            && !self.optional
+            && rp.from.alias != rp.to.alias
+            && batch.is_bound_at(rp.from.alias.id, row)
+            && !batch.is_bound_at(rp.to.alias.id, row)
+    }
+
     /// Batched F·A traversal — mirrors C FalkorDB's `_traverse` in
     /// `op_conditional_traverse.c`. For an input slice of envs:
     /// 1. build sparse F[i, src_id] = true (one bulk FFI call),
@@ -872,7 +931,9 @@ impl<'a> CondTraverseOp<'a> {
         // has emitted.
         const SLICE: usize = 64;
         let rp = self.relationship_pattern;
-        let seed_alias = if self.transposed {
+        let seed_alias = if self.walks_backward(batch, active_subset) {
+            &rp.from.alias
+        } else if self.transposed {
             &rp.to.alias
         } else {
             &rp.from.alias
@@ -933,11 +994,35 @@ impl<'a> CondTraverseOp<'a> {
         }
 
         let node_mode = self.node_unique.as_deref();
+        let back = self.walks_backward(batch, active_subset);
+        if state.batched_matrix.is_some() && state.batched_back != back {
+            // The matrix was built for the other direction.
+            return false;
+        }
 
         let g = runtime.graph();
 
         if state.batched_matrix.is_none() {
-            let m = if rp.types.is_empty() {
+            state.batched_back = back;
+            let m = if back {
+                let tensors: Vec<&Tensor> = if rp.types.is_empty() {
+                    g.relationship_tensors().iter().collect()
+                } else {
+                    let found: Vec<&Tensor> = rp
+                        .types
+                        .iter()
+                        .filter_map(|t| g.get_relationship_matrix(t))
+                        .collect();
+                    found
+                };
+                // Unknown types match nothing, as in the forward union; the
+                // traverse matches nothing only when every type is unknown.
+                if tensors.is_empty() {
+                    state.no_match = true;
+                    return true;
+                }
+                TraversalMatrix::BoolUnion(tensors.iter().map(|t| t.matrix_t().clone()).collect())
+            } else if rp.types.is_empty() {
                 untyped_traversal_matrix(&g)
             } else if rp.types.len() == 1 {
                 if let Some(t) = g.get_relationship_matrix(&rp.types[0]) {
@@ -962,7 +1047,7 @@ impl<'a> CondTraverseOp<'a> {
             };
             state.batched_added = m.added_layers();
             state.batched_matrix = Some(m);
-            state.batched_surplus = parallel_surplus(&g, &rp.types);
+            state.batched_surplus = parallel_surplus(&g, &rp.types, back);
 
             // Build per-hop matrices and label-id vectors for the fused chain.
             // If any hop's relationship type is unknown, mark no_match — that
@@ -994,7 +1079,9 @@ impl<'a> CondTraverseOp<'a> {
                 };
                 state.chain_added.push(hm.added_layers());
                 state.chain_matrices.push(hm);
-                state.chain_surplus.push(parallel_surplus(&g, &hop.types));
+                state
+                    .chain_surplus
+                    .push(parallel_surplus(&g, &hop.types, false));
                 let Some(dst_labels) = g.resolve_label_ids(&hop.to.labels) else {
                     state.no_match = true;
                     if self.optional {
@@ -1022,6 +1109,15 @@ impl<'a> CondTraverseOp<'a> {
 
         let transposed = self.transposed;
         let nrows = active_subset.len() as u64;
+        // The matrix-source and matrix-destination ends of the pattern. A
+        // backward walk starts at `rel.from` (the matrix destination) and ends
+        // at `rel.to`; every other batched traversal starts at the matrix
+        // source.
+        let (seed_labels, end_labels) = if back {
+            (&state.fwd_dst_label_ids, &state.fwd_src_label_ids)
+        } else {
+            (&state.fwd_src_label_ids, &state.fwd_dst_label_ids)
+        };
 
         // Collect (row_i, src_id) for rows where the from-alias is bound to
         // a Node and (post-label-filter) the src has all required labels.
@@ -1029,7 +1125,7 @@ impl<'a> CondTraverseOp<'a> {
         // 311 early return). Rows where from is unbound trigger fall-back.
         let mut row_idx_buf: Vec<u64> = Vec::with_capacity(active_subset.len());
         let mut col_idx_buf: Vec<u64> = Vec::with_capacity(active_subset.len());
-        let from_alias = if transposed {
+        let from_alias = if transposed && !back {
             &rp.to.alias
         } else {
             &rp.from.alias
@@ -1053,8 +1149,7 @@ impl<'a> CondTraverseOp<'a> {
                 return false;
             };
             // Pre-filter src by label (= L_src * F in C's algebra).
-            if !state
-                .fwd_src_label_ids
+            if !seed_labels
                 .iter()
                 .all(|&lid| g.node_has_label_id(src_id, lid))
             {
@@ -1101,7 +1196,7 @@ impl<'a> CondTraverseOp<'a> {
         // refuses to fuse when transposed differs), so `transposed` applies
         // only to the first hop and the final destination alias comes from
         // the last hop in `self.chain`.
-        let from_alias = if transposed {
+        let from_alias = if transposed && !back {
             &rp.to.alias
         } else {
             &rp.from.alias
@@ -1111,10 +1206,12 @@ impl<'a> CondTraverseOp<'a> {
                 &last_hop.to.alias,
                 state.chain_dst_label_ids.last().unwrap().as_slice(),
             )
+        } else if back {
+            (&rp.to.alias, end_labels.as_slice())
         } else if transposed {
-            (&rp.from.alias, state.fwd_dst_label_ids.as_slice())
+            (&rp.from.alias, end_labels.as_slice())
         } else {
-            (&rp.to.alias, state.fwd_dst_label_ids.as_slice())
+            (&rp.to.alias, end_labels.as_slice())
         };
         let chain_is_empty = self.chain.is_empty();
         // A chain-less traverse binds the edge column, and getting a value for
@@ -1181,7 +1278,13 @@ impl<'a> CondTraverseOp<'a> {
                 if let Some(seed) = sibling_seed {
                     shared = sibling_pairs
                         .iter()
-                        .filter(|&&pair| pair == (seed, dest_id))
+                        .filter(|&&pair| {
+                            pair == if back {
+                                (dest_id, seed)
+                            } else {
+                                (seed, dest_id)
+                            }
+                        })
                         .count() as u64;
                 }
             }
@@ -1214,8 +1317,11 @@ impl<'a> CondTraverseOp<'a> {
                 let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx) else {
                     continue;
                 };
-                let mat_src = u64::from(src_id);
-                let mat_dst = u64::from(dest_id);
+                let (mat_src, mat_dst) = if back {
+                    (u64::from(dest_id), u64::from(src_id))
+                } else {
+                    (u64::from(src_id), u64::from(dest_id))
+                };
                 let before = out_indices.len();
                 for &tidx in &state.edge_type_indices {
                     for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {

@@ -307,9 +307,40 @@ struct Derived {
     added: OnceLock<Option<Matrix<bool>>>,
     /// Edges beyond the first of every pair that holds more than one.
     surplus: OnceLock<Option<Matrix<u64>>>,
+    /// `surplus` transposed (dst, src), for a traversal that walks the backward
+    /// adjacency.
+    surplus_t: OnceLock<Option<Matrix<u64>>>,
     /// The effective pattern, when the pending layers are large next to the
     /// base; see [`Tensor::merged_layer`].
     merged: OnceLock<Option<Matrix<bool>>>,
+}
+
+impl Derived {
+    /// Bytes held by the caches that are built so far. `OnceLock::get` never
+    /// populates one, so measuring memory does not allocate.
+    fn memory_usage(&self) -> usize {
+        let added = self
+            .added
+            .get()
+            .and_then(Option::as_ref)
+            .map_or(0, Matrix::memory_usage);
+        let surplus = self
+            .surplus
+            .get()
+            .and_then(Option::as_ref)
+            .map_or(0, Matrix::memory_usage);
+        let surplus_t = self
+            .surplus_t
+            .get()
+            .and_then(Option::as_ref)
+            .map_or(0, Matrix::memory_usage);
+        let merged = self
+            .merged
+            .get()
+            .and_then(Option::as_ref)
+            .map_or(0, Matrix::memory_usage);
+        added + surplus + surplus_t + merged
+    }
 }
 
 /// Sentinel stored as the inline forward value of a pair with more than one
@@ -1404,6 +1435,20 @@ impl Tensor {
             .clone()
     }
 
+    /// [`Self::parallel_edge_surplus_cached`] transposed, built once per version
+    /// of the tensor.
+    #[must_use]
+    pub fn parallel_edge_surplus_t_cached(&self) -> Option<Matrix<u64>> {
+        self.derived
+            .surplus_t
+            .get_or_init(|| {
+                let surplus = self.parallel_edge_surplus_cached()?.transpose();
+                surplus.wait();
+                Some(surplus)
+            })
+            .clone()
+    }
+
     #[must_use]
     pub fn parallel_edge_surplus(&self) -> Option<Matrix<u64>> {
         if !self.has_multi_edge() {
@@ -1595,6 +1640,7 @@ impl Tensor {
                 .iter()
                 .map(|(_, me)| me.memory_usage())
                 .sum::<usize>()
+            + self.derived.memory_usage()
     }
 }
 
@@ -2012,6 +2058,28 @@ mod tests {
         t.forge_orphan_tombstone_for_test(2, 3);
         t.forge_orphan_tombstone_for_test(4, 5);
         let _ = t.edge_count();
+    }
+
+    /// The caches a traversal builds stay on the tensor version, so they must
+    /// show up in `memory_usage` once built, and measuring must not build them.
+    #[test]
+    fn memory_usage_counts_derived_caches() {
+        ensure_init();
+        let mut t = Tensor::new(64, 64);
+        t.set_all_from_slices(&[0, 0, 1], &[1, 1, 2], &[0, 1, 2]);
+        let mut t = t.dup();
+        t.flush();
+        t.wait();
+        let before = t.memory_usage();
+        assert_eq!(t.memory_usage(), before, "measuring must not populate");
+        assert!(t.derived.surplus.get().is_none());
+
+        assert!(t.parallel_edge_surplus_cached().is_some());
+        let after = t.memory_usage();
+        assert!(
+            after > before,
+            "surplus cache not counted: {before} -> {after}"
+        );
     }
 
     /// The bulk loader puts a pair's duplicate edges in ONE batch, which takes

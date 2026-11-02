@@ -553,3 +553,59 @@ class testRelationPattern(FlowTestsBase):
         for lim in (1, 10, 100):
             res = g3.query(f"MATCH (a:N)-[:R]->()-[:R]->(c) RETURN c.id LIMIT {lim}")
             self.env.assertEqual(len(res.result_set), lim)
+
+    # An anonymous edge whose type no other edge of the pattern can bind checks
+    # no uniqueness. Edge id 0 here is the U edge; the two T edges, compared by
+    # node, bind no real id, and the U traverse used to reject its edge as
+    # "already used" against their placeholder 0.
+    def test21_disjoint_type_edge_is_not_compared_to_the_others(self):
+        g = self.db.select_graph("disjoint_type_edge")
+        g.query("CREATE (a:A {id: 1}), (b:B {id: 2}), (c:C {id: 3})")
+        g.query("MATCH (b:B), (c:C) CREATE (b)-[:U]->(c)")
+        g.query("MATCH (a:A), (b:B) CREATE (b)-[:T]->(a), (a)-[:T]->(b), (a)-[:T]->(b), (a)-[:T]->(b)")
+        res = g.query("MATCH (n0:B)<-[:T]-(n1)<-[:T]-(n2)-[:U]->(n3) RETURN n3.id, count(*)")
+        self.env.assertEqual(res.result_set, [[3, 3]])
+        res = g.query("MATCH (n0:B)<-[r:T]-(n1)<-[s:T]-(n2)-[:U]->(n3) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[3]])
+
+    # A traverse the planner transposed (it starts at the pattern's `to`) runs
+    # as one product over the backward adjacency: parallel edges, several types
+    # (one of them unknown), labels at both ends, and writes after the load.
+    def test22_backward_batched_traverse(self):
+        g = self.db.select_graph("backward_batched")
+        g.query("UNWIND range(0, 5) AS i CREATE (:L {id: i})")
+        g.query("MATCH (a:L), (b:L) WHERE b.id = (a.id + 1) % 6 CREATE (a)-[:R]->(b), (a)-[:R]->(b)")
+        g.query("MATCH (a:L {id: 0}), (b:L {id: 3}) CREATE (a)-[:S]->(b)")
+        g.query("MATCH (a:L {id: 2}) CREATE (a)-[:R]->(a)")
+        # brute force the expected counts from the edge list itself
+        edges = [(i, (i + 1) % 6, "R") for i in range(6)] * 2 + [(0, 3, "S"), (2, 2, "R")]
+
+        def paths(types):
+            n = 0
+            for i, (s1, d1, t1) in enumerate(edges):
+                for j, (s2, d2, t2) in enumerate(edges):
+                    if i != j and d1 == d2 and t1 in types and t2 in types:
+                        n += 1
+            return n
+        for pat, types in [("(a:L)-[:R]->(m)<-[:R]-(b)", {"R"}),
+                           ("(a:L)-[:R|S]->(m)<-[:R|S]-(b)", {"R", "S"}),
+                           ("(a:L)-[:R|NOPE]->(m)<-[:R|NOPE]-(b)", {"R"}),
+                           ("(a:L)-[]->(m)<-[]-(b)", {"R", "S"})]:
+            for where in ["", " WHERE a.id < 3", " WHERE b.id = 2"]:
+                res = g.query(f"MATCH {pat}{where} RETURN count(*)")
+                want = 0
+                for i, (s1, d1, t1) in enumerate(edges):
+                    for j, (s2, d2, t2) in enumerate(edges):
+                        if i == j or d1 != d2 or t1 not in types or t2 not in types:
+                            continue
+                        if where == " WHERE a.id < 3" and not s1 < 3:
+                            continue
+                        if where == " WHERE b.id = 2" and s2 != 2:
+                            continue
+                        want += 1
+                self.env.assertEqual(res.result_set, [[want]])
+        # an edge added after the first run is seen by the cached structures
+        g.query("MATCH (a:L {id: 1}), (b:L {id: 3}) CREATE (a)-[:R]->(b), (a)-[:R]->(b)")
+        edges += [(1, 3, "R")] * 2
+        res = g.query("MATCH (a:L)-[:R]->(m)<-[:R]-(b) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[paths({"R"})]])

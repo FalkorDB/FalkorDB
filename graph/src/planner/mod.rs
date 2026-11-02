@@ -2030,7 +2030,7 @@ impl Planner {
             // depend on whether the edges were named. A lone anonymous edge, or
             // anonymous edges of disjoint types, stay out: nothing can collide
             // and they keep the collapsed fast paths.
-            let sibling_edges: Vec<u32> = relationships
+            let component_siblings: Vec<u32> = relationships
                 .iter()
                 .filter(|r| {
                     !r.alias
@@ -2043,6 +2043,19 @@ impl Planner {
                 })
                 .map(|r| r.alias.id)
                 .collect();
+            // An edge outside that set (anonymous, types disjoint from every
+            // other edge) can collide with none of them, so it checks none. It
+            // must not compare ids against the set either: an operator that
+            // binds no real id for its anonymous edge leaves a placeholder
+            // there, which would reject a real edge that happens to have it.
+            let siblings_of = |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                if component_siblings.contains(&rel.alias.id) {
+                    component_siblings.clone()
+                } else {
+                    Vec::new()
+                }
+            };
+            let sibling_edges = siblings_of(relationship);
             // Inline attrs are lowered to Filters below; the operator embeds the
             // stripped pattern so the predicate has one representation only.
             // A var-length walk is the exception for its edge's own attrs: it
@@ -2217,6 +2230,7 @@ impl Planner {
             // Chain remaining relationships in the component, each one
             // stacking on top of the previous result using the same logic.
             for relationship in iter {
+                let sibling_edges = siblings_of(relationship);
                 // As above: a walk keeps its edge's own attrs on the pattern.
                 let is_walk = relationship.all_shortest_paths != AllShortestPaths::No
                     || relationship.min_hops.is_some();
