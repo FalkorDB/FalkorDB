@@ -2067,6 +2067,57 @@ def test_previous_match_where_kept_under_traverse():
     assert query("MATCH (n) RETURN count(n)").result_set == [[4]]
 
 
+def test_previous_match_kept_under_var_len_traverse():
+    """The same holds when the traversal is a variable-length walk whose scan
+    selection reverses it to start at the more selective end: the earlier
+    clause's WHERE, rows and variables stay (#2972)."""
+    query("CREATE INDEX FOR (n:B) ON (n.id)", write=True)
+    query(
+        "CREATE (:A {id: 1})-[:R]->(:B {id: 1}), (:A {id: 99})-[:R]->(:B {id: 1}), "
+        "(:A {id: 5})-[:R]->(:C {id: 1}), (:Q {id: 8})",
+        write=True,
+    )
+    cases = [
+        ("MATCH (a) WHERE a.id = 99 MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", [[1]]),
+        ("MATCH (a) WHERE a.id = 99 MATCH (a)-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", [[1]]),
+        ("MATCH (a:A) WHERE a.id = 99 MATCH (a)<-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", [[0]]),
+        ("UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", [[4]]),
+        ("UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", [[4]]),
+        ("MATCH (x:A) WHERE x.id = 5 MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", [[2]]),
+        # a variable the earlier clause binds survives the reversal
+        ("MATCH (q:Q) WHERE q.id = 8 MATCH (x)-[:R*1..2]->(t:B {id: 1}) RETURN q.id, count(x)", [[8, 2]]),
+    ]
+    for q, expected in cases:
+        assert query(q).result_set == expected, q
+
+
+def test_vector_scan_kept_under_traverse():
+    """A (correlated) vector scan feeding a traversal binds `node` and whatever
+    the earlier clause bound; neither is lost when the traversal picks its
+    start endpoint (#2972)."""
+    query(
+        "CREATE VECTOR INDEX FOR (n:P) ON (n.emb) "
+        "OPTIONS {dimension: 2, similarityFunction: 'euclidean'}",
+        write=True,
+    )
+    query(
+        "CREATE (:P {id: 1, emb: vecf32([1.0, 0.0])})-[:R]->(:T {id: 10}), "
+        "(:P {id: 2, emb: vecf32([0.0, 1.0])})-[:R]->(:T {id: 20}), "
+        "(:Q {id: 7, v: [1.0, 0.0]}), (:Q {id: 8, v: [0.0, 1.0]})",
+        write=True,
+    )
+    call = "CALL db.idx.vector.queryNodes('P', 'emb', 1, vecf32(q.v)) YIELD node "
+    cases = [
+        ("MATCH (q:Q) " + call + "MATCH (node)-[:R]->(t) RETURN q.id, node.id, t.id", [[7, 1, 10], [8, 2, 20]]),
+        ("MATCH (q:Q) WHERE q.id = 7 " + call + "MATCH (node)-[:R]->(t) RETURN q.id, node.id, t.id", [[7, 1, 10]]),
+        ("MATCH (q:Q) " + call + "MATCH (node)-[:R*1..2]->(t:T {id: 10}) RETURN q.id, node.id, t.id", [[7, 1, 10]]),
+        ("MATCH (q:Q) " + call + "MATCH (a)-[:R]->(node) RETURN q.id, node.id, a.id", []),
+        ("MATCH (q:Q) WHERE q.id = 8 " + call + "MATCH (x)-[:R*1..2]->(t:T {id: 20}) RETURN q.id, node.id, x.id", [[8, 2, 2]]),
+    ]
+    for q, expected in cases:
+        assert sorted(query(q).result_set) == sorted(expected), q
+
+
 def test_self_loop_hop_after_other_hops_keeps_them():
     """A fixed-length self-loop whose node is reached only through a later
     (var-length) hop must not drop the hops planned before it (#2999)."""

@@ -618,6 +618,29 @@ fn select_var_len_scan_node(
             }
             _ => {}
         }
+        // A `Filter` in the wrapper chain is an earlier clause's predicate: the
+        // planner no longer emits one around its own scan, so this is outer
+        // context that happens to start with a scan of `from`. Rebuilding the
+        // chain would drop the predicate (`MATCH (a) WHERE a.id = 99
+        // MATCH (a)-[:R*1..2]->(b:B {id: 1})`).
+        let mut wrapper = optimized_plan.node(child_idx);
+        while wrapper.idx() != scan_idx {
+            if matches!(wrapper.data(), IR::Filter(_)) {
+                break;
+            }
+            wrapper = wrapper.child(0);
+        }
+        if wrapper.idx() != scan_idx {
+            continue;
+        }
+        // Whatever sits below the scan feeds it rows (an earlier clause, an
+        // `UNWIND`, an `Argument`): the new scan keeps all of it, so their
+        // multiplicity and bindings survive the reversal.
+        let kept: Vec<DynTree<IR>> = optimized_plan
+            .node(scan_idx)
+            .children()
+            .map(|c| c.clone_as_tree())
+            .collect();
 
         // This used to refuse the reversal unless every endpoint carrying
         // inline attrs also had a Filter above the traverse — a cross-check
@@ -640,9 +663,9 @@ fn select_var_len_scan_node(
         } else {
             DynTree::new(IR::NodeByLabelScan { node: to.clone() })
         };
-        if let Some(arg) = argument {
+        for t in kept {
             let root_idx = scan.root().idx();
-            scan.node_mut(root_idx).push_child(arg);
+            scan.node_mut(root_idx).push_child_tree(t);
         }
         if in_merge {
             scan = tree!(IR::IncludePending { node: to.clone() }, scan);
