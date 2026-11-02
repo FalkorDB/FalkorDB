@@ -81,10 +81,15 @@ pub(super) fn ir_references_variable(
                 .any(|v| v.id == var_id && v.scope_id == scope_id)
         }),
         // The list they iterate is read; `UNWIND [e] AS x` reads `e`.
-        IR::Unwind { expr: list, var } | IR::ForEach { list, var } => {
+        IR::Unwind { expr: list, var } => {
             expr_references_variable(list, var_id, scope_id)
                 || (var.id == var_id && var.scope_id == scope_id)
         }
+        // The loop variable is an output binding, not a read: `FOREACH (r IN
+        // [1] | ...)` may reuse an outer edge's name, and a body that never
+        // reads it must not keep that edge per-edge. A body that does read it
+        // is a sibling branch, inspected on its own.
+        IR::ForEach { list, .. } => expr_references_variable(list, var_id, scope_id),
         IR::Delete { exprs, .. } | IR::Remove(exprs) => exprs
             .iter()
             .any(|expr| expr_references_variable(expr, var_id, scope_id)),

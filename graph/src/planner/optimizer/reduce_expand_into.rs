@@ -186,6 +186,20 @@ mod tests {
         }
     }
 
+    /// `FOREACH (r IN [1] | ...)` binds a loop variable that may reuse the
+    /// outer edge's name; the loop variable is not a read of the edge.
+    #[test]
+    fn foreach_loop_variable_named_like_the_edge_is_not_a_read() {
+        assert_eq!(
+            emitted_edges("MATCH (a:A)-[r:R]->(b) FOREACH (r IN [1] | CREATE (:Q))"),
+            vec![false]
+        );
+        assert_eq!(
+            emitted_edges("MATCH (a:A)-[r:R]->(b) FOREACH (x IN [r] | CREATE (:Q))"),
+            vec![true]
+        );
+    }
+
     /// A `UNION` branch inside a `CALL {}` body (nested one or two levels, with
     /// OPTIONAL MATCH / UNWIND / WITH before it) that binds a variable through
     /// an operator other than a traverse (UNWIND, a procedure YIELD, a scan, a
