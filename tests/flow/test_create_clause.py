@@ -300,3 +300,14 @@ class testCreateClause():
         res = self.g.query("MATCH (a) CREATE (a:Z)-[:T]->(:C) RETURN count(*)")
         self.env.assertEqual(res.result_set, [[3]])
         self.env.assertEqual(res.relationships_created, 3)
+
+    def test21_create_labels_do_not_constrain_an_optional_match(self):
+        # An OPTIONAL MATCH alias is already in scope: a label written on it
+        # in CREATE must not leak into the OPTIONAL MATCH scan, or the
+        # existing :B node would be missed.
+        self.g.query("CREATE (:B)")
+        q = "OPTIONAL MATCH (b) CREATE (b:Z)-[:T]->()"
+        plan = self.g.explain(q)
+        self.env.assertNotIn("Node By Label Scan", str(plan))
+        res = self.g.query(q)
+        self.env.assertGreaterEqual(res.relationships_created, 1)

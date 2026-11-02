@@ -1570,18 +1570,26 @@ impl Binder {
     /// Runs `bind`, then puts `node_labels` back as it was before the call, so
     /// the labels it wrote constrain only what it bound and not the MATCH that
     /// bound a shared node. With `keep_new`, entries `bind` introduced for
-    /// nodes that had none are kept; entries that already existed are always
-    /// restored.
+    /// nodes it declared itself are kept; entries for a node already in scope
+    /// (bound by a MATCH or OPTIONAL MATCH, even one with no entry) and
+    /// entries that already existed are always restored.
     fn with_node_labels_rolled_back<T>(
         &mut self,
         keep_new: bool,
         bind: impl FnOnce(&mut Self) -> T,
     ) -> T {
         let mut saved = self.node_labels.clone();
+        let in_scope: HashSet<(u32, u32)> = self
+            .current_env()
+            .values()
+            .map(|v| (v.scope_id, v.id))
+            .collect();
         let result = bind(self);
         if keep_new {
             for (key, labels) in self.node_labels.drain() {
-                saved.entry(key).or_insert(labels);
+                if !in_scope.contains(&key) {
+                    saved.entry(key).or_insert(labels);
+                }
             }
         }
         self.node_labels = saved;
