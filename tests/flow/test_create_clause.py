@@ -47,7 +47,9 @@ class testCreateClause():
     def test02_edge_reuse(self):
         queries = ["CREATE ()-[e:R]->()-[e:R]->()",
                    "MATCH ()-[e:R]->() CREATE ()-[e:R]->()",
-                   "CREATE ()-[e:R]->() CREATE ()-[e:R]->()"]
+                   "CREATE ()-[e:R]->() CREATE ()-[e:R]->()",
+                   "CREATE p=(a)-[e:R]->(b), q=(c)-[e:R]->(d) RETURN p, q",
+                   "CREATE p=()-[e:R]->()-[e:R]->() RETURN p"]
 
         for q in queries:
             try:
