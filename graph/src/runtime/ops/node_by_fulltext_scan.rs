@@ -95,7 +95,7 @@ impl<'a> Iterator for NodeByFulltextScanOp<'a> {
                 else {
                     return Err("fulltext query expects a string query".into());
                 };
-                let g = self.runtime.g.borrow();
+                let g = self.runtime.graph();
                 let iter = Box::new(g.fulltext_query_nodes(&label_str, &query_str)?)
                     as Box<dyn Iterator<Item = (NodeId, f64)>>;
                 Ok(Some(RowIter::many(iter)))
