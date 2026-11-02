@@ -4,15 +4,19 @@
 
 use super::{Graph, NodeId, RelationshipId};
 use crate::entity_type::EntityType;
+use crate::graph::mvcc_graph::MvccGraph;
 use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::BuildCursor;
 use crate::index::falkordb::graph_writes;
-use crate::index::falkordb::versioned::BuildState;
+use crate::index::falkordb::versioned::{
+    ALLOW_BATCH_RACE, BuildState, Discarded, IndexId, IndexerCommit, PreparedBatch,
+};
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::orderset::OrderSet;
 use crate::runtime::value::Value;
+use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -1573,4 +1577,232 @@ fn set_then_delete_in_one_batch_leaves_no_entry() {
         vec![ids[1]],
         "the untouched node is all that is left"
     );
+}
+
+// --- Indexer batch commits ---
+
+/// An MVCC graph of `:Person` nodes with `v` = each of `values`, and a `Building` column on
+/// `(:Person, v)`.
+fn mvcc_building(values: &[i64]) -> (MvccGraph, Arc<String>, Arc<String>, Vec<u64>) {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, values);
+    create_index_on(&mut g, &label, &attr);
+    (MvccGraph::from_graph(g), label, attr, ids)
+}
+
+/// An indexer batch of at most `budget` entities of index `id`, applied to a new build version of
+/// `mvcc`'s published one, as the indexer's turn prepares it: the version and the batch.
+fn prepare(
+    mvcc: &MvccGraph,
+    id: &IndexId,
+    budget: usize,
+) -> (Arc<AtomicRefCell<Graph>>, PreparedBatch) {
+    let version = Arc::new(AtomicRefCell::new(mvcc.read().borrow().new_build_version()));
+    let batch = version
+        .borrow_mut()
+        .indexer_prepare(id, budget)
+        .expect("the index is Building");
+    (version, batch)
+}
+
+/// One writer's unit of work on `mvcc`: fork, `write` into the fork, commit it.
+fn commit_write(
+    mvcc: &mut MvccGraph,
+    write: impl FnOnce(&mut Graph),
+) {
+    let fork = mvcc.fork();
+    write(&mut fork.borrow_mut());
+    mvcc.commit(fork).expect("the write commits");
+}
+
+/// With nothing committed since its version was made, an indexer batch publishes that version
+/// itself. The batch changes no data, so the data version stays.
+#[test]
+fn an_indexer_batch_with_nothing_committed_since_publishes_its_version() {
+    let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let data_version = mvcc.read().borrow().version;
+
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    let published = mvcc.read();
+    assert!(Arc::ptr_eq(&published, &prepared), "its own version");
+    let published = published.borrow();
+    assert_eq!(published.version, data_version, "the data version stays");
+    assert_eq!(
+        cursor(&published, EntityType::Node, &label, &attr),
+        Some(BuildCursor::Node(NodeId::from(ids[2])))
+    );
+    assert_eq!(
+        range_scan(&published, &label, &attr, 0, 100),
+        ids[..2].to_vec()
+    );
+}
+
+/// When only another index's batch committed since, an indexer batch puts its column into a new
+/// build version of the published one: both batches' progress is kept.
+#[test]
+fn an_indexer_batch_after_another_columns_batch_swaps_its_column_in() {
+    let (g, label, v, ty, w) = scan_fixture();
+    let mut mvcc = MvccGraph::from_graph(g);
+    let nodes = IndexId::Column(EntityType::Node, (label.clone(), v.clone()));
+    let edges = IndexId::Column(EntityType::Relationship, (ty.clone(), w.clone()));
+
+    let (node_version, node_batch) = prepare(&mvcc, &nodes, 3);
+    let (edge_version, edge_batch) = prepare(&mvcc, &edges, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&edge_version, &edge_batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert_eq!(
+        mvcc.commit_indexer_batch(&node_version, &node_batch),
+        Ok(IndexerCommit::Swap)
+    );
+
+    let published = mvcc.read();
+    assert!(!Arc::ptr_eq(&published, &node_version));
+    let published = published.borrow();
+    for (entity, l, a, version) in [
+        (EntityType::Node, &label, &v, &node_version),
+        (EntityType::Relationship, &ty, &w, &edge_version),
+    ] {
+        let version = version.borrow();
+        assert_eq!(
+            cursor(&published, entity, l, a),
+            cursor(&version, entity, l, a),
+            "{entity:?}"
+        );
+        assert_eq!(
+            contents(&published, entity, l, a, &[]),
+            contents(&version, entity, l, a, &[]),
+            "{entity:?}"
+        );
+        assert!(cursor(&published, entity, l, a).is_some(), "{entity:?}");
+    }
+}
+
+/// An indexer batch whose column a writer dropped, or dropped and created again, since its
+/// version was made publishes nothing. A column created again starts its build over: its next
+/// batch reads from the first node.
+#[test]
+fn an_indexer_batch_on_a_dropped_or_recreated_column_publishes_nothing() {
+    for recreate in [false, true] {
+        let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30]);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let (prepared, batch) = prepare(&mvcc, &id, 2);
+        commit_write(&mut mvcc, |g| {
+            drop_index_on(g, &label, &attr);
+            if recreate {
+                create_index_on(g, &label, &attr);
+            }
+        });
+
+        let before = mvcc.read();
+        assert_eq!(
+            mvcc.commit_indexer_batch(&prepared, &batch),
+            Ok(IndexerCommit::Discarded(Discarded::Gone)),
+            "recreate {recreate}"
+        );
+        assert!(Arc::ptr_eq(&mvcc.read(), &before), "nothing published");
+
+        if recreate {
+            let (prepared, batch) = prepare(&mvcc, &id, 2);
+            assert_eq!(
+                mvcc.commit_indexer_batch(&prepared, &batch),
+                Ok(IndexerCommit::Same)
+            );
+            assert_eq!(
+                range_scan(&mvcc.read().borrow(), &label, &attr, 0, 100),
+                ids[..2].to_vec(),
+                "the build starts over"
+            );
+        }
+    }
+}
+
+/// An indexer batch read on a version a writer has since moved past publishes nothing: it read
+/// values the writer may have changed. The next batch reads the writer's values.
+#[test]
+fn an_indexer_batch_after_a_writer_publishes_nothing() {
+    let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    commit_write(&mut mvcc, |g| set_attr(g, ids[0], &attr, Value::Int(15)));
+
+    let before = mvcc.read();
+    assert_eq!(
+        mvcc.commit_indexer_batch(&prepared, &batch),
+        Ok(IndexerCommit::Discarded(Discarded::Writers))
+    );
+    assert!(Arc::ptr_eq(&mvcc.read(), &before), "nothing published");
+
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    let published = mvcc.read();
+    assert_eq!(
+        range_scan(&published.borrow(), &label, &attr, 15, 15),
+        vec![ids[0]],
+        "the writer's value"
+    );
+    assert!(range_scan(&published.borrow(), &label, &attr, 10, 10).is_empty());
+}
+
+/// Two indexer batches read from one version on the same column: the first publishes, the second
+/// finds the first in its way and publishes nothing. One chain of batches per column rules this
+/// out, so it is reported; here the report is allowed, to check what is published.
+#[test]
+fn of_two_indexer_batches_on_one_column_only_the_first_publishes() {
+    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let (first, first_batch) = prepare(&mvcc, &id, 1);
+    let (second, second_batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&first, &first_batch),
+        Ok(IndexerCommit::Same)
+    );
+    ALLOW_BATCH_RACE.with(|allow| allow.set(true));
+    let second_commit = mvcc.commit_indexer_batch(&second, &second_batch);
+    ALLOW_BATCH_RACE.with(|allow| allow.set(false));
+    assert_eq!(
+        second_commit,
+        Ok(IndexerCommit::Discarded(Discarded::AnotherBatch))
+    );
+    assert!(
+        Arc::ptr_eq(&mvcc.read(), &first),
+        "the first batch's version"
+    );
+}
+
+/// A debug build stops on two indexer batches racing on one column.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "two indexer batches raced")]
+fn a_race_of_two_indexer_batches_stops_a_debug_build() {
+    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let (first, first_batch) = prepare(&mvcc, &id, 1);
+    let (second, second_batch) = prepare(&mvcc, &id, 1);
+    let _ = mvcc.commit_indexer_batch(&first, &first_batch);
+    let _ = mvcc.commit_indexer_batch(&second, &second_batch);
+}
+
+/// An indexer batch's commit keeps the data version, so a writer's fork made before it is not
+/// stale.
+#[test]
+fn a_fork_made_before_an_indexer_batch_commit_is_not_stale() {
+    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let fork = mvcc.fork();
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert!(!mvcc.is_stale(&fork));
 }

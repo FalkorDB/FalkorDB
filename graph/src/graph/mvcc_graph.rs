@@ -64,6 +64,10 @@ use atomic_refcell::AtomicRefCell;
 use thiserror::Error;
 
 use crate::graph::graph::{Graph, NodeOpError};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::versioned::{
+    Discarded, IndexerCommit, PreparedBatch, report_batch_race,
+};
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -165,10 +169,66 @@ impl MvccGraph {
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
     ) -> Result<(), CommitError> {
-        // Before any of the work below, so a refusal changes nothing.
-        if self.is_stale(&new_graph) {
+        self.commit_version(new_graph, true)
+    }
+
+    /// Commit an indexer batch. `prepared` is a build version of a published one
+    /// ([`Graph::new_build_version`]) with `batch` already applied
+    /// ([`Graph::indexer_prepare`]), made with no lock held. How it goes in depends on what
+    /// committed since ([`Graph::indexer_fit`]):
+    /// - nothing: `prepared` is published as it is;
+    /// - only other indexes' batches: `batch`'s index is put into a new build version of the
+    ///   published one, which is published ([`Graph::with_batch_index`]);
+    /// - `batch`'s index was dropped or created again, or a writer committed, or another batch
+    ///   committed on the same index: nothing is published, and the index's next batch starts from
+    ///   its published cursor. Another batch on the index is a bug in the builder's one chain per
+    ///   index, and is reported ([`report_batch_race`]).
+    ///
+    /// The commit changes no graph data and keeps the data version, so it does not make a writer's
+    /// fork stale ([`Self::is_stale`]).
+    ///
+    /// # Errors
+    ///
+    /// [`CommitError::Invalid`] if [`Graph::validate`] refuses the version. Nothing is published.
+    #[cfg(feature = "index-falkordb")]
+    pub fn commit_indexer_batch(
+        &mut self,
+        prepared: &Arc<AtomicRefCell<Graph>>,
+        batch: &PreparedBatch,
+    ) -> Result<IndexerCommit, CommitError> {
+        let fit = prepared.borrow().indexer_fit(&self.graph.borrow(), batch);
+        let version = match fit {
+            IndexerCommit::Same => Arc::clone(prepared),
+            IndexerCommit::Swap => Arc::new(AtomicRefCell::new(
+                prepared
+                    .borrow()
+                    .with_batch_index(&self.graph.borrow(), batch),
+            )),
+            IndexerCommit::Discarded(why) => {
+                if why == Discarded::AnotherBatch {
+                    report_batch_race(&batch.id());
+                }
+                return Ok(fit);
+            }
+        };
+        self.commit_version(version, false)?;
+        Ok(fit)
+    }
+
+    /// [`Self::commit`]: `writer` for a writer's version, `false` for an indexer batch's, which
+    /// keeps the data version.
+    fn commit_version(
+        &mut self,
+        new_graph: Arc<AtomicRefCell<Graph>>,
+        writer: bool,
+    ) -> Result<(), CommitError> {
+        // Before any of the work below, so a refusal changes nothing. A batch's version is fitted
+        // onto the published one, at its data version ([`Graph::indexer_fit`]): only a writer's
+        // can be stale.
+        if writer && self.is_stale(&new_graph) {
             return Err(CommitError::Stale);
         }
+        debug_assert!(writer || self.graph.borrow().version == new_graph.borrow().version);
         new_graph.borrow().validate()?;
 
         // Check if schema changed (new labels, relationship types, or attributes)
