@@ -104,7 +104,7 @@ pub(crate) fn digest(
     g: &AtomicRefCell<Graph>,
 ) -> Vec<Record> {
     let mut out = Vec::new();
-    for_each_record(p, g, |record| out.push(record));
+    for_each_record(p, &g.borrow(), |record| out.push(record));
     out
 }
 
@@ -115,7 +115,7 @@ pub(crate) fn encode_all(
     g: &AtomicRefCell<Graph>,
     buf: &mut Vec<u8>,
 ) {
-    for_each_record(p, g, |record| record.encode(buf).unwrap());
+    for_each_record(p, &g.borrow(), |record| record.encode(buf).unwrap());
 }
 
 /// Encode, then decode: what a replica would see.

@@ -1,0 +1,91 @@
+# Reusable workflow: build libfalkordb.so in the toolchain container and upload it as an
+# artifact, for the artifact vehicle (_flow-artifact.yml) to run against.
+#
+# One definition for every build of the engine a CI job tests: the release build, the coverage
+# build and the native-index build differ only in the inputs below. Another build is another call
+# of this file, not another copy of it.
+
+name: Build engine artifact (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      build_image:
+        description: "Toolchain image used as the job container"
+        required: true
+        type: string
+      profile:
+        description: "Cargo profile: release or debug. Also the target directory the module is in"
+        required: false
+        type: string
+        default: release
+      features:
+        description: "Cargo features to build with, if any"
+        required: false
+        type: string
+        default: ""
+      rustflags:
+        description: >
+          RUSTFLAGS for the build, if any. RUSTFLAGS replaces the rustflags in .cargo/config.toml,
+          so these must repeat its `-C link-arg=-Wl,--allow-multiple-definition`.
+        required: false
+        type: string
+        default: ""
+      cache_key:
+        description: "rust-cache shared key. Builds whose dependencies compile the same can share one"
+        required: true
+        type: string
+      artifact_name:
+        description: "Name of the uploaded artifact"
+        required: true
+        type: string
+      unit_tests:
+        description: "Also run the Rust unit tests here, where the compiled tree already exists"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container: ${{ inputs.build_image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ${{ inputs.cache_key }}
+      - name: Build
+        env:
+          PROFILE: ${{ inputs.profile }}
+          FEATURES: ${{ inputs.features }}
+          BUILD_RUSTFLAGS: ${{ inputs.rustflags }}
+        run: |
+          # Set only when given: even an empty RUSTFLAGS replaces .cargo/config.toml's rustflags.
+          if [ -n "$BUILD_RUSTFLAGS" ]; then export RUSTFLAGS="$BUILD_RUSTFLAGS"; fi
+          set -- build
+          if [ "$PROFILE" = release ]; then set -- "$@" --release; fi
+          if [ -n "$FEATURES" ]; then set -- "$@" --features "$FEATURES"; fi
+          cargo "$@"
+      - name: Run unit tests
+        if: ${{ inputs.unit_tests }}
+        run: |
+          # Doctests are linked separately by rustdoc, which ignores RUSTFLAGS and
+          # the .cargo rustflags, so the duplicate-symbol allowance for
+          # libredisearch_rs.a's bundled std has to come via RUSTDOCFLAGS. Release
+          # LTO is off for the test build: the embedded C/Rust archives carry no
+          # LLVM bitcode, so a release-LTO doctest fails on a missing .llvmbc.
+          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
+          # The module crate's own unit tests (the RDB codec); `--lib` skips doctests.
+          CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p falkordb-rs --lib
+      - name: Upload the engine
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: target/${{ inputs.profile }}/libfalkordb.so
