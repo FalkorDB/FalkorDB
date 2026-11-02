@@ -401,6 +401,8 @@ impl Drop for MvccGraph {
 mod tests {
     use super::{CommitError, MvccGraph};
     use crate::graph::graphblas::test_init::ensure_init;
+    #[cfg(debug_assertions)]
+    use crate::locks::without_global_lock;
     use roaring::RoaringTreemap;
     use std::sync::Arc;
 
@@ -513,5 +515,17 @@ mod tests {
             Arc::ptr_eq(&mvcc.read(), &first),
             "the first version stays published"
         );
+    }
+
+    /// A commit asserts that the caller holds the host's global lock. Debug builds only:
+    /// `debug_assert!` compiles out of a release test run.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "commit without the global lock")]
+    fn a_commit_without_the_global_lock_is_refused() {
+        ensure_init();
+        let mvcc = MvccGraph::new(64, 64, 0, "t");
+        let version = mvcc.fork();
+        let _ = without_global_lock(|| mvcc.commit(version));
     }
 }
