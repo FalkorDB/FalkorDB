@@ -164,8 +164,9 @@ pub enum ExprIR<TVar> {
     /// Variable reference
     Variable(TVar),
     /// The extra argument the parser appends to an aggregate call. It names
-    /// nothing a query can write; the binder turns it into a fresh nameless
-    /// variable that the aggregate uses to carry its ORDER BY key.
+    /// nothing a query can write; the binder turns it into a fresh variable,
+    /// reserved in a slot no name reaches, that the aggregate uses to carry its
+    /// ORDER BY key.
     AggOrderPlaceholder,
     /// Query parameter reference ($param)
     Parameter(String),

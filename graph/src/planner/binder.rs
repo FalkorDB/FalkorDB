@@ -784,7 +784,7 @@ impl Binder {
                 // planner's own fresh variables — reuse an ID the FOREACH
                 // still uses, silently aliasing two variables in the record.
                 let inner_env = std::mem::replace(self.current_env_mut(), saved_env);
-                let restored: HashSet<u32> = self.current_env().values().map(|v| v.id).collect();
+                let restored: HashSet<u32> = self.current_env().variables().map(|v| v.id).collect();
                 for v in inner_env.into_variables() {
                     if !restored.contains(&v.id) {
                         self.current_env_mut().reserve(v);

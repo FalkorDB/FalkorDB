@@ -1,6 +1,7 @@
 from common import *
 import itertools
 import re
+import time
 
 values = ["str1", "str2", False, True, 5, 10.5]
 GRAPH_ID = "with_caluse"
@@ -547,5 +548,22 @@ class testWithClause(FlowTestsBase):
                     want = rows(plain)
                     self.env.assertEqual(got, want, message=q)
                     self.env.assertFalse(isinstance(want, str) and want.startswith("ERR 'w"), message=plain)
+        finally:
+            g.delete()
+
+    def test20_foreach_after_hidden_variables_does_not_multiply_reservations(self):
+        # FOREACH keeps the ids of its body's variables reserved. It must not
+        # re-reserve the ones the scope already holds (a hidden WITH copy, an
+        # earlier FOREACH's locals), or every FOREACH doubles the scope table:
+        # 24 of them took 5 s and 2 GB, 30 would not finish.
+        g = self.db.select_graph("with_foreach_reservations")
+        g.query("CREATE (:A {v: 1})")
+        try:
+            body = " ".join(f"FOREACH (i{j} IN [1] | CREATE (:T {{x: i{j}}}))" for j in range(40))
+            start = time.time()
+            res = g.query(f"MATCH (n:A) WITH n.v AS k WHERE n.v >= 0 {body} RETURN k")
+            self.env.assertEqual(res.result_set, [[1]])
+            self.env.assertEqual(res.nodes_created, 40)
+            self.env.assertLess(time.time() - start, 10)
         finally:
             g.delete()
