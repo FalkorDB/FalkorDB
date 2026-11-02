@@ -597,8 +597,13 @@ impl<T> Decode<19> for Matrix<T> {
             // The hyper-hash (Y) is not serialized, so a hypersparse matrix
             // comes back with GxB_WILL_WAIT set. Rebuild it now so `pending()`
             // reflects real pending work (no-op for non-hypersparse matrices).
+            // GraphBLAS can still find the payload's components inconsistent
+            // here (e.g. a corrupted index array), so this is bad input too.
             let info = GrB_Matrix_wait(m, GrB_WaitMode::GrB_MATERIALIZE as _);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            if info != GrB_Info::GrB_SUCCESS {
+                GrB_Matrix_free(&raw mut m);
+                return Err(format!("GrB_Matrix_wait failed: {info:?}"));
+            }
 
             Ok(Self {
                 m: Arc::new(Handle(m)),
@@ -2247,6 +2252,52 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} = 2 accepted"));
             assert!(err.contains(name), "unexpected error: {err}");
         }
+    }
+
+    /// Sweep corruption over the whole payload: every byte of every buffer is
+    /// replaced by a handful of hostile values and the matrix decoded. Each
+    /// attempt must come back (`Ok` or `Err`), never panic or abort, and a
+    /// matrix decoded from a corrupted container header must be readable.
+    /// (A corrupted component array can still load: GraphBLAS does not check
+    /// the indices, so those are only decoded here, never read.)
+    #[test]
+    fn decode_survives_corrupted_payload_bytes() {
+        use super::Decode;
+        ensure_init();
+        let clean = encoded();
+        let (mut ok, mut err) = (0usize, 0usize);
+        for op in 0..clean.ops.len() {
+            let len = match &clean.ops[op] {
+                TapeOp::Buffer(b) => b.len().min(700),
+                _ => 0,
+            };
+            for at in 0..len {
+                for v in [0u8, 1, 2, 0x7f, 0x80, 0xff] {
+                    let mut t = clean.clone();
+                    if let Some(TapeOp::Buffer(b)) = t.ops.get_mut(op) {
+                        b[at] = v;
+                    }
+                    match Matrix::<bool>::decode(&mut t) {
+                        Ok(m) => {
+                            let _ = m.nvals();
+                            // Only the header is validated against the
+                            // components. A corrupted component array can
+                            // load and still be unsafe to read:
+                            // GraphBLAS does not check indices on load.
+                            if op == 0 {
+                                for (r, c) in (0..8).flat_map(|r| (0..8).map(move |c| (r, c))) {
+                                    let _ = m.get(r, c);
+                                }
+                            }
+                            ok += 1;
+                        }
+                        Err(_) => err += 1,
+                    }
+                }
+            }
+        }
+        eprintln!("corrupted payloads: {ok} decoded, {err} refused");
+        assert!(err > 0);
     }
 
     /// The encoded container header must not carry this process's heap
