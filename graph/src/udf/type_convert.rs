@@ -181,7 +181,7 @@ fn value_to_js_level<'js>(
             Ok(obj.into_value())
         }
         Value::Node(node_id) => {
-            crate::udf::js_classes::create_js_node(ctx, (*node_id).into(), graph)
+            crate::udf::js_classes::create_js_node(ctx, (*node_id).into(), graph, runtime)
         }
         Value::Relationship(rel_id) => {
             let (src, dst) = runtime.map_or_else(
