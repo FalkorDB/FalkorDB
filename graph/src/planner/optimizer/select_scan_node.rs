@@ -388,30 +388,49 @@ fn swap_relationship(
     Arc::new(swapped)
 }
 
-/// Adds the `(id, scope_id)` of the variables an IR node outputs through a
-/// projection or a known `Argument`; the scope-aware counterpart of
-/// [`collect_output_aliases`] for the operators `get_variables` does not cover.
-fn collect_output_pairs(
+/// Adds the `(id, scope_id)` of the variables a projection or a known
+/// `Argument` writes, and nothing it merely reads: a copy `(new, old)` writes
+/// `new`, and an aggregation writes its `names` and the `new` of its
+/// projections. The one list [`collect_output_pairs`] and
+/// [`collect_output_aliases`] both start from, so they cannot disagree about
+/// what an operator outputs.
+fn projected_outputs(
     ir: &IR,
     out: &mut HashSet<(u32, u32)>,
 ) {
     match ir {
         IR::Project { exprs, copies } => {
             out.extend(exprs.iter().map(|(v, _)| (v.id, v.scope_id)));
-            // A copy reads `old` and writes `new`: both are carried.
-            for (old, new) in copies {
-                out.extend([(old.id, old.scope_id), (new.id, new.scope_id)]);
-            }
+            out.extend(copies.iter().map(|(new, _)| (new.id, new.scope_id)));
         }
         IR::Aggregate {
             names, projections, ..
         } => {
             out.extend(names.iter().map(|v| (v.id, v.scope_id)));
-            for (old, new) in projections {
-                out.extend([(old.id, old.scope_id), (new.id, new.scope_id)]);
-            }
+            out.extend(projections.iter().map(|(new, _)| (new.id, new.scope_id)));
         }
         IR::Argument(Some(vars)) => out.extend(vars.iter().copied()),
+        _ => {}
+    }
+}
+
+/// Adds the `(id, scope_id)` of the variables an IR node outputs through a
+/// projection or a known `Argument`; the scope-aware counterpart of
+/// [`collect_output_aliases`] for the operators `get_variables` does not cover.
+/// A copy's source is listed as well: it is carried, and the pair keeps its
+/// scope, so it cannot be mistaken for a variable of the chain.
+fn collect_output_pairs(
+    ir: &IR,
+    out: &mut HashSet<(u32, u32)>,
+) {
+    projected_outputs(ir, out);
+    match ir {
+        IR::Project { copies, .. } => {
+            out.extend(copies.iter().map(|(_, old)| (old.id, old.scope_id)));
+        }
+        IR::Aggregate { projections, .. } => {
+            out.extend(projections.iter().map(|(_, old)| (old.id, old.scope_id)));
+        }
         _ => {}
     }
 }
@@ -435,30 +454,19 @@ fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
                 aliases.insert(s.id);
             }
         }
-        IR::Project { exprs, copies } => {
-            for (var, _) in exprs {
-                aliases.insert(var.id);
-            }
-            for (var, _) in copies {
-                aliases.insert(var.id);
-            }
-        }
-        IR::Aggregate { names, .. } => {
-            for var in names {
-                aliases.insert(var.id);
-            }
+        // Only the id is kept, and only of what the operator writes: ids are
+        // per-scope, so a copy's source (a variable of the scope before the
+        // projection) must not stand for a variable of the chain. This set
+        // feeds `score_endpoint`'s `bound_vars`, a preference heuristic that
+        // never decides plan validity; the scope-sensitive decision (whether
+        // an `Argument` or a projection is transparent) compares full pairs.
+        IR::Project { .. } | IR::Aggregate { .. } | IR::Argument(Some(_)) => {
+            let mut outputs = HashSet::new();
+            projected_outputs(ir, &mut outputs);
+            aliases.extend(outputs.into_iter().map(|(id, _)| id));
         }
         IR::Unwind { var, .. } => {
             aliases.insert(var.id);
-        }
-        // Argument with known bound vars: the incoming rows bind exactly
-        // these variables. `Argument(None)` stays opaque (conservative).
-        // Only the id is kept: this set feeds `score_endpoint`'s `bound_vars`,
-        // a preference heuristic that never decides plan validity. The
-        // scope-sensitive decision — whether the Argument is transparent —
-        // compares full pairs.
-        IR::Argument(Some(vars)) => {
-            aliases.extend(vars.iter().map(|(id, _)| *id));
         }
         _ => {}
     }
@@ -1463,4 +1471,64 @@ pub(super) fn select_scan_node(
     }
 
     select_var_len_scan_node(optimized_plan, graph);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::functions::Type;
+
+    fn var(
+        id: u32,
+        scope_id: u32,
+    ) -> Variable {
+        Variable {
+            name: None,
+            id,
+            scope_id,
+            ty: Type::Any,
+        }
+    }
+
+    /// The variables a projection writes are the ones a traverse above it can
+    /// start from. A copy is `(new, old)` and an aggregation carries its copies
+    /// too; both helpers must report the `new` end, whatever the operator.
+    #[test]
+    fn output_aliases_cover_copies_of_projections_and_aggregations() {
+        let (new, old) = (var(7, 1), var(3, 0));
+        let project = IR::Project {
+            exprs: vec![],
+            copies: vec![(new.clone(), old.clone())],
+        };
+        assert!(collect_output_aliases(&project).contains(&new.id));
+        let aggregate = IR::Aggregate {
+            names: vec![var(9, 1)],
+            keys: vec![],
+            aggregations: vec![],
+            projections: vec![(new.clone(), old.clone())],
+        };
+        let aliases = collect_output_aliases(&aggregate);
+        assert!(aliases.contains(&new.id), "copy through an aggregation");
+        assert!(aliases.contains(&9), "aggregate output");
+        // The source of a copy is a variable of the scope before the
+        // projection: carried (a pair keeps its scope), but not an output id.
+        assert!(!collect_output_aliases(&project).contains(&old.id));
+        assert!(!aliases.contains(&old.id));
+        // The two helpers agree on every variant that projects: the id helper
+        // lists what the scoped one does, less the copies' sources.
+        for (ir, source) in [(&project, &old), (&aggregate, &old)] {
+            let mut pairs = HashSet::new();
+            collect_output_pairs(ir, &mut pairs);
+            assert!(
+                pairs.contains(&(source.id, source.scope_id)),
+                "source carried"
+            );
+            let ids: HashSet<u32> = pairs
+                .iter()
+                .filter(|&&p| p != (source.id, source.scope_id))
+                .map(|&(id, _)| id)
+                .collect();
+            assert_eq!(collect_output_aliases(ir), ids);
+        }
+    }
 }

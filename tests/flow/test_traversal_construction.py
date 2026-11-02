@@ -610,7 +610,17 @@ class testTraversalConstruction():
         for q, expected in [
                 ("MATCH (a:Doc) WITH 1 AS x ORDER BY a.id MATCH (b:Doc)-[r:LINK]->() RETURN count(r)", 10000),
                 ("MATCH (a:Doc) WITH a.id AS aid, count(a) AS n MATCH (b:Doc)-[r:LINK]->() RETURN count(r)", 10000)]:
+            # the count alone is the same for the scan plan and the edge-driven one
+            self.env.assertContains("Node By Label Scan | (b:Doc)", str(g.explain(q)), message=q)
             self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
+
+        # A variable carried through an aggregating WITH * is bound there, so
+        # the traverse starts from it instead of scanning again.
+        q = "MATCH (a:Doc) WITH *, count(*) AS c MATCH (a)-[r:LINK]->() RETURN count(r)"
+        plan = str(g.explain(q))
+        self.env.assertEqual(plan.count("Node By Label Scan"), 1, message=plan)
+        expected = g.query("MATCH (:Doc)-[r:LINK]->() RETURN count(r)").result_set
+        self.env.assertEqual(g.query(q).result_set, expected)
 
         # The delete from the report.
         res = g.query("UNWIND range(0, 9) AS pid MATCH (d:Doc {id: pid})-[r:LINK]->() DELETE r")
