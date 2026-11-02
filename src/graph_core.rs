@@ -738,8 +738,9 @@ pub fn execute_profile(
 /// its matching window, so under a steady stream of writes it could run forever
 /// while C finishes in one pass. After [`MAX_STALE_RETRIES`] stale runs the write
 /// runs once more as a writer, holding the write lock from the start like C does,
-/// which no one can make stale. All attempts share one clock, so `TIMEOUT` and the
-/// slow log count from the first attempt, not from the last.
+/// which no one can make stale. All attempts share one clock and one timeout,
+/// resolved on the first attempt, so `TIMEOUT` and the slow log count from the
+/// first attempt, and a config change during a retry cannot move the deadline.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_query_write(
     session: QuerySession,
@@ -754,6 +755,7 @@ pub fn execute_query_write(
     let graph = session.graph_arc();
     let facts = session.facts();
     let started = Instant::now();
+    let mut timeout = None;
     let mut stale_runs = 0;
     let mut session = session;
     loop {
@@ -766,6 +768,7 @@ pub fn execute_query_write(
             compact,
             first_cached,
             per_query_timeout,
+            &mut timeout,
             profile,
             started,
         );
@@ -809,7 +812,8 @@ impl From<String> for WriteAttempt {
     }
 }
 
-/// One run of [`execute_query_write`].
+/// One run of [`execute_query_write`]. `timeout` is the write's resolved timeout,
+/// set by the first run and kept for the retries.
 #[allow(clippy::too_many_arguments)]
 fn try_query_write(
     session: QuerySession,
@@ -819,6 +823,7 @@ fn try_query_write(
     compact: bool,
     first_cached: bool,
     per_query_timeout: Option<i64>,
+    timeout: &mut Option<Option<u64>>,
     profile: bool,
     wall_start: Instant,
 ) -> Result<(usize, f64), WriteAttempt> {
@@ -835,7 +840,11 @@ fn try_query_write(
     )));
 
     // The budget is for the whole write, so a retry gets what the earlier runs left.
-    let timeout_ms = match compute_effective_timeout(per_query_timeout, true)? {
+    let total = match *timeout {
+        Some(total) => total,
+        None => *timeout.insert(compute_effective_timeout(per_query_timeout, true)?),
+    };
+    let timeout_ms = match total {
         Some(total) => {
             let spent = u64::try_from(wall_start.elapsed().as_millis()).unwrap_or(u64::MAX);
             if spent >= total {
