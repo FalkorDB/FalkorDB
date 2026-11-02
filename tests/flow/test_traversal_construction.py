@@ -689,3 +689,26 @@ class testTraversalConstruction():
                     self.env.assertTrue(all(got_set[x] <= full_set[x] for x in got_set), message=f"{body} subset k={k} s={s}")
         finally:
             g.delete()
+
+    # Destination-label check inside an undirected two-hop chain: the traversal
+    # drops rows, so a LIMIT must not stop it at its own row budget (main
+    # returned 0 rows for LIMIT 1 here although 25 rows exist).
+    def test_limit_with_dest_label_check_on_undirected_chain(self):
+        g = self.db.select_graph("LimitDestLabelChain")
+        self.env.cmd("DEL", g.name)
+        try:
+            g.query("""CREATE (:N:X {id:0}), (:N:S {id:1}), (:N:S:D {id:2}), (:N:S:D {id:3}),
+                              (:N:S:D {id:4}), (:N:S:D {id:5}), (:N:D {id:6})""")
+            edges = [(0,3,'R'),(6,3,'R'),(4,6,'R'),(5,3,'R'),(5,6,'R'),(4,0,'R'),(0,0,'R'),(5,4,'R'),
+                     (3,5,'R'),(3,5,'R'),(4,1,'R'),(3,4,'R'),(2,1,'S'),(1,6,'R'),(2,0,'R'),(6,4,'S'),
+                     (0,1,'S'),(5,6,'R'),(0,5,'R'),(5,5,'S'),(3,4,'S'),(1,2,'R'),(4,3,'S'),(3,4,'R')]
+            for a, b, t in edges:
+                g.query(f"MATCH (a:N {{id:{a}}}), (b:N {{id:{b}}}) CREATE (a)-[:{t}]->(b)")
+            body = "MATCH (s:S)-[]-()-[]-(d:D) RETURN d.id"
+            total = g.query(body).result_set
+            self.env.assertEqual(len(total), 25)
+            for limit in (1, 2, 5, 25, 100):
+                got = g.query(f"{body} LIMIT {limit}").result_set
+                self.env.assertEqual(len(got), min(limit, 25), message=f"LIMIT {limit}")
+        finally:
+            g.delete()
