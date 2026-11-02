@@ -157,15 +157,15 @@ class testDisklessReplication(FlowTestsBase):
 
     def _constraints(self, con):
         """The constraints each graph of the snapshot carries."""
-        out = []
-        for name in sorted(con.execute_command("GRAPH.LIST")):
-            if name in SMALL_GRAPHS:
-                continue  # none of them has a constraint; keep a sample cheap
-            res = Graph(con, name).ro_query(
-                "CALL db.constraints() YIELD type, label, properties, entitytype, status "
-                "RETURN type, label, properties, entitytype, status")
-            out.append([name, sorted(res.result_set)])
-        return out
+        return [self._constraints_of(con, name)
+                for name in sorted(con.execute_command("GRAPH.LIST"))
+                if name not in SMALL_GRAPHS]  # none of them has a constraint
+
+    def _constraints_of(self, con, name):
+        res = Graph(con, name).ro_query(
+            "CALL db.constraints() YIELD type, label, properties, entitytype, status "
+            "RETURN type, label, properties, entitytype, status")
+        return [name, sorted(res.result_set)]
 
     def _assert_enforced(self, con, name):
         """A promoted replica enforces the snapshot's constraints on `name`."""
@@ -199,6 +199,13 @@ class testDisklessReplication(FlowTestsBase):
                 query = "MATCH (a:A) WHERE a.v = 1 RETURN count(a)"
                 out.append(Graph(con, name).ro_query(query).result_set)
         return out
+
+    def _quick_state(self, con):
+        """The part of `_state` a few queries read: what a sample taken inside a
+        short async-load window can afford."""
+        udf = Graph(con, GRAPH_ID).ro_query(f"RETURN {UDF_LIB}.f()").result_set
+        return [sorted(con.execute_command("GRAPH.LIST")), self._contents(con), udf,
+                self._constraints_of(con, GRAPH_ID)]
 
     def _change_master(self, version):
         """Give the primary a snapshot the replica's differs from in every way
@@ -355,6 +362,7 @@ class testDisklessReplication(FlowTestsBase):
         self._change_master(4)
         self._wait_for_sync()
         live = self._state(self.replica)
+        quick_live = self._quick_state(self.replica)
 
         # An async load needs a full sync that keeps the replication id: the
         # replica reconnects to the same primary, whose backlog no longer
@@ -381,19 +389,25 @@ class testDisklessReplication(FlowTestsBase):
             def async_loading():
                 return self.replica.info("persistence").get("async_loading") == 1
 
-            seen = []
+            seen, seen_full = [], []
             deadline = time() + 30
             while time() < deadline:
                 if async_loading():
-                    state = self._state(self.replica)
+                    state = self._quick_state(self.replica)
                     if async_loading():
                         seen.append(state)
+                        # the whole of it, when the window is wide enough
+                        full = self._state(self.replica)
+                        if async_loading():
+                            seen_full.append(full)
                 elif seen:
                     break
                 sleep(0.05)
 
             self.env.assertGreater(len(seen), 0, message="replica never async loaded")
             for state in seen:
+                self.env.assertEqual(state, quick_live)
+            for state in seen_full:
                 self.env.assertEqual(state, live)
 
             self._wait_for_sync()
