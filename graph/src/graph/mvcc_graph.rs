@@ -65,9 +65,7 @@ use thiserror::Error;
 
 use crate::graph::graph::{Graph, NodeOpError};
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::versioned::{
-    Discarded, IndexerCommit, PreparedBatch, report_batch_race,
-};
+use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -182,7 +180,8 @@ impl MvccGraph {
     /// - `batch`'s index was dropped or created again, or a writer committed, or another batch
     ///   committed on the same index: nothing is published, and the index's next batch starts from
     ///   its published cursor. Another batch on the index is a bug in the builder's one chain per
-    ///   index, and is reported ([`report_batch_race`]).
+    ///   index ([`AnotherBatch`](crate::index::falkordb::versioned::Discarded::AnotherBatch)),
+    ///   which the caller reports.
     ///
     /// The commit changes no graph data and keeps the data version, so it does not make a writer's
     /// fork stale ([`Self::is_stale`]).
@@ -204,12 +203,7 @@ impl MvccGraph {
                     .borrow()
                     .with_batch_index(&self.graph.borrow(), batch),
             )),
-            IndexerCommit::Discarded(why) => {
-                if why == Discarded::AnotherBatch {
-                    report_batch_race(&batch.id());
-                }
-                return Ok(fit);
-            }
+            IndexerCommit::Discarded(_) => return Ok(fit),
         };
         self.commit_version(version, false)?;
         Ok(fit)

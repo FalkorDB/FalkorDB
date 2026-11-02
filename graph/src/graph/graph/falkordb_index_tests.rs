@@ -10,7 +10,7 @@ use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::BuildCursor;
 use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::versioned::{
-    ALLOW_BATCH_RACE, BuildState, Discarded, IndexId, IndexerCommit, PreparedBatch,
+    BuildState, Discarded, IndexId, IndexerCommit, PreparedBatch,
 };
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
@@ -1755,7 +1755,7 @@ fn an_indexer_batch_after_a_writer_publishes_nothing() {
 
 /// Two indexer batches read from one version on the same column: the first publishes, the second
 /// finds the first in its way and publishes nothing. One chain of batches per column rules this
-/// out, so it is reported; here the report is allowed, to check what is published.
+/// out; the commit says so, for the builder to report.
 #[test]
 fn of_two_indexer_batches_on_one_column_only_the_first_publishes() {
     let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
@@ -1766,30 +1766,14 @@ fn of_two_indexer_batches_on_one_column_only_the_first_publishes() {
         mvcc.commit_indexer_batch(&first, &first_batch),
         Ok(IndexerCommit::Same)
     );
-    ALLOW_BATCH_RACE.with(|allow| allow.set(true));
-    let second_commit = mvcc.commit_indexer_batch(&second, &second_batch);
-    ALLOW_BATCH_RACE.with(|allow| allow.set(false));
     assert_eq!(
-        second_commit,
+        mvcc.commit_indexer_batch(&second, &second_batch),
         Ok(IndexerCommit::Discarded(Discarded::AnotherBatch))
     );
     assert!(
         Arc::ptr_eq(&mvcc.read(), &first),
         "the first batch's version"
     );
-}
-
-/// A debug build stops on two indexer batches racing on one column.
-#[cfg(debug_assertions)]
-#[test]
-#[should_panic(expected = "two indexer batches raced")]
-fn a_race_of_two_indexer_batches_stops_a_debug_build() {
-    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
-    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-    let (first, first_batch) = prepare(&mvcc, &id, 1);
-    let (second, second_batch) = prepare(&mvcc, &id, 1);
-    let _ = mvcc.commit_indexer_batch(&first, &first_batch);
-    let _ = mvcc.commit_indexer_batch(&second, &second_batch);
 }
 
 /// An indexer batch's commit keeps the data version, so a writer's fork made before it is not

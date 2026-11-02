@@ -6,7 +6,6 @@
 //! those operations is written once here, over [`IndexEntry<K>`], and never names a kind.
 
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::entity_type::EntityType;
 use crate::graph::graph::Graph;
@@ -83,15 +82,6 @@ enum Prepared {
     Column(IndexerBatch<IndexColumn>),
 }
 
-impl PreparedBatch {
-    /// The index the batch was applied to.
-    pub(crate) fn id(&self) -> IndexId {
-        match &self.0 {
-            Prepared::Column(batch) => IndexId::Column(batch.name.0, batch.name.1.clone()),
-        }
-    }
-}
-
 /// How an indexer batch went in: what its commit published, given what committed since its
 /// version was made ([`Graph::indexer_fit`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,7 +107,7 @@ pub enum Discarded {
     /// batch can catch up on writers' changes, it merges them instead, and this goes.
     Writers,
     /// Another batch committed on the same index since. The builder runs one chain of batches per
-    /// index, so this is a bug in that exclusion, and it is reported ([`report_batch_race`]).
+    /// index, so this is a bug in that exclusion, for the caller to report.
     AnotherBatch,
 }
 
@@ -364,34 +354,4 @@ impl Graph {
             .apply_indexer_batch(&mut batch)
             .then_some(batch)
     }
-}
-
-/// Report an indexer batch that found another batch committed on its index
-/// ([`Discarded::AnotherBatch`]): a bug in the builder's one chain of batches per index. A debug
-/// build stops on it. A release build logs it once per process and goes on: the batch publishes
-/// nothing, and the index's next batch starts from its published cursor.
-pub(crate) fn report_batch_race(id: &IndexId) {
-    #[cfg(test)]
-    if ALLOW_BATCH_RACE.with(std::cell::Cell::get) {
-        return;
-    }
-    if cfg!(debug_assertions) {
-        panic!(
-            "two indexer batches raced on {id:?}: the builder runs one chain of batches per index"
-        );
-    }
-    static REPORTED: AtomicBool = AtomicBool::new(false);
-    if !REPORTED.swap(true, Ordering::Relaxed) {
-        eprintln!(
-            "native index: two indexer batches raced on {id:?}, which the builder should rule out; \
-             the later one published nothing. Further races are not logged."
-        );
-    }
-}
-
-#[cfg(test)]
-thread_local! {
-    /// For tests that race two batches on one index on purpose: while set, [`report_batch_race`]
-    /// does not stop the test.
-    pub(crate) static ALLOW_BATCH_RACE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
