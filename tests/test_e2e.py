@@ -2055,6 +2055,11 @@ def test_var_len_traverse_keeps_earlier_clause_below_it():
     res = query("MATCH (a {v: 0})-[*1..2]->(b:B {w: 2}) RETURN count(*)")
     assert res.result_set == [[2]]
 
+    plan = str(
+        common.g.explain("MATCH (a {v: 0})-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    )
+    assert "Node By Label Scan | (b:B)" in plan, plan
+
 
 def test_self_loop_hop_after_other_hops_keeps_them():
     """A fixed-length self-loop whose node is reached only through a later
