@@ -304,3 +304,37 @@ class testFilters():
             ("MATCH (x:B) WITH x.v AS v, count(*) AS c ORDER BY c DESC LIMIT 1 MATCH (b:B), (d:B) WHERE d.v = b.v AND d.v = v RETURN v, c, count(*)", [[5, 2, 4]]),
         ]:
             self.env.assertEqual(g.query(q).result_set, expected, depth=1)
+
+    def test12_nested_scopes_reusing_variable_ids(self):
+        # CALL {} bodies, UNION branches and pattern predicates are scopes of
+        # their own: their variables reuse the IDs of the outer ones, and the
+        # outer WITH's hidden variables share them too. None of that may make a
+        # predicate on `b` / `c` look satisfied by the wrong branch.
+        g = self.db.select_graph("filter_nested_scopes")
+        g.query("CREATE (:B {v: 0}), (:B {v: 5})")
+        for q, expected in [
+            # a subquery that joins on its own variables
+            ("""MATCH (x:B), (y:B) WITH count(*) AS s
+                CALL { MATCH (b:B), (c:B) WHERE c.v = b.v RETURN count(*) AS k }
+                RETURN s, k""", [[4, 2]]),
+            # a subquery with an aggregating WITH of its own, then a join
+            ("""MATCH (x:B), (y:B) WITH count(*) AS s
+                CALL { MATCH (x:B), (y:B) WITH count(*) AS t
+                       MATCH (b:B), (c:B) WHERE c.v = b.v RETURN t, count(*) AS k }
+                RETURN s, t, k""", [[4, 4, 2]]),
+            # a subquery, then the same names joined again outside
+            ("""MATCH (x:B), (y:B) WITH count(*) AS s
+                CALL { MATCH (b:B), (c:B) WHERE c.v = b.v RETURN count(*) AS k }
+                MATCH (b:B), (c:B) WHERE c.v = b.v RETURN s, k, count(*)""", [[4, 2, 2]]),
+            # UNION branches repeating the names, one of them aggregating
+            ("""MATCH (x:B), (y:B) WITH count(*) AS s
+                MATCH (b:B), (c:B) WHERE c.v = b.v RETURN count(*)
+                UNION ALL
+                MATCH (b:B), (c:B) WITH count(*) AS s
+                MATCH (x:B), (y:B) WHERE y.v = x.v RETURN count(*)""", [[2], [2]]),
+            # a pattern predicate inside the filtered MATCH
+            ("""MATCH (x:B), (y:B) WITH count(*) AS s
+                MATCH (b:B), (c:B) WHERE c.v = b.v AND size([(b)-[:R]->(z) | 1]) = 0
+                RETURN count(*)""", [[2]]),
+        ]:
+            self.env.assertEqual(sorted(g.query(q).result_set), sorted(expected), depth=1)
