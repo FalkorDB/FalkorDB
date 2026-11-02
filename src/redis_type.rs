@@ -808,7 +808,10 @@ pub fn discard_pending_graphs() {
 pub enum SwapLoad {
     Idle,
     Loading {
-        graphs: HashMap<String, Arc<RwLock<ThreadedGraph>>>,
+        /// A list, not a map: a client `RESTORE` into the live database runs
+        /// the same load callback, and may land on a name the stream also
+        /// brings. `adopt_restored_graph` takes those out again.
+        graphs: Vec<(String, Arc<RwLock<ThreadedGraph>>)>,
         udfs: Option<Vec<UdfLibrary>>,
     },
     /// `ABORTED` fired. The `LOADING_FAILED` that follows concerns the
@@ -826,20 +829,37 @@ fn register_loaded_graph(
     arc: Arc<RwLock<ThreadedGraph>>,
 ) {
     if let SwapLoad::Loading { graphs, .. } = &mut *SWAP_LOAD.lock() {
-        let displaced = graphs.insert(name, arc);
-        debug_assert!(
-            displaced.is_none(),
-            "register_loaded_graph: key loaded twice into the temporary database"
-        );
+        graphs.push((name, arc));
         return;
     }
     register_graph(name, arc);
 }
 
+/// A client `RESTORE` of a graph key, during a `swapdb` load: the value went
+/// through `graph_rdb_load` like the stream's keys and was staged with them,
+/// but it lives in the *live* database (a writable replica serves clients while
+/// it async-loads), which an aborted load leaves in place. Register it live
+/// instead of leaving it to be dropped with the temporary database.
+pub fn adopt_restored_graph(
+    name: &str,
+    arc: &Arc<RwLock<ThreadedGraph>>,
+) {
+    let adopted = match &mut *SWAP_LOAD.lock() {
+        SwapLoad::Loading { graphs, .. } => graphs
+            .iter()
+            .position(|(_, g)| Arc::ptr_eq(g, arc))
+            .map(|i| graphs.swap_remove(i)),
+        _ => None,
+    };
+    if let Some((_, arc)) = adopted {
+        register_graph(name.to_string(), arc);
+    }
+}
+
 /// `REPL_ASYNC_LOAD_STARTED`: Redis is about to load into a temporary database.
 pub fn begin_swap_load() {
     *SWAP_LOAD.lock() = SwapLoad::Loading {
-        graphs: HashMap::new(),
+        graphs: Vec::new(),
         udfs: None,
     };
 }
@@ -854,7 +874,7 @@ pub fn commit_swap_load() {
     else {
         return;
     };
-    let previous = std::mem::replace(&mut *GRAPH_REGISTRY.lock(), graphs);
+    let previous = std::mem::replace(&mut *GRAPH_REGISTRY.lock(), graphs.into_iter().collect());
     // The previous graphs' keys are freed by Redis along with the old database;
     // `graph_free` finds nothing left to unregister. Drop the registry's own
     // references off the main thread (see `register_graph`).

@@ -159,6 +159,8 @@ class testDisklessReplication(FlowTestsBase):
         """The constraints each graph of the snapshot carries."""
         out = []
         for name in sorted(con.execute_command("GRAPH.LIST")):
+            if name in SMALL_GRAPHS:
+                continue  # none of them has a constraint; keep a sample cheap
             res = Graph(con, name).ro_query(
                 "CALL db.constraints() YIELD type, label, properties, entitytype, status "
                 "RETURN type, label, properties, entitytype, status")
@@ -174,7 +176,7 @@ class testDisklessReplication(FlowTestsBase):
                     g.query(q)
                     self.env.assertTrue(False, message=f"{q} was accepted")
                 except ResponseError:
-                    pass
+                    pass  # rejected, as it must be
         elif name.startswith("added_"):
             try:
                 g.query("CREATE (:A)")  # mandatory on A.v
@@ -207,13 +209,15 @@ class testDisklessReplication(FlowTestsBase):
         added.query("CREATE (:A {v: 1})")
         try:
             added.create_node_range_index("A", "v")
-        except ResponseError:
-            pass  # a version changed twice
+        except ResponseError as e:
+            if "already" not in str(e):
+                raise  # only a version changed twice may find it there
         wait_for_indices_to_sync(added)
         try:
             create_mandatory_node_constraint(added, "A", "v", sync=True)
-        except ResponseError:
-            pass  # a version changed twice
+        except ResponseError as e:
+            if "already" not in str(e):
+                raise  # only a version changed twice may find it there
         for name in self.master.execute_command("GRAPH.LIST"):
             if name.startswith("added_") and name != f"added_{version}":
                 self.db.select_graph(name).delete()
@@ -401,3 +405,55 @@ class testDisklessReplication(FlowTestsBase):
         finally:
             self.master.config_set("rdb-key-save-delay", "0")
             self.master.execute_command("GRAPH.DEBUG", "AUX", "END")
+
+    def test06_restore_during_async_load_survives_an_abort(self):
+        # A writable replica takes client commands while it async-loads, and a
+        # RESTORE of a graph key goes through the same load callback as the
+        # replication stream. That key lives in the live database, so an
+        # aborted load must leave it registered: the graph the client restored
+        # takes writes afterwards.
+        self.replica.config_set("repl-diskless-load", "swapdb")
+        self.replica.config_set("replica-read-only", "no")
+        self.replica.config_set("loading-process-events-interval-bytes", "1024")
+        self.db.select_graph("restore_src").query("CREATE (:S)")
+        payload = self.master.dump("restore_src")
+        self._change_master(6)
+        self._wait_for_sync()
+
+        self.master.config_set("repl-backlog-size", "16384")
+        self.master.config_set("rdb-key-save-delay", "10000")  # 10ms per key
+        since = len(self._replica_log())
+        try:
+            pipe = self.master.pipeline(transaction=True)
+            pipe.execute_command("CLIENT", "KILL", "TYPE", "replica")
+            pipe.execute_command("GRAPH.QUERY", GRAPH_ID, f"MERGE (:N {{v: {PAIRS + 7}}})")
+            pipe.execute_command("GRAPH.DEBUG", "AUX", "START")
+            pipe.set("backlog_overflow", "x" * 65536)
+            pipe.execute()
+
+            deadline = time() + 30
+            while time() < deadline and \
+                    self.replica.info("persistence").get("async_loading") != 1:
+                sleep(0.02)
+            self.env.assertEqual(self.replica.info("persistence").get("async_loading"), 1)
+            self.env.assertTrue(self.replica.restore("rx", 0, payload))
+
+            # Cut the load, and hold the retry back so the replica stays on
+            # the live database.
+            self.master.config_set("repl-diskless-sync-delay", "5")
+            self.master.config_set("rdb-key-save-delay", "0")
+            self.master.execute_command("CLIENT", "KILL", "TYPE", "replica")
+            log = self._wait_for_log(DISCARDED_TEMP, since)
+            self.env.assertContains(LOAD_FAILED, log)
+
+            g = Graph(self.replica, "rx")
+            self.env.assertEqual(g.ro_query("MATCH (n:S) RETURN count(n)").result_set, [[1]])
+            g.query("CREATE (:W)")  # a writer aborts on an unregistered graph
+            self.env.assertEqual(g.ro_query("MATCH (n:W) RETURN count(n)").result_set, [[1]])
+        finally:
+            self.replica.delete("rx")
+            self.replica.config_set("replica-read-only", "yes")
+            self.master.config_set("repl-diskless-sync-delay", "0")
+            self.master.config_set("rdb-key-save-delay", "0")
+            self.master.execute_command("GRAPH.DEBUG", "AUX", "END")
+

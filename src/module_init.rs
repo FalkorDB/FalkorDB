@@ -659,6 +659,36 @@ unsafe extern "C" fn on_repl_async_load(
     }
 }
 
+/// `RESTORE`: if the key now holds a graph, tell the `swapdb` staging that this
+/// one belongs to the live database (see `adopt_restored_graph`).
+unsafe fn adopt_restored_key(
+    ctx: *mut RedisModuleCtx,
+    key: *mut raw::RedisModuleString,
+    key_name: &str,
+) {
+    unsafe {
+        let k = raw::RedisModule_OpenKey.unwrap()(
+            ctx,
+            key,
+            raw::KeyMode::READ.bits() | raw::REDISMODULE_OPEN_KEY_NOTOUCH as i32,
+        );
+        if k.is_null() {
+            return;
+        }
+        if raw::RedisModule_ModuleTypeGetType.unwrap()(k)
+            == *crate::redis_type::GRAPH_TYPE.raw_type.borrow()
+        {
+            let value = raw::RedisModule_ModuleTypeGetValue.unwrap()(k);
+            if !value.is_null() {
+                let graph =
+                    &*value.cast::<Arc<parking_lot::RwLock<crate::graph_core::ThreadedGraph>>>();
+                crate::redis_type::adopt_restored_graph(key_name, graph);
+            }
+        }
+        raw::RedisModule_CloseKey.unwrap()(k);
+    }
+}
+
 /// Tracks the old key name during a two-phase RENAME notification.
 static RENAME_OLD_NAME: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
 
@@ -709,6 +739,7 @@ unsafe extern "C" fn on_keyspace_event(
                 telemetry::delete_stream(&context, &old_name);
             }
         }
+        "restore" => unsafe { adopt_restored_key(ctx, key, &key_name) },
         _ => {}
     }
     0
