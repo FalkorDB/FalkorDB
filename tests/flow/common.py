@@ -843,3 +843,16 @@ def skip():
             return f(x, *args, **kwargs)
         return wrapper
     return decorate
+
+
+def assert_error_reply(env, conn, *cmd):
+    """Run `cmd`, require an error reply, and require the server to still answer
+    afterwards. Returns the error message, so callers can check its text too."""
+    try:
+        conn.execute_command(*cmd)
+        env.assertTrue(False, message=f"expected an error reply from {cmd!r}")
+        return None
+    except ResponseError as e:
+        msg = str(e)
+    env.assertTrue(conn.ping())
+    return msg

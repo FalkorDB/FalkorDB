@@ -16,6 +16,7 @@ use graph::{
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::Arc;
 
@@ -171,6 +172,65 @@ fn read_property(
                 }
             }
         }
+    }
+}
+
+/// A token header's property columns, sanitized once per token.
+///
+/// A header may name a property twice (`p,q,p`). An entity must still hold one entry per
+/// attribute, and the first non-null value in header order wins: this is what C reads
+/// back (its loader appends both, and every lookup returns the first).
+///
+/// Building this is one pass over the header with a hash map from attribute to slot, so a
+/// header with `P` columns costs `O(P)`. The header cannot be deduplicated outright by
+/// dropping repeated columns: a null in the first column lets a later one supply the value,
+/// so the check is per record, against a per-slot stamp, `O(1)` per column.
+struct PropColumns {
+    /// Per header column: its attribute and the slot of that attribute.
+    cols: Vec<(u16, usize)>,
+    /// Whether the current record already holds a value for that slot; cleared at the
+    /// start of every record, since each record is a separate entity.
+    filled: Vec<bool>,
+}
+
+impl PropColumns {
+    fn new(attr_ids: &[u16]) -> Self {
+        let mut slots: HashMap<u16, usize> = HashMap::with_capacity(attr_ids.len());
+        let cols: Vec<(u16, usize)> = attr_ids
+            .iter()
+            .map(|&attr_id| {
+                let next = slots.len();
+                (attr_id, *slots.entry(attr_id).or_insert(next))
+            })
+            .collect();
+        Self {
+            cols,
+            filled: vec![false; slots.len()],
+        }
+    }
+
+    const fn is_empty(&self) -> bool {
+        self.cols.is_empty()
+    }
+
+    /// Reads one record's properties, one value per header column, dropping nulls and
+    /// any column whose attribute already has a value in this record.
+    fn read_record(
+        &mut self,
+        data: &[u8],
+        idx: &mut usize,
+    ) -> Result<Vec<(u16, Value)>, String> {
+        self.filled.fill(false);
+        let mut entries: Vec<(u16, Value)> = Vec::with_capacity(self.cols.len());
+        for &(attr_id, slot) in &self.cols {
+            let val = read_property(data, idx)?;
+            if matches!(val, Value::Null) || self.filled[slot] {
+                continue;
+            }
+            self.filled[slot] = true;
+            entries.push((attr_id, val));
+        }
+        Ok(entries)
     }
 }
 
@@ -348,6 +408,7 @@ fn process_node_token(
         .iter()
         .map(|name| g.get_or_create_node_attr_id(name))
         .collect();
+    let mut columns = PropColumns::new(&attr_ids);
 
     // Collect all node data first, then insert at the end
     let mut nodes_bitmap = RoaringTreemap::new();
@@ -369,14 +430,8 @@ fn process_node_token(
             label_cols.push(lid.0 as u64);
         }
 
-        if !attr_ids.is_empty() {
-            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_ids.len());
-            for &attr_id in &attr_ids {
-                let val = read_property(data, &mut idx)?;
-                if !matches!(val, Value::Null) {
-                    entries.push((attr_id, val));
-                }
-            }
+        if !columns.is_empty() {
+            let entries = columns.read_record(data, &mut idx)?;
             if !entries.is_empty() {
                 resolved_attrs.push((raw_id, entries));
             }
@@ -437,6 +492,7 @@ fn process_edge_token(
         .iter()
         .map(|name| g.get_or_create_rel_attr_id(name))
         .collect();
+    let mut columns = PropColumns::new(&attr_ids);
 
     // Collect all edge data first, then bulk-insert at the end
     let mut srcs: Vec<u64> = Vec::new();
@@ -458,14 +514,8 @@ fn process_edge_token(
         dsts.push(dst_id);
         edge_ids.push(rel_id.into());
 
-        if !attr_ids.is_empty() {
-            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_ids.len());
-            for &attr_id in &attr_ids {
-                let val = read_property(data, &mut idx)?;
-                if !matches!(val, Value::Null) {
-                    entries.push((attr_id, val));
-                }
-            }
+        if !columns.is_empty() {
+            let entries = columns.read_record(data, &mut idx)?;
             if !entries.is_empty() {
                 resolved_rel_attrs.push((rel_id.into(), entries));
             }
