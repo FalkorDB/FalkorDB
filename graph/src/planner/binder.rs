@@ -1921,12 +1921,8 @@ impl Binder {
                 // Keep anonymous variables (_anon_*) since they are always created
                 // fresh and their IDs must be visible to scope_vars so the planner
                 // can avoid ID collisions.
-                self.current_env_mut().retain(|name, _| {
-                    outer_scope_names.contains(name) || name.starts_with("_anon")
-                });
-                for name in &aliases {
-                    self.current_env_mut().remove(name);
-                }
+                self.hide_new_names(&outer_scope_names);
+                self.hide_names(&aliases);
 
                 let mut new_tree =
                     DynTree::new(ExprIR::PatternComprehension(Box::new(bound_graph)));
@@ -2110,12 +2106,8 @@ impl Binder {
                         // Remove pattern-local aliases so they don't leak into
                         // the outer scope.  Keep anonymous variables (_anon_*)
                         // since their IDs must remain visible in scope_vars.
-                        self.current_env_mut().retain(|name, _| {
-                            outer_scope_names.contains(name) || name.starts_with("_anon")
-                        });
-                        for name in &aliases {
-                            self.current_env_mut().remove(name);
-                        }
+                        self.hide_new_names(&outer_scope_names);
+                        self.hide_names(&aliases);
 
                         ExprIR::Pattern(Box::new(result?))
                     }
@@ -2200,6 +2192,44 @@ impl Binder {
             }
         }
         aliases
+    }
+
+    /// Takes the names a pattern comprehension or pattern predicate entered
+    /// into the scope (its own variables, and the parent names
+    /// `import_parent_names` brought in) out of sight, keeping the anonymous
+    /// entities that scope_vars needs. A fresh variable's id is the size of the
+    /// scope table, so each entry is re-keyed rather than dropped: dropping it
+    /// would shrink the table and hand the next variable (a second comprehension
+    /// in the same condition, say) an id still held by this pattern's entities.
+    fn hide_new_names(
+        &mut self,
+        outer: &HashSet<Arc<String>>,
+    ) {
+        let names: Vec<Arc<String>> = self
+            .current_env()
+            .keys()
+            .filter(|name| !outer.contains(*name) && !name.starts_with("_anon"))
+            .cloned()
+            .collect();
+        self.hide_names(&names);
+    }
+
+    fn hide_names(
+        &mut self,
+        names: &[Arc<String>],
+    ) {
+        for name in names {
+            let Some(var) = self.current_env_mut().remove(name) else {
+                continue;
+            };
+            let mut key = format!("_slot_hidden_{name}_{}", var.id);
+            let mut n = 0;
+            while self.current_env().contains_key(&key) {
+                n += 1;
+                key = format!("_slot_hidden_{name}_{}_{n}", var.id);
+            }
+            self.current_env_mut().insert(Arc::new(key), var);
+        }
     }
 
     fn define_name_in_scope(
