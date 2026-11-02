@@ -250,15 +250,6 @@ impl<K: VersionedIndex> IndexEntry<K> {
             _ => Some(Discarded::Gone),
         }
     }
-
-    /// Whether `other` is this same index (the same generation) with the same indexer batches
-    /// committed on it.
-    pub(crate) fn same_batches_as(
-        &self,
-        other: &Self,
-    ) -> bool {
-        (self.generation, self.indexer_commits) == (other.generation, other.indexer_commits)
-    }
 }
 
 impl FalkorDbIndex {
@@ -317,14 +308,15 @@ impl Graph {
         if published.version != self.version {
             return IndexerCommit::Discarded(Discarded::Writers);
         }
-        // No writer committed, so only batches can have changed an index since.
-        if self
+        // No writer committed, so only batches can have changed an index since, and none did if
+        // none was published.
+        if published
             .falkordb_index
-            .only_index_changed(&published.falkordb_index, &batch.id())
+            .batch_published_since(&self.falkordb_index)
         {
-            IndexerCommit::Same
-        } else {
             IndexerCommit::Swap
+        } else {
+            IndexerCommit::Same
         }
     }
 

@@ -230,6 +230,11 @@ impl MvccGraph {
         }
         debug_assert!(writer || self.graph.borrow().version == new_graph.borrow().version);
         new_graph.borrow().validate()?;
+        #[cfg(feature = "index-falkordb")]
+        new_graph
+            .borrow_mut()
+            .falkordb_index
+            .set_batches_published(&self.graph.borrow().falkordb_index, !writer);
 
         // Check if schema changed (new labels, relationship types, or attributes)
         // Single borrow for old graph to collect all schema counts

@@ -21,7 +21,7 @@ use super::encode::encode_numeric;
 use super::graph_writes;
 use super::numeric::{DocIter, EncodedTuples, KeySet, NumericIndex};
 use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
-use super::versioned::{BuildState, IndexEntry, IndexId, VersionedIndex};
+use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 
 /// Identifies one index column: `(label, attribute)`.
 ///
@@ -340,6 +340,11 @@ pub struct FalkorDbIndex {
     edge_columns: HashMap<IndexKey, IndexEntry<IndexColumn>>,
     /// Indexes created in this version and those before it: the next one's generation.
     indexes_created: u64,
+    /// Indexer batches published in this graph before this version, and this one if it is a
+    /// batch's ([`Self::set_batches_published`]). It never falls and rises with every batch
+    /// published, so between a version and a later published one with the same count, no batch
+    /// was published. Writers may have been: the data version tells.
+    batches_published: u64,
 }
 
 impl FalkorDbIndex {
@@ -554,33 +559,24 @@ impl FalkorDbIndex {
             .contains_key(&(label.clone(), attr.clone()))
     }
 
-    /// Whether no index but `id` changed between `other` and this version: the same indexes, each
-    /// the same index (its generation) with the same number of indexer batches committed on it.
-    /// An indexer batch's commit asks this when no writer committed in between, so only batches
-    /// can have changed an index. The caller has already checked that `id` is the same index in
-    /// both, so equal counts of columns mean no other index was created or dropped.
-    pub(crate) fn only_index_changed(
+    /// Set this version's [`Self::batches_published`] as it is published after `published`:
+    /// `published`'s count, plus one if this is an indexer batch's version. Only the publish
+    /// calls this, so nothing that builds a version has to keep the count.
+    pub(crate) fn set_batches_published(
+        &mut self,
+        published: &Self,
+        indexer_batch: bool,
+    ) {
+        self.batches_published = published.batches_published + u64::from(indexer_batch);
+    }
+
+    /// Whether an indexer batch was published between `older`, an earlier version, and this
+    /// published one.
+    pub(crate) fn batch_published_since(
         &self,
-        other: &Self,
-        id: &IndexId,
+        older: &Self,
     ) -> bool {
-        let IndexId::Column(id_entity, id_key) = id;
-        for entity in [EntityType::Node, EntityType::Relationship] {
-            let (ours, theirs) = (self.columns(entity), other.columns(entity));
-            if ours.len() != theirs.len() {
-                return false;
-            }
-            for (key, our) in ours {
-                if entity == *id_entity && key == id_key {
-                    continue;
-                }
-                match theirs.get(key) {
-                    Some(their) if their.same_batches_as(our) => {}
-                    _ => return false,
-                }
-            }
-        }
-        true
+        self.batches_published != older.batches_published
     }
 
     /// The tree key `value` takes in column `(entity, label, attr)`, or `None` when there is no
