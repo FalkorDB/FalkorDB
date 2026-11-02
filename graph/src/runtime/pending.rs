@@ -1198,6 +1198,8 @@ impl Pending {
 
     /// Count pending-created relationships whose destination is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
+    /// An edge created and deleted since the last commit is not counted, here or in
+    /// [`Self::pending_deleted_indegree`].
     #[must_use]
     pub fn pending_indegree(
         &self,
@@ -1208,20 +1210,22 @@ impl Pending {
             self.created_rels_by_type
                 .values()
                 .flat_map(|v| v.iter())
-                .filter(|(_, _, to)| *to == node_id)
+                .filter(|(id, _, to)| *to == node_id && !self.is_relationship_deleted(*id))
                 .count()
         } else {
             types
                 .iter()
                 .filter_map(|t| self.created_rels_by_type.get(t))
                 .flat_map(|v| v.iter())
-                .filter(|(_, _, to)| *to == node_id)
+                .filter(|(id, _, to)| *to == node_id && !self.is_relationship_deleted(*id))
                 .count()
         }
     }
 
     /// Count pending-created relationships whose source is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
+    /// An edge created and deleted since the last commit is not counted, here or in
+    /// [`Self::pending_deleted_outdegree`].
     #[must_use]
     pub fn pending_outdegree(
         &self,
@@ -1232,21 +1236,23 @@ impl Pending {
             self.created_rels_by_type
                 .values()
                 .flat_map(|v| v.iter())
-                .filter(|(_, from, _)| *from == node_id)
+                .filter(|(id, from, _)| *from == node_id && !self.is_relationship_deleted(*id))
                 .count()
         } else {
             types
                 .iter()
                 .filter_map(|t| self.created_rels_by_type.get(t))
                 .flat_map(|v| v.iter())
-                .filter(|(_, from, _)| *from == node_id)
+                .filter(|(id, from, _)| *from == node_id && !self.is_relationship_deleted(*id))
                 .count()
         }
     }
 
     /// Count pending-deleted relationships whose destination is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Requires access to the graph to resolve relationship type IDs.
+    /// Only committed edges are counted: an edge created since the last commit
+    /// has no endpoints in the graph yet, and is already left out of
+    /// [`Self::pending_indegree`].
     #[must_use]
     pub fn pending_deleted_indegree(
         &self,
@@ -1257,6 +1263,12 @@ impl Pending {
         self.deleted_relationships
             .iter()
             .filter(|rel_id| {
+                if self
+                    .created_rel_types
+                    .contains_key(&RelationshipId::from(*rel_id))
+                {
+                    return false;
+                }
                 let (_from, to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
                 to == node_id
                     && (types.is_empty()
@@ -1268,7 +1280,9 @@ impl Pending {
 
     /// Count pending-deleted relationships whose source is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Requires access to the graph to resolve relationship type IDs.
+    /// Only committed edges are counted: an edge created since the last commit
+    /// has no endpoints in the graph yet, and is already left out of
+    /// [`Self::pending_outdegree`].
     #[must_use]
     pub fn pending_deleted_outdegree(
         &self,
@@ -1279,6 +1293,12 @@ impl Pending {
         self.deleted_relationships
             .iter()
             .filter(|rel_id| {
+                if self
+                    .created_rel_types
+                    .contains_key(&RelationshipId::from(*rel_id))
+                {
+                    return false;
+                }
                 let (from, _to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
                 from == node_id
                     && (types.is_empty()
