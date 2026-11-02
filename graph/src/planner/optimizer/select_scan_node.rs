@@ -334,11 +334,13 @@ fn is_planner_scan_subtree(
 fn planner_scan_alias(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
-) -> Option<u32> {
+) -> Option<(u32, u32)> {
     let mut node = plan.node(idx);
     loop {
         match node.data() {
-            IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => return Some(n.alias.id),
+            IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => {
+                return Some((n.alias.id, n.alias.scope_id));
+            }
             IR::Filter(_) | IR::IncludePending { .. } if node.num_children() == 1 => {
                 node = node.child(0);
             }
@@ -552,7 +554,9 @@ fn select_var_len_scan_node(
             continue;
         }
         let child_idx = node.child(0).idx();
-        if planner_scan_alias(optimized_plan, child_idx) != Some(relationship.from.alias.id) {
+        if planner_scan_alias(optimized_plan, child_idx)
+            != Some((relationship.from.alias.id, relationship.from.alias.scope_id))
+        {
             continue;
         }
         let from = relationship.from.clone();
@@ -1321,8 +1325,9 @@ pub(super) fn select_scan_node(
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
                         let filters = filters_of(optimized_plan, child_idx);
                         if has_planner_scan
-                            && planner_scan_alias(optimized_plan, child_idx)
-                                .is_some_and(|alias| alias != scan_node.alias.id)
+                            && planner_scan_alias(optimized_plan, child_idx).is_some_and(|alias| {
+                                alias != (scan_node.alias.id, scan_node.alias.scope_id)
+                            })
                         {
                             (vec![], filters)
                         } else {

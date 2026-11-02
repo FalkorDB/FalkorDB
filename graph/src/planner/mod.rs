@@ -650,7 +650,7 @@ fn lift_cross_entity_attrs(
     pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
     visited: &HashSet<(u32, u32)>,
     lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
-    lifted_rels: &mut HashSet<u32>,
+    lifted_rels: &mut HashSet<(u32, u32)>,
 ) -> Option<QueryGraph<Arc<String>, Arc<String>, Variable>> {
     let pending: HashSet<(u32, u32)> = pattern
         .variables()
@@ -717,7 +717,7 @@ fn lift_cross_entity_attrs(
             None
         };
         if attrs.is_some() {
-            lifted_rels.insert(rel.alias.id);
+            lifted_rels.insert((rel.alias.id, rel.alias.scope_id));
         }
         hops.push((from, to, attrs));
     }
@@ -2014,7 +2014,7 @@ impl Planner {
         let mut bound_filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
         // Relationships whose attrs were lifted: the Filter reads the edge, so
         // the traversal must emit every parallel edge for it to test.
-        let mut lifted_rels: HashSet<u32> = HashSet::new();
+        let mut lifted_rels: HashSet<(u32, u32)> = HashSet::new();
         let lifted =
             lift_cross_entity_attrs(pattern, &self.visited, &mut bound_filters, &mut lifted_rels);
         let pattern = lifted.as_ref().unwrap_or(pattern);
@@ -2190,7 +2190,7 @@ impl Planner {
                     .name
                     .as_ref()
                     .is_some_and(|n| n.starts_with("_anon"))
-                    || lifted_rels.contains(&rel.alias.id)
+                    || lifted_rels.contains(&(rel.alias.id, rel.alias.scope_id))
                     || component
                         .paths()
                         .iter()

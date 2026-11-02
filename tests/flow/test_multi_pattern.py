@@ -108,6 +108,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
     # allocated ~20 GB.
     def test07_multi_branch_cartesian_product_is_streamed(self):
         g = self.db.select_graph("multi_pattern_stream")
+        self.env.cmd("DEL", g.name)
         g.query("UNWIND range(0, 1000) AS x CREATE ({v: x})")
 
         q = "MATCH (a), (b), (c), (d) RETURN *"
@@ -172,6 +173,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         # Relationship uniqueness holds within one MATCH clause, not across
         # consecutive ones (#2534, #3347, #2217).
         g = self.db.select_graph("multi_pattern_uniqueness")
+        self.env.cmd("DEL", g.name)
         g.query("CREATE (:A {id:1})-[:R]->(:B {id:2})")
         cases = [
             ("MATCH (a)-[r1:R]->(b) MATCH (a)-[r2:R]->(b) RETURN id(r1), id(r2)", [[0, 0]]),
@@ -193,6 +195,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         # The components of a later MATCH read the variables an earlier clause
         # bound, and are joined to it per row (#3393).
         g = self.db.select_graph("multi_pattern_later_match")
+        self.env.cmd("DEL", g.name)
         g.query("CREATE (v1:V {id:1}), (v2:V {id:2}), (v3:V {id:3}), (v1)-[:E]->(v2), (v2)-[:E]->(v3)")
         cases = [
             ("MATCH (u:V)-[r:E]->(v:V) MATCH (u)-[:E]-(x:V) RETURN count(*)", [[3]]),
@@ -216,6 +219,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
     def test11_create_clause_sees_variables_of_the_previous_create(self):
         # (#2654)
         g = self.db.select_graph("multi_pattern_create")
+        self.env.cmd("DEL", g.name)
         res = g.query("CREATE (a) CREATE (b {x: id(a)}) RETURN b.x, id(a)")
         self.env.assertEqual(res.result_set[0][0], res.result_set[0][1])
         self.env.assertEqual(res.nodes_created, 2)
@@ -230,6 +234,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         # The next MATCH must not be swallowed into the WHERE pattern
         # predicate of the one before it (#2502).
         g = self.db.select_graph("multi_pattern_where_predicate")
+        self.env.cmd("DEL", g.name)
         g.query("CREATE (a:A)-[:Q]->(:Z), (a)-[:R]->(m:M)-[:R]->(c:C), (m)-[:R]->(:C)")
         q = "MATCH (a:A) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m)-[:R]->(c) RETURN "
         self.env.assertEqual(g.query(q + "count(*)").result_set, [[2]])
