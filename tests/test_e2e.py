@@ -1839,12 +1839,23 @@ def test_boolean_operator_static_operand_type_3293():
         ("UNWIND [1, 2] AS x RETURN x ORDER BY false AND 1", "Integer"),
         ("UNWIND [1, 2] AS x WITH x ORDER BY true OR (1+2) RETURN x", "Integer"),
         ("RETURN false AND ([{a: 1}] + [2])", "List"),
+        # a standalone negated constant, and a call whose declared return type
+        # can be neither Boolean nor Null, in an ORDER BY expression
+        ("UNWIND [1, 2] AS x RETURN x ORDER BY false AND (-1)", "Integer"),
+        ("UNWIND [1, 2] AS x RETURN x ORDER BY true OR -1.5", "Float"),
+        ("UNWIND [1] AS x RETURN x ORDER BY false AND rand()", "Float"),
+        ("UNWIND [1] AS x RETURN x ORDER BY true OR timestamp()", "Integer"),
     ]:
         query_exception(q, f"Type mismatch: expected Boolean or Null but was {t}")
 
     # ORDER BY only rejects operands whose static type is known: a runtime-typed
     # subscript result is still accepted there.
     assert query("UNWIND [[true], [false]] AS xs RETURN xs ORDER BY xs[0] AND true").result_set == [[[False]], [[True]]]
+
+    # A nullable function result (declared Null-including) stays runtime-checked, in
+    # ORDER BY as in a projection; C rejects these only because it evaluates every operand.
+    assert query("UNWIND [1] AS x RETURN x ORDER BY false AND toString(null)").result_set == [[1]]
+    assert query("UNWIND [1] AS x RETURN x ORDER BY false AND toString(1)").result_set == [[1]]
 
     # A Null-valued constant expression is still a valid operand.
     res = query("RETURN false AND (null+1), true OR (1+null), false AND (null = 1)")
@@ -1892,6 +1903,13 @@ def test_boolean_operator_filter_contexts_short_circuit_3293():
     query_exception("RETURN [p = (a)-->() WHERE false AND 1 | p]", "Type mismatch")
     query_exception("RETURN [x IN [1] WHERE NOT 1]", "Type mismatch")
     query_exception("RETURN any(x IN [1] WHERE true AND 1)", "Type mismatch")
+    # Checked against C (#3605 review threads): a unary NOT is exempt like AND/OR
+    # (C accepts it over an empty list and fails only when evaluated), but a
+    # wrapper such as coalesce is a value context, so C rejects its operand even
+    # when it is never evaluated.
+    assert query("RETURN [x IN [] WHERE NOT 1]").result_set == [[[]]]
+    assert query("RETURN none(x IN [] WHERE NOT (1+2))").result_set == [[True]]
+    query_exception("RETURN [x IN [] WHERE coalesce(false AND (1+2), true)]", "Type mismatch")
     query_exception(
         "RETURN [x IN [1] | false AND (1+2)]",
         "Type mismatch: expected Boolean or Null but was Integer",

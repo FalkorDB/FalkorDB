@@ -2343,6 +2343,20 @@ impl Binder {
                         "Type mismatch: expected Boolean or Null but was {name}"
                     ));
                 }
+                // A call whose declared return type cannot be Boolean (and
+                // cannot be Null) is rejected, as the projection shape check
+                // does; ORDER BY skips that check so it needs this one.
+                if !check_shape
+                    && let ExprIR::FuncInvocation(func) = child.data()
+                    && !func.ret_type.can_return_boolean()
+                {
+                    return Err(match Self::type_name(&func.ret_type) {
+                        Some(name) => {
+                            format!("Type mismatch: expected Boolean or Null but was {name}")
+                        }
+                        None => String::from("Type mismatch: expected Boolean or Null"),
+                    });
+                }
                 if check_shape && !Self::expr_may_return_boolean(child) {
                     return Err(String::from("Type mismatch: expected Boolean or Null"));
                 }
@@ -2374,6 +2388,10 @@ impl Binder {
             ExprIR::Map | ExprIR::MapProjection => Some("Map"),
             ExprIR::Length => Some("Integer"),
             ExprIR::Constant(v) if !matches!(v, Value::Bool(_) | Value::Null) => Some(v.name()),
+            // A negated constant, like a negative literal, is a number.
+            ExprIR::Negate => Self::constant_value(node)
+                .filter(|v| !matches!(v, Value::Bool(_) | Value::Null))
+                .map(|v| v.name()),
             // Arithmetic over constants has a known result type; with any
             // runtime operand the result may be Null, so it stays unchecked.
             ExprIR::Add
@@ -2384,6 +2402,23 @@ impl Binder {
             | ExprIR::Modulo => Self::constant_arithmetic(node)
                 .filter(|v| !matches!(v, Value::Bool(_) | Value::Null))
                 .map(|v| v.name()),
+            _ => None,
+        }
+    }
+
+    /// The C spelling of a declared function return type, when it is a single
+    /// type; `None` for unions and the like.
+    fn type_name(ty: &Type) -> Option<&'static str> {
+        match ty {
+            Type::Int => Some("Integer"),
+            Type::Float => Some("Float"),
+            Type::String => Some("String"),
+            Type::List(_) => Some("List"),
+            Type::Map => Some("Map"),
+            Type::Node => Some("Node"),
+            Type::Relationship => Some("Edge"),
+            Type::Path => Some("Path"),
+            Type::Optional(inner) => Self::type_name(inner),
             _ => None,
         }
     }
