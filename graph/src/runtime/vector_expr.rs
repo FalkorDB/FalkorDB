@@ -230,7 +230,6 @@ impl<'a> VectorEval<'a> {
                     None => self.eval_per_row(node, batch, rows),
                 }
             }
-            ExprIR::Paren if node.num_children() == 1 => self.eval(&node.child(0), batch, rows),
             ExprIR::And => self.eval_and_or(node, batch, rows, false),
             ExprIR::Or => self.eval_and_or(node, batch, rows, true),
             ExprIR::Not if node.num_children() == 1 => {
@@ -454,7 +453,10 @@ impl<'a> VectorEval<'a> {
                         still_live.push(pos);
                     }
                     v => {
-                        return Err(format!("Type mismatch: expected Bool but was {v:?}"));
+                        return Err(format!(
+                            "Type mismatch: expected Boolean or Null but was {}",
+                            v.name()
+                        ));
                     }
                 }
             }
@@ -890,7 +892,14 @@ fn arithmetic(
             ExprIR::Add => Some((0..len).map(|i| a[i].wrapping_add(b[i])).collect()),
             ExprIR::Sub => Some((0..len).map(|i| a[i].wrapping_sub(b[i])).collect()),
             ExprIR::Mul => Some((0..len).map(|i| a[i].wrapping_mul(b[i])).collect()),
-            ExprIR::Div | ExprIR::Modulo if (0..len).all(|i| b[i] != 0 || nulls.is_null(i)) => {
+            // `i64::MIN / -1` is not representable: leave it to the scalar
+            // path, which raises the overflow error.
+            ExprIR::Div | ExprIR::Modulo
+                if (0..len).all(|i| b[i] != 0 || nulls.is_null(i))
+                    && (!matches!(op, ExprIR::Div)
+                        || (0..len)
+                            .all(|i| !(a[i] == i64::MIN && b[i] == -1) || nulls.is_null(i))) =>
+            {
                 let div = matches!(op, ExprIR::Div);
                 Some(
                     (0..len)
