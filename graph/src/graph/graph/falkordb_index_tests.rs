@@ -1219,12 +1219,12 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
         assert!(batch < 64, "the build stopped making progress");
         for (i, q) in node_queries.iter().enumerate() {
             if let Some(Err(scan_filter)) = g.query_index_numeric_nodes(&label, q) {
-                let attr = g
-                    .get_node_attribute_id(scan_filter.attribute())
-                    .expect("registered") as u16;
+                let scan_filter = scan_filter
+                    .resolve(|attr| g.get_node_attribute_id(attr).map(|attr| attr as u16))
+                    .expect("registered");
                 let ids = g
                     .get_nodes(&labels, 0)
-                    .filter(|&id| g.node_matches(id, attr, &scan_filter))
+                    .filter(|&id| g.node_matches(id, &scan_filter))
                     .map(u64::from)
                     .collect();
                 kept.push((false, i, sorted(ids)));
@@ -1232,13 +1232,16 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
         }
         for (i, q) in edge_queries.iter().enumerate() {
             if let Some(Err(scan_filter)) = g.query_index_numeric_edges(&ty, q) {
-                let attr = g
-                    .get_relationship_attribute_id(scan_filter.attribute())
-                    .expect("registered") as u16;
+                let scan_filter = scan_filter
+                    .resolve(|attr| {
+                        g.get_relationship_attribute_id(attr)
+                            .map(|attr| attr as u16)
+                    })
+                    .expect("registered");
                 let ids = g
                     .get_all_edges(&ty)
                     .into_iter()
-                    .filter(|&(_, _, edge)| g.relationship_matches(edge, attr, &scan_filter))
+                    .filter(|&(_, _, edge)| g.relationship_matches(edge, &scan_filter))
                     .map(|(_, _, edge)| u64::from(edge))
                     .collect();
                 kept.push((true, i, sorted(ids)));
@@ -4598,11 +4601,13 @@ fn building_scans_and_built_answers(
     let mut kept = Vec::new();
     loop {
         for (i, q) in queries.iter().enumerate() {
-            if let Some(Err(filter)) = g.query_index_numeric_nodes(label, q) {
-                let attr = g.get_node_attribute_id(filter.attribute());
+            if let Some(Err(scan_filter)) = g.query_index_numeric_nodes(label, q) {
+                let scan_filter = scan_filter
+                    .resolve(|attr| g.get_node_attribute_id(attr).map(|attr| attr as u16))
+                    .expect("registered");
                 let mut ids: Vec<u64> = g
                     .get_nodes(&labels, 0)
-                    .filter(|&id| attr.is_some_and(|attr| g.node_matches(id, attr as u16, &filter)))
+                    .filter(|&id| g.node_matches(id, &scan_filter))
                     .map(u64::from)
                     .collect();
                 ids.sort_unstable();
@@ -4718,4 +4723,78 @@ fn array_contains_is_routed_to_the_array_tree() {
         None,
         "a non-numeric probe is not this column's to answer"
     );
+}
+
+// --- Conjunctions while a column is building ---
+
+/// While columns are building, a conjunction is answered by a scan, and the scan keeps exactly
+/// what the built columns answer: on one attribute, the folded window; across attributes, the
+/// entities every attribute's window admits; and with an `= null` member or a null bound,
+/// nothing, as `= null` holds for nothing. A scan that checked only one attribute of a
+/// cross-attribute conjunction would keep rows the other excludes.
+#[test]
+fn a_building_columns_scan_keeps_what_a_conjunction_answers() {
+    let (a, b) = (Arc::new("a".to_string()), Arc::new("b".to_string()));
+    let (mut g, label, ids) = people_with(&a, &[1, 1, 2, 2, 1, 3, 1]);
+    for (i, &id) in ids.iter().enumerate() {
+        set_attr(&mut g, id, &b, Value::Int(10 * (i as i64 + 1)));
+    }
+    create_index_on(&mut g, &label, &a);
+    create_index_on(&mut g, &label, &b);
+    let range = |key: &Arc<String>, min: Option<i64>, max: Option<i64>| IndexQuery::Range {
+        key: key.clone(),
+        min: min.map(Value::Int),
+        max: max.map(Value::Int),
+        include_min: true,
+        include_max: true,
+    };
+    let null = |key: &Arc<String>| IndexQuery::Equal {
+        key: key.clone(),
+        value: Value::Null,
+    };
+    let null_bound = |key: &Arc<String>| IndexQuery::Range {
+        key: key.clone(),
+        min: Some(Value::Null),
+        max: Some(Value::Int(50)),
+        include_min: true,
+        include_max: true,
+    };
+    let queries = [
+        IndexQuery::And(vec![eq(&a, 1), range(&a, Some(1), None)]),
+        IndexQuery::And(vec![eq(&a, 1), range(&b, Some(21), None)]),
+        IndexQuery::And(vec![eq(&a, 1), null(&a)]),
+        IndexQuery::And(vec![null(&a), eq(&b, 10)]),
+        IndexQuery::And(vec![eq(&a, 1), null_bound(&a)]),
+        IndexQuery::And(vec![eq(&a, 1), null_bound(&b)]),
+        IndexQuery::And(vec![range(&a, Some(1), Some(2)), eq(&b, 30)]),
+        IndexQuery::And(vec![
+            IndexQuery::And(vec![eq(&a, 2)]),
+            range(&b, None, Some(40)),
+        ]),
+    ];
+
+    let (kept, built) = building_scans_and_built_answers(&mut g, &label, &queries);
+    assert_eq!(
+        built,
+        vec![
+            vec![ids[0], ids[1], ids[4], ids[6]],
+            vec![ids[4], ids[6]],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![ids[2]],
+            vec![ids[2], ids[3]],
+        ],
+        "the built columns themselves"
+    );
+    for i in 0..queries.len() {
+        assert!(
+            kept.iter().filter(|(j, _)| *j == i).count() >= 2,
+            "query {i}: scanned at more than one cursor"
+        );
+    }
+    for (i, scanned) in kept {
+        assert_eq!(scanned, built[i], "query {i}");
+    }
 }

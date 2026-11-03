@@ -4261,34 +4261,31 @@ impl Graph {
         }))
     }
 
-    /// Whether the scan standing in for a column still building keeps node `id`: whether its value
-    /// of `attr` matches `scan_filter`, so the built column would answer the query with it. `attr`
-    /// is the filter's attribute as [`Self::get_node_attribute_id`] resolves it, once per scan
-    /// rather than once per node. Reads the committed value, which is the one the column indexes.
+    /// Whether the scan standing in for columns still building keeps node `id`: whether its values
+    /// match `scan_filter`, so the built columns would answer the query with it. `scan_filter`'s
+    /// attributes are resolved by [`Self::get_node_attribute_id`] ([`ScanFilter::resolve`]), once
+    /// per scan rather than once per node. Reads the committed values, which are the ones the
+    /// columns index.
     #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub fn node_matches(
         &self,
         id: NodeId,
-        attr: u16,
-        scan_filter: &ScanFilter,
+        scan_filter: &ScanFilter<u16>,
     ) -> bool {
-        self.get_node_attribute_by_idx(id, attr)
-            .is_some_and(|value| scan_filter.matches(&value))
+        scan_filter.matches(|&attr| self.get_node_attribute_by_idx(id, attr))
     }
 
-    /// [`Self::node_matches`] for relationship `id`, with `attr` resolved by
+    /// [`Self::node_matches`] for relationship `id`, with `scan_filter`'s attributes resolved by
     /// [`Self::get_relationship_attribute_id`].
     #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub fn relationship_matches(
         &self,
         id: RelationshipId,
-        attr: u16,
-        scan_filter: &ScanFilter,
+        scan_filter: &ScanFilter<u16>,
     ) -> bool {
-        self.get_relationship_attribute_by_idx(id, attr)
-            .is_some_and(|value| scan_filter.matches(&value))
+        scan_filter.matches(|&attr| self.get_relationship_attribute_by_idx(id, attr))
     }
 
     /// The relationship counterpart of [`Self::is_indexed`].
