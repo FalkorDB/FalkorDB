@@ -60,9 +60,8 @@ pub trait BuildHost: Send + Sync {
         f: &mut dyn FnMut(&MvccGraph),
     ) -> bool;
 
-    /// Report what an operator should see: a batch that failed, which the builder retries, or one
-    /// its own exclusion should have ruled out. The default writes to stderr; the Redis host logs
-    /// it.
+    /// Report what an operator should see: a batch that failed, which the builder retries. The
+    /// default writes to stderr; the Redis host logs it.
     fn warn(
         &self,
         message: &str,
@@ -198,22 +197,6 @@ impl Drop for Reading<'_> {
     }
 }
 
-/// Report a batch that met another batch's commit on its index ([`Discarded::AnotherBatch`]): a
-/// bug in the builder's one chain per index. Once per process, so a bug that repeats does not
-/// flood the log.
-fn report_batch_race(
-    host: &dyn BuildHost,
-    id: &IndexId,
-) {
-    static REPORTED: AtomicBool = AtomicBool::new(false);
-    if !REPORTED.swap(true, Ordering::Relaxed) {
-        host.warn(&format!(
-            "native index: two indexer batches of {id:?} ran at once, and the later one published \
-             nothing. This is a bug in the index builder."
-        ));
-    }
-}
-
 /// One turn of index `id` of the graph `host` reaches, in `run`: one indexer batch, published. It
 /// reads as many entities as `sizing` gives for what the index's batches have read and the chain's
 /// `shift` ([`Sizing::batch`]). A batch larger than the floor publishes nothing if its commit
@@ -221,8 +204,7 @@ fn report_batch_race(
 ///
 /// The builder runs at most one turn per index at a time ([`Indexer`]). Two at once would still
 /// publish nothing wrong: the later commit finds the earlier batch on the index and publishes
-/// nothing ([`Discarded::AnotherBatch`]). That is a bug in the builder, which the turn reports
-/// through its host, once per process.
+/// nothing ([`Discarded::AnotherBatch`]).
 pub(crate) fn run_turn(
     host: &dyn BuildHost,
     id: &IndexId,
@@ -285,14 +267,9 @@ pub(crate) fn run_turn(
                 }
             }
             Ok(IndexerCommit::Discarded(Discarded::CatchUpTooLarge)) => Turn::TooLarge,
-            Ok(IndexerCommit::Discarded(why)) => {
-                if why == Discarded::AnotherBatch {
-                    report_batch_race(host, id);
-                }
-                Turn::Discarded {
-                    more: mvcc.read().index_building(id),
-                }
-            }
+            Ok(IndexerCommit::Discarded(_)) => Turn::Discarded {
+                more: mvcc.read().index_building(id),
+            },
             // Validation refused the version, or another was published while this commit ran,
             // which only a host publishing without its global lock allows. Retried.
             Err(e) => {
