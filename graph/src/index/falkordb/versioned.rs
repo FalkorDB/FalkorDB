@@ -55,6 +55,13 @@ pub(crate) enum IndexId {
 pub(crate) struct IndexEntry<K: VersionedIndex> {
     pub(crate) index: K,
     pub(crate) state: BuildState<K::Cursor>,
+    /// Which index this is: the version's count of indexes created when this one was. An index
+    /// dropped and created again under the same name has another.
+    pub(crate) generation: u64,
+    /// Indexer batches applied to this index. Only a batch moves it, so a batch's copy one ahead
+    /// of the published copy means no other batch committed on the index since the batch's
+    /// version was made.
+    pub(crate) indexer_commits: u64,
 }
 
 /// One indexer batch of index `name`: the work it read, and where the index's next batch resumes
@@ -63,6 +70,45 @@ pub(crate) struct IndexerBatch<K: VersionedIndex> {
     pub(crate) name: K::Name,
     pub(crate) work: K::Batch,
     pub(crate) next: Option<K::Cursor>,
+}
+
+/// An indexer batch of any kind, as the indexer's turn keeps it from the version it was applied
+/// to ([`Graph::indexer_prepare`]) to its commit
+/// ([`MvccGraph::commit_indexer_batch`](crate::graph::mvcc_graph::MvccGraph::commit_indexer_batch)).
+pub struct PreparedBatch(Prepared);
+
+/// [`PreparedBatch`] by kind.
+enum Prepared {
+    Column(IndexerBatch<IndexColumn>),
+}
+
+/// How an indexer batch went in: what its commit published, given what committed since its
+/// version was made ([`Graph::indexer_fit`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexerCommit {
+    /// Nothing committed since: the batch's version was published as it is.
+    Same,
+    /// Only other indexes' batches committed since: the batch's index was put into a new build
+    /// version of the published one, which was published.
+    Swap,
+    /// The batch's own work was discarded and nothing was published, for the reason given. The
+    /// index's next batch starts from the published index's cursor.
+    Discarded(Discarded),
+}
+
+/// Why an indexer batch's own work was discarded ([`IndexerCommit::Discarded`]): it published
+/// nothing, and the index's next batch starts from the published cursor. Nothing a writer
+/// committed is discarded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Discarded {
+    /// The index was dropped, or dropped and created again.
+    Gone,
+    /// A writer committed since: the batch read values it may have changed. Temporary: once a
+    /// batch can catch up on writers' changes, it merges them instead, and this goes.
+    Writers,
+    /// Another batch committed on the same index since. The builder runs one chain of batches per
+    /// index, so this is a bug in that exclusion, for the caller to report.
+    AnotherBatch,
 }
 
 /// What a kind of index does on each side of its lifecycle. The state those operations move is
@@ -127,8 +173,14 @@ impl<K: VersionedIndex> IndexEntry<K> {
     pub(crate) fn new(
         index: K,
         state: BuildState<K::Cursor>,
+        generation: u64,
     ) -> Self {
-        Self { index, state }
+        Self {
+            index,
+            state,
+            generation,
+            indexer_commits: 0,
+        }
     }
 
     /// Whether some entities are not indexed yet.
@@ -169,7 +221,24 @@ impl<K: VersionedIndex> IndexEntry<K> {
         }
         self.index.indexer_add(work);
         self.state = next.map_or(BuildState::Ready, |next| BuildState::Building { next });
+        self.indexer_commits += 1;
         true
+    }
+
+    /// Why this copy of an index, which an indexer batch moved on, cannot go in over `published`,
+    /// the published copy under its name: gone or created again (another generation), or moved
+    /// on by another batch since. `None` if it follows it: the same index, one batch ahead.
+    fn discarded_against(
+        &self,
+        published: Option<&Self>,
+    ) -> Option<Discarded> {
+        match published {
+            Some(published) if published.generation == self.generation => {
+                (published.indexer_commits + 1 != self.indexer_commits)
+                    .then_some(Discarded::AnotherBatch)
+            }
+            _ => Some(Discarded::Gone),
+        }
     }
 }
 
@@ -187,17 +256,86 @@ impl FalkorDbIndex {
 
 impl Graph {
     /// One indexer batch of index `id` on this version: read its next entities at the values this
-    /// version holds, at most `budget` of them, add them to the index and move its cursor. `false`,
-    /// changing nothing, if the index is not `Building`.
+    /// version holds, at most `budget` of them, add them to the index and move its cursor. Returns
+    /// the batch, for its commit, or `None`, changing nothing, if the index is not `Building`.
     pub(crate) fn indexer_prepare(
         &mut self,
         id: &IndexId,
         budget: usize,
-    ) -> bool {
+    ) -> Option<PreparedBatch> {
         match id {
             IndexId::Column(entity, key) => self
                 .prepare_batch::<IndexColumn>((*entity, key.clone()), budget)
-                .is_some(),
+                .map(|batch| PreparedBatch(Prepared::Column(batch))),
+        }
+    }
+
+    /// How `batch`, applied to this version, a build version of an older published one
+    /// ([`Self::new_build_version`]), fits `published`, the current one:
+    /// - its index was dropped or created again since, or another batch committed on it, or a
+    ///   writer committed: [`IndexerCommit::Discarded`];
+    /// - otherwise, nothing committed since: [`IndexerCommit::Same`];
+    /// - otherwise only other indexes' batches did: [`IndexerCommit::Swap`].
+    ///
+    /// Columns are the only kind of index, so this reads the batch's column entry directly. A
+    /// second kind adds a variant to [`Prepared`], and the `let` below becomes a `match` on it,
+    /// each arm asking these same questions of its kind's entry ([`VersionedIndex::entry`]). Once
+    /// the arms differ only in the kind, move their body into one function generic over
+    /// [`VersionedIndex`].
+    pub(crate) fn indexer_fit(
+        &self,
+        published: &Self,
+        batch: &PreparedBatch,
+    ) -> IndexerCommit {
+        let Prepared::Column(column) = &batch.0;
+        let Some(ours) = IndexColumn::entry(&self.falkordb_index, &column.name) else {
+            return IndexerCommit::Discarded(Discarded::Gone);
+        };
+        let theirs = IndexColumn::entry(&published.falkordb_index, &column.name);
+        if let Some(why) = ours.discarded_against(theirs) {
+            return IndexerCommit::Discarded(why);
+        }
+        if published.version != self.version {
+            return IndexerCommit::Discarded(Discarded::Writers);
+        }
+        // No writer committed, so only batches can have changed an index since, and none did if
+        // none was published.
+        if published
+            .falkordb_index
+            .batch_published_since(&self.falkordb_index)
+        {
+            IndexerCommit::Swap
+        } else {
+            IndexerCommit::Same
+        }
+    }
+
+    /// A new build version of `published` with `batch`'s index as this version has it, in place
+    /// of its own: for a batch that only other indexes' batches committed after
+    /// ([`IndexerCommit::Swap`]).
+    pub(crate) fn with_batch_index(
+        &self,
+        published: &Self,
+        batch: &PreparedBatch,
+    ) -> Self {
+        let mut version = published.new_build_version();
+        match &batch.0 {
+            Prepared::Column(batch) => version.take_index::<IndexColumn>(self, &batch.name),
+        }
+        version
+    }
+
+    /// Put index `name` as `from` has it in place of this version's copy.
+    fn take_index<K: VersionedIndex>(
+        &mut self,
+        from: &Self,
+        name: &K::Name,
+    ) {
+        if let (Some(theirs), Some(ours)) = (
+            K::entry(&from.falkordb_index, name),
+            K::entry_mut(&mut self.falkordb_index, name),
+        ) {
+            *ours = theirs.clone();
         }
     }
 
