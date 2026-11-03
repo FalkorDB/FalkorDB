@@ -329,11 +329,10 @@ impl VersionedIndex for CchIndex {
     /// dispatches here.
     fn writer_record(
         &mut self,
-        _state: BuildState<()>,
+        _state: &mut BuildState<()>,
         _changes: CchDirty,
         _place: impl Fn(u64) -> Option<()>,
         _scratch: &mut (),
-        _written: &mut RoaringTreemap,
     ) {
         unreachable!("CCH is not dispatched through IndexId until the background build")
     }
@@ -342,7 +341,7 @@ impl VersionedIndex for CchIndex {
     /// CCH entry is held `Ready`.
     fn writer_rebase(
         &mut self,
-        _state: BuildState<()>,
+        _state: &BuildState<()>,
         _def: &CchIndexDef,
         _written: &RoaringTreemap,
         _published: &Graph,
@@ -355,7 +354,7 @@ impl VersionedIndex for CchIndex {
     /// batch commits on one.
     fn indexer_catch_up(
         &mut self,
-        _state: BuildState<()>,
+        _state: &BuildState<()>,
         _def: &CchIndexDef,
         _written: &RoaringTreemap,
         _batch_version: &Graph,

@@ -655,14 +655,10 @@ fn cursor(
     label: &Arc<String>,
     attr: &Arc<String>,
 ) -> Option<BuildCursor> {
-    match g
-        .falkordb_index
+    g.falkordb_index
         .column_state(entity, label, attr)
         .expect("the column exists")
-    {
-        BuildState::Building { next } => Some(next),
-        BuildState::Ready => None,
-    }
+        .next()
 }
 
 /// Column `(entity, label, attr)` as the ids it answers for each of `values`, plus all its ids in
@@ -2176,12 +2172,10 @@ fn check_rules(
             .filter_map(|(&id, &(person, v, w))| {
                 let value = if i == 0 { v } else { w };
                 let key = encode_numeric(&Value::Int(value?))?;
-                let below = match state {
-                    BuildState::Ready => true,
-                    BuildState::Building {
-                        next: BuildCursor::Node(next),
-                    } => id < u64::from(next),
-                    BuildState::Building { .. } => unreachable!("a node column"),
+                let below = match state.next() {
+                    None => true,
+                    Some(BuildCursor::Node(next)) => id < u64::from(next),
+                    Some(_) => unreachable!("a node column"),
                 };
                 (person && below).then_some((key, id))
             })
@@ -2207,12 +2201,11 @@ fn build_progress(
     match g
         .falkordb_index
         .column_state(EntityType::Node, label, attr)?
+        .next()
     {
-        BuildState::Ready => Some(u64::MAX),
-        BuildState::Building {
-            next: BuildCursor::Node(next),
-        } => Some(u64::from(next)),
-        BuildState::Building { .. } => unreachable!("a node column"),
+        None => Some(u64::MAX),
+        Some(BuildCursor::Node(next)) => Some(u64::from(next)),
+        Some(_) => unreachable!("a node column"),
     }
 }
 

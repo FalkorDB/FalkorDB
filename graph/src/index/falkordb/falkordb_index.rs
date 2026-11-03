@@ -164,7 +164,7 @@ impl IndexColumn {
     /// catch-up both do ([`VersionedIndex::writer_rebase`], [`VersionedIndex::indexer_catch_up`]).
     fn refresh(
         &mut self,
-        state: BuildState<BuildCursor>,
+        state: &BuildState<BuildCursor>,
         (entity, key): &(EntityType, IndexKey),
         written: &RoaringTreemap,
         from: &Graph,
@@ -181,8 +181,8 @@ impl IndexColumn {
             BuildState::Ready => {
                 graph_writes::entity_tuples(to, *entity, key, written, self, &mut adds);
             }
-            BuildState::Building { next } => {
-                let below = placed_below(written, *entity, next, to);
+            BuildState::Building { next, .. } => {
+                let below = placed_below(written, *entity, *next, to);
                 graph_writes::entity_tuples(to, *entity, key, &below, self, &mut adds);
             }
         }
@@ -277,14 +277,14 @@ impl VersionedIndex for IndexColumn {
     /// still go first.
     fn writer_record(
         &mut self,
-        state: BuildState<BuildCursor>,
+        state: &mut BuildState<BuildCursor>,
         mut log: Vec<IndexWrite>,
         place: impl Fn(u64) -> Option<BuildCursor>,
         (removes, adds): &mut (EncodedTuples, EncodedTuples),
-        written: &mut RoaringTreemap,
     ) {
-        if let BuildState::Building { next } = state {
-            written.extend(log.iter().map(|w| w.id));
+        if let BuildState::Building { next, written } = state {
+            written.by_this_version.extend(log.iter().map(|w| w.id));
+            let next = *next;
             // A batch reads an entity at or above the cursor when it reaches it, so its
             // additions go. They go before the collapse, so one cannot cancel an earlier
             // removal of the same tuple.
@@ -297,7 +297,7 @@ impl VersionedIndex for IndexColumn {
 
     fn writer_rebase(
         &mut self,
-        state: BuildState<BuildCursor>,
+        state: &BuildState<BuildCursor>,
         name: &(EntityType, IndexKey),
         written: &RoaringTreemap,
         published: &Graph,
@@ -308,7 +308,7 @@ impl VersionedIndex for IndexColumn {
 
     fn indexer_catch_up(
         &mut self,
-        state: BuildState<BuildCursor>,
+        state: &BuildState<BuildCursor>,
         name: &(EntityType, IndexKey),
         written: &RoaringTreemap,
         batch_version: &Graph,
@@ -562,9 +562,7 @@ impl FalkorDbIndex {
             label,
             attr,
             IndexColumn::Numeric(NumericIndex::new()),
-            BuildState::Building {
-                next: BuildCursor::new(entity),
-            },
+            BuildState::building(BuildCursor::new(entity)),
         );
     }
 
@@ -918,7 +916,8 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         attr: &Arc<String>,
     ) -> Option<BuildState<BuildCursor>> {
-        self.entry(entity, label, attr).map(|entry| entry.state)
+        self.entry(entity, label, attr)
+            .map(|entry| entry.state.clone())
     }
 }
 

@@ -36,13 +36,48 @@ use super::falkordb_index::{FalkorDbIndex, IndexColumn, IndexKey};
 /// tuple the unit removed and added back, as the reused id's new edge can, is still removed. This
 /// is how C populates an index (`src/index/index_construct.c`), in batches interleaved with
 /// writes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// While `Building`, the index also keeps which entities writers changed in it ([`Written`]), so a
+/// batch read before them, or a writer's fork made before a batch, can take them again. A `Ready`
+/// index keeps none.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum BuildState<C> {
     /// Some entities are not indexed yet — reads scan instead. `next` is where the next indexer
     /// batch resumes.
-    Building { next: C },
+    Building { next: C, written: Written },
     /// Every entity is indexed — the index serves reads.
     Ready,
+}
+
+impl<C: Copy> BuildState<C> {
+    /// `Building` from `next`, with no entity written yet.
+    pub(crate) fn building(next: C) -> Self {
+        Self::Building {
+            next,
+            written: Written::default(),
+        }
+    }
+
+    /// Where the next indexer batch resumes, or `None` once `Ready`.
+    pub(crate) fn next(&self) -> Option<C> {
+        match self {
+            Self::Building { next, .. } => Some(*next),
+            Self::Ready => None,
+        }
+    }
+}
+
+/// The entities writers changed in a `Building` index, every staged change counted, even one the
+/// cursor kept out.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Written {
+    /// Since a batch last committed on the index. A batch read before some of them were written
+    /// catches up on them at its commit ([`VersionedIndex::indexer_catch_up`]).
+    pub(crate) since_last_indexer_step: Arc<RoaringTreemap>,
+    /// By this version, until it is published. A writer whose fork batches have moved past
+    /// re-applies them as it escalates ([`VersionedIndex::writer_rebase`]); published, they join
+    /// `since_last_indexer_step`.
+    pub(crate) by_this_version: RoaringTreemap,
 }
 
 /// The name of any versioned index: what the builder's chains, a commit's report of what it created
@@ -65,15 +100,6 @@ pub(crate) struct IndexEntry<K: VersionedIndex> {
     /// of the published copy means no other batch committed on the index since the batch's
     /// version was made.
     pub(crate) indexer_commits: u64,
-    /// While `Building`: the entities writers changed in the index since a batch last committed
-    /// on it. A batch read before some of them were written catches up on them at its commit
-    /// ([`VersionedIndex::indexer_catch_up`]). Empty once `Ready`.
-    pub(crate) written_since_last_indexer_step: Arc<RoaringTreemap>,
-    /// While `Building`, until this version is published: the entities it changed in the index,
-    /// every staged change counted, even one the cursor kept out. A writer whose fork batches have
-    /// moved past re-applies them as it escalates ([`VersionedIndex::writer_rebase`]); published,
-    /// they join `written_since_last_indexer_step`.
-    pub(crate) written_by_this_version: RoaringTreemap,
 }
 
 /// One indexer batch of index `name`: the work it read, and where the index's next batch resumes
@@ -164,15 +190,14 @@ pub(crate) trait VersionedIndex: Clone + Sized {
     /// so a dropped addition cannot cancel an earlier removal of the same tuple ([`BuildState`]
     /// says why).
     ///
-    /// While `Building`, the id of every entity a change names goes into `written`, whether the
-    /// change is applied or not.
+    /// While `Building`, the id of every entity a change names goes into the state's
+    /// [`Written::by_this_version`], whether the change is applied or not.
     fn writer_record(
         &mut self,
-        state: BuildState<Self::Cursor>,
+        state: &mut BuildState<Self::Cursor>,
         changes: Self::Changes,
         place: impl Fn(u64) -> Option<Self::Cursor>,
         scratch: &mut Self::Scratch,
-        written: &mut RoaringTreemap,
     );
 
     /// Writer side, as it escalates: this is `published`'s copy of index `name`, which batches moved
@@ -181,7 +206,7 @@ pub(crate) trait VersionedIndex: Clone + Sized {
     /// `state` is `Building` only for an entity `fork` places below the cursor.
     fn writer_rebase(
         &mut self,
-        state: BuildState<Self::Cursor>,
+        state: &BuildState<Self::Cursor>,
         name: &Self::Name,
         written: &RoaringTreemap,
         published: &Graph,
@@ -195,7 +220,7 @@ pub(crate) trait VersionedIndex: Clone + Sized {
     /// cursor.
     fn indexer_catch_up(
         &mut self,
-        state: BuildState<Self::Cursor>,
+        state: &BuildState<Self::Cursor>,
         name: &Self::Name,
         written: &RoaringTreemap,
         batch_version: &Graph,
@@ -231,8 +256,6 @@ impl<K: VersionedIndex> IndexEntry<K> {
             state,
             generation,
             indexer_commits: 0,
-            written_since_last_indexer_step: Arc::default(),
-            written_by_this_version: RoaringTreemap::new(),
         }
     }
 
@@ -243,10 +266,7 @@ impl<K: VersionedIndex> IndexEntry<K> {
 
     /// Where the next indexer batch resumes, or `None` once the index is `Ready`.
     pub(crate) fn cursor(&self) -> Option<K::Cursor> {
-        match self.state {
-            BuildState::Building { next } => Some(next),
-            BuildState::Ready => None,
-        }
+        self.state.next()
     }
 
     /// Apply one unit of work's `changes`, as this index's state allows
@@ -257,13 +277,8 @@ impl<K: VersionedIndex> IndexEntry<K> {
         place: impl Fn(u64) -> Option<K::Cursor>,
         scratch: &mut K::Scratch,
     ) {
-        self.index.writer_record(
-            self.state,
-            changes,
-            place,
-            scratch,
-            &mut self.written_by_this_version,
-        );
+        self.index
+            .writer_record(&mut self.state, changes, place, scratch);
     }
 
     /// Add an indexer batch's `work`, read from this same version, then move the cursor to `next`,
@@ -278,25 +293,34 @@ impl<K: VersionedIndex> IndexEntry<K> {
             return false;
         }
         self.index.indexer_add(work);
-        self.state = next.map_or(BuildState::Ready, |next| BuildState::Building { next });
         self.indexer_commits += 1;
-        // The batch read every entity at this version's values, writers' changes included.
-        if !self.written_since_last_indexer_step.is_empty() {
-            self.written_since_last_indexer_step = Arc::default();
+        match (next, &mut self.state) {
+            (
+                Some(next),
+                BuildState::Building {
+                    next: cursor,
+                    written,
+                },
+            ) => {
+                *cursor = next;
+                // The batch read every entity at this version's values, writers' changes included.
+                if !written.since_last_indexer_step.is_empty() {
+                    written.since_last_indexer_step = Arc::default();
+                }
+            }
+            _ => self.state = BuildState::Ready,
         }
         true
     }
 
     /// Ready this copy to be published: while `Building`, the entities this version changed join
-    /// `written_since_last_indexer_step`; once `Ready`, neither set is kept.
+    /// [`Written::since_last_indexer_step`].
     pub(crate) fn publish(&mut self) {
-        let written = std::mem::take(&mut self.written_by_this_version);
-        if self.is_building() {
-            if !written.is_empty() {
-                *Arc::make_mut(&mut self.written_since_last_indexer_step) |= written;
+        if let BuildState::Building { written, .. } = &mut self.state {
+            let mine = std::mem::take(&mut written.by_this_version);
+            if !mine.is_empty() {
+                *Arc::make_mut(&mut written.since_last_indexer_step) |= mine;
             }
-        } else if !self.written_since_last_indexer_step.is_empty() {
-            self.written_since_last_indexer_step = Arc::default();
         }
     }
 
@@ -433,14 +457,15 @@ impl Graph {
         ) else {
             return;
         };
+        let none = Arc::default();
+        let written = match &theirs.state {
+            BuildState::Building { written, .. } => &written.since_last_indexer_step,
+            BuildState::Ready => &none,
+        };
         let mut caught = ours.clone();
-        caught.index.indexer_catch_up(
-            caught.state,
-            name,
-            &theirs.written_since_last_indexer_step,
-            batch_version,
-            published,
-        );
+        caught
+            .index
+            .indexer_catch_up(&caught.state, name, written, batch_version, published);
         if let Some(slot) = K::entry_mut(&mut self.falkordb_index, name) {
             *slot = caught;
         }
@@ -513,12 +538,20 @@ impl Graph {
         ) else {
             return;
         };
-        let written = ours.written_by_this_version.clone();
+        let BuildState::Building { written, .. } = &ours.state else {
+            return;
+        };
+        let written = written.by_this_version.clone();
         let mut rebased = theirs.clone();
         rebased
             .index
-            .writer_rebase(rebased.state, name, &written, published, self);
-        rebased.written_by_this_version = written;
+            .writer_rebase(&rebased.state, name, &written, published, self);
+        if let BuildState::Building {
+            written: theirs, ..
+        } = &mut rebased.state
+        {
+            theirs.by_this_version = written;
+        }
         if let Some(slot) = K::entry_mut(&mut self.falkordb_index, name) {
             *slot = rebased;
         }
