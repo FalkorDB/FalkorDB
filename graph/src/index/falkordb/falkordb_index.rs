@@ -209,7 +209,8 @@ fn placed_below(
         BuildCursor::Edge { .. } => written
             .iter()
             .filter(|&id| {
-                BuildCursor::from_id(entity, id, &version.edge_endpoints)
+                version
+                    .build_place(entity, id)
                     .is_some_and(|at| at.precedes(next))
             })
             .collect(),

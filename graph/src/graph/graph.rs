@@ -454,7 +454,7 @@ pub struct Graph {
     /// 6 bytes per edge on a graph of millions of nodes rather than a flat 8 —
     /// and it has no ceiling, where the previous `(src << 32) | dst` packing
     /// refused any node id past 2^32.
-    pub(crate) edge_endpoints: Arc<EndpointIndex>,
+    edge_endpoints: Arc<EndpointIndex>,
     /// The graph's one attribute-name dictionary: name → id and id → name, shared by
     /// both stores below so an id means the same attribute everywhere it appears — in a
     /// span, the RDB, a `GRAPH.EFFECT`, or a compact reply.
@@ -3871,6 +3871,17 @@ impl Graph {
             self.node_indexer.write_lock(),
             self.edge_indexer.write_lock(),
         )
+    }
+
+    /// Where entity `id` sits in this version's build order ([`BuildCursor::from_id`]): a node by
+    /// its id, an edge by its endpoints. `None` for an edge this version does not have.
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) fn build_place(
+        &self,
+        entity: EntityType,
+        id: u64,
+    ) -> Option<BuildCursor> {
+        BuildCursor::from_id(entity, id, &self.edge_endpoints)
     }
 
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
