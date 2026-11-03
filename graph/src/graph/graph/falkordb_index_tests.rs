@@ -4,14 +4,19 @@
 
 use super::{Graph, NodeId, RelationshipId};
 use crate::entity_type::EntityType;
+use crate::graph::mvcc_graph::MvccGraph;
 use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::BuildCursor;
 use crate::index::falkordb::graph_writes;
-use crate::index::falkordb::versioned::BuildState;
+use crate::index::falkordb::versioned::{
+    BuildState, Discarded, IndexId, IndexerCommit, PreparedBatch,
+};
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
+use crate::runtime::orderset::OrderSet;
 use crate::runtime::value::Value;
+use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -175,9 +180,11 @@ fn create_index_builds_the_column_from_live_nodes() {
         Some(BuildState::Ready)
     );
     assert!(
-        g.falkordb_index
-            .query_numeric(EntityType::Node, &label, &eq(&attr, 20))
-            .is_some(),
+        matches!(
+            g.falkordb_index
+                .query_numeric(EntityType::Node, &label, &eq(&attr, 20)),
+            Some(Ok(_))
+        ),
         "a Ready column serves reads"
     );
 
@@ -279,7 +286,10 @@ fn create_index_builds_the_column_from_live_edges() {
     assert_eq!(
         g.falkordb_index
             .query_numeric(EntityType::Relationship, &ty, &eq(&attr, 2))
-            .map(Iterator::collect::<Vec<u64>>),
+            .map(|answer| match answer {
+                Ok(rows) => rows.collect::<Vec<u64>>(),
+                Err(_) => panic!("a Ready column answered with a ScanFilter"),
+            }),
         Some(vec![eids[1]]),
         "a Ready column serves reads"
     );
@@ -1079,6 +1089,146 @@ fn any_batch_size_builds_the_one_pass_column() {
     }
 }
 
+/// While a column is building, a read of it scans, and the scan keeps what the built column will
+/// answer: at every cursor a build passes through, for nodes and for edges, for each shape a
+/// column serves. The planner drops the predicate it hands an index scan, so nothing else checks
+/// the scan's rows; a scan that kept them all would return every entity of the label. `= null`,
+/// and a range with a null bound, hold for nothing, and are answered with no rows rather than
+/// declined.
+#[test]
+fn a_building_columns_scan_keeps_what_the_built_column_answers() {
+    let (mut g, label, v, ty, w) = scan_fixture();
+    let int = Value::Int;
+    let range = |key: &Arc<String>, min: Option<i64>, max: Option<i64>, inclusive: bool| {
+        IndexQuery::Range {
+            key: key.clone(),
+            min: min.map(int),
+            max: max.map(int),
+            include_min: inclusive,
+            include_max: inclusive,
+        }
+    };
+    let in_list = |key: &Arc<String>, values: &[Value]| IndexQuery::InList {
+        key: key.clone(),
+        list: Value::List(Arc::new(values.iter().cloned().collect())),
+    };
+    let equal = |key: &Arc<String>, value: Value| IndexQuery::Equal {
+        key: key.clone(),
+        value,
+    };
+    let bounds = |key: &Arc<String>, min: Value, max: Value| IndexQuery::Range {
+        key: key.clone(),
+        min: Some(min),
+        max: Some(max),
+        include_min: true,
+        include_max: true,
+    };
+    // Node `v` is `10 * id` over ids 0..10 with node 4 deleted; edge `w` is 0..8.
+    let node_queries = [
+        eq(&v, 30),
+        eq(&v, 40),
+        eq(&v, 35),
+        equal(&v, Value::Float(30.0)),
+        equal(&v, Value::Null),
+        range(&v, Some(20), Some(60), true),
+        range(&v, Some(20), Some(60), false),
+        range(&v, Some(50), None, true),
+        range(&v, None, Some(30), false),
+        bounds(&v, Value::Null, int(60)),
+        bounds(&v, int(20), Value::Null),
+        in_list(&v, &[int(10), int(70), int(70), int(1000)]),
+        IndexQuery::Or(vec![
+            eq(&v, 0),
+            in_list(&v, &[int(90)]),
+            equal(&v, Value::Null),
+        ]),
+    ];
+    let edge_queries = [
+        eq(&w, 3),
+        equal(&w, Value::Null),
+        range(&w, Some(2), Some(5), true),
+        bounds(&w, Value::Null, int(5)),
+        in_list(&w, &[int(0), int(7)]),
+        IndexQuery::Or(vec![eq(&w, 1), eq(&w, 7)]),
+        IndexQuery::Or(vec![eq(&w, 1), equal(&w, Value::Null)]),
+    ];
+    let labels: OrderSet<Arc<String>> = std::iter::once(label.clone()).collect();
+    let sorted = |mut ids: Vec<u64>| {
+        ids.sort_unstable();
+        ids
+    };
+
+    // What each scan kept, at every cursor: `(edge?, query, kept)`.
+    let mut kept: Vec<(bool, usize, Vec<u64>)> = Vec::new();
+    // Ten nodes and eight edges, two per batch: a build that stops moving fails here rather than
+    // looping forever.
+    for batch in 0.. {
+        assert!(batch < 64, "the build stopped making progress");
+        for (i, q) in node_queries.iter().enumerate() {
+            if let Some(Err(scan_filter)) = g.query_index_numeric_nodes(&label, q) {
+                let attr = g
+                    .get_node_attribute_id(scan_filter.attribute())
+                    .expect("registered") as u16;
+                let ids = g
+                    .get_nodes(&labels, 0)
+                    .filter(|&id| g.node_matches(id, attr, &scan_filter))
+                    .map(u64::from)
+                    .collect();
+                kept.push((false, i, sorted(ids)));
+            }
+        }
+        for (i, q) in edge_queries.iter().enumerate() {
+            if let Some(Err(scan_filter)) = g.query_index_numeric_edges(&ty, q) {
+                let attr = g
+                    .get_relationship_attribute_id(scan_filter.attribute())
+                    .expect("registered") as u16;
+                let ids = g
+                    .get_all_edges(&ty)
+                    .into_iter()
+                    .filter(|&(_, _, edge)| g.relationship_matches(edge, attr, &scan_filter))
+                    .map(|(_, _, edge)| u64::from(edge))
+                    .collect();
+                kept.push((true, i, sorted(ids)));
+            }
+        }
+        if !g.falkordb_index.has_building_columns() {
+            break;
+        }
+        graph_writes::run_indexer_batch(&mut g, 2);
+    }
+    for edges in [false, true] {
+        let queries = if edges {
+            edge_queries.len()
+        } else {
+            node_queries.len()
+        };
+        for i in 0..queries {
+            assert!(
+                kept.iter()
+                    .filter(|&&(e, j, _)| e == edges && j == i)
+                    .count()
+                    >= 2,
+                "edges={edges}, query {i}: scanned at more than one cursor"
+            );
+        }
+    }
+
+    for (edges, i, scanned) in kept {
+        let built = if edges {
+            match g.query_index_numeric_edges(&ty, &edge_queries[i]) {
+                Some(Ok(rows)) => rows.map(|(_, _, edge)| u64::from(edge)).collect(),
+                _ => panic!("edge query {i}: a built column serves it"),
+            }
+        } else {
+            match g.query_index_numeric_nodes(&label, &node_queries[i]) {
+                Some(Ok(rows)) => rows.map(u64::from).collect(),
+                _ => panic!("node query {i}: a built column serves it"),
+            }
+        };
+        assert_eq!(scanned, sorted(built), "edges={edges}, query {i}");
+    }
+}
+
 /// A node batch reads its size and no more: after each batch the column holds exactly the nodes
 /// read so far, all of them below the cursor, so nine nodes take exactly `ceil(9 / batch)` batches,
 /// the last of which flips the column `Ready`. A batch that read further than it moved the cursor
@@ -1427,4 +1577,216 @@ fn set_then_delete_in_one_batch_leaves_no_entry() {
         vec![ids[1]],
         "the untouched node is all that is left"
     );
+}
+
+// --- Indexer batch commits ---
+
+/// An MVCC graph of `:Person` nodes with `v` = each of `values`, and a `Building` column on
+/// `(:Person, v)`.
+fn mvcc_building(values: &[i64]) -> (MvccGraph, Arc<String>, Arc<String>, Vec<u64>) {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, values);
+    create_index_on(&mut g, &label, &attr);
+    (MvccGraph::from_graph(g), label, attr, ids)
+}
+
+/// An indexer batch of at most `budget` entities of index `id`, applied to a new build version of
+/// `mvcc`'s published one, as the indexer's turn prepares it: the version and the batch.
+fn prepare(
+    mvcc: &MvccGraph,
+    id: &IndexId,
+    budget: usize,
+) -> (Arc<AtomicRefCell<Graph>>, PreparedBatch) {
+    let version = Arc::new(AtomicRefCell::new(mvcc.read().borrow().new_build_version()));
+    let batch = version
+        .borrow_mut()
+        .indexer_prepare(id, budget)
+        .expect("the index is Building");
+    (version, batch)
+}
+
+/// One writer's unit of work on `mvcc`: fork, `write` into the fork, commit it.
+fn commit_write(
+    mvcc: &mut MvccGraph,
+    write: impl FnOnce(&mut Graph),
+) {
+    let fork = mvcc.fork();
+    write(&mut fork.borrow_mut());
+    mvcc.commit(fork).expect("the write commits");
+}
+
+/// With nothing committed since its version was made, an indexer batch publishes that version
+/// itself. The batch changes no data, so the data version stays.
+#[test]
+fn an_indexer_batch_with_nothing_committed_since_publishes_its_version() {
+    let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let data_version = mvcc.read().borrow().version;
+
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    let published = mvcc.read();
+    assert!(Arc::ptr_eq(&published, &prepared), "its own version");
+    let published = published.borrow();
+    assert_eq!(published.version, data_version, "the data version stays");
+    assert_eq!(
+        cursor(&published, EntityType::Node, &label, &attr),
+        Some(BuildCursor::Node(NodeId::from(ids[2])))
+    );
+    assert_eq!(
+        range_scan(&published, &label, &attr, 0, 100),
+        ids[..2].to_vec()
+    );
+}
+
+/// When only another index's batch committed since, an indexer batch puts its column into a new
+/// build version of the published one: both batches' progress is kept.
+#[test]
+fn an_indexer_batch_after_another_columns_batch_swaps_its_column_in() {
+    let (g, label, v, ty, w) = scan_fixture();
+    let mut mvcc = MvccGraph::from_graph(g);
+    let nodes = IndexId::Column(EntityType::Node, (label.clone(), v.clone()));
+    let edges = IndexId::Column(EntityType::Relationship, (ty.clone(), w.clone()));
+
+    let (node_version, node_batch) = prepare(&mvcc, &nodes, 3);
+    let (edge_version, edge_batch) = prepare(&mvcc, &edges, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&edge_version, &edge_batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert_eq!(
+        mvcc.commit_indexer_batch(&node_version, &node_batch),
+        Ok(IndexerCommit::Swap)
+    );
+
+    let published = mvcc.read();
+    assert!(!Arc::ptr_eq(&published, &node_version));
+    let published = published.borrow();
+    for (entity, l, a, version) in [
+        (EntityType::Node, &label, &v, &node_version),
+        (EntityType::Relationship, &ty, &w, &edge_version),
+    ] {
+        let version = version.borrow();
+        assert_eq!(
+            cursor(&published, entity, l, a),
+            cursor(&version, entity, l, a),
+            "{entity:?}"
+        );
+        assert_eq!(
+            contents(&published, entity, l, a, &[]),
+            contents(&version, entity, l, a, &[]),
+            "{entity:?}"
+        );
+        assert!(cursor(&published, entity, l, a).is_some(), "{entity:?}");
+    }
+}
+
+/// An indexer batch whose column a writer dropped, or dropped and created again, since its
+/// version was made publishes nothing. A column created again starts its build over: its next
+/// batch reads from the first node.
+#[test]
+fn an_indexer_batch_on_a_dropped_or_recreated_column_publishes_nothing() {
+    for recreate in [false, true] {
+        let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30]);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let (prepared, batch) = prepare(&mvcc, &id, 2);
+        commit_write(&mut mvcc, |g| {
+            drop_index_on(g, &label, &attr);
+            if recreate {
+                create_index_on(g, &label, &attr);
+            }
+        });
+
+        let before = mvcc.read();
+        assert_eq!(
+            mvcc.commit_indexer_batch(&prepared, &batch),
+            Ok(IndexerCommit::Discarded(Discarded::Gone)),
+            "recreate {recreate}"
+        );
+        assert!(Arc::ptr_eq(&mvcc.read(), &before), "nothing published");
+
+        if recreate {
+            let (prepared, batch) = prepare(&mvcc, &id, 2);
+            assert_eq!(
+                mvcc.commit_indexer_batch(&prepared, &batch),
+                Ok(IndexerCommit::Same)
+            );
+            assert_eq!(
+                range_scan(&mvcc.read().borrow(), &label, &attr, 0, 100),
+                ids[..2].to_vec(),
+                "the build starts over"
+            );
+        }
+    }
+}
+
+/// An indexer batch read on a version a writer has since moved past publishes nothing: it read
+/// values the writer may have changed. The next batch reads the writer's values.
+#[test]
+fn an_indexer_batch_after_a_writer_publishes_nothing() {
+    let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    commit_write(&mut mvcc, |g| set_attr(g, ids[0], &attr, Value::Int(15)));
+
+    let before = mvcc.read();
+    assert_eq!(
+        mvcc.commit_indexer_batch(&prepared, &batch),
+        Ok(IndexerCommit::Discarded(Discarded::Writers))
+    );
+    assert!(Arc::ptr_eq(&mvcc.read(), &before), "nothing published");
+
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    let published = mvcc.read();
+    assert_eq!(
+        range_scan(&published.borrow(), &label, &attr, 15, 15),
+        vec![ids[0]],
+        "the writer's value"
+    );
+    assert!(range_scan(&published.borrow(), &label, &attr, 10, 10).is_empty());
+}
+
+/// Two indexer batches read from one version on the same column: the first publishes, the second
+/// finds the first in its way and publishes nothing. One chain of batches per column rules this
+/// out; the commit says so, for the builder to report.
+#[test]
+fn of_two_indexer_batches_on_one_column_only_the_first_publishes() {
+    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let (first, first_batch) = prepare(&mvcc, &id, 1);
+    let (second, second_batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&first, &first_batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert_eq!(
+        mvcc.commit_indexer_batch(&second, &second_batch),
+        Ok(IndexerCommit::Discarded(Discarded::AnotherBatch))
+    );
+    assert!(
+        Arc::ptr_eq(&mvcc.read(), &first),
+        "the first batch's version"
+    );
+}
+
+/// An indexer batch's commit keeps the data version, so a writer's fork made before it is not
+/// stale.
+#[test]
+fn a_fork_made_before_an_indexer_batch_commit_is_not_stale() {
+    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let fork = mvcc.fork();
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert!(!mvcc.is_stale(&fork));
 }

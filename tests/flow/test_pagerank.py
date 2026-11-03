@@ -181,3 +181,12 @@ class testPagerank(FlowTestsBase):
         self.env.assertEqual(len(result), 1)
         self.env.assertEqual(result[0][0], 'a')
         self.env.assertAlmostEqual(result[0][1], 1.0, 1e-6)
+
+    def test_pagerank_unknown_label_or_relationship_type(self):
+        """An unknown label or relationship type selects nothing: no rows (as in C)"""
+
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1}), (:B {id:2})")
+        self.graph.query("MATCH (b:B) DELETE b")  # label B exists, no node has it
+        for args in ["'Nope', NULL", "NULL, 'Nope'", "'A', 'Nope'", "'B', NULL"]:
+            res = self.graph.query(f"CALL algo.pageRank({args}) YIELD node RETURN node").result_set
+            self.env.assertEqual(res, [])
