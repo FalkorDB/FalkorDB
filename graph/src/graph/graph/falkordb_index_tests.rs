@@ -3543,34 +3543,35 @@ fn a_turn_publishes_one_batch_and_says_whether_more_remain() {
 }
 
 /// A turn whose batch meets another batch's commit on its index publishes nothing
-/// ([`Discarded::AnotherBatch`]) and reports it through its host: a bug in the builder's one chain
-/// per index, which only a test makes happen. Once per process, so a second race reports nothing
-/// more. No other test races two batches through a turn.
+/// ([`Discarded::AnotherBatch`]), and its index goes on: a bug in the builder's one chain per
+/// index, which only a test makes happen. It reports nothing: the index is still built right. No
+/// other test races two batches through a turn.
 #[test]
-fn a_turn_that_meets_another_batch_on_its_index_reports_it_once() {
-    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30, 40]);
+fn a_turn_that_meets_another_batch_on_its_index_publishes_nothing() {
+    let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
     let host = TestHost::new(mvcc);
     let reach = HostRef(Arc::downgrade(&host));
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let run = Run::new();
-    for round in 0..2 {
-        let other = id.clone();
-        host.before_publish(move |mvcc| {
-            let (prepared, batch) = prepare(mvcc, &other, 1);
-            assert_eq!(
-                mvcc.commit_indexer_batch(&prepared, &batch),
-                Ok(IndexerCommit::Same)
-            );
-        });
+    let other = id.clone();
+    host.before_publish(move |mvcc| {
+        let (prepared, batch) = prepare(mvcc, &other, 1);
         assert_eq!(
-            run_turn(&reach, &id, &run, Sizing::fixed(1), 0),
-            Turn::Discarded { more: true },
-            "round {round}"
+            mvcc.commit_indexer_batch(&prepared, &batch),
+            Ok(IndexerCommit::Same)
         );
-    }
+    });
+    assert_eq!(
+        run_turn(&reach, &id, &run, Sizing::fixed(1), 0),
+        Turn::Discarded { more: true }
+    );
+    assert_eq!(
+        cursor(&host.mvcc.read().borrow(), EntityType::Node, &label, &attr),
+        Some(BuildCursor::Node(NodeId::from(ids[1]))),
+        "only the other batch published"
+    );
     let warnings = host.warnings.lock();
-    assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(warnings[0].contains("ran at once"), "{warnings:?}");
+    assert!(warnings.is_empty(), "{warnings:?}");
 }
 
 /// A turn whose index was dropped after its batch read it publishes nothing and ends its chain.
