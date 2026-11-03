@@ -3294,11 +3294,13 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
 
 /// A graph as the builder reaches it in these tests. A fair lock stands in for the host's global
 /// lock: a turn publishes holding it, and so does every writer here. `before_publish` runs once,
-/// holding it, just before the next turn's batch goes in.
+/// holding it, just before the next turn's batch goes in. `warnings` keeps what the builder
+/// reports through the host.
 struct TestHost {
     mvcc: MvccGraph,
     global: parking_lot::FairMutex<()>,
     before_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&MvccGraph) + Send>>>,
+    warnings: parking_lot::Mutex<Vec<String>>,
 }
 
 impl TestHost {
@@ -3307,6 +3309,7 @@ impl TestHost {
             mvcc,
             global: parking_lot::FairMutex::new(()),
             before_publish: parking_lot::Mutex::new(None),
+            warnings: parking_lot::Mutex::new(Vec::new()),
         })
     }
 
@@ -3349,6 +3352,15 @@ impl BuildHost for HostRef {
         }
         f(&host.mvcc);
         true
+    }
+
+    fn warn(
+        &self,
+        message: &str,
+    ) {
+        if let Some(host) = self.0.upgrade() {
+            host.warnings.lock().push(message.to_string());
+        }
     }
 }
 
@@ -3424,6 +3436,37 @@ fn a_turn_publishes_one_batch_and_says_whether_more_remain() {
         contents(&g, EntityType::Node, &label, &attr, &values),
         one_pass(&g, EntityType::Node, &label, &attr, &values)
     );
+}
+
+/// A turn whose batch meets another batch's commit on its index publishes nothing
+/// ([`Discarded::AnotherBatch`]) and reports it through its host: a bug in the builder's one chain
+/// per index, which only a test makes happen. Once per process, so a second race reports nothing
+/// more. No other test races two batches through a turn.
+#[test]
+fn a_turn_that_meets_another_batch_on_its_index_reports_it_once() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30, 40]);
+    let host = TestHost::new(mvcc);
+    let reach = HostRef(Arc::downgrade(&host));
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let run = Run::new();
+    for round in 0..2 {
+        let other = id.clone();
+        host.before_publish(move |mvcc| {
+            let (prepared, batch) = prepare(mvcc, &other, 1);
+            assert_eq!(
+                mvcc.commit_indexer_batch(prepared, &batch),
+                Ok(IndexerCommit::Same)
+            );
+        });
+        assert_eq!(
+            run_turn(&reach, &id, &run, Sizing::fixed(1), 0),
+            Turn::Discarded { more: true },
+            "round {round}"
+        );
+    }
+    let warnings = host.warnings.lock();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("ran at once"), "{warnings:?}");
 }
 
 /// A turn whose index was dropped after its batch read it publishes nothing and ends its chain.
