@@ -134,8 +134,8 @@ impl MvccGraph {
     /// Register how the background index builder reaches this graph, and start the build of every
     /// index the published version holds `Building`: one a commit brought in before any host was
     /// registered (a `CREATE INDEX` that created its graph's key, inside `MULTI`/`EXEC` or replayed
-    /// from the AOF), or one a stopped builder left unfinished. From then on, each commit that
-    /// brings in a `Building` index starts its build. The first host registered is kept.
+    /// from the AOF). From then on, each commit that brings in a `Building` index starts its
+    /// build. The first host registered is kept.
     #[cfg(feature = "index-falkordb")]
     pub fn set_build_host(
         &self,
