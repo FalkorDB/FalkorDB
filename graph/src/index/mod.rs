@@ -54,12 +54,13 @@ pub use text_index_options::TextIndexOptions;
 pub use vector_index_options::VectorIndexOptions;
 
 use std::{
-    collections::HashMap,
+    cell::{Cell, RefCell},
+    collections::{HashMap, VecDeque},
     ffi::{CStr, CString},
     hash::Hash,
-    marker::PhantomData,
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
+    rc::{Rc, Weak},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -333,37 +334,173 @@ impl IndexResult for (u64, u64, u64, f64) {
     }
 }
 
-/// Lazy iterator over one RediSearch query's results.
+/// One RediSearch query. While its C iterator is open it holds RediSearch's
+/// global read lock and the spec's read lock.
 ///
-/// Wraps the C `RSResultsIterator` and calls `RediSearch_ResultsIteratorNext`
-/// on each `.next()`. Frees the C iterator on `Drop`. `T` decodes each result:
-/// a node id or an edge triple, with or without the score.
-pub struct IndexResultsIter<T> {
-    iter: *mut RSResultsIterator,
-    /// Own a strong reference so the spec stays alive for the whole iteration,
-    /// even if a concurrent `DROP INDEX` runs. `None` for an empty iterator.
-    index: Option<OwnedIndex>,
-    _item: PhantomData<fn() -> T>,
+/// Shared by the iterator that reads it and the thread's list of open queries,
+/// on one thread only. `release` never runs inside `next`, so the cells are
+/// never borrowed twice.
+struct OpenQuery<T> {
+    /// Null once the query is read to its end or released.
+    iter: Cell<*mut RSResultsIterator>,
+    /// The spec of `iter`. Valid while `iter` is open.
+    spec: *mut RSIndex,
+    /// Keeps the spec alive while `iter` is open, even across a `DROP INDEX`.
+    index: Cell<Option<OwnedIndex>>,
+    /// Results that `release` read before it freed `iter`. Empty while `iter`
+    /// is open, so `next` reads it only after `iter` is null.
+    read: RefCell<VecDeque<T>>,
 }
 
-impl<T> IndexResultsIter<T> {
-    const fn open(
+impl<T: IndexResult> OpenQuery<T> {
+    #[inline]
+    fn next(&self) -> Option<T> {
+        let iter = self.iter.get();
+        if iter.is_null() {
+            return self.read.borrow_mut().pop_front();
+        }
+        self.read_next(iter)
+    }
+
+    /// Frees the iterator at its end, so a query read to its end holds no lock.
+    #[inline]
+    fn read_next(
+        &self,
+        iter: *mut RSResultsIterator,
+    ) -> Option<T> {
+        loop {
+            let mut key_len: usize = 0;
+            let key = unsafe { RediSearch_ResultsIteratorNext(iter, self.spec, &raw mut key_len) }
+                .cast::<u8>();
+            if key.is_null() {
+                self.free();
+                return None;
+            }
+            if let Some(item) = unsafe { T::decode(iter, key, key_len) } {
+                return Some(item);
+            }
+        }
+    }
+}
+
+impl<T> OpenQuery<T> {
+    fn free(&self) {
+        let iter = self.iter.replace(null_mut());
+        if !iter.is_null() {
+            unsafe { RediSearch_ResultsIteratorFree(iter) };
+        }
+        drop(self.index.take());
+    }
+}
+
+impl<T> Drop for OpenQuery<T> {
+    fn drop(&mut self) {
+        self.free();
+    }
+}
+
+trait ReleaseQuery {
+    /// Read the remaining results into the query and free its C iterator.
+    fn release(&self);
+}
+
+impl<T: IndexResult> ReleaseQuery for OpenQuery<T> {
+    fn release(&self) {
+        let iter = self.iter.get();
+        if iter.is_null() {
+            return;
+        }
+        let mut read = self.read.borrow_mut();
+        while let Some(item) = self.read_next(iter) {
+            read.push_back(item);
+        }
+    }
+}
+
+thread_local! {
+    /// The RediSearch queries this thread has opened and not dropped.
+    static OPEN_QUERIES: RefCell<Vec<Weak<dyn ReleaseQuery>>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// Read every RediSearch query this thread has open to its end and free it, so
+/// the thread holds no RediSearch lock; each iterator then yields the results
+/// read here.
+///
+/// Call before the thread takes the GIL or writes an index. Holding a query's
+/// read locks there deadlocks against a GIL holder that waits for RediSearch's
+/// write lock, and a write to the scanned index aborts in `IndexSpec_LockWrite`.
+pub fn release_open_queries() {
+    for query in OPEN_QUERIES.take() {
+        if let Some(query) = query.upgrade() {
+            query.release();
+        }
+    }
+}
+
+/// Lazy iterator over one RediSearch query's results.
+///
+/// The first two results are read when the query opens. A query with at most
+/// one result is then read to its end: it holds no lock and is not listed. A
+/// longer query is listed in its thread's open queries, so
+/// [`release_open_queries`] can free it early.
+pub struct IndexResultsIter<T: 'static> {
+    state: ResultsState<T>,
+}
+
+enum ResultsState<T: 'static> {
+    /// The query had no result left.
+    Done,
+    /// The only result left. The query is freed.
+    Last(T),
+    /// The two results read at open, then the rest of the open query.
+    Two(T, T, Rc<OpenQuery<T>>),
+    /// The second result read at open, then the rest of the open query.
+    One(T, Rc<OpenQuery<T>>),
+    /// The rest of the open query.
+    Open(Rc<OpenQuery<T>>),
+}
+
+impl<T: IndexResult> IndexResultsIter<T> {
+    fn open(
         iter: *mut RSResultsIterator,
         index: OwnedIndex,
     ) -> Self {
+        if iter.is_null() {
+            return Self::empty();
+        }
+        let query = OpenQuery {
+            iter: Cell::new(iter),
+            spec: index.as_ptr(),
+            index: Cell::new(Some(index)),
+            read: RefCell::new(VecDeque::new()),
+        };
+        // `read_next` frees the iterator at the end of the query.
+        let Some(first) = query.read_next(iter) else {
+            return Self::empty();
+        };
+        let Some(second) = query.read_next(iter) else {
+            return Self {
+                state: ResultsState::Last(first),
+            };
+        };
+        let query = Rc::new(query);
+        let listed: Weak<dyn ReleaseQuery> = Rc::downgrade(&query) as Weak<OpenQuery<T>>;
+        OPEN_QUERIES.with_borrow_mut(|open| {
+            open.retain(|q| q.strong_count() > 0);
+            open.push(listed);
+        });
         Self {
-            iter,
-            index: Some(index),
-            _item: PhantomData,
+            state: ResultsState::Two(first, second, query),
         }
     }
+}
 
+impl<T: 'static> IndexResultsIter<T> {
     #[must_use]
     pub const fn empty() -> Self {
         Self {
-            iter: null_mut(),
-            index: None,
-            _item: PhantomData,
+            state: ResultsState::Done,
         }
     }
 }
@@ -371,32 +508,23 @@ impl<T> IndexResultsIter<T> {
 impl<T: IndexResult> Iterator for IndexResultsIter<T> {
     type Item = T;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.iter.is_null() {
-            return None;
+        if let ResultsState::Open(query) = &self.state {
+            return query.next();
         }
-        let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
-        loop {
-            let mut key_len: usize = 0;
-            let key =
-                unsafe { RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len) }
-                    .cast::<u8>();
-            if key.is_null() {
-                return None;
+        match std::mem::replace(&mut self.state, ResultsState::Done) {
+            ResultsState::Done => None,
+            ResultsState::Last(item) => Some(item),
+            ResultsState::Two(first, second, query) => {
+                self.state = ResultsState::One(second, query);
+                Some(first)
             }
-            if let Some(item) = unsafe { T::decode(self.iter, key, key_len) } {
-                return Some(item);
+            ResultsState::One(second, query) => {
+                self.state = ResultsState::Open(query);
+                Some(second)
             }
-        }
-    }
-}
-
-impl<T> Drop for IndexResultsIter<T> {
-    fn drop(&mut self) {
-        if !self.iter.is_null() {
-            unsafe {
-                RediSearch_ResultsIteratorFree(self.iter);
-            }
+            ResultsState::Open(_) => unreachable!("handled above"),
         }
     }
 }

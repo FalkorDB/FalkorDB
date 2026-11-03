@@ -301,6 +301,44 @@ class testIndexUpdatesFlow(FlowTestsBase):
         self.env.assertEqual(result.result_set[0][0], 20000)
         g.delete()
 
+    # An index scan under LIMIT, or feeding a CALL subquery, is still open when
+    # the query commits. Writing the scanned property must not abort the server,
+    # for node, edge and fulltext scans alike.
+    def test13_write_to_index_scanned_under_limit(self):
+        g = self.db.select_graph('idx_scan_write')
+        g.query("UNWIND range(1, 2000) AS i CREATE (:W1 {v: i}), (:W2 {v: i}), (:W3 {v: i}), (:F {t: 'alpha'})")
+        g.query("UNWIND range(1, 2000) AS i CREATE ()-[:R1 {w: i}]->(), ()-[:R2 {w: i}]->()")
+        create_node_range_index(g, 'W1', 'v', sync=True)
+        create_node_range_index(g, 'W2', 'v', sync=True)
+        create_node_range_index(g, 'W3', 'v', sync=True)
+        create_edge_range_index(g, 'R1', 'w', sync=True)
+        create_edge_range_index(g, 'R2', 'w', sync=True)
+        create_node_fulltext_index(g, 'F', 't', sync=True)
+
+        # (write, scan operator, rows written, query that counts them)
+        cases = [
+            ("MATCH (n:W1) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000 RETURN count(n)",
+             "Node By Index Scan", 10, "MATCH (n:W1) WHERE n.v > 100000 RETURN count(n)"),
+            ("MATCH (n:W2) WHERE n.v > 0 CALL { WITH n SET n.v = n.v + 100000 } RETURN count(*)",
+             "Node By Index Scan", 2000, "MATCH (n:W2) WHERE n.v > 100000 RETURN count(n)"),
+            # One result per scan: the scan is read to its end when it opens.
+            ("UNWIND range(1, 100) AS i MATCH (n:W3) WHERE n.v = i SET n.v = n.v + 100000 RETURN count(n)",
+             "Node By Index Scan", 100, "MATCH (n:W3) WHERE n.v > 100000 RETURN count(n)"),
+            ("MATCH ()-[r:R1]->() WHERE r.w > 0 WITH r LIMIT 10 SET r.w = r.w + 100000 RETURN count(r)",
+             "Edge By Index Scan", 10, "MATCH ()-[r:R1]->() WHERE r.w > 100000 RETURN count(r)"),
+            ("MATCH ()-[r:R2]->() WHERE r.w > 0 CALL { WITH r SET r.w = r.w + 100000 } RETURN count(*)",
+             "Edge By Index Scan", 2000, "MATCH ()-[r:R2]->() WHERE r.w > 100000 RETURN count(r)"),
+            ("CALL db.idx.fulltext.queryNodes('F', 'alpha') YIELD node "
+             "WITH node LIMIT 5 SET node.t = 'beta' RETURN count(node)",
+             None, 5, "CALL db.idx.fulltext.queryNodes('F', 'beta') YIELD node RETURN count(node)"),
+        ]
+        for write, scan, written, check in cases:
+            # A range write must read through the index, or the case checks nothing.
+            if scan is not None:
+                self.env.assertContains(scan, str(g.explain(write)))
+            self.env.assertEqual(g.query(write).result_set[0][0], written)
+            self.env.assertEqual(g.query(check).result_set[0][0], written)
+        g.delete()
 
 class testNativeOnlyFeedFlow(FlowTestsBase):
     # Under `index-falkordb` the native index is the only Range index, so nothing may also feed
