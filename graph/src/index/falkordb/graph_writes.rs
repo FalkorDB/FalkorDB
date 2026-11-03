@@ -433,13 +433,19 @@ fn build_in_one_batch(
 /// as `g` has them, for a refresh: none for an entity without the label or type in `g`, nor for a
 /// value the column does not index.
 ///
-/// `ids` are already the column's: the entities writers changed in it (`Written`). The check per
-/// id is whether `g`, the version being read, has the entity under the label or type. A refresh
-/// reads two versions, what an entity had to come out and what it has to go in, and the two can
-/// differ: a writer may have removed a node's label, deleted the entity, or deleted an edge and
-/// reused its id for an edge of another type. Such an entity takes no tuple in the version that no
-/// longer has it. The label or type and the attribute are looked up once per call; per id it is
-/// one membership lookup, and the attribute read the tuple needs anyway.
+/// `ids` are already the column's: the entities whose tuple in it changed (`Written`), recorded by
+/// the writes that made the version tuples go into (a writer's fork, for its rebase; the published
+/// version, for a batch's catch-up). The label or type is still checked per id, in `g`, and what
+/// for depends on the side:
+/// - Going in, it is needed. A removal is recorded too: a writer that removed the label, deleted
+///   the entity, or reused a deleted edge's id for an edge of another type recorded an entity `g`
+///   no longer has under it. In a catch-up a later writer can also undo an earlier one, and only
+///   `g` settles it.
+/// - Coming out, it only saves work. Tuples come out of the version whose copy of the column is
+///   refreshed, and that copy holds none for an entity without the label there, so removing one
+///   would change nothing: one label lookup replaces an attribute read and a removal.
+///
+/// The label or type and the attribute are looked up once per call.
 pub(crate) fn entity_tuples(
     g: &Graph,
     entity: EntityType,
