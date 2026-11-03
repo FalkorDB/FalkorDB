@@ -87,6 +87,7 @@ use crate::index::falkordb::falkordb_index::ScanFilter;
 use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
+    cch::{CchError, CchIndex, CchIndexDef},
     falkordb_index::{BuildCursor, FalkorDbIndex},
     graph_writes,
 };
@@ -5190,6 +5191,76 @@ impl Graph {
                 self.indexer_prepare(&IndexId::Column(entity, key), entities)
                     .is_some()
             })
+    }
+}
+
+/// CCH shortest-path indexes. They live in the native index's state
+/// ([`FalkorDbIndex`]'s CCH methods), so they share its feature gate. What needs the graph
+/// (building a hierarchy) is done here, from `&self`, before the result is handed to the
+/// index.
+#[cfg(feature = "index-falkordb")]
+impl Graph {
+    /// Build a CCH index for `def` and hold it on this version of the graph. Synchronous:
+    /// unlike the RediSearch indexes there is no background population pass.
+    ///
+    /// # Errors
+    /// [`CchError::AlreadyExists`] if an index with the same definition is already held,
+    /// [`CchError::UnknownRelType`] / [`CchError::UnknownAttribute`] for an unresolvable
+    /// definition, and whatever [`Cch::build`](crate::index::falkordb::cch::Cch::build) reports.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn create_cch_index(
+        &mut self,
+        _def: CchIndexDef,
+    ) -> Result<(), CchError> {
+        unimplemented!("Graph API, #3212")
+    }
+
+    /// # Errors
+    /// [`CchError::NotFound`] if no index with this definition is held.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn drop_cch_index(
+        &mut self,
+        def: &CchIndexDef,
+    ) -> Result<(), CchError> {
+        self.falkordb_index.drop_cch(def)
+    }
+
+    /// Every CCH index definition held by this version, in no guaranteed order.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn cch_indexes(&self) -> impl Iterator<Item = &CchIndexDef> {
+        self.falkordb_index.cch_defs()
+    }
+
+    /// The index for `def`, if this version holds it and it is ready to answer: a building
+    /// index is not returned.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    #[must_use]
+    pub fn cch_index(
+        &self,
+        def: &CchIndexDef,
+    ) -> Option<&CchIndex> {
+        self.falkordb_index.cch_index(def)
+    }
+
+    /// Rebuild every CCH index from the current graph. Used by RDB load (the hierarchy is not
+    /// persisted, only the definition) and by maintenance.
+    ///
+    /// # Errors
+    /// Whatever [`Cch::build`](crate::index::falkordb::cch::Cch::build) reports for any held
+    /// definition.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn rebuild_cch_indexes(&mut self) -> Result<(), CchError> {
+        unimplemented!("Graph API, #3212")
     }
 }
 
