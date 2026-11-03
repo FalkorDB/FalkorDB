@@ -818,6 +818,58 @@ mod tests {
         );
     }
 
+    /// A host for a turn that panics: it only keeps what the builder reports through it.
+    #[derive(Default)]
+    struct Reports(Mutex<Vec<String>>);
+
+    impl BuildHost for Reports {
+        fn read(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
+            None
+        }
+
+        fn publish(
+            &self,
+            _: &mut dyn FnMut(&MvccGraph),
+        ) -> bool {
+            false
+        }
+
+        fn warn(
+            &self,
+            message: &str,
+        ) {
+            self.0.lock().unwrap().push(message.to_string());
+        }
+    }
+
+    /// A turn that panics is reported through its graph's host, and its index gets another turn
+    /// once the retry wait has passed.
+    #[test]
+    fn a_turn_that_panics_is_reported_through_its_host_and_retried() {
+        let turns = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&turns);
+        let indexer = Indexer::new(Box::new(move |_, _, _, _| {
+            assert_ne!(
+                counted.fetch_add(1, Ordering::SeqCst),
+                0,
+                "the first turn panics"
+            );
+            Turn::Idle
+        }));
+        let reports = Arc::new(Reports::default());
+        indexer.start(1);
+        indexer.enqueue(
+            Arc::clone(&reports) as Arc<dyn BuildHost>,
+            column(EntityType::Node, "a"),
+        );
+        wait_until("the retried turn", || turns.load(Ordering::SeqCst) == 2);
+        wait_until("the chain to end", || indexer.idle());
+        indexer.stop_within(STOP_WAIT);
+        let reports = reports.0.lock().unwrap();
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        assert!(reports[0].contains("panicked"), "{reports:?}");
+    }
+
     /// An index created again while its chain's last turn runs (the turn finds it done, and the
     /// commit that creates it again finds the chain still there) is built: the chain takes one more
     /// turn instead of ending.
