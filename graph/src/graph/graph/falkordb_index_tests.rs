@@ -3806,7 +3806,9 @@ fn a_chains_batches_shrink_under_writers_and_grow_back() {
 /// index its published version holds `Building` (a `CREATE INDEX` committed before any host was
 /// registered); a write that leaves it `Building` starts nothing more; a commit that creates
 /// another index starts that one. The pool then builds both to `Ready` while a writer keeps
-/// re-valuing nodes in both, and each ends as a one-pass build of the final data.
+/// re-valuing nodes in both, and each ends as a one-pass build of the final data. The writer is
+/// writing before the pool starts, and the first batch to publish catches up on a write made while
+/// it read, so the builds run under writes however the threads are scheduled.
 ///
 /// The only test in this crate that uses the builder itself, which is one per process.
 #[test]
@@ -3841,9 +3843,21 @@ fn the_builder_finishes_what_registering_and_commits_start_under_sustained_write
         cursor(&g, EntityType::Node, &label, &v).is_none()
             && cursor(&g, EntityType::Node, &label, &w).is_none()
     };
+    // A write that lands just before the first batch to publish goes in, so that batch catches up
+    // on it however the threads are scheduled.
+    host.before_publish({
+        let (v, w, written) = (v.clone(), w.clone(), [ids[0], ids[nodes - 1]]);
+        move |mvcc| {
+            commit_write(mvcc, |g| {
+                for id in written {
+                    set_attr(g, id, &v, Value::Int(-2));
+                    set_attr(g, id, &w, Value::Int(-2));
+                }
+            });
+        }
+    });
     let done = AtomicBool::new(false);
     let writes = AtomicUsize::new(0);
-    online_build::start(2);
     thread::scope(|scope| {
         scope.spawn(|| {
             let mut i = 0;
@@ -3867,13 +3881,19 @@ fn the_builder_finishes_what_registering_and_commits_start_under_sustained_write
             }
         }
         let _done = Done(&done);
+        // The pool starts once the writer is writing: on a busy machine a writer spawned after it
+        // may not write before both builds end.
+        wait_until("the writer's first write", || {
+            writes.load(Ordering::SeqCst) > 0
+        });
+        online_build::start(2);
         wait_until("both indexes to be built", built);
     });
     online_build::stop();
 
     assert!(
-        writes.load(Ordering::SeqCst) > 0,
-        "the builds ran under writes"
+        host.before_publish.lock().is_none(),
+        "a batch published after a write it caught up on"
     );
     let published = host.mvcc.read();
     let g = published.borrow();
