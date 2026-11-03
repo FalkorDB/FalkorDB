@@ -57,6 +57,7 @@ use std::{
     collections::HashMap,
     ffi::{CStr, CString},
     hash::Hash,
+    marker::PhantomData,
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
     sync::{
@@ -259,82 +260,138 @@ pub enum IndexQuery<T> {
     },
 }
 
-/// Lazy iterator over RediSearch query results.
+/// One result of a RediSearch query, decoded from its document key and, for a
+/// scored query, the iterator's current score.
+pub trait IndexResult: Sized + 'static {
+    /// Decodes the result that `iter` returned as `key`. `None` skips a key of
+    /// an unexpected length.
+    ///
+    /// # Safety
+    ///
+    /// `key` points to `len` readable bytes, and `iter` is the open iterator
+    /// that returned it.
+    unsafe fn decode(
+        iter: *mut RSResultsIterator,
+        key: *const u8,
+        len: usize,
+    ) -> Option<Self>;
+}
+
+impl IndexResult for u64 {
+    unsafe fn decode(
+        _iter: *mut RSResultsIterator,
+        key: *const u8,
+        len: usize,
+    ) -> Option<Self> {
+        // `Document::new` always writes a NODE_DOC_KEY_LEN-char hex key; skip
+        // anything else rather than let `decode_id` over-read.
+        if len != NODE_DOC_KEY_LEN {
+            debug_assert!(false, "unexpected node index key length {len}");
+            return None;
+        }
+        Some(unsafe { decode_id(key) })
+    }
+}
+
+impl IndexResult for (u64, f64) {
+    unsafe fn decode(
+        iter: *mut RSResultsIterator,
+        key: *const u8,
+        len: usize,
+    ) -> Option<Self> {
+        let id = unsafe { u64::decode(iter, key, len) }?;
+        Some((id, unsafe { RediSearch_ResultsIteratorGetScore(iter) }))
+    }
+}
+
+impl IndexResult for (u64, u64, u64) {
+    unsafe fn decode(
+        _iter: *mut RSResultsIterator,
+        key: *const u8,
+        len: usize,
+    ) -> Option<Self> {
+        // `Document::new_edge` always writes an EDGE_DOC_KEY_LEN-char hex key;
+        // skip anything else rather than let `decode_triple` over-read.
+        if len != EDGE_DOC_KEY_LEN {
+            debug_assert!(false, "unexpected edge index key length {len}");
+            return None;
+        }
+        Some(unsafe { decode_triple(key) }.into())
+    }
+}
+
+impl IndexResult for (u64, u64, u64, f64) {
+    unsafe fn decode(
+        iter: *mut RSResultsIterator,
+        key: *const u8,
+        len: usize,
+    ) -> Option<Self> {
+        let (src, dst, edge_id) = unsafe { <(u64, u64, u64)>::decode(iter, key, len) }?;
+        Some((src, dst, edge_id, unsafe {
+            RediSearch_ResultsIteratorGetScore(iter)
+        }))
+    }
+}
+
+/// Lazy iterator over one RediSearch query's results.
 ///
 /// Wraps the C `RSResultsIterator` and calls `RediSearch_ResultsIteratorNext`
-/// on each `.next()`. Frees the C iterator on `Drop`.
-///
-/// The mapper function `F` extracts the desired item type from each raw
-/// iterator step (e.g. just the ID, or ID + score).
-pub struct IndexResultsIter<T, F: FnMut(*mut RSResultsIterator, u64) -> T> {
+/// on each `.next()`. Frees the C iterator on `Drop`. `T` decodes each result:
+/// a node id or an edge triple, with or without the score.
+pub struct IndexResultsIter<T> {
     iter: *mut RSResultsIterator,
     /// Own a strong reference so the spec stays alive for the whole iteration,
     /// even if a concurrent `DROP INDEX` runs. `None` for an empty iterator.
     index: Option<OwnedIndex>,
-    map: F,
+    _item: PhantomData<fn() -> T>,
 }
 
-impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> IndexResultsIter<T, F> {
-    const fn new(
+impl<T> IndexResultsIter<T> {
+    const fn open(
         iter: *mut RSResultsIterator,
-        index: Option<OwnedIndex>,
-        map: F,
+        index: OwnedIndex,
     ) -> Self {
-        Self { iter, index, map }
+        Self {
+            iter,
+            index: Some(index),
+            _item: PhantomData,
+        }
     }
-}
 
-impl IndexResultsIter<u64, fn(*mut RSResultsIterator, u64) -> u64> {
     #[must_use]
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             iter: null_mut(),
             index: None,
-            map: |_, id| id,
+            _item: PhantomData,
         }
     }
 }
 
-impl IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, u64) -> (u64, f64)> {
-    #[must_use]
-    pub fn empty_scored() -> Self {
-        Self {
-            iter: null_mut(),
-            index: None,
-            map: |_, id| (id, 0.0),
-        }
-    }
-}
-
-impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> Iterator for IndexResultsIter<T, F> {
+impl<T: IndexResult> Iterator for IndexResultsIter<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.iter.is_null() {
             return None;
         }
-        unsafe {
-            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
-            loop {
-                let mut key_len: usize = 0;
-                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
+        let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
+        loop {
+            let mut key_len: usize = 0;
+            let key =
+                unsafe { RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len) }
                     .cast::<u8>();
-                if key.is_null() {
-                    return None;
-                }
-                // `Document::new` always writes a NODE_DOC_KEY_LEN-char hex key;
-                // skip anything else rather than let `decode_id` over-read.
-                if key_len != NODE_DOC_KEY_LEN {
-                    debug_assert!(false, "unexpected node index key length {key_len}");
-                    continue;
-                }
-                return Some((self.map)(self.iter, decode_id(key)));
+            if key.is_null() {
+                return None;
+            }
+            if let Some(item) = unsafe { T::decode(self.iter, key, key_len) } {
+                return Some(item);
             }
         }
     }
 }
 
-impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> Drop for IndexResultsIter<T, F> {
+impl<T> Drop for IndexResultsIter<T> {
     fn drop(&mut self) {
         if !self.iter.is_null() {
             unsafe {
@@ -345,140 +402,20 @@ impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> Drop for IndexResultsIter<T,
 }
 
 /// Iterator yielding entity IDs from range/tag/geo index queries.
-pub type IdIter = IndexResultsIter<u64, fn(*mut RSResultsIterator, u64) -> u64>;
+pub type IdIter = IndexResultsIter<u64>;
 
 /// Iterator yielding (entity ID, score) pairs from fulltext index queries.
-pub type ScoredIdIter = IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, u64) -> (u64, f64)>;
+pub type ScoredIdIter = IndexResultsIter<(u64, f64)>;
 
 /// Iterator yielding `(src, dst, edge_id)` triples from edge-index
 /// queries. Reads a 24-byte `[u64; 3]` key per result (as written by
 /// `Document::new_edge`).
-pub struct EdgeTripleIter {
-    iter: *mut RSResultsIterator,
-    /// Strong reference keeping the spec alive for the iteration's lifetime.
-    index: Option<OwnedIndex>,
-}
-
-impl EdgeTripleIter {
-    const fn new(
-        iter: *mut RSResultsIterator,
-        index: Option<OwnedIndex>,
-    ) -> Self {
-        Self { iter, index }
-    }
-
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self {
-            iter: null_mut(),
-            index: None,
-        }
-    }
-}
-
-impl Iterator for EdgeTripleIter {
-    type Item = (u64, u64, u64);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.iter.is_null() {
-            return None;
-        }
-        unsafe {
-            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
-            loop {
-                let mut key_len: usize = 0;
-                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
-                    .cast::<u8>();
-                if key.is_null() {
-                    return None;
-                }
-                // `Document::new_edge` always writes an EDGE_DOC_KEY_LEN-char hex
-                // key; skip anything else rather than let `decode_triple` over-read.
-                if key_len != EDGE_DOC_KEY_LEN {
-                    debug_assert!(false, "unexpected edge index key length {key_len}");
-                    continue;
-                }
-                return Some(decode_triple(key).into());
-            }
-        }
-    }
-}
-
-impl Drop for EdgeTripleIter {
-    fn drop(&mut self) {
-        if !self.iter.is_null() {
-            unsafe {
-                RediSearch_ResultsIteratorFree(self.iter);
-            }
-        }
-    }
-}
+pub type EdgeTripleIter = IndexResultsIter<(u64, u64, u64)>;
 
 /// Iterator yielding `(src, dst, edge_id, score)` tuples from edge
 /// fulltext queries. Like [`EdgeTripleIter`] but also exposes the
 /// relevance score via `RediSearch_ResultsIteratorGetScore`.
-pub struct ScoredEdgeTripleIter {
-    iter: *mut RSResultsIterator,
-    /// Strong reference keeping the spec alive for the iteration's lifetime.
-    index: Option<OwnedIndex>,
-}
-
-impl ScoredEdgeTripleIter {
-    const fn new(
-        iter: *mut RSResultsIterator,
-        index: Option<OwnedIndex>,
-    ) -> Self {
-        Self { iter, index }
-    }
-
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self {
-            iter: null_mut(),
-            index: None,
-        }
-    }
-}
-
-impl Iterator for ScoredEdgeTripleIter {
-    type Item = (u64, u64, u64, f64);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.iter.is_null() {
-            return None;
-        }
-        unsafe {
-            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
-            loop {
-                let mut key_len: usize = 0;
-                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
-                    .cast::<u8>();
-                if key.is_null() {
-                    return None;
-                }
-                // `Document::new_edge` always writes an EDGE_DOC_KEY_LEN-char hex
-                // key; skip anything else rather than let `decode_triple` over-read.
-                if key_len != EDGE_DOC_KEY_LEN {
-                    debug_assert!(false, "unexpected edge index key length {key_len}");
-                    continue;
-                }
-                let triple = decode_triple(key);
-                let score = RediSearch_ResultsIteratorGetScore(self.iter);
-                return Some((triple[0], triple[1], triple[2], score));
-            }
-        }
-    }
-}
-
-impl Drop for ScoredEdgeTripleIter {
-    fn drop(&mut self) {
-        if !self.iter.is_null() {
-            unsafe {
-                RediSearch_ResultsIteratorFree(self.iter);
-            }
-        }
-    }
-}
+pub type ScoredEdgeTripleIter = IndexResultsIter<(u64, u64, u64, f64)>;
 
 /// `ScoredIdIter` wrapped with the `Arc<ThinVec<f32>>` whose data was
 /// passed to `RediSearch_CreateVecSimNode`.
@@ -498,7 +435,7 @@ impl VectorScoredIdIter {
     #[must_use]
     pub fn empty(vector: Arc<thin_vec::ThinVec<f32>>) -> Self {
         Self {
-            inner: IndexResultsIter::empty_scored(),
+            inner: IndexResultsIter::empty(),
             _vector_owner: vector,
         }
     }
@@ -1703,7 +1640,7 @@ impl Index {
                 return IndexResultsIter::empty();
             }
             let iter = RediSearch_GetResultsIterator(query_node, index.as_ptr());
-            IndexResultsIter::new(iter, Some(index), |_, id| id)
+            IndexResultsIter::open(iter, index)
         }
     }
 
@@ -1724,7 +1661,7 @@ impl Index {
                 return EdgeTripleIter::empty();
             }
             let iter = RediSearch_GetResultsIterator(query_node, index.as_ptr());
-            EdgeTripleIter::new(iter, Some(index))
+            IndexResultsIter::open(iter, index)
         }
     }
 
@@ -1735,7 +1672,7 @@ impl Index {
     ) -> Result<ScoredIdIter, String> {
         let cstr = CString::new(query).map_err(|e| e.to_string())?;
         let Some(index) = self.spec.as_ref().and_then(|h| h.try_clone_ref()) else {
-            return Ok(IndexResultsIter::empty_scored());
+            return Ok(IndexResultsIter::empty());
         };
         let mut err: *mut c_char = null_mut();
         unsafe {
@@ -1746,10 +1683,7 @@ impl Index {
                 drop(CString::from_raw(err));
                 return Err(msg);
             }
-            Ok(IndexResultsIter::new(iter, Some(index), |iter, id| {
-                let score = RediSearch_ResultsIteratorGetScore(iter);
-                (id, score)
-            }))
+            Ok(IndexResultsIter::open(iter, index))
         }
     }
 
@@ -1775,7 +1709,7 @@ impl Index {
                 drop(CString::from_raw(err));
                 return Err(msg);
             }
-            Ok(ScoredEdgeTripleIter::new(iter, Some(index)))
+            Ok(IndexResultsIter::open(iter, index))
         }
     }
 
@@ -1812,7 +1746,7 @@ impl Index {
         let nbytes = std::mem::size_of_val(vector.as_slice());
         let Some(index) = self.spec.as_ref().and_then(|h| h.try_clone_ref()) else {
             return Ok(VectorScoredIdIter {
-                inner: IndexResultsIter::empty_scored(),
+                inner: IndexResultsIter::empty(),
                 _vector_owner: vector,
             });
         };
@@ -1826,7 +1760,7 @@ impl Index {
             );
             if query_node.is_null() {
                 return Ok(VectorScoredIdIter {
-                    inner: IndexResultsIter::empty_scored(),
+                    inner: IndexResultsIter::empty(),
                     _vector_owner: vector,
                 });
             }
@@ -1838,15 +1772,12 @@ impl Index {
             let iter = RediSearch_GetResultsIterator(query_node, index.as_ptr());
             if iter.is_null() {
                 return Ok(VectorScoredIdIter {
-                    inner: IndexResultsIter::empty_scored(),
+                    inner: IndexResultsIter::empty(),
                     _vector_owner: vector,
                 });
             }
             Ok(VectorScoredIdIter {
-                inner: IndexResultsIter::new(iter, Some(index), |it, id| {
-                    let score = RediSearch_ResultsIteratorGetScore(it);
-                    (id, score)
-                }),
+                inner: IndexResultsIter::open(iter, index),
                 _vector_owner: vector,
             })
         }
@@ -1897,7 +1828,7 @@ impl Index {
                 });
             }
             Ok(VectorScoredEdgeTripleIter {
-                inner: ScoredEdgeTripleIter::new(iter, Some(index)),
+                inner: IndexResultsIter::open(iter, index),
                 _vector_owner: vector,
             })
         }
