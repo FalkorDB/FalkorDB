@@ -106,17 +106,6 @@ pub(crate) const SIZING: Sizing = Sizing {
 };
 
 impl Sizing {
-    /// Every batch reads `n` entities, and none limits its catch-up: for tests that set where
-    /// batches stop.
-    #[cfg(test)]
-    pub(crate) const fn fixed(n: usize) -> Self {
-        Self {
-            floor: n,
-            cap: n,
-            catch_up_max: u64::MAX,
-        }
-    }
-
     /// How many entities the next batch of an index reads, when its batches have read `read` and
     /// its chain halves them `shift` times ([`Chain::shift`]): `read` halved, between `floor` and
     /// `cap`.
@@ -449,12 +438,6 @@ impl Indexer {
         }
     }
 
-    /// Whether every chain has ended.
-    #[cfg(test)]
-    fn idle(&self) -> bool {
-        self.state().chains.is_empty()
-    }
-
     /// Start the chain of index `id` of `host`'s graph, or, if the index has one, have that chain
     /// take one more turn when it would end. Never blocks for long: the builder's is called from
     /// [`MvccGraph::commit`], under the host's global lock.
@@ -627,6 +610,27 @@ pub(crate) fn enqueue(
     id: IndexId,
 ) {
     BUILDER.enqueue(host, id);
+}
+
+#[cfg(test)]
+impl Sizing {
+    /// Every batch reads `n` entities, and none limits its catch-up: for tests that set where
+    /// batches stop.
+    pub(crate) const fn fixed(n: usize) -> Self {
+        Self {
+            floor: n,
+            cap: n,
+            catch_up_max: u64::MAX,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Indexer {
+    /// Whether every chain has ended.
+    fn idle(&self) -> bool {
+        self.state().chains.is_empty()
+    }
 }
 
 #[cfg(test)]
