@@ -1,7 +1,8 @@
 """The full-set measurement loop.
 
 For each query: warm it up (plan cache), snapshot jemalloc, run
-`redis-benchmark -c 1 -n N` inside a counter window, snapshot jemalloc again.
+`redis-benchmark -c <clients> -n N` (`-c` from the row, 1 unless it sets
+`clients`) inside a counter window, snapshot jemalloc again.
 
 `redis-benchmark` is the load generator and stays one — see `counters` for why
 the thing inside the window has to be an external C process. That does mean the
