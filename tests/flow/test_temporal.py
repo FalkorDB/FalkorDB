@@ -550,6 +550,26 @@ class testTemporalDuration(FlowTestsBase):
             except ResponseError as e:
                 self.env.assertIn("overflow", str(e))
 
+    def test_duration_float_components_stay_in_date_range(self):
+        # a fractional component takes the float path, which must apply the
+        # same date range as the integer one: 1e12 days is past the supported
+        # civil years and used to print as a negative year
+        for q, params in [
+            ("RETURN duration({days: 1e12})", {}),
+            ("RETURN duration({days: 1e12, hours: 1})", {}),
+            ("WITH {days: 1e12} AS m RETURN duration(m)", {}),
+            ("RETURN duration($m)", {'m': {'days': 1e12}}),
+        ]:
+            try:
+                self.graph.query(q, params)
+                self.env.assertFalse(True)
+            except ResponseError as e:
+                self.env.assertIn("out of range", str(e))
+
+        # a value inside the range is still accepted
+        result = self.graph.query("RETURN toString(duration({days: 1.5}))")
+        self.env.assertEqual(result.result_set[0][0], "P1DT12H")
+
     def test_month_end_duration_arithmetic(self):
         result = self.graph.query(
             """

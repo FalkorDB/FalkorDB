@@ -821,6 +821,7 @@ fn construct_duration_secs_float(c: [f64; 7]) -> Result<i64, String> {
     let base = construct_duration_secs(years_int as i64, months_int as i64, 0, 0, 0, 0, 0)?;
     base.checked_add(total as i64)
         .ok_or_else(|| "Duration overflow when combining components".to_string())
+        .and_then(check_date_range)
 }
 
 pub fn duration_struct_pure(args: &[Value]) -> Result<Value, String> {
