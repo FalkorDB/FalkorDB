@@ -573,10 +573,13 @@ fn apply_record(
             // deferred statement runs, later records' constraints are in place.
             let mut blocked =
                 g.index_drop_blocked_by_constraint(&index_type, &schema_type, &label, &fields);
-            if fields.is_empty() {
+            if fields.is_empty() && index_type == IndexType::Range {
                 // An empty drop removes every field of its type, those an
                 // earlier queued create adds included, which the index map
-                // does not hold yet.
+                // does not hold yet. Only a range index can back a constraint,
+                // so the scan of the queued statements is skipped for the
+                // others: it would make a buffer of N fulltext create/drop
+                // pairs quadratic.
                 blocked |= index_ddl.iter().any(|ddl| match ddl {
                     IndexDdl::Create {
                         index_type: t,
