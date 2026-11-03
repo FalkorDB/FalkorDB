@@ -366,6 +366,12 @@ impl ScanFilter {
 
 /// Where a building column's next indexer batch resumes: the first entity no batch has indexed
 /// yet. Also an entity's place in that order, to compare with it ([`Self::precedes`]).
+///
+/// A marker, not an iterator: it holds a place and nothing of the scan that reached it. Each batch
+/// opens a new scan from it, of the label's matrix for nodes or the type's tensor for edges, reads
+/// up to its budget, and returns the next marker (`graph_writes::scan`). The order is the same for
+/// every label, node id or `(src, dst)`, so the cursor names none: the scan reads only the label's
+/// entities, and a refresh keeps only those the label has (`graph_writes::entity_tuples`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BuildCursor {
     /// A node column's next node.

@@ -89,6 +89,11 @@ pub(crate) enum IndexId {
 }
 
 /// One versioned index: the kind's own structure plus its build state.
+///
+/// The kind (`K`, today [`IndexColumn`]) is only the data: a column's tuples. The build state is
+/// the entry's, as are the generation and the batch count, so the build's rules are written once
+/// here for every kind. That is why a kind's operations are handed the state
+/// ([`VersionedIndex::writer_record`] and the rest) rather than reading it from `self`.
 #[derive(Clone)]
 pub(crate) struct IndexEntry<K: VersionedIndex> {
     pub(crate) index: K,
@@ -158,7 +163,8 @@ pub enum Discarded {
 }
 
 /// What a kind of index does on each side of its lifecycle. The state those operations move is
-/// [`IndexEntry<K>`]'s, the same for every kind.
+/// [`IndexEntry<K>`]'s, the same for every kind: `self` is the kind's data alone, so each operation
+/// is handed the state.
 pub(crate) trait VersionedIndex: Clone + Sized {
     /// Where a `Building` index's next batch resumes, and an entity's place in that order.
     type Cursor: Copy + Eq + fmt::Debug;

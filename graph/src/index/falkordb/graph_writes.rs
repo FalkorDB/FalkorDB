@@ -430,10 +430,16 @@ fn build_in_one_batch(
 // `BuildState`.
 
 /// Append to `out` the tuples `column` (index `(label, attr)` of `entity`) takes for each of `ids`
-/// as `g` has them: none for an entity without the label or type in `g`, which a deleted one, or
-/// one `g` never had, is, nor for a value the column does not index. A refresh reads them from two
-/// versions, what an entity had to come out and what it has to go in, so each version answers for
-/// itself: an entity one deleted, or an id one reused, is another's.
+/// as `g` has them, for a refresh: none for an entity without the label or type in `g`, nor for a
+/// value the column does not index.
+///
+/// `ids` are already the column's: the entities writers changed in it (`Written`). The check per
+/// id is whether `g`, the version being read, has the entity under the label or type. A refresh
+/// reads two versions, what an entity had to come out and what it has to go in, and the two can
+/// differ: a writer may have removed a node's label, deleted the entity, or deleted an edge and
+/// reused its id for an edge of another type. Such an entity takes no tuple in the version that no
+/// longer has it. The label or type and the attribute are looked up once per call; per id it is
+/// one membership lookup, and the attribute read the tuple needs anyway.
 pub(crate) fn entity_tuples(
     g: &Graph,
     entity: EntityType,
