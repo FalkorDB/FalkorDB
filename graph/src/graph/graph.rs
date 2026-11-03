@@ -4508,56 +4508,57 @@ impl Graph {
     /// Under `index-falkordb`, `info`'s label is under construction while any of its Range
     /// attributes' native columns is `Building` in this version: each such column counts as
     /// pending. The progress shown is the label's build as a whole, out of the label's or type's
-    /// entities, as C shows it: the least any of those columns has read.
+    /// entities, as C shows it: the least any of those columns has read, or what RediSearch has
+    /// populated of another of the label's fields (a fulltext or vector one) if that is less. The
+    /// label's or type's entities are counted once, and only while one of its columns builds.
     #[cfg(feature = "index-falkordb")]
     fn add_native_build(
         &self,
         entity: EntityType,
         info: &mut IndexInfo,
     ) {
-        let mut building: Option<(i32, u64, u64)> = None;
+        let mut building: Option<(i32, u64)> = None;
         for attr in &info.field_order {
             let range = info
                 .fields
                 .get(attr)
                 .is_some_and(|fields| fields.iter().any(|f| f.ty == IndexType::Range));
             if range
-                && let Some((done, total)) = self.native_build_progress(entity, &info.label, attr)
+                && let Some(read) = self.falkordb_index.building_read(entity, &info.label, attr)
             {
-                building = Some(building.map_or((1, done, total), |(columns, least, _)| {
-                    (columns + 1, least.min(done), total)
-                }));
+                building = Some(
+                    building.map_or((1, read), |(columns, least)| (columns + 1, least.min(read))),
+                );
             }
         }
-        if let Some((columns, done, total)) = building {
-            info.pending += columns;
-            info.progress = done;
-            info.total = total;
-        }
+        let Some((columns, least)) = building else {
+            return;
+        };
+        let total = self.native_build_total(entity, &info.label);
+        let done = least.min(total);
+        // RediSearch reports what it has populated while it has a field pending.
+        info.progress = if info.pending > 0 {
+            done.min(info.progress)
+        } else {
+            done
+        };
+        info.pending += columns;
+        info.total = total;
     }
 
-    /// How far the build of column `(entity, label, attr)` has come, as `(entities read, entities
-    /// of the label or type)`, or `None` if the column is `Ready` or does not exist. The entities
-    /// read are those its batches have read ([`IndexEntry::read`]), at most the label's or type's:
-    /// an entity created or deleted behind the cursor after a batch passed it does not move the
-    /// count. Nothing here grows with the graph.
-    ///
-    /// [`IndexEntry::read`]: crate::index::falkordb::versioned::IndexEntry::read
+    /// The entities of `label`, or of relationship type `label`: what a build's progress is out of.
     #[cfg(feature = "index-falkordb")]
-    fn native_build_progress(
+    fn native_build_total(
         &self,
         entity: EntityType,
         label: &Arc<String>,
-        attr: &Arc<String>,
-    ) -> Option<(u64, u64)> {
-        let read = self.falkordb_index.building_read(entity, label, attr)?;
-        let total = match entity {
+    ) -> u64 {
+        match entity {
             EntityType::Node => self.get_label_matrix(label).map_or(0, |lm| lm.nvals()),
             EntityType::Relationship => self
                 .get_relationship_matrix(label)
                 .map_or(0, |t| t.edge_count()),
-        };
-        Some((read.min(total), total))
+        }
     }
 
     // ── Constraint management ─────────────────────────────────────────
