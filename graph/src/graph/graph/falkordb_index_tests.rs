@@ -3999,6 +3999,22 @@ fn a_plan_made_on_a_ready_column_reads_right_while_it_builds_again() {
     }
 }
 
+/// How far the build of column `(entity, label, attr)` has come, as `(entities read, entities of
+/// the label or type)`, or `None` if the column is `Ready` or does not exist: one column's part of
+/// what `db.indexes()` shows for its label ([`Graph::add_native_build`]). The entities read are
+/// those its batches have read, at most the label's or type's: an entity created or deleted behind
+/// the cursor after a batch passed it does not move the count.
+fn native_build_progress(
+    g: &Graph,
+    entity: EntityType,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+) -> Option<(u64, u64)> {
+    let read = g.falkordb_index.building_read(entity, label, attr)?;
+    let total = g.native_build_total(entity, label);
+    Some((read.min(total), total))
+}
+
 /// `db.indexes()` reports a `Building` column's progress as the entities its batches have read,
 /// counted as their budgets, out of the label's or type's: one batch at a time, nodes (with a
 /// deleted node in the ids) then edges, until both are `Ready`. The edges' first batch finishes the
@@ -4008,8 +4024,8 @@ fn a_building_columns_progress_counts_what_its_batches_have_read() {
     let (mut g, label, v, ty, w) = scan_fixture();
     let progress = |g: &Graph| {
         (
-            g.native_build_progress(EntityType::Node, &label, &v),
-            g.native_build_progress(EntityType::Relationship, &ty, &w),
+            native_build_progress(&g, EntityType::Node, &label, &v),
+            native_build_progress(&g, EntityType::Relationship, &ty, &w),
         )
     };
     let mut seen = vec![progress(&g)];
@@ -4044,7 +4060,7 @@ fn a_building_columns_progress_stays_with_what_it_read_up_to_the_labels_entities
     let (mut g, label, ids) = people_with(&attr, &(0..6).collect::<Vec<_>>());
     create_index_on(&mut g, &label, &attr);
     assert!(graph_writes::run_indexer_batch(&mut g, 4));
-    let progress = |g: &Graph| g.native_build_progress(EntityType::Node, &label, &attr);
+    let progress = |g: &Graph| native_build_progress(g, EntityType::Node, &label, &attr);
     assert_eq!(progress(&g), Some((4, 6)));
     for &id in &ids[1..3] {
         delete_node_with_edges(&mut g, id);
@@ -4098,4 +4114,44 @@ fn a_labels_progress_is_its_slowest_building_column_out_of_its_nodes() {
     assert_eq!(info(&g), (1, 4, 6), "v Ready, w read 4");
     assert!(g.indexer_prepare(&column(&w), 4).is_some());
     assert_eq!(info(&g), (0, 0, 0), "both Ready: nothing added");
+}
+
+/// A label whose Range column builds while RediSearch populates another of its fields (a fulltext
+/// or vector one) shows the slower of the two builds, and both pending. Once RediSearch has nothing
+/// pending, what it last reported no longer counts.
+#[test]
+fn a_labels_progress_is_the_slower_of_its_column_and_redisearch() {
+    let v = Arc::new("v".to_string());
+    let (mut g, label, _) = people_with(&v, &(0..6).collect::<Vec<_>>());
+    let column = IndexId::Column(EntityType::Node, (label.clone(), v.clone()));
+    // What `db.indexes()` shows for the label, given what RediSearch reports for it.
+    let info = |g: &Graph, pending: i32, progress: u64| {
+        let field = Field::new(CString::new(v.as_str()).unwrap(), IndexType::Range, None);
+        let mut info = IndexInfo {
+            label: label.clone(),
+            pending,
+            progress,
+            total: 6,
+            fields: HashMap::from([(v.clone(), vec![Arc::new(field)])]),
+            field_order: vec![v.clone()],
+            language: None,
+            stopwords: None,
+            entity_type: String::from("NODE"),
+        };
+        g.add_native_build(EntityType::Node, &mut info);
+        (info.pending, info.progress, info.total)
+    };
+    create_index_on(&mut g, &label, &v);
+    assert!(g.indexer_prepare(&column, 4).is_some());
+    assert_eq!(
+        info(&g, 1, 2),
+        (2, 2, 6),
+        "RediSearch at 2, the column at 4"
+    );
+    assert_eq!(
+        info(&g, 1, 5),
+        (2, 4, 6),
+        "RediSearch at 5, the column at 4"
+    );
+    assert_eq!(info(&g, 0, 1), (1, 4, 6), "RediSearch done");
 }
