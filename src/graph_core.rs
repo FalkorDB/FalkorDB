@@ -20,7 +20,7 @@
 //!                        |
 //!                        +--> single writer loop
 //!                              +--> execute_query_write()
-//!                              +--> commit() on success / rollback() on error
+//!                              +--> commit() on success / drop the fork on error
 //! ```
 //!
 //! The key design goal is predictable write ordering with high read throughput.
@@ -260,7 +260,7 @@ impl WriteQueryOk {
         Self {
             // The MVCC version this query built, taken from the runtime that
             // built it rather than passed alongside, so the two cannot differ.
-            graph: Arc::clone(&runtime.g),
+            graph: runtime.graph_arc(),
             effects_buffer: take_effects_buffer(runtime),
             // `effects_count` as well as the counters: a query can replicate an
             // effect without moving any of them — index DDL does.
@@ -803,16 +803,12 @@ fn try_query_write(
         IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
     )));
 
-    // Compute the timeout before taking the MVCC write slot, so an error
-    // here cannot leak the slot.
     let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
 
-    // The private COW version to build into. As a reader this does not take the
-    // MVCC write slot yet — the session claims it on escalation, under the write
-    // lock — so an inline writer is never refused because we are still matching.
-    let g = session
-        .write_version()
-        .map_err(|_| "another write is in progress, retry the query".to_string())?;
+    // The private COW version to build into. Forking takes nothing, so an
+    // inline writer is never refused because we are still matching; if one
+    // commits meanwhile, the session finds this version stale on escalation.
+    let g = session.write_version();
     let runtime = Runtime::new(
         g.clone(),
         parameters,
@@ -838,9 +834,6 @@ fn try_query_write(
             // private version: documents published by earlier `Commit`s are deleted
             // (entity never existed) or rewritten from committed values. Writer
             // mode, so no reader observes the interim state.
-            // Releases the MVCC write slot we took above, dropping the private
-            // version with all its writes. Slot ownership lives here — callers
-            // must NOT roll back.
             abandon_write(&session, &runtime);
             if session.is_stale() {
                 return Err(WriteAttempt::Stale);
@@ -1308,10 +1301,9 @@ fn query_sync(
                         telemetry::enqueue_entry(key_name, graph, entry);
                     }
                     Err(err) => {
-                        // execute_query_write already released the MVCC write
-                        // slot on failure (rollback lives there now); just
-                        // surface the error. Dropping the session releases the
-                        // write lock.
+                        // execute_query_write already discarded the private
+                        // version on failure; just surface the error. Dropping
+                        // the session releases the write lock.
                         //
                         // Unless it was the master's write: the master only
                         // replicates a query that already succeeded there, so
@@ -1486,8 +1478,8 @@ fn profile_sync(
             match res {
                 Ok(_) => {}
                 Err(err) => {
-                    // execute_query_write already released the MVCC slot on
-                    // failure (rollback lives there); just surface the error.
+                    // execute_query_write already discarded the private
+                    // version on failure; just surface the error.
                     if mem_capacity > 0 {
                         disable_tracking();
                     }
@@ -1525,21 +1517,12 @@ pub(crate) fn finish_write(
     stats: &QueryStatistics,
 ) {
     let wq = WriteQueryOk::new(runtime, stats);
-    // `None` means the closure never ran, not that it failed:
-    // `with_graph_mut` yields it for a session still in reader mode.
-    if session
-        .with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, wq))
-        .is_some()
-    {
-        session.committed();
-    } else {
-        // Never escalated, so the plan's `Commit` never ran and nothing was
-        // mutated — `LIMIT 0` short-circuits above `Commit`, for instance. There
-        // is nothing to publish or replicate; just drop the private version
-        // (and release the MVCC write slot, if this session started as a
-        // writer and so claimed it up front).
-        session.release_slot();
-    }
+    // `with_graph_mut` skips the closure for a session still in reader mode:
+    // it never escalated, so the plan's `Commit` never ran and nothing was
+    // mutated — `LIMIT 0` short-circuits above `Commit`, for instance. There is
+    // nothing to publish or replicate, and the private version goes with the
+    // runtime.
+    session.with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, wq));
 }
 
 /// Discard a write that failed, leaving the published state as it was.
@@ -1548,18 +1531,17 @@ pub(crate) fn finish_write(
 /// existed) or rewritten from committed values before the private version goes,
 /// and this runs in writer mode, so no reader observes the interim state.
 ///
-/// Releases the MVCC write slot if the session claimed it. A session that
-/// never claimed it (still matching, or its fork went stale) published no
-/// document, so there is nothing to resync.
+/// A session whose version was never found current (still matching, or its
+/// fork went stale) published no document, so there is nothing to resync. The
+/// version itself goes with the runtime; there is nothing else to release.
 pub(crate) fn abandon_write(
     session: &QuerySession,
     runtime: &Runtime,
 ) {
-    if session.holds_slot() {
+    if session.version_is_current() {
         let committed = session.with_graph(|tg| tg.graph.read());
         runtime.resync_published_indexes(&committed);
     }
-    session.release_slot();
 }
 
 /// Commit a successfully-executed write and replicate it.
@@ -1577,15 +1559,17 @@ fn commit_and_replicate(
     // Index document changes were already applied by each `CommitOp` while this
     // query held the write lock (so a later operator in the same query could see
     // them); nothing left to publish but the matrix version.
-    // `commit` validates the version before publishing it. It cannot refuse one
-    // from here: every write query ends its last segment through
+    // `commit` checks the version before publishing it, and cannot refuse one
+    // from here. Not stale: the session forked under the write lock, or found
+    // its fork current on escalation, and has held the lock since. Not
+    // invalid: every write query ends its last segment through
     // `Pending::end_segment`, which verifies the batch and rolls it over, so the
     // batch reaching this point is empty and passes trivially. A query with no
     // `Commit` operator at all — index DDL — creates no ids and passes for the
     // same reason. There is also nothing this could do about a refusal: the
     // query has already succeeded and its reply is about to be serialized.
-    if g.graph.commit(Arc::clone(&wq.graph)).is_err() {
-        unreachable!("a committed write query leaves an empty, verified id batch");
+    if let Err(e) = g.graph.commit(Arc::clone(&wq.graph)) {
+        unreachable!("a write query's version is current and verified by now: {e}");
     }
     // Signal the key as modified so WATCH gets triggered.
     unsafe { ffi::signal_modified_key(ctx.ctx, key_name.as_bytes()) };

@@ -355,3 +355,16 @@ class testBidirectionalTraversals(FlowTestsBase):
         self.env.assertEqual(result.result_set, [[1]])
         result = g.query("MATCH (a:A) WHERE size((a)--()) > 1 AND size((a)-->()) = 2 RETURN count(a)")
         self.env.assertEqual(result.result_set, [[1]])
+
+    def test15_multi_type_undirected_one_row_per_pair(self):
+        # several types stream through the union iterators; the collapse to one
+        # row per pattern pair must hold there too
+        g = self.db.select_graph("both_directions_multi")
+        g.query("CREATE (a:A {id:1})-[:R]->(b:B {id:2}), (b)-[:S]->(a), (a)-[:R]->(b)")
+
+        result = g.query("MATCH (a)-[:R|S]-(b) RETURN a.id, b.id ORDER BY a.id, b.id")
+        self.env.assertEqual(result.result_set, [[1, 2], [2, 1]])
+        result = g.query("MATCH (a:A)-[:R|S]-(b) RETURN a.id, b.id")
+        self.env.assertEqual(result.result_set, [[1, 2]])
+        result = g.query("MATCH (a:A)-[r:R|S]-(b) RETURN count(r)")
+        self.env.assertEqual(result.result_set, [[3]])

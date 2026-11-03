@@ -60,11 +60,7 @@ pub fn graph_effect(
     };
 
     let mut tg = graph.write();
-    let Some(g_arc) = tg.graph.write() else {
-        return Err(RedisError::String(
-            "ERR another write is in progress, retry the query".to_string(),
-        ));
-    };
+    let g_arc = tg.graph.fork();
 
     let result = {
         let mut g = g_arc.borrow_mut();
@@ -77,7 +73,7 @@ pub fn graph_effect(
     };
 
     // Folded into the same result rather than handled in the `Ok` arm. `commit`
-    // validates before publishing, and a version it refuses is discarded — so
+    // validates before publishing, and a version it refuses is dropped — so
     // the master's write is missing here exactly as it would be if `apply` had
     // rejected the buffer, and it needs the same forced resync. Answered
     // separately, it replied with an error the master will not act on and left
@@ -90,12 +86,11 @@ pub fn graph_effect(
             Ok(RedisValue::SimpleStringStatic("OK"))
         }
         Err(e) => {
-            // Rolled back, so this graph is exactly as it was — but the write
-            // the master already made is now missing here, and every later
-            // effect lands on a graph that has drifted. Redis will not break
-            // the link over an error reply, so without this the replica serves
-            // wrong data until someone notices.
-            tg.graph.rollback();
+            // The version was dropped unpublished, so this graph is exactly as
+            // it was — but the write the master already made is now missing
+            // here, and every later effect lands on a graph that has drifted.
+            // Redis will not break the link over an error reply, so without
+            // this the replica serves wrong data until someone notices.
             // `on_failure` decides for itself whether this was replayed; a
             // client-sent payload returns the error below and nothing more.
             divergence_guard::on_failure(ctx, &key_str.to_string(), "GRAPH.EFFECT", &e, Some(buf));
