@@ -3076,6 +3076,36 @@ updating clause.")
                RETURN count(*) AS c""",
             [[64]])
 
+    def test_57_union_branch_variables_do_not_alias_outer_ones(self):
+        # The branches of a UNION inside CALL {} have their own scopes: a
+        # branch variable must not read the record slot of an outer one.
+        self.graph.delete()
+        self.graph.query("CREATE (:A {v:1})-[:R]->(:B {v:0}), (:B {v:5})")
+
+        self.get_res_and_assertEquals(
+            """MATCH (n:A)
+               CALL { MATCH (q:B) RETURN q UNION MATCH (q:B) RETURN q }
+               RETURN n.v, q.v ORDER BY q.v""",
+            [[1, 0], [1, 5]])
+
+        self.get_res_and_assertEquals(
+            """MATCH (n:A)
+               CALL { MATCH (q:B) RETURN q UNION ALL MATCH (q:B) RETURN q }
+               RETURN n.v, q.v ORDER BY q.v""",
+            [[1, 0], [1, 0], [1, 5], [1, 5]])
+
+        self.get_res_and_assertEquals(
+            """MATCH (n)
+               CALL { MATCH (q:B) RETURN q.v AS qv UNION ALL MATCH (q:A) RETURN q.v AS qv }
+               RETURN n.v, qv ORDER BY n.v, qv""",
+            [[0, 0], [0, 1], [0, 5], [1, 0], [1, 1], [1, 5], [5, 0], [5, 1], [5, 5]])
+
+        self.get_res_and_assertEquals(
+            """MATCH (n:A)
+               CALL { MATCH (q:B) RETURN q.v AS x UNION MATCH (q:A) RETURN q.v AS x }
+               WITH n, x MATCH (m:B) RETURN n.v, x, m.v ORDER BY x, m.v""",
+            [[1, 0, 0], [1, 0, 5], [1, 1, 0], [1, 1, 5], [1, 5, 0], [1, 5, 5]])
+
     def _graph_contents(self):
         """Every node (labels, properties) and relationship (type,
         properties), order-independent."""
@@ -3085,7 +3115,7 @@ updating clause.")
             "MATCH ()-[r]->() RETURN type(r), properties(r)").result_set
         return (sorted(map(str, nodes)), sorted(map(str, edges)))
 
-    def test_57_deleted_ids_are_not_reused_within_the_query(self):
+    def test_58_deleted_ids_are_not_reused_within_the_query(self):
         """#3164: a CALL body commits once per input row. An id its DELETE
         freed must not be handed to a node the next invocation creates, because
         the next input row still holds the old node: its DELETE would remove the
@@ -3126,7 +3156,7 @@ updating clause.")
         res = self.graph.query("CREATE (:After)")
         self.env.assertEqual(res.nodes_created, 1)
 
-    def test_58_deleted_relationship_ids_are_not_reused_within_the_query(self):
+    def test_59_deleted_relationship_ids_are_not_reused_within_the_query(self):
         self.graph.query("MATCH (n) DETACH DELETE n")
         self.graph.query(
             """CREATE (a:N {id:1}), (b:N {id:2}),
@@ -3155,7 +3185,7 @@ updating clause.")
             [["NEW", None, 1], ["NEW", None, 2], ["NEW", None, 3],
              ["R", 2, None], ["R", 3, None]])
 
-    def test_59_nested_call_and_merge_do_not_reuse_deleted_ids(self):
+    def test_60_nested_call_and_merge_do_not_reuse_deleted_ids(self):
         queries = [
             # nested CALL
             """UNWIND [1, 2, 3] AS i
@@ -3205,7 +3235,7 @@ updating clause.")
                 [[["N"], 2, None], [["New"], None, 1], [["New"], None, 2],
                  [["New"], None, 3]], depth=0)
 
-    def test_60_union_branch_without_import_keeps_its_own_labels(self):
+    def test_61_union_branch_without_import_keeps_its_own_labels(self):
         """A UNION branch of a CALL body that imports nothing was bound with
         scope ids that restart at 0; the outer MATCH's labels (also scope 0,
         id 0) were applied over it, so `CREATE (:New)` created a `:N`."""
@@ -3221,7 +3251,7 @@ updating clause.")
             ).result_set,
             [[["N"], 1, None], [["New"], None, 1]])
 
-    def test_61_issue_3164_query(self):
+    def test_62_issue_3164_query(self):
         """The reported query: the second branch's creates were shifted onto
         ids the first branch's deletes had just freed, leaving unlabeled
         nodes and deleting freshly created ones."""
@@ -3299,7 +3329,7 @@ updating clause.")
             [[1]])
         g.delete()
 
-    def test_62_cancelled_creation_ids_are_not_reused_within_the_query(self):
+    def test_63_cancelled_creation_ids_are_not_reused_within_the_query(self):
         """#3164: a creation cancelled by a DELETE in the same segment returns
         its id to the free set. A later segment of the query must not hand that
         id out, since the row still carries the stale node/relationship and a

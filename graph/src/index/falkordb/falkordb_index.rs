@@ -338,6 +338,13 @@ impl BuildCursor {
 pub struct FalkorDbIndex {
     node_columns: HashMap<IndexKey, IndexEntry<IndexColumn>>,
     edge_columns: HashMap<IndexKey, IndexEntry<IndexColumn>>,
+    /// Indexes created in this version and those before it: the next one's generation.
+    indexes_created: u64,
+    /// Indexer batches published in this graph before this version, and this one if it is a
+    /// batch's ([`Self::set_batches_published`]). It never falls and rises with every batch
+    /// published, so between a version and a later published one with the same count, no batch
+    /// was published. Writers may have been: the data version tells.
+    batches_published: u64,
 }
 
 impl FalkorDbIndex {
@@ -450,9 +457,11 @@ impl FalkorDbIndex {
         column: IndexColumn,
         state: BuildState<BuildCursor>,
     ) {
+        self.indexes_created += 1;
+        let generation = self.indexes_created;
         self.columns_mut(entity).insert(
             (label.clone(), attr.clone()),
-            IndexEntry::new(column, state),
+            IndexEntry::new(column, state, generation),
         );
     }
 
@@ -548,6 +557,26 @@ impl FalkorDbIndex {
     ) -> bool {
         self.columns(entity)
             .contains_key(&(label.clone(), attr.clone()))
+    }
+
+    /// Set this version's [`Self::batches_published`] as it is published after `published`:
+    /// `published`'s count, plus one if this is an indexer batch's version. Only the publish
+    /// calls this, so nothing that builds a version has to keep the count.
+    pub(crate) fn set_batches_published(
+        &mut self,
+        published: &Self,
+        indexer_batch: bool,
+    ) {
+        self.batches_published = published.batches_published + u64::from(indexer_batch);
+    }
+
+    /// Whether an indexer batch was published between `older`, an earlier version, and this
+    /// published one.
+    pub(crate) fn batch_published_since(
+        &self,
+        older: &Self,
+    ) -> bool {
+        self.batches_published != older.batches_published
     }
 
     /// The tree key `value` takes in column `(entity, label, attr)`, or `None` when there is no

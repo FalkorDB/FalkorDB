@@ -1,44 +1,51 @@
 //! Multi-Version Concurrency Control (MVCC) for graph access.
 //!
-//! This module provides [`MvccGraph`], the top-level coordinator for concurrent
-//! graph access. It ensures:
+//! [`MvccGraph`] holds the published version of a graph. Readers share it; a
+//! writer forks a private version, mutates it, and publishes it with
+//! [`MvccGraph::commit`].
 //!
-//! - Multiple readers can access the graph simultaneously (lock-free)
-//! - Only one writer at a time (serialized via `AtomicBool`)
-//! - Writers work on a Copy-on-Write versioned copy, committing atomically
-//! - Readers always see a consistent, committed snapshot
+//! - Readers never block: [`MvccGraph::read`] clones the `Arc`.
+//! - A writer builds into a fork ([`MvccGraph::fork`]), Copy-on-Write and
+//!   invisible to readers until it is committed.
+//! - [`MvccGraph::commit`] publishes a fork only if it still extends the
+//!   published version, so a fork that another commit overtook is refused
+//!   rather than published over it.
 //!
-//! ## Concurrency Model
+//! ## Who serializes writers
+//!
+//! The host does. `commit` takes `&mut self`, and the host only hands that out
+//! under its per-graph write lock, so two commits cannot overlap and this
+//! module needs no lock of its own. Forking takes nothing at all, which is
+//! why a fork has to be checked for staleness instead.
 //!
 //! ```text
 //!  MvccGraph
 //!  ┌─────────────────────────────────────────────────────┐
-//!  │  graph: Arc<AtomicRefCell<Graph>>  (committed v1)   │
-//!  │  write: AtomicBool (false = no write in progress)   │
+//!  │  graph: Arc<AtomicRefCell<Graph>>  (published v1)   │
 //!  └─────────────────────────────────────────────────────┘
 //!
 //!  Reader 1 ──read()──▶ clones Arc ──▶ sees Graph v1
 //!  Reader 2 ──read()──▶ clones Arc ──▶ sees Graph v1
 //!
-//!  Writer ──write()──▶ CAS(false→true) ──▶ Graph::new_version() ──▶ Graph v2
-//!    │                                       (COW matrices, COW AttributeStore)
+//!  Writer ──fork()──▶ Graph::new_version() ──▶ Graph v2 (private)
+//!    │                 (COW matrices, COW AttributeStore)
 //!    │── mutations on v2 ──▶ ...
-//!    │── commit(v2) ──▶ swap graph pointer, store(false)
+//!    │── commit(v2) ──▶ v2 still extends v1? valid? swap graph pointer
 //!    │
 //!    │  Readers now see v2; v1 is dropped when last Arc goes away
 //!
-//!  Failed writer ──write()──▶ CAS fails ──▶ returns None
+//!  Abandoned writer ──▶ drops v2; there is nothing to release
 //! ```
 //!
 //! ## Version Lifecycle
 //!
 //! ```text
-//!  ┌──────┐   write()    ┌──────────┐  commit()   ┌───────────┐
+//!  ┌──────┐   fork()     ┌──────────┐  commit()   ┌───────────┐
 //!  │  v1  │ ────────────▶│ v2 (wip) │ ──────────▶ │ v2 (live) │
 //!  │(live)│              │          │             │           │
 //!  └──────┘              └──────────┘             └───────────┘
 //!                              │
-//!                         rollback()
+//!                   dropped, or refused by commit()
 //!                              │
 //!                              ▼
 //!                         (discarded)
@@ -47,19 +54,18 @@
 //! ## Thread Safety
 //!
 //! Readers never block -- they simply clone the `Arc` to the current graph.
-//! The `AtomicBool` only serializes write acquisition, not read access.
 //! `AtomicRefCell` provides runtime borrow checking for the rare cases
 //! where mutable access to the committed graph is needed (e.g., indexer
 //! graph reference updates on commit).
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 use atomic_refcell::AtomicRefCell;
+use thiserror::Error;
 
 use crate::graph::graph::{Graph, NodeOpError};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -68,17 +74,19 @@ use crate::graph::graph::{Graph, NodeOpError};
 pub struct MvccGraph {
     /// Current committed graph version
     graph: Arc<AtomicRefCell<Graph>>,
-    /// Write lock (true = write in progress)
-    write: AtomicBool,
 }
 
-/// Why [`MvccGraph::claim`] refused a fork.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Claim {
-    /// Another writer holds the write slot.
-    Busy,
-    /// Another writer committed after the fork was made.
+/// Why [`MvccGraph::commit`] refused a version. Whichever it is, the version
+/// was not published and the published graph is as it was.
+#[derive(Debug, PartialEq, Eq, Error)]
+pub enum CommitError {
+    /// Another version was published after this one was forked, so it no
+    /// longer extends the published graph.
+    #[error("the graph was written after this version was forked")]
     Stale,
+    /// The version failed [`Graph::validate`].
+    #[error(transparent)]
+    Invalid(#[from] NodeOpError),
 }
 
 unsafe impl Send for MvccGraph {}
@@ -94,7 +102,6 @@ impl MvccGraph {
     ) -> Self {
         Self {
             graph: Arc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0, name))),
-            write: AtomicBool::new(false),
         }
     }
 
@@ -104,7 +111,6 @@ impl MvccGraph {
     pub fn from_graph(graph: Graph) -> Self {
         Self {
             graph: Arc::new(AtomicRefCell::new(graph)),
-            write: AtomicBool::new(false),
         }
     }
 
@@ -113,89 +119,116 @@ impl MvccGraph {
         self.graph.clone()
     }
 
-    /// Claim the write slot and fork a private version to build into, in one
-    /// step. For writers that already hold the per-graph write lock.
-    #[must_use]
-    pub fn write(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
-        if self
-            .write
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
-            Some(self.fork())
-        } else {
-            None
-        }
-    }
-
-    /// A private version of the committed graph, *without* claiming the write
-    /// slot.
+    /// A private version of the published graph to build a write into.
     ///
-    /// For a writer that matches as a reader before it mutates anything shared:
-    /// it builds into the fork and claims the slot only when it escalates
-    /// ([`Self::claim`]), so the slot is only ever held by a thread holding the
-    /// per-graph write lock and an inline writer never finds it taken.
+    /// Readers do not see it until [`Self::commit`] publishes it, and
+    /// dropping it discards the write: forking takes nothing that has to be
+    /// given back. So a writer can fork while it is still matching as a
+    /// reader, and an inline writer that commits meanwhile is never refused
+    /// for it (#3093) — the fork goes stale instead ([`Self::is_stale`]).
     #[must_use]
     pub fn fork(&self) -> Arc<AtomicRefCell<Graph>> {
         Arc::new(AtomicRefCell::new(self.graph.borrow().new_version()))
     }
 
-    /// Claim the write slot for a version made by [`Self::fork`].
+    /// Whether a version was published after `fork` was made, so it no
+    /// longer extends the published graph and [`Self::commit`] would refuse
+    /// it.
     ///
-    /// # Errors
-    ///
-    /// [`Claim::Busy`] if another writer holds the slot. [`Claim::Stale`] if
-    /// another writer committed since the fork was made, so it no longer
-    /// extends the committed version and must be discarded; the slot is left
-    /// free.
-    pub fn claim(
+    /// For a writer that forked before it held the write lock: it asks once
+    /// it holds it, before it touches state that is not versioned — the index
+    /// documents a `Commit` publishes, which dropping the fork cannot take
+    /// back. Nothing else commits while the lock is held, so the answer stands
+    /// until this writer's own commit.
+    #[must_use]
+    pub fn is_stale(
         &self,
         fork: &AtomicRefCell<Graph>,
-    ) -> Result<(), Claim> {
-        if self
-            .write
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            return Err(Claim::Busy);
-        }
-        if self.graph.borrow().version + 1 != fork.borrow().version {
-            self.write.store(false, Ordering::Release);
-            return Err(Claim::Stale);
-        }
-        Ok(())
+    ) -> bool {
+        self.graph.borrow().version + 1 != fork.borrow().version
     }
 
     /// Publish `new_graph` as the current version.
     ///
-    /// Validates before touching anything, so a refusal leaves the published
-    /// version untouched and the private one unpublished. This is the only
-    /// place a version becomes visible, which makes it the only place the check
-    /// has to be.
+    /// Checks before touching anything, so a refusal leaves the published
+    /// version untouched and `new_graph` unpublished. This is the only place a
+    /// version becomes visible, so every writer gets these checks; a writer
+    /// that publishes unversioned state before it commits also asks
+    /// [`Self::is_stale`] first.
     ///
-    /// A refusal *is* a [`Self::rollback`], performed here rather than left to
-    /// the caller. That is not a convenience: the write slot is a single
-    /// `AtomicBool` for the whole graph, so returning without clearing it makes
-    /// every later `write()` fail until the process restarts. Five of the six
-    /// callers would have had to remember, and the sixth is `unreachable!()`.
+    /// A refusal needs no cleanup: nothing was taken, and the refused version
+    /// is just dropped.
     ///
     /// # Errors
     ///
-    /// Whatever [`Graph::validate`] refuses. The version is not published and
-    /// the write slot is released.
+    /// [`CommitError::Stale`] if `new_graph` no longer extends the published
+    /// graph, [`CommitError::Invalid`] if [`Graph::validate`] refuses it.
     pub fn commit(
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
-    ) -> Result<(), NodeOpError> {
-        debug_assert_eq!(self.graph.borrow().version + 1, new_graph.borrow().version);
+    ) -> Result<(), CommitError> {
+        self.commit_version(new_graph, true)
+    }
 
-        // Before any of the work below, so a refusal changes nothing — and
-        // releasing the slot on the way out, so a refusal is a rollback rather
-        // than a graph nobody can write to again.
-        if let Err(e) = new_graph.borrow().validate() {
-            self.rollback();
-            return Err(e);
+    /// Commit an indexer batch. `prepared` is a build version of a published one
+    /// ([`Graph::new_build_version`]) with `batch` already applied
+    /// ([`Graph::indexer_prepare`]), made with no lock held. How it goes in depends on what
+    /// committed since ([`Graph::indexer_fit`]):
+    /// - nothing: `prepared` is published as it is;
+    /// - only other indexes' batches: `batch`'s index is put into a new build version of the
+    ///   published one, which is published ([`Graph::with_batch_index`]);
+    /// - `batch`'s index was dropped or created again, or a writer committed, or another batch
+    ///   committed on the same index: nothing is published, and the index's next batch starts from
+    ///   its published cursor. Another batch on the index is a bug in the builder's one chain per
+    ///   index ([`AnotherBatch`](crate::index::falkordb::versioned::Discarded::AnotherBatch)),
+    ///   which the caller reports.
+    ///
+    /// The commit changes no graph data and keeps the data version, so it does not make a writer's
+    /// fork stale ([`Self::is_stale`]).
+    ///
+    /// # Errors
+    ///
+    /// [`CommitError::Invalid`] if [`Graph::validate`] refuses the version. Nothing is published.
+    #[cfg(feature = "index-falkordb")]
+    pub fn commit_indexer_batch(
+        &mut self,
+        prepared: &Arc<AtomicRefCell<Graph>>,
+        batch: &PreparedBatch,
+    ) -> Result<IndexerCommit, CommitError> {
+        let fit = prepared.borrow().indexer_fit(&self.graph.borrow(), batch);
+        let version = match fit {
+            IndexerCommit::Same => Arc::clone(prepared),
+            IndexerCommit::Swap => Arc::new(AtomicRefCell::new(
+                prepared
+                    .borrow()
+                    .with_batch_index(&self.graph.borrow(), batch),
+            )),
+            IndexerCommit::Discarded(_) => return Ok(fit),
+        };
+        self.commit_version(version, false)?;
+        Ok(fit)
+    }
+
+    /// [`Self::commit`]: `writer` for a writer's version, `false` for an indexer batch's, which
+    /// keeps the data version.
+    fn commit_version(
+        &mut self,
+        new_graph: Arc<AtomicRefCell<Graph>>,
+        writer: bool,
+    ) -> Result<(), CommitError> {
+        // Before any of the work below, so a refusal changes nothing. A batch's version is fitted
+        // onto the published one, at its data version ([`Graph::indexer_fit`]): only a writer's
+        // can be stale.
+        if writer && self.is_stale(&new_graph) {
+            return Err(CommitError::Stale);
         }
+        debug_assert!(writer || self.graph.borrow().version == new_graph.borrow().version);
+        new_graph.borrow().validate()?;
+        #[cfg(feature = "index-falkordb")]
+        new_graph
+            .borrow_mut()
+            .falkordb_index
+            .set_batches_published(&self.graph.borrow().falkordb_index, !writer);
 
         // Check if schema changed (new labels, relationship types, or attributes)
         // Single borrow for old graph to collect all schema counts
@@ -262,12 +295,7 @@ impl MvccGraph {
         new_graph.borrow().set_indexer_graph(new_graph.clone());
 
         self.graph = new_graph;
-        self.write.store(false, Ordering::Release);
         Ok(())
-    }
-
-    pub fn rollback(&self) {
-        self.write.store(false, Ordering::Release);
     }
 }
 
@@ -279,64 +307,69 @@ impl Drop for MvccGraph {
 
 #[cfg(test)]
 mod tests {
-    use super::{Claim, MvccGraph};
+    use super::{CommitError, MvccGraph};
     use crate::graph::graphblas::test_init::ensure_init;
     use roaring::RoaringTreemap;
+    use std::sync::Arc;
 
-    /// A refused version must leave the write slot free.
-    ///
-    /// The slot is one `AtomicBool` for the whole graph, so a `commit` that
-    /// returns without clearing it does not fail one write — it fails every
-    /// write for the life of the process. Found in review, by two reviewers
-    /// independently, after the validation was added here.
+    /// A refused version publishes nothing, and the graph takes the next one.
     #[test]
-    fn a_refused_commit_releases_the_write_slot() {
+    fn a_refused_commit_publishes_nothing() {
         ensure_init();
         let mut mvcc = MvccGraph::new(64, 64, 0, "t");
+        let published = mvcc.read();
 
-        let version = mvcc.write().expect("the slot starts free");
+        let invalid = mvcc.fork();
         // Ids 0 and 5 with nothing between: a batch that cannot have come from
         // an allocator, which is what `Graph::validate` refuses.
         let holed: RoaringTreemap = [0u64, 5].into_iter().collect();
-        version
+        invalid
             .borrow_mut()
             .create_nodes(&holed)
             .expect("neither id is live, so the graph takes them");
-
         assert!(
-            mvcc.commit(version).is_err(),
+            matches!(mvcc.commit(invalid), Err(CommitError::Invalid(_))),
             "a hole in the id space must refuse the version"
         );
         assert!(
-            mvcc.write().is_some(),
-            "the refusal must release the write slot, or no write ever succeeds again"
+            Arc::ptr_eq(&mvcc.read(), &published),
+            "a refused version must not be published"
         );
+
+        let next = mvcc.fork();
+        mvcc.commit(next)
+            .expect("a refusal leaves nothing behind to block the next write");
     }
 
-    /// A fork made while another writer is still free to commit: the slot is
-    /// claimed only at escalation, and a commit in between makes the fork stale
-    /// instead of making the other writer fail (#3093).
+    /// A fork takes nothing, so a writer that forks while it is still
+    /// matching never blocks one that commits meanwhile (#3093) — its own
+    /// fork goes stale instead, and is refused rather than published over the
+    /// other writer's version.
     #[test]
-    fn a_fork_is_claimed_late_and_refused_once_stale() {
+    fn a_fork_blocks_no_writer_and_goes_stale_when_one_commits() {
         ensure_init();
         let mut mvcc = MvccGraph::new(64, 64, 0, "t");
 
-        let fork = mvcc.fork();
-        // The fork holds no slot, so an inline writer still gets it.
-        let inline = mvcc.write().expect("forking does not take the slot");
-        assert_eq!(mvcc.claim(&fork), Err(Claim::Busy));
-        mvcc.commit(inline).expect("an empty version commits");
+        let matching = mvcc.fork();
+        assert!(!mvcc.is_stale(&matching));
 
-        assert_eq!(
-            mvcc.claim(&fork),
-            Err(Claim::Stale),
+        let inline = mvcc.fork();
+        mvcc.commit(Arc::clone(&inline))
+            .expect("an open fork must not refuse another writer");
+
+        assert!(
+            mvcc.is_stale(&matching),
             "the fork predates the inline commit"
         );
-        // A stale claim leaves the slot free; a fresh fork claims it.
+        assert_eq!(mvcc.commit(matching), Err(CommitError::Stale));
+        assert!(
+            Arc::ptr_eq(&mvcc.read(), &inline),
+            "the refused fork must not replace the version it was overtaken by"
+        );
+
         let fresh = mvcc.fork();
-        assert_eq!(mvcc.claim(&fresh), Ok(()));
-        assert!(mvcc.write().is_none(), "the claim holds the slot");
-        mvcc.commit(fresh).expect("the claimed fork commits");
-        assert!(mvcc.write().is_some());
+        assert!(!mvcc.is_stale(&fresh));
+        mvcc.commit(fresh)
+            .expect("a fork of the current version commits");
     }
 }
