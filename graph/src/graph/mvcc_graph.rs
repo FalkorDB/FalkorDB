@@ -275,8 +275,8 @@ impl MvccGraph {
     /// - `batch`'s index was dropped or created again, or another batch committed on the same
     ///   index: nothing is published, and the index's next batch starts from its published cursor.
     ///   Another batch on the index is a bug in the builder's one chain per index
-    ///   ([`AnotherBatch`](crate::index::falkordb::versioned::Discarded::AnotherBatch)), which the
-    ///   caller reports.
+    ///   ([`AnotherBatch`](crate::index::falkordb::versioned::Discarded::AnotherBatch)), which
+    ///   leaves nothing wrong.
     ///
     /// The commit changes no graph data and keeps the data version, so it does not make a writer's
     /// fork stale ([`Self::is_stale`]).

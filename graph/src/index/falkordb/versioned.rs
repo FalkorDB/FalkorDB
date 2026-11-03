@@ -220,7 +220,8 @@ pub enum Discarded {
     /// The index was dropped, or dropped and created again.
     Gone,
     /// Another batch committed on the same index since. The builder runs one chain of batches per
-    /// index, so this is a bug in that exclusion, for the caller to report.
+    /// index, so this is a bug in that exclusion. It leaves nothing wrong: the later batch
+    /// publishes nothing.
     AnotherBatch,
     /// Writers changed more of the index while the batch was read than its commit may catch up
     /// on ([`PreparedBatch::limit_catch_up`]). The index is unchanged, and still `Building`.
