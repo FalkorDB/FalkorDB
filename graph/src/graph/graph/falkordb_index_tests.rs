@@ -1969,6 +1969,116 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
     }
 }
 
+/// A writer deletes an edge a batch indexed and reuses its id for an edge of another type with the
+/// same attribute, also below the batch's cursor, committed before the batch or after it. The
+/// column's refresh reads that id in both versions, and only a version where it is the column's
+/// type gives it a tuple: the column ends without the other type's edge.
+#[test]
+fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_order() {
+    for writer_first in [false, true] {
+        ensure_graphblas();
+        let mut g = Graph::new(64, 64, 10, 1, "t");
+        let ty = Arc::new("R".to_string());
+        let other = Arc::new("S".to_string());
+        let attr = Arc::new("w".to_string());
+        let aid = g.get_or_create_rel_attr_id(&attr);
+        let nodes = reserve_nodes(&mut g, 4);
+        g.create_nodes(&nodes.iter().copied().collect())
+            .expect("freshly reserved ids are creatable");
+        let (a, b, c, d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
+        // In batch order: a->b, a->c, c->d; w = 1..=3.
+        let eids: Vec<u64> = g
+            .relationship_id_space()
+            .reserve(3, &RoaringTreemap::new())
+            .expect("reserved");
+        g.create_relationships_bulk(&ty, &[a, a, c], &[b, c, d], &eids)
+            .expect("freshly reserved ids are creatable");
+        let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
+            pairs
+                .iter()
+                .map(|&(eid, w)| (eid, vec![(aid, Value::Int(w))]))
+                .collect()
+        };
+        let initial: Vec<(u64, i64)> = eids.iter().copied().zip(1..).collect();
+        applied!(g, |w| g
+            .import_relationship_attrs(&with_w(&initial), &mut w));
+        g.falkordb_index
+            .create_building(EntityType::Relationship, &ty, &attr);
+        let mvcc = &mut MvccGraph::from_graph(g);
+        let id = IndexId::Column(EntityType::Relationship, (ty.clone(), attr.clone()));
+        // a->b, which the batch reads, goes, and its id comes back as an `S` edge a->a with a value,
+        // below the batch's cursor at a->c too.
+        let write = |g: &mut Graph| {
+            let mut w = IndexDocs::default();
+            let mut del = RoaringTreemap::new();
+            del.insert(eids[0]);
+            g.delete_relationships(&del, &mut w).unwrap();
+            g.create_relationships_bulk(&other, &[a], &[a], &[eids[0]])
+                .expect("a freed id is creatable");
+            g.import_relationship_attrs(&with_w(&[(eids[0], 9)]), &mut w);
+            g.apply_index_writes(&mut w);
+        };
+        let what = format!("writer first: {writer_first}");
+        let values = [1, 2, 3, 9];
+        let column = |mvcc: &MvccGraph| {
+            contents(
+                &mvcc.read().borrow(),
+                EntityType::Relationship,
+                &ty,
+                &attr,
+                &values,
+            )
+        };
+
+        let (prepared, batch) = prepare(mvcc, &id, 1);
+        if writer_first {
+            commit_write(mvcc, write);
+            let committed = mvcc.commit_indexer_batch(&prepared, &batch);
+            assert!(
+                matches!(committed, Ok(IndexerCommit::CatchUp(_))),
+                "{what}: {committed:?}"
+            );
+        } else {
+            let fork = mvcc.fork();
+            write(&mut fork.borrow_mut());
+            assert_eq!(
+                mvcc.commit_indexer_batch(&prepared, &batch),
+                Ok(IndexerCommit::Same),
+                "{what}"
+            );
+            assert_eq!(escalate(&mvcc, &fork), Ok(()), "{what}");
+            mvcc.commit(fork).expect("the write commits");
+        }
+        let nothing = (values.iter().map(|&v| (v, vec![])).collect(), vec![]);
+        assert_eq!(
+            column(mvcc),
+            nothing,
+            "{what}: no `R` edge below the cursor"
+        );
+
+        let mut batches = 0;
+        loop {
+            let version = Arc::new(AtomicRefCell::new(mvcc.read().borrow().new_build_version()));
+            let Some(batch) = version.borrow_mut().indexer_prepare(&id, 1) else {
+                break;
+            };
+            assert_eq!(
+                mvcc.commit_indexer_batch(&version, &batch),
+                Ok(IndexerCommit::Same)
+            );
+            batches += 1;
+            assert!(batches < 100, "the build never finishes");
+        }
+        let published = mvcc.read();
+        let g = published.borrow();
+        assert_eq!(
+            contents(&g, EntityType::Relationship, &ty, &attr, &values),
+            one_pass(&g, EntityType::Relationship, &ty, &attr, &values),
+            "{what}: built to the end"
+        );
+    }
+}
+
 /// A final indexer batch, which reaches the end of its column and flips it `Ready`, and a writer
 /// that re-values a node the batch read and creates one past the batch's last, commit in either
 /// order. Writer first: the batch catches up on the writer's changes. Batch first: the writer
