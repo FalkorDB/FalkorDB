@@ -63,7 +63,7 @@ use std::{
     rc::{Rc, Weak},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicI32, AtomicU64, Ordering},
     },
 };
 
@@ -958,6 +958,9 @@ pub struct Index {
     /// acquired against an older published generation are released against
     /// the same counters.
     pending_slots: Arc<Mutex<PendingSlots>>,
+    /// Copy of `pending_slots.current_pending`, read without the mutex: a fork
+    /// can copy the mutex locked, and the RDB encoder reads this in the child.
+    current_pending: Arc<AtomicI32>,
     progress: AtomicU64,
     total: AtomicU64,
     language: Option<Arc<String>>,
@@ -1089,6 +1092,7 @@ impl Default for Index {
                 current_pending: 0,
                 stale_pending: 0,
             })),
+            current_pending: Arc::new(AtomicI32::new(0)),
             progress: AtomicU64::new(0),
             total: AtomicU64::new(0),
             language: None,
@@ -1120,6 +1124,7 @@ impl Index {
         slots.stale_pending += slots.current_pending;
         slots.current_generation = self.id;
         slots.current_pending = 0;
+        self.current_pending.store(0, Ordering::Relaxed);
     }
 
     /// Copy this `Index` for a clone-and-swap schema update.
@@ -1137,6 +1142,7 @@ impl Index {
             fields: self.fields.clone(),
             field_order: self.field_order.clone(),
             pending_slots: self.pending_slots.clone(),
+            current_pending: self.current_pending.clone(),
             progress: AtomicU64::new(self.progress.load(Ordering::Relaxed)),
             total: AtomicU64::new(self.total.load(Ordering::Relaxed)),
             language: self.language.clone(),
@@ -2175,6 +2181,8 @@ impl Index {
         if generation_id == slots.current_generation {
             let prev = slots.current_pending;
             slots.current_pending += 1;
+            self.current_pending
+                .store(slots.current_pending, Ordering::Relaxed);
             prev
         } else {
             let prev = slots.stale_pending;
@@ -2194,6 +2202,8 @@ impl Index {
             let prev = slots.current_pending;
             if prev > 0 {
                 slots.current_pending -= 1;
+                self.current_pending
+                    .store(slots.current_pending, Ordering::Relaxed);
             }
             prev
         } else {
@@ -2223,6 +2233,17 @@ impl Index {
     #[must_use]
     pub fn pending_count(&self) -> i32 {
         self.pending_slots.lock().current_pending
+    }
+
+    /// Get the current pending changes count without the mutex, so a BGSAVE
+    /// fork child can read it: the fork copies a mutex that another thread
+    /// holds as locked, and no thread in the child can release it.
+    ///
+    /// Under a concurrent change it may return the count from before that
+    /// change. The planner reads [`Self::pending_count`] instead.
+    #[must_use]
+    pub fn pending_count_snapshot(&self) -> i32 {
+        self.current_pending.load(Ordering::Relaxed)
     }
 
     // --- language ---

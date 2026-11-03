@@ -818,7 +818,7 @@ impl Indexer {
                 let (progress, total) = index.progress();
                 IndexInfo {
                     label: label.clone(),
-                    pending: index.pending_count(),
+                    pending: index.pending_count_snapshot(),
                     progress,
                     total,
                     fields: index.fields().clone(),
