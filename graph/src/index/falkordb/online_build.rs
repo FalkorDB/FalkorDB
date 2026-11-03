@@ -19,17 +19,17 @@
 //! **When the builder runs.** A commit that brings in a `Building` index starts its chain
 //! ([`MvccGraph::commit`]): a `CREATE INDEX`, however it arrives, or an index dropped and created
 //! again. So does registering a graph's host, for every index its published version holds
-//! `Building`: one a commit brought in before any host was registered, or one a stop left
-//! unfinished. A chain already running for the index takes one more turn when it would have ended,
-//! in case it ended on the index that was dropped.
+//! `Building`: one a commit brought in before any host was registered. A chain already running for
+//! the index takes one more turn when it would have ended, in case it ended on the index that was
+//! dropped.
 //!
 //! **Stopping.** [`stop`] waits a bounded time for the pool's workers, since a turn waiting for
 //! what its host needs to publish may be waiting on the caller (the Redis shutdown handler holds
 //! the GIL). A turn checks again that the builder is not stopping once it holds what publishing
 //! needs, so one that waited publishes nothing. Then `stop` waits, with no limit, for every turn
 //! still holding a version of a graph with no lock: each one ends, and the caller tears GraphBLAS
-//! down next. Each start of the pool is a [`Run`] of its own, so a worker a stop left behind,
-//! finishing after a restart, counts and checks against its own stopped run, never the new one.
+//! down next. The builder starts once, and its stop is for good: the Redis module starts it as it
+//! loads, and stops it only in its shutdown handler.
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -138,7 +138,8 @@ pub(crate) enum Turn {
     Failed,
 }
 
-/// One start of an indexer's pool, to its stop. A turn belongs to the run that submitted it.
+/// What an indexer's turns share with no lock held: whether it is stopping, and how many turns are
+/// queued and reading. One per indexer, which starts once and stops for good.
 pub(crate) struct Run {
     /// Set by the stop: a turn not started gives up, and one started publishes nothing.
     stopping: AtomicBool,
@@ -162,8 +163,7 @@ impl Run {
         self.stopping.load(Ordering::SeqCst)
     }
 
-    /// Stop the run: a turn checks this before it reads and again once it holds what publishing
-    /// needs.
+    /// Stop: a turn checks this before it reads and again once it holds what publishing needs.
     pub(crate) fn stop(&self) {
         self.stopping.store(true, Ordering::SeqCst);
     }
@@ -312,7 +312,7 @@ struct Chain {
     id: IndexId,
     /// How many times the chain halves its batches ([`Sizing::batch`]): one more after each turn
     /// writers made too large to commit ([`Turn::TooLarge`]), one fewer after each that committed.
-    /// Each start of the pool starts it at 0.
+    /// A chain starts it at 0.
     shift: u32,
 }
 
@@ -340,24 +340,34 @@ struct Known {
 pub(crate) struct Indexer {
     state: Mutex<IndexerState>,
     turn: Box<TurnFn>,
+    run: Run,
 }
 
 struct IndexerState {
-    /// The pool and its run, while the indexer runs.
-    running: Option<(Arc<ThreadPool>, Arc<Run>)>,
-    /// Every chain not ended: queued or running while the indexer runs, and waiting for the next
-    /// start while it does not.
+    pool: Pool,
+    /// Every chain not ended: waiting for the start, queued or running while the indexer runs, and
+    /// as the stop left it after.
     chains: HashMap<ChainId, Known>,
+}
+
+/// An indexer's pool, which starts once and stops for good.
+enum Pool {
+    /// Chains wait for the start.
+    NotStarted,
+    Running(Arc<ThreadPool>),
+    /// Chains are left as the stop found them.
+    Stopped,
 }
 
 impl Indexer {
     pub(crate) fn new(turn: Box<TurnFn>) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(IndexerState {
-                running: None,
+                pool: Pool::NotStarted,
                 chains: HashMap::new(),
             }),
             turn,
+            run: Run::new(),
         })
     }
 
@@ -365,18 +375,17 @@ impl Indexer {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Start the pool with `threads` workers (at least one), as a new run, and submit every chain
-    /// not ended: those started before it, and those a stop interrupted. Idempotent while it runs.
+    /// Start the pool with `threads` workers (at least one), and submit every chain started before
+    /// it. Once only: a start while the pool runs, or after its stop, does nothing.
     pub(crate) fn start(
         self: &Arc<Self>,
         threads: usize,
     ) {
         let mut state = self.state();
-        if state.running.is_some() {
+        if !matches!(state.pool, Pool::NotStarted) {
             return;
         }
         let pool = Arc::new(ThreadPool::named(threads.max(1), "falkordb-index-build"));
-        let run = Arc::new(Run::new());
         let chains: Vec<Chain> = state
             .chains
             .iter_mut()
@@ -389,36 +398,37 @@ impl Indexer {
                 }
             })
             .collect();
-        state.running = Some((Arc::clone(&pool), Arc::clone(&run)));
+        state.pool = Pool::Running(Arc::clone(&pool));
         drop(state);
         for chain in chains {
-            self.spawn(&pool, &run, chain);
+            self.spawn(&pool, chain);
         }
     }
 
-    /// Stop the pool, waiting up to `wait` for its workers ([`ThreadPool::shutdown_within`]); a
-    /// worker still running a turn then is left behind, and its turn publishes nothing. Then wait,
-    /// with no limit, for every turn still holding a version with no lock held. The chains not
-    /// ended wait for the next start.
+    /// Stop the pool, for good, waiting up to `wait` for its workers
+    /// ([`ThreadPool::shutdown_within`]); a worker still running a turn then is left behind, and
+    /// its turn publishes nothing. Then wait, with no limit, for every turn still holding a version
+    /// with no lock held. The chains not ended are left as they are.
     pub(crate) fn stop_within(
         &self,
         wait: Duration,
     ) {
-        let Some((pool, run)) = self.state().running.take() else {
-            return;
+        let pool = match std::mem::replace(&mut self.state().pool, Pool::Stopped) {
+            Pool::Running(pool) => pool,
+            Pool::NotStarted | Pool::Stopped => return,
         };
-        run.stop();
+        self.run.stop();
         pool.shutdown_within(wait);
-        run.wait_for_readers();
+        self.run.wait_for_readers();
     }
 
-    /// Chains waiting for a turn: queued on the pool while it runs, every chain not ended while it
-    /// does not.
+    /// Chains waiting for a turn: queued on the pool while it runs; before the start and after the
+    /// stop, every chain not ended.
     pub(crate) fn pending(&self) -> usize {
         let state = self.state();
-        match &state.running {
-            Some((_, run)) => run.queued.load(Ordering::SeqCst),
-            None => state.chains.len(),
+        match state.pool {
+            Pool::Running(_) => self.run.queued.load(Ordering::SeqCst),
+            Pool::NotStarted | Pool::Stopped => state.chains.len(),
         }
     }
 
@@ -443,41 +453,39 @@ impl Indexer {
                 });
             }
         }
-        // Before the pool starts, the chain waits for it.
-        let Some((pool, run)) = state.running.clone() else {
+        // Before the start, the chain waits for it; after the stop, it is left as it is.
+        let Pool::Running(pool) = &state.pool else {
             return;
         };
+        let pool = Arc::clone(pool);
         drop(state);
-        self.spawn(&pool, &run, Chain { host, id, shift: 0 });
+        self.spawn(&pool, Chain { host, id, shift: 0 });
     }
 
-    /// Submit `chain`'s next turn to `run`'s pool.
+    /// Submit `chain`'s next turn to `pool`.
     fn spawn(
         self: &Arc<Self>,
         pool: &ThreadPool,
-        run: &Arc<Run>,
         chain: Chain,
     ) {
-        run.queued.fetch_add(1, Ordering::SeqCst);
+        self.run.queued.fetch_add(1, Ordering::SeqCst);
         let indexer = Arc::clone(self);
-        let run = Arc::clone(run);
-        pool.spawn(move || indexer.take_turn(&run, chain), None);
+        pool.spawn(move || indexer.take_turn(chain), None);
     }
 
-    /// One turn of `chain`'s index, on a worker of `run`'s pool, then the decision on its next one.
+    /// One turn of `chain`'s index, on a worker of the pool, then the decision on its next one.
     fn take_turn(
         self: &Arc<Self>,
-        run: &Arc<Run>,
         mut chain: Chain,
     ) {
-        run.queued.fetch_sub(1, Ordering::SeqCst);
-        if run.stopping() {
+        self.run.queued.fetch_sub(1, Ordering::SeqCst);
+        if self.run.stopping() {
             return;
         }
         // A panic in a turn is caught here only where no panic hook ends the process first, which
         // the Redis module's does.
         let turn = catch_unwind(AssertUnwindSafe(|| {
-            (self.turn)(chain.host.as_ref(), &chain.id, run, chain.shift)
+            (self.turn)(chain.host.as_ref(), &chain.id, &self.run, chain.shift)
         }))
         .unwrap_or_else(|_| {
             chain.host.warn(&format!(
@@ -499,25 +507,22 @@ impl Indexer {
             // matters.
             thread::sleep(wait);
         }
-        self.after_turn(run, chain, next.is_some());
+        self.after_turn(chain, next.is_some());
     }
 
     /// Submit `chain`'s next turn if `more`, or if a commit created its index again while this turn
     /// ran; otherwise end the chain, and the next commit that creates its index starts a new one.
-    /// Nothing, if `run` was stopped: its chains wait for the next start, which submits them.
+    /// Nothing once the indexer is stopped: its chains are left as they are.
     fn after_turn(
         self: &Arc<Self>,
-        run: &Arc<Run>,
         chain: Chain,
         more: bool,
     ) {
         let mut state = self.state();
-        let Some((pool, current)) = state.running.clone() else {
+        let Pool::Running(pool) = &state.pool else {
             return;
         };
-        if !Arc::ptr_eq(&current, run) {
-            return;
-        }
+        let pool = Arc::clone(pool);
         let id = chain_id(&chain.host, &chain.id);
         let go = more
             || match state.chains.get_mut(&id) {
@@ -533,7 +538,7 @@ impl Indexer {
             };
         drop(state);
         if go {
-            self.spawn(&pool, run, chain);
+            self.spawn(&pool, chain);
         }
     }
 }
@@ -886,131 +891,49 @@ mod tests {
         assert_eq!(turns.load(Ordering::Relaxed), 2, "one more turn");
     }
 
-    /// A chain started before the pool, or while it is stopped, waits for it and runs once it
-    /// starts. So does a chain a stop interrupted: its index is still `Building`, and the next
-    /// start builds it.
+    /// A chain started before the pool waits for it. A stop is for good: the turn running then
+    /// ends seeing it, the turn queued behind it never runs, both chains are left as they were, and
+    /// a start after the stop runs nothing.
     #[test]
-    fn a_chain_waits_for_the_pool_and_a_stop_interrupts_it_until_the_next_start() {
+    fn a_chain_waits_for_the_pool_and_a_stop_is_for_good() {
+        let (a, b) = (column(EntityType::Node, "a"), column(EntityType::Node, "b"));
         let (in_turn, wait_in_turn) = mpsc::channel::<()>();
         let (go, wait_go) = mpsc::channel::<()>();
         let wait_go = Mutex::new(wait_go);
-        let turns = Arc::new(AtomicUsize::new(0));
-        let counted = Arc::clone(&turns);
-        let indexer = Indexer::new(Box::new(move |_, _, run, _| {
-            match counted.fetch_add(1, Ordering::SeqCst) {
-                // The first turn of the second start runs until the stop.
-                1 => {
-                    in_turn.send(()).unwrap();
-                    wait_go.lock().unwrap().recv().unwrap();
-                    assert!(run.stopping(), "released only once stopped");
-                    Turn::Gone
-                }
-                _ => Turn::Idle,
-            }
-        }));
-        let host: Arc<dyn BuildHost> = Arc::new(NoGraph);
-        indexer.enqueue(Arc::clone(&host), column(EntityType::Node, "a"));
-        assert_eq!(indexer.pending(), 1, "waits for the pool");
-        indexer.start(1);
-        wait_until("the first chain to end", || indexer.idle());
-        indexer.stop_within(STOP_WAIT);
-
-        indexer.enqueue(Arc::clone(&host), column(EntityType::Node, "b"));
-        assert_eq!(indexer.pending(), 1, "waits for the next start");
-        indexer.start(1);
-        wait_in_turn.recv().unwrap();
-        thread::scope(|scope| {
-            scope.spawn(|| indexer.stop_within(Duration::from_millis(50)));
-            thread::sleep(Duration::from_millis(100));
-            go.send(()).unwrap();
-        });
-        assert_eq!(indexer.pending(), 1, "the interrupted chain waits");
-        indexer.start(1);
-        wait_until("the interrupted chain to end", || indexer.idle());
-        indexer.stop_within(STOP_WAIT);
-        assert_eq!(turns.load(Ordering::SeqCst), 3);
-    }
-
-    /// A worker a stop left behind, with a turn running and another queued on its stopped pool,
-    /// never touches the next run. Its turn ends after a new start has submitted the same index's
-    /// chain again: the stopped run's turn leaves that chain alone, so an index created again
-    /// meanwhile still gets one more turn of that chain, not a second chain beside it. Its queued
-    /// turn gives up and counts against its own run, so the new run's count of queued turns never
-    /// wraps.
-    #[test]
-    fn a_worker_a_stop_left_behind_never_touches_the_next_run() {
-        /// What each turn of [`a_worker_a_stop_left_behind_never_touches_the_next_run`] saw: turns
-        /// per index, and the most at once on one index in one run. Across a stop, the stopped
-        /// run's turn may still run beside the new run's: it publishes nothing.
-        #[derive(Default)]
-        struct Seen {
-            turns: HashMap<IndexId, usize>,
-            running: HashMap<(usize, IndexId), usize>,
-            most_on_one: usize,
-        }
-        let (a, b) = (column(EntityType::Node, "a"), column(EntityType::Node, "b"));
-        let (in_turn, wait_in_turn) = mpsc::channel::<usize>();
-        let gates: Vec<_> = (0..2).map(|_| mpsc::channel::<()>()).collect();
-        let (open, gates): (Vec<_>, Vec<_>) = gates.into_iter().unzip();
-        let gates = Mutex::new(gates.into_iter().map(Some).collect::<Vec<_>>());
-        let seen = Arc::new(Mutex::new(Seen::default()));
+        let seen: Arc<Mutex<Vec<(IndexId, bool)>>> = Arc::default();
         let in_seen = Arc::clone(&seen);
-        let held = a.clone();
         let indexer = Indexer::new(Box::new(move |_, id, run, _| {
-            let in_run = (std::ptr::from_ref(run) as usize, id.clone());
-            let nth = {
-                let mut seen = in_seen.lock().unwrap();
-                let running = seen.running.entry(in_run.clone()).or_default();
-                *running += 1;
-                let running = *running;
-                seen.most_on_one = seen.most_on_one.max(running);
-                let turns = seen.turns.entry(id.clone()).or_default();
-                *turns += 1;
-                *turns
-            };
-            // The index's first two turns, one in each run, hold until the test opens their gate.
-            if *id == held && nth <= 2 {
-                let gate = gates.lock().unwrap()[nth - 1].take().unwrap();
-                in_turn.send(nth).unwrap();
-                gate.recv().unwrap();
+            // The second turn holds the pool's only worker until the test lets it go.
+            if in_seen.lock().unwrap().len() == 1 {
+                in_turn.send(()).unwrap();
+                wait_go.lock().unwrap().recv().unwrap();
             }
-            *in_seen.lock().unwrap().running.get_mut(&in_run).unwrap() -= 1;
+            in_seen.lock().unwrap().push((id.clone(), run.stopping()));
             Turn::Idle
         }));
         let host: Arc<dyn BuildHost> = Arc::new(NoGraph);
-
+        indexer.enqueue(Arc::clone(&host), a.clone());
+        assert_eq!(indexer.pending(), 1, "waits for the pool");
         indexer.start(1);
+        wait_until("a's first chain to end", || indexer.idle());
+
         indexer.enqueue(Arc::clone(&host), a.clone());
-        assert_eq!(wait_in_turn.recv().unwrap(), 1);
-        // The pool's only worker holds a's turn, so b's waits behind it on the pool.
+        wait_in_turn.recv().unwrap();
         indexer.enqueue(Arc::clone(&host), b.clone());
-        assert_eq!(indexer.pending(), 1);
-        indexer.stop_within(Duration::from_millis(20));
-        assert_eq!(indexer.pending(), 2, "both chains wait for the next start");
-
-        indexer.start(2);
-        assert_eq!(wait_in_turn.recv().unwrap(), 2, "the new run's turn of a");
-        // The left-behind worker ends the stopped run's turn of a, then takes b's queued turn of
-        // the stopped run.
-        open[0].send(()).unwrap();
+        assert_eq!(indexer.pending(), 1, "b's turn is queued behind a's");
+        thread::scope(|scope| {
+            scope.spawn(|| indexer.stop_within(Duration::from_millis(20)));
+            thread::sleep(Duration::from_millis(100));
+            go.send(()).unwrap();
+        });
         thread::sleep(Duration::from_millis(100));
-        assert_eq!(indexer.pending(), 0, "the count did not wrap");
-        // A commit creates a again while the new run's turn of a still runs.
-        indexer.enqueue(Arc::clone(&host), a.clone());
-        thread::sleep(Duration::from_millis(50));
-        open[1].send(()).unwrap();
-        wait_until("every chain to end", || indexer.idle());
-        indexer.stop_within(STOP_WAIT);
-
-        let seen = seen.lock().unwrap();
+        indexer.start(1);
+        thread::sleep(Duration::from_millis(100));
         assert_eq!(
-            seen.most_on_one, 1,
-            "two chains of one index at once in one run"
+            *seen.lock().unwrap(),
+            [(a.clone(), false), (a.clone(), true)],
+            "a's held turn ends after the stop; b's queued turn, and any after the stop, never run"
         );
-        assert_eq!(
-            (seen.turns.get(&a).copied(), seen.turns.get(&b).copied()),
-            (Some(3), Some(1)),
-            "a: the stopped run's, the new run's, and its one more; b: the new run's only"
-        );
+        assert_eq!(indexer.pending(), 2, "both chains are left as they were");
     }
 }
