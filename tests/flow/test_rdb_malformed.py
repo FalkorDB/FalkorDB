@@ -4,7 +4,7 @@ from constraint_utils import (create_unique_node_constraint,
                               create_mandatory_node_constraint)
 from rdb_payload import (GraphValue, reframe, crc64, rdb_module_values,
                          T_ARRAY, T_INT64, T_NULL, T_STRING, T_INTERN_STRING,
-                         T_VECTOR_F32)
+                         T_VECTOR_F32, TAG_UNSIGNED)
 
 import os
 import time
@@ -699,3 +699,64 @@ class testRdbLoadMalformedGraphKey():
         self.env.assertGreater(ours, -1)
         self.env.assertGreater(redis_line, ours)
         self.env.assertContains("not able to load", log[redis_line:])
+
+#-------------------------------------------------------------------------------
+# encoders up to 4.22.3 wrote "no tensors" as three zeros (total, M count, DP
+# count) for a relation flagged multi-edge without any tensor, leaving two stray
+# zeros before the next relation id; such a payload loads, the zeros skipped
+#-------------------------------------------------------------------------------
+
+_ZERO = bytes([TAG_UNSIGNED]) + (0).to_bytes(8, "little")
+_EDGES = [["R0", 1, 1], ["R1", 1, 2], ["R2", 1, 3]]
+
+class testRdbLegacyEmptyTensorSection():
+    def __init__(self):
+        # DEBUG RELOAD checks the round trip
+        self.env, self.db = Env(enableDebugCommand=True)
+        self.conn = self.env.getConnection()
+        self.conn.flushall()
+        g = self.db.select_graph(GRAPH_ID)
+        g.query("CREATE (a:N {v: 1})-[:R0 {w: 1}]->(b:N {v: 2}), "
+                "(a)-[:R1 {w: 2}]->(b), (b)-[:R2 {w: 3}]->(a)")
+        # uncompressed, so the walker can read the serializer buffers
+        self.conn.config_set("rdbcompression", "no")
+        try:
+            payload = self.conn.dump(GRAPH_ID)
+        finally:
+            self.conn.config_set("rdbcompression", "yes")
+        self.body, self.version = payload[:-10], payload[-10:-8]
+        self.conn.flushall()
+
+    def _edges(self):
+        g = self.db.select_graph(GRAPH_ID)
+        return g.ro_query("MATCH ()-[r]->() RETURN type(r), count(r), "
+                          "sum(r.w) ORDER BY type(r)").result_set
+
+    def test_stray_zeros_skipped(self):
+        # after the first and after a middle relation; after the last one the
+        # zeros precede the adjacency matrix, which the decoder can't recover
+        for r in (0, 1):
+            gv = GraphValue(self.body, 1)
+            name = f"relation_matrix[{r}].tensor_count"
+            self.env.assertEqual(gv.fields[name].value, 0)
+            gv.insert_after(name, _ZERO * 2)
+            self.conn.restore(GRAPH_ID, 0, reframe(gv.buf, self.version))
+            self.env.assertEqual(self._edges(), _EDGES)
+
+            # re-encoded with a single zero: a reload keeps every edge
+            self.conn.execute_command("DEBUG", "RELOAD")
+            self.env.assertEqual(self._edges(), _EDGES)
+            self.conn.flushall()
+
+    def test_single_stray_zero_rejected(self):
+        # one stray zero doesn't match the legacy encoding: still rejected
+        gv = GraphValue(self.body, 1)
+        gv.insert_after("relation_matrix[0].tensor_count", _ZERO)
+        failed = False
+        try:
+            self.conn.restore(GRAPH_ID, 0, reframe(gv.buf, self.version))
+        except ResponseError:
+            failed = True
+        self.env.assertTrue(failed)
+        self.env.assertTrue(self.conn.ping())
+        self.env.assertEqual(self.conn.keys("*"), [])
