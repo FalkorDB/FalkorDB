@@ -45,7 +45,9 @@ use crate::{
     runtime::{
         functions::{
             Type,
-            temporal::{construct_duration_secs, decompose_duration},
+            temporal::{
+                MAX_DATE_YEAR, check_date_range, construct_duration_secs, decompose_duration,
+            },
         },
         ordermap::OrderMap,
         runtime::Runtime,
@@ -172,37 +174,6 @@ impl Point {
         // Earth's radius in meters
         EARTH_RADIUS * c
     }
-
-    /// Validates that the point coordinates are within valid ranges
-    pub fn validate(&self) -> Result<(), String> {
-        // Check for NaN or infinite values first
-        if !self.latitude.is_finite() {
-            return Err(format!(
-                "latitude must be a finite number, got {}",
-                self.latitude
-            ));
-        }
-        if !self.longitude.is_finite() {
-            return Err(format!(
-                "longitude must be a finite number, got {}",
-                self.longitude
-            ));
-        }
-        // Then check range bounds
-        if self.latitude < -90.0 || self.latitude > 90.0 {
-            return Err(format!(
-                "latitude should be within the range -90.0 to 90.0, got {}",
-                self.latitude
-            ));
-        }
-        if self.longitude < -180.0 || self.longitude > 180.0 {
-            return Err(format!(
-                "longitude should be within the range -180.0 to 180.0, got {}",
-                self.longitude
-            ));
-        }
-        Ok(())
-    }
 }
 
 /// Runtime value type representing all possible Cypher values.
@@ -285,32 +256,34 @@ impl Value {
         }
     }
 
+    // Format datetime as ISO-8601: "2025-04-14T06:08:21"
     #[must_use]
     pub fn format_datetime(timestamp_secs: i64) -> String {
-        use chrono::{Datelike, TimeZone, Timelike, Utc};
-        match Utc.timestamp_opt(timestamp_secs, 0) {
-            chrono::LocalResult::Single(dt) => format!(
-                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
-                dt.year(),
-                dt.month(),
-                dt.day(),
-                dt.hour(),
-                dt.minute(),
-                dt.second()
-            ),
-            _ => format!("<invalid timestamp: {timestamp_secs}>"),
-        }
+        let days = timestamp_secs.div_euclid(86400);
+        let secs = timestamp_secs.rem_euclid(86400) as u32;
+        let (y, m, d) = civil_from_days_wide(days);
+        let mut s = String::with_capacity(19);
+        push_date(&mut s, y, m, d);
+        let mut buf = [0u8; 9];
+        buf[0] = b'T';
+        write_two_digits(&mut buf[1..3], secs / 3600);
+        buf[3] = b':';
+        write_two_digits(&mut buf[4..6], secs % 3600 / 60);
+        buf[6] = b':';
+        write_two_digits(&mut buf[7..9], secs % 60);
+        // Safe: ASCII digits, 'T' and ':'
+        s.push_str(unsafe { std::str::from_utf8_unchecked(&buf) });
+        s
     }
 
     // Format date as ISO-8601: "2025-04-14"
     #[must_use]
     pub fn format_date(timestamp_secs: i64) -> String {
         let days = timestamp_secs.div_euclid(86400);
-        let (y, m, d) = civil_from_days(days);
-        let mut buf = [0u8; 10];
-        write_date_into(&mut buf, y, m, d);
-        // Safe: ASCII digits and '-'
-        unsafe { String::from_utf8_unchecked(buf.to_vec()) }
+        let (y, m, d) = civil_from_days_wide(days);
+        let mut s = String::with_capacity(10);
+        push_date(&mut s, y, m, d);
+        s
     }
 
     // Format time as ISO-8601: "06:08:21"
@@ -730,8 +703,8 @@ fn add_duration_to_timestamp(
     dur_secs: i64,
 ) -> Result<i64, String> {
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let (days, time_of_day) = shift_months(ts, years, months);
-    Ok(days * 86400 + time_of_day + remaining_secs)
+    let (days, time_of_day) = shift_months(ts, years, months)?;
+    check_date_range(days * 86400 + time_of_day + remaining_secs)
 }
 
 /// Subtract a duration from a timestamp.
@@ -740,8 +713,8 @@ fn sub_duration_from_timestamp(
     dur_secs: i64,
 ) -> Result<i64, String> {
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let (days, time_of_day) = shift_months(ts, -years, -months);
-    Ok(days * 86400 + time_of_day - remaining_secs)
+    let (days, time_of_day) = shift_months(ts, -years, -months)?;
+    check_date_range(days * 86400 + time_of_day - remaining_secs)
 }
 
 /// Move `ts` by whole years and months, returning (days since epoch, time of
@@ -753,15 +726,22 @@ fn shift_months(
     ts: i64,
     years: i32,
     months: i32,
-) -> (i64, i64) {
+) -> Result<(i64, i64), String> {
     let days = ts.div_euclid(86400);
     let time_of_day = ts.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
 
-    let new_year = y + years;
-    let new_month_raw = m as i32 + months;
-    let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
+    // Widened, and range-checked before narrowing back to `i32`: a chain of
+    // additions near the limit must be an error, not a wrapped year.
+    let new_month_raw = i64::from(m) + i64::from(months);
+    let adj_year = i64::from(y) + i64::from(years) + (new_month_raw - 1).div_euclid(12);
     let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
+    // One year of slack: the days applied afterwards can still bring the final
+    // date back inside the range; `check_date_range` has the last word.
+    if adj_year.abs() > i64::from(MAX_DATE_YEAR) + 1 {
+        return Err("Date out of range".to_string());
+    }
+    let adj_year = adj_year as i32;
     let max_day = days_in_month(adj_year, adj_month);
     let (final_year, final_month, final_day) = if d > max_day {
         let overflow = d - max_day;
@@ -776,10 +756,10 @@ fn shift_months(
         (adj_year, adj_month, d)
     };
 
-    (
+    Ok((
         days_from_civil(final_year, final_month, final_day),
         time_of_day,
-    )
+    ))
 }
 
 const fn days_in_month(
@@ -817,8 +797,19 @@ pub const fn days_from_civil(
 }
 
 /// Howard Hinnant's `civil_from_days`: days since 1970-01-01 -> (y, m, d).
+///
+/// The year is cut to `i32`; use [`civil_from_days_wide`] for an arbitrary
+/// persisted timestamp.
 #[must_use]
 pub const fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    let (y, m, d) = civil_from_days_wide(z);
+    (y as i32, m, d)
+}
+
+/// [`civil_from_days`] with the year kept as `i64`, so every day number an
+/// `i64` of seconds can hold (year about +-2.9e11) keeps its real year.
+#[must_use]
+pub const fn civil_from_days_wide(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097); // [0, 146096]
@@ -829,27 +820,42 @@ pub const fn civil_from_days(z: i64) -> (i32, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
     let y = if m <= 2 { y + 1 } else { y };
-    (y as i32, m, d)
+    (y, m, d)
 }
 
-/// Write "YYYY-MM-DD" into buf[0..10]. buf must be at least 10 bytes.
-const fn write_date_into(
-    buf: &mut [u8],
-    y: i32,
+/// Append a date as "YYYY-MM-DD". Years outside 0..=9999 keep all their
+/// digits and a leading '-' when negative ("12345-01-01", "-0005-01-01").
+fn push_date(
+    s: &mut String,
+    y: i64,
     m: u32,
     d: u32,
 ) {
-    let yr = y.unsigned_abs();
-    buf[0] = b'0' + ((yr / 1000) % 10) as u8;
-    buf[1] = b'0' + ((yr / 100) % 10) as u8;
-    buf[2] = b'0' + ((yr / 10) % 10) as u8;
-    buf[3] = b'0' + (yr % 10) as u8;
-    buf[4] = b'-';
-    buf[5] = b'0' + ((m / 10) % 10) as u8;
-    buf[6] = b'0' + (m % 10) as u8;
-    buf[7] = b'-';
-    buf[8] = b'0' + ((d / 10) % 10) as u8;
-    buf[9] = b'0' + (d % 10) as u8;
+    if (0..=9999).contains(&y) {
+        let y = y as u32;
+        let mut buf = [0u8; 10];
+        write_two_digits(&mut buf[0..2], y / 100);
+        write_two_digits(&mut buf[2..4], y % 100);
+        buf[4] = b'-';
+        write_two_digits(&mut buf[5..7], m);
+        buf[7] = b'-';
+        write_two_digits(&mut buf[8..10], d);
+        // Safe: ASCII digits and '-'
+        s.push_str(unsafe { std::str::from_utf8_unchecked(&buf) });
+    } else {
+        use std::fmt::Write;
+        let sign = if y < 0 { "-" } else { "" };
+        let _ = write!(s, "{sign}{:04}-{m:02}-{d:02}", y.unsigned_abs());
+    }
+}
+
+/// Write `v` (0..=99) as two ASCII digits into buf[0..2].
+const fn write_two_digits(
+    buf: &mut [u8],
+    v: u32,
+) {
+    buf[0] = b'0' + (v / 10 % 10) as u8;
+    buf[1] = b'0' + (v % 10) as u8;
 }
 
 impl Hash for Value {
@@ -1160,7 +1166,9 @@ impl Div for Value {
                 if b == 0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::Int(a.wrapping_div(b)))
+                    a.checked_div(b)
+                        .map(Self::Int)
+                        .ok_or_else(|| String::from("ArgumentError: integer overflow in division"))
                 }
             }
             (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a / b)),
@@ -2898,5 +2906,26 @@ mod nesting_tests {
             drop(back);
             drop(v);
         });
+    }
+}
+
+#[cfg(test)]
+mod date_format_tests {
+    use super::Value;
+
+    // A persisted timestamp is any i64 of seconds; its year (about 2.9e11 at
+    // the ends) must not be cut to an i32 on its way to the text.
+    #[test]
+    fn extreme_timestamps_keep_their_full_year() {
+        assert_eq!(Value::format_date(i64::MAX), "292277026596-12-04");
+        assert_eq!(
+            Value::format_datetime(i64::MAX),
+            "292277026596-12-04T15:30:07"
+        );
+        assert_eq!(Value::format_date(i64::MIN), "-292277022657-01-27");
+        assert_eq!(
+            Value::format_datetime(i64::MIN),
+            "-292277022657-01-27T08:29:52"
+        );
     }
 }

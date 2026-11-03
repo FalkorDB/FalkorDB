@@ -1013,7 +1013,67 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[m:A]->() RETURN count(m)")
         self.env.assertEqual(res.result_set[0][0], 0)
 
-    def test41_deleted_id_is_not_reused_in_the_same_query(self):
+    def test41_degree_after_deleting_an_edge_created_in_the_same_query(self):
+        # An edge created and deleted in one query never reaches the graph, so
+        # the degree functions must not look its endpoints up there: doing so
+        # panicked and took the server down.
+        # https://github.com/FalkorDB/FalkorDB/issues/2769
+        self.graph.delete()
+
+        res = self.graph.query("""CREATE (a)-[r:R]->(b)
+                                  DELETE r
+                                  SET a.d = outdegree(a), b.d = indegree(b),
+                                      a.t = outdegree(a, 'R'), b.t = indegree(b, 'R')
+                                  RETURN a.d, b.d, a.t, b.t""")
+        self.env.assertEqual(res.result_set, [[0, 0, 0, 0]])
+        self.env.assertEqual(res.relationships_created, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
+
+        # mixed with a committed edge deleted and a created edge kept. The
+        # degrees are computed in SET, before the query commits, so they read
+        # the pending state: committed-edge subtraction, the surviving pending
+        # edge's addition, and the created-then-deleted edge left out.
+        self.graph.delete()
+        self.graph.query("CREATE (:A)-[:R]->(:B)")
+        res = self.graph.query("""MATCH (a:A)-[old:R]->(b:B)
+                                  CREATE (a)-[gone:R]->(b), (a)-[kept:S]->(b)
+                                  DELETE old, gone
+                                  SET a.o = outdegree(a), b.i = indegree(b),
+                                      a.r = outdegree(a, 'R'), b.s = indegree(b, 'S'),
+                                      a.rs = outdegree(a, 'R', 'S')
+                                  RETURN a.o, b.i, a.r, b.s, a.rs""")
+        self.env.assertEqual(res.result_set, [[1, 1, 0, 1, 1]])
+
+        res = self.graph.query("MATCH (a:A) RETURN outdegree(a), outdegree(a, 'S')")
+        self.env.assertEqual(res.result_set, [[1, 1]])
+
+
+    def test42_fused_hop_keeps_a_node_a_live_edge_still_reaches(self):
+        # s reaches z through x and through y. Deleting x->z must not hide z:
+        # y->z is live. A fused anonymous chain multiplies a frontier row that
+        # holds both x and y, and masking that product with the deleted layer
+        # dropped z. The 1000 filler edges fold the creates into the base
+        # matrix, so the delete stays in the deletion layer.
+        self.graph.delete()
+        self.graph.query("""CREATE (s {n:'s'}), (x {n:'x'}), (y {n:'y'}), (z {n:'z'}),
+                                   (s)-[:A]->(x), (s)-[:A]->(y), (x)-[:A]->(z), (y)-[:A]->(z),
+                                   (s)-[:B]->(x)
+                            WITH 1 AS one UNWIND range(1, 1000) AS i
+                            CREATE (:F)-[:A]->(:F)""")
+        self.graph.query("MATCH ({n:'x'})-[e:A]->({n:'z'}) DELETE e")
+
+        for q in ["MATCH (s {n:'s'})-[:A]->()-[:A]->(t) RETURN t.n",
+                  "MATCH (s {n:'s'})-[:A|B]->()-[:A|B]->(t) RETURN t.n"]:
+            self.env.assertEqual(self.graph.query(q).result_set, [['z']], message=q)
+
+        # with both paths deleted, z is gone
+        self.graph.query("MATCH ({n:'y'})-[e:A]->({n:'z'}) DELETE e")
+        for q in ["MATCH (s {n:'s'})-[:A]->()-[:A]->(t) RETURN t.n",
+                  "MATCH (s {n:'s'})-[:A|B]->()-[:A|B]->(t) RETURN t.n"]:
+            self.env.assertEqual(self.graph.query(q).result_set, [], message=q)
+
+
+    def test43_deleted_id_is_not_reused_in_the_same_query(self):
         # A node deleted before a WITH used to hand its id to a node created
         # after it, in the same query. The deleted node's snapshot stayed keyed
         # by that id and shadowed the live node through every accessor: it read
