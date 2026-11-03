@@ -1011,7 +1011,41 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[m:A]->() RETURN count(m)")
         self.env.assertEqual(res.result_set[0][0], 0)
 
-    def test41_return_cascaded_edge_of_a_new_type(self):
+    def test41_degree_after_deleting_an_edge_created_in_the_same_query(self):
+        # An edge created and deleted in one query never reaches the graph, so
+        # the degree functions must not look its endpoints up there: doing so
+        # panicked and took the server down.
+        # https://github.com/FalkorDB/FalkorDB/issues/2769
+        self.graph.delete()
+
+        res = self.graph.query("""CREATE (a)-[r:R]->(b)
+                                  DELETE r
+                                  SET a.d = outdegree(a), b.d = indegree(b),
+                                      a.t = outdegree(a, 'R'), b.t = indegree(b, 'R')
+                                  RETURN a.d, b.d, a.t, b.t""")
+        self.env.assertEqual(res.result_set, [[0, 0, 0, 0]])
+        self.env.assertEqual(res.relationships_created, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
+
+        # mixed with a committed edge deleted and a created edge kept. The
+        # degrees are computed in SET, before the query commits, so they read
+        # the pending state: committed-edge subtraction, the surviving pending
+        # edge's addition, and the created-then-deleted edge left out.
+        self.graph.delete()
+        self.graph.query("CREATE (:A)-[:R]->(:B)")
+        res = self.graph.query("""MATCH (a:A)-[old:R]->(b:B)
+                                  CREATE (a)-[gone:R]->(b), (a)-[kept:S]->(b)
+                                  DELETE old, gone
+                                  SET a.o = outdegree(a), b.i = indegree(b),
+                                      a.r = outdegree(a, 'R'), b.s = indegree(b, 'S'),
+                                      a.rs = outdegree(a, 'R', 'S')
+                                  RETURN a.o, b.i, a.r, b.s, a.rs""")
+        self.env.assertEqual(res.result_set, [[1, 1, 0, 1, 1]])
+
+        res = self.graph.query("MATCH (a:A) RETURN outdegree(a), outdegree(a, 'S')")
+        self.env.assertEqual(res.result_set, [[1, 1]])
+
+    def test43_return_cascaded_edge_of_a_new_type(self):
         # The edge's type is new and its only edge is cascaded away by the
         # DETACH DELETE in the same statement. The compact reply (what this
         # client asks for) states the type by id, so the type has to be
