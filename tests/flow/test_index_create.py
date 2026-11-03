@@ -1025,9 +1025,9 @@ class testIndexCreationOnMissingKey():
         self._assert_index_serves(graph)
 
     def test02_create_index_in_aof_replay(self):
-        # Pin the verbatim GRAPH.QUERY in the AOF (see test_aof.py), start from an
-        # empty AOF, and replay it in-process with DEBUG LOADAOF.
-        self.db.config_set("EFFECTS_THRESHOLD", 999999)
+        # Start from an empty AOF, and replay it in-process with DEBUG LOADAOF.
+        # The CREATE INDEX is in it as a GRAPH.EFFECT: every write replicates
+        # as effects.
         self.conn.flushall()
         self.conn.config_set("appendonly", "no")
         self.conn.config_set("appendonly", "yes")
