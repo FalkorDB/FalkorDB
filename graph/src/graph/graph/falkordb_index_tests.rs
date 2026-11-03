@@ -3846,8 +3846,10 @@ fn the_builder_finishes_what_registering_and_commits_start_under_sustained_write
     };
     // A write that lands just before the first batch to publish goes in, so that batch catches up
     // on it however the threads are scheduled.
+    let wrote = Arc::new(AtomicBool::new(false));
     host.before_publish({
         let (v, w, written) = (v.clone(), w.clone(), [ids[0], ids[nodes - 1]]);
+        let wrote = Arc::clone(&wrote);
         move |mvcc| {
             commit_write(mvcc, |g| {
                 for id in written {
@@ -3855,6 +3857,7 @@ fn the_builder_finishes_what_registering_and_commits_start_under_sustained_write
                     set_attr(g, id, &w, Value::Int(-2));
                 }
             });
+            wrote.store(true, Ordering::SeqCst);
         }
     });
     let done = AtomicBool::new(false);
@@ -3893,9 +3896,11 @@ fn the_builder_finishes_what_registering_and_commits_start_under_sustained_write
     online_build::stop();
 
     assert!(
-        host.before_publish.lock().is_none(),
-        "a batch published after a write it caught up on"
+        wrote.load(Ordering::SeqCst),
+        "a write committed between the first batch's read and its publish"
     );
+    let warnings = host.warnings.lock();
+    assert!(warnings.is_empty(), "a turn failed: {warnings:?}");
     let published = host.mvcc.read();
     let g = published.borrow();
     for attr in [&v, &w] {
