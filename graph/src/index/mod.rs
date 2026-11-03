@@ -866,7 +866,7 @@ impl Document {
                 // Temporals are not indexed. Stored as their raw number in the
                 // numeric field they would match numeric queries (`n.v > 0`
                 // returned dates), and no index query is ever built for a
-                // temporal value: the scan ops refuse them (`can_utilize_index`), so
+                // temporal value: the scan ops refuse them (`IndexQuery::can_be_served`), so
                 // a temporal predicate is answered by a label scan and its
                 // retained filter.
                 Value::Datetime(_) | Value::Date(_) | Value::Time(_) | Value::Duration(_) => {}
@@ -1310,11 +1310,11 @@ impl Index {
                             if options.nostem.unwrap_or(false) {
                                 field_options_flag |= RSFLDOPT_TXTNOSTEM;
                             }
-                            // Any non-empty code turns phonetic matching on.
-                            // RediSearch takes a flag, not an algorithm, so
-                            // which code it is cannot reach it — see
-                            // `TextIndexOptions::phonetic`.
-                            if options.phonetic.as_deref().is_some_and(|p| !p.is_empty()) {
+                            // Any code but empty or C's "no" turns phonetic
+                            // matching on. RediSearch takes a flag, not an
+                            // algorithm, so which code it is cannot reach it —
+                            // see `TextIndexOptions::phonetic`.
+                            if options.phonetic_enabled() {
                                 field_options_flag |= RSFLDOPT_TXTPHONETIC;
                             }
                         }

@@ -33,7 +33,7 @@ pub fn encode_numeric(value: &Value) -> Option<u64> {
         Value::Bool(b) => f64::from(*b),
         // Temporals are not indexed, matching the RediSearch path (`index/mod.rs`): stored as
         // their raw number they land among the numbers, so `n.v > 0` returns dates. No index
-        // query is ever built for a temporal value — `can_utilize_index` refuses them — so an
+        // query is ever built for a temporal value — `IndexQuery::can_be_served` refuses them — so an
         // entry here could only ever surface as a wrong row.
         _ => return None,
     };
@@ -160,7 +160,7 @@ mod tests {
     ///
     /// The one pair deliberately excluded is **Int vs Int past 2^53**: there `compare_value` is
     /// exact (`a.cmp(b)`) while the encoder rounds both through `f64`, so they genuinely disagree.
-    /// That gap is closed upstream — `can_utilize_index` rejects such a query via
+    /// That gap is closed upstream — `IndexQuery::can_be_served` rejects such a query via
     /// `Index::int_loses_f64_precision` and routes it to a label scan. If this test is ever
     /// extended to cover that pair, the guard is what has to change with it.
     #[test]
