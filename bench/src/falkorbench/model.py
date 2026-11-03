@@ -61,6 +61,11 @@ class Query(NamedTuple):
     raw     a non-graph command to measure instead of the Cypher, e.g.
             `("DUMP", "{graph}")` for the serialization path; `{graph}` is
             replaced by the graph's key. `cypher` then only documents it.
+    drains  each run deletes what it reads from a finite pool: its prerequisite's
+            rows or the setup's. `measure` runs a row a counted number of times,
+            which the pools are sized for. `profile` repeats one query for as long
+            as it samples, so it would empty the pool and then profile a query
+            that deletes nothing; it refuses these rows.
     """
 
     name: str
@@ -71,6 +76,7 @@ class Query(NamedTuple):
     needs: tuple[str, ...] = ()
     clients: int = 1
     raw: tuple[str, ...] = ()
+    drains: bool = False
 
     @property
     def command(self) -> str:
