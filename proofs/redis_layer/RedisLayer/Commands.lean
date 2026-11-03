@@ -59,29 +59,28 @@ theorem delete_nongraph (n : List Char) : deleteCmd 2 false n = none := rfl
 
 /-! ## GRAPH.EFFECT -/
 
-inductive EffOut | okNoop | busy | okApplied | failed
+inductive EffOut | okNoop | okApplied | failed
   deriving DecidableEq, Repr
 
-/-- `graph_effect`: an empty payload is a no-op; otherwise take the write slot, apply,
-commit and replicate, or roll back and report through the divergence guard. Since
+/-- `graph_effect`: an empty payload is a no-op; otherwise fork (nothing to take since #3657),
+apply, commit and replicate, or drop the version and report through the divergence guard. Since
 #2846 the commit is folded into the result (effect.rs:85): a version `Graph::validate`
 refuses (`valid = false`) takes the same failure arm as a rejected buffer. -/
-def effectCmd (empty slotFree applyOk : Bool) (valid : Bool := true) : EffOut × List String :=
+def effectCmd (empty applyOk : Bool) (valid : Bool := true) : EffOut × List String :=
   if empty then (.okNoop, [])
-  else if !slotFree then (.busy, [])
   else if applyOk then
     if valid then (.okApplied, ["commit", "replicate"])
-    else (.failed, ["commit_refused", "rollback", "divergence_guard"])
-  else (.failed, ["rollback", "divergence_guard"])
+    else (.failed, ["commit_refused", "divergence_guard"])
+  else (.failed, ["divergence_guard"])
 
-theorem effect_replicates_iff (e s a v : Bool) :
-    "replicate" ∈ (effectCmd e s a v).2 ↔ e = false ∧ s = true ∧ a = true ∧ v = true := by
-  cases e <;> cases s <;> cases a <;> cases v <;> decide
+theorem effect_replicates_iff (e a v : Bool) :
+    "replicate" ∈ (effectCmd e a v).2 ↔ e = false ∧ a = true ∧ v = true := by
+  cases e <;> cases a <;> cases v <;> decide
 
 /-- A refused commit forces the same resync as a rejected buffer (the replica must not
 keep serving a graph that silently stopped following). -/
 theorem effect_refused_resyncs :
-    effectCmd false true true false = (.failed, ["commit_refused", "rollback", "divergence_guard"]) := rfl
+    effectCmd false true false = (.failed, ["commit_refused", "divergence_guard"]) := rfl
 
 /-! ## GRAPH.EXPLAIN -/
 
@@ -370,16 +369,13 @@ theorem restore_no_overwrite (u d : Bool) : restoreCmd 3 u true d ≠ .ok := by
 
 /-! ## GRAPH.BULK reply text -/
 
-def bulkReply (n e : Nat) : String := toString n ++ " nodes created, " ++ toString e ++ " relations created"
+def bulkReply (n e : Nat) : String := toString n ++ " nodes created, " ++ toString e ++ " edges created"
 /-- C's text (`bulk_insert.c`): `"%llu nodes created, %llu edges created"`. -/
 def cBulkReply (n e : Nat) : String := toString n ++ " nodes created, " ++ toString e ++ " edges created"
 
-/-- **Divergence (confirmed live)**: the success reply names relationships differently. -/
-theorem bulk_reply_differs (n e : Nat) : bulkReply n e ≠ cBulkReply n e := by
-  intro h
-  have := congrArg String.length h
-  simp [bulkReply, cBulkReply] at this
-  exact absurd this (by decide)
+/-- **Fixed by #3301 (dd333fe32)**: the success reply names relationships as C does
+(`bulk_insert.rs:889,1044`; both bulk paths). -/
+theorem bulk_reply_c (n e : Nat) : bulkReply n e = cBulkReply n e := rfl
 
 /-! ## GRAPH.PROFILE / GRAPH.EXPLAIN flags (`QueryArgs.profileFront`, `explainFront`)
 

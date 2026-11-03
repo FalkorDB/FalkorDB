@@ -1,7 +1,8 @@
 /-
 # Copy-on-write versions: published snapshots are never written
 
-Model of `graph/src/graph/cow.rs` and `graph/src/graph/mvcc_graph.rs`.
+Model of `graph/src/graph/cow.rs` and `graph/src/graph/mvcc_graph.rs` (fork-and-commit since
+#3657, 34a708cfa: no write slot, no `rollback`).
 
 A GraphBLAS handle is a location in a heap `Nat → α` (its contents: for a
 matrix, the coordinate set of `Delta.lean`). `Matrix::clone` shares the
@@ -16,10 +17,10 @@ one (`matrix.rs:1174`). A `Cow` is a handle plus the `dup` flag.
 | `replace`        | `Cow::replace` (cow.rs:112): fresh contents, `dup = false` |
 | `mutate`         | any `&mut Matrix` write through a `Cow` (`Delta::layer_mut`, `insert`, `erase`, `resize`, ...) |
 | `Version`        | a graph version: every `Cow` it owns (`Graph::new_version` dups every matrix, graph.rs:976) |
-| `Mvcc`           | `MvccGraph` (mvcc_graph.rs:68): committed version + `write` flag |
-| `Mvcc.write`     | `MvccGraph::write` (:108): CAS, then `new_version` |
-| `Mvcc.commit`    | `MvccGraph::commit` (:139): since #2846 `Graph::validate` first (`valid`, :148) — refused ⇒ `rollback` (:149); else publish, clear the flag |
-| `Mvcc.rollback`  | `MvccGraph::rollback` (:221) |
+| `Mvcc`           | `MvccGraph` (mvcc_graph.rs:64): the published version |
+| `Mvcc.begin`     | `MvccGraph::fork` (:130): `new_version` of the published graph, takes nothing |
+| `Mvcc.commit`    | `MvccGraph::commit` (:166) → `commit_version` (:214): `Graph::validate` (`valid`) — refused ⇒ `Err`, the version is dropped, published unchanged; else publish. (The staleness refusal is in `search_concurrency` `Mvcc`; isolation does not need it.) |
+| `Mvcc.abandon`   | dropping an uncommitted version (no `rollback` since #3657) |
 
 `Graph::new_version` goes through `VersionedMatrix::dup`/`Tensor::dup`, which
 call `Cow::new_version` / `Delta::new_version` for every layer — so a write
@@ -127,7 +128,7 @@ theorem wstep_iso {H : Heap α} {Pub : Nat → Prop} {W : Version} (hi : Iso H P
       have h1 : h ≠ H.fresh := by omega
       simp [h1]
 
-/-- A fresh write version (`MvccGraph::write` → `Graph::new_version`) starts
+/-- A fresh write version (`MvccGraph::fork` → `Graph::new_version`) starts
 with every layer shared (`dup = true`), so `Iso` holds for any `Pub` that
 already contains the committed version's handles. -/
 theorem newVersion_iso {H : Heap α} {Pub : Nat → Prop} (C : Version)
@@ -139,15 +140,14 @@ theorem newVersion_iso {H : Heap α} {Pub : Nat → Prop} (C : Version)
 
 structure Mvcc where
   committed : Version
-  writing : Bool
 
-/-- A whole history: writers begin, write, commit or roll back; readers take
+/-- A whole history: writers fork, write, commit or abandon; readers take
 snapshots (`MvccGraph::read` clones the `Arc` of the committed version). -/
 inductive Ev (α : Type) where
-  | begin                   -- `write()`
+  | begin                   -- `fork()`
   | op (o : WOp α)          -- a mutation by the current writer
   | commit                  -- `commit(new_graph)`
-  | rollback
+  | abandon                 -- the uncommitted version is dropped
 
 structure Sys (α : Type) where
   H : Heap α
@@ -156,33 +156,33 @@ structure Sys (α : Type) where
 
 /-- `valid` is `Graph::validate` (graph.rs:1495) on the write version. -/
 def sstep (valid : Version → Bool) (S : Sys α) : Ev α → Sys α
-  | .begin => if S.g.writing then S else { S with g := { S.g with writing := true }, W := some S.g.committed.newVersion }
+  | .begin => { S with W := some S.g.committed.newVersion }
   | .op o => match S.W with
     | none => S
     | some W => let r := wstep S.H W o; { S with H := r.1, W := some r.2 }
   | .commit => match S.W with
     | none => S
-    | some W => if valid W then { S with g := ⟨W, false⟩, W := none }
-      else { S with g := { S.g with writing := false }, W := none }   -- refused: `self.rollback()`
-  | .rollback => { S with g := { S.g with writing := false }, W := none }
+    | some W => if valid W then { S with g := ⟨W⟩, W := none }
+      else { S with W := none }   -- refused: `Err`, the version is dropped
+  | .abandon => { S with W := none }
 
 /-- Handles published so far: every version that was ever committed. -/
 def Published (S : Sys α) (Pub : Nat → Prop) : Prop :=
   (∀ i, Pub (S.g.committed i).h) ∧ (∀ h, Pub h → h < S.H.fresh) ∧
   (∀ i, (S.g.committed i).h < S.H.fresh) ∧
-  (∀ W, S.W = some W → Iso S.H Pub W) ∧ (S.W.isSome → S.g.writing = true)
+  (∀ W, S.W = some W → Iso S.H Pub W)
 
 /-- **Snapshot isolation.** Along any history, the contents of every handle a
 published snapshot references never change, so a reader holding any
 committed version sees the same matrices forever — through later
-mutations, commits, new writers and rollbacks. -/
+mutations, commits, new writers and abandoned versions. -/
 theorem snapshot_isolation (valid : Version → Bool) : ∀ (evs : List (Ev α)) (S : Sys α) (Pub : Nat → Prop),
     Published S Pub →
     ∃ Pub' : Nat → Prop, (∀ h, Pub h → Pub' h) ∧
       ∀ h, Pub h → (evs.foldl (sstep valid) S).H.mem h = S.H.mem h
   | [], S, Pub, _ => ⟨Pub, fun _ h => h, fun _ _ => by first | rfl | trivial⟩
   | e :: es, S, Pub, hS => by
-    obtain ⟨c1, c2, c3, c4, c5⟩ := hS
+    obtain ⟨c1, c2, c3, c4⟩ := hS
     -- the published set after `e`: commit publishes the write version's handles
     let Pub1 : Nat → Prop := match e, S.W with
       | .commit, some W => fun h => Pub h ∨ ∃ i, (W i).h = h
@@ -192,19 +192,17 @@ theorem snapshot_isolation (valid : Version → Bool) : ∀ (evs : List (Ev α))
       cases e with
       | begin =>
         simp only [sstep, Pub1]
-        split
-        · exact ⟨⟨c1, c2, c3, c4, c5⟩, fun _ h => h, fun _ _ => by first | rfl | trivial⟩
-        · refine ⟨⟨c1, c2, c3, ?_, fun _ => rfl⟩, fun _ h => h, fun _ _ => by first | rfl | trivial⟩
-          intro W hW; simp at hW; subst hW; exact newVersion_iso _ c2 c3
+        refine ⟨⟨c1, c2, c3, ?_⟩, fun _ h => h, fun _ _ => by first | rfl | trivial⟩
+        intro W hW; simp at hW; subst hW; exact newVersion_iso _ c2 c3
       | op o =>
         simp only [sstep, Pub1]
         cases hW : S.W with
-        | none => simp only; exact ⟨⟨c1, c2, c3, c4, c5⟩, fun _ h => h, fun _ _ => by first | rfl | trivial⟩
+        | none => simp only; exact ⟨⟨c1, c2, c3, c4⟩, fun _ h => h, fun _ _ => by first | rfl | trivial⟩
         | some W =>
           simp only
           have hi := c4 W hW
           have := wstep_iso hi o
-          refine ⟨⟨c1, this.1.pub_lt, ?_, ?_, fun _ => c5 (by simp [hW])⟩, fun _ h => h, this.2⟩
+          refine ⟨⟨c1, this.1.pub_lt, ?_, ?_⟩, fun _ h => h, this.2⟩
           · intro i
             have hfr : S.H.fresh ≤ (wstep S.H W o).1.fresh := by
               cases o <;> simp [wstep, mutate, derefMut, replace, Heap.write] <;> split <;> simp
@@ -214,24 +212,24 @@ theorem snapshot_isolation (valid : Version → Bool) : ∀ (evs : List (Ev α))
       | commit =>
         simp only [sstep, Pub1]
         cases hW : S.W with
-        | none => simp only; exact ⟨⟨c1, c2, c3, c4, c5⟩, fun _ h => h, fun _ _ => by first | rfl | trivial⟩
+        | none => simp only; exact ⟨⟨c1, c2, c3, c4⟩, fun _ h => h, fun _ _ => by first | rfl | trivial⟩
         | some W =>
           simp only
           have hi := c4 W hW
           split
-          · refine ⟨⟨fun i => Or.inr ⟨i, rfl⟩, ?_, hi.w_lt, by simp, by simp⟩,
+          · refine ⟨⟨fun i => Or.inr ⟨i, rfl⟩, ?_, hi.w_lt, by simp⟩,
               fun _ h => Or.inl h, fun _ _ => by first | rfl | trivial⟩
             intro h hp; rcases hp with hp | ⟨i, rfl⟩
             · exact c2 h hp
             · exact hi.w_lt i
-          · refine ⟨⟨fun i => Or.inl (c1 i), ?_, c3, by simp, by simp⟩,
+          · refine ⟨⟨fun i => Or.inl (c1 i), ?_, c3, by simp⟩,
               fun _ h => Or.inl h, fun _ _ => by first | rfl | trivial⟩
             intro h hp; rcases hp with hp | ⟨i, rfl⟩
             · exact c2 h hp
             · exact hi.w_lt i
-      | rollback =>
+      | abandon =>
         simp only [sstep, Pub1]
-        exact ⟨⟨c1, c2, c3, by simp, by simp⟩, fun _ h => h, fun _ _ => by first | rfl | trivial⟩
+        exact ⟨⟨c1, c2, c3, by simp⟩, fun _ h => h, fun _ _ => by first | rfl | trivial⟩
     obtain ⟨hP1, hsub, hmem⟩ := step
     obtain ⟨Pub2, hsub2, hmem2⟩ := snapshot_isolation valid es (sstep valid S e) Pub1 hP1
     refine ⟨Pub2, fun h hp => hsub2 h (hsub h hp), fun h hp => ?_⟩
@@ -245,18 +243,19 @@ theorem reader_view_frozen (valid : Version → Bool) (evs : List (Ev α)) (S : 
   obtain ⟨_, _, hmem⟩ := snapshot_isolation valid evs S Pub hS
   funext i; exact hmem _ (hS.1 i)
 
-/-- At most one writer: `begin` while writing is a no-op (the CAS fails). -/
-theorem single_writer (valid : Version → Bool) (S : Sys α) (h : S.g.writing = true) :
-    sstep valid S .begin = S := by
-  simp [sstep, h]
+/-- A fork takes nothing: `begin` leaves the published version as it is (no flag, so no
+writer can be refused because another is building, #3093). -/
+theorem fork_takes_nothing (valid : Version → Bool) (S : Sys α) :
+    (sstep valid S .begin).g = S.g ∧ (sstep valid S .begin).H = S.H := by
+  simp [sstep]
 
-/-- **A refused version is never published and frees the write flag**
-(`MvccGraph::commit` :148-151): the committed version is unchanged and the
-next `begin` succeeds. -/
-theorem refused_commit_rolls_back (valid : Version → Bool) (S : Sys α) (W : Version)
+/-- **A refused version is never published** (`MvccGraph::commit` returns `Err`): the
+published version is unchanged and the version is dropped (nothing to roll back), so the
+next `begin` forks as usual. -/
+theorem refused_commit_publishes_nothing (valid : Version → Bool) (S : Sys α) (W : Version)
     (hW : S.W = some W) (hv : valid W = false) :
-    (sstep valid S .commit).g.committed = S.g.committed ∧
-    (sstep valid S .commit).g.writing = false ∧ (sstep valid S .commit).W = none := by
+    (sstep valid S .commit).g.committed = S.g.committed ∧ (sstep valid S .commit).W = none ∧
+    (sstep valid S .commit).H = S.H := by
   simp [sstep, hW, hv]
 
 /-! ### Where isolation stops: sharing an *owned* handle -/
@@ -283,10 +282,10 @@ handle the new version still shares. `snapshot_isolation` is sound because
 its history (`sstep`) never writes a version after it has been
 `new_version`ed: only the in-flight `W` is written, and `W` is only ever
 `new_version`ed after it is committed (by the next `begin`). In the engine,
-that is `MvccGraph::write`/`commit`: the committed graph is only ever read
-(`read()` hands out `Arc` clones; read queries run with `write = false`), and
+that is `MvccGraph::fork`/`commit`: the committed graph is only ever read
+(`read()` hands out `Arc` clones; read queries never fork), and
 every mutation path — `Runtime` for write queries, GRAPH.BULK, index DDL —
-goes through the version returned by `write()`. Reproduced at the API level
+goes through the version returned by `fork()`. Reproduced at the API level
 by `cow_is_one_directional_old_version_write_leaks` in
 `graph/tests/lean_versioned_matrix.rs`. Status on main (#2905, #2903): the
 contract is now documented on `Cow`, and debug builds assert it in `deref_mut`

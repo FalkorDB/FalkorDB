@@ -32,14 +32,15 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 
 | Lean | Rust |
 | --- | --- |
-| `isLeap`, `daysInMonth` | `is_leap` `value.rs:797`, `days_in_month` `value.rs:785` |
-| `daysFromCivil` | `days_from_civil` `value.rs:804` |
+| `isLeap`, `daysInMonth` | `is_leap` `value.rs:777`, `days_in_month` `value.rs:765` |
+| `daysFromCivil` | `days_from_civil` `value.rs:784` |
 | `daysFromCivilT` | `days_from_civil` `temporal.rs:463` (second copy, truncating i32 `/`) |
-| `civilFromDaysI` / `civilFromDays` | `civil_from_days` `value.rs:821` (without / with `y as i32`) |
-| `constructDuration` | `construct_duration_secs` `temporal.rs:479` |
-| `decomposeDuration` | `decompose_duration` `temporal.rs:520` |
-| `shiftMonths` | `shift_months` `value.rs:752` (shared by `+`/`-` since #2984) |
-| `addDur` / `subDur` | `add_duration_to_timestamp` `value.rs:728` / `sub_duration_from_timestamp` `value.rs:738` |
+| `civilFromDaysI` / `civilFromDays` | `civil_from_days_wide` `value.rs:812` (i64 year) / `civil_from_days` `value.rs:804` (with `y as i32`) |
+| `constructDuration` | `construct_duration_secs` `temporal.rs:479` (ends in `check_date_range`, #2746) |
+| `MAX_DATE_YEAR`, `checkDateRange` | `MAX_DATE_YEAR` `temporal.rs:523`, `check_date_range` `temporal.rs:531` (#2746) |
+| `decomposeDuration` | `decompose_duration` `temporal.rs:539` |
+| `shiftMonths` / `shiftMonthsR` | `shift_months` `value.rs:725` (shared by `+`/`-` since #2984); arithmetic / with the `MAX_DATE_YEAR` guard |
+| `addDur` / `subDur` (`addDurRaw` / `subDurRaw`: the unchecked arithmetic) | `add_duration_to_timestamp` `value.rs:701` / `sub_duration_from_timestamp` `value.rs:711` (range-checked since #2746) |
 | `timeAddDur` / `timeSubDur` | `(Time, Duration)` arms of `add_slow` `value.rs:1063` / `Sub` `value.rs:1105` (#2985) |
 | `dateFromComponents`, `weekPath`, `quarterPath`, `ymdPath` | `date_from_components` `temporal.rs:82` (range-checked since #2950) |
 | `checkRange`, `inRange`, `i32Ok`, `u32Ok` | `check_range` `temporal.rs:63`, `i32::try_from`/`u32::try_from` |
@@ -47,7 +48,8 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 | `weekSlice`, `sliceOk` | `rest.split_at_checked(2)` in `parse_week_date` `temporal.rs:285-287` |
 | `Fns.dateLoop`, `chk64` | `W`/`D` arms of `parse_duration_string` `temporal.rs:417-428` (`checked_mul`/`checked_add`, #2987) |
 | `wrapMul` | pre-#2987 release `n * 7` (history) |
-| `formatDateDigits` | `format_date` `value.rs:307` + `write_date_into` `value.rs:836` |
+| `formatDate`, `formatDatetime`, `pushDate`, `twoDigits` (`Components.lean`) | `format_date` `value.rs:281`, `format_datetime` `value.rs:261`, `push_date` `value.rs:828`, `write_two_digits` `value.rs:853` (#2986, #2746: i64 year, all digits, sign) |
+| `SpatialFns.pointFromMapEntries`, `numeric`, `point` | `point_from_map_entries` `spatial.rs:38`, `numeric` `spatial.rs:74`, `point` `spatial.rs:110` (#3301; `Point::validate` and `point_struct_pure` are gone) |
 | `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:391` / `ExprIR::And`,`Or` in `eval.rs:629-706` |
 | `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs:880` / `Add..Rem for Value` `value.rs:933-1200` |
 | `Spatial2.distance` / `Spatial.haversine` | `Point::distance` `value.rs:151` (clamped `a`, #2983); pre-#2983 counterexamples (removed; in 17ccc5412): history |
@@ -66,14 +68,15 @@ Duration` relies on), `construct_ym_s`, `decompose_monthsDur`, `add_sub_months`
 (`temporal_order_*`, `dateTs_mono_day`). Constructors: `dateFromComponents_total` (#2950: no
 input of `date_from_components` panics), `weekPath_total`, `quarterPath_total`,
 `weekPath_ok`, `quarterPath_ok`,
-`weekSlice_total`, `sliceOk_ascii`, `formatDate_injective_4digit`.
+`weekSlice_total`, `sliceOk_ascii`.
+Dates (#2746, #2986, #3301): `checkDateRange_iff`, `checkDateRange_boundary`, `shiftMonthsR_eq`, `shiftMonthsR_out_of_range`, `shiftMonthsR_no_wrap`, `shift_past_limit_errors`, `addDur_eq_raw`, `addDur_in_range`, `subDur_in_range`; `formatDate_spec`, `formatDatetime_spec`, `pushDate_eq`, `format_extremes` (the unit test's four `i64::MIN/MAX` strings), `format_wide_years`, `formatDate_wide_distinct`; `pointFromMapEntries`: `point_key_count`, `point_ok_iff`, `point_nan_refused`, `point_range_msgs`.
 Columnar: `colEval_eq` (columnar AND/OR with row narrowing = per-row Kleene AND/OR; batch
 fails iff some row fails), `rowEval_short`, `intLane_eq` (int lane = `Value` arithmetic,
 incl. the divide-by-zero fallback), `mapM_bind_mapM`, `colEval_rows`, `rowK_eq`.
 `shiftMonths_total`, `sub_eq_add_neg_months` (`ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M`, #2984),
 `subDur_eq_shift`.
 Counterexamples as theorems: `neg_days_encoding`,
-`time_not_normalised`, `week_string_wraps`, `formatDate_not_injective`, `civilFromDays_trunc`
+`time_not_normalised`, `week_string_wraps`, `civilFromDays_trunc`
 (the pre-#2950/#2984/#2988 ones were removed; in 17ccc5412).
 Fixed forms on main: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `dayOfWeek_out_of_range_errors`.
 
@@ -110,11 +113,13 @@ Fixed forms on main: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `da
    localtime('01:00')` → false (C true); same for `{months:1}`. Time arithmetic was not
    reduced mod 86400. Test `bug_time_plus_day_not_normalised`. Main: `timeAddDur_eq_tod`,
    `timeAddDur_range`, `timeSub_timeAdd`, `time_normalised`.
-7. **Wrong result** `toString(date({year:12345}))` = "2345-01-01" (C "12345-01-01");
-   `date({year:-5})` prints "0005-01-01" (`write_date_into` `value.rs:803`). Test
-   `bug_format_date_truncates_year`. Relatedly `toString(localdatetime(...) +
-   duration({years:300000}))` = "<invalid timestamp: 9468663474030>" (C
-   "302020-01-01T10:20:30") — `format_datetime` via chrono range.
+7. **FIXED by #2986 / #2746 (#3575).** Was: `toString(date({year:12345}))` = "2345-01-01" (C
+   "12345-01-01"); `date({year:-5})` printed "0005-01-01"; and `toString(localdatetime(...) +
+   duration({years:300000}))` = "<invalid timestamp: 9468663474030>" (C "302020-01-01T10:20:30"),
+   because `format_datetime` went through chrono's range. Main: `push_date` keeps all digits and
+   the sign, `format_datetime` no longer uses chrono, dates are range-checked at
+   `MAX_DATE_YEAR`: `formatDate_spec`, `formatDatetime_spec`, `format_extremes`,
+   `format_wide_years`, `formatDate_wide_distinct`, `checkDateRange_iff`.
 8. **FIXED by #2987 (9d3869aa8).** Was: `duration('P2635249153387078803W')` = `P5D`
    (release wrap of `n * 7`; debug panics). C returns a (garbage) non-P5D value; the map
    form errors. Test `bug_duration_week_string_wraps`. Main errors "Duration overflow:
@@ -163,8 +168,8 @@ C's `date('2021-01-03').dayOfQuarter` is 4 (Rust 3, correct).
 
 f64 is abstract (`toString`, `toInteger`/`toFloat` parsing, haversine are only
 `#eval`/live-tested); chrono's formatting, `from_ymd_opt`, `from_isoywd_opt`, component
-accessors and `Utc::now` are trusted; i32/i64 overflow in `addDur`/`subDur` is outside the
-proved range (`SmallYear`); the columnar proof covers AND/OR and the int lane, not CASE,
+accessors and `Utc::now` are trusted; `addDur`/`subDur` are range-checked at
+`MAX_DATE_YEAR` (#2746; the round-trip laws are proved on the unchecked arithmetic over `SmallYear`); the columnar proof covers AND/OR and the int lane, not CASE,
 comparisons or the float lane; which row's error message a batch reports is not modelled.
 
 ## Wave 5 (`Fns.lean`, `Parse.lean`, `Pure.lean`, `Components.lean`, `SpatialFns.lean`)

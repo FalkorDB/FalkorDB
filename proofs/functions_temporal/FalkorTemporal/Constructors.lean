@@ -16,7 +16,7 @@ import FalkorTemporal.Duration
 | `dateFromComponents`| `date_from_components` — `temporal.rs:82` |
 | `weekSlice`         | `rest.split_at_checked(2)` in `parse_week_date` — `temporal.rs:285-287` |
 | `sliceOk`           | byte 2 of `rest` is a char boundary |
-| `formatDateDigits`  | `format_date` + `write_date_into` — `value.rs:307`, `value.rs:836` |
+| (`formatDate` moved to `Components.lean`) | `format_date` — `value.rs:285`, `push_date` `value.rs:836` (#2986) |
 | pre-#2950 counterexamples (removed; in 17ccc5412)         | the same before #2950 (737dfb5da): unchecked `NaiveDate ± TimeDelta`, `&rest[..2]` (history) |
 -/
 namespace FalkorTemporal
@@ -298,29 +298,5 @@ theorem sliceOk_ascii (a b : Char) (rest : List Char) (ha : a.toNat < 0x80) (hb 
   have e1 : utf8Len a = 1 := by simp [utf8Len, ha]
   have e2 : utf8Len b = 1 := by simp [utf8Len, hb]
   cases rest <;> simp [boundaries, e1, e2]
-
-/-! ## `format_date` -/
-
-/-- `write_date_into` (`value.rs:836`): four year digits of `|y|`, no sign. -/
-def formatDateDigits (y m d : Int) : List Nat :=
-  let yr := y.natAbs
-  [yr / 1000 % 10, yr / 100 % 10, yr / 10 % 10, yr % 10, m.toNat / 10 % 10, m.toNat % 10,
-    d.toNat / 10 % 10, d.toNat % 10]
-
-/-- **Bug (Rust vs C, confirmed live)**: `toString(date({year: 12345}))` prints
-`2345-01-01` (C: `12345-01-01`), and year −5 prints as year 5 (`0005-01-01`), so
-`toString` on dates is not injective and misreports the value. -/
-theorem formatDate_not_injective :
-    formatDateDigits 12345 1 1 = formatDateDigits 2345 1 1 ∧
-    formatDateDigits (-5) 1 1 = formatDateDigits 5 1 1 := by decide
-
-/-- …but it is injective on years `0..9999` (the only range it was written for). -/
-theorem formatDate_injective_4digit (y y' m m' d d' : Int)
-    (hy : 0 ≤ y ∧ y ≤ 9999) (hy' : 0 ≤ y' ∧ y' ≤ 9999) (hm : 1 ≤ m ∧ m ≤ 12) (hm' : 1 ≤ m' ∧ m' ≤ 12)
-    (hd : 1 ≤ d ∧ d ≤ 31) (hd' : 1 ≤ d' ∧ d' ≤ 31)
-    (e : formatDateDigits y m d = formatDateDigits y' m' d') : y = y' ∧ m = m' ∧ d = d' := by
-  unfold formatDateDigits at e
-  simp only [List.cons.injEq] at e
-  omega
 
 end FalkorTemporal

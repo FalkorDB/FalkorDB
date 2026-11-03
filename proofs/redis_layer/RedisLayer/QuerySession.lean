@@ -7,13 +7,14 @@ lock implementations themselves are parking_lot / Redis — AXIOMATISED rows for
 
 | here | there |
 | --- | --- |
-| `Th`, `gilAcquire`, `gilDrop` | `Gil::acquire` `:506`, `Gil::drop` `:529`, `hold_gil` `:484`, `GIL_CTX` |
-| `S`, `begin`, `beginWriter`   | `QuerySession::begin` `:159`, `begin_with` `:166`, `begin_writer` `:182` |
-| `release`                     | `release_locks` `:303`, `Drop` `:464` |
-| `withGraph`, `withGraphMut`   | `with_graph` `:320`, `with_graph_mut` `:336` |
-| `escalate`, `upgrade`         | `escalate` `:379`, `upgrade_to_write` `:354` (and the trait shim `:454`) |
-| `reauthorize`                 | `reauthorize_write` `:413` |
-| `Slot`, `SS`, `writeVersion`, `releaseSlot`, `committed`, `holdsSlot`, `isStale`, `isWriter`, `claimFork`, `upgradeS` | #3290: `enum Slot` `:110`, `write_version` `:216`, `release_slot` `:234`, `committed` `:245`, `holds_slot` `:251`, `is_stale` `:257`, `is_writer` `:261`, `claim_fork` `:267`, `facts` `:201` |
+| `Th`, `gilAcquire`, `gilDrop` | `Gil::acquire` `:472`, `Gil::drop` `:495`, `hold_gil` `:450`, `GIL_CTX` |
+| `S`, `begin`, `beginWriter`   | `QuerySession::begin` `:158`, `begin_with` `:165`, `begin_writer` `:180` |
+| `release`                     | `release_locks` `:268`, `Drop` `:430` |
+| `withGraph`, `withGraphMut`   | `with_graph` `:285`, `with_graph_mut` `:301` |
+| `escalate`, `upgrade`         | `escalate` `:345`, `upgrade_to_write` `:319` (and the trait shim `:420`) |
+| `reauthorize`                 | `reauthorize_write` `:379` |
+| `Version`, `SS`, `writeVersion`, `isStale`, `versionIsCurrent`, `checkFork`, `upgradeS` | #3657: `enum Version` `:108`, `write_version` `:211`, `is_stale` `:227`, `version_is_current` `:235`, `is_writer` `:239`, `check_fork` `:246`, `facts` `:198` |
+| `CommitError`, `WriteAbort.ofCommit` | `From<CommitError> for WriteAbort` `:74` |
 -/
 namespace RedisLayer.QuerySession
 
@@ -100,9 +101,9 @@ def escalate (s : S) : Bool × S :=
     let (nr, t) := gilAcquire t
     (true, ⟨some (.writer nr), { t with log := t.log ++ [.writeLock] }⟩)
 
-/-- `WriteAbort` (query_session.rs:50). `writeSlotBusy` and `invalid` (#2846) are
-produced by callers of `MvccGraph::write`/`commit`, not by `upgrade_to_write`. -/
-inductive WriteAbort | replicaTrafficPaused | notAMaster | graphUnregistered | writeSlotBusy
+/-- `WriteAbort` (query_session.rs:52). `stale` is `check_fork`'s refusal; `invalid` (#2846) is
+`commit`'s (`From<CommitError>`, `ofCommit`). `WriteSlotBusy` is gone with the write slot (#3657). -/
+inductive WriteAbort | replicaTrafficPaused | notAMaster | graphUnregistered | stale
   | invalid (msg : String)
   deriving DecidableEq, Repr
 
@@ -111,7 +112,7 @@ def writeAbortMsg : WriteAbort → String
   | .replicaTrafficPaused => "Write query aborted: replica traffic is currently paused"
   | .notAMaster => "Write query aborted: this instance is not a master"
   | .graphUnregistered => "graph was deleted or replaced while the query was running, aborting"
-  | .writeSlotBusy => "Write query aborted: another write is in progress"
+  | .stale => "Write query aborted: the graph was written while this query was matching"
   | .invalid m => m
 
 theorem writeAbortMsg_invalid (m : String) : writeAbortMsg (.invalid m) = m := rfl
@@ -204,115 +205,110 @@ theorem withGraph_released (s : S) : withGraph (release s) = none := rfl
 def graphArc (g : Nat) : Nat := g
 theorem graphArc_id (g : Nat) : graphArc g = g := rfl
 
-/-! ## The session's write slot (#3290, `66d4d9d40`)
+/-! ## The session's write version (#3657, `34a708cfa`)
 
-`MvccGraph` enters as its two fields that matter here: `slotTaken` (the `AtomicBool`) and
-the committed `ver`sion; `fork()` is the version `ver + 1` (`new_version`). -/
+`MvccGraph` enters as its committed `ver`sion only; `fork()` is the version `ver + 1`
+(`new_version`) and `is_stale` is `ver + 1 != fork.version`. There is no slot to claim or
+release: an uncommitted version is dropped with the runtime. -/
 
-inductive Slot | none | forked | claimed | stale
+/-- `enum Version` (`:108`). `unchecked` holds the fork's `version`. -/
+inductive Version | none | unchecked (fv : Nat) | current | stale
   deriving DecidableEq, Repr
 
 structure SS where
-  writer : Bool          -- `is_writer` (`:261`): `Mode::Writer`
-  slot : Slot
-  fork : Option Nat      -- the fork's `version`
-  slotTaken : Bool       -- `MvccGraph.write`
-  ver : Nat              -- committed `Graph::version`
+  writer : Bool          -- `is_writer` (`:239`): `Mode::Writer`
+  version : Version
+  ver : Nat              -- published `Graph::version`
   deriving DecidableEq, Repr
 
-inductive Abort | busy | stale
-  deriving DecidableEq, Repr
+/-- `write_version` (`:211-224`): always a fork (`MvccGraph::fork`, version `ver + 1`); in writer
+mode it is `Current` from the start, in reader mode `Unchecked`. Infallible. -/
+def writeVersion (s : SS) : SS :=
+  { s with version := if s.writer then .current else .unchecked (s.ver + 1) }
 
-/-- `write_version` (`:216-231`): a writer claims the slot now (`MvccGraph::write`), a reader
-takes an unclaimed fork (`MvccGraph::fork`). -/
-def writeVersion (s : SS) : Except Abort SS :=
-  if s.writer then
-    if s.slotTaken then .error .busy else .ok { s with slotTaken := true, slot := .claimed }
-  else .ok { s with fork := some (s.ver + 1), slot := .forked }
+def isStale (s : SS) : Bool := s.version == .stale
+/-- `version_is_current` (`:235`). -/
+def versionIsCurrent (s : SS) : Bool := s.version == .current
 
-/-- `release_slot` (`:234-242`): rollback if claimed, drop the fork, and reset unless stale. -/
-def releaseSlot (s : SS) : SS :=
-  let s1 := if s.slot = .claimed then { s with slotTaken := false } else s
-  let s2 := { s1 with fork := none }
-  if s.slot ≠ .stale then { s2 with slot := .none } else s2
+/-- `check_fork` (`:246`): only an `Unchecked` fork is looked at; `MvccGraph::is_stale` fork
+(`mvcc_graph.rs:144`) is `ver + 1 ≠ fork.version`. Stale ⇒ `Version::Stale` and `Err(Stale)`. -/
+def checkFork (s : SS) : Except Unit SS :=
+  match s.version with
+  | .unchecked fv =>
+    if s.ver + 1 ≠ fv then .error () else .ok { s with version := .current }
+  | _ => .ok s
 
-/-- `committed` (`:245`): `MvccGraph::commit` released the slot. -/
-def committed (s : SS) : SS := { s with slot := .none }
-def holdsSlot (s : SS) : Bool := s.slot == .claimed
-def isStale (s : SS) : Bool := s.slot == .stale
+/-- The state `check_fork` leaves on `Stale`: the fork dropped, `Version::Stale`. -/
+def checkForkStale (s : SS) : SS := { s with version := .stale }
 
-/-- `claim_fork` (`:267-292`) → `MvccGraph::claim` (`mvcc_graph.rs:151-167`). -/
-def claimFork (s : SS) : Except Abort SS :=
-  if s.slot ≠ .forked then .ok s else
-  match s.fork with
-  | none => .ok s                                   -- `expect` (a fork for `Forked`): unreachable
-  | some fv =>
-    if s.slotTaken then .error .busy                -- `Claim::Busy`: fork put back
-    else if s.ver + 1 ≠ fv then .error .stale     -- state left: `claimForkStale`
-    else .ok { s with slotTaken := true, slot := .claimed, fork := none }
-
-/-- The state `claim_fork` leaves on `Stale`: the CAS was undone (`store(false)`), the
-fork dropped, `Slot::Stale`. -/
-def claimForkStale (s : SS) : SS := { s with slot := .stale, fork := none }
-
-/-- `upgrade_to_write` since #3290: escalate; then registry and role checks; then
-`claim_fork`, under the write lock. -/
-def upgradeS (s : SS) (registered : Bool) (auth : Option WriteAbort) : Option WriteAbort ⊕ Abort :=
+/-- `upgrade_to_write` since #3657: escalate; then registry and role checks; then
+`check_fork`, under the write lock. `inr` is `WriteAbort::Stale`. -/
+def upgradeS (s : SS) (registered : Bool) (auth : Option WriteAbort) : Option WriteAbort ⊕ Unit :=
   if s.writer then .inl none
   else if !registered then .inl (some .graphUnregistered)
   else match auth with
     | some a => .inl (some a)
-    | none => match claimFork { s with writer := true } with
+    | none => match checkFork { s with writer := true } with
       | .ok _ => .inl none
-      | .error a => .inr a
+      | .error _ => .inr ()
 
-/-- A reader's write version takes no slot: an inline writer is never refused because a
-queued write is matching (#3093, fixed by #3290). -/
-theorem reader_takes_no_slot (s : SS) (h : s.writer = false) :
-    ∃ s', writeVersion s = .ok s' ∧ s'.slotTaken = s.slotTaken ∧ s'.slot = .forked := by
-  simp [writeVersion, h]
+/-- A write version takes nothing, in either mode: an inline writer is never refused because a
+queued write is matching (#3093, #3290), and no version needs releasing (#3657). A
+writer's is `Current` at once. -/
+theorem writeVersion_takes_nothing (s : SS) :
+    (writeVersion s).ver = s.ver ∧ (writeVersion s).writer = s.writer ∧
+    (s.writer = true → versionIsCurrent (writeVersion s) = true) ∧
+    (s.writer = false → (writeVersion s).version = .unchecked (s.ver + 1)) := by
+  cases h : s.writer <;> simp [writeVersion, versionIsCurrent, h]
 
-/-- A writer claims at once, or is refused without taking anything. -/
-theorem writer_claims (s : SS) (h : s.writer = true) :
-    (s.slotTaken = false → ∃ s', writeVersion s = .ok s' ∧ s'.slotTaken ∧ holdsSlot s') ∧
-    (s.slotTaken = true → writeVersion s = .error .busy) := by
-  constructor
-  · intro h2; simp [writeVersion, h, h2, holdsSlot]
-  · intro h2; simp [writeVersion, h, h2]
-
-/-- **A claim succeeds only on a fork of the current version**: then the slot is held and the
-private version extends the committed one. If anything committed since the fork, the claim is
+/-- **A check succeeds only on a fork of the current version**: then the version is
+`Current` and extends the published one. If anything committed since the fork, it is
 `Stale`. -/
-theorem claimFork_spec (s : SS) (fv : Nat) (hf : s.slot = .forked) (hfk : s.fork = some fv)
-    (ht : s.slotTaken = false) :
-    (fv = s.ver + 1 → claimFork s = .ok { s with slotTaken := true, slot := .claimed, fork := none }) ∧
-    (fv ≠ s.ver + 1 → claimFork s = .error .stale) := by
+theorem checkFork_spec (s : SS) (fv : Nat) (hf : s.version = .unchecked fv) :
+    (fv = s.ver + 1 → checkFork s = .ok { s with version := .current }) ∧
+    (fv ≠ s.ver + 1 → checkFork s = .error ()) := by
   constructor
-  · intro e; subst e; simp [claimFork, hf, hfk, ht]
-  · intro e; simp [claimFork, hf, hfk, ht]; intro h; exact absurd h.symm e
+  · intro e; subst e; simp [checkFork, hf]
+  · intro e; simp [checkFork, hf]; intro h; exact absurd h.symm e
 
-/-- A non-forked session's claim is a no-op (a writer from `begin_writer` already holds it;
-`attempt_settle` never forks). -/
-theorem claimFork_noop (s : SS) (h : s.slot ≠ .forked) : claimFork s = .ok s := by
-  simp [claimFork, h]
+/-- A session that is not `Unchecked` is unchanged by the check (a writer from `begin_writer`
+is `Current` already; `attempt_settle` forks under the write lock itself). -/
+theorem checkFork_noop (s : SS) (h : ∀ fv, s.version ≠ .unchecked fv) : checkFork s = .ok s := by
+  unfold checkFork; split
+  · rename_i fv hfv; exact absurd hfv (h fv)
+  · rfl
 
-/-- `release_slot` frees the MVCC slot exactly when this session held it, and is
-idempotent. -/
-theorem releaseSlot_spec (s : SS) :
-    (releaseSlot s).slotTaken = (if s.slot = .claimed then false else s.slotTaken) ∧
-    (releaseSlot s).fork = none ∧ releaseSlot (releaseSlot s) = releaseSlot s := by
-  unfold releaseSlot
-  cases h : s.slot <;> simp [h]
+/-- `Stale` is sticky: no step but a new `write_version` leaves it, so `is_stale` still
+reports it to the retry loop. -/
+theorem stale_sticky (s : SS) (h : s.version = .stale) : isStale (checkForkStale s) = true ∧ checkFork s = .ok s := by
+  simp [checkForkStale, isStale, checkFork, h]
 
-/-- Stale survives `release_slot`, so `is_stale` still reports it to the retry loop. -/
-theorem stale_sticky (s : SS) (h : s.slot = .stale) : isStale (releaseSlot s) = true := by
-  simp [releaseSlot, isStale, h]
+/-- **`Current` is never refused as stale**: a writer session is `Current` from its fork, and
+`check_fork` keeps it so, so `commit` (which refuses only a stale fork) cannot refuse it —
+`commit_and_replicate`'s `unreachable!`. -/
+theorem current_kept (s : SS) (h : versionIsCurrent s = true) : checkFork s = .ok s := by
+  have : s.version = .current := by simpa [versionIsCurrent] using h
+  simp [checkFork, this]
 
-/-- `upgrade_to_write` reports `Stale` exactly from the claim. -/
-theorem upgrade_stale (s : SS) (fv : Nat) (hw : s.writer = false) (hf : s.slot = .forked)
-    (hfk : s.fork = some fv) (ht : s.slotTaken = false) (hv : fv ≠ s.ver + 1) :
-    upgradeS s true none = .inr .stale := by
-  have := (claimFork_spec { s with writer := true } fv hf hfk ht).2 hv
+/-- `upgrade_to_write` reports `Stale` exactly from the check. -/
+theorem upgrade_stale (s : SS) (fv : Nat) (hw : s.writer = false) (hf : s.version = .unchecked fv)
+    (hv : fv ≠ s.ver + 1) :
+    upgradeS s true none = .inr () := by
+  have := (checkFork_spec { s with writer := true } fv hf).2 hv
   simp [upgradeS, hw, this]
+
+/-- `From<CommitError> for WriteAbort` (`:74`). -/
+inductive CommitError | stale | invalid (msg : String)
+  deriving DecidableEq, Repr
+
+def WriteAbort.ofCommit : CommitError → WriteAbort
+  | .stale => .stale
+  | .invalid m => .invalid m
+
+theorem ofCommit_stale : WriteAbort.ofCommit .stale = .stale := rfl
+theorem ofCommit_invalid (m : String) : WriteAbort.ofCommit (.invalid m) = .invalid m := rfl
+/-- The two refusals map to different aborts, which the retry loops tell apart. -/
+theorem ofCommit_ne (m : String) : WriteAbort.ofCommit .stale ≠ WriteAbort.ofCommit (.invalid m) := by
+  simp [WriteAbort.ofCommit]
 
 end RedisLayer.QuerySession

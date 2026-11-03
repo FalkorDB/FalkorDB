@@ -32,7 +32,7 @@ A pair with one edge stores the id inline. A pair with more is marked `MULTI_EDG
 
 **4. Does a reader see a frozen snapshot while a writer works?**
 
-`snapshot_isolation` proves that along any history (begin, writes, commit, rollback, new writers) no handle a published version references ever changes. So `reader_view_frozen` holds: a reader's view of any committed version stays fixed. `single_writer` proves a second `begin` while writing is a no-op. Since #2846, `refused_commit_rolls_back` proves a version that fails `Graph::validate` is never published and frees the write flag.
+`snapshot_isolation` proves that along any history (fork, writes, commit, abandon, new writers) no handle a published version references ever changes. So `reader_view_frozen` holds: a reader's view of any committed version stays fixed. `fork_takes_nothing` proves a fork leaves the published version alone (there is no write flag since #3657). Since #2846, `refused_commit_publishes_nothing` proves a version that fails `Graph::validate` is never published and is dropped.
 
 The project also proves where isolation stops. `clone_of_owned_is_not_isolated` shows a shallow `clone` of an owned layer shares a writable handle. `old_write_leaks_into_new_version` shows copy-on-write only protects one direction: a write through the *old* version lands in the new one. Isolation holds because the engine only ever writes the in-flight version. Since #2905 that rule is documented on `Cow` and debug builds assert it (proved in `runtime_ds`: `CowModel.dbg_write_through_branched_source_panics`); release builds behave as before.
 
@@ -65,7 +65,7 @@ No. `mayHold_sound` (bit-exact over `BitVec 64`) proves `may_hold` never answers
 | `colDegree_eq` | `col_degree` never hits `unreachable!` and counts every incoming edge | `TensorOps.lean` |
 | `resizeT_edges`, `resizeT_allInv` | `Tensor::resize` never shrinks (#3250), so it never drops an entry and keeps every invariant | `TensorResize.lean` |
 | `snapshot_isolation`, `reader_view_frozen` | A published version's matrices never change | `Cow.lean` |
-| `refused_commit_rolls_back` | A version that fails validation is never published | `Cow.lean` |
+| `refused_commit_publishes_nothing` | A version that fails validation is never published | `Cow.lean` |
 | `mayHold_sound`, `slot_word_lt` | The row filter never wrongly answers "no" and never indexes out of bounds | `RowFilter.lean` |
 | `write_implies_read` | The read path folds whenever the write path would | `Policy.lean` |
 | `decode_encode` | `VersionedMatrix` encode/decode round-trips | `VMOps.lean` |
@@ -119,7 +119,7 @@ See [`../FINDINGS.md`](../FINDINGS.md) for the repro of each.
 | `TensorBlocks.lean` | The whole tensor: `me` blocks, widening, multi-pair counting |
 | `TensorOps.lean` | Degrees, extract, flush/fold/dup/wait, iterator plumbing |
 | `TensorResize.lean` | `resize` (grow-only since #3250; W4-matrix-1 history), `nrows`/`ncols`, encode's inline values, `EdgeIds::size_hint`, `Iter::new`/`seek` |
-| `Cow.lean` | Copy-on-write handles and the MVCC history: `snapshot_isolation`, `refused_commit_rolls_back`, the isolation limits |
+| `Cow.lean` | Copy-on-write handles and the MVCC history: `snapshot_isolation`, `refused_commit_publishes_nothing`, the isolation limits |
 | `CowGlue.lean` | `Cow::new`, `Cow::deref`, `MvccGraph::new`/`from_graph`/`drop` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 

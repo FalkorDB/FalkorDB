@@ -7,7 +7,7 @@ Project `proofs/search_concurrency`. Modules:
                as a hypothesis structure (`RediSearch`), no `axiom`.
 * `Knn`      — `vector_query_nodes` / `vector_query_edges` @ 89d68334a (#3088 k clamp).
 * `Tickets`  — index-population tickets (`PendingSlots`) and the batch protocol.
-* `Mvcc`     — MVCC publish/read + write slot + GIL + GRAPH.DELETE + BGSAVE fork,
+* `Mvcc`     — MVCC publish/read + fork-and-commit (no write slot since #3657) + GIL + GRAPH.DELETE + BGSAVE fork,
                as a transition system with an inductive invariant.
 * `Locks`    — lock-order deadlock freedom, the `write_loop` hand-off (exhaustive),
                and the bounded-queue deadlock.
@@ -38,18 +38,22 @@ Each module's header has its Lean ↔ Rust `file:line` table. Coverage rows are 
 
 ## Proven (no sorry / admit / axiom)
 
-Concurrency (`Mvcc`, over every interleaving of read, claim, escalate, release,
-mutate, commit, rollback, delete, fork):
+Concurrency (`Mvcc`, over every interleaving of read, forkW, forkCur, checkFork, abandon,
+escalate, release, mutate, commit, indexer batch, delete, fork):
 * `snapshots_are_committed` — a reader / fork child only ever sees a version some
   commit published whole (snapshot isolation; never a partial commit).
 * `no_lost_writes` — committed state = all acknowledged writes, in ack order.
 * `history_linear` — every published version is a prefix of the current one.
-* `private_on_committed` — a private version is always based on the committed one
-  (single write slot ⇒ writes serialized, no lost update).
+* `private_on_committed`, `current_not_stale` — a `Current` version is always based on the
+  published one at its data version, by the GIL holder (write lock ⇒ writes serialized, no
+  lost update; `commit`'s `Stale` refusal is unreachable under the lock).
 * `delete_blocks_writes` — after GRAPH.DELETE no mutate/commit is enabled.
 * `fork_excludes_commit` — fork and delete need the GIL a committing writer holds.
-* #3290: `one_commit_per_version`, `claimFork_stale`, `claimFork_on_committed`,
-  `inline_write_ok`, `stale_then_rerun`, `reader_cannot_claim`; `multi_write_ok_in_c` (BUG 5).
+* #3290/#3657: `one_commit_per_version`, `checkFork_stale`, `checkFork_on_committed`,
+  `inline_write_ok`, `stale_then_rerun`, `reader_cannot_commit`; refused commits
+  (`refused_commit_publishes_nothing`, `stale_commit_publishes_nothing`, `commit_publishes`);
+  indexer batches keep the data version (`batch_keeps_forks`, `batch_then_check`,
+  `batch_does_not_stale`, #3566).
 `Locks`:
 * `no_cycle` (+ `path_increasing`) — threads that acquire in rank order cannot form
   a wait-for cycle; `all_programs_ordered` — writer (incl. escalate), inline writer,
@@ -134,9 +138,9 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    write in its match phase + `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC`: Rust
    replies `another write is in progress, retry the query` and `M` is not created
    (3/3); C creates it (3/3). `repro/multi_race.py`. (Counterexample removed; in 17ccc5412.)
-   Now the queued write forks without the slot and claims it under the write lock;
+   Now the queued write forks without the slot and checks it under the write lock (since
+   #3657 there is no slot at all: forking takes nothing and `commit` refuses a stale fork);
    `inline_write_ok`, `stale_then_rerun`, `one_commit_per_version`.
-   Fix: claim the slot after escalation (or block on it under the write lock).
 
 Option validation (re-checked live at fe619ac5f, Rust release vs C `falkordb.so`, ports 19010/19011).
 Historical (2c874022a, #3091): Rust accepted a vector index without `dimension` or
@@ -166,9 +170,9 @@ retry-on-timeout re-sent writes — a harness artefact, see the MEMORY note.)
 `MvccGraph::commit` (mvcc_graph.rs:139) now runs `Graph::validate` first and, on a
 refusal, performs the rollback itself (:148-151). `Mvcc.step` takes `valid` as a
 parameter; every invariant theorem holds for any `valid`; new
-`refused_commit_releases_slot` (nothing published or acked, the next writer can
-claim — the property the Rust test `a_refused_commit_releases_the_write_slot`
-checks) and `valid_commit_publishes`. `commit_and_replicate` treats a refusal as
+`refused_commit_publishes_nothing` (nothing published or acked, the next writer can
+fork — the property the Rust test `a_refused_commit_publishes_nothing` checks; was
+`refused_commit_releases_slot` before #3657) and `commit_publishes`. `commit_and_replicate` treats a refusal as
 `unreachable!` (graph_core.rs:1489).
 
 ## Re-target to 73077bb4a (#3086, #3033)
@@ -230,7 +234,7 @@ import SearchConcurrency.Knn
 #print axioms SC.Knn.alloc_bounded
 #print axioms SC.Knn.rows_length_topk
 #print axioms SC.Mvcc.one_commit_per_version
-#print axioms SC.Mvcc.claimFork_on_committed
+#print axioms SC.Mvcc.checkFork_on_committed
 #print axioms SC.Pool.release_exactly_once
 #print axioms SC.Pool.count_eq_live
 #print axioms SC.PoolWithin.within_in_time

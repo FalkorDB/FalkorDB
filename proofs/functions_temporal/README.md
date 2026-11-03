@@ -82,7 +82,7 @@ Yes:
 
 ## Bugs found
 
-Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). Re-checked against main 737dfb5da: #2950 fixed W2-temporal-1, -2 and -3, and #2983, #2984, #2985 and #2987 fixed W2-temporal-4, -5, -6 and -8. W2-temporal-7 and -9 are still present.
+Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). Re-checked against main 737dfb5da: #2950 fixed W2-temporal-1, -2 and -3, and #2983, #2984, #2985 and #2987 fixed W2-temporal-4, -5, -6 and -8. W2-temporal-9 is still present; W2-temporal-7 was fixed on 2026-11-03 (#2986, #3575).
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
@@ -92,7 +92,7 @@ Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run lo
 | W2-temporal-4 | removed (17ccc5412) | `distance()` between near-antipodal points was `NaN` (C: 20037518): `(1.0 - a).sqrt()` with `a` rounded above 1. 35 428 of 6 485 401 antipodal pairs on a 0.1° grid. Proven over an abstract float with the binary64 facts as hypotheses (`NanLaws`); the mechanism is also `#eval`'d in `Spatial.lean` | Fixed by #2983 (`distance_finite`: finite whenever the haversine term is not NaN) |
 | W2-temporal-5 | removed (17ccc5412) | `date('2020-03-31') - duration({months:1})` was 2020-02-29 (subtraction clamped the day), while `+ duration({months:-1})` was 2020-03-02 (C: 03-02) | Fixed by #2984 (`sub_eq_add_neg_months`: `ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M` for every timestamp; `sub_vs_add_neg`: both 03-02) |
 | W2-temporal-6 | removed (17ccc5412) | `localtime('01:00') + duration({days:1}) = localtime('01:00')` was `false` (C: `true`): time arithmetic wasn't reduced mod 86400 | Fixed by #2985 (`timeAddDur_eq_tod`, `timeSub_timeAdd`, `time_normalised`) |
-| W2-temporal-7 | `formatDate_not_injective` | `toString(date({year:12345}))` is `"2345-01-01"` (C: `"12345-01-01"`); `formatDate_injective_4digit` proves it is right for 4-digit years | **Open** |
+| W2-temporal-7 | `formatDate_spec`, `format_extremes`, `format_wide_years`, `formatDate_wide_distinct`, `checkDateRange_iff` (counterexample replaced) | `toString(date({year:12345}))` was `"2345-01-01"` (C: `"12345-01-01"`), `-5` printed `0005`, and a datetime past chrono's range printed `<invalid timestamp>` | **Fixed** (#2986, #2746/#3575): all digits and the sign; `format_datetime` no longer uses chrono; dates range-checked at `MAX_DATE_YEAR` |
 | W2-temporal-8 | removed (17ccc5412) | `duration('P2635249153387078803W')` was `P5D` in release (`n * 7` wrapped) and panicked in debug | Fixed by #2987 (`dateLoop_week_overflow`, `dateLoop_days_i64`: now an error, never a wrap) |
 | W2-temporal-9 | `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `dayOfWeek_out_of_range_errors` (counterexamples removed; in 17ccc5412) | The map form's `dayOfWeek` was 0..6 with 0 = Sunday, so `dayOfWeek:7` errored (C: accepted); the string form uses 1..7 | **Fixed** (#2988, closes #2936): ISO 1..7, 7 = Sunday |
 | — | `neg_days_encoding` | `date('2020-03-01') + duration({days:-1})` is 2020-03-02 (spec: 02-29), because negative durations are encoded as an instant before 1970 | Shared with C |
@@ -136,7 +136,7 @@ The project is self-contained: its `lakefile.toml` has no dependencies, and it d
 - **MODELLED:** `ExprColumn::get`, `union_nulls` and `eval_per_row`, which this project's columnar proof uses as its reference but doesn't state a theorem about.
 - **NOT COVERED (`vector_expr.rs`, 20 rows):** the rest of the columnar evaluator: dispatch, `CASE`, comparisons, the float lane and bitmap plumbing. All of these are proven in [`../columnar`](../columnar) and [`../expr_semantics`](../expr_semantics).
 - **NOT COVERED (`conversion.rs`, 11 rows):** `f64` parsing and formatting, checked live against C only. `value_math` proves most of these.
-- **NOT COVERED (`value.rs`, 3 rows):** `Point::validate` (f32 range checks), `format_duration` and `get_duration_component`, all live-tested.
+- **NOT COVERED (`value.rs`, 2 rows):** `format_duration` and `get_duration_component`, live-tested. (`Point::validate` was removed in #3301.)
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
 
@@ -144,7 +144,7 @@ The project is self-contained: its `lakefile.toml` has no dependencies, and it d
 
 - **Floats.** `f64` is abstract. `toString` and `toInteger`/`toFloat` parsing are only live-tested. The antipodal-NaN theorems assume the binary64 facts they use (`NanLaws`: `f64::clamp`, `sqrt`, `atan2`, NaN propagation) rather than deriving them, and `mul_add`'s fused rounding is not modelled.
 - **Chrono.** Formatting, `from_ymd_opt`, `from_isoywd_opt`, the component accessors and `Utc::now` are trusted, as structures (`Chrono`, `ChronoDT`) whose laws come from chrono's docs.
-- **Overflow.** `i32`/`i64` overflow in `add_duration_to_timestamp`/`sub_duration_from_timestamp` is outside the proven range (`SmallYear`).
+- **Overflow.** `add_duration_to_timestamp`/`sub_duration_from_timestamp` are range-checked since #2746 (`addDur`, `shiftMonthsR`, `checkDateRange_iff`); the round-trip laws (`add_sub_months`) are proved on the unchecked arithmetic (`addDurRaw`) over `SmallYear`, and `addDur_eq_raw` links the two.
 - **Columnar coverage.** The columnar proof here covers `AND`/`OR` and the int lane only, not `CASE`, comparisons or the float lane (those are in `columnar` and `expr_semantics`). Which row's error message a batch reports isn't modelled.
 - **simsimd.** The `vec.*` kernels are an FFI parameter.
 

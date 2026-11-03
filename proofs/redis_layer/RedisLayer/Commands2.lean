@@ -10,7 +10,7 @@ import RedisLayer.Telemetry
 | `consArgs`, `string2ll`   | `graph_constraint` argument parsing `:415-511`; `parse_integer` = `RedisModule_StringToLongLong` = Redis `string2ll` (util.c) |
 | `registerSchema`          | `register_constraint_schema` `:63` |
 | `findStatus`              | `find_status` `:82` |
-| `settle`, `attempt`       | `settle_constraint` `:171`, `attempt_settle` `:283` |
+| `settle`, `attempt`       | `settle_constraint` `:171`, `attempt_settle` `:282` |
 | `recordShape`             | `record.rs` `record_mut` `:44`, `graph_record` `:173` |
 | `copyOut`                 | `copy.rs` `graph_copy` `:27` (`pipe`/`fork`/`_exit`/`waitpid` are libc, AXIOMATISED) |
 | `bulkFlow`, `heldReplicate`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` `:218-1045` |
@@ -179,27 +179,30 @@ theorem findStatus_none {C S} (m : C → Bool) (st : C → S) (cs : List C) (h :
 
 /-! ### Settling (`settle_constraint` / `attempt_settle`) -/
 
-/-- `WriteAbort` as the settle loop sees it; `invalid` is `WriteAbort::Invalid`
-(query_session.rs:71, #2846): `MvccGraph::commit` refused the version. -/
-inductive Abort | paused | busy | unregistered | notMaster | invalid
-  | stale   -- `WriteAbort::Stale` (#3290); `attempt_settle` never forks, so never produced there
+/-- `WriteAbort` as the settle loop sees it (`WriteSlotBusy` is gone since #3657); `invalid` is
+`WriteAbort::Invalid` (#2846) and `stale` is `WriteAbort::Stale`: the two refusals of
+`MvccGraph::commit`, passed on by `?` through `From<CommitError>`. -/
+inductive Abort | paused | unregistered | notMaster | invalid | stale
   deriving DecidableEq, Repr
 
-/-- `attempt_settle`'s outcome given: nothing pending, the upgrade result, the write slot,
-and whether `commit` accepted the version (`Graph::validate`, constraint.rs:337-340). -/
-def attempt (nothingPending : Bool) (upgrade : Option Abort) (slotFree : Bool) (commitOk : Bool := true) :
+/-- `attempt_settle`'s outcome given: nothing pending, the upgrade result, and `commit`'s
+refusal if any (constraint.rs:327, `tg.graph.commit(g_arc)?`). The closure forks under the write
+lock, so its version is current: `commit` cannot report `stale` here
+(`QuerySession.current_kept`), but the mapping is total. -/
+def attempt (nothingPending : Bool) (upgrade : Option Abort) (commit : Option Abort := none) :
     Option Abort :=
   if nothingPending then none
   else match upgrade with
     | some a => some a
-    | none => if !slotFree then some .busy else if commitOk then none else some .invalid
+    | none => commit
 
-theorem attempt_nothing (u : Option Abort) (s c : Bool) : attempt true u s c = none := rfl
-theorem attempt_busy (c : Bool) : attempt false none false c = some .busy := rfl
-theorem attempt_upgrade_fail (a : Abort) (s c : Bool) : attempt false (some a) s c = some a := rfl
-/-- A refused version is reported as `Invalid`, not as a busy slot (constraint.rs:402-409): the
-retry loop must not spend its whole budget on a permanent engine fault. -/
-theorem attempt_invalid : attempt false none true false = some .invalid := rfl
+theorem attempt_nothing (u c : Option Abort) : attempt true u c = none := rfl
+theorem attempt_ok : attempt false none none = none := rfl
+theorem attempt_upgrade_fail (a : Abort) (c : Option Abort) : attempt false (some a) c = some a := rfl
+/-- A refused version is reported as `Invalid`, not flattened to a transient (constraint.rs:305-310):
+the retry loop must not spend its whole budget on a permanent engine fault. -/
+theorem attempt_invalid : attempt false none (some .invalid) = some .invalid := rfl
+theorem attempt_stale : attempt false none (some .stale) = some .stale := rfl
 
 /-- The retry loop on a list of attempt outcomes, with `budget` retries left before the
 deadline: returns the number of attempts and whether it settled. -/
@@ -208,7 +211,7 @@ def settle : List (Option Abort) → Nat → Nat × Bool
   | o :: os, budget =>
     match o with
     | none => (1, true)
-    | some .paused | some .busy | some .stale =>   -- transient (constraint.rs:215-219)
+    | some .paused | some .stale =>   -- transient (constraint.rs:215-218)
       if budget = 0 then (1, false) else let r := settle os (budget - 1); (r.1 + 1, r.2)
     | some _ => (1, false)   -- unregistered, notMaster, invalid (constraint.rs:254-265): break
 
@@ -226,12 +229,9 @@ theorem settle_bounded (os : List (Option Abort)) (b : Nat) : (settle os b).1 �
     · split
       · simp
       · have := ih (b - 1); simp; omega
-    · split
-      · simp
-      · have := ih (b - 1); simp; omega
     · simp
 
-/-- A stale fork (#3290) is retried like a busy slot, never reported as settled. -/
+/-- A stale version is retried like a pause, never reported as settled. -/
 theorem settle_stale_retries (os : List (Option Abort)) (b : Nat) :
     settle (some .stale :: os) (b + 1) = ((settle os b).1 + 1, (settle os b).2) := by
   simp [settle]
@@ -363,7 +363,7 @@ and no RediSearch document outlives the discarded fork. -/
 def bulkFlow (begin ok : Bool) (valid : Bool := true) : List String :=
   if ok && valid then ["validate", "publish", "commit", "replicate", "reply"]
   else (if ok then ["validate"] else []) ++
-    (["rollback"] ++ (if begin then ["discard"] else []) ++ ["error"])
+    ((if begin then ["discard"] else []) ++ ["error"])
 
 theorem bulk_begin_failure_discards : "discard" ∈ bulkFlow true false := by decide
 theorem bulk_append_failure_keeps : "discard" ∉ bulkFlow false false := by decide

@@ -181,4 +181,9 @@ from set.rs:403 without a committed-label check), property `IncludePendingExact`
 the live nodes whose effective labels contain the pattern) is refuted by the three live repros:
 `bug3453_yields_deleted_node`, `bug3453_duplicate_row`, `bug3453_misses_split_multilabel`. Fix property:
 `includePendingFixed_exact` (Phase 2 filtered by liveness/effective labels, minus Phase 1's nodes).
+**Fixed by #3467 (a477d9aa3)**: `get_pending_nodes_with_labels(label_ids, g)` returns the live nodes that gain a
+pattern label, and Phase 1 skips them (`extra_nodes`). `IncludePendingExact.lean` now models that code
+(`pendingWith g`, `includePendingMain` with `childRows … extra`, `StreamOps.endChild`) and proves
+`includePendingMain_exact`; the refutations are replaced by `fixed3453_deleted_node`, `fixed3453_duplicate_row`,
+`fixed3453_split_multilabel`.
 -/

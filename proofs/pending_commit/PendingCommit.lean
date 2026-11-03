@@ -98,9 +98,9 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
   `rust_reads_dead_entity` stands: `reserve` still reclaims the free set first.
 * W2-pending-2 — **still present**: `CREATE (a) DELETE a` Rust no counters, C
   `Nodes created: 1, Nodes deleted: 1` (`c_eq_rust_plus_cancelled`).
-* #2769 — **still present**: `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b), a.o =
-  outdegree(a) RETURN b.d, a.o` panics `relationship 0 not found` at graph.rs:3365
-  (server killed); C `0|0` (`deg_panics_on_pending_deleted`).
+* #2769 — **fixed by #3520** (9ffa9ab04): `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b), a.o =
+  outdegree(a) RETURN b.d, a.o` used to panic `relationship 0 not found`; now `0|0` as C
+  (`fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted`).
 * W4-fn-1 (labels staged before DELETE) — **fixed by #3288** (`7fd3c12a0`, closes #3245): the
   deleted-node snapshot is built by `Runtime::staged_label_ids` (ops/delete.rs:197), the committed
   ids with the staged adds and removes applied (`Labels.stagedLabelIds_eq_overlay`,
@@ -160,17 +160,16 @@ intended span, every other slot is unchanged, `CInv` holds); `dsetSpan_ok`,
 `encode_decode_roundtrip`; `structural_partition` (structural + per-entity
 bytes = whole allocation, no underflow); `rustUpsert_eq` (the Rust upsert is
 `Props.upsert`); `setAttr_spec`, `getA_spec`, `updA_spec`; `removeRels_spec`;
-`createdRel_spec`; `deletedDeg_none`; `absorb_spec`, `resync_spec`,
+`createdRel_spec`; `deletedDeg_some`; `absorb_spec`, `resync_spec`,
 `clear_spec`; `scan_ok`, `check_spec`, `enforce_spec`, `commit_spec`;
 `evict_preserves_Good`, `evict_reads_live_entity` (PR #2964).
 
 Wave-4 findings:
-* `deg_panics_on_pending_deleted` — `pending_deleted_*degree` asks the
-  committed graph for the endpoints of every pending-deleted edge, including
-  one created in the same batch: `CREATE (a)-[r:R]->(b) DELETE r SET b.d =
-  indegree(b)` kills the Rust server (`relationship 0 not found`,
-  graph.rs:3365); C `0`. Already #2769 (re-found; reproduced live on origin/main
-  code).
+* #2769 (found as `deg_panics_on_pending_deleted`; **fixed by #3520**) —
+  `pending_deleted_*degree` asked the committed graph for the endpoints of every
+  pending-deleted edge, including one created in the same batch. Now it skips
+  edges created in this query and `pending_*degree` skip deleted ones
+  (`fixed2769_created_deleted`).
 * `setSpan_u16_wrap` — `set_span` stores `n as u16`; with ≥ 65,536 entries for
   one entity the slot reads empty while the arena keeps the entries no counter
   covers (`Arena.Inv` false, `compact`'s `debug_assert_eq!` would fire). Only
@@ -300,9 +299,9 @@ commit/replay was never stated. Properties and refutations:
   created/cancelled node in `remove_labels`): `deletePendingNode_keeps_remL` (general),
   `bug3448_cancelled_node_keeps_remL` (+ `_reached`); replica consequence in
   effects_emit_apply `bug3448_removeLabels_before_create_refused`.
-* **#3453** `PendingWithLabelsLive`: `bug3453_pendingWithLabels_yields_deleted` (`deleted_node`
-  :772 keeps `set_labels`; `get_pending_nodes_with_labels` :1040 has no deleted filter). Composed
-  property `IncludePendingExact` in ops_aggregate.
+* **#3453** `PendingWithLabelsLive` (*fixed by #3467*): `pendingWithLabels_live`; `fixed3453_*` replace the
+  refutation (`get_pending_nodes_with_labels` now takes the graph, skips deleted nodes and nodes whose
+  pattern labels are all committed). Composed property `IncludePendingExact` in ops_aggregate.
 * **#3447** `CancelledTypeRegistered`: `bug3447_cascade_drops_type_key`
   (`remove_pending_relationships_for_node` :839-896 drops the emptied group, so `commit`
   :1239-1253 never registers the type); replica id gap in effects_emit_apply

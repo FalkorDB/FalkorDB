@@ -5,11 +5,13 @@ import FalkorTemporal.CalendarLaws
 | here | there |
 | --- | --- |
 | `chk`, `chkMul`, `chkAdd` | `i64::checked_*` |
-| `constructDuration`       | `construct_duration_secs` — `temporal.rs:479` |
+| `constructDuration`       | `construct_duration_secs` — `temporal.rs:479` (ends in `check_date_range`, #2746) |
 | `decomposeDuration`       | `decompose_duration` — `temporal.rs:520` (`y - 1970` is i32: `toI32`) |
-| `shiftMonths`             | `shift_months` — `value.rs:752` (shared by `+` and `-` since #2984) |
-| `addDur`                  | `add_duration_to_timestamp` — `value.rs:728` |
-| `subDur`                  | `sub_duration_from_timestamp` — `value.rs:738` |
+| `shiftMonths`             | `shift_months` — `value.rs:725`, arithmetic only (shared by `+` and `-` since #2984) |
+| `addDur` / `addDurRaw`    | `add_duration_to_timestamp` — `value.rs:701` (checked / the unchecked arithmetic inside it) |
+| `subDur` / `subDurRaw`    | `sub_duration_from_timestamp` — `value.rs:711` |
+| `shiftMonthsR`            | `shift_months` — `value.rs:725`, with its `MAX_DATE_YEAR` guard (#2746) |
+| `checkDateRange`          | `check_date_range` — `temporal.rs:531` |
 | `durAddDur`               | `Add for Value`, `(Duration, Duration)` arm — `value.rs:1044` |
 | `timeAddDur` / `timeSubDur` | `Add`/`Sub for Value`, `(Time, Duration)` arms — `add_slow` `value.rs:1063-1064`, `Sub` `:1105-1106` (since #2985) |
 | `wrapMul`                 | pre-#2987 release-mode `n * 7` in `parse_duration_string` (history; main is checked, `Parse.lean`) |
@@ -32,7 +34,17 @@ theorem chk32_of (x : Int) (h : I32 x) : chk32 x = some x := by
   unfold chk32; unfold I32 at h
   rw [decide_eq_true h.1, decide_eq_true h.2]; rfl
 
-/-- `construct_duration_secs` (`temporal.rs:479-517`), `Err` ↦ `none`. -/
+/-! ### `MAX_DATE_YEAR`, `check_date_range` (#2746) -/
+
+def MAX_DATE_YEAR : Int := 2147481647
+def minDateDays : Int := daysFromCivil (-MAX_DATE_YEAR) 1 1
+def maxDateDays : Int := daysFromCivil MAX_DATE_YEAR 12 31
+
+/-- `check_date_range` (`temporal.rs:531`): `Err("Date out of range")` ↦ `none`. -/
+def checkDateRange (ts : Int) : Option Int :=
+  if minDateDays ≤ ts / 86400 ∧ ts / 86400 ≤ maxDateDays then some ts else none
+
+/-- `construct_duration_secs` (`temporal.rs:479-517`), `Err` ↦ `none`; ends with `check_date_range`. -/
 def constructDuration (years months weeks days hours minutes seconds : Int) : Option Int := do
   let tmo ← chkMul years 12 >>= fun y => chkAdd y months
   let tmo32 ← chk32 tmo
@@ -43,18 +55,20 @@ def constructDuration (years months weeks days hours minutes seconds : Int) : Op
     >>= (fun s => chkMul hours 3600 >>= fun h => chkAdd s h)
     >>= (fun s => chkMul minutes 60 >>= fun m => chkAdd s m)
     >>= (fun s => chkAdd s seconds)
-  chkAdd anchor extra
+  (chkAdd anchor extra).bind checkDateRange
 
 /-- `construct_duration_secs` on a years/months/seconds triple, when nothing overflows. -/
 theorem construct_ym_s (Y M S : Int) (h1 : I64 (Y * 12)) (h2 : I64 (Y * 12 + M))
     (h3 : I32 (Y * 12 + M)) (h4 : I32 (1970 + (Y * 12 + M) / 12)) (h5 : I64 S)
-    (h6 : I64 (daysFromCivil (1970 + (Y * 12 + M) / 12) ((Y * 12 + M) % 12 + 1) 1 * 86400 + S)) :
+    (h6 : I64 (daysFromCivil (1970 + (Y * 12 + M) / 12) ((Y * 12 + M) % 12 + 1) 1 * 86400 + S))
+    (h7 : minDateDays ≤ (daysFromCivil (1970 + (Y * 12 + M) / 12) ((Y * 12 + M) % 12 + 1) 1 * 86400 + S) / 86400 ∧
+      (daysFromCivil (1970 + (Y * 12 + M) / 12) ((Y * 12 + M) % 12 + 1) 1 * 86400 + S) / 86400 ≤ maxDateDays) :
     constructDuration Y M 0 0 0 0 S =
       some (daysFromCivil (1970 + (Y * 12 + M) / 12) ((Y * 12 + M) % 12 + 1) 1 * 86400 + S) := by
   have z : I64 0 := by unfold I64; decide
   unfold constructDuration chkMul chkAdd
   simp only [Int.zero_mul, Int.zero_add, Int.mul_zero, chk_of _ h1, chk_of _ h2, chk32_of _ h3,
-    chk32_of _ h4, chk_of _ z, chk_of _ h5, daysFromCivilT_eq, chk_of _ h6, bind, Option.bind]
+    chk32_of _ h4, chk_of _ z, chk_of _ h5, daysFromCivilT_eq, chk_of _ h6, bind, Option.bind, checkDateRange, h7, and_self, if_true]
 
 /-- `decompose_duration` (`temporal.rs:520-530`) as built in release (i32 wrap). -/
 def decomposeDuration (dur : Int) : Int × Int × Int :=
@@ -67,7 +81,8 @@ def decomposeDuration (dur : Int) : Int × Int × Int :=
 
 theorem construct_decompose (dur : Int) (hd : I64 dur)
     (hy : -2 ^ 31 + 1970 ≤ (civilFromDaysI (dur / 86400)).1 ∧ (civilFromDaysI (dur / 86400)).1 < 2 ^ 31)
-    (hmo : I32 (((civilFromDaysI (dur / 86400)).1 - 1970) * 12 + ((civilFromDaysI (dur / 86400)).2.1 - 1))) :
+    (hmo : I32 (((civilFromDaysI (dur / 86400)).1 - 1970) * 12 + ((civilFromDaysI (dur / 86400)).2.1 - 1)))
+    (hr : minDateDays ≤ dur / 86400 ∧ dur / 86400 ≤ maxDateDays) :
     constructDuration (decomposeDuration dur).1 (decomposeDuration dur).2.1 0 0 0 0
       (decomposeDuration dur).2.2 = some dur := by
   have hv := civil_valid (dur / 86400)
@@ -122,14 +137,14 @@ def shiftMonths (ts years months : Int) : Int × Int :=
   (daysFromCivil fy fm fd, tod)
 
 /-- `add_duration_to_timestamp` (`value.rs:728-735`). -/
-def addDur (ts dur : Int) : Int :=
+def addDurRaw (ts dur : Int) : Int :=
   let (years, months, rem) := decomposeDuration dur
   let (days, tod) := shiftMonths ts years months
   days * 86400 + tod + rem
 
 /-- `sub_duration_from_timestamp` (`value.rs:738-745`, since #2984): the same
-`shift_months` with the years and months negated, so it rolls over like `addDur`. -/
-def subDur (ts dur : Int) : Int :=
+`shift_months` with the years and months negated, so it rolls over like `addDurRaw`. -/
+def subDurRaw (ts dur : Int) : Int :=
   let (years, months, rem) := decomposeDuration dur
   let (days, tod) := shiftMonths ts (-years) (-months)
   days * 86400 + tod - rem
@@ -180,12 +195,12 @@ theorem decompose_monthsDur (t : Int) (ht : -1000000 ≤ t ∧ t ≤ 1000000) :
 (so the roll-over in `shiftMonths` fires on neither side). -/
 theorem add_sub_months (y m d t : Int) (hv : ValidDate y m d) (hd : d ≤ 28)
     (hy : SmallYear y) (ht : -1000000 ≤ t ∧ t ≤ 1000000) :
-    subDur (addDur (dateTs y m d) (daysFromCivil (1970 + t / 12) (t % 12 + 1) 1 * 86400))
+    subDurRaw (addDurRaw (dateTs y m d) (daysFromCivil (1970 + t / 12) (t % 12 + 1) 1 * 86400))
         (daysFromCivil (1970 + t / 12) (t % 12 + 1) 1 * 86400) = dateTs y m d := by
   have hdec := decompose_monthsDur t ht
   have hc := civil_dfc y m d hv
   obtain ⟨hm1, hm2, hd1, _⟩ := hv
-  unfold addDur subDur dateTs shiftMonths
+  unfold addDurRaw subDurRaw dateTs shiftMonths
   simp only [hdec]
   have e1 : daysFromCivil y m d * 86400 / 86400 = daysFromCivil y m d := by omega
   have e2 : daysFromCivil y m d * 86400 % 86400 = 0 := by omega
@@ -218,23 +233,23 @@ theorem add_sub_months (y m d t : Int) (hv : ValidDate y m d) (hd : d ≤ 28)
 duration, `ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M`: subtraction and addition share
 `shift_months`, so `d - dur = d + (-dur)` (pre-#2984 this failed). -/
 theorem sub_eq_add_neg_months (ts t : Int) (ht : -1000000 ≤ t ∧ t ≤ 1000000) :
-    subDur ts (daysFromCivil (1970 + t / 12) (t % 12 + 1) 1 * 86400) =
-      addDur ts (daysFromCivil (1970 + (-t) / 12) ((-t) % 12 + 1) 1 * 86400) := by
+    subDurRaw ts (daysFromCivil (1970 + t / 12) (t % 12 + 1) 1 * 86400) =
+      addDurRaw ts (daysFromCivil (1970 + (-t) / 12) ((-t) % 12 + 1) 1 * 86400) := by
   have h1 := decompose_monthsDur t ht
   have h2 := decompose_monthsDur (-t) ⟨by omega, by omega⟩
-  unfold subDur addDur
+  unfold subDurRaw addDurRaw
   simp only [h1, h2]
   rw [shiftMonths_total ts (-(t / 12)), shiftMonths_total ts ((-t) / 12)]
   have : -(t / 12) * 12 + -(t % 12) = (-t) / 12 * 12 + (-t) % 12 := by omega
   rw [this]; omega
 
-/-- The same for any duration: `subDur` is `addDur` with the decomposed years and months
+/-- The same for any duration: `subDurRaw` is `addDurRaw` with the decomposed years and months
 negated (the remaining seconds are subtracted). -/
 theorem subDur_eq_shift (ts dur : Int) :
-    subDur ts dur =
+    subDurRaw ts dur =
       (shiftMonths ts 0 (-((decomposeDuration dur).1 * 12 + (decomposeDuration dur).2.1))).1 * 86400 +
         (shiftMonths ts 0 0).2 - (decomposeDuration dur).2.2 := by
-  unfold subDur
+  unfold subDurRaw
   generalize decomposeDuration dur = c
   obtain ⟨Y, M, R⟩ := c
   simp only
@@ -242,6 +257,185 @@ theorem subDur_eq_shift (ts dur : Int) :
   have e : -Y * 12 + -M = -(Y * 12 + M) := by omega
   rw [e]
   unfold shiftMonths; simp only
+
+/-! ## Range checks (#2746, #3575): `check_date_range`, the `shift_months` guard
+
+`MAX_DATE_YEAR = i32::MAX - 2000` (`temporal.rs:523`). `MIN_DATE_DAYS`/`MAX_DATE_DAYS` are
+`days_from_civil(∓MAX_DATE_YEAR, 1 / 12, 1 / 31)` (`temporal.rs:528-529`). -/
+
+theorem minDateDays_val : minDateDays = -784352284982 := by decide +kernel
+theorem maxDateDays_val : maxDateDays = 784350846291 := by decide +kernel
+
+theorem daysFromCivil_year_mono (y Y : Int) (h : y < Y) :
+    daysFromCivil y 12 31 < daysFromCivil Y 1 1 := by
+  unfold daysFromCivil; simp only; omega
+
+theorem daysFromCivil_in_year (y m d : Int) (hv : ValidDate y m d) :
+    daysFromCivil y 1 1 ≤ daysFromCivil y m d ∧ daysFromCivil y m d ≤ daysFromCivil y 12 31 := by
+  have hdim : daysInMonth y m ≤ 31 := by
+    unfold daysInMonth; split <;> (try split) <;> (try split) <;> omega
+  obtain ⟨h1, h2, h3, h4⟩ := hv
+  unfold daysFromCivil; simp only
+  constructor <;> split <;> split <;> omega
+
+/-- **`check_date_range` accepts exactly the timestamps whose civil year is within
+`±MAX_DATE_YEAR`** (the year here is the exact `civil_from_days_wide` one, no `i32` cut). -/
+theorem checkDateRange_iff (ts : Int) :
+    (checkDateRange ts).isSome = true ↔
+      -MAX_DATE_YEAR ≤ (civilFromDaysI (ts / 86400)).1 ∧ (civilFromDaysI (ts / 86400)).1 ≤ MAX_DATE_YEAR := by
+  have hrt := dfc_civil (ts / 86400)
+  have hv := civil_valid (ts / 86400)
+  generalize civilFromDaysI (ts / 86400) = c at *
+  obtain ⟨y, m, d⟩ := c
+  simp only at hrt hv ⊢
+  have l1 := daysFromCivil_in_year y m d hv
+  have a1 := daysFromCivil_year_mono y (-MAX_DATE_YEAR)
+  have a2 := daysFromCivil_year_mono MAX_DATE_YEAR y
+  have b1 := daysFromCivil_in_year (-MAX_DATE_YEAR) 12 31 ⟨by omega, by omega, by omega, by decide⟩
+  have b2 := daysFromCivil_in_year MAX_DATE_YEAR 1 1 ⟨by omega, by omega, by omega, by decide⟩
+  have b3 := daysFromCivil_in_year (-MAX_DATE_YEAR) 1 1 ⟨by omega, by omega, by omega, by decide⟩
+  have b4 := daysFromCivil_in_year MAX_DATE_YEAR 12 31 ⟨by omega, by omega, by omega, by decide⟩
+  have c1 := daysFromCivil_year_mono (-MAX_DATE_YEAR) y
+  have c2 := daysFromCivil_year_mono y MAX_DATE_YEAR
+  have hM : MAX_DATE_YEAR = 2147481647 := rfl
+  have e1 : minDateDays = daysFromCivil (-MAX_DATE_YEAR) 1 1 := rfl
+  have e2 : maxDateDays = daysFromCivil MAX_DATE_YEAR 12 31 := rfl
+  have k1 : -MAX_DATE_YEAR ≤ y → minDateDays ≤ daysFromCivil y 1 1 := by
+    intro hy
+    rcases Int.lt_or_eq_of_le hy with h | h
+    · have := c1 h; omega
+    · rw [e1, ← h]; exact Int.le_refl _
+  have k2 : y ≤ MAX_DATE_YEAR → daysFromCivil y 12 31 ≤ maxDateDays := by
+    intro hy
+    rcases Int.lt_or_eq_of_le hy with h | h
+    · have := c2 h; omega
+    · rw [e2, h]; exact Int.le_refl _
+  have k3 := a1
+  have k4 := a2
+  rw [← e1] at k3
+  rw [← e2] at k4
+  unfold checkDateRange
+  by_cases h : minDateDays ≤ ts / 86400 ∧ ts / 86400 ≤ maxDateDays
+  · simp only [h, and_self, if_true, Option.isSome_some, true_iff]
+    omega
+  · simp only [h, if_false, Option.isSome_none, Bool.false_eq_true, false_iff]
+    omega
+
+/-- The year bound keeps every `i32` step in `shift_months` and its callers exact. -/
+theorem MAX_DATE_YEAR_margin : MAX_DATE_YEAR + 2000 < 2 ^ 31 := by decide
+
+/-- The year `shift_months` computes before narrowing (`adj_year`, i64). -/
+def adjYear (ts years months : Int) : Int :=
+  (civilFromDays (ts / 86400)).1 + years + ((civilFromDays (ts / 86400)).2.1 + months - 1) / 12
+
+/-- `shift_months` (`value.rs:725-760`, since #2746): the arithmetic above, behind the guard
+`adj_year.abs() > MAX_DATE_YEAR + 1 → Err("Date out of range")`. -/
+def shiftMonthsR (ts years months : Int) : Option (Int × Int) :=
+  if (adjYear ts years months).natAbs > (MAX_DATE_YEAR + 1).toNat then none
+  else some (shiftMonths ts years months)
+
+theorem shiftMonthsR_eq (ts years months : Int) (h : -(MAX_DATE_YEAR + 1) ≤ adjYear ts years months ∧
+    adjYear ts years months ≤ MAX_DATE_YEAR + 1) :
+    shiftMonthsR ts years months = some (shiftMonths ts years months) := by
+  unfold shiftMonthsR
+  rw [if_neg]; unfold MAX_DATE_YEAR at *; omega
+
+theorem shiftMonthsR_out_of_range (ts years months : Int)
+    (h : MAX_DATE_YEAR + 1 < adjYear ts years months ∨ adjYear ts years months < -(MAX_DATE_YEAR + 1)) :
+    shiftMonthsR ts years months = none := by
+  unfold shiftMonthsR
+  rw [if_pos]; unfold MAX_DATE_YEAR at *; omega
+
+/-- No wrap: whenever `shift_months` answers, `adj_year` (and the `adj_year + 1` of the
+roll-over) fits an `i32`, so the narrowing `as i32` is exact. -/
+theorem shiftMonthsR_no_wrap (ts years months : Int) (r : Int × Int)
+    (h : shiftMonthsR ts years months = some r) :
+    I32 (adjYear ts years months) ∧ I32 (adjYear ts years months + 1) := by
+  unfold shiftMonthsR at h
+  split at h
+  · cases h
+  · unfold I32 MAX_DATE_YEAR at *; omega
+
+/-- `add_duration_to_timestamp` (`value.rs:701`, since #2746): `shift_months`, then
+`check_date_range` on the sum. `decompose_duration` is modelled as total. -/
+def addDur (ts dur : Int) : Option Int :=
+  let (years, months, rem) := decomposeDuration dur
+  (shiftMonthsR ts years months).bind fun (days, tod) => checkDateRange (days * 86400 + tod + rem)
+
+/-- `sub_duration_from_timestamp` (`value.rs:711`, since #2746). -/
+def subDur (ts dur : Int) : Option Int :=
+  let (years, months, rem) := decomposeDuration dur
+  (shiftMonthsR ts (-years) (-months)).bind fun (days, tod) => checkDateRange (days * 86400 + tod - rem)
+
+/-- When both checks pass, the checked function is the arithmetic of `addDurRaw`. -/
+theorem addDur_eq_raw (ts dur : Int)
+    (h1 : (shiftMonthsR ts (decomposeDuration dur).1 (decomposeDuration dur).2.1).isSome = true)
+    (h2 : (checkDateRange (addDurRaw ts dur)).isSome = true) :
+    addDur ts dur = some (addDurRaw ts dur) := by
+  unfold addDur addDurRaw at *
+  generalize decomposeDuration dur = c at *
+  obtain ⟨y, m, r⟩ := c
+  simp only at *
+  cases hs : shiftMonthsR ts y m with
+  | none => simp [hs] at h1
+  | some p =>
+    have e : shiftMonthsR ts y m = some (shiftMonths ts y m) := by
+      unfold shiftMonthsR at hs ⊢; split at hs
+      · cases hs
+      · rw [if_neg ‹_›]
+    rw [e] at hs; cases hs
+    simp only [Option.bind]
+    cases hc : checkDateRange ((shiftMonths ts y m).1 * 86400 + (shiftMonths ts y m).2 + r) with
+    | none => simp [hc] at h2
+    | some v => simp only [checkDateRange] at hc; split at hc <;> simp_all
+
+/-- A date or datetime produced by `+`/`-` of a duration is inside the supported range. -/
+theorem addDur_in_range (ts dur r : Int) (h : addDur ts dur = some r) :
+    -MAX_DATE_YEAR ≤ (civilFromDaysI (r / 86400)).1 ∧ (civilFromDaysI (r / 86400)).1 ≤ MAX_DATE_YEAR := by
+  rw [← checkDateRange_iff]
+  unfold addDur at h
+  generalize decomposeDuration dur = c at h
+  obtain ⟨y, m, rm⟩ := c
+  simp only at h
+  cases hs : shiftMonthsR ts y m with
+  | none => simp [hs] at h
+  | some p =>
+    simp only [hs, Option.bind] at h
+    have : checkDateRange (p.1 * 86400 + p.2 + rm) = some r := h
+    simp only [checkDateRange] at this
+    split at this
+    · cases this; simp [checkDateRange, *]
+    · cases this
+
+theorem subDur_in_range (ts dur r : Int) (h : subDur ts dur = some r) :
+    -MAX_DATE_YEAR ≤ (civilFromDaysI (r / 86400)).1 ∧ (civilFromDaysI (r / 86400)).1 ≤ MAX_DATE_YEAR := by
+  rw [← checkDateRange_iff]
+  unfold subDur at h
+  generalize decomposeDuration dur = c at h
+  obtain ⟨y, m, rm⟩ := c
+  simp only at h
+  cases hs : shiftMonthsR ts (-y) (-m) with
+  | none => simp [hs] at h
+  | some p =>
+    simp only [hs, Option.bind] at h
+    have : checkDateRange (p.1 * 86400 + p.2 - rm) = some r := h
+    simp only [checkDateRange] at this
+    split at this
+    · cases this; simp [checkDateRange, *]
+    · cases this
+
+/-- The boundary: the last supported day is accepted, the next one is not. -/
+theorem checkDateRange_boundary :
+    (checkDateRange (maxDateDays * 86400)).isSome = true ∧
+    checkDateRange ((maxDateDays + 1) * 86400) = none ∧
+    (checkDateRange (minDateDays * 86400)).isSome = true ∧
+    checkDateRange ((minDateDays - 1) * 86400) = none := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> simp [checkDateRange, minDateDays_val, maxDateDays_val] <;> omega
+
+/-- Close to the limit a chain of additions is an error and not a wrapped year: a month
+shift past `MAX_DATE_YEAR + 1` from a date in the last supported year. -/
+theorem shift_past_limit_errors :
+    shiftMonthsR (maxDateDays * 86400) 2 0 = none := by decide +kernel
 
 /-! ## Counterexamples (all evaluated by the kernel) -/
 
@@ -253,16 +447,16 @@ def plus1M : Int := (constructDuration 0 1 0 0 0 0 0).getD 0
 2020-03-02), and `localdatetime('2020-03-31T10:00:00') - duration({months:1})` is
 `2020-03-02T10:00:00`. -/
 theorem sub_vs_add_neg :
-    subDur (dateTs 2020 3 31) plus1M = dateTs 2020 3 2 ∧
-    addDur (dateTs 2020 3 31) minus1M = dateTs 2020 3 2 ∧
-    subDur (dateTs 2020 3 31 + 36000) plus1M = dateTs 2020 3 2 + 36000 := by decide +kernel
+    subDurRaw (dateTs 2020 3 31) plus1M = dateTs 2020 3 2 ∧
+    addDurRaw (dateTs 2020 3 31) minus1M = dateTs 2020 3 2 ∧
+    subDurRaw (dateTs 2020 3 31 + 36000) plus1M = dateTs 2020 3 2 + 36000 := by decide +kernel
 
 /-- Shared C/Rust divergence from openCypher: `duration({days:-1})` is stored as the
 instant 1969-12-31, which decomposes as `P-1Y11M30D`; so `date('2020-03-01') +
 duration({days:-1})` is 2020-03-02 (openCypher: 2020-02-29). -/
 theorem neg_days_encoding :
     decomposeDuration ((constructDuration 0 0 0 (-1) 0 0 0).getD 0) = (-1, 11, 30 * 86400) ∧
-    addDur (dateTs 2020 3 1) ((constructDuration 0 0 0 (-1) 0 0 0).getD 0) = dateTs 2020 3 2 := by
+    addDurRaw (dateTs 2020 3 1) ((constructDuration 0 0 0 (-1) 0 0 0).getD 0) = dateTs 2020 3 2 := by
   decide +kernel
 
 /-! ## `Time ± Duration` (since #2985, `add_slow` `value.rs:1063-1064`, `Sub` `:1105-1106`)
@@ -283,8 +477,8 @@ theorem timeSubDur_range (t dur : Int) : 0 ≤ timeSubDur t dur ∧ timeSubDur t
 /-- **W2-temporal-6 fixed.** Main's `Time + Duration` is the time of day of the
 date-arithmetic result `add_duration_to_timestamp t dur` (every duration encoding is whole
 days plus a clock offset), i.e. the openCypher result, for every `t` and `dur`. -/
-theorem timeAddDur_eq_tod (t dur : Int) : timeAddDur t dur = addDur t dur % 86400 := by
-  unfold timeAddDur addDur decomposeDuration shiftMonths
+theorem timeAddDur_eq_tod (t dur : Int) : timeAddDur t dur = addDurRaw t dur % 86400 := by
+  unfold timeAddDur addDurRaw decomposeDuration shiftMonths
   generalize civilFromDays (dur / 86400) = c1
   obtain ⟨y1, m1, d1⟩ := c1
   generalize civilFromDays (t / 86400) = c2

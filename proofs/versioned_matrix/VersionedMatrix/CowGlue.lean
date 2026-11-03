@@ -6,8 +6,8 @@ import VersionedMatrix.Cow
 | --- | --- |
 | `cowNew`   | `Cow::new` (cow.rs:84): a fresh, owned handle |
 | `deref`    | `Cow::deref` (cow.rs:128) |
-| `mvccNew`  | `MvccGraph::new` (mvcc_graph.rs:80) / `from_graph` (:95): committed version, no writer |
-| `dropG`    | `impl Drop for MvccGraph` (:201): cancels the committed graph's indexing |
+| `mvccNew`  | `MvccGraph::new` (mvcc_graph.rs:97) / `from_graph` (:111): the published version |
+| `dropG`    | `impl Drop for MvccGraph` (:302): cancels the committed graph's indexing |
 -/
 namespace VMCow
 
@@ -28,13 +28,12 @@ theorem cowNew_spec (H : Heap α) (x : α) (Pub : Nat → Prop) (hp : ∀ h, Pub
 
 theorem deref_view (H : Heap α) (V : Version) (i : Nat) : deref H (V i) = view H V i := rfl
 
-/-- `MvccGraph::new` / `from_graph`: the given graph committed, no writer. -/
-def mvccNew (H : Heap α) (V : Version) : Sys α := ⟨H, ⟨V, false⟩, none⟩
+/-- `MvccGraph::new` / `from_graph`: the given graph published, nothing in flight. -/
+def mvccNew (H : Heap α) (V : Version) : Sys α := ⟨H, ⟨V⟩, none⟩
 
 theorem mvccNew_ready (valid : Version → Bool) (H : Heap α) (V : Version) :
     (sstep valid (mvccNew H V) .begin).W = some V.newVersion ∧
-    (sstep valid (mvccNew H V) .begin).g.writing = true ∧
-    (sstep valid (mvccNew H V) .begin).g.committed = V := ⟨rfl, rfl, rfl⟩
+    (sstep valid (mvccNew H V) .begin).g.committed = V := ⟨rfl, rfl⟩
 
 /-- `Drop`: `cancel_indexing` on the committed graph; the model records that
 the committed version's indexers were cancelled and nothing else changes. -/

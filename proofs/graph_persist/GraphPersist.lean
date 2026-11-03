@@ -156,7 +156,8 @@ ports 18910/18911, `CACHE_SIZE 1`):
 * `Graph::restore` now builds `IdSpace::restored(count, deleted)`; caps unchanged
   (proved in proofs/graph_queries `restore_ids`). `MvccGraph` rows here stay NOT
   COVERED/MODELLED; the validated `commit` is proved in proofs/search_concurrency
-  (`refused_commit_releases_slot`) and proofs/versioned_matrix (`refused_commit_rolls_back`).
+  (`refused_commit_publishes_nothing`, `current_not_stale`) and proofs/versioned_matrix
+  (`refused_commit_publishes_nothing`); since #3657 `write`/`rollback` are gone.
 
 ## Gaps
 

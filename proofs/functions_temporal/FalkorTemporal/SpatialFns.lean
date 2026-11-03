@@ -147,62 +147,109 @@ def SV.name {F F32} : SV F F32 → String
 inductive Res (α : Type) where
   | ok (a : α) | err (s : String) | unreachable
 
-/-- One coordinate of `point_struct_pure` (spatial.rs:40-60). -/
-def coord (field : String) : SV F F32 → Except String F32
-  | .float f => .ok (L.ofF64 f)
-  | .int i => .ok (L.ofI64 i)
-  | .null => .error s!"point() requires '{field}' field"
-  | other => .error s!"Type mismatch: '{field}' must be a number, got {other.name}"
+/-- The f64 facts `point_from_map_entries` (spatial.rs:38) needs: `numeric` of an `Int` is
+`i as f64`, a NaN test, and the two closed range tests `-90.0..=90.0`, `-180.0..=180.0`
+(false on NaN, as in Rust). They are separate from `Flt` so that structure stays as it was. -/
+structure PtRng (F : Type) where
+  ofInt : Int → F
+  isNan : F → Bool
+  inLat : F → Bool
+  inLon : F → Bool
+  lat_not_nan : ∀ x, isNan x = true → inLat x = false
+  lon_not_nan : ∀ x, isNan x = true → inLon x = false
 
-/-- `point_struct_pure` (spatial.rs:38); `validate` is `Point::validate` (PROVEN elsewhere). -/
-def pointStructPure (validate : Point F32 → Except String Unit) (args : List (SV F F32)) :
-    Res (SV F F32) :=
-  match coord L "latitude" (args.getD 0 .null) with
-  | .error e => .err e
-  | .ok lat => match coord L "longitude" (args.getD 1 .null) with
-    | .error e => .err e
-    | .ok lon => match validate (Point.new lat lon) with
-      | .error e => .err e
-      | .ok () => .ok (.point (Point.new lat lon))
+variable {R : PtRng F}
 
-/-- The map form `point` (spatial.rs:95): a missing key is the "requires" error, a present
-non-number (including `null`) is the type-mismatch error. -/
-def coordMap (m : List (String × SV F F32)) (field : String) : Except String F32 :=
-  match m.lookup field with
-  | none => .error s!"point() requires '{field}' field"
-  | some (.float f) => .ok (L.ofF64 f)
-  | some (.int i) => .ok (L.ofI64 i)
-  | some other => .error s!"Type mismatch: '{field}' must be a number, got {other.name}"
+/-- `numeric` (spatial.rs:74): Float and Int are numbers, anything else (`null`
+included) is not. -/
+def numeric (R : PtRng F) : SV F F32 → Option F
+  | .float f => some f
+  | .int i => some (R.ofInt i)
+  | _ => none
 
-def point (validate : Point F32 → Except String Unit) : List (SV F F32) → Res (SV F F32)
-  | .map m :: _ =>
-    match coordMap L m "latitude" with
-    | .error e => .err e
-    | .ok lat => match coordMap L m "longitude" with
-      | .error e => .err e
-      | .ok lon => match validate (Point.new lat lon) with
-        | .error e => .err e
-        | .ok () => .ok (.point (Point.new lat lon))
+/-- `point_from_map_entries` (spatial.rs:38-79, since #3301): C's checks and messages.
+`keyCount` is the map's length; `lat`/`lon` are `map.get_str(..)` (`none` = key absent,
+`some .null` = key set to `null`). The range tests run on the `f64`s; `as f32` happens only
+in the result. -/
+def pointFromMapEntries (L : Flt F F32) (R : PtRng F) (keyCount : Nat)
+    (lat lon : Option (SV F F32)) : Res (SV F F32) :=
+  if keyCount ≠ 2 then .err "A point map should have 2 elements, latitude and longitude"
+  else match lat with
+  | none => .err "Did not find 'latitude' value in point map"
+  | some lat => match lon with
+  | none => .err "Did not find 'longitude' value in point map"
+  | some lon => match numeric R lat, numeric R lon with
+  | some la, some lo =>
+    if R.isNan la then .err "latitude must be a finite number, got NaN"
+    else if R.isNan lo then .err "longitude must be a finite number, got NaN"
+    else if R.inLat la && R.inLon lo then .ok (.point (Point.new (L.ofF64 la) (L.ofF64 lo)))
+    else if R.inLat la then .err "longitude should be within the -180 to 180 range"
+    else .err "latitude should be within the -90 to 90 range"
+  | _, _ => .err "'latitude' and 'longitude' values in point map were not both valid numerics"
+
+/-- The `point` fn (spatial.rs:95): a map goes to `pointFromMapEntries`, `null` to `null`. -/
+def point (L : Flt F F32) (R : PtRng F) : List (SV F F32) → Res (SV F F32)
+  | .map m :: _ => pointFromMapEntries L R m.length (m.lookup "latitude") (m.lookup "longitude")
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- Map form = slot form whenever no coordinate key is bound to `null`. -/
-theorem point_eq_struct (validate : Point F32 → Except String Unit) (m : List (String × SV F F32))
-    (h1 : m.lookup "latitude" ≠ some .null) (h2 : m.lookup "longitude" ≠ some .null) :
-    point L validate [.map m] = pointStructPure L validate
-      [(m.lookup "latitude").getD .null, (m.lookup "longitude").getD .null] := by
-  have e : ∀ f, m.lookup f ≠ some .null → coordMap L m f = coord L f ((m.lookup f).getD .null) := by
-    intro f hf; unfold coordMap; split <;> rename_i heq <;> simp only [heq, Option.getD, coord] <;> simp_all
-  simp only [point, pointStructPure, List.getD, List.getElem?_cons_zero, List.getElem?_cons_succ,
-    Option.getD_some, e _ h1, e _ h2]
+/-- Any map without exactly two keys is refused, whatever they are. -/
+theorem point_key_count (m : List (String × SV F F32)) (h : m.length ≠ 2) :
+    point L R [.map m] = .err "A point map should have 2 elements, latitude and longitude" := by
+  simp [point, pointFromMapEntries, h]
 
-/-- …but `point({latitude: null, ..})` differs: the map form says "must be a number, got
-Null", the slot form (used for constant map literals) "requires 'latitude' field". -/
-theorem point_null_lat_msgs (validate : Point F32 → Except String Unit) (lon : SV F F32) :
-    point L validate [.map [("latitude", .null), ("longitude", lon)]] =
-      .err "Type mismatch: 'latitude' must be a number, got Null" ∧
-    pointStructPure L validate [.null, lon] = .err "point() requires 'latitude' field" := by
-  constructor <;> rfl
+/-- A missing key is "Did not find", a key set to `null` falls to the numerics message. -/
+theorem point_missing_lat (lon : SV F F32) :
+    pointFromMapEntries L R 2 none (some lon) = .err "Did not find 'latitude' value in point map" := rfl
+
+theorem point_null_not_numeric (lon : SV F F32) :
+    pointFromMapEntries L R 2 (some .null) (some lon) =
+      .err "'latitude' and 'longitude' values in point map were not both valid numerics" := by
+  simp [pointFromMapEntries, numeric]
+
+/-- A NaN coordinate is refused (latitude first), as the real Rust does; C lets it through. -/
+theorem point_nan_refused (lat lon : SV F F32) (la lo : F) (ha : numeric R lat = some la)
+    (hlo : numeric R lon = some lo) (hn : R.isNan la = true) :
+    pointFromMapEntries L R 2 (some lat) (some lon) = .err "latitude must be a finite number, got NaN" := by
+  simp [pointFromMapEntries, ha, hlo, hn]
+
+theorem point_nan_lon_refused (lat lon : SV F F32) (la lo : F) (ha : numeric R lat = some la)
+    (hlo : numeric R lon = some lo) (hn : R.isNan la = false) (hn' : R.isNan lo = true) :
+    pointFromMapEntries L R 2 (some lat) (some lon) = .err "longitude must be a finite number, got NaN" := by
+  simp [pointFromMapEntries, ha, hlo, hn, hn']
+
+/-- Success exactly when both are numbers, not NaN, and in range **as f64** — the check
+precedes the narrowing, so a value just past a bound is never rounded onto it. The point holds
+the narrowed values. -/
+theorem point_ok_iff (lat lon : SV F F32) (p : SV F F32) :
+    pointFromMapEntries L R 2 (some lat) (some lon) = .ok p ↔
+      ∃ la lo, numeric R lat = some la ∧ numeric R lon = some lo ∧ R.inLat la = true ∧
+        R.inLon lo = true ∧ p = .point (Point.new (L.ofF64 la) (L.ofF64 lo)) := by
+  unfold pointFromMapEntries
+  rw [if_neg (by decide)]
+  rcases ha : numeric R lat with _ | la
+  · simp [ha]
+  rcases hb : numeric R lon with _ | lo
+  · simp [ha, hb]
+  by_cases h1 : R.isNan la = true
+  · simp [ha, hb, h1, R.lat_not_nan _ h1]
+  · by_cases h2 : R.isNan lo = true
+    · simp [ha, hb, h1, h2, R.lon_not_nan _ h2]
+    · by_cases h3 : R.inLat la = true <;> by_cases h4 : R.inLon lo = true <;> simp [ha, hb, h1, h2, h3, h4]
+      all_goals (try (intro h; cases h))
+      all_goals (try exact eq_comm)
+
+/-- Both in range but a bound broken on one side: the message names that side
+(longitude when latitude is fine). -/
+theorem point_range_msgs (lat lon : SV F F32) (la lo : F) (ha : numeric R lat = some la)
+    (hlo : numeric R lon = some lo) (h1 : R.isNan la = false) (h2 : R.isNan lo = false) :
+    (R.inLat la = true → R.inLon lo = false →
+      pointFromMapEntries L R 2 (some lat) (some lon) = .err "longitude should be within the -180 to 180 range") ∧
+    (R.inLat la = false →
+      pointFromMapEntries L R 2 (some lat) (some lon) = .err "latitude should be within the -90 to 90 range") := by
+  constructor
+  · intro a b; simp [pointFromMapEntries, ha, hlo, h1, h2, a, b]
+  · intro a; simp [pointFromMapEntries, ha, hlo, h1, h2, a]
 
 def isNum : SV F F32 → Bool
   | .int _ | .float _ => true
@@ -284,12 +331,11 @@ theorem vecDist_mismatch (k : List F32 → List F32 → Option F) (d : F) (a b :
     vecDist k d [.vec a, .vec b] = .err s!"Vector dimension mismatch, expected {a.length} but got {b.length}" := by
   simp [vecDist, h]
 
-/-- `register` (spatial.rs:67): five `cypher_fn!`s and one struct form. -/
+/-- `register` (spatial.rs:67): five `cypher_fn!`s. -/
 def registered : List (String × Nat) :=
   [("vecf32", 1), ("point", 1), ("distance", 2), ("vec.euclideanDistance", 2), ("vec.cosineDistance", 2)]
-def structSlots : List (String × List String) := [("point", ["latitude", "longitude"])]
-
-theorem register_wf : (registered.map (·.1)).Nodup ∧
-    (∀ p ∈ structSlots, p.1 ∈ registered.map (·.1) ∧ p.2.length = 2) := by decide
+/-- `register` (spatial.rs:67): since #3301 `point` has no struct form any more
+(`set_struct_fn("point", ..)` is gone). -/
+theorem register_wf : (registered.map (·.1)).Nodup := by decide
 
 end FalkorTemporal.Spatial2

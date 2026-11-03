@@ -18,10 +18,9 @@ function on it. Relationship type names (`Arc<String>`) are `Nat`s.
   (fresh id) and `remove_pending_relationships_for_node`, which removes
   exactly the incident edges (`removeRels_spec`);
   `get_created_relationship_endpoints` answers from the unique entry.
-* degrees: `pendingDeg_spec`; `pending_deleted_*degree` returns `none`
-  (= `get_relationship_endpoints` panics, graph.rs:3365) as soon as a
-  deleted id has no committed endpoints, which is the state after
-  `CREATE ()-[r]->() DELETE r` (`deg_panics_on_pending_deleted`, #2769, seen live).
+* degrees: `pendingDeg_spec` (created, not deleted edges); `pending_deleted_*degree` skips edges created
+  in this query, so it asks the committed graph only for committed ids (`deletedDeg_skips_created`,
+  `fixed2769_created_deleted`, #2769 fixed by #3520).
 -/
 namespace PendingCommit.PS
 open PA

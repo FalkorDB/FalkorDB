@@ -14,11 +14,12 @@ import FalkorNativeIndex.Ddl
 import FalkorNativeIndex.Scan
 import FalkorNativeIndex.Unique
 import FalkorNativeIndex.Decline
+import FalkorNativeIndex.Batch
 
 /-!
 # `native_index`: the FalkorDB native numeric index (#2350 ec2448f32, #3307 18836a355)
 
-Targets the worktree at origin/main b02266c2b (re-targeted from e860645bb: #3547 `155a246f8` (native-only
+Targets the worktree at origin/main a477d9aa3 (re-targeted from b02266c2b: #3566 `29e85ffc3`, an indexer batch commits as a version of its own: `Batch.lean`; earlier, from e860645bb: #3547 `155a246f8` (native-only
 writes: no Range field is fed to RediSearch under `index-falkordb`; `redisearch_fields`; `index_only_writes` is
 gone), #2386 `41ed78225` (no fallback under the flag: `query_numeric` answers `Option<Result<rows, ScanFilter>>`,
 a predicate the native index cannot serve is the error `unsupported_by_native_index`, a column still building is
@@ -48,6 +49,7 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
 | `Pending.lean`: `IndexWrite`, `IndexChanges.*`, `PendingIndexWrites.*`, `lastWriteWins`, `stateLog`, `IndexColumn.writerRecord`, `IndexEntry.writerRecord`, `applyStep`, `FalkorDbIndex.applyWrites`/`apply` | `pending_writes.rs:24-179`, `falkordb_index.rs:215-232` (`writer_record`), `:581-632`; `versioned.rs:99-156` |
 | `Writes.lean`: `G`, `StageOp`, `stage`, `nodeAttrsSet`, `nodeRowsSet`, `newNodeAttrs`, `bulkNodeAttrs`, `labelsAdded`, `labelsProductAdded`, `labelsRemoved`, `nodesDeleted`, `edgeAttrsSetWith`/`edgeAttrsSet`/`edgeAttrsSetOfType`, `newEdgeAttrs`, `bulkEdgeAttrs`, `edgesDeleted`, `addNodeUnderLabel`, `removeNodeUnderLabel`, `nodeLabelIdsInto`, `edgeType` | `graph_writes.rs:50-380`, `:451-510` |
 | `Build.lean`: `pushAttr`, `scanNodes`, `edgeLoop`, `scanEdges`, `scan`, `G.place`, `IndexColumn.indexerRead`/`indexerAdd`, `G.prepareBatch`, `G.indexerPrepare` | `graph_writes.rs:513-620` (`scan` :513, `scan_nodes` :538, `scan_edges` :574); `falkordb_index.rs:235-250`; `versioned.rs:187-230`; `graph.rs:3858-3888` (`place`, in `apply_index_writes`) |
+| `Batch.lean`: `SE`, `discardedAgainst`, `V` (`newBuildVersion`, `createEntry`, `setBatchesPublished`, `batchPublishedSince`, `applyBatch`, `withBatchIndex`), `indexerFit`, `commitIndexerBatch` | `versioned.rs:54-65`, `:173-241` (`IndexEntry`), `:248-340` (`apply_indexer_batch`, `indexer_prepare`, `indexer_fit`, `with_batch_index`, `take_index`); `falkordb_index.rs:452`, `:565`, `:575`; `graph.rs:1138` (`new_build_version`); `mvcc_graph.rs:193`, `:214` |
 | `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries` (specifications), `buildInOneBatch`, `createIndex`, `populate`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanOp`, `newVersion`, `runUnit` | `graph_writes.rs:396-450`; `graph.rs:1083`, `:3858`, `:3889`, `:4181`, `:4199`; `node_by_index_scan.rs:302`, `edge_by_index_scan.rs:318` |
 | `Scan.lean`: `G.nodeMatches`/`relationshipMatches`, `nodeFilteredScan`/`edgeFilteredScan`, `nodeScanOp`/`edgeScanOp`, `redisearchFieldsAll`/`redisearchFields` | `graph.rs:4230` (`node_matches`), `:4244` (`relationship_matches`), `:144`/`:151` (`redisearch_fields`); the `Some(Err(scan_filter))` arms of `node_by_index_scan.rs:~330`, `edge_by_index_scan.rs:~375` |
 | `Unique.lean`: `nativeUniqueQuery`, `roundGo`/`fewestLoop`/`fewest`, `ReadOnce` | `unique.rs:20`, `:48`, `:69` |
@@ -82,6 +84,14 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   `buildInOneBatch_entry` (CREATE INDEX = one unlimited batch: the column is `Ready` and holds
   `from_entries` of the live pairs), `createIndex_builds`, `createIndex_ready`,
   `createIndex_nodeScan_agrees`, `addEncoded_spec` / `addEncoded_sorted` (an empty tree is bulk-built).
+- **#3566, an indexer batch commits as a version of its own** (`Batch.lean`): the fit of a batch built on a
+  build version against what was published meanwhile: `fit_fresh` (nothing committed: `Same`),
+  `fit_after_other_batch` (`Swap`), `fit_after_writer` (`Discarded Writers`), `fit_after_same_batch`
+  (`AnotherBatch`), `fit_after_drop` / `fit_after_recreate` (`Gone`; a re-created index has the next
+  generation); the commit: `commit_discarded` (nothing published), `commit_same`, `commit_swap` (only the
+  batch's index comes from the batch), `commit_invalid`, `commit_batches` (+1 per publish),
+  `commit_keeps_version` / `commit_not_stale` (the data version never moves, so a writer's fork is not made
+  stale). The model is on the one index the batch is about; the rest of the graph is opaque.
 - **#3547 / #2386, the native index is the only Range index** (`Query.lean`, `Scan.lean`, `Ddl.lean`,
   `Unique.lean`, `Decline.lean`): `queryNumeric_isSome_iff` (what is declined does not depend on the build
   state), `queryNumeric_ok` / `_error` (rows only from a `Ready` column, a `ScanFilter` only from a `Building`

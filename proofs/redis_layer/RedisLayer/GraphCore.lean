@@ -5,18 +5,18 @@ import RedisLayer.Resp
 | here | there (`origin/main`) |
 | --- | --- |
 | `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul` `:87`, `c_graph_name` `:104`, `c_graph_key` `:119` |
-| `Reg.*`                     | `register_graph` `:140`, `graph_is_registered` `:188`, `rename_graph` `:202`, `graph_free` `:1777` |
+| `Reg.*`                     | `register_graph` `:140`, `graph_is_registered` `:188`, `rename_graph` `:202`, `graph_free` `:1761` |
 | `modified`                  | `WriteQueryOk::new` `:256` |
 | `sanitise`                  | `ffi::sanitise_error` `:318` |
-| `invalidVersionBytes`       | `reply_invalid_graph_version` `:993` |
-| `profileDepth`, `profileOps`| `reply_profile` `:891` (all ops, plain depth, since #2390) |
+| `invalidVersionBytes`       | `reply_invalid_graph_version` `:986` |
+| `profileDepth`, `profileOps`| `reply_profile` `:884` (all ops, plain depth, since #2390) |
 | `isWrite`, `profileDetect`, `admissionKept` | `execute_query` `:587` / `execute_profile` `:674` write detection and `admission.take()` |
-| `writeSteps`                | `try_query_write` `:783`, `finish_write` `:1520`, `abandon_write` `:1554`, `commit_and_replicate` `:1571` |
+| `writeSteps`                | `try_query_write` `:783`, `finish_write` `:1512`, `abandon_write` `:1537`, `commit_and_replicate` `:1553` |
 | `executeWrite`, `Attempt`   | `execute_query_write` `:737` (retry loop, #3290), `WriteAttempt::from` `:776` |
-| `admitQ`, `dispatch`        | `admit` `:1007`, `query_mut` `:1018` (#3014) |
-| `syncOutcome`               | `query_sync` `:1222`, `profile_sync` `:1453`, `profile_mut` `:1352` |
-| `loopExit`                  | `process_write_queued_query` `:1615` |
-| `EFFECT_COMMAND`            | `CtxSink::replicate` `:1764` |
+| `admitQ`, `dispatch`        | `admit` `:1000`, `query_mut` `:1011` (#3014) |
+| `syncOutcome`               | `query_sync` `:1215`, `profile_sync` `:1445`, `profile_mut` `:1344` |
+| `loopExit`                  | `process_write_queued_query` `:1599` |
+| `EFFECT_COMMAND`            | `CtxSink::replicate` `:1748` |
 | `TG`                        | `ThreadedGraph::new` `:553`, `from_mvcc` `:569` (unbounded write channel since #3014) |
 -/
 namespace RedisLayer.GraphCore
@@ -167,15 +167,16 @@ def modified (s : Stats) (effects : Nat) : Bool :=
 
 theorem modified_zero : modified ⟨0,0,0,0,0,0,0,0,0,0⟩ 0 = false := rfl
 
-inductive Step | commit | signal | replicate | warnNoEffects | rollback | resync | release | reply | dropFork
+inductive Step | commit | signal | replicate | warnNoEffects | resync | release | reply
   deriving DecidableEq, Repr
 
 /-- `commit_and_replicate`. -/
 def commitSteps (mod : Bool) (hasBuf : Bool) : List Step :=
   [.commit, .signal] ++ (if !mod then [] else if hasBuf then [.replicate] else [.warnNoEffects])
 
-/-- `commit_and_replicate` (graph_core.rs:1571) since #2846: `MvccGraph::commit` now
-validates, and a refusal here is `unreachable!()` — the panic step. The
+/-- `commit_and_replicate` (graph_core.rs:1553) since #2846: `MvccGraph::commit` validates
+(and since #3657 refuses a stale fork too: `unreachable!` in `current_not_stale`, see
+SearchConcurrency `Mvcc`), and a refusal here is `unreachable!()` — the panic step. The
 argument it rests on: every write query ends its last segment through
 `Pending::end_segment`, which verifies the batch and rolls it, so the batch reaching
 here is fresh (proofs/graph_queries `rollIdBatches_spec`: `entry_bound = bound`,
@@ -186,19 +187,18 @@ def commitStepsV (valid mod hasBuf : Bool) : Option (List Step) :=
 theorem commitStepsV_valid (mod buf : Bool) : commitStepsV true mod buf = some (commitSteps mod buf) := rfl
 theorem commitStepsV_refused (mod buf : Bool) : commitStepsV false mod buf = none := rfl
 
-/-- `release_slot` (`query_session.rs:234`): roll back only a slot this session holds. -/
-def releaseSteps (holds : Bool) : List Step := if holds then [.rollback] else [.dropFork]
-
-/-- `abandon_write` (`:1554`) since #3290: resync the index only if the slot was held (a fork
-never published a document), then `release_slot`. -/
-def abandonSteps (holds : Bool) : List Step := (if holds then [.resync] else []) ++ releaseSteps holds
+/-- `abandon_write` (`:1537`) since #3657: resync the index only if the session's version is
+current (`version_is_current`: a version still matching, stale or refused at escalation
+published no document), and nothing else: the version is dropped with the runtime, so there
+is no slot to release and nothing to roll back. -/
+def abandonSteps (cur : Bool) : List Step := if cur then [.resync] else []
 
 /-- `try_query_write` from `runtime.query()` on: abandon on error; else `finish_write`
-(commit + `committed()` if the session escalated, otherwise `release_slot`), release locks,
-then reply. -/
-def writeSteps (ok writer holds mod hasBuf : Bool) : List Step :=
-  if !ok then abandonSteps holds
-  else (if writer then commitSteps mod hasBuf else releaseSteps holds) ++ [.release, .reply]
+(`commit_and_replicate` if the session escalated; otherwise nothing, the version drops with
+the runtime), release locks, then reply. -/
+def writeSteps (ok writer cur mod hasBuf : Bool) : List Step :=
+  if !ok then abandonSteps cur
+  else (if writer then commitSteps mod hasBuf else []) ++ [.release, .reply]
 
 /-- The client is answered only after the commit is published and the locks are gone. -/
 theorem reply_after_commit (h mod buf : Bool) :
@@ -206,11 +206,16 @@ theorem reply_after_commit (h mod buf : Bool) :
   simp [writeSteps]
 
 /-- A failed write never commits and never replies here (the caller sends the error, or
-re-runs a stale one); it rolls back only a slot it held. -/
+re-runs a stale one); it resyncs the index only for a current version. -/
 theorem failed_no_commit (w h m b : Bool) :
     .commit ∉ writeSteps false w h m b ∧ .reply ∉ writeSteps false w h m b ∧
-    (.rollback ∈ writeSteps false w h m b ↔ h = true) := by
-  cases h <;> simp [writeSteps, abandonSteps, releaseSteps]
+    (.resync ∈ writeSteps false w h m b ↔ h = true) := by
+  cases h <;> simp [writeSteps, abandonSteps]
+
+/-- A write that never escalated (`LIMIT 0` short-circuits above `Commit`) publishes and
+replicates nothing: the session answers and the version is dropped. -/
+theorem unescalated_silent (h m b : Bool) :
+    writeSteps true false h m b = [.release, .reply] := by simp [writeSteps]
 
 /-! ### `execute_query_write`'s retry (#3290)
 
@@ -238,10 +243,10 @@ theorem executeWrite_first (k : Nat) (a : Attempt) (rest : List Attempt) (h : a 
   | zero => cases a <;> simp_all [executeWrite]
   | succ k ih => simpa [List.replicate_succ, executeWrite] using ih
 
-/-- A stale run took no write step a client could see: it rolled nothing back (it held no
-slot) and committed and replied nothing. -/
+/-- A stale run took no write step a client could see: it is not `current`, so it resyncs
+nothing, and it committed and replied nothing. -/
 theorem stale_run_silent (w m b : Bool) :
-    writeSteps false w false m b = [.dropFork] := by simp [writeSteps, abandonSteps, releaseSteps]
+    writeSteps false w false m b = [] := by simp [writeSteps, abandonSteps]
 
 /-- Every modified commit either replicates or logs that it could not. -/
 theorem modified_replicates_or_warns (buf : Bool) :

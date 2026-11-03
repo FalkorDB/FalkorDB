@@ -63,16 +63,16 @@ graph/src/runtime/eval.rs	list_contains	1760	PROVEN	Eval.listContains (List / Nu
 graph/src/runtime/eval.rs	get_elements	1774	NOT COVERED	list slicing; lists out of scope
 graph/src/runtime/eval.rs	logical_xor	1807	PROVEN	Eval.logicalXor: logicalXor_eq, xor_two; scalarXor: xor_kleene
 graph/src/runtime/eval.rs	evaluate_param	1814	PROVEN	EvalParam.evalParam: evalParams_consts, evalParam_neg (i64::MIN overflow error), evalParam_neg_null, evalParam_badkey
-graph/src/runtime/value.rs	Add::add	946	PROVEN	vArith .add: arith_agrees, add_exact, max_add_one (scalar subset)
-graph/src/runtime/value.rs	Value::add_slow	961	MODELLED	vArith null and String-concat arms only; List/Map/temporal arms out of scope
-graph/src/runtime/value.rs	Sub::sub	1078	PROVEN	vArith .sub: arith_agrees, neg_vs_sub_zero (scalar subset)
-graph/src/runtime/value.rs	Mul::mul	1124	PROVEN	vArith .mul: arith_agrees (scalar subset)
-graph/src/runtime/value.rs	Div::div	1153	PROVEN	vArith .div: arith_agrees, divGate_spec, div_exact, min_div_neg_one
-graph/src/runtime/value.rs	Rem::rem	1183	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
-graph/src/runtime/value.rs	OrderedEnum::order	1213	MODELLED	V.order (scalar subset; value_order proves the full table)
-graph/src/runtime/value.rs	CompareValue::compare_value	1244	MODELLED	compareValue (scalar subset, abstract f64); used by the proofs, not their subject
-graph/src/runtime/value.rs	Contains::contains	1871	PROVEN	containsGo/contains: contains_is_kleene_any, null_in
-graph/src/runtime/value.rs	compare_floats	1909	MODELLED	compareFloats: compareFloats_flag, cf_ne (helper lemmas)
+graph/src/runtime/value.rs	Add::add	952	PROVEN	vArith .add: arith_agrees, add_exact, max_add_one (scalar subset)
+graph/src/runtime/value.rs	Value::add_slow	967	MODELLED	vArith null and String-concat arms only; List/Map/temporal arms out of scope
+graph/src/runtime/value.rs	Sub::sub	1084	PROVEN	vArith .sub: arith_agrees, neg_vs_sub_zero (scalar subset)
+graph/src/runtime/value.rs	Mul::mul	1130	PROVEN	vArith .mul: arith_agrees (scalar subset)
+graph/src/runtime/value.rs	Div::div	1159	PROVEN	vArith .div: arith_agrees, divGate_spec, div_exact, min_div_neg_one
+graph/src/runtime/value.rs	Rem::rem	1189	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
+graph/src/runtime/value.rs	OrderedEnum::order	1219	MODELLED	V.order (scalar subset; value_order proves the full table)
+graph/src/runtime/value.rs	CompareValue::compare_value	1250	MODELLED	compareValue (scalar subset, abstract f64); used by the proofs, not their subject
+graph/src/runtime/value.rs	Contains::contains	1877	PROVEN	containsGo/contains: contains_is_kleene_any, null_in
+graph/src/runtime/value.rs	compare_floats	1915	MODELLED	compareFloats: compareFloats_flag, cf_ne (helper lemmas)
 graph/src/runtime/functions/math.rs	register	42	NOT COVERED	registration table
 graph/src/runtime/functions/math.rs	abs	46	NOT COVERED	checkedAbs defined but no theorem about abs()
 graph/src/runtime/functions/math.rs	ceil	63	NOT COVERED	not modelled

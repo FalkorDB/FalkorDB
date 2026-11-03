@@ -17,9 +17,9 @@ committed or replayed. Line numbers are b84473a7f.
   has a staged removal). Refuted: `bug3448_remove_of_staged_label`,
   `bug3448_cancelled_node_keeps_remL` (via the general
   `deletePendingNode_keeps_remL`).
-* **#3453** `deleted_node` (:772-777) leaves `set_labels`, and
-  `get_pending_nodes_with_labels` (:1040-1055) does not filter deleted ids.
-  Property `PendingWithLabelsLive`. Refuted: `bug3453_pendingWithLabels_yields_deleted`.
+* **#3453** (*fixed by #3467, a477d9aa3*) `deleted_node` leaves `set_labels`, and
+  `get_pending_nodes_with_labels` used to ignore deletion and committed labels. Property
+  `PendingWithLabelsLive`, now proven (`pendingWithLabels_live`); `fixed3453_*` are the three repros.
   (The composed IncludePending property is in proofs/ops_aggregate,
   `IncludePendingExact.lean`.)
 * **#3447** `remove_pending_relationships_for_node` (:839-896) drops a type's
@@ -123,20 +123,40 @@ theorem bug3448_cancelled_node_keeps_remL_reached :
     ∃ p' g', deletePendingNode (fun (g : Unit) _ => some g) (fun g _ => some g) pCreateRemove () 0 = some (p', g') :=
   ⟨_, _, rfl⟩
 
-/-! ## #3453: `get_pending_nodes_with_labels` -/
+/-! ## #3453: `get_pending_nodes_with_labels` (fixed by #3467, a477d9aa3) -/
 
 /-- **Property**: Phase 2's node list holds no pending-deleted node. -/
-def PendingWithLabelsLive (p : P) (ls : List Nat) : Prop := ∀ n ∈ pendingWithLabels p ls, n ∉ p.deletedN
+def PendingWithLabelsLive (p : P) (C : Nat → Nat → Bool) (ls : List Nat) : Prop :=
+  ∀ n ∈ pendingWithLabels p C ls, n ∉ p.deletedN
+
+/-- **`pendingWithLabels_live`**: for a non-empty pattern the new `get_pending_nodes_with_labels` skips every
+pending-deleted node, whatever `set_labels` still says about it. -/
+theorem pendingWithLabels_live (p : P) (C : Nat → Nat → Bool) (hk : (p.setL.map (·.1)).Nodup)
+    (ls : List Nat) (hls : ls ≠ []) : PendingWithLabelsLive p C ls := by
+  intro n hn
+  rw [pendingWithLabels_spec p C hk] at hn
+  rcases hn with ⟨h, _⟩ | ⟨_, hd, _⟩
+  · exact absurd h hls
+  · exact hd
 
 /-- `MATCH (n:A) SET n:B` on committed node 0 (`B` = 1 staged). -/
 def pSetB : P := ⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [1])], []⟩
 
-/-- **#3453 (1)** `MATCH (n:A) SET n:B DELETE n MERGE (m:B)`: `deleted_node`
-leaves `set_labels`, so the deleted node is a pending `:B` node. -/
-theorem bug3453_pendingWithLabels_yields_deleted :
-    pendingWithLabels (deletedNode pSetB 0) [1] = [0] ∧ 0 ∈ (deletedNode pSetB 0).deletedN ∧
-    ¬ PendingWithLabelsLive (deletedNode pSetB 0) [1] := by
-  refine ⟨rfl, by simp [deletedNode, mem_sins], fun h => h 0 (by decide) (by simp [deletedNode, mem_sins])⟩
+/-- **#3453 (1), fixed**: `MATCH (n:A) SET n:B DELETE n MERGE (m:B)`: the deleted node is not a pending `:B`
+node any more (before the fix the list was `[0]`). -/
+theorem fixed3453_deleted_not_pending :
+    pendingWithLabels (deletedNode pSetB 0) (fun _ l => l == 0) [1] = [] := by decide
+
+/-- **#3453 (2), fixed**: `MATCH (n:A) SET n:A`: the node already has `A` committed, so it is left to the
+scan, not listed again (before the fix: a second row). -/
+theorem fixed3453_resets_committed_label :
+    pendingWithLabels ⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [0])], []⟩
+      (fun _ l => l == 0) [0] = [] := by decide
+
+/-- **#3453 (3), fixed**: `MATCH (n:A) SET n:B MERGE (m:A:B)`: node 0 has `A` committed and `B` staged; it
+is listed here (and skipped by the scan), so MERGE matches it (before the fix: nothing, a duplicate). -/
+theorem fixed3453_split_multilabel :
+    pendingWithLabels pSetB (fun _ l => l == 0) [0, 1] = [0] := by decide
 
 /-! ## #3447: a cascaded edge's type -/
 

@@ -98,7 +98,7 @@ Yes:
 | `writeAll_flatten`, `roundtrip` | The RDB byte layer is lossless for every buffer size and chunk source | `BufferedIO.lean`, `RoundTrip.lean` |
 | `decH_encH`, `decSchema_encSchema` | Graph header and schema blocks round-trip | `Serial.lean`, `SerialProof.lean` |
 | `hashInput_total`, `truncate_total`, `prefix_longest` | Since #3234 the slow log never panics, and keeps the longest prefix of at most 2048 bytes that ends on a character boundary | `SlowLog.lean` |
-| `claimFork_spec`, `executeWrite_first`, `admit_bounded` | Write sessions: a claim succeeds only on a fork of the current version (#3290); a stale attempt is invisible; the queue never exceeds `MAX_QUEUED_QUERIES` (#3014) | `QuerySession.lean`, `GraphCore.lean` |
+| `checkFork_spec`, `current_kept`, `executeWrite_first`, `admit_bounded` | Write sessions: a check succeeds only on a fork of the current version, a `Current` one is never refused as stale (#3290, #3657); a stale attempt is invisible; the queue never exceeds `MAX_QUEUED_QUERIES` (#3014) | `QuerySession.lean`, `GraphCore.lean` |
 | `query_accounting`, `other_thread_invisible` | Per-query memory accounting counts exactly the query's own allocations, on its own thread | `Allocator.lean` |
 
 ### How `rust_c_agree` is proved
@@ -126,7 +126,7 @@ All confirmed live against C (`repro_live.py` in this folder, and the scripts na
 | 9 | removed (17ccc5412) | Module-load arguments: `CMD_INFO YES` read as 0, `CMD_INFO garbage` loaded, `cache_size 10` and `ASYNC_DELETE yes` ignored (W4-redis-3) | Fixed by #3328 (closes #3268); `fixed3328_counterexamples` |
 | 10 | `leading_space_divergence` | `CACHE_SIZE " 10"` and `GRAPH.CONFIG SET RESULTSET_SIZE " 5"` succeed on C and are refused by Rust | **Open** (confirmed live, not filed) |
 | 11 | `from_slice_past_end` | Any truncated `GRAPH.RESTORE` payload calls `RedisModule_LoadStringBuffer(NULL)`; a cut at a record boundary SIGSEGVs. C crashes too | **Open** (#2537; external PR #3167) |
-| 12 | `bulk_reply_differs` | The `GRAPH.BULK` reply says "relations created"; C says "edges created" (W4-redis-4) | **Open** (minor) |
+| 12 | `bulk_reply_c` | The `GRAPH.BULK` reply said "relations created"; C says "edges created" (W4-redis-4) | Fixed by #3301 (dd333fe32) |
 | 13 | removed (17ccc5412) | Verbose format: a top-level point printed `latitude: 1.000000` with a space (C none); NaN inside a list printed `NaN` (C `nan`) | Fixed by #3043 (closes #3042); `pointStr_c`, `fmtS_floats_c`. Still open (minor, not filed): `CREATE (a:A) DELETE a` reports no node stats |
 | 14 | `bug2782_same_name_other_db_aborts`, `bug2782_invariant_broken` (`MultiDb.lean`) | `GRAPH_REGISTRY` is keyed by name only, so creating `shared` in db1 displaces db0's `shared`; the next write to db0's graph aborts ("graph was deleted or replaced…"; debug build: assert). Property `KeyspaceRegistered` / `WritesSucceed` | **Open** (#2782) |
 | 15 | `bug2653_nonutf8_key_mangled` (`KeyName.lean`) | A non-UTF-8 graph key is replicated and signalled under its `from_utf8_lossy` form: `\xc3(bin` → `\xef\xbf\xbd(bin`, so the replica writes a different key. Property `ReplicatedKeyIsStored` (C: `c_ok`) | **Open** (#2653) |

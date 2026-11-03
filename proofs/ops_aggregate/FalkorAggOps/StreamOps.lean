@@ -5,7 +5,7 @@ include_pending.rs, procedure_call.rs).
 | here | there |
 | --- | --- |
 | `FilterSt.new`, `Verdict`, `filterEval`, `filterNext` | `FilterOp::new` (filter.rs:39), `eval` (:57), `next` (:121) |
-| `IpSt.new`, `captureArg`, `initPending`, `pendingRows`, `childRows` | `IncludePendingOp::new` (include_pending.rs:49), `capture_argument` (:72), `init_pending_state` (:83), `emit_pending_batch` (:110), `next` (:161) |
+| `IpSt.new`, `captureArg`, `initPending`, `pendingRows`, `childRows` | `IncludePendingOp::new` (include_pending.rs:49), `capture_argument` (:77), `init_pending_state` (:88), `emit_pending_batch` (:115), `next` (:166) |
 | `pcNew`, `pcReset`, `remap`, `pcRows`, `nextInput` | `ProcedureCallOp::new` (procedure_call.rs:59), `reset_state` (:115), `emit_pending_rows` (:125), `remap_procedure_batch` (:153), `next_input_row` (:192), `next` (:228) |
 -/
 namespace FalkorAggOps.StreamOps
@@ -88,12 +88,14 @@ structure IpSt (N R : Type) where
   pendingExtra : Option (List N)
   deleted : Option (List N)
   removed : Option (List N)
+  /-- `extra_nodes` (#3467): the nodes Phase 2 emits, skipped in Phase 1. -/
+  extra : List N
   childExhausted : Bool
   argRows : List R
   cur : Option N
   argIdx : Nat
 
-def IpSt.new {N R : Type} (alias : Nat) : IpSt N R := ⟨alias, none, none, none, false, [], none, 0⟩
+def IpSt.new {N R : Type} (alias : Nat) : IpSt N R := ⟨alias, none, none, none, [], false, [], none, 0⟩
 
 theorem ipNew_spec {N R : Type} (a : Nat) :
     (IpSt.new a : IpSt N R).deleted = none ∧ (IpSt.new a : IpSt N R).argRows = [] ∧
@@ -104,17 +106,28 @@ def captureArg {N R : Type} (s : IpSt N R) (rows : List R) : IpSt N R := { s wit
 
 theorem captureArg_spec {N R : Type} (s : IpSt N R) (rows : List R) : (captureArg s rows).argRows = rows := rfl
 
-/-- include_pending.rs:83-108: deleted / label-removed snapshots; pending nodes carrying ALL
-the pattern's labels — none when some label does not exist yet. -/
+/-- include_pending.rs:88-110: deleted / label-removed snapshots; the nodes carrying ALL the pattern's
+labels after the pending changes and gaining one (`get_pending_nodes_with_labels`, #3467) go into the
+skip-set `extra_nodes` — none when some label does not exist yet. `pending_extra` is built later
+(`endChild`). -/
 def initPending {N R : Type} [DecidableEq N] (s : IpSt N R) (labels : List String) (labelId : String → Option Nat)
     (deleted : List N) (removedFor : List Nat → List N) (pendingWith : List Nat → List N) : IpSt N R :=
   let ids := labels.filterMap labelId
   { s with deleted := some deleted, removed := some (removedFor ids),
-           pendingExtra := some (if ids.length = labels.length then pendingWith ids else []) }
+           extra := if ids.length = labels.length then pendingWith ids else [] }
+
+/-- include_pending.rs:211-215: the child is exhausted; the skip-set becomes the emission queue
+(`std::mem::take`). -/
+def endChild {N R : Type} (s : IpSt N R) : IpSt N R :=
+  { s with childExhausted := true, pendingExtra := some s.extra, extra := [] }
+
+theorem endChild_spec {N R : Type} (s : IpSt N R) :
+    (endChild s).pendingExtra = some s.extra ∧ (endChild s).extra = [] ∧ (endChild s).childExhausted = true :=
+  ⟨rfl, rfl, rfl⟩
 
 theorem initPending_spec {N R : Type} [DecidableEq N] (s : IpSt N R) (ls : List String) (lid : String → Option Nat)
     (d : List N) (rf : List Nat → List N) (pw : List Nat → List N) (l : String) (hl : l ∈ ls) (hu : lid l = none) :
-    (initPending s ls lid d rf pw).pendingExtra = some [] := by
+    (initPending s ls lid d rf pw).extra = [] := by
   simp only [initPending]
   have : (ls.filterMap lid).length < ls.length := by
     induction ls with
@@ -134,17 +147,17 @@ when there is no argument), the node bound at the alias; `BATCH_SIZE` chunks, re
 def pendingRows {N R : Type} (bind : R → N → R) (empty : R) (args : List R) (nodes : List N) : List R :=
   nodes.flatMap fun n => (if args.isEmpty then [empty] else args).map fun r => bind r n
 
-/-- include_pending.rs:161-209: child rows whose node is deleted or lost the label this query are
-dropped; then the pending nodes follow. -/
-def childRows {N R : Type} [DecidableEq N] (nodeOf : R → Option N) (deleted removed : List N) (rows : List R) : List R :=
+/-- include_pending.rs:166-224: child rows whose node is deleted, lost the label this query, or is one of the
+nodes Phase 2 emits itself (`extra`, #3467) are dropped; then the pending nodes follow. -/
+def childRows {N R : Type} [DecidableEq N] (nodeOf : R → Option N) (deleted removed extra : List N) (rows : List R) : List R :=
   rows.filter fun r => match nodeOf r with
-    | some n => !(deleted.contains n || removed.contains n)
+    | some n => !(deleted.contains n || removed.contains n || extra.contains n)
     | none => false
 
 theorem includePending_spec {N R : Type} [DecidableEq N] (nodeOf : R → Option N) (bind : R → N → R) (empty : R)
-    (deleted removed : List N) (rows args : List R) (nodes : List N) (r : R) :
-    (r ∈ childRows nodeOf deleted removed rows ↔
-      r ∈ rows ∧ ∃ n, nodeOf r = some n ∧ n ∉ deleted ∧ n ∉ removed) ∧
+    (deleted removed extra : List N) (rows args : List R) (nodes : List N) (r : R) :
+    (r ∈ childRows nodeOf deleted removed extra rows ↔
+      r ∈ rows ∧ ∃ n, nodeOf r = some n ∧ n ∉ deleted ∧ n ∉ removed ∧ n ∉ extra) ∧
     (pendingRows bind empty args nodes).length = nodes.length * (max args.length 1) := by
   constructor
   · simp only [childRows, List.mem_filter]
@@ -152,8 +165,8 @@ theorem includePending_spec {N R : Type} [DecidableEq N] (nodeOf : R → Option 
     · rintro ⟨h1, h2⟩
       cases hn : nodeOf r with
       | none => rw [hn] at h2; cases h2
-      | some n => rw [hn] at h2; simp at h2; exact ⟨h1, n, rfl, h2.1, h2.2⟩
-    · rintro ⟨h1, n, hn, hd, hr⟩; refine ⟨h1, ?_⟩; rw [hn]; simp [hd, hr]
+      | some n => rw [hn] at h2; simp at h2; exact ⟨h1, n, rfl, h2.1.1, h2.1.2, h2.2⟩
+    · rintro ⟨h1, n, hn, hd, hr, he⟩; refine ⟨h1, ?_⟩; rw [hn]; simp [hd, hr, he]
   · simp only [pendingRows, List.length_flatMap, List.length_map]
     have hs : ∀ (l : List N) (c : Nat), (l.map fun _ => c).sum = l.length * c := by
       intro l c; induction l with

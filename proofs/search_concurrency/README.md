@@ -27,7 +27,7 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, claim the write slot,
 **2. Can an inline write fail because a queued write is in progress?**
 
 - **Before #3290, yes.** A queued write claimed the write slot while still matching, as a reader. A `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC` arriving then was refused with "another write is in progress" (counterexample removed; in 17ccc5412); C creates the node (`multi_write_ok_in_c`).
-- **On main, no.** The queued write builds on an unclaimed fork and claims the slot only after it holds the GIL. If an inline write committed in between, the claim is stale and the queued write re-runs (`claimFork_stale`, `stale_then_rerun`); the inline write succeeds (`inline_write_ok`). `reader_cannot_claim` proves a reader can no longer take the slot.
+- **On main, no.** The queued write builds on a fork that takes nothing (since #3657 there is no write slot at all) and checks it only after it holds the GIL. If an inline write committed in between, the check finds it stale and the queued write re-runs (`checkFork_stale`, `stale_then_rerun`); the inline write succeeds (`inline_write_ok`). `reader_cannot_commit` proves a reader-mode fork cannot mutate or commit before that check; an indexer batch in between does not make it stale (`batch_does_not_stale`).
 
 **3. Can the server deadlock?**
 
@@ -62,7 +62,7 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 | `no_lost_writes`, `history_linear` | Committed state = acknowledged writes, in order; history only grows | `Mvcc.lean` |
 | `one_commit_per_version`, `inline_write_ok` | Writes are serialized; since #3290 an inline write is never refused by a queued one | `Mvcc.lean` |
 | `delete_blocks_writes`, `fork_excludes_commit` | After `GRAPH.DELETE` no write can proceed; a fork never runs during a commit | `Mvcc.lean` |
-| `refused_commit_releases_slot` | A commit refused by `Graph::validate` publishes nothing and frees the slot | `Mvcc.lean` |
+| `refused_commit_publishes_nothing`, `current_not_stale` | A commit refused by `Graph::validate` publishes nothing and the version is dropped; a version made under the write lock is never refused as stale | `Mvcc.lean` |
 | `no_cycle`, `all_programs_ordered` | The lock order rules out deadlock, and every locking path follows it | `Locks.lean` |
 | `drain_no_lost_message` | The `write_loop` hand-off never strands a queued write (2 producers, exhaustive) | `Locks.lean` |
 | `main_operational_complete` | Since #3086 an OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches | `PoolWithin.lean` | `threadpool.rs` after #3502: named workers, `shutdown_within` (`within_in_time`, `detached_workers_exit`) and its two open bugs |

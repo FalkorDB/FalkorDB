@@ -49,7 +49,16 @@ Re-target to 2c874022a (#2846): `MvccGraph::commit` (mvcc_graph.rs:139) validate
 write version first and rolls back on a refusal (:148-151). `sstep` takes `valid`
 (= `Graph::validate`); `snapshot_isolation`/`reader_view_frozen` hold for every
 `valid`; new `refused_commit_rolls_back` (committed version unchanged, write flag
-cleared, no in-flight version).
+cleared, no in-flight version; renamed below).
+
+Re-target to a477d9aa3 (#3657, fork-and-commit): `MvccGraph::write`/`rollback`/the write flag
+are gone. `Mvcc` is the published version only; `Ev.rollback` is `Ev.abandon` (drop an
+uncommitted version); `single_writer` is replaced by `fork_takes_nothing` and
+`refused_commit_rolls_back` by `refused_commit_publishes_nothing`; `snapshot_isolation` and
+`reader_view_frozen` are unchanged in statement and hold without the flag invariant. New
+`MvccGraph::commit_indexer_batch`/`commit_version` publish a version at the same data
+version (see `search_concurrency` `Mvcc.batch_keeps_forks`); they write no matrix, so
+isolation is untouched.
 -/
 import VersionedMatrix.Delta
 import VersionedMatrix.DeltaProofs

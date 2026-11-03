@@ -12,7 +12,6 @@ import FalkorValueMath.Conversion
 | `getNumeric` | `Value::get_numeric` :246 |
 | `Tok`, `encode`, `pre3339_decode` | `Encode<19> for Value` :2068; `Decode<19>` before #3339 (current: Nesting.lean) |
 | `Deduper` | `ValuesDeduper` :1853-1896 |
-| `validatePoint` | `Point::validate` :144 |
 | `jsonFloat` | `DisplayJson` Float arm :1591 |
 -/
 
@@ -268,14 +267,8 @@ def partialCmp (fc : FloatCmp F) (a b : V F) : Option Ordering :=
 theorem partialCmp_null (fc : FloatCmp F) (a : V F) : partialCmp fc .null a = none := by
   cases a <;> simp [partialCmp, cmpV]
 
-/-! ## `Point::validate` (value.rs:144) at class level -/
-
-def validatePoint (lat lon : FC) (latInRange lonInRange : Bool) : Bool :=
-  !(lat = .nan ∨ lat = .pinf ∨ lat = .ninf) && !(lon = .nan ∨ lon = .pinf ∨ lon = .ninf) &&
-  latInRange && lonInRange
-
-theorem validatePoint_rejects_nan (lon : FC) (a b : Bool) : validatePoint .nan lon a b = false := by
-  simp [validatePoint]
+/-! `Point::validate` was removed in #3301: `point()` checks NaN and range in `point_from_map_entries`
+(`proofs/functions_temporal` `SpatialFns.pointFromMapEntries`). -/
 
 /-! ## JSON of a Float (value.rs:1591) -/
 

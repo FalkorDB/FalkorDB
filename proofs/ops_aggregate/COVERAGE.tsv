@@ -132,11 +132,11 @@ graph/src/runtime/ops/commit.rs	new	45	PROVEN	CommitSt.new: commit_new_ro, commi
 graph/src/runtime/ops/filter.rs	new	39	PROVEN	StreamOps.FilterSt.new: filterNew_spec
 graph/src/runtime/ops/filter.rs	eval	57	PROVEN	StreamOps.filterEval: filterEval_bools, filter_mem, filterEval_empty, filterEval_type_error
 graph/src/runtime/ops/filter.rs	next	121	PROVEN	StreamOps.filterNext: filterNext_skips
-graph/src/runtime/ops/include_pending.rs	new	49	PROVEN	StreamOps.IpSt.new: ipNew_spec
-graph/src/runtime/ops/include_pending.rs	capture_argument	72	PROVEN	StreamOps.captureArg: captureArg_spec
-graph/src/runtime/ops/include_pending.rs	init_pending_state	83	PROVEN	StreamOps.initPending: initPending_spec; composed with Pending (IncludePendingExact.lean): IncludePendingExact refuted by bug3453_yields_deleted_node, bug3453_duplicate_row, bug3453_misses_split_multilabel (BUG #3453); fixed Phase 2 proven: includePendingFixed_exact
-graph/src/runtime/ops/include_pending.rs	emit_pending_batch	110	PROVEN	StreamOps.pendingRows: includePending_spec
-graph/src/runtime/ops/include_pending.rs	next	161	PROVEN	StreamOps.childRows + pendingRows: includePending_spec (PROVEN per phase only; the composed Phase1+Phase2 property IncludePendingExact is refuted on main: bug3453_yields_deleted_node, bug3453_duplicate_row, bug3453_misses_split_multilabel, BUG #3453; fix property includePendingFixed_exact)
+graph/src/runtime/ops/include_pending.rs	new	53	PROVEN	StreamOps.IpSt.new: ipNew_spec
+graph/src/runtime/ops/include_pending.rs	capture_argument	77	PROVEN	StreamOps.captureArg: captureArg_spec
+graph/src/runtime/ops/include_pending.rs	init_pending_state	88	PROVEN	StreamOps.initPending: initPending_spec (#3467: the pending nodes go into the skip-set `extra`); composed with Pending (IncludePendingExact.lean): includePendingMain_exact (#3453 fixed by #3467), fixed3453_deleted_node, fixed3453_duplicate_row, fixed3453_split_multilabel
+graph/src/runtime/ops/include_pending.rs	emit_pending_batch	115	PROVEN	StreamOps.pendingRows: includePending_spec
+graph/src/runtime/ops/include_pending.rs	next	166	PROVEN	StreamOps.childRows (skips deleted, label-removed and `extra` nodes) + endChild (skip-set becomes the emission queue) + pendingRows: includePending_spec, endChild_spec; composed Phase1+Phase2: includePendingMain_exact (every live node whose effective labels contain the pattern, once)
 graph/src/runtime/ops/procedure_call.rs	new	59	PROVEN	StreamOps.pcNew/srcPosOf/maskOf: pcNew_spec, srcPos_named
 graph/src/runtime/ops/procedure_call.rs	reset_state	115	PROVEN	StreamOps.pcReset: pcReset_spec
 graph/src/runtime/ops/procedure_call.rs	emit_pending_rows	125	PROVEN	StreamOps.pcRows: pcRows_ok

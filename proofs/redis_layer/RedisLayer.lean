@@ -167,7 +167,7 @@ Headline theorems:
 * `LoadArgs.rust_c_same_accept` (#3328) — module-load arguments accepted exactly as C's
   `Config_Init` (modulo leading whitespace and Rust-only names, both confirmed live);
   `error_applies_nothing`; `cross_eq`; historical `ModuleInit.pre3328_*`;
-  `Bulk.deep_refused` (#3339 depth cap); `QuerySession.claimFork_spec`, `upgrade_stale`,
+  `Bulk.deep_refused` (#3339 depth cap); `QuerySession.checkFork_spec`, `upgrade_stale`, `current_kept`, `ofCommit_ne`,
   `GraphCore.executeWrite_first` (#3290); `GraphCore.admit_bounded` (#3014); `cGraphName_key`; `rename_moves`; `loopExit_safe`; `escalate_order`,
   `writer_holds_gil`, `release_order`; `consArgs_ok`, `cons_label_refused`, `cons_count_noncanonical`, `memArgs_samples`; `copy_ok_iff`/`exited_iff`;
   `memTotal_sum`; `sync_is_yield_without_yields`.
@@ -197,8 +197,8 @@ New confirmed findings (live, Rust `target/release` vs C `bin/…/falkordb.so`, 
     C refuses to load; `cache_size 10` → Rust ignores (25), C 10; `ASYNC_DELETE yes` → Rust
     ignores (0), C 1 (FIXED by #3328: counterexamples removed; in 17ccc5412; now `LoadArgs.fixed3328_counterexamples`; cause:
     redismodule-rs `find_config_value` is case-sensitive and bools are `== "yes"`).
-11. `GRAPH.BULK` success reply says `relations created`, C `edges created`
-    (`Commands.bulk_reply_differs`).
+11. `GRAPH.BULK` success reply said `relations created`, C `edges created` (FIXED by #3301
+    dd333fe32; now `Commands.bulk_reply_c`).
 Also seen: #2537's root cause is general — any truncated GRAPH.RESTORE payload makes
 `BufferedReader::from_slice` call `RedisModule_LoadStringBuffer(NULL)` (`from_slice_past_end`).
 Model correction: compact vector elements use `RedisModule_ReplyWithDouble` (`Env.vfmt`), not
@@ -305,6 +305,19 @@ take `s` to be that already-scrubbed text.
   row renders from its snapshot), `snapshot_inspect`, `fixed3449_record_abort`,
   `verboseRelFixed_total` (the verbose encoder is total on every known id). The compact encoder
   still reads the committed graph for a pending edge's type; `GRAPH.RECORD` renders verbose only.
+
+## Re-target to a477d9aa3 (#3657 fork-and-commit)
+The MVCC write slot is gone. `QuerySession`: `Slot`/`claimFork`/`releaseSlot`/`committed`/
+`holdsSlot` are replaced by `Version` (`none | unchecked fv | current | stale`), the infallible
+`writeVersion`, `versionIsCurrent`, `checkFork` (`is_stale` = `ver + 1 ≠ fork.version`) with
+`writeVersion_takes_nothing`, `checkFork_spec`, `checkFork_noop`, `current_kept`,
+`stale_sticky`, `upgrade_stale`; `WriteAbort` loses `WriteSlotBusy` and gains `stale`, with
+`From<CommitError>` as `WriteAbort.ofCommit` (`ofCommit_stale`, `ofCommit_invalid`, `ofCommit_ne`).
+`GraphCore`: `abandonSteps` resyncs only for a current version and releases nothing
+(`failed_no_commit`, `stale_run_silent`, `unescalated_silent`). `Commands`: `effectCmd` lost its
+`slotFree` input; `Commands2`: `attempt` takes `commit`'s refusal instead of a slot flag
+(`attempt_stale`, `attempt_invalid`; the retry arm is `paused | stale`); `bulkFlow` has no
+rollback step. Counterexamples and theorems about the slot are gone with it.
 -/
 #print axioms RedisLayer.Serial.decField_encFieldC
 #print axioms RedisLayer.Serial.decField_encField

@@ -1,6 +1,6 @@
 import FalkorAggOps.StreamOps
 /-
-# IncludePending composed with `Pending` (#3453)
+# IncludePending composed with `Pending` (#3453, fixed by #3467)
 
 `StreamOps.includePending_spec` proves Phase 1 (`childRows`) and Phase 2
 (`pendingRows`) of `IncludePendingOp` separately, each against whatever node
@@ -8,25 +8,26 @@ lists it is handed. Here the lists are the ones main hands it, for an
 uncorrelated MERGE node scan (`argument_rows` empty, one row per node; the row
 is the node id):
 
-| here | there (b84473a7f) |
+| here | there (a477d9aa3) |
 | --- | --- |
 | `Gc` | the committed graph: live node ids, each node's committed labels |
 | `Pd` | `Pending`'s `created_nodes`, `deleted_nodes`, `set_labels`, `remove_labels` (pending.rs) |
 | `scan` | the wrapped `NodeByLabelScan` over the committed graph |
-| `stage` | `stage_node_labels` (pending.rs:661-676), reached by `SetOp` `SetItem::Label` (ops/set.rs:403) without checking the committed matrix |
-| `deletedNode` | `deleted_node` (pending.rs:772-777): inserts into `deleted_nodes`, `set_labels` untouched |
-| `removedFor` | `nodes_with_pending_label_removes` (pending.rs:1060-1076) |
-| `pendingWith` | `get_pending_nodes_with_labels` (pending.rs:1040-1055): `set_labels` entries carrying every label, no deleted filter, committed labels ignored |
-| `includePendingMain` | `IncludePendingOp::next` (include_pending.rs:161-209) = `StreamOps.childRows` then `StreamOps.pendingRows` |
+| `stage` | `stage_node_labels` (pending.rs), reached by `SetOp` `SetItem::Label` (ops/set.rs) without checking the committed matrix |
+| `deletedNode` | `deleted_node`: inserts into `deleted_nodes`, `set_labels` untouched |
+| `removedFor` | `nodes_with_pending_label_removes` |
+| `pendingWith` | `get_pending_nodes_with_labels(label_ids, g)` (pending.rs:1114): live nodes gaining a pattern label |
+| `includePendingMain` | `IncludePendingOp::next` (include_pending.rs:166-224) = `StreamOps.childRows` (skipping deleted, label-removed and `extra_nodes`) then `StreamOps.pendingRows` over `extra_nodes` |
 
 Property `IncludePendingExact`: the emitted node rows are duplicate-free and
 are exactly the live nodes (committed or created, not deleted) whose effective
 labels — `(committed \ remove_labels) ∪ set_labels`, `set_labels` alone for a
-created node — contain the pattern. The three live repros refute it on main:
-`bug3453_yields_deleted_node`, `bug3453_duplicate_row`,
-`bug3453_misses_split_multilabel`. `includePendingFixed_exact` proves it for a
-Phase 2 that filters by liveness and effective labels and skips what Phase 1
-already emitted.
+created node — contain the pattern. On b84473a7f the three live repros refuted it
+(#3453); #3467 made `get_pending_nodes_with_labels` return exactly the live nodes
+that gain a pattern label and made Phase 1 skip them, and `includePendingMain_exact`
+proves the property for main: for every non-empty pattern, given the pending maps
+are keyed uniquely (`FxHashMap`) and name only live-or-created nodes. The three repros are
+`fixed3453_deleted_node`, `fixed3453_duplicate_row`, `fixed3453_split_multilabel`.
 -/
 namespace FalkorAggOps.IncludePendingExact
 open FalkorAggOps.StreamOps
@@ -64,16 +65,25 @@ def deletedNode (p : Pd) (n : Nat) : Pd := { p with deleted := if n ∈ p.delete
 def removedFor (p : Pd) (ls : List Nat) : List Nat :=
   if ls = [] then [] else (p.remL.filter fun e => ls.any (· ∈ e.2)).map (·.1)
 
-/-- `get_pending_nodes_with_labels` (pending.rs:1040-1055). -/
-def pendingWith (p : Pd) (ls : List Nat) : List Nat :=
-  if ls = [] then p.created else (p.setL.filter fun e => ls.all (· ∈ e.2)).map (·.1)
+/-- A pattern label `l` is committed on `n` and still there after the staged removals: `n` is not created,
+`remove_labels` does not hold `l`, and the graph has it (`node_has_label_id`). -/
+def committedL (g : Gc) (p : Pd) (n l : Nat) : Bool :=
+  !decide (n ∈ p.created) && !decide (l ∈ look p.remL n) && decide (l ∈ g.labels n)
 
-/-- `IncludePendingOp::next` with no argument rows: Phase 1 = the scan minus
-deleted and label-removed nodes (`childRows`), Phase 2 = `pendingWith`
-(`pendingRows`, one empty row per node). -/
+/-- `get_pending_nodes_with_labels(label_ids, g)` (pending.rs:1114-1146): created nodes for no label; else the
+`set_labels` entries that are not pending-deleted, whose every pattern label is committed or staged, and not
+all committed. -/
+def pendingWith (g : Gc) (p : Pd) (ls : List Nat) : List Nat :=
+  if ls = [] then p.created else
+    (p.setL.filter fun e => !decide (e.1 ∈ p.deleted) &&
+      ls.all (fun l => committedL g p e.1 l || decide (l ∈ e.2)) &&
+      !ls.all (fun l => committedL g p e.1 l)).map (·.1)
+
+/-- `IncludePendingOp::next` with no argument rows: Phase 1 = the scan minus deleted, label-removed and
+`extra_nodes` (`childRows`), Phase 2 = `extra_nodes` (`pendingRows`, one empty row per node). -/
 def includePendingMain (g : Gc) (p : Pd) (ls : List Nat) : List Nat :=
-  childRows some p.deleted (removedFor p ls) (scan g ls) ++
-  pendingRows (fun _ n => n) 0 [] (pendingWith p ls)
+  childRows some p.deleted (removedFor p ls) (pendingWith g p ls) (scan g ls) ++
+  pendingRows (fun _ n => n) 0 [] (pendingWith g p ls)
 
 /-- Live after the pending changes. -/
 def live (g : Gc) (p : Pd) (n : Nat) : Prop := (n ∈ g.nodes ∨ n ∈ p.created) ∧ n ∉ p.deleted
@@ -92,79 +102,27 @@ def B : Nat := 1
 def g1 : Gc := ⟨[0], fun n => if n = 0 then [A] else []⟩
 def p0 : Pd := ⟨[], [], [], []⟩
 
-/-- **#3453 (1)** `MATCH (n:A) SET n:B DELETE n MERGE (m:B) RETURN m`: Phase 2
-yields the deleted node, so MERGE matches it (live: Rust returns node 0 and
-creates nothing; C creates a new `:B`). -/
-theorem bug3453_yields_deleted_node :
-    includePendingMain g1 (deletedNode (stage p0 0 [B]) 0) [B] = [0] ∧
-    ¬ IncludePendingExact g1 (deletedNode (stage p0 0 [B]) 0) [B] [0] := by
-  refine ⟨by decide, fun ⟨_, h⟩ => ?_⟩
-  have := ((h 0).1 (by simp)).1.2
-  exact this (by decide)
+/-- **#3453 (1), fixed** `MATCH (n:A) SET n:B DELETE n MERGE (m:B) RETURN m`: the deleted node is not
+yielded, so MERGE creates a new `:B`, as C (before: node 0 was matched). -/
+theorem fixed3453_deleted_node :
+    includePendingMain g1 (deletedNode (stage p0 0 [B]) 0) [B] = [] := by decide
 
-/-- **#3453 (2)** `MATCH (n:A) SET n:A MERGE (m:A) …`: SET stages a label the
-node already has, so Phase 1 and Phase 2 both yield node 0 (live: two rows, ON
-MATCH runs twice; C one row). -/
-theorem bug3453_duplicate_row :
-    includePendingMain g1 (stage p0 0 [A]) [A] = [0, 0] ∧
-    ¬ IncludePendingExact g1 (stage p0 0 [A]) [A] [0, 0] := by
-  refine ⟨by decide, fun ⟨h, _⟩ => ?_⟩
-  simp at h
+/-- **#3453 (2), fixed** `MATCH (n:A) SET n:A MERGE (m:A) …`: node 0 is emitted once (before: twice). -/
+theorem fixed3453_duplicate_row :
+    includePendingMain g1 (stage p0 0 [A]) [A] = [0] := by decide
 
-/-- **#3453 (3)** `MATCH (n:A) SET n:B MERGE (m:A:B)`: node 0 has A committed and
-B staged; Phase 1 sees only A, Phase 2 only B, so nothing is emitted and MERGE
-creates a duplicate (live: count(n) = 2 after; C matches n). -/
-theorem bug3453_misses_split_multilabel :
-    includePendingMain g1 (stage p0 0 [B]) [A, B] = [] ∧
-    ¬ IncludePendingExact g1 (stage p0 0 [B]) [A, B] [] := by
-  refine ⟨by decide, fun ⟨_, h⟩ => ?_⟩
-  have := (h 0).2 ⟨⟨.inl (by decide), by decide⟩, by decide⟩
-  simp at this
+/-- **#3453 (3), fixed** `MATCH (n:A) SET n:B MERGE (m:A:B)`: node 0 (A committed, B staged) is matched
+(before: nothing, MERGE created a duplicate). -/
+theorem fixed3453_split_multilabel :
+    includePendingMain g1 (stage p0 0 [B]) [A, B] = [0] := by decide
 
-/-! ## What a fix proves -/
-
-/-- Phase 1's condition: a committed node the scan yields and the filter keeps. -/
-def phase1 (g : Gc) (p : Pd) (ls : List Nat) (n : Nat) : Bool :=
-  n ∈ g.nodes && ls.all (· ∈ g.labels n) && n ∉ p.deleted && n ∉ removedFor p ls
-
-instance (g : Gc) (p : Pd) (n : Nat) : Decidable (live g p n) := by unfold live; infer_instance
-
-/-- Keep the last copy of each id. -/
-def dedupL : List Nat → List Nat
-  | [] => []
-  | x :: xs => if x ∈ xs then dedupL xs else x :: dedupL xs
-
-theorem mem_dedupL : ∀ (l : List Nat) (a : Nat), a ∈ dedupL l ↔ a ∈ l
-  | [], _ => by simp [dedupL]
-  | x :: xs, a => by
-    unfold dedupL; split
-    · rename_i h; rw [mem_dedupL xs a]; constructor
-      · exact List.mem_cons_of_mem _
-      · intro h'; rcases List.mem_cons.mp h' with rfl | h'
-        · exact h
-        · exact h'
-    · simp [mem_dedupL xs a]
-
-theorem nodup_dedupL : ∀ (l : List Nat), (dedupL l).Nodup
-  | [] => by simp [dedupL]
-  | x :: xs => by
-    unfold dedupL; split
-    · exact nodup_dedupL xs
-    · rename_i h; exact List.nodup_cons.2 ⟨by rw [mem_dedupL]; exact h, nodup_dedupL xs⟩
-
-/-- A fixed Phase 2: candidates are created nodes and `set_labels` keys, kept when
-live, matching on effective labels, and not already emitted by Phase 1. -/
-def pendingFixed (g : Gc) (p : Pd) (ls : List Nat) : List Nat :=
-  (dedupL (p.created ++ p.setL.map (·.1))).filter fun n =>
-    decide (live g p n) && ls.all (· ∈ eff g p n) && !phase1 g p ls n
-
-def includePendingFixed (g : Gc) (p : Pd) (ls : List Nat) : List Nat :=
-  childRows some p.deleted (removedFor p ls) (scan g ls) ++ pendingRows (fun _ n => n) 0 [] (pendingFixed g p ls)
+/-! ## The proof for main -/
 
 theorem contains_false (l : List Nat) (n : Nat) : l.contains n = false ↔ n ∉ l := by
   rw [← Bool.not_eq_true, List.contains_iff_mem]
 
-theorem childRows_some (d r rows : List Nat) : childRows some d r rows = rows.filter fun n => !(d.contains n || r.contains n) := rfl
+theorem childRows_some (d r e rows : List Nat) :
+    childRows some d r e rows = rows.filter fun n => !(d.contains n || r.contains n || e.contains n) := rfl
 
 theorem pendingRows_id (l : List Nat) : pendingRows (fun _ n => n) 0 [] l = l := by
   simp [pendingRows]
@@ -205,74 +163,127 @@ theorem mem_removedFor (p : Pd) (ls : List Nat) (n : Nat) (hls : ls ≠ []) (l :
     simp only [removedFor, hls, ite_false, List.mem_map, List.mem_filter, List.any_eq_true, decide_eq_true_eq]
     exact ⟨e, ⟨hm, l, hl, hr⟩, he⟩
 
-/-- **`includePendingFixed_exact`**: when committed and created ids are apart,
-with `remove_labels` keyed uniquely (an `FxHashMap`), the fixed operator satisfies `IncludePendingExact` for every non-empty pattern. -/
-theorem includePendingFixed_exact (g : Gc) (p : Pd) (ls : List Nat) (hls : ls ≠ [])
-    (hgn : g.nodes.Nodup) (hapart : ∀ n ∈ p.created, n ∉ g.nodes) (hrk : (p.remL.map (·.1)).Nodup) :
-    IncludePendingExact g p ls (includePendingFixed g p ls) := by
-  have h1mem : ∀ n, n ∈ childRows some p.deleted (removedFor p ls) (scan g ls) ↔ phase1 g p ls n = true := by
+theorem committedL_iff (g : Gc) (p : Pd) (n l : Nat) :
+    committedL g p n l = true ↔ n ∉ p.created ∧ l ∉ look p.remL n ∧ l ∈ g.labels n := by
+  simp [committedL, and_assoc]
+
+/-- Membership in `pendingWith` for a non-empty pattern (set_labels keyed uniquely). -/
+theorem mem_pendingWith (g : Gc) (p : Pd) (ls : List Nat) (hls : ls ≠ []) (hsk : (p.setL.map (·.1)).Nodup)
+    (n : Nat) :
+    n ∈ pendingWith g p ls ↔ (∃ e ∈ p.setL, e.1 = n) ∧ n ∉ p.deleted ∧
+      (∀ l ∈ ls, committedL g p n l = true ∨ l ∈ look p.setL n) ∧ ∃ l ∈ ls, committedL g p n l = false := by
+  unfold pendingWith
+  simp only [hls, ite_false, List.mem_map, List.mem_filter, Bool.and_eq_true, Bool.not_eq_true',
+    List.all_eq_true, decide_eq_true_eq, Bool.or_eq_true, decide_eq_false_iff_not]
+  constructor
+  · rintro ⟨e, ⟨he, ⟨hd, hl⟩, hnc⟩, rfl⟩
+    have hlk := look_of_mem p.setL hsk e he
+    refine ⟨⟨e, he, rfl⟩, hd, fun l hl' => ?_, ?_⟩
+    · rw [hlk]; exact hl l hl'
+    · apply Classical.byContradiction
+      intro hno
+      have : (ls.all fun l => committedL g p e.1 l) = true := by
+        simp only [List.all_eq_true]; intro l hl'
+        by_cases hc : committedL g p e.1 l = true
+        · exact hc
+        · exact absurd ⟨l, hl', by simpa using hc⟩ hno
+      rw [this] at hnc; cases hnc
+  · rintro ⟨hk, hd, hl, l0, hl0, hc0⟩
+    obtain ⟨e, he, hen⟩ := hk
+    subst hen
+    have hlk := look_of_mem p.setL hsk e he
+    refine ⟨e, ⟨he, ⟨hd, fun l hl' => ?_⟩, ?_⟩, rfl⟩
+    · rw [← hlk]; exact hl l hl'
+    · have : (ls.all fun l => committedL g p e.1 l) = false := by
+        simp only [Bool.eq_false_iff, ne_eq, List.all_eq_true]
+        intro hall; have := hall l0 hl0; simp [hc0] at this
+      simp [this]
+
+/-- **`includePendingMain_exact`** (#3453 fixed by #3467): for every non-empty pattern, when committed and
+created ids are apart, `set_labels` and `remove_labels` are keyed uniquely (they are `FxHashMap`s) and
+`set_labels` names only committed or created nodes, main's operator emits each live node whose effective
+labels contain the pattern exactly once, and nothing else. -/
+theorem includePendingMain_exact (g : Gc) (p : Pd) (ls : List Nat) (hls : ls ≠ [])
+    (hgn : g.nodes.Nodup) (hapart : ∀ n ∈ p.created, n ∉ g.nodes)
+    (hrk : (p.remL.map (·.1)).Nodup) (hsk : (p.setL.map (·.1)).Nodup)
+    (hsub : ∀ n ∈ p.setL.map (·.1), n ∈ g.nodes ∨ n ∈ p.created) :
+    IncludePendingExact g p ls (includePendingMain g p ls) := by
+  have hX := mem_pendingWith g p ls hls hsk
+  have h1mem : ∀ n, n ∈ childRows some p.deleted (removedFor p ls) (pendingWith g p ls) (scan g ls) ↔
+      ((n ∈ g.nodes ∧ ∀ l ∈ ls, l ∈ g.labels n) ∧ n ∉ p.deleted) ∧ n ∉ removedFor p ls ∧ n ∉ pendingWith g p ls := by
     intro n
-    simp only [childRows_some, scan, List.mem_filter, phase1, Bool.and_eq_true, decide_eq_true_eq,
-      Bool.not_eq_true', Bool.or_eq_false_iff, contains_false]
-    constructor
-    · rintro ⟨⟨h1, h2⟩, h3, h4⟩; exact ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩
-    · rintro ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩; exact ⟨⟨h1, h2⟩, h3, h4⟩
-  have p1live : ∀ n, phase1 g p ls n = true → live g p n ∧ ∀ l ∈ ls, l ∈ eff g p n := by
-    intro n h
-    simp only [phase1, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at h
-    obtain ⟨⟨⟨hn, hl⟩, hd⟩, hr⟩ := h
-    refine ⟨⟨.inl hn, hd⟩, fun l hl' => ?_⟩
-    have hc : n ∉ p.created := fun hc => hapart n hc hn
-    simp only [eff, hc, ite_false, List.mem_append, List.mem_filter, decide_eq_true_eq]
-    refine .inl ⟨hl l hl', fun hrm => hr (mem_removedFor p ls n hls l hl' hrm)⟩
-  rw [includePendingFixed, pendingRows_id]
+    simp only [childRows_some, scan, List.mem_filter, Bool.not_eq_true', Bool.or_eq_false_iff, contains_false,
+      decide_eq_true_eq, List.all_eq_true, and_assoc]
+  rw [includePendingMain, pendingRows_id]
   refine ⟨?_, fun n => ?_⟩
   · rw [List.nodup_append]
     refine ⟨?_, ?_, ?_⟩
     · rw [childRows_some]; exact (hgn.filter _).filter _
-    · exact (nodup_dedupL _).filter _
+    · unfold pendingWith
+      split
+      · rename_i h; exact absurd h hls
+      · exact (List.Nodup.sublist (List.filter_sublist.map _) hsk)
     · intro a ha b hb hab; subst hab
-      have := (h1mem a).1 ha
-      simp only [pendingFixed, List.mem_filter, Bool.and_eq_true, Bool.not_eq_true'] at hb
-      rw [this] at hb; exact absurd hb.2 (by simp)
+      exact ((h1mem a).1 ha).2.2 hb
   · rw [List.mem_append, h1mem]
     constructor
-    · rintro (h | h)
-      · exact p1live n h
-      · simp only [pendingFixed, List.mem_filter, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at h
-        exact ⟨h.2.1.1, h.2.1.2⟩
-    · rintro ⟨hlv, hl⟩
-      by_cases hp : phase1 g p ls n = true
-      · exact .inl hp
-      · right
-        simp only [pendingFixed, List.mem_filter, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true,
-          Bool.not_eq_true', mem_dedupL, List.mem_append]
-        refine ⟨?_, ⟨hlv, hl⟩, by simpa using hp⟩
-        -- a node not emitted by Phase 1 is created or carries a staged label
-        by_cases hc : n ∈ p.created
-        · exact .inl hc
-        · right
-          have hn : n ∈ g.nodes := hlv.1.resolve_right hc
-          -- some pattern label is not committed-and-unremoved, so it is staged
-          have : ∃ l ∈ ls, l ∈ look p.setL n := by
-            apply Classical.byContradiction
-            intro hno
-            apply hp
-            simp only [phase1, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true]
-            have hall : ∀ l ∈ ls, l ∈ g.labels n ∧ l ∉ look p.remL n := by
-              intro l hl'
-              have := hl l hl'
-              simp only [eff, hc, ite_false, List.mem_append, List.mem_filter, decide_eq_true_eq] at this
-              rcases this with h | h
-              · exact h
-              · exact absurd ⟨l, hl', h⟩ hno
-            refine ⟨⟨⟨hn, fun l hl' => (hall l hl').1⟩, hlv.2⟩, fun hrf => ?_⟩
-            simp only [removedFor, hls, ite_false, List.mem_map, List.mem_filter, List.any_eq_true,
-              decide_eq_true_eq] at hrf
-            obtain ⟨e, ⟨he, l, hl', hle⟩, rfl⟩ := hrf
-            -- `look` returns the first entry with this key; `e` may be a later one
-            exact (hall l hl').2 (by rw [look_of_mem p.remL hrk e he]; exact hle)
-          obtain ⟨l, _, hl'⟩ := this
-          exact look_mem _ _ _ hl'
+    · rintro (⟨⟨⟨hn, hl⟩, hd⟩, hr, hx⟩ | hx)
+      · refine ⟨⟨.inl hn, hd⟩, fun l hl' => ?_⟩
+        have hc : n ∉ p.created := fun hc => hapart n hc hn
+        simp only [eff, hc, ite_false, List.mem_append, List.mem_filter, decide_eq_true_eq]
+        exact .inl ⟨hl l hl', fun hrm => hr (mem_removedFor p ls n hls l hl' hrm)⟩
+      · obtain ⟨hk, hd, hl, _⟩ := (hX n).1 hx
+        refine ⟨⟨hsub n (List.mem_map.2 hk), hd⟩, fun l hl' => ?_⟩
+        rcases hl l hl' with hc | hs
+        · obtain ⟨hc1, hc2, hc3⟩ := (committedL_iff g p n l).1 hc
+          simp only [eff, hc1, ite_false, List.mem_append, List.mem_filter, decide_eq_true_eq]
+          exact .inl ⟨hc3, hc2⟩
+        · simp only [eff, List.mem_append]; exact .inr hs
+    · rintro ⟨⟨hlv, hd⟩, hl⟩
+      by_cases hx : n ∈ pendingWith g p ls
+      · exact .inr hx
+      · left
+        -- n is not created: a created node would be in the list
+        have hc : n ∉ p.created := by
+          intro hc
+          apply hx
+          obtain ⟨l0, hl0⟩ : ∃ l0, l0 ∈ ls := by
+            cases ls with
+            | nil => exact absurd rfl hls
+            | cons a _ => exact ⟨a, List.mem_cons_self⟩
+          have hel : ∀ l ∈ ls, l ∈ look p.setL n := by
+            intro l hl'
+            have := hl l hl'
+            simpa [eff, hc] using this
+          refine (hX n).2 ⟨List.mem_map.1 (look_mem _ _ _ (hel l0 hl0)), hd, fun l hl' => .inr (hel l hl'), l0, hl0, ?_⟩
+          simp [committedL, hc]
+        have hn : n ∈ g.nodes := hlv.resolve_right hc
+        -- every pattern label is committed and not removed, or n would be in the list
+        have hall : ∀ l ∈ ls, l ∈ g.labels n ∧ l ∉ look p.remL n := by
+          intro l0 hl0
+          apply Classical.byContradiction
+          intro hbad
+          apply hx
+          have hel : l0 ∈ look p.setL n := by
+            have := hl l0 hl0
+            simp only [eff, hc, ite_false, List.mem_append, List.mem_filter, decide_eq_true_eq] at this
+            rcases this with h | h
+            · exact absurd ⟨h.1, h.2⟩ hbad
+            · exact h
+          refine (hX n).2 ⟨List.mem_map.1 (look_mem _ _ _ hel), hd, fun l hl' => ?_, l0, hl0, ?_⟩
+          · have := hl l hl'
+            simp only [eff, hc, ite_false, List.mem_append, List.mem_filter, decide_eq_true_eq] at this
+            rcases this with h | h
+            · exact .inl ((committedL_iff g p n l).2 ⟨hc, h.2, h.1⟩)
+            · exact .inr h
+          · apply Classical.byContradiction
+            intro hct
+            have := (committedL_iff g p n l0).1 (by simpa using hct)
+            exact hbad ⟨this.2.2, this.2.1⟩
+        refine ⟨⟨⟨hn, fun l hl' => (hall l hl').1⟩, hd⟩, fun hrf => ?_, hx⟩
+        simp only [removedFor, hls, ite_false, List.mem_map, List.mem_filter, List.any_eq_true,
+          decide_eq_true_eq] at hrf
+        obtain ⟨e, ⟨he, l, hl', hle⟩, rfl⟩ := hrf
+        exact (hall l hl').2 (by rw [look_of_mem p.remL hrk e he]; exact hle)
 
 end FalkorAggOps.IncludePendingExact
