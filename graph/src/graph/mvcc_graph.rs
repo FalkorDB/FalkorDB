@@ -161,34 +161,29 @@ impl MvccGraph {
     ///
     /// [`CommitError::Stale`] if a batch overtook `fork` and it is borrowed, which no escalating
     /// writer's is: a debug build stops on it, and in a release build the write runs again.
+    #[cfg(feature = "index-falkordb")]
     pub fn rebase_onto_indexer_batches(
         &self,
         fork: &AtomicRefCell<Graph>,
     ) -> Result<(), CommitError> {
-        #[cfg(feature = "index-falkordb")]
+        // Borrowed mutably only when a batch overtook it: until a build runs in the background, no
+        // published column is `Building`, and nothing is rebased.
+        if fork
+            .try_borrow()
+            .is_ok_and(|fork| !fork.overtaken_by_indexer_batches(&self.graph.borrow()))
         {
-            // Borrowed mutably only when a batch overtook it: until a build runs in the
-            // background, no published column is `Building`, and nothing is rebased.
-            if fork
-                .try_borrow()
-                .is_ok_and(|fork| !fork.overtaken_by_indexer_batches(&self.graph.borrow()))
-            {
-                return Ok(());
-            }
-            // An escalating writer's fork is never borrowed: its writer has stopped reading it to
-            // escalate. One that is is a bug, which a debug build stops on. A release build
-            // refuses it, and the host runs the write again.
-            let Ok(mut fork) = fork.try_borrow_mut() else {
-                if cfg!(debug_assertions) {
-                    panic!("a fork is rebased while it is borrowed");
-                }
-                return Err(CommitError::Stale);
-            };
-            fork.rebase_onto_indexer_batches(&self.graph.borrow());
+            return Ok(());
         }
-        // Without the native index there are no indexer batches to rebase onto.
-        #[cfg(not(feature = "index-falkordb"))]
-        let _ = fork;
+        // An escalating writer's fork is never borrowed: its writer has stopped reading it to
+        // escalate. One that is is a bug, which a debug build stops on. A release build refuses
+        // it, and the host runs the write again.
+        let Ok(mut fork) = fork.try_borrow_mut() else {
+            if cfg!(debug_assertions) {
+                panic!("a fork is rebased while it is borrowed");
+            }
+            return Err(CommitError::Stale);
+        };
+        fork.rebase_onto_indexer_batches(&self.graph.borrow());
         Ok(())
     }
 

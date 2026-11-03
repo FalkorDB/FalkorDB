@@ -256,8 +256,10 @@ impl QuerySession {
             // An indexer batch changes no data, so it leaves the fork current,
             // but the fork takes its index progress now: the index documents
             // this query publishes, and the indexes it reads from here on,
-            // have it.
-            tg.graph.rebase_onto_indexer_batches(fork)
+            // have it. Without the native index there are no batches.
+            #[cfg(feature = "index-falkordb")]
+            tg.graph.rebase_onto_indexer_batches(fork)?;
+            Ok(())
         });
         if checked.is_err() {
             *state = Version::Stale;
