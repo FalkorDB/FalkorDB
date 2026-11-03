@@ -16,7 +16,7 @@ use roaring::RoaringTreemap;
 
 use crate::entity_type::EntityType;
 use crate::graph::endpoint_index::EndpointIndex;
-use crate::graph::graph::{Graph, NodeId};
+use crate::graph::graph::{Graph, NodeId, RelationshipId};
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
@@ -162,6 +162,10 @@ impl IndexColumn {
     /// Removing a tuple the column does not hold changes nothing, and an entity whose value did not
     /// change takes its tuple out and puts it back. What a writer's rebase and an indexer batch's
     /// catch-up both do ([`VersionedIndex::writer_rebase`], [`VersionedIndex::indexer_catch_up`]).
+    ///
+    /// This is `from`'s copy of the column, so the tuples coming out are read with no label check:
+    /// the copy holds none for an entity without the label in `from`, and removing one changes
+    /// nothing. The tuples going in are checked ([`graph_writes::entity_tuples`]).
     fn refresh(
         &mut self,
         state: &BuildState<BuildCursor>,
@@ -174,7 +178,31 @@ impl IndexColumn {
             return;
         }
         let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
-        graph_writes::entity_tuples(from, *entity, key, written, self, &mut removes);
+        let attr = &key.1;
+        match entity {
+            EntityType::Node => {
+                if let Some(idx) = from.get_node_attribute_id(attr) {
+                    for id in written {
+                        if let Some(value) =
+                            from.get_node_attribute_by_idx(NodeId::from(id), idx as u16)
+                        {
+                            self.push_encoded(&value, id, &mut removes);
+                        }
+                    }
+                }
+            }
+            EntityType::Relationship => {
+                if let Some(idx) = from.get_relationship_attribute_id(attr) {
+                    for id in written {
+                        if let Some(value) = from
+                            .get_relationship_attribute_by_idx(RelationshipId::from(id), idx as u16)
+                        {
+                            self.push_encoded(&value, id, &mut removes);
+                        }
+                    }
+                }
+            }
+        }
         // Placed before their values are read, so an entity past the cursor costs a place, not an
         // attribute read.
         match state {

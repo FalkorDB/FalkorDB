@@ -430,20 +430,16 @@ fn build_in_one_batch(
 // `BuildState`.
 
 /// Append to `out` the tuples `column` (index `(label, attr)` of `entity`) takes for each of `ids`
-/// as `g` has them, for a refresh: none for an entity without the label or type in `g`, nor for a
-/// value the column does not index.
+/// as `g` has them, for a refresh to put in: none for an entity without the label or type in `g`,
+/// nor for a value the column does not index.
 ///
 /// `ids` are already the column's: the entities whose tuple in it changed (`Written`), recorded by
-/// the writes that made the version tuples go into (a writer's fork, for its rebase; the published
-/// version, for a batch's catch-up). The label or type is still checked per id, in `g`, and what
-/// for depends on the side:
-/// - Going in, it is needed. A removal is recorded too: a writer that removed the label, deleted
-///   the entity, or reused a deleted edge's id for an edge of another type recorded an entity `g`
-///   no longer has under it. In a catch-up a later writer can also undo an earlier one, and only
-///   `g` settles it.
-/// - Coming out, it only saves work. Tuples come out of the version whose copy of the column is
-///   refreshed, and that copy holds none for an entity without the label there, so removing one
-///   would change nothing: one label lookup replaces an attribute read and a removal.
+/// the writes that made `g` (a writer's fork, for its rebase; the published version, for a batch's
+/// catch-up). The label or type is still checked per id, because a removal is recorded too: a
+/// writer that removed the label, deleted the entity, or reused a deleted edge's id for an edge of
+/// another type recorded an entity `g` no longer has under it, though its attribute may still be
+/// set. In a catch-up a later writer can also undo an earlier one, and only `g` settles it. The
+/// tuples coming out need no check, and the refresh reads them itself.
 ///
 /// The label or type and the attribute are looked up once per call.
 pub(crate) fn entity_tuples(
