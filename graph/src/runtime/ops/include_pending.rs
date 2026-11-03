@@ -1,7 +1,8 @@
 //! Composable operator that augments a child scan with pending mutations.
 //!
 //! Wraps any scan operator (NodeByLabelScan, NodeByIndexScan, etc.) and:
-//! 1. Filters out pending-deleted nodes and nodes with pending label removals
+//! 1. Filters out pending-deleted nodes, nodes with pending label removals and
+//!    nodes the second step emits itself
 //! 2. After child exhaustion, emits pending-created nodes and nodes with
 //!    pending label additions
 //!
@@ -31,6 +32,9 @@ pub struct IncludePendingOp<'a> {
     /// Nodes to filter out of child results.
     deleted_nodes: Option<RoaringTreemap>,
     label_removed_nodes: Option<RoaringTreemap>,
+    /// Nodes emitted from `pending_extra` instead of the child, so the child
+    /// does not yield them a second time.
+    extra_nodes: RoaringTreemap,
     /// Whether we've finished pulling from the child.
     child_exhausted: bool,
     /// Correlated argument rows captured from the enclosing sub-plan's
@@ -59,6 +63,7 @@ impl<'a> IncludePendingOp<'a> {
             pending_extra: None,
             deleted_nodes: None,
             label_removed_nodes: None,
+            extra_nodes: RoaringTreemap::new(),
             child_exhausted: false,
             argument_rows: Vec::new(),
             cur_pending_node: None,
@@ -81,14 +86,13 @@ impl<'a> IncludePendingOp<'a> {
 
     /// Initialize pending state (deleted/removed sets and extra nodes to emit).
     fn init_pending_state(&mut self) {
-        let g = self.runtime.g.borrow();
+        let g = self.runtime.graph();
         let label_ids: Vec<_> = self
             .node_pattern
             .labels
             .iter()
             .filter_map(|l| g.get_label_id(l))
             .collect();
-        drop(g);
 
         let pending = self.runtime.pending.borrow();
 
@@ -96,14 +100,15 @@ impl<'a> IncludePendingOp<'a> {
         self.label_removed_nodes = Some(pending.nodes_with_pending_label_removes(&label_ids));
 
         let pending_nodes = if label_ids.len() == self.node_pattern.labels.len() {
-            pending.get_pending_nodes_with_labels(&label_ids)
+            pending.get_pending_nodes_with_labels(&label_ids, &g)
         } else {
             RoaringTreemap::new()
         };
 
         drop(pending);
+        drop(g);
 
-        self.pending_extra = Some(Box::new(pending_nodes.into_iter().map(NodeId::from)));
+        self.extra_nodes = pending_nodes;
     }
 
     /// Emit a batch from pending_extra nodes.
@@ -179,7 +184,10 @@ impl<'a> Iterator for IncludePendingOp<'a> {
                             let env = BatchRow::new(&batch, row).to_owned_row();
                             if let Some(Value::Node(nid)) = env.get_by_id(alias.id) {
                                 let raw: u64 = (*nid).into();
-                                if deleted.contains(raw) || removed.contains(raw) {
+                                if deleted.contains(raw)
+                                    || removed.contains(raw)
+                                    || self.extra_nodes.contains(raw)
+                                {
                                     continue;
                                 }
                             } else {
@@ -200,6 +208,10 @@ impl<'a> Iterator for IncludePendingOp<'a> {
                     Some(Err(e)) => return Some(Err(e)),
                     None => {
                         self.child_exhausted = true;
+                        // The child is done, so the skip-set becomes the
+                        // emission queue without a second copy.
+                        let extra = std::mem::take(&mut self.extra_nodes);
+                        self.pending_extra = Some(Box::new(extra.into_iter().map(NodeId::from)));
                         break;
                     }
                 }
