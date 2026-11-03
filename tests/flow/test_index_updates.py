@@ -364,7 +364,7 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
         create_edge_range_index(g, 'RB', 'w')
         # The build runs in the background, RediSearch's or, under the flag, the native column's;
         # it has to finish before the reading shows it.
-        wait_for_indices_to_sync(g)
+        wait_for_indices_to_sync(g, timeout=300)
         after_build = indices_mb()
 
         # The build after an RDB load.

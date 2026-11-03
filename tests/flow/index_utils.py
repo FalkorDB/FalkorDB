@@ -130,12 +130,19 @@ def index_under_construction(graph, label):
     return "UNDER CONSTRUCTION" in res.result_set[0][0]
 
 # wait for all graph indices to by operational
-def wait_for_indices_to_sync(graph):
+def wait_for_indices_to_sync(graph, timeout=None):
+    # With a timeout, an index still not operational after it fails the wait, naming it,
+    # rather than leaving the test to run until the CI job's limit.
     q = "CALL db.indexes() YIELD status WHERE status <> 'OPERATIONAL' RETURN count(1)"
+    deadline = None if timeout is None else time.time() + timeout
     while True:
         result = graph.ro_query(q)
         if result.result_set[0][0] == 0:
             break
+        if deadline is not None and time.time() >= deadline:
+            pending = graph.ro_query("CALL db.indexes() YIELD label, status "
+                                     "WHERE status <> 'OPERATIONAL' RETURN label, status").result_set
+            raise AssertionError(f"indexes not operational after {timeout} s: {pending}")
         time.sleep(0.5) # sleep 500ms
 
 def query_node_vector_index(graph, label, attribute, k, q):
