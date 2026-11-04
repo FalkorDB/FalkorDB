@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 23 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -47,7 +47,8 @@ class testConfig(FlowTestsBase):
                 ("TEMP_FOLDER", "/tmp"),
                 ("JS_HEAP_SIZE", 256 * 1024 * 1024),
                 ("JS_STACK_SIZE", 1024 * 1024),
-                ("WRITE_LOCK_POLL_INTERVAL", 5)
+                ("WRITE_LOCK_POLL_INTERVAL", 5),
+                ("PARALLEL_INDEXING", 0)
         ]
 
         for i, config in enumerate(response):
