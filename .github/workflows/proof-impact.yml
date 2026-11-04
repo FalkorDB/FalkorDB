@@ -1,0 +1,196 @@
+# Lean proof impact of a PR, and an AI re-prove of what it touches.
+#
+# The Lean proofs (branch proofs/lean4-verification, PR #3172) are hand-written
+# models of the Rust code: rebuilding them on a PR proves nothing new. What a PR
+# can do is change a function whose model and theorems then describe old code.
+#
+#   impact   every PR: proofs/pr_impact.py maps the diff to the verified
+#            functions it touches, new functions with no coverage row, and
+#            removed/renamed functions that still have rows, and keeps one sticky
+#            comment with the result. No Lean build, a few seconds.
+#   reprove  only when a verified function changed, and only for branches of
+#            this repo (fork PRs get no secrets): Claude updates the Lean models
+#            for the change, re-runs the affected projects' proofs, and pushes
+#            the update to proofs/pr-<N>, or reports a counterexample when a
+#            theorem no longer holds. It never pushes to the PR's branch.
+#
+# Advisory: not part of ci-gate. The proofs come from proofs/lean4-verification
+# until #3172 merges; after that, point PROOFS_REF at the PR's own proofs/.
+
+name: Proof impact
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    # Mirrors rust-pr.yml's trunks.
+    branches:
+      - "main"
+      - "[0-9]*.[0-9]*"
+    paths:
+      - "graph/src/**"
+      - "src/**"
+      - ".github/workflows/proof-impact.yml"
+
+concurrency:
+  group: proof-impact-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PROOFS_REF: proofs/lean4-verification
+
+jobs:
+  impact:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      changed: ${{ steps.impact.outputs.changed }}
+      proofs_sha: ${{ steps.impact.outputs.proofs_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: code
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.PROOFS_REF }}
+          path: proofs-src
+          sparse-checkout: proofs
+      - name: Map the diff to verified functions
+        id: impact
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          proofs_sha=$(git -C proofs-src rev-parse HEAD)
+          python3 proofs-src/proofs/pr_impact.py --repo code --base "$BASE" --head "$HEAD" \
+            --proofs proofs-src/proofs --proofs-ref "$PROOFS_REF@${proofs_sha:0:9}" \
+            --json impact.json --md impact.md
+          cat impact.md >> "$GITHUB_STEP_SUMMARY"
+          echo "changed=$(jq '.changed | length' impact.json)" >> "$GITHUB_OUTPUT"
+          echo "proofs_sha=$proofs_sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: proof-impact
+          path: impact.json
+      - name: Keep one sticky comment
+        # A fork PR's token cannot comment; the job summary still has the report.
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            -q '.[] | select(.body | startswith("<!-- proof-impact -->")) | .id' | head -1)
+          if [[ -n "$id" ]]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@impact.md >/dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@impact.md >/dev/null
+          fi
+
+  reprove:
+    needs: impact
+    if: >-
+      needs.impact.outputs.changed != '0' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write        # push proofs/pr-<N>
+      pull-requests: write   # the re-prove comment
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: code
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.impact.outputs.proofs_sha }}
+          fetch-depth: 0
+          path: proofs-src
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: proof-impact
+      - name: Install Lean (elan)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.elan/toolchains
+            proofs-src/proofs/*/.lake
+          key: lean-${{ hashFiles('proofs-src/proofs/*/lean-toolchain', 'proofs-src/proofs/*/lake-manifest.json') }}-${{ needs.impact.outputs.proofs_sha }}
+          restore-keys: |
+            lean-${{ hashFiles('proofs-src/proofs/*/lean-toolchain', 'proofs-src/proofs/*/lake-manifest.json') }}-
+      - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          claude_args: >-
+            --model claude-opus-5-5
+            --max-turns 300
+            --allowedTools Bash,Read,Edit,Write,Glob,Grep
+          prompt: |
+            You re-check FalkorDB's Lean 4 proofs against a pull request's Rust change.
+
+            Repository ${{ github.repository }}, PR #${{ github.event.pull_request.number }}.
+            - ./code: the PR head (${{ github.event.pull_request.head.sha }}), full history.
+              Its diff is `git -C code diff ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}`.
+            - ./proofs-src: branch ${{ env.PROOFS_REF }} at ${{ needs.impact.outputs.proofs_sha }}.
+              proofs/<project>/ are Lake projects; proofs/<project>/COVERAGE.tsv maps each Rust
+              fn (file, name, line, bucket, Lean names) to its model and theorems. Read
+              proofs/FINDINGS.md and the .claude/skills/proofs skill there first if present.
+            - ./impact.json: `changed` lists every verified fn the PR's diff touches, with its
+              COVERAGE rows (project, bucket, Lean names); `added` new fns with no row;
+              `removed` fns gone or renamed that still have rows.
+
+            For each fn in `changed`, read its new Rust body and the Lean model and theorems
+            its rows name, and decide one of:
+            1. unchanged: the model still describes the new code exactly (e.g. a refactor or
+               a change the model abstracts away). Say why in one line.
+            2. model updated: update the model to the new code and repair the proofs so the
+               same properties are proved. Never weaken a theorem's statement to make it
+               pass; adding a theorem for new behaviour is welcome.
+            3. counterexample: a theorem's property no longer holds for the new code. Do not
+               weaken it. Keep the old statement, prove its negation on the new model (a
+               concrete input), and translate it into the smallest Cypher query or command
+               that shows it, with the result the old code gave and the new code gives.
+               This is a probable bug in the PR.
+            For `removed` and `added`, update COVERAGE.tsv rows (renamed fns keep their
+            proofs; new fns get a row, with a model and proof when they are small, else
+            NOT COVERED with a reason). Line numbers in rows must match ./code.
+
+            Gates, run from ./proofs-src: `proofs/lean_ci.sh <project> ...` for every project
+            you touched and every project that requires it (lakefile path dependencies) must
+            pass (it rejects sorry, admit, native_decide and unjustified axioms), and
+            `COVERAGE_RUST_ROOT=$PWD/../code proofs/coverage.sh --unmatched` must list no
+            unmatched rows for the files the PR changed.
+
+            If you changed anything under ./proofs-src: commit there on branch
+            proofs/pr-${{ github.event.pull_request.number }} (create it from the checked-out
+            commit; if it already exists on origin, fetch it and merge your work into it with a
+            normal merge), message ending with
+            `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`, and `git push origin
+            proofs/pr-${{ github.event.pull_request.number }}`. Never force-push, never push to
+            the PR's branch, never edit ./code.
+
+            Finally keep exactly one PR comment whose body starts with `<!-- proof-reprove -->`
+            (edit it with `gh api -X PATCH repos/${{ github.repository }}/issues/comments/<id>`
+            if it exists, else create it on issue ${{ github.event.pull_request.number }}). Body:
+            a heading "Lean re-prove", one line per fn with its verdict (unchanged / model
+            updated / counterexample) and the Lean theorem names, the gate results, and a link
+            to the compare view of proofs/pr-${{ github.event.pull_request.number }} against
+            ${{ env.PROOFS_REF }} when you pushed. Put counterexamples first, each with its
+            Cypher repro. Keep it short; no preamble.
