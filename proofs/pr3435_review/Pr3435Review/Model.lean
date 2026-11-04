@@ -3,7 +3,7 @@ import Pr3435Review.AlgoBfs
 
 `gbModel n` is a reference implementation of the four GraphBLAS calls on
 size-`n` vectors; `gbModel_spec` proves it meets `GBSpec n`. `lagModel` (our own
-push/pull over `gbModel`, always pushing) meets `LagSpec n` for `n < 2^31`. Small
+push/pull over `gbModel`, always pushing) meets `LagSpec n` for every `n ≤ GRB_DIM_MAX` (`2^60`). Small
 `decide` checks run the loop with an always-push, an always-pull and an
 alternating heuristic and get the same levels.
 -/
