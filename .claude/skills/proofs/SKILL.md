@@ -15,12 +15,12 @@ Mathlib. The toolchain comes from each project's `lean-toolchain`
 - `proofs/<area>/<Root>.lean` — the header is the report: Lean↔Rust `file:line` table, theorems, bugs, gaps.
 - `proofs/<area>/COVERAGE.tsv` — one row per Rust fn: bucket PROVEN / CONDITIONAL / AXIOMATISED / MODELLED / NOT COVERED.
 - `proofs/FINDINGS.md` — the bug ledger. Every bug has a confirmed repro, and later notes record which commits fixed it.
-- `proofs/lean_ci.sh`, `proofs/coverage.sh` — the two gates.
+- `proofs/lean_ci.sh`, `proofs/coverage.sh` — the two gates. `.github/workflows/lean-proofs.yml` runs both on pull requests that touch `proofs/**`, `graph/src/**` or `src/**` and on pushes to `main` (a separate check, not in `ci-gate`).
 
 ## Quick start
 
 ```bash
-curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh   # once
+# install elan once: https://github.com/leanprover/elan/releases (CI's pinned, checksum-verified install is in .github/workflows/lean-proofs.yml)
 bash proofs/lean_ci.sh                     # build all projects; fails on sorry/admit/native_decide/unjustified axiom
 bash proofs/lean_ci.sh binder value_order  # just some projects
 bash proofs/coverage.sh                    # per-file + total coverage; --unmatched lists stale rows

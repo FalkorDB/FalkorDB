@@ -1,0 +1,106 @@
+name: Lean proofs
+
+# The Lean 4 proofs in proofs/ are models of the Rust engine. Two gates keep them
+# true: `proofs/lean_ci.sh` builds every project and rejects sorry, admit,
+# native_decide and unjustified axioms; `proofs/coverage.sh --unmatched` checks
+# every Rust fn is listed in a COVERAGE.tsv and every row still points at a fn.
+#
+# A separate check, deliberately not part of ci-gate (yet). Lean builds read only
+# proofs/, but the coverage gate reads graph/src and src, so a Rust change that
+# adds, removes or renames a fn can break it: that is why the Rust paths trigger it.
+on:
+  pull_request:
+    branches:
+      - main
+      - "[0-9]*.[0-9]*"
+    paths:
+      - "proofs/**"
+      - "graph/src/**"
+      - "src/**"
+      - ".github/workflows/lean-proofs.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "proofs/**"
+      - "graph/src/**"
+      - "src/**"
+      - ".github/workflows/lean-proofs.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # elan is installed from a pinned release asset, never from the moving
+  # elan-init.sh on master. v4.2.4 was published 2026-08-25. The sha256 is the
+  # asset's own digest (also what GitHub shows for the release); bumping elan means
+  # bumping both lines together. The Lean toolchain itself is the one each project
+  # pins in its lean-toolchain file.
+  ELAN_VERSION: v4.2.4
+  ELAN_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
+
+jobs:
+  proofs:
+    name: Lean proofs
+    runs-on: ubuntu-latest
+    # Replaced by the measured cold build time (see the PR description).
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The Lean build is incremental on its own trace files, so a restored
+      # proofs/*/.lake makes an unchanged project a no-op. The exact key hits when
+      # no .lean file changed; otherwise the newest cache for the same toolchains is
+      # restored and only the changed modules (and their dependents) are rebuilt.
+      - name: Cache elan and the Lake build directories
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: |
+            ~/.elan
+            proofs/*/.lake
+          key: lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs/*/lean-toolchain') }}-${{ hashFiles('proofs/**/*.lean', 'proofs/*/lakefile.toml', 'proofs/*/lake-manifest.json') }}
+          restore-keys: |
+            lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs/*/lean-toolchain') }}-
+
+      - name: Install elan
+        env:
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          asset=elan-x86_64-unknown-linux-gnu.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP_DIR/$asset" \
+            "https://github.com/leanprover/elan/releases/download/${ELAN_VERSION}/${asset}"
+          echo "${ELAN_SHA256}  $RUNNER_TEMP_DIR/$asset" | sha256sum -c -
+          mkdir "$RUNNER_TEMP_DIR/elan"
+          tar -xzf "$RUNNER_TEMP_DIR/$asset" -C "$RUNNER_TEMP_DIR/elan"
+          "$RUNNER_TEMP_DIR/elan/elan-init" -y --default-toolchain none --no-modify-path
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Build and check every project (lean_ci.sh)
+        run: |
+          set -euo pipefail
+          bash proofs/lean_ci.sh
+
+      # coverage.sh prints a report and exits 0 whatever it finds, so read the
+      # report: every Rust fn listed (0 unlisted), every row matching a fn
+      # (0 unmatched), no row in an unknown bucket.
+      - name: Coverage gate (coverage.sh --unmatched)
+        run: |
+          set -euo pipefail
+          bash proofs/coverage.sh --unmatched | tee "$RUNNER_TEMP/coverage.txt"
+          unlisted=$(awk '/^TOTAL over all/ { print $(NF-3) }' "$RUNNER_TEMP/coverage.txt")
+          unmatched=$(sed -nE 's/.* ([0-9]+) rows unmatched.*/\1/p' "$RUNNER_TEMP/coverage.txt")
+          bad=$(sed -nE 's/.* ([0-9]+) bad buckets.*/\1/p' "$RUNNER_TEMP/coverage.txt")
+          echo "unlisted=${unlisted:-?} unmatched=${unmatched:-?} bad_buckets=${bad:-?}"
+          if [[ "${unlisted:-}" != 0 || "${unmatched:-}" != 0 || "${bad:-}" != 0 ]]; then
+            echo "::error::coverage gate failed: unlisted=${unlisted:-?} unmatched=${unmatched:-?} bad_buckets=${bad:-?}. List new Rust fns in a proofs/*/COVERAGE.tsv and fix stale rows (see .claude/skills/proofs/SKILL.md)."
+            exit 1
+          fi
