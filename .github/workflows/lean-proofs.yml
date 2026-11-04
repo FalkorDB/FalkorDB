@@ -91,7 +91,8 @@ jobs:
 
       # coverage.sh prints a report and exits 0 whatever it finds, so read the
       # report: every Rust fn listed (0 unlisted), every row matching a fn
-      # (0 unmatched), no row in an unknown bucket.
+      # (0 unmatched), no row in an unknown bucket, no project without a
+      # COVERAGE.tsv, no TEST-ONLY row on a fn the scanner sees as production code.
       - name: Coverage gate (coverage.sh --unmatched)
         run: |
           set -euo pipefail
@@ -99,8 +100,9 @@ jobs:
           unlisted=$(awk '/^TOTAL over all/ { print $(NF-3) }' "$RUNNER_TEMP/coverage.txt")
           unmatched=$(sed -nE 's/.* ([0-9]+) rows unmatched.*/\1/p' "$RUNNER_TEMP/coverage.txt")
           bad=$(sed -nE 's/.* ([0-9]+) bad buckets.*/\1/p' "$RUNNER_TEMP/coverage.txt")
-          echo "unlisted=${unlisted:-?} unmatched=${unmatched:-?} bad_buckets=${bad:-?}"
-          if [[ "${unlisted:-}" != 0 || "${unmatched:-}" != 0 || "${bad:-}" != 0 ]]; then
-            echo "::error::coverage gate failed: unlisted=${unlisted:-?} unmatched=${unmatched:-?} bad_buckets=${bad:-?}. List new Rust fns in a proofs/*/COVERAGE.tsv and fix stale rows (see .claude/skills/proofs/SKILL.md)."
+          untracked=$(grep -cE '^(projects without COVERAGE\.tsv|TEST-ONLY rows on fns the scanner sees as production code)' "$RUNNER_TEMP/coverage.txt" || true)
+          echo "unlisted=${unlisted:-?} unmatched=${unmatched:-?} bad_buckets=${bad:-?} untracked_report_lines=${untracked}"
+          if [[ "${unlisted:-}" != 0 || "${unmatched:-}" != 0 || "${bad:-}" != 0 || "$untracked" != 0 ]]; then
+            echo "::error::coverage gate failed: unlisted=${unlisted:-?} unmatched=${unmatched:-?} bad_buckets=${bad:-?} untracked_report_lines=${untracked}. List new Rust fns in a proofs/*/COVERAGE.tsv and fix stale rows (see .claude/skills/proofs/SKILL.md)."
             exit 1
           fi

@@ -37,24 +37,46 @@ import os, re, sys
 root = sys.argv[1]
 bad = 0
 
+def interp_end(src, i):
+    """Index of the `}` closing the interpolation opened by the `{` at src[i], skipping
+    nested braces and string literals; -1 if unbalanced."""
+    d, j, n = 0, i, len(src)
+    while j < n:
+        c = src[j]
+        if c == '"':
+            j += 1
+            while j < n and src[j] != '"':
+                j += 2 if src[j] == '\\' else 1
+        elif c == '{':
+            d += 1
+        elif c == '}':
+            d -= 1
+            if d == 0:
+                return j
+        j += 1
+    return -1
+
 def strip_comments(src):
     """Blank out -- line comments and nested /- -/ block comments (incl. docstrings),
     keeping newlines so line numbers survive. String literals are respected."""
     out, i, n, depth = [], 0, len(src), 0
-    in_str = False
+    in_str, interp = False, False
     while i < n:
         c = src[i]
         if depth == 0 and not in_str and c == '"':
-            in_str = True; out.append(c); i += 1; continue
+            in_str = True
+            interp = src[max(0, i - 2):i] in ('s!', 'm!', 'f!')
+            out.append(c); i += 1; continue
         if in_str:
             if c == '\\' and i + 1 < n:
                 out.append('  '); i += 2; continue
             if c == '"': in_str = False
-            if c == '{':
-                # `s!"..{e}.."` interpolation: the braces hold code, which is scanned
-                j = src.find('}', i)
-                if j > 0 and '"' not in src[i:j]:
-                    out.append(src[i:j + 1]); i = j + 1; continue
+            if c == '{' and interp:
+                # `s!"..{e}.."` interpolation: the braces hold code (which may itself
+                # contain string literals and nested `s!` strings): scan it recursively
+                j = interp_end(src, i)
+                if j > 0:
+                    out.append('{' + strip_comments(src[i + 1:j]) + '}'); i = j + 1; continue
             out.append(c if c in '"\n' else ' '); i += 1; continue
         if src.startswith('/-', i):
             depth += 1; out.append('  '); i += 2; continue
