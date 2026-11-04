@@ -16,6 +16,12 @@
 # CONDITIONAL > AXIOMATISED > MODELLED > NOT COVERED). Rust functions no TSV
 # mentions are UNLISTED.
 #
+# Arm rows: a project may split one function into rows named `fn/Arm` (one per
+# match arm). Those rows are parts of one proof, and a whole-function row for the
+# same function relies on them for the arms it does not prove itself, so a
+# function with arm rows counts no better than its WORST arm, whatever its other
+# rows say: one MODELLED arm keeps the whole function from counting as PROVEN.
+#
 # CONDITIONAL: the theorem holds only under an undischarged hypothesis about
 # *other Rust code* (a contract of a fn modelled/proven in another project, an
 # invariant maintained elsewhere, or one known to be false); the reason column
@@ -197,6 +203,7 @@ have = {os.path.basename(os.path.dirname(t)) for t in tsvs}
 missing = [p for p in projects if p not in have]
 
 best = {}                       # (rel, line) -> bucket (BUCKETS or TEST)
+arms = defaultdict(list)        # (rel, line) -> buckets of its `fn/Arm` rows, all projects
 test_rows = {}                  # (rel, line) -> tsv location, for TEST-ONLY rows
 unmatched, bad_bucket, nrows = [], [], 0
 for t in tsvs:
@@ -225,8 +232,15 @@ for t in tsvs:
         if b == TEST:
             test_rows.setdefault(hit, f'{proj}/COVERAGE.tsv:{k}')
             best.setdefault(hit, TEST)
+        elif '/' in cols[1].split('(')[0]:
+            arms[hit].append(b)                  # merged below: capped by the worst arm
         elif hit not in best or best[hit] == TEST or RANK[b] < RANK[best[hit]]:
             best[hit] = b
+
+for hit, bs in arms.items():
+    worst = max(bs, key=RANK.get)                # the function's worst arm
+    if hit not in best or best[hit] == TEST or RANK[best[hit]] < RANK[worst]:
+        best[hit] = worst                        # no row counts better than it
 
 # a fn is TEST if the scanner says so, or its best row is TEST-ONLY
 suspicious = [f'{loc}: {r}:{ln} {rust[r][ln]}' for (r, ln), loc in sorted(test_rows.items())
