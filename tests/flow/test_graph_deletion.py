@@ -321,6 +321,19 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[r]->() RETURN r.v")
         self.env.assertEqual(res.result_set, [[7]])
 
+        # the equality check of SET reads the new edge, not the deleted one's
+        # snapshot: the old edge had v=5, the new one v=1, and SET r2.v = 5
+        # must land
+        self.graph.delete()
+        self.graph.query("CREATE ()-[:R {v:5}]->()")
+        res = self.graph.query("MATCH ()-[r]->() DELETE r WITH 1 AS x "
+                               "CREATE ()-[r2:R {v:1}]->() SET r2.v = 5 RETURN r2.v, id(r2)")
+        self.env.assertEqual(res.result_set, [[5, 0]])
+        res = self.graph.query("MATCH ()-[r]->() RETURN r.v")
+        self.env.assertEqual(res.result_set, [[5]])
+        self.graph.query("MATCH ()-[r]->() DELETE r")
+        self.graph.query("CREATE ()-[:R {v:1}]->()")
+
         # a reissued edge the query deletes again is still skipped
         res = self.graph.query("MATCH ()-[r]->() DELETE r WITH 1 AS x "
                                "CREATE ()-[r2:R {v:1}]->() WITH r2 DELETE r2 WITH r2 SET r2.v = 9")

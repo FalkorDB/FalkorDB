@@ -1630,6 +1630,7 @@ impl<'a> Runtime<'a> {
     ) -> Option<Value> {
         let deleted = self.deleted_relationships.borrow();
         if !deleted.is_empty()
+            && !self.is_reissued_relationship(id)
             && let Some(dn) = deleted.get(&id)
         {
             if let Some(value) = dn.attrs.get(attr) {
@@ -1670,6 +1671,16 @@ impl<'a> Runtime<'a> {
             || (!pending.is_relationship_created(id)
                 && !self.reissued_relationships.borrow().contains(&id)
                 && self.deleted_relationships.borrow().contains_key(&id))
+    }
+
+    /// Whether `id` was deleted by this query and then given to a new
+    /// relationship: its snapshot describes the previous owner, so reads of the
+    /// id must see the new relationship, not the snapshot.
+    fn is_reissued_relationship(
+        &self,
+        id: RelationshipId,
+    ) -> bool {
+        self.reissued_relationships.borrow().contains(&id)
     }
 
     /// Snapshots a relationship this query deleted. The id now names that
@@ -1794,7 +1805,12 @@ impl<'a> Runtime<'a> {
             }
         } else {
             for &id in rel_ids {
-                let val = deleted.get(&id).map_or_else(
+                let snapshot = if self.is_reissued_relationship(id) {
+                    None
+                } else {
+                    deleted.get(&id)
+                };
+                let val = snapshot.map_or_else(
                     || {
                         attr_idx
                             .and_then(|idx| {
@@ -1933,7 +1949,9 @@ impl<'a> Runtime<'a> {
         &self,
         id: RelationshipId,
     ) -> OrderMap<Arc<String>, Value> {
-        if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
+        if !self.is_reissued_relationship(id)
+            && let Some(dr) = self.deleted_relationships.borrow().get(&id)
+        {
             let attrs = dr
                 .attrs
                 .iter()
@@ -1953,7 +1971,9 @@ impl<'a> Runtime<'a> {
         &self,
         id: RelationshipId,
     ) -> (NodeId, NodeId) {
-        if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
+        if !self.is_reissued_relationship(id)
+            && let Some(dr) = self.deleted_relationships.borrow().get(&id)
+        {
             return (dr.src, dr.dst);
         }
         if let Some(endpoints) = self.pending.borrow().get_created_relationship_endpoints(id) {
@@ -1966,7 +1986,9 @@ impl<'a> Runtime<'a> {
         &self,
         id: RelationshipId,
     ) -> Option<Arc<String>> {
-        if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
+        if !self.is_reissued_relationship(id)
+            && let Some(dr) = self.deleted_relationships.borrow().get(&id)
+        {
             return Some(dr.type_name.clone());
         }
         if let Some(type_name) = self.pending.borrow().get_relationship_type(id) {
