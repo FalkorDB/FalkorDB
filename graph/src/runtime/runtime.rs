@@ -466,12 +466,10 @@ impl<'a> Runtime<'a> {
             pending.borrow_mut().set_schema_baseline(&g.borrow());
         }
         // A read query runs on a published version and can take its borrow once
-        // here instead of on every access. Writers mutate a private fork; the
-        // one `borrow_mut` of a published version, `resync_published_indexes`,
-        // runs under the per-graph write lock, and a read runtime lives entirely
-        // inside its session's read lock, so the two never overlap (proved in
-        // proofs/pr3436_review, `Protocol.reader_guard_sound`). Were that to
-        // change, the `borrow_mut` would panic rather than race.
+        // here instead of on every access. Writers mutate a private fork, and
+        // nothing borrows a published version mutably (`MvccGraph`), so this
+        // borrow can be held for the whole query. Were that to change, the
+        // `borrow_mut` would panic rather than race.
         //
         let read_guard = (!write).then(|| {
             let owner = Arc::clone(&g);
@@ -589,7 +587,7 @@ impl<'a> Runtime<'a> {
     }
 
     /// Call `runtime.write_escalation().upgrade_to_write()?` before mutating
-    /// shared state (the index, or the published graph version).
+    /// shared state (the index).
     ///
     /// Not a guard: the host owns the locks for the whole query — they must
     /// outlive `query()` so the host can commit — so this only *changes mode*,
