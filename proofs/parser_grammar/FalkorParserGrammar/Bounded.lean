@@ -41,7 +41,10 @@ def known (l : List Tok) : Bool :=
     -- a run of ≥ 3 NOTs folds by parity (not_run_folds); none fits in 3 tokens with an operand
     (l.zip (l.drop 1) |>.zip (l.drop 2) |>.any (fun ((x, y), z) =>
       x == .kw .not_ && y == .kw .not_ && z == .kw .not_)) ||
-    ((parseAll 400 l matches .ok _ _) && (G.all 200 (asIdents l) matches .ok _ _))  -- keyword as variable
+    -- keyword as variable: the grammar reads each keyword as an identifier; the trees (and the
+    -- rest of the input) must still be equal, not merely both accepted
+    ((parseAll 400 l matches .ok _ _) && (G.all 200 (asIdents l) matches .ok _ _) &&
+      agreeB (parseAll 400 l) (G.all 200 (asIdents l)))
 
 /-- **Bounded soundness and completeness**: on every one of the 9,724 token
 lists of length ≤ 3 over `alpha`, the Rust model and the grammar accept the

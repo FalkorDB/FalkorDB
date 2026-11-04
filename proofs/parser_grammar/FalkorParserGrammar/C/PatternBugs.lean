@@ -1,5 +1,10 @@
 /-
-# Pattern-level counterexamples (all CONFIRMED on a live server, Rust vs C)
+# Pattern-level bugs and the theorems that pin their fixes
+
+Only `anon_name_collides` documents a bug that is still open (confirmed on a live server, Rust
+vs C). The #3289 and #3300 theorems pin the fixed, correct behaviour (a repeated relationship
+alias and `[:A:B]` are now refused, as in C); `create_named_path_distinct_rels_ok` and
+`create_anon_path_dup_rel_rejected` are the unchanged controls.
 -/
 import FalkorParserGrammar.C.PatternG2
 import FalkorParserGrammar.C.Oracle0

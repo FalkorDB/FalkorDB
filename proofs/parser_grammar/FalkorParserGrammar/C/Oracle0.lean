@@ -16,6 +16,11 @@ def atom0 : P ET := fun s =>
   | .ident v => .ok (leaf (.var v)) s.adv
   | _ => .err
 
+/-- Fuel-bounded: it stops after 8 `.prop` lookups, so a 9th `.x` in `a.b.c…` is left
+unconsumed (the caller then fails with a syntax error). That cap is a termination device of
+this example oracle (a structural recursion on the fuel), not Rust behaviour: Rust's postfix
+`.name` lookups (`parse_property_lookup`, cypher.rs:2165) are cut off only by the nesting-depth
+guard (`check_depth`), never at 8. No example run with this oracle chains more than a few. -/
 def props0 : Nat → ET → P ET
   | 0, e => pure e
   | n + 1, e => fun s =>

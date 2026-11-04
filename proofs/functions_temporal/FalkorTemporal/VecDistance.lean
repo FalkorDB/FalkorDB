@@ -10,8 +10,11 @@ numeric value is not modelled. `f64::sqrt` and negation are parameters too.
 Proved: each metric's exact composition (`euclidean = sqrt ∘ l2sq`, `inner_product = -dot`,
 `cosine = cos`), the dispatch table of `distance` (`None` ⇒ euclidean, unknown name ⇒
 `None`, names are case-sensitive), and **`distance_none_iff`**: the result is `None`
-exactly when the metric is unknown or the lengths differ — the only two reasons the
-callers report (`vec.euclideanDistance` / vector KNN).
+exactly when the metric is unknown or the lengths differ. The callers do not report either
+reason: `vec.euclideanDistance` / `vec.cosineDistance` (`spatial.rs:146-190`) check the lengths
+first and raise the dimension-mismatch error themselves (their `unwrap_or` is unreachable),
+and the vector KNN paths (`graph.rs:4398`, `:4457`) silently skip an entity whose `distance`
+is `None` (an unknown metric or a length mismatch).
 -/
 
 namespace FalkorTemporal.VecDist

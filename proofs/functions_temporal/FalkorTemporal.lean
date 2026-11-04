@@ -51,7 +51,7 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 | `SpatialFns.pointFromMapEntries`, `numeric`, `point` | `point_from_map_entries` `spatial.rs:38`, `numeric` `spatial.rs:74`, `point` `spatial.rs:110` (#3301; `Point::validate` and `point_struct_pure` are gone) |
 | `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:391` / `ExprIR::Or` `eval.rs:640` / `ExprIR::And` `eval.rs:691` |
 | `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs:880` / `Add..Rem for Value` `value.rs:933-1200` |
-| `Spatial2.distance` / `Spatial.haversine` | `Point::distance` `value.rs:153` (clamped `a`, #2983); pre-#2983 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412): history |
+| `Spatial2.distance` (`Spatial` holds only the `#guard`ed rounding mechanism) | `Point::distance` `value.rs:153` (clamped `a`, #2983); pre-#2983 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412): history |
 
 ## Proven (160 theorems + 30 kernel-checked era chunks)
 
