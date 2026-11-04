@@ -25,9 +25,9 @@ use super::falkordb_index::{FalkorDbIndex, IndexColumn, IndexKey};
 /// instead. `CREATE INDEX` takes one batch over every entity, so its index is `Ready` when it
 /// returns.
 ///
-/// Batches read entities in a fixed order, and an entity's place in it is what it is compared to the
-/// cursor by ([`BuildCursor::precedes`](super::falkordb_index::BuildCursor::precedes)): a node by
-/// its id; an edge by its source, then its destination, then its edge id, so a batch can stop
+/// Batches read entities in a fixed order, and an entity is compared with the cursor by its place
+/// in that order ([`BuildCursor::precedes`](super::falkordb_index::BuildCursor::precedes)): a node
+/// by its id; an edge by its source, then its destination, then its edge id, so a batch can stop
 /// between any two edges, those of one multi-edge pair included.
 ///
 /// A `Building` index holds exactly the current tuples of the entities below its cursor, and

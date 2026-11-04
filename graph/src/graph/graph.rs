@@ -3876,7 +3876,7 @@ impl Graph {
     }
 
     /// Where entity `id` sits in this version's build order ([`BuildCursor::from_id`]): a node by
-    /// its id, an edge by its endpoints. `None` for an edge this version does not have.
+    /// its id, an edge by its endpoints and its id. `None` for an edge this version does not have.
     #[cfg(feature = "index-falkordb")]
     pub(crate) fn build_place(
         &self,
