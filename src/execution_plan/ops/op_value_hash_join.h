@@ -13,6 +13,7 @@
 typedef struct {
 	OpBase op;
 	Record rhs_rec;                     // Right hand side record.
+	SIValue rhs_value;                  // Joined value of rhs_rec.
 	AR_ExpNode *lhs_exp;                // Left hand side expression to join on.
 	AR_ExpNode *rhs_exp;                // Right hand side expression to join on.
 	int64_t intersect_idx;              // Current intersection, < number_of_intersections

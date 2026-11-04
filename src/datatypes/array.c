@@ -157,14 +157,13 @@ bool SIArray_ContainsValue
 	if(comparedNull) *comparedNull = false;
 	uint array_len = SIArray_Length(siarray);
 	for(uint i = 0; i < array_len; i++) {
-		int disjointOrNull = 0;
 		SIValue elem = siarray.array[i];
-		int compareValue = SIValue_Compare(elem, value, &disjointOrNull);
-		if(disjointOrNull == COMPARED_NULL) {
+		SIValueEquality eq = SIValue_Equals(elem, value);
+		if(eq == SI_EQ_NULL) {
 			if(comparedNull) *comparedNull = true;
 			continue;
 		}
-		if(compareValue == 0) return true;
+		if(eq == SI_EQ_TRUE) return true;
 	}
 	return false;
 }

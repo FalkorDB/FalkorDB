@@ -902,6 +902,12 @@ int SIValue_Compare
 
 		case T_POINT:
 		{
+			// a NaN coordinate is not equal to anything, like a NaN double
+			if(isnan(Point_lat(a)) || isnan(Point_lon(a)) ||
+			   isnan(Point_lat(b)) || isnan(Point_lon(b))) {
+				if(disjointOrNull) *disjointOrNull = COMPARED_NAN;
+			}
+
 			int lon_diff = SAFE_COMPARISON_RESULT(Point_lon(a) - Point_lon(b));
 			if(lon_diff == 0)
 				return SAFE_COMPARISON_RESULT(Point_lat(a) - Point_lat(b));
@@ -941,6 +947,58 @@ int SIValue_Compare
 
 	// return base type difference, ignoring intern flag (used for disjoint or null comparisons)
 	return (a.type & ~T_INTERN) - (b.type & ~T_INTERN);
+}
+
+// tests two lists for equality
+// lists of different length are not equal
+// otherwise the lists are not equal if any pair of elements is not equal,
+// unknown if any pair is unknown and equal if all pairs are equal
+static SIValueEquality _SIArray_Equals
+(
+	SIValue arrayA,
+	SIValue arrayB
+) {
+	uint len = SIArray_Length(arrayA);
+	if(len != SIArray_Length(arrayB)) return SI_EQ_FALSE;
+
+	bool compared_null = false;
+	for(uint i = 0; i < len; i++) {
+		SIValueEquality eq = SIValue_Equals(SIArray_Get(arrayA, i),
+				SIArray_Get(arrayB, i));
+		if(eq == SI_EQ_FALSE) return SI_EQ_FALSE;
+		if(eq == SI_EQ_NULL)  compared_null = true;
+	}
+
+	return compared_null ? SI_EQ_NULL : SI_EQ_TRUE;
+}
+
+SIValueEquality SIValue_Equals
+(
+	const SIValue a,
+	const SIValue b
+) {
+	if(SI_TYPE(a) == T_NULL || SI_TYPE(b) == T_NULL) return SI_EQ_NULL;
+
+	// containers are compared element-wise
+	// an unknown element pair must not hide an unequal one
+	if(SI_TYPE(a) == T_ARRAY && SI_TYPE(b) == T_ARRAY) {
+		return _SIArray_Equals(a, b);
+	}
+
+	if(SI_TYPE(a) == T_MAP && SI_TYPE(b) == T_MAP) {
+		return Map_Equals(a, b);
+	}
+
+	int disjointOrNull = 0;
+	int order = SIValue_Compare(a, b, &disjointOrNull);
+	ASSERT(disjointOrNull != COMPARED_NULL);
+
+	// NaN is not equal to any value and disjoint types are never equal
+	if(disjointOrNull == COMPARED_NAN || disjointOrNull == DISJOINT) {
+		return SI_EQ_FALSE;
+	}
+
+	return (order == 0) ? SI_EQ_TRUE : SI_EQ_FALSE;
 }
 
 // hashes the id and properties of the node

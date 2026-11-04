@@ -140,26 +140,20 @@ SIValue AR_EQ(SIValue *argv, int argc, void *private_data) {
 	SIValue a = argv[0];
 	SIValue b = argv[1];
 
-	int disjointOrNull = 0;
-	int res = SIValue_Compare(a, b, &disjointOrNull);
-	if(disjointOrNull == COMPARED_NULL) return SI_NullVal();
-	if(disjointOrNull == COMPARED_NAN) return SI_BoolVal(false);
-	if(disjointOrNull == DISJOINT) return SI_BoolVal(false);
 	// Disjoint comparison is allowed on EQ and NE operators, since they impose no order.
-	return SI_BoolVal(res == 0);
+	SIValueEquality eq = SIValue_Equals(a, b);
+	if(eq == SI_EQ_NULL) return SI_NullVal();
+	return SI_BoolVal(eq == SI_EQ_TRUE);
 }
 
 SIValue AR_NE(SIValue *argv, int argc, void *private_data) {
 	SIValue a = argv[0];
 	SIValue b = argv[1];
 
-	int disjointOrNull = 0;
-	int res = SIValue_Compare(a, b, &disjointOrNull);
-	if(disjointOrNull == COMPARED_NULL) return SI_NullVal();
-	if(disjointOrNull == COMPARED_NAN) return SI_BoolVal(true);
-	if(disjointOrNull == DISJOINT) return SI_BoolVal(true);
 	// Disjoint comparison is allowed on EQ and NE operators, since they impose no order.
-	return SI_BoolVal(res != 0);
+	SIValueEquality eq = SIValue_Equals(a, b);
+	if(eq == SI_EQ_NULL) return SI_NullVal();
+	return SI_BoolVal(eq == SI_EQ_FALSE);
 }
 
 // Returns true if argv[0] is null.

@@ -21,6 +21,24 @@ static inline int _key_cmp
 	return strcmp(a->key.stringval, b->key.stringval);
 }
 
+// sorts pairs by key
+// a map whose keys are already in order is left untouched: equality tests
+// run once per join candidate on values cached by the hash join, and must
+// neither re-sort nor write to them
+static void _sort_pairs
+(
+	Pair *pairs,
+	uint n
+) {
+	for(uint i = 1; i < n; i++) {
+		if(_key_cmp(pairs + i - 1, pairs + i) > 0) {
+			qsort(pairs, n, sizeof(Pair),
+					(int(*)(const void*, const void*))_key_cmp);
+			return;
+		}
+	}
+}
+
 static inline Pair Pair_New
 (
 	SIValue key,
@@ -365,10 +383,8 @@ int Map_Compare
 	}
 
 	// sort both maps
-	qsort(A, A_key_count, sizeof(Pair),
-			(int(*)(const void*, const void*))_key_cmp);
-	qsort(B, B_key_count, sizeof(Pair),
-			(int(*)(const void*, const void*))_key_cmp);
+	_sort_pairs(A, A_key_count);
+	_sort_pairs(B, B_key_count);
 
 	// element-wise key comparison
 	for(uint i = 0; i < key_count; i++) {
@@ -379,19 +395,69 @@ int Map_Compare
 	}
 
 	// element-wise value comparison
+	//
+	// the returned order is the first non-zero value comparison
+	// it must not depend on whether the caller asked for 'disjointOrNull':
+	// sort and binary search pass NULL while relational operators pass a
+	// pointer and both must agree on the order of the same two maps
+	//
+	// 'disjointOrNull' is taken from the first pair of values which is either
+	// not equal or compared as null, NaN or disjoint types, so '<' follows the
+	// scalar rules for that pair: null or disjoint types give null and NaN
+	// gives false
+	// this pair does not always decide the returned order, a leading null pair
+	// sets the flag and a later pair can still decide the order
+	// equality is not decided here, see Map_Equals
+	bool decided = false;  // the flag was taken from a pair
+
+	if(disjointOrNull) *disjointOrNull = 0;
+
 	for(uint i = 0; i < key_count; i++) {
 		// key lookup succeeded; compare values
-		order = SIValue_Compare(A[i].val, B[i].val, disjointOrNull);
-		if(disjointOrNull && (*disjointOrNull == COMPARED_NULL ||
-							  *disjointOrNull == DISJOINT)) {
-			return 0;
+		int flag = 0;
+		order = SIValue_Compare(A[i].val, B[i].val, &flag);
+
+		if(!decided && (order != 0 || flag != 0)) {
+			decided = true;
+			if(disjointOrNull) *disjointOrNull = flag;
 		}
 
-		if(order != 0) return order;
+		if(order != 0) break;
 	}
 
-	// maps are equal
-	return 0;
+	return order;
+}
+
+SIValueEquality Map_Equals
+(
+	SIValue mapA,
+	SIValue mapB
+) {
+	Map   A          =  mapA.map;
+	Map   B          =  mapB.map;
+	uint  key_count  =  Map_KeyCount(mapA);
+
+	if(key_count != Map_KeyCount(mapB)) return SI_EQ_FALSE;
+
+	// sort both maps
+	_sort_pairs(A, key_count);
+	_sort_pairs(B, key_count);
+
+	// maps with different keys are not equal
+	for(uint i = 0; i < key_count; i++) {
+		if(SIValue_Compare(A[i].key, B[i].key, NULL) != 0) return SI_EQ_FALSE;
+	}
+
+	// an unequal pair of values decides, wherever it is
+	// otherwise a null pair makes the result unknown
+	bool compared_null = false;
+	for(uint i = 0; i < key_count; i++) {
+		SIValueEquality eq = SIValue_Equals(A[i].val, B[i].val);
+		if(eq == SI_EQ_FALSE) return SI_EQ_FALSE;
+		if(eq == SI_EQ_NULL)  compared_null = true;
+	}
+
+	return compared_null ? SI_EQ_NULL : SI_EQ_TRUE;
 }
 
 // merge two maps
@@ -430,8 +496,7 @@ XXH64_hash_t Map_HashCode
 	// sort the map by key, so that {a:1, b:1} and {b:1, a:1}
 	// have the same hash value
 	uint key_count = Map_KeyCount(map);
-	qsort(map.map, key_count, sizeof(Pair),
-			(int(*)(const void*, const void*))_key_cmp);
+	_sort_pairs(map.map, key_count);
 
 	SIType t = T_MAP;
 	XXH64_hash_t hashCode = XXH64(&t, sizeof(t), 0);
