@@ -385,6 +385,11 @@ impl VersionedIndex for IndexColumn {
 
     /// The column's next `budget` nodes or edges from `from`, at their values in `version`,
     /// encoded and sorted ([`graph_writes::scan`]).
+    ///
+    /// A batch with a budget reads at least one entity or reaches the end, so the cursor it
+    /// leaves is past `from`. A debug build checks it here, where every batch is read: a scan
+    /// that resumes behind its cursor would otherwise read the same entities batch after batch,
+    /// and a build loop would never end.
     fn indexer_read(
         &self,
         version: &Graph,
@@ -392,7 +397,12 @@ impl VersionedIndex for IndexColumn {
         from: BuildCursor,
         budget: usize,
     ) -> (EncodedTuples, Option<BuildCursor>) {
-        graph_writes::scan(version, label, attr, from, budget, self)
+        let (tuples, next) = graph_writes::scan(version, label, attr, from, budget, self);
+        debug_assert!(
+            budget == 0 || next.is_none_or(|next| from.precedes(next)),
+            "a batch of {budget} from {from:?} leaves its cursor at {next:?}: no progress"
+        );
+        (tuples, next)
     }
 
     fn indexer_add(
@@ -448,15 +458,19 @@ impl ScanFilter {
 pub(crate) enum BuildCursor {
     /// A node column's next node.
     Node(NodeId),
-    /// An edge column's next `(src, dst)` pair, so a source with more edges than one batch reads
-    /// can be resumed partway, as C does. A batch always finishes the multi-edge pair it stops in,
-    /// so every edge of an earlier pair is indexed.
-    Edge { src: NodeId, dst: NodeId },
+    /// An edge column's next edge, by its source, then its destination, then its id: the order
+    /// batches read edges in, a multi-edge pair's edges one by one. A batch can stop anywhere, in
+    /// the middle of a source's edges or of a multi-edge pair, and the next one resumes there.
+    Edge {
+        src: NodeId,
+        dst: NodeId,
+        edge: RelationshipId,
+    },
 }
 
 impl BuildCursor {
     /// Whether this entity's place comes before `next`, a column's cursor: whether a batch has
-    /// indexed it. A node by its id; an edge by its `(src, dst)` pair, the order batches read
+    /// indexed it. A node by its id; an edge by `(src, dst, edge id)`, the order batches read
     /// edges in.
     pub(crate) fn precedes(
         self,
@@ -464,20 +478,14 @@ impl BuildCursor {
     ) -> bool {
         match (self, next) {
             (Self::Node(at), Self::Node(next)) => u64::from(at) < u64::from(next),
-            (
-                Self::Edge { src, dst },
-                Self::Edge {
-                    src: nsrc,
-                    dst: ndst,
-                },
-            ) => (u64::from(src), u64::from(dst)) < (u64::from(nsrc), u64::from(ndst)),
+            (Self::Edge { .. }, Self::Edge { .. }) => self.edge_place() < next.edge_place(),
             _ => unreachable!("a node and an edge are never in one column"),
         }
     }
 
     /// Where entity `id` sits in build order, as a cursor: a node by its id, an edge by its
-    /// endpoints in `endpoints`, a version's edge endpoints. An edge that version deleted has none
-    /// (`None`).
+    /// endpoints in `endpoints`, a version's edge endpoints, and its id. An edge that version
+    /// deleted has none (`None`).
     pub(crate) fn from_id(
         entity: EntityType,
         id: u64,
@@ -488,17 +496,27 @@ impl BuildCursor {
             EntityType::Relationship => endpoints.get(id).map(|(src, dst)| Self::Edge {
                 src: NodeId::from(src),
                 dst: NodeId::from(dst),
+                edge: RelationshipId::from(id),
             }),
         }
     }
 
-    /// Where the build of a new `entity` column starts: its first node, or its first pair.
+    /// An edge's place as `(src, dst, edge id)`.
+    fn edge_place(self) -> (u64, u64, u64) {
+        match self {
+            Self::Edge { src, dst, edge } => (u64::from(src), u64::from(dst), u64::from(edge)),
+            Self::Node(_) => unreachable!("a node has no edge place"),
+        }
+    }
+
+    /// Where the build of a new `entity` column starts: its first node, or its first edge.
     pub(crate) fn new(entity: EntityType) -> Self {
         match entity {
             EntityType::Node => Self::Node(NodeId::from(0)),
             EntityType::Relationship => Self::Edge {
                 src: NodeId::from(0),
                 dst: NodeId::from(0),
+                edge: RelationshipId::from(0),
             },
         }
     }
@@ -768,6 +786,31 @@ impl FalkorDbIndex {
             .contains_key(&(label.clone(), attr.clone()))
     }
 
+    /// Whether column `(entity, label, attr)` exists and is `Ready`: whether this version's index
+    /// serves reads on it. A `Building` column answers with a [`ScanFilter`] instead.
+    #[must_use]
+    pub fn is_ready(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> bool {
+        self.entry(entity, label, attr)
+            .is_some_and(|entry| !entry.is_building())
+    }
+
+    /// How many entities column `(entity, label, attr)`'s batches have read ([`IndexEntry::read`]),
+    /// or `None` if the column is `Ready` or does not exist.
+    pub(crate) fn building_read(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<u64> {
+        let entry = self.entry(entity, label, attr)?;
+        entry.is_building().then_some(entry.read)
+    }
+
     /// Ready this version to be published: each index's sets of written entities are settled
     /// ([`IndexEntry::publish`]).
     pub(crate) fn publish(&mut self) {
@@ -988,8 +1031,8 @@ impl FalkorDbIndex {
         })
     }
 
-    /// Whether any column is still `Building`.
-    #[cfg(test)]
+    /// Whether any column is still `Building`. Walks the columns' states without hashing a name,
+    /// so a per-write check that only matters during a build costs next to nothing outside one.
     #[must_use]
     pub(crate) fn has_building_columns(&self) -> bool {
         self.node_columns
@@ -1185,6 +1228,8 @@ mod tests {
                 name: (Node, column.clone()),
                 work: tuples,
                 next,
+                read: 3,
+                catch_up_limit: None,
             }
         };
         let next = BuildCursor::Node(NodeId::from(3));
@@ -1704,6 +1749,8 @@ mod tests {
             name: (Node, (label.clone(), attr.clone())),
             work,
             next: Some(BuildCursor::Node(NodeId::from(11))),
+            read: 11,
+            catch_up_limit: None,
         }));
         assert_eq!(
             idx.numeric(Node, &label, &attr)

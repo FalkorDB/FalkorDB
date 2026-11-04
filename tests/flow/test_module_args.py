@@ -34,6 +34,8 @@ REFUSED = [
     ("OMP_THREAD_COUNT 0",        "Failed setting field 'OMP_THREAD_COUNT'"),
     ("MAX_QUEUED_QUERIES 0",      "Failed setting field 'MAX_QUEUED_QUERIES'"),
     ("JS_HEAP_SIZE 5",            "JS_HEAP_SIZE must be at least 1MB (1048576)"),
+    ("INDEX_BUILD_THREAD_COUNT 0",    "Failed setting field 'INDEX_BUILD_THREAD_COUNT'"),
+    ("INDEX_BUILD_THREAD_COUNT 1025", "Failed setting field 'INDEX_BUILD_THREAD_COUNT'"),
     ("FOO 1",                     "Encountered unknown configuration field 'FOO'"),
     ("CACHE_SIZE",                "FalkorDB received 1 arguments, all configurations should be key-value pairs"),
     ("CACHE_SIZE 10 THREAD_COUNT", "FalkorDB received 3 arguments, all configurations should be key-value pairs"),
@@ -145,3 +147,14 @@ class testModuleArgs():
             for name in IGNORED:
                 env.assertContains(
                     f"configuration field '{name}' is deprecated and has no effect", log)
+
+    def test05_index_build_thread_count(self):
+        """INDEX_BUILD_THREAD_COUNT, a load-time setting of this engine's own,
+        takes effect whatever the case of its name. GRAPH.CONFIG does not list
+        it (its list mirrors C's), so it is read through Redis's CONFIG."""
+        env, _ = Env(moduleArgs="index_build_thread_count 3")
+        conn = env.getConnection()
+        reply = conn.config_get("graph.INDEX_BUILD_THREAD_COUNT")
+        text = lambda s: s if isinstance(s, str) else s.decode()
+        env.assertEqual({text(k): text(v) for k, v in reply.items()},
+                        {"graph.INDEX_BUILD_THREAD_COUNT": "3"})
