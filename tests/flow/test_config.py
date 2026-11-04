@@ -504,6 +504,7 @@ class testLoadTimeConfig(FlowTestsBase):
             ("VKEY_MAX_ENTITY_COUNT", 100000),
             ("CMD_INFO",              "yes"),
             ("DELAY_INDEXING",        "no"),
+            ("PARALLEL_INDEXING",     "no"),
             ("IMPORT_FOLDER",         "/var/lib/FalkorDB/import/"),
             ("TEMP_FOLDER",           "/tmp"),
             ("JS_HEAP_SIZE",          268435456),
