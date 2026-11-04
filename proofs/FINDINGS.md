@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-11-04): the proofs were re-targeted to `origin/main` @ 43936bab9 (native_index: #3568 `CatchUp::Insert`/`placed_in`/`catch_up_by`, #3569 `memory_usage`; #3545's compare-and-swap commit is noted on the commit rows, single-publisher model); each project's header carries its own revision pin where a section was last checked against an older one (the COVERAGE.tsv rows are the authoritative per-function list).
+Current state (2026-11-04): the proofs were re-targeted to `origin/main` @ 43936bab9 (native_index: #3568 `CatchUp::Insert`/`placed_in`/`catch_up_by`, #3569 `memory_usage`; #3545's compare-and-swap commit is modelled: `search_concurrency` `Mvcc.swap_overtaken_publishes_nothing`/`swap_unchanged_publishes`, `native_index` `Batch.commit_cas_stale`/`commit_cas_current`); each project's header carries its own revision pin where a section was last checked against an older one (the COVERAGE.tsv rows are the authoritative per-function list).
 There is one Lake project per area under `proofs/<area>/` (38 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,

@@ -22,10 +22,11 @@ published version.
 | `V.applyBatch` | `FalkorDbIndex::apply_indexer_batch` (`versioned.rs:353`) |
 | `indexerFit` | `Graph::indexer_fit` (`versioned.rs:391`) |
 | `V.withBatchIndex` | `Graph::with_batch_index` (`:316`) with `take_index` (`:329`) |
-| `commitIndexerBatch` | `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:235`) and `commit_version(_, false)` (`:261`) |
+| `commitIndexerBatch` | `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:235`) and `commit_version(_, false)` (`:261`), up to the swap |
+| `commitIndexerBatchE`, `CommitError` | the same with its `compare_and_swap` (#3545, `mvcc_graph.rs:327-331`) and `Err(Invalid)` / `Err(Stale)` |
 
 Since #3545 a commit publishes by compare-and-swap against the version it loaded (`CommitError::Stale` if
-another publisher slipped in); the model is the single-publisher regime the host's global lock provides.
+another publisher slipped in): `commitIndexerBatchE` models it (`commit_cas_stale`, `commit_cas_current`).
 
 `Graph::validate` is the abstract predicate `valid`; schema-version bump, `trim_attr_stores`,
 `fold_oversized_deltas` and `set_indexer_graph` do not touch the version, the batch's entry or the
@@ -203,6 +204,30 @@ def commitIndexerBatch {R : Type} (pub prepared : V R) (valid : V R → Bool) (f
     let ver := commitVersion pub prepared f fit
     if valid ver then (ver.setBatchesPublished pub true, some fit) else (pub, none)
 
+/-- The two refusals of `MvccGraph::commit_indexer_batch`: `Graph::validate` (`Invalid`) and the
+compare-and-swap (`Stale`, #3545). -/
+inductive CommitError where
+  | invalid
+  | stale
+  deriving DecidableEq, Repr
+
+/-- `MvccGraph::commit_indexer_batch` with its compare-and-swap (`commit_version`, `mvcc_graph.rs:261-330`).
+`pub` is the published version the commit loaded and fitted against; `now` is what is published when the swap
+runs, and `unchanged` is `Arc::ptr_eq(&previous, &published)`: nothing else was published in between (always so
+under the host's global lock; a publisher without it breaks that). A `Discarded` fit returns before the commit,
+`validate` refuses before the swap, and a refused swap leaves `now` published. Returns the published version
+afterwards and the outcome. -/
+def commitIndexerBatchE {R : Type} (pub now prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn)
+    (unchanged : Bool) : V R × Except CommitError IndexerCommit :=
+  let fit := indexerFit prepared pub
+  match fit with
+  | .discarded _ => (now, .ok fit)
+  | _ =>
+    let ver := commitVersion pub prepared f fit
+    if !valid ver then (now, .error .invalid)
+    else if unchanged then (ver.setBatchesPublished pub true, .ok fit)
+    else (now, .error .stale)
+
 /-! ## The fit -/
 
 theorem fit_gone_of_no_entry {R : Type} (ours pub : V R) (h : ours.entry = none) :
@@ -309,6 +334,47 @@ theorem commit_catchUp {R : Type} (pub prepared : V R) (valid : V R → Bool) (f
   all_goals
     simp only [V.caughtUpOnto, V.newBuildVersion, V.newVersion]
     cases prepared.entry <;> cases pub.entry <;> simp
+
+/-- **#3545, a current commit publishes**: when nothing was published since the load (`now = pub`, the
+swap's pointer check passes) `commitIndexerBatchE` is exactly the commit above, with `Invalid` for its refusal. -/
+theorem commit_cas_current {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn) :
+    commitIndexerBatchE pub pub prepared valid f true =
+      ((commitIndexerBatch pub prepared valid f).1,
+        match (commitIndexerBatch pub prepared valid f).2 with
+        | some fit => .ok fit
+        | none => .error .invalid) := by
+  unfold commitIndexerBatchE commitIndexerBatch
+  generalize indexerFit prepared pub = fit
+  cases fit with
+  | discarded w => simp
+  | same => by_cases hv : valid prepared = true <;> simp [commitVersion, hv]
+  | swap => by_cases hv : valid (V.withBatchIndex prepared pub) = true <;> simp [commitVersion, hv]
+  | catchUp => by_cases hv : valid (V.caughtUpOnto prepared pub f) = true <;> simp [commitVersion, hv]
+
+/-- **#3545, a stale commit publishes nothing**: another version was published between the load and the swap
+(`unchanged = false`), `validate` accepts, and the fit is not `Discarded`: the commit is refused with `Stale`, and
+what is published is still `now`, the other publisher's version, untouched. -/
+theorem commit_cas_stale {R : Type} (pub now prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn)
+    (c : IndexerCommit) (h : indexerFit prepared pub = c) (hc : ∀ w, c ≠ .discarded w)
+    (hv : valid (commitVersion pub prepared f c) = true) :
+    commitIndexerBatchE pub now prepared valid f false = (now, .error .stale) := by
+  cases c with
+  | discarded w => exact absurd rfl (hc w)
+  | same => simp [commitIndexerBatchE, h, commitVersion] at hv ⊢; simp [hv]
+  | swap => simp [commitIndexerBatchE, h, commitVersion] at hv ⊢; simp [hv]
+  | catchUp => simp [commitIndexerBatchE, h, commitVersion] at hv ⊢; simp [hv]
+
+/-- A refused version (`validate` fails) publishes nothing, whether or not another publisher slipped in:
+the validation refusal comes before the swap. -/
+theorem commit_cas_invalid {R : Type} (pub now prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn)
+    (c : IndexerCommit) (h : indexerFit prepared pub = c) (hc : ∀ w, c ≠ .discarded w)
+    (hv : valid (commitVersion pub prepared f c) = false) (u : Bool) :
+    commitIndexerBatchE pub now prepared valid f u = (now, .error .invalid) := by
+  cases c with
+  | discarded w => exact absurd rfl (hc w)
+  | same => simp [commitIndexerBatchE, h, commitVersion] at hv ⊢; simp [hv]
+  | swap => simp [commitIndexerBatchE, h, commitVersion] at hv ⊢; simp [hv]
+  | catchUp => simp [commitIndexerBatchE, h, commitVersion] at hv ⊢; simp [hv]
 
 /-- A refused version (`validate` fails) publishes nothing. -/
 theorem commit_invalid {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn)

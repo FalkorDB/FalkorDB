@@ -62,6 +62,7 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 | `no_lost_writes`, `history_linear` | Committed state = acknowledged writes, in order; history only grows | `Mvcc.lean` |
 | `one_commit_per_version`, `inline_write_ok` | Writes are serialized; since #3290 an inline write is never refused by a queued one | `Mvcc.lean` |
 | `delete_blocks_writes`, `fork_excludes_commit` | After `GRAPH.DELETE` no write can proceed; a fork never runs during a commit | `Mvcc.lean` |
+| `swap_overtaken_publishes_nothing`, `swap_unchanged_publishes` | #3545: a commit publishes by compare-and-swap against the pointer it loaded; another publisher slipping in refuses it (`Stale`) and nothing is published; with nothing in between it publishes | `Mvcc.lean` |
 | `refused_commit_publishes_nothing`, `current_not_stale` | A commit refused by `Graph::validate` publishes nothing and the version is dropped; a version made under the write lock is never refused as stale | `Mvcc.lean` |
 | `no_cycle`, `all_programs_ordered` | The lock order rules out deadlock, and every locking path follows it | `Locks.lean` |
 | `drain_no_lost_message` | The `write_loop` hand-off never strands a queued write (2 producers, exhaustive) | `Locks.lean` |

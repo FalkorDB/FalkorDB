@@ -52,6 +52,9 @@ escalate, release, mutate, commit, indexer batch, delete, fork):
 * #3290/#3657: `one_commit_per_version`, `checkFork_stale`, `checkFork_on_committed`,
   `inline_write_ok`, `stale_then_rerun`, `unchecked_fork_cannot_write` (every reachable state; `reader_cannot_commit` is its one-trace instance); refused commits
   (`refused_commit_publishes_nothing`, `stale_commit_publishes_nothing`, `commit_publishes`);
+  since #3545 the publish is a compare-and-swap (`Ev.swap`): `swap_overtaken_publishes_nothing` (a version
+  published between the load and the swap refuses the commit, nothing published), `swap_unchanged_publishes`,
+  `cas_refuses_overtaken_commit`, `cas_current_commit_publishes`;
   indexer batches keep the data version (`batch_keeps_forks`, `batch_then_check`,
   `batch_does_not_stale`, #3566).
 `Locks`:
