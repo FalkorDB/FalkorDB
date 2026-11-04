@@ -220,6 +220,61 @@ class testGraphPersistency():
 
             self.env.assertEquals(actual_result.result_set, expected_result)
 
+    # Verify that a graph's indices are correctly reconstructed when the
+    # PARALLEL_INDEXING configuration is enabled, i.e. when indices of every
+    # type across several labels / relationship-types are populated concurrently
+    # during RDB decode
+    def test_parallel_index_construction(self):
+        self.db.config_set('PARALLEL_INDEXING', 'yes')
+
+        try:
+            graph = self.db.select_graph('parallel_idx')
+
+            # populate several labels and a relationship-type
+            n = 2000
+            graph.query(f"""UNWIND range(1, {n}) AS i
+                            CREATE (:A {{id:i, v:i%100, s:'a_'+toString(i),
+                                         txt:'alpha beta '+toString(i),
+                                         emb:vecf32([toFloat(i%7), toFloat(i%5), toFloat(i%3)])}})""")
+            graph.query(f"UNWIND range(1, {n}) AS i CREATE (:B {{id:i, v:toFloat(i)*1.5, s:'b_'+toString(i)}})")
+            graph.query(f"UNWIND range(1, {n}) AS i CREATE (:C {{id:i, s:'c_'+toString(i)}})")
+            graph.query(f"MATCH (a:A {{id:1}}), (b:A) WHERE b.id <= {n} CREATE (a)-[:R {{w:b.id}}]->(b)")
+
+            # create indices of every type across labels and the edge
+            create_node_range_index(graph, 'A', 'v', 's')
+            create_node_fulltext_index(graph, 'A', 'txt')
+            create_node_vector_index(graph, 'A', 'emb', dim=3)
+            create_node_range_index(graph, 'B', 'v')
+            create_node_range_index(graph, 'C', 's')
+            create_edge_range_index(graph, 'R', 'w')
+            wait_for_indices_to_sync(graph)
+
+            # snapshot index-backed query results
+            def snapshot():
+                r1 = graph.ro_query("MATCH (a:A) WHERE a.v >= 50 AND a.v < 60 RETURN count(a)").result_set[0][0]
+                r2 = graph.ro_query("MATCH (b:B) WHERE b.v > 1500.0 RETURN count(b)").result_set[0][0]
+                r3 = graph.ro_query("CALL db.idx.fulltext.queryNodes('A', 'beta') YIELD node RETURN count(node)").result_set[0][0]
+                r4 = len(query_node_vector_index(graph, 'A', 'emb', 10, [1.0, 2.0, 3.0]).result_set)
+                r5 = graph.ro_query("MATCH ()-[e:R]->() WHERE e.w < 100 RETURN count(e)").result_set[0][0]
+                return (r1, r2, r3, r4, r5)
+
+            before     = snapshot()
+            idx_before = len(list_indicies(graph).result_set)
+
+            # reload: indices are reconstructed in parallel during decode
+            self.env.dumpAndReload()
+            wait_for_indices_to_sync(graph)
+
+            # every index is present and index-backed results are unchanged
+            self.env.assertEquals(len(list_indicies(graph).result_set), idx_before)
+            self.env.assertEquals(snapshot(), before)
+
+            # an index scan is still planned after reload
+            plan = str(graph.explain("MATCH (a:A) WHERE a.v >= 50 AND a.v < 60 RETURN a"))
+            self.env.assertIn("Index Scan", plan)
+        finally:
+            self.db.config_set('PARALLEL_INDEXING', 'no')
+
     # Verify multiple edges of the same relation between nodes A and B
     # are saved and restored correctly.
     def test_repeated_edges(self):
