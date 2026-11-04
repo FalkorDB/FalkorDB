@@ -105,7 +105,7 @@ pub(crate) struct IndexEntry<K: VersionedIndex> {
     /// Indexer batches applied to this index. Only a batch moves it, so a batch's copy one ahead
     /// of the published copy means no other batch committed on the index since the batch's
     /// version was made.
-    pub(crate) indexer_commits: u64,
+    indexer_commits: u64,
     /// While `Building`: how many entities the build's batches have read ([`IndexerBatch::read`]),
     /// which sizes the builder's next batch. Only a batch moves it, so it goes where the cursor
     /// goes: a writer's rebase takes the published copy's, and a batch's catch-up the batch's.
@@ -134,7 +134,7 @@ pub(crate) struct IndexerBatch<K: VersionedIndex> {
 /// An indexer batch of any kind, as the indexer's turn keeps it from the version it was applied
 /// to ([`Graph::indexer_prepare`]) to its commit
 /// ([`MvccGraph::commit_indexer_batch`](crate::graph::mvcc_graph::MvccGraph::commit_indexer_batch)).
-pub struct PreparedBatch(Prepared);
+pub(crate) struct PreparedBatch(Prepared);
 
 /// [`PreparedBatch`] by kind.
 enum Prepared {
@@ -157,7 +157,7 @@ impl PreparedBatch {
 /// How an indexer batch went in: what its commit published, given what committed since its
 /// version was made ([`Graph::indexer_fit`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IndexerCommit {
+pub(crate) enum IndexerCommit {
     /// Nothing committed since: the batch's version was published as it is.
     Same,
     /// Only other indexes' batches committed since: the batch's index was put into a new build
@@ -175,7 +175,7 @@ pub enum IndexerCommit {
 /// How an indexer batch caught up with writes committed after it was read
 /// ([`IndexerCommit::CatchUp`]). The commit takes the cheaper way, as [`REFRESH_COST`] decides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CatchUp {
+pub(crate) enum CatchUp {
     /// The entities the writers changed were refreshed in the batch's index.
     Refresh,
     /// The batch was inserted into the published index, without the entities the writers
@@ -216,7 +216,7 @@ fn catch_up_by(
 /// nothing, and the index's next batch starts from the published cursor. Nothing a writer
 /// committed is discarded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Discarded {
+pub(crate) enum Discarded {
     /// The index was dropped, or dropped and created again.
     Gone,
     /// Another batch committed on the same index since. The builder runs one chain of batches per
@@ -395,7 +395,7 @@ impl<K: VersionedIndex> IndexEntry<K> {
     /// Add an indexer batch's `work`, read from this same version, then move the cursor to `next`,
     /// or flip the index `Ready` when it is `None`, and count the `read` entities. `false`,
     /// changing nothing, if the index is not `Building`.
-    pub(crate) fn indexer_apply(
+    fn indexer_apply(
         &mut self,
         work: &mut K::Batch,
         next: Option<K::Cursor>,
@@ -773,29 +773,14 @@ impl Graph {
     }
 
     /// How many entities the batches of index `id` have read in this version
-    /// ([`IndexEntry::read`]), or `None` if it is not `Building`.
+    /// ([`IndexEntry::read`]), or `None` if it is not `Building`, so also whether it is.
     pub(crate) fn index_build_read(
         &self,
         id: &IndexId,
     ) -> Option<u64> {
         match id {
-            IndexId::Column(entity, key) => {
-                IndexColumn::entry(&self.falkordb_index, &(*entity, key.clone()))
-                    .filter(|entry| entry.is_building())
-                    .map(|entry| entry.read)
-            }
-        }
-    }
-
-    /// Whether index `id` is `Building` in this version.
-    pub(crate) fn index_building(
-        &self,
-        id: &IndexId,
-    ) -> bool {
-        match id {
-            IndexId::Column(entity, key) => {
-                IndexColumn::entry(&self.falkordb_index, &(*entity, key.clone()))
-                    .is_some_and(IndexEntry::is_building)
+            IndexId::Column(entity, (label, attr)) => {
+                self.falkordb_index.building_read(*entity, label, attr)
             }
         }
     }

@@ -300,7 +300,7 @@ impl MvccGraph {
     /// if another version was published while this commit ran (only a host publishing without the
     /// global lock lets that happen). Nothing is published.
     #[cfg(feature = "index-falkordb")]
-    pub fn commit_indexer_batch(
+    pub(crate) fn commit_indexer_batch(
         &self,
         prepared: &Arc<AtomicRefCell<Graph>>,
         batch: &PreparedBatch,
