@@ -13,10 +13,16 @@
 extern RSDoc *Index_IndexGraphEntity(Index idx,const GraphEntity *e,
 		const void *key, size_t key_len, uint *doc_field_count);
 
-void Index_IndexEdge
+// index an edge into the given index
+// when 'unsafe' is true the document is added without acquiring RediSearch's
+// global write lock; this is only valid during parallel population of disjoint,
+// not-yet-visible indices (RDB decode) where the caller guarantees single-writer
+// access to the spec
+static void _index_edge
 (
 	Index idx,
-	const Edge *e
+	const Edge *e,
+	bool unsafe
 ) {
 	ASSERT(e   != NULL);
 	ASSERT(idx != NULL);
@@ -36,8 +42,11 @@ void Index_IndexEdge
 
 	if(doc_field_count == 0) {
 		// entity doesn't possess any attributes which are indexed
-		// remove entity from index and delete document
-		Index_RemoveEdge(idx, e);
+		// during fresh (unsafe) population the index is empty so there is
+		// nothing to remove; avoid the lock-taking delete in that path
+		if(!unsafe) {
+			Index_RemoveEdge(idx, e);
+		}
 		RediSearch_FreeDocument(doc);
 		return;
 	}
@@ -48,8 +57,26 @@ void Index_IndexEdge
 			src_id, RSFLDTYPE_NUMERIC);
 	RediSearch_DocumentAddFieldNumber(doc, "range:_dest_id",
 			dest_id, RSFLDTYPE_NUMERIC);
-	int res = RediSearch_SpecAddDocument(rsIdx, doc);
+	int res = unsafe
+		? RediSearch_SpecAddDocumentUnsafe(rsIdx, doc)
+		: RediSearch_SpecAddDocument(rsIdx, doc);
 	ASSERT(res == REDISMODULE_OK);
+}
+
+void Index_IndexEdge
+(
+	Index idx,
+	const Edge *e
+) {
+	_index_edge(idx, e, false);
+}
+
+void Index_IndexEdgeUnsafe
+(
+	Index idx,
+	const Edge *e
+) {
+	_index_edge(idx, e, true);
 }
 
 void Index_RemoveEdge

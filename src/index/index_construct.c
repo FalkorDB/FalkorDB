@@ -25,7 +25,8 @@
 static void _Index_PopulateNodeIndex
 (
 	Index idx,
-	GraphContext *gc
+	GraphContext *gc,
+	bool unsafe       // skip RediSearch's global write lock (parallel decode)
 ) {
 	ASSERT (gc  != NULL) ;
 	ASSERT (idx != NULL) ;
@@ -76,7 +77,11 @@ static void _Index_PopulateNodeIndex
 		{
 			Node n;
 			Graph_GetNode(g, id, &n);
-			Index_IndexNode(idx, &n);
+			if(unsafe) {
+				Index_IndexNodeUnsafe(idx, &n);
+			} else {
+				Index_IndexNode(idx, &n);
+			}
 			indexed++;
 		}
 
@@ -118,7 +123,8 @@ static void _Index_PopulateNodeIndex
 static void _Index_PopulateEdgeIndex
 (
 	Index idx,
-	GraphContext *gc
+	GraphContext *gc,
+	bool unsafe       // skip RediSearch's global write lock (parallel decode)
 ) {
 	ASSERT (gc  != NULL) ;
 	ASSERT (idx != NULL) ;
@@ -188,7 +194,11 @@ static void _Index_PopulateEdgeIndex
 			e.relationID = schema_id;
 
 			Graph_GetEdge(g, edge_id, &e);
-			Index_IndexEdge(idx, &e);
+			if(unsafe) {
+				Index_IndexEdgeUnsafe(idx, &e);
+			} else {
+				Index_IndexEdge(idx, &e);
+			}
 
 			prev_src_id = src_id;
 			prev_dest_id = dest_id;
@@ -205,10 +215,13 @@ static void _Index_PopulateEdgeIndex
 }
 
 // constructs index
-void Index_Populate
+// when 'unsafe' is true the RediSearch global write lock is NOT taken per
+// document; see Index_PopulateUnsafe for the required caller guarantees
+static void _Index_Populate
 (
 	Index idx,
-	GraphContext *gc
+	GraphContext *gc,
+	bool unsafe
 ) {
 	ASSERT (gc  != NULL) ;
 	ASSERT (idx != NULL) ;
@@ -219,9 +232,29 @@ void Index_Populate
 	//--------------------------------------------------------------------------
 
 	if (Index_GraphEntityType(idx) == GETYPE_NODE) {
-		_Index_PopulateNodeIndex (idx, gc) ;
+		_Index_PopulateNodeIndex (idx, gc, unsafe) ;
 	} else {
-		_Index_PopulateEdgeIndex (idx, gc) ;
+		_Index_PopulateEdgeIndex (idx, gc, unsafe) ;
 	}
+}
+
+// constructs index (acquires RediSearch's global write lock per document)
+void Index_Populate
+(
+	Index idx,
+	GraphContext *gc
+) {
+	_Index_Populate (idx, gc, false) ;
+}
+
+// constructs index without acquiring RediSearch's global write lock
+// only valid for parallel population of disjoint, not-yet-registered indices
+// during RDB decode (single writer per spec, no concurrent query/GC/add)
+void Index_PopulateUnsafe
+(
+	Index idx,
+	GraphContext *gc
+) {
+	_Index_Populate (idx, gc, true) ;
 }
 
