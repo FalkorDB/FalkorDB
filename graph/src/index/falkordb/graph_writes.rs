@@ -24,7 +24,7 @@
 //! lookup hides only edges that are deleted and not yet reused.
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
@@ -34,25 +34,10 @@ use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId, TypeId};
 use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
-use super::falkordb_index::{BuildCursor, IndexColumn};
+use super::falkordb_index::{BuildCursor, IndexColumn, IndexKey};
 use super::numeric::EncodedTuples;
 use super::pending_writes::IndexChanges;
 use super::versioned::IndexId;
-
-/// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`. The native index then maintains node
-/// Range indexes alone, and the graph skips the redundant RediSearch feed on the write path.
-/// Read once and cached.
-///
-/// This exists only to benchmark the native write cost against RediSearch without the double
-/// write. It is not a shipping mode: it drops the string and geo entries RediSearch still
-/// serves.
-pub fn index_only_writes() -> bool {
-    static INDEX_ONLY: OnceLock<bool> = OnceLock::new();
-    *INDEX_ONLY.get_or_init(|| {
-        std::env::var("FALKORDB_INDEX_ONLY")
-            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-    })
-}
 
 // ---- Nodes ----
 
@@ -431,7 +416,8 @@ fn build_in_one_batch(
     attr: &Arc<String>,
 ) {
     g.falkordb_index.create_building(entity, label, attr);
-    g.indexer_prepare(
+    // Applied to `g` itself: a writer's version, published with the writer's changes.
+    let _ = g.indexer_prepare(
         &IndexId::Column(entity, (label.clone(), attr.clone())),
         usize::MAX,
     );
@@ -442,6 +428,61 @@ fn build_in_one_batch(
 // A `Building` column is filled by indexer batches. Each reads the label's next entities from the
 // cursor, at their values in a version, and adds them to the column in that same version. See
 // `BuildState`.
+
+/// Append to `out` the tuples `column` (index `(label, attr)` of `entity`) takes for each of `ids`
+/// as `g` has them, for a refresh to put in: none for an entity without the label or type in `g`,
+/// nor for a value the column does not index.
+///
+/// `ids` are already the column's: the entities whose tuple in it changed (`Written`), recorded by
+/// the writes that made `g` (a writer's fork, for its rebase; the published version, for a batch's
+/// catch-up). The label or type is still checked per id, because a removal is recorded too: a
+/// writer that removed the label, deleted the entity, or reused a deleted edge's id for an edge of
+/// another type recorded an entity `g` no longer has under it, though its attribute may still be
+/// set. In a catch-up a later writer can also undo an earlier one, and only `g` settles it. The
+/// tuples coming out need no check, and the refresh reads them itself.
+///
+/// The label or type and the attribute are looked up once per call.
+pub(crate) fn entity_tuples(
+    g: &Graph,
+    entity: EntityType,
+    (label, attr): &IndexKey,
+    ids: &RoaringTreemap,
+    column: &IndexColumn,
+    out: &mut EncodedTuples,
+) {
+    match entity {
+        EntityType::Node => {
+            let (Some(label_id), Some(idx)) =
+                (g.get_label_id(label), g.get_node_attribute_id(attr))
+            else {
+                return;
+            };
+            for id in ids {
+                let node = NodeId::from(id);
+                if g.node_has_label_id(node, label_id)
+                    && let Some(value) = g.get_node_attribute_by_idx(node, idx as u16)
+                {
+                    column.push_encoded(&value, id, out);
+                }
+            }
+        }
+        EntityType::Relationship => {
+            let (Some(type_id), Some(idx)) =
+                (g.get_type_id(label), g.get_relationship_attribute_id(attr))
+            else {
+                return;
+            };
+            for id in ids {
+                let edge = RelationshipId::from(id);
+                if g.edge_has_type_id(edge, type_id)
+                    && let Some(value) = g.get_relationship_attribute_by_idx(edge, idx as u16)
+                {
+                    column.push_encoded(&value, id, out);
+                }
+            }
+        }
+    }
+}
 
 /// Index population after an RDB load: build every column that a population snapshot of
 /// `label` covers, as CREATE INDEX does ([`create_index`]). `fields` maps each attribute to its

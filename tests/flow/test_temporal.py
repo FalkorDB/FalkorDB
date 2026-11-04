@@ -158,6 +158,19 @@ class testTemporalDate(FlowTestsBase):
         self.env.assertEqual(dayOfQuarter, 21)
         self.env.assertEqual(ordinalDay, 295)
 
+    # years outside 0..9999 keep all their digits and their sign
+    def test_date_to_string_extended_years(self):
+        q = """RETURN toString(date({year: 12345})),
+                      toString(date('2020-01-01') + duration({years: 10000})),
+                      toString(date({year: -5})),
+                      toString(date({year: 5})),
+                      toString(localdatetime('2020-01-01T10:20:30') + duration({years: 300000})),
+                      toString(localdatetime({year: -5, month: 3, day: 4, hour: 5}))"""
+        actual = self.graph.query(q).result_set[0]
+        self.env.assertEqual(actual, ['12345-01-01', '12020-01-01', '-0005-01-01',
+                                      '0005-01-01', '302020-01-01T10:20:30',
+                                      '-0005-03-04T05:00:00'])
+
     def test_date_to_from_string(self):
         test_cases = [
             ({'year': 1984},                                   '1984-01-01'),
@@ -418,6 +431,51 @@ class testTemporalLocalDateTime(FlowTestsBase):
         self.env.assertTrue(ge)
         self.env.assertTrue(le)
         self.env.assertTrue(e)
+
+    def test_date_arithmetic_year_above_9999(self):
+        # a year past 9999 keeps every digit, as in C (%Y); it used to lose the
+        # leading digits (1e9 days gave 9933-01-03)
+        cases = [
+            ("date('2026-01-01') + duration({days: 1000000000})", '2739933-01-03'),
+            ("date('9999-12-31') + duration({days: 1})", '10000-01-01'),
+            ("date('9999-12-31') + duration({years: 20})", '10019-12-31'),
+        ]
+        for expr, expected in cases:
+            # toString only: the Python client cannot decode years above 9999
+            res = self.graph.query(f"RETURN toString({expr})")
+            self.env.assertEqual(res.result_set[0][0], expected)
+
+        # a leap-day-aware bound: this one still fits the i32 year
+        res = self.graph.query(
+            "RETURN toString(date('1970-01-01') + duration({days: 783831531156}))")
+        self.env.assertEqual(res.result_set[0][0], '2146059811-06-15')
+
+        # the endpoints: an intermediate year just past the range is fine when
+        # the days that follow bring the date back inside it
+        for expr, expected in [
+            ("date('1970-01-01') + duration({days: 784350846290}) - duration({days: -1})",
+             '2147481647-12-31'),
+            ("date('1970-01-01') + duration({days: -784352284981}) + duration({days: -1})",
+             '-2147481647-01-01'),
+        ]:
+            res = self.graph.query(f"RETURN toString({expr})")
+            self.env.assertEqual(res.result_set[0][0], expected)
+
+        # beyond what the year can hold is an error, not a wrapped date --
+        # also when it is reached by repeated addition or subtraction
+        for expr in [
+            "date('2026-01-01') + duration({days: 3000000000000})",
+            "date('1970-01-01') + duration({days: 438291000000}) + duration({days: 438291000000})",
+            "date('1970-01-01') - duration({days: 438291000000}) - duration({days: 438291000000})",
+            "date('2026-01-01') + duration({days: 783000000000}) + duration({years: 10000000})",
+            "date('1970-01-01') + duration({days: 784350846291}) + duration({days: 1})",
+            "date('1970-01-01') + duration({days: -784352284982}) + duration({days: -1})",
+        ]:
+            try:
+                self.graph.query(f"RETURN toString({expr})")
+                self.env.assertFalse(True)
+            except ResponseError as e:
+                self.env.assertIn("out of range", str(e))
 
 class testTemporalDuration(FlowTestsBase):
     def __init__(self):
