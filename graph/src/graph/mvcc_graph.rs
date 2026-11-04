@@ -148,6 +148,38 @@ impl MvccGraph {
         self.graph.borrow().version + 1 != fork.borrow().version
     }
 
+    /// Bring a writer's `fork`, which is not stale ([`Self::is_stale`]), onto the indexer batches
+    /// published since it was made. A batch changes no data, so what the writer read still holds:
+    /// each index the batches moved on becomes the published copy, with their progress, and what
+    /// the fork wrote in it is re-applied (`Graph::rebase_onto_indexer_batches`).
+    ///
+    /// For a writer that forked before it held the write lock, as it escalates, right after
+    /// [`Self::is_stale`]: what it publishes and reads from then on has the batches' progress, and
+    /// nothing else publishes before its own commit.
+    ///
+    /// # Errors
+    ///
+    /// [`CommitError::Stale`] if `fork` is borrowed, which no escalating writer's is. The write
+    /// runs again.
+    pub fn rebase_onto_indexer_batches(
+        &self,
+        fork: &AtomicRefCell<Graph>,
+    ) -> Result<(), CommitError> {
+        #[cfg(feature = "index-falkordb")]
+        {
+            // A fork that is borrowed, which no escalating writer's is, is refused rather than
+            // panicked on.
+            let Ok(mut fork) = fork.try_borrow_mut() else {
+                return Err(CommitError::Stale);
+            };
+            fork.rebase_onto_indexer_batches(&self.graph.borrow());
+        }
+        // Without the native index there are no indexer batches to rebase onto.
+        #[cfg(not(feature = "index-falkordb"))]
+        let _ = fork;
+        Ok(())
+    }
+
     /// Publish `new_graph` as the current version.
     ///
     /// Checks before touching anything, so a refusal leaves the published
@@ -177,11 +209,14 @@ impl MvccGraph {
     /// - nothing: `prepared` is published as it is;
     /// - only other indexes' batches: `batch`'s index is put into a new build version of the
     ///   published one, which is published ([`Graph::with_batch_index`]);
-    /// - `batch`'s index was dropped or created again, or a writer committed, or another batch
-    ///   committed on the same index: nothing is published, and the index's next batch starts from
-    ///   its published cursor. Another batch on the index is a bug in the builder's one chain per
-    ///   index ([`AnotherBatch`](crate::index::falkordb::versioned::Discarded::AnotherBatch)),
-    ///   which the caller reports.
+    /// - writers, and no other batch on `batch`'s index: its index as `prepared` has it, caught up
+    ///   on the entities the writers changed in it, is put into a new build version of the
+    ///   published one, which is published ([`Graph::caught_up_onto`]);
+    /// - `batch`'s index was dropped or created again, or another batch committed on the same
+    ///   index: nothing is published, and the index's next batch starts from its published cursor.
+    ///   Another batch on the index is a bug in the builder's one chain per index
+    ///   ([`AnotherBatch`](crate::index::falkordb::versioned::Discarded::AnotherBatch)), which the
+    ///   caller reports.
     ///
     /// The commit changes no graph data and keeps the data version, so it does not make a writer's
     /// fork stale ([`Self::is_stale`]).
@@ -202,6 +237,11 @@ impl MvccGraph {
                 prepared
                     .borrow()
                     .with_batch_index(&self.graph.borrow(), batch),
+            )),
+            IndexerCommit::CatchUp(_) => Arc::new(AtomicRefCell::new(
+                prepared
+                    .borrow()
+                    .caught_up_onto(&self.graph.borrow(), batch),
             )),
             IndexerCommit::Discarded(_) => return Ok(fit),
         };
@@ -225,10 +265,12 @@ impl MvccGraph {
         debug_assert!(writer || self.graph.borrow().version == new_graph.borrow().version);
         new_graph.borrow().validate()?;
         #[cfg(feature = "index-falkordb")]
-        new_graph
-            .borrow_mut()
-            .falkordb_index
-            .set_batches_published(&self.graph.borrow().falkordb_index, !writer);
+        {
+            let mut new = new_graph.borrow_mut();
+            new.falkordb_index
+                .set_batches_published(&self.graph.borrow().falkordb_index, !writer);
+            new.falkordb_index.publish();
+        }
 
         // Check if schema changed (new labels, relationship types, or attributes)
         // Single borrow for old graph to collect all schema counts

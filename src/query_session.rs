@@ -240,7 +240,8 @@ impl QuerySession {
         matches!(*self.mode.borrow(), Some(Mode::Writer { .. }))
     }
 
-    /// Check the fork made in reader mode against the published graph. Writer
+    /// Check the fork made in reader mode against the published graph, and
+    /// rebase it onto the indexer batches published since it was made. Writer
     /// mode only, so nothing can commit between this check and this session's
     /// own commit.
     fn check_fork(&self) -> Result<(), WriteAbort> {
@@ -248,7 +249,17 @@ impl QuerySession {
         let Version::Unchecked(fork) = &*state else {
             return Ok(());
         };
-        if self.with_graph(|tg| tg.graph.is_stale(fork)) {
+        let checked = self.with_graph(|tg| {
+            if tg.graph.is_stale(fork) {
+                return Err(CommitError::Stale);
+            }
+            // An indexer batch changes no data, so it leaves the fork current,
+            // but the fork takes its index progress now: the index documents
+            // this query publishes, and the indexes it reads from here on,
+            // have it.
+            tg.graph.rebase_onto_indexer_batches(fork)
+        });
+        if checked.is_err() {
             *state = Version::Stale;
             return Err(WriteAbort::Stale);
         }

@@ -34,7 +34,7 @@ use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId, TypeId};
 use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
-use super::falkordb_index::{BuildCursor, IndexColumn};
+use super::falkordb_index::{BuildCursor, IndexColumn, IndexKey};
 use super::numeric::EncodedTuples;
 use super::pending_writes::IndexChanges;
 use super::versioned::IndexId;
@@ -428,6 +428,51 @@ fn build_in_one_batch(
 // A `Building` column is filled by indexer batches. Each reads the label's next entities from the
 // cursor, at their values in a version, and adds them to the column in that same version. See
 // `BuildState`.
+
+/// Append to `out` the tuples `column` (index `(label, attr)` of `entity`) takes for each of `ids`
+/// as `g` has them: none for an entity without the label or type in `g`, which a deleted one, or
+/// one `g` never had, is, nor for a value the column does not index. A refresh reads them from two
+/// versions, what an entity had to come out and what it has to go in, so each version answers for
+/// itself: an entity one deleted, or an id one reused, is another's.
+pub(crate) fn entity_tuples(
+    g: &Graph,
+    entity: EntityType,
+    (label, attr): &IndexKey,
+    ids: &RoaringTreemap,
+    column: &IndexColumn,
+    out: &mut EncodedTuples,
+) {
+    match entity {
+        EntityType::Node => {
+            let (Some(label_id), Some(idx)) =
+                (g.get_label_id(label), g.get_node_attribute_id(attr))
+            else {
+                return;
+            };
+            for id in ids {
+                let node = NodeId::from(id);
+                if g.node_has_label_id(node, label_id)
+                    && let Some(value) = g.get_node_attribute_by_idx(node, idx as u16)
+                {
+                    column.push_encoded(&value, id, out);
+                }
+            }
+        }
+        EntityType::Relationship => {
+            let Some(idx) = g.get_relationship_attribute_id(attr) else {
+                return;
+            };
+            for id in ids {
+                let edge = RelationshipId::from(id);
+                if g.edge_has_type(edge, label)
+                    && let Some(value) = g.get_relationship_attribute_by_idx(edge, idx as u16)
+                {
+                    column.push_encoded(&value, id, out);
+                }
+            }
+        }
+    }
+}
 
 /// Index population after an RDB load: build every column that a population snapshot of
 /// `label` covers, as CREATE INDEX does ([`create_index`]). `fields` maps each attribute to its
