@@ -7,6 +7,7 @@ import FalkorExprSemantics.BFS
 import FalkorExprSemantics.FnRegistry
 import FalkorCore.Int64
 import FalkorCore.Float
+import FalkorCore.Range
 /-
 # Expression evaluation: the columnar path agrees with the per-row path, and
 # where the per-row path itself departs from openCypher / C FalkorDB
@@ -140,7 +141,7 @@ and with counterexamples, each reproduced against the real engine
 | `containsGo`, `contains` | `impl Contains for ThinVec<Value>` (`value.rs:1762`), used by `ExprIR::In` (`eval.rs:774`) |
 | `applyPow`, `powStep`, `powFold` | `apply_pow` (`math.rs:328`); `ExprIR::Pow` in `eval_compound` (`eval.rs:828-834`, `reduce` calling `apply_pow(acc?, value?)`) |
 | `pow_constant_not_true`  | `is_constant_true` (`graph/src/planner/optimizer/eliminate_true_filters.rs:48`) |
-| `rangeIter` / `rangeIterRel` | `RangeIter::next` (`eval.rs:114-127`), debug / release build |
+| `FalkorCore.rangeIter` / `rangeIterRel` (`core/FalkorCore/Range.lean`, shared with functions_str_list) | `RangeIter::next` (`eval.rs:114-127`), debug / release build |
 | `rangeIterSizeHint`      | `RangeIter::size_hint` (`eval.rs:130-133`, `usize::try_from(remaining).unwrap_or(usize::MAX)`) |
 | `rangeLen`, `rangeList`  | `length` in `eval_iter_expr` (`eval.rs:1224-1233`); the eager `range()` list |
 | `rangeMath`              | `range()` (`graph/src/runtime/functions/math.rs:251`) |
@@ -1630,54 +1631,9 @@ def rangeMath (up : Bool) (stepAbs endv : Int) : Nat → Int → List Int
 
 /-! ## `UNWIND range(..)` after #2899: exactly the eager range, never overflows -/
 
-/-- `RangeIter::next` after #2899 (`eval.rs:114-127`), debug build (checked `+=`):
-`remaining` counts the elements still due and `current` advances only while
-another one is (`if self.remaining > 0 { self.current += self.step }`). -/
-def rangeIter (step : Int) : Nat → Int → Except String (List Int)
-  | 0, _ => .ok []
-  | r + 1, cur =>
-    if r = 0 then .ok [cur]
-    else if I64MIN ≤ cur + step ∧ cur + step ≤ I64MAX then
-      (rangeIter step r (cur + step)).map (cur :: ·)
-    else .error "attempt to add with overflow"
-
-/-- The same in a release build (wrapping `+=`). -/
-def rangeIterRel (step : Int) : Nat → Int → List Int
-  | 0, _ => []
-  | r + 1, cur => if r = 0 then [cur] else cur :: rangeIterRel step r (wrap (cur + step))
-
-/-- `length` as `eval_iter_expr` (`eval.rs:1224-1233`) computes it (in `i128`/`u128`,
-so exactly): `|end - start| / |step| + 1`; it becomes `remaining`. -/
-def rangeLen (a e s : Int) : Nat := (e - a).natAbs / s.natAbs + 1
-
-/-- The eager `range()` list: `start + k*step` for `k < n`. -/
-def rangeList (a s : Int) (n : Nat) : List Int := (List.range n).map fun (k : Nat) => a + (k : Int) * s
-
-theorem rangeIter_of_inRange (step : Int) :
-    ∀ (r : Nat) (cur : Int), (∀ k : Nat, k < r → InI64 (cur + k * step)) →
-      rangeIter step r cur = .ok (rangeList cur step r) ∧
-      rangeIterRel step r cur = rangeList cur step r
-  | 0, _, _ => ⟨rfl, rfl⟩
-  | r + 1, cur, h => by
-    by_cases hr : r = 0
-    · subst hr; simp [rangeIter, rangeIterRel, rangeList]
-    · have h1 : InI64 (cur + step) := by have := h 1 (by omega); simpa using this
-      have ih := rangeIter_of_inRange step r (cur + step) (fun k hk => by
-        have := h (k + 1) (by omega)
-        have e : cur + step + (k : Int) * step = cur + ((k + 1 : Nat) : Int) * step := by
-          push_cast; rw [Int.add_mul]; omega
-        rwa [e])
-      have hl : rangeList cur step (r + 1) = cur :: rangeList (cur + step) step r := by
-        simp only [rangeList, List.range_succ_eq_map, List.map_cons, List.map_map]
-        congr 1
-        · simp
-        · apply List.map_congr_left; intro k _
-          simp only [Function.comp]; push_cast; rw [Int.add_mul]; omega
-      have hw : wrap (cur + step) = cur + step := wrap_id h1
-      have h1' : I64MIN ≤ cur + step ∧ cur + step ≤ I64MAX := h1
-      refine ⟨?_, ?_⟩
-      · simp only [rangeIter, hr, ↓reduceIte, h1', and_self, ih.1, hl]; rfl
-      · simp only [rangeIterRel, hr, ↓reduceIte, hw, ih.2, hl]
+/-! `rangeLen`, `rangeList`, `rangeIter` (debug), `rangeIterRel` (release) and `rangeIter_of_inRange`
+are the shared model in `proofs/core` (`FalkorCore/Range.lean`; `open FalkorCore`): `RangeIter::next`
+after #2899 (`eval.rs:114-127`), `length` as `eval_iter_expr` computes it (`eval.rs:1224-1233`). -/
 
 /-- Arithmetic facts about the element count `length` the caller computes. -/
 theorem rangeLen_bounds (a e s : Int) (hs : s ≠ 0)

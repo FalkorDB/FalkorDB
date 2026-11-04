@@ -6,6 +6,7 @@
 - the IEEE float model;
 - `i64` range and wrap-around arithmetic;
 - integer orderings;
+- the lazy `UNWIND range()` iterator (`RangeIter::next`, shared by `expr_semantics` and `functions_str_list`);
 - the generic laws a comparator must satisfy to be a valid sort order.
 
 Each of these now has one definition, so a fix to the float model, for example, reaches every project that imports `FalkorCore`. A project that keeps its own abstraction does not get it automatically: `columnar` has its own `FloatModel` class and connects to `core` only through `Columnar/CoreBridge.lean`.
@@ -116,6 +117,7 @@ None. `core` models no Rust function on its own, so it can't find a bug by itsel
 | `Value.lean` | `V F` (the engine `Value`, all 16 variants), `V.order`, `V.name`, `isNull`/`isNum`/`isList` |
 | `Float.lean` | `F`, `F.nkey`, `fpcmp`, `Flag`, `cmpF`, `roundF` (`i as f64`), `bits64`/`bits32`, `asI64`, `diffZero` |
 | `Int64.lean` | `I64MIN`/`I64MAX`, `InI64`, `wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `satI64`, `w` |
+| `Range.lean` | `rangeLen`, `rangeList`, `rangeIter` / `rangeIterRel` (the lazy `UNWIND range()` iterator after #2899, debug and release build), `rangeIter_of_inRange` |
 | `Order.lean` | `cmpI`, `cmpN`, `cmpB` (`Ord::cmp` on `i64`/`usize`/`bool`), `cmp3`, and their swap/transitivity lemmas |
 | `Laws.lean` | `Lw`, `thn`, `lexA`, `zipNe` and their laws; `cmp3_lw` |
 | `COVERAGE.tsv` | Header only: `core` owns no Rust functions |
@@ -134,8 +136,8 @@ path = "../core"
 |---|---|
 | [`value_order`](../value_order) | all of `FalkorCore` (`F`, `fpcmp`, i64 helpers, `Lw`/`thn`/`lexA`) |
 | [`value_math`](../value_math) | `Value` (`V F`), `Int64` |
-| [`expr_semantics`](../expr_semantics) | `Int64`, `Float` (the `Flag` type) |
-| [`functions_str_list`](../functions_str_list) | `Int64` |
+| [`expr_semantics`](../expr_semantics) | `Int64`, `Float` (the `Flag` type), `Range` |
+| [`functions_str_list`](../functions_str_list) | `Int64`, `Range` |
 | [`native_index`](../native_index) | `Float` |
 
 ## Coverage

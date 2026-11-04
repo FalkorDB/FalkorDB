@@ -115,7 +115,7 @@ Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDI
 | `FnRegistry.lean` | #2724: the registered function names vs. C's user-callable built-ins |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
-Shared foundations (`wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `InI64`, `I64MIN`/`I64MAX`, `wrap_id`) come from [`../core`](../core) through a Lake path dependency.
+Shared foundations (`wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `InI64`, `I64MIN`/`I64MAX`, `wrap_id`, and the lazy range iterator `rangeLen`/`rangeList`/`rangeIter`/`rangeIterRel`/`rangeIter_of_inRange`, also used by `functions_str_list`) come from [`../core`](../core) through a Lake path dependency.
 
 ## Coverage
 

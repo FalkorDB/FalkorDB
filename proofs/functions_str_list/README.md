@@ -126,7 +126,7 @@ This project has no CONDITIONAL rows. The string pool contract (`intern`) is dis
 | `Misc.lean` | The remaining `string.rs`, `list.rs` and `internal.rs` functions: `STARTS WITH`/`ENDS WITH`/`CONTAINS`, `isNull`, string interning, `toStringList`, `matchRegEx`, `list.sort`, `list.dedup`, registration |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
-Shared foundations (`InI64`, `wrap`, `I64MIN`/`I64MAX`) come from [`../core`](../core) through a Lake path dependency.
+Shared foundations (`InI64`, `wrap`, `I64MIN`/`I64MAX`, and the lazy range iterator `rangeLen`/`rangeList`/`rangeIter`/`rangeIter_of_inRange`, also used by `expr_semantics`) come from [`../core`](../core) through a Lake path dependency.
 
 ## Coverage
 

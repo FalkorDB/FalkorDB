@@ -1,6 +1,7 @@
 import FalkorStrList.Misc
 import FalkorStrList.Entity
 import FalkorCore.Int64
+import FalkorCore.Range
 /-
 # String and list functions: totality and spec agreement
 
@@ -27,7 +28,7 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 | `insertNorm` | `list.insert` / `list.insertListElements`, `list.rs:231-269`, `list.rs:282-330` |
 | `head`, `last`, `tail`, `size`, reverse | `list.rs:61-150` |
 | `rangeLen`, `rangeElems`, `range` | eager `range`, `math.rs:251-308` |
-| `rangeIter` | `RangeIter::next` after #2899, `eval.rs:112-128`, built at `eval.rs:1264-1269` (debug: checked `+=`) |
+| `FalkorCore.rangeIter` (`core/FalkorCore/Range.lean`, shared with expr_semantics) | `RangeIter::next` after #2899, `eval.rs:112-128`, built at `eval.rs:1264-1269` (debug: checked `+=`) |
 | `evalQuantifier`, `quant`, `kand`/`kor`/`knot` | `eval_quantifier`, `eval.rs:1665-1711`; loop `eval.rs:1003-1041` |
 | `containsLoop`, `contains` | `Contains for ThinVec<Value>`, `value.rs:1876-1899` (via `list_contains`, `eval.rs:1761`) |
 | `comprehensionRust` / `comprehensionSpec` | `ExprIR::ListComprehension` after #2954, `eval.rs:1042-1085` (literal/`range` source via `eval_iter_expr`, else `eval_node`) |
@@ -521,17 +522,12 @@ theorem size_concat (a b : List α) : (a ++ b).length = a.length + b.length := L
 
 /-! ## Eager `range(start, end, step)` (`math.rs:251-308`) -/
 
-/-- `math.rs:251-308` (the length computation): `|end - start| / |step| + 1`, computed in `i128`, so no
-overflow is possible (it is plain `Int` arithmetic here). -/
-def rangeLen (start stop step : Int) : Nat :=
-  ((if stop ≥ start then stop - start else start - stop).natAbs / step.natAbs) + 1
-
-/-- `(start..=end).step_by(step)` / `(end..=start).rev().step_by(|step|)`:
-std's `step_by` on an inclusive range yields `start + k*step` while it stays
-inside the range; it never computes an element outside it, so it cannot
-overflow. That is modelled directly as the element list. -/
-def rangeElems (start stop step : Int) : List Int :=
-  (List.range (rangeLen start stop step)).map (fun (k : Nat) => start + (k : Int) * step)
+/-! `rangeLen` (`math.rs:251-308`, the length `|end - start| / |step| + 1`, computed in `i128`, so no
+overflow is possible) and `rangeList` (the `step_by` elements `start + k*step`) are the shared
+definitions in `proofs/core` (`FalkorCore/Range.lean`). `(start..=end).step_by(step)` yields
+`start + k*step` while it stays inside the range and never computes an element outside it, so the
+eager list is modelled directly. -/
+def rangeElems (start stop step : Int) : List Int := rangeList start step (rangeLen start stop step)
 
 inductive ROut where
   | ok (l : List Int)
@@ -551,9 +547,10 @@ theorem range_elems_between (start stop step : Int) (hs : step ≠ 0)
     (hdir : ¬ ((start > stop ∧ step > 0) ∨ (start < stop ∧ step < 0)))
     (x : Int) (hx : x ∈ rangeElems start stop step) :
     min start stop ≤ x ∧ x ≤ max start stop := by
-  unfold rangeElems rangeLen at hx
+  unfold rangeElems rangeList at hx
   simp only [List.mem_map, List.mem_range] at hx
   obtain ⟨k, hk, rfl⟩ := hx
+  rw [rangeLen_eq_cases] at hk
   have hk' : k ≤ (if stop ≥ start then stop - start else start - stop).natAbs / step.natAbs := by omega
   have hmul : k * step.natAbs ≤ (if stop ≥ start then stop - start else start - stop).natAbs :=
     (Nat.le_div_iff_mul_le (by omega)).mp hk'
@@ -613,42 +610,8 @@ Before #2899 the constructor stored `step: step.unsigned_abs() as i64` (`RangeIt
 
 /-! ## Lazy `RangeIter::next` after #2899 (`eval.rs:112-128`)
 
-`eval_iter_expr` (`eval.rs:1264-1269`) builds `RangeIter { current: start, step,
-remaining: length }` with the signed `step` (no negation any more) and the same
-`length` as the eager `range` (`rangeLen`). `next` yields `current`, decrements
-`remaining` and advances `current += step` only while `remaining > 0`. Debug build:
-the `+=` is checked. -/
-
-def rangeIter (step : Int) : Nat → Int → Except String (List Int)
-  | 0, _ => .ok []
-  | r + 1, cur =>
-    if r = 0 then .ok [cur]
-    else if InI64 (cur + step) then (rangeIter step r (cur + step)).map (cur :: ·)
-    else .error "attempt to add with overflow"
-
-/-- The lazy iterator is the element list as long as every element it is due to
-yield is an `i64` (it never computes the one past the last). -/
-theorem rangeIter_of_inRange (step : Int) :
-    ∀ (r : Nat) (cur : Int), (∀ k : Nat, k < r → InI64 (cur + k * step)) →
-      rangeIter step r cur = .ok ((List.range r).map fun (k : Nat) => cur + (k : Int) * step)
-  | 0, _, _ => rfl
-  | r + 1, cur, h => by
-    by_cases hr : r = 0
-    · subst hr; simp [rangeIter]
-    · have h1 : InI64 (cur + step) := by have := h 1 (by omega); simpa using this
-      have ih := rangeIter_of_inRange step r (cur + step) (fun k hk => by
-        have := h (k + 1) (by omega)
-        have e : cur + step + (k : Int) * step = cur + ((k + 1 : Nat) : Int) * step := by
-          push_cast; rw [Int.add_mul]; omega
-        rwa [e])
-      have hl : ((List.range (r + 1)).map fun (k : Nat) => cur + (k : Int) * step) =
-          cur :: ((List.range r).map fun (k : Nat) => cur + step + (k : Int) * step) := by
-        simp only [List.range_succ_eq_map, List.map_cons, List.map_map]
-        congr 1
-        · simp
-        · apply List.map_congr_left; intro k _
-          simp only [Function.comp]; push_cast; rw [Int.add_mul]; omega
-      simp only [rangeIter, hr, ↓reduceIte, h1, ih, hl]; rfl
+The iterator model `rangeIter` (debug build, checked `+=`) and `rangeIter_of_inRange` are in
+`proofs/core` (`FalkorCore/Range.lean`), shared with `expr_semantics`. -/
 
 /-- **#2894 / #2899, fixed**: the iterator `eval_iter_expr` builds yields exactly the list
 the eager `range(a, b, step)` returns whenever that list is non-empty (the empty, `step = 0`
@@ -667,7 +630,7 @@ theorem rangeIter_eq_range (start stop step : Int) (h1 : InI64 start) (h2 : InI6
       · cases hr
       · cases hr
         rename_i hs hdir _
-        apply rangeIter_of_inRange
+        refine (rangeIter_of_inRange step _ start ?_).1
         intro k hk
         have hx : start + k * step ∈ rangeElems start stop step := by
           unfold rangeElems; exact List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩
@@ -700,7 +663,7 @@ theorem rangeLazy_eq_range (start stop step : Int) (h1 : InI64 start) (h2 : InI6
   by_cases hl : rangeLen start stop step > 4294967295
   · simp [hs, hd, hl]
   have key : rangeIter step (rangeLen start stop step) start = .ok (rangeElems start stop step) := by
-    apply rangeIter_of_inRange
+    refine (rangeIter_of_inRange step _ start ?_).1
     intro k hk
     have hx : start + k * step ∈ rangeElems start stop step := by
       unfold rangeElems; exact List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩
