@@ -103,14 +103,14 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   holding exactly the tuples of the entities its version puts in it still does after a refresh over a set
   outside which the two versions agree (`Frame`); `rebase_progress` (a rebased fork has the published copy's
   generation, commit count and cursor: the batches' progress is kept), `rebase_keeps_writes`,
-  `rebase_index_spec`, `rebase_inv`, `catchUp_spec`, `catchUp_inv`, `commit_catchUp`, `V.rebased_keeps_data`
+  `rebase_index_spec`, `rebase_inv`, `catchUp_spec`, `catchUp_inv`, `insert_inv` (the Insert path, #3568), `fit_catchUp_how`, `commit_catchUp`, `commit_catchUp_refresh`/`_insert`, `V.rebased_keeps_data`
   (no data version change, so a rebased fork is not stale); `writerRecord_proj`/`indexerApply_proj`/
   `publish_proj` (the pre-#3567 model is the projection of the new one), `writerRecord_records` (every change's
   entity is recorded). The gap #3567 closed (an unrebased writer's commit published the *older* commit count, so the
   next batch was judged `AnotherBatch`; model-only, not reproduced live; see FINDINGS) is covered by
   `rebased_commit_keeps_chain` and `rebased_batch_fits`. `Frame` (outside the
   written set, the two versions agree on what each entity contributes and where it sits) is assumed: the three
-  invariant theorems (`refresh_inv`, `rebase_inv`, `catchUp_inv`) are conditional on it, the rows rest on the unconditional specs.
+  invariant theorems (`refresh_inv`, `rebase_inv`, `catchUp_inv`, `insert_inv`) are conditional on it, the rows rest on the unconditional specs.
 - **#3319, the CCH contract skeleton** (`Cch.lean`): `Csr::is_well_formed` is exactly the type's shape rules
   (`isWellFormed_iff`), `is_symmetric_simple` exactly a simple undirected adjacency (`isSymmetricSimple_iff`,
   `_any_bs`), `row` never panics on a well-formed `Csr` (`row?_isSome_of_wf`), `CchIndexDef::new` makes equal

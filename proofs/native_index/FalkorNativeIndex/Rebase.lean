@@ -547,16 +547,93 @@ theorem indexerInsert_mem (c : IndexColumn) (e : EntityType) (published : Ver) (
     simp only [IndexColumn.indexerInsert, IndexColumn.addEncoded, IndexColumn.ix, addEncoded_spec,
       List.mem_append, List.mem_filter, entityTuples_spec, hc]
 
-/-- `Graph::insert_index` (`versioned.rs:538-575`) on a `V`: `published`'s copy of the index (generation
-    included) with the batch inserted (`g o p` is the column `indexer_insert` leaves), carrying the batch's state
-    and commit count. An index that is no longer `Building` in `published` is left as it is. -/
-def V.insertedOnto {R : Type} (ours pub : V R) (g : SE → SE → IndexColumn) : V R :=
-  match ours.entry, pub.newBuildVersion.entry with
-  | some o, some p =>
-    if p.en.isBuilding then
-      { pub.newBuildVersion with entry := some ⟨⟨g o p, o.en.state⟩, p.generation, o.commits⟩ }
-    else pub.newBuildVersion
-  | _, _ => pub.newBuildVersion
+/-- Whether version `v` places `id` at or after the cursor `frm` (the lower end of `placed_in`). -/
+def notBefore (frm : BuildCursor) (v : Ver) (id : Nat) : Bool := (v.place id).any (fun pl => !pl.precedes frm)
+
+/-- The state a batch leaves: `Ready` if it ran out of entities (`next = None`), else `Building next`. -/
+def stOf (next : Option BuildCursor) : BuildState :=
+  match next with | none => .ready | some n => .building n
+
+/-- `placed_in` on a relationship column is the place test `[frm, next)`: `notBefore frm` and `below`. -/
+theorem placedIn_edge_spec (to : Ver) (ws : List Nat) (frm : BuildCursor) (next : Option BuildCursor) (id : Nat) :
+    id ∈ placedIn .relationship to ws (some frm) next ↔
+      id ∈ ws ∧ notBefore frm to id = true ∧ below (stOf next) to id = true := by
+  simp only [placedIn, List.mem_filter, notBefore, stOf]
+  cases next with
+  | none => simp [below]
+  | some n => simp only [below]; generalize to.place id = o; cases o <;> simp
+
+/-- `placed_in` on a node column (cursors are node ids, a node's place is its own id) is the same. -/
+theorem placedIn_node_spec (to : Ver) (ws : List Nat) (f : Nat) (next : Option Nat)
+    (hk : ∀ id, to.place id = some (.node id)) (id : Nat) :
+    id ∈ placedIn .node to ws (some (.node f)) (next.map BuildCursor.node) ↔
+      id ∈ ws ∧ notBefore (.node f) to id = true ∧ below (stOf (next.map BuildCursor.node)) to id = true := by
+  simp only [placedIn, List.mem_filter, notBefore, stOf, below, hk]
+  cases next <;> simp [BuildCursor.precedes]
+
+theorem indexerInsert_numeric (ix : NumericIndex) (e : EntityType) (published : Ver) (batch : EncodedTuples)
+    (written : List Nat) (frm : BuildCursor) (next : Option BuildCursor) :
+    ∃ ix', (IndexColumn.numeric ix).indexerInsert e published batch written frm next = .numeric ix' := ⟨_, rfl⟩
+
+/-- **An insert keeps a column exact** (#3568, the `CatchUp::Insert` path, as `catchUp_inv` is for `Refresh`).
+    `c` is the published copy's column, exact below the cursor `frm` the batch starts from; the batch holds
+    exactly the tuples, as `batchVer` has them, of the entities `batchVer` places in `[frm, next)`; `written`
+    covers every entity on which `batchVer` and `published` differ there (`Frame`); entity ids fit the tuple's id
+    field and have a place. Then the column `indexer_insert` leaves holds exactly the tuples of the entities
+    `published` puts in the column in the state the batch leaves (`Building next`, or `Ready`): the same
+    conclusion `catchUp_inv` draws for the refresh path. -/
+theorem insert_inv (c : IndexColumn) (e : EntityType) (batchVer published : Ver) (batch : EncodedTuples)
+    (written : List Nat) (frm : BuildCursor) (next : Option BuildCursor)
+    (hplaced : ∀ id, id ∈ placedIn e published written (some frm) next ↔
+      id ∈ written ∧ notBefore frm published id = true ∧ below (stOf next) published id = true)
+    (hinv : Inv c (.building frm) published)
+    (hmono : ∀ id, below (.building frm) published id = true → below (stOf next) published id = true)
+    (hbatch : ∀ t, t ∈ batch.scalar ↔ ∃ id, notBefore frm batchVer id = true ∧
+      below (stOf next) batchVer id = true ∧ t ∈ tupl c batchVer id)
+    (hf : ∀ id, id ∉ written → notBefore frm batchVer id = notBefore frm published id ∧
+      below (stOf next) batchVer id = below (stOf next) published id ∧ tupl c batchVer id = tupl c published id)
+    (hWv : ∀ id, tupl c batchVer id ≠ [] → id < W) (hWp : ∀ id, tupl c published id ≠ [] → id < W)
+    (hplace : ∀ id, tupl c published id ≠ [] → (published.place id).isSome = true) :
+    Inv (c.indexerInsert e published batch written frm next) (stOf next) published := by
+  intro t
+  have hkind : ∀ id, tupl (c.indexerInsert e published batch written frm next) published id =
+      tupl c published id := by
+    intro id
+    cases c with
+    | numeric ix =>
+      obtain ⟨ix', h⟩ := indexerInsert_numeric ix e published batch written frm next
+      rw [h]; exact tupl_numeric _ _ _ _
+  simp only [Inv, hkind]
+  rw [indexerInsert_mem]
+  constructor
+  · rintro (h | ⟨hb, hw⟩ | ⟨id, hid, ht⟩)
+    · obtain ⟨id, hbl, hit⟩ := (hinv t).1 h
+      exact ⟨id, hmono id hbl, hit⟩
+    · obtain ⟨id, hnb, hbl, hit⟩ := (hbatch t).1 hb
+      obtain ⟨k, hk⟩ := tupl_enc c batchVer id t hit
+      have hlt := hWv id (by intro h; rw [h] at hit; simp at hit)
+      have hd : docOf t = id := by rw [hk, docOf_enc _ _ hlt]
+      have hnw : id ∉ written := hd ▸ hw
+      have fr := hf id hnw
+      exact ⟨id, by rw [← fr.2.1]; exact hbl, by rw [← fr.2.2]; exact hit⟩
+    · exact ⟨id, ((hplaced id).1 hid).2.2, ht⟩
+  · rintro ⟨id, hbl, ht⟩
+    have hne : tupl c published id ≠ [] := by intro h; rw [h] at ht; simp at ht
+    by_cases hbf : below (.building frm) published id = true
+    · exact Or.inl ((hinv t).2 ⟨id, hbf, ht⟩)
+    · have hnb : notBefore frm published id = true := by
+        obtain ⟨pl, hpl⟩ := Option.isSome_iff_exists.mp (hplace id hne)
+        simp only [below, hpl, Option.any_some, Bool.not_eq_true] at hbf
+        simp [notBefore, hpl, hbf]
+      by_cases hw : id ∈ written
+      · exact Or.inr (Or.inr ⟨id, (hplaced id).2 ⟨hw, hnb, hbl⟩, ht⟩)
+      · refine Or.inr (Or.inl ?_)
+        have fr := hf id hw
+        have hlt := hWp id hne
+        obtain ⟨k, hk⟩ := tupl_enc c published id t ht
+        have hd : docOf t = id := by rw [hk, docOf_enc _ _ hlt]
+        refine ⟨(hbatch t).2 ⟨id, by rw [fr.1]; exact hnb, by rw [fr.2.1]; exact hbl, by rw [fr.2.2]; exact ht⟩, ?_⟩
+        rw [hd]; exact hw
 
 /-- **Both catch-ups publish the same shape of entry.** When the batch fits (same generation, so
     `discardedAgainst` found nothing) and the published index is still `Building`, inserting leaves exactly
@@ -569,18 +646,8 @@ theorem insertedOnto_eq_caughtUpOnto {R : Type} (ours pub : V R) (g : SE → SE 
   simp only [V.insertedOnto, V.caughtUpOnto, V.newBuildVersion, V.newVersion, ho, hp, hb, if_true]
   cases o with | mk oen og oc => cases oen; simp_all
 
-/-- `catch_up_by` (`versioned.rs:179-191`): which way a batch catches up. -/
-inductive CatchUp where
-  | refresh | insert
-deriving DecidableEq, Repr
-
-/-- `REFRESH_COST` (`versioned.rs:171`): refreshing one entity costs as much as inserting ten tuples. -/
-def REFRESH_COST : Nat := 10
-
-/-- `catch_up_by` (`versioned.rs:182`): refresh iff `written * REFRESH_COST < batch` (`u64::saturating_mul`,
-    see `catchUpBy_saturating`). -/
-def catchUpBy (written batch : Nat) : CatchUp :=
-  if written * REFRESH_COST < batch then .refresh else .insert
+/-! `CatchUp`, `REFRESH_COST` and `catchUpBy` (`versioned.rs:149-191`) are in `Batch.lean`, where `indexerFit`
+chooses the way; `V.insertedOnto` (`Graph::insert_index`) is there too. -/
 
 theorem catchUpBy_refresh_iff (written batch : Nat) :
     catchUpBy written batch = .refresh ↔ written * REFRESH_COST < batch := by
@@ -647,17 +714,17 @@ theorem rebased_commit_keeps_chain (ours theirs : SE) (f : IndexColumn) (h : ove
 /-- **...and the next batch fits**: the writer commits `after := fork.rebased pub f` (derived here from the
     rebase itself, not assumed). A batch prepared on the published copy has that copy's generation and
     `p.commits + 1`; judged against the writer's rebased commit, which has `p.commits`, it is not discarded
-    (it is a `CatchUp`, the writer having moved the data version). The fit reads only the generation and
-    the commit count, so the refreshed column `f` is irrelevant. -/
-theorem rebased_batch_fits {R : Type} (fork pub prepared : V R) (f : SE → SE → IndexColumn) (o p : SE)
+    (it is a `CatchUp`, the writer having moved the data version, by whichever way `catch_up_by` picks). The fit
+    reads only the generation, the commit count and the `since` count, so the refreshed column `f` is irrelevant. -/
+theorem rebased_batch_fits {R : Type} (w : SE → Nat) (bl : Nat) (fork pub prepared : V R) (f : SE → SE → IndexColumn) (o p : SE)
     (ho : fork.entry = some o) (hp : pub.entry = some p) (hov : overtakenSE o p = true)
     (en : IndexEntry) (hprep : prepared.entry = some ⟨en, p.generation, p.commits + 1⟩)
     (hv : (fork.rebased pub f).version ≠ prepared.version) :
-    indexerFit prepared (fork.rebased pub f) = .catchUp := by
+    ∃ how, indexerFit w bl prepared (fork.rebased pub f) = .catchUp how := by
   have hafter : (fork.rebased pub f).entry = some (rebasedSE o p (f o p)) := by
     simp [V.rebased, ho, hp]
   have hk := rebased_commit_keeps_chain o p (f o p) hov
-  simp [indexerFit, hprep, hafter, discardedAgainst, hk.1, hk.2.1, hv]
+  exact ⟨catchUpBy (w (rebasedSE o p (f o p))) bl, by simp [indexerFit, hprep, hafter, discardedAgainst, hk.1, hk.2.1, hv]⟩
 
 /-! ## The smaller functions around them -/
 
