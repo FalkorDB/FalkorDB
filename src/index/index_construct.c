@@ -40,7 +40,11 @@ static void _Index_PopulateNodeIndex
 
 	while(true) {
 		// lock graph for reading
-		GraphContext_AcquireReadLock (gc) ;
+		// the parallel decode path (unsafe) is single-writer-per-spec with no
+		// concurrent writers; it skips the graph lock so workers don't race on
+		// the shared lock / matrix-sync-policy state (ReleaseLock resets the
+		// policy), and the caller-set NOP policy survives the whole region
+		if(!unsafe) GraphContext_AcquireReadLock (gc) ;
 
 		// index state changed, abort indexing
 		// this can happen if for example the following sequance is issued:
@@ -94,7 +98,7 @@ static void _Index_PopulateNodeIndex
 			break;
 		} else {
 			// release read lock
-			GraphContext_ReleaseLock (gc) ;
+			if(!unsafe) GraphContext_ReleaseLock (gc) ;
 
 			// finished current batch
 			Delta_MatrixTupleIter_detach(&it);
@@ -107,7 +111,7 @@ static void _Index_PopulateNodeIndex
 	}
 
 	// release read lock
-	GraphContext_ReleaseLock (gc) ;
+	if(!unsafe) GraphContext_ReleaseLock (gc) ;
 	Delta_MatrixTupleIter_detach(&it);
 }
 
@@ -144,14 +148,18 @@ static void _Index_PopulateEdgeIndex
 
 	while (active) {
 		// lock graph for reading
-		GraphContext_AcquireReadLock (gc) ;
+		// the parallel decode path (unsafe) is single-writer-per-spec with no
+		// concurrent writers; it skips the graph lock so workers don't race on
+		// the shared lock / matrix-sync-policy state (ReleaseLock resets the
+		// policy), and the caller-set NOP policy survives the whole region
+		if(!unsafe) GraphContext_AcquireReadLock (gc) ;
 
 		// index state changed, abort indexing
 		// this can happen if for example the following sequance is issued:
 		// 1. CREATE INDEX FOR (:Person)-[e:WORKS]-(:Company) ON (e.since)
 		// 2. CREATE INDEX FOR (:Person)-[e:WORKS]-(:Company) ON (e.title)
 		if(Index_PendingChanges(idx) > 1) {
-			GraphContext_ReleaseLock (gc) ;
+			if(!unsafe) GraphContext_ReleaseLock (gc) ;
 			return ;
 		}
 
@@ -210,7 +218,7 @@ static void _Index_PopulateEdgeIndex
 		//----------------------------------------------------------------------
 		// done with current batch, release read lock
 		//----------------------------------------------------------------------
-		GraphContext_ReleaseLock (gc) ;
+		if(!unsafe) GraphContext_ReleaseLock (gc) ;
 	}
 }
 

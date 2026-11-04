@@ -468,13 +468,17 @@ GraphContext *RdbLoadGraphContext_latest
 			int n_threads = (n_idx < omp_nthread) ? (int)n_idx : (int)omp_nthread;
 			if(n_threads < 1) n_threads = 1;
 
-			// Graph_ApplyAllPending above already synchronized every matrix, so
-			// switch to a no-op matrix sync policy: the per-batch matrix fetches
-			// inside Index_Populate become pure reads, making concurrent
-			// population across disjoint indices safe. the policy is restored
-			// only after the parallel region's implicit barrier, i.e. once all
-			// workers have joined
-			MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
+			// for the parallel path only: workers skip the per-batch graph lock
+			// (Index_PopulateUnsafe), so nothing resets the matrix sync policy
+			// mid-region. Graph_ApplyAllPending above already synchronized every
+			// matrix, so pin a no-op policy for the region (pure reads) and
+			// restore it once the workers have joined (after the implicit
+			// barrier). the serial path manages the policy itself via its
+			// per-batch lock, so leave it untouched
+			MATRIX_POLICY policy = SYNC_POLICY_UNKNOWN;
+			if(use_parallel) {
+				policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
+			}
 
 			// populate each index; when parallel indexing is disabled, we're not
 			// on the main thread, or there is a single index, the 'if' clause
@@ -491,7 +495,9 @@ GraphContext *RdbLoadGraphContext_latest
 				}
 			}
 
-			Graph_SetMatrixPolicy(g, policy);
+			if(use_parallel) {
+				Graph_SetMatrixPolicy(g, policy);
+			}
 
 			// enable and activate indices on the main thread; Schema_ActivateIndex
 			// mutates schema arrays and may drop a stale index, so it must not run
