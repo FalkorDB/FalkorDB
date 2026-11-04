@@ -1,3 +1,4 @@
+import FalkorIdList.Wire
 /-
 # `width_for` (`graph/src/narrow_int.rs:19`) picks the narrowest lossless width
 
@@ -10,22 +11,20 @@
 -/
 namespace FalkorRuntimeDS.NarrowIntModel
 
-/-- narrow_int.rs:19 — the four match arms, in order. -/
-def widthFor (max : Nat) : Nat :=
-  if max ≤ 0xFF then 1
-  else if max ≤ 0xFFFF then 2
-  else if max ≤ 0xFFFF_FFFF then 4
-  else 8
+/-- narrow_int.rs:19 — the four match arms, in order. One model for the whole proofs tree:
+`IdListWire.widthFor` (`proofs/id_list`, which the id-list wire format also uses), so a change to
+a threshold cannot leave two projects inconsistent. -/
+abbrev widthFor : Nat → Nat := IdListWire.widthFor
 
 /-- Truncating `as` cast to `w` bytes. -/
 def narrow (w x : Nat) : Nat := x % 2 ^ (8 * w)
 
 theorem widthFor_mem (m : Nat) : widthFor m = 1 ∨ widthFor m = 2 ∨ widthFor m = 4 ∨ widthFor m = 8 := by
-  unfold widthFor; split <;> (try split) <;> (try split) <;> simp
+  unfold widthFor IdListWire.widthFor; split <;> (try split) <;> (try split) <;> simp
 
 /-- The chosen width holds `max` (every `u64` fits, since the last arm is 8 bytes). -/
 theorem widthFor_fits (m : Nat) (hm : m < 2 ^ 64) : m < 2 ^ (8 * widthFor m) := by
-  unfold widthFor
+  unfold widthFor IdListWire.widthFor
   split
   · simp; omega
   · split
@@ -37,13 +36,14 @@ theorem widthFor_fits (m : Nat) (hm : m < 2 ^ 64) : m < 2 ^ (8 * widthFor m) := 
 /-- …and it is the narrowest power-of-two width that does. -/
 theorem widthFor_minimal (m w : Nat) (hw : w = 1 ∨ w = 2 ∨ w = 4 ∨ w = 8)
     (hlt : w < widthFor m) : 2 ^ (8 * w) ≤ m := by
-  unfold widthFor at hlt
+  unfold widthFor IdListWire.widthFor at hlt
   rcases hw with rfl | rfl | rfl | rfl <;>
     (split at hlt <;> (try split at hlt) <;> (try split at hlt) <;> simp_all <;> omega)
 
-/-- Monotone: every value `≤ max` fits in `widthFor max`. -/
+/-- Monotone in `max`. (That every value `≤ max` fits in `widthFor max` is `widthFor_fits` +
+`narrow_lossless`.) -/
 theorem widthFor_mono {a b : Nat} (h : a ≤ b) : widthFor a ≤ widthFor b := by
-  unfold widthFor
+  unfold widthFor IdListWire.widthFor
   split <;> split <;> (try split) <;> (try split) <;> (try split) <;> (try split) <;> omega
 
 /-- Narrowing any `x ≤ max` to `widthFor max` bytes is lossless. -/

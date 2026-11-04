@@ -3,3 +3,8 @@ defaultTargets = ["FalkorRuntimeDS"]
 
 [[lean_lib]]
 name = "FalkorRuntimeDS"
+
+# `narrow_int::width_for` is modelled once, in id_list (`IdListWire.widthFor`); NarrowInt reuses it.
+[[require]]
+name = "falkor-id-list"
+path = "../id_list"
