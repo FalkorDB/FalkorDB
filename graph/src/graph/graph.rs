@@ -1329,11 +1329,20 @@ impl Graph {
         edge_id: RelationshipId,
         type_name: &str,
     ) -> bool {
-        self.get_type_id(type_name).is_some_and(|type_id| {
-            self.relationship_type_matrix
-                .get(edge_id.0, type_id.0 as u64)
-                .is_some()
-        })
+        self.get_type_id(type_name)
+            .is_some_and(|type_id| self.edge_has_type_id(edge_id, type_id))
+    }
+
+    /// Check if an edge has a specific relationship type by id (no string lookup).
+    #[must_use]
+    pub fn edge_has_type_id(
+        &self,
+        edge_id: RelationshipId,
+        type_id: TypeId,
+    ) -> bool {
+        self.relationship_type_matrix
+            .get(edge_id.0, type_id.0 as u64)
+            .is_some()
     }
 
     /// Get-or-create a relationship type by name, returning its `TypeId`.
@@ -3864,6 +3873,17 @@ impl Graph {
         )
     }
 
+    /// Where entity `id` sits in this version's build order ([`BuildCursor::from_id`]): a node by
+    /// its id, an edge by its endpoints. `None` for an edge this version does not have.
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) fn build_place(
+        &self,
+        entity: EntityType,
+        id: u64,
+    ) -> Option<BuildCursor> {
+        BuildCursor::from_id(entity, id, &self.edge_endpoints)
+    }
+
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
     /// A no-op without the `index-falkordb` feature, which has no native index. `self` must be the
     /// private version the changes were staged against.
@@ -3873,19 +3893,11 @@ impl Graph {
     ) {
         #[cfg(feature = "index-falkordb")]
         {
-            // A `Building` column asks where a written entity sits in build order: a node by its
-            // id, an edge by its endpoints, which an edge this unit deleted no longer has.
+            // A `Building` column asks where a written entity sits in build order.
             let endpoints = &self.edge_endpoints;
-            self.falkordb_index
-                .apply(&mut docs.native, |entity, id| match entity {
-                    EntityType::Node => Some(BuildCursor::Node(NodeId::from(id))),
-                    EntityType::Relationship => {
-                        endpoints.get(id).map(|(src, dst)| BuildCursor::Edge {
-                            src: NodeId::from(src),
-                            dst: NodeId::from(dst),
-                        })
-                    }
-                });
+            self.falkordb_index.apply(&mut docs.native, |entity, id| {
+                BuildCursor::from_id(entity, id, endpoints)
+            });
         }
         #[cfg(not(feature = "index-falkordb"))]
         let _ = docs;

@@ -6,6 +6,9 @@
 //! those operations is written once here, over [`IndexEntry<K>`], and never names a kind.
 
 use std::fmt;
+use std::sync::Arc;
+
+use roaring::RoaringTreemap;
 
 use crate::entity_type::EntityType;
 use crate::graph::graph::Graph;
@@ -33,13 +36,48 @@ use super::falkordb_index::{FalkorDbIndex, IndexColumn, IndexKey};
 /// tuple the unit removed and added back, as the reused id's new edge can, is still removed. This
 /// is how C populates an index (`src/index/index_construct.c`), in batches interleaved with
 /// writes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// While `Building`, the index also keeps which entities writers changed in it ([`Written`]), so a
+/// batch read before them, or a writer's fork made before a batch, can take them again. A `Ready`
+/// index keeps none.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum BuildState<C> {
     /// Some entities are not indexed yet — reads scan instead. `next` is where the next indexer
     /// batch resumes.
-    Building { next: C },
+    Building { next: C, written: Written },
     /// Every entity is indexed — the index serves reads.
     Ready,
+}
+
+impl<C: Copy> BuildState<C> {
+    /// `Building` from `next`, with no entity written yet.
+    pub(crate) fn building(next: C) -> Self {
+        Self::Building {
+            next,
+            written: Written::default(),
+        }
+    }
+
+    /// Where the next indexer batch resumes, or `None` once `Ready`.
+    pub(crate) fn next(&self) -> Option<C> {
+        match self {
+            Self::Building { next, .. } => Some(*next),
+            Self::Ready => None,
+        }
+    }
+}
+
+/// The entities writers changed in a `Building` index, every staged change counted, even one the
+/// cursor kept out.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Written {
+    /// Since a batch last committed on the index. A batch read before some of them were written
+    /// catches up on them at its commit ([`VersionedIndex::indexer_catch_up`]).
+    pub(crate) since_last_indexer_step: Arc<RoaringTreemap>,
+    /// By this version, until it is published. A writer whose fork batches have moved past
+    /// re-applies them as it escalates ([`VersionedIndex::writer_rebase`]); published, they join
+    /// `since_last_indexer_step`.
+    pub(crate) by_this_version: RoaringTreemap,
 }
 
 /// The name of any versioned index: what the builder's chains, a commit's report of what it created
@@ -51,6 +89,11 @@ pub(crate) enum IndexId {
 }
 
 /// One versioned index: the kind's own structure plus its build state.
+///
+/// The kind (`K`, today [`IndexColumn`]) is only the data: a column's tuples. The build state is
+/// the entry's, as are the generation and the batch count, so the build's rules are written once
+/// here for every kind. That is why a kind's operations are handed the state
+/// ([`VersionedIndex::writer_record`] and the rest) rather than reading it from `self`.
 #[derive(Clone)]
 pub(crate) struct IndexEntry<K: VersionedIndex> {
     pub(crate) index: K,
@@ -91,9 +134,20 @@ pub enum IndexerCommit {
     /// Only other indexes' batches committed since: the batch's index was put into a new build
     /// version of the published one, which was published.
     Swap,
+    /// Writers committed since, and no other batch on the batch's index: the index as the batch
+    /// left it, caught up on what the writers changed in it, was put into a new build version of
+    /// the published one, which was published.
+    CatchUp(CatchUp),
     /// The batch's own work was discarded and nothing was published, for the reason given. The
     /// index's next batch starts from the published index's cursor.
     Discarded(Discarded),
+}
+
+/// How an indexer batch caught up on writers' changes ([`IndexerCommit::CatchUp`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatchUp {
+    /// The entities the writers changed were refreshed in the batch's index.
+    Refresh,
 }
 
 /// Why an indexer batch's own work was discarded ([`IndexerCommit::Discarded`]): it published
@@ -103,16 +157,14 @@ pub enum IndexerCommit {
 pub enum Discarded {
     /// The index was dropped, or dropped and created again.
     Gone,
-    /// A writer committed since: the batch read values it may have changed. Temporary: once a
-    /// batch can catch up on writers' changes, it merges them instead, and this goes.
-    Writers,
     /// Another batch committed on the same index since. The builder runs one chain of batches per
     /// index, so this is a bug in that exclusion, for the caller to report.
     AnotherBatch,
 }
 
 /// What a kind of index does on each side of its lifecycle. The state those operations move is
-/// [`IndexEntry<K>`]'s, the same for every kind.
+/// [`IndexEntry<K>`]'s, the same for every kind: `self` is the kind's data alone, so each operation
+/// is handed the state.
 pub(crate) trait VersionedIndex: Clone + Sized {
     /// Where a `Building` index's next batch resumes, and an entity's place in that order.
     type Cursor: Copy + Eq + fmt::Debug;
@@ -143,12 +195,42 @@ pub(crate) trait VersionedIndex: Clone + Sized {
     /// changes nothing. Additions are dropped before the changes collapse to the last per tuple,
     /// so a dropped addition cannot cancel an earlier removal of the same tuple ([`BuildState`]
     /// says why).
+    ///
+    /// While `Building`, the id of every entity a change names goes into the state's
+    /// [`Written::by_this_version`], whether the change is applied or not.
     fn writer_record(
         &mut self,
-        state: BuildState<Self::Cursor>,
+        state: &mut BuildState<Self::Cursor>,
         changes: Self::Changes,
         place: impl Fn(u64) -> Option<Self::Cursor>,
         scratch: &mut Self::Scratch,
+    );
+
+    /// Writer side, as it escalates: this is `published`'s copy of index `name`, which batches moved
+    /// on after the writer's fork was made. Re-apply `written`, the entities the fork changed in
+    /// it: their tuples as `published` has them come out, and as `fork` has them go in, while
+    /// `state` is `Building` only for an entity `fork` places below the cursor.
+    fn writer_rebase(
+        &mut self,
+        state: &BuildState<Self::Cursor>,
+        name: &Self::Name,
+        written: &RoaringTreemap,
+        published: &Graph,
+        fork: &Graph,
+    );
+
+    /// Indexer side, under the lock: this is the batch's copy of index `name`, read on
+    /// `batch_version`, and writers committed since. Catch it up on `written`, the entities they
+    /// changed in it: their tuples as `batch_version` has them come out, and as `published` has
+    /// them go in, while `state` is `Building` only for an entity `published` places below the
+    /// cursor.
+    fn indexer_catch_up(
+        &mut self,
+        state: &BuildState<Self::Cursor>,
+        name: &Self::Name,
+        written: &RoaringTreemap,
+        batch_version: &Graph,
+        published: &Graph,
     );
 
     /// Indexer side, off the lock: read index `name`'s batch from `from`, at most `budget`
@@ -190,10 +272,7 @@ impl<K: VersionedIndex> IndexEntry<K> {
 
     /// Where the next indexer batch resumes, or `None` once the index is `Ready`.
     pub(crate) fn cursor(&self) -> Option<K::Cursor> {
-        match self.state {
-            BuildState::Building { next } => Some(next),
-            BuildState::Ready => None,
-        }
+        self.state.next()
     }
 
     /// Apply one unit of work's `changes`, as this index's state allows
@@ -205,7 +284,7 @@ impl<K: VersionedIndex> IndexEntry<K> {
         scratch: &mut K::Scratch,
     ) {
         self.index
-            .writer_record(self.state, changes, place, scratch);
+            .writer_record(&mut self.state, changes, place, scratch);
     }
 
     /// Add an indexer batch's `work`, read from this same version, then move the cursor to `next`,
@@ -220,9 +299,35 @@ impl<K: VersionedIndex> IndexEntry<K> {
             return false;
         }
         self.index.indexer_add(work);
-        self.state = next.map_or(BuildState::Ready, |next| BuildState::Building { next });
         self.indexer_commits += 1;
+        match (next, &mut self.state) {
+            (
+                Some(next),
+                BuildState::Building {
+                    next: cursor,
+                    written,
+                },
+            ) => {
+                *cursor = next;
+                // The batch read every entity at this version's values, writers' changes included.
+                if !written.since_last_indexer_step.is_empty() {
+                    written.since_last_indexer_step = Arc::default();
+                }
+            }
+            _ => self.state = BuildState::Ready,
+        }
         true
+    }
+
+    /// Ready this copy to be published: while `Building`, the entities this version changed join
+    /// [`Written::since_last_indexer_step`].
+    pub(crate) fn publish(&mut self) {
+        if let BuildState::Building { written, .. } = &mut self.state {
+            let mine = std::mem::take(&mut written.by_this_version);
+            if !mine.is_empty() {
+                *Arc::make_mut(&mut written.since_last_indexer_step) |= mine;
+            }
+        }
     }
 
     /// Why this copy of an index, which an indexer batch moved on, cannot go in over `published`,
@@ -272,8 +377,9 @@ impl Graph {
 
     /// How `batch`, applied to this version, a build version of an older published one
     /// ([`Self::new_build_version`]), fits `published`, the current one:
-    /// - its index was dropped or created again since, or another batch committed on it, or a
-    ///   writer committed: [`IndexerCommit::Discarded`];
+    /// - its index was dropped or created again since, or another batch committed on it:
+    ///   [`IndexerCommit::Discarded`];
+    /// - otherwise, a writer committed: [`IndexerCommit::CatchUp`];
     /// - otherwise, nothing committed since: [`IndexerCommit::Same`];
     /// - otherwise only other indexes' batches did: [`IndexerCommit::Swap`].
     ///
@@ -296,7 +402,7 @@ impl Graph {
             return IndexerCommit::Discarded(why);
         }
         if published.version != self.version {
-            return IndexerCommit::Discarded(Discarded::Writers);
+            return IndexerCommit::CatchUp(CatchUp::Refresh);
         }
         // No writer committed, so only batches can have changed an index since, and none did if
         // none was published.
@@ -323,6 +429,138 @@ impl Graph {
             Prepared::Column(batch) => version.take_index::<IndexColumn>(self, &batch.name),
         }
         version
+    }
+
+    /// A new build version of `published` with `batch`'s index as this version has it, caught up
+    /// on the entities writers changed in it since this version was made
+    /// ([`VersionedIndex::indexer_catch_up`]): for a batch that writers committed after
+    /// ([`IndexerCommit::CatchUp`]).
+    pub(crate) fn caught_up_onto(
+        &self,
+        published: &Self,
+        batch: &PreparedBatch,
+    ) -> Self {
+        let mut version = published.new_build_version();
+        match &batch.0 {
+            Prepared::Column(batch) => {
+                version.catch_up_index::<IndexColumn>(self, published, &batch.name);
+            }
+        }
+        version
+    }
+
+    /// [`Self::caught_up_onto`] for one kind: index `name` as `batch_version` has it, caught up on
+    /// `published`'s writes, in place of this version's copy.
+    fn catch_up_index<K: VersionedIndex>(
+        &mut self,
+        batch_version: &Self,
+        published: &Self,
+        name: &K::Name,
+    ) {
+        let (Some(ours), Some(theirs)) = (
+            K::entry(&batch_version.falkordb_index, name),
+            K::entry(&published.falkordb_index, name),
+        ) else {
+            return;
+        };
+        let none = Arc::default();
+        let written = match &theirs.state {
+            BuildState::Building { written, .. } => &written.since_last_indexer_step,
+            BuildState::Ready => &none,
+        };
+        let mut caught = ours.clone();
+        caught
+            .index
+            .indexer_catch_up(&caught.state, name, written, batch_version, published);
+        if let Some(slot) = K::entry_mut(&mut self.falkordb_index, name) {
+            *slot = caught;
+        }
+    }
+
+    /// For a writer's fork that no other writer's commit made stale, as it escalates: rebase it onto
+    /// the indexer batches committed since it was made. Each index still `Building` here that a
+    /// batch moved on in `published` becomes `published`'s copy, with the entities the fork changed
+    /// in it re-applied ([`VersionedIndex::writer_rebase`]). An index no batch moved on keeps the
+    /// fork's copy, and so does one the fork created, or dropped and created again. Batches change
+    /// no data, so what the writer read still holds.
+    pub(crate) fn rebase_onto_indexer_batches(
+        &mut self,
+        published: &Self,
+    ) {
+        for name in self.falkordb_index.column_names() {
+            self.rebase_index::<IndexColumn>(published, &name);
+        }
+    }
+
+    /// Whether [`Self::rebase_onto_indexer_batches`] has anything to do: whether an indexer batch
+    /// moved on, in `published`, an index still `Building` here. Every escalating write asks, so it
+    /// looks no index up unless a batch was published since this version was made.
+    pub(crate) fn overtaken_by_indexer_batches(
+        &self,
+        published: &Self,
+    ) -> bool {
+        published
+            .falkordb_index
+            .batch_published_since(&self.falkordb_index)
+            && self
+                .falkordb_index
+                .column_names()
+                .iter()
+                .any(|name| self.overtaken::<IndexColumn>(published, name))
+    }
+
+    /// Whether an indexer batch moved on, in `published`, index `name`, still `Building` here: the
+    /// same index (the same generation), with more batches committed on it.
+    fn overtaken<K: VersionedIndex>(
+        &self,
+        published: &Self,
+        name: &K::Name,
+    ) -> bool {
+        match (
+            K::entry(&self.falkordb_index, name),
+            K::entry(&published.falkordb_index, name),
+        ) {
+            (Some(ours), Some(theirs)) => {
+                ours.is_building()
+                    && theirs.generation == ours.generation
+                    && theirs.indexer_commits != ours.indexer_commits
+            }
+            _ => false,
+        }
+    }
+
+    /// [`Self::rebase_onto_indexer_batches`] for one index.
+    fn rebase_index<K: VersionedIndex>(
+        &mut self,
+        published: &Self,
+        name: &K::Name,
+    ) {
+        if !self.overtaken::<K>(published, name) {
+            return;
+        }
+        let (Some(ours), Some(theirs)) = (
+            K::entry(&self.falkordb_index, name),
+            K::entry(&published.falkordb_index, name),
+        ) else {
+            return;
+        };
+        let BuildState::Building { written, .. } = &ours.state else {
+            return;
+        };
+        let written = written.by_this_version.clone();
+        let mut rebased = theirs.clone();
+        rebased
+            .index
+            .writer_rebase(&rebased.state, name, &written, published, self);
+        if let BuildState::Building {
+            written: theirs, ..
+        } = &mut rebased.state
+        {
+            theirs.by_this_version = written;
+        }
+        if let Some(slot) = K::entry_mut(&mut self.falkordb_index, name) {
+            *slot = rebased;
+        }
     }
 
     /// Put index `name` as `from` has it in place of this version's copy.

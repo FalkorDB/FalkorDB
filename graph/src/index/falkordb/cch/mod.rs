@@ -25,6 +25,8 @@ pub(crate) mod testkit;
 
 use std::sync::Arc;
 
+use roaring::RoaringTreemap;
+
 use super::falkordb_index::FalkorDbIndex;
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 use crate::graph::graph::{Graph, TypeId};
@@ -329,10 +331,36 @@ impl VersionedIndex for CchIndex {
     /// dispatches here.
     fn writer_record(
         &mut self,
-        _state: BuildState<()>,
+        _state: &mut BuildState<()>,
         _changes: CchDirty,
         _place: impl Fn(u64) -> Option<()>,
         _scratch: &mut (),
+    ) {
+        unreachable!("CCH is not dispatched through IndexId until the background build")
+    }
+
+    /// Never called: a writer is rebased only onto batches on a `Building` column, and every
+    /// CCH entry is held `Ready`.
+    fn writer_rebase(
+        &mut self,
+        _state: &BuildState<()>,
+        _def: &CchIndexDef,
+        _written: &RoaringTreemap,
+        _published: &Graph,
+        _fork: &Graph,
+    ) {
+        unreachable!("CCH is not dispatched through IndexId until the background build")
+    }
+
+    /// Never called: `IndexId` has no CCH variant until the background build, so no indexer
+    /// batch commits on one.
+    fn indexer_catch_up(
+        &mut self,
+        _state: &BuildState<()>,
+        _def: &CchIndexDef,
+        _written: &RoaringTreemap,
+        _batch_version: &Graph,
+        _published: &Graph,
     ) {
         unreachable!("CCH is not dispatched through IndexId until the background build")
     }
