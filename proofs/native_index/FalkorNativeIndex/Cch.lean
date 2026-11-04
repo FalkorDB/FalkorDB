@@ -86,7 +86,7 @@ def graphCchIndexes {G X : Type} (g : G) (index : G → X) : Res (List Def) := i
 /-- `Graph::cch_index` (`:5258`): `self.falkordb_index.cch_index(def)`. -/
 def graphCchIndex {G X Cch : Type} (g : G) (index : G → X) (d : Def) : Res (Option Cch) := indexCchIndex (index g) d
 
-/-- The `VersionedIndex for CchIndex` bodies that are `unreachable!` (`:330-395`): `writer_record`,
+/-- The `VersionedIndex for CchIndex` bodies that are `unreachable!` (`:330-413`): `writer_record`,
     `writer_rebase`, `indexer_catch_up`, `indexer_insert`, `batch_len`, `indexer_read`, `indexer_add`,
     `memory_usage` (#3568, #3569). No `IndexId` variant dispatches to them
     until the background build; a rebase is only onto a `Building` column and every CCH entry is `Ready`. -/

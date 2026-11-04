@@ -291,7 +291,9 @@ structure EN where
   commits : Nat
 
 /-- The old model's entry. -/
-def EN.proj (e : EN) : SE := ⟨⟨e.index, e.state.proj⟩, e.generation, e.commits⟩
+def EN.proj (e : EN) : SE :=
+  ⟨⟨e.index, e.state.proj⟩, e.generation, e.commits,
+    match e.state with | .building _ w => w.since.eraseDups.length | .ready => 0⟩
 
 def EN.isBuilding (e : EN) : Bool := match e.state with | .building _ _ => true | .ready => false
 
@@ -365,8 +367,18 @@ def EN.publish (e : EN) : EN :=
   | .building n w => { e with state := .building n ⟨w.since ++ w.byThis, []⟩ }
   | .ready => e
 
-theorem publish_proj (e : EN) : e.publish.proj = e.proj := by
-  cases e with | mk i s g c => cases s <;> rfl
+/-- Publishing changes nothing of the entry's old-model content: the column, the cursor (or `Ready`), the
+generation and the commit count. (The `since` count of `SE` does move: `publish_since_len`.) -/
+theorem publish_proj (e : EN) :
+    e.publish.proj.en = e.proj.en ∧ e.publish.proj.generation = e.proj.generation ∧
+    e.publish.proj.commits = e.proj.commits := by
+  cases e with | mk i s g c => cases s <;> exact ⟨rfl, rfl, rfl⟩
+
+/-- ...and the entities this version changed join the `since` count the batch fit reads. -/
+theorem publish_since_len (e : EN) (n : BuildCursor) (w : Written) (h : e.state = .building n w) :
+    e.publish.proj.since = (w.since ++ w.byThis).eraseDups.length := by
+  cases e with | mk i s g c =>
+    simp only at h; subst h; rfl
 
 theorem publish_since (e : EN) (n : BuildCursor) (w : Written) (h : e.state = .building n w) (id : Nat) :
     ∃ w', e.publish.state = .building n w' ∧ w'.byThis = [] ∧
@@ -503,15 +515,36 @@ def placedIn (e : EntityType) (to : Ver) (ws : List Nat) (frm next : Option Buil
       (match frm with | none => true | some f => !pl.precedes f) &&
       (match next with | none => true | some n => pl.precedes n)))
 
-/-- What `placed_in` keeps, for cursors of the column's kind: the ids of `ws` placed in `[frm, next)`. For a
-    node column the range test is the place test whenever `to` places a node at its own id. -/
-theorem placedIn_mem (to : Ver) (ws : List Nat) (frm next : Option BuildCursor) (id : Nat)
-    (hk : ∀ id, to.place id = some (.node id)) :
+/-- What `placed_in` keeps on a node column: the ids of `ws` cut by id at both ends (`remove_range`), whatever
+    `to` says of the place (so it takes no hypothesis about `to`, and a cursor of another kind is no end). -/
+theorem placedIn_mem (to : Ver) (ws : List Nat) (frm next : Option BuildCursor) (id : Nat) :
     id ∈ placedIn .node to ws frm next ↔
       id ∈ ws ∧ (match frm with | some (.node f) => f ≤ id | _ => True) ∧
         (match next with | some (.node n) => id < n | _ => True) := by
   simp only [placedIn, List.mem_filter, Bool.and_eq_true]
   rcases frm with _ | _ | _ <;> rcases next with _ | _ | _ <;> simp
+
+/-- What `placed_in` keeps on a relationship column, for any ends: the ids of `ws` whose edge `to` still has
+    (`build_place` is `Some`) and places at or after `frm` and before `next` (a `None` end is open). -/
+theorem placedIn_rel_mem (to : Ver) (ws : List Nat) (frm next : Option BuildCursor) (id : Nat) :
+    id ∈ placedIn .relationship to ws frm next ↔
+      id ∈ ws ∧ ∃ pl, to.place id = some pl ∧
+        (match frm with | none => True | some f => ¬ pl.precedes f = true) ∧
+        (match next with | none => True | some n => pl.precedes n = true) := by
+  simp only [placedIn, List.mem_filter]
+  constructor
+  · rintro ⟨h, h2⟩
+    refine ⟨h, ?_⟩
+    cases hp : to.place id with
+    | none => simp [hp] at h2
+    | some pl =>
+      refine ⟨pl, rfl, ?_, ?_⟩
+      · cases frm <;> simp_all
+      · cases next <;> simp_all
+  · rintro ⟨h, pl, hp, h1, h2⟩
+    refine ⟨h, ?_⟩
+    simp only [hp, Option.any_some]
+    cases frm <;> cases next <;> simp_all
 
 /-- With no lower end, `placed_in` is the old `placed_below` (the call `refresh` now makes,
     `placed_in(written, entity, None, Some(next), to)`, `falkordb_index.rs:213`). -/
@@ -684,7 +717,7 @@ theorem overtaken_proj (ours theirs : EN) : overtakenSE ours.proj theirs.proj = 
 
 /-- The entry slot after `rebase_index` as `V` sees it (`f` = the refreshed column). -/
 def rebasedSE (ours theirs : SE) (f : IndexColumn) : SE :=
-  if overtakenSE ours theirs then ⟨⟨f, theirs.en.state⟩, theirs.generation, theirs.commits⟩ else ours
+  if overtakenSE ours theirs then ⟨⟨f, theirs.en.state⟩, theirs.generation, theirs.commits, theirs.since⟩ else ours
 
 /-- `rebase_onto_indexer_batches` on a `V` (`versioned.rs:486-496`): only the batch's index slot changes; the
     data version and the rest of the graph are the fork's. -/
@@ -716,15 +749,15 @@ theorem rebased_commit_keeps_chain (ours theirs : SE) (f : IndexColumn) (h : ove
     `p.commits + 1`; judged against the writer's rebased commit, which has `p.commits`, it is not discarded
     (it is a `CatchUp`, the writer having moved the data version, by whichever way `catch_up_by` picks). The fit
     reads only the generation, the commit count and the `since` count, so the refreshed column `f` is irrelevant. -/
-theorem rebased_batch_fits {R : Type} (w : SE → Nat) (bl : Nat) (fork pub prepared : V R) (f : SE → SE → IndexColumn) (o p : SE)
+theorem rebased_batch_fits {R : Type} (work : EncodedTuples) (fork pub prepared : V R) (f : SE → SE → IndexColumn) (o p : SE)
     (ho : fork.entry = some o) (hp : pub.entry = some p) (hov : overtakenSE o p = true)
-    (en : IndexEntry) (hprep : prepared.entry = some ⟨en, p.generation, p.commits + 1⟩)
+    (en : IndexEntry) (s : Nat) (hprep : prepared.entry = some ⟨en, p.generation, p.commits + 1, s⟩)
     (hv : (fork.rebased pub f).version ≠ prepared.version) :
-    ∃ how, indexerFit w bl prepared (fork.rebased pub f) = .catchUp how := by
+    ∃ how, indexerFit work prepared (fork.rebased pub f) = .catchUp how := by
   have hafter : (fork.rebased pub f).entry = some (rebasedSE o p (f o p)) := by
     simp [V.rebased, ho, hp]
   have hk := rebased_commit_keeps_chain o p (f o p) hov
-  exact ⟨catchUpBy (w (rebasedSE o p (f o p))) bl, by simp [indexerFit, hprep, hafter, discardedAgainst, hk.1, hk.2.1, hv]⟩
+  exact ⟨catchUpBy (rebasedSE o p (f o p)).written (IndexColumn.batchLen work), by simp [indexerFit, hprep, hafter, discardedAgainst, hk.1, hk.2.1, hv]⟩
 
 /-! ## The smaller functions around them -/
 
@@ -760,7 +793,10 @@ theorem publishAll_proj (l : List (IndexKey × EN)) :
     l.map (fun p => (p.1, p.2.proj.en.index, p.2.proj.en.state, p.2.proj.generation, p.2.proj.commits)) := by
   induction l with
   | nil => rfl
-  | cons p ps ih => simp only [publishAll, List.map_cons] at ih ⊢; rw [ih, publish_proj]
+  | cons p ps ih =>
+    simp only [publishAll, List.map_cons] at ih ⊢
+    obtain ⟨h1, h2, h3⟩ := publish_proj p.2
+    rw [ih, h1, h2, h3]
 
 /-- `FalkorDbIndex::column_names` (`falkordb_index.rs:724-736`): every column, by kind and key. -/
 def FalkorDbIndex.columnNames (x : FalkorDbIndex) : List (EntityType × IndexKey) :=

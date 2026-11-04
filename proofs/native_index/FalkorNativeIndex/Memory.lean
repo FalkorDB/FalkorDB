@@ -10,7 +10,8 @@ import FalkorNativeIndex.Rebase
 | `memoryUsage` | `FalkorDbIndex::memory_usage` (`falkordb_index.rs:582`) |
 | `IndexColumn.batchLen` | `VersionedIndex::batch_len` for `IndexColumn` (`falkordb_index.rs:382`) = `EncodedTuples::len` |
 
-`CowBTree::heap_bytes` (a walk of every page) is proved in `proofs/cow_btree` (`heapBytes_eq`); it is the
+`CowBTree::heap_bytes` (a walk of every page) is proved in `proofs/cow_btree` (`heapBytes_eq`, for a tree
+satisfying `TreeWF`; every tree reachable through the public API does: `Reachable_wf_asserted`); it is the
 parameter `hb` here, so these theorems say how the sizes are combined, not what a page weighs. The
 serialized size of a `RoaringTreemap` (`Written::since_last_indexer_step`) is the parameter `ser`.
 -/
@@ -58,9 +59,7 @@ theorem memoryUsage_add (hb : NumericIndex → Nat) (ser : List Nat → Nat) (ns
       (ns.map (EN.memoryUsage hb ser)).sum + (es.map (EN.memoryUsage hb ser)).sum := by
   simp [memoryUsage, List.map_append, List.sum_append]
 
-/-- `batch_len`: the number of tuples in the batch (`EncodedTuples::len`). -/
-def IndexColumn.batchLen (b : EncodedTuples) : Nat := b.len
-
+/-- `batch_len`: the number of tuples in the batch (`EncodedTuples::len`; `IndexColumn.batchLen` is defined in `Batch.lean`, where the fit reads it). -/
 theorem IndexColumn.batchLen_spec (b : EncodedTuples) : IndexColumn.batchLen b = b.scalar.length := rfl
 
 end NI
