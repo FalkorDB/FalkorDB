@@ -290,6 +290,13 @@ impl NumericIndex {
         self.tree.is_empty()
     }
 
+    /// Heap bytes the tree holds ([`CowBTree::heap_bytes`]): every page this version reaches,
+    /// whether or not another version shares it. Walks every page.
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.tree.heap_bytes()
+    }
+
     /// Entity ids whose value equals `value`. Empty for a non-numeric value.
     #[must_use]
     pub fn point(

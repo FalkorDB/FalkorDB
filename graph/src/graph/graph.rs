@@ -291,6 +291,8 @@ pub struct MemoryUsageReport {
     pub unlabeled_node_attr_sz: usize,
     pub edge_block_storage_sz: usize,
     pub edge_attr_by_type: Vec<(Arc<String>, usize)>,
+    /// RediSearch's own estimate of its indexes, and on a build with `index-falkordb` the native
+    /// index's columns as well.
     pub indices_sz: usize,
 }
 
@@ -5067,7 +5069,12 @@ impl Graph {
         }
 
         // --- indices ---
+        // RediSearch's own estimate, as C reports it. Under the flag the native columns hold the
+        // Range fields and RediSearch the rest, so both count: this version's pages, including
+        // those it shares with another version.
         let indices_sz = self.node_indexer.memory_usage() + self.edge_indexer.memory_usage();
+        #[cfg(feature = "index-falkordb")]
+        let indices_sz = indices_sz + self.falkordb_index.memory_usage();
 
         MemoryUsageReport {
             label_matrices_sz,
