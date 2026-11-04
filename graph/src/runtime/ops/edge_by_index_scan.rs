@@ -377,17 +377,14 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                             Some(Err(scan_filter)) => {
                                 // Resolved once per scan. No edge holds a name the graph has
                                 // never seen.
-                                let edges: Box<dyn Iterator<Item = EdgeRow>> = match g
-                                    .get_relationship_attribute_id(scan_filter.attribute())
-                                {
-                                    Some(attr) => {
-                                        let attr = attr as u16;
+                                let edges: Box<dyn Iterator<Item = EdgeRow>> = match scan_filter
+                                    .resolve(|attr| {
+                                        g.get_relationship_attribute_id(attr)
+                                            .map(|attr| attr as u16)
+                                    }) {
+                                    Some(scan_filter) => {
                                         Box::new(scan_type().filter(move |&(_, _, edge)| {
-                                            runtime.graph().relationship_matches(
-                                                edge,
-                                                attr,
-                                                &scan_filter,
-                                            )
+                                            runtime.graph().relationship_matches(edge, &scan_filter)
                                         }))
                                     }
                                     None => Box::new(std::iter::empty()),
