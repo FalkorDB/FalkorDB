@@ -40,7 +40,7 @@ theorem resize_clamp_grownOk (r0 c0 nrows ncols : Nat) :
 theorem resize_clamp_not_shrink (r0 c0 nrows ncols : Nat) :
     ¬ (max nrows r0 < r0 ∨ max ncols c0 < c0) := by omega
 
-/-! ## `Vector::Iter` (vector.rs:597-650): the cursor state machine
+/-! ## `Vector::Iter` (vector.rs:601-658): the cursor state machine
 
 `Iter::new` attaches and calls `GxB_Vector_Iterator_seek(0)` (`depleted` iff that returns
 `GxB_EXHAUSTED`, :619-625); `next` returns `None` once `depleted`, otherwise reads

@@ -18,9 +18,11 @@ def atom0 : P ET := fun s =>
 
 /-- Fuel-bounded: it stops after 8 `.prop` lookups, so a 9th `.x` in `a.b.c…` is left
 unconsumed (the caller then fails with a syntax error). That cap is a termination device of
-this example oracle (a structural recursion on the fuel), not Rust behaviour: Rust's postfix
-`.name` lookups (`parse_property_lookup`, cypher.rs:2165) are cut off only by the nesting-depth
-guard (`check_depth`), never at 8. No example run with this oracle chains more than a few. -/
+this example oracle (a structural recursion on the fuel), not Rust behaviour. In an expression,
+Rust's postfix `.name` lookups (`parse_property_lookup`, cypher.rs:2165, called from the postfix
+loop at :2602) are cut off only by the nesting-depth guard (`check_depth`), never at 8; the SET
+and REMOVE item loops (:3351, :3447) call it with no depth check, so there a chain ends only at
+the end of the tokens. No example run with this oracle chains more than a few. -/
 def props0 : Nat → ET → P ET
   | 0, e => pure e
   | n + 1, e => fun s =>

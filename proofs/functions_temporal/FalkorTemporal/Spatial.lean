@@ -12,7 +12,7 @@ the clamp) is `Spatial2.distance` in `SpatialFns.lean`; this file only checks th
 -/
 namespace FalkorTemporal.Spatial
 
-/-- Rust's `EARTH_RADIUS` (value.rs:156). -/
+/-- Rust's `EARTH_RADIUS` (value.rs:157). -/
 def EARTH_RADIUS : Float := 6378140.0
 
 -- The mechanism, checked at build time (`#guard` fails the build on a mismatch): one ulp above 1

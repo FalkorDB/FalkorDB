@@ -11,9 +11,11 @@ import FalkorIdList.Wire
 -/
 namespace FalkorRuntimeDS.NarrowIntModel
 
-/-- narrow_int.rs:19 — the four match arms, in order. One model for the whole proofs tree:
-`IdListWire.widthFor` (`proofs/id_list`, which the id-list wire format also uses), so a change to
-a threshold cannot leave two projects inconsistent. -/
+/-- narrow_int.rs:19 — the four match arms, in order. `runtime_ds` and `id_list` share one
+model, `IdListWire.widthFor` (`proofs/id_list`, which the id-list wire format also uses), so a
+threshold change cannot leave those two inconsistent. `proofs/index_layer` still has its own
+`widthFor` (LeafBytes.lean, for the leaf's `pow2_bytes_for` path): a threshold change must be
+made there too. -/
 abbrev widthFor : Nat → Nat := IdListWire.widthFor
 
 /-- Truncating `as` cast to `w` bytes. -/
