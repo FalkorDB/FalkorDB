@@ -9,14 +9,18 @@
 //! back at the graph for background population; that cycle is exactly what this
 //! avoids. The write path mutates a version's own copy instead.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use roaring::RoaringTreemap;
+
 use crate::entity_type::EntityType;
-use crate::graph::graph::{Graph, NodeId};
+use crate::graph::endpoint_index::EndpointIndex;
+use crate::graph::graph::{Graph, NodeId, RelationshipId};
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
+use super::cch::{CchError, CchIndex, CchIndexDef};
 use super::encode::encode_numeric;
 use super::graph_writes;
 use super::numeric::{DocIter, EncodedTuples, KeySet, NumericIndex};
@@ -152,6 +156,93 @@ impl IndexColumn {
             Self::Numeric(idx) => idx.point_key(key),
         }
     }
+
+    /// Refresh `written` in column `name`: their tuples as `from` has them come out, and as `to`
+    /// has them go in, while `state` is `Building` only for an entity `to` places below the cursor.
+    /// Removing a tuple the column does not hold changes nothing, and an entity whose value did not
+    /// change takes its tuple out and puts it back. What a writer's rebase and an indexer batch's
+    /// catch-up both do ([`VersionedIndex::writer_rebase`], [`VersionedIndex::indexer_catch_up`]).
+    ///
+    /// This is `from`'s copy of the column, so the tuples coming out are read with no label check:
+    /// the copy holds none for an entity without the label in `from`, and removing one changes
+    /// nothing. The tuples going in are checked ([`graph_writes::entity_tuples`]).
+    fn refresh(
+        &mut self,
+        state: &BuildState<BuildCursor>,
+        (entity, key): &(EntityType, IndexKey),
+        written: &RoaringTreemap,
+        from: &Graph,
+        to: &Graph,
+    ) {
+        if written.is_empty() {
+            return;
+        }
+        let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
+        let attr = &key.1;
+        match entity {
+            EntityType::Node => {
+                if let Some(idx) = from.get_node_attribute_id(attr) {
+                    for id in written {
+                        if let Some(value) =
+                            from.get_node_attribute_by_idx(NodeId::from(id), idx as u16)
+                        {
+                            self.push_encoded(&value, id, &mut removes);
+                        }
+                    }
+                }
+            }
+            EntityType::Relationship => {
+                if let Some(idx) = from.get_relationship_attribute_id(attr) {
+                    for id in written {
+                        if let Some(value) = from
+                            .get_relationship_attribute_by_idx(RelationshipId::from(id), idx as u16)
+                        {
+                            self.push_encoded(&value, id, &mut removes);
+                        }
+                    }
+                }
+            }
+        }
+        // Placed before their values are read, so an entity past the cursor costs a place, not an
+        // attribute read.
+        match state {
+            BuildState::Ready => {
+                graph_writes::entity_tuples(to, *entity, key, written, self, &mut adds);
+            }
+            BuildState::Building { next, .. } => {
+                let below = placed_below(written, *entity, *next, to);
+                graph_writes::entity_tuples(to, *entity, key, &below, self, &mut adds);
+            }
+        }
+        self.remove_encoded(&mut removes);
+        self.add_encoded(&mut adds);
+    }
+}
+
+/// The entities of `written` that `version` places below `next`, a column's cursor: the nodes
+/// below it, one range of the set, or the edges whose endpoints come before it, one lookup each. An
+/// edge `version` no longer has is not below it.
+fn placed_below(
+    written: &RoaringTreemap,
+    entity: EntityType,
+    next: BuildCursor,
+    version: &Graph,
+) -> RoaringTreemap {
+    match next {
+        BuildCursor::Node(next) => {
+            let mut below = written.clone();
+            below.remove_range(u64::from(next)..);
+            below
+        }
+        BuildCursor::Edge { .. } => written
+            .iter()
+            .filter(|&id| {
+                version
+                    .build_place(entity, id)
+                    .is_some_and(|at| at.precedes(next))
+            })
+            .collect(),
+    }
 }
 
 /// A lookup a column has agreed to answer: which of its entities may hold one value.
@@ -214,12 +305,14 @@ impl VersionedIndex for IndexColumn {
     /// still go first.
     fn writer_record(
         &mut self,
-        state: BuildState<BuildCursor>,
+        state: &mut BuildState<BuildCursor>,
         mut log: Vec<IndexWrite>,
         place: impl Fn(u64) -> Option<BuildCursor>,
         (removes, adds): &mut (EncodedTuples, EncodedTuples),
     ) {
-        if let BuildState::Building { next } = state {
+        if let BuildState::Building { next, written } = state {
+            written.by_this_version.extend(log.iter().map(|w| w.id));
+            let next = *next;
             // A batch reads an entity at or above the cursor when it reaches it, so its
             // additions go. They go before the collapse, so one cannot cancel an earlier
             // removal of the same tuple.
@@ -228,6 +321,28 @@ impl VersionedIndex for IndexColumn {
         last_write_wins(&mut log, &mut removes.scalar, &mut adds.scalar);
         self.remove_encoded(removes);
         self.add_encoded(adds);
+    }
+
+    fn writer_rebase(
+        &mut self,
+        state: &BuildState<BuildCursor>,
+        name: &(EntityType, IndexKey),
+        written: &RoaringTreemap,
+        published: &Graph,
+        fork: &Graph,
+    ) {
+        self.refresh(state, name, written, published, fork);
+    }
+
+    fn indexer_catch_up(
+        &mut self,
+        state: &BuildState<BuildCursor>,
+        name: &(EntityType, IndexKey),
+        written: &RoaringTreemap,
+        batch_version: &Graph,
+        published: &Graph,
+    ) {
+        self.refresh(state, name, written, batch_version, published);
     }
 
     /// The column's next `budget` nodes or edges from `from`, at their values in `version`,
@@ -279,6 +394,12 @@ impl ScanFilter {
 
 /// Where a building column's next indexer batch resumes: the first entity no batch has indexed
 /// yet. Also an entity's place in that order, to compare with it ([`Self::precedes`]).
+///
+/// A marker, not an iterator: it holds a place and nothing of the scan that reached it. Each batch
+/// opens a new scan from it, of the label's matrix for nodes or the type's tensor for edges, reads
+/// up to its budget, and returns the next marker (`graph_writes::scan`). The order is the same for
+/// every label, node id or `(src, dst)`, so the cursor names none: the scan reads only the label's
+/// entities, and a refresh keeps only those the label has (`graph_writes::entity_tuples`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BuildCursor {
     /// A node column's next node.
@@ -307,6 +428,23 @@ impl BuildCursor {
                 },
             ) => (u64::from(src), u64::from(dst)) < (u64::from(nsrc), u64::from(ndst)),
             _ => unreachable!("a node and an edge are never in one column"),
+        }
+    }
+
+    /// Where entity `id` sits in build order, as a cursor: a node by its id, an edge by its
+    /// endpoints in `endpoints`, a version's edge endpoints. An edge that version deleted has none
+    /// (`None`).
+    pub(crate) fn from_id(
+        entity: EntityType,
+        id: u64,
+        endpoints: &EndpointIndex,
+    ) -> Option<Self> {
+        match entity {
+            EntityType::Node => Some(Self::Node(NodeId::from(id))),
+            EntityType::Relationship => endpoints.get(id).map(|(src, dst)| Self::Edge {
+                src: NodeId::from(src),
+                dst: NodeId::from(dst),
+            }),
         }
     }
 
@@ -345,6 +483,22 @@ pub struct FalkorDbIndex {
     /// published, so between a version and a later published one with the same count, no batch
     /// was published. Writers may have been: the data version tells.
     batches_published: u64,
+    /// CCH shortest-path indexes, one [`IndexEntry`] per definition, keyed by the whole
+    /// [`CchIndexDef`](super::cch::CchIndexDef) (the kind's [`VersionedIndex::Name`]). Every
+    /// entry is built synchronously and held `Ready` until the background build, so readers
+    /// still check the state.
+    ///
+    /// A `BTreeMap`, not a `HashMap`: it iterates in definition order, the same in every
+    /// process, so whatever lists the indexes (a save, a listing) is deterministic. Found by
+    /// key, one entry per definition. Empty until one is created, so a graph with no CCH index
+    /// pays one empty map.
+    ///
+    /// Cloned with the rest of the index by `Graph::new_version`, which clones one `Arc<Cch>`
+    /// per index: no hierarchy data is copied, a reader that already holds the old version
+    /// keeps it, and rollback costs nothing. `pub(super)` for the CCH modules that find or
+    /// update an entry in place (`CchIndex`'s [`VersionedIndex`] lookup); everything else goes
+    /// through the CCH methods below.
+    pub(super) cch_indexes: BTreeMap<CchIndexDef, IndexEntry<CchIndex>>,
 }
 
 impl FalkorDbIndex {
@@ -442,9 +596,7 @@ impl FalkorDbIndex {
             label,
             attr,
             IndexColumn::Numeric(NumericIndex::new()),
-            BuildState::Building {
-                next: BuildCursor::new(entity),
-            },
+            BuildState::building(BuildCursor::new(entity)),
         );
     }
 
@@ -557,6 +709,27 @@ impl FalkorDbIndex {
     ) -> bool {
         self.columns(entity)
             .contains_key(&(label.clone(), attr.clone()))
+    }
+
+    /// Ready this version to be published: each index's sets of written entities are settled
+    /// ([`IndexEntry::publish`]).
+    pub(crate) fn publish(&mut self) {
+        self.node_columns
+            .values_mut()
+            .chain(self.edge_columns.values_mut())
+            .for_each(IndexEntry::publish);
+    }
+
+    /// Every column, by kind and key.
+    pub(crate) fn column_names(&self) -> Vec<(EntityType, IndexKey)> {
+        [EntityType::Node, EntityType::Relationship]
+            .into_iter()
+            .flat_map(|entity| {
+                self.columns(entity)
+                    .keys()
+                    .map(move |key| (entity, key.clone()))
+            })
+            .collect()
     }
 
     /// Set this version's [`Self::batches_published`] as it is published after `published`:
@@ -777,7 +950,45 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         attr: &Arc<String>,
     ) -> Option<BuildState<BuildCursor>> {
-        self.entry(entity, label, attr).map(|entry| entry.state)
+        self.entry(entity, label, attr)
+            .map(|entry| entry.state.clone())
+    }
+}
+
+/// CCH shortest-path indexes, held next to the columns. `Graph`'s CCH methods build a
+/// hierarchy from the graph first, then hand it here; nothing here reads the graph.
+///
+/// The signatures are fixed here so the DDL, maintenance and procedure changes can be written
+/// against them. Every body is `unimplemented!()`: nothing in the engine calls these, so a
+/// graph with no CCH index behaves exactly as it did before.
+impl FalkorDbIndex {
+    /// The index held over exactly `def`, if it is ready to answer.
+    #[must_use]
+    pub(crate) fn cch_index(
+        &self,
+        _def: &CchIndexDef,
+    ) -> Option<&CchIndex> {
+        unimplemented!("Graph API, #3212")
+    }
+
+    /// Every held CCH definition, in no guaranteed order.
+    pub(crate) fn cch_defs(&self) -> impl Iterator<Item = &CchIndexDef> {
+        unimplemented!("Graph API, #3212");
+        // Unreachable, but it pins the return type: `impl Iterator` needs a concrete type
+        // and `unimplemented!()` alone leaves the compiler without one.
+        #[allow(unreachable_code)]
+        std::iter::empty()
+    }
+
+    /// Stop holding the index over `def`.
+    ///
+    /// # Errors
+    /// [`CchError::NotFound`] if no entry over `def` is held.
+    pub(crate) fn drop_cch(
+        &mut self,
+        _def: &CchIndexDef,
+    ) -> Result<(), CchError> {
+        unimplemented!("Graph API, #3212")
     }
 }
 
