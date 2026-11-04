@@ -231,7 +231,12 @@ def isStale (s : SS) : Bool := s.version == .stale
 def versionIsCurrent (s : SS) : Bool := s.version == .current
 
 /-- `check_fork` (`:246`): only an `Unchecked` fork is looked at; `MvccGraph::is_stale` fork
-(`mvcc_graph.rs:144`) is `ver + 1 ≠ fork.version`. Stale ⇒ `Version::Stale` and `Err(Stale)`. -/
+(`mvcc_graph.rs:144`) is `ver + 1 ≠ fork.version`. Stale ⇒ `Version::Stale` and `Err(Stale)`.
+Since #3567 a current fork is also rebased onto the indexer batches published since
+(`rebase_onto_indexer_batches`, `query_session.rs:262`): index progress only, no data change
+(native_index `Rebase.lean`: `V.rebased_keeps_data`). The rebase fails (`Err(Stale)`, release) only for a
+fork that is still borrowed, which an escalating writer's is not (a debug build panics): that is the one
+assumption this model makes, not proven here. -/
 def checkFork (s : SS) : Except Unit SS :=
   match s.version with
   | .unchecked fv =>

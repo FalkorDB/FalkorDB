@@ -15,11 +15,13 @@ import FalkorNativeIndex.Scan
 import FalkorNativeIndex.Unique
 import FalkorNativeIndex.Decline
 import FalkorNativeIndex.Batch
+import FalkorNativeIndex.Rebase
+import FalkorNativeIndex.Cch
 
 /-!
 # `native_index`: the FalkorDB native numeric index (#2350 ec2448f32, #3307 18836a355)
 
-Targets the worktree at origin/main a477d9aa3 (re-targeted from b02266c2b: #3566 `29e85ffc3`, an indexer batch commits as a version of its own: `Batch.lean`; earlier, from e860645bb: #3547 `155a246f8` (native-only
+Targets the worktree at origin/main 5c7af54f2 (re-targeted from a477d9aa3: #3567 `b18530683`, writers rebase onto indexer batches and a batch catches up on writers: `Rebase.lean`; #3319 `1ff68d538`, the CCH path-index contract skeleton: `Cch.lean`; #3320 `5c7af54f2`, the graph test kit, test-only. Before that, from b02266c2b: #3566 `29e85ffc3`, an indexer batch commits as a version of its own: `Batch.lean`; earlier, from e860645bb: #3547 `155a246f8` (native-only
 writes: no Range field is fed to RediSearch under `index-falkordb`; `redisearch_fields`; `index_only_writes` is
 gone), #2386 `41ed78225` (no fallback under the flag: `query_numeric` answers `Option<Result<rows, ScanFilter>>`,
 a predicate the native index cannot serve is the error `unsupported_by_native_index`, a column still building is
@@ -50,6 +52,8 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
 | `Writes.lean`: `G`, `StageOp`, `stage`, `nodeAttrsSet`, `nodeRowsSet`, `newNodeAttrs`, `bulkNodeAttrs`, `labelsAdded`, `labelsProductAdded`, `labelsRemoved`, `nodesDeleted`, `edgeAttrsSetWith`/`edgeAttrsSet`/`edgeAttrsSetOfType`, `newEdgeAttrs`, `bulkEdgeAttrs`, `edgesDeleted`, `addNodeUnderLabel`, `removeNodeUnderLabel`, `nodeLabelIdsInto`, `edgeType` | `graph_writes.rs:50-380`, `:451-510` |
 | `Build.lean`: `pushAttr`, `scanNodes`, `edgeLoop`, `scanEdges`, `scan`, `G.place`, `IndexColumn.indexerRead`/`indexerAdd`, `G.prepareBatch`, `G.indexerPrepare` | `graph_writes.rs:513-620` (`scan` :513, `scan_nodes` :538, `scan_edges` :574); `falkordb_index.rs:235-250`; `versioned.rs:187-230`; `graph.rs:3858-3888` (`place`, in `apply_index_writes`) |
 | `Batch.lean`: `SE`, `discardedAgainst`, `V` (`newBuildVersion`, `createEntry`, `setBatchesPublished`, `batchPublishedSince`, `applyBatch`, `withBatchIndex`), `indexerFit`, `commitIndexerBatch` | `versioned.rs:54-65`, `:173-241` (`IndexEntry`), `:248-340` (`apply_indexer_batch`, `indexer_prepare`, `indexer_fit`, `with_batch_index`, `take_index`); `falkordb_index.rs:452`, `:565`, `:575`; `graph.rs:1138` (`new_build_version`); `mvcc_graph.rs:193`, `:214` |
+| `Rebase.lean`: `Ver`, `tupl`, `entityTuples`, `rawTuples`, `placedBelow`, `IndexColumn.refresh`/`writerRebase`/`indexerCatchUp`, `Written`, `BS`, `EN` (`writerRecord`, `indexerApply`, `publish`, `rebase`, `catchUp`), `overtaken`, `BuildCursor.fromId`, `publishAll`, `columnNames`, `rebaseAll`, `overtakenAny`, `mvccRebase`, `V.rebased` | `falkordb_index.rs:169-244` (`refresh`, `placed_below`), `:326`, `:337`, `:437` (`from_id`), `:716`, `:724`; `versioned.rs:54-81` (`BuildState`, `Written`), `:213`, `:227`, `:280-334`, `:438-565`; `graph_writes.rs:445` (`entity_tuples`); `mvcc_graph.rs:165` (`rebase_onto_indexer_batches`); `graph.rs:3879` (`build_place`) |
+| `Cch.lean`: `Csr` (`row?`, `isWellFormed`, `isSymmetricSimple`), `defNew`, the `unimplemented!()` bodies as always-panicking functions | `cch/mod.rs:57-107` (`Csr`), `:139` (`CchIndexDef::new`), `:193-260` (`Cch::*`), `:314-395` (`VersionedIndex for CchIndex`); `falkordb_index.rs:967-987`; `graph.rs:5225-5274` |
 | `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries` (specifications), `buildInOneBatch`, `createIndex`, `populate`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanOp`, `newVersion`, `runUnit` | `graph_writes.rs:396-450`; `graph.rs:1083`, `:3858`, `:3889`, `:4181`, `:4199`; `node_by_index_scan.rs:302`, `edge_by_index_scan.rs:318` |
 | `Scan.lean`: `G.nodeMatches`/`relationshipMatches`, `nodeFilteredScan`/`edgeFilteredScan`, `nodeScanOp`/`edgeScanOp`, `redisearchFieldsAll`/`redisearchFields` | `graph.rs:4230` (`node_matches`), `:4244` (`relationship_matches`), `:144`/`:151` (`redisearch_fields`); the `Some(Err(scan_filter))` arms of `node_by_index_scan.rs:~330`, `edge_by_index_scan.rs:~375` |
 | `Unique.lean`: `nativeUniqueQuery`, `roundGo`/`fewestLoop`/`fewest`, `ReadOnce` | `unique.rs:20`, `:48`, `:69` |
@@ -86,12 +90,32 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   `createIndex_nodeScan_agrees`, `addEncoded_spec` / `addEncoded_sorted` (an empty tree is bulk-built).
 - **#3566, an indexer batch commits as a version of its own** (`Batch.lean`): the fit of a batch built on a
   build version against what was published meanwhile: `fit_fresh` (nothing committed: `Same`),
-  `fit_after_other_batch` (`Swap`), `fit_after_writer` (`Discarded Writers`), `fit_after_same_batch`
+  `fit_after_other_batch` (`Swap`), `fit_after_writer` (`CatchUp` since #3567; it was `Discarded Writers`), `fit_after_same_batch`
   (`AnotherBatch`), `fit_after_drop` / `fit_after_recreate` (`Gone`; a re-created index has the next
   generation); the commit: `commit_discarded` (nothing published), `commit_same`, `commit_swap` (only the
   batch's index comes from the batch), `commit_invalid`, `commit_batches` (+1 per publish),
   `commit_keeps_version` / `commit_not_stale` (the data version never moves, so a writer's fork is not made
   stale). The model is on the one index the batch is about; the rest of the graph is opaque.
+- **#3567, writers rebase onto indexer batches; a batch catches up on writers** (`Rebase.lean`, `Batch.lean`):
+  closes the gap recorded at a477d9aa3 ("`is_stale` compares only the data version"). `refresh_mem`,
+  `entityTuples_spec`, `placedBelow_mem`: what `IndexColumn::refresh` does, exactly; `refresh_inv`: a column
+  holding exactly the tuples of the entities its version puts in it still does after a refresh over a set
+  outside which the two versions agree (`Frame`); `rebase_progress` (a rebased fork has the published copy's
+  generation, commit count and cursor: the batches' progress is kept), `rebase_keeps_writes`,
+  `rebase_index_spec`, `rebase_inv`, `catchUp_spec`, `catchUp_inv`, `commit_catchUp`, `V.rebased_keeps_data`
+  (no data version change, so a rebased fork is not stale); `writerRecord_proj`/`indexerApply_proj`/
+  `publish_proj` (the pre-#3567 model is the projection of the new one), `writerRecord_records` (every change's
+  entity is recorded). The gap itself: `pre3567_unrebased_commit_regresses` and
+  `pre3567_batch_misfits_after_writer` (an unrebased writer's commit publishes the *older* commit count, so the
+  next batch is judged `AnotherBatch`, which the builder reports as a bug in its own exclusion; model-only,
+  not reproduced live), closed by `rebased_commit_keeps_chain` and `rebased_batch_fits`. `Frame` (outside the
+  written set, the two versions agree on what each entity contributes and where it sits) is assumed: the two
+  invariant theorems are conditional on it, the rows rest on the unconditional specs.
+- **#3319, the CCH contract skeleton** (`Cch.lean`): `Csr::is_well_formed` is exactly the type's shape rules
+  (`isWellFormed_iff`), `is_symmetric_simple` exactly a simple undirected adjacency (`isSymmetricSimple_iff`,
+  `_any_bs`), `row` never panics on a well-formed `Csr` (`row?_isSome_of_wf`), `CchIndexDef::new` makes equal
+  sets equal indexes (`defNew_eq_of_same_members`); every `unimplemented!()` body is an always-panicking
+  function (`*_panics`).
 - **#3547 / #2386, the native index is the only Range index** (`Query.lean`, `Scan.lean`, `Ddl.lean`,
   `Unique.lean`, `Decline.lean`): `queryNumeric_isSome_iff` (what is declined does not depend on the build
   state), `queryNumeric_ok` / `_error` (rows only from a `Ready` column, a `ScanFilter` only from a `Building`
@@ -162,8 +186,8 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   the label matrix is iterated in strictly ascending row order and a tensor by `(src, dst)` (GraphBLAS iteration,
   a C API fact; hypotheses `hasc`), and `buildInOneBatch_entry` that the entity count fits `usize::MAX`
   (`G.Fits`). Not proven: the global invariant "a `Building` column holds exactly the current tuples of the
-  entities below its cursor" as an induction over interleaved batches and units of work; its two halves are
-  proven separately (`writerRecord_eq_sequential` + `stateLog_*` for writes, `scan*_below_cursor` +
+  entities below its cursor" as an induction over interleaved batches and units of work; its parts are
+  proven separately (since #3567 also `Rebase.refresh_inv`/`rebase_inv`/`catchUp_inv`, conditional on `Frame`) (`writerRecord_eq_sequential` + `stateLog_*` for writes, `scan*_below_cursor` +
   `prepareBatch_building` for batches). `idx as u16` (attribute ids above 65535) is not modelled, as before.
 - Schema: attribute names unique (`attrNames.Nodup`: the single `attrs_name` dictionary). The graph's
   mutation of its own stores (`insert_attrs`, label matrix, `remove_all`) is modelled by other

@@ -1,6 +1,6 @@
 import FalkorNativeIndex.Build
 /-!
-# An indexer batch commits as a version of its own (#3566, 29e85ffc3)
+# An indexer batch commits as a version of its own (#3566, 29e85ffc3), and catches up on writers (#3567, b18530683)
 
 An indexer batch is built on a *build version* of the published graph with no lock held
 (`Graph::new_build_version`, `graph.rs:1133`; `Graph::indexer_prepare`, `versioned.rs:262`), then
@@ -29,10 +29,10 @@ published version.
 counters, and are not modelled.
 
 Theorems: `fit_fresh` (nothing committed since: `Same`), `fit_after_other_batch` (`Swap`),
-`fit_after_writer` (`Discarded Writers`), `fit_after_same_batch` (`AnotherBatch`), `fit_after_drop` /
+`fit_after_writer` (`CatchUp`, #3567: it was `Discarded Writers`), `fit_after_same_batch` (`AnotherBatch`), `fit_after_drop` /
 `fit_after_recreate` (`Gone`: a dropped, or dropped and created again, index has another generation),
 `commit_discarded` (nothing published), `commit_same`, `commit_swap` (only the batch's index comes from the
-batch; all else from the published version), `commit_keeps_version` / `commit_not_stale` (a batch commit
+batch; all else from the published version), `commit_catchUp` (the same, with the batch's index caught up: `Rebase.lean`), `commit_keeps_version` / `commit_not_stale` (a batch commit
 never makes a writer's fork stale), `commit_batches` (the batch counter rises by one on each publish).
 -/
 namespace NI
@@ -70,12 +70,14 @@ theorem new_commits (i : IndexColumn) (st : BuildState) (g : Nat) :
     (new i st g).commits = 0 ∧ (new i st g).generation = g := ⟨rfl, rfl⟩
 end SE
 
+/-- `Discarded` (`versioned.rs:157-164`); `Writers` is gone since #3567: a batch catches up on writers. -/
 inductive Discarded where
-  | gone | writers | anotherBatch
+  | gone | anotherBatch
 deriving DecidableEq, Repr
 
+/-- `IndexerCommit` (`versioned.rs:128-143`); `CatchUp(CatchUp::Refresh)` is `catchUp`. -/
 inductive IndexerCommit where
-  | same | swap | discarded (why : Discarded)
+  | same | swap | catchUp | discarded (why : Discarded)
 deriving DecidableEq, Repr
 
 /-- `IndexEntry::discarded_against`: `ours` is a copy moved on by a batch, `pub` the published copy. -/
@@ -150,6 +152,15 @@ def withBatchIndex (ours pub : V R) : V R :=
   match ours.entry, pub.newBuildVersion.entry with
   | some t, some _ => { pub.newBuildVersion with entry := some t }
   | _, _ => pub.newBuildVersion
+
+/-- `Graph::caught_up_onto` with `catch_up_index` (`versioned.rs:438-473`): a new build version of `pub`, the
+batch's entry in its slot with its index caught up on the writers' changes. `f ours pub` is the caught-up index
+(`Rebase.lean`: `IndexColumn.refresh`); the entry's state, generation and commit count are the batch's
+(`caught = ours.clone()`). -/
+def caughtUpOnto (ours pub : V R) (f : SE → SE → IndexColumn) : V R :=
+  match ours.entry, pub.newBuildVersion.entry with
+  | some o, some p => { pub.newBuildVersion with entry := some { o with en := { o.en with index := f o p } } }
+  | _, _ => pub.newBuildVersion
 end V
 
 /-- `Graph::indexer_fit`. `ours` is the batch's version, `pub` the published one. -/
@@ -160,17 +171,25 @@ def indexerFit {R : Type} (ours pub : V R) : IndexerCommit :=
     match discardedAgainst o pub.entry with
     | some why => .discarded why
     | none =>
-      if pub.version ≠ ours.version then .discarded .writers
+      if pub.version ≠ ours.version then .catchUp
       else if V.batchPublishedSince pub ours then .swap else .same
 
+/-- The version a batch commit publishes, for each fit (`commit_indexer_batch`, `mvcc_graph.rs:235-260`). -/
+def commitVersion {R : Type} (pub prepared : V R) (f : SE → SE → IndexColumn) : IndexerCommit → V R
+  | .same => prepared
+  | .swap => V.withBatchIndex prepared pub
+  | .catchUp => V.caughtUpOnto prepared pub f
+  | .discarded _ => pub
+
 /-- `MvccGraph::commit_indexer_batch` (`valid` is `Graph::validate`): the new published version and what
-went in; `none` is the `Invalid` refusal, nothing published. -/
-def commitIndexerBatch {R : Type} (pub prepared : V R) (valid : V R → Bool) : V R × Option IndexerCommit :=
+went in; `none` is the `Invalid` refusal, nothing published. `f` is the catch-up of the batch's index. -/
+def commitIndexerBatch {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn) :
+    V R × Option IndexerCommit :=
   let fit := indexerFit prepared pub
   match fit with
   | .discarded _ => (pub, some fit)
   | _ =>
-    let ver := match fit with | .same => prepared | _ => V.withBatchIndex prepared pub
+    let ver := commitVersion pub prepared f fit
     if valid ver then (ver.setBatchesPublished pub true, some fit) else (pub, none)
 
 /-! ## The fit -/
@@ -197,11 +216,12 @@ theorem fit_after_other_batch {R : Type} (pub pub' : V R) (p : SE) (hp : pub.ent
   simp only [V.newBuildVersion, V.newVersion, V.applyBatch, hp, indexerFit, discardedAgainst, hent, hver]
   simp [ha.2.2.1, ha.2.2.2, V.batchPublishedSince, hcnt]
 
-/-- A writer committed meanwhile (the data version moved, this index untouched): `Writers`. -/
+/-- A writer committed meanwhile (the data version moved, this index untouched): `CatchUp` (#3567; before it,
+`Discarded Writers`). -/
 theorem fit_after_writer {R : Type} (pub pub' : V R) (p : SE) (hp : pub.entry = some p)
     (hb : p.en.isBuilding = true) (work : EncodedTuples) (next : Option BuildCursor)
     (hent : pub'.entry = pub.entry) (hver : pub'.version ≠ pub.version) :
-    indexerFit (pub.newBuildVersion.applyBatch work next).1 pub' = .discarded .writers := by
+    indexerFit (pub.newBuildVersion.applyBatch work next).1 pub' = .catchUp := by
   have ha := SE.indexerApply_building p work next hb
   simp only [V.newBuildVersion, V.newVersion, V.applyBatch, hp, indexerFit, discardedAgainst, hent]
   simp [ha.2.2.1, ha.2.2.2, hver]
@@ -237,59 +257,89 @@ theorem fit_after_recreate {R : Type} (pub pub' : V R) (p : SE) (hp : pub.entry 
 
 /-! ## The commit -/
 
-theorem commit_discarded {R : Type} (pub prepared : V R) (valid : V R → Bool) (why : Discarded)
-    (h : indexerFit prepared pub = .discarded why) :
-    commitIndexerBatch pub prepared valid = (pub, some (.discarded why)) := by
+theorem commit_discarded {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn)
+    (why : Discarded) (h : indexerFit prepared pub = .discarded why) :
+    commitIndexerBatch pub prepared valid f = (pub, some (.discarded why)) := by
   simp [commitIndexerBatch, h]
 
-theorem commit_same {R : Type} (pub prepared : V R) (valid : V R → Bool)
+theorem commit_same {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn)
     (h : indexerFit prepared pub = .same) (hv : valid prepared = true) :
-    commitIndexerBatch pub prepared valid = (prepared.setBatchesPublished pub true, some .same) := by
-  simp [commitIndexerBatch, h, hv]
+    commitIndexerBatch pub prepared valid f = (prepared.setBatchesPublished pub true, some .same) := by
+  simp [commitIndexerBatch, h, commitVersion, hv]
 
 /-- `Swap`: the published version, at its own data version, with exactly the batch's index replaced. -/
-theorem commit_swap {R : Type} (pub prepared : V R) (valid : V R → Bool)
+theorem commit_swap {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn)
     (h : indexerFit prepared pub = .swap) (hv : valid (V.withBatchIndex prepared pub) = true) :
-    commitIndexerBatch pub prepared valid = ((V.withBatchIndex prepared pub).setBatchesPublished pub true, some .swap) ∧
+    commitIndexerBatch pub prepared valid f =
+      ((V.withBatchIndex prepared pub).setBatchesPublished pub true, some .swap) ∧
     (V.withBatchIndex prepared pub).rest = pub.rest ∧
     (V.withBatchIndex prepared pub).version = pub.version ∧
     (V.withBatchIndex prepared pub).indexesCreated = pub.indexesCreated ∧
     (V.withBatchIndex prepared pub).entry = (match prepared.entry, pub.entry with
         | some t, some _ => some t | _, e => e) := by
-  refine ⟨by simp [commitIndexerBatch, h, hv], ?_, ?_, ?_, ?_⟩
+  refine ⟨by simp [commitIndexerBatch, h, commitVersion, hv], ?_, ?_, ?_, ?_⟩
   all_goals
     simp only [V.withBatchIndex, V.newBuildVersion, V.newVersion]
     cases prepared.entry <;> cases pub.entry <;> simp
 
+/-- `CatchUp` (#3567): the published version, at its own data version (the writers' data), with exactly the
+batch's index replaced by the batch's index caught up on what the writers changed: its state, generation and
+commit count are the batch's. -/
+theorem commit_catchUp {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn)
+    (h : indexerFit prepared pub = .catchUp) (hv : valid (V.caughtUpOnto prepared pub f) = true) :
+    commitIndexerBatch pub prepared valid f =
+      ((V.caughtUpOnto prepared pub f).setBatchesPublished pub true, some .catchUp) ∧
+    (V.caughtUpOnto prepared pub f).rest = pub.rest ∧
+    (V.caughtUpOnto prepared pub f).version = pub.version ∧
+    (V.caughtUpOnto prepared pub f).indexesCreated = pub.indexesCreated ∧
+    (V.caughtUpOnto prepared pub f).entry = (match prepared.entry, pub.entry with
+        | some o, some p => some { o with en := { o.en with index := f o p } } | _, e => e) := by
+  refine ⟨by simp [commitIndexerBatch, h, commitVersion, hv], ?_, ?_, ?_, ?_⟩
+  all_goals
+    simp only [V.caughtUpOnto, V.newBuildVersion, V.newVersion]
+    cases prepared.entry <;> cases pub.entry <;> simp
+
 /-- A refused version (`validate` fails) publishes nothing. -/
-theorem commit_invalid {R : Type} (pub prepared : V R) (valid : V R → Bool) (c : IndexerCommit)
-    (h : indexerFit prepared pub = c) (hc : ∀ w, c ≠ .discarded w)
-    (hv : valid (match c with | .same => prepared | _ => V.withBatchIndex prepared pub) = false) :
-    commitIndexerBatch pub prepared valid = (pub, none) := by
+theorem commit_invalid {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn)
+    (c : IndexerCommit) (h : indexerFit prepared pub = c) (hc : ∀ w, c ≠ .discarded w)
+    (hv : valid (commitVersion pub prepared f c) = false) :
+    commitIndexerBatch pub prepared valid f = (pub, none) := by
   cases c with
   | discarded w => exact absurd rfl (hc w)
-  | same => simp [commitIndexerBatch, h, hv]
-  | swap => simp [commitIndexerBatch, h, hv]
+  | same => simp [commitIndexerBatch, h, commitVersion] at hv ⊢; simp [hv]
+  | swap => simp [commitIndexerBatch, h, commitVersion] at hv ⊢; simp [hv]
+  | catchUp => simp [commitIndexerBatch, h, commitVersion] at hv ⊢; simp [hv]
 
 /-- The data version never moves with a batch commit, so a writer's fork (made at `pub.version + 1`) is
 not made stale by one (`MvccGraph::is_stale`: `published.version + 1 != fork.version`). -/
 def isStale {R : Type} (pub fork : V R) : Bool := pub.version + 1 != fork.version
 
-theorem commit_keeps_version {R : Type} (pub prepared : V R) (valid : V R → Bool)
+/-- `CatchUp` and `Swap` are built on `pub.new_build_version()`, so keep its data version; `Same` is at it. -/
+theorem commit_keeps_version {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn)
     (hsame : indexerFit prepared pub = .same → prepared.version = pub.version) :
-    (commitIndexerBatch pub prepared valid).1.version = pub.version := by
+    (commitIndexerBatch pub prepared valid f).1.version = pub.version := by
   unfold commitIndexerBatch
-  generalize hf : indexerFit prepared pub = f
-  cases f with
+  generalize hf : indexerFit prepared pub = fit
+  cases fit with
   | discarded w => rfl
   | same =>
     have := hsame hf
-    simp only
-    split <;> simp [V.setBatchesPublished, this]
+    simp only [commitVersion]
+    by_cases hv : valid prepared = true <;> simp [hv, V.setBatchesPublished, this]
   | swap =>
-    simp only
-    split <;> simp [V.setBatchesPublished, V.withBatchIndex, V.newBuildVersion, V.newVersion]
-    all_goals (cases prepared.entry <;> cases pub.entry <;> simp)
+    simp only [commitVersion]
+    by_cases hv : valid (V.withBatchIndex prepared pub) = true
+    · simp only [hv, ↓reduceIte]
+      simp only [V.setBatchesPublished, V.withBatchIndex, V.newBuildVersion, V.newVersion]
+      cases prepared.entry <;> cases pub.entry <;> simp
+    · simp [hv]
+  | catchUp =>
+    simp only [commitVersion]
+    by_cases hv : valid (V.caughtUpOnto prepared pub f) = true
+    · simp only [hv, ↓reduceIte]
+      simp only [V.setBatchesPublished, V.caughtUpOnto, V.newBuildVersion, V.newVersion]
+      cases prepared.entry <;> cases pub.entry <;> simp
+    · simp [hv]
 
 /-- `Same` implies the batch's version is at the published data version (what `commit_version`'s
 `debug_assert!` checks). -/
@@ -303,19 +353,32 @@ theorem fit_same_version {R : Type} (ours pub : V R) (h : indexerFit ours pub = 
       · exact hv.symm
       · simp [hv] at h
 
-theorem commit_not_stale {R : Type} (pub prepared fork : V R) (valid : V R → Bool) :
-    isStale (commitIndexerBatch pub prepared valid).1 fork = isStale pub fork := by
-  have := commit_keeps_version pub prepared valid (fun h => fit_same_version prepared pub h)
+theorem commit_not_stale {R : Type} (pub prepared fork : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn) :
+    isStale (commitIndexerBatch pub prepared valid f).1 fork = isStale pub fork := by
+  have := commit_keeps_version pub prepared valid f (fun h => fit_same_version prepared pub h)
   simp [isStale, this]
 
 /-- Each publish counts one batch. -/
-theorem commit_batches {R : Type} (pub prepared : V R) (valid : V R → Bool) 
+theorem commit_batches {R : Type} (pub prepared : V R) (valid : V R → Bool) (f : SE → SE → IndexColumn)
     (c : IndexerCommit) (hf : indexerFit prepared pub = c) (hc : ∀ w, c ≠ .discarded w)
-    (hv : valid (match c with | .same => prepared | _ => V.withBatchIndex prepared pub) = true) :
-    (commitIndexerBatch pub prepared valid).1.batches = pub.batches + 1 := by
+    (hv : valid (commitVersion pub prepared f c) = true) :
+    (commitIndexerBatch pub prepared valid f).1.batches = pub.batches + 1 := by
   cases c with
   | discarded w => exact absurd rfl (hc w)
-  | same => simp [commitIndexerBatch, hf, hv, V.setBatchesPublished]
-  | swap => simp [commitIndexerBatch, hf, hv, V.setBatchesPublished]
+  | same =>
+    simp only [commitVersion] at hv
+    simp only [commitIndexerBatch, hf, commitVersion]
+    simp only [hv, ↓reduceIte]
+    rfl
+  | swap =>
+    simp only [commitVersion] at hv
+    simp only [commitIndexerBatch, hf, commitVersion]
+    simp only [hv, ↓reduceIte]
+    rfl
+  | catchUp =>
+    simp only [commitVersion] at hv
+    simp only [commitIndexerBatch, hf, commitVersion]
+    simp only [hv, ↓reduceIte]
+    rfl
 
 end NI

@@ -17,7 +17,7 @@ import GraphQueries.Basic
 | `getRelMatMut` | `get_relationship_matrix_mut` :1340 |
 | `getRelMat`    | `get_relationship_matrix` :1366 |
 | `getLabelMat`/`getLabelMatMut` | :1306 / :1327 |
-| `nodeHasLabel`/`nodeHasLabelId`/`edgeHasType` | :1174 / :1188 / :1200 |
+| `nodeHasLabel`/`nodeHasLabelId`/`edgeHasType`/`edgeHasTypeId` | :1174 / :1188 / :1326 / :1338 |
 | `labelNodeCount`/`..ByIdx`/`typeEdgeCount` | :1030 / :1047 / :1056 |
 -/
 namespace GQ
@@ -442,8 +442,14 @@ theorem getLabelMatMut_spec (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String
 def nodeHasLabelId (g : G V) (n l : Nat) : Bool := g.nodeLabels.get n l
 def nodeHasLabel (g : G V) (n : Nat) (s : String) : Bool :=
   match getLabelId g s with | some l => g.nodeLabels.get n l | none => false
+/-- `edge_has_type_id` (`graph.rs:1338`, #3567): the relationship-type matrix at `(edge, type)`, no string lookup. -/
+def edgeHasTypeId (g : G V) (e t : Nat) : Bool := g.relType.get e t
+/-- `edge_has_type` (`graph.rs:1326`): the type's id by name, then `edge_has_type_id` (before #3567 the matrix
+    read was inline). -/
 def edgeHasType (g : G V) (e : Nat) (s : String) : Bool :=
-  match getTypeId g s with | some t => g.relType.get e t | none => false
+  match getTypeId g s with | some t => edgeHasTypeId g e t | none => false
+
+theorem edgeHasTypeId_iff (g : G V) (e t : Nat) : edgeHasTypeId g e t = true ↔ g.relType.get e t = true := Iff.rfl
 
 theorem nodeHasLabel_iff (g : G V) (n : Nat) (s : String) :
     nodeHasLabel g n s = true ↔ ∃ l, getLabelId g s = some l ∧ nodeHasLabelId g n l = true := by
@@ -452,7 +458,7 @@ theorem nodeHasLabel_iff (g : G V) (n : Nat) (s : String) :
 theorem edgeHasType_iff (g : G V) (e : Nat) (s : String) :
     edgeHasType g e s = true ↔ ∃ t, g.types[t]? = some s ∧ getTypeId g s = some t ∧
       g.relType.get e t = true := by
-  unfold edgeHasType; cases ht : getTypeId g s with
+  unfold edgeHasType edgeHasTypeId; cases ht : getTypeId g s with
   | none => simp
   | some t =>
     simp only

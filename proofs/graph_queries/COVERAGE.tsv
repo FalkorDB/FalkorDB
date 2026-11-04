@@ -1,18 +1,18 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/graph/graph.rs	from_str	215	PROVEN	Queries.dirOfStr_spec
-graph/src/graph/graph.rs	from	226	PROVEN	Accessors newtype identity (LabelId.0)
-graph/src/graph/graph.rs	from	232	PROVEN	Accessors newtype identity (TypeId.0)
-graph/src/graph/graph.rs	from	238	PROVEN	Accessors.nodeId_roundtrip
-graph/src/graph/graph.rs	from	244	PROVEN	Accessors.nodeId_roundtrip
-graph/src/graph/graph.rs	from	250	PROVEN	Accessors.nodeId_roundtrip (RelId)
-graph/src/graph/graph.rs	from	256	PROVEN	Accessors.nodeId_roundtrip (RelId)
-graph/src/graph/graph.rs	new	263	PROVEN	Accessors.planNew_spec
-graph/src/graph/graph.rs	from	399	PROVEN	Accessors.nodeOpErrorOf_spec
+graph/src/graph/graph.rs	from_str	216	PROVEN	Queries.dirOfStr_spec
+graph/src/graph/graph.rs	from	227	PROVEN	Accessors newtype identity (LabelId.0)
+graph/src/graph/graph.rs	from	233	PROVEN	Accessors newtype identity (TypeId.0)
+graph/src/graph/graph.rs	from	239	PROVEN	Accessors.nodeId_roundtrip
+graph/src/graph/graph.rs	from	245	PROVEN	Accessors.nodeId_roundtrip
+graph/src/graph/graph.rs	from	251	PROVEN	Accessors.nodeId_roundtrip (RelId)
+graph/src/graph/graph.rs	from	257	PROVEN	Accessors.nodeId_roundtrip (RelId)
+graph/src/graph/graph.rs	new	264	PROVEN	Accessors.planNew_spec
+graph/src/graph/graph.rs	from	400	PROVEN	Accessors.nodeOpErrorOf_spec
 graph/src/graph/graph.rs	populate_index	510	PROVEN	Index.populateStart_spec
 graph/src/graph/graph.rs	populate_index_batch	536	PROVEN	see proofs/search_concurrency Tickets.batch
 graph/src/graph/graph.rs	drop_index_bg	761	PROVEN	Index.dropBg_spec
 graph/src/graph/graph.rs	grow_cap	808	PROVEN	Schema.growCap/growStep: growCap_ge_needed (needed <= GrB_INDEX_MAX), growCap_le_max, growCap_reaches, growCap_ge_cap, growCap_noop, growCap_chunked, growStep_small (#2911 checked/clamped step; total)
-graph/src/graph/graph.rs	new	881	PROVEN	Ids.newG_spec
+graph/src/graph/graph.rs	new	882	PROVEN	Ids.newG_spec
 graph/src/graph/graph.rs	restore	869	PROVEN	Ids.restore_ids, restoreCap_covers, clampTiers_mono, restore_LInv, fillEndpoints_spec
 graph/src/graph/graph.rs	rebuild_derived_matrices	982	PROVEN	Ids.rebuildRelType_complete (tensor rebuild_backward = GraphBLAS transpose); #3250 node half Ids.rebuildNodeMs (node_cap = max(node_cap, saved)): rebuild_never_shrinks, rebuild_keeps_entries (tensor dims not on Ten; Tensor::resize in versioned_matrix)
 graph/src/graph/graph.rs	trim_attr_stores	1020	PROVEN	Ids.trimAttrStores_id
@@ -197,3 +197,4 @@ graph/src/graph/graph.rs	node_id_space	1615	PROVEN	Ids.openNodeSpace_eq
 graph/src/graph/graph.rs	relationship_id_space	1621	PROVEN	Ids.openRelSpace_eq
 graph/src/graph/graph.rs	grow_for_nodes	1687	PROVEN	Ids.growForNodes_spec
 graph/src/graph/graph.rs	first_node_with_relationships	2343	CONDITIONAL	FirstRel.firstNodeWithRels: firstNodeWithRels_spec (= lowest node of the set with a relationship either way; GraphBLAS mxv/iterator spec as hypothesis BulkOps, AdjExact), probe_iff, find_takeWhile (#3022) || CONDITIONAL on AdjExact (adjacency = union of relation tensors; the graph.rs mutators' invariant, not proven preserved)
+graph/src/graph/graph.rs	edge_has_type_id	1338	PROVEN	Schema.edgeHasTypeId_iff (#3567: the matrix read edge_has_type used inline); edgeHasType_iff
