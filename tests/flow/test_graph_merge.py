@@ -1071,3 +1071,34 @@ class testGraphMergeFlow():
             res = self.graph.query(f"MATCH (n:{label}) RETURN count(n)")
             self.env.assertEqual(res.result_set, [[expected]])
         self.graph.query("MATCH (n) DETACH DELETE n")
+
+    def test45_merge_traverse_skips_explicitly_deleted_edge(self):
+        """
+        A MERGE traversal must not match an edge deleted earlier in the query:
+        with only the deleted edge it creates a replacement, and with a
+        parallel live edge it matches that one (named and anonymous edge)
+        """
+
+        for edge in ("r", ""):
+            pattern = f"MERGE (a)-[{edge}:R]->(x:B)"
+
+            # only the deleted edge: MERGE creates a replacement
+            self.graph.query("MATCH (n) DETACH DELETE n")
+            self.graph.query("CREATE (:A)-[:R {k:1}]->(:B)")
+            self.graph.query(f"MATCH (a:A)-[e:R]->() DELETE e {pattern}")
+            res = self.graph.query("MATCH (:A)-[r:R]->(:B) RETURN count(r)")
+            self.env.assertEqual(res.result_set, [[1]])
+            res = self.graph.query("MATCH (n:B) RETURN count(n)")
+            self.env.assertEqual(res.result_set, [[2]])
+            res = self.graph.query("MATCH ()-[r:R]->() RETURN r.k")
+            self.env.assertEqual(res.result_set, [[None]])
+
+            # a parallel live edge: MERGE matches it, nothing is created
+            self.graph.query("MATCH (n) DETACH DELETE n")
+            self.graph.query("CREATE (a:A), (b:B), (a)-[:R {k:1}]->(b), (a)-[:R {k:2}]->(b)")
+            self.graph.query(f"MATCH (a:A)-[e:R {{k:1}}]->() DELETE e {pattern}")
+            res = self.graph.query("MATCH (:A)-[r:R]->(:B) RETURN r.k")
+            self.env.assertEqual(res.result_set, [[2]])
+            res = self.graph.query("MATCH (n:B) RETURN count(n)")
+            self.env.assertEqual(res.result_set, [[1]])
+        self.graph.query("MATCH (n) DETACH DELETE n")
