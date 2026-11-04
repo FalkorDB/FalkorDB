@@ -51,10 +51,8 @@ Theorems:
 * `catchUp_spec`, `catchUp_inv`: the same for a batch's copy over the writers' `since` set.
 * `writerRecord_records`: every id a change names is recorded, applied or not.
 * `V.rebased_keeps_data`: a rebase changes no data version (the fork stays current).
-* **The gap**: `pre3567_unrebased_commit_regresses`, `pre3567_batch_misfits_after_writer` (before the rebase, the
-  writer's commit published a copy with fewer batches than the published one, so the next batch's fit was
-  `AnotherBatch`, which the builder reports as a bug); `rebased_commit_keeps_chain`, `rebased_batch_fits` (after
-  it, the published copy has the batches' count and the next batch fits).
+* **The fix of the 2026-11-03 gap** (#3567; no history lemma kept, see FINDINGS): `rebased_commit_keeps_chain`,
+  `rebased_batch_fits` (the published copy has the batches' count and the next batch fits).
 
 `Frame` is the one thing assumed: outside `W`, the two versions agree on what each entity contributes and on
 where it sits. For a writer, `W` = `by_this_version`, which `writerRecord_records` fills with the id of every
@@ -512,28 +510,6 @@ theorem V.rebased_keeps_data {R : Type} (fork pub : V R) (f : SE → SE → Inde
 theorem V.rebased_not_stale {R : Type} (fork pub : V R) (f : SE → SE → IndexColumn) (q : V R) :
     isStale q (fork.rebased pub f) = isStale q fork := by
   simp [isStale, (V.rebased_keeps_data fork pub f).1]
-
-/-- **Before #3567 a writer's commit published the fork's own copy.** A fork made before a batch committed on
-    its index (`fork` has one commit fewer than the published copy, the same generation, the same data
-    version): once it commits, the published copy has the *older* cursor and commit count, so the batch's
-    progress is lost. -/
-theorem pre3567_unrebased_commit_regresses {R : Type} (fork pub : V R) (o p : SE)
-    (ho : fork.entry = some o) (hp : pub.entry = some p) (hg : p.generation = o.generation)
-    (hc : o.commits < p.commits) :
-    (fork.entry.map (·.commits)).getD 0 < (pub.entry.map (·.commits)).getD 0 := by
-  simp [ho, hp, hc]
-
-/-- **...so the next batch no longer fits.** A batch prepared on the published copy (`prepared`: one commit
-    more, `p.commits + 1`) is judged against the *writer's* copy as another batch that committed on the same
-    index: `AnotherBatch`, which the builder reports as a bug in its own exclusion. Model-only: the 2026-11-03
-    gap, closed by #3567; the test `a_writer_overtaken_by_an_indexer_batch_keeps_its_progress`
-    (`falkordb_index_tests.rs`) pins the fix. -/
-theorem pre3567_batch_misfits_after_writer {R : Type} (prepared after : V R) (o p : SE)
-    (hprep : prepared.entry = some ⟨p.en, p.generation, p.commits + 1⟩)
-    (hafter : after.entry = some o) (hg : o.generation = p.generation) (hc : o.commits + 1 < p.commits + 1) :
-    indexerFit prepared after = .discarded .anotherBatch := by
-  have hne : o.commits ≠ p.commits := by omega
-  simp [indexerFit, hprep, hafter, discardedAgainst, hg, hne]
 
 /-- **With the rebase, the writer publishes the batches' chain**: the rebased copy has the published copy's
     generation and commit count, so the chain continues. -/

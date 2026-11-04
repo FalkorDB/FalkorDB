@@ -24,14 +24,13 @@ def attrCap : Nat := 65535
 
 /-- `add_node_attribute_name` with its capacity: a name already there keeps its id; a new one is refused
 (`none`, `AttributeLimitReached`) once the dictionary is full. `internF` is this without the cap, which is
-what labels and types do and what the abstract `applyRec` assumes for attributes. -/
+what labels and types do. The abstract `applyRec` uses `internCap` for attributes (`internCap_refines`). -/
 def internCapF (cap : Nat) (d : List String) (n : String) : Option (Nat × List String) :=
   match idxOfF d n with
   | some i => some (i, d)
   | none => if d.length < cap then some (d.length, d ++ [n]) else none
 
-/-- Below capacity (or for a known name) the capped intern is the uncapped one: the abstract model's
-`applyRec_addAttribute_refines` holds under this precondition and not otherwise. -/
+/-- Below capacity (or for a known name) the capped intern is the uncapped one. -/
 theorem internCapF_of_room (cap : Nat) (d : List String) (n : String) (h : d.length < cap ∨ idxOfF d n ≠ none) :
     internCapF cap d n = some (internF d n) := by
   unfold internCapF internF
@@ -54,6 +53,13 @@ def verifyIdF (expected assigned : Nat) : Bool := assigned == expected
 def applyAddSchemaF (d : List String) (id : Nat) (n : String) : Option (List String) :=
   let (assigned, d') := internF d n
   if verifyIdF id assigned then some d' else none
+
+/-- The attribute arm of `apply_record` (`apply.rs:171`): `add_node_attribute_name` (capped), read the id
+back, `AttributeLimitReached` (`none`) if the name is not registered, then `verify_id`. -/
+def applyAddAttributeF (cap : Nat) (d : List String) (id : Nat) (n : String) : Option (List String) :=
+  match internCapF cap d n with
+  | none => none
+  | some (assigned, d') => if verifyIdF id assigned then some d' else none
 
 /-- `IdSpace::reserve` (`id_space.rs:483`) on a batch opened at `bound` that has
 taken and been issued nothing: `reclaim_ids` (`:244`) takes the lowest `count`

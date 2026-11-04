@@ -34,7 +34,8 @@ no clock and no plan choice for the two sides to disagree about.
 
 | here | there |
 | --- | --- |
-| `intern`                 | `Graph::get_label_id_mut`, `get_attribute_id_mut` (`graph/src/graph/graph.rs`) — append-only, id = index |
+| `intern`                 | `Graph::get_label_id_mut`, `get_type_id_mut` (`graph/src/graph/graph.rs`) — append-only, id = index |
+| `internCap`              | `add_node_attribute_name` + `AttrNameMap::insert` (`attribute_store.rs`), refusing a new name at 65,535 (`MAX_ATTRIBUTES`); `applyRec` refuses the buffer (`AttributeLimitReached`, `apply.rs:195`): `applyRec_addAttribute_full_refused` |
 | `GState.bound`           | `Graph::node_id_bound` (`graph.rs:1607`) = `IdSpace::bound` = `live + recycled.len()` (`id_space.rs:343`, #2846) — `absIds`, `createOne_refines` |
 | `GState.free`            | the recycle bin (a `RoaringTreemap`, hence a set — modelled as a predicate) |
 | `createOne` / `deleteOne`| `Graph::create_nodes` / `delete_nodes`, one node at a time |
@@ -57,7 +58,7 @@ no clock and no plan choice for the two sides to disagree about.
 | `Replica.resync`         | `divergence_guard::on_failure` → `REPLICAOF NO ONE` + `REPLICAOF <master>` |
 | `Replica.halted`         | the same guard under `LOADING` → `std::process::exit(1)` |
 | `Guard.*` (`Guard.lean`) | every fn of `src/divergence_guard.rs` line by line: `onFailure_client_noop`, `onFailure_loading_exits`, `onFailure_replicated_resyncs`, `forceFullResync_exit_iff`, `masterAddress_some`, `clip_spec`; `guardReplica_spec`, `stepNode_failure_matches_guard` tie them to `stepNode` |
-| refinement (wave 4)      | `intern_refines`, `applyRec_addLabel_refines`/`_addAttribute_refines` (= `apply_add_schema`), `idsOf_refines` (= `IdSpace::reserve` on a fresh batch), `memo_refines_groupBy`/`emit_refines` (= the `slots`/`index`/`last` loops, effects_emit_apply `Basic.lean`) |
+| refinement (wave 4)      | `intern_refines`, `internCap_refines`, `applyRec_addLabel_refines` (= `apply_add_schema`), `applyRec_addAttribute_refines` (= the attribute arm of `apply_record`, cap and refusal included), `idsOf_refines` (= `IdSpace::reserve` on a fresh batch), `memo_refines_groupBy`/`emit_refines` (= the `slots`/`index`/`last` loops, effects_emit_apply `Basic.lean`) |
 
 ## Three mechanisms the proof turns on
 
@@ -195,6 +196,14 @@ def intern (d : List Name) (n : Name) : Nat × List Name :=
   match idxOf d n 0 with
   | some i => (i, d)
   | none   => (d.length, d ++ [n])
+
+/-- `AttrNameMap::insert` with its capacity (`MAX_ATTRIBUTES` = 65,535, `attribute_store.rs:130`): a known
+name keeps its id; a new one is refused (`none`) once the dictionary holds `cap` names. Labels and types
+have no such cap, so they use `intern`. `internCap_refines` ties it to `FalkorFaithful.internCapF`. -/
+def internCap (cap : Nat) (d : List Name) (n : Name) : Option (Nat × List Name) :=
+  match idxOf d n 0 with
+  | some i => some (i, d)
+  | none   => if d.length < cap then some (d.length, d ++ [n]) else none
 
 theorem idxOf_lt : ∀ (d : List Name) (n : Name) (k i : Nat),
     idxOf d n k = some i → i < k + d.length := by
@@ -750,8 +759,9 @@ def applyRec : Record → GState × Batch → Option (GState × Batch)
       if (intern σ.labels nm).1 = id then
         some ({ σ with labels := (intern σ.labels nm).2 }, b) else none
   | .addAttribute id nm, (σ, b) =>
-      if (intern σ.attrs nm).1 = id then
-        some ({ σ with attrs := (intern σ.attrs nm).2 }, b) else none
+      match internCap FalkorFaithful.attrCap σ.attrs nm with
+      | none => none  -- `ApplyError::AttributeLimitReached` (`apply.rs:195`)
+      | some (a, d') => if a = id then some ({ σ with attrs := d' }, b) else none
   | .createNode ids labels attrIds rows, (σ, b) =>
       if okCreate σ b ids labels attrIds rows then
         some (createBatch σ (specsOf ids labels attrIds rows),
@@ -1035,19 +1045,21 @@ theorem applySchemaLabels :
 
 theorem applySchemaAttrs :
   ∀ (ns : List Name) (d : List Name) (σ : GState) (b : Batch),
-    σ.attrs = d → (d ++ ns).Nodup →
+    σ.attrs = d → (d ++ ns).Nodup → (d ++ ns).length ≤ FalkorFaithful.attrCap →
     applyRecs (schemaRecs Record.addAttribute d.length ns) (σ, b)
       = some ({ σ with attrs := d ++ ns }, b) := by
   intro ns
   induction ns with
-  | nil => intro d σ b hd _; subst hd; simp [schemaRecs, applyRecs]
+  | nil => intro d σ b hd _ _; subst hd; simp [schemaRecs, applyRecs]
   | cons n rest ih =>
-    intro d σ b hd hnd
+    intro d σ b hd hnd hcap
     have hnmem : n ∉ d := by
       intro hc
       exact (List.nodup_append.mp hnd).2.2 n hc n (List.mem_cons_self ..) rfl
-    have hint : intern σ.attrs n = (d.length, d ++ [n]) := by
-      rw [hd]; exact intern_fresh hnmem
+    have hroom : d.length < FalkorFaithful.attrCap := by
+      have := hcap; simp only [List.length_append, List.length_cons] at this; omega
+    have hint : internCap FalkorFaithful.attrCap σ.attrs n = some (d.length, d ++ [n]) := by
+      rw [hd]; simp [internCap, idxOf_none d n 0 hnmem, hroom]
     have hstep : applyRec (Record.addAttribute d.length n) (σ, b)
         = some ({ σ with attrs := d ++ [n] }, b) := by
       simp only [applyRec, hint, ite_true]
@@ -1055,7 +1067,8 @@ theorem applySchemaAttrs :
       rw [List.append_assoc]; exact hnd
     simp only [schemaRecs, applyRecs, hstep]
     rw [show d.length + 1 = (d ++ [n]).length by simp,
-        ih (d ++ [n]) { σ with attrs := d ++ [n] } b rfl hnd']
+        ih (d ++ [n]) { σ with attrs := d ++ [n] } b rfl hnd'
+          (by simp only [List.append_assoc]; exact hcap)]
     simp [List.append_assoc]
 /-! ## The allocator
 
@@ -1155,6 +1168,9 @@ structure PendingWF (p : Pending) (σ : GState) : Prop where
                   a < σ.attrs.length + p.newAttrs.length
   newLabelsOk : (σ.labels ++ p.newLabels).Nodup
   newAttrsOk  : (σ.attrs ++ p.newAttrs).Nodup
+  /-- The master's own `AttrNameMap::insert` refused a new name once it held `MAX_ATTRIBUTES`
+      (65,535), so a committed `Pending`'s attribute dictionary is within the cap. -/
+  attrsInCap  : (σ.attrs ++ p.newAttrs).length ≤ FalkorFaithful.attrCap
   delsNodup   : p.dels.Nodup
   delsLive    : ∀ i ∈ p.dels, σ.liveB i = true
   disjoint    : ∀ i ∈ p.ids, i ∉ p.dels
@@ -1194,7 +1210,7 @@ theorem emit_apply (p : Pending) (σ : GState) (hw : WF σ) (hp : PendingWF p σ
         hp.newLabelsOk]
   simp only [Option.bind_some]
   rw [applySchemaAttrs p.newAttrs σ.attrs { σ with labels := σ.labels ++ p.newLabels }
-        { entry := σ.bound, created := [] } rfl hp.newAttrsOk]
+        { entry := σ.bound, created := [] } rfl hp.newAttrsOk hp.attrsInCap]
   simp only [Option.bind_some]
   have hfnd : (((groupBy NodeSpec.shape p.created).flatMap Prod.snd).map NodeSpec.id).Nodup :=
     (hperm.map NodeSpec.id).symm.nodup hcnd
@@ -1597,11 +1613,52 @@ theorem applyRec_addLabel_refines (id : Nat) (nm : Name) (σ : GState) (b : Batc
   simp only [applyRec, FalkorFaithful.applyAddSchemaF, ← intern_refines, FalkorFaithful.verifyIdF]
   by_cases h : (intern σ.labels nm).1 = id <;> simp [h]
 
+/-- `internCap` is `AttrNameMap::insert` + the id read-back (`add_node_attribute_name`, `get_node_attribute_id`). -/
+theorem internCap_refines (cap : Nat) (d : List Name) (n : Name) :
+    internCap cap d n = FalkorFaithful.internCapF cap d n := by
+  unfold internCap FalkorFaithful.internCapF FalkorFaithful.idxOfF
+  rw [idxOf_findIdx]
+  cases d.findIdx? (· == n) <;> simp
+
+/-- **`applyRec`'s `ADD_ATTRIBUTE` arm is the attribute path of `apply_record` (`apply.rs:171`)**, cap and
+refusal included: the faithful copy is `FalkorFaithful.applyAddAttributeF` (insert, read the id back, refuse
+with `AttributeLimitReached` if there is none, then `verify_id`). -/
 theorem applyRec_addAttribute_refines (id : Nat) (nm : Name) (σ : GState) (b : Batch) :
     applyRec (.addAttribute id nm) (σ, b) =
-      (FalkorFaithful.applyAddSchemaF σ.attrs id nm).map fun d => ({ σ with attrs := d }, b) := by
-  simp only [applyRec, FalkorFaithful.applyAddSchemaF, ← intern_refines, FalkorFaithful.verifyIdF]
-  by_cases h : (intern σ.attrs nm).1 = id <;> simp [h]
+      (FalkorFaithful.applyAddAttributeF FalkorFaithful.attrCap σ.attrs id nm).map
+        fun d => ({ σ with attrs := d }, b) := by
+  simp only [applyRec, FalkorFaithful.applyAddAttributeF, internCap_refines]
+  cases FalkorFaithful.internCapF FalkorFaithful.attrCap σ.attrs nm with
+  | none => rfl
+  | some r =>
+    obtain ⟨a, d'⟩ := r
+    by_cases h : a = id <;> simp [FalkorFaithful.verifyIdF, h]
+
+/-- **The refusal path.** A full dictionary refuses a name it does not hold, whatever id the record carries,
+and leaves the replica's state alone (the whole buffer is refused: `applyRec` returns `none`). -/
+theorem applyRec_addAttribute_full_refused (id : Nat) (nm : Name) (σ : GState) (b : Batch)
+    (hfull : FalkorFaithful.attrCap ≤ σ.attrs.length) (hnew : nm ∉ σ.attrs) :
+    applyRec (.addAttribute id nm) (σ, b) = none := by
+  simp [applyRec, internCap, idxOf_none σ.attrs nm 0 hnew, Nat.not_lt.mpr hfull]
+
+/-- Below the cap, or for a name already there, the capped arm is the uncapped one: the cap never changes
+what a master within it replays. -/
+theorem applyRec_addAttribute_room (id : Nat) (nm : Name) (σ : GState) (b : Batch)
+    (h : σ.attrs.length < FalkorFaithful.attrCap ∨ nm ∈ σ.attrs) :
+    applyRec (.addAttribute id nm) (σ, b) =
+      if (intern σ.attrs nm).1 = id then
+        some ({ σ with attrs := (intern σ.attrs nm).2 }, b) else none := by
+  have : internCap FalkorFaithful.attrCap σ.attrs nm = some (intern σ.attrs nm) := by
+    rw [internCap_refines, intern_refines]
+    exact FalkorFaithful.internCapF_of_room _ _ _ (by
+      rcases h with h | h
+      · exact Or.inl h
+      · right
+        unfold FalkorFaithful.idxOfF
+        intro hn
+        have := List.findIdx?_eq_none_iff.mp hn
+        exact absurd (this nm h) (by simp))
+  simp [applyRec, this]
 
 /-- **`idsOf` is `IdSpace::reserve` on a fresh batch** (recycled first, lowest
 first, then fresh from the boundary). -/

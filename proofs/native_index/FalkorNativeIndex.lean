@@ -105,10 +105,9 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   `rebase_index_spec`, `rebase_inv`, `catchUp_spec`, `catchUp_inv`, `commit_catchUp`, `V.rebased_keeps_data`
   (no data version change, so a rebased fork is not stale); `writerRecord_proj`/`indexerApply_proj`/
   `publish_proj` (the pre-#3567 model is the projection of the new one), `writerRecord_records` (every change's
-  entity is recorded). The gap itself: `pre3567_unrebased_commit_regresses` and
-  `pre3567_batch_misfits_after_writer` (an unrebased writer's commit publishes the *older* commit count, so the
-  next batch is judged `AnotherBatch`, which the builder reports as a bug in its own exclusion; model-only,
-  not reproduced live), closed by `rebased_commit_keeps_chain` and `rebased_batch_fits`. `Frame` (outside the
+  entity is recorded). The gap #3567 closed (an unrebased writer's commit published the *older* commit count, so the
+  next batch was judged `AnotherBatch`; model-only, not reproduced live; see FINDINGS) is covered by
+  `rebased_commit_keeps_chain` and `rebased_batch_fits`. `Frame` (outside the
   written set, the two versions agree on what each entity contributes and where it sits) is assumed: the two
   invariant theorems are conditional on it, the rows rest on the unconditional specs.
 - **#3319, the CCH contract skeleton** (`Cch.lean`): `Csr::is_well_formed` is exactly the type's shape rules

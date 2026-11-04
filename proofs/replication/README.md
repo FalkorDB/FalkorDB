@@ -39,7 +39,7 @@ The `#guard` checks at the end of `FalkorReplication.lean` run this exact exampl
 It refuses the buffer instead of applying it to the wrong graph. Two checks do this:
 
 - **Entity ids are sent, then validated.** The replica is told which ids to create, so it never allocates. `Batch.verify` (`IdSpace::verify`) checks that the batch's fresh ids start exactly at the replica's own id boundary. A replica that missed an earlier write has a different boundary and refuses.
-- **Schema ids are re-derived, then compared.** For `ADD_SCHEMA 1 "K6"` the replica interns `K6` itself and refuses unless it also gets id 1 (`apply_add_schema` / `verify_id`).
+- **Schema ids are re-derived, then compared.** For `ADD_SCHEMA 1 "K6"` the replica interns `K6` itself and refuses unless it also gets id 1 (`apply_add_schema` / `verify_id`). Attribute names also have a capacity: a replica whose dictionary already holds 65,535 names refuses a new one (`AttributeLimitReached`, `applyRec_addAttribute_full_refused`); a master within the cap always replays (`PendingWF.attrsInCap`, used by `emit_apply`).
 
 Both are checked by `#guard`: a replica whose label dictionary is `["X"]` refuses, and a replica that missed `p1` refuses `p3`.
 
