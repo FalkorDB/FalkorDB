@@ -11,13 +11,18 @@
 #   reprove  only when a verified function changed, and only for branches of
 #            this repo (a fork PR's token cannot bill Copilot): the GitHub
 #            Copilot CLI, on the model in COPILOT_MODEL (Claude Opus 5.5),
-#            edits the Lean models for the change and writes its verdicts. The
-#            job's token can only read the repo and call Copilot: the agent
-#            cannot push or comment. Trusted steps then run the gates with the
-#            pristine gate scripts and hand a patch to publish.
-#   publish  no PR code runs here: applies the patch to proofs/pr-<N> (whose
-#            tree is rebuilt from the proofs base on every run, so edits a later
-#            push made obsolete do not linger) and keeps one re-prove comment.
+#            edits the Lean models for the change and writes its verdicts. Its
+#            token can only read the repo and call Copilot.
+#   gate     on a fresh runner, checks the AI's patch (paths, modes, no
+#            build-time code, no new axiom/sorry, existing theorem statements
+#            unchanged, a verdict per function) and runs the proof gates on it.
+#   report   keeps one re-prove comment: the verdicts, the gate result, and a
+#            link to the run, whose `proof-gate` artifact holds the patch.
+#
+# The bot only suggests: nothing is pushed anywhere. The PR's author applies the
+# patch (or writes their own) in the PR itself, where the Lean proofs workflow
+# and review check it like any other proof change. The gate's checks make the
+# suggestion trustworthy enough to read, not a sandbox.
 #
 # Advisory: not part of ci-gate. The proofs come from proofs/lean4-verification
 # until #3172 merges; after that, point PROOFS_REF at the PR's own proofs/.
@@ -32,7 +37,7 @@ on:
     branches-ignore:
       - "master"
     # No `paths:` filter: a push that reverts a PR's last Rust change must still run,
-    # so the zero-impact path can retire the earlier verdict and proofs/pr-<N>. The
+    # so the zero-impact path can retire the earlier re-prove verdict. The
     # impact job is a few seconds and finds nothing to do on other PRs.
 
 concurrency:
@@ -327,6 +332,7 @@ jobs:
           #     none, `lake build` only checks proofs and cannot touch this runner;
           #   - existing theorem statements unchanged (a weaker one would still build);
           #   - an explicit verdict for every changed function.
+          cp ../in/verdicts.json ../out/verdicts.json
           python3 - "$(git rev-parse HEAD)" ../in/impact.json ../in/verdicts.json > ../out/checks.md <<'EOF'
           import json, re, subprocess, sys
           base, impact_path, verdicts_path = sys.argv[1:]
@@ -382,7 +388,9 @@ jobs:
                   elif depth == 0 and src.startswith(':=', i):
                       break
                   i += 1
-              return ' '.join(src[k:i].split())
+              # Collapse whitespace outside string literals only.
+              parts = re.split(r'("(?:\\.|[^"\\])*")', src[k:i])
+              return ''.join(p if p.startswith('"') else ' '.join(p.split()) + ' ' for p in parts).strip()
 
           def decls(text):
               """Fully qualified name -> statement; a name seen twice maps to None."""
@@ -410,16 +418,31 @@ jobs:
 
           problems = []
           # Build-time code added to a .lean file.
-          FORBID = re.compile(r'(#eval|#exit|\brun_cmd\b|\brun_elab\b|\brun_meta\b|\binitialize\b|'
-                              r'\bbuiltin_initialize\b|\belab\b|\belab_rules\b|\bIO\.|\bunsafe\b|'
-                              r'\bimplemented_by\b|\bextern\b)')
+          # Code that runs while Lean elaborates, and unproven declarations. Matched on
+          # the added lines of each file after stripping that whole file's comments,
+          # so a word inside a multi-line doc comment does not count.
+          FORBID = re.compile(r'(#eval|#exec|#exit|\brun_cmd\b|\brun_elab\b|\brun_meta\b|\brun_tac\b|'
+                              r'\binitialize\b|\bbuiltin_initialize\b|\belab\b|\belab_rules\b|'
+                              r'\bmacro_rules\b|\bIO\b|\bunsafe\b|\bimplemented_by\b|\bextern\b|'
+                              r'\baxiom\b|\bsorry\b|\badmit\b|\bsorryAx\b|AXIOM-OK)')
+          added = {}
+          cur = None
           for line in git('diff', '--cached', '--no-renames', '-U0', '--', '*.lean').splitlines():
-              if line.startswith('+') and not line.startswith('+++'):
-                  m = FORBID.search(strip_comments(line[1:]))
-                  if m:
-                      problems.append(f'- adds build-time code `{m.group(1)}`: `{line[1:].strip()[:120]}`')
+              if line.startswith('+++ '):
+                  cur = line[6:] if line.startswith('+++ b/') else None
+              elif line.startswith('@@') and cur:
+                  m = re.match(r'@@ -\S+ \+(\d+)(?:,(\d+))? @@', line)
+                  start, count = int(m.group(1)), int(m.group(2) or 1)
+                  added.setdefault(cur, set()).update(range(start, start + count))
+          for f, lines in added.items():
+              text = strip_comments(git('show', f':{f}')).split('\n')
+              for n in sorted(lines):
+                  if n - 1 < len(text):
+                      m = FORBID.search(text[n - 1])
+                      if m:
+                          problems.append(f'- `{f}:{n}` adds `{m.group(1)}`: `{text[n - 1].strip()[:120]}`')
           if problems:
-              print('Patch dropped: build-time code is not allowed in a re-prove patch:')
+              print('Patch dropped: it adds build-time code or an unproven declaration:')
               print('\n'.join(problems))
               print('REJECT')
               sys.exit(0)
@@ -441,12 +464,16 @@ jobs:
 
           VERDICTS = {'unchanged', 'model updated', 'counterexample'}
           try:
-              given = json.load(open(verdicts_path))
-              given = {(v['file'], v['fn'], int(v['line'])): v.get('verdict') for v in given}
+              given_full = {(v['file'], v['fn'], int(v['line'])): v for v in json.load(open(verdicts_path))}
           except Exception:
-              given = {}
+              given_full = {}
+          given = {k: v.get('verdict') for k, v in given_full.items()}
           missing = [c for c in json.load(open(impact_path))['changed']
                      if given.get((c['file'], c['fn'], int(c['line']))) not in VERDICTS]
+          noname = [k for k, v in given_full.items() if v.get('verdict') in VERDICTS and not v.get('theorems')]
+          if noname:
+              print('Verdicts that name no Lean theorem (reported, not gated):')
+              print('\n'.join(f'- `{f}` `{fn}` (line {ln})' for f, fn, ln in noname))
           if missing:
               print('No valid verdict for:')
               print('\n'.join(f"- `{c['file']}` `{c['fn']}` (line {c['line']})" for c in missing))
@@ -483,114 +510,72 @@ jobs:
           path: out/
           if-no-files-found: ignore
 
-  publish:
+  report:
     needs: [impact, reprove, gate]
-    # Also when nothing needs re-proving any more, to reset proofs/pr-<N>.
     if: >-
-      always() && needs.impact.result == 'success' &&
+      always() && needs.impact.result == 'success' && needs.impact.outputs.changed != '0' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      (needs.impact.outputs.changed == '0' || (needs.reprove.result != 'skipped' && needs.reprove.result != 'cancelled'))
+      needs.reprove.result != 'skipped' && needs.reprove.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write        # push proofs/pr-<N>
-      pull-requests: write   # the re-prove comment
+      pull-requests: write   # the re-prove comment; nothing is pushed
     steps:
-      # Only the proofs tree is checked out; no PR code runs in this job.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ needs.impact.outputs.proofs_sha }}
-          fetch-depth: 0
-          path: proofs-src
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        if: ${{ needs.impact.outputs.changed != '0' }}
         id: download
         # Absent when the re-prove or gate job failed before uploading; reported below.
         continue-on-error: true
         with:
           name: proof-gate
           path: out
-      - name: Update proofs/pr-${{ github.event.pull_request.number }} and the comment
+      - name: Keep the re-prove comment
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-          CHANGED: ${{ needs.impact.outputs.changed }}
           GATES: ${{ needs.gate.outputs.gates }}
           GATE_RESULT: ${{ needs.gate.result }}
           DOWNLOAD: ${{ steps.download.outcome }}
-          GIT_AUTHOR_NAME: github-actions[bot]
-          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-          GIT_COMMITTER_NAME: github-actions[bot]
-          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          branch="proofs/pr-$PR"
           mkdir -p out
-          cd proofs-src
-          # A newer push has its own run; an older run must not overwrite its result.
-          current=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" -q .head.sha)
-          if [[ "$current" != "$HEAD" ]]; then
-            echo "PR head moved to ${current:0:9}; this run (${HEAD:0:9}) is superseded."
-            exit 0
+          # A newer push has its own run; don't overwrite its comment with this one.
+          if [[ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" -q .head.sha)" != "$HEAD" ]]; then
+            echo "PR head moved; this run (${HEAD:0:9}) is superseded."; exit 0
           fi
-          note=""
-          if [[ "$CHANGED" != 0 && ( "$DOWNLOAD" != success || ! -f ../out/proofs.patch || ! -f ../out/gates.md ) ]]; then
-            note="Not published: the gate result is missing (gate job: $GATE_RESULT)."
-          elif [[ "$CHANGED" != 0 && "$GATES" != pass ]]; then
-            note="Not published: gates **${GATES:-did not run}**; logs and the patch are in the run's \`proof-gate\` artifact."
+          if [[ "$DOWNLOAD" != success || ! -f out/gates.md ]]; then
+            note="No result: the gate did not finish (gate job: $GATE_RESULT). See the [run]($RUN_URL)."
+          elif [[ "$GATES" == pass && -s out/proofs.patch ]]; then
+            note="Suggested proof update: download \`proofs.patch\` from the [run's \`proof-gate\` artifact]($RUN_URL) and apply it in this PR (\`git apply proofs.patch\`), or update the proofs yourself."
+          elif [[ "$GATES" == pass ]]; then
+            note="No proof change was needed."
           else
-            # The tree this run publishes: the proofs base, plus the patch when there is one.
-            if [[ "$CHANGED" != 0 && -s ../out/proofs.patch ]]; then
-              git apply --index ../out/proofs.patch
-              # Re-check before anything is committed with the write token.
-              bad=$(git diff --cached --name-only --no-renames | grep -vE "$PROOF_PATHS" | grep -v '^$' || true)
-              bad+=$(git diff --cached --name-only --no-renames | grep -E "$PROOF_DENY" || true)
-              bad+=$(git diff --cached --raw --no-renames | awk '$2 != "100644" && $2 != "000000"')
-              if [[ -n "$bad" ]]; then echo "::error::patch outside the proof allowlist: $bad"; exit 1; fi
-              git commit -q -m "proofs: re-prove for #$PR at ${HEAD:0:9}" \
-                -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-            fi
-            tree=$(git rev-parse 'HEAD^{tree}')
-            old=""
-            if git fetch -q origin "$branch" 2>/dev/null; then old=$(git rev-parse FETCH_HEAD); fi
-            if [[ -n "$old" && "$(git rev-parse "$old^{tree}")" == "$tree" ]]; then
-              note="No change to \`$branch\`."
-            elif [[ -z "$old" && "$(git rev-parse HEAD)" == "$(git rev-parse "${{ needs.impact.outputs.proofs_sha }}")" ]]; then
-              note="No proof change was needed."
-            else
-              # History is kept (the old tip is a parent) but the tree is this run's
-              # result, so edits a later push made obsolete do not linger. The lease
-              # makes the update a compare-and-swap against the tip just fetched.
-              parents=(-p HEAD); [[ -n "$old" ]] && parents=(-p "$old" -p HEAD)
-              commit=$(printf 'proofs: re-prove for #%s at %s\n' "$PR" "${HEAD:0:9}" | git commit-tree "$tree" "${parents[@]}")
-              if [[ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" -q .head.sha)" != "$HEAD" ]]; then
-                echo "PR head moved while publishing; this run is superseded."; exit 0
-              fi
-              git push -q --force-with-lease="refs/heads/${branch}:${old}" origin "${commit}:refs/heads/${branch}"
-              if [[ "$CHANGED" == 0 || ! -s ../out/proofs.patch ]]; then
-                note="\`$branch\` reset to the proofs base: nothing left to re-prove."
-              else
-                note="Proof update: [\`$branch\`](https://github.com/$GITHUB_REPOSITORY/compare/$PROOFS_REF...$branch)"
-              fi
-            fi
+            note="Gates: **${GATES:-did not run}**, so the patch is not suggested as is; it and the logs are in the [run's \`proof-gate\` artifact]($RUN_URL)."
           fi
-          # With nothing left to re-prove the impact job already rewrote the comment.
-          [[ "$CHANGED" == 0 ]] && { echo "$note"; exit 0; }
           {
             echo "<!-- proof-reprove -->"
-            if [[ -s ../out/reprove.md ]]; then cat ../out/reprove.md; else echo "### Lean re-prove"; echo; echo "No verdicts were written."; fi
+            if [[ -s out/reprove.md ]]; then
+              cat out/reprove.md
+            else
+              echo "### Lean re-prove"; echo
+              if [[ -s out/verdicts.json ]] && jq -e 'length > 0' out/verdicts.json >/dev/null 2>&1; then
+                jq -r '.[] | "- `\(.file)` `\(.fn)`: \(.verdict)\(if (.theorems // []) | length > 0 then " (" + ((.theorems) | join(", ")) + ")" else "" end)"' out/verdicts.json
+              else
+                echo "The re-prove wrote no verdicts."
+              fi
+            fi
             echo
-            [[ -s ../out/gates.md ]] && cat ../out/gates.md
+            [[ -s out/gates.md ]] && cat out/gates.md
             echo
             echo "$note"
             echo
-            echo "<sub>At ${HEAD:0:9}. Advisory, not part of ci-gate.</sub>"
-          } > ../comment.md
+            echo "<sub>At ${HEAD:0:9}. Advisory, not part of ci-gate; nothing is pushed.</sub>"
+          } > comment.md
           id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
             -q ".[] | select(.user.login == \"$BOT_LOGIN\" and (.body | startswith(\"<!-- proof-reprove -->\"))) | .id" | head -1)
           if [[ -n "$id" ]]; then
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@../comment.md >/dev/null
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@comment.md >/dev/null
           else
-            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@../comment.md >/dev/null
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@comment.md >/dev/null
           fi
