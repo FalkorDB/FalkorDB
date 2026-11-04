@@ -7,7 +7,7 @@ work to (`Runtime::evaluate_id_filter`, `NodeByIndexScanOp`, `Index::build_query
 
 Build: `lake build` (Lean 4.35, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
 `utilize_sound` and `seek_sound` depend only on `propext`, `Quot.sound`, `Classical.choice`.
-70 theorems, 35 `decide`d examples (counterexamples and sanity checks).
+77 theorems, 36 `decide`d examples (counterexamples and sanity checks).
 Coverage per Rust function: `COVERAGE.tsv`. Rust repros: `graph/tests/lean_optimizer_scan.rs`
 (`cargo test -p graph --test lean_optimizer_scan`; `bug_*` tests FAIL today by design).
 Index repros need RediSearch, so they run live: `venv/bin/python proofs/optimizer_scan/repro.py`
@@ -117,6 +117,18 @@ Scan selection (`ScanOrder.lean`):
    `-1 IN [n.a]` → Rust `[]`, without index `[2]`. Fix: array-contains only when the right
    side *is* `Property(scanned alias)`.
 
+6. **`select_scan_node` salvages a filter whose variable the pruned child bound (`Unwind`/`WITH`)** —
+   `is_planner_scan_subtree` (`:315`) accepts a scan with *any* child; `argument_leaf_of` (`:276`)
+   keeps only an `Argument`, so the rest of the subtree (an `Unwind` that the planner stitched
+   below the scan) is pruned (`:1131`, `:1294`) while the `Filter` above the scan is salvaged and
+   re-attached above the chain (`filters_of`, `:250`). The filter reads `k`, which nothing in the
+   rebuilt plan binds. Lean `Salvage.premise_fails`, `salvage_loses_row`, `rebuilt_drops_unwind`.
+   `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` on
+   `(:B {v:1})-[:H]->(:C {v:1}), (:B {v:2})-[:H]->(:C {v:5})`: Rust 0, C 1.
+   `UNWIND [1,1] AS k MATCH (b:B) WHERE b.v = 1 MATCH (b)-[:H]->(c:C) RETURN count(*)`:
+   Rust 1, C 2 (EXPLAIN has no `Unwind`). Fix: treat a scan as planner-added only when its
+   children are empty or a single `Argument`; otherwise leave the subtree alone.
+
 ## Also reproduced here but already reported by parallel wave-2 agents
 - `proofs/index_layer` bugs 1, 3, 4, 5, 6, 8: folded `date()` constant returns every node
   (C3); `IN [.., date()]` drops the item (C9); multi-label AND → nothing / OR loses rows
@@ -189,8 +201,11 @@ optimizer's own inline paths are gone. Model changes (every citation re-mapped):
   them (`makeScanSubtree_planner`, `filtersOf_wrap`, `filtersOf_makeScanSubtree`);
   `select_var_len_scan_node` (`vlNonLeaf_keeps_wrappers`, `vlLeaf_guards`).
 - `ScanOrder`: salvaged filters re-attached above the re-ordered chain are well-scoped, given that they
-  read only variables the chain binds (`salvage_wellScoped`, `boundAfter_hop`; the premise is assumed,
-  not derived from `filters_of`).
+  read only variables the chain binds (`salvage_wellScoped`, `boundAfter_hop`).
+- `Salvage` (new): models `filters_of`'s output with the variables each filter reads, and decides that
+  premise: `salvaged_wellScoped`, `premise_of_spine` (it holds when the spine's filters read only the
+  scanned node and the `Argument`'s variables); REFUTED for a scan with an `Unwind` child
+  (`exChild_shape`, `rebuilt_drops_unwind`, `premise_fails`, `salvage_loses_row`; bug 6 below).
 - `Cleanup`: `governing_filter` (`governingFilter_spec`), `match_scan_with_filter`, and
   `apply_filter_pushdown`'s `over_pending` (`utilizeP_false`, `utilizeP_true`, `overPending_sound`:
   over `IncludePending` the kept Filter makes the index scan exact for any pending set;
@@ -218,3 +233,4 @@ import OptimizerScan.ScanOrder
 import OptimizerScan.EdgeInline
 import OptimizerScan.Cleanup
 import OptimizerScan.ScanTree
+import OptimizerScan.Salvage

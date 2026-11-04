@@ -340,7 +340,9 @@ spine (`select_scan_node.rs:958`, `:1114`, `:1315`). On a swap they go back *abo
 chain (`:1240-1246`) or above the reversed CondTraverse (`:1156-1176`), never inside the new scan
 (their variable is the old scan endpoint, which the hops now bind). At the top of the chain every
 variable the hops bind is bound, so the result is well-scoped, and by `run_append` the filters
-are applied exactly as before (generate-and-test is a conjunction). -/
+are applied exactly as before (generate-and-test is a conjunction) — *provided* they read only
+variables the chain binds, which `Salvage.lean` shows is false when the pruned scan carried an
+`Unwind`. -/
 
 /-- The variables bound after running a chain from bound set `B`. -/
 def boundAfter : List Nat → List Step → List Nat
@@ -350,10 +352,10 @@ def boundAfter : List Nat → List Step → List Nat
 
 /-- **PROVEN**: appending filters above a well-scoped chain keeps it well-scoped when the filters
     read only variables the chain (or what is below it) binds.
-    The premise `hf` is an assumption here: that Rust's salvaged filters meet it (they come from
-    `filters_of` on a planner scan subtree and read its endpoint, which the hops now bind, plus
-    outer-bound variables) is argued in the section header, not derived: `filters_of`'s output is not
-    modelled with variable sets. -/
+    The statement is unchanged. Whether Rust's salvaged filters meet the premise `hf` is decided in
+    `Salvage.lean`, which models `filters_of`'s output with the variables each filter reads:
+    `premise_of_spine` says when it holds, `premise_fails` / `salvage_loses_row` refute it for a
+    planner scan with a non-`Argument` child (e.g. `Unwind`), which `prune` discards. -/
 theorem salvage_wellScoped : ∀ (B : List Nat) (steps : List Step), wellScoped B steps →
     ∀ (fs : List (List Nat × ((Nat → Nat) → Bool))), (∀ f ∈ fs, ∀ v ∈ f.1, v ∈ boundAfter B steps) →
     wellScoped B (steps ++ fs.map (fun f => Step.filt f.1 f.2))
