@@ -144,8 +144,6 @@ jobs:
     permissions:
       contents: read           # the agent's token: read the repo, nothing else
       copilot-requests: write  # Copilot CLI on the job's own token
-    outputs:
-      gates: ${{ steps.gates.outputs.gates }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -232,57 +230,153 @@ jobs:
             Put counterexamples first, each with its Cypher repro. Keep it short; no preamble.
         run: |
           copilot -p "$PROMPT" -s --model "$COPILOT_MODEL" --allow-all-tools --no-ask-user
-      - name: Gates on the result, with the original gate scripts
-        id: gates
+      - name: Export the patch (untrusted; the gate job checks it on a fresh runner)
         env:
           BASE_SHA: ${{ needs.impact.outputs.proofs_sha }}
         run: |
-          set -uo pipefail
           cd proofs-src
-          # Everything is compared with the pinned BASE_SHA, not HEAD: the agent could
-          # have committed or moved HEAD.
           git add -A
-          git diff --cached --name-only "$BASE_SHA" > ../changed.txt
-          bad=$(grep -vE "$PROOF_PATHS" ../changed.txt || true)
-          bad+=$(grep -E "$PROOF_DENY" ../changed.txt || true)
-          # Only regular files: no executables, symlinks or submodules.
-          bad+=$(git diff --cached --summary "$BASE_SHA" | grep -E 'mode (100755|120000|160000)' || true)
-          : > ../proofs.patch
-          if [[ -n "$bad" ]]; then
-            # shellcheck disable=SC2016  # literal Markdown backticks
-            { echo "Patch dropped: it touches files outside the proof allowlist:"; echo; echo "$bad" | sed 's/^/- `/; s/$/`/'; } > ../gates.md
-            echo "gates=rejected" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git diff --cached --binary "$BASE_SHA" > ../proofs.patch
-          # Gate with the pristine scripts and nothing else of the agent's state.
-          git reset -q --hard "$BASE_SHA"
-          [[ -s ../proofs.patch ]] && git apply --index ../proofs.patch
-          ok=pass
-          if [[ -s ../proofs.patch ]]; then proofs/lean_ci.sh > ../lean_ci.log 2>&1 || ok=fail; fi
-          COVERAGE_RUST_ROOT="$GITHUB_WORKSPACE/code" bash proofs/coverage.sh --unmatched > ../coverage.log 2>&1 || ok=fail
-          # coverage.sh exits 0 with findings; the counts decide (as in lean-proofs.yml).
-          unlisted=$(awk '/^TOTAL over all/ { print $(NF-3) }' ../coverage.log)
-          unmatched=$(sed -nE 's/.* ([0-9]+) rows unmatched.*/\1/p' ../coverage.log)
-          badb=$(sed -nE 's/.* ([0-9]+) bad buckets.*/\1/p' ../coverage.log)
-          if [[ "${unlisted:-}" != 0 || "${unmatched:-}" != 0 || "${badb:-}" != 0 ]]; then ok=fail; fi
-          echo "Gates: \`lean_ci.sh\` and \`coverage.sh --unmatched\` (unlisted=${unlisted:-?}, unmatched=${unmatched:-?}, bad buckets=${badb:-?}): **$ok**" > ../gates.md
-          echo "gates=$ok" >> "$GITHUB_OUTPUT"
+          git diff --cached --binary --no-renames "$BASE_SHA" > ../proofs.patch
+          touch ../reprove.md
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: ${{ always() }}
         with:
           name: proof-reprove
           path: |
             proofs.patch
             reprove.md
-            gates.md
-            lean_ci.log
-            coverage.log
+
+  # Fresh runner: none of the agent's processes or files reach it, only the two
+  # uploaded files. It validates the patch and runs the gates on base + patch with
+  # the base's own gate scripts.
+  gate:
+    needs: [impact, reprove]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      gates: ${{ steps.gates.outputs.gates }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: code
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.impact.outputs.proofs_sha }}
+          path: proofs-src
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: proof-reprove
+          path: in
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: proof-impact
+          path: in
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.elan
+            proofs-src/proofs/*/.lake
+          key: lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs-src/proofs/*/lean-toolchain') }}-${{ needs.impact.outputs.proofs_sha }}
+          restore-keys: |
+            lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs-src/proofs/*/lean-toolchain') }}-
+      - name: Install elan
+        run: |
+          set -euo pipefail
+          asset=elan-x86_64-unknown-linux-gnu.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$asset" \
+            "https://github.com/leanprover/elan/releases/download/${ELAN_VERSION}/${asset}"
+          echo "${ELAN_SHA256}  $RUNNER_TEMP/$asset" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/elan"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/elan"
+          "$RUNNER_TEMP/elan/elan-init" -y --default-toolchain none --no-modify-path
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Validate the patch and run the gates
+        id: gates
+        run: |
+          set -uo pipefail
+          mkdir -p out
+          cp in/proofs.patch out/proofs.patch
+          cp in/reprove.md out/reprove.md
+          verdict() { echo "gates=$1" >> "$GITHUB_OUTPUT"; }
+          cd proofs-src
+          if [[ -s ../out/proofs.patch ]] && ! git apply --index ../out/proofs.patch 2> ../out/apply.log; then
+            { echo "Patch does not apply to the proofs base:"; echo '```'; cat ../out/apply.log; echo '```'; } > ../out/gates.md
+            verdict rejected; exit 0
+          fi
+          # --no-renames: a rename is listed as its deletion and its addition, so both
+          # paths are checked. --raw gives each destination mode: only regular
+          # non-executable files (100644) or deletions (000000) are allowed.
+          raw=$(git diff --cached --raw --no-renames)
+          paths=$(git diff --cached --name-only --no-renames)
+          bad=$(printf '%s\n' "$paths" | grep -vE "$PROOF_PATHS" | grep -v '^$' || true)
+          bad+=$(printf '%s\n' "$paths" | grep -E "$PROOF_DENY" || true)
+          bad+=$(printf '%s\n' "$raw" | awk '$2 != "100644" && $2 != "000000" { print $NF " (mode " $2 ")" }')
+          if [[ -n "$bad" ]]; then
+            # shellcheck disable=SC2016  # literal Markdown backticks
+            { echo "Patch dropped: it touches files outside the proof allowlist:"; echo; printf '%s\n' "$bad" | sed 's/^/- `/; s/$/`/'; } > ../out/gates.md
+            verdict rejected; exit 0
+          fi
+          # Existing theorem statements may not change without a human: a statement
+          # replaced by something weaker would still build. New theorems are fine.
+          python3 - "$(git rev-parse HEAD)" > ../out/statements.md <<'EOF'
+          import re, subprocess, sys
+          base = sys.argv[1]
+          DECL = re.compile(r'^[ \t]*(?:@\[[^\]]*\][ \t]*)?(?:private[ \t]+|protected[ \t]+)?(?:theorem|lemma)[ \t]+([^\s(:{\[]+)(.*?):=',
+                            re.M | re.S)
+          def decls(text):
+              return {m.group(1): ' '.join(m.group(2).split()) for m in DECL.finditer(text)}
+          files = subprocess.run(['git', 'diff', '--cached', '--name-only', '--no-renames', '--diff-filter=MD', '--', '*.lean'],
+                                 capture_output=True, text=True, check=True).stdout.split()
+          for f in files:
+              old = decls(subprocess.run(['git', 'show', f'{base}:{f}'], capture_output=True, text=True).stdout)
+              new = decls(subprocess.run(['git', 'show', f':{f}'], capture_output=True, text=True).stdout)
+              for name, stmt in old.items():
+                  if name not in new:
+                      print(f'- `{f}` `{name}`: removed')
+                  elif new[name] != stmt:
+                      print(f'- `{f}` `{name}`: statement changed')
+          EOF
+          # Every changed function must have a verdict.
+          missing=$(jq -r '.changed[].fn' ../in/impact.json | sort -u | while read -r fn; do
+            grep -qF -- "$fn" ../out/reprove.md || echo "$fn"; done)
+          lean=skipped; cov=pass; ok=pass
+          if [[ -s ../out/proofs.patch ]]; then
+            lean=pass; proofs/lean_ci.sh > ../out/lean_ci.log 2>&1 || { lean=fail; ok=fail; }
+          fi
+          COVERAGE_RUST_ROOT="$GITHUB_WORKSPACE/code" bash proofs/coverage.sh --unmatched > ../out/coverage.log 2>&1 || cov=fail
+          # coverage.sh exits 0 with findings; the counts decide (as in lean-proofs.yml).
+          unlisted=$(awk '/^TOTAL over all/ { print $(NF-3) }' ../out/coverage.log)
+          unmatched=$(sed -nE 's/.* ([0-9]+) rows unmatched.*/\1/p' ../out/coverage.log)
+          badb=$(sed -nE 's/.* ([0-9]+) bad buckets.*/\1/p' ../out/coverage.log)
+          if [[ "${unlisted:-}" != 0 || "${unmatched:-}" != 0 || "${badb:-}" != 0 ]]; then cov=fail; fi
+          [[ "$cov" == fail ]] && ok=fail
+          {
+            echo "Gates: \`lean_ci.sh\` **$lean**; \`coverage.sh --unmatched\` **$cov** (unlisted=${unlisted:-?}, unmatched=${unmatched:-?}, bad buckets=${badb:-?})."
+            # shellcheck disable=SC2016  # literal Markdown backticks
+            if [[ -n "$missing" ]]; then echo; echo "No verdict for:"; printf '%s\n' "$missing" | sed 's/^/- `/; s/$/`/'; fi
+            if [[ -s ../out/statements.md ]]; then echo; echo "Held for review, existing theorem statements changed:"; cat ../out/statements.md; fi
+          } > ../out/gates.md
+          if [[ "$ok" == pass && -n "$missing" ]]; then ok=incomplete; fi
+          if [[ "$ok" == pass && -s ../out/statements.md ]]; then ok=held; fi
+          verdict "$ok"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ always() }}
+        with:
+          name: proof-gate
+          path: out/
           if-no-files-found: ignore
 
   publish:
-    needs: [impact, reprove]
-    if: ${{ always() && needs.reprove.result != 'skipped' && needs.reprove.result != 'cancelled' }}
+    needs: [impact, reprove, gate]
+    # Also when nothing needs re-proving any more, to reset proofs/pr-<N>.
+    if: >-
+      always() && needs.impact.result == 'success' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (needs.impact.outputs.changed == '0' || (needs.reprove.result != 'skipped' && needs.reprove.result != 'cancelled'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -296,20 +390,21 @@ jobs:
           fetch-depth: 0
           path: proofs-src
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: ${{ needs.impact.outputs.changed != '0' }}
         id: download
-        # Absent when the re-prove job failed before uploading; the comment says so.
+        # Absent when the re-prove or gate job failed before uploading; reported below.
         continue-on-error: true
         with:
-          name: proof-reprove
+          name: proof-gate
           path: out
-      - name: Push proofs/pr-${{ github.event.pull_request.number }} and keep the comment
+      - name: Update proofs/pr-${{ github.event.pull_request.number }} and the comment
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-          BASE_SHA: ${{ needs.impact.outputs.proofs_sha }}
-          GATES: ${{ needs.reprove.outputs.gates }}
-          REPROVE_RESULT: ${{ needs.reprove.result }}
+          CHANGED: ${{ needs.impact.outputs.changed }}
+          GATES: ${{ needs.gate.outputs.gates }}
+          GATE_RESULT: ${{ needs.gate.result }}
           DOWNLOAD: ${{ steps.download.outcome }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
@@ -318,41 +413,54 @@ jobs:
         run: |
           set -euo pipefail
           branch="proofs/pr-$PR"
-          mkdir -p ../out
+          mkdir -p out
           cd proofs-src
+          # A newer push has its own run; an older run must not overwrite its result.
+          current=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" -q .head.sha)
+          if [[ "$current" != "$HEAD" ]]; then
+            echo "PR head moved to ${current:0:9}; this run (${HEAD:0:9}) is superseded."
+            exit 0
+          fi
           note=""
-          if [[ "$DOWNLOAD" != "success" || ! -f ../out/proofs.patch || ! -f ../out/gates.md ]]; then
-            GATES="artifact missing"
-          elif [[ "$GATES" == "pass" && -s ../out/proofs.patch ]]; then
-            # Re-check here, before anything is committed with the write token.
-            git apply --index ../out/proofs.patch
-            bad=$(git diff --cached --name-only | grep -vE "$PROOF_PATHS" || true)
-            bad+=$(git diff --cached --name-only | grep -E "$PROOF_DENY" || true)
-            bad+=$(git diff --cached --summary | grep -E 'mode (100755|120000|160000)' || true)
-            if [[ -n "$bad" ]]; then
-              echo "::error::patch touches paths outside the proof allowlist: $bad"
-              exit 1
-            fi
-            git commit -q -m "proofs: re-prove for #$PR at ${HEAD:0:9}" \
-              -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-            tree=$(git rev-parse 'HEAD^{tree}')
-            # The branch keeps its history, but each run's tree is this run's result on
-            # the proofs base, so edits an earlier push needed and this one doesn't go.
-            parent=()
-            if git fetch -q origin "$branch" 2>/dev/null; then parent=(-p FETCH_HEAD); fi
-            parent+=(-p HEAD)
-            commit=$(git log -1 --format=%B HEAD | git commit-tree "$tree" "${parent[@]}")
-            git push -q origin "${commit}:refs/heads/${branch}"
-            note="Proof update: [\`$branch\`](https://github.com/$GITHUB_REPOSITORY/compare/$PROOFS_REF...$branch)"
-          fi
-          if [[ -n "$note" ]]; then
-            :
-          elif [[ "$GATES" == "pass" ]]; then
-            # proofs.patch is present (checked above) and empty.
-            note="No proof change was needed."
+          if [[ "$CHANGED" != 0 && ( "$DOWNLOAD" != success || ! -f ../out/proofs.patch || ! -f ../out/gates.md ) ]]; then
+            note="Not published: the gate result is missing (gate job: $GATE_RESULT)."
+          elif [[ "$CHANGED" != 0 && "$GATES" != pass ]]; then
+            note="Not published: gates **${GATES:-did not run}**; logs and the patch are in the run's \`proof-gate\` artifact."
           else
-            note="Not published: gates **${GATES:-did not run}** (re-prove job: $REPROVE_RESULT); logs are in the run's \`proof-reprove\` artifact."
+            # The tree this run publishes: the proofs base, plus the patch when there is one.
+            if [[ "$CHANGED" != 0 && -s ../out/proofs.patch ]]; then
+              git apply --index ../out/proofs.patch
+              # Re-check before anything is committed with the write token.
+              bad=$(git diff --cached --name-only --no-renames | grep -vE "$PROOF_PATHS" | grep -v '^$' || true)
+              bad+=$(git diff --cached --name-only --no-renames | grep -E "$PROOF_DENY" || true)
+              bad+=$(git diff --cached --raw --no-renames | awk '$2 != "100644" && $2 != "000000"')
+              if [[ -n "$bad" ]]; then echo "::error::patch outside the proof allowlist: $bad"; exit 1; fi
+              git commit -q -m "proofs: re-prove for #$PR at ${HEAD:0:9}" \
+                -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+            fi
+            tree=$(git rev-parse 'HEAD^{tree}')
+            old=""
+            if git fetch -q origin "$branch" 2>/dev/null; then old=$(git rev-parse FETCH_HEAD); fi
+            if [[ -n "$old" && "$(git rev-parse "$old^{tree}")" == "$tree" ]]; then
+              note="No change to \`$branch\`."
+            elif [[ -z "$old" && "$(git rev-parse HEAD)" == "$(git rev-parse "${{ needs.impact.outputs.proofs_sha }}")" ]]; then
+              note="No proof change was needed."
+            else
+              # History is kept (the old tip is a parent) but the tree is this run's
+              # result, so edits a later push made obsolete do not linger. The lease
+              # makes the update a compare-and-swap against the tip just fetched.
+              parents=(-p HEAD); [[ -n "$old" ]] && parents=(-p "$old" -p HEAD)
+              commit=$(printf 'proofs: re-prove for #%s at %s\n' "$PR" "${HEAD:0:9}" | git commit-tree "$tree" "${parents[@]}")
+              git push -q --force-with-lease="refs/heads/${branch}:${old}" origin "${commit}:refs/heads/${branch}"
+              if [[ "$CHANGED" == 0 || ! -s ../out/proofs.patch ]]; then
+                note="\`$branch\` reset to the proofs base: nothing left to re-prove."
+              else
+                note="Proof update: [\`$branch\`](https://github.com/$GITHUB_REPOSITORY/compare/$PROOFS_REF...$branch)"
+              fi
+            fi
           fi
+          # With nothing left to re-prove the impact job already rewrote the comment.
+          [[ "$CHANGED" == 0 ]] && { echo "$note"; exit 0; }
           {
             echo "<!-- proof-reprove -->"
             if [[ -s ../out/reprove.md ]]; then cat ../out/reprove.md; else echo "### Lean re-prove"; echo; echo "No verdicts were written."; fi
