@@ -10,7 +10,8 @@ import VersionedMatrix.TensorResize
 | `countPairsInto` | `Tensor::count_pairs_into` (`tensor.rs`, fn `count_pairs_into`) = `self.mt.count_in_rows(dsts)` |
 
 `count_in_rows` counts per layer and combines `|m| + |dp| − |dm|`; the doc says
-this is exact on a bool matrix because `dm ⊆ m` and `dp ∩ m = ∅`.
+this is exact on a bool matrix because `dm ⊆ m`, `dp ∩ m = ∅` and `dp` is duplicate-free
+(each layer is a set; the Rust doc names the first two, the distinct count needs all three).
 `vmCountInRows_spec` proves it: the result is the *list count* (`countP`) of the effective keys
 `effKeys` (`(m ∖ dm)` then `dp`) in the selected rows, and the `u64` subtraction cannot underflow.
 It needs `dm ⊆ m` and duplicate-free `m` and `dm`. `vmCountInRows_spec` alone counts the *list* `effKeys`.

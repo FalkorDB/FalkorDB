@@ -86,7 +86,8 @@ def bitlenAux : Nat → Nat → Nat
     `roundNat`/`ieeeBits` results above it. -/
 def bitlen (n : Nat) : Nat := bitlenAux (n + 1) n
 
-/-- With enough fuel the count is exact: `n < 2^bitlen n`. -/
+/-- Upper bound: with enough fuel (`n < fuel`), `n < 2 ^ bitlenAux fuel n`. It is a bound, not an
+exactness claim (`bitlen_lt` below is the same bound for `bitlen`). -/
 theorem bitlenAux_lt : ∀ (fuel n : Nat), n < fuel → n < 2 ^ bitlenAux fuel n
   | 0, n, h => by omega
   | fuel + 1, n, h => by

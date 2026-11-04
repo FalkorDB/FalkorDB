@@ -21,7 +21,7 @@ comparison (only `true` keeps a row).
 Re-targeted to origin/main 5e475e6c9: #2383 keeps an `IN [...]` list whole as `IndexQuery::InList`
 (node and edge index scans) instead of an `Or` of `Equal`s; `Index.Q` gained `inList`, `evalIQ`
 builds it, `canUtilize` has its arm, and the new query builds the same union and is accepted/refused by `can_utilize_index` exactly as the old `Or`
-(equivalence theorem removed in bbee75955; the last revision that has them is 17ccc5412). `utilize_sound` is unchanged in statement. #3436 only
+(the `inList_same_as_pre2383` wrapper was removed in bbee75955, the last revision that has it is 17ccc5412; the equivalence itself stays proved as `build_inList_eq_or` and `canUtilize_inList_eq_or` in `Index.lean`). `utilize_sound` is unchanged in statement. #3436 only
 shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs:1415`.
 
 ## Lean ↔ Rust
@@ -50,7 +50,7 @@ Id seeks (`IdSeek.lean`):
 - `step_none`, `step_some`: each `evaluate_id_filter` arm keeps exactly the ids of the running range that satisfy it.
 - `step_nonempty`: the running `min ≤ max` invariant holds, so `insert_range(min..=max)` is never inverted.
 - `fold_none`, `fold_some`, `go_eq_fold`, `asU64_of_small`: the whole fold is exact for operands in `[0, 2^63)`.
-- `seek_sound` (main b84473a7f, #3394): on any well-formed graph (`G.wf`: `node_count` counts the live ids), including one that never held a node, with non-negative integer operands, `NodeByIdSeek` = `Filter(id(n) op v …)` over `AllNodeScan`. `empty_graph_seek_none`: a never-populated graph seeks nothing. Before #3394 the seek theorem needed `nodeCount ≠ 0` (removed in bbee75955; the last revision that has them is 17ccc5412).
+- `seek_sound` (main b84473a7f, #3394): on any well-formed graph (`G.wf`: `node_count` counts the live ids), including one that never held a node, with non-negative integer operands, `NodeByIdSeek` = `Filter(id(n) op v …)` over `AllNodeScan`. `empty_graph_seek_none`: a never-populated graph seeks nothing. Before #3394 the seek theorem needed `nodeCount ≠ 0`; that version survives only as `pre3394_seek_sound` in `IdSeek.lean`, the stepping stone of `seek_sound` (the other pre-#3394 counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412).
 
 Index utilization (`Index.lean`, `IndexSound.lean`, `IndexPipeline.lean`):
 - `ordI_swap`, `ord3_swap`, `eq3_swap`, `flip_correct`: comparison flip when the property is on the right.
@@ -92,7 +92,7 @@ Scan selection (`ScanOrder.lean`):
    `empty_graph_seek_none`). Before:
    `Graph::max_node_id` (`graph.rs:1783`, `IdSpace::max_id` since #2846) is 0 on a graph with no nodes, so
    `evaluate_id_filter` yields `{0}` and `node_by_id_seek.rs:67` only subtracts deleted ids.
-   Lean `IdSeek.gEmpty` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). On a fresh graph `MATCH (n) WHERE id(n) = 0 RETURN n`
+   Lean `IdSeek.gEmpty` (it now proves the fix, `empty_graph_seek_none`; the phantom-node counterexample theorem was removed in bbee75955, the last revision that has it is 17ccc5412). On a fresh graph `MATCH (n) WHERE id(n) = 0 RETURN n`
    → Rust 1 row, C 0. `MATCH (n) WHERE id(n)=0 SET n.x=1, n:Z` then `CREATE (m:Q)` →
    `MATCH (n) RETURN labels(n), properties(n)` Rust `[Z, Q] {x: 1}`, C `[Q] {}`;
    `DELETE` errors "0 was never allocated here"; `CREATE (n)-[:R]->(:W)` makes a self-loop.

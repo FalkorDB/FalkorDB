@@ -14,7 +14,8 @@
 
 **Fixed crash** (W4-redis-1, fixed by #3234 `3660a5fc3`): `entry_hash` and `truncate`
 used to cut the query at *byte* 2048, so a query longer than 2048 bytes with a multi-byte
-character across byte 2048 panicked (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). Both now
+character across byte 2048 panicked (counterexamples removed in bbee75955; the last
+revision that has them is 17ccc5412). Both now
 go through `prefix`, which backs up to `floor_char_boundary(2048)`:
 `hashInput_total`/`truncate_total` (never panics, for every byte string),
 `prefix_le`/`prefix_isPrefix`/`prefix_boundary`/`prefix_longest` (the cut is the longest
@@ -342,7 +343,8 @@ entry's latency and `return`ed before the recompute at `:172-177`, leaving `minL
 one, the pre-check at `:114` admitted a query faster than every retained entry and the
 replace path evicted the real fastest entry. C (`SlowLog_Add`) sends the update path through
 `cleanup`, which recomputes the minimum. #3456 makes the branch fall through to the recompute
-(`:120-139`, `:178`); `add` above is that main code. The refutations were removed (in 17ccc5412); `add_minCache` and `fixed3442_trace` prove the fix on main. -/
+(`:120-139`, `:178`); `add` above is that main code. The refutations were removed in bbee75955 (the last revision that has them is
+17ccc5412); `add_minCache` and `fixed3442_trace` prove the fix on main. -/
 
 /-- Cache invariant: a non-empty log caches the minimum of its latencies. -/
 def MinCache (s : SL) : Prop := s.entries ≠ [] → s.minLat = minOf s.entries
