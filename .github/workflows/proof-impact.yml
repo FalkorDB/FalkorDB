@@ -60,12 +60,13 @@ env:
   # Only comments this workflow wrote are reused.
   BOT_LOGIN: github-actions[bot]
   # The only paths a re-prove patch may touch: Lean sources (no dot directories,
-  # so never .lake/), each project's COVERAGE.tsv, README.md and declarative
-  # lakefile.toml, and FINDINGS.md. Not the gate scripts, lakefile.lean,
-  # lake-manifest.json, lean-toolchain, or anything outside proofs/.
-  # lakefile.lean is build-time code, so it is denied even though it ends in .lean.
+  # so never .lake/), each project's COVERAGE.tsv and README.md, and FINDINGS.md.
+  # Not any Lake configuration (lakefile.toml / lakefile.lean, lake-manifest.json,
+  # lean-toolchain: the build uses the base's projects and targets), the gate
+  # scripts, or anything outside proofs/.
+  # lakefile.lean is a Lake configuration (and build-time code), denied though it ends in .lean.
   PROOF_DENY: '(^|/)lakefile\.lean$'
-  PROOF_PATHS: '^proofs/(FINDINGS\.md|[A-Za-z0-9_]+/(COVERAGE\.tsv|README\.md|lakefile\.toml|([A-Za-z0-9_]+/)*[A-Za-z0-9_]+\.lean))$'
+  PROOF_PATHS: '^proofs/(FINDINGS\.md|[A-Za-z0-9_]+/(COVERAGE\.tsv|README\.md|([A-Za-z0-9_]+/)*[A-Za-z0-9_]+\.lean))$'
 
 jobs:
   impact:
@@ -448,6 +449,22 @@ jobs:
               sys.exit(0)
 
           held = []
+          # Lines that change what an unchanged statement means: section variables
+          # (`variable (h : False)` + `include h` gives a theorem an impossible
+          # premise), name resolution (`open`) and notation. Added or removed, they
+          # hold the patch for a human; the statement text alone can't show them.
+          CONTEXT = re.compile(r'^\s*(?:local\s+|scoped\s+)?(variable|include|omit|open|export|notation|'
+                               r'infix|infixl|infixr|prefix|postfix|macro|syntax|universe|set_option)\b')
+          for f in git('diff', '--cached', '--name-only', '--no-renames', '--', '*.lean').split():
+              old_t = strip_comments(git('show', f'{base}:{f}')).split('\n')
+              new_t = strip_comments(git('show', f':{f}')).split('\n')
+              ctx_old = sorted(l.strip() for l in old_t if CONTEXT.match(l))
+              ctx_new = sorted(l.strip() for l in new_t if CONTEXT.match(l))
+              if ctx_old != ctx_new:
+                  gone = [l for l in ctx_old if l not in ctx_new]
+                  came = [l for l in ctx_new if l not in ctx_old]
+                  what = '; '.join([f'adds `{l[:80]}`' for l in came] + [f'removes `{l[:80]}`' for l in gone])
+                  held.append(f'- `{f}`: context changed ({what})')
           files = git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=MD', '--', '*.lean').split()
           for f in files:
               old, new = decls(git('show', f'{base}:{f}')), decls(git('show', f':{f}'))
@@ -459,17 +476,21 @@ jobs:
                   elif new[name] != st:
                       held.append(f'- `{f}` `{name}`: statement changed')
           if held:
-              print('Held for review, existing theorem statements changed:')
+              print('Held for review, existing theorem statements or their context changed:')
               print('\n'.join(held))
 
           VERDICTS = {'unchanged', 'model updated', 'counterexample'}
           try:
-              given_full = {(v['file'], v['fn'], int(v['line'])): v for v in json.load(open(verdicts_path))}
+              records = json.load(open(verdicts_path))
+              keys = [(v['file'], v['fn'], int(v['line'])) for v in records]
+              given_full = dict(zip(keys, records))
+              dups = sorted({k for k in keys if keys.count(k) > 1})
           except Exception:
-              given_full = {}
+              given_full, dups = {}, []
           given = {k: v.get('verdict') for k, v in given_full.items()}
           missing = [c for c in json.load(open(impact_path))['changed']
-                     if given.get((c['file'], c['fn'], int(c['line']))) not in VERDICTS]
+                     if given.get((c['file'], c['fn'], int(c['line']))) not in VERDICTS
+                     or (c['file'], c['fn'], int(c['line'])) in dups]
           noname = [k for k, v in given_full.items() if v.get('verdict') in VERDICTS and not v.get('theorems')]
           if noname:
               print('Verdicts that name no Lean theorem (reported, not gated):')
