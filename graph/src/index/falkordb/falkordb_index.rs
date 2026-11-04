@@ -9,14 +9,18 @@
 //! back at the graph for background population; that cycle is exactly what this
 //! avoids. The write path mutates a version's own copy instead.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use roaring::RoaringTreemap;
+
 use crate::entity_type::EntityType;
-use crate::graph::graph::{Graph, NodeId};
+use crate::graph::endpoint_index::EndpointIndex;
+use crate::graph::graph::{Graph, NodeId, RelationshipId};
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
+use super::cch::{CchError, CchIndex, CchIndexDef};
 use super::encode::encode_numeric;
 use super::graph_writes;
 use super::numeric::{DocIter, EncodedTuples, KeySet, NumericIndex};
@@ -152,6 +156,101 @@ impl IndexColumn {
             Self::Numeric(idx) => idx.point_key(key),
         }
     }
+
+    /// Refresh `written` in column `name`: their tuples as `from` has them come out, and as `to`
+    /// has them go in, while `state` is `Building` only for an entity `to` places below the cursor.
+    /// Removing a tuple the column does not hold changes nothing, and an entity whose value did not
+    /// change takes its tuple out and puts it back. What a writer's rebase and an indexer batch's
+    /// catch-up both do ([`VersionedIndex::writer_rebase`], [`VersionedIndex::indexer_catch_up`]).
+    ///
+    /// This is `from`'s copy of the column, so the tuples coming out are read with no label check:
+    /// the copy holds none for an entity without the label in `from`, and removing one changes
+    /// nothing. The tuples going in are checked ([`graph_writes::entity_tuples`]).
+    fn refresh(
+        &mut self,
+        state: &BuildState<BuildCursor>,
+        (entity, key): &(EntityType, IndexKey),
+        written: &RoaringTreemap,
+        from: &Graph,
+        to: &Graph,
+    ) {
+        if written.is_empty() {
+            return;
+        }
+        let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
+        let attr = &key.1;
+        match entity {
+            EntityType::Node => {
+                if let Some(idx) = from.get_node_attribute_id(attr) {
+                    for id in written {
+                        if let Some(value) =
+                            from.get_node_attribute_by_idx(NodeId::from(id), idx as u16)
+                        {
+                            self.push_encoded(&value, id, &mut removes);
+                        }
+                    }
+                }
+            }
+            EntityType::Relationship => {
+                if let Some(idx) = from.get_relationship_attribute_id(attr) {
+                    for id in written {
+                        if let Some(value) = from
+                            .get_relationship_attribute_by_idx(RelationshipId::from(id), idx as u16)
+                        {
+                            self.push_encoded(&value, id, &mut removes);
+                        }
+                    }
+                }
+            }
+        }
+        // Placed before their values are read, so an entity past the cursor costs a place, not an
+        // attribute read.
+        match state {
+            BuildState::Ready => {
+                graph_writes::entity_tuples(to, *entity, key, written, self, &mut adds);
+            }
+            BuildState::Building { next, .. } => {
+                let below = placed_in(written, *entity, None, Some(*next), to);
+                graph_writes::entity_tuples(to, *entity, key, &below, self, &mut adds);
+            }
+        }
+        self.remove_encoded(&mut removes);
+        self.add_encoded(&mut adds);
+    }
+}
+
+/// The entities of `written` whose place in a column's build order, in `version`, is at or after
+/// `from` and before `next`. A `None` end leaves that side open. Nodes are found by cutting the
+/// set at the ends; each edge costs one endpoint lookup. An edge that `version` no longer has is
+/// left out.
+fn placed_in(
+    written: &RoaringTreemap,
+    entity: EntityType,
+    from: Option<BuildCursor>,
+    next: Option<BuildCursor>,
+    version: &Graph,
+) -> RoaringTreemap {
+    match entity {
+        EntityType::Node => {
+            let mut placed = written.clone();
+            if let Some(BuildCursor::Node(from)) = from {
+                placed.remove_range(..u64::from(from));
+            }
+            if let Some(BuildCursor::Node(next)) = next {
+                placed.remove_range(u64::from(next)..);
+            }
+            placed
+        }
+        EntityType::Relationship => written
+            .iter()
+            .filter(|&id| {
+                version.build_place(entity, id).is_some_and(|at| {
+                    from.is_none_or(|from| !at.precedes(from))
+                        && next.is_none_or(|next| at.precedes(next))
+                })
+            })
+            .collect(),
+    }
 }
 
 /// A lookup a column has agreed to answer: which of its entities may hold one value.
@@ -214,12 +313,14 @@ impl VersionedIndex for IndexColumn {
     /// still go first.
     fn writer_record(
         &mut self,
-        state: BuildState<BuildCursor>,
+        state: &mut BuildState<BuildCursor>,
         mut log: Vec<IndexWrite>,
         place: impl Fn(u64) -> Option<BuildCursor>,
         (removes, adds): &mut (EncodedTuples, EncodedTuples),
     ) {
-        if let BuildState::Building { next } = state {
+        if let BuildState::Building { next, written } = state {
+            written.by_this_version.extend(log.iter().map(|w| w.id));
+            let next = *next;
             // A batch reads an entity at or above the cursor when it reaches it, so its
             // additions go. They go before the collapse, so one cannot cancel an earlier
             // removal of the same tuple.
@@ -228,6 +329,58 @@ impl VersionedIndex for IndexColumn {
         last_write_wins(&mut log, &mut removes.scalar, &mut adds.scalar);
         self.remove_encoded(removes);
         self.add_encoded(adds);
+    }
+
+    fn writer_rebase(
+        &mut self,
+        state: &BuildState<BuildCursor>,
+        name: &(EntityType, IndexKey),
+        written: &RoaringTreemap,
+        published: &Graph,
+        fork: &Graph,
+    ) {
+        self.refresh(state, name, written, published, fork);
+    }
+
+    fn indexer_catch_up(
+        &mut self,
+        state: &BuildState<BuildCursor>,
+        name: &(EntityType, IndexKey),
+        written: &RoaringTreemap,
+        batch_version: &Graph,
+        published: &Graph,
+    ) {
+        self.refresh(state, name, written, batch_version, published);
+    }
+
+    fn indexer_insert(
+        &mut self,
+        (entity, key): &(EntityType, IndexKey),
+        batch: &EncodedTuples,
+        written: &RoaringTreemap,
+        from: BuildCursor,
+        next: Option<BuildCursor>,
+        published: &Graph,
+    ) {
+        let mut adds = EncodedTuples::scalars(
+            batch
+                .scalar
+                .iter()
+                .filter(|&&(_, id)| !written.contains(id))
+                .copied()
+                .collect(),
+        );
+        // Add the written entities in the batch's range, with their values in `published`. Those
+        // below `from` are already right in this copy. Their places are found before any value is
+        // read, so a written entity outside the range costs no attribute read under the host's
+        // locks.
+        let in_range = placed_in(written, *entity, Some(from), next, published);
+        graph_writes::entity_tuples(published, *entity, key, &in_range, self, &mut adds);
+        self.add_encoded(&mut adds);
+    }
+
+    fn batch_len(batch: &EncodedTuples) -> usize {
+        batch.len()
     }
 
     /// The column's next `budget` nodes or edges from `from`, at their values in `version`,
@@ -247,6 +400,12 @@ impl VersionedIndex for IndexColumn {
         batch: &mut EncodedTuples,
     ) {
         self.add_encoded(batch);
+    }
+
+    fn memory_usage(&self) -> usize {
+        match self {
+            Self::Numeric(idx) => idx.memory_usage(),
+        }
     }
 }
 
@@ -279,6 +438,12 @@ impl ScanFilter {
 
 /// Where a building column's next indexer batch resumes: the first entity no batch has indexed
 /// yet. Also an entity's place in that order, to compare with it ([`Self::precedes`]).
+///
+/// A marker, not an iterator: it holds a place and nothing of the scan that reached it. Each batch
+/// opens a new scan from it, of the label's matrix for nodes or the type's tensor for edges, reads
+/// up to its budget, and returns the next marker (`graph_writes::scan`). The order is the same for
+/// every label, node id or `(src, dst)`, so the cursor names none: the scan reads only the label's
+/// entities, and a refresh keeps only those the label has (`graph_writes::entity_tuples`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BuildCursor {
     /// A node column's next node.
@@ -307,6 +472,23 @@ impl BuildCursor {
                 },
             ) => (u64::from(src), u64::from(dst)) < (u64::from(nsrc), u64::from(ndst)),
             _ => unreachable!("a node and an edge are never in one column"),
+        }
+    }
+
+    /// Where entity `id` sits in build order, as a cursor: a node by its id, an edge by its
+    /// endpoints in `endpoints`, a version's edge endpoints. An edge that version deleted has none
+    /// (`None`).
+    pub(crate) fn from_id(
+        entity: EntityType,
+        id: u64,
+        endpoints: &EndpointIndex,
+    ) -> Option<Self> {
+        match entity {
+            EntityType::Node => Some(Self::Node(NodeId::from(id))),
+            EntityType::Relationship => endpoints.get(id).map(|(src, dst)| Self::Edge {
+                src: NodeId::from(src),
+                dst: NodeId::from(dst),
+            }),
         }
     }
 
@@ -345,6 +527,22 @@ pub struct FalkorDbIndex {
     /// published, so between a version and a later published one with the same count, no batch
     /// was published. Writers may have been: the data version tells.
     batches_published: u64,
+    /// CCH shortest-path indexes, one [`IndexEntry`] per definition, keyed by the whole
+    /// [`CchIndexDef`](super::cch::CchIndexDef) (the kind's [`VersionedIndex::Name`]). Every
+    /// entry is built synchronously and held `Ready` until the background build, so readers
+    /// still check the state.
+    ///
+    /// A `BTreeMap`, not a `HashMap`: it iterates in definition order, the same in every
+    /// process, so whatever lists the indexes (a save, a listing) is deterministic. Found by
+    /// key, one entry per definition. Empty until one is created, so a graph with no CCH index
+    /// pays one empty map.
+    ///
+    /// Cloned with the rest of the index by `Graph::new_version`, which clones one `Arc<Cch>`
+    /// per index: no hierarchy data is copied, a reader that already holds the old version
+    /// keeps it, and rollback costs nothing. `pub(super)` for the CCH modules that find or
+    /// update an entry in place (`CchIndex`'s [`VersionedIndex`] lookup); everything else goes
+    /// through the CCH methods below.
+    pub(super) cch_indexes: BTreeMap<CchIndexDef, IndexEntry<CchIndex>>,
 }
 
 impl FalkorDbIndex {
@@ -374,6 +572,19 @@ impl FalkorDbIndex {
     #[must_use]
     pub fn len(&self) -> usize {
         self.node_columns.len() + self.edge_columns.len()
+    }
+
+    /// Heap bytes every column holds in this version, node and edge
+    /// ([`VersionedIndex::memory_usage`]): what a build with `index-falkordb` adds to
+    /// `indices_sz_mb` in `GRAPH.MEMORY USAGE`. Walks every page of every column. The CCH
+    /// indexes are not counted: their hierarchy holds no arrays until #3208 and #3209.
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.node_columns
+            .values()
+            .chain(self.edge_columns.values())
+            .map(IndexEntry::memory_usage)
+            .sum()
     }
 
     /// The column map for `entity` — node labels and relationship types keep
@@ -442,9 +653,7 @@ impl FalkorDbIndex {
             label,
             attr,
             IndexColumn::Numeric(NumericIndex::new()),
-            BuildState::Building {
-                next: BuildCursor::new(entity),
-            },
+            BuildState::building(BuildCursor::new(entity)),
         );
     }
 
@@ -557,6 +766,27 @@ impl FalkorDbIndex {
     ) -> bool {
         self.columns(entity)
             .contains_key(&(label.clone(), attr.clone()))
+    }
+
+    /// Ready this version to be published: each index's sets of written entities are settled
+    /// ([`IndexEntry::publish`]).
+    pub(crate) fn publish(&mut self) {
+        self.node_columns
+            .values_mut()
+            .chain(self.edge_columns.values_mut())
+            .for_each(IndexEntry::publish);
+    }
+
+    /// Every column, by kind and key.
+    pub(crate) fn column_names(&self) -> Vec<(EntityType, IndexKey)> {
+        [EntityType::Node, EntityType::Relationship]
+            .into_iter()
+            .flat_map(|entity| {
+                self.columns(entity)
+                    .keys()
+                    .map(move |key| (entity, key.clone()))
+            })
+            .collect()
     }
 
     /// Set this version's [`Self::batches_published`] as it is published after `published`:
@@ -777,7 +1007,45 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         attr: &Arc<String>,
     ) -> Option<BuildState<BuildCursor>> {
-        self.entry(entity, label, attr).map(|entry| entry.state)
+        self.entry(entity, label, attr)
+            .map(|entry| entry.state.clone())
+    }
+}
+
+/// CCH shortest-path indexes, held next to the columns. `Graph`'s CCH methods build a
+/// hierarchy from the graph first, then hand it here; nothing here reads the graph.
+///
+/// The signatures are fixed here so the DDL, maintenance and procedure changes can be written
+/// against them. Every body is `unimplemented!()`: nothing in the engine calls these, so a
+/// graph with no CCH index behaves exactly as it did before.
+impl FalkorDbIndex {
+    /// The index held over exactly `def`, if it is ready to answer.
+    #[must_use]
+    pub(crate) fn cch_index(
+        &self,
+        _def: &CchIndexDef,
+    ) -> Option<&CchIndex> {
+        unimplemented!("Graph API, #3212")
+    }
+
+    /// Every held CCH definition, in no guaranteed order.
+    pub(crate) fn cch_defs(&self) -> impl Iterator<Item = &CchIndexDef> {
+        unimplemented!("Graph API, #3212");
+        // Unreachable, but it pins the return type: `impl Iterator` needs a concrete type
+        // and `unimplemented!()` alone leaves the compiler without one.
+        #[allow(unreachable_code)]
+        std::iter::empty()
+    }
+
+    /// Stop holding the index over `def`.
+    ///
+    /// # Errors
+    /// [`CchError::NotFound`] if no entry over `def` is held.
+    pub(crate) fn drop_cch(
+        &mut self,
+        _def: &CchIndexDef,
+    ) -> Result<(), CchError> {
+        unimplemented!("Graph API, #3212")
     }
 }
 
@@ -996,6 +1264,138 @@ mod tests {
         };
         assert_eq!(all(&v1), vec![1]); // committed version unchanged
         assert_eq!(all(&v2), vec![1, 2]); // new version sees the write
+    }
+
+    /// Tuples for entities `0..n`, entity `i` holding `value(i)`.
+    fn tuples(
+        n: u64,
+        value: impl Fn(u64) -> i64,
+    ) -> EncodedTuples {
+        EncodedTuples::scalars(
+            (0..n)
+                .map(|i| (encode_numeric(&Value::Int(value(i))).unwrap(), i))
+                .collect(),
+        )
+    }
+
+    /// A column built from `tuples`, as an indexer batch builds one.
+    fn column_of(mut tuples: EncodedTuples) -> IndexColumn {
+        let mut column = IndexColumn::Numeric(NumericIndex::new());
+        column.indexer_add(&mut tuples);
+        column
+    }
+
+    /// A column reports its pages, at sizes from empty to several levels of branches.
+    ///
+    /// Distinct ints are far apart once encoded, so every leaf stays in the 16-byte
+    /// array-of-structs form: the tuples are a floor. Above each leaf a branch holds one child
+    /// and one 16-byte separator, under 64 bytes a leaf between them.
+    #[test]
+    fn a_column_reports_its_pages() {
+        let mut smaller = 0;
+        for n in [0, 1, 255, 256, 257, 10_000, 200_000] {
+            let size = VersionedIndex::memory_usage(&column_of(tuples(n, |i| i as i64)));
+            let floor = usize::try_from(n).unwrap() * 16;
+            let leaves = floor.div_ceil(256 * 16);
+            assert!(
+                (floor..=floor + 64 * leaves).contains(&size),
+                "{n} tuples reported {size} bytes, not {floor} plus at most {} for branches",
+                64 * leaves
+            );
+            assert!(
+                size > smaller || n == 0,
+                "{n} tuples reported no more than fewer did"
+            );
+            smaller = size;
+        }
+    }
+
+    /// The compact leaf form counts too: every entity holding one value packs a tuple into a
+    /// one-byte index entry plus its doc, well under the 16 bytes the other form takes.
+    #[test]
+    fn a_compact_column_reports_its_pages() {
+        for n in [256, 10_000, 200_000] {
+            let size = VersionedIndex::memory_usage(&column_of(tuples(n, |_| 7)));
+            let n = usize::try_from(n).unwrap();
+            assert!(
+                (n..=n * 8).contains(&size),
+                "{n} tuples of one value reported {size} bytes"
+            );
+        }
+    }
+
+    /// Versions that share pages each count them: a fork reports what its parent does, and
+    /// writing the fork changes only the fork's number.
+    #[test]
+    fn each_version_counts_the_pages_it_shares() {
+        let (label, attr) = (arc("Person"), arc("age"));
+        let adds = |ids: std::ops::Range<u64>| -> Vec<(i64, u64, bool)> {
+            ids.map(|id| (id as i64, id, true)).collect()
+        };
+        let mut v1 = FalkorDbIndex::new();
+        v1.create_numeric(Node, &label, &attr);
+        write(&mut v1, &label, &attr, &adds(0..10_000));
+        let before = v1.memory_usage();
+        assert!(before > 0);
+
+        let mut v2 = v1.clone();
+        assert_eq!(v2.memory_usage(), before);
+        write(&mut v2, &label, &attr, &adds(10_000..20_000));
+        assert_eq!(v1.memory_usage(), before);
+        assert!(v2.memory_usage() > before);
+    }
+
+    /// The index reports every column, node and edge, each by its own pages.
+    #[test]
+    fn the_index_counts_node_and_edge_columns() {
+        let (label, attr) = (arc("Rated"), arc("score")); // a node label and a relationship type
+        let with = |columns: &[(EntityType, u64)]| -> FalkorDbIndex {
+            let mut idx = FalkorDbIndex::new();
+            for &(entity, n) in columns {
+                idx.create_numeric(entity, &label, &attr);
+                idx.numeric_mut(entity, &label, &attr)
+                    .unwrap()
+                    .add_encoded(&mut tuples(n, |i| i as i64));
+            }
+            idx
+        };
+        let own = |n| VersionedIndex::memory_usage(&column_of(tuples(n, |i| i as i64)));
+
+        assert_eq!(FalkorDbIndex::new().memory_usage(), 0);
+        assert_eq!(with(&[(Node, 1_000)]).memory_usage(), own(1_000));
+        assert_eq!(with(&[(Relationship, 3_000)]).memory_usage(), own(3_000));
+        assert_eq!(
+            with(&[(Node, 1_000), (Relationship, 3_000)]).memory_usage(),
+            own(1_000) + own(3_000)
+        );
+
+        let mut idx = with(&[(Node, 1_000), (Relationship, 3_000)]);
+        idx.drop_column(Node, &label, &attr);
+        assert_eq!(idx.memory_usage(), own(3_000));
+    }
+
+    /// A `Building` index also holds the entities writers changed since its last batch, until a
+    /// batch catches up on them. A `Ready` one holds none, and reports its pages alone.
+    #[test]
+    fn a_building_index_counts_what_writers_left_for_its_next_batch() {
+        let (label, attr) = (arc("Person"), arc("age"));
+        let name = (Node, (label.clone(), attr.clone()));
+        let mut idx = FalkorDbIndex::new();
+        idx.create_building(Node, &label, &attr);
+        let pages = idx.memory_usage();
+
+        let written: roaring::RoaringTreemap = (0..10_000).step_by(3).collect();
+        let BuildState::Building { written: w, .. } =
+            &mut IndexColumn::entry_mut(&mut idx, &name).unwrap().state
+        else {
+            panic!("create_building leaves the column Building");
+        };
+        w.since_last_indexer_step = Arc::new(written.clone());
+        assert!(written.serialized_size() > 0);
+        assert_eq!(idx.memory_usage(), pages + written.serialized_size());
+
+        idx.create_numeric(Node, &label, &attr);
+        assert_eq!(idx.memory_usage(), 0);
     }
 
     /// `create_numeric` installs a column; before it, the key is absent.
