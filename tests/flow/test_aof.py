@@ -10,9 +10,11 @@ class testAOFReplay():
         self.conn = self.env.getConnection()
 
     def tearDown(self):
-        # Leave AOF off for whatever runs next in this environment.
+        # Leave AOF off, and the preamble on its default, for whatever runs
+        # next in this environment.
         try:
             self.conn.config_set("appendonly", "no")
+            self.conn.config_set("aof-use-rdb-preamble", "yes")
         except Exception:
             pass
         self.conn.flushall()
@@ -70,5 +72,38 @@ class testAOFReplay():
 
         # ...and the graph came back through it, so the command really was replayed
         # rather than skipped.
+        result = graph.query("MATCH (n) RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 2)
+
+    def test02_bgrewriteaof_survives_without_rdb_preamble(self):
+        # With aof-use-rdb-preamble on (the default, test01's control) BGREWRITEAOF
+        # writes an RDB preamble and never calls the type's aof_rewrite callback.
+        # With it off, Redis rewrites every key as commands and calls
+        # aof_rewrite unconditionally. Neither engine registered one (#2710), so
+        # the rewrite forked a child that dereferenced a null function pointer
+        # and segfaulted every time, forever, since auto-aof-rewrite-percentage
+        # keeps re-triggering a rewrite that can never succeed.
+        self.conn.flushall()
+        self.conn.config_set("appendonly", "no")
+        self.conn.config_set("aof-use-rdb-preamble", "no")
+        self.conn.config_set("appendonly", "yes")
+        self._wait_for_aof_rewrite()
+
+        graph = self.db.select_graph(GRAPH_ID)
+        graph.query("CREATE (:P {n:1})")
+        graph.query("CREATE (:P {n:2})")
+
+        self.conn.execute_command("BGREWRITEAOF")
+        self._wait_for_aof_rewrite()
+
+        # The child that ran the rewrite must not have crashed.
+        self.env.assertTrue(self.conn.ping())
+        status = self.conn.info("persistence").get("aof_last_bgrewrite_status")
+        self.env.assertEqual(status, "ok")
+
+        # The rewritten AOF must actually reconstruct the graph, not just avoid
+        # crashing while producing an empty one.
+        self.conn.execute_command("DEBUG", "LOADAOF")
+        self.env.assertTrue(self.conn.ping())
         result = graph.query("MATCH (n) RETURN count(n)")
         self.env.assertEqual(result.result_set[0][0], 2)
