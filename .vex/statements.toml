@@ -40,7 +40,7 @@ purl = "pkg:rpm/amazon/{name}"
 [runtime.os.debian]
 programs = [
   "/var/lib/falkordb/bin/run.sh", "/bin/sh", "/usr/bin/find", "/usr/bin/chown",
-  "/usr/bin/mkdir", "/usr/bin/id", "/usr/sbin/gosu",
+  "/usr/bin/mkdir", "/usr/bin/id", "/usr/bin/mktemp", "/usr/bin/rm", "/usr/sbin/gosu",
   "/usr/local/bin/redis-server", "/var/lib/falkordb/bin/falkordb.so",
   # gen-certs.sh, with TLS=1
   "/var/lib/falkordb/bin/gen-certs.sh", "/usr/bin/env", "/usr/bin/bash",
@@ -54,7 +54,7 @@ dlopen = [
 [runtime.os.rhel]
 programs = [
   "/var/lib/falkordb/bin/run.sh", "/bin/sh", "/usr/bin/find", "/usr/bin/chown",
-  "/usr/bin/mkdir", "/usr/bin/id",
+  "/usr/bin/mkdir", "/usr/bin/id", "/usr/bin/mktemp", "/usr/bin/rm",
   # build/runtime/gosu-setpriv.sh
   "/usr/local/bin/gosu", "/usr/bin/setpriv",
   "/usr/local/bin/redis-server", "/var/lib/falkordb/bin/falkordb.so",
@@ -69,7 +69,7 @@ dlopen = [
 [runtime.os.amazon]
 programs = [
   "/var/lib/falkordb/bin/run.sh", "/bin/sh", "/usr/bin/find", "/usr/bin/chown",
-  "/usr/bin/mkdir", "/usr/bin/id",
+  "/usr/bin/mkdir", "/usr/bin/id", "/usr/bin/mktemp", "/usr/bin/rm",
   "/usr/local/bin/gosu", "/usr/bin/setpriv",
   "/usr/local/bin/redis-server", "/var/lib/falkordb/bin/falkordb.so",
   "/var/lib/falkordb/bin/gen-certs.sh", "/usr/bin/env", "/usr/bin/bash",
@@ -126,7 +126,7 @@ impact = "The flaw is unbounded recursion when glibc's regular-expression matche
 evidence = [
   { check = "not-run", packages = ["grep", "sed", "diffutils", "tar", "apt", "libapt-pkg7.0", "debianutils", "libc-bin"] },
 ]
-notes = "[confidence: high] Arches/images: all four Debian images (falkordb + falkordb-server, arm64 + amd64; I exported the missing server-amd64 rootfs with export-image.sh). Imports: readelf --dyn-syms over every ELF file, and every predicate re-run with the CI checker's own evaluate() (copy of build/vex/vex.py + .vex/statements.toml incl. the dlopen patterns) on `docker export` tarballs of the four images: all OK. glibc-internal calls: objdump -d of libc.so.6 on aarch64 and x86-64 (byte-identical between full and server per arch), listing every direct call/jump to the function. Importers of glibc regex (regcomp/regexec/re_search/re_match/re_compile_pattern), same on all four: run-parts (debianutils), du/expr/ptx/csplit/tac/nl (coreutils), diff (diffutils), grep, sed, tar, localedef (libc-bin), libapt-pkg/libapt-private (apt), bash, find. The not-run predicate covers the packages never run; of the rest, bash runs only gen-certs.sh (TLS=1), which has no [[ =~ ]] (read from the image; identical to build/runtime/gen-certs.sh), and find runs only run.sh's fixed -name/-type/-user expressions (no -regex). rpmatch() (imported by find, rm and others) compiles the locale's fixed yes/no pattern and runs only for interactive prompts, which rm -f and run.sh's find never show. Inside libc the only direct callers of regcomp/regexec are rpmatch and the legacy re_exec/step/advance, which nothing imports. redis-server, falkordb.so and node do not import glibc regex. FalkorDB's Cypher =~ uses the Rust regex engine: on both arches `GRAPH.QUERY g \"MATCH (n) WHERE n.name =~ '(a|)(\\\\1\\\\1)*' RETURN count(n)\"` returns 'backreferences are not supported'. Source: https://security-tracker.debian.org/tracker/CVE-2018-20796"
+notes = "[confidence: high] Arches/images: all four Debian images (falkordb + falkordb-server, arm64 + amd64; I exported the missing server-amd64 rootfs with export-image.sh). Imports: readelf --dyn-syms over every ELF file, and every predicate re-run with the CI checker's own evaluate() (copy of build/vex/vex.py + .vex/statements.toml incl. the dlopen patterns) on `docker export` tarballs of the four images: all OK. glibc-internal calls: objdump -d of libc.so.6 on aarch64 and x86-64 (byte-identical between full and server per arch), listing every direct call/jump to the function. Importers of glibc regex (regcomp/regexec/re_search/re_match/re_compile_pattern), same on all four: run-parts (debianutils), du/expr/ptx/csplit/tac/nl (coreutils), diff (diffutils), grep, sed, tar, localedef (libc-bin), libapt-pkg/libapt-private (apt), bash, find. The not-run predicate covers the packages never run; of the rest, bash runs only gen-certs.sh (TLS=1), which has no [[ =~ ]] (read from the image; identical to build/runtime/gen-certs.sh), and find runs only run.sh's fixed expressions, none with -regex or -iregex. rpmatch() (imported by find, rm and others) compiles the locale's fixed yes/no pattern and runs only for interactive prompts, which rm -f and run.sh's find never show. Inside libc the only direct callers of regcomp/regexec are rpmatch and the legacy re_exec/step/advance, which nothing imports. redis-server, falkordb.so and node do not import glibc regex. FalkorDB's Cypher =~ uses the Rust regex engine: on both arches `GRAPH.QUERY g \"MATCH (n) WHERE n.name =~ '(a|)(\\\\1\\\\1)*' RETURN count(n)\"` returns 'backreferences are not supported'. Source: https://security-tracker.debian.org/tracker/CVE-2018-20796"
 
 [[statement]]
 cve = "CVE-2019-1010022"
@@ -182,7 +182,7 @@ impact = "The flaw is unbounded recursion when glibc's regular-expression matche
 evidence = [
   { check = "not-run", packages = ["grep", "sed", "diffutils", "tar", "apt", "libapt-pkg7.0", "debianutils", "libc-bin"] },
 ]
-notes = "[confidence: high] Arches/images: all four Debian images (falkordb + falkordb-server, arm64 + amd64; I exported the missing server-amd64 rootfs with export-image.sh). Imports: readelf --dyn-syms over every ELF file, and every predicate re-run with the CI checker's own evaluate() (copy of build/vex/vex.py + .vex/statements.toml incl. the dlopen patterns) on `docker export` tarballs of the four images: all OK. glibc-internal calls: objdump -d of libc.so.6 on aarch64 and x86-64 (byte-identical between full and server per arch), listing every direct call/jump to the function. Importers of glibc regex (regcomp/regexec/re_search/re_match/re_compile_pattern), same on all four: run-parts (debianutils), du/expr/ptx/csplit/tac/nl (coreutils), diff (diffutils), grep, sed, tar, localedef (libc-bin), libapt-pkg/libapt-private (apt), bash, find. The not-run predicate covers the packages never run; of the rest, bash runs only gen-certs.sh (TLS=1), which has no [[ =~ ]] (read from the image; identical to build/runtime/gen-certs.sh), and find runs only run.sh's fixed -name/-type/-user expressions (no -regex). rpmatch() (imported by find, rm and others) compiles the locale's fixed yes/no pattern and runs only for interactive prompts, which rm -f and run.sh's find never show. Inside libc the only direct callers of regcomp/regexec are rpmatch and the legacy re_exec/step/advance, which nothing imports. redis-server, falkordb.so and node do not import glibc regex. FalkorDB's Cypher =~ uses the Rust regex engine: on both arches `GRAPH.QUERY g \"MATCH (n) WHERE n.name =~ '(a|)(\\\\1\\\\1)*' RETURN count(n)\"` returns 'backreferences are not supported'. Source: https://security-tracker.debian.org/tracker/CVE-2019-9192 (the maintainer disputes it: needs a crafted pattern)"
+notes = "[confidence: high] Arches/images: all four Debian images (falkordb + falkordb-server, arm64 + amd64; I exported the missing server-amd64 rootfs with export-image.sh). Imports: readelf --dyn-syms over every ELF file, and every predicate re-run with the CI checker's own evaluate() (copy of build/vex/vex.py + .vex/statements.toml incl. the dlopen patterns) on `docker export` tarballs of the four images: all OK. glibc-internal calls: objdump -d of libc.so.6 on aarch64 and x86-64 (byte-identical between full and server per arch), listing every direct call/jump to the function. Importers of glibc regex (regcomp/regexec/re_search/re_match/re_compile_pattern), same on all four: run-parts (debianutils), du/expr/ptx/csplit/tac/nl (coreutils), diff (diffutils), grep, sed, tar, localedef (libc-bin), libapt-pkg/libapt-private (apt), bash, find. The not-run predicate covers the packages never run; of the rest, bash runs only gen-certs.sh (TLS=1), which has no [[ =~ ]] (read from the image; identical to build/runtime/gen-certs.sh), and find runs only run.sh's fixed expressions, none with -regex or -iregex. rpmatch() (imported by find, rm and others) compiles the locale's fixed yes/no pattern and runs only for interactive prompts, which rm -f and run.sh's find never show. Inside libc the only direct callers of regcomp/regexec are rpmatch and the legacy re_exec/step/advance, which nothing imports. redis-server, falkordb.so and node do not import glibc regex. FalkorDB's Cypher =~ uses the Rust regex engine: on both arches `GRAPH.QUERY g \"MATCH (n) WHERE n.name =~ '(a|)(\\\\1\\\\1)*' RETURN count(n)\"` returns 'backreferences are not supported'. Source: https://security-tracker.debian.org/tracker/CVE-2019-9192 (the maintainer disputes it: needs a crafted pattern)"
 
 [[statement]]
 cve = "CVE-2026-102010"
