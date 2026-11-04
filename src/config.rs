@@ -269,10 +269,13 @@ fn apply_load_arg(
         } => {
             apply_config_set(ctx, &name, &parsed);
             if IGNORED_CONFIGS.contains(&name.as_str()) {
-                ctx.log_warning(&format!(
-                    "FalkorDB: configuration field '{name}' is deprecated and has no effect in \
+                crate::log::context_warning(
+                    ctx,
+                    format!(
+                        "FalkorDB: configuration field '{name}' is deprecated and has no effect in \
                      this version; the value '{value}' is accepted and ignored"
-                ));
+                    ),
+                );
             }
         }
     }

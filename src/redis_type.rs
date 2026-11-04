@@ -42,6 +42,7 @@
 
 use crate::config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_VKEY_MAX_ENTITY_COUNT};
 use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, graph_free, register_graph};
+use crate::log::{notice as log_notice, warning as log_warning};
 use crate::serializers;
 use crate::serializers::decoder::LoadedKey;
 use crate::serializers::encoder::build_multi_key_payloads;
@@ -50,7 +51,6 @@ use graph::graph::mvcc_graph::MvccGraph;
 use graph::runtime::functions::{GraphFn, register_udf};
 use graph::udf::get_udf_repo;
 use parking_lot::RwLock;
-use redis_module::logging::{log_notice, log_warning};
 use redis_module::raw::{
     self, RedisModuleCtx, RedisModuleIO, load_string_buffer, load_unsigned, save_string,
     save_unsigned,

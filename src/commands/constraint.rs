@@ -1,3 +1,4 @@
+use crate::log;
 use crate::query_session::{QuerySession, WriteAbort, WriteFacts};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
@@ -214,7 +215,7 @@ pub fn settle_constraint(
             Err(reason @ (WriteAbort::ReplicaTrafficPaused | WriteAbort::Stale)) => {
                 if Instant::now() >= deadline {
                     for c in announce {
-                        redis_module::logging::log_warning(format!(
+                        log::warning(format!(
                             "constraint on {:?} {} ({}) is stuck UNDER CONSTRUCTION: writes were \
                              refused for {}s across {attempts} attempts, so validation could not \
                              publish its result. It is not being enforced. Recover with \
@@ -238,7 +239,7 @@ pub fn settle_constraint(
                 // which is what lets a test assert it was exercised rather
                 // than pass because the window was never hit.
                 if attempts == 1 {
-                    redis_module::logging::log_notice(format!(
+                    log::notice(format!(
                         "constraint announcement on graph '{key_display}' is deferred ({reason}); \
                          retrying for up to {}s",
                         RETRY_BUDGET.as_secs(),
@@ -256,7 +257,7 @@ pub fn settle_constraint(
             // Logged loudly because the constraint is left unenforced and the id
             // space it was refused over is an engine fault, not a user error.
             Err(WriteAbort::Invalid(e)) => {
-                redis_module::logging::log_warning(format!(
+                log::warning(format!(
                     "constraint announcement on graph '{key_display}' was refused: {e}. \
                      The constraint is not being enforced."
                 ));
@@ -368,7 +369,7 @@ fn attempt_settle(
                     // nothing can re-drive it because `GRAPH.CONSTRAINT CREATE`
                     // answers "already exists". Silent, and only visible as a
                     // replica that enforces a constraint the master does not.
-                    Err(e) => redis_module::logging::log_warning(format!(
+                    Err(e) => log::warning(format!(
                         "constraint on {:?} {} ({}) settled locally but could not be \
                          announced ({e}); replicas will keep reporting it UNDER \
                          CONSTRUCTION. Recover with GRAPH.CONSTRAINT DROP on graph \
@@ -626,7 +627,7 @@ pub fn graph_constraint(
                     find_status(&mutated.borrow(), ct, entity_type, &label, &properties).map(Some)
                 };
                 let Some(status) = status else {
-                    redis_module::logging::log_warning(format!(
+                    log::warning(format!(
                         "constraint CREATE on {entity_type:?} '{label}' was applied but its \
                          status could not be read back, so it was not announced; it will not \
                          reach replicas or the AOF. Recover with GRAPH.CONSTRAINT DROP on \
@@ -662,7 +663,7 @@ pub fn graph_constraint(
                     // AOF. Same shape as `graph_core`'s "modified but produced
                     // no effects payload", and loud for the same reason: it is
                     // divergence that nothing else will report.
-                    Err(e) => redis_module::logging::log_warning(format!(
+                    Err(e) => log::warning(format!(
                         "constraint {} on {entity_type:?} '{label}' was applied but could \
                          not be announced ({e}); it will not reach replicas or the AOF",
                         if is_create { "CREATE" } else { "DROP" },
