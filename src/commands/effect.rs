@@ -59,7 +59,7 @@ pub fn graph_effect(
         g
     };
 
-    let mut tg = graph.write();
+    let tg = graph.write();
     let g_arc = tg.graph.fork();
 
     let result = {

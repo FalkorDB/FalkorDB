@@ -518,7 +518,7 @@ pub fn graph_constraint(
         g
     };
 
-    let mut tg = graph.write();
+    let tg = graph.write();
     let g_arc = tg.graph.fork();
 
     // Not for replication: nothing propagates `GRAPH.CONSTRAINT` any more, so

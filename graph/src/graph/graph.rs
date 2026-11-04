@@ -291,6 +291,8 @@ pub struct MemoryUsageReport {
     pub unlabeled_node_attr_sz: usize,
     pub edge_block_storage_sz: usize,
     pub edge_attr_by_type: Vec<(Arc<String>, usize)>,
+    /// RediSearch's own estimate of its indexes, and on a build with `index-falkordb` the native
+    /// index's columns as well.
     pub indices_sz: usize,
 }
 
@@ -3859,12 +3861,12 @@ impl Graph {
     }
 
     /// The indexer serialization locks, cloned so a caller can take them **before**
-    /// borrowing the graph.
+    /// borrowing the graph, and hold both across several index writes — the index undo
+    /// path, which writes node and edge documents through the published version.
     ///
     /// That is the order `populate_index_batch` uses (indexer lock held across its
-    /// graph borrow), so anything that needs a *mutable* borrow of the same version —
-    /// the index undo path — must take these first or the two collide, which
-    /// `AtomicRefCell` reports by panicking.
+    /// graph borrow). Every borrow involved is immutable, since index writes take
+    /// `&self`, so the order is kept for uniformity rather than to avoid a collision.
     #[must_use]
     pub fn index_locks(&self) -> (Arc<Mutex<()>>, Arc<Mutex<()>>) {
         (
@@ -3925,7 +3927,7 @@ impl Graph {
 
     /// Write node index documents to RediSearch, taking the node indexer lock.
     pub fn commit_index(
-        &mut self,
+        &self,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
@@ -3938,7 +3940,7 @@ impl Graph {
     /// lock from [`Self::index_locks`] — which it must, to have borrowed the graph in
     /// the sanctioned order.
     pub fn commit_index_locked(
-        &mut self,
+        &self,
         guard: &MutexGuard<'_, ()>,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
@@ -3948,7 +3950,7 @@ impl Graph {
 
     /// Write edge index documents to RediSearch, taking the edge indexer lock.
     pub fn commit_edge_index(
-        &mut self,
+        &self,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     ) {
@@ -3960,7 +3962,7 @@ impl Graph {
     /// As [`Self::commit_edge_index`], for a caller already holding the edge indexer
     /// lock from [`Self::index_locks`].
     pub fn commit_edge_index_locked(
-        &mut self,
+        &self,
         _guard: &MutexGuard<'_, ()>,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
@@ -4041,7 +4043,7 @@ impl Graph {
     /// matching attribute store, then hand them to the underlying
     /// `Indexer::commit`.
     fn commit_index_kind(
-        &mut self,
+        &self,
         _guard: &MutexGuard<'_, ()>,
         kind: IndexKind,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
@@ -5067,7 +5069,12 @@ impl Graph {
         }
 
         // --- indices ---
+        // RediSearch's own estimate, as C reports it. Under the flag the native columns hold the
+        // Range fields and RediSearch the rest, so both count: this version's pages, including
+        // those it shares with another version.
         let indices_sz = self.node_indexer.memory_usage() + self.edge_indexer.memory_usage();
+        #[cfg(feature = "index-falkordb")]
+        let indices_sz = indices_sz + self.falkordb_index.memory_usage();
 
         MemoryUsageReport {
             label_matrices_sz,
