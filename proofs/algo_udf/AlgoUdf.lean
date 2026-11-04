@@ -166,7 +166,6 @@ New in this wave (checked on live C 18620 / Rust 18621, then cargo):
   `fromJs_past_cap`, `toJs_past_cap` (past the cap: an `Err`, never an overflow);
   `self_array_error`, `fromJs_nestArr_ok`/`_past`, `advisory_array_error`,
   `nestList_rt`, `toJs_nestList_past` (the Rust tests); `fromJs_needs_all_frames` (bound tight).
-  Historical: `pre3336_nestArr_overflows` (n nested arrays needed n + 1 levels).
   `fromJs` now also models the `"path"` arm (:359-397), which the earlier model sent to the map branch.
 * Model finding (not a crash, not confirmed live): `cap_asymmetry_vecf32` — `value_to_js` counts only
   List/Map toward the cap, `js_to_value` also counts the array carrying a VecF32 (and the object carrying

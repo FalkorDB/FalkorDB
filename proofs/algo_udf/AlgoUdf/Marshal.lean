@@ -15,7 +15,6 @@ import AlgoUdf.Nesting
 | `classify`, `runShape`, `pathArm`, `pathLoop`, `fromLevel`, `fromStep`, `fromF` | `js_to_value_level` :270-470 (dispatch / recursive arms; array :319, path :359, plain object :443), `js_to_value_at` :262-267 |
 | `fromJs`              | `js_to_value` :252 (= `js_to_value_at(.., 0)`) |
 | `esc`, `unesc`        | key escaping :171-177 / :458-462 |
-| `pre3336_fromF`       | historical: `js_to_value` before #3336 (`33a956360`): no depth check (`cap = none`) |
 
 `with_stack` (:80, `stacker::maybe_grow`) only switches the machine stack; `f` counts conversion
 levels, which is what the depth cap bounds (`MarshalCap.lean`).
@@ -318,8 +317,5 @@ def fromF (H : Heap) (cap : Option Nat) : Nat → Nat → JsV → R RV
 /-- `js_to_value` (:252): `js_to_value_at(val, 0)`; `MarshalCap.fromJs_frames` shows `MAX + 1`
     frames always suffice (for any heap, cyclic ones included), so the `none` arm is unreachable. -/
 def fromJs (H : Heap) (v : JsV) : Except String RV := Rget (fromF H (some MAX) (MAX + 1) 0 v)
-
-/-- HISTORICAL (before #3336, `33a956360`): `js_to_value` recursed with no depth check. -/
-def pre3336_fromF (H : Heap) (f : Nat) (v : JsV) : R RV := fromF H none f 0 v
 
 end AlgoUdf.Marshal

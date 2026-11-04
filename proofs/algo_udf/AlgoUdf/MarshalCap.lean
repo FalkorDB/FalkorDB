@@ -13,8 +13,8 @@ Main results (`MAX = MAX_UDF_VALUE_NESTING = 1024`):
   exactly `udf_nesting_error()` for the Rust tests' shapes (`fromJs_nestArr_past`, `self_array_error`,
   `toJs_nestList_past`).
 * `fromJs_needs_all_frames`: the bound is tight (`MAX` frames do not suffice for `MAX` nested arrays);
-  `pre3336_nestArr_overflows`: the old code needed `n + 1` frames for `n` nested arrays (the advisory's
-  300,000-deep array).
+  the uncapped conversion (`cap = none`) needs `n + 1` frames for `n` nested arrays, which is why
+  the bound is exactly `MAX + 1` (the advisory's 300,000-deep array).
 * `cap_asymmetry_vecf32`: the two caps count differently — `value_to_js` does not count a VecF32 (or
   Path) leaf as a level, `js_to_value` does, so `MAX` lists around a vecf32 convert into JS but not
   back.
@@ -553,11 +553,11 @@ theorem fromJs_nestArr_past (H : Heap) (n : Nat) (h : MAX < n) : fromJs H (nestA
 theorem advisory_array_error : fromJs H0 (nestArr 300000) = .error nestErr :=
   fromJs_nestArr_past H0 300000 (by decide)
 
-/-- HISTORICAL (before #3336): the old code needed `n + 1` levels of stack for `n` nested arrays —
-    300,001 for the advisory's array; with fewer it overflowed. -/
-theorem pre3336_nestArr_overflows (H : Heap) : ∀ n f, f ≤ n → pre3336_fromF H f (nestArr n) = none := by
-  unfold pre3336_fromF
-  suffices ∀ n f d, f ≤ n → fromF H none f d (nestArr n) = none from fun n f h => this n f 0 h
+/-- The `MAX + 1` bound is tight: `MAX` levels of stack do not convert `MAX` nested arrays. -/
+theorem fromJs_needs_all_frames (H : Heap) : fromF H (some MAX) MAX 0 (nestArr MAX) = none := by
+  rw [fromF_eq_run, ← (fromStep H).run_eq_uncapped MAX MAX 0 _ (by rw [fits_nestArr]; simp), ← fromF_eq_run]
+  -- without the cap, `n` nested arrays need `n + 1` levels, so `MAX` levels overflow
+  suffices ∀ n f d, f ≤ n → fromF H none f d (nestArr n) = none from this MAX MAX 0 (Nat.le_refl _)
   intro n
   induction n with
   | zero => intro f d h; rw [Nat.le_zero.1 h]; rfl
@@ -568,11 +568,6 @@ theorem pre3336_nestArr_overflows (H : Heap) : ∀ n f, f ≤ n → pre3336_from
     | succ f =>
       simp only [fromF, fromLevel, nestArr, deref_arr, classify_arr_nil]
       simp only [runShape, chk, Bool.false_eq_true, ite_false, listLoop, ih f (d + 1) (by omega), R.bind_none]
-
-/-- The `MAX + 1` bound is tight: `MAX` levels of stack do not convert `MAX` nested arrays. -/
-theorem fromJs_needs_all_frames (H : Heap) : fromF H (some MAX) MAX 0 (nestArr MAX) = none := by
-  rw [fromF_eq_run, ← (fromStep H).run_eq_uncapped MAX MAX 0 _ (by rw [fits_nestArr]; simp), ← fromF_eq_run]
-  exact pre3336_nestArr_overflows H MAX MAX (Nat.le_refl _)
 
 /-! ## #3336, `value_to_js` -/
 
