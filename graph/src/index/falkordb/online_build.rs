@@ -263,12 +263,12 @@ pub(crate) fn run_turn(
         turn = match mvcc.commit_indexer_batch(prepared, &batch) {
             Ok(IndexerCommit::Same | IndexerCommit::Swap | IndexerCommit::CatchUp(_)) => {
                 Turn::Committed {
-                    more: mvcc.read().index_building(id),
+                    more: mvcc.read().index_build_read(id).is_some(),
                 }
             }
             Ok(IndexerCommit::Discarded(Discarded::CatchUpTooLarge)) => Turn::TooLarge,
             Ok(IndexerCommit::Discarded(_)) => Turn::Discarded {
-                more: mvcc.read().index_building(id),
+                more: mvcc.read().index_build_read(id).is_some(),
             },
             // Validation refused the version, or another was published while this commit ran,
             // which only a host publishing without its global lock allows. Retried.
