@@ -1925,6 +1925,9 @@ impl Iterator for IterFrom<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+    use std::iter::once;
+
     use super::super::test_init::ensure_init;
     use super::*;
 
@@ -2879,5 +2882,123 @@ mod tests {
             "fixture is not exercising deletion: no edge was removed"
         );
         check(&t, "pending add and delete");
+    }
+
+    /// A walk from any place yields the tensor's edges from there on, in `(src, dst, edge id)`
+    /// order: from the start, from every edge, and from just after each one, which is inside its
+    /// multi-edge pair, between two pairs, between two rows or past the last. The edges expected
+    /// are the fixture's own record of what it wrote, not another walk. On committed storage, then
+    /// with live deltas in the forward layers and in `me`: a new pair, a promotion, and the
+    /// deletion of an inline edge and of one edge of a multi-edge pair, both mid-matrix, so walks
+    /// start just before each.
+    #[test]
+    fn a_walk_from_any_place_is_the_full_walk_from_there() {
+        ensure_init();
+        const N: u64 = 130;
+        let mut t = Tensor::new(N, N);
+        // Row `r` holds `r % 5` pairs, and a row's fourth pair, where it has one, is a multi-edge
+        // pair of 12: 260 pairs, 26 of them multi-edge with 312 ids between them, enough for the
+        // commit below to fold both the forward layers and `me` into their bases.
+        let (mut srcs, mut dsts, mut ids) = (Vec::new(), Vec::new(), Vec::new());
+        let mut next_id = 0u64;
+        for r in 0..N {
+            for c in 0..(r % 5) {
+                let dst = (r * 7 + c * 11) % N;
+                let k = if c == 3 { 12 } else { 1 };
+                for _ in 0..k {
+                    srcs.push(r);
+                    dsts.push(dst);
+                    ids.push(next_id);
+                    next_id += 1;
+                }
+            }
+        }
+        t.set_all_from_slices(&srcs, &dsts, &ids);
+        let mut edges: BTreeSet<(u64, u64, u64)> = srcs
+            .iter()
+            .zip(&dsts)
+            .zip(&ids)
+            .map(|((&src, &dst), &id)| (src, dst, id))
+            .collect();
+        // Commit: fold the pending adds into the bases, so the walk reads `m`, and the deletions
+        // below are pending in `dm`.
+        t.fold_oversized();
+        t.wait();
+        // Entries pending in the forward `dp` and `dm`, and in every `me` block's.
+        let pending = |t: &Tensor| {
+            let in_me = |layer: fn(&VersionedMatrix<bool>) -> u64| {
+                t.me.iter().map(|(_, block)| layer(block)).sum()
+            };
+            (
+                (t.fwd_dp().nvals(), t.fwd_dm().nvals()),
+                (
+                    in_me(|block| block.dp().nvals()),
+                    in_me(|block| block.dm().nvals()),
+                ),
+            )
+        };
+        assert_eq!(pending(&t), ((0, 0), (0, 0)), "the fixture is committed");
+        let mut t = t.dup();
+
+        let check = |t: &Tensor, edges: &BTreeSet<(u64, u64, u64)>, what: &str| {
+            let all: Vec<(u64, u64, u64)> = edges.iter().copied().collect();
+            assert_eq!(
+                t.iter(0, u64::MAX, false).collect::<Vec<_>>(),
+                all,
+                "{what}: the full walk"
+            );
+            let places = all
+                .iter()
+                .flat_map(|&(s, d, e)| [(s, d, e), (s, d, e + 1), (s, d + 1, 0), (s + 1, 0, 0)]);
+            for from in once((0, 0, 0)).chain(places) {
+                assert_eq!(
+                    t.iter_from(from).collect::<Vec<_>>(),
+                    edges.range(from..).copied().collect::<Vec<_>>(),
+                    "{what}: from {from:?}"
+                );
+            }
+        };
+        check(&t, &edges, "committed");
+
+        // A new pair, 40 -> 41, and two more edges on row 3's inline pair 3 -> 21, promoting it.
+        let added = [
+            (3, 21, next_id),
+            (3, 21, next_id + 1),
+            (40, 41, next_id + 2),
+        ];
+        t.set_all_from_slices(
+            &added.map(|(src, _, _)| src),
+            &added.map(|(_, dst, _)| dst),
+            &added.map(|(_, _, id)| id),
+        );
+        t.wait();
+        edges.extend(added);
+        assert_eq!(
+            pending(&t),
+            ((2, 0), (3, 0)),
+            "two pairs pending in dp, and the promoted pair's three ids in me's"
+        );
+        check(&t, &edges, "pending adds");
+
+        // Row 2's second pair, 2 -> 25, holds edge 2; row 4's fourth pair, 4 -> 61, is the first
+        // multi-edge pair, and its second edge goes.
+        let pair: Vec<u64> = edges
+            .iter()
+            .filter(|&&(src, dst, _)| (src, dst) == (4, 61))
+            .map(|&(_, _, id)| id)
+            .collect();
+        assert_eq!(pair.len(), 12, "the fixture's first multi-edge pair");
+        let deleted = [(2, 2, 25), (pair[1], 4, 61)];
+        t.remove_all(&deleted);
+        t.wait();
+        for (id, src, dst) in deleted {
+            assert!(edges.remove(&(src, dst, id)), "the fixture holds {id}");
+        }
+        assert_eq!(
+            pending(&t),
+            ((2, 1), (3, 1)),
+            "each deletion pending in a dm"
+        );
+        check(&t, &edges, "pending adds and deletes");
     }
 }
