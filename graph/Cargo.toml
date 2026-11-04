@@ -9,6 +9,14 @@ readme = "../README.md"
 keywords = ["graph", "database"]
 categories = ["data-structures", "database"]
 
+# Emit the crate as a shared object in addition to the default rlib, so
+# downstream consumers can link against (or load) the Rust engine directly
+# without going through the C-side falkordb.so build (see #3129). Note this
+# alone does not produce a loadable Redis module: no RedisModule_OnLoad
+# entrypoint is implemented on the Rust side yet.
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 
