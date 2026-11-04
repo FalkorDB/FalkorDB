@@ -366,6 +366,26 @@ impl VersionedIndex for CchIndex {
     }
 
     /// Never called: `IndexId` has no CCH variant until the background build, so no indexer
+    /// batch commits on one.
+    fn indexer_insert(
+        &mut self,
+        _def: &CchIndexDef,
+        _batch: &Arc<Cch>,
+        _written: &RoaringTreemap,
+        _from: (),
+        _next: Option<()>,
+        _published: &Graph,
+    ) {
+        unreachable!("CCH is not dispatched through IndexId until the background build")
+    }
+
+    /// Never called: `IndexId` has no CCH variant until the background build, so no indexer
+    /// batch commits on one.
+    fn batch_len(_batch: &Arc<Cch>) -> usize {
+        unreachable!("CCH is not dispatched through IndexId until the background build")
+    }
+
+    /// Never called: `IndexId` has no CCH variant until the background build, so no indexer
     /// batch is read for one.
     fn indexer_read(
         &self,
