@@ -20,6 +20,8 @@ mod customize;
 mod input;
 mod order;
 mod query;
+#[cfg(test)]
+pub(crate) mod testkit;
 
 use std::sync::Arc;
 
