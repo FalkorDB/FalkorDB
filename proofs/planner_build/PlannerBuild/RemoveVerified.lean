@@ -124,7 +124,7 @@ theorem matched_sound : VerifiedSound stMatched glMatched := by
 def renAB : List (V × V) := [(aRm, a1), (bRm, b1)]
 
 /-- The second MATCH's relationship `(a:A)-[:R]->(b)`, both endpoints bound. -/
-def qAB : QR := { alias := ⟨2, 1⟩, named := false, frm := { alias := a1, labels := ["A"] }, to := { alias := b1 } }
+def qAB : QR := { alias := ⟨2, 1⟩, named := false, frm := { alias := a1, labels := ["A"], ptr := 0 }, to := { alias := b1, ptr := 0 }, ptr := 0 }
 
 /-- **BUG #3450 (planner half)**: `MATCH (a:A), (b:B) REMOVE a:A WITH a, b MATCH
 (a:A)-[:R]->(b)` — after the REMOVE the planner still has `A` verified for `a`, carries it

@@ -8,11 +8,11 @@ the configuration separate.
 
 | here | there |
 | --- | --- |
-| `edgeNumericAttr` | `edge_numeric_attr` `algo_procedures.rs:2156-2169` (`prop.map_or(default, …)`, one `default` for both cases) |
-| `rustFastCost`    | `dijkstra_single_path`'s reported cost, default `missing_cost` = 1 if `costProp` is configured else 0 (`:2369-2375`, #3580) |
-| `rustEnumCost`    | `bfs_find_bound` `:2451` and `enumerate_paths` `:2573`, default `1.0` |
+| `edgeNumericAttr` | `edge_numeric_attr` `algo_procedures.rs:2167-2180` (`prop.map_or(default, …)`, one `default` for both cases) |
+| `rustFastCost`    | `dijkstra_single_path`'s reported cost, default `missing_cost` = 1 if `costProp` is configured else 0 (`:2372-2375`, #3580) |
+| `rustEnumCost`    | `bfs_find_bound` `:2465` and `enumerate_paths` `:2587`, default `1.0` |
 | `cResolve`        | `GraphContext_GetAttributeID` (`proc_sp_paths.c:350`): an unknown name is `ATTRIBUTE_ID_NONE` |
-| `cFastCost`       | C `_sum_path_cost` as run live (`c.so`): `ATTRIBUTE_ID_NONE` → 0, else missing → `SI_LongVal(1)` |
+| `cFastCost`       | C `_sum_path_cost` as run live on the pre-`ae9ef2a73` (#2656) `c.so` build: `ATTRIBUTE_ID_NONE` → 0, else missing → `SI_LongVal(1)`. Current origin/master charges 1 in both cases, so only the configured-`costProp` conjuncts are parity claims against master |
 | `cEnumCost`       | C DFS `GraphEntity_GetNumericPropertyOrDefault(.., cost_prop, SI_LongVal(1))` (`proc_sp_paths.c:633,670`) |
 
 `costProp` is `none` (not configured), `some true` (configured, the attribute name
@@ -26,7 +26,7 @@ Live before the fix (Rust 9d3869aa8 vs C), `A-[:E {weight:1,cost:2}]->B-[:E2 {we
 | `costProp:'nosuch'` (fast path) | 0 | 2 (each edge lacks it) | 0 on `c.so`; 2 on newer master (see below) |
 | `costProp:'cost', maxLen:5` (enumeration) | 3 | 3 | 3 |
 
-(origin/master's newer `_sum_path_cost` charges 1 even with no `costProp`; the
+(origin/master's `_sum_path_cost`, since `ae9ef2a73` (#2656), charges 1 even with no `costProp`; the
 configured-but-missing case, which is what the property below states, is 1 in both C
 versions.)
 -/
@@ -90,8 +90,9 @@ theorem fastpath_missing_cost_one :
 theorem fast_eq_enum (attrs : List (Option Int)) :
     rustFastCost (some true) attrs = rustEnumCost (some true) attrs := rfl
 
-/-- No `costProp` configured: both Rust and the C build checked live report 0 on the fast
-path (origin/master's newer `_sum_path_cost` charges 1 here, which Rust does not). -/
+/-- No `costProp` configured: Rust and the pre-`ae9ef2a73` C build (the live `c.so` that
+`cFastCost` models) both report 0 on the fast path. This is NOT parity with current
+origin/master, whose `_sum_path_cost` charges 1 per edge here (pathCost = hop count, #2656). -/
 theorem fast_unconfigured_agree :
     rustFastCost none [none, none] = cFastCost none [none, none] := by decide
 

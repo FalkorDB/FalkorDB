@@ -14,14 +14,14 @@ import FalkorEffectsCodec.Prim
 | `loop`             | the outer `loop` of `decode` (`value.rs:173-201`), with fuel; `owed` is `decode`'s `owed` |
 | `owedOf`           | the invariant the `owed` comment states: the sum of `left - 1` over the stack |
 | `decodeV`          | `impl EffectDecode<3> for Value::decode` (`value.rs:168`) |
+| `propValid`        | `pending::is_valid_property` (`graph/src/runtime/pending.rs:63`) |
 
 **#3267 (`eaa65eeba`).** `read_one`'s array arm now checks the claimed width against
 the whole stack, `guard_count(n + owed, MIN_VALUE_BYTES)`, where `owed` counts the
 children the open frames still need after this one. Before, it checked `n` alone and
-every level of `[[[…` could claim the whole remainder (pre-#3267 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) below: the
+every level of `[[[…` could claim the whole remainder (the pre-#3267 counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412: the
 reservations sum to `k (k-1)` elements from `8k` bytes). Now `capTrace_linear`: the
 capacities one decode reserves sum to at most `remaining / 4`.
-| `propValid`        | `pending::is_valid_property` (`graph/src/runtime/pending.rs:63`) |
 
 Floats: `f64::to_le_bytes`/`from_le_bytes` are the identity on the bit pattern
 (`to_bits`/`from_bits`), so a float *is* its `BitVec 64` here and "roundtrips"
@@ -212,7 +212,7 @@ def deliver : Val → List Frame → Deliv
 
 /-- The outer loop (`value.rs:173-201`). `owed` is `decode`'s counter: `read_one`
 adds `n - 1` when it opens a frame of `n`, and the inner loop subtracts one when
-a frame takes a child and still waits for more (`owed -= 1`, `value.rs:192`) — an
+a frame takes a child and still waits for more (`owed -= 1`, `value.rs:191`) — an
 underflow there would be a debug panic, modelled as `panic`, and `loop_noPanic`
 proves it cannot happen. -/
 def loop (utf8 : Bytes → Bool) : Nat → List Frame → Nat → R Val
@@ -768,8 +768,8 @@ theorem deliver_ok : ∀ (v : Val) (st : List Frame), FramesOk st →
       omega
 
 /-- **The decoder never panics**, on any input whatsoever — neither the
-`*left -= 1` of `value.rs:190`, which would underflow on a frame of zero, nor
-#3267's `owed -= 1` (`value.rs:192`): `owed` is always `owedOf` the stack. -/
+`*left -= 1` of `value.rs:188`, which would underflow on a frame of zero, nor
+#3267's `owed -= 1` (`value.rs:191`): `owed` is always `owedOf` the stack. -/
 theorem loop_noPanic (utf8 : Bytes → Bool) :
     ∀ fuel st owed r, FramesOk st → owed = owedOf st → loop utf8 fuel st owed r ≠ .error .panic
   | 0, _, _, _, _, _ => by simp [loop]

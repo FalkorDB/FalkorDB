@@ -9,7 +9,7 @@ import RedisLayer.RespCompact
 | `encVb`, `specVb`, `pointStr` | `reply_verbose_value` `:357-541` (top-level point `:531-540`, #3043) |
 | `statCalls`, `statLines`      | `reply_stats` `:543-630` |
 | `resultCalls`                 | `reply_result::<COMPACT>` `:632-679`, `reply_verbose` `:681`, `reply_compact` `:689` |
-| `Fmt.g15`                     | `format_g(x, 15)` `:123-142` (libc `snprintf`, AXIOMATISED as an abstract function) |
+| `E.fmt` (`Compact.Env`)       | `format_g(x, 15)` `:123-142` (libc `snprintf`, AXIOMATISED as an abstract function) |
 
 Number/temporal formatting is abstract (`Fmt`): `{:.6}`, `%.15g`, `Value::format_*`.
 

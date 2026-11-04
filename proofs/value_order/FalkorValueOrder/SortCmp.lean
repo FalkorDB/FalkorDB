@@ -32,7 +32,7 @@ def isSignNeg : F → Bool
 /-- The key `sort_cmp_f64` orders by: the numeric position, NaN above all. -/
 def fkey (f : F) : Nat × Int × Nat := f.nkey.getD (3, 0, 0)
 
-/-- `sort_cmp_f64` (value.rs:1891): `partial_cmp`, else `a.is_nan().cmp(&b.is_nan())`. -/
+/-- `sort_cmp_f64` (value.rs:1931): `partial_cmp`, else `a.is_nan().cmp(&b.is_nan())`. -/
 def scF64 (a b : F) : Ordering :=
   match fpcmp a b with
   | some o => o
@@ -62,7 +62,7 @@ def fracCmp : Ordering → Ordering
   | .lt => .gt
   | .eq => .eq
 
-/-- `sort_cmp_int_float` (value.rs:1931). -/
+/-- `sort_cmp_int_float` (value.rs:1971). -/
 def scIntFloat (i : Int) (f : F) : Ordering :=
   if isNaN f || fge f (.num P63) then .lt
   else if fltF f (.num (-P63)) then .gt
@@ -215,7 +215,7 @@ theorem scIntFloat_key (i : Int) (lo : I64MIN ≤ i) (hi : i ≤ I64MAX) (f : F)
 /-! ## `Value::sort_cmp` -/
 
 mutual
-/-- `Value::sort_cmp` (value.rs:1529), arm by arm; `c32` is `sort_cmp_f32`. -/
+/-- `Value::sort_cmp` (value.rs:1569), arm by arm; `c32` is `sort_cmp_f32`. -/
 def sc (c32 : F → F → Ordering) : V → V → Ordering
   | .bool a, .bool b => cmpB a b
   | .int a, .int b => cmpI a b

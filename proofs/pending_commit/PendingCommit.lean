@@ -4,12 +4,14 @@
 A Lean model of how a FalkorDB-rs write query stages mutations in
 `runtime::pending::Pending`, reads them back, and applies them at `Commit`; of
 the attribute store they land in; and of the deleted-entity snapshots later
-clauses read through. 370 theorems, no `sorry`/`admit`/`axiom`. Coverage per
+clauses read through. 407 theorems, no `sorry`/`admit`/`axiom`. Coverage per
 Rust function: `COVERAGE.tsv` — every function of `attribute_store.rs` (66) is PROVEN;
-of `pending.rs` (71 non-test) 69 are PROVEN and `check_node_constraint` /
+of `pending.rs` (72 non-test) 70 are PROVEN and `check_node_constraint` /
 `check_edge_constraint` are CONDITIONAL on the native index lookup's completeness (#3334, #3547). Repros: `graph/tests/lean_pending_commit.rs`
 (asserting C's behaviour / the agreed semantics, so each FAILS today).
-Line numbers are origin/main (`2c874022a`); COVERAGE.tsv rows are re-cited to `1d15bf713`.
+Line numbers are current main (`5c7af54f2`), as are the COVERAGE.tsv rows, except where a section
+heading names an older commit (the `Re-target to …` sections keep the numbers of the commit they name,
+and `Re-pinned to …` states only the offsets).
 
 ## Re-target to 53d694496 (from 5b18b9cab): #3547 / #2386, unique enforcement through `query_for` + `lookup`
 
@@ -68,24 +70,24 @@ No function this project models changed: #3250 touches only `rebuild_derived_mat
   `importResolved_spec` (no length precondition any more), `importResolved_reads`,
   `resolved_duplicate_fixed`.
 #3339 (b080a44c1): property validation bounds list nesting at `MAX_VALUE_NESTING` = 4096 —
-`PA.validate_depth` (accepted ⇒ old-valid ∧ depth ≤ 4096), `PA.validate_nest`; the save/load consequence is value_math `stored_roundtrip`.
+`PA.validate_depth` (accepted ⇒ old-valid ∧ depth ≤ 4096), `PA.validate_nest`; the save/load consequence is value_math `stored_roundtrip`, which holds when `VecsFit` does (every vector fits the u32 dimension, < 2^32 elements: property validation accepts vectors of any length).
 
-## Re-target to 2c874022a (#2846: the graph's `IdSpace` owns the ids)
+## Re-target to 2c874022a (#2846: the graph's `IdSpace` owns the ids; pins re-cited to main 5c7af54f2)
 
 | Lean | Rust |
 | --- | --- |
-| `PS.P` (no `nodeEntry`/`relEntry`) | `struct Pending` (pending.rs:283): the boundary fields and the id-space builders are gone |
-| `PS.rmStep` (+ `taken` removal), `removeRelsG` | `remove_pending_relationships_for_node(id, g)` (:691): `taken_relationship_ids.remove` + `g.cancel_relationship_id(rel_id)?` (:733-736) |
-| `PS.deletePendingNode` | `delete_pending_node(id, g)` (:640): unwinds and hands the id back via `g.cancel_node_id(id)?` (:677) |
-| `PD.endSegment`, `clear` | `end_segment` (:1592), which replaced `clear` + `open_id_boundaries` |
-| `CommitOpNext.*` | `CommitOp::next` (ops/commit.rs:69) with `end_segment` (:135-143) |
+| `PS.P` (no `nodeEntry`/`relEntry`) | `struct Pending` (pending.rs:307): the boundary fields and the id-space builders are gone |
+| `PS.rmStep` (+ `taken` removal), `removeRelsG` | `remove_pending_relationships_for_node(id, g)` (:902): `taken_relationship_ids.remove` + `g.cancel_relationship_id(rel_id)?` (:944-947) |
+| `PS.deletePendingNode` | `delete_pending_node(id, g)` (:851): unwinds and hands the id back via `g.cancel_node_id(id)?` (:888) |
+| `PD.endSegment`, `clear` | `end_segment` (:1885), which replaced `clear` + `open_id_boundaries` |
+| `CommitOpNext.*` | `CommitOp::next` (ops/commit.rs:69) with `end_segment` (:139) |
 
 New theorems: `removeRelsG_spec`, `foldl_rmStep_taken`, `deletePendingNode_spec`,
 `deletePendingNode_refused`, `endSegment_spec`, `commitNext_ok`,
 `commitNext_commit_err`, `commitNext_endSegment_err`, `pops_in_order`;
 `removeRels_spec` now also states `taken` loses the cascaded ids. The graph's
-cancel is the hypothesis `PS.CancelSpec` (= `IdSpace::cancel` inserts into the
-free set; proofs/id_space, and `IdSpaceContract.cancel_ok` in proofs/graph_queries).
+cancel is the hypothesis `PS.CancelSpec freeN freeR` (= `IdSpace::cancel` inserts into the
+free set of its own id space and shrinks neither; proofs/id_space, and `IdSpaceContract.cancel_ok` in proofs/graph_queries).
 **Discharged (2026-10-11):** `CancelRust.lean` models `cancel_node_id` /
 `cancel_relationship_id` over the two id spaces (`IdSpace::cancel`, id_space.rs:529)
 and proves `cancelN_spec`/`cancelR_spec`; `deletePendingNode_spec_rust`,
@@ -102,7 +104,7 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
   outdegree(a) RETURN b.d, a.o` used to panic `relationship 0 not found`; now `0|0` as C
   (`fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted`).
 * W4-fn-1 (labels staged before DELETE) — **fixed by #3288** (`7fd3c12a0`, closes #3245): the
-  deleted-node snapshot is built by `Runtime::staged_label_ids` (ops/delete.rs:197), the committed
+  deleted-node snapshot is built by `Runtime::staged_label_ids` (ops/delete.rs:196), the committed
   ids with the staged adds and removes applied (`Labels.stagedLabelIds_eq_overlay`,
   `stagedLabelIds_run`, `deleted_snapshot_examples`); `MATCH (n:A) SET n:C DELETE n RETURN
   labels(n), n:C` now gives `[A, C]|true`. The pre-fix counterexample is replaced by these.
@@ -121,18 +123,18 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 | `Arena.setSpan/freeSpan/mergeSpan`| `Block::set_span` (:573), `free_span` (:616), `merge_span` slot effects |
 | `Arena.compact`, `live`           | `Block::compact` (:798) and its `debug_assert_eq!` (:821) |
 | `Labels.stage/removeLabels/nodeHas/overlay` | `stage_node_labels` (pending.rs:691), `remove_node_labels` (:729), `node_has_label` (:755), `update_node_labels` (:806) |
-| `Labels.stagedNodeLabels/updateNodeLabels/stagedLabelIds` | `staged_node_labels` (pending.rs:826), `update_node_labels` over it, `Runtime::staged_label_ids` (ops/delete.rs:197), #3288 |
-| `Labels.removeOp`                 | `Runtime::remove` label branch (ops/remove.rs:128-138) |
-| `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1262-1273) |
-| `Props.upsert`, `stageAll`        | `set_node_attribute` / `set_relationship_attribute` (pending.rs:571, :948) |
-| `Props.readQ`, `normQ`            | `get_node_attribute_no_delete_check` (runtime.rs:1585) + evaluator's null |
-| `Props.commitNew`                 | `import_node_attrs` → `import_attrs` (graph.rs:1798, attribute_store.rs:1351) |
-| existing-entity commit            | `set_nodes_attributes` → `insert_attrs` → `merge_span` (graph.rs:1761) |
-| `Props.replaceFrom`               | `clear_node_attrs_for_replace` / `clear_relationship_attrs_for_replace` + the source's entries, every `SET e = …` branch (ops/set.rs:125-148, :218-352; #3524) |
-| `Snapshot.RS`, `readRt`           | `Runtime::deleted_nodes/_relationships` and every snapshot-first accessor (runtime.rs:1565-1895) |
+| `Labels.stagedNodeLabels/updateNodeLabels/stagedLabelIds` | `staged_node_labels` (pending.rs:824), `update_node_labels` over it, `Runtime::staged_label_ids` (ops/delete.rs:196), #3288 |
+| `Labels.removeOp`                 | `Runtime::remove` label branch (ops/remove.rs:128-142) |
+| `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1362-1378) |
+| `Props.upsert`, `stageAll`        | `set_node_attribute` / `set_relationship_attribute` (pending.rs:595, :1005) |
+| `Props.readQ`, `normQ`            | `get_node_attribute_no_delete_check` (runtime.rs:1591) + evaluator's null |
+| `Props.commitNew`                 | `import_node_attrs` → `import_attrs` (graph.rs:1898, attribute_store.rs:1351) |
+| existing-entity commit            | `set_nodes_attributes` → `insert_attrs` → `merge_span` (graph.rs:1861/:1871) |
+| `Props.replaceFrom`               | `clear_node_attrs_for_replace` / `clear_relationship_attrs_for_replace` + the source's entries, every `SET e = …` branch (ops/set.rs:125-148, and the node/relationship-target arms of `set_inner` :151; #3524) |
+| `Snapshot.RS`, `readRt`           | `Runtime::deleted_nodes/_relationships` and every snapshot-first accessor (runtime.rs:1571-1999: `get_node_attribute` to `get_node_outdegree_by_type`) |
 | `Snapshot.del/commit/createRust`  | `delete_nodes_bulk`/`delete_entity` (ops/delete.rs), `CommitOp` (ops/commit.rs), `IdSpace::reserve` bin-first |
 | `Snapshot.createDeferred`         | the fix proposed in #2876 |
-| `Stats.step`, `Stats.P`           | `created_nodes`, `delete_pending_node` (pending.rs:794), commit counters (:1240-1352) |
+| `Stats.step`, `Stats.P`           | `created_nodes`, `delete_pending_node` (pending.rs:851), commit counters (:1344-1415) |
 
 Hypotheses (the AXIOMATISED rows): GraphBLAS `set_all`/`remove` on the label
 matrices behave as set insert/delete, so commit is `(C ∪ set) \ remove`
@@ -168,16 +170,15 @@ Wave-4 findings:
 * #2769 (found as `deg_panics_on_pending_deleted`; **fixed by #3520**) —
   `pending_deleted_*degree` asked the committed graph for the endpoints of every
   pending-deleted edge, including one created in the same batch. Now it skips
-  edges created in this query and `pending_*degree` skip deleted ones
+  edges created since the last `Commit` and `pending_*degree` skip deleted ones
   (`fixed2769_created_deleted`).
 * `setSpan_u16_wrap` — `set_span` stores `n as u16`; with ≥ 65,536 entries for
   one entity the slot reads empty while the arena keeps the entries no counter
-  covers (`Arena.Inv` false, `compact`'s `debug_assert_eq!` would fire). Only
-  `import_attrs_resolved` (GRAPH.BULK, header with ≥ 65,536 columns) and
-  `decode_with_count` (malformed RDB) can pass that many, as neither
-  deduplicates ids; `setSpan_cast_exact` shows strictly ascending ids below
-  `ATTRIBUTE_ID_NONE` always fit. Not reproduced (needs a 65,536-column bulk
-  payload).
+  covers (`Arena.Inv` false, `compact`'s `debug_assert_eq!` would fire). Since #3063
+  `import_attrs_resolved` (GRAPH.BULK) deduplicates and drops `ATTRIBUTE_ID_NONE`, so it
+  can no longer pass that many (`normResolved_fits`); only `decode_with_count` (malformed
+  RDB), which does not deduplicate ids, can. `setSpan_cast_exact` shows strictly ascending
+  ids below `ATTRIBUTE_ID_NONE` always fit. Not reproduced.
 * `import_attrs_resolved` (**fixed by #3063**: `resolved_duplicate_fixed`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — kept duplicate ids
   (`GRAPH.BULK` header repeating a column name): two entries for one id are
   stored, reads return the second (binary search), `attr_count` says 2. C
@@ -241,10 +242,10 @@ Wave-4 findings:
    Inconsistent within Rust too: a pending edge deleted directly is counted
    created + deleted. Fix: add `cancelled_nodes.len()` /
    `cancelled_relationships.len()` (and their staged props/labels) to both sides
-   (pending.rs:1234-1352). Tests `bug_cancelled_*`.
+   (pending.rs:1344-1415). Tests `bug_cancelled_*`.
 3. **Writes to a deleted relationship are applied and counted.** `REMOVE r.v`
-   after `DELETE r` (ops/remove.rs:140 has no deletion check for relationships;
-   nodes have one at :121) → Rust `Properties removed: 1`, C none. `SET r.v = 2`
+   after `DELETE r` (ops/remove.rs:144-146 has no deletion check for relationships;
+   nodes have one at :119-121) → Rust `Properties removed: 1`, C none. `SET r.v = 2`
    after `DETACH DELETE a` cascades `r` → Rust set 1/removed 1, C none: the
    cascade is recorded only in `Runtime::deleted_relationships`, which set.rs:274-278
    does not consult. Test `bug_writes_to_deleted_relationship_are_counted`.
@@ -261,17 +262,14 @@ plain DELETE detaches (#2573), #2876 shapes A/B.
 
 ## Suspicions (not confirmed)
 
-* `effects_count` (pending.rs:1798) ignores `cancelled_nodes`, so a query that
+* `effects_count` (pending.rs:1958) ignores `cancelled_nodes`, so a query that
   only cancels (`CREATE (a) DELETE a`) ships no effect although its id went to
   the master's bin; the replica's boundary is then one lower. By hand this
   self-heals on the next create; not run against a replica.
 * `decode_with_count` does not deduplicate attribute ids before `set_span`, which
   assumes a strictly sorted null-free span; reachable only via a malformed RDB.
   (`import_attrs_resolved` deduplicates since #3063; its GRAPH.BULK callers drop
-  `Null` values before calling it, bulk_insert.rs:373.)
-* Deleted-node snapshots take labels from the committed matrix only
-  (delete.rs:265, :305), ignoring labels staged in the same query; C returns
-  `[]` for any deleted node's labels, so this is a divergence either way.
+  `Null` values before calling it, src/commands/bulk_insert.rs:227, call :460.)
 
 ## Modelling assumptions
 
@@ -288,14 +286,14 @@ plain DELETE detaches (#2573), #2876 shapes A/B.
 * `FxHashMap`/`RoaringTreemap` are duplicate-free association lists / lists.
 * Relationship tensors, id spaces and effects emission are other projects
   (proofs/versioned_matrix, proofs/id_space, proofs/replication).
-## Gaps closed 2026-10-22: staged state that outlives what it describes (`StagedBugs.lean`, b84473a7f)
+## Gaps closed 2026-10-22: staged state that outlives what it describes (`StagedBugs.lean`, added at b84473a7f; pins re-cited to main 5c7af54f2)
 
 The query-time views were proven (`overlay_eq_ref`, `pendingWithLabels_spec`,
 `deletePendingNode_spec`); that the staged maps only name entities existing at
 commit/replay was never stated. Properties and refutations:
 * **#3448** `RemLCommitted` (a staged removal is of a committed label):
   `bug3448_remove_of_staged_label` (`CREATE (n:Foo) REMOVE n:Foo`, `SET n:B REMOVE n:B`:
-  `remove_node_labels`, pending.rs:705-, pushes an only-staged label). `RemLLive` (no
+  `remove_node_labels`, pending.rs:729-746, pushes an only-staged label). `RemLLive` (no
   created/cancelled node in `remove_labels`): `deletePendingNode_keeps_remL` (general),
   `bug3448_cancelled_node_keeps_remL` (+ `_reached`); replica consequence in
   effects_emit_apply `bug3448_removeLabels_before_create_refused`.
@@ -303,15 +301,15 @@ commit/replay was never stated. Properties and refutations:
   refutation (`get_pending_nodes_with_labels` now takes the graph, skips deleted nodes and nodes whose
   pattern labels are all committed). Composed property `IncludePendingExact` in ops_aggregate.
 * **#3447** `CancelledTypeRegistered`: `bug3447_cascade_drops_type_key`
-  (`remove_pending_relationships_for_node` :839-896 drops the emptied group, so `commit`
-  :1239-1253 never registers the type); replica id gap in effects_emit_apply
+  (`remove_pending_relationships_for_node` :902-960 drops the emptied group, so `commit`
+  :1348-1361 never registers the type; main 5c7af54f2); replica id gap in effects_emit_apply
   `bug3447_cancelled_edge_id_gap`.
 No existing definition or theorem changed.
 
 ## Re-pinned to 5e475e6c9 (#3436, #3462)
 Re-pin only; no theorem added or changed. `Pending::commit`, `end_segment`, `enforce_constraints`
 now take `&mut Graph` / `&Graph` (#3436), so `pending.rs` pins moved by -1 or -2 up to `commit` and
--14 from `enforce_constraints` on; `delete.rs` pins +2 (#3462 adds the `inspect ||` snapshot
+-13 at `enforce_constraints` and -14 after it; `delete.rs` pins +2 (#3462 adds the `inspect ||` snapshot
 line, modelled in `ops_apply` `Delete.DeleteSt.new`).
 -/
 import PendingCommit.Span

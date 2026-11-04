@@ -1,17 +1,17 @@
 /-!
 # Graph-entity functions (functions/entity.rs) over the runtime accessor model
 
-The runtime accessors entity.rs calls (`runtime.rs:1661-1880`) are modelled with the order
+The runtime accessors entity.rs calls (`runtime.rs`, `get_node_labels` :1787 to `get_node_outdegree_by_type` :1983) are modelled with the order
 they use: **deleted-entity snapshot > pending (this query's writes) > committed graph**.
 `deleteNode` / `deleteRel` model the snapshot the DELETE operator takes
-(`ops/delete.rs:197-210, :228-292, :417-502`; #3462 `5e475e6c9` makes the DeleteOp snapshot flag `runtime.inspect || snapshot_required(..)` — `deleteNode`/`deleteRel` below are the `snapshot = true` case).
+(`staged_label_ids` `ops/delete.rs:196-209`, `delete_nodes_bulk` `:213`, `delete_entity` `:415`; #3462 `5e475e6c9` makes the DeleteOp snapshot flag `runtime.inspect || snapshot_required(..)` — `deleteNode`/`deleteRel` below are the `snapshot = true` case).
 
 House decision (2026-09-25): a deleted entity keeps returning *all* its details for the rest
 of the query. `deleteRel_preserves`, `deleteNode_preserves` and `deleteNode_labels_preserved`
 prove it for every accessor, node labels included. Labels were the one exception until #3288
 (`7fd3c12a0`, fixes #3245): the snapshot used to copy the *committed* label ids
 (`g.get_node_label_ids(id)`), so labels staged by `SET`/`REMOVE` earlier in the same query were
-lost; it now takes `Runtime::staged_label_ids` (ops/delete.rs:197: the committed ids with the
+lost; it now takes `Runtime::staged_label_ids` (`ops/delete.rs:196`: the committed ids with the
 query's staged adds and removes applied — the same view `get_node_labels` gives a live node;
 proofs/pending_commit `stagedLabelIds_eq_overlay`), which `pendingLabels` models.
 -/
@@ -50,46 +50,46 @@ structure RT where
   delNodes : Nat → Option DelNode
   delRels : Nat → Option DelRel
 
-/-- `get_node_labels` (runtime.rs:1661). -/
+/-- `get_node_labels` (runtime.rs:1787). -/
 def RT.labels (r : RT) (id : Nat) : List String :=
   match r.delNodes id with
   | some dn => dn.labels
   | none => (r.pendingLabels id).getD (r.committedLabels id)
 
-/-- `get_node_attrs` (runtime.rs:1740). -/
+/-- `get_node_attrs` (runtime.rs:1866). -/
 def RT.getNodeAttrs (r : RT) (id : Nat) : List (String × EV) :=
   match r.delNodes id with
   | some dn => dn.attrs
   | none => r.nodeAttrs id
 
-/-- `get_relationship_attrs` (runtime.rs:1758). -/
+/-- `get_relationship_attrs` (runtime.rs:1884). -/
 def RT.getRelAttrs (r : RT) (id : Nat) : List (String × EV) :=
   match r.delRels id with
   | some d => d.attrs
   | none => r.relAttrs id
 
-/-- `get_relationship_endpoints` (runtime.rs:1778). -/
+/-- `get_relationship_endpoints` (runtime.rs:1904). -/
 def RT.getRelEnds (r : RT) (id : Nat) : Nat × Nat :=
   match r.delRels id with
   | some d => (d.src, d.dst)
   | none => r.relEnds id
 
-/-- `get_relationship_type` (runtime.rs:1791). -/
+/-- `get_relationship_type` (runtime.rs:1917). -/
 def RT.getRelType (r : RT) (id : Nat) : Option String :=
   match r.delRels id with
   | some d => some d.typeName
   | none => r.relType id
 
-/-- `node_has_label` (runtime.rs:1691) — same three-way order as `get_node_labels`. -/
+/-- `node_has_label` (runtime.rs:1817) — same three-way order as `get_node_labels`. -/
 def RT.hasLabel (r : RT) (id : Nat) (l : String) : Bool := (r.labels id).contains l
 
-/-- `get_node_in/outdegree[_by_type]` (runtime.rs:1805-1875): 0 for a deleted node. -/
+/-- `get_node_in/outdegree[_by_type]` (runtime.rs:1931, :1948, :1966, :1983): 0 for a deleted node. -/
 def RT.inDegree (r : RT) (id : Nat) (ts : List String) : Nat :=
   if (r.delNodes id).isSome || r.pendingDeleted id then 0 else r.indeg id ts
 def RT.outDegree (r : RT) (id : Nat) (ts : List String) : Nat :=
   if (r.delNodes id).isSome || r.pendingDeleted id then 0 else r.outdeg id ts
 
-/-- DELETE of a node with `snapshot` (ops/delete.rs:303-306 / :486-487): labels through
+/-- DELETE of a node with `snapshot` (`delete_nodes_bulk` `ops/delete.rs:306`, `delete_entity` `:485-491`): labels through
 `staged_label_ids` (committed ids with this query's staged changes applied, #3288), attrs through
 `get_node_attrs` (pending applied). -/
 def deleteNode (r : RT) (id : Nat) : RT :=
@@ -99,7 +99,7 @@ def deleteNode (r : RT) (id : Nat) : RT :=
       else r.delNodes x
     pendingDeleted := fun x => if x = id then true else r.pendingDeleted x }
 
-/-- DELETE of a relationship (ops/delete.rs:487-502): type, attrs, endpoints through the
+/-- DELETE of a relationship (`delete_entity`, `Value::Relationship` arm, `ops/delete.rs:511-517`): type, attrs, endpoints through the
 accessors, before marking it deleted. -/
 def deleteRel (r : RT) (id : Nat) : RT :=
   { r with delRels := fun x =>
@@ -131,7 +131,7 @@ def typeOf : List EV → Res
   | v :: _ => .ok (.str (typeName v))
   | [] => .unreachable
 
-/-- `Value::name` (value.rs:1387). Since #2954 (b6567cb97) it spells `Relationship` as
+/-- `Value::name` (value.rs:1395). Since #2954 (b6567cb97) it spells `Relationship` as
 `Edge` and `VecF32` as `Vectorf32` (C's `SIType_ToString`); before, it printed
 `Relationship`/`VecF32`. -/
 def valueName : EV → String
@@ -144,7 +144,7 @@ def valueName : EV → String
 theorem typeName_eq_valueName : typeName = valueName := by
   funext v; cases v <;> rfl
 
-/-- The source check `ExprIR::ListComprehension` applies (eval.rs:1055-1069, #2954) to a
+/-- The source check `ExprIR::ListComprehension` applies (eval.rs:1057-1070, #2954) to a
 source that is neither a list literal nor `range(..)`: a list is iterated, null gives
 `null` (`none`), anything else is a type error naming `Value::name`. -/
 def comprehensionSourceCheck : EV → Except String (Option (List EV))
@@ -162,7 +162,7 @@ example : comprehensionSourceCheck (.int 5) =
 example (e : Nat) : comprehensionSourceCheck (.rel e) =
     .error "Type mismatch: expected List or Null but was Edge" := rfl
 
-/-- `format!("{}", v.get_type())`: `ValueGetType::get_type` (value.rs:1328) then
+/-- `format!("{}", v.get_type())`: `ValueGetType::get_type` (value.rs:1369) then
 `Display for Type` (functions/mod.rs:610). `List(_)` prints `List`, `Relationship` prints
 `Edge`. -/
 def tyDisp : EV → String
@@ -171,9 +171,9 @@ def tyDisp : EV → String
   | .rel _ => "Edge" | .path _ => "Path" | .vecf32 => "VecF32" | .point => "Point"
   | .datetime => "Datetime" | .date => "Date" | .time => "Time" | .duration => "Duration"
 
-/-- `hasLabels` (entity.rs:86-125): the whole list is type-checked even once settled.
+/-- `hasLabels` (entity.rs:68-107): the whole list is type-checked even once settled.
 Since #3127 (`d739765e1`) the fallback arm names the received type via `Value::name`
-(entity.rs:107-112). -/
+(entity.rs:89-95). -/
 def hasLabelsLoop (r : RT) (id : Nat) : List EV → Bool → Res
   | [], acc => .ok (.bool acc)
   | .str n :: ls, acc => hasLabelsLoop r id ls (acc && r.hasLabel id n)
@@ -190,13 +190,13 @@ def hasLabels (r : RT) : List EV → Res
 /-- `u64 as i64` -/
 def asI64 (n : Nat) : Int := if n < 2^63 then n else (n : Int) - 2^64
 
-/-- `id` (entity.rs:135). -/
+/-- `id` (entity.rs:117). -/
 def id : List EV → Res
   | .node n :: _ | .rel n :: _ => .ok (.int (asI64 n))
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `properties` (entity.rs:154). -/
+/-- `properties` (entity.rs:136). -/
 def properties (r : RT) : List EV → Res
   | .map m :: _ => .ok (.map m)
   | .node n :: _ => .ok (.map (r.getNodeAttrs n))
@@ -204,8 +204,8 @@ def properties (r : RT) : List EV → Res
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `startNode` / `endNode` (entity.rs:171, :187). Since #3132 (`58d7c2c49`) the
-declared argument is `Relationship | Null` and `Null` maps to `Null` (entity.rs:177, :193). -/
+/-- `startNode` / `endNode` (entity.rs:153, :169). Since #3132 (`58d7c2c49`) the
+declared argument is `Relationship | Null` and `Null` maps to `Null` (entity.rs:159, :175). -/
 def startNode (r : RT) : List EV → Res
   | .rel e :: _ => .ok (.node (r.getRelEnds e).1)
   | .null :: _ => .ok .null
@@ -215,13 +215,13 @@ def endNode (r : RT) : List EV → Res
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `length` (entity.rs:203): `path.len() / 2`. -/
+/-- `length` (entity.rs:185): `path.len() / 2`. -/
 def length : List EV → Res
   | .path p :: _ => .ok (.int (p.length / 2 : Nat))
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `keys` (entity.rs:221). -/
+/-- `keys` (entity.rs:203). -/
 def keys (r : RT) : List EV → Res
   | .map m :: _ => .ok (.list (m.map fun kv => .str kv.1))
   | .node n :: _ => .ok (.list ((r.getNodeAttrs n).map fun kv => .str kv.1))
@@ -229,7 +229,7 @@ def keys (r : RT) : List EV → Res
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `type` (entity.rs:250). -/
+/-- `type` (entity.rs:232). -/
 def relationshipType (r : RT) : List EV → Res
   | .rel e :: _ => match r.getRelType e with
     | some t => .ok (.str t)
@@ -237,7 +237,7 @@ def relationshipType (r : RT) : List EV → Res
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `exists` (entity.rs:264). -/
+/-- `exists` (entity.rs:246). -/
 def «exists» : List EV → Res
   | .null :: _ => .ok (.bool false)
   | _ :: _ => .ok (.bool true)
@@ -249,7 +249,7 @@ def collectTypes : List EV → List String → Except String (List String)
   | .str s :: vs, acc => collectTypes vs (if acc.contains s then acc else acc ++ [s])
   | v :: _, _ => .error s!"Type mismatch: expected String but was {tyDisp v}"
 
-/-- `parse_degree_args` (entity.rs:311). Since #3127 (`d739765e1`) the received type is
+/-- `parse_degree_args` (entity.rs:293). Since #3127 (`d739765e1`) the received type is
 printed with `{}` (`Display for Type`, `tyDisp`) instead of `{:?}`. -/
 def parseDegreeArgs (fn : String) (args : List EV) :
     Except String (Option Nat × List String) :=
@@ -269,7 +269,7 @@ def parseDegreeArgs (fn : String) (args : List EV) :
       | .list _ :: _ => .error s!"Received {rest.length + 1} arguments to function '{fn}', expected at most 2"
       | _ => (collectTypes rest []).map fun ts => (i, ts)
 
-/-- `indegree` / `outdegree` (entity.rs:275, :291). -/
+/-- `indegree` / `outdegree` (entity.rs:257, :273). -/
 def degree (deg : RT → Nat → List String → Nat) (fn : String) (r : RT)
     (args : List EV) : Res :=
   match parseDegreeArgs fn args with
@@ -308,14 +308,17 @@ theorem deleteNode_preserves (r : RT) (n : Nat) :
   simp [properties, keys, id, deleteNode, RT.getNodeAttrs, RT.inDegree, RT.outDegree]
 
 /-- **Fixed by #3288 (closes #3245, W4-fn-1): labels survive the DELETE, staged changes
-included.** For a node not yet deleted, the snapshot's labels are exactly what `labels(n)` /
-`n:L` showed before the DELETE, whatever this query staged on it. -/
+included.** For a node not yet deleted, the snapshot has exactly the labels `labels(n)` /
+`n:L` showed before the DELETE, whatever this query staged on it. Stated as set membership:
+Rust gives no order guarantee (the snapshot is a `HashSet<LabelId>`, `staged_label_ids`, while a
+live node's labels come in insertion order), so list equality is not claimed. The model keeps the
+live order only because it needs some order. -/
 theorem deleteNode_labels_preserved (r : RT) (n : Nat) (hnd : r.delNodes n = none) :
-    (deleteNode r n).labels n = r.labels n ∧
+    (∀ l, l ∈ (deleteNode r n).labels n ↔ l ∈ r.labels n) ∧
     (∀ l, (deleteNode r n).hasLabel n l = r.hasLabel n l) := by
   have h : (deleteNode r n).labels n = r.labels n := by
     simp [RT.labels, deleteNode, hnd]
-  exact ⟨h, fun l => by simp [RT.hasLabel, h]⟩
+  exact ⟨fun l => by rw [h], fun l => by simp [RT.hasLabel, h]⟩
 
 /-- `MATCH (n:A) SET n:C DELETE n RETURN labels(n), n:C`: before and after the DELETE
 `labels(n) = [A, C]` and `n:C` holds (it was `[A]` and false before #3288). -/
@@ -336,12 +339,15 @@ theorem staged_remove_kept_after_delete :
     r.labels 0 = [] ∧ (deleteNode r 0).labels 0 = [] := by
   decide
 
-/-- Every node accessor survives the DELETE (labels no longer need "no staged change"). -/
+/-- Every node accessor survives the DELETE (labels no longer need "no staged change"): the
+`labels(n)` list has the same members (order is not guaranteed, see
+`deleteNode_labels_preserved`), and `n:L` is unchanged. -/
 theorem deleteNode_preserves_all (r : RT) (n : Nat) (hnd : r.delNodes n = none) :
-    labels (deleteNode r n) [.node n] = labels r [.node n] ∧
+    (∃ ls ls', labels r [.node n] = .ok (.list ls) ∧ labels (deleteNode r n) [.node n] = .ok (.list ls') ∧
+      ∀ s, EV.str s ∈ ls' ↔ EV.str s ∈ ls) ∧
     (∀ l, (deleteNode r n).hasLabel n l = r.hasLabel n l) := by
-  have h := (deleteNode_labels_preserved r n hnd).1
-  simp [labels, RT.hasLabel, h]
+  have h : (deleteNode r n).labels n = r.labels n := by simp [RT.labels, deleteNode, hnd]
+  refine ⟨⟨_, _, rfl, rfl, fun s => by simp [labels, h]⟩, fun l => by simp [RT.hasLabel, h]⟩
 
 /-- `hasLabels` with all-string labels is "every label is in `labels(n)`". -/
 theorem hasLabels_all (r : RT) (n : Nat) (ls : List String) :
@@ -424,7 +430,7 @@ theorem collectTypes_strs (ts acc : List String) :
 /-- **#3127** (`d739765e1`): every mismatch `parse_degree_args` reports names the
 received type in the `Display` vocabulary (`Integer`, `List`, `Edge`), never the
 `{:?}` form (`Int`, `List(Any)`, `Relationship`) it printed before. Mirrors the Rust tests
-`node_argument_mismatch_names_the_received_type` and siblings (entity.rs:411-433). -/
+`node_argument_mismatch_names_the_received_type` and siblings (entity.rs:393-433). -/
 theorem parseDegreeArgs_mismatch_names (fn : String) (v : EV)
     (hv : ∀ n, v ≠ .node n) (hn : v ≠ .null) :
     parseDegreeArgs fn [v] = .error s!"Type mismatch: expected Node but was {tyDisp v}" := by

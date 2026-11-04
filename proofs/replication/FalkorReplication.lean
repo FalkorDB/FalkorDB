@@ -41,7 +41,7 @@ no clock and no plan choice for the two sides to disagree about.
 | `createOne` / `deleteOne`| `Graph::create_nodes` / `delete_nodes`, one node at a time |
 | `idsOf`                  | `IdSpace::reserve` (`graph/src/graph/id_space.rs:483`) — recycled first, then fresh |
 | `Pending`                | `runtime::pending::Pending` |
-| `commit`                 | `Pending::commit` (`runtime/pending.rs:1078`), driven by `CommitOp::next` (`runtime/ops/commit.rs:69`) |
+| `commit`                 | `Pending::commit` (`runtime/pending.rs:1338`), driven by `CommitOp::next` (`runtime/ops/commit.rs:69`) |
 | `emit`                   | `EffectsFormat::build` → `for_each_record` (`graph/src/effects/v3/emit.rs`) |
 | `groupBy NodeSpec.shape` | `digest_created_nodes`' `slots`/`index`/`last` memo |
 | `groupBy Prod.snd`       | `digest_deleted_nodes`, grouped by label set |
@@ -1732,13 +1732,15 @@ theorem deleteOne_refines (σ : GState) (s : FalkorFaithful.Ids)
     (deleteOne σ id).bound = (s.release1 id).bound ∧
     ∀ i, (deleteOne σ id).free i = (s.release1 id).bin.contains i ∧ (s.release1 id).bin.Nodup = s.bin.Nodup := by
   refine ⟨?_, fun i => ⟨?_, ?_⟩⟩
-  · simp only [deleteOne, FalkorFaithful.Ids.release1, FalkorFaithful.Ids.bound] at hb ⊢
-    simp; omega
+  · simp only [deleteOne, FalkorFaithful.Ids.release1, FalkorFaithful.Ids.bound,
+      FalkorFaithful.insAsc_length] at hb ⊢
+    omega
   · simp only [deleteOne, FalkorFaithful.Ids.release1]
     by_cases e : i = id
-    · subst e; simp
-    · simp [e, hf i]
-  · simp [FalkorFaithful.Ids.release1, hnf]
+    · subst e; simp [List.contains_iff_mem, FalkorFaithful.insAsc_mem]
+    · simp [e, hf i, List.contains_iff_mem, FalkorFaithful.insAsc_mem]
+  · simp only [FalkorFaithful.Ids.release1]
+    exact propext (FalkorFaithful.insAsc_nodup id s.bin hnf)
 
 end Falkor
 

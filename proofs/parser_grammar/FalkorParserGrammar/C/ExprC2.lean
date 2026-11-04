@@ -1,6 +1,6 @@
 /-
 # Pattern comprehensions, `[`-dispatch, shortestPath, and the
-# pattern-comprehension guards (cypher.rs:1753-1940, 2792-2995, 3521-3531)
+# pattern-comprehension guards (cypher.rs:1753-1940, 2792-2995, 3551-3561)
 -/
 import FalkorParserGrammar.C.ExprC
 
@@ -28,7 +28,7 @@ theorem rejectForbidden_spec (flag : Option Nat) :
     rejectForbidden flag = .ok () ↔ flag = none := by
   cases flag <;> simp [rejectForbidden]
 
-/-- `reject_aggregate` (cypher.rs:3521-3531). -/
+/-- `reject_aggregate` (cypher.rs:3551-3561). -/
 def rejectAggregate (t : ET) : P Unit := if (aggName t).isSome then fail else pure ()
 
 theorem rejectAggregate_spec (t : ET) (s : PS) :
@@ -39,7 +39,7 @@ theorem rejectAggregate_spec (t : ET) (s : PS) :
   · split <;> simp_all
   · split <;> simp
 
-/-- `parse_inline_properties` (cypher.rs:3006-3020): the map's own error is
+/-- `parse_inline_properties` (cypher.rs:3016-3029): the map's own error is
 kept only when it is an unknown-function error. -/
 def inlineErr (isUnknownFn : String → Bool) (msg : String) (r : Except String ET) : Except String ET :=
   match r with
@@ -182,7 +182,7 @@ def listLitPU (o : Oracle) (F : Nat) (forb : Bool) : P (ET × Bool) := do
 
 /-! ## shortestPath (cypher.rs:1753-1940) -/
 
-/-- shortestPath's types: the same `parse_relationship_types` (cypher.rs:3054-3064) as a pattern's. -/
+/-- shortestPath's types: the same `parse_relationship_types` (cypher.rs:3057-3064) as a pattern's. -/
 def spTypes : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
   | n + 1, acc => do

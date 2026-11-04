@@ -13,7 +13,7 @@ RediSearch LLAPI audit (2026-10-26: C side at `deps/RediSearch@a272834a6`, compa
 | here | there |
 | --- | --- |
 | `gil`                    | the Redis GIL: main-thread callbacks, `QuerySession` writer mode, `RM_ThreadSafeContextLock` |
-| `rsGlobal`, `rsSpec`     | RediSearch's global `RWLOCK` (`src/rwlock.c:59-102`) and per-spec `rwlock` (`src/spec.c:2263-2310`), write mode |
+| `rsGlobal`, `rsSpec`     | RediSearch's global `RWLOCK` (`src/rwlock.c:59-102`) and per-spec `rwlock` (`src/spec.c:2263-2310`), write mode. A lock in `Access.held` is treated as exclusive; a read-mode hold (the ForkGC fix `h1_fix_gc_spec_lock`) is modelled as exclusive too, which is sound only because every other access to `idxMem` holds `rsSpec` in write mode |
 | `indexer`, `graphW`      | `Indexer::write_lock`; the per-graph `RwLock` in write mode |
 | `naRef`                  | refcount of RediSearch's global `NA_rstr` (`src/info/index_error.c:29`), a plain `int` |
 | `idxMem`                 | an index's inverted-index / numeric-tree memory, which ForkGC's child scans unlocked (`src/fork_gc.c:443-456`) |
@@ -32,8 +32,8 @@ At a272834a6 (FalkorDB/RediSearch#29) errors borrow `NA_rstr`: none of these tou
 * ForkGC: `RM_Fork` under the GIL only (`fork_gc.c:1050-1065`): `{gil}`.
 * Writer commit `Indexer::commit` → `IndexAddDocument` (`api:648-688`, RWLOCK W + spec W):
   `{gil, graphW, indexer, rsGlobal, rsSpec}`.
-* Background population `populate_index_batch` (`graph/src/graph/graph.rs:543-563`,
-  "Deliberately no global lock") → `IndexAddDocument`: `{indexer, rsGlobal, rsSpec}`.
+* Background population `populate_index_batch` (`graph/src/graph/graph.rs:594` `populate_index_batch`,
+  the "Deliberately no global lock" comment at `:618`) → `IndexAddDocument`: `{indexer, rsGlobal, rsSpec}`.
 -/
 
 namespace SC.Guarded
@@ -44,19 +44,26 @@ def rsSpec : Nat := 2
 def indexer : Nat := 3
 def graphW : Nat := 4
 
-/-- One access to a shared resource with the locks its thread holds. -/
+/-- One access to a shared resource with the locks its thread holds. There is no read/write
+mode: every held lock is treated as exclusive, which is exact when the accesses hold it in
+write mode (all RediSearch accesses here) and sound for a single read-mode holder against
+write-mode holders (`h1_fix_gc_spec_lock`). It would be unsound if two accesses held their only
+common lock in read mode and one of them wrote. -/
 structure Access where
   site : String
   held : List Nat
 deriving Repr, Inhabited
 
-/-- Locks held at every access (Eraser's candidate set). -/
+/-- Locks held at every access (Eraser's candidate set). Derived from the accesses, not
+from a fixed universe of lock ids, so a lock added later is never dropped. The empty
+access list has no candidates (it is handled in `consistent`). -/
 def lockset : List Access → List Nat
-  | [] => [gil, rsGlobal, rsSpec, indexer, graphW]
-  | a :: as => (lockset as).filter (a.held.contains ·)
+  | [] => []
+  | [a] => a.held
+  | a :: b :: as => (lockset (b :: as)).filter (a.held.contains ·)
 
-/-- Race-free: some lock is common to every access. -/
-def consistent (as : List Access) : Bool := !(lockset as).isEmpty
+/-- Race-free: no access at all, or some lock is common to every access. -/
+def consistent (as : List Access) : Bool := as.isEmpty || !(lockset as).isEmpty
 
 /-! ## #3483: `NA_rstr`'s refcount -/
 
@@ -95,7 +102,9 @@ theorem h1_fork_vs_populate_race : consistent idxMem = false := by decide
 theorem h1_without_populate : consistent (idxMem.take 2) = true := by decide
 
 /-- Either fix restores a common lock: population under the GIL, or the GC holding the
-spec lock across the fork. -/
+spec lock across the fork. For the second, the GC holds `rsSpec` in *read* mode while the
+writer and population accesses hold it in *write* mode, so the shared lock does exclude
+them even though `Access` has no modes (see `Access`). -/
 theorem h1_fix_populate_gil :
     consistent (idxMem.take 2 ++ [⟨"populate under GIL", [gil, indexer, rsGlobal, rsSpec]⟩])
       = true := by decide
@@ -105,21 +114,26 @@ theorem h1_fix_gc_spec_lock :
 
 /-! ## The check is the lockset property -/
 
-theorem mem_lockset {as : List Access} {l : Nat} (h : l ∈ lockset as) (a : Access)
-    (ha : a ∈ as) : l ∈ a.held := by
-  induction as with
-  | nil => simp at ha
-  | cons b bs ih =>
+theorem mem_lockset : ∀ (as : List Access) {l : Nat}, l ∈ lockset as →
+    ∀ a ∈ as, l ∈ a.held
+  | [], _, _, a, ha => by simp at ha
+  | [b], l, h, a, ha => by
+    simp only [lockset] at h
+    rcases List.mem_singleton.mp ha with rfl
+    exact h
+  | b :: c :: cs, l, h, a, ha => by
     simp only [lockset, List.mem_filter] at h
     rcases List.mem_cons.mp ha with rfl | hb
     · simpa using h.2
-    · exact ih h.1 hb
+    · exact mem_lockset (c :: cs) h.1 a hb
 
-/-- If the accesses are consistent, one lock is held at every access. -/
+/-- If the accesses are consistent, one lock is held at every access (vacuous for no accesses). -/
 theorem consistent_common_lock (as : List Access) (h : consistent as = true) :
     ∃ l, ∀ a ∈ as, l ∈ a.held := by
-  simp only [consistent, Bool.not_eq_true', List.isEmpty_eq_false_iff] at h
-  obtain ⟨l, hl⟩ := List.exists_mem_of_ne_nil _ h
-  exact ⟨l, fun a ha => mem_lockset hl a ha⟩
+  by_cases he : as.isEmpty = true
+  · exact ⟨0, fun a ha => by simp [List.isEmpty_iff.mp he] at ha⟩
+  · simp only [consistent, he, Bool.false_or, Bool.not_eq_true', List.isEmpty_eq_false_iff] at h
+    obtain ⟨l, hl⟩ := List.exists_mem_of_ne_nil _ h
+    exact ⟨l, fun a ha => mem_lockset as hl a ha⟩
 
 end SC.Guarded

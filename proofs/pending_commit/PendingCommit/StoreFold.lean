@@ -3,7 +3,7 @@ import PendingCommit.Store
 # Batches of per-entity writes over distinct ids
 
 `AttributeStore::insert_attrs` (:1315), `insert_attrs_rows` (:1266),
-`import_attrs` (:1351), `import_attrs_resolved` (:1379), `remove_all` (:1246)
+`import_attrs` (:1351), `import_attrs_resolved` (:1388), `remove_all` (:1246)
 and `decode_with_count` (:1460) all loop "for each entity, one
 `DataBlock` write" and sum the per-entity counts. `runOps_spec`: when the ids
 are distinct, each entity ends up with exactly its own write's result, every

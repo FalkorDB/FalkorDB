@@ -6,7 +6,7 @@ import FalkorCowBTree.Assert
 # Bug 3 (W7-btree-1, introduced by #2278, FIXED by #3283 799968a8b): `remove_batch` left a single-child
 # non-root branch, at any `BRANCH_MAX`
 
-HISTORY (the pre-#3283 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) theorems and the pre-#3283 model were removed in bbee75955; the last revision that has them is 17ccc5412).
+HISTORY: the pre-#3283 model and its counterexample theorems were removed in bbee75955; the last revision that has them is 17ccc5412.
 `Node::remove_batch` (`node.rs:483-538` before #3283) repaired under-full children with `merge_underfull`, one level
 at a time. A branch `X` that ends with one child is flagged under-full (`1 < BRANCH_MAX / 2` for
 `BRANCH_MAX >= 4`) — but only its parent `P` can repair it, and if `P` itself ends with `X` as its
@@ -16,7 +16,7 @@ with one child and is never re-examined. The tree is no longer well-formed (`Tre
 `check_invariants`: "branch must have >= 2 children"). One later single-key `remove` that drains `X`'s
 lone leaf then leaves an **empty non-root leaf** (`Branch::rebalance` on `X` is a no-op, `node.rs:211`,
 and the parent's `combine` keeps the empty page), and the next `Node::min` over it panics
-(`leaf.key(0)` out of bounds, `mod.rs:83`) — e.g. in `insert_batch`'s `pack_branches`.
+(`leaf.key(0)` out of bounds, `node.rs:249`) — e.g. in `insert_batch`'s `pack_branches`.
 
 Since #3307 (18836a355) `remove_batch` has a production caller (`FalkorDbIndex::apply_writes` →
 `remove_encoded`), so the single-child branch is reachable; the panic chain still needs a single-key
@@ -36,8 +36,8 @@ The fix (#3283, issue #3237) is the first suggestion made here: after each `comb
 `merge_underfull_below` re-runs the repair over the produced node's children. The Rust test
 `remove_batch_never_leaves_a_single_child_branch` (`tests.rs:1640`) is the repro above.
 
-The pre-#3283 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) theorems replay the mechanism on a 12-entry tree with `LEAF_MAX = 2`, `BRANCH_MAX = 4`;
-`rb_remove_batch_fixed`, `rb_remove_batch_fixed_wf`, `rb_then_remove_fixed` replay the same input on
+The removed pre-#3283 counterexample theorems (see 17ccc5412) replayed the mechanism on a 12-entry tree with `LEAF_MAX = 2`, `BRANCH_MAX = 4`;
+`rb_remove_batch_fixed` and `rb_then_remove_fixed` replay the same input on
 main, and `removeBatchTree_wf_asserted` is the general statement (`BatchWF.lean`: `removeBatchTree_wf`).
 -/
 

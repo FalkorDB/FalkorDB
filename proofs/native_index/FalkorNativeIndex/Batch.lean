@@ -3,9 +3,9 @@ import FalkorNativeIndex.Build
 # An indexer batch commits as a version of its own (#3566, 29e85ffc3), and catches up on writers (#3567, b18530683)
 
 An indexer batch is built on a *build version* of the published graph with no lock held
-(`Graph::new_build_version`, `graph.rs:1133`; `Graph::indexer_prepare`, `versioned.rs:262`), then
-`MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:193`) fits it to whatever was published meanwhile
-(`Graph::indexer_fit`, `versioned.rs:285`). The proofs below model that logic on the one index the batch
+(`Graph::new_build_version`, `graph.rs:1139`; `Graph::indexer_prepare`, `versioned.rs:366`), then
+`MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:235`) fits it to whatever was published meanwhile
+(`Graph::indexer_fit`, `versioned.rs:391`). The proofs below model that logic on the one index the batch
 is about (`V.entry`); everything else in the graph is the opaque `rest : R`, which a `Swap` takes from the
 published version.
 
@@ -16,17 +16,22 @@ published version.
 | `SE.indexerApply` | `IndexEntry::indexer_apply` (`:209-221`, now bumps `indexer_commits`) |
 | `discardedAgainst` | `IndexEntry::discarded_against` (`:226-241`) |
 | `V` | the parts of a `Graph` the fit reads: `version`, `falkordb_index.{indexes_created, batches_published}`, the batch's entry |
-| `V.newVersion`, `V.newBuildVersion` | `Graph::new_version` (`graph.rs:1085`), `Graph::new_build_version` (`:1133`) |
+| `V.newVersion`, `V.newBuildVersion` | `Graph::new_version` (`graph.rs:1084`), `Graph::new_build_version` (`:1139`) |
 | `V.createEntry` | `FalkorDbIndex::insert_column` (`falkordb_index.rs:450`): `indexes_created += 1`, that is the generation |
 | `V.setBatchesPublished`, `V.batchPublishedSince` | `falkordb_index.rs:565`, `:575` |
-| `V.applyBatch` | `FalkorDbIndex::apply_indexer_batch` (`versioned.rs:248`) |
-| `indexerFit` | `Graph::indexer_fit` (`versioned.rs:285`) |
+| `V.applyBatch` | `FalkorDbIndex::apply_indexer_batch` (`versioned.rs:353`) |
+| `indexerFit` | `Graph::indexer_fit` (`versioned.rs:391`) |
 | `V.withBatchIndex` | `Graph::with_batch_index` (`:316`) with `take_index` (`:329`) |
-| `commitIndexerBatch` | `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:193`) and `commit_version(_, false)` (`:214`) |
+| `commitIndexerBatch` | `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:235`) and `commit_version(_, false)` (`:261`) |
 
 `Graph::validate` is the abstract predicate `valid`; schema-version bump, `trim_attr_stores`,
 `fold_oversized_deltas` and `set_indexer_graph` do not touch the version, the batch's entry or the
 counters, and are not modelled.
+
+**Counters are unbounded `Nat`.** The Rust generation, `indexer_commits`, data-version and batch counters
+are `u64`, each bumped by one per create / commit / publish; the model treats them as unbounded naturals,
+so no theorem here covers a wrap at 2^64. That is an explicit assumption (2^64 commits are not reachable),
+not a proven bound.
 
 Theorems: `fit_fresh` (nothing committed since: `Same`), `fit_after_other_batch` (`Swap`),
 `fit_after_writer` (`CatchUp`, #3567: it was `Discarded Writers`), `fit_after_same_batch` (`AnotherBatch`), `fit_after_drop` /

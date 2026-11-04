@@ -228,7 +228,7 @@ theorem sign_float_agrees_int (n : Int) : mSign (.float (fcOfInt n)) = mSign (.i
 
 /-- **The declared return type now holds** (`ret: Integer | Null`, math.rs:209): every
 validated `sign` call returns a value that `Integer | Null` accepts. Before #2907 a
-non-zero Float argument broke this). -/
+non-zero Float argument violated the declared return type. -/
 theorem sign_ret (v : V FC) (h : validateArgsType (.fixed [numArg]) [v] = none) :
     ∃ r, mSign v = .ok r ∧ Accepts r (.union [.int, .null]) := by
   rcases numeric_body_cases v h with ⟨i, rfl⟩ | ⟨f, rfl⟩ | rfl

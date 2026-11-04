@@ -6,12 +6,12 @@ import PendingCommit.Labels
 The existing theorems prove the query-time views (`overlay_eq_ref`,
 `pendingWithLabels_spec`, `deletePendingNode_spec`). What they never state is
 that the staged maps only name entities that exist when the batch is
-committed or replayed. Line numbers are b84473a7f.
+committed or replayed. Line numbers are current main (5c7af54f2).
 
-* **#3448** `remove_node_labels` (pending.rs:697-709) pushes every label into
+* **#3448** `remove_node_labels` (pending.rs:729-746) pushes every label into
   `remove_labels`, also one the node only had staged (a `CREATE`d node, or a
   `SET n:L` earlier in the query); ops/remove.rs filters by the overlay, not the
-  committed matrix (`Labels.removeOp`). `delete_pending_node` (:788-821) clears
+  committed matrix (`Labels.removeOp`). `delete_pending_node` (:851-891) clears
   `set_labels` but not `remove_labels`. Properties: `RemLCommitted` (every staged
   removal is of a committed label) and `RemLLive` (no created or cancelled node
   has a staged removal). Refuted: `bug3448_remove_of_staged_label`,
@@ -22,11 +22,11 @@ committed or replayed. Line numbers are b84473a7f.
   `PendingWithLabelsLive`, now proven (`pendingWithLabels_live`); `fixed3453_*` are the three repros.
   (The composed IncludePending property is in proofs/ops_aggregate,
   `IncludePendingExact.lean`.)
-* **#3447** `remove_pending_relationships_for_node` (:839-896) drops a type's
+* **#3447** `remove_pending_relationships_for_node` (:902-960) drops a type's
   `created_rels_by_type` group once it is empty, so `Pending::commit`
-  (:1239-1253, `create_relationships_bulk` → `get_type_id_mut`) never registers a
+  (:1348-1361, `create_relationships_bulk` → `get_type_id_mut`) never registers a
   type whose every edge was cascaded away; `CreateOp::resolve_pattern`
-  (ops/create.rs:353-390) registers labels eagerly but not types. Property
+  (ops/create.rs:353-400) registers labels eagerly but not types. Property
   `CancelledTypeRegistered`. Refuted: `bug3447_cascade_drops_type_key`; the
   emitter consequence (an id gap on the replica) is proofs/effects_emit_apply
   `CancelGap.lean`.

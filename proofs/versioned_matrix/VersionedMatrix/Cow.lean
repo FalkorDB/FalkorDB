@@ -6,8 +6,8 @@ Model of `graph/src/graph/cow.rs` and `graph/src/graph/mvcc_graph.rs` (fork-and-
 
 A GraphBLAS handle is a location in a heap `Nat → α` (its contents: for a
 matrix, the coordinate set of `Delta.lean`). `Matrix::clone` shares the
-handle (`Arc<GrB_Matrix>`, `matrix.rs:374`), `Matrix::dup` allocates a fresh
-one (`matrix.rs:1174`). A `Cow` is a handle plus the `dup` flag.
+handle (`Arc<Handle>`, `matrix.rs:405`), `Matrix::dup` allocates a fresh
+one (`matrix.rs:1209`). A `Cow` is a handle plus the `dup` flag.
 
 | here | there |
 | --- | --- |
@@ -16,10 +16,10 @@ one (`matrix.rs:1174`). A `Cow` is a handle plus the `dup` flag.
 | `derefMut`       | `DerefMut for Cow` (cow.rs:134): dup on first write |
 | `replace`        | `Cow::replace` (cow.rs:112): fresh contents, `dup = false` |
 | `mutate`         | any `&mut Matrix` write through a `Cow` (`Delta::layer_mut`, `insert`, `erase`, `resize`, ...) |
-| `Version`        | a graph version: every `Cow` it owns (`Graph::new_version` dups every matrix, graph.rs:976) |
-| `Mvcc`           | `MvccGraph` (mvcc_graph.rs:64): the published version |
+| `Version`        | a graph version: every `Cow` it owns (`Graph::new_version` dups every matrix, graph.rs:1084) |
+| `Mvcc`           | `MvccGraph` (mvcc_graph.rs:74): the published version |
 | `Mvcc.begin`     | `MvccGraph::fork` (:130): `new_version` of the published graph, takes nothing |
-| `Mvcc.commit`    | `MvccGraph::commit` (:166) → `commit_version` (:214): `Graph::validate` (`valid`) — refused ⇒ `Err`, the version is dropped, published unchanged; else publish. (The staleness refusal is in `search_concurrency` `Mvcc`; isolation does not need it.) |
+| `Mvcc.commit`    | `MvccGraph::commit` (:205) → `commit_version` (:261): `Graph::validate` (`valid`) — refused ⇒ `Err`, the version is dropped, published unchanged; else publish. (The staleness refusal is in `search_concurrency` `Mvcc`; isolation does not need it.) |
 | `Mvcc.abandon`   | dropping an uncommitted version (no `rollback` since #3657) |
 
 `Graph::new_version` goes through `VersionedMatrix::dup`/`Tensor::dup`, which
@@ -154,7 +154,16 @@ structure Sys (α : Type) where
   g : Mvcc
   W : Option Version        -- the in-flight write version, if any
 
-/-- `valid` is `Graph::validate` (graph.rs:1495) on the write version. -/
+/-- `valid` is `Graph::validate` (graph.rs:1629) on the write version.
+
+One in-flight write version only (`W : Option Version`): `.begin` while a version is
+already in flight replaces it, as if it had been abandoned first, without an `.abandon`
+event. The engine can hold several forks at once (a writer may fork while still
+matching as a reader, and the bulk-insert phase-1 fork): that is not modelled here. Each
+such fork is created by `new_version` of the committed version and is written only by its
+own writer, so the one-directional-COW argument below applies to each; but the proof
+covers histories with one in-flight version at a time, and the stale check
+(`is_stale`) that orders concurrent forks' commits is in `search_concurrency` `Mvcc`. -/
 def sstep (valid : Version → Bool) (S : Sys α) : Ev α → Sys α
   | .begin => { S with W := some S.g.committed.newVersion }
   | .op o => match S.W with
@@ -284,8 +293,13 @@ its history (`sstep`) never writes a version after it has been
 `new_version`ed after it is committed (by the next `begin`). In the engine,
 that is `MvccGraph::fork`/`commit`: the committed graph is only ever read
 (`read()` hands out `Arc` clones; read queries never fork), and
-every mutation path — `Runtime` for write queries, GRAPH.BULK, index DDL —
-goes through the version returned by `fork()`. Reproduced at the API level
+every mutation path — `Runtime` for write queries, GRAPH.BULK, index DDL — goes
+through the version returned by `fork()`, except the indexer batch, which is applied to
+a build version of a published one (`Graph::new_build_version`, graph.rs:1139, via
+`Graph::indexer_prepare`) and published by `commit_indexer_batch`. A build version is
+made the same way (`new_version`-style dup of every layer), so it is another instance of
+the model's write version `W`; `commit_indexer_batch` publishes it through the same
+`commit_version`. Reproduced at the API level
 by `cow_is_one_directional_old_version_write_leaks` in
 `graph/tests/lean_versioned_matrix.rs`. Status on main (#2905, #2903): the
 contract is now documented on `Cow`, and debug builds assert it in `deref_mut`

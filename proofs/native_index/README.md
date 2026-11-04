@@ -1,6 +1,6 @@
 # native_index: the native numeric index answers like a label scan plus a filter
 
-This project proves that the native numeric index (#2350, with writes batched by #3307 and a build state with indexer batches since #2351) returns exactly the rows a full label scan plus a `WHERE` filter would return, and that every graph write keeps the index in step with the data. The index is built only with `--features index-falkordb` (off by default in the shipped module); when it is on, it is the **only** Range index (#3547, #2386): RediSearch is not fed Range fields and there is no fallthrough to it. It serves range and equality predicates, `IN` lists and same-attribute `OR`s on indexed numeric properties, answers a read on a column still being built by scanning, and raises an error for any predicate it cannot serve:
+This project proves that the native numeric index (#2350, with writes batched by #3307 and a build state with indexer batches since #2351) returns exactly the rows a full label scan plus a `WHERE` filter would return, and models the graph-write staging paths (what each write stages for the index) under the caller premises (`*_hit`: unique attribute ids) and the tree contract documented below; the graph store's own mutation is not modelled. The index is built only with `--features index-falkordb` (off by default in the shipped module); when it is on, it is the **only** Range index (#3547, #2386): RediSearch is not fed Range fields and there is no fallthrough to it. It serves range and equality predicates, `IN` lists and same-attribute `OR`s on indexed numeric properties, answers a read on a column still being built by scanning, and raises an error for any predicate it cannot serve:
 
 ```cypher
 CREATE INDEX FOR (p:Person) ON (p.age)
@@ -12,7 +12,7 @@ MATCH (p:Person) WHERE p.age = 42 RETURN p
 
 Since #2383 the index also serves `IN [...]`, and an `OR` of equalities and `IN` lists on one attribute, as a union of point lookups (`MATCH (p:Person) WHERE p.age IN [30, 40]`).
 
-The Rust is `graph/src/index/falkordb/{encode,numeric,falkordb_index,pending_writes,graph_writes,versioned,unique,mod}.rs`, the native-index parts of `graph/src/graph/graph.rs` (including `redisearch_fields`, `node_matches`, `relationship_matches`), and the index route of `runtime/ops/{node,edge}_by_index_scan.rs`. The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorNativeIndex.lean`](FalkorNativeIndex.lean). This README explains *what* is proven and *why it matters*.
+The Rust is `graph/src/index/falkordb/{encode,numeric,falkordb_index,pending_writes,graph_writes,versioned,unique,mod}.rs`, the native-index parts of `graph/src/graph/graph.rs` (including `redisearch_fields`, `node_matches`, `relationship_matches`), and the index route of `graph/src/runtime/ops/{node,edge}_by_index_scan.rs`. The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorNativeIndex.lean`](FalkorNativeIndex.lean). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -34,7 +34,7 @@ Yes, for non-Bool data and a guarded numeric bound. `filter_iff_key` proves that
 
 **3b. Does an `IN` list (#2383) return what a label scan plus `IN` filter returns?**
 
-Yes, and it declines rather than answering part. `n.a IN [v1, ..]` reaches the column as one `InList`; `numeric.rs::in_list` encodes every member and returns them as a `KeySet::Keys` (sorted, deduplicated: `KeySet::distinct`) that `lookup` turns into the union of the point scans (since #2386 the keys are computed apart from the lookup).
+Yes for a non-empty list whose members are all guarded numerics, and it declines rather than answering part. One open gap sits before the column: a mixed list such as `[date(..), 2]` loses its non-scalar members in the scan op before the native route sees them, so the column is asked about a shorter list and answers wrongly (W2-index-3, FINDINGS.md; not modelled here). `n.a IN [v1, ..]` reaches the column as one `InList`; `numeric.rs::in_list` encodes every member and returns them as a `KeySet::Keys` (sorted, deduplicated: `KeySet::distinct`) that `lookup` turns into the union of the point scans (since #2386 the keys are computed apart from the lookup).
 
 - `inList_agrees`: a served list returns exactly the ids whose value equals some member (members guarded, no `Bool` data), via `point_agrees` per key;
 - `inList_isSome_iff`: the column answers only a non-empty list whose members all encode. Serving the numeric subset would drop rows held by another kind (a string member), and an empty list must not mean "no rows"; the scan op does not re-check the predicate, so both are declined (`inListKeys_isSome_iff`), and under `index-falkordb` a decline is an error, not a RediSearch query;
@@ -47,7 +47,7 @@ Order is deliberately unspecified (the chain is not merged into id order), so ev
 
 **4. Does batching writes per unit of work (#3307) change the result?**
 
-No. #3307 stages index changes during a query and applies them once at commit: `last_write_wins` collapses each tuple's history, then one `remove_batch` and one `insert_batch` run per column. `lastWriteWins_spec` proves the collapse keeps exactly each tuple's last staged change, and `writerRecord_eq_sequential` proves the batched apply leaves the same tree as applying every staged change one by one, in order, for any interleaving of adds and removes.
+No. #3307 stages index changes during a query and applies them once at commit: `last_write_wins` collapses each tuple's history, then one `remove_batch` and one `insert_batch` run per column. `lastWriteWins_spec` proves the collapse keeps exactly each tuple's last staged change, and `writerRecord_eq_sequential` proves the batched apply leaves the same tree as applying every staged change one by one (filtered by the column's build state; unfiltered for a `Ready` column), in order, for any interleaving of adds and removes.
 
 **4b. Is a column that is still being built ever read, and do writes during the build get lost? (#2351)**
 
@@ -165,14 +165,15 @@ Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entr
 
 ## Coverage
 
-`COVERAGE.tsv` has 137 function rows (plus one comment row):
+`COVERAGE.tsv` has 190 function rows (plus one header row):
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 137 |
+| PROVEN | 187 |
+| CONDITIONAL | 3 |
 
 - The 13 rows that read or write the tree (`from_entries` (test-only since #2351), `add`, `remove`, `add_batch`, `remove_batch`, `add_encoded`, `remove_encoded`, `is_empty`, `point`, `range`, `empty`, and `FalkorDbIndex::apply` / `apply_writes`) were CONDITIONAL on the `cow_btree` invariant `TreeWF`, which `remove_batch` broke (W7-btree-1). #3283 fixed it, `cow_btree` now proves every reachable tree is well-formed, and `Contract.lean` ties each operation to its model, so they are PROVEN.
-- Three PROVEN rows (`node_attrs_set`, `new_node_attrs`, `edge_attrs_set_with`) state their per-entry result (`*_hit`) under a caller premise: each node's written attribute ids are unique. `Pending::set_node_attribute` keeps them sorted and unique; `set_node_attributes` only `debug_assert!`s it.
+- Three CONDITIONAL rows (`node_attrs_set`, `new_node_attrs`, `edge_attrs_set_with`) state their per-entry result (`*_hit`) under an undischarged caller premise: each node's written attribute ids are unique. `Pending::set_node_attribute` keeps them sorted and unique; `set_node_attributes` only `debug_assert!`s it.
 
 ## What the model does not cover
 

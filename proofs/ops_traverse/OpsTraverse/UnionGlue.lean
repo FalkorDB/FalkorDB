@@ -8,9 +8,9 @@ import GraphblasWrappers.DeltaLmxm
 | here | there |
 | --- | --- |
 | `relationshipTensors`        | `relationship_tensors` (`cond_traverse.rs:288`) |
-| `buildUnrestricted`, `buildTransposed` | `build_unrestricted_iter` (:302), `build_transposed_iter` (:337): untyped or single type |
-| `buildUnion`, `buildTransposedUnion`   | `build_union_iter` (:317), `build_transposed_union_iter` (:352) |
-| `fwdOkOf`                    | the `fwd_ok` / `rev_ok` of `build_state` (:508-528) |
+| `buildUnrestricted` | `build_unrestricted_iter` (:302) and `build_transposed_iter` (:337): untyped or single type (the transposed builder is the same function over the transposed sources) |
+| `buildUnion`, `transposedPairs` | `build_union_iter` (:317); `build_transposed_union_iter` (:352), whose pair set is the forward union's swapped back (`transposedPairs`) |
+| `fwdOkOf`                    | the `fwd_ok` / `rev_ok` of `build_state` (:512-531) |
 | `pickMatrix`                 | the `TraversalMatrix` selection of `expand_batch` (:615-650, chain hops :658-680) |
 | `deltaInto`, `TMat`          | `TraversalMatrix::delta_lmxm_into` (:86-112) |
 | `expandRowP`, `expandUnionRow` | `expand_row`'s forward/reverse blocks over `PairIters<UnionIter>` = `expand_union_row` (:1121) |

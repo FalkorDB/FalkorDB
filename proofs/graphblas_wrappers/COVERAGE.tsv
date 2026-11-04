@@ -23,7 +23,7 @@ graph/src/graph/graphblas/matrix.rs	grown	738	PROVEN	Misc.grown_rejects_shrink, 
 graph/src/graph/graphblas/matrix.rs	inner	758	PROVEN	GBWGlue.MatH.inner: inner_eq (#3090: reads Arc<Handle>.0, no ownership transfer)
 graph/src/graph/graphblas/matrix.rs	contains	769	PROVEN	GrbInfo.Disposition.propagate (== SUCCESS -> bool)
 graph/src/graph/graphblas/matrix.rs	intersection_nvals	781	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	count_in_rows	811	PROVEN	GBWBulk.countInRows: countInRows_spec (= entries in the selected rows; GrB_mxv PLUS_PAIR T0 + GrB_Vector_reduce as hypothesis BulkSpec), countInRows_fromSorted, countInRows_pos (#3022)
+graph/src/graph/graphblas/matrix.rs	count_in_rows	811	PROVEN	GBWBulk.countInRows: countInRows_spec (= entries in the selected rows, under MxvOk: matching dims, unique in-bounds coordinates, nvals < 2^64 so the u64 reduce does not wrap; GrB_mxv PLUS_PAIR T0 + GrB_Vector_reduce as hypothesis BulkSpec), countInRows_fromSorted, countInRows_pos (#3022)
 graph/src/graph/graphblas/matrix.rs	pending	832	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/matrix.rs	wait	849	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/matrix.rs	is_synced	870	PROVEN	GBWGlue.MatH.isSynced: isSynced_iff
@@ -56,7 +56,7 @@ graph/src/graph/graphblas/matrix.rs	get	1525	PROVEN	GrbInfo.Disposition.propagat
 graph/src/graph/graphblas/matrix.rs	set	1541	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/matrix.rs	assign_product_true	1565	PROVEN	Index.len_cast_lossless (len() as u64)
 graph/src/graph/graphblas/matrix.rs	build	1594	PROVEN	Index.len_cast_lossless (rows.len() as u64)
-graph/src/graph/graphblas/matrix.rs	delta_lmxm	1631	PROVEN	DeltaLmxm.deltaLmxm (matrix.rs:1520-1655 branch for branch, GrB calls as spec definitions): deltaLmxm_spec (path counts, no assumption on layers); deltaLmxm_correct = F*(M-DM+DP) given dm ⊆ m; deltaLmxm_eff (VM.Inv.dm_m: the VersionedMatrix invariant, discharged), deltaLmxm_tensor (Tensor.Inv); #3492 (a3a99bdbc) fix: delta_lmxm_keeps_live_path, delta_lmxm_drops_when_all_paths_deleted, needs_dm_sub_m
+graph/src/graph/graphblas/matrix.rs	delta_lmxm	1631	PROVEN	DeltaLmxm.deltaLmxm (matrix.rs:1631-1768 branch for branch, GrB calls as spec definitions): deltaLmxm_spec (path counts, no assumption on layers); deltaLmxm_correct = F*(M-DM+DP) given dm ⊆ m; deltaLmxm_eff (VM.Inv.dm_m: the VersionedMatrix invariant, discharged), deltaLmxm_tensor (Tensor.Inv); #3492 (a3a99bdbc) fix: delta_lmxm_keeps_live_path, delta_lmxm_drops_when_all_paths_deleted, needs_dm_sub_m
 graph/src/graph/graphblas/matrix.rs	iter	1771	PROVEN	RowIter.drain_seek_eq_spec
 graph/src/graph/graphblas/matrix.rs	extract	1792	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/matrix.rs	pos	1795	PROVEN	GBWGlue.posB/posU: posB_eq, posU_eq
@@ -91,7 +91,7 @@ graph/src/graph/graphblas/vector.rs	new	458	AXIOMATISED	thin wrapper over one Gr
 graph/src/graph/graphblas/vector.rs	set	474	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	iter	487	PROVEN	Misc.vecDrain_eq; Iter carries no borrow (report: UAF)
 graph/src/graph/graphblas/vector.rs	ptr	492	PROVEN	GBWBulk.VecU.ptr: VecU.ptr_eq (#3022)
-graph/src/graph/graphblas/vector.rs	sum	498	PROVEN	GBWBulk.VecU.sum: VecU.sum_spec (PLUS-monoid reduce from 0 = sum of stored values; GrB_Vector_reduce_UINT64 as hypothesis) (#3022)
+graph/src/graph/graphblas/vector.rs	sum	498	PROVEN	GBWBulk.VecU.sum: VecU.sum_spec (PLUS-monoid reduce on u64 = sum of stored values modulo 2^64, the wrap modelled; GrB_Vector_reduce_UINT64 as hypothesis) (#3022)
 graph/src/graph/graphblas/vector.rs	size	515	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	resize	516	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	set	524	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
@@ -1200,15 +1200,15 @@ graph/src/graph/graphblas/lagraphx_bindings.rs	LAGraph_coloring_independent_set	
 graph/src/graph/graphblas/lagraphx_bindings.rs	LAGraph_coloring_MIS	603	AXIOMATISED	bindgen extern decl (LAGraphX C API); called from algo procedures, outside this project
 graph/src/graph/graphblas/lagraphx_bindings.rs	LAGr_MaxFlow	610	AXIOMATISED	bindgen extern decl (LAGraphX C API); called from algo procedures, outside this project
 graph/src/graph/graphblas/tensor.rs	resize	823	PROVEN	Misc.resize_clamp_grownOk / resize_clamp_not_shrink (#3250 clamp: grown precondition always holds)
-graph/src/graph/graphblas/tensor.rs	edge_count	1231	PROVEN	Decode.edgeCount_no_panic / edgeCount_value (also VM count_correct)
+graph/src/graph/graphblas/tensor.rs	edge_count	1231	PROVEN	Decode.edgeCount_no_panic / edgeCount_value (checked u64 adds and subs, under Wf incl. the two u64 bounds; also VM count_correct)
 graph/src/graph/graphblas/tensor.rs	iter_edges	1293	PROVEN	Misc.iterExpand_eq_flatMap / iterExpand_all_single
 graph/src/graph/graphblas/tensor.rs	iter	1310	PROVEN	Misc.iterExpand_eq_flatMap
 graph/src/graph/graphblas/tensor.rs	decode	1553	PROVEN	Decode.checkLayers_ok_iff / checkLayers_merge_in_bounds (#2996 layer sizes); Codes.decodeBlob_never_dies; #3033 promotion completeness: Decode.decodeCheck_ok_iff / decodeCheck_refuses_incomplete / decodeCheck_ok_complete / decodeCheck_ok_edgeCount_no_panic / decodeCheck_accepts_encoded
 graph/src/graph/graphblas/tensor.rs	next	1699	PROVEN	Misc.expand (EdgeIds = inline or me row)
 graph/src/graph/graphblas/tensor.rs	next	1783	PROVEN	Misc.iterExpand_eq_flatMap / iterExpand_length
-graph/src/graph/graphblas/serialization.rs	encode	34	PROVEN	GBWSerial.Codec (trait contract; instance VMOps.decode_encode): Codec.roundtrip2
+graph/src/graph/graphblas/serialization.rs	encode	34	AXIOMATISED	trait method declaration (no body): its contract is the structure GBWSerial.Codec, an obligation each impl owes; Codec.roundtrip is a field, so Codec.roundtrip2 proves nothing about an impl (instances are proved in their own projects, e.g. VMOps.decode_encode)
 graph/src/graph/graphblas/serialization.rs	encode_with_range	40	PROVEN	GBWSerial.encodeWithRangeDefault: defaults_panic
-graph/src/graph/graphblas/serialization.rs	decode	64	PROVEN	GBWSerial.Codec (trait contract; instance VMOps.decode_encode): Codec.roundtrip2
+graph/src/graph/graphblas/serialization.rs	decode	64	AXIOMATISED	trait method declaration (no body): its contract is the structure GBWSerial.Codec, an obligation each impl owes; Codec.roundtrip is a field, so Codec.roundtrip2 proves nothing about an impl (instances are proved in their own projects, e.g. VMOps.decode_encode)
 graph/src/graph/graphblas/serialization.rs	decode_with_count	76	PROVEN	GBWSerial.decodeWithCountDefault: defaults_panic
 graph/src/graph/graphblas/serialization.rs	from_u64	146	PROVEN	GBWSerial.fromU64: fromU64_disc, fromU64_some, fromU64_none
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::new	1388	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320), only the test kit's oracle uses it

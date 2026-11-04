@@ -13,7 +13,9 @@ error) is sound — `constEval_sound` — which discharges `hconst` for
 
 A Lean 4 model of the optimizer passes in `graph/src/planner/optimizer/`
 (origin/main `0f45a8685`), except `select_scan_node.rs`, `utilize_index.rs` and
-`utilize_node_by_id.rs`'s #2390 changes (another agent's). Each pass is judged against a reference semantics of the IR:
+`utilize_node_by_id.rs`'s #2390 changes (another agent's). Of `select_scan_node.rs` only
+the #2556 chain-rebuild is modelled here (`PushPlan.selectScan`); the pass itself is in
+`proofs/optimizer_scan`. Each pass is judged against a reference semantics of the IR:
 rows are association lists (`Basic.Row`), expressions follow `eval.rs`
 (three-valued, errors short-circuit, `AND` exactly as `eval.rs:674`), `Filter`
 keeps `true` and drops `false`/`null` (`filter.rs:48-80`), and operators are
@@ -36,7 +38,7 @@ effects and scope-blind ids; #748, #997, #3352; and select_scan_node's chain
 re-ordering, #2556).
 `AndOf` (#3335: every rebuilt filter goes through `ExprIR::and_of`; splicing an
 AND into an AND keeps the runtime value — `scL_splice`, `flat_eval`, `flat_passes`).
-Build: `lake build` — 165 theorems, no `sorry`/`admit`/`axiom`. Every production row of
+Build: `lake build` — 162 theorems, no `sorry`/`admit`/`axiom`. Every production row of
 COVERAGE.tsv is PROVEN (the NOT COVERED rows are test/bench code). Rust source: origin/main `0f45a8685` (re-targeted across #2390,
 d2c42e032: `references.rs` added, the four passes switched to it, fusion checks the whole plan;
 #3335: filters rebuilt with `and_of`).
@@ -134,7 +136,7 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
    properties, ProcedureCall args, LoadCsv, Skip/Limit, index-scan queries:
    `MATCH (a)-[r]->(b) UNWIND [r.w] AS w RETURN w` → Rust [1],[3] of [1],[2],[3];
    `… CREATE (:C {w: r.w})` created 2 of 3; `FOREACH` likewise; `()-[r*1..1]->() UNWIND r` lost rows.
-   On 8743953a8 all of these match C (live); Lean `pre2390_misses_*` (historical) and
+   On 8743953a8 all of these match C (live); the surviving evidence is Lean
    `refsNew_complete` / `refsNew_sees_*`. **Still open**: the three `reduce_*` passes walk
    ancestors only, so a reader in a sibling subtree is missed —
    `MATCH (a)-[r]->(b) CALL { WITH r RETURN r.w AS w } RETURN w` → Rust 1 row, C 3;
@@ -142,7 +144,7 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
    and the oracle ignores `sibling_edges` (W2-traverse-1: `MATCH (a)-[r]->(x)<-[s]-(c)
    RETURN count(*)` → Rust 1, C 2; Lean `refsNew_misses_sibling_edges`).
 
-8. **(NEW; still crashes the server on 8743953a8, live) `utilize_node_by_id` panics on a root scan** — `utilize_node_by_id.rs:118`
+8. **(NEW; still crashes the server on 8743953a8, live) `utilize_node_by_id` panics on a root scan** — `utilize_node_by_id.rs:106`
    `optimized_plan.node(idx).parent().unwrap()`: `CALL db.labels() YIELD label MATCH (n)`
    (accepted because `inner_validate` skips everything after a CALL — planner_build bug 6)
    plans `NodeByLabelScan`/`AllNodeScan` as the root → **Rust server crash**
@@ -158,7 +160,8 @@ The push-down theorems above compare result rows only and route by `(id, scope)`
 `PushPlan` gives push_filters_down a plan tree with graph state that writes
 change, and the routing exactly as main computes it (bare ids, `get_variables`
 walking through `Aggregate`, Case 1/Case 2 inheritance). Property `EffectSound`
-(rows **and** the graph left behind are kept); `RowSound` is the old criterion;
+(rows **and** the node count left behind are kept; the only write modelled is creating a bare
+node, labels, relationships and attributes are not written); `RowSound` is the old criterion;
 `RoutesBound` (a pushed conjunct reads only variables available where it lands).
 
 9. **#748 / #997: a constant-false WHERE after `CALL { MERGE/CREATE }` is pushed into

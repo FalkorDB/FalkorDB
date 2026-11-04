@@ -8,8 +8,11 @@ handling in the parser (`graph/src/parser/cypher.rs`) and the expression-height
 with machine-checked proofs of:
 
 * **`rs_agrees_spec`** — `read_spaces` skips exactly the openCypher
-  `WHITESPACE`/`Comment` run wherever the spec accepts one (since #2908,
-  `dfa326583`); an unterminated `/*` is not skipped (`rs_unterminated_general`);
+  `Comment` run and the four-character subset of `WHITESPACE` that `specSkip`
+  models (space, `\t`, `\r`, `\n`) wherever the spec accepts one (since #2908,
+  `dfa326583`); the other `WHITESPACE` characters of Cypher.g4:697-728 (VT, FF,
+  FS, GS, RS, US and the Unicode spaces) are not skipped by `read_spaces` and
+  are outside the theorem (a divergence from the grammar, not modelled); an unterminated `/*` is not skipped (`rs_unterminated_general`);
   `\r` is whitespace since #2910 (`rs_crlf`).
 * **`lexAll_total_cover`** — on every input the lexer never slices a `&str` off
   a char boundary (so never panics), and the whitespace/comment runs and token
@@ -30,21 +33,24 @@ with machine-checked proofs of:
   most `MAX_NESTING` deep.
 
 and machine-checked *counterexamples* for the places where a property is false
-(each one reproduced against the real Rust in `graph/tests/lean_lexer.rs`):
+(each one reproduced against the real Rust in `graph/tests/lean_lexer.rs`). The rows marked
+"removed" are bugs that have since been fixed: their counterexample theorems are no longer
+in the tree (removed in bbee75955; the last revision that has them is 17ccc5412), and the
+fixed behaviour is now a correctness theorem, named in the row:
 
 | theorem | what is wrong |
 | --- | --- |
-| removed (17ccc5412) | (fixed by #2908 `dfa326583`) `/* ... */` ended at the first `/`, not at `*/` |
-| removed (17ccc5412) | (fixed by #2908) a lone trailing `/` was skipped as whitespace |
-| removed (17ccc5412) | (fixed by #2908) an unterminated `/*` was accepted |
+| `pre2908_rs_block_comment_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908 `dfa326583`) `/* ... */` ended at the first `/`, not at `*/` |
+| `pre2908_rs_trailing_slash_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908) a lone trailing `/` was skipped as whitespace |
+| `pre2908_rs_unterminated_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908) an unterminated `/*` was accepted |
 | `foreach_unbounded`         | `FOREACH` nesting bypasses `nested`, so its recursion is unbounded |
 | `set_target_unbounded`      | `SET n.a.a…` / `REMOVE n.a.a…` targets bypass `check_depth` |
 | `hop_truncation_bug`        | `*4294967298` is `*2` (`i as u32`) |
-| removed (17ccc5412) | (fixed by #2910 `dba677942`) `\r` was not whitespace — now `rs_crlf` |
-| removed (17ccc5412) | (fixed by #2910) `0e5` lexed as `0` then `e5` — now `lexNum_zero_exp` |
-| removed (17ccc5412) | (fixed by #2910) `-0x08000000000000000` was rejected — now `min_noncanonical_fixed`, `int_literal_correct` (any spelling) |
-| removed (17ccc5412) | (fixed by #2910) `9223372036854775808.x` escaped the overflow check — now `litExpr_min` |
-| removed (17ccc5412) | (fixed by #2910) `\u+041` decoded to `A` — now `unesc_plus_rejected` |
+| `pre2910_crlf_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910 `dba677942`) `\r` was not whitespace — now `rs_crlf` |
+| `pre2910_zero_exp_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `0e5` lexed as `0` then `e5` — now `lexNum_zero_exp` |
+| `pre2910_min_noncanonical_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `-0x08000000000000000` was rejected — now `min_noncanonical_fixed`, `int_literal_correct` (any spelling) |
+| `pre2910_min_postfix_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `9223372036854775808.x` escaped the overflow check — now `litExpr_min` |
+| `pre2910_unesc_plus_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `\u+041` decoded to `A` — now `unesc_plus_rejected` |
 
 ## What is modelled, and where it lives in the tree
 
@@ -63,13 +69,13 @@ and machine-checked *counterexamples* for the places where a property is false
 | `fromStrRadix16`          | `u32::from_str_radix(_, 16)` (accepts a leading `+`) |
 | `specUnesc`               | openCypher `EscapedChar` (graph/src/Cypher.g4:553-554) |
 | `str2int`                 | `Lexer::str2number_token`, integer half (lexer.rs:700-737) |
-| `level10`, `litExpr`      | level 10's `2^63` guard (cypher.rs:2570-2586) + level 9 |
-| `evalLit`                 | level 9 of `parse_expr_inner` (cypher.rs:2547-2565) + `parse_literal` (cypher.rs:445-469) |
-| `asU32`                   | `i as u32` in the var-length hop parser (cypher.rs:1804-1814, 3080-3100) |
+| `level10`, `litExpr`      | level 10's `2^63` guard (cypher.rs:2570-2584) + level 9 |
+| `evalLit`                 | level 9 of `parse_expr_inner` (cypher.rs:2545-2565) + `parse_literal` (cypher.rs:445-469) |
+| `asU32`                   | `i as u32` in the var-length hop parser (cypher.rs:1804, 1811, 3108, 3111) |
 | `Frame`, `Op`, `step`     | the `(level, tree, height)` frames of `parse_expr_inner` and `parse_expr_return!` / `parse_operators!` (macro.rs) |
 | `Reach`                   | every frame update of `parse_expr_inner`, each with its `check_depth` |
-| `setTarget`               | the property loop of `parse_set_items` / `parse_remove_items` (cypher.rs:3333-3327, 3413-3416) |
-| `Call`, `runCall`         | `Parser::nested` (cypher.rs:344-354), `parse_expr`, `parse_foreach_clause` (cypher.rs:3439-3513) |
+| `setTarget`               | the property loop of `parse_set_items` / `parse_remove_items` (cypher.rs:3348-3352, 3444-3448) |
+| `Call`, `runCall`         | `Parser::nested` (cypher.rs:344-354), `parse_expr`, `parse_foreach_clause` (cypher.rs:3469-3543) |
 
 ## What this does NOT cover
 
@@ -314,7 +320,8 @@ theorem rs_boundary (cs : List Char) : RsB cs := rsB_all _ cs (Nat.le_refl _)
 theorem rs_top_boundary (cs : List Char) : Boundary cs (rs cs) := (rs_boundary cs).1
 
 /-- The openCypher `Comment` / `WHITESPACE` rule (Cypher.g4:697-733), for
-the whitespace chars the Rust accepts: a block comment ends at `*/` and an
+the four whitespace chars the Rust skips (the grammar's rule also lists VT, FF, FS, GS, RS, US
+and Unicode spaces, which `read_spaces` does not skip and this model leaves out): a block comment ends at `*/` and an
 unterminated comment or a lone `/` is not whitespace. `none` = the rest is
 not a well-formed whitespace/comment run (or the fuel ran out). -/
 def specSkip : Nat → List Char → Option Nat
@@ -357,8 +364,8 @@ theorem rsLine_spec : ∀ r : List Char,
       cases d <;> simp <;> omega
 
 /-- **`read_spaces` is the spec's whitespace/comment rule** (fixed by #2908,
-`dfa326583`): wherever the openCypher `WHITESPACE`/`Comment` rule accepts the
-run, the Rust skips exactly that many bytes — a block comment ends at its
+`dfa326583`): wherever the openCypher `Comment` rule and the four-character subset of
+`WHITESPACE` modelled by `specSkip` accept the run, the Rust skips exactly that many bytes — a block comment ends at its
 first `*/`, a line comment at its `'\n'`. -/
 theorem rs_agrees_spec : ∀ f : Nat,
     (∀ cs n, specSkip f cs = some n → rs cs = n) ∧
@@ -437,9 +444,11 @@ theorem rs_agrees_spec : ∀ f : Nat,
 
 The pre-`dfa326583` `read_spaces` (lexer.rs:314-362 at `8743953a8`) kept a
 one-char lookahead `next` in three states: the outer loop (`top`), inside
-`// ...` (`line`) and inside `/* ...` (`block`). Kept with the three
-counterexamples it had against `specSkip` (FINDINGS: #2901), all fixed by
-#2908 (`dfa326583`). -/
+`// ...` (`line`) and inside `/* ...` (`block`). It had three counterexamples
+against `specSkip` (FINDINGS: #2901; `pre2908_rs_block_comment_bug`,
+`pre2908_rs_trailing_slash_bug`, `pre2908_rs_unterminated_bug`), all fixed by #2908
+(`dfa326583`). That model and its counterexamples were removed in bbee75955; the last
+revision that has them is 17ccc5412. -/
 
 /-! ### Now: the three inputs, and the Rust regression tests of #2908 -/
 
@@ -1250,14 +1259,15 @@ Since #2910 (`dba677942`) `2^63` is recognised by value, however it is spelled
 (`u64::from_str_radix(number_str, radix) == Ok(1 << 63)`, lexer.rs:726), and
 returned as `i64::MIN` for the parser to sort out. `u64::from_str_radix` errs on
 the empty string and on any value past `u64::MAX`, so the test is exactly
-"non-empty and worth `2^63`". -/
+"non-empty and worth `2^63`". A digit `≥ radix` (not a digit of that radix) makes
+`from_str_radix` fail with `InvalidDigit`, so it is an `Invalid input` error here too. -/
 def str2int (radix : Nat) (ds : List Nat) : Except String Int :=
-  if ds ≠ [] ∧ digitsVal radix ds = 2 ^ 63 then .ok I64MIN
-  else if ds = [] then .error "Invalid input"
+  if ds = [] ∨ ds.any (fun d => radix ≤ d) = true then .error "Invalid input"
+  else if digitsVal radix ds = 2 ^ 63 then .ok I64MIN
   else if (digitsVal radix ds : Int) ≤ I64MAX then .ok (digitsVal radix ds)
   else .error "Integer overflow"                -- IntErrorKind::PosOverflow
 
-/-- Level 9 of `parse_expr_inner` (cypher.rs:2224-2237, 2547-2565) — and
+/-- Level 9 of `parse_expr_inner` (cypher.rs:2228-2244, 2545-2565) — and
 `parse_literal` (cypher.rs:445-469), which has the same three cases — applied
 to one literal token, optionally preceded by `-`; a `Negate` node over a
 constant then evaluates by `checked_neg`, which cannot fail on `0..=i64::MAX`. -/
@@ -1268,9 +1278,10 @@ def evalLit (neg : Bool) : Except String Int → Except String Int
     else if v = I64MIN then .error "Integer overflow '9223372036854775808'"
     else .ok v
 
-/-- openCypher: the literal's value, negated if asked, if it fits `i64`. -/
+/-- openCypher: the literal's value, negated if asked, if it fits `i64`; a digit string
+that is empty or has a digit `≥ radix` is not a literal. -/
 def specLit (neg : Bool) (radix : Nat) (ds : List Nat) : Option Int :=
-  if ds = [] then none else
+  if ds = [] ∨ ds.any (fun d => radix ≤ d) = true then none else
   let w : Int := if neg then -(digitsVal radix ds : Int) else digitsVal radix ds
   if I64MIN ≤ w ∧ w ≤ I64MAX then some w else none
 
@@ -1281,11 +1292,17 @@ theorem canon_min_val : ∀ r ∈ [2, 8, 10, 16], digitsVal r (canon r (2 ^ 63))
 
 /-- **Integer literals are exact** (since #2910, for *every* spelling): for a
 non-empty digit string, leading zeros or not, negated or not, the parser
-produces the literal's value when it fits `i64` and an error otherwise. -/
+produces the literal's value when it fits `i64` and an error otherwise. The digit values are
+arbitrary: a digit `≥ radix` is an error on both sides (`from_str_radix`'s `InvalidDigit`), so
+no hypothesis ties `ds` to the scanner (`lex_numeric` only hands digits of the radix on). -/
 theorem int_literal_correct (neg : Bool) (radix : Nat) (ds : List Nat) (hne : ds ≠ []) :
     (evalLit neg (str2int radix ds)).toOption = specLit neg radix ds := by
+  by_cases hb : ds.any (fun d => radix ≤ d) = true
+  · simp [str2int, specLit, hb, evalLit]
+  have hc : ¬ (ds = [] ∨ ds.any (fun d => radix ≤ d) = true) := by simp [hne, hb]
   unfold str2int specLit
-  simp only [hne, ne_eq, not_false_eq_true, true_and, if_false]
+  rw [if_neg hc, if_neg hc]
+  simp only [ne_eq, hne, not_false_eq_true, true_and]
   generalize digitsVal radix ds = v
   have e1 : I64MIN = -9223372036854775808 := rfl
   have e2 : I64MAX = 9223372036854775807 := rfl
@@ -1333,7 +1350,7 @@ def level9 : LitTree → Except String LitTree
   | .const v => if v = I64MIN then .error "Integer overflow" else .ok (.const v)
   | e => .ok e
 
-/-- Level 10 since #2910 (`dba677942`, cypher.rs:2570-2586): a bare
+/-- Level 10 since #2910 (`dba677942`, cypher.rs:2570-2584): a bare
 `Constant(i64::MIN)` followed by a postfix token (`[`, `.`, `{`, `:`) is the
 unnegated literal `2^63` and is an overflow, before the postfix loop wraps
 it. Otherwise the postfix (if any) wraps the tree. -/
@@ -1363,7 +1380,7 @@ theorem litExpr_other (neg pf : Bool) (v : Int) (hv : v ≠ I64MIN) :
     ∃ t, litExpr neg pf v = .ok t := by
   cases neg <;> cases pf <;> simp [litExpr, level10, level9, hv]
 
-/-- `i as u32` on an `i64` hop count (cypher.rs:1806, 1813, 3073, 3089). -/
+/-- `i as u32` on an `i64` hop count (cypher.rs:1804, 1811, 3108, 3111). -/
 def asU32 (i : Int) : Nat := (i % 2 ^ 32).toNat
 
 /-- `*4294967298` is `*2` and `*4294967296` is `*0`; the i64::MIN token of
@@ -1564,8 +1581,8 @@ theorem chain_rejected : ¬ ∃ e, Reach (chain 256) e := by
   rw [chain_height] at this
   simp [MAX_TREE_DEPTH] at this
 
-/-- …but `parse_set_items` / `parse_remove_items` (cypher.rs:3333-3327,
-3331-3334) build the SET/REMOVE target with `parse_property_lookup` in a bare
+/-- …but `parse_set_items` / `parse_remove_items` (cypher.rs:3348-3352,
+3444-3448) build the SET/REMOVE target with `parse_property_lookup` in a bare
 `while` loop, outside `Reach`: no estimate, no check. Modelled literally, it
 accepts every length, so the tree the binder then recurses over is unbounded
 (repro: `MATCH (n) SET n.a.a…(5000) = 1` overflows the binder's stack;
@@ -1586,7 +1603,7 @@ theorem set_target_unbounded (k : Nat) :
 /-- The parser's call-recursive descents. `expr` is a `parse_expr` (or
 `parse_literal_list/map`, `CALL {}`) — all routed through `Parser::nested`;
 `foreach` is `parse_foreach_clause`, whose body re-enters itself directly
-(cypher.rs:3493-3496). -/
+(cypher.rs:3527, in the body loop 3484-3531). -/
 inductive Call
   | leaf
   | expr (kids : List Call)

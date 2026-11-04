@@ -8,7 +8,7 @@ import Columnar.Dispatch
 The arms of `VecEval.eval` instantiated with the lanes modelled in this project, over one
 batch `b` and the runtime record `rt` (`armsOf`), and the per-row reference *being*
 proofs/expr_semantics' `evalNode` on the batch row `BatchRow::value_at` (`rowSem`; this is
-what `eval_per_row` runs, vector_expr.rs:708-725). **`lawful`** proves every field of
+what `eval_per_row` runs, vector_expr.rs:708-721). **`lawful`** proves every field of
 `VecEval.Lawful` from the lane theorems: `evalVariable_agree`, `propertyValues` +
 `classifyExact_exact`, `evalAndOr_sound`, `negate_agree` (with `notRow_eq`),
 `arithmetic_agree`, `evalCase_sound`, `compareColumns_agree` (with `allEq_rowCmp`,
@@ -33,7 +33,7 @@ variable {F : Type} [FloatModel F]
 
 set_option linter.unusedSectionVars false
 
-/-! ## `eval_property` (vector_expr.rs:333-354) and `property_values` (:356-389) -/
+/-! ## `eval_property` (vector_expr.rs:333-351) and `property_values` (:356-383) -/
 
 /-- `property_values`: a bound node / relationship column, gathered at `rows`, one bulk fetch. -/
 def propertyValues (rt : RT F) (col : Nat → Column F) (attr : String) : E (V F) → List Nat → Option (List (V F))
@@ -136,11 +136,11 @@ def rowSem : RowSem (V F) (EC F) where
   wf := fun col len => col.WF len
   rowEval := rowEval rt c b
 
-/-- `eval_per_row` (vector_expr.rs:708-725). -/
+/-- `eval_per_row` (vector_expr.rs:708-721). -/
 def perRow (e : E (V F)) (rows : List Nat) : Except String (EC F) :=
   (rows.mapM (rowEval rt c b e)).map EC.values
 
-/-- `VectorEval` over batch `b` (vector_expr.rs:211-283). -/
+/-- `VectorEval` over batch `b` (vector_expr.rs:211-271). -/
 def armsOf : Arms (V F) (EC F) where
   scalar := .scalar
   params := rt.params

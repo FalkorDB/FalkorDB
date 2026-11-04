@@ -1,6 +1,6 @@
 import PendingCommit.PendingCommitOp
 /-
-# UNIQUE constraints enforced by index lookup (#3334, #3547/#2386; pending.rs:156-290, :1522-1700)
+# UNIQUE constraints enforced by index lookup (#3334, #3547/#2386; pending.rs:61-290 `unique_violated` and helpers, :1580-1700 constraint checks)
 
 Before #3334 (fixing #3330) a UNIQUE check scanned the whole label (type) once per
 affected member: `PC.check` / `PC.scan_ok` / `PC.check_spec` (kept as the reference
@@ -17,18 +17,26 @@ gathered so far are dropped (none runs). The RediSearch `query_for` is
 | Lean | Rust |
 | --- | --- |
 | `EV`, `exactLookup`, `exactLookup_spec` | `is_value_valid_for_index_lookup` (:160) |
-| `gather` | the member loop of `unique_violated` (:231-262): `keys`, `lookups`, `use_index` |
+| `gather` | the member loop of `unique_violated` (:235-262): `keys`, `lookups`, `use_index` |
 | `uniqueViolated` | `unique_violated` (:217) |
-| `checkMandatory`, `checkUnique`, `checkNode2`, `checkEdge2` | `check_node_constraint` (:1522), `check_edge_constraint` (:1614) |
+| `checkMandatory`, `checkUnique`, `checkNode2`, `checkEdge2` | `check_node_constraint` (:1580), `check_edge_constraint` (:1672) |
 | `UniqueQuery.lean`: `Query`, `redisearchQuery` | `redisearch_unique_query` (:174) |
 
 Modelling:
 * Values are an abstract type `V` with decidable equality; `attr e q = none` is an absent
   or `Null` property (both filtered by Rust before keying). The composite key of `e` is
-  `key e = props.mapM (attr e)`: `Graph::build_composite_key` (graph.rs:4607) returns the
+  `key e = props.mapM (attr e)`: `Graph::build_composite_key` (graph.rs:4772) returns the
   empty byte string iff a property is null/absent, and otherwise the `Debug` rendering of
-  each value followed by `'|'`, which we take as injective (strings render quoted and
-  escaped). With `props = []` both sides degenerate the same way (`some []` / `b""`).
+  each value followed by `'|'`. Key equality is therefore equality of the derived `Debug`
+  renderings, and `V` is to be read as the set of those renderings (`V` equality = key
+  equality). **Modelling assumption:** the rendering is injective on the values a property can
+  hold except for floating-point NaN: every NaN, whatever its payload or sign, renders as
+  `NaN`, so two distinct NaN bit patterns share a key (`0.0` and `-0.0` render differently,
+  as `Int(1)` and `Float(1.0)` do). With `V` read as renderings this is exactly Rust's
+  behaviour (two NaN-valued members count as sharing a key; `is_value_valid_for_index_lookup`
+  also sends NaN to the scan); the theorems say nothing about a finer notion of value
+  equality. Strings render quoted and escaped. With `props = []` both sides degenerate the
+  same way (`some []` / `b""`).
 * `FxHashSet`/`Vec` are lists; `RoaringTreemap` iteration is a duplicate-free list.
 * The lookup (`queryFor`, `lookup`) and the label/type scan (`scan`) are uninterpreted. The
   theorems that compare with a specification take, as explicit hypotheses, the contract the
@@ -427,7 +435,7 @@ def checkUnique (props affected : List Nat) (member : Nat → Bool) (attr : Nat 
   !uniqueViolated props (affected.filter member) (fun o => decide (o ∈ affected)) attr isCand qf
     lookup scan
 
-/-- `check_node_constraint` (:1522): no such label ⇒ `Ok`. `isCand` for nodes is
+/-- `check_node_constraint` (:1580): no such label ⇒ `Ok`. `isCand` for nodes is
 `!deleted_nodes.contains(n) && constraint_node_has_label(n)` (`PC.constraintHas`). `qf`/`lookup`
 are the per-cfg `(query_for, lookup)` pair. -/
 def checkNode2 (labelExists : Bool) (ct : CT) (props affected : List Nat) (member : Nat → Bool)
@@ -437,7 +445,7 @@ def checkNode2 (labelExists : Bool) (ct : CT) (props affected : List Nat) (membe
     | .mandatory => checkMandatory props affected member present
     | .unique => checkUnique props affected member attr isCand qf lookup scan
 
-/-- `check_edge_constraint` (:1614): membership is `PC.edgeMember`; `isCand` is
+/-- `check_edge_constraint` (:1672): membership is `PC.edgeMember`; `isCand` is
 `!deleted_relationships.contains(e)` (the index and the tensor hold only this type). -/
 def checkEdge2 (ct : CT) (props affected : List Nat) (member : Nat → Bool)
     (present : Nat → Nat → Bool) (attr : Nat → Nat → Option V) (isCand : Nat → Bool)

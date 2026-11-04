@@ -5,7 +5,10 @@ import RedisLayer.GraphCore
 `GraphCore.cGraphKey` models the key a new graph is *stored* under as bytes, and
 `GraphCore.Lossy` keeps UTF-8 decoding abstract. What reaches replication and
 `WATCH` signalling is `key_name: Arc<str>`, a `String`, so a non-UTF-8 key goes through
-`from_utf8_lossy`. This file gives a concrete lossy decoder and states the property.
+`from_utf8_lossy`. This file gives a concrete lossy decoder and states the property. `decF`/`lossy` are a
+standalone model: they are not constructed as a `GraphCore.Lossy` (the abstract `from_utf8_lossy`
+hypothesis `cGraphName` uses), so `cGraphName_key` does not rest on this decoder and the two are
+not bridged by a theorem.
 
 | here | there (fb3d516d0) |
 | --- | --- |
@@ -113,8 +116,9 @@ def kFF : Bytes := [0xff, 0xfe]
 
 /-- **BUG #2653**: an invalid-UTF-8 key is replicated with U+FFFD (`EF BF BD`) in place
 of each invalid subpart, so the replica writes a different key. Live (primary 6650 →
-replica 6652, Rust main): keys `\xc3(bin2`, `\xff\xfd` arrive as `\xef\xbf\xbd(bin2`,
-`\xef\xbf\xbd\xef\xbf\xbd`; C's replica has the primary's keys. -/
+replica 6652, Rust main): a key `\xc3(bin` arrives as `\xef\xbf\xbd(bin` (FINDINGS), and a key of the
+shape `\xff\xfe` as `\xef\xbf\xbd\xef\xbf\xbd`; `kBin` and `kFF` are exactly these model keys. C's replica has the
+primary's keys. -/
 theorem bug2653_nonutf8_key_mangled :
     rustReplicatedKey kBin = [0xef, 0xbf, 0xbd, 0x28, 0x62, 0x69, 0x6e] ∧
     rustReplicatedKey kFF = [0xef, 0xbf, 0xbd, 0xef, 0xbf, 0xbd] ∧

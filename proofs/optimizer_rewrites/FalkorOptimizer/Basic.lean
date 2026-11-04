@@ -477,7 +477,7 @@ theorem filter_and_single (c : Expr) (xs : List Row) :
   | cons r rs ih => simp only [filterRows, passes_and_single, ih]
 
 /-- Whole-filter removal is sound when the filter is `true` on every row. Since
-#2904, `ConstEval.constTrue_sound` derives that hypothesis from the plan-time
+#2904, `ConstEval.constEval_sound` derives that hypothesis from the plan-time
 constant evaluator's verdict (before #2904 it was false for `^`, issue #2902). -/
 theorem eliminate_whole_filter (c : Expr) (xs : List Row)
     (hconst : ∀ r, eval r c = .ok (.bool true)) : filterRows c xs = .ok xs := by

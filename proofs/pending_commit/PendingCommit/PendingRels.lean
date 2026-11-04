@@ -1,7 +1,7 @@
 import PendingCommit.PendingState
 /-
 # Created relationships, label scans and degrees in `Pending`
-(pending.rs:689-1075). See `PendingState.lean`'s header for the statements.
+(pending.rs:902-1200: `remove_pending_relationships_for_node` to `has_created_relationships`). See `PendingState.lean`'s header for the statements.
 -/
 namespace PendingCommit.PS
 open PA
@@ -13,12 +13,12 @@ def grp (p : P) (t : Nat) : List (Nat × Nat × Nat) := (fget p.relsByType t).ge
 def RelInv (p : P) : Prop :=
   (∀ r t, fget p.relTypes r = some t ↔ r ∈ (grp p t).map (·.1)) ∧ (∀ t, ((grp p t).map (·.1)).Nodup)
 
-/-- `created_relationship` (:751). -/
+/-- `created_relationship` (:962). -/
 def createdRel (p : P) (rid f to t : Nat) : P :=
   { p with relsByType := fset p.relsByType t (grp p t ++ [(rid, f, to)]),
            relTypes := fset p.relTypes rid t, taken := sins p.taken rid }
 
-/-- `get_created_relationship_endpoints` (:939). -/
+/-- `get_created_relationship_endpoints` (:1177). -/
 def createdEndpoints (p : P) (rid : Nat) : Option (Nat × Nat) :=
   (fget p.relTypes rid).bind fun t => (fget p.relsByType t).bind fun es =>
     (es.find? (·.1 == rid)).map (fun e => e.2)

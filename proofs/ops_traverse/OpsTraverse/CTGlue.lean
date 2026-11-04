@@ -164,7 +164,7 @@ structure CtState where
   revDst : List Nat
   edgeTypes : List Nat
   noMatch : Bool
-  /-- the single-type `rev_iter` exists (never for a multi-type pattern: `!multi_type`, :550) -/
+  /-- the single-type `rev_iter` exists (never for a multi-type pattern: `!multi_type`, :552) -/
   hasRev : Bool
   /-- `rp.types.len() > 1`: the per-type `UnionIter` carries the pattern (`CtState::union`) -/
   multi : Bool
@@ -188,9 +188,10 @@ def buildState (resolve : List String → Option (List Nat)) (typeId : String �
     noMatch, hasRev := bidir && !(decide (types.length > 1)),
     multi := decide (types.length > 1), unionRev := bidir && decide (types.length > 1) }
 
-/-- An unknown label or relationship type sets `no_match` (no rows, but the child is still
-drained; `fwdOk`/`revOk` are whether the iterator builders found their matrices, see
-`UnionGlue.fwdOkOf`); the source/destination label sets swap under transposition; no type means every
+/-- An unknown label sets `no_match` (no rows, but the child is still drained), and so does a
+builder that found no matrix: `fwdOk`/`revOk` say whether the iterator builders found theirs, which
+for a single or untyped pattern fails on an unknown type and for a multi-type pattern only when NO
+type exists (see `UnionGlue.fwdOkOf`); the source/destination label sets swap under transposition; no type means every
 relationship tensor. -/
 theorem buildState_spec (resolve : List String → Option (List Nat)) (typeId : String → Option Nat)
     (n : Nat) (fromL toL types : List String) (bidir tr fwdOk revOk : Bool) :

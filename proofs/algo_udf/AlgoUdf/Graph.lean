@@ -6,11 +6,11 @@ import AlgoUdf.Paths
 | here | there |
 | --- | --- |
 | `G.rels u`  | `Graph::get_node_relationships_by_type(u, relTypes, relDirection)` as `(src, dst, eid)` (AXIOMATISED: any finite list) |
-| `G.wt e`    | `edge_numeric_attr(g, e, weightProp, 1.0)` :2156, `none` when the sum is non-finite (the edge is skipped, :2316-2321, :2583) |
-| `G.cost e`  | `edge_numeric_attr(g, e, costProp, 1.0)` :2156 (default 1 since #3113; the model takes any cost function) |
-| `Edge`      | one relaxation candidate: `far_endpoint` :2173 accepts it and the weight is finite |
+| `G.wt e`    | `edge_numeric_attr(g, e, weightProp, 1.0)` :2167, `none` when the sum is non-finite (the edge is skipped, :2331-2333, :2594) |
+| `G.cost e`  | `edge_numeric_attr(g, e, costProp, ·)` :2167; the default is mode-specific: enumeration and the BFS bound use `1.0` (:2465, :2587, #3113), the Dijkstra fast path uses `1.0` when `costProp` is configured and `0.0` when it is absent (`missing_cost` :2372, #3580; see `CostProp.lean`). The model takes any cost function |
+| `Edge`      | one relaxation candidate: `far_endpoint` :2184 accepts it and the weight is finite |
 | `Walk`      | an edge sequence in traversal order, edges kept in their stored direction (`FoundPath.0`) |
-| `succs`     | `node_successors` :2205 |
+| `succs`     | `node_successors` :2216 |
 
 Weights are exact non-negative naturals: f64 rounding, NaN/inf (already
 filtered by the Rust `is_finite` checks) and negative weights are out of the
@@ -56,7 +56,7 @@ inductive HWalk (g : G) : Nat → List Rel → Nat → Prop
   | cons {u v w : Nat} {r : Rel} {rest : List Rel} :
       Adj g u v r → HWalk g v rest w → HWalk g u (r :: rest) w
 
-/-- `node_successors` :2205: `filter_map(far_endpoint)` over the typed relationships. -/
+/-- `node_successors` :2216: `filter_map(far_endpoint)` over the typed relationships. -/
 def succs (g : G) (u : Nat) : List (Rel × Nat) :=
   (g.rels u).filterMap (fun r => (farEndpoint u r.1 r.2.1 g.dir).map (fun far => (r, far)))
 

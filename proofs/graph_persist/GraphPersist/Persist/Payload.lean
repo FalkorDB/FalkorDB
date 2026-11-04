@@ -99,7 +99,7 @@ theorem decIdx_rt {β : Type} (C : Codec β) (xs : List β) (hn : xs.length < 2 
 
 /-! ## The graph -/
 
-/-- `Header` (serializers/mod.rs:200-232). -/
+/-- `Header` (serializers/mod.rs:123). -/
 structure Hdr (Nm : Type) where
   name : Nm
   nodeCount : Nat
@@ -111,7 +111,7 @@ structure Hdr (Nm : Type) where
   multiEdge : List Bool
   keyCount : Nat
 
-/-- `Schema` (serializers/mod.rs:236-242). -/
+/-- `Schema` (serializers/mod.rs:237). -/
 structure Sch (Nm Ix Cn : Type) where
   attrs : List Nm
   labels : List Nm
@@ -148,10 +148,10 @@ structure G (M Tn Nm Ix Cn : Type) where
 variable {M Tn Nm Ix Cn : Type}
 
 /-- The ids `encode_with_range` walks: `0..=max_id` (`max_id = count + |deleted| - 1`,
-graph.rs:1683), skipping deleted ones. -/
+`Graph::max_node_id`, graph.rs:1783; the loop is `encode_with_range`, attribute_store.rs:1425-1437), skipping deleted ones. -/
 def live (n : Nat) (del : List Nat) : List Nat := (List.range (n + del.length)).filter fun i => decide (i ∉ del)
 
-/-- `Header::from_graph(graph, graph_name, key_count)` (serializers/mod.rs:212). -/
+/-- `Header::from_graph(graph, graph_name, key_count)` (serializers/mod.rs:213). -/
 def hdrOf (g : G M Tn Nm Ix Cn) (name : Nm) (k : Nat) : Hdr Nm :=
   ⟨name, g.nodeCount, g.edgeCount, g.delNodes.length, g.delEdges.length, g.labelMats.length,
    g.tensors.length, g.multiEdge, k⟩
@@ -172,7 +172,7 @@ still writes one — never reached: every payload entry has `count > 0`). -/
 def encRange (S : Store) (ids : List Nat) (count off : Nat) : Stream :=
   ((ids.drop off).take (max count 1)).flatMap (encEnt S)
 
-/-- `Graph::encode_payload` (graph.rs:4926-4979). -/
+/-- `Graph::encode_payload` (graph.rs:5093-5146). -/
 def encPayload (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (e : Entry) : Stream :=
   match e.st with
   | .nodes => encRange g.nodes (live g.nodeCount g.delNodes) e.count e.offset

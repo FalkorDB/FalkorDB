@@ -14,7 +14,7 @@ their `sel` agree on every node of the graph.
 | `valueToNumeric`           | `Index::value_to_numeric`, `index/mod.rs:1357-1363` |
 | `lossy`                    | `Index::int_loses_f64_precision`, `index/mod.rs:1371-1372` |
 | `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs:1477-1687` (`null_mut` ↦ `none`) |
-| `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs:1691`, `graph/graph.rs:3934`) |
+| `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs:1691`, `graph/graph.rs:4191`) |
 | `isIndexable`, `canUtilize`| `NodeByIndexScanOp::can_utilize_index`, `runtime/ops/node_by_index_scan.rs:251-295` |
 | `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs:98-245` (InList → one `InList` of the scalar items since #2383; an `Or` of `Equal`s before) |
 | `T`, `R`, `A`, `F`         | `ExprIR` filter trees: terms, IN right-hand sides, atoms, AND/OR roots |

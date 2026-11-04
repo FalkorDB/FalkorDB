@@ -13,7 +13,9 @@ The readers (`live`, `recycled`, `bound`, `max_id`, `is_free`,
 restated verbatim, with their id_space.rs line.
 
 `RoaringTreemap` = a duplicate-free `List Nat` read with membership
-(`insert` = `ins`, `|=` = `union`, `-=` = `diff`, `len` = `length`).
+(`insert` = `ins`, `|=` = `union`, `-=` = `diff`, `len` = `length`). A request
+list is a set in Rust, so a clause that reads its length (`create_ok`) takes
+`ns.Nodup`; the other clauses are membership statements and need no such premise.
 -/
 namespace GQ
 
@@ -68,18 +70,30 @@ and `released |= freed` (:717, a per-batch field graph.rs never reads, so not
 part of `IdS`); `cancel`: `recycled.insert(id)` (:536);
 `open_batch` moves only `entry_bound`/`taken` (:449-450). -/
 structure IdSpaceContract (O : IdSpaceOps) : Prop where
-  create_ok : ∀ s ns s', O.create s ns = some s' →
+  /-- `ns` is a `RoaringTreemap` in Rust, so duplicate-free: `live += nodes.len()` is a count of
+  distinct ids only under `Nodup` (a list `[id, id]` is not a set the Rust code can hold). -/
+  create_ok : ∀ s ns s', ns.Nodup → O.create s ns = some s' →
     s'.live = s.live + ns.length ∧ s'.recycled = diff s.recycled ns
   create_refuses_live : ∀ s ns n, n ∈ ns → n ∉ s.recycled → n < s.entryBound →
     O.create s ns = none
-  /-- #2911 (`fe619ac5f`): `nodes.max().filter(|&id| id >= ID_LIMIT)` (id_space.rs:599);
-  `ID_LIMIT = GrB_INDEX_MAX = 2^60 - 1` (id_space.rs:112). Proven in proofs/id_space as
+  /-- A second `create` of an id this batch already created (`claimed & taken` non-empty,
+  `AlreadyLive`): the in-batch double create is refused. -/
+  create_refuses_taken : ∀ s ns n, n ∈ ns → n ∉ s.recycled → n ∈ s.taken →
+    O.create s ns = none
+  /-- #2911 (`fe619ac5f`): `nodes.max().filter(|&id| id >= ID_LIMIT)` (id_space.rs:586);
+  `ID_LIMIT = GrB_INDEX_MAX = 2^60 - 1` (id_space.rs:100). Proven in proofs/id_space as
   `create_out_of_range`. -/
   create_refuses_limit : ∀ s ns n, n ∈ ns → 2 ^ 60 - 1 ≤ n → O.create s ns = none
   release_ok : ∀ s req fr s', O.release s req fr = some s' →
     s'.recycled = union s.recycled fr ∧ s'.live = s.live - fr.length
   release_refuses_recycled : ∀ s req fr n, n ∈ req → n ∈ s.recycled →
     O.release s req fr = none
+  /-- `refuse_undeletable` (id_space.rs:638): an id at or above the batch's `entry_bound` that this
+  batch did not create (not in `taken`) cannot be released. -/
+  release_refuses_undeletable : ∀ s req fr n, n ∈ req → s.entryBound ≤ n → n ∉ s.taken →
+    O.release s req fr = none
+  /-- `cancel` of an id already in `taken` (a second cancel) is refused (`AlreadyTaken`). -/
+  cancel_refuses_taken : ∀ s id, id ∈ s.taken → O.cancel s id = none
   cancel_ok : ∀ s id s', O.cancel s id = some s' →
     s'.recycled = ins s.recycled id ∧ s'.live = s.live
   open_ok : ∀ s s', O.openBatch s = some s' →

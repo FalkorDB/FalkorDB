@@ -132,15 +132,15 @@ Known before this wave (counterexamples added):
 New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 1. **FIXED by #3113 (`8a66c01e5`)** — SPpaths/SSpaths charged a missing cost as 0
    (algo_procedures.rs bound and enumeration); C charges 1 per edge, so pathCost = hops
-   without costProp and `maxCost` bounds hops. Now default 1.0 (:2399, :2521):
+   without costProp and `maxCost` bounds hops. Now default 1.0 (:2465, :2587):
    `Paths.cost_agree`, `cost_no_prop_hops`, `cost_default_agrees`. The Dijkstra fast path with no `costProp` reports 0, as C's does
    (live, `Paths.dijkstra_cost_no_prop`); with a configured `costProp` it charges 1 since #3580.
 2. **FIXED by #3074** — UDF map with key `constructor: {name:'Date'}` fails ("Date getTime error");
    `{name:'RegExp'}` becomes the string "[object Object]" (type_convert.rs:314-350).
-   `Marshal.constructor_key_breaks_roundtrip`, `constructor_regexp_becomes_string`;
+   Now `Marshal.constructor_key_roundtrips`, `constructor_regexp_roundtrips`;
    `bug_udf_constructor_key_mistaken_for_date` (C returns the map).
 3. **FIXED by #3074** — vecf32 holding ±inf cannot pass through a UDF (type_convert.rs:239-241).
-   `Marshal.vecf32_inf_not_roundtrip`; `bug_udf_vecf32_inf_rejected` (C [inf]).
+   Now `Marshal.vecf32_inf_rt`; `bug_udf_vecf32_inf_rejected` (C [inf]).
 4. betweenness / HarmonicCentrality with an unknown nodeLabels entry return no rows;
    C errors ("unknown label Nope"). `bug_betweenness_unknown_label_is_empty_not_error` — **FIXED by #3058** (`Compact.checkKnown_*`).
 
@@ -148,7 +148,7 @@ New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 * #3074 (`7a81c83b0`, issue #3073) — `js_to_value` keeps -0.0 a Float (type_convert.rs:203),
   picks Date/RegExp by internal class (`JS_IsDate`/`JS_IsRegExp`, :313-345) instead of a
   `constructor` property, and lets non-finite vecf32 elements through (:236-244).
-  Now: `Marshal.float_rt_iff` (−0.0 excluded), `neg_zero_rt`,
+  Now: `Marshal.float_rt_iff` (an integral float below 2^53 comes back as an Int, except −0.0, which stays a Float), `neg_zero_rt`,
   `plain_obj_is_map`, `constructor_key_roundtrips`, `constructor_regexp_roundtrips`,
   `vecf32_rt`, `vecf32_inf_rt`.
 * #3079 (`006428fc5`, issue #3077) — the validation context now defines the `graph` global
@@ -186,7 +186,8 @@ New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 * getNeighbors `types: [123]` silently disables the type filter
   (`Neighbors.non_string_types_disable_filter`); C crashes on that input (C bug).
 * betweenness samples deleted slots on the unfiltered path (`Compact.seed0_samples_deleted`).
-* Datetime `ts * 1000` is unchecked i64 arithmetic (type_convert.rs:215, 224) — modelled as an error.
+* Datetime `ts * 1000` is unchecked i64 arithmetic (type_convert.rs:215, 224): the release profile sets no
+  `overflow-checks`, so it wraps (`Marshal.wrapI64`, `toJs_datetime`); a debug build would panic.
 
 ## Gaps (earlier waves)
 Closed in wave 5: Dijkstra, the DFS enumeration, the BFS bound, BFS parent→edge
@@ -198,7 +199,7 @@ reconstruction, js_context/js_globals glue and graph.traverse/iterate*.
   `bug3380_seedless_deterministic` (no clock seed; `SeedlessRunVaries`),
   `bug3380_seeded_fewer_sources` (20 requested on 40 nodes, seed 7 → 15; `SourcesExact`).
 * #3121 `CostProp`: `costProp` configured vs. absent kept apart (`edge_numeric_attr` :2167).
-  **FIXED by #3580**: the Dijkstra fast path (:2369-2375) charges a configured but missing cost 1
+  **FIXED by #3580**: the Dijkstra fast path (:2372-2375) charges a configured but missing cost 1
   like C; `fastpath_missing_cost_one` (property `MissingCostIsOne` holds on both paths).
 * #3349 `LagContract`: the LAGraph contract now has the `LAGRAPH_INVALID_GRAPH` (-1000)
   outcome (`LAGraph_CheckGraph` rejects by-column storage; GraphBLAS stores n-by-1, hence
@@ -210,8 +211,8 @@ runtime; the counterexamples were removed (in 17ccc5412).
 
 ## Fixed on main (re-target 1c0e6c8de → ee21013d6)
 * #3045 (fixes #3044) — HarmonicCentrality sizes its unfiltered source vector by `g.node_id_bound()`
-  (algo_procedures.rs:2848-2860); every `node_count() + deleted_nodes_count()` in the algo procedures became
-  `node_id_bound()` (:783, :893, :1020, :1315). `Compact.harmonic_complete` (every live node is a source
+  (algo_procedures.rs:2826, :2851); every `node_count() + deleted_nodes_count()` in the algo procedures became
+  `node_id_bound()` (:775, :885, :1012, :1033, :1307, :2826, :2851). `Compact.harmonic_complete` (every live node is a source
   and reported), `unfiltered_keeps_high_ids` (ids 0..4, node 0 deleted: `[1,2,3,4]`; it was `[1,2,3]`).
   Replaces the old counterexample `unfiltered_drops_high_ids`.
 * #3032 (fixes #3029) — new `compact_to_original` (:449) maps the WCC component / CDLP community id back to the
@@ -220,7 +221,7 @@ runtime; the counterexamples were removed (in 17ccc5412).
   `wcc_compact_component_id_member` (active ids [0,2,3], LAGraph reps [0,1,1] → `[(0,0),(2,2),(3,2)]`),
   `compactToOriginal_none`. Replaces `wcc_compact_component_id_not_member`.
 * #3580 (fixes #3121) — `dijkstra_single_path` charges `missing_cost` = 1 for an edge lacking a configured
-  `costProp` (0 with none) (:2369-2375). `CostProp.fastpath_missing_cost_one`, `fast_eq_enum`, `fast_unconfigured_agree`;
+  `costProp` (0 with none) (:2372-2375). `CostProp.fastpath_missing_cost_one`, `fast_eq_enum`, `fast_unconfigured_agree`;
   `Paths.dijkstra_cost_configured`, `dijkstra_cost_no_prop` (`dijkstraCostRust` now takes the configured flag).
   Model note `CostProp.fast_unknown_name_hops`: a configured name the graph never saw costs 1 per edge in Rust
   (the `c.so` model gives 0; newer master's `_sum_path_cost` gives 1); not re-run live.

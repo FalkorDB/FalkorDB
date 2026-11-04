@@ -27,7 +27,7 @@ not), `firstRel_edge_pred`/`chainRel_edge_pred` (a fixed hop's edge map is a Fil
 above an operator that emits every parallel edge), `walk_keeps_edge_attrs`,
 `firstRel_stripped`/`chainRel_stripped`/`planComp_stripped`/`planMatch_stripped`, and the
 fixed bug (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412).
-| `buildPatternSubPlan` | `build_pattern_sub_plan` mod.rs:1038-1049 |
+| `buildPatternSubPlan` | `build_pattern_sub_plan` mod.rs:1033-1044 |
 
 Expressions and the WHERE (`plan_filter`, FilterPlan.lean) are parameters;
 operators are recorded with the relationship they traverse.
@@ -39,8 +39,10 @@ structure QN where
   labels : List String := []
   attrs : List (String × Ex) := []
   /-- Identity of the attrs map (`Arc::as_ptr(attrs)`), the third component of
-  `lower_inline_attrs`'s key. -/
-  ptr : Nat := 0
+  `lower_inline_attrs`'s key. No default: a literal must name an identity, because two distinct
+  non-empty maps given the same one share a lowering key and the second is dropped (`0` is fine
+  where `attrs = []`, which is never lowered). -/
+  ptr : Nat
 
 inductive Kind | fixed | varLen | shortest
   deriving DecidableEq
@@ -52,7 +54,7 @@ structure QR where
   to : QN
   kind : Kind := .fixed
   attrs : List (String × Ex) := []
-  ptr : Nat := 0
+  ptr : Nat
 
 structure Comp where
   nodes : List QN
@@ -238,14 +240,16 @@ def stripEndpoints (r : QR) : QR :=
 theorem stripNode_self (n : QN) (h : n.attrs = []) : stripNode n = n := by simp [stripNode, h]
 
 theorem stripNode_spec (n : QN) :
-    (stripNode n).attrs = [] ∧ (stripNode n).alias = n.alias ∧ (stripNode n).labels = n.labels := by
+    (stripNode n).attrs = [] ∧ (stripNode n).alias = n.alias ∧ (stripNode n).labels = n.labels ∧
+    (stripNode n).ptr = n.ptr := by
   unfold stripNode; split <;> simp_all
 
 theorem stripRel_spec (r : QR) :
     (stripRel r).attrs = [] ∧ (stripRel r).frm.attrs = [] ∧ (stripRel r).to.attrs = [] ∧
     (stripRel r).alias = r.alias ∧ (stripRel r).named = r.named ∧ (stripRel r).kind = r.kind ∧
     (stripRel r).frm.alias = r.frm.alias ∧ (stripRel r).to.alias = r.to.alias ∧
-    (stripRel r).frm.labels = r.frm.labels ∧ (stripRel r).to.labels = r.to.labels := by
+    (stripRel r).frm.labels = r.frm.labels ∧ (stripRel r).to.labels = r.to.labels ∧
+    (stripRel r).ptr = r.ptr ∧ (stripRel r).frm.ptr = r.frm.ptr ∧ (stripRel r).to.ptr = r.to.ptr := by
   unfold stripRel
   split
   · rename_i h; simp only [Bool.and_eq_true, List.isEmpty_iff] at h; simp [h]
@@ -256,7 +260,9 @@ theorem stripEndpoints_spec (r : QR) :
     (stripEndpoints r).to.attrs = [] ∧ (stripEndpoints r).alias = r.alias ∧
     (stripEndpoints r).named = r.named ∧ (stripEndpoints r).kind = r.kind ∧
     (stripEndpoints r).frm.alias = r.frm.alias ∧ (stripEndpoints r).to.alias = r.to.alias ∧
-    (stripEndpoints r).frm.labels = r.frm.labels ∧ (stripEndpoints r).to.labels = r.to.labels := by
+    (stripEndpoints r).frm.labels = r.frm.labels ∧ (stripEndpoints r).to.labels = r.to.labels ∧
+    (stripEndpoints r).ptr = r.ptr ∧ (stripEndpoints r).frm.ptr = r.frm.ptr ∧
+    (stripEndpoints r).to.ptr = r.to.ptr := by
   unfold stripEndpoints
   split
   · rename_i h; simp only [Bool.and_eq_true, List.isEmpty_iff] at h; simp [h]
@@ -507,7 +513,7 @@ def relF (r : QR) : Option Ex := inlineAttrsToFilter r.alias r.attrs
 def aV : V := ⟨0, 0⟩
 def xOne : Ex := .node (.const (.int 1)) []
 def qVL : QR := { alias := ⟨2, 0⟩, named := false, frm := { alias := aV, attrs := [("x", xOne)], ptr := 7 },
-                  to := { alias := ⟨1, 0⟩ }, kind := .varLen }
+                  to := { alias := ⟨1, 0⟩, ptr := 0 }, kind := .varLen, ptr := 0 }
 def stA : MSt := { visited := [aV], verified := [] }
 
 end PlannerBuild.E

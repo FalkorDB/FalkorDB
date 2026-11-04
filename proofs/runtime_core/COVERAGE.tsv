@@ -44,7 +44,7 @@ graph/src/runtime/runtime.rs	node_has_label	1817	PROVEN	Accessors.hasLabel_iff
 graph/src/runtime/runtime.rs	label_id	1838	PROVEN	RelAccessors.labelIdOf: labelIdOf_spec
 graph/src/runtime/runtime.rs	node_has_label_id	1852	PROVEN	Accessors.hasLabelId_iff
 graph/src/runtime/runtime.rs	get_node_attrs	1866	CONDITIONAL	Accessors.attrs_agree (and reuse_diverges witness) || CONDITIONAL on hc (Graph all-attrs read agrees with the by-index read; graph.rs, not linked) and hdisj (fails under #2876, reuse_diverges)
-graph/src/runtime/runtime.rs	get_relationship_attrs	1884	CONDITIONAL	RelAccessors.getRelAttrs: relAttrs_agree || CONDITIONAL on hName/hc (Graph by-name and all-attrs reads agree with the by-index read; graph.rs, not linked)
+graph/src/runtime/runtime.rs	get_relationship_attrs	1884	CONDITIONAL	RelAccessors.getRelAttrs: relAttrs_agree || CONDITIONAL on hName/hc (Graph by-name and all-attrs reads agree with the by-index read; graph.rs, not linked) and hdisj (one pending map per id; fails under #2876, reuse_diverges)
 graph/src/runtime/runtime.rs	get_relationship_endpoints	1904	PROVEN	RelAccessors.relEndpoints: relEndpoints_spec
 graph/src/runtime/runtime.rs	get_relationship_type	1917	PROVEN	RelAccessors.relType: relType_spec
 graph/src/runtime/runtime.rs	get_node_indegree	1931	PROVEN	Accessors.degree_exact (endp = dst, types = [])

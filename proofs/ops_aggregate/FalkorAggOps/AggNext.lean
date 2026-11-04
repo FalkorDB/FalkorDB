@@ -1,14 +1,14 @@
 import FalkorAggOps.AggState
 /-
-`AggregateOp::next` (aggregate.rs:1111) and the bulk column extractors
-`extract_key_columns` (:781) / `extract_agg_input_columns` (:830).
+`AggregateOp::next` (aggregate.rs:1128) and the bulk column extractors
+`extract_key_columns` (:794) / `extract_agg_input_columns` (:843).
 
 | here | there |
 | --- | --- |
-| `keyCol`, `extractKeys`   | `extract_key_columns` (aggregate.rs:781-822) |
-| `aggCol`, `extractAggs`   | `extract_agg_input_columns` (aggregate.rs:830-864) |
-| `finishGroup`             | the per-group closure of `next` (aggregate.rs:1141-1213) |
-| `aggNext`                 | `Iterator::next` (aggregate.rs:1111-1222) after consumption |
+| `keyCol`, `extractKeys`   | `extract_key_columns` (aggregate.rs:794-834) |
+| `aggCol`, `extractAggs`   | `extract_agg_input_columns` (aggregate.rs:843-877) |
+| `finishGroup`             | the per-group closure of `next` (aggregate.rs:1162-1228) |
+| `aggNext`                 | `Iterator::next` (aggregate.rs:1128-1239) after consumption |
 
 `batch.value_at`, `extract_node_ids`, `materialize_node_property_values` and
 `VectorEval::eval_values` are parameters; the expression evaluator (`ExprEval::eval`) is a
@@ -24,7 +24,7 @@ section Extract
 variable {N : Type} (null : Z) (valueAt : Nat → Nat → Option Z)
   (nodeIds : Nat → Option (Nat → N)) (props : List N → Nat → List Z)
 
-/-- One key column (aggregate.rs:786-819). `.error ()` = "this batch cannot take the bulk path". -/
+/-- One key column (inside `extract_key_columns`, aggregate.rs:794-834). `.error ()` = "this batch cannot take the bulk path". -/
 def keyCol (evalC : Ex Z → Except Unit (List Z)) (active : List Nat) : KeyKind Z → Except Unit (List Z)
   | .var v => .ok (active.map fun r => (valueAt v r).getD null)
   | .prop v attr => match nodeIds v with
@@ -36,7 +36,7 @@ def extractKeys (evalC : Ex Z → Except Unit (List Z)) (active : List Nat) (ks 
     Except Unit (List (List Z)) :=
   ks.mapM (keyCol null valueAt nodeIds props evalC active)
 
-/-- One aggregate input column (aggregate.rs:837-861); `count(*)` gets an empty placeholder. -/
+/-- One aggregate input column (inside `extract_agg_input_columns`, aggregate.rs:843-877); `count(*)` gets an empty placeholder. -/
 def aggCol (evalC : Ex Z → Except String (List Z)) (active : List Nat) : Option (Input Z) → Except String (List Z)
   | none => .ok []
   | some (.var v) => .ok (active.map fun r => (valueAt v r).getD null)
@@ -109,7 +109,7 @@ theorem extractAggs_spec (evalC : Ex Z → Except String (List Z)) (active : Lis
 
 end Extract
 
-/-! ## Per-group output row (aggregate.rs:1141-1213) -/
+/-! ## Per-group output row (aggregate.rs:1162-1228) -/
 
 /-- `Row::merge`: every bound slot of `other` overwrites. -/
 def mergeE (self other : Env Z) : Env Z := fun j => match other j with
@@ -123,7 +123,7 @@ structure KeySpec where
   name : Nat
   orig : Option Nat
 
-/-- `combined` (aggregate.rs:1144-1153): the key row, the pre-projection key aliases
+/-- `combined` (aggregate.rs:1163-1174): the key row, the pre-projection key aliases
 (`combined.insert(original_var, …)`), then every bound accumulator slot on top
 (`combined.merge(&acc)`). -/
 def combinedEnv (keys : List KeySpec) (key acc : Env Z) : Env Z :=
@@ -131,10 +131,10 @@ def combinedEnv (keys : List KeySpec) (key acc : Env Z) : Env Z :=
     | some o, some v => upd c o v
     | _, _ => c) key) acc
 
-/-- The closure of `next` up to `acc.merge(&key)` (aggregate.rs:1154-1182): evaluate every
+/-- The closure of `next` up to `acc.merge(&key)` (aggregate.rs:1175-1217): evaluate every
 aggregation over `combined`, writing each output into `acc` **and** `combined`
-(`acc.insert(name, …)`, `combined.insert(name, …)`, :1166-1167), then the pre-projection key
-aliases unless an output owns the slot (:1173-1180), then the key row (:1181). Returns that
+(`acc.insert(name, …)`, `combined.insert(name, …)`, :1188-1189), then the pre-projection key
+aliases unless an output owns the slot (:1206-1216), then the key row (:1217). Returns that
 row and the outputs in order. Every slot of it is bound (`Row::insert` sets the bit). -/
 def finishCore {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
     (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z × List (Nat × Z)) := do
@@ -149,7 +149,7 @@ def finishCore {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeyS
     | _, _ => a) acc1
   pure (mergeE acc2 key, outs)
 
-/-- Stage 1 of `finishCore` (aggregate.rs:1154-1168): evaluate every aggregation over `combined`,
+/-- Stage 1 of `finishCore` (aggregate.rs:1175-1191): evaluate every aggregation over `combined`,
 writing each output into `acc` and `combined`. Returns `acc` and the outputs in order. -/
 def finishEval {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
     (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z × List (Nat × Z)) := do
@@ -159,7 +159,7 @@ def finishEval {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeyS
     (acc, combinedEnv keys key acc, [])
   pure (acc1, outs)
 
-/-- Stage 2 (aggregate.rs:1196-1210 on main): the pre-projection key aliases unless an output owns
+/-- Stage 2 (aggregate.rs:1202-1217 on main): the pre-projection key aliases unless an output owns
 the slot, then `acc.merge(&key)`. -/
 def finishTail (keys : List KeySpec) (aggs : List (Nat × Ex Z)) (key acc1 : Env Z) : Env Z :=
   mergeE (keys.foldl (fun a k => match k.orig, key k.name with
@@ -175,9 +175,9 @@ def preFinishGroup {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List 
   | .error e => .error e
   | .ok (acc3, outs) => .ok (updAll (aggs.foldl (fun a p => unbindAcc p.2 a) acc3) outs)
 
-/-- The emitted row's **bound** slots on main (aggregate.rs:1141-1213 since #3522): evaluate the
-aggregations (:1154-1168), unbind every accumulator FIRST (:1184-1192), then write the key aliases
-and the key row (:1193-1209), then re-bind the outputs last (:1210-1213). -/
+/-- The emitted row's **bound** slots on main (aggregate.rs:1162-1228 since #3522): evaluate the
+aggregations (:1175-1191), unbind every accumulator FIRST (:1192-1201), then write the key aliases
+and the key row (:1202-1217), then re-bind the outputs last (:1218-1226). -/
 def finishGroup {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
     (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z) :=
   match finishEval ev keys aggs key acc with
@@ -185,8 +185,8 @@ def finishGroup {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List Key
   | .ok (acc1, outs) =>
     .ok (updAll (finishTail keys aggs key (aggs.foldl (fun a p => unbindAcc p.2 a) acc1)) outs)
 
-/-- The values (not the bound bits) of the emitted row do not depend on whether the unbind comes
-before or after the key writes, because `unbind` keeps the value; `finishCore` is the two stages. -/
+/-- `finishCore` is `finishEval` followed by `finishTail`; no unbind is involved. The argument that
+unbind order does not change values is in `SlotReuse.finishVals`. -/
 theorem finishCore_eq {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
     (aggs : List (Nat × Ex Z)) (key acc : Env Z) :
     finishCore ev keys aggs key acc =
@@ -263,7 +263,7 @@ theorem finishEval_outs {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : 
     have hl := foldlM_outs ev aggs _ r0 hr
     simpa using hl
 
-/-- **Output bindings win** (aggregate.rs:1210-1213): on success, with distinct output
+/-- **Output bindings win** (aggregate.rs:1218-1226): on success, with distinct output
 names, every aggregate output name is bound to the value computed for it — even when an
 accumulator slot or a key alias shares its id. -/
 theorem finishGroup_outputs {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
@@ -308,7 +308,7 @@ slot ids are (even a null key sharing a slot with an accumulator), a key whose n
 aggregate output name is bound to its key value on the emitted row, because the keys are written
 after the accumulators are unbound and `acc.merge(&key)` lets every key win over every alias. The
 premise that no key name is an output name is the binder's (the projected items get distinct
-ids `0, 1, …` in the new scope, binder.rs:1149-1167). Keys do not overwrite each other: `key` is
+ids `0, 1, …` in the new scope, binder.rs, `bind_projection`). Keys do not overwrite each other: `key` is
 one row, so `WITH 1 AS a, 2 AS b RETURN b AS x, a AS y, count(*)` keeps `x = 2, y = 1`
 (`keysBound_swap_3522`). -/
 theorem finishGroup_keys_bound {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
@@ -328,12 +328,12 @@ theorem finishGroup_keys_bound {E : Type} (ev : Ex Z → Env Z → Except E Z) (
     rw [← h, updAll_other _ _ _ (by rw [hl]; exact hdisj k hk)]
     simp [finishTail, mergeE, hv]
 
-/-! ## `next` after consumption (aggregate.rs:1133-1222) -/
+/-! ## `next` after consumption (aggregate.rs:1152-1239) -/
 
 def BATCH_SIZE : Nat := 1024
 
 /-- Pack up to `n` finished groups; the first failing group aborts the call
-(`return Some(Err(e))`, aggregate.rs:1214). Returns (packed rows or error, rest). -/
+(`return Some(Err(e))`, aggregate.rs:1230). Returns (packed rows or error, rest). -/
 def pack {G R E : Type} (fin : G → Except E R) : Nat → List G → List R → Except E (List R) × List G
   | 0, gs, acc => (.ok acc, gs)
   | _, [], acc => (.ok acc, [])

@@ -5,17 +5,20 @@ import VersionedMatrix.TensorResize
 
 | here | there |
 | --- | --- |
-| `LayerCount` | `Matrix::count_in_rows` (`matrix.rs:788`): hypothesis here, proved from `GrB_mxv` + `GrB_Vector_reduce` in `proofs/graphblas_wrappers` (`countInRows_spec`) |
-| `vmCountInRows` | `VersionedMatrix::count_in_rows` (`versioned_matrix.rs:818-834`) |
-| `countPairsInto` | `Tensor::count_pairs_into` (`tensor.rs:1325-1330`) = `self.mt.count_in_rows(dsts)` |
+| `LayerCount` | `Matrix::count_in_rows` (`matrix.rs:811`): hypothesis here, proved from `GrB_mxv` + `GrB_Vector_reduce` in `proofs/graphblas_wrappers` (`countInRows_spec`) |
+| `vmCountInRows` | `VersionedMatrix::count_in_rows` (`versioned_matrix.rs`, fn `count_in_rows`) |
+| `countPairsInto` | `Tensor::count_pairs_into` (`tensor.rs`, fn `count_pairs_into`) = `self.mt.count_in_rows(dsts)` |
 
 `count_in_rows` counts per layer and combines `|m| + |dp| − |dm|`; the doc says
 this is exact on a bool matrix because `dm ⊆ m` and `dp ∩ m = ∅`.
 `vmCountInRows_spec` proves it: the result is the *list count* (`countP`) of the effective keys
 `effKeys` (`(m ∖ dm)` then `dp`) in the selected rows, and the `u64` subtraction cannot underflow.
-It needs `dm ⊆ m` and duplicate-free `m` and `dm`. It does not assume `dp` is duplicate-free or disjoint
-from `m`, so the count equals the number of distinct effective entries only when they are (`dp ∩ m = ∅`,
-a layer invariant of the Rust, not hypothesised here); `effKeys.Nodup` is not proven.
+It needs `dm ⊆ m` and duplicate-free `m` and `dm`. `vmCountInRows_spec` alone counts the *list* `effKeys`.
+`vmCountInRows_distinct` closes the gap to "number of distinct effective entries": given the layer invariants
+`dp` duplicate-free and `dp ∩ m = ∅` (both in `VMDelta.Inv`), `effKeys` is duplicate-free (`effKeys_nodup`), so the
+count is the number of distinct effective coordinates in the selected rows.
+Likewise `countPairsInto_spec` counts the list `t.ps`; `countPairsInto_distinct` adds that, for a duplicate-free
+pair list `t.ps`, the counted `mt` coordinates are pairwise distinct.
 -/
 namespace VMCount
 open VMMat VMOps
@@ -39,7 +42,7 @@ theorem layer_eq (C : LayerCount) (l : Mat Unit) (S : List Nat) : layer C l S = 
     rw [this]; rfl
   · exact C.spec l S
 
-/-- `count_in_rows` (:818): `self.wait(); self.m.wait();` then `layer(m) + layer(dp) − layer(dm)`. -/
+/-- `count_in_rows` (versioned_matrix.rs, fn `count_in_rows`): `self.wait(); self.m.wait();` then `layer(m) + layer(dp) − layer(dm)`. -/
 def vmCountInRows (C : LayerCount) (v : BVM) (S : List Nat) : Nat :=
   let w := wait v
   let m := VMMat.wait w.m
@@ -81,6 +84,29 @@ theorem vmCountInRows_spec (C : LayerCount) (v : BVM) (S : List Nat)
   unfold effKeys; rw [List.countP_append]
   omega
 
+/-- With `dp` duplicate-free and disjoint from `m` (two layer invariants), the effective
+keys are duplicate-free. -/
+theorem effKeys_nodup (v : BVM) (hm : (keys v.m).Nodup) (hdp : (keys v.dp.layer).Nodup)
+    (hdisj : ∀ p ∈ keys v.dp.layer, p ∉ keys v.m) : (effKeys v).Nodup := by
+  unfold effKeys
+  rw [List.nodup_append]
+  refine ⟨hm.sublist List.filter_sublist, hdp, ?_⟩
+  intro a ha b hb hab
+  subst hab
+  exact hdisj a hb (List.mem_filter.mp ha).1
+
+/-- **`count_in_rows` counts distinct effective entries**: under the layer invariants (`dp`
+duplicate-free and disjoint from `m`, besides `vmCountInRows_spec`'s), the counted list is
+duplicate-free, so the result is the number of distinct effective coordinates in the selected rows. -/
+theorem vmCountInRows_distinct (C : LayerCount) (v : BVM) (S : List Nat)
+    (hm : (keys v.m).Nodup) (hdm : (keys v.dm.layer).Nodup)
+    (hsub : ∀ p ∈ keys v.dm.layer, p ∈ keys v.m)
+    (hdp : (keys v.dp.layer).Nodup) (hdisj : ∀ p ∈ keys v.dp.layer, p ∉ keys v.m) :
+    ((effKeys v).filter (inRows S)).Nodup ∧
+    vmCountInRows C v S = ((effKeys v).filter (inRows S)).length := by
+  refine ⟨(effKeys_nodup v hm hdp hdisj).sublist List.filter_sublist, ?_⟩
+  rw [(vmCountInRows_spec C v S hm hdm hsub).1, List.countP_eq_length_filter]
+
 /-! ## `Tensor::count_pairs_into` -/
 
 open VMTensor VMTensorOps
@@ -88,7 +114,7 @@ open VMTensor VMTensorOps
 /-- The backward matrix `mt`'s logical keys: `(dst, src)` for every pair whose `mt` bit is set. -/
 def mtKeys (t : TT) : List VMMat.Pair := (t.ps.filter (fun p => (t.st p).mt)).map (fun p => (p.2, p.1))
 
-/-- `count_pairs_into` (tensor.rs:1325): `self.mt.count_in_rows(dsts)`, with
+/-- `count_pairs_into` (tensor.rs, fn `count_pairs_into`): `self.mt.count_in_rows(dsts)`, with
 `count_in_rows` exact on `mt` (`vmCountInRows_spec`). -/
 def countPairsInto (vmCount : List VMMat.Pair → List Nat → Nat) (t : TT) (dsts : List Nat) : Nat :=
   vmCount (mtKeys t) dsts
@@ -116,5 +142,20 @@ theorem countPairsInto_spec (vmCount : List VMMat.Pair → List Nat → Nat)
       rw [List.mem_filter, Bool.and_eq_true, decide_eq_true_eq]
       exact ⟨hp, (hi p).mt_eff ▸ he, hd⟩
     rw [hnil] at this; cases this
+
+/-- With a duplicate-free pair list `t.ps`, the `mt` coordinates counted by `count_pairs_into` are
+pairwise distinct: the result is a count of distinct `(dst, src)` coordinates, not of list occurrences. -/
+theorem countPairsInto_distinct (vmCount : List VMMat.Pair → List Nat → Nat)
+    (hc : ∀ ks S, vmCount ks S = ks.countP (inRows S)) (t : TT) (dsts : List Nat)
+    (hnd : t.ps.Nodup) :
+    ((mtKeys t).filter (inRows dsts)).Nodup ∧
+    countPairsInto vmCount t dsts = ((mtKeys t).filter (inRows dsts)).length := by
+  have hk : (mtKeys t).Nodup := by
+    unfold mtKeys
+    refine List.Pairwise.map _ (fun a b hab h => hab ?_) (hnd.sublist List.filter_sublist)
+    exact Prod.ext (congrArg Prod.snd h) (congrArg Prod.fst h)
+  refine ⟨hk.sublist List.filter_sublist, ?_⟩
+  unfold countPairsInto
+  rw [hc, List.countP_eq_length_filter]
 
 end VMCount

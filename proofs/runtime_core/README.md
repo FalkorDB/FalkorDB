@@ -63,15 +63,15 @@ Several of these rest on store contracts the project can't see; see the CONDITIO
 | `hard_cap_unsound_expandInto`, `hard_cap_unsound_condTraverse`, `hard_cap_unsound_stacked_skip` | Counterexamples: through a traversal, or with stacked SKIPs, the hard cap loses the answer | `Budget.lean` |
 | `drive_flatten`, `fresh_drive` | The emitter outputs exactly the per-row expansions in order, for any `record_cap` | `Emitter.lean` |
 | `runBatch_eq_rec` | The iterative post-order `run_batch` builds the same tree, with the same first error, as the recursive build, for every plan | `RunBatch.lean` |
-| `query_rows`, `query_write_pulls_all` | `resultset_size` keeps exactly the first `n` rows; writes still pull every batch | `Cell.lean` | #3436's `Runtime::graph()`, `graph_mut()`, `GraphRef`, `Deref` on an atomic_refcell borrow-word model: the rewrite changes no result and no borrow-word effect |
-| `DropOrder.lean` | `HeldRead` / `Runtime` drop order, `graph_arc()`, `g` never reassigned |
-| `Protocol.lean` | The read-guard protocol over `MvccGraph` and `QuerySession`: `reader_guard_sound`, `priv_borrows_owner_only`; the open #3439 `writer_reply_race` |
-| `Reuse.lean` | `read_plan_no_update` (on `redis_layer`'s `RedisLayer.Ro`), `accessor_unchanged`, `materialize_unchanged` |
-| `Query.lean` |
+| `query_rows`, `query_write_pulls_all` | `resultset_size` keeps exactly the first `n` rows; a write query always drains the root operator (every batch plus the terminating `next()`), so a root `CommitOp` always runs | `Query.lean` |
+| `graph_deref`, `graph_same_result`, `graph_mut_write_same` | #3436's `Runtime::graph()`, `graph_mut()`, `GraphRef`, `Deref` on an atomic_refcell borrow-word model: the rewrite changes no result and no borrow-word effect | `Cell.lean` |
+| `held_survives`, `drop_sound`, `g_never_reassigned` | `HeldRead` / `Runtime` drop order, `graph_arc()`, `g` never reassigned | `DropOrder.lean` |
+| `reader_guard_sound`, `priv_borrows_owner_only` | The read-guard protocol over `MvccGraph` and `QuerySession`; the open #3439 `writer_reply_race` | `Protocol.lean` |
+| `read_plan_no_update`, `accessor_unchanged`, `materialize_unchanged` | A read plan has no updating operator (from `redis_layer`'s `RedisLayer.Ro`), so the accessor theorems transfer through `graph()` | `Reuse.lean` |
 | `attrs_agree`, `materialize_eq` | `properties(n).k`, `n.k` and the bulk column read agree | `Accessors.lean` |
 | `hasLabelId_iff`, `hasLabel_iff` | `n:L` is exactly `L ∈ labels(n)`, by id or by name | `Accessors.lean` |
 | `degree_exact` | Degrees never underflow and count live edges exactly | `Accessors.lean` |
-| `checkTimeout_spec`, `checkMem_spec` | The timeout fires iff now ≥ deadline; the memory cap fires iff 0 < cap < usage | `Misc.lean` |
+| `checkTimeout_spec`, `checkMem_spec` | The timeout fires iff now ≥ deadline; for usage < 2⁶³, the memory cap fires iff 0 < cap < usage | `Misc.lean` |
 | `vector_requires_dimension`, `vector_requires_similarity`, `fulltextUnknown_none_iff` | Index OPTIONS validation as in C (#3094) | `Misc.lean` |
 
 ### How `need_sound` is proved (and why `record_cap` fails it)
@@ -112,6 +112,10 @@ Each bug has a Rust repro test (`graph/tests/lean_runtime_core.rs`, run locally 
 | `Emitter.lean` | `RowIter`, `refill_from_cursor`, `drain_pending_entry`, `emit_lazy`, `seed`, `reset`, and the operator pull loop; `drive_flatten` |
 | `Query.lean` | `Runtime::query`: the result-set cap and the write drain |
 | `RunBatch.lean` | `run_batch`'s iterative post-order build against the recursive build; `children_to_recurse` |
+| `Cell.lean` | `Runtime::graph()` / `graph_mut()` / `GraphRef` / `Deref` / `HeldRead` on an atomic_refcell borrow-word model |
+| `DropOrder.lean` | `HeldRead` / `Runtime` drop glue, `graph_arc()`, `g` never reassigned |
+| `Protocol.lean` | The read-guard protocol over `MvccGraph` and `QuerySession`; open bug #3439 |
+| `Reuse.lean` | Accessor theorems reused through `graph()` for read plans (needs `redis_layer`) |
 | `Accessors.lean` | Node attribute reads (deleted > pending > committed), the attr-id memo, labels and label staging, degrees |
 | `RelAccessors.lean` | Relationship attribute reads, typed materialisation, `label_id`, endpoints and type, pending attribute writes |
 | `Plan.lean` | `get_variables`, `get_return_names`, `inspect_batch`, `Runtime::new`, `default_batch`, `run_nested_plan`, `build_batch_op`'s child popping and checks |
@@ -122,11 +126,11 @@ Its `lakefile.toml` requires [`../redis_layer`](../redis_layer) (for `Reuse.lean
 
 ## Coverage
 
-`COVERAGE.tsv` has 93 rows: 52 in `runtime.rs`, 39 in `batched_result_emitter.rs` and 2 in `ops/mod.rs`.
+`COVERAGE.tsv` has 94 rows: 53 in `runtime.rs`, 39 in `batched_result_emitter.rs` and 2 in `ops/mod.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 48 |
+| PROVEN | 53 |
 | CONDITIONAL | 9 |
 | MODELLED | 7 |
 | NOT COVERED | 25 |

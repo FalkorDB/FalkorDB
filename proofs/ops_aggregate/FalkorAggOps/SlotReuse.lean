@@ -217,7 +217,7 @@ def PreKeysBound {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List Ke
     slotAt (preFinishGroup ev keys aggs key acc) k.name = some (some v)
 
 /-- **#3150 fixed by #3522 (ca36bfa15)**: `AggregateOp::next` unbinds the accumulators before it
-writes the keys (aggregate.rs:1184-1192), so on the same ids the null key `x` is bound to `null`
+writes the keys (aggregate.rs:1192-1217), so on the same ids the null key `x` is bound to `null`
 and the column is present (live: `null, 1`, as C), and `KeysBound` holds. -/
 theorem fixed3522_null_key_bound :
     let L := projLayout 0 items3150

@@ -9,16 +9,16 @@ now refuse a record naming an entity this replica does not hold live:
 
 | here | there (`apply.rs`) |
 | --- | --- |
-| `needLive` | `require_live` (`:634`) over `IdSpace::refuse_not_live` (accepts exactly the live ids: `proofs/id_space` `refuseNotLive_live`) |
-| `firstWithRels` | `Graph::first_node_with_relationships` (`graph.rs:2321`; its Rust is proved against this spec in `proofs/graph_queries`) |
-| `applyRec .createNode` | `CreateNode` arm (`:209`) — since #3298 a repeated id is refused (`nodes.len() != ids.count()`, `:222`), then `create_nodes` refuses a live id |
-| `applyRec .createEdge` | `CreateEdge` arm (`:254`) — `require_live((src ∪ dst) − released)` (`:279-280`), then `create_relationships_bulk` refuses a live or repeated id |
-| `applyRec .updateNode` | `UpdateNode` arm (`:308`) — `require_live` (`:314`) |
-| `applyRec .updateEdge` | `UpdateEdge` arm (`:328`) — `require_live` (`:334`) |
-| `applyRec .setLabels/.removeLabels` | `:348` / `:360` — `require_live` (`:349`, `:361`) |
-| `applyRec .deleteNode` | `DeleteNode` arm (`:380`) — `require_live` (`:386`), `NodeHasRelationships` (`:390-392`), then `delete_nodes` (records `released`) |
-| `applyRec .deleteEdge` | `DeleteEdge` arm (`:403`) — `delete_relationships` refuses a non-live id |
-| `danglingRel` | `Graph::validate`'s `verify_created_relationships` (`graph.rs:1546`), run by `apply_effects` (`:92`) |
+| `needLive` | `require_live` (`:647`) over `IdSpace::refuse_not_live` (accepts exactly the live ids: `proofs/id_space` `refuseNotLive_live`) |
+| `firstWithRels` | `Graph::first_node_with_relationships` (`graph.rs:2421`; its Rust is proved against this spec in `proofs/graph_queries`) |
+| `applyRec .createNode` | `CreateNode` arm (`:210`) — since #3298 a repeated id is refused (`nodes.len() != ids.count()`, `:223`), then `create_nodes` refuses a live id |
+| `applyRec .createEdge` | `CreateEdge` arm (`:263`) — `require_live((src ∪ dst) − released)` (`:289-290`), then `create_relationships_bulk` refuses a live or repeated id |
+| `applyRec .updateNode` | `UpdateNode` arm (`:318`) — `require_live` (`:324`) |
+| `applyRec .updateEdge` | `UpdateEdge` arm (`:332`) — `require_live` (`:338`) |
+| `applyRec .setLabels/.removeLabels` | `:352` / `:359` — `require_live` (`:353`, `:360`) |
+| `applyRec .deleteNode` | `DeleteNode` arm (`:378`) — `require_live` (`:385`), `NodeHasRelationships` (`:390-392`), then `delete_nodes` (records `released`) |
+| `applyRec .deleteEdge` | `DeleteEdge` arm (`:401`) — `delete_relationships` refuses a non-live id |
+| `danglingRel` | `Graph::validate`'s `verify_created_relationships` (`graph.rs:1646`), run by `apply_effects` (`g.validate()`, `:86`) |
 
 The replica is abstract (as in `Apply.lean`): node liveness, labels, properties,
 live relationships `(id, src, dst)` with properties, and the batch's `released`
@@ -29,7 +29,7 @@ Headline: **`apply_wf`** — from a well-formed replica at a batch boundary, any
 sequence of records that applies, followed by a `validate` that passes, leaves a
 well-formed replica: no dead id carries a label, property or relationship, and
 every relationship's endpoints are live. The pre-#3022 counterexamples
-(`Apply.lean`, pre-#3022 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412)) are each refused here (`*_refused`).
+(historical `pre3022_*` in `Apply.lean`, removed in bbee75955; the last revision that has them is 17ccc5412) are each refused here (`*_refused`).
 -/
 
 namespace FalkorEA.Live
@@ -63,15 +63,20 @@ inductive Rec where
   | deleteNode (ids : List Nat)
   | deleteEdge (ids : List Nat)
 
-/-- `require_live`: refuse an id that is not live. -/
+/-- `require_live`: refuse an id that is not live. The id named is the *lowest* one that is
+not live: Rust walks a sorted `RoaringTreemap` and `refuse_recycled` reports `.min()` of the
+recycled ids (the model has one liveness predicate, so it does not separate that from
+`refuse_undeletable`, which names the highest never-created id; the payload id is not part of
+what the theorems below rest on). -/
 def needLive (live : Nat → Bool) (k : Kind) (ids : List Nat) : Except AErr Unit :=
-  match ids.find? (fun i => !live i) with
+  match (ids.filter (fun i => !live i)).min? with
   | some i => .error (.notLive k i "")
   | none => .ok ()
 
-/-- `IdSpace::create`'s `AlreadyLive` refusal, as the create arms meet it. -/
+/-- `IdSpace::create`'s `AlreadyLive` refusal, as the create arms meet it. It names the
+lowest live id (`claimed.min()`), not the first in input order. -/
 def needDead (live : Nat → Bool) (k : Kind) (ids : List Nat) : Except AErr Unit :=
-  match ids.find? live with
+  match (ids.filter live).min? with
   | some i => .error (.alreadyLive k i 0)
   | none => .ok ()
 
@@ -85,7 +90,7 @@ def upd {α} (ids : List Nat) (f : Nat → α) (v : Nat → α) : Nat → α :=
 
 def applyRec (g : G) : Rec → Except AErr G
   | .createNode ids lbls => do
-    -- #3298 (`apply.rs:222`): the id set must be as long as the id list
+    -- #3298 (`apply.rs:223`): the id set must be as long as the id list
     if !ids.Nodup then .error (.graph "bulk node create got repeated ids; an id names one node") else
     needDead g.nlive .node ids
     pure { g with nlive := upd ids g.nlive (fun _ => true), labels := upd ids g.labels (fun _ => lbls) }
@@ -151,25 +156,28 @@ structure BInv (g : G) : Prop where
 theorem needLive_ok {live : Nat → Bool} {k ids} :
     needLive live k ids = .ok () ↔ ∀ i ∈ ids, live i = true := by
   unfold needLive
-  cases h : ids.find? (fun i => !live i) with
+  cases h : (ids.filter (fun i => !live i)).min? with
   | some i =>
     simp only [reduceCtorEq, false_iff, Classical.not_forall]
-    have := List.find?_some h; have hm := List.mem_of_find?_eq_some h
-    exact ⟨i, hm, by simpa using this⟩
+    have hm := List.mem_filter.mp (List.min?_mem h)
+    exact ⟨i, hm.1, by simpa using hm.2⟩
   | none =>
     simp only [true_iff]
-    intro i hi; have := List.find?_eq_none.mp h i hi; simpa using this
+    rw [List.min?_eq_none_iff, List.filter_eq_nil_iff] at h
+    intro i hi; have := h i hi; simpa using this
 
 theorem needDead_ok {live : Nat → Bool} {k ids} :
     needDead live k ids = .ok () ↔ ∀ i ∈ ids, live i = false := by
   unfold needDead
-  cases h : ids.find? live with
+  cases h : (ids.filter live).min? with
   | some i =>
     simp only [reduceCtorEq, false_iff, Classical.not_forall]
-    exact ⟨i, List.mem_of_find?_eq_some h, by simp [List.find?_some h]⟩
+    have hm := List.mem_filter.mp (List.min?_mem h)
+    exact ⟨i, hm.1, by simpa using hm.2⟩
   | none =>
     simp only [true_iff]
-    intro i hi; have := List.find?_eq_none.mp h i hi; simpa using this
+    rw [List.min?_eq_none_iff, List.filter_eq_nil_iff] at h
+    intro i hi; have := h i hi; simpa using this
 
 theorem firstWithRels_none {g : G} {ids} :
     firstWithRels g ids = none ↔ ∀ i ∈ ids, g.hasRel i = false := by
@@ -444,7 +452,8 @@ theorem detach_delete_applies :
 
 /-! ## #3298: a repeated id in one `CREATE_NODE` (#3247) -/
 
-/-- **On main a repeated id is refused**, whatever the graph. -/
+/-- **On main a repeated id is refused**, whatever the graph. The message is a stand-in for
+Rust's formatted one (`apply.rs:224-229`); only the `.graph` constructor is modelled. -/
 theorem createNode_repeat_refused (g : G) (ids lbls : List Nat) (h : ¬ ids.Nodup) :
     applyRec g (.createNode ids lbls) =
       .error (.graph "bulk node create got repeated ids; an id names one node") := by
@@ -459,10 +468,12 @@ theorem createNode_ok_nodup {g g' : G} {ids lbls : List Nat}
   · rw [createNode_repeat_refused g ids lbls hn] at h
     cases h
 
-/-- `a_repeated_node_id_in_one_create_is_refused` (`apply.rs` test, #3247). -/
+/-- An abstract refusal check for the `a_repeated_node_id_in_one_create_is_refused` input of
+the `apply.rs` test (#3247): `[2, 3, 2]` is refused with a `Graph` error. Only the error
+constructor is claimed; the message is a stand-in (Rust formats the id and distinct counts,
+`apply.rs:224-229`, and its test asserts on the word `distinct`), so the payload is not modelled. -/
 theorem a_repeated_node_id_in_one_create_is_refused :
-    errOf (applyRec s0 (.createNode [2, 3, 2] [])) =
-      some (.graph "bulk node create got repeated ids; an id names one node") := by
-  decide
+    ∃ m, errOf (applyRec s0 (.createNode [2, 3, 2] [])) = some (.graph m) :=
+  ⟨"bulk node create got repeated ids; an id names one node", by decide⟩
 
 end FalkorEA.Live

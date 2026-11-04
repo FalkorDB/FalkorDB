@@ -56,12 +56,15 @@ def overlayLabels (p : Pending) (id : Nat) (ls : List String) : List String :=
   match p.removeL id with | some r => a.filter (· ∉ r) | none => a
 
 /-- `Pending::update_node_attrs`: a `Null` removes the key, anything else sets it
-(the position of a re-set key is not modelled). -/
+(`OrderMap::insert` replaces an existing key in place, otherwise appends). -/
+def setKey (kv : String × JV) (as : List (String × JV)) : List (String × JV) :=
+  if as.any (·.1 == kv.1) then as.map (fun p => if p.1 == kv.1 then kv else p) else as ++ [kv]
+
 def overlayAttrs (p : Pending) (id : Nat) (as : List (String × JV)) : List (String × JV) :=
   match p.added id with
   | some ad => ad.foldl (fun acc kv => match kv.2 with
       | .null => acc.filter (·.1 != kv.1)
-      | v => acc.filter (·.1 != kv.1) ++ [(kv.1, v)]) as
+      | v => setKey (kv.1, v) acc) as
   | none => as
 
 /-- `Pending::node_has_changes`. -/
@@ -150,7 +153,8 @@ def RuntimeFirstNode (mk : Option RT → NodeView → Nat → Obj) : Prop :=
 def RuntimeFirstEdgeEnds
     (mk : Option RT → NodeView → Nat → Nat → Nat → String → List (String × JV) → Obj) : Prop :=
   ∀ r id s d ty attrs,
-    get (mk (some r) r.g id s d ty attrs) "source" = some (.obj (jsNode s (r.labels s) (r.attrs s)))
+    get (mk (some r) r.g id s d ty attrs) "source" = some (.obj (jsNode s (r.labels s) (r.attrs s))) ∧
+    get (mk (some r) r.g id s d ty attrs) "target" = some (.obj (jsNode d (r.labels d) (r.attrs d)))
 
 theorem spec_runtime_first : RuntimeFirstNode specJsNode := fun _ _ => rfl
 
@@ -185,16 +189,23 @@ theorem jsEdge_source (id s d : Nat) (ty : String) (so dob : Obj) (attrs : List 
   simp only
   rw [get_set_ne _ _ _ _ (by decide), get_set_ne _ _ _ _ (by decide), get_set_same _ _ _ (by decide)]
 
+theorem jsEdge_target (id s d : Nat) (ty : String) (so dob : Obj) (attrs : List (String × JV)) :
+    get (jsEdge id s d ty so dob attrs) "target" = some (.obj dob) := by
+  unfold jsEdge
+  simp only
+  rw [get_set_ne _ _ _ _ (by decide), get_set_same _ _ _ (by decide)]
+
 theorem spec_edge_ok : RuntimeFirstEdgeEnds specJsEdge := by
   intro rt id s d ty attrs
-  exact jsEdge_source _ _ _ _ _ _ _
+  exact ⟨jsEdge_source _ _ _ _ _ _ _, jsEdge_target _ _ _ _ _ _ _⟩
 
 /-- **#3464**: edge endpoints on main satisfy `RuntimeFirstEdgeEnds`
 (`r.source` after `DETACH DELETE` sees the snapshot). -/
 theorem rs_edge_ok : RuntimeFirstEdgeEnds rsJsEdge := by
   intro r id s d ty attrs
   unfold rsJsEdge
-  rw [jsEdge_source, rs_runtime_first]
+  rw [jsEdge_source, jsEdge_target, rs_runtime_first, rs_runtime_first]
+  exact ⟨rfl, rfl⟩
 
 /-! ## The scenario: node 0 `(:P {name:'A'})` deleted by this query -/
 
@@ -221,8 +232,13 @@ theorem fixed3454_deleted_node :
 theorem fixed3454_edge_source :
     get (rsJsEdge (some rtAfterDelete) committedAfterDelete 5 0 1 "R" []) "source" =
       some (.obj (jsNode 0 ["P"] [("name", .attr 0)])) := by
-  rw [show committedAfterDelete = rtAfterDelete.g from rfl, rs_edge_ok]
-  rfl
+  exact (rs_edge_ok rtAfterDelete 5 0 1 "R" []).1
+
+/-- **#3454 fixed**, the other endpoint: `r.target.labels = [P]` when the deleted node is the target. -/
+theorem fixed3454_edge_target :
+    get (rsJsEdge (some rtAfterDelete) committedAfterDelete 5 1 0 "R" []) "target" =
+      some (.obj (jsNode 0 ["P"] [("name", .attr 0)])) :=
+  (rs_edge_ok rtAfterDelete 5 1 0 "R" []).2
 
 /-! ## Historical: `create_js_node` before #3464 (fixed by #3464) -/
 

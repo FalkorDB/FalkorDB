@@ -13,3 +13,8 @@ path = "../graphblas_wrappers"
 [[require]]
 name = "falkor-versioned-matrix"
 path = "../versioned_matrix"
+
+# `edgeVerdict` is stated against ops_aggregate's `StreamOps.filterEval` (FilterOp), not a copy.
+[[require]]
+name = "falkor-ops-aggregate"
+path = "../ops_aggregate"

@@ -35,8 +35,8 @@ proofs/functions_temporal.
 Lean 4 (core only) models of `graph/src/runtime/value.rs` (arithmetic, formatting,
 memory accounting, attribute access, self-comparison, v19 codec),
 `functions/math.rs`, `functions/conversion.rs` and `functions/mod.rs` (arity, argument
-type checking, registry). Zero `sorry`/`admit`/`axiom`; 184 theorems/examples.
-Coverage per Rust fn: `COVERAGE.tsv` (72 PROVEN, 11 MODELLED, 46 NOT COVERED of 129).
+type checking, registry). Zero `sorry`/`admit`/`axiom`; 384 theorems/examples.
+Coverage per Rust fn: `COVERAGE.tsv` (165 PROVEN, 3 MODELLED, 19 NOT COVERED of 187).
 Rust repros: `graph/tests/lean_value_math.rs`
 (`cargo test -p graph --test lean_value_math`; tests assert today's behaviour, C output in
 comments). Live: Rust module on port 18410 vs C `bin/macos-arm64v8-release/falkordb.so`
@@ -50,7 +50,7 @@ on 18411. Compare/eq/hash laws are in `proofs/value_order` (reused, not redone).
 | `roundF`, `satTrunc`, `cDivExact` (Int64) | `i as f64`; C `SIValue_Divide` (src/value.c, master) |
 | `V`, `add`, `addSlow`, `sub`, `mul`, `div`, `rem`, `omInsert/omExtend` (Value) | value.rs:180, :910, :925, :1042, :1091, :1120, :1148; `OrderMap::insert/extend` ordermap.rs:76,218 |
 | `cAdd`, `cMul` (CArith) | C `SIValue_Add/_Multiply` + `AR_ADD/AR_MUL` type checks |
-| `Ty`, `valueOfType`, `Accepts`, `validate`, `validateArgsType`, `isCompatibleWith`, `canReturnBoolean`, `unionDisplay`, `regGet`, `regIsAggregate` (TypeCheck) | value.rs:1282; mod.rs:531, :787, :828, :590, :569, :610, :1048, :1079 |
+| `Ty`, `valueOfType`, `Accepts`, `validate`, `validateArgsType`, `isCompatibleWith`, `canReturnBoolean`, `unionDisplay`, `regGet`, `regIsAggregate` (TypeCheck) | value.rs:1282; mod.rs:531, :787, :828, :590, :569, :610, :1048, :1080 |
 | `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow` (+ `pre2904_applyPow`), `cAbs` (MathFns) | math.rs:46-352; C `AR_ABS` |
 | `parseI64`, `f64Grammar`, `cStrtoll`, `rustToIntegerStr`, `toInteger/toFloat/toStr/toBooleanV`, list forms, `isEmpty` (Conversion) | conversion.rs:44-285; C `AR_TOINTEGER/AR_TOFLOAT` (numeric_funcs.c) |
 | `cmpV`, `cmpList`, `cmpMap`, `chunked`, `firstDiff`, `mayFail`, `isNeverEqual` (SelfCompare) | value.rs:1224, :1399, :1472, :1817, :1821, :1554, :1531 |
@@ -89,7 +89,7 @@ the old decoder succeeds with a value `within` the cap), `decode_encode` /
 nesting error), `within_of_depth` / `not_within_of_depth` (depth ≤ MAX always loads, ≥ MAX+2
 never), **`validateProperty_depth`** (every accepted property has depth ≤ MAX), **`stored_roundtrip`**
 (every accepted property — vectors < 2³² — saves and loads back), `validateProperty_nest`.
-History: `decode_nest_deep` (before #3339 any depth was decoded and storable; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412).
+`decode_nest_deep` is a current theorem: the decoder refuses depth past the cap. History: before #3339 any depth was decoded and storable; the `pre3339_isValid_any_depth` and `pre3339_decode_any_depth` counterexamples were removed in bbee75955 (the last revision that has them is 17ccc5412).
 Note (`within_nest_empty`): the decoder's cut is one level more lenient than the writers' —
 `MAX` arrays around `[]` (depth MAX+1) decode; harmless (still bounded, never stored).
 `GRAPH.BULKINSERT`'s bound (bulk_insert.rs:132) is in proofs/redis_layer (`Bulk`).
@@ -109,7 +109,7 @@ Note (`within_nest_empty`): the decoder's cut is one level more lenient than the
 
 ## Divergences from C (live; Rust often the better answer — decide per case)
 
-- `MIN / -1`: was Rust MIN, C MAX; Rust now errors (#3603, `Value.div_min_neg_one`); `(2^53+1)/1` Rust exact, C 2^53 (C divides through double).
+- `MIN / -1`: was Rust MIN, C MAX; Rust now errors (#3603, `ValueMath.div_min_neg_one`); `(2^53+1)/1` Rust exact, C 2^53 (C divides through double).
 - `abs(MIN)` Rust error, C MIN; `abs(-0.0)` Rust 0, C -0.
 - `+` typing: `'a'+date(..)`, `'a'+{b:1}`, `'a'+localtime(..)` Rust error, C concatenates;
   `true+1`, `1.5+true`, `duration+1`, `date+1` Rust error, C Float; `null*'a'`, `'a'/null`

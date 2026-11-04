@@ -1,24 +1,24 @@
 import AlgoUdf.Graph
-/-! # `dijkstra_single_path` (algo_procedures.rs:2219-2312) and the `DijkstraItem` heap order
+/-! # `dijkstra_single_path` (algo_procedures.rs:2282-2378) and the `DijkstraItem` heap order
 
 | here | there |
 | --- | --- |
-| `Lbl`, `St.labels`     | `DijkstraLabel`, `labels: FxHashMap<NodeId, DijkstraLabel>` :2252-2258, :2277 |
-| `St.settled`           | `settled: FxHashSet<NodeId>` :2278 |
-| `St.heap`              | `heap: BinaryHeap<DijkstraItem>` :2279 as a multiset of `(weight, node)` |
-| `St.done`              | `reached = true; break` :2298-2301 |
+| `Lbl`, `St.labels`     | `DijkstraLabel`, `labels: FxHashMap<NodeId, DijkstraLabel>` :2232-2237, :2288 |
+| `St.settled`           | `settled: FxHashSet<NodeId>` :2289 |
+| `St.heap`              | `heap: BinaryHeap<DijkstraItem>` :2290 as a multiset of `(weight, node)` |
+| `St.done`              | `reached = true; break` :2312-2313 |
 | `St.ord`, `St.clock`   | ghost: the time each node was settled (proof-only) |
-| `itemCmp`              | `impl Ord for DijkstraItem::cmp` :2240, `partial_cmp` :2255 |
-| `Step.skip`            | pop of a superseded entry, `!settled.insert(node) → continue` :2295-2297 |
-| `Step.reach`           | pop of `target` :2298-2301 |
-| `Step.relax`, `relaxOne` | the relaxation loop :2304-2340 |
-| `walkBack`             | parent-chain walk :2348-2354 (built in traversal order directly instead of push+reverse) |
-| `finish`               | result assembly :2342-2364 (`none` = a `labels[&cur]` panic) |
+| `itemCmp`              | `impl Ord for DijkstraItem::cmp` :2251, `partial_cmp` :2266 |
+| `Step.skip`            | pop of a superseded entry, `!settled.insert(node) → continue` :2308-2310 |
+| `Step.reach`           | pop of `target` :2311-2314 |
+| `Step.relax`, `relaxOne` | the relaxation loop :2316-2351 |
+| `walkBack`             | parent-chain walk :2358-2366 (built in traversal order directly instead of push+reverse) |
+| `finish`               | result assembly :2368-2377 (`none` = a `labels[&cur]` panic) |
 
 The heap is modelled as a list from which `Step` may pop *any* entry of minimum
 weight; `itemCmp_max_min_weight` shows `BinaryHeap::pop` (max under `itemCmp`)
 is such an entry, so every theorem covers the real pop order (ties broken by
-the smaller node id). Timeout / memory checks (:2290-2293) only add an `Err`
+the smaller node id). Timeout / memory checks (:2302-2305) only add an `Err`
 exit and are not modelled.
 
 Main results (all for exact non-negative weights, see `AlgoUdf.Graph`):
@@ -38,11 +38,11 @@ open AlgoUdf.Graph
 
 /-- `DijkstraItem::cmp(self, other)` = `other.weight.partial_cmp(&self.weight)
 .unwrap_or(Equal).then_with(|| other.node.cmp(&self.node))`, on finite weights
-(only finite weights are ever pushed, :2316-2321). -/
+(only finite weights are ever pushed, :2331-2333). -/
 def itemCmp (a b : Nat × Nat) : Ordering :=
   (compare b.1 a.1).then (compare b.2 a.2)
 
-/-- `partial_cmp` is `Some(self.cmp(other))` :2255-2260. -/
+/-- `partial_cmp` is `Some(self.cmp(other))` :2266-2271. -/
 def itemPartialCmp (a b : Nat × Nat) : Option Ordering := some (itemCmp a b)
 
 theorem itemCmp_gt (a b : Nat × Nat) :
@@ -82,7 +82,7 @@ structure St where
 
 def init (src : Nat) : St := ⟨fun _ => none, fun _ => false, [(0, src)], false, fun _ => 0, 0⟩
 
-/-- One iteration of the relaxation loop :2304-2340. -/
+/-- One iteration of the relaxation loop :2316-2351. -/
 def relaxOne (g : G) (u wu : Nat) (st : St) (r : Rel) : St :=
   match farEndpoint u r.1 r.2.1 g.dir with
   | none => st
@@ -120,7 +120,7 @@ inductive Star (g : G) (tgt : Nat) : St → St → Prop
 /-- The `while let Some(..) = heap.pop()` loop has exited. -/
 def Terminal (st : St) : Prop := st.done = true ∨ st.heap = []
 
-/-- Parent walk :2348-2354 (fuel-bounded; `none` = `labels[&cur]` panic or no termination). -/
+/-- Parent walk :2358-2366 (fuel-bounded; `none` = `labels[&cur]` panic or no termination). -/
 def walkBack (L : Nat → Option Lbl) (src : Nat) : Nat → Nat → List Rel → Option (List Rel)
   | 0, _, _ => none
   | fuel + 1, cur, acc =>
@@ -129,7 +129,7 @@ def walkBack (L : Nat → Option Lbl) (src : Nat) : Nat → Nat → List Rel →
     | none => none
     | some l => walkBack L src fuel l.parent (l.edge :: acc)
 
-/-- Result assembly :2342-2364. Outer `none` = panic; `some none` = `Ok(None)`. -/
+/-- Result assembly :2368-2377. Outer `none` = panic; `some none` = `Ok(None)`. -/
 def finish (g : G) (src tgt : Nat) (st : St) : Option (Option (List Rel × Nat × Nat)) :=
   if st.done then
     match walkBack st.labels src (st.clock + 1) tgt [] with

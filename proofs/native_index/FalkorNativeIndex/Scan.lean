@@ -291,7 +291,8 @@ theorem redisearchFields_idem (fields : List (String × List Field)) :
       simp only [hf, he, Bool.false_eq_true, if_false, ih]
 
 /-- **Range is the native index's alone**: an attribute with a Range field is built natively by
-    `populate` (from every field, `native_attrs`) and is never fed to RediSearch. -/
+    `populate` (from every field, `native_attrs`), and the Range fields are never fed to RediSearch (an attribute
+    that also has a Fulltext or Vector field still has those fed: `redisearchFields_keeps_nonrange`). -/
 theorem native_owns_range (g : G) (e : EntityType) (label : String) (a : String) (fs : List Field)
     (fields : List (String × List Field)) (hr : fs.any (fun f => f.ty == .range) = true) :
     populate g e label [(a, fs)] = buildInOneBatch g e label a ∧

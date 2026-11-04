@@ -74,13 +74,13 @@ def encodePairsInto (entries : List (Value × Nat)) (_out : List Nat) : List Nat
 /-- `add_batch` (`numeric.rs:183-191`); returns the index and the scratch buffer. -/
 def NumericIndex.addBatch (ix : NumericIndex) (entries : List (Value × Nat)) (scratch : List Nat) :
     NumericIndex × List Nat :=
-  let scratch := sortDedup (encodePairsInto entries scratch)   -- `sort_unstable` (dups harmless: union)
+  let scratch := (encodePairsInto entries scratch).mergeSort (fun a b => decide (a ≤ b))   -- `sort_unstable`: sorted, duplicates kept
   (⟨tInsertBatch ix.tree scratch⟩, scratch)
 
 /-- `remove_batch` (`numeric.rs:197-205`). -/
 def NumericIndex.removeBatch (ix : NumericIndex) (entries : List (Value × Nat)) (scratch : List Nat) :
     NumericIndex × List Nat :=
-  let scratch := sortDedup (encodePairsInto entries scratch)
+  let scratch := (encodePairsInto entries scratch).mergeSort (fun a b => decide (a ≤ b))   -- `sort_unstable`: sorted, duplicates kept
   (⟨tRemoveBatch ix.tree scratch⟩, scratch)
 
 /-- `add_encoded` (`numeric.rs:226-236`): `tuples.sort_dedup()`, then into an empty tree
@@ -112,8 +112,11 @@ deriving Repr, DecidableEq
 /-- `KeySet::distinct` (`numeric.rs:77-81`): `sort_unstable(); dedup()`. -/
 def KeySet.distinct (keys : List Nat) : KeySet := .keys (sortDedup keys)
 
-/-- `KeySet::contains` (`numeric.rs:85-92`). `Keys` is a `binary_search` over a sorted list; every
-    `Keys` is built by `distinct`, so it is sorted (`keys_sorted`) and the search is membership. -/
+/-- `KeySet::contains` (`numeric.rs:85-92`). `Keys` is a `binary_search`, modelled here as plain list
+    membership, which equals the search exactly when the list is sorted. The model does not carry that as a
+    type invariant: it is the separate theorem `keysOf_sorted` (every `Keys` the column builds comes from
+    `distinct`, so it is sorted), and a `KeySet.keys` built any other way is outside what these specs
+    claim about the Rust (`binary_search` on an unsorted slice is unspecified). -/
 def KeySet.contains : KeySet → Nat → Bool
   | .empty, _ => false
   | .point k, key => k == key
@@ -879,11 +882,11 @@ theorem remove_spec (ix : NumericIndex) (hs : Sorted ix.tree) (v : Value) (id : 
 
 theorem addBatch_spec (ix : NumericIndex) (entries : List (Value × Nat)) (scratch : List Nat) (e : Nat) :
     e ∈ (ix.addBatch entries scratch).1.tree ↔ e ∈ ix.tree ∨ e ∈ encodePairs entries := by
-  simp [NumericIndex.addBatch, encodePairsInto, mem_insertBatch, (sortDedup_spec _).2]
+  simp [NumericIndex.addBatch, encodePairsInto, mem_insertBatch, List.mem_mergeSort]
 
 theorem removeBatch_spec (ix : NumericIndex) (entries : List (Value × Nat)) (scratch : List Nat) (e : Nat) :
     e ∈ (ix.removeBatch entries scratch).1.tree ↔ e ∈ ix.tree ∧ e ∉ encodePairs entries := by
-  simp [NumericIndex.removeBatch, encodePairsInto, mem_removeBatch, (sortDedup_spec _).2]
+  simp [NumericIndex.removeBatch, encodePairsInto, mem_removeBatch, List.mem_mergeSort]
 
 theorem addEncoded_spec (ix : NumericIndex) (tuples : EncodedTuples) (e : Nat) :
     e ∈ (ix.addEncoded tuples).1.tree ↔ e ∈ ix.tree ∨ e ∈ tuples.scalar := by

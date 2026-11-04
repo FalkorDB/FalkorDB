@@ -42,7 +42,7 @@ The exception is `from_unique_keys`, which checks uniqueness only with a `debug_
 
 **4. Is `OrderSet` a correct set?**
 
-Yes, and since #2905 with no caveat: `from_vec`, the one constructor that could take duplicates, now drops later duplicates in every build (`fromVec_nodup`; first wins, order kept, `fromVec_sublist`), so `remove` after `from_vec` really removes (`containsS_removeS_fromVec`). On a duplicate-free vector, which every in-tree caller passes, it is still the identity (`fromVec_of_nodup`). `insert` never duplicates (`insertS_nodup`), `remove` removes (`containsS_removeS`, given no duplicates), and `get_index_of` shifts by exactly one for every element after a removed one (`indexOf_removeS`). Unlike `OrderMap`, `OrderSet`'s `=` is order-sensitive: it is the derived list equality.
+Yes, and since #2905 with no caveat on duplicates, for elements whose equality is an equivalence (the theorems assume `EquivBEq`, as for `OrderMap`; `OrderSet::from_vec` itself takes any `T: PartialEq`, and for `f32::NAN`, where `NAN == NAN` is false, `remove(&NAN)` cannot remove a stored NaN, which the model does not cover): `from_vec`, the one constructor that could take duplicates, now drops later duplicates in every build (`fromVec_nodup`; first wins, order kept, `fromVec_sublist`), so `remove` after `from_vec` really removes (`containsS_removeS_fromVec`). On a duplicate-free vector, which every in-tree caller passes, it is still the identity (`fromVec_of_nodup`). `insert` never duplicates (`insertS_nodup`), `remove` removes (`containsS_removeS`, given no duplicates), and `get_index_of` shifts by exactly one for every element after a removed one (`indexOf_removeS`). Unlike `OrderMap`, `OrderSet`'s `=` is order-sensitive: it is the derived list equality.
 
 **5. Does string interning give one pointer per string, and keep it stable?**
 
@@ -115,7 +115,7 @@ Also worth knowing, not filed as a bug: the examples after `hashed_pad` in `Row.
 | `OrderMap.lean` | `OrderMap` as a list of pairs; insert/remove/get, last-write-wins construction, `=` as permutation; the `from_unique_keys` counterexamples |
 | `OrderMapExtra.lean` | Constructors, accessors, `Index` (panics iff absent), `IntoIterator`, and `Hash` (`hash_consistent`) |
 | `OrderSet.lean` | `OrderSet` as a list; insert/remove/contains/`get_index_of`; why `remove` needs no duplicates |
-| `OrderSetExtra.lean` | Constructors (incl. the deduplicating `from_vec` and its `pre2905_` history), accessors, `clear`, `Index`, `IntoIterator` |
+| `OrderSetExtra.lean` | Constructors (incl. the deduplicating `from_vec`), accessors, `clear`, `Index`, `IntoIterator` |
 | `StringPool.lean` | The pool as `(content, pointer)` entries plus a count of outside references; intern, prune, release and the invariant `WF` |
 | `Cow.lean` | `Cow` over a heap of handles; `newVersion_isolated`, `siblings_isolated`, the one-directional counterexample, and the #2905 debug `branched` flag |
 | `NarrowInt.lean` | `width_for` and the truncating cast it guards |
@@ -141,6 +141,8 @@ By file: `row.rs` 21, `ordermap.rs` 20, `orderset.rs` 15, `cow.rs` 6, `bitset.rs
 - `OrderMap` keys are compared with an abstract `BEq`; theorems that need it assume `EquivBEq` (reflexive, symmetric, transitive), which `Arc<String>` equality satisfies.
 - `StringPool::stats` is modelled only for its pruning; its counting is not. The `Mutex` is not modelled: operations are taken to run one at a time, which the lock guarantees.
 - `Cow` models the handle sharing, not GraphBLAS: `dup()` is "allocate and copy contents". The debug `branched` flag's `AtomicBool` is a cell in a second heap; its `Relaxed` ordering is not modelled (operations run one at a time).
+- `Row::origin_row` (the correlation lineage field) is not in the `Row` model: `to_owned_row` (`clone`) preserves it in Rust, but `toOwnedRow_eq` states only values and bound bits.
+- `OrderSet` theorems assume `EquivBEq` on the element type; Rust's `T: PartialEq` bound is weaker (NaN).
 - Capacity, `SmallVec` inline storage and `ThinVec` allocation are invisible in the model; only contents are.
 
 ## Build and check

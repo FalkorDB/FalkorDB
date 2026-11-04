@@ -49,7 +49,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 * **Values** are proofs/core's `FalkorCore.V F` (all sixteen variants; `Column.lean`), so the
   lanes and expr_semantics' evaluator share one value type; `compare_value`'s null arms order
   by `OrderedEnum::order` and `NOT` names the operand type, as in Rust.
-* **`VecEval`**: `VectorEval::eval` (vector_expr.rs:211-283) over proofs/expr_semantics' `E`, arms
+* **`VecEval`**: `VectorEval::eval` (vector_expr.rs:211-271) over proofs/expr_semantics' `E`, arms
   in source order with their guards; `eval_sound` (every tree in scope, every set of valid
   rows) and `evalValues_sound` (`eval_values`, :285). `Dispatch.lean` stays as the coarser
   `Kind`/`Node` model of the same walk.
@@ -87,7 +87,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 * `set_column` binds exactly its slot; `classify_stored_column` and
   `classify_exact_column` are lossless; `classify_column` is lossy (latent, no caller).
 * `concat` = per-row `BatchBuilder` concat (value and bound bit at every row and
-  slot, origins, row count) when no input batch is empty; the typed fast path
+  slot, origins, row count) for every list of batches; the typed fast path
   equals the fallback.
 * Emitter: `emit_lazy` conserves the `(row, item)` stream (no loss, duplication or
   reordering), fills to `min(ceiling, remaining)`, all batches non-empty and
@@ -116,7 +116,7 @@ Both were confirmed on the real code (pub API; no Cypher trigger found, so laten
 1. `Batch::concat` (`batch.rs:1008-1015` before the fix) took `bound_anywhere` from batches with
    no active rows: a slot bound only in an empty batch came out bound (`Some(Null)`) where the
    per-row definition leaves it unbound (`None`). Now the fallback loop skips `active_len() == 0`
-   batches (`batch.rs:1008-1012`), as `concat_typed_column` does. Lean `empty_batch_ignored`;
+   batches (`batch.rs:1008-1013`), as `concat_typed_column` does. Lean `empty_batch_ignored`;
    `concat_obs_eq` no longer needs every batch non-empty (`concatGeneric` skips empty batches).
 2. `BatchRow::to_owned_row` dropped trailing Unbound columns, so `view.value_at(i) = Some(Null)`
    but `to_owned_row().value_at(i) = None` ("Variable not found" in `resolve_var`). Now it builds
@@ -155,7 +155,7 @@ proofs/ops_aggregate.
 ## Re-target to 5e475e6c9 (#2973, #3436)
 * #2973 (closes #2922) rewrites `BatchedResultEmitter::with_binding`'s ceiling from the guarded arm
   `Some(cap) if cap < BATCH_SIZE => cap.max(1)` to `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1,
-  BATCH_SIZE))` (batched_result_emitter.rs:563), plus two `debug_assert!`s (`pack_ceiling` in `[1,
+  BATCH_SIZE))` (batched_result_emitter.rs:562), plus two `debug_assert!`s (`pack_ceiling` in `[1,
   BATCH_SIZE]` in `with_binding`, `<= BATCH_SIZE` in `start_batch`). The #2922 miscompile (LLVM 21-23.1.0 on
   aarch64-apple-darwin dropped the guard) is a compiler bug, so the source semantics did not change:
   `Emitter.withBinding` is now the clamp;

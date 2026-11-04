@@ -234,10 +234,12 @@ theorem vkeyName_uuid_counter (g g' : List Nat) (t t' s s' : Nat)
   · exact hne
   · exact absurd hu (uuid_counter_distinct t t' s s' hne)
 
-/-- **Discharges `VKeys.Names.vname_inj`** for a naming that gives the `i`-th virtual
-key of graph `g` the uuid of call `ctr g i` (at any clock reading `clk g i`), provided
-the calls are distinct mod 2^48 — `COUNTER.fetch_add` hands each call its own value,
-so this holds for any 2^48 consecutive names of one process. -/
+/-- **Reduces `VKeys.Names.vname_inj` to counter injectivity**: for a naming that gives the
+`i`-th virtual key of graph `g` the uuid of call `ctr g i` (at any clock reading `clk g i`),
+the names are injective **provided** `hctr` holds, i.e. the calls' counters are distinct mod
+2^48. That premise is conditional, not proven here: `COUNTER.fetch_add` hands each call its
+own value, so it holds for any 2^48 consecutive names of one process, but this file does not
+model the atomic allocation. -/
 theorem names_vname_inj (clk ctr : List Nat → Nat → Nat)
     (hctr : ∀ g i g' j, ctr g i % 2 ^ 48 = ctr g' j % 2 ^ 48 → g = g' ∧ i = j) :
     ∀ g i g' j, vkeyName g (uuid (clk g i) (ctr g i)) = vkeyName g' (uuid (clk g' j) (ctr g' j)) →

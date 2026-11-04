@@ -8,18 +8,18 @@ for *any* indexer behaviour.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `populateStart`   | `populate_index` :510 |
-| `dropBg`          | `drop_index_bg` :761 |
-| `createIndex`     | `create_index` :3592 / `create_index_sync` :3639 |
-| `syncDocs`        | `populate_indexes_sync` :3683 (one label/type) |
-| `commitDocs`      | `commit_index_kind` :3946 (via `commit_index` :3835, `commit_index_locked` :3848) |
-| `commitEdgeDocs`  | `commit_edge_index_locked` :3870 (via `commit_edge_index` :3858) |
-| `commitIndexDocs` | `commit_index_docs` :3821 (native apply, then `commit_index`/`commit_edge_index` per non-empty kind) |
-| `dropIndex`, `noSuchIndexMsg` | `drop_index` :4000 (message :4085) |
-| `indexInfo`       | `index_info` :4343 |
-| `memEstimate`, `labelPass` | `memory_usage_report` :4794 sampling arithmetic and seen-dedup |
-| `encodeOp`        | `encode_payload` :4968 dispatch |
-| `getPlan`         | `get_plan` :1305 cache decision |
+| `populateStart`   | `populate_index` :560 |
+| `dropBg`          | `drop_index_bg` :819 |
+| `createIndex`     | `create_index` :3670 / `create_index_sync` :3717 |
+| `syncDocs`        | `populate_indexes_sync` :3764 (one label/type) |
+| `commitDocs`      | `commit_index_kind` :4043 (via `commit_index` :3927, `commit_index_locked` :3940) |
+| `commitEdgeDocs`  | `commit_edge_index_locked` :3962 (via `commit_edge_index` :3950) |
+| `commitIndexDocs` | `commit_index_docs` :3913 (native apply, then `commit_index`/`commit_edge_index` per non-empty kind) |
+| `dropIndex`, `noSuchIndexMsg` | `drop_index` :4090 (message :4160-4177) |
+| `indexInfo`       | `index_info` :4468 |
+| `memEstimate`, `labelPass` | `memory_usage_report` :4919 sampling arithmetic and seen-dedup |
+| `encodeOp`        | `encode_payload` :5093 dispatch |
+| `getPlan`         | `get_plan` :1383 cache decision |
 -/
 namespace GQ
 variable {V : Type}
@@ -152,7 +152,7 @@ theorem commitDocs_every_id (adds rems : List (Nat × List Nat)) (names : List S
   · cases h
     exact ⟨_, _, List.mem_map.2 ⟨_, hs, rfl⟩, _, List.mem_map.2 ⟨id, hi, rfl⟩⟩
 
-/-- `commit_index_docs` (graph.rs:3821): first `apply_index_writes` (the native index's
+/-- `commit_index_docs` (graph.rs:3913): first `apply_index_writes` (the native index's
 staged `docs.native`, a no-op without `index-falkordb`; its semantics belong to
 proofs/index_layer), then the RediSearch node documents iff `node_adds`/`node_removes` is
 non-empty, then the edge documents iff `edge_adds`/`edge_removes` is non-empty. The ops
@@ -202,7 +202,7 @@ theorem commitEdgeDocs_mem (tn : Ten) (ids : List Nat) (s d e : Nat) (hnd : (tn.
       · have : y.2.2 ≠ e := fun h => hnd.1 (h ▸ List.mem_map_of_mem hm')
         simp [this, ih hnd.2 hm']
 
-/-- The "no such index" text (graph.rs:4085-4092): `:L` when no attribute is named
+/-- The "no such index" text (graph.rs:4160-4177): `:L` when no attribute is named
 (`db.idx.fulltext.drop('L')`, #3280, as C), else `:L(a, b)`. -/
 def noSuchIndexMsg (label : String) (attrs : List String) : String :=
   let attrList := ", ".intercalate attrs

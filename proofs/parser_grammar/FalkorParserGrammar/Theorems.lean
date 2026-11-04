@@ -162,8 +162,8 @@ theorem slice_bounds_omitted :
   refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- **`listOp` never swallows a bound's error**: whenever the bound parser fails
-where a bound starts (not on `..` / `]`), `parse_list_operator_expression`
-fails at the same place. -/
+where the `from` bound starts (not on `..`; a `]` there is handed to the bound parser, which
+fails on it), `parse_list_operator_expression` fails at the same place. -/
 theorem listOp_from_err (pe : List Tok → Out) (lhs : RT) (ts e : List Tok)
     (hd : ∀ r, ts ≠ .dotdot :: r) (h : pe ts = .err e) : listOp pe lhs ts = .err e := by
   unfold listOp; split

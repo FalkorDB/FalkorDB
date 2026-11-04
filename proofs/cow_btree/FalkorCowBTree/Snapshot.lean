@@ -12,7 +12,7 @@ values:
    through the writer's own `root` field (`insert` / `remove` / `insert_batch` take `&mut self`).
 2. Leaf pages are `Arc<[u8]>` built fresh by every edit (`Arc::from(buf)`, `leaf/*.rs`) and never
    written after construction (`grep get_mut` finds only `make_private`).
-3. Since #3283, `Node::merge_underfull_below` (`node.rs:563-573`) uses `Arc::make_mut`. It is only
+3. Since #3283, `Node::merge_underfull_below` (`node.rs:563-574`) uses `Arc::make_mut`. It is only
    called on a node `combine` has just built with `Arc::new` during the same `remove_batch`, so the
    `Arc` is unique and `make_mut` mutates that fresh page in place; were it ever shared, `make_mut`
    clones first. Either way no page reachable from an older root is written (the Rust test

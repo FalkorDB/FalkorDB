@@ -3,11 +3,11 @@ import FalkorBinder.Resolve
 # CALL {} entry projection as a record boundary (#2845, eb470521b)
 
 Folded in from the retired proofs/pr2845_review. Model of `bind_call_body`
-(graph/src/planner/binder.rs:824-971) and `build_import_projections`
-(binder.rs:979-1003); scope tables, `freshVar`, `mint_fresh_iff`,
+(graph/src/planner/binder.rs:824-978) and `build_import_projections`
+(binder.rs:984-1006); scope tables, `freshVar`, `mint_fresh_iff`,
 `projectName` are this project's (Table.lean, Resolve.lean). Counterexamples
-on main before #2845 (da6f808c3) were removed (in 17ccc5412)
-(fixed by #2845, eb470521b; closes #2601, #2602).
+on main before #2845 (da6f808c3) were removed in bbee75955 (the last revision that has them is
+17ccc5412) (fixed by #2845, eb470521b; closes #2601, #2602).
 
 * Every CALL body gets an entry projection (`bodyNew_entry`, `bodyNew_empty`,
   `branchNew_entry`), unchanged when something is imported (`bodyNew_eq_old`).
@@ -22,7 +22,7 @@ on main before #2845 (da6f808c3) were removed (in 17ccc5412)
 -/
 namespace FalkorBinder.Pr2845
 
-/-- `build_import_projections` (binder.rs:979): one `project_name` per
+/-- `build_import_projections` (binder.rs:984): one `project_name` per
 imported variable, in the HashMap's iteration order (`imported`, any order),
 paired with the outer variable it reads. The final `sort_by` name only
 reorders the pairs. -/

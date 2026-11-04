@@ -1,6 +1,6 @@
 import GraphQueries.Accessors
 /-
-# `Graph::first_node_with_relationships` (graph.rs:2321, #3022)
+# `Graph::first_node_with_relationships` (graph.rs:2421, #3022)
 
 The `DELETE_NODE` arm of `apply_record` refuses a node that still has a
 relationship. The Rust answers it in bulk: one `Aᵀ·x` over the adjacency matrix
@@ -19,7 +19,7 @@ edge of any type), and every edge's endpoints are rows of it.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `firstNodeWithRels` | `first_node_with_relationships` :2321-2361 |
+| `firstNodeWithRels` | `first_node_with_relationships` :2421 |
 | `BulkOps.countInRows` | `adj.count_in_rows(&x)` (`VersionedMatrix::count_in_rows`) over `x = Vector::from_sorted_indices(n, &ids)` |
 | `BulkOps.pairsInto` | `t.count_pairs_into(&x)` (`Tensor::count_pairs_into`) |
 | `BulkOps.outNext` / `incNext` | `out.seek(id, id); out.next().is_some()` / `it.seek(id, id); it.next().is_some()` over `adj.iter(0, 0)` / `t.iter(0, 0, true)` |
@@ -52,7 +52,7 @@ structure BulkOps (g : G V) where
   incNext : Ten → Nat → Bool
   incNext_spec : ∀ t id, incNext t id = true ↔ Ten.inc t id ≠ []
 
-/-- `first_node_with_relationships` (:2321). -/
+/-- `first_node_with_relationships` (:2421). -/
 def firstNodeWithRels (g : G V) (B : BulkOps g) (nodes : List Nat) : Option Nat :=
   if nodes.isEmpty || g.adj.nvals == 0 then none else
   let n := g.adj.nr
@@ -161,7 +161,8 @@ theorem firstNodeWithRels_spec (g : G V) (hx : AdjExact g) (B : BulkOps g) (node
       · exfalso
         rcases (hasRel_iff g i).mp hr with ⟨t, ht, e, he, _⟩ | ⟨t, ht, e, he, _⟩ <;>
         · have := (hx.exact e.1 e.2.1).mpr ⟨t, ht, e, he, rfl, rfl⟩
-          simp [Mat.nvals] at h; rw [h] at this; cases this
+          have h' := (Mat.nvals_eq_zero _).mp (by simpa using h)
+          rw [h'] at this; cases this
   simp only [h0, Bool.false_eq_true, ↓reduceIte]
   by_cases h1 : ids.isEmpty = true
   · simp only [h1, ↓reduceIte]; rw [List.isEmpty_iff.mp h1]; rfl

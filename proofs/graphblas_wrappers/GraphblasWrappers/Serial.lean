@@ -12,6 +12,11 @@
 what was encoded returns the value and the rest of the stream. Instances are
 proved in their own projects (e.g. `VMOps.decode_encode` for
 `VersionedMatrix`, `graph_persist` for the roaring set).
+
+`Codec.roundtrip` is a *field*, so `Codec.roundtrip2` follows from the
+assumption and proves nothing about any Rust `Encode`/`Decode` impl; it only
+records what an impl must satisfy. The two trait-method rows in `COVERAGE.tsv`
+are therefore AXIOMATISED (an obligation), not PROVEN.
 -/
 namespace GBWSerial
 

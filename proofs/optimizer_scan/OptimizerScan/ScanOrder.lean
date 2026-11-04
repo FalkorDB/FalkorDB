@@ -349,7 +349,11 @@ def boundAfter : List Nat → List Step → List Nat
   | B, .filt _ _ :: rest => boundAfter B rest
 
 /-- **PROVEN**: appending filters above a well-scoped chain keeps it well-scoped when the filters
-    read only variables the chain (or what is below it) binds. -/
+    read only variables the chain (or what is below it) binds.
+    The premise `hf` is an assumption here: that Rust's salvaged filters meet it (they come from
+    `filters_of` on a planner scan subtree and read its endpoint, which the hops now bind, plus
+    outer-bound variables) is argued in the section header, not derived: `filters_of`'s output is not
+    modelled with variable sets. -/
 theorem salvage_wellScoped : ∀ (B : List Nat) (steps : List Step), wellScoped B steps →
     ∀ (fs : List (List Nat × ((Nat → Nat) → Bool))), (∀ f ∈ fs, ∀ v ∈ f.1, v ∈ boundAfter B steps) →
     wellScoped B (steps ++ fs.map (fun f => Step.filt f.1 f.2))

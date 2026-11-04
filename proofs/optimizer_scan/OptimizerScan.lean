@@ -31,7 +31,7 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | `IdSeek.getIdFilter`, `Op.flip`, `collectFilters` | `utilize_node_by_id.rs:52-92, 106-119` |
 | `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1415-1469` (`id as u64` at 1428) |
 | `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1470-1480` (#3394, main b84473a7f: `node_count() == 0 → Ok(None)`) |
-| `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1624` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
+| `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1783` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
 | `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
 | `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1477-1687`, `Index::query` 1690 |
 | `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-295` |
@@ -90,7 +90,7 @@ Scan selection (`ScanOrder.lean`):
    (9212add39, closes #3353; main b84473a7f: `evaluate_id_filter` returns `Ok(None)` when
    `node_count() == 0`, `runtime.rs:1470-1475`; Lean `seek_sound` without `nodeCount ≠ 0`,
    `empty_graph_seek_none`). Before:
-   `Graph::max_node_id` (`graph.rs:1624`, `IdSpace::max_id` since #2846) is 0 on a graph with no nodes, so
+   `Graph::max_node_id` (`graph.rs:1783`, `IdSpace::max_id` since #2846) is 0 on a graph with no nodes, so
    `evaluate_id_filter` yields `{0}` and `node_by_id_seek.rs:67` only subtracts deleted ids.
    Lean `IdSeek.gEmpty` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). On a fresh graph `MATCH (n) WHERE id(n) = 0 RETURN n`
    → Rust 1 row, C 0. `MATCH (n) WHERE id(n)=0 SET n.x=1, n:Z` then `CREATE (m:Q)` →
@@ -162,7 +162,7 @@ Scan selection (`ScanOrder.lean`):
 ## Wave 4 additions (origin/main 3fec7d7c9)
 - `EdgeInline`: both `IndexSubject` impls (`nMatch_spec`, `eMatch_spec`), the edge headline
   `edge_utilize_sound` (EdgeByIndexScan + bound-endpoint filter = Filter → CondTraverse),
-  the inline-attribute path (now historical `pre2390_applyInline_*`), `distance()`
+  the inline-attribute path (removed by #2390; only an unchecked historical note remains), `distance()`
   scans (`distance_sound`: sound with a complete GEO filter; the Filter is always kept),
   and `NodeByIndexScanOp` (`scanRow_eq_sel`, `evalIQE_*`, `canUtilize_empty`).
 - `Cleanup`: BFS walkers (`mem_bfs`, `extractAttr_*`, `hasPropOf_iff`, `nonIdxD_spec`),
@@ -188,8 +188,9 @@ optimizer's own inline paths are gone. Model changes (every citation re-mapped):
   `filteredVars_above_sub`); `make_scan_subtree` takes salvaged filters and `filters_of` collects
   them (`makeScanSubtree_planner`, `filtersOf_wrap`, `filtersOf_makeScanSubtree`);
   `select_var_len_scan_node` (`vlNonLeaf_keeps_wrappers`, `vlLeaf_guards`).
-- `ScanOrder`: salvaged filters re-attached above the re-ordered chain are well-scoped
-  (`salvage_wellScoped`, `boundAfter_hop`).
+- `ScanOrder`: salvaged filters re-attached above the re-ordered chain are well-scoped, given that they
+  read only variables the chain binds (`salvage_wellScoped`, `boundAfter_hop`; the premise is assumed,
+  not derived from `filters_of`).
 - `Cleanup`: `governing_filter` (`governingFilter_spec`), `match_scan_with_filter`, and
   `apply_filter_pushdown`'s `over_pending` (`utilizeP_false`, `utilizeP_true`, `overPending_sound`:
   over `IncludePending` the kept Filter makes the index scan exact for any pending set;

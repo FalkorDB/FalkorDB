@@ -12,17 +12,17 @@ answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to 
 | here | there |
 | --- | --- |
 | `Budget.effectiveLimit/effectiveSkip/recordCap` | `Runtime::effective_limit` (`runtime.rs:681`), `effective_skip` (`:716`), `record_cap` (`:748`) |
-| `Budget.hardCap`, `Budget.run` | the hard `record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs:1030,1179`), `ExpandIntoOp` (`ops/expand_into.rs:246`), SortOp top-k (`ops/sort.rs:491`) |
+| `Budget.hardCap`, `Budget.run` | the hard `record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs`: stop `:1378-1383`, `trim_to_cap` `:1321-1340`), `ExpandIntoOp` (`ops/expand_into.rs`: stop `:253`, trim `:294-300`), SortOp top-k (`ops/sort.rs:509-511`) |
 | `Cell.*`      | #3436 `Runtime::graph()` / `graph_mut()` / `GraphRef` / `Deref` / `HeldRead` (`runtime.rs:115-137`, `:476-491`, `:559-589`): an atomic_refcell borrow-word model; `graph_deref`, `graph_same_result`, `read_program_same`, `sites_same`, `graph_mut_write_same`, `graph_mut_same_cell` |
-| `DropOrder.*` | `HeldRead { guard, _owner }` / `Runtime` drop glue, `graph_arc()`: `held_survives`, `drop_sound`, `held_swapped_unsound`, `g_never_reassigned`, `graph_arc_keeps_g` |
+| `Drop.*` (`DropOrder.lean`) | `HeldRead { guard, _owner }` / `Runtime` drop glue, `graph_arc()`: `held_survives`, `drop_sound`, `held_swapped_unsound`, `g_never_reassigned`, `graph_arc_keeps_g` |
 | `Proto.*`     | the read-guard protocol over `MvccGraph`, `QuerySession` and every graph-cell `borrow_mut`: `reader_guard_sound`, `guard_never_excl`, `readNew_never_panics`, `priv_borrows_owner_only`; open bug #3439 `writer_reply_race` |
 | `Reuse.*`     | `read_plan_no_update` (a read plan has no updating operator, from `redis_layer`'s `RedisLayer.Ro`), `accessor_unchanged`, `materialize_unchanged` (accessor theorems transfer through `graph()`) |
 | `Emitter.*`   | `BatchedResultEmitter` (`ops/batched_result_emitter.rs:455-785`) |
 | `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs:620-667`) |
 | `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs:816`), `children_to_recurse` (`:758`) |
 | `Accessors.*` | entity accessors `runtime.rs:1483-1984` (attrs, memo, labels, degrees, endpoints/type) |
-| `Accessors.differs*` | #3464 `Runtime::node_differs_from_committed` (`runtime.rs:1778`) + `Pending::node_has_changes` (`pending.rs:760`): `differs_spec`, `not_differs_labels`, `not_differs_attrs`, `reads_differ_imp_differs` (guard false ⇒ `get_node_labels`/`get_node_attrs` equal the committed graph's; sufficient, not exact: `differs_overapprox`) |
-| `Misc.*`      | `check_timeout` (`:531`), `check_mem_capacity` (`:541`), `map_to_index_options` (`:1993`; #3094 required vector keys, fulltext unknown-key refusal), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
+| `Accessors.differs*` | #3464 `Runtime::node_differs_from_committed` (`runtime.rs:1778`) + `Pending::node_has_changes` (`pending.rs:784`): `differs_spec`, `not_differs_labels`, `not_differs_attrs`, `reads_differ_imp_differs` (guard false ⇒ `get_node_labels`/`get_node_attrs` equal the committed graph's; sufficient, not exact: `differs_overapprox`) |
+| `Misc.*`      | `check_timeout` (`:531`), `check_mem_capacity` (`:541`), `map_to_index_options` (`:2008`; #3094 required vector keys, fulltext unknown-key refusal), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
 | (reused)      | `evaluate_id_filter` (`:1415-1479`) is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`, `empty_graph_seek_none`: since #3394 no range on a graph with no nodes) |
 
 ## Proven (plain English)
@@ -58,8 +58,8 @@ answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to 
 
 ## CONFIRMED bugs (Rust repro in `graph/tests/lean_runtime_core.rs`, C = `bin/macos-arm64v8-release/falkordb.so`)
 B1. `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:699-702`), but
-    `CondTraverseOp`/`ExpandIntoOp` treat it as a HARD stop (`cond_traverse.rs:1088`,
-    `expand_into.rs:246`). A traverse feeding another row-reducing traverse stops after
+    `CondTraverseOp`/`ExpandIntoOp` treat it as a HARD stop (`cond_traverse.rs:1378-1383`,
+    `expand_into.rs:253`). A traverse feeding another row-reducing traverse stops after
     LIMIT rows and the answer is lost.
     `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1` (a1→b1, a2⇄b2): Rust [] , C [2].
     `MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 1` (a1→b1 dead end, a2→b2→c): Rust [], C [30].

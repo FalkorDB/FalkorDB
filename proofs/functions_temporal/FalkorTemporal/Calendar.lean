@@ -6,11 +6,11 @@ FalkorDB-rs passes through:
 
 | here | there |
 | --- | --- |
-| `isLeap`          | `is_leap` — `graph/src/runtime/value.rs:764` |
-| `daysInMonth`     | `days_in_month` — `value.rs:752` |
-| `daysFromCivil`   | `days_from_civil` — `value.rs:771` (`div_euclid`/`rem_euclid` = Lean `/`,`%` for a positive divisor) |
+| `isLeap`          | `is_leap` — `graph/src/runtime/value.rs:777` |
+| `daysInMonth`     | `days_in_month` — `value.rs:765` |
+| `daysFromCivil`   | `days_from_civil` — `value.rs:784` (`div_euclid`/`rem_euclid` = Lean `/`,`%` for a positive divisor) |
 | `daysFromCivilT`  | `days_from_civil` — `graph/src/runtime/functions/temporal.rs:463` (a second copy, i32 arithmetic, truncating `/`) |
-| `civilFromDays`   | `civil_from_days` — `value.rs:788` (the final `y as i32` is `toI32`) |
+| `civilFromDays`   | `civil_from_days` — `value.rs:804` (the final `y as i32` is `toI32`) |
 
 Era-local pieces (`yoeOf`, `doyOf`, `mpOf`, `dOf`, `dfcEra`) are the
 sub-expressions of those functions, named so that the finite era check in
@@ -19,11 +19,11 @@ sub-expressions of those functions, named so that the finite era check in
 
 namespace FalkorTemporal
 
-/-- `is_leap` (`value.rs:764`). Rust `%` on i32 is truncating; divisibility tests
+/-- `is_leap` (`value.rs:777`). Rust `%` on i32 is truncating; divisibility tests
 do not care about the sign convention, which `isLeap_tmod` records. -/
 def isLeap (y : Int) : Bool := (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 
-/-- `days_in_month` (`value.rs:752`). Only called with `1 ≤ m ≤ 12`. -/
+/-- `days_in_month` (`value.rs:765`). Only called with `1 ≤ m ≤ 12`. -/
 def daysInMonth (y m : Int) : Int :=
   if m = 2 then (if isLeap y then 29 else 28)
   else if m = 4 ∨ m = 6 ∨ m = 9 ∨ m = 11 then 30 else 31
@@ -32,7 +32,7 @@ def daysInMonth (y m : Int) : Int :=
 chrono's ±262143-year limit, see `chronoYearOk`). -/
 def ValidDate (y m d : Int) : Prop := 1 ≤ m ∧ m ≤ 12 ∧ 1 ≤ d ∧ d ≤ daysInMonth y m
 
-/-- `days_from_civil` (`value.rs:771`). -/
+/-- `days_from_civil` (`value.rs:784`). -/
 def daysFromCivil (y m d : Int) : Int :=
   let y := if m ≤ 2 then y - 1 else y
   let era := y / 400
@@ -52,7 +52,7 @@ def daysFromCivilT (y m d : Int) : Int :=
   let doe := yoe * 365 + yoe / 4 - yoe / 100 + doy
   era * 146097 + doe - 719468
 
-/-- Era-local pieces of `civil_from_days` (`value.rs:791-797`). -/
+/-- Era-local pieces of `civil_from_days` (`civil_from_days_wide`, `value.rs:815-822`). -/
 def yoeOf (doe : Int) : Int := (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
 def doyOf (doe : Int) : Int := doe - (365 * yoeOf doe + yoeOf doe / 4 - yoeOf doe / 100)
 def mpOf (doe : Int) : Int := (5 * doyOf doe + 2) / 153
@@ -67,7 +67,7 @@ def dimMarch (yoe mp : Int) : Int :=
   if mp = 11 then (if isLeap (yoe + 1) then 29 else 28)
   else if mp = 1 ∨ mp = 3 ∨ mp = 6 ∨ mp = 8 then 30 else 31
 
-/-- `civil_from_days` (`value.rs:788`) before the final `as i32` truncation. -/
+/-- `civil_from_days` (`value.rs:804`, via `civil_from_days_wide` `value.rs:812`) before the final `as i32` truncation. -/
 def civilFromDaysI (z : Int) : Int × Int × Int :=
   let z := z + 719468
   let era := z / 146097

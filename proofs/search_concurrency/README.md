@@ -1,6 +1,6 @@
 # search_concurrency: snapshot isolation, deadlock freedom and the RediSearch document path
 
-This project proves the concurrency guarantees FalkorDB-rs gives its clients, and shows with counterexamples where they used to break. It models the Redis main thread, the worker pool, the per-graph write slot, the GIL, `GRAPH.DELETE` and the `BGSAVE` fork as a transition system, and proves properties that hold over **every** interleaving. It also covers the RediSearch side of indexing: what `Document::set` sends, index option parsing, index population tickets, and vector KNN queries.
+This project proves the concurrency guarantees FalkorDB-rs gives its clients, and shows with counterexamples where they used to break. It models the Redis main thread, the worker pool, the per-graph write lock and fork-and-commit versions (no write slot since #3657), the GIL, `GRAPH.DELETE` and the `BGSAVE` fork as a transition system, and proves properties that hold over **every** interleaving. It also covers the RediSearch side of indexing: what `Document::set` sends, index option parsing, index population tickets, and vector KNN queries.
 
 User-facing behaviour that depends on it:
 
@@ -16,7 +16,7 @@ Each module's header has its Lean↔Rust `file:line` table; the root [`SearchCon
 
 **1. Can a reader see a partial commit, or a write get lost?**
 
-No. `Mvcc.lean` models each atomic step of the Rust (read, claim the write slot, fork, escalate to the GIL, mutate, commit, rollback, delete, BGSAVE fork) and lets any enabled step fire in any order. Over every reachable state:
+No. `Mvcc.lean` models each atomic step of the Rust (read, fork a private version as a reader or a writer, check the fork, escalate to the GIL, mutate, commit, abandon, delete, BGSAVE fork) and lets any enabled step fire in any order. Over every reachable state:
 
 - `snapshots_are_committed`: every snapshot a reader or fork child ever took is a version some commit published whole;
 - `no_lost_writes`: the committed state is exactly the acknowledged writes, in acknowledgement order;
@@ -27,7 +27,7 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, claim the write slot,
 **2. Can an inline write fail because a queued write is in progress?**
 
 - **Before #3290, yes.** A queued write claimed the write slot while still matching, as a reader. A `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC` arriving then was refused with "another write is in progress" (counterexample removed in bbee75955; the last revision that has them is 17ccc5412); C creates the node (`multi_write_ok_in_c`).
-- **On main, no.** The queued write builds on a fork that takes nothing (since #3657 there is no write slot at all) and checks it only after it holds the GIL. If an inline write committed in between, the check finds it stale and the queued write re-runs (`checkFork_stale`, `stale_then_rerun`); the inline write succeeds (`inline_write_ok`). `reader_cannot_commit` is one trace: right after `forkW` from the initial state a `commit` is refused. The general claim (no reachable state lets a thread with an unchecked fork and no `Current` version mutate or commit) is not proven: the model's `forkCur` can still fire for a thread that holds an unchecked fork, which a real session (one version at a time) cannot do; an indexer batch in between does not make it stale (`batch_does_not_stale`).
+- **On main, no.** The queued write builds on a fork that takes nothing (since #3657 there is no write slot at all) and checks it only after it holds the GIL. If an inline write committed in between, the check finds it stale and the queued write re-runs (`checkFork_stale`, `stale_then_rerun`); the inline write succeeds (`inline_write_ok`). In every reachable state a thread with an unchecked fork cannot mutate or commit (`unchecked_fork_cannot_write`; `reader_cannot_commit` is the one-trace instance): the model refuses `forkCur` for a thread that already holds a version, as a real session (one version at a time) does. An indexer batch in between does not make a fork stale (`batch_does_not_stale`).
 
 **3. Can the server deadlock?**
 
@@ -65,8 +65,9 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 | `refused_commit_publishes_nothing`, `current_not_stale` | A commit refused by `Graph::validate` publishes nothing and the version is dropped; a version made under the write lock is never refused as stale | `Mvcc.lean` |
 | `no_cycle`, `all_programs_ordered` | The lock order rules out deadlock, and every locking path follows it | `Locks.lean` |
 | `drain_no_lost_message` | The `write_loop` hand-off never strands a queued write (2 producers, exhaustive) | `Locks.lean` |
-| `main_operational_complete` | Since #3086 an OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches | `PoolWithin.lean` | `threadpool.rs` after #3502: named workers, `shutdown_within` (`within_in_time`, `detached_workers_exit`) and its two open bugs |
-| `Tickets.lean` |
+| `unchecked_fork_cannot_write` | In every reachable state a thread with an unchecked fork can neither mutate nor commit | `Mvcc.lean` |
+| `main_operational_complete` | Since #3086 an OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches, except the store-to-ticket window (the theorem assumes `owed = false`; see "One remaining window", `store_window_operational_incomplete`) | `Tickets.lean` |
+| `within_in_time`, `detached_workers_exit` | `threadpool.rs` after #3502: named workers; `shutdown_within` returns in time and detaches stuck workers without leaking them; two bugs stay open (`second_call_true_despite_straggler`, `within_blocks_behind_shutdown`) | `PoolWithin.lean` |
 | `never_stuck_3014`, `main_never_blocks` | Since #3014 the main thread never blocks on a full queue | `Locks.lean` |
 | `release_exactly_once`, `count_eq_live` | Every admitted query releases its queue slot exactly once; the counter equals live queries | `Pool.lean` |
 | `shutdown_drains` | Pool shutdown runs every queued job once, in order, then all workers exit | `Pool.lean` |
@@ -75,10 +76,10 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 
 ### How `snapshots_are_committed` is proved
 
-1. **Model the state.** `S` holds the committed version `pub` and its version number, the write slot (owner, the base it was claimed on, its pending writes), the unclaimed forks, who holds the GIL, whether the graph is registered, and ghost history: every published version (`hist`), every snapshot taken (`seen`) and every acknowledged write (`acked`). A version is the list of writes it contains.
-2. **Model the Rust steps.** `step` has one case per event, each one atomic step of the Rust: `read` clones the committed `Arc`; `claim` is the compare-and-swap on the write flag; `commit` runs `Graph::validate` (a parameter, so every theorem holds for any validation) and then swaps the `Arc`; `delete` and `fork` need the GIL on the main thread.
+1. **Model the state.** `S` holds the committed version `pub` and its version number, the `Current` version (owner, the data version and base it was forked at, its pending writes), the unchecked forks, who holds the GIL, whether the graph is registered, and ghost history: every published version (`hist`), every snapshot taken (`seen`) and every acknowledged write (`acked`). A version is the list of writes it contains.
+2. **Model the Rust steps.** `step` has one case per event, each one atomic step of the Rust: `read` clones the committed `Arc`; `forkW`/`forkCur` take a private version and `checkFork` finds it stale or makes it `Current`; `commit` runs `Graph::validate` (a parameter, so every theorem holds for any validation) and then swaps the `Arc`; `delete` and `fork` need the GIL on the main thread.
 3. **Any interleaving.** `Reach` is every state reachable from `init` by any sequence of enabled steps.
-4. **One inductive invariant.** `Inv` says: `hist`'s head is `pub`, the slot's base is `pub`, everything `seen` is in `hist`, `acked = pub`, every historical version is a prefix of `pub`, and forks are no newer than `pub`. `inv_step` proves each event keeps it; `reach_inv` lifts that to every reachable state. The headline theorems are fields of `Inv`.
+4. **One inductive invariant.** `Inv` says: `hist`'s head is `pub`, a `Current` version's base is `pub`, everything `seen` is in `hist`, `acked = pub`, every historical version is a prefix of `pub`, forks are no newer than `pub`, and a thread with an unchecked fork has no `Current` version. `inv_step` proves each event keeps it; `reach_inv` lifts that to every reachable state. The headline theorems are fields of `Inv`.
 
 The model abstracts what a write does to a version (writes are opaque), the per-graph `RwLock` and the matrices (proven elsewhere), and assumes sequentially consistent memory for the atomics.
 
@@ -103,7 +104,7 @@ A 40-second stress run (`repro/stress.py`: 3 writers, 6 readers, `GRAPH.DELETE`,
 
 | File | What's in it |
 |---|---|
-| `Mvcc.lean` | The transition system: `S`, `Ev`, `step`, `Reach`, the invariant `Inv`; snapshot isolation, no lost writes, #3290's fork-and-claim, delete and fork exclusion |
+| `Mvcc.lean` | The transition system: `S`, `Ev`, `step`, `Reach`, the invariant `Inv`; snapshot isolation, no lost writes, #3290/#3657's fork-and-commit (`unchecked_fork_cannot_write`), delete and fork exclusion |
 | `Locks.lean` | Lock-order deadlock freedom (`no_cycle`), the `write_loop` hand-off (`drain_no_lost_message`), the pre-#3014 deadlock and the #3014 model (`never_stuck_3014`) |
 | `Pool.lean` | `threadpool.rs` and #3014's `QueueSlot`: `shutdown_drains`, `acquire_bounded`, `release_exactly_once`, `count_eq_live` |
 | `Tickets.lean` | Index population tickets (`Slots`): counter soundness, `main_operational_complete` (#3086) |
@@ -116,15 +117,17 @@ No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 119 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
+`COVERAGE.tsv` has 120 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 69 |
+| CONDITIONAL | 1 |
 | AXIOMATISED | 20 |
 | MODELLED | 17 |
 | NOT COVERED | 13 |
 
+- **CONDITIONAL:** `QuerySession::check_fork`: `Mvcc.checkFork` is exact, but the Rust also rebases the fork onto indexer batches (`MvccGraph::rebase_onto_indexer_batches`), which refuses a fork that is still borrowed. That the escalating writer's fork is never borrowed is a runtime lifecycle invariant this project does not prove.
 - **AXIOMATISED:** thin wrappers over the Redis module API (blocking and unblocking clients, thread-safe contexts, the GIL lock and unlock, replication, string helpers), and `Index::add_document`, whose RediSearch behaviour is the `RediSearch` hypothesis structure in `Search.lean` (a whole document is rejected or accepted).
 - **MODELLED:** functions that appear as a step of the transition system without a theorem of their own: `MvccGraph::new`/`from_graph` (`init`), `register_graph`, `execute_query`/`execute_profile`/`profile_sync` (a read on a snapshot), the `QuerySession` constructors, lock release and drop order, `must_run_inline`, and the `Field` constructors, and `CommitOp::next` (its lock path only, #3226).
 - **NOT COVERED:** string and reply-formatting helpers, config arithmetic (`compute_effective_timeout`), `rename_graph` (RENAME is not modelled), `reauthorize_write` (Redis pause and role flags), borrow helpers, and `MvccGraph::drop`. `reply_profile` is proven in `redis_layer`.
@@ -152,7 +155,7 @@ bash proofs/coverage.sh                      # repo-wide coverage report
 **When you change `src/graph_core.rs`, `src/query_session.rs`, `mvcc_graph.rs`, `threadpool.rs`, `locks.rs`, the population code in `graph.rs`/`indexer.rs`, or `Document::set` and the KNN queries:**
 
 1. Find the function in `COVERAGE.tsv`.
-2. Update its Lean model to match: a new locking path goes into `Locks.lean` and must pass `all_programs_ordered`; a new atomic step or a change to the slot protocol goes into `Mvcc.step`.
+2. Update its Lean model to match: a new locking path goes into `Locks.lean` and must pass `all_programs_ordered`; a new atomic step or a change to the fork/commit protocol goes into `Mvcc.step`.
 3. Re-run the build, and for a concurrency change re-run `repro/stress.py` against a live server.
 
 If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.

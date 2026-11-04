@@ -25,7 +25,7 @@ The project has two layers:
 - two `unreachable!()`.
 
 - **No.** `parseExpr_no_panic` proves the modelled parser never reaches any of them, on any input, and that every tree it returns is well formed (`Good`: every `Negate`, `Paren` and comparison has a child).
-- **At the clause level, no.** `parse_no_panic` covers index DDL, every clause and end of input, including the two `unreachable!()` dispatchers. `primaryC_np` covers `parse_primary_expr`, and `np_paramsP` the query-parameter parser.
+- **At the clause level, conditionally.** Given an `Oracle.Safe` expression/map parser (the abstract `Oracle` stands for `parse_expr`, `parse_primary_expr` and `parse_map`; that the Rust ones are `Safe` is a bridge by inspection, via `parseExpr_no_panic`), `parse_no_panic` covers index DDL, every clause and end of input, including the two `unreachable!()` dispatchers. `primaryC_np` covers `parse_primary_expr`, and `np_paramsP` the query-parameter parser.
 
 **2. Is operator precedence what the grammar says?**
 
@@ -43,7 +43,7 @@ The project has two layers:
 
 **3. Is every accepted query grammatical, with the grammar's tree?**
 
-- **Yes, apart from listed extensions.** For every clause parser, an accepted input is derivable in a transcription of the matching `Cypher.g4` rule, and the tree returned is that derivation's. The top-level theorems are `parseP_sound` and `queryP_sound`, with `patternP_sound`, `primaryC_sound`, `shortestP_sound`, `listLitP_sound` and `lit_sound` for the pieces.
+- **Conditionally, for the model, and apart from listed extensions.** Given the `Oracle.PPRec` contract (a `parse_primary_expr` that asks to recurse started at `(` and returned a `Paren` tree, or at `[` and returned a list; the bridge from the Rust to the abstract oracle is by inspection), an accepted model input is derivable in a transcription of the matching `Cypher.g4` rule, and the tree returned is that derivation's. The top-level theorems are `parseP_sound` and `queryP_sound`, with `patternP_sound`, `primaryC_sound`, `shortestP_sound`, `listLitP_sound` and `lit_sound` for the pieces.
 - The extensions are explicit flags (`Ext`, `GExt`, `CExt`), not silent. They include keyword folding (`MATCH … MATCH`), allShortestPaths, and FalkorDB-only constructs: index DDL, LOAD CSV, FOREACH, `CALL {}`, reduce and shortestPath.
 - Completeness is **not** claimed: the parser rejects some grammatical inputs on purpose, for example aggregates in WHERE, `SKIP 1+1`, mixed UNION / UNION ALL, and undirected CREATE.
 
@@ -52,12 +52,12 @@ The project has two layers:
 Before #3104, `[(x {k: [(x {k: …})]})]` nested 18 levels deep (206 bytes) took 49 s to parse. #3104 runs the pattern-comprehension attempt only behind a gate (`list_has_top_level_pipe`) and memoises failed attempts.
 
 - **The gate is exact on balanced brackets** (`pipeScan_exact`).
-- **Failed attempts are linear**: at most `808·(n+1)` on `n` bytes (`failed_attempts_linear`, `memoRun_nodup`).
+- **Failed attempts are linear in the abstract `memoRun` model**: for any visit list with positions ≤ `n` and depth ≤ 100, at most `808·(n+1)` failed (`failed_attempts_linear`, `memoRun_nodup`). The theorem is not linked to parser runs; that a whole parse only produces such visits is by inspection.
 - **"The gate never changes the parse" is CONDITIONAL.** `listLitP_eq_ungated` holds under two premises, `Oracle.Bal` and `MemoSound`. `Oracle.Bal` was **false** for the Rust until #3041 because of the slice-bound bug (counterexample removed in bbee75955; the last revision that has them is 17ccc5412): `MATCH (a) RETURN [(a)-->(b) WHERE [1][(1..2] | b]` was accepted before #3104 and a syntax error after (C's answer). #3041 makes a failed slice bound an error, so `[1][(1..2]` is refused (`slice_unclosed_paren_refused`), and the expression fragment consumes balanced runs on every input checked (`bounded_bal`). `Oracle.Bal` is no longer refuted, but it is not proved for the whole expression parser (CASE, comprehensions, maps, … are outside the fragment). `MemoSound` is unproven: the memo key omits the anonymous counter, and no input was found where that matters (`memoRun_sound`).
 
 **5. Does `connected_components` split a pattern correctly?**
 
-- **Yes.** `connectedComponents_spec` proves the components are node-disjoint, consist of the graph's nodes or relationship endpoints, and cover every node.
+- **Conditionally.** `connectedComponents_spec` proves the components are node-disjoint and consist of the graph's nodes or relationship endpoints; every graph node is covered unless its id is also used by a relationship or a path (one `visited` set holds all three kinds of id), and the theorem applies only when the model returns within its fuel budget.
 
 ## The headline theorems
 
@@ -67,14 +67,14 @@ Before #3104, `[(x {k: [(x {k: …})]})]` nested 18 levels deep (206 bytes) took
 | `binary_pairs_agree` | All 400 binary-operator pairs parse to the grammar's tree | `Theorems.lean` |
 | `bounded_agree` | Every token list of length ≤ 3 is parsed exactly as the grammar parses it, apart from `known` classes (no slice class since #3041) | `Bounded.lean` |
 | `slice_bound_error_reported` | A slice bound that fails to parse is an error, as in the grammar and C (#3041) | `Theorems.lean` |
-| `bounded_bal` | A successful expression parse consumes a balanced run (the fragment's `Oracle.Bal`) | `Bounded.lean` |
+| `bounded_bal` | Every token list of length ≤ 3 that parses consumes a balanced run (the fragment's `Oracle.Bal`) | `Bounded.lean` |
 | `chained_comparison` | `a < b < c` becomes `a < b AND b < c` | `Theorems.lean` |
 | `parse_deterministic` | The parse is a function of the input | `Theorems.lean` |
-| `parseP_sound`, `queryP_sound` | Every accepted query is derivable in the grammar, with the derivation's tree | `C/Index.lean`, `C/ClausesG3.lean` |
+| `parseP_sound`, `queryP_sound` | Given `Oracle.PPRec` (question 3), every accepted model query is derivable in the grammar, with the derivation's tree | `C/Index.lean`, `C/ClausesG3.lean` |
 | `patternP_sound`, `primaryC_sound`, `shortestP_sound`, `listLitP_sound` | The same for patterns, primaries, shortestPath and list literals | `C/PatternG2.lean`, `C/PrimaryG.lean`, `C/ExprC5.lean`, `C/ExprC3.lean` |
-| `parse_no_panic` | The clause layer never panics | `C/Index.lean` (clause lemmas in `C/ClausesNP.lean`) |
+| `parse_no_panic` | Given `Oracle.Safe` (question 1), the clause layer never panics | `C/Index.lean` (clause lemmas in `C/ClausesNP.lean`) |
 | `pipeScan_exact`, `failed_attempts_linear` | #3104's gate is exact on balanced input; failed attempts are linear | `C/ListGate.lean` |
-| `connectedComponents_spec` | Pattern components are disjoint and cover every node | `C/Components.lean` |
+| `connectedComponents_spec` | Pattern components are disjoint and cover every node whose id is not also a relationship or path id (within the fuel budget) | `C/Components.lean` |
 | `not_not_kept`, `is_null_then_predicate` | `NOT NOT x` keeps both NOTs; `1 IS NULL IN [false]` parses (since #3060) | `Theorems.lean` |
 
 ### How `parseExpr_no_panic` is proved
@@ -106,7 +106,7 @@ Each bug was confirmed against the Rust (`graph/tests/lean_parser_grammar.rs`, n
 | W4-parse-2 | `create_named_path_dup_rel_rejected` | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` created 1 relationship (C: "already declared") | **Fixed by #3289** (`d15d38a10`) |
 | W4-parse-3 | `merge_dup_rel_rejected`, `pattern_comprehension_repeated_rel_refused` | `MERGE (a)-[r:R]->(b)-[r:R]->(c)` created 1 relationship (C: error); pattern comprehensions ignored a repeat | **Fixed by #3289** |
 | W4-parse-4 | `set_paren_target_refused`, `set_paren_needs_dot`, `type_colon_refused` | `SET (n.x) = 5` and `[:A:B]` were accepted (C: syntax error) | **Fixed by #3300** (`f680bb9f2`) |
-| #2502 | `bug2502_pred_swallows_match`, `bug2502_where_match_merged` (property `PredEndsBeforeClause`) | A WHERE pattern predicate is parsed by `parse_pattern(&Keyword::Match)` (cypher.rs:2119), whose separator (1562-1579) continues on `MATCH`, so the next MATCH clause is folded into the predicate: `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` → Rust `'m' not defined`, C returns the rows; with `RETURN count(*)` Rust 1, C 2 | **Open** |
+| #2502 | `bug2502_pred_swallows_match`, `bug2502_where_match_merged` (property `PredEndsBeforeClause`) | A WHERE pattern predicate is parsed by `parse_pattern(&Keyword::Match)` (cypher.rs:2119), whose separator (1562-1579) continues on `MATCH`, so the next MATCH clause is folded into the predicate: `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` → Rust `'m' not defined`, C returns the rows; with `MATCH (a:A) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN count(*)` on `CREATE (a:A)-[:Q]->(:B), (a)-[:R]->(:M {v:1}), (a)-[:R]->(:M {v:2})` Rust 1, C 2 | **Open** |
 | W3-parser-9 | removed (17ccc5412) | Exponential backtracking in nested `[(...)]` lists: 206 bytes took 49 s | Fixed by #3104 |
 | #3057 | `not_not_kept`, `is_null_then_predicate`, `call_trailing_comma_refused`, `set_bracket_paren_refused`, `match_match_refused`, `load_csv_with_from_refused` | `NOT NOT x` was parsed as `x`; `1 IS NULL IN [false]` was rejected; `abs(-1,)`, `SET [n).x = 5`, `MATCH MATCH` and `LOAD CSV WITH FROM` were accepted | Fixed by #3060 (the theorems are now the correct behaviour) |
 
@@ -170,7 +170,7 @@ Every function listed is PROVEN. For the functions involved in open bugs (for ex
 - The step budget (`fuel`) is the model's. It is not proven that more fuel never changes a result, so parsers and `connected_components` are proven partially correct: nothing is claimed when fuel runs out.
 - Relationship types go through a `HashSet`; the model keeps first-occurrence order, and only membership is observable.
 - Identifier length limits, error messages and error positions are not modelled.
-- The header cites `cypher.rs` line numbers from main at `737dfb5da` (the `ast.rs` CALL arm at `b84473a7f`, after #3297); the theorems are re-checked against current main by `lean_ci.sh`, but the line numbers may have drifted.
+- The header cites `cypher.rs` line numbers from main at `737dfb5da` (the `ast.rs` CALL arm at `b84473a7f`, after #3297); `lean_ci.sh` builds the project but does not check these line numbers against current main, so they may have drifted.
 
 ## Build and check
 

@@ -1,7 +1,7 @@
 import Columnar.CaseLane
 
 /-!
-# `VectorEval::eval_function` (vector_expr.rs:557-642) and `eval_has_labels` (:644-706)
+# `VectorEval::eval_function` (vector_expr.rs:557-622) and `eval_has_labels` (:644-704)
 
 | here | there |
 | --- | --- |

@@ -45,14 +45,13 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 | `dateFromComponents`, `weekPath`, `quarterPath`, `ymdPath` | `date_from_components` `temporal.rs:82` (range-checked since #2950) |
 | `checkRange`, `inRange`, `i32Ok`, `u32Ok` | `check_range` `temporal.rs:63`, `i32::try_from`/`u32::try_from` |
 | `checkedAddDays`, `tdDaysOk`, `chronoYearOk` | chrono 0.4.45 `checked_add_signed` / `NaiveDate + TimeDelta`, `TimeDelta::days`, `MIN_YEAR`/`MAX_YEAR` |
-| `weekSlice`, `sliceOk` | `rest.split_at_checked(2)` in `parse_week_date` `temporal.rs:285-287` |
+| `weekSlice`, `sliceOk` | the `rest.len() <= 2` branch and `rest.split_at_checked(2)` in `parse_week_date` `temporal.rs:279-289` |
 | `Fns.dateLoop`, `chk64` | `W`/`D` arms of `parse_duration_string` `temporal.rs:417-428` (`checked_mul`/`checked_add`, #2987) |
-| `wrapMul` | pre-#2987 release `n * 7` (history) |
 | `formatDate`, `formatDatetime`, `pushDate`, `twoDigits` (`Components.lean`) | `format_date` `value.rs:281`, `format_datetime` `value.rs:261`, `push_date` `value.rs:828`, `write_two_digits` `value.rs:853` (#2986, #2746: i64 year, all digits, sign) |
 | `SpatialFns.pointFromMapEntries`, `numeric`, `point` | `point_from_map_entries` `spatial.rs:38`, `numeric` `spatial.rs:74`, `point` `spatial.rs:110` (#3301; `Point::validate` and `point_struct_pure` are gone) |
-| `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:391` / `ExprIR::And`,`Or` in `eval.rs:629-706` |
+| `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:391` / `ExprIR::Or` `eval.rs:640` / `ExprIR::And` `eval.rs:691` |
 | `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs:880` / `Add..Rem for Value` `value.rs:933-1200` |
-| `Spatial2.distance` / `Spatial.haversine` | `Point::distance` `value.rs:151` (clamped `a`, #2983); pre-#2983 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412): history |
+| `Spatial2.distance` / `Spatial.haversine` | `Point::distance` `value.rs:153` (clamped `a`, #2983); pre-#2983 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412): history |
 
 ## Proven (160 theorems + 30 kernel-checked era chunks)
 
@@ -68,22 +67,23 @@ Duration` relies on), `construct_ym_s`, `decompose_monthsDur`, `add_sub_months`
 (`temporal_order_*`, `dateTs_mono_day`). Constructors: `dateFromComponents_total` (#2950: no
 input of `date_from_components` panics), `weekPath_total`, `quarterPath_total`,
 `weekPath_ok`, `quarterPath_ok`,
-`weekSlice_total`, `sliceOk_ascii`.
+`weekSlice_err_iff`, `weekSlice_short_ok`, `sliceOk_ascii` (the split step errors exactly for a
+long `rest` whose byte 2 is not a char boundary; the no-panic guarantee itself is the `Option`
+type of `split_at_checked`).
 Dates (#2746, #2986, #3301): `checkDateRange_iff`, `checkDateRange_boundary`, `shiftMonthsR_eq`, `shiftMonthsR_out_of_range`, `shiftMonthsR_no_wrap`, `shift_past_limit_errors`, `addDur_eq_raw`, `addDur_in_range`, `subDur_in_range`; `formatDate_spec`, `formatDatetime_spec`, `pushDate_eq`, `format_extremes` (the unit test's four `i64::MIN/MAX` strings), `format_wide_years`, `formatDate_wide_distinct`; `pointFromMapEntries`: `point_key_count`, `point_ok_iff`, `point_nan_refused`, `point_range_msgs`.
 Columnar: `colEval_eq` (columnar AND/OR with row narrowing = per-row Kleene AND/OR; batch
 fails iff some row fails), `rowEval_short`, `intLane_eq` (int lane = `Value` arithmetic,
 incl. the divide-by-zero fallback), `mapM_bind_mapM`, `colEval_rows`, `rowK_eq`.
 `shiftMonths_total`, `sub_eq_add_neg_months` (`ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M`, #2984),
 `subDur_eq_shift`.
-Counterexamples as theorems: `neg_days_encoding`,
-`time_not_normalised`, `week_string_wraps`, `civilFromDays_trunc`
-(the pre-#2950/#2984/#2988 ones were removed in bbee75955; the last revision that has them is 17ccc5412).
+Counterexamples as theorems: `neg_days_encoding`, `civilFromDays_trunc`
+(the ones for the fixed bugs were removed in bbee75955; the last revision that has them is 17ccc5412).
 Fixed forms on main: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `dayOfWeek_out_of_range_errors`.
 
 ## Confirmed bugs (Rust repro + live Rust-vs-C)
 
 1. **FIXED by #2950 (737dfb5da).** Was: **server crash** `RETURN date({year:2020, week:10000000000})` — panic
-   "`NaiveDate + TimeDelta` overflowed" at `temporal.rs:83`; C: "Invalid value for week
+   "`NaiveDate + TimeDelta` overflowed" at `temporal.rs:83` (pre-#2950 line); C: "Invalid value for week
    (valid values 1 - 53)". `week: -9223372036854775807` → `TimeDelta::days out of bounds`
    (debug: multiply overflow at `:83`). Test `bug_date_week_huge_panics`. Fix: validate
    `week ∈ 1..=53` and use `checked_add_signed`/`try_days`. Main does exactly that:
@@ -91,14 +91,14 @@ Fixed forms on main: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `da
    in-range week at chrono's year edge, `date({year:-262143, week:1})`
    (`week_edge_errors`). Counterexamples removed in bbee75955; the last revision that has them is 17ccc5412.
 2. **FIXED by #2950 (737dfb5da).** Was: **server crash** `date({year:2020, quarter:2, dayOfQuarter: 9223372036854775807})` —
-   `TimeDelta::days` panics (`temporal.rs:95`, `doq - 1` also overflows for i64::MIN);
+   `TimeDelta::days` panics (`temporal.rs:95` before #2950, `doq - 1` also overflows for i64::MIN);
    C: "Invalid value for dayOfQuarter (valid values 1 - 92)". Test
    `bug_date_day_of_quarter_panics`. Main validates 1..=92 (`check_range`):
    `quarter_doq_errors`, `quarterPath_total`.
 3. **FIXED by #2950 (737dfb5da).** Was: **server crash** `RETURN date('2020W1é')` — `&rest[..2]` not a char boundary
-   (`temporal.rs:255`); C: "Failed to parse date". Test
+   (`temporal.rs:255` before #2950); C: "Failed to parse date". Test
    `bug_date_week_string_char_boundary_panics`. Main uses `split_at_checked(2)`:
-   `weekSlice_total`, `week_slice_errors`.
+   `weekSlice_err_iff`, `week_slice_errors`.
 4. **FIXED by #2983 (86dcd5a11).** Was: `distance(point({latitude:-88.3, longitude:-180}),
    point({latitude:88.3, longitude:0}))` is `nan` (Rust) vs 20037518 (C); 35 428 of
    6 485 401 antipodal pairs on a 0.1° grid. `(1.0 - a).sqrt()` with `a` rounded above 1.
@@ -126,7 +126,7 @@ Fixed forms on main: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `da
    weeks=…": `dateLoop_week_overflow`, `week_string_overflow_errors`,
    `dateLoop_day_overflow`, `dateLoop_days_i64` (days never wraps).
 9. **FIXED by #2988 (closes #2936, main 5e475e6c9).** Was: map `dayOfWeek` 0..6 with 0 = Sunday
-   (`temporal.rs:97,104`), so `date({year:2021, week:1, dayOfWeek:7})` errored (C: 2021-01-10)
+   (`temporal.rs:97,104` before #2988), so `date({year:2021, week:1, dayOfWeek:7})` errored (C: 2021-01-10)
    and `dayOfWeek:0` was accepted (C: error). Main takes ISO 1..7 (7 = Sunday) like the string
    form and C: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`,
    `dayOfWeek_out_of_range_errors`.
@@ -154,7 +154,7 @@ C's `date('2021-01-03').dayOfQuarter` is 4 (Rust 3, correct).
 ## Suspected, not confirmed
 
 - `decompose_duration`: `y - 1970` in i32 and `ya + yb` in `Duration + Duration`
-  (`value.rs:1014`) overflow in debug for durations whose year wraps (`civilFromDays_trunc`);
+  (`value.rs:1053`) overflow in debug for durations whose year wraps (`civilFromDays_trunc`);
   release wraps silently. Not triggered in release (construct rejects afterwards).
 - `shift_months` (shared by `+`/`-` since #2984): `y + years` (i32), and in
   `sub_duration_from_timestamp` `-years` (i32::MIN), plus `days * 86400` (i64), unchecked;
@@ -178,16 +178,16 @@ Every fn of temporal.rs and spatial.rs plus the temporal accessors/formatters an
 `Point::new`/`distance` of value.rs is PROVEN. chrono, `str::parse`, f64 `as` casts, the
 clock, f64/f32 trig and simsimd are structures (`Num`, `Chrono`, `ChronoDT`, `Flt`, `Simd`)
 or arguments — no axioms. Highlights: `parseDate_ok` (a parsed date is a valid calendar
-date / ordinal / ISO-week date), `parseTime_ok`, `parseDuration_weeks`,
+date, or an ordinal / ISO-week result that the abstract chrono parser accepted), `parseTime_ok`, `parseDuration_weeks`,
 `durationStruct_eq_map` / `dateStruct_eq_map` / `localtimeStruct_eq_map` (the binder's
 positional-slot rewrite preserves values), `datePure_midnight`, `localtimePure_range`,
 `clock_fns_shape`, `transaction_consistent`, `calendar_ranges`, `fields_roundtrip`,
 `formatTime_length`, `distance_self`, `point_eq_struct`, `vecDist_kernel`.
 Re-targeted to e8f8a3017: #3125 (`1ea868116`) makes the compact date/time branches reject
-any non-digit (`allDigits` guard, temporal.rs:192, :309) instead of silently dropping it —
+any non-digit (`allDigits` guard, temporal.rs:220, :335) instead of silently dropping it —
 `parseDate_compact_rejects`, `parseDate_compact_ok_allDigits`, `parseTime_compact_rejects`,
 `compact_junk_examples`. It does not touch the `W` path (`parseDate_week_first`), so bug 3
-(`date('2020W1é')`) was fixed later by #2950 (`weekSlice_total`).
+(`date('2020W1é')`) was fixed later by #2950 (`weekSlice_err_iff`).
 Suspicion (message only): `point({latitude: null, ..})` errors "requires 'latitude'
 field" for a literal map (slot form) but "must be a number, got Null" for a map value
 (`point_null_lat_msgs`); C uses one message for both.
@@ -200,15 +200,14 @@ theorems (`distance_finite`). #2985 (`289c201fe`) gives
 `Time ± Duration` its own arms (`timeAddDur`/`timeSubDur`; W2-temporal-6 fixed).
 #2987 (`9d3869aa8`) makes the `W`/`D` accumulators checked (`Fns.dateLoop`; W2-temporal-8
 fixed). #3294 only changes the AND/OR type-error text, which `VExpr` leaves abstract
-(`none`). COVERAGE.tsv line numbers re-pinned (temporal.rs +9 after `:391`, value.rs +23..+26,
-vector_expr.rs +3 after `:456`).
+(`none`). COVERAGE.tsv line numbers re-pinned (line pins have since been re-pinned again by name; see `COVERAGE.tsv`).
 
 ## Re-targeted to 8621212fc
 
 #2984 (`5986f4df1`) makes `sub_duration_from_timestamp` call the new `shift_months` with
 `-years`/`-months` (the clamp is gone), so `d - dur = d + (-dur)`: `Duration.shiftMonths`,
 `subDur` re-modelled, `add_sub_months` and `timeAddDur_eq_tod` re-proved through it,
-`sub_eq_add_neg_months` (every timestamp, every pure year/month duration),
+`sub_eq_add_neg_months` (every timestamp, every pure year/month duration of at most 10^6 months, `-1000000 ≤ t ≤ 1000000`),
 `shiftMonths_total`, W2-temporal-5 fixed.
 #2904 (`^`), #3007 (percentile), #3043 (reply.rs) and #3419 (lib.rs) touch nothing modelled
 here. COVERAGE.tsv value.rs rows re-pinned (+7 after the import block, +6 after
@@ -229,7 +228,7 @@ it (`check_range`: week 1..53, quarter 1..4, dayOfQuarter 1..92; `i32::try_from`
 splits the week string with `split_at_checked(2)`. Re-modelled as `dateFromComponents`
 (`weekPath`/`quarterPath`/`ymdPath`, `checkedAddDays`) and `weekSlice`; the old models were
 removed (in 17ccc5412). New: `dateFromComponents_total` (no input panics — the constructors are total),
-`weekPath_ok`/`quarterPath_ok` (in-range results), `weekSlice_total`; W2-temporal-1, -2, -3
+`weekPath_ok`/`quarterPath_ok` (in-range results), `weekSlice_err_iff`; W2-temporal-1, -2, -3
 fixed, and the two item-11 divergences (`dayOfQuarter:200`, `week:60`). `week_edge_errors`
 records one more pre-#2950 crash found while re-proving (in-range week at chrono's year edge).
 #2899 (eval.rs) and #3041 (cypher.rs) touch nothing modelled here. COVERAGE.tsv temporal.rs
@@ -240,8 +239,8 @@ rows re-pinned (+20 after `check_range`, +28 after `date_from_components`, +29 a
 
 #2954 (closes #2928) renames `Value::name` for vectors from `VecF32` to `Vectorf32` (C's
 `SIType_ToString`); `SV.name` (the spatial.rs "Type mismatch … but was <name>" errors)
-updated. Nothing else modelled here changed; value.rs rows re-pinned (+2 after
-`Value::name`).
+updated. Nothing else modelled here changed; no value.rs COVERAGE.tsv row lies after
+`Value::name`, so none were re-pinned.
 
 ## Wave 6 (`VecDistance`)
 vec_distance.rs PROVEN against the exact simsimd 6.5.16 wrapper (length check, then the

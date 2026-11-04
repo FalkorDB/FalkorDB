@@ -4,13 +4,13 @@ import FalkorBinder.Scopes
 
 `accumulate` / `specScanLabels` assumed labels only accumulate: `LClause` had no
 REMOVE, so a label removed between clauses was invisible to the model. Rust source of
-truth: origin/main b84473a7f, `graph/src/planner/binder.rs`.
+truth: origin/main 5c7af54f2 (the bug found on b84473a7f), `graph/src/planner/binder.rs`.
 
 * `bind_ir` `QueryIR::Remove` (:477-482) binds the items and never touches `node_labels`.
 * `bind_projection` copies the parent variable's label set to the projected child
-  (`WITH a`, :1132-1141 / :1159-1168), so the child starts from `accumulate before`.
-* A later `MATCH (a)…` extends the child's set (`bind_graph` :1356-1360), and
-  `update_all_node_labels` (:122-134, called from `bind` :104) stamps the whole set onto
+  (`WITH a`, :1135-1146 / :1162-1173), so the child starts from `accumulate before`.
+* A later `MATCH (a)…` extends the child's set (`bind_graph` :1360-1366), and
+  `update_all_node_labels` (:122-153, called from `bind` :104) stamps the whole set onto
   that MATCH's node, turning `(a)` into `(a:A)`.
 
 `rsStamp before own` is the label set stamped on the node of the first MATCH after the
@@ -36,8 +36,8 @@ def held (acc : List Name) : List LClause → List Name
   | .optMatch _ :: r | .predicate _ :: r | .comprehension _ :: r => held acc r
 
 /-- The label set `update_all_node_labels` stamps on the first MATCH after `WITH`: the
-child inherits `accumulate [] before` (binder.rs:1159-1168) and the MATCH extends it
-(:1356-1360). -/
+child inherits `accumulate [] before` (binder.rs:1162-1173) and the MATCH extends it
+(:1360-1366). -/
 def rsStamp (before : List LClause) (own : List Name) : List Name :=
   accumulate (accumulate [] before) [.match_ own]
 
@@ -50,6 +50,13 @@ that MATCH wrote or one the node still carries at that point. -/
 def StampedLabelsHeld (stamp : List LClause → List Name → List Name) : Prop :=
   ∀ before own, ∀ l ∈ stamp before own, l ∈ own ∨ l ∈ held [] before
 
+/-- The fixed stamp satisfies the property. **Caveat: this holds by construction.** `specStamp`
+is defined from the same `held` that `StampedLabelsHeld` mentions, so the theorem only checks
+the bookkeeping of that definition; it does not show that `held` models what `binder.rs` and the
+runtime do for REMOVE (that REMOVE clears a label point-in-time while `bind_ir`'s REMOVE arm
+leaves `node_labels` alone is read off the Rust by inspection). The evidence for the bug is the
+refutation `bug3450_remove_label_kept_across_with` of the *Rust* stamp `rsStamp`, which is
+independent of `specStamp`. -/
 theorem specStamp_held : StampedLabelsHeld specStamp := by
   intro before own l hl
   simp only [specStamp, List.mem_append, List.mem_filter] at hl

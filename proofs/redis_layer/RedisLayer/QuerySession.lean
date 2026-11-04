@@ -13,7 +13,7 @@ lock implementations themselves are parking_lot / Redis — AXIOMATISED rows for
 | `withGraph`, `withGraphMut`   | `with_graph` `:285`, `with_graph_mut` `:301` |
 | `escalate`, `upgrade`         | `escalate` `:345`, `upgrade_to_write` `:319` (and the trait shim `:420`) |
 | `reauthorize`                 | `reauthorize_write` `:379` |
-| `Version`, `SS`, `writeVersion`, `isStale`, `versionIsCurrent`, `checkFork`, `upgradeS` | #3657: `enum Version` `:108`, `write_version` `:211`, `is_stale` `:227`, `version_is_current` `:235`, `is_writer` `:239`, `check_fork` `:246`, `facts` `:198` |
+| `Version`, `SS`, `writeVersion`, `isStale`, `versionIsCurrent`, `checkFork`, `upgradeS`, `upgradeSt` | #3657: `enum Version` `:108`, `write_version` `:211`, `is_stale` `:227`, `version_is_current` `:235`, `is_writer` `:239`, `check_fork` `:246`, `facts` `:198` |
 | `CommitError`, `WriteAbort.ofCommit` | `From<CommitError> for WriteAbort` `:74` |
 -/
 namespace RedisLayer.QuerySession
@@ -101,8 +101,8 @@ def escalate (s : S) : Bool × S :=
     let (nr, t) := gilAcquire t
     (true, ⟨some (.writer nr), { t with log := t.log ++ [.writeLock] }⟩)
 
-/-- `WriteAbort` (query_session.rs:52). `stale` is `check_fork`'s refusal; `invalid` (#2846) is
-`commit`'s (`From<CommitError>`, `ofCommit`). `WriteSlotBusy` is gone with the write slot (#3657). -/
+/-- `WriteAbort` (query_session.rs:52). `stale` comes from two places: `check_fork`'s refusal and
+`commit`'s stale refusal (`From<CommitError>`, `ofCommit`); `invalid` (#2846) is `commit`'s only. `WriteSlotBusy` is gone with the write slot (#3657). -/
 inductive WriteAbort | replicaTrafficPaused | notAMaster | graphUnregistered | stale
   | invalid (msg : String)
   deriving DecidableEq, Repr
@@ -232,8 +232,9 @@ def versionIsCurrent (s : SS) : Bool := s.version == .current
 
 /-- `check_fork` (`:246`): only an `Unchecked` fork is looked at; `MvccGraph::is_stale` fork
 (`mvcc_graph.rs:144`) is `ver + 1 ≠ fork.version`. Stale ⇒ `Version::Stale` and `Err(Stale)`.
-Since #3567 a current fork is also rebased onto the indexer batches published since
-(`rebase_onto_indexer_batches`, `query_session.rs:262`): index progress only, no data change
+Since #3567 an unchecked fork is also rebased onto the indexer batches published since, as it
+becomes current (inside the `Unchecked` arm: `rebase_onto_indexer_batches`, `query_session.rs:261`; the
+`Current`/`Stale`/`None` arms return at once): index progress only, no data change
 (native_index `Rebase.lean`: `V.rebased_keeps_data`). The rebase fails (`Err(Stale)`, release) only for a
 fork that is still borrowed, which an escalating writer's is not (a debug build panics): that is the one
 assumption this model makes, not proven here. -/
@@ -256,6 +257,46 @@ def upgradeS (s : SS) (registered : Bool) (auth : Option WriteAbort) : Option Wr
     | none => match checkFork { s with writer := true } with
       | .ok _ => .inl none
       | .error _ => .inr ()
+
+/-- `upgradeS` together with the state the session is left in: on `Stale` the version is
+`Version::Stale` (`check_fork` sets it before returning `Err(Stale)`), which the retry loop reads
+through `is_stale`; on success it is what `check_fork` left. -/
+def upgradeSt (s : SS) (registered : Bool) (auth : Option WriteAbort) :
+    (Option WriteAbort ⊕ Unit) × SS :=
+  if s.writer then (.inl none, s)
+  else if !registered then (.inl (some .graphUnregistered), s)
+  else match auth with
+    | some a => (.inl (some a), s)
+    | none => match checkFork { s with writer := true } with
+      | .ok t => (.inl none, t)
+      | .error _ => (.inr (), checkForkStale { s with writer := true })
+
+theorem upgradeSt_fst (s : SS) (registered : Bool) (auth : Option WriteAbort) :
+    (upgradeSt s registered auth).1 = upgradeS s registered auth := by
+  unfold upgradeSt upgradeS
+  split
+  · rfl
+  · split
+    · rfl
+    · cases auth with
+      | some a => rfl
+      | none => cases checkFork { s with writer := true } <;> rfl
+
+/-- **A stale refusal leaves the retry-visible state**: when `upgrade_to_write` reports `Stale`, the
+session is `Version::Stale`, so `is_stale` is true and the retry loop reruns the write. -/
+theorem upgradeSt_stale_visible (s : SS) (registered : Bool) (auth : Option WriteAbort) (e : Unit)
+    (h : (upgradeSt s registered auth).1 = .inr e) :
+    isStale (upgradeSt s registered auth).2 = true := by
+  by_cases hw : s.writer = true
+  · simp [upgradeSt, hw] at h
+  · by_cases hr : registered = false
+    · simp [upgradeSt, hw, hr] at h
+    · cases auth with
+      | some a => simp [upgradeSt, hw, hr] at h
+      | none =>
+        cases hc : checkFork { s with writer := true } with
+        | ok t => simp [upgradeSt, hw, hr, hc] at h
+        | error u => simp [upgradeSt, hw, hr, hc, isStale, checkForkStale]
 
 /-- A write version takes nothing, in either mode: an inline writer is never refused because a
 queued write is matching (#3093, #3290), and no version needs releasing (#3657). A

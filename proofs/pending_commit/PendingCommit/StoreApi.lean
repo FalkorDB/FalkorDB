@@ -16,7 +16,7 @@ The store is a `DataBlock` (`D`). Every read below is stated in terms of
 | `entityMem` | `entity_memory_usage` (:1215) |
 | `removeAll` | `remove_all` (:1246) |
 | `insertAttrs`, `insertRows` | `insert_attrs` (:1315), `insert_attrs_rows` (:1266) |
-| `importAttrs`, `importResolved` | `import_attrs` (:1351), `import_attrs_resolved` (:1379) |
+| `importAttrs`, `importResolved` | `import_attrs` (:1351), `import_attrs_resolved` (:1388, post-#3063: stable sort, dedup, drop `ATTRIBUTE_ID_NONE`) |
 -/
 namespace PendingCommit.Content
 open Arena (Slot)

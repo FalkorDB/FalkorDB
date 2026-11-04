@@ -43,7 +43,7 @@ Yes. `Reachable_wf_asserted` proves that an empty tree, a `from_sorted` tree, an
 
 **5. Can a reader see a write that happened after its snapshot?**
 
-No. `snapshot_isolated` proves that after you clone the tree, any sequence of inserts, removes and batch inserts on the writer leaves every range scan of the clone unchanged. In Rust this rests on `make_private` always cloning a shared page before mutating it, and leaf pages never being written after they are built (see "What the model does not cover").
+In the immutable model, no: `snapshot_isolated` proves that after you clone the model tree, any sequence of inserts, removes and batch inserts on the writer leaves every range scan of the clone unchanged. That is a property of the model, not a proof about the Rust heap. Rust snapshot isolation relies on `make_private` always cloning a shared page before mutating it, and on leaf pages never being written after they are built; that argument is not proven against the heap (see "What the model does not cover").
 
 **6. Does `heap_bytes` (used by `GRAPH.MEMORY`) count correctly?**
 
@@ -97,7 +97,7 @@ The Rust repros were run against the `cow_btree` sources (see [`../FINDINGS.md`]
 | 3 (W7-btree-1) | removed (17ccc5412) | `remove_batch` could leave a non-root branch with one child at any `BRANCH_MAX >= 4`. One later single-key `remove` then left an empty non-root leaf, and the next `insert_batch` panicked in `Node::min` | Fixed by #3283 (issue #3237): `removeBatchTree_wf`, `removeBatchTree_wf_asserted`, `rb_remove_batch_fixed`, `rb_then_remove_fixed` |
 | W7-btree-2 | removed (17ccc5412), in `../index_layer` | `DOC_BYTES ∈ {3,5,6,7}` passed the const assert but `read_width` reads only 1/2/4/8, so `CowBTree::<256,256,3>` panicked on its second insert | Fixed by #3285 (issue #3238): the assert now requires `is_read_width(DOC_BYTES)` (`isReadWidth`, `constAssert`) |
 
-Bug 3 in more detail: before #3283 the batch path repaired under-full children one level at a time. If a branch ended with one child and its parent also ended with only that branch, the parent's merge loop did not run, and the lone-child branch was pushed into the merged node one level up, where nothing looked at it again. `BugsBatch.lean` replays this on a 12-entry tree with `LEAF_MAX = 2`, `BRANCH_MAX = 4` (the pre-#3283 model was removed in bbee75955; the last revision that has them is 17ccc5412), and its header has the Rust repro, which #3283 added as the test `remove_batch_never_leaves_a_single_child_branch`. On main the same input gives a well-formed tree (`rb_remove_batch_fixed`), and `removeBatchTree_wf` proves it for every input.
+Bug 3 in more detail: before #3283 the batch path repaired under-full children one level at a time. If a branch ended with one child and its parent also ended with only that branch, the parent's merge loop did not run, and the lone-child branch was pushed into the merged node one level up, where nothing looked at it again. `BugsBatch.lean` used to replay this on a 12-entry tree with `LEAF_MAX = 2`, `BRANCH_MAX = 4`; that pre-#3283 model was removed in bbee75955 (the last revision that has it is 17ccc5412). Its header keeps the Rust repro, which #3283 added as the test `remove_batch_never_leaves_a_single_child_branch`. On main the same input gives a well-formed tree (`rb_remove_batch_fixed`), and `removeBatchTree_wf` proves it for every input.
 
 Bug 3 was why [`../native_index`](../native_index) had 13 **CONDITIONAL** rows. With `Reachable_wf_asserted` their hypothesis is discharged, and they are PROVEN (`native_index/FalkorNativeIndex/Contract.lean`).
 
@@ -113,13 +113,13 @@ Bug 3 was why [`../native_index`](../native_index) had 13 **CONDITIONAL** rows. 
 | `Remove.lean` | The underflow contract (`Weak`), `rebalance`, `combine`, `remove_spec` |
 | `Cursor.lean` | The range cursor: `seek_rest`, `next_spec`, `range_spec` |
 | `Snapshot.lean` | Writer operations (`Op`, `applyOps`), `snapshot_isolated`, `insertOne_shares_siblings` |
-| `Bugs.lean` | Bug 1 (`pre2278_route_*`) and Bug 2 (`pre2897_b3_*`) counterexamples |
-| `Batch.lean` | The batch paths after #2278: routing fix, `subtract_eq`, `cws`, `stripEmpty`; the pre-#3283 `remove_batch` model and its content proofs (pre-#3283 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412)) |
+| `Bugs.lean` | Historical notes on Bug 1 (#2278) and Bug 2 (#2897), both fixed; their counterexample theorems were removed in bbee75955 |
+| `Batch.lean` | The batch paths after #2278: routing fix, `subtract_eq`, `cws`, `stripEmpty`, the shape lemmas; the pre-#3283 `remove_batch` model and its counterexamples were removed in bbee75955 |
 | `BatchWF.lean` | `remove_batch` after #3283: `muLoop`, `mubF`, `mergeUnderfull`, `removeBatch`, `removeBatchTree`; `Good`, `combine_good`, `muLoop_good`, `removeBatchTree_wf` |
 | `InsertBatchWF.lean` | `mergeWalk_spec`, `MinChain`, `packBranches_chain`, `buildRoot_wf`, `applyBatch_chain`, `insertBatch_wf`, `fromSorted_wf`, `Reachable`, `Reachable_wf` |
 | `Lookup.lean` | #2278 read-side additions: `firstDoc`, `containsKey`, insert/remove return flags |
 | `Extract.lean` | The generic cursor (`Extract`, `DocExtract`, `TupleExtract`) and `heap_bytes` |
-| `BugsBatch.lean` | Bug 3: the pre-#3283 `remove_batch` single-child branch (pre-#3283 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412), with the Rust repro), the same input on main, `removeBatchTree_wf_asserted` |
+| `BugsBatch.lean` | Bug 3: the pre-#3283 `remove_batch` single-child branch (history note with the Rust repro; the counterexample theorems were removed in bbee75955), the same input on main, `removeBatchTree_wf_asserted` |
 | `Assert.lean` | The const assert (`constAssert`, `isReadWidth`) and `remove_spec_asserted` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 

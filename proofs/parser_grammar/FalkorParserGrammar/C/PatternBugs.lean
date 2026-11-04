@@ -7,7 +7,7 @@ import FalkorParserGrammar.C.Oracle0
 namespace FalkorParserGrammar.C
 
 /-- `MATCH (_anon_0:A), (:B)`: the anonymous node is named `_anon_0`
-(cypher.rs:3026), the same as the user's node, so `add_pattern_node` merges
+(cypher.rs:3037), the same as the user's node, so `add_pattern_node` merges
 them into one node with labels A and B. Live: Rust returns 0 rows, C 1
 (on `CREATE (:A), (:B)`). -/
 theorem anon_name_collides :
@@ -17,7 +17,7 @@ theorem anon_name_collides :
       some [[1, 2]] := by decide
 
 /-- **`CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` is rejected** (#3289, W4-parse-2): every
-relationship goes through `add_pattern_relationship` (cypher.rs:1380), which refuses an alias the
+relationship goes through `add_pattern_relationship` (cypher.rs:1378), which refuses an alias the
 pattern already holds in any clause ("The bound variable 'r' can't be redeclared in a CREATE
 clause"), as C does. Before it only MATCH rejected a repeat in a named path: CREATE silently
 dropped the second relationship (Rust created 4 nodes and 1 relationship). -/

@@ -3,32 +3,35 @@
 
 | here | there |
 | --- | --- |
-| `capLoop`  | the `if self.result_set_size >= 0` loop, `runtime/runtime.rs:626-652` |
+| `capLoop`  | the `if self.result_set_size >= 0` loop, `runtime/runtime.rs:626-658` |
 | `query`    | `Runtime::query`, `runtime/runtime.rs:620-667` (rows + number of child batches pulled) |
 
 A batch is modelled by its active rows (`active_indices`); `set_selection(take keep)`
 keeps the first `keep` of them. The second component counts how many batches were pulled
-from the root operator — pulling is what runs `CommitOp`/pending side effects.
+from the root operator, counting the terminating `next()` that returns `None` (a root
+`CommitOp` commits on its first `next()` and yields nothing, so an empty-result write
+still has one pull). Pulling is what runs `CommitOp`/pending side effects.
 -/
 namespace RuntimeCore.Query
 
 variable {α : Type}
 
-/-- The capped loop. `total` is the running `total`; returns (result batches, #pulled). -/
+/-- The capped loop. `total` is the running `total`; returns (result batches, #`next()`
+calls on the root, including the terminating `None` when the stream is exhausted). -/
 def capLoop (limit : Nat) (write : Bool) : Nat → List (List α) → List (List α) × Nat
-  | _, [] => ([], 0)
+  | _, [] => ([], 1)
   | total, b :: bs =>
     let total' := total + b.length
     if total' ≥ limit then
       -- `keep = batch.active_len() - (total - limit)`, then drain the rest if `write`
-      ([b.take (b.length - (total' - limit))], 1 + if write then bs.length else 0)
+      ([b.take (b.length - (total' - limit))], 1 + if write then bs.length + 1 else 0)
     else
       let r := capLoop limit write total' bs
       (b :: r.1, r.2 + 1)
 
 /-- `Runtime::query` (`runtime.rs:620-667`). `rss` is `result_set_size`. -/
 def query (rss : Int) (write : Bool) (bs : List (List α)) : List (List α) × Nat :=
-  if rss ≥ 0 then capLoop rss.toNat write 0 bs else (bs, bs.length)
+  if rss ≥ 0 then capLoop rss.toNat write 0 bs else (bs, bs.length + 1)
 
 /-- **PROVEN** (no `usize` underflow): when the cap is hit, `total - limit ≤ active_len`,
 so `batch.active_len() - (total - limit)` is exact and equals `limit - total_before`. -/
@@ -62,7 +65,7 @@ theorem query_rows (rss : Int) (write : Bool) (bs : List (List α)) :
   · rfl
 
 theorem capLoop_pulls_all_on_write (limit : Nat) :
-    ∀ (total : Nat) (bs : List (List α)), (capLoop limit true total bs).2 = bs.length
+    ∀ (total : Nat) (bs : List (List α)), (capLoop limit true total bs).2 = bs.length + 1
   | _, [] => rfl
   | total, b :: bs => by
     simp only [capLoop]
@@ -70,10 +73,12 @@ theorem capLoop_pulls_all_on_write (limit : Nat) :
     · simp; omega
     · simp [capLoop_pulls_all_on_write limit _ bs]
 
-/-- **PROVEN**: a write query always pulls every batch (so every `Commit` runs), however
-small the result-set cap. -/
+/-- **PROVEN**: a write query always drains the root operator: every batch is pulled and
+then the terminating `next()` (`bs.length + 1` calls, at least one even when the result is
+empty), however small the result-set cap. So a root `CommitOp` always gets its first
+`next()` and commits. -/
 theorem query_write_pulls_all (rss : Int) (bs : List (List α)) :
-    (query rss true bs).2 = bs.length := by
+    (query rss true bs).2 = bs.length + 1 := by
   simp only [query]; split
   · exact capLoop_pulls_all_on_write _ 0 bs
   · rfl

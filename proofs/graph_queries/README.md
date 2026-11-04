@@ -28,7 +28,7 @@ These theorems take the id-space behaviour as an argument (`IdSpaceContract`). I
 
 **3. Can a matrix be grown past what GraphBLAS accepts?**
 
-No. `growCap_le_max` proves `grow_cap` never exceeds `GrB_INDEX_MAX`, `growCap_ge_needed` that it reaches every size `IdSpace::create` lets through, and `growCap_chunked` that it grows in whole chunks (or stops at the clamp). Before #2911, an effect id near 2^61 asserted in `GrB_Matrix_new`, and `u64::MAX - 1` wrapped the step and spun forever (the old step is kept as `oldStepWrapped`).
+No, provided the capacity it starts from is itself at most `GrB_INDEX_MAX` (an already-larger capacity is returned unchanged; every capacity the graph holds is). `growCap_le_max` proves `grow_cap` then never exceeds `GrB_INDEX_MAX`, `growCap_ge_needed` that it reaches every size `IdSpace::create` lets through, and `growCap_chunked` that it grows in whole chunks (or stops at the clamp). Before #2911, an effect id near 2^61 asserted in `GrB_Matrix_new`, and `u64::MAX - 1` wrapped the step and spun forever (the old step is kept as `oldStepWrapped`).
 
 **4. Does `first_node_with_relationships` find the right node?**
 
@@ -40,7 +40,7 @@ No. `growCap_le_max` proves `grow_cap` never exceeds `GrB_INDEX_MAX`, `growCap_g
 
 **5b. Does a load keep the matrices it decodes?**
 
-Yes, since #3250. `rebuild_derived_matrices` now takes `node_cap = max(node_cap, saved)` before resizing: `rebuild_never_shrinks` proves no node matrix ends smaller than decoded, and `rebuild_keeps_entries` that every in-bounds entry survives. Before, a decoded matrix larger than `restore`'s `node_cap` was cut down and lost every entry past it.
+Yes, since #3250. `rebuild_derived_matrices` now takes `node_cap = max(node_cap, saved)` before resizing: `rebuild_never_shrinks` proves no node matrix ends smaller than decoded, and `rebuild_keeps_entries` that every decoded entry inside the resized dimensions survives (adjacency by its own bounds; `node_labels` and the label matrices as the label count and the square node cap, so a decoded matrix of an unexpected shape is outside the claim) (both for the node matrices only; the relationship tensors' half of #3250, that `Tensor::resize` never shrinks, is proven in `proofs/versioned_matrix`). Before, a decoded matrix larger than `restore`'s `node_cap` was cut down and lost every entry past it.
 
 **6. Is each relationship reported once?**
 
@@ -60,7 +60,7 @@ No. `cmatches_iff` proves constraint matching is plain equality of the property 
 | `validate_ok_iff`, `verifyCreatedRels_spec` | Commit validation accepts exactly two verified batches whose created relationships end at live nodes; an error names a real offender | `Ids.lean` |
 | `markNodesLive_spec`, `rollIdBatches_spec`, `newVersion_spec` | Creating nodes, rolling batches and opening a version move the ids exactly as intended | `Ids.lean` |
 | `rustIdOps_contract` | The Rust `IdSpace` mutators satisfy the contract the theorems above assume | `IdRust.lean` |
-| `growCap_le_max`, `growCap_ge_needed`, `growCap_chunked` | `grow_cap` always terminates, never passes `GrB_INDEX_MAX`, and reaches every legal size (#2911) | `Schema.lean` |
+| `growCap_le_max`, `growCap_ge_needed`, `growCap_chunked` | `grow_cap` always terminates, never passes `GrB_INDEX_MAX` (from a start at or below it), and reaches every legal size (#2911) | `Schema.lean` |
 | `firstNodeWithRels_spec` | `first_node_with_relationships` returns the lowest node with a relationship (CONDITIONAL on `AdjExact`) | `FirstRel.lean` |
 | `deleteImplicit_no_dangling`, `deleteImplicit_freed` | `DETACH DELETE` leaves no (non-explicit) edge touching a deleted node, and every edge it removes ends up in the recycle bin | `Delete.lean` |
 | `createRelsBulk_endpoints`, `createRelsBulk_ragged`, `createRelsBulk_dup` | Bulk relationship creation records the right endpoints and refuses malformed batches (#2846) | `Delete.lean` |

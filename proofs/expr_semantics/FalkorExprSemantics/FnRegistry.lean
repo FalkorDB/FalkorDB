@@ -10,7 +10,7 @@ the functions C offers. This file states that property.
 | --- | --- |
 | `rustNames` | every name `init_functions` registers, lowercased: the `cypher_fn!(funcs, "…"` and `funcs.add[_var_len\|_procedure]("…"` sites under `graph/src/runtime/functions/` at fb3d516d0, unchanged at 289c201fe (134 names, extracted mechanically) |
 | `cPublic`   | every `AR_FuncDesc` in C `src/arithmetic/builtin_funcs.c` (origin/master d7cf86675, `git show`) *without* `.internal=true`, lowercased (104 names; the 40 internal ones — operators, `topath`, `list_comprehension`, … — are not callable by name, checked live) |
-| `resolves`  | `Functions::get`'s built-in arm: `self.functions.get(name.to_lowercase())` |
+| `resolves`  | `Functions::get`'s built-in name lookup: `self.functions.get(name.to_lowercase())`. The `fn_type` guard of that arm (`&graph_fn.fn_type == fn_type`) and the case-sensitive UDF fallback are NOT modelled: `resolves` is name membership only |
 
 MODELLED: the two name sets are data extracted from the sources, not derived from the
 Rust code by proof; re-extract them when a function is added.
@@ -60,7 +60,10 @@ def cPublic : List String := [
   "tostringlist", "tostringornull", "toupper", "trim", "type", "typeof",
   "vec.cosinedistance", "vec.euclideandistance", "vecf32"]
 
-/-- `Functions::get`'s built-in lookup (names are stored and looked up lowercase). -/
+/-- `Functions::get`'s built-in name lookup (names are stored and looked up lowercase).
+Name membership only: `Functions::get` also requires the registered function's `fn_type` to
+equal the requested `FnType` and falls back to the UDF registry; neither is modelled, so
+`CoversC` says every C name is registered, not that it resolves under every `FnType`. -/
 def resolves (reg : List String) (name : String) : Bool := reg.contains name
 
 /-- **The Rust function set covers C's**: every user-callable C function name resolves

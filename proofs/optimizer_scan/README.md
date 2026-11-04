@@ -3,7 +3,7 @@
 This project proves that the optimizer passes which choose how a pattern is scanned return the same nodes as the plain plan they replace. It also gives concrete counterexamples where they do not. Every `MATCH` goes through these passes:
 
 - **`select_scan_node`** picks the node to start from and the order to walk the hops.
-- **`utilize_index`** replaces `Filter → NodeByLabelScan` with an index scan when a range or fulltext index covers the property.
+- **`utilize_index`** replaces `Filter → NodeByLabelScan` with a range-index scan when a range index covers the property (`utilize_index.rs` handles range indexes only; fulltext scans are planned separately, by the procedure call, and are not part of this project).
 - **`utilize_node_by_id`** turns `WHERE id(n) = 5` (and `<`, `>`, …) into a NodeByIdSeek.
 - **`reorder_labels`** puts the cheapest label first.
 
@@ -34,7 +34,7 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 
 **4. Is every filter placed after the variables it reads are bound?**
 
-- **If the starting set of bound variables is honest, yes.** `place_wellScoped` and `runScoped_wellScoped` prove filter re-placement is sound **exactly when** the seed set only contains variables that really are bound. `salvage_wellScoped` covers filters re-attached above a re-ordered chain.
+- **If the starting set of bound variables is honest, yes.** `place_wellScoped` and `runScoped_wellScoped` prove filter re-placement is sound **exactly when** the seed set only contains variables that really are bound. `salvage_wellScoped` covers filters re-attached above a re-ordered chain, assuming those filters read only variables the chain binds; the model does not derive that from `filters_of`, so it is an assumption, not a proved fact about Rust.
 - **On main, the seed is not always honest.** `select_scan_node` adds the start node to the seed even when it keeps an outer child and builds no scan for it. So `MATCH (b:A) WITH b LIMIT 1 MATCH (b)<-[]-(d)-[:R]->(c {v:1})-[:R]->(z) RETURN count(*)` returns 0; C returns 1.
 
 **5. Do `reorder_labels` and the primary-label choice keep the scan?**

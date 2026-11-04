@@ -138,16 +138,20 @@ def rsGlobal : Nat := 4
 def rsSpec : Nat := 5
 
 /-- **Property (#3226).** A thread never re-acquires a lock it already holds. For the
-RediSearch spec lock this is exactly the `spec.c:2304` assertion (read held, write
-wanted); with the rank order it is what `okProg` already demands, stated on its own so
+RediSearch spec lock this is a stricter form of the `spec.c:2304` assertion, which only
+fires on a read-to-write upgrade (read held, write wanted): `noReacquire` rejects every
+re-acquire, so it is a superset of the assertion. With the rank order it is what `okProg`
+already demands, stated on its own so
 a fix that keeps the scan open but drops it before commit can prove it separately. -/
 def noReacquire : List Nat → List Op → Bool
   | _, [] => true
   | held, .acq l :: ops => !held.contains l && noReacquire (l :: held) ops
   | held, .rel l :: ops => noReacquire (held.erase l) ops
 
-/-- **Property (#3226).** Every locking path is ordered (`okProg`, the premise of
-`no_cycle`) once the RediSearch locks are in the model. -/
+/-- **Property (#3226).** Every locking path is ordered (`okProg`, the per-program check)
+once the RediSearch locks are in the model. `no_cycle`'s premise is `Ordered s` on a
+`WaitState`; `okProg` on every program is what establishes it for the states those
+programs reach. -/
 abbrev LockOrdered (p : List Op) : Prop := okProg [] p = true
 
 /-- A read query's index scan, opened and drained under the per-graph read lock. -/
@@ -333,6 +337,9 @@ enabled event: main holds the GIL waiting for queue space, the worker waits for 
 GIL. (Live: 11 workers, cap 1024, 1400 writes on one graph or 3000 over 16 graphs.) -/
 def deadState : Pool := { queue := 1, running := 1, mainBlocked := true, pendingClients := 1 }
 
+/-- The model above is stuck in `deadState` (kept so the pre-#3014 model stays checked). -/
+theorem deadState_stuck : stuck 1 1 deadState = true := by decide
+
 /-- The fix proposed before #3014: `spawn` from the main thread must not block (reject
 with "Max pending queries exceeded", or an unbounded queue as C's thpool has). #3014
 does both; its actual protocol is `succ3014` below. -/
@@ -389,8 +396,10 @@ def succ3014 (max : Nat) (s : P3014) : List P3014 :=
 def Inv3014 (max : Nat) (s : P3014) : Prop :=
   s.count = s.queue + s.matching + s.writeQ ∧ s.count ≤ max
 
-/-- **The count is exactly the queued queries and never exceeds `MAX_QUEUED_QUERIES`**,
-in every reachable state. -/
+/-- **For a fixed `max`, the count is exactly the queued queries and never exceeds it**,
+in every reachable state. `MAX_QUEUED_QUERIES` is runtime-settable (`GRAPH.CONFIG SET`);
+lowering it while slots are outstanding can leave `count > max` until they drain, which
+this model (a constant `max`) does not cover. -/
 theorem inv3014_step (max : Nat) (s t : P3014) (h : Inv3014 max s) (ht : t ∈ succ3014 w max s) :
     Inv3014 max t := by
   obtain ⟨h1, h2⟩ := h
@@ -433,16 +442,26 @@ theorem main_never_blocks (max : Nat) (s : P3014) (h : s.pending > 0) :
       by simp [succ3014, h, hc], rfl⟩
   · exact ⟨{ s with pending := s.pending - 1 }, by simp [succ3014, h, hc], rfl⟩
 
+/-- Replay a trace: each state is a successor of the previous one. -/
+def replay3014 (max : Nat) : P3014 → List P3014 → Bool
+  | _, [] => true
+  | s, t :: ts => decide (t ∈ succ3014 w max s) && replay3014 max t ts
+
 /-- The pre-#3014 deadlock trace, replayed under #3014 (1 worker, `MAX_QUEUED_QUERIES = 1`,
-3 writes): the third command is rejected instead of blocking, and everything drains. -/
+3 writes): the second command is rejected instead of blocking, the third is admitted once
+the slot is freed, and everything drains to `⟨0, 0, 0, 0, 0, 0⟩`. -/
 theorem flood_drains :
-    let s0 : P3014 := ⟨3, 0, 0, 0, 0, 0⟩
-    let s1 : P3014 := ⟨2, 1, 0, 0, 0, 1⟩      -- admitted
-    let s2 : P3014 := ⟨2, 0, 0, 1, 0, 1⟩      -- a write starts matching
-    let s3 : P3014 := ⟨1, 0, 0, 1, 0, 1⟩      -- next command rejected ("Max pending queries exceeded")
-    let s4 : P3014 := ⟨1, 0, 1, 0, 1, 1⟩      -- queued to the write channel
-    let s5 : P3014 := ⟨1, 0, 1, 0, 0, 0⟩      -- dequeued
-    s1 ∈ succ3014 1 1 s0 ∧ s2 ∈ succ3014 1 1 s1 ∧ s3 ∈ succ3014 1 1 s2 ∧ s4 ∈ succ3014 1 1 s3 ∧
-    s5 ∈ succ3014 1 1 s4 := by decide
+    replay3014 1 1 ⟨3, 0, 0, 0, 0, 0⟩
+      [⟨2, 1, 0, 0, 0, 1⟩,      -- first command admitted
+       ⟨2, 0, 0, 1, 0, 1⟩,      -- its write starts matching
+       ⟨1, 0, 0, 1, 0, 1⟩,      -- second command rejected ("Max pending queries exceeded")
+       ⟨1, 0, 1, 0, 1, 1⟩,      -- first write queued to the write channel
+       ⟨1, 0, 0, 0, 1, 1⟩,      -- its worker finishes
+       ⟨1, 0, 0, 0, 0, 0⟩,      -- dequeued: slot freed
+       ⟨0, 1, 0, 0, 0, 1⟩,      -- third command admitted
+       ⟨0, 0, 0, 1, 0, 1⟩,      -- starts matching
+       ⟨0, 0, 1, 0, 1, 1⟩,      -- queued to the write channel
+       ⟨0, 0, 1, 0, 0, 0⟩,      -- dequeued
+       ⟨0, 0, 0, 0, 0, 0⟩] = true := by decide
 
 end SC.Locks

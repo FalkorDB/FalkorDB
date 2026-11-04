@@ -126,11 +126,9 @@ with its formatted message; then each qualified name found in the JS registry
 is cached under its name as registered (`low` = identity since #3066, js_context.rs:261; it was `to_lowercase`). -/
 def rebuild (low : String → String) (libs : List Lib) (evalLib : Lib → Except Caught Unit)
     (raw : List String) (v : Nat) : Except String Cache :=
-  match libs.find? (fun l => (evalLib l).toBool == false) with
-  | some l =>
-    match evalLib l with
-    | .error c => .error ("Failed to load UDF library '" ++ l.name ++ "': " ++ String.ofList (errMsg c true))
-    | .ok () => .error "unreachable"
+  match libs.findSome? (fun l => match evalLib l with | .error c => some (l, c) | .ok () => none) with
+  | some (l, c) =>
+    .error ("Failed to load UDF library '" ++ l.name ++ "': " ++ String.ofList (errMsg c true))
   | none => .ok ⟨v, (libs.flatMap (·.fns)).filter (· ∈ raw) |>.map low⟩
 
 /-- `ensure_context_current`: rebuild iff no context or a stale version. The
@@ -160,7 +158,7 @@ theorem ensureCurrent_version (low : String → String) (st : Option Cache) (v :
       refine ⟨c, rfl, ?_⟩
       unfold rebuild at hc
       split at hc
-      · split at hc <;> cases hc
+      · cases hc
       · cases hc; rfl
     · intro h; cases h
 
@@ -171,7 +169,7 @@ theorem rebuild_keys (low : String → String) (libs : List Lib) (ev : Lib → E
     ∀ k, k ∈ c.funcs ↔ ∃ l ∈ libs, ∃ q ∈ l.fns, q ∈ raw ∧ k = low q := by
   unfold rebuild at h
   split at h
-  · split at h <;> cases h
+  · cases h
   · cases h
     intro k
     simp only [List.mem_map, List.mem_filter, List.mem_flatMap, decide_eq_true_eq]
@@ -184,7 +182,7 @@ theorem rebuild_fail (low : String → String) (l : Lib) (rest : List Lib) (ev :
     (raw : List String) (v : Nat) (c : Caught) (h : ev l = .error c) :
     rebuild low (l :: rest) ev raw v =
       .error ("Failed to load UDF library '" ++ l.name ++ "': " ++ String.ofList (errMsg c true)) := by
-  simp [rebuild, List.find?_cons, h, Except.toBool]
+  simp [rebuild, List.findSome?_cons, h]
 
 /-! ## call_udf_bridge -/
 

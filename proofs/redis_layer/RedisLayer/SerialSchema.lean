@@ -62,7 +62,7 @@ variable (one : Nat) (simCode : Option Bytes → Nat)
 
 /-- The phonetic string written (`:402-406`, #3514): an absent or empty code is written as
 C's `"no"` (`PHONETIC_OFF`), because C enables phonetic matching for any other string, an empty
-one included. Before #3514 it wrote the empty string (`pre3514_encField`). -/
+one included. Before #3514 it wrote the empty string. -/
 def encPh (f : Fld) : Bytes := if f.phonetic.getD [] = [] then PHON_OFF else f.phonetic.getD []
 
 /-- Field loop body of `encode_schema_index_block` (`:383-427`). -/
@@ -93,17 +93,17 @@ def ANYW : Nat := RANGEW ||| FULLTEXT ||| VECTOR
 
 def failD {α} : Dec α := fun _ => none
 
-/-- `phonetic == PHONETIC_OFF → clear` (`:662-665`). -/
+/-- `phonetic == PHONETIC_OFF → clear` (`:650-653`). -/
 def phonNorm (p : Bytes) : Bytes := if p = PHON_OFF then [] else p
 
-/-- **`decode_index_field` on main** (`:637-725`, #3514): the type word is a bitmask and every
+/-- **`decode_index_field` on main** (`:637-724`, #3514): the type word is a bitmask and every
 set type becomes its own field, in `db.indexes()` order (range, fulltext, vector); a word with
-no type or an unknown bit is an error (`:668-672`); C's phonetic `"no"` comes back as our
-explicit off (`:662-665`). The attribute is the name verbatim (#3252). -/
+no type or an unknown bit is an error (`:655-660`; the mask test `(ft ||| ANYW) ≠ ANYW` is exact for every `Nat`, not only
+the bits below 2^64); C's phonetic `"no"` comes back as our explicit off (`:650-653`). The attribute is the name verbatim (#3252). -/
 def decField : Dec (Bytes × List Fld) :=
   Dec.bind rdB fun nb => Dec.bind rdU fun ft => Dec.bind rdD fun w =>
   Dec.bind rdU fun ns => Dec.bind rdB fun pb =>
-  if ft = 0 ∨ ft &&& (ANYW ^^^ 0xFFFFFFFFFFFFFFFF) ≠ 0 then failD else
+  if ft = 0 ∨ (ft ||| ANYW) ≠ ANYW then failD else
   let isR := ft &&& RANGEW ≠ 0
   let isFt := ft &&& FULLTEXT ≠ 0
   let isV := ft &&& VECTOR ≠ 0
@@ -178,7 +178,7 @@ theorem field_name_kept (attr : Bytes) (ty : Ty) : attrBack attr ty = attr := rf
 theorem field_prefix_kept (a : Bytes) : attrBack (RANGE_ ++ a) .range = RANGE_ ++ a := rfl
 
 /-- A vector field without `VectorIndexOptions` writes no option words (`:408-420`), yet
-the decoder reads five (`:677-683`): the stream desynchronises. Such a field is not built by
+the decoder reads five (`:671-675`): the stream desynchronises. Such a field is not built by
 `CREATE VECTOR INDEX` (options are mandatory there), so this is latent. -/
 theorem vector_without_opts (attr : Bytes) (ts : List W) :
     encField one simCode attr ⟨.vector, none, none, none, none⟩ ++ ts

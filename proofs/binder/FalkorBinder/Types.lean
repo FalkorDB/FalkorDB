@@ -4,18 +4,18 @@
 | here | there |
 | --- | --- |
 | `TK`, `CK`, `TE` | `ExprIR` variants (bound), constant value kinds |
-| `mayBool` | `expr_may_return_boolean` binder.rs:2318-2385 |
-| `mayEntity` | `expr_may_return_entity` binder.rs:2387-2457 |
-| `validate` | `validate_boolean_operands` / `_impl` binder.rs:2292-2316 |
+| `mayBool` | `expr_may_return_boolean` binder.rs:2323-2389 |
+| `mayEntity` | `expr_may_return_entity` binder.rs:2392-2457 |
+| `validate` | `validate_boolean_operands` / `_impl` binder.rs:2297-2321 |
+| `canBN`, `canEnt` | reference: can the expression *evaluate* (without error) to a Bool/Null, to an entity/Null |
 
 `TE` is a *bound* tree, and since #3335 no bound tree holds a `Paren`
 (`BindExpr.bind_paren`; `BE` has no such constructor): both checks now hit
-`unreachable!` on one (binder.rs:2329, 2403), so `TK` has no `paren` and
+`unreachable!` on one (binder.rs:2334, 2408), so `TK` has no `paren` and
 `Distinct` is the one transparent wrapper.
-| `canBN`, `canEnt` | reference: can the expression *evaluate* (without error) to a Bool/Null, to an entity/Null |
 
 `mayBool` is used to reject a WHERE / list-comprehension predicate ("Expected
-boolean predicate", binder.rs:381, 668, 1828) and logical operands
+boolean predicate", binder.rs:352, 662, 1259, 1827) and logical operands
 (`validate_boolean_operands`); a check is *sound* if it never rejects an
 expression that can produce a boolean or null.
 
@@ -159,7 +159,7 @@ theorem mayBoolAll_sound : ∀ l, noLossyAll l = true → canBNAll l = true → 
 end
 
 /-- The subscript `l[0]` (a list of booleans, a property list …) is rejected as
-a predicate although it can be `true` (CONFIRMED bug, binder.rs:2338). -/
+a predicate although it can be `true` (CONFIRMED bug, the `GetElement` arm of the non-boolean list, binder.rs:2352). -/
 theorem getElement_rejected (l i : TE) :
     canBN (.node .getElement [l, i]) = true ∧ mayBool (.node .getElement [l, i]) = false ∧
     validate (.node .and [.node (.const .bool) [], .node .getElement [l, i]]) = false := by

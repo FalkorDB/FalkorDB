@@ -5,7 +5,7 @@ import FalkorEffectsEmitApply.Basic
 
 Models `graph/src/effects/v3/emit.rs` (`for_each_record` and its digests) and
 the gate that decides whether it runs at all (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1655`).
+`Pending::effects_count` at `runtime/pending.rs:1958`).
 -/
 
 namespace FalkorEA
@@ -154,7 +154,7 @@ theorem mergeRow_eq_lookup :
         rw [← key b (Nat.le_of_lt (hlt b hb))]
 
 /-- A width-`n` shape yields `n` cells per id, so `rows.len() == ids.len() * n`
-    — the shape check the decoder and `check_attr_shape` (`apply.rs:707`)
+    — the shape check the decoder and `check_attr_shape` (`apply.rs:720`)
     apply to it. -/
 theorem mergeRow_length : ∀ (as : List Nat) (ps : List (Nat × Val)),
     (mergeRow as ps).length = as.length := by
@@ -185,7 +185,7 @@ theorem gatherRows_length (attrIds : List Nat) (look : Nat → Option (List (Nat
 example : mergeRow [1, 2] [(2, .int 20), (1, .int 10)] ≠ [1, 2].map (lookupAttr [(2, .int 20), (1, .int 10)]) := by
   decide
 
-/-! ## The record stream (`for_each_record`, `emit.rs:323-372`)
+/-! ## The record stream (`for_each_record`, `emit.rs:323-375`)
 
     Records are abstracted to their opcode and the ids they name — enough to
     decide *whether* the stream is empty and what the replica's schema
@@ -230,7 +230,7 @@ structure Pending where
   baseline          : Schema
 deriving Repr
 
-/-- `Pending::effects_count` (`runtime/pending.rs:1655-1674`), term for term.
+/-- `Pending::effects_count` (`runtime/pending.rs:1958-1977`), term for term.
     Note what is **not** summed: `cancelled_nodes`, `cancelled_relationships`,
     and the schema registered since `baseline`. -/
 def effectsCount (p : Pending) : Nat :=
@@ -244,7 +244,7 @@ def suffixRecs (mk : Nat → Name → Rec) (base : Nat) : List Name → List Rec
   | []      => []
   | n :: ns => mk base n :: suffixRecs mk (base + 1) ns
 
-/-- `emit_schema_additions` (`emit.rs:60-108`): every dictionary entry past the
+/-- `emit_schema_additions` (`emit.rs:60-92`): every dictionary entry past the
     baseline, with its offset as id. -/
 def schemaAdditions (g : Schema) (b : Schema) : List Rec :=
   suffixRecs .addLabel b.labels.length (g.labels.drop b.labels.length)
@@ -380,7 +380,7 @@ theorem gate_drops_schema_only :
 /-! ### Why a dropped payload is a divergence and not a no-op
 
     The replica checks every `ADD_SCHEMA` id against the id its own dictionary
-    assigns (`apply_add_schema`, `apply.rs:519`; `verify_id`, `apply.rs:539`).
+    assigns (`apply_add_schema`, `apply.rs:532`; `verify_id`, `apply.rs:552`).
     One dropped registration shifts every later id by one. -/
 
 /-- `get_label_id_mut` then `verify_id`: get-or-create, and the id must match. -/

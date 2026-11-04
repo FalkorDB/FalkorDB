@@ -9,12 +9,12 @@ Here ↔ there:
 
 | Lean | Rust |
 | --- | --- |
-| `Val`                      | `runtime::value::Value` storable variants (value.rs:1898) |
+| `Val`                      | `runtime::value::Value` storable variants (value.rs:2084) |
 | `siType`                   | `graphblas::serialization::si_type::*` (serialization.rs:107) |
 | `Tok`, token stream        | `BufferedWriter`/`BufferedReader` type-tagged words (buffered_io.rs) |
-| `Val.encode`/`Val.decode`  | `impl Encode/Decode<19> for Value` (value.rs:1898, :1984) |
+| `Val.encode`/`Val.decode`  | `impl Encode/Decode<19> for Value` (value.rs:2084, :2170) |
 | `Roaring.encode/decode`    | `impl Encode/Decode<19> for RoaringTreemap` (serialization.rs:172) |
-| `Span.encode/decode`       | `AttributeStore::encode_with_range` / `decode_with_count` (attribute_store.rs:1409, :1460) |
+| `Span.encode/decode`       | `AttributeStore::encode_with_range` / `decode_with_count` (attribute_store.rs:1425, :1476) |
 
 The reader is a *tagged* stream: every word carries its own type tag, so a
 decoder that reads the wrong width still cannot silently succeed — it either
@@ -90,7 +90,7 @@ def stripNul (b : List UInt8) : List UInt8 :=
 theorem stripNul_nulTerm (b : List UInt8) : stripNul (nulTerm b) = b := by
   simp [stripNul, nulTerm]
 
-/-- Encoder: `impl Encode<19> for Value` (value.rs:1898). Each arm writes a tag
+/-- Encoder: `impl Encode<19> for Value` (value.rs:2084). Each arm writes a tag
 `u` then its payload, exactly as the Rust match does. Point widens f32→f64 with
 `f64::from`; here the bits carrier already stands for the widened image. Vector
 writes one BYTES word: `dim` little-endian then each component — modelled as its
@@ -116,7 +116,7 @@ def Val.encode : Val → Stream
   | .vduration t  => [.u siType.T_DURATION, .s t]
 
 /-- Decoder over a token stream, returning the value and the remaining stream.
-Mirrors `impl Decode<19> for Value` (value.rs:1984): read a tag, branch on it,
+Mirrors `impl Decode<19> for Value` (value.rs:2170): read a tag, branch on it,
 consume exactly what the encoder wrote. -/
 partial def Val.decode : Stream → Option (Val × Stream)
   | .u tag :: rest =>
@@ -227,7 +227,7 @@ def Val.isScalar : Val → Bool
 
 /-- **Scalar roundtrip.** For every scalar value and any trailing stream,
 `decOne` reads back exactly the value and returns the untouched suffix. Ten
-constructors, each an arm of `Value::decode` (value.rs:1984). -/
+constructors, each an arm of `Value::decode` (value.rs:2170). -/
 theorem decOne_encode (v : Val) (r : Stream) (h : v.isScalar = true) :
     decOne (v.encode ++ r) = some (v, r) := by
   cases v with

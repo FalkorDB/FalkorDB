@@ -142,9 +142,7 @@ theorem minHead_some : ∀ {hs : List (Option P)} {m : P}, minHead hs = some m �
             rcases lt_total b a with h1 | h1 | h1
             · exact absurd h1 hlt
             · subst h1; exact hxa
-            · exact lt_trans hxa h1 |> fun h2 => by
-                -- x < a and a < b gives x < b
-                exact lt_trans hxa h1)
+            · exact lt_trans hxa h1)  -- x < a and a < b gives x < b
 
 /-- Per-iterator invariant: the stream (head, then the rest) is ascending, and an empty head
 means the iterator is exhausted. -/
@@ -170,7 +168,7 @@ theorem mem_seek_stream (p : P → Bool) (c : Cur) (k : P) :
     have : k ∉ c.src.filter p := by rw [hf]; simp
     simp only [List.mem_filter, not_and] at this
     simp only [Option.toList, List.head?_nil, List.nil_append, List.tail_nil, List.not_mem_nil, false_iff, not_and]
-    intro h1 h2; exact absurd h2 (this h1) |> fun x => x
+    intro h1 h2; exact absurd h2 (this h1)
   | cons a t =>
     have : k ∈ a :: t ↔ k ∈ c.src ∧ p k = true := by
       rw [← hf, List.mem_filter]
@@ -269,7 +267,7 @@ theorem next_some {st st' : List Cur} {m : P} (hg : AllGood st) (h : next st = (
         simp only [Cur.stream, hh, Option.toList, List.singleton_append, List.mem_cons] at hin
         rcases hin with e | hin
         · exact hne' e.symm
-        · exact lt_irrefl _ (lt_trans (lt_trans hmla (hla m' hin)) hmla |> fun _ => lt_trans hmla (hla m' hin))
+        · exact lt_irrefl _ (lt_trans hmla (hla m' hin))
     refine ⟨⟨c0, hc0, by simp [Cur.stream, hh0]⟩, ?_, ?_, ?_, ?_⟩
     · rintro k ⟨c, hc, hk⟩ hkm
       cases hh : c.head with

@@ -1,21 +1,21 @@
 import PendingCommit.Props
 import PendingCommit.ContentCompact
 /-
-# `Pending` property staging, validation and reads (pending.rs:46-494, :768-852)
+# `Pending` property staging, validation and reads (pending.rs: validation and `flatten_label_map` :61-144, node attributes :568-662, relationship attributes :979-1066)
 
 * `rustUpsert_eq` — the `binary_search_by_key` + `entry[pos].1 = value` /
-  `Vec::insert(pos, …)` in `set_node_attribute` (:425) and
-  `set_relationship_attribute` (:794) is `Props.upsert` on a sorted list, so
+  `Vec::insert(pos, …)` in `set_node_attribute` (:595) and
+  `set_relationship_attribute` (:1005) is `Props.upsert` on a sorted list, so
   `Props.stage_sorted_lastWrite` / `read_your_writes_*` apply to the Rust code.
-* `lookupSorted_eq` — `lookup_sorted` (:100) is first-match `get`.
-* `validate_spec`, `validate_depth`, `validate_nest` — `is_valid_property` (:69),
-  `validate_list_property` (:98), `validate_property` (:115), `validate_*` (:124, :129):
+* `lookupSorted_eq` — `lookup_sorted` (:144) is first-match `get`.
+* `validate_spec`, `validate_depth`, `validate_nest` — `is_valid_property` (:79),
+  `validate_list_property` (:108), `validate_property` (:125), `validate_*` (:134, :139):
   scalars, `String`, `Point`, `VecF32`, temporal values, and lists whose elements are
   (recursively) valid and non-null, nested at most `MAX_VALUE_NESTING` (4096) deep (#3339,
   b080a44c1); `Null` only at top level. Every accepted value was valid before (`isValid`, the
   pre-#3339 check) and has depth ≤ 4096. (Same as C on
   live servers: `[[1]]` accepted, `[1, null]`, maps and lists of maps rejected.)
-* `flatten_spec` — `flatten_label_map` (:46) emits parallel arrays whose zip
+* `flatten_spec` — `flatten_label_map` (:61) emits parallel arrays whose zip
   is every `(node, label)` pair, total length = Σ labels.
 * `setAttr_spec`, `setAttrs_spec`, `clearAttrs_spec`, `getAttr_spec`,
   `updateAttrs_spec` — the node/relationship staging API.
@@ -122,7 +122,7 @@ theorem rustUpsert_eq (l : List Entry) (hs : Sorted l) (k : Nat) (v : Val) : rus
     conv => rhs; rw [← List.take_append_drop pos l]
     rw [upsert_pre _ _ k v hpre, upsert_lt _ k v hpost]
 
-/-- `lookup_sorted` (:100): the same binary search, returning the value. -/
+/-- `lookup_sorted` (:144): the same binary search, returning the value. -/
 def lookupSorted (attrs : List Entry) (k : Nat) : Option Val := Content.spanGet attrs k
 
 theorem lookupSorted_eq (attrs : List Entry) (h : Sorted attrs) (k : Nat) : lookupSorted attrs k = get attrs k :=
@@ -138,7 +138,7 @@ inductive PV where
 
 def MAX_VALUE_NESTING : Nat := 4096
 
-/-- `is_valid_property` (:69): a non-list primitive, or NULL when allowed (#3339 moved the
+/-- `is_valid_property` (:79): a non-list primitive, or NULL when allowed (#3339 moved the
 list arm into `validate_list_property`). -/
 def isValidP : PV → Bool → Bool
   | .null, allowNull => allowNull
@@ -146,12 +146,12 @@ def isValidP : PV → Bool → Bool
   | .datetime, _ | .date, _ | .time, _ | .duration, _ => true
   | _, _ => false
 
-/-- The nesting message (:103) / `INVALID_PROPERTY_MSG` (:64). -/
+/-- The nesting message (:114) / `INVALID_PROPERTY_MSG` (:74). -/
 inductive PErr | nesting | invalid
   deriving DecidableEq
 
 mutual
-/-- `validate_list_property(items, depth)`'s `try_for_each` (:108-112); the recursive call's
+/-- `validate_list_property(items, depth)`'s `try_for_each` (:117-121); the recursive call's
 depth check is inlined into `validateItem`. -/
 def validateItems : Nat → List PV → Except PErr Unit
   | _, [] => .ok ()
@@ -164,19 +164,19 @@ def validateItem : Nat → PV → Except PErr Unit
   | _, v => if isValidP v false then .ok () else .error .invalid
 end
 
-/-- `validate_list_property` (:98). -/
+/-- `validate_list_property` (:108). -/
 def validateListProperty (items : List PV) (depth : Nat) : Except PErr Unit :=
   if depth > MAX_VALUE_NESTING then .error .nesting else validateItems depth items
 
-/-- `validate_property` (:115); `validate_node_property` (:124) and
-`validate_relationship_property` (:129) return it. -/
+/-- `validate_property` (:125); `validate_node_property` (:134) and
+`validate_relationship_property` (:139) return it. -/
 def validateProperty : PV → Except PErr Unit
   | .list items => validateListProperty items 1
   | v => if isValidP v true then .ok () else .error .invalid
 
 def validate (v : PV) : Bool := (validateProperty v).toBool
 
-/-- Historical `is_valid_property` before #3339 (:62 at 4a4f2a72f): lists of any depth. -/
+/-- Historical `is_valid_property` before #3339 (`is_valid_property` at 4a4f2a72f): lists of any depth. -/
 def isValid : PV → Bool → Bool
   | .null, allowNull => allowNull
   | .bool, _ | .int, _ | .float, _ | .string, _ | .point, _ | .vecf32, _

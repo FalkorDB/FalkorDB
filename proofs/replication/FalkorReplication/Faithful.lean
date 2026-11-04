@@ -46,7 +46,7 @@ theorem internCapF_full (cap : Nat) (d : List String) (n : String) (hf : ¬ d.le
     internCapF cap d n = none := by
   simp [internCapF, hn, hf]
 
-/-- `verify_id` (`apply.rs:566`), success only. -/
+/-- `verify_id` (`apply.rs:552`), success only. -/
 def verifyIdF (expected assigned : Nat) : Bool := assigned == expected
 
 /-- `apply_add_schema` (`apply.rs:532`): intern, then `verify_id`. -/
@@ -83,9 +83,57 @@ pass: `recycled -= nodes; live += nodes.len()` — what `Graph::create_nodes`
 (`graph.rs:1646`) does to the id space. -/
 def Ids.create1 (s : Ids) (id : Nat) : Ids := ⟨s.live + 1, s.bin.erase id⟩
 
+/-- Insert `id` into an ascending list at its sorted place. -/
+def insAsc (id : Nat) : List Nat → List Nat
+  | [] => [id]
+  | b :: bs => if id ≤ b then id :: b :: bs else b :: insAsc id bs
+
+theorem insAsc_perm (id : Nat) : ∀ l : List Nat, (insAsc id l).Perm (id :: l)
+  | [] => List.Perm.refl _
+  | b :: bs => by
+    unfold insAsc
+    split
+    · exact List.Perm.refl _
+    · exact ((insAsc_perm id bs).cons b).trans (List.Perm.swap id b bs)
+
+theorem insAsc_mem (id x : Nat) (l : List Nat) : x ∈ insAsc id l ↔ x = id ∨ x ∈ l := by
+  rw [(insAsc_perm id l).mem_iff]; simp
+
+theorem insAsc_length (id : Nat) (l : List Nat) : (insAsc id l).length = l.length + 1 := by
+  rw [(insAsc_perm id l).length_eq]; simp
+
+theorem insAsc_nodup (id : Nat) (l : List Nat) (h : id ∉ l) : (insAsc id l).Nodup ↔ l.Nodup := by
+  rw [(insAsc_perm id l).nodup_iff]; simp [h]
+
+theorem insAsc_sorted (id : Nat) : ∀ l : List Nat, l.Pairwise (· ≤ ·) → (insAsc id l).Pairwise (· ≤ ·)
+  | [], _ => by simp [insAsc]
+  | b :: bs, h => by
+    unfold insAsc
+    split
+    · rename_i hle
+      refine List.Pairwise.cons ?_ h
+      intro x hx
+      rcases List.mem_cons.mp hx with rfl | hx
+      · exact hle
+      · exact Nat.le_trans hle (List.rel_of_pairwise_cons h hx)
+    · rename_i hlt
+      have h' := List.pairwise_cons.mp h
+      refine List.Pairwise.cons ?_ (insAsc_sorted id bs h'.2)
+      intro x hx
+      have := (insAsc_perm id bs).mem_iff.mp hx
+      rcases List.mem_cons.mp this with rfl | hx
+      · omega
+      · exact h'.1 x hx
+
 /-- The state `IdSpace::release` (`:703`) moves to on `requested = freed = {id}`
 once its refusals pass (`id` not free): `recycled |= freed; live -= freed.len()`
-— `Graph::delete_nodes` (`graph.rs:2200`). -/
-def Ids.release1 (s : Ids) (id : Nat) : Ids := ⟨s.live - 1, id :: s.bin⟩
+— `Graph::delete_nodes` (`graph.rs:2200`). The id goes in at its sorted place, so the bin stays an
+ascending listing (`release1_sorted`), which `reserveFresh` (`bin.take`) relies on. -/
+def Ids.release1 (s : Ids) (id : Nat) : Ids := ⟨s.live - 1, insAsc id s.bin⟩
+
+theorem Ids.release1_sorted (s : Ids) (id : Nat) (h : s.bin.Pairwise (· ≤ ·)) :
+    (s.release1 id).bin.Pairwise (· ≤ ·) := by
+  simp only [Ids.release1]
+  exact insAsc_sorted id s.bin h
 
 end FalkorFaithful

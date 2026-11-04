@@ -7,7 +7,7 @@ graph/src/runtime/functions/temporal.rs	time_from_components	142	PROVEN	Fns.time
 graph/src/runtime/functions/temporal.rs	time_from_map	154	PROVEN	Fns.timeFromMap: timeFromMap_eq_slots, localtimeStruct_eq_map
 graph/src/runtime/functions/temporal.rs	slot_to_int	164	PROVEN	Fns.slotToInt: slotToInt_range, slotToInt_nan, getIntField_eq_slot
 graph/src/runtime/functions/temporal.rs	parse_date_string	173	PROVEN	Parse.parseDate (chrono/parse in Chrono structure): parseDate_ok (soundness), parseDate_negative, parseDate_compact_rejects, parseDate_compact_ok_allDigits, compact_junk_examples, parseDate_week_first (#3125 1ea868116)
-graph/src/runtime/functions/temporal.rs	parse_week_date	268	PROVEN	weekSlice (split_at_checked, #2950): weekSlice_total, week_slice_errors, sliceOk_ascii; W2-temporal-3 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/runtime/functions/temporal.rs	parse_week_date	268	PROVEN	weekSlice (rest.len() <= 2 branch and split_at_checked, #2950): weekSlice_err_iff, weekSlice_short_ok, week_slice_errors, sliceOk_ascii; W2-temporal-3 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/runtime/functions/temporal.rs	parse_time_string	308	PROVEN	Parse.parseTime: parseTime_ok (result < 86400), parseTime_compact_rejects (#3125 1ea868116)
 graph/src/runtime/functions/temporal.rs	parse_datetime_string	370	PROVEN	Parse.parseDatetime: parseDatetime_ok, parseDatetime_noT
 graph/src/runtime/functions/temporal.rs	parse_duration_string	388	PROVEN	Parse.parseDuration/dateLoop/timeLoop: parseDuration_weeks, parseDuration_noP; #2987 checked W/D: dateLoop_week_overflow, dateLoop_day_overflow, dateLoop_days_i64, week_string_overflow_errors; W2-temporal-8 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
@@ -32,7 +32,7 @@ graph/src/runtime/functions/temporal.rs	duration_fn	832	PROVEN	Pure.durationFn =
 graph/src/runtime/functions/temporal.rs	date_transaction_fn	842	PROVEN	Pure.dateTransactionFn: transaction_consistent
 graph/src/runtime/functions/temporal.rs	localtime_transaction_fn	854	PROVEN	Pure.localtimeTransactionFn: transaction_consistent
 graph/src/runtime/functions/temporal.rs	localdatetime_transaction_fn	868	PROVEN	Pure.localdatetimeTransactionFn: transaction_consistent
-graph/src/runtime/value.rs	Point::distance	153	PROVEN	SpatialFns.distance (Flt structure, clamp01 since #2983): distance_self, distance_finite, distance_not_nan (NanLaws); W2-temporal-4 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/runtime/value.rs	Point::distance	153	PROVEN	SpatialFns.distance (Flt structure, clamp01 since #2983): distance_self, distance_finite_coords (finite for finite coordinates), distance_finite, distance_not_nan (hypothesis-free apart from the binary64 laws of the Flt/NanLaws structures, as for chrono and simsimd); W2-temporal-4 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/runtime/value.rs	Value::format_datetime	261	PROVEN	Components.formatDatetime: formatDatetime_spec, format_extremes (total, no chrono since #2986)
 graph/src/runtime/value.rs	Value::format_date	281	PROVEN	Components.formatDate: formatDate_spec, pushDate_eq, format_extremes, format_wide_years, formatDate_wide_distinct (#2986/#2746 fixed)
 graph/src/runtime/value.rs	Value::format_time	291	PROVEN	Components.formatTime: formatTime_length, format_invalid, pad2_length
@@ -101,5 +101,5 @@ graph/src/runtime/vector_expr.rs	int_lane	962	PROVEN	VExpr.intLane
 graph/src/runtime/vector_expr.rs	float_lane	974	NOT COVERED	f64
 graph/src/runtime/vector_expr.rs	float_operand	989	NOT COVERED	trivial predicate
 graph/src/runtime/value.rs	Point::new	142	PROVEN	SpatialFns.Point.new: Point.new_fields
-graph/src/runtime/value.rs	Value::add_slow (Time/Duration arm)	967	PROVEN	Duration.timeAddDur (arm at value.rs:1063, #2985): timeAddDur_eq_tod, timeAddDur_range, timeAddDur_eq, time_normalised
-graph/src/runtime/value.rs	Sub::sub (Time/Duration arm)	1084	PROVEN	Duration.timeSubDur (arm at value.rs:1105, #2985): timeSubDur_range, timeSubDur_eq, timeSub_timeAdd, time_normalised
+graph/src/runtime/value.rs	Value::add_slow (Time/Duration arm)	967	PROVEN	Duration.timeAddDur (arm at value.rs:1069, #2985): timeAddDur_eq_tod, timeAddDur_range, timeAddDur_eq, time_normalised
+graph/src/runtime/value.rs	Sub::sub (Time/Duration arm)	1084	PROVEN	Duration.timeSubDur (arm at value.rs:1111, #2985): timeSubDur_range, timeSubDur_eq, timeSub_timeAdd, time_normalised

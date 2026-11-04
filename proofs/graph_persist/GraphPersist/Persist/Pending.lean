@@ -90,7 +90,7 @@ theorem run_later (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) (s : Sch Nm Ix Cn) :
 
 /-- **Any arrival order.** `K = items.length ≥ 2` keys of one graph, each carrying the
 header (`key_count = K`) and schema: nothing finalizes early; the last key finalizes the
-fold of every key's payloads (in arrival order — which `pending_any_order` shows does not
+fold of every key's payloads (in arrival order — which `multi_load` shows does not
 matter); `meta_keys` is exactly the keys not named after the graph. -/
 theorem run_keys (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) (s : Sch Nm Ix Cn) (items : List (Nm × List (PR M Tn)))
     (hK : h.keyCount = items.length) (h2 : 2 ≤ items.length) :

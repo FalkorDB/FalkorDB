@@ -44,8 +44,8 @@ graph/src/runtime/string_pool.rs	StringPool::intern	28	PROVEN	intern: intern_isI
 graph/src/runtime/string_pool.rs	StringPool::is_interned	42	PROVEN	isInterned: intern_isInterned, prune_keeps_held
 graph/src/runtime/string_pool.rs	StringPool::stats	52	PROVEN	prune (retain strong_count > 1): prune_keeps_held, wf_prune; counting part not modelled
 graph/src/runtime/string_pool.rs	global	66	PROVEN	globalPool: globalPool_spec
-graph/src/runtime/row.rs	RowView::value_at	47	PROVEN	RowView.Lawful, rowView_lawful (trait contract; Row impl = getById)
-graph/src/runtime/row.rs	RowView::to_owned_row	56	PROVEN	RowView.Lawful, rowView_lawful, toOwnedRow_eq
+graph/src/runtime/row.rs	RowView::value_at	47	PROVEN	RowView.Lawful, rowView_lawful, Lawful.valueAt_none_iff (trait contract: snapshot answers value_at, None exactly out of range; Row impl = getById)
+graph/src/runtime/row.rs	RowView::to_owned_row	56	PROVEN	RowView.Lawful, rowView_lawful, toOwnedRow_eq (values and bound bits; origin_row not modelled)
 graph/src/runtime/row.rs	Row::new	76	PROVEN	Row.new: new_spec
 graph/src/runtime/row.rs	Row::with_capacity	82	PROVEN	withCapacity: withCapacity_eq
 graph/src/runtime/row.rs	Row::from_raw	92	PROVEN	fromRaw: fromRaw_spec
@@ -64,7 +64,7 @@ graph/src/runtime/row.rs	Row::merge	209	PROVEN	merge: mergeFrom_preserve, mergeF
 graph/src/runtime/row.rs	Row::push_slot	224	PROVEN	pushSlot: getById_pushSlot, length_pushSlot, isBound_pushSlot, pushSlot_unbound
 graph/src/runtime/row.rs	Row::unbind_by_id	237	PROVEN	unbind: isBound_unbind, getById_unbind
 graph/src/runtime/row.rs	Row::value_at	246	PROVEN	getById: getById_insertById
-graph/src/runtime/row.rs	Row::to_owned_row	253	PROVEN	toOwnedRow: toOwnedRow_eq
+graph/src/runtime/row.rs	Row::to_owned_row	253	PROVEN	toOwnedRow: toOwnedRow_eq (values and bound bits; origin_row not modelled)
 graph/src/runtime/row.rs	Row::hash	259	PROVEN	hashed (key/value sequence fed to the hasher): hashed_pad; hasher abstract
 graph/src/identifier_limits.rs	validate_identifier_len	26	PROVEN	validate: validate_ok_iff
 graph/src/identifier_limits.rs	is_identifier_too_long	42	PROVEN	isTooLong: isTooLong_of_validate

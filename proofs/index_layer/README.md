@@ -69,7 +69,7 @@ The hypotheses: the RediSearch specification (`RunSpec`, the 82 AXIOMATISED rows
 
 ## Bugs found
 
-Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 73077bb4a: the header's re-targets (cab3cf192, 1d15bf713, 73077bb4a) list bugs 1-4, 7, 8, 10, 12 and 13 as still present, and no later commit touches that code.
+Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 73077bb4a: the header's re-targets (cab3cf192, 1d15bf713, 73077bb4a) list bugs 1-4, 7, 8, 10, 12 and 13 as still present, and no later commit touches that code. The last three rows (#3166, #3382, #2781) are not `repro.py` cases: each needs more than one setup and one query (a second `CREATE FULLTEXT INDEX` with options; a vector query while the index is still UNDER CONSTRUCTION; a failed query whose rollback is observed afterwards), so they were reproduced by hand on a Rust and a C server and the results are recorded in those rows and in the per-bug notes of `FalkorIndexLayer.lean`.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
@@ -133,7 +133,7 @@ No path dependencies.
 | AXIOMATISED | 83 |
 | MODELLED | 2 |
 
-- **MODELLED:** the two #2781 rows: the edge arm of the rollback is modelled and refuted (`bug2781_rollback_not_restored`); their positive theorems live in `proofs/pending_commit` and `proofs/graph_queries`.
+- **MODELLED:** the two #2781 rows: the edge arm of the rollback is modelled and refuted (`bug2781_rollback_not_restored`); the only positive edge-arm result is the fix shape `resyncEdgesFixed_restores` in this project (`proofs/pending_commit`'s `PD.resync_spec` is keyed by id and cannot express the mismatch; it covers the node arm).
 - **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`. The 83rd row is the commented-out `redis.rs` line for the Redis module ABI types.
 
 ## What the model does not cover

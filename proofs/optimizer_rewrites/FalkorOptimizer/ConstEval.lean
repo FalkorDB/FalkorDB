@@ -21,7 +21,7 @@ verdict on every row; this discharges `eliminate_whole_filter`'s and
 | --- | --- |
 | `evalG look` | `ExprEval::eval_node` with variable lookup `look` (`resolve_var`, eval.rs:287-293) |
 | `constEval`  | `ExprEval::constant().eval(.., NO_ROW, None)` — `look` always errors |
-| `constTrue`  | `is_constant_true`'s fast path: `matches!(.., Ok(Value::Bool(true)))` (eliminate_true_filters.rs:52-57); the slow path re-runs it on `substitute_params`' tree (Helpers.evX_subst: same value) |
+| `constTrue`  | `is_constant_true`'s fast path: `matches!(.., Ok(Value::Bool(true)))` (eliminate_true_filters.rs:52-57); the slow path re-runs it on `substitute_params`' tree (`substP`; `constTrue_slow`, parameters modelled as marked variable leaves) |
 -/
 namespace Falkor.Opt
 
@@ -138,6 +138,76 @@ theorem pow_true_type_error (x : Var) (r : Row) :
   simp only [eval, bind, Except.bind]
   cases r.get x <;> rfl
 
-/-! ### History: the `Pow` arm before #2904 broke soundness (#2902) -/
+/-! ### The slow path: parameters (`substitute_params`)
+
+`Expr` has no parameter node, so a parameter `$n` is modelled as a leaf `.var v` with
+`pv v = some n`; its runtime value is `ps.lookup n` (a missing parameter is an error, as
+in `evX`). `substP` is `substitute_params`: it replaces the parameters present in `ps` by
+literals and leaves a missing one as the (erroring) leaf. -/
+
+/-- `substitute_params` (eliminate_true_filters.rs:83-98). -/
+def substP (pv : Var → Option String) (ps : List (String × Val)) : Expr → Expr
+  | .lit v => .lit v
+  | .var v =>
+    match pv v with
+    | some n =>
+      match ps.lookup n with
+      | some val => .lit val
+      | none => .var v
+    | none => .var v
+  | .eq a b => .eq (substP pv ps a) (substP pv ps b)
+  | .neq a b => .neq (substP pv ps a) (substP pv ps b)
+  | .lt a b => .lt (substP pv ps a) (substP pv ps b)
+  | .gt a b => .gt (substP pv ps a) (substP pv ps b)
+  | .sub a b => .sub (substP pv ps a) (substP pv ps b)
+  | .div a b => .div (substP pv ps a) (substP pv ps b)
+  | .and a b => .and (substP pv ps a) (substP pv ps b)
+  | .pow a b => .pow (substP pv ps a) (substP pv ps b)
+
+/-- The runtime lookup of a row with parameters: a parameter reads `ps` (missing: error),
+any other variable reads the row. -/
+def paramLook (pv : Var → Option String) (ps : List (String × Val)) (r : Row) :
+    Var → Except Err Val :=
+  fun v =>
+    match pv v with
+    | some n =>
+      match ps.lookup n with
+      | some val => .ok val
+      | none => .error .notFound
+    | none => .ok (r.get v)
+
+/-- Substituting parameters does not change the value under any lookup that reads them
+from `ps`. -/
+theorem substP_evalG (pv : Var → Option String) (ps : List (String × Val))
+    (look : Var → Except Err Val)
+    (h : ∀ v n val, pv v = some n → ps.lookup n = some val → look v = .ok val) :
+    ∀ e, evalG look (substP pv ps e) = evalG look e := by
+  intro e
+  induction e with
+  | lit => rfl
+  | var v =>
+    cases hp : pv v with
+    | none => simp [substP, hp]
+    | some n =>
+      cases hl : ps.lookup n with
+      | none => simp [substP, hp, hl]
+      | some val => simp [substP, hp, hl, evalG, h v n val hp hl]
+  | eq a b iha ihb | neq a b iha ihb | lt a b iha ihb | gt a b iha ihb
+  | sub a b iha ihb | div a b iha ihb | and a b iha ihb | pow a b iha ihb =>
+    simp only [substP, evalG, iha, ihb]
+
+/-- **`is_constant_true`, slow path**: if the constant evaluator accepts the
+parameter-substituted tree, the original expression (parameters read from `ps`) is `true`
+on every row. -/
+theorem constTrue_slow (pv : Var → Option String) (ps : List (String × Val)) (c : Expr)
+    (h : constTrue (substP pv ps c) = true) (r : Row) :
+    evalG (paramLook pv ps r) c = .ok (.bool true) := by
+  have hl : ∀ v n val, pv v = some n → ps.lookup n = some val → paramLook pv ps r v = .ok val := by
+    intro v n val hp hl'; simp [paramLook, hp, hl']
+  rw [← substP_evalG pv ps (paramLook pv ps r) hl c]
+  unfold constTrue at h
+  split at h
+  · rename_i heq; exact constEval_sound _ _ _ heq
+  · cases h
 
 end Falkor.Opt

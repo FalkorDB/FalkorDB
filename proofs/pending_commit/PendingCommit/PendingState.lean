@@ -1,6 +1,6 @@
 import PendingCommit.PendingAttrs
 /-
-# `Pending` bookkeeping (pending.rs:116-1075)
+# `Pending` bookkeeping (pending.rs:307-1225: `struct Pending` and its accessors)
 
 The struct with every field as a finite set (`RoaringTreemap`: a duplicate-free
 list) or finite map (`FxHashMap`: `PA.FMap`), and each accessor/mutator as a
@@ -19,7 +19,7 @@ function on it. Relationship type names (`Arc<String>`) are `Nat`s.
   exactly the incident edges (`removeRels_spec`);
   `get_created_relationship_endpoints` answers from the unique entry.
 * degrees: `pendingDeg_spec` (created, not deleted edges); `pending_deleted_*degree` skips edges created
-  in this query, so it asks the committed graph only for committed ids (`deletedDeg_skips_created`,
+  since the last commit, so it asks the committed graph only for committed ids (`deletedDeg_skips_created`,
   `fixed2769_created_deleted`, #2769 fixed by #3520).
 -/
 namespace PendingCommit.PS
@@ -39,12 +39,12 @@ theorem sins_nodup (s : List Nat) (h : s.Nodup) (x : Nat) : (sins s x).Nodup := 
   · exact h
   · rename_i hx; exact List.nodup_cons.2 ⟨hx, h⟩
 
-/-- `struct Pending` (pending.rs:134). Since #2846 it keeps no id boundary
+/-- `struct Pending` (pending.rs:307). Since #2846 it keeps no id boundary
 (`node_entry`/`rel_entry` are gone): the graph holds the batch.
-`created` (`created_nodes`, :145) is what the allocator must not reissue —
+`created` (`created_nodes`, :316) is what the allocator must not reissue —
 reserved, not yet recorded by the id space; `taken`
-(`taken_relationship_ids`, :145) is its relationship mirror and loses an id
-at cancellation (`remove_pending_relationships_for_node`, :693). -/
+(`taken_relationship_ids`, :326) is its relationship mirror and loses an id
+at cancellation (`remove_pending_relationships_for_node`, :902). -/
 structure P where
   created : List Nat
   relsByType : FMap (List (Nat × Nat × Nat))
@@ -63,21 +63,21 @@ structure P where
 
 /-! ## Sets -/
 
-/-- `created_nodes` (:387). -/
+/-- `created_nodes` (:557). -/
 def createdNodes (p : P) (ids : List Nat) : P := { p with created := ids.foldl sins p.created }
-/-- `deleted_node` (:624), `deleted_relationship` (:857), `deleted_relationships_bulk` (:864). -/
+/-- `deleted_node` (:835), `deleted_relationship` (:1068), `deleted_relationships_bulk` (:1075). -/
 def deletedNode (p : P) (id : Nat) : P := { p with deletedN := sins p.deletedN id }
 def deletedRel (p : P) (id : Nat) : P := { p with deletedR := sins p.deletedR id }
 def deletedRelsBulk (p : P) (ids : List Nat) : P := { p with deletedR := ids.foldl sins p.deletedR }
-def isNodeCreated (p : P) (id : Nat) : Bool := decide (id ∈ p.created)              -- :882
-def isNodeDeleted (p : P) (id : Nat) : Bool := decide (id ∈ p.deletedN)             -- :967
-def isRelDeleted (p : P) (id : Nat) : Bool := decide (id ∈ p.deletedR)              -- :981
-def deletedNodes (p : P) : List Nat := p.deletedN                                   -- :976
-def hasDeletedNodes (p : P) : Bool := !p.deletedN.isEmpty                            -- :952
-def hasDeletedRels (p : P) : Bool := !p.deletedR.isEmpty                             -- :957
-def hasCreatedRels (p : P) : Bool := !p.relTypes.isEmpty                             -- :962
-def isRelCreated (p : P) (id : Nat) : Bool := (fget p.relTypes id).isSome            -- :930
-def getRelType (p : P) (id : Nat) : Option Nat := fget p.relTypes id                -- :874
+def isNodeCreated (p : P) (id : Nat) : Bool := decide (id ∈ p.created)              -- :1093
+def isNodeDeleted (p : P) (id : Nat) : Bool := decide (id ∈ p.deletedN)             -- :1205
+def isRelDeleted (p : P) (id : Nat) : Bool := decide (id ∈ p.deletedR)              -- :1219
+def deletedNodes (p : P) : List Nat := p.deletedN                                   -- :1214
+def hasDeletedNodes (p : P) : Bool := !p.deletedN.isEmpty                            -- :1190
+def hasDeletedRels (p : P) : Bool := !p.deletedR.isEmpty                             -- :1195
+def hasCreatedRels (p : P) : Bool := !p.relTypes.isEmpty                             -- :1200
+def isRelCreated (p : P) (id : Nat) : Bool := (fget p.relTypes id).isSome            -- :1168
+def getRelType (p : P) (id : Nat) : Option Nat := fget p.relTypes id                -- :1085
 
 theorem foldl_sins (ids s : List Nat) (y : Nat) : y ∈ ids.foldl sins s ↔ y ∈ s ∨ y ∈ ids := by
   induction ids generalizing s with
@@ -112,30 +112,30 @@ theorem sets_spec (p : P) (ids : List Nat) (id y : Nat) :
 
 /-! ## Attribute staging, generic over the (new, existing) pair -/
 
-/-- `set_*_attribute` (:444, :813): validate, pick the map, upsert. `none` = `Err`. -/
+/-- `set_*_attribute` (:595, :1005): validate, pick the map, upsert. `none` = `Err`. -/
 def stageOne (valid : Val → Bool) (isNew : Bool) (nw ex : FMap (List Entry)) (id k : Nat) (v : Val) :
     Option (FMap (List Entry) × FMap (List Entry)) :=
   if !valid v then none
   else if isNew then some (fset nw id (PA.rustUpsert ((fget nw id).getD []) k v), ex)
   else some (nw, fset ex id (PA.rustUpsert ((fget ex id).getD []) k v))
 
-/-- `set_*_attributes` (:417, :787): validate all, skip empty, replace the list. -/
+/-- `set_*_attributes` (:568, :979): validate all, skip empty, replace the list. -/
 def stageAll (valid : Val → Bool) (isNew : Bool) (nw ex : FMap (List Entry)) (id : Nat) (attrs : List Entry) :
     Option (FMap (List Entry) × FMap (List Entry)) :=
   if !(attrs.all (fun e => valid e.2)) then none
   else if attrs = [] then some (nw, ex)
   else if isNew then some (fset nw id attrs, ex) else some (nw, fset ex id attrs)
 
-/-- `clear_node_attributes` (:445). -/
+/-- `clear_node_attributes` (:615). -/
 def clearA (nw ex : FMap (List Entry)) (id : Nat) : FMap (List Entry) × FMap (List Entry) := (frem nw id, frem ex id)
 
-/-- `has_node_attrs` / `has_relationship_attrs` (:455, :461). -/
+/-- `has_node_attrs` / `has_relationship_attrs` (:633, :639). -/
 def hasA (nw ex : FMap (List Entry)) : Bool := !(nw.isEmpty && ex.isEmpty)
 
 theorem hasA_spec (nw ex : FMap (List Entry)) : hasA nw ex = true ↔ nw ≠ [] ∨ ex ≠ [] := by
   cases nw <;> cases ex <;> simp [hasA]
 
-/-- `get_*_attribute` (:485, :834). -/
+/-- `get_*_attribute` (:644, :1026). -/
 def getA (nw ex : FMap (List Entry)) (id k : Nat) : Option Val :=
   if nw.isEmpty && ex.isEmpty then none
   else match (fget nw id).bind (fun a => PA.lookupSorted a k) with
@@ -266,13 +266,13 @@ theorem oget_orem (m : OM) (s t : String) : oget (orem m s) t = if t = s then no
       · subst ht; simp [ha, Ne.symm ha]
       · simp [ht]
 
-/-- One staged entry applied (`update_node_attrs` loop body, :511-519). -/
+/-- One staged entry applied (`update_node_attrs` loop body, :673-681). -/
 def updStep (nm : Nat → Option String) (o : OM) (e : Entry) : OM :=
   match nm e.1 with
   | none => o
   | some s => if e.2.isNull then orem o s else oins o s e.2
 
-/-- `update_node_attrs` / `update_relationship_attrs` (:484, :833). -/
+/-- `update_node_attrs` / `update_relationship_attrs` (:662, :1044). -/
 def updA (nm : Nat → Option String) (nw ex : FMap (List Entry)) (id : Nat) (o : OM) : OM :=
   match fget nw id with
   | some a => a.foldl (updStep nm) o

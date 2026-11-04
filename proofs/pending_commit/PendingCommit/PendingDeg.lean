@@ -1,13 +1,13 @@
 import PendingCommit.PendingRels
 /-
-# Degrees and label scans over `Pending` (pending.rs:1097-1340)
+# Degrees and label scans over `Pending` (pending.rs:1114-1340)
 
 * `pendingDeg_spec` — `pending_indegree` / `pending_outdegree`: with type
   names, the sum over the listed types of the matching created edges of that
   type that are not pending-deleted (a name listed twice is counted twice; the
   callers dedupe, `functions/entity.rs` `parse_degree_args`); without, all such
   created edges. Since #3520 (9ffa9ab04) an edge created and deleted in the
-  same query is not counted (`pendingDeg_skips_deleted`).
+  query segment (since the last commit) is not counted (`pendingDeg_skips_deleted`).
 * `deletedDeg_some` / `deletedDeg_none` — `pending_deleted_*degree` count the
   deleted edges with the right endpoint (and type) that are *committed*: an
   edge created since the last commit is skipped (`deletedDeg_skips_created`),
@@ -38,7 +38,7 @@ def outSel (node : Nat) (e : Nat × Nat × Nat) : Bool := e.2.1 == node
 def liveSel (p : P) (sel : Nat × Nat × Nat → Bool) (e : Nat × Nat × Nat) : Bool :=
   sel e && !decide (e.1 ∈ p.deletedR)
 
-/-- `pending_indegree` / `pending_outdegree` (:1233, :1258): created edges at the node that are not deleted. -/
+/-- `pending_indegree` / `pending_outdegree` (:1231, :1257): created edges at the node that are not deleted. -/
 def pendingDeg (p : P) (sel : Nat × Nat × Nat → Bool) (types : List Nat) : Nat :=
   pendingDegRaw p (liveSel p sel) types
 
@@ -65,8 +65,8 @@ theorem pendingDeg_skips_deleted (p : P) (sel : Nat × Nat × Nat → Bool) (e :
     (hd : e.1 ∈ p.deletedR) : liveSel p sel e = false := by
   simp [liveSel, hd]
 
-/-- `pending_deleted_indegree` / `_outdegree` (:1282, :1313): the deleted edges that are not created in this
-query, each asked for its committed endpoints (`ep`, `none` = `get_relationship_endpoints` panics). -/
+/-- `pending_deleted_indegree` / `_outdegree` (:1284, :1314): the deleted edges that were not created since the last
+commit, each asked for its committed endpoints (`ep`, `none` = `get_relationship_endpoints` panics). -/
 def deletedDeg (p : P) (ep : Nat → Option (Nat × Nat)) (ty : Nat → Nat) (types : List Nat)
     (useDst : Bool) (node : Nat) : Option Nat :=
   (p.deletedR.filter (fun r => !(fget p.relTypes r).isSome)).foldl (fun acc r => acc.bind fun c => (ep r).map fun (f, t) =>
@@ -121,7 +121,7 @@ theorem deletedDeg_some (p : P) (ep : Nat → Option (Nat × Nat)) (ty : Nat →
   rw [if_pos this]; simp
 
 /-- **`deletedDeg_none`**: one deleted, committed-side id without committed endpoints = panic. Only reachable
-for an id that is neither created in this query nor committed (a stale id). -/
+for an id that is neither created since the last commit nor committed (a stale id). -/
 theorem deletedDeg_none (p : P) (ep : Nat → Option (Nat × Nat)) (ty : Nat → Nat) (types : List Nat)
     (useDst : Bool) (node r : Nat) (hr : r ∈ p.deletedR) (hc : (fget p.relTypes r).isSome = false)
     (he : ep r = none) :
@@ -132,7 +132,7 @@ theorem deletedDeg_none (p : P) (ep : Nat → Option (Nat × Nat)) (ty : Nat →
     have := hall r ⟨hr, by simp [hc]⟩; simp [he] at this
   rw [if_neg this]
 
-/-- **`deletedDeg_skips_created`** (#3520): an edge created in this query contributes nothing, and its
+/-- **`deletedDeg_skips_created`** (#3520): an edge created since the last commit contributes nothing, and its
 endpoints are never asked for: if the only deleted edges were created here, the answer is `some 0` for any
 `ep`. -/
 theorem deletedDeg_skips_created (p : P) (ep : Nat → Option (Nat × Nat)) (ty : Nat → Nat) (types : List Nat)

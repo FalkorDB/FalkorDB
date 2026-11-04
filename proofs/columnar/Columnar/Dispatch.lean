@@ -11,7 +11,7 @@ the tree walk around them:
 | --- | --- |
 | `Kind`, `Node` | the `ExprIR` variants `eval` inspects, with children |
 | `fromExprIR` | `CmpOp::from_expr_ir` (vectorized.rs:70) |
-| `Arms`, `eval` | `VectorEval::eval` (vector_expr.rs:211-270) — arms in source order, guards included; since #3335 (b8321be81) `Paren` has no arm of its own (the binder removes every `Paren`) and falls to `eval_per_row` |
+| `Arms`, `eval` | `VectorEval::eval` (vector_expr.rs:211-271) — arms in source order, guards included; since #3335 (b8321be81) `Paren` has no arm of its own (the binder removes every `Paren`) and falls to `eval_per_row` |
 | `evalValues` | `eval_values` (:286) |
 | `propertyValues` | `property_values` (:357) |
 | `hasLabels` | `eval_has_labels` (:642) |

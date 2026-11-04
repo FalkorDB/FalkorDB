@@ -14,18 +14,18 @@ Every lane is compared against the per-row definition: the `Value` operator
 | `Flag`, `compareFloats`, `compareValue` | `DisjointOrNull`, `compare_floats` (`value.rs:1801`), `compare_value` numeric/null arms (`value.rs:1225-1270`); other shapes abstract (`other`) |
 | `compareValues` | `compare_values` (`vectorized.rs:239-271`) |
 | `icmp`, `fcmp` | the primitive `==,!=,<,<=,>,>=` on `i64` / `f64` |
-| `kernelI`, `kernelF` | `compare_i64_column` / `compare_f64_column` (`vectorized.rs:105-210`), `compare_i64_pairs` / `compare_f64_pairs` + `mask_out_nulls` (`vector_expr.rs:798-854`) |
+| `kernelI`, `kernelF` | `compare_i64_column` / `compare_f64_column` (`vectorized.rs:105-210`), `compare_i64_pairs` / `compare_f64_pairs` + `mask_out_nulls` (`vector_expr.rs:797-853`) |
 | `kernelV` | `compare_value_column_3vl` / `compare_value_column` (`vectorized.rs:229-293`) |
 | `EC` | `ExprColumn` (`vector_expr.rs:66-75`); `EC.get` = `ExprColumn::get` (`:80-109`) |
 | `EC.isNull`, `EC.constNull`, `EC.nullsOrNone`, `unionNulls` | `is_null`, `constant_nullness`, `nulls_or_none`, `union_nulls` (`vector_expr.rs:127-189`) |
 | `EC.intoValues` | `ExprColumn::into_values` (`vector_expr.rs:114-123`) |
-| `compareColumns` | `compare_columns` (`vector_expr.rs:734-795`) |
+| `compareColumns` | `compare_columns` (`vector_expr.rs:733-794`) |
 | `wrap`, `valueArith` | `i64::wrapping_*` and `impl Add/Sub/Mul/Div/Rem for Value` (`value.rs:904-1170`) |
-| `intLane`, `floatLane`, `floatOperand`, `arithmetic` | `int_lane`, `float_lane`, `float_operand`, `arithmetic` (`vector_expr.rs:881-988`) |
-| `negate`, `notRow` | `negate_bools` (`vector_expr.rs:857-876`) / per-row `ExprIR::Not` (`eval.rs:708-717`) |
-| `caseCol`, `caseRow` | `VectorEval::eval_case` (`vector_expr.rs:478-552`) / `ExprEval::eval_case` (`eval.rs:485-518`) |
+| `intLane`, `floatLane`, `floatOperand`, `arithmetic` | `int_lane`, `float_lane`, `float_operand`, `arithmetic` (`vector_expr.rs:880-994`) |
+| `negate`, `notRow` | `negate_bools` (`vector_expr.rs:856-875`) / per-row `ExprIR::Not` (`eval.rs:708-717`) |
+| `caseCol`, `caseRow` | `VectorEval::eval_case` (`vector_expr.rs:477-551`) / `ExprEval::eval_case` (`eval.rs:485-518`) |
 | `foldCall` | `eval_function` scalar folding (`vector_expr.rs:604-622`) |
-| `evalVariable` | `VectorEval::eval_variable` (`vector_expr.rs:310-329`) |
+| `evalVariable` | `VectorEval::eval_variable` (`vector_expr.rs:309-328`) |
 | `filterPass` | `FilterOp` mask read (`filter.rs:69-86`) |
 -/
 
@@ -388,7 +388,7 @@ theorem unionNulls_length (l r : EC F) (len : Nat) (hl : l.WF len) (hr : r.WF le
 
 /-! ## `compare_columns` -/
 
-/-- The typed lanes of `compare_columns` (`vector_expr.rs:741-770`). -/
+/-- The typed lanes of `compare_columns` (`vector_expr.rs:740-769`). -/
 def typedLane (lhs rhs : EC F) (op : CmpOp) (nulls : Bits) : Option (List Bool) :=
   match lhs, rhs with
   | .ints d _, .scalar (.int t) => some (kernelI op d (List.replicate d.length t) nulls)
@@ -403,7 +403,7 @@ def typedLane (lhs rhs : EC F) (op : CmpOp) (nulls : Bits) : Option (List Bool) 
   | .floats a _, .floats b _ => some (kernelF op a b nulls)
   | _, _ => none
 
-/-- The generic lanes (`vector_expr.rs:778-794`). -/
+/-- The generic lanes (`vector_expr.rs:777-793`). -/
 def genericLane (other : V F → V F → Ordering × Flag) (lhs rhs : EC F) (op : CmpOp) (len : Nat) : EC F :=
   match rhs, lhs with
   | .scalar c, .values d => let r := kernelV other op d c; .bools r.1 r.2
@@ -411,7 +411,7 @@ def genericLane (other : V F → V F → Ordering × Flag) (lhs rhs : EC F) (op 
     .bools ((List.range len).map (fun i => (compareValues other (lhs.get i) (rhs.get i) op).getD false))
       ((List.range len).map (fun i => (compareValues other (lhs.get i) (rhs.get i) op).isNone))
 
-/-- `compare_columns` (`vector_expr.rs:734-795`). -/
+/-- `compare_columns` (`vector_expr.rs:733-794`). -/
 def compareColumns (other : V F → V F → Ordering × Flag) (lhs rhs : EC F) (op : CmpOp) (len : Nat) : EC F :=
   match typedLane lhs rhs op (unionNulls lhs rhs len) with
   | some mask => .bools mask (unionNulls lhs rhs len)

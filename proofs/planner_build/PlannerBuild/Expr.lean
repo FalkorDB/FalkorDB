@@ -341,16 +341,15 @@ theorem spliceOp_other (op : D) (x : Ex) (h : x.d ≠ op) : spliceOp op x = [x] 
   have : ¬ (d = op) := h
   simp [spliceOp, this]
 
-/-- The Rust unit test `nested_and_is_flattened_in_order` (ast.rs:1489). -/
-theorem andOf_nested_in_order (a b c d e : Ex) (ha : a.d ≠ .and) (hb : b.d ≠ .and) (hc : c.d ≠ .and)
-    (hd : d.d ≠ .and) (he : e.d ≠ .and) :
+/-- The Rust unit test `nested_and_is_flattened_in_order` (ast.rs:1495). -/
+theorem andOf_nested_in_order (a b c d e : Ex) (hc : c.d ≠ .and) :
     andOf [.node .and [a, b], c, .node .and [d, e]] = .node .and [a, b, c, d, e] := by
   unfold andOf
   rw [flat_many] <;>
     simp only [List.flatMap_cons, List.flatMap_nil, spliceOp_same, spliceOp_other _ _ hc,
       List.append_nil, List.cons_append, List.nil_append, List.length_cons] <;> omega
 
-/-- `different_operators_are_not_merged` (ast.rs:1507): an OR operand of AND stays a child. -/
+/-- `different_operators_are_not_merged` (ast.rs:1513): an OR operand of AND stays a child. -/
 theorem andOf_keeps_or (a b c : Ex) (hc : c.d ≠ .and) :
     andOf [.node .or [a, b], c] = .node .and [.node .or [a, b], c] := by
   have ho : spliceOp .and (.node .or [a, b]) = [.node .or [a, b]] := spliceOp_other _ _ (by simp [Ex.d])

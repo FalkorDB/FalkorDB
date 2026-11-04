@@ -97,12 +97,19 @@ theorem readU_rt (n : Nat) (h : n < 2 ^ 64) : RT readU (encU n) n := by
       obtain ⟨rfl, h2⟩ := hpq
       exact absurd h2.2 hq
 
-/-! ## Scalar values (`impl Decode<19> for Value`, value.rs:1984) -/
+/-! ## Scalar values (`impl Decode<19> for Value`, value.rs:2170) -/
 
-/-- Words still owed after a recognised tag (the stream ended inside a value). -/
+/-- The tags `decOne` recognises that carry payload words (every scalar tag but NULL). -/
+def payloadTags : List UInt64 :=
+  [siType.T_BOOL, siType.T_INT64, siType.T_DOUBLE, siType.T_STRING,
+   siType.T_INTERN ||| siType.T_STRING, siType.T_POINT, siType.T_DATETIME, siType.T_DATE,
+   siType.T_TIME, siType.T_DURATION]
+
+/-- Words still owed after a recognised tag (the stream ended inside a value). An unknown
+one-word tag is a codec error, not a short read. -/
 def owes : Stream → Bool
   | [] => true
-  | [.u t] => t != siType.T_NULL
+  | [.u t] => payloadTags.contains t
   | [.u t, .d _] => t == siType.T_POINT
   | _ => false
 
@@ -111,6 +118,15 @@ def decV : Dec Val := fun s =>
   match decOne s with
   | some (v, r) => .ok v r
   | none => if owes s then .eof else .err
+
+/-- A one-word stream whose tag is neither NULL nor a payload-bearing scalar tag is a codec
+error, not `.eof`. -/
+theorem decV_unknown_tag (t : UInt64) (h : payloadTags.contains t = false)
+    (hn : (t == siType.T_NULL) = false) : decV [.u t] = .err := by
+  simp only [payloadTags, List.contains_cons, List.contains_nil, Bool.or_eq_false_iff, Bool.or_false] at h
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10⟩ := h
+  simp at h1 h2 h3 h4 h5 h6 h7 h8 h9 h10
+  simp [decV, decOne, owes, payloadTags, hn, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10]
 
 theorem strictPre_take {p toks : Stream} (h : StrictPre p toks) :
     p = toks.take p.length ∧ p.length < toks.length := by

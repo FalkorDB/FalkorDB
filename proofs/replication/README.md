@@ -68,7 +68,7 @@ No: `no_spurious_resync`. If the replica is in sync and the write is well formed
 - no id is both created and deleted in the same write (`disjoint`);
 - every id is below `ID_LIMIT` (`inLimit`, from #2911).
 
-`disjoint` is an assumption, not a derived fact. In the engine, a node created and deleted in one query is unwound out of `Pending` and shipped as a separate create/delete pair by `digest_cancelled`, which this model does not include. See [What the model does not cover](#what-the-model-does-not-cover): that is where W2-effects-1 lives.
+`disjoint` is an assumption, not a derived fact. In the engine, a node created and deleted in one query is unwound out of `Pending`, and `digest_cancelled` is the emitter path that can ship it as a separate create/delete pair; today the effects-count gate drops a write that only cancels entities before `digest_cancelled` runs, so that path is suppressed for cancel-only writes (W2-effects-1). The model does not include `digest_cancelled`. See [What the model does not cover](#what-the-model-does-not-cover): that is where W2-effects-1 lives.
 
 ## The headline theorems
 

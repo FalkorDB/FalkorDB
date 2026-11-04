@@ -30,15 +30,15 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
 | `remove`, `removeOne`, `collapse`, `removeRet` | `mod.rs:260-279`, `node.rs:471-490` |
 | `rebalance`, `cws`, `combine` | `node.rs:219`, `:113` (`combine_with_sibling`), `:384` (+ `aos_combine` `:447`) |
 | `removeBatchTree`, `removeBatch`, `subtract`, `stripEmpty` (`BatchWF.lean`, `Batch.lean`) | `mod.rs:286`, `node.rs:498-555`, `:180` |
-| `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`) | `node.rs:155-191` (`merge_underfull`), `:563-573` (`merge_underfull_below`) |
+| `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`) | `node.rs:155-175` (`merge_underfull`), `:563-574` (`merge_underfull_below`) |
 | `isUnderfull`, `branchUnderfull`, `isEmptyNode` | `node.rs:576`, `:212`, `:585` |
 | `route`, `applyBatch`, `insertBatch` | `node.rs:284-304` (old `:194-206`), `:259`, `mod.rs:241` |
 | `packBranches`, `buildRoot`, `fromSorted`, `mergeWalk`, `mergeBatch`, `chunks` | `node.rs:56`, `:90`, `mod.rs:190`, `leaf/mod.rs:50`/`:97`, `:471` |
 | `Cursor.new`/`seek`, `descendLeft`, `advanceLeaf`, `wholeOf` | `cursor.rs:82-116`, `:140`, `:160`, `:129` |
 | `Cursor.next`, `Cursor.nextWith`, `Extract`, `DocExtract`, `TupleExtract` | `cursor.rs:181-207`, `:16-53` |
 | `range`, `rangeWith` | `mod.rs:314` (`range`), `:324` (`point`), `:408` (`range_tuples`) |
-| `firstDocGo`, `firstDoc`, `containsKey`, `minOpt` | `mod.rs:357-404`, `:343`, `node.rs:245` |
-| `heapWalk`, `heapBytes`, `Mem` | `mod.rs:419-441` |
+| `firstDocGo`, `firstDoc`, `containsKey`, `minOpt` | `mod.rs:357-400`, `:343`, `node.rs:245` |
+| `heapWalk`, `heapBytes`, `Mem` | `mod.rs:419-442` |
 | `constAssert`, `isReadWidth`, `Cfg.ofAssert` (`Assert.lean`) | the const asserts `mod.rs:151-160`, `:173-182`, `:191-200`; `is_read_width` `mod.rs:88` |
 
 ## Proven

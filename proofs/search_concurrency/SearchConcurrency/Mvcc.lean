@@ -8,18 +8,18 @@ Since #3657 (34a708cfa) there is no write slot: a writer forks a private version
 
 | here | there |
 | --- | --- |
-| `S.pub`, `S.ver`           | `MvccGraph.graph` (the published `Arc`) and its data `Graph::version` (`graph/src/graph/mvcc_graph.rs:64`; `new_version` sets `version + 1`; `new_build_version` keeps it, `graph.rs:1138`) |
-| `S.forks`                  | `Version::Unchecked` forks (`QuerySession.version`, `src/query_session.rs:96-120`): owner, the published version forked, its base |
+| `S.pub`, `S.ver`           | `MvccGraph.graph` (the published `Arc`) and its data `Graph::version` (`graph/src/graph/mvcc_graph.rs:74` `MvccGraph`; `new_version` sets `version + 1`; `new_build_version` keeps it, `graph.rs:1139`) |
+| `S.forks`                  | `Version::Unchecked` forks (`QuerySession.version`, `src/query_session.rs:108` `enum Version`): owner, the published version forked, its base |
 | `S.cur`                    | the one `Version::Current` version: it is built under the write lock (the owner holds the GIL), so nothing can commit before its own commit |
 | `Ev.read`                  | `MvccGraph::read` (`:118`) — clone of the published Arc |
-| `Ev.forkW`                 | `MvccGraph::fork` (`:130`) via `QuerySession::write_version` in reader mode (`query_session.rs:211-224`): takes nothing |
-| `Ev.forkCur`               | the same in writer mode (`Version::Current`), and `graph.write()` + `fork()` in `effect.rs`/`constraint.rs`/`bulk_insert.rs` |
-| `Ev.checkFork`             | `QuerySession::check_fork` (`:246`) → `MvccGraph::is_stale` (`:144`): `published.version + 1 != fork.version` ⇒ `Version::Stale` + `Err(Stale)`, else `Current`; called from `upgrade_to_write` (`:367`) in writer mode. Since #3567 (b18530683) it also rebases the fork onto the indexer batches published since (`MvccGraph::rebase_onto_indexer_batches`, `mvcc_graph.rs:166`): index progress only, data version and data untouched, so the verdict and the model are unchanged (native_index `Rebase.lean`: `V.rebased_keeps_data`, `V.rebased_not_stale`, `rebase_progress`). Its one `Err(Stale)` (a release build, a fork still borrowed) cannot happen to an escalating writer, whose fork its owner has stopped reading; a debug build panics on it |
+| `Ev.forkW`                 | `MvccGraph::fork` (`mvcc_graph.rs:130`) via `QuerySession::write_version` in reader mode (`query_session.rs:211-224`): takes nothing; refused if the thread has a `Current` version (a session holds one version) |
+| `Ev.forkCur`               | the same in writer mode (`Version::Current`), refused if the thread already has an unchecked fork or a `Current` version (`debug_assert!(Version::None)`, "one write version per session"), and `graph.write()` + `fork()` in `effect.rs`/`constraint.rs`/`bulk_insert.rs` |
+| `Ev.checkFork`             | `QuerySession::check_fork` (`:247`) → `MvccGraph::is_stale` (`mvcc_graph.rs:144`): `published.version + 1 != fork.version` ⇒ `Version::Stale` + `Err(Stale)`, else `Current`; called from `upgrade_to_write` (`:332`, the call at `:348`) in writer mode. Since #3567 (b18530683) it also rebases the fork onto the indexer batches published since (`MvccGraph::rebase_onto_indexer_batches`, `mvcc_graph.rs:165`): index progress only, data version and data untouched, so the verdict and the model are unchanged (native_index `Rebase.lean`: `V.rebased_keeps_data`, `V.rebased_not_stale`, `rebase_progress`). Its one `Err(Stale)` (a release build, a fork still borrowed) cannot happen to an escalating writer, whose fork its owner has stopped reading; a debug build panics on it |
 | `Ev.abandon`               | dropping the session/runtime: an uncommitted version (`Unchecked`, `Current` or `Stale`) is just dropped |
 | `Ev.mutate`                | any mutation on the private version (runtime `Commit` op) — requires writer mode |
-| `Ev.commit`                | `commit_and_replicate` → `MvccGraph::commit` → `commit_version(.., true)` (`src/graph_core.rs:1553`, `mvcc_graph.rs:166`,214): `is_stale` ⇒ `Err(Stale)`; `Graph::validate` (`valid`) refused ⇒ `Err(Invalid)`; else the Arc swap. A refusal publishes nothing and the version is dropped |
-| `Ev.batch`                 | `MvccGraph::commit_indexer_batch` (`:193`) → `commit_version(.., false)` (`:214`): publishes a version at the *same* data version (`new_build_version`), changes no data, bumps `batches_published` (`S.bver`) |
-| `S.gil`, `Ev.escalate`     | `QuerySession::escalate` (`query_session.rs:379`): drop read lock, `Gil::acquire`, `write_arc` |
+| `Ev.commit`                | `commit_and_replicate` → `MvccGraph::commit` → `commit_version(.., true)` (`src/graph_core.rs:1553`, `mvcc_graph.rs:205`, `:261`): `is_stale` ⇒ `Err(Stale)`; `Graph::validate` (`valid`) refused ⇒ `Err(Invalid)`; else the Arc swap. A refusal publishes nothing and the version is dropped |
+| `Ev.batch`                 | `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:235`) → `commit_version(.., false)` (`:261`): publishes a version at the *same* data version (`new_build_version`), changes no data, bumps `batches_published` (`S.bver`) |
+| `S.gil`, `Ev.escalate`     | `QuerySession::escalate` (`query_session.rs:358`): drop read lock, `Gil::acquire`, `write_arc` |
 | `S.registered`             | `GRAPH_REGISTRY` membership (`graph_core.rs:140`, `graph_is_registered` `:188`) |
 | `Ev.delete`                | `GRAPH.DELETE` (`src/commands/delete.rs:37`) → `graph_free` (`graph_core.rs:1777`), main thread, GIL held |
 | `Ev.fork`                  | BGSAVE `fork()` on the main thread with the GIL (`redis_type.rs:350` `pre_fork_prepare`, `module_init.rs:118` `on_fork_child`) |
@@ -88,9 +88,13 @@ def dropT (fs : List (Tid × Nat × List W)) (t : Tid) : List (Tid × Nat × Lis
 version. -/
 def step (valid : List W → Bool) (s : S) : Ev → Option S
   | .read _ => some { s with seen := s.pub :: s.seen }
-  | .forkW t => some { s with forks := (t, s.ver, s.pub) :: dropT s.forks t }       -- takes nothing
+  | .forkW t =>                                        -- takes nothing; reader mode has no `Current` version
+    if s.cur.any (·.1 = t) then none
+    else some { s with forks := (t, s.ver, s.pub) :: dropT s.forks t }
   | .forkCur t =>                                      -- writer mode / under `graph.write()`
-    if s.gil ≠ some t then none
+    -- a session holds one version (`write_version`'s `debug_assert!(Version::None)`): no unchecked
+    -- fork of this thread and no `Current` version yet
+    if s.gil ≠ some t ∨ s.cur.isSome ∨ (s.forks.find? (·.1 = t)).isSome then none
     else some { s with cur := some (t, s.ver, s.pub, []) }
   | .checkFork t =>
     if s.gil ≠ some t then none else
@@ -139,12 +143,15 @@ structure Inv (s : S) : Prop where
   hist_prefix : ∀ v ∈ s.hist, v <+: s.pub
   ver_hist : s.hist.length = s.ver + 1
   fork_ok : ∀ f ∈ s.forks, f.2.1 ≤ s.ver ∧ (f.2.1 = s.ver → f.2.2 = s.pub)
+  /-- a session holds one version: a thread with an unchecked fork has no `Current` version -/
+  fork_cur : ∀ f ∈ s.forks, ∀ o fv b p, s.cur = some (o, fv, b, p) → f.1 ≠ o
 
 theorem inv_init : Inv init := by
-  refine ⟨rfl, ?_, ?_, rfl, ?_, rfl, ?_⟩
+  refine ⟨rfl, ?_, ?_, rfl, ?_, rfl, ?_, ?_⟩
   · intro o fv b p h; cases h
   · intro v h; cases h
   · intro v h; simp [init] at h; subst h; exact List.nil_prefix
+  · intro f h; cases h
   · intro f h; cases h
 
 theorem mem_dropT {fs : List (Tid × Nat × List W)} {t : Tid} {f} (h : f ∈ dropT fs t) : f ∈ fs :=
@@ -161,28 +168,45 @@ theorem seen_cons (s : S) (h1 : s.hist.head? = some s.pub) (h3 : ∀ v ∈ s.see
 
 theorem inv_step (valid : List W → Bool) {s s' : S} (e : Ev) (h : Inv s) (hs : step valid s e = some s') :
     Inv s' := by
-  obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := h
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := h
   cases e with
   | read t =>
     simp [step] at hs; subst hs
-    exact ⟨h1, h2, seen_cons s h1 h3, h4, h5, h6, h7⟩
+    exact ⟨h1, h2, seen_cons s h1 h3, h4, h5, h6, h7, h8⟩
   | forkW t =>
-    simp [step] at hs; subst hs
-    refine ⟨h1, h2, h3, h4, h5, h6, ?_⟩
-    intro f hf; simp at hf
-    rcases hf with rfl | hf
-    · exact ⟨Nat.le_refl _, fun _ => rfl⟩
-    · exact h7 f (mem_dropT hf)
+    simp only [step] at hs
+    split at hs
+    · cases hs
+    · rename_i hg
+      simp at hs; subst hs
+      refine ⟨h1, h2, h3, h4, h5, h6, ?_, ?_⟩
+      · intro f hf; simp at hf
+        rcases hf with rfl | hf
+        · exact ⟨Nat.le_refl _, fun _ => rfl⟩
+        · exact h7 f (mem_dropT hf)
+      · intro f hf o fv' b' p' hc
+        simp at hf
+        rcases hf with rfl | hf
+        · intro ho; apply hg
+          have hc' : s.cur = some (o, fv', b', p') := hc
+          simp [hc']; exact ho.symm
+        · exact h8 f (mem_dropT hf) o fv' b' p' hc
   | forkCur t =>
     simp only [step] at hs
     split at hs
     · cases hs
     · rename_i hg
       simp at hs; subst hs
-      refine ⟨h1, ?_, h3, h4, h5, h6, h7⟩
-      intro o fv b p hh; simp at hh
-      obtain ⟨rfl, rfl, rfl, rfl⟩ := hh
-      exact ⟨rfl, rfl, by simpa using hg⟩
+      rw [not_or, not_or] at hg
+      obtain ⟨hg1, hg2, hg3⟩ := hg
+      refine ⟨h1, ?_, h3, h4, h5, h6, h7, ?_⟩
+      · intro o fv b p hh; simp at hh
+        obtain ⟨rfl, rfl, rfl, rfl⟩ := hh
+        exact ⟨rfl, rfl, by simpa using hg1⟩
+      · intro f hf o fv' b' p' hc; simp at hc
+        obtain ⟨rfl, -, -, -⟩ := hc
+        intro hft; apply hg3
+        exact List.find?_isSome.mpr ⟨f, hf, by simp [hft]⟩
   | checkFork t =>
     simp only [step] at hs
     split at hs
@@ -197,25 +221,35 @@ theorem inv_step (valid : List W → Bool) {s s' : S} (e : Ev) (h : Inv s) (hs :
         split at hs
         · rename_i hv
           simp at hs; subst hs
-          refine ⟨h1, ?_, h3, h4, h5, h6, fun f hf' => h7 f (mem_dropT hf')⟩
-          intro o fv' b' p hh; simp at hh
-          obtain ⟨rfl, rfl, rfl, rfl⟩ := hh
-          exact ⟨hv, (h7 _ hfm).2 hv, by simpa using hg⟩
+          refine ⟨h1, ?_, h3, h4, h5, h6, fun f hf' => h7 f (mem_dropT hf'), ?_⟩
+          · intro o fv' b' p hh; simp at hh
+            obtain ⟨rfl, rfl, rfl, rfl⟩ := hh
+            exact ⟨hv, (h7 _ hfm).2 hv, by simpa using hg⟩
+          · intro f hf' o fv' b' p hh; simp at hh
+            obtain ⟨rfl, -, -, -⟩ := hh
+            have := (List.mem_filter.1 hf').2
+            simpa using this
         · simp at hs; subst hs
-          exact ⟨h1, h2, h3, h4, h5, h6, fun f hf' => h7 f (mem_dropT hf')⟩
+          exact ⟨h1, h2, h3, h4, h5, h6, fun f hf' => h7 f (mem_dropT hf'),
+            fun f hf' => h8 f (mem_dropT hf')⟩
   | abandon t =>
     simp [step] at hs; subst hs
-    refine ⟨h1, ?_, h3, h4, h5, h6, fun f hf' => h7 f (mem_dropT hf')⟩
-    intro o fv b p hh
-    apply h2 o fv b p
-    cases hc : s.cur with
-    | none => simp [hc] at hh
-    | some c => simp [hc, Option.filter] at hh; rw [hh.2]
+    have hcur : ∀ o fv b p, (s.cur.filter (·.1 ≠ t)) = some (o, fv, b, p) →
+        s.cur = some (o, fv, b, p) := by
+      intro o fv b p hh
+      cases hc : s.cur with
+      | none => simp [hc] at hh
+      | some c => simp [hc, Option.filter] at hh; rw [hh.2]
+    refine ⟨h1, ?_, h3, h4, h5, h6, fun f hf' => h7 f (mem_dropT hf'), ?_⟩
+    · intro o fv b p hh
+      exact h2 o fv b p (hcur o fv b p hh)
+    · intro f hf' o fv b p hh
+      exact h8 f (mem_dropT hf') o fv b p (hcur o fv b p hh)
   | escalate t =>
     simp only [step] at hs; split at hs
     · rename_i hg
       simp at hs; subst hs
-      refine ⟨h1, ?_, h3, h4, h5, h6, h7⟩
+      refine ⟨h1, ?_, h3, h4, h5, h6, h7, h8⟩
       intro o fv b p hh
       have := h2 o fv b p hh
       simp [hg] at this
@@ -223,18 +257,22 @@ theorem inv_step (valid : List W → Bool) {s s' : S} (e : Ev) (h : Inv s) (hs :
   | release t =>
     simp only [step] at hs; split at hs
     · simp at hs; subst hs
-      refine ⟨h1, ?_, h3, h4, h5, h6, h7⟩
-      intro o fv b p hh; cases hh
+      refine ⟨h1, ?_, h3, h4, h5, h6, h7, ?_⟩
+      · intro o fv b p hh; cases hh
+      · intro f hf o fv b p hh; cases hh
     · cases hs
   | mutate t w =>
     simp only [step] at hs; split at hs
     · rename_i o fv b p hsl
       split at hs
       · simp at hs; subst hs
-        refine ⟨h1, ?_, h3, h4, h5, h6, h7⟩
-        intro o' fv' b' p' hh; simp at hh
-        obtain ⟨rfl, rfl, rfl, -⟩ := hh
-        exact h2 _ _ _ _ hsl
+        refine ⟨h1, ?_, h3, h4, h5, h6, h7, ?_⟩
+        · intro o' fv' b' p' hh; simp at hh
+          obtain ⟨rfl, rfl, rfl, -⟩ := hh
+          exact h2 _ _ _ _ hsl
+        · intro f hf o' fv' b' p' hh; simp at hh
+          obtain ⟨rfl, rfl, rfl, -⟩ := hh
+          exact h8 f hf _ _ _ _ hsl
       · cases hs
     · cases hs
   | commit t =>
@@ -244,13 +282,14 @@ theorem inv_step (valid : List W → Bool) {s s' : S} (e : Ev) (h : Inv s) (hs :
       split at hs
       · split at hs
         · simp at hs; subst hs
-          refine ⟨h1, ?_, h3, h4, h5, h6, h7⟩
-          intro _ _ _ _ hh; cases hh
+          refine ⟨h1, ?_, h3, h4, h5, h6, h7, ?_⟩
+          · intro _ _ _ _ hh; cases hh
+          · intro _ _ _ _ _ _ hh; cases hh
         · split at hs
           · simp at hs; subst hs
             obtain ⟨hv, hb, -⟩ := hc
             subst hb
-            refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
+            refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
             · intro _ _ _ _ hh; cases hh
             · intro v hv'; exact List.mem_cons_of_mem _ (h3 v hv')
             · simp [h4]
@@ -263,22 +302,24 @@ theorem inv_step (valid : List W → Bool) {s s' : S} (e : Ev) (h : Inv s) (hs :
               have := (h7 f hf).1
               refine ⟨Nat.le_succ_of_le this, fun e => absurd e ?_⟩
               show f.2.1 ≠ s.ver + 1; omega
+            · intro _ _ _ _ _ _ hh; cases hh
           · simp at hs; subst hs
-            refine ⟨h1, ?_, h3, h4, h5, h6, h7⟩
-            intro _ _ _ _ hh; cases hh
+            refine ⟨h1, ?_, h3, h4, h5, h6, h7, ?_⟩
+            · intro _ _ _ _ hh; cases hh
+            · intro _ _ _ _ _ _ hh; cases hh
       · cases hs
     · cases hs
   | batch =>
     simp [step] at hs; subst hs
-    exact ⟨h1, h2, h3, h4, h5, h6, h7⟩
+    exact ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩
   | delete =>
     simp only [step] at hs; split at hs
-    · simp at hs; subst hs; exact ⟨h1, h2, h3, h4, h5, h6, h7⟩
+    · simp at hs; subst hs; exact ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩
     · cases hs
   | fork =>
     simp only [step] at hs; split at hs
     · simp at hs; subst hs
-      exact ⟨h1, h2, seen_cons s h1 h3, h4, h5, h6, h7⟩
+      exact ⟨h1, h2, seen_cons s h1 h3, h4, h5, h6, h7, h8⟩
     · cases hs
 
 theorem reach_inv {valid : List W → Bool} {s : S} (h : Reach valid s) : Inv s := by
@@ -328,12 +369,14 @@ theorem commit_publishes {valid : List W → Bool} {s : S} (h : Reach valid s) (
 `a_refused_commit_publishes_nothing`): the published version, its data version and the
 acknowledgements are as they were, the version is dropped (nothing to roll back), and the
 next writer, holding the write lock, can fork again. -/
-theorem refused_commit_publishes_nothing (valid : List W → Bool) (s : S) (t : Tid) (fv : Nat) (b p : List W)
-    (hsl : s.cur = some (t, fv, b, p)) (hg : s.gil = some t) (hr : s.registered = true)
+theorem refused_commit_publishes_nothing {valid : List W → Bool} {s : S} (h : Reach valid s) (t : Tid)
+    (fv : Nat) (b p : List W) (hsl : s.cur = some (t, fv, b, p)) (hg : s.gil = some t) (hr : s.registered = true)
     (hv : valid (b ++ p) = false) (hfv : fv = s.ver) :
     ∃ s', step valid s (.commit t) = some s' ∧ s'.cur = none ∧ s'.pub = s.pub ∧ s'.ver = s.ver ∧
       s'.acked = s.acked ∧ s'.hist = s.hist ∧ (step valid s' (.forkCur t)).isSome := by
-  refine ⟨{ s with cur := none }, ?_, rfl, rfl, rfl, rfl, rfl, by simp [step, hg]⟩
+  have hnf : ∀ x y, (t, x, y) ∉ s.forks := fun x y hm =>
+    (reach_inv h).fork_cur _ hm t fv b p hsl rfl
+  refine ⟨{ s with cur := none }, ?_, rfl, rfl, rfl, rfl, rfl, by simp [step, hg, hnf]⟩
   simp [step, hsl, hg, hr, hv, hfv]
 
 /-- Even a stale refusal (unreachable for `Current`, see `current_not_stale`) publishes nothing. -/
@@ -447,10 +490,26 @@ theorem fork_excludes_commit (valid : List W → Bool) (s : S) (t : Tid) (ht : t
     step valid s .fork = none ∧ step valid s .delete = none := by
   simp [step, hg, ht]
 
-/-- A reader-mode fork (`forkW`) taken from the initial state holds no `Current` version, so `commit` is
-refused. This is one trace, not a reachability result: the model's `forkCur` is not guarded on the thread
-having no unchecked fork (a real session holds one version at a time), so a general "an unchecked fork
-cannot mutate or commit" needs that guard and an invariant first (not done). -/
+/-- **A thread with an unchecked fork cannot mutate or commit, in every reachable state.** A
+session holds one version (`write_version`'s `debug_assert!`): `forkCur` is refused while the
+thread has an unchecked fork or a `Current` version, and `forkW` while it has a `Current`
+one (invariant `fork_cur`), so only `checkFork` (which consumes the fork) can give it a
+`Current` version, and `mutate`/`commit` need one. -/
+theorem unchecked_fork_cannot_write {valid : List W → Bool} {s : S} (h : Reach valid s) (t : Tid)
+    (hf : ∃ f ∈ s.forks, f.1 = t) (w : W) :
+    step valid s (.mutate t w) = none ∧ step valid s (.commit t) = none := by
+  obtain ⟨f, hfm, hft⟩ := hf
+  have hi := (reach_inv h).fork_cur f hfm
+  cases hc : s.cur with
+  | none => simp [step, hc]
+  | some c =>
+    obtain ⟨o, fv, b, p⟩ := c
+    have hne := hi o fv b p hc
+    have hot : o ≠ t := fun e => hne (hft.trans e.symm)
+    simp [step, hc, hot]
+
+/-- The single trace the Rust test checks: a reader-mode fork (`forkW`) from the initial state
+holds no `Current` version, so `commit` is refused (an instance of `unchecked_fork_cannot_write`). -/
 theorem reader_cannot_commit : ∀ t, ((step (fun _ => true) init (.forkW 1)).bind (step (fun _ => true) · (.commit t))).isNone := by
   intro t; simp [step, init, dropT, Option.bind]
 

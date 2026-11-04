@@ -13,7 +13,7 @@ already owns, compared ignoring ASCII case, as C does.
 | `delete`              | `UdfRepo::delete` :156 + the caller's `unregister_udf` loop (`unregister_udf` :1142) |
 | `Consistent`          | "LIST shows f ⇔ calling f runs f's body" |
 
-`to_lowercase` / `to_ascii_lowercase` is modelled as `asciiLow` (Lean's `Char.toLower` is ASCII-only).
+`eq_ignore_ascii_case` / `to_ascii_lowercase` is modelled as `asciiLow` (Lean's `Char.toLower` is ASCII-only); Unicode `str::to_lowercase`, which the pre-#3066 code used, is not modelled and stays abstract in the historical counterexamples.
 -/
 namespace AlgoUdf.Repo
 

@@ -5,7 +5,7 @@ include_pending.rs, procedure_call.rs).
 | here | there |
 | --- | --- |
 | `FilterSt.new`, `Verdict`, `filterEval`, `filterNext` | `FilterOp::new` (filter.rs:39), `eval` (:57), `next` (:121) |
-| `IpSt.new`, `captureArg`, `initPending`, `pendingRows`, `childRows` | `IncludePendingOp::new` (include_pending.rs:49), `capture_argument` (:77), `init_pending_state` (:88), `emit_pending_batch` (:115), `next` (:166) |
+| `IpSt.new`, `captureArg`, `initPending`, `pendingRows`, `childRows` | `IncludePendingOp::new` (include_pending.rs:53), `capture_argument` (:77), `init_pending_state` (:88), `emit_pending_batch` (:115), `next` (:166) |
 | `pcNew`, `pcReset`, `remap`, `pcRows`, `nextInput` | `ProcedureCallOp::new` (procedure_call.rs:59), `reset_state` (:115), `emit_pending_rows` (:125), `remap_procedure_batch` (:153), `next_input_row` (:192), `next` (:228) |
 -/
 namespace FalkorAggOps.StreamOps

@@ -19,7 +19,11 @@ stores exactly the given (distinct, in-range) indices; `GrB_mxv` with `DESC_T0`
 computes `w = Aᵀ·x`, and over `PLUS_PAIR` (`PAIR(a,b) = 1`) entry `j` of `w` is the
 number of `i` with `A(i,j)` and `x(i)` both present (absent when zero);
 `GrB_Vector_reduce_UINT64` with the `PLUS` monoid is the sum of the stored values
-(0 for an empty vector). Values are counts of stored entries, far below `2^64`.
+(0 for an empty vector), computed in `u64`: the sum wraps modulo `2^64`
+(`reduce_spec`). `mxvT_spec` is stated only for the inputs `GrB_mxv` accepts
+(`MxvOk`: matching dimensions, unique in-bounds stored coordinates, a duplicate
+free in-bounds selection); `countInRows_spec` carries that precondition, plus
+`nvals < 2^64`, which every real matrix satisfies, so the wrap never occurs.
 
 Headline: `countInRows_spec` — `count_in_rows(x) = Σ_{i ∈ rows} |A(i, :)|`.
 -/
@@ -42,6 +46,22 @@ structure VecU where
   n : Nat
   val : Nat → Nat
 
+/-- A well-formed GraphBLAS matrix: stored coordinates are unique and in
+bounds, and the entry count fits `GrB_Index` (`nvals` is a `u64`). -/
+structure MatWf (A : MatC) : Prop where
+  nodup : A.ents.Nodup
+  inb : ∀ p ∈ A.ents, p.1 < A.nr ∧ p.2 < A.nc
+  fits : A.ents.length < 2 ^ 64
+
+/-- The inputs `GrB_mxv(w, .., A, x, DESC_T0)` accepts: a well-formed matrix and
+a well-formed vector of the matching dimension (`x.n = nrows` under `DESC_T0`),
+whose pattern is unique and in bounds. -/
+structure MxvOk (A : MatC) (x : VecB) : Prop where
+  mat : MatWf A
+  dim : x.n = A.nr
+  xnodup : x.pat.Nodup
+  xinb : ∀ i ∈ x.pat, i < x.n
+
 /-- **Hypothesis** — the GraphBLAS C calls, by their spec. -/
 structure BulkSpec where
   /-- `GrB_Vector_new(&v, GrB_BOOL, n)`. -/
@@ -52,11 +72,12 @@ structure BulkSpec where
   build_spec : ∀ n ids, ids.Pairwise (· < ·) → (∀ i ∈ ids, i < n) → build ⟨n, []⟩ ids = ⟨n, ids⟩
   /-- `GrB_mxv(w, NULL, NULL, GxB_PLUS_PAIR_UINT64, A, x, GrB_DESC_T0)` into a fresh `w` of size `ncols`. -/
   mxvT : MatC → VecB → VecU
-  mxvT_spec : ∀ A x j, (mxvT A x).val j = (A.ents.filter (fun p => decide (p.2 = j) && decide (p.1 ∈ x.pat))).length
-  mxvT_n : ∀ A x, (mxvT A x).n = A.nc
-  /-- `GrB_Vector_reduce_UINT64(&s, NULL, GrB_PLUS_MONOID_UINT64, w, NULL)`. -/
+  mxvT_spec : ∀ A x, MxvOk A x → ∀ j, (mxvT A x).val j = (A.ents.filter (fun p => decide (p.2 = j) && decide (p.1 ∈ x.pat))).length
+  mxvT_n : ∀ A x, MxvOk A x → (mxvT A x).n = A.nc
+  /-- `GrB_Vector_reduce_UINT64(&s, NULL, GrB_PLUS_MONOID_UINT64, w, NULL)`: the
+  PLUS monoid on `u64`, so the sum is taken modulo `2^64`. -/
   reduce : VecU → Nat
-  reduce_spec : ∀ w, reduce w = ((List.range w.n).map w.val).sum
+  reduce_spec : ∀ w, reduce w = ((List.range w.n).map w.val).sum % 2 ^ 64
 
 /-- `Vector::<bool>::from_sorted_indices` (vector.rs:149). -/
 def fromSortedIndices (G : BulkSpec) (nrows : Nat) (indices : List Nat) : VecB :=
@@ -81,7 +102,10 @@ theorem VecU.ptr_eq (w : VecU) : w.ptr = w.handle := rfl
 /-- `Vector::<u64>::sum` (vector.rs:498). -/
 def VecU.sum (G : BulkSpec) (w : VecU) : Nat := G.reduce w
 
-theorem VecU.sum_spec (G : BulkSpec) (w : VecU) : w.sum G = ((List.range w.n).map w.val).sum :=
+/-- The `u64` reduction wraps: the stored values' sum modulo `2^64` (a vector holding
+`u64::MAX` and `1` sums to `0`). -/
+theorem VecU.sum_spec (G : BulkSpec) (w : VecU) :
+    w.sum G = ((List.range w.n).map w.val).sum % 2 ^ 64 :=
   G.reduce_spec w
 
 /-- `Matrix::count_in_rows` (matrix.rs:788). -/
@@ -132,24 +156,30 @@ theorem double_count (S : Nat → Bool) (nc : Nat) :
 
 /-- **`count_in_rows` counts the entries in the selected rows**:
 `Σ_j |{i ∈ rows : A(i,j)}| = |{(i,j) ∈ A : i ∈ rows}|`, since every stored entry
-lies in exactly one column `< ncols`. -/
-theorem countInRows_spec (G : BulkSpec) (A : MatC) (rows : VecB) (hc : ∀ p ∈ A.ents, p.2 < A.nc) :
+lies in exactly one column `< ncols`. Under `MxvOk` (what `GrB_mxv` requires:
+matching dimensions, unique in-bounds coordinates) the `u64` reduction does not
+wrap, because the total is at most `nvals < 2^64`. -/
+theorem countInRows_spec (G : BulkSpec) (A : MatC) (rows : VecB) (hw : MxvOk A rows) :
     countInRows G A rows = (A.ents.filter (fun p => decide (p.1 ∈ rows.pat))).length := by
   unfold countInRows
-  rw [VecU.sum_spec, G.mxvT_n, show (G.mxvT A rows).val = _ from funext (G.mxvT_spec A rows)]
-  exact double_count (fun i => decide (i ∈ rows.pat)) A.nc A.ents hc
+  rw [VecU.sum_spec, G.mxvT_n A rows hw,
+    show (G.mxvT A rows).val = _ from funext (G.mxvT_spec A rows hw)]
+  rw [double_count (fun i => decide (i ∈ rows.pat)) A.nc A.ents (fun p hp => (hw.mat.inb p hp).2)]
+  exact Nat.mod_eq_of_lt (Nat.lt_of_le_of_lt (List.length_filter_le _ _) hw.mat.fits)
 
 /-- Over `from_sorted_indices(nrows, ids)`, the count is over `ids`. -/
 theorem countInRows_fromSorted (G : BulkSpec) (A : MatC) (ids : List Nat)
-    (hs : ids.Pairwise (· < ·)) (hb : ∀ i ∈ ids, i < A.nr) (hc : ∀ p ∈ A.ents, p.2 < A.nc) :
+    (hs : ids.Pairwise (· < ·)) (hb : ∀ i ∈ ids, i < A.nr) (hw : MatWf A) :
     countInRows G A (fromSortedIndices G A.nr ids) = (A.ents.filter (fun p => decide (p.1 ∈ ids))).length := by
-  rw [fromSortedIndices_spec G A.nr ids hs hb]; exact countInRows_spec G A _ hc
+  rw [fromSortedIndices_spec G A.nr ids hs hb]
+  exact countInRows_spec G A _
+    ⟨hw, rfl, List.Pairwise.imp (fun h => Nat.ne_of_lt h) hs, hb⟩
 
 /-- Positive iff some selected row holds an entry — the question
 `first_node_with_relationships` asks. -/
-theorem countInRows_pos (G : BulkSpec) (A : MatC) (rows : VecB) (hc : ∀ p ∈ A.ents, p.2 < A.nc) :
+theorem countInRows_pos (G : BulkSpec) (A : MatC) (rows : VecB) (hw : MxvOk A rows) :
     0 < countInRows G A rows ↔ ∃ p ∈ A.ents, p.1 ∈ rows.pat := by
-  rw [countInRows_spec G A rows hc, List.length_pos_iff]
+  rw [countInRows_spec G A rows hw, List.length_pos_iff]
   constructor
   · intro h
     obtain ⟨p, hp⟩ := List.exists_mem_of_ne_nil _ h

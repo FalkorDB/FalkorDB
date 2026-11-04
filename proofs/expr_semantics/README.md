@@ -30,7 +30,7 @@ Yes, for every lane this project models:
 - **`AND`/`OR` with row narrowing:** the per-row short-circuit fold on every row (`andOr_agrees`);
 - **`CASE`:** each `WHEN`, `THEN` and `ELSE` runs for exactly the rows the per-row path runs it for (`case_agrees`, `case_match_agrees`). So `CASE WHEN n.d <> 0 THEN 1 / n.d ELSE 0 END` can't divide by zero on either path.
 
-Agreement is on success versus error, not on the error *message*. The columnar path reports the first error child by child, while the per-row path reports it row by row. Since #3294 both paths word an `AND`/`OR` type error the same way (`boolMismatch`), but they may report it for different rows.
+Agreement is on success versus error, not on the error *message*. The columnar path reports the first error child by child, while the per-row path reports it row by row. Since #3294 both paths word an `AND`/`OR` type error the same way in the Rust, but the model proves that wording only for the per-row path (`boolMismatch`), and the two paths may report it for different rows.
 
 **2. Is the logic openCypher's three-valued logic?**
 
@@ -40,7 +40,7 @@ Yes:
 - De Morgan holds (`deMorgan_and`, `deMorgan_or`);
 - `x IN list` is Kleene "any" of `x = element` for scalars (`contains_is_kleene_any`), so `1 IN [2, null]` is `null` and not `false`;
 - `<>` is exactly `NOT (=)` (`neq_eq_not_eq`), since #2917;
-- a non-Boolean, non-null `AND`/`OR`/`XOR` operand fails with C's message naming its type, `Type mismatch: expected Boolean or Null but was Integer` (`and_or_mismatch_names_type`, `xor_mismatch_names_type`), since #3294.
+- a non-Boolean, non-null `AND`/`OR`/`XOR` operand fails with C's message naming its type, `Type mismatch: expected Boolean or Null but was Integer` (`and_or_mismatch_names_type`, `xor_mismatch_names_type`, on the scalar subset), since #3294. Only the per-row path's wording is proven; the columnar `vecAndOr` is modelled without a message.
 
 **3. What does integer arithmetic do at the edges?**
 
@@ -88,23 +88,23 @@ Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDI
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | removed (17ccc5412) | `^` dropped an operand's error: `2 ^ (1/0)` returned `2`, unpowered. In the optimizer's constant evaluator every variable is an error, so `WHERE x ^ true` folded to `true` and the Filter was deleted: every row came back although `x ^ true` was `null` | Fixed by #2904 (`fd2c76a6c`, issue #2902): `pow_propagates_error`, `pow_constant_not_true`, `pow_bool_type_error` (`x ^ true` is now C's type error), `pow_binary_eq_spec`, `pow_agrees_without_errors`. The optimizer side is proven sound in [`../optimizer_rewrites`](../optimizer_rewrites) (`ConstEval.constEval_sound`) |
-| 2 | removed (17ccc5412) | `UNWIND range(i64::MAX - 1, i64::MAX)` yielded `MAX-1, MAX, MIN, MIN+1, …` and never stopped in release, and panicked on overflow in debug. The eager `range()` gives the two elements | Fixed by #2899 (`e63165cb5`, issue #2894): `rangeIter_correct` (all inputs), `rangeIter_max_fixed`, `rangeIter_bounds_examples` |
-| 3 | removed (17ccc5412) | `sign(-2.5)` returned a Float | Fixed by #2907 (`sign_float_is_int`) |
+| 1 | removed in bbee75955 (last revision: 17ccc5412) | `^` dropped an operand's error: `2 ^ (1/0)` returned `2`, unpowered. In the optimizer's constant evaluator every variable is an error, so `WHERE x ^ true` folded to `true` and the Filter was deleted: every row came back although `x ^ true` was `null` | Fixed by #2904 (`fd2c76a6c`, issue #2902): `pow_propagates_error`, `pow_constant_not_true`, `pow_bool_type_error` (`x ^ true` is now C's type error), `pow_binary_eq_spec`, `pow_agrees_without_errors`. The optimizer side is proven sound in [`../optimizer_rewrites`](../optimizer_rewrites) (`ConstEval.constEval_sound`) |
+| 2 | removed in bbee75955 (last revision: 17ccc5412) | `UNWIND range(i64::MAX - 1, i64::MAX)` yielded `MAX-1, MAX, MIN, MIN+1, …` and never stopped in release, and panicked on overflow in debug. The eager `range()` gives the two elements | Fixed by #2899 (`e63165cb5`, issue #2894): `rangeIter_correct` (all inputs), `rangeIter_max_fixed`, `rangeIter_bounds_examples` |
+| 3 | removed in bbee75955 (last revision: 17ccc5412) | `sign(-2.5)` returned a Float | Fixed by #2907 (`sign_float_is_int`) |
 | 4 | `int_float_eq_not_transitive` | Whenever two distinct integers round to the same `f64`, `=` stops being transitive: `2^53+1 = 2^53.0` and `2^53 = 2^53.0`, yet `2^53+1 <> 2^53` | Harmless: C promotes the same way (Neo4j compares exactly). `ORDER BY` no longer depends on it since #2912 (see `value_order`) |
 | 5 | `bug2724_prev_missing` (`FnRegistry.lean`) | `prev()` is a documented, user-callable C function but is not registered in Rust ("Unknown function 'prev'"). Property `CoversC` (every non-internal C built-in resolves); `covers_all_but_prev` shows it is the only gap | **Open** (#2724) |
 | — | `toInteger_float_vs_string` | `toInteger(1e30)` saturates to `i64::MAX`, while `toInteger('1e30')` returns `null` | Noted difference, not filed |
 
 **CONDITIONAL rows.** Four rows are covered but not proven outright, because each rests on a hypothesis about other Rust code:
 
-- `NeighborIter::new` and `new_reversed` assume the graph laws: the adjacency matrix is the union of the relation matrices, and `matrix_t` is the transpose.
+- `NeighborIter::new` assumes the graph laws `adj_union` (the adjacency matrix is the union of the relation matrices) and `transpose` (`matrix_t` is the transpose); `new_reversed` assumes `transpose` and `relT_some` (a type has a transpose matrix iff it has a matrix).
 - `eval_batch` and `try_eval_batch_property` assume `BatchLaws` here; proofs/columnar `EvalBatch.laws` proves it for the real batch and runtime (`RuntimeReads.matNode_eq`), so they are PROVEN.
 
 ## Files
 
 | File | What's in it |
 |---|---|
-| `FalkorExprSemantics.lean` | The report header, i64 helpers, the scalar `V F` and `compare_value`, the per-row evaluator, every columnar lane and its agreement theorem, three-valued logic, `IN`, `^` (and its pre-#2904 history), `RangeIter` (and its pre-#2899 history), `sign`, `toInteger`, `coalesce`; bugs 1–4 |
+| `FalkorExprSemantics.lean` | The report header, i64 helpers, the scalar `V F` and `compare_value`, the per-row evaluator, every columnar lane and its agreement theorem, three-valued logic, `IN`, `^`, `RangeIter`, `sign`, `toInteger`, `coalesce`; bugs 1–4 |
 | `EvalSyntax.lean` | The expression tree `E` (every arm a comprehension body can reach), `Ops`, `Fn` (`GraphFn`), the arm helpers |
 | `Eval.lean` | `ExprEval::eval_node` with `eval_compound` / `eval_case` (AND/OR/XOR/NOT/CASE/calls/IN/lists/subscripts/projections, a thunked catch-all), `eval`, `eval_operand` |
 | `Frame.lean` | `E.vars`, `E.funcs`, the frame property `evalNode_frame` |
@@ -119,7 +119,7 @@ Shared foundations (`wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `InI64`, `I64MIN
 
 ## Coverage
 
-Line numbers are pinned to main 737dfb5da, re-checked at 5e475e6c9 (only `eval_shortest_path` changed, #3436, no line moved) (#2899 rewrites `RangeIter` and adds `RangeIter::size_hint`, shifting every later `eval.rs` row; earlier, #2904 changed the `Pow` arm of `eval_compound` and `apply_pow`; #2951 only changes `eval_compound`'s aggregate-finalizer arm, modelled in [`../ops_aggregate`](../ops_aggregate)).
+`COVERAGE.tsv` line numbers are regenerated by function name against the current tree (origin/main 5c7af54f2). Earlier pins (737dfb5da, then 5e475e6c9) were stale: between them #2954 added 27 lines to `eval.rs` at about `:1045` and shifted every later `eval.rs` row by +27 (#2899 rewrites `RangeIter` and adds `RangeIter::size_hint`, shifting every later `eval.rs` row; earlier, #2904 changed the `Pow` arm of `eval_compound` and `apply_pow`; #2951 only changes `eval_compound`'s aggregate-finalizer arm, modelled in [`../ops_aggregate`](../ops_aggregate)).
 
 `COVERAGE.tsv` has 94 rows: 31 in `eval.rs`, 26 in `vector_expr.rs`, 17 in `functions/math.rs`, 10 in `value.rs`, 7 in `vectorized.rs`, and one each in `conversion.rs`, `eliminate_true_filters.rs` and `functions/mod.rs` (`init_functions`, MODELLED: the registered name set, #2724).
 

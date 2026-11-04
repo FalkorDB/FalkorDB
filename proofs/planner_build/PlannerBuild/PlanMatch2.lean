@@ -112,7 +112,7 @@ theorem chainRel_stripped (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR)
 (enforced only by its per-row re-check, which #2390 also removed); now it is a Filter. -/
 def bV : V := ⟨1, 0⟩
 def qB : QR := { alias := ⟨5, 0⟩, named := false, frm := { alias := bV, attrs := [("x", xOne)], ptr := 9 },
-                 to := { alias := ⟨4, 0⟩ } }
+                 to := { alias := ⟨4, 0⟩, ptr := 0 }, ptr := 0 }
 def stB : MSt := { visited := [bV], verified := [] }
 
 /-! ## Labels on already-bound endpoints (mod.rs:1858-1872) -/
@@ -182,7 +182,7 @@ def nodeOnly (st : MSt) (lw : LW) (n : QN) (paths : List (V × List V)) : MP × 
     if n.labels.isEmpty then (.arg, st, bf, lw)
     else
       let rel : QR := { alias := ⟨u32max - n.alias.id, n.alias.scope⟩, named := false,
-                        frm := { alias := n.alias }, to := { alias := n.alias, labels := n.labels } }
+                        frm := { alias := n.alias, ptr := 0 }, to := { alias := n.alias, labels := n.labels, ptr := 0 }, ptr := 0 }
       (.expandInto rel false [.arg], markLabels st n.alias n.labels, bf, lw)
   else
     let (af, lw) := lowerN lw n
@@ -203,7 +203,7 @@ theorem nodeOnly_bound_labels (st : MSt) (lw : LW) (n : QN) (ps : List (V × Lis
       r.to.labels = n.labels ∧ r.frm.labels = [] := by
   have : n.labels.isEmpty = false := by cases h : n.labels <;> simp_all
   exact ⟨{ alias := ⟨u32max - n.alias.id, n.alias.scope⟩, named := false,
-           frm := { alias := n.alias }, to := { alias := n.alias, labels := n.labels } },
+           frm := { alias := n.alias, ptr := 0 }, to := { alias := n.alias, labels := n.labels, ptr := 0 }, ptr := 0 },
     by simp [nodeOnly, hb, this], rfl, rfl, rfl, rfl, rfl⟩
 
 /-- A bound node's map becomes a bound filter, at most once per (alias, map). -/

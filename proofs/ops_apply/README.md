@@ -36,7 +36,7 @@ No, when batched. `optionalBatched_perm_ref` proves the rows are right, but all 
 
 **3. Is MERGE correct?**
 
-Without `SET` clauses, yes, for every batch size: `rust_eq_ref_noSet` proves Rust's MERGE ends with the same graph and the same next id as the per-row openCypher meaning, and emits the same rows in a possibly different order. `merge_noSet_any_batch_size` is the same statement for a fresh query split into batches of any size. This works because MERGE caches what earlier rows of the batch created, and the proof shows the cache exactly simulates "later rows see earlier rows' creations".
+Without `SET` clauses, yes, for every batch size, on the non-all-bound path (`allBound = false`; the all-bound shortcut that keeps only the first match is outside `mainMerge_noSet_eq_ref`, and the #3055 condition that gates it is proved in `Merge.lean`: `allBoundMain_imp_pre`, `allBound_path_keeps_all`). `rust_eq_ref_noSet` proves Rust's MERGE ends with the same graph and the same next id as the per-row openCypher meaning, and emits the same rows in a possibly different order. `merge_noSet_any_batch_size` is the same statement for a fresh query split into batches of any size. This works because MERGE caches what earlier rows of the batch created, and the proof shows the cache exactly simulates "later rows see earlier rows' creations".
 
 With `ON CREATE SET` / `ON MATCH SET`, or with more than one MERGE clause, it is not. The project found three bugs there (W2-apply-2, -3, -4 below).
 
@@ -66,15 +66,15 @@ Mostly:
 | `applyPerRow_eq_ref`, `optionalPerRow_eq_ref` | The per-row fallbacks are right for every sub-plan | `Correlated.lean` |
 | `rowLocal_separable`, `compose_separable` | Row-local operators, and pipelines of them, are separable | `Correlated.lean` |
 | `mainMerge_noSet_eq_ref`, `mainMerge_batch_independent`, `fixed3067_batch_independent` | MERGE (since #3067: all rows matched before any create) without SET matches openCypher in the same row order, and no result depends on the batching | `MergeEager.lean` |
-| `rust_eq_ref_noSet`, `merge_noSet_any_batch_size` | History: the per-batch-match model before #3067 | `Merge.lean` |
+| `rust_eq_ref_noSet`, `merge_noSet_any_batch_size` | The per-batch-match model before #3067, kept as the shared base of `MergeEager.lean` | `Merge.lean` |
 | `run_ok`, `foreach_correct`, `calls_items` | FOREACH is a pass-through that runs its body once per item, in order | `ForEach.lean` |
 | `union_drain` | UNION ALL is the concatenation of its branches | `Union.lean` |
 | `deleteBatch_vars`, `deleteBatchE_ok` | Every deleted variable's entity is gone; the fallible version agrees on success | `Delete.lean`, `DeleteCancel.lean` |
 | `createNode_spec`, `createRel_spec` | CREATE binds one fresh node per row; relationships use each row's endpoints | `CreateBatch.lean` |
 | `setFrom_replace`, `setAttrItem_replace_shapes` | `SET e = src` leaves exactly the source's keys (all six shapes, since #3524) | `SetRemove.lean` |
 | `allTuples_length`, `orbit_valid` | A cartesian product has ∏ lengths rows and visits only valid combinations | `CartVhj.lean` |
-| `applyBatchedW_eq_ref_of_readIndep` | Batched Apply over a writing sub-plan equals per-row Apply when the sub-plan's reads ignore its own writes (the condition a fix for #2738 must meet) | `MergeSlot.lean` | MERGE over a real row (values + bound bits): the pattern hash reads a value-only slot as the variable's value, the cache hit re-inserts another clause's ids; `KeyFromBoundNodeOnly`, `MergeBindsOwnNode`, the fixed key, and #3368/#3369 |
-| `RowWrites.lean` |
+| `applyBatchedW_eq_ref_of_readIndep` | Batched Apply over a writing sub-plan equals per-row Apply when the sub-plan's reads ignore its own writes (the condition a fix for #2738 must meet) | `RowWrites.lean` |
+| `KeyFromBoundNodeOnly`, `MergeBindsOwnNode`, `bug3368_filed_repro_fixed_by_3050` | MERGE over a real row (values + bound bits): the pattern hash reads a value-only slot as the variable's value, the cache hit re-inserts another clause's ids; the fixed key, and #3368/#3369 | `MergeSlot.lean` |
 
 ### How `applyBatched_eq_ref` is proved
 
@@ -84,7 +84,7 @@ Mostly:
 4. **State the condition.** `Separable f` says `f` on a tagged batch equals the concatenation of `f` on each row alone, re-tagged.
 5. **Prove by rewriting.** Rewrite `f (tag xs 0)` with `Separable`, then `lookup_tagged` shows that looking up each origin in the tagged input finds exactly the row that produced it.
 
-The hypothesis `Separable` is the whole question. It is proven for row-local operators and their pipelines, and refuted for `ValueHashJoin` and `count(*)` (`vhj_not_separable`, `count_not_separable`). For the real child operators of each plan it is not derived from their code; that is why four rows are CONDITIONAL (see [Coverage](#coverage)).
+The hypothesis `Separable` is the whole question. It is proven for row-local operators and their pipelines, and refuted for `ValueHashJoin` and `count(*)` (`vhj_not_separable`, `count_not_separable`). For the real child operators of each plan it is not derived from their code; that is why these rows are CONDITIONAL (see [Coverage](#coverage)).
 
 ## Bugs found
 
@@ -94,8 +94,8 @@ Every bug was reproduced against a live server and compared with C before it was
 |---|---|---|---|
 | W2-apply-1 | `vhj_batched_16_vs_8`, `canBatchApply_admits_vhj` | A ValueHashJoin inside a batched Apply or Optional joins rows that came from different outer rows: the `can_batch` blacklists (`apply.rs:119-133`, `optional.rs:104-106`) miss it. `UNWIND [1,2] AS x MATCH (a:A),(b:B) WHERE a.v = b.v RETURN count(*)` over 2 `A` and 2 `B`: Rust 16, C 8 | **Open** |
 | W2-apply-2 | removed (17ccc5412), `cross_clause_keyed` | `merge_pattern_cache` was shared by every MERGE clause of the query. `MERGE (a:M {v:1}) ON CREATE SET a.v = 2 MERGE (b:M {v:1}) RETURN a.v, b.v` failed with "Variable b not found" and rolled back; C returns `2, 1`. In a `UNION ALL` it gave wrong results | **Fixed** (#3050, closes #3038): the key is `(operator idx, hash)`; `cross_clause_keyed` proves the second clause creates and binds its own node |
-| W2-apply-3 | removed (17ccc5412), `fixed3067_batch_independent` | **Fixed by #3067 (b47d6d6a3, closes #3039): `match_all` (`merge.rs:260`) matches every row before any create.** Was: MERGE's result depends on `BATCH_SIZE` (`merge.rs:313-343` at ca36bfa15): the match runs once per batch, so a row sees earlier rows' creations only across a batch boundary. With `ON CREATE SET` changing the merged property, two such rows in one batch create 2 nodes and the same rows 1024 apart create 1. C creates 2 either way (it matches every row before creating anything); the per-row openCypher meaning creates 1 | **Open** |
-| W2-apply-4 | removed (17ccc5412), `allBound_path_keeps_all`, `allBoundMain_imp_pre`, `path_shortcut_off` | When every MERGE variable was already bound, the shortcut kept only the first match. With two parallel `:R` edges, `MATCH (a:A),(b:B) MERGE p=(a)-[:R]->(b) RETURN count(p)`: Rust 1, C 2 | **Fixed** (#3055, closes #3040): the shortcut now skips a relationship exposed by a path variable; `allBound_path_keeps_all` proves the reference rows |
+| W2-apply-3 | removed (17ccc5412), `fixed3067_batch_independent` | **Fixed by #3067 (b47d6d6a3, closes #3039): `match_all` (`merge.rs:260`) matches every row before any create.** Was: MERGE's result depends on `BATCH_SIZE` (`merge.rs:313-343` at ca36bfa15): the match runs once per batch, so a row sees earlier rows' creations only across a batch boundary. With `ON CREATE SET` changing the merged property, two such rows in one batch create 2 nodes and the same rows 1024 apart create 1. C creates 2 either way (it matches every row before creating anything); the per-row openCypher meaning creates 1 | **Fixed** (#3067, closes #3039) |
+| W2-apply-4 | removed (17ccc5412), `allBound_path_keeps_all`, `allBoundMain_imp_pre`, `path_shortcut_off` | The all-bound shortcut kept only the first match. In `MATCH (a:A),(b:B) MERGE p=(a)-[:R]->(b) RETURN count(p)` both nodes are bound and the relationship is anonymous (not bound) but exposed by the path `p`; the old condition (`preAllBound`: every *named* relationship bound, anonymous ones ignored) fired, so with two parallel `:R` edges Rust returned 1, C 2 | **Fixed** (#3055, closes #3040): the condition (`allBoundMain`) now also requires an unbound anonymous relationship not to be exposed by a path variable, which turns the shortcut off for that shape; `allBound_path_keeps_all` proves the reference rows |
 | W2-apply-5 | `optionalBatched_order_differs` | Batched Optional moves the `null` rows after the matched rows. Low severity: order is unspecified, but `collect` shows it | **Open** |
 | #2776 (wider) | removed (17ccc5412), `fixed3524_clears_pending`, `setAttrItem_replace_shapes` | **Fixed by #3524 (af45ca776).** Was: `SET e = <node, relationship or map>` kept attributes written earlier in the same query; only the node-from-map branch cleared them (`set.rs:202-249`, `:279-376` at ca36bfa15). `CREATE (a {x:1}), (b {y:2}) SET a = b`: Rust `{x:1, y:2}`, C `{y:2}` | Fixed by #3524 |
 | #2738 | `bug2738_batched_call_hides_writes`, `canBatchApply_admits_write`; property `WriteSeparable` | A CALL subquery that writes is batched (`can_batch`, `apply.rs:119-133`, does not blacklist Create/Delete/Set/Commit), so its reads for every row of the batch see the graph from before the batch and one Commit flushes all rows' writes. `UNWIND [1,2,3] AS x CALL { MATCH (a:N) CREATE (:N) RETURN 1 AS one } RETURN count(*)` over one `:N`: Rust 3 (4 `:N` after), C 7 (8 after) | **Open** (#2738) |
@@ -106,14 +106,15 @@ Every bug was reproduced against a live server and compared with C before it was
 
 ### CONDITIONAL rows
 
-Four rows are proven only under the hypothesis that the sub-plan is separable:
+Six rows rest on the hypothesis that the sub-plan is separable (four directly, and the two `next` dispatchers through `next_batched`):
 
 - `ApplyOp::next_batched` and `OptionalOp::next_batched`: the hypothesis is **false** for a sub-plan containing a ValueHashJoin (W2-apply-1). For every other sub-plan the planner lets through, it is believed true but not proven.
+- `ApplyOp::next` and `OptionalOp::next`: a one-line dispatch on `can_batch` to `next_batched` or `next_per_row`; no dispatch theorem, so they inherit the CONDITIONAL status of `next_batched`.
 - `SemiApplyOp::next` and `OrApplyMultiplexerOp::next`: the planner only feeds them pattern sub-plans, which should be separable, but this is not proven.
 
 Fixing W2-apply-1 (adding `IR::ValueHashJoin` to both blacklists) removes the known counterexample but does not by itself turn these rows PROVEN: that needs a proof that every operator the blacklist admits is separable.
 
-Re-targeted to main 5e475e6c9: #3050 and #3055 fix W2-apply-2 and W2-apply-4 (the old refutations are kept as pre-#3050 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) / pre-#3055 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) and the fixed behaviour is proved on the new model), #3050 also removes the cross-operator cache sharing behind #3368/#3369 as filed (a same-operator collision of equal leftovers remains, model only), #3462 adds `inspect` to `DeleteSt.new`, #3436 only shifts lines.
+Re-targeted to main 5e475e6c9: #3050 and #3055 fix W2-apply-2 and W2-apply-4 (the old refutations were removed in bbee75955, the last revision that has them being 17ccc5412, and the fixed behaviour is proved on the new model), #3050 also removes the cross-operator cache sharing behind #3368/#3369 as filed (a same-operator collision of equal leftovers remains, model only), #3462 adds `inspect` to `DeleteSt.new`, #3436 only shifts lines.
 
 ## Files
 
@@ -138,16 +139,16 @@ The project has no dependencies beyond Lean core. The id-space `reserve` it call
 
 ## Coverage
 
-`COVERAGE.tsv` has 74 rows:
+`COVERAGE.tsv` has 77 rows:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 64 |
-| CONDITIONAL | 4 |
+| PROVEN | 65 |
+| CONDITIONAL | 6 |
 | MODELLED | 5 |
 | AXIOMATISED | 1 |
 
-- **CONDITIONAL:** `ApplyOp::next_batched`, `OptionalOp::next_batched`, `SemiApplyOp::next`, `OrApplyMultiplexerOp::next`, all resting on `Separable` (above).
+- **CONDITIONAL:** `ApplyOp::next_batched`, `OptionalOp::next_batched`, `SemiApplyOp::next`, `OrApplyMultiplexerOp::next`, all resting on `Separable` (above), and the dispatchers `ApplyOp::next` and `OptionalOp::next` that call `next_batched`.
 - **MODELLED:** four `batch.rs` helpers the idiom is built from (`clone_active_rows_seq_origin`, `merge_over_input`, `origin_row`, `gather`). They are modelled as `tag`, the abstract merge, the origin tag and the fallback gather; the column-level code is not. Also `BatchRow::to_owned_row` (`MergeSlot.Row.ofCells`), used only to build the #3368/#3369 rows.
 - **AXIOMATISED:** `BatchOp::set_argument_batch`. It is not an axiom in Lean: its behaviour is what the `Separable` hypothesis describes.
 

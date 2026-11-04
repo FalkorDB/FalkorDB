@@ -1,5 +1,5 @@
 /-
-# The clause parsers of `graph/src/parser/cypher.rs` (lines 516-1340, 2689-2738, 3199-3409)
+# The clause parsers of `graph/src/parser/cypher.rs` (lines 516-1340, 2689-2738, 3199-3543)
 
 One model function per Rust function. All recursion (loops and the
 `CALL {}` / `FOREACH` re-entries) runs on one budget `n`: every call made by
@@ -24,7 +24,7 @@ def whereP (o : Oracle) : P (Option ET) := do
     if (aggName e).isSome then fail else pure (some e)
   else pure none
 
-/-- `parse_orderby` after `ORDER` (cypher.rs:3292-3308). -/
+/-- `parse_orderby` after `ORDER` (cypher.rs:3306-3322). -/
 def orderItems (o : Oracle) : Nat → List (ET × Bool) → P (List (ET × Bool))
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -170,7 +170,7 @@ def deleteP (o : Oracle) (n : Nat) (isDetach : Bool) : P IR := do
   let es ← exprList1 o n []
   deleteMore o n es isDetach
 
-/-- The `.prop.prop...` chain of a SET / REMOVE target (cypher.rs:3333-3337). -/
+/-- The `.prop.prop...` chain of a SET / REMOVE target (cypher.rs:3348-3352 and 3444-3448). -/
 def dotChain : Nat → ET → P ET
   | 0, _ => fuelP
   | n + 1, e => do
@@ -181,17 +181,17 @@ def dotChain : Nat → ET → P ET
       dotChain n (.node (.prop p) [e])
     else pure e
 
-/-- `reject_unparenthesized_target` (cypher.rs:3380-3380, #3060 / `fe619ac5f`): a target
+/-- `reject_unparenthesized_target` (cypher.rs:3395-3402, #3060 / `fe619ac5f`): a target
 that opened a nested expression must have opened it with `(` — the tree is a `Paren`. -/
 def rejectUnparenP (t : ET) : P Unit := if t.root = .paren then pure () else fail
 
-/-- `expect_property_after_paren` (cypher.rs:3406-3418, #3300): a parenthesised target is only
+/-- `expect_property_after_paren` (cypher.rs:3409-3418, #3300): a parenthesised target is only
 the subject of a property lookup, `(n).x`, so the `)` must be followed by `.`. -/
 def expectDotP : P Unit := do
   let c ← peek
   if c = .dot then pure () else fail
 
-/-- The target of a SET / REMOVE item (cypher.rs:3341-3347, 3439-3445). -/
+/-- The target of a SET / REMOVE item (cypher.rs:3341-3347, 3437-3443). -/
 def targetP (o : Oracle) : P ET := do
   let r ← o.pp
   if r.2 then do
@@ -202,7 +202,7 @@ def targetP (o : Oracle) : P ET := do
     pure e
   else pure r.1
 
-/-- `parse_set_items` (cypher.rs:3322-3375). -/
+/-- `parse_set_items` (cypher.rs:3336-3390). -/
 def setItems (o : Oracle) (F : Nat) : Nat → List SetItem → P (List SetItem)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -229,7 +229,7 @@ def setItems (o : Oracle) (F : Nat) : Nat → List SetItem → P (List SetItem)
     let more ← opt .comma
     if more then setItems o F n (acc ++ [item]) else pure (acc ++ [item])
 
-/-- `parse_set_clause` (cypher.rs:3310-3320): consecutive SETs fold. -/
+/-- `parse_set_clause` (cypher.rs:3324-3334): consecutive SETs fold. -/
 def setMore (o : Oracle) (F : Nat) : Nat → List SetItem → P IR
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -240,10 +240,10 @@ def setP (o : Oracle) (F : Nat) : P IR := do
   let is ← setItems o F F []
   setMore o F F is
 
-/-- The `hasLabels` function id (cypher.rs:3423). -/
+/-- The `hasLabels` function id (cypher.rs:3452). -/
 def fnHasLabels : Nat := 5000001
 
-/-- `parse_remove_items` (cypher.rs:3403-3437). -/
+/-- `parse_remove_items` (cypher.rs:3432-3467). -/
 def removeItems (o : Oracle) (F : Nat) : Nat → List ET → P (List ET)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -257,7 +257,7 @@ def removeItems (o : Oracle) (F : Nat) : Nat → List ET → P (List ET)
     let more ← opt .comma
     if more then removeItems o F n (acc ++ [item]) else pure (acc ++ [item])
 
-/-- `parse_remove_clause` (cypher.rs:3391-3401). -/
+/-- `parse_remove_clause` (cypher.rs:3420-3430). -/
 def removeMore (o : Oracle) (F : Nat) : Nat → List ET → P IR
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -475,7 +475,7 @@ def callP (o : Oracle) (F : Nat) : Nat → P (List IR)
     else do
       let r ← callProcP o F
       pure [r]
-/-- `parse_foreach_clause` (cypher.rs:3439-3519), after FOREACH. -/
+/-- `parse_foreach_clause` (cypher.rs:3469-3543), after FOREACH. -/
 def foreachP (o : Oracle) (F : Nat) : Nat → P IR
   | 0 => fuelP
   | n + 1 => do
@@ -488,7 +488,7 @@ def foreachP (o : Oracle) (F : Nat) : Nat → P IR
     let body ← foreachBody o F n []
     tok .rparen
     if body = [] then fail else pure (.forEach l v body)
-/-- The FOREACH body loop (cypher.rs:3453-3504). -/
+/-- The FOREACH body loop (cypher.rs:3484-3531). -/
 def foreachBody (o : Oracle) (F : Nat) : Nat → List IR → P (List IR)
   | 0, _ => fuelP
   | n + 1, body => do

@@ -30,6 +30,11 @@ the write that is skipped. `RoutesBound` is the syntactic property behind
 #3352: a pushed conjunct reads only variables, by `(id, scope)`, that are
 available where it lands.
 
+Write scope: the only write the model performs is creating a bare node (`newNode`,
+from `CREATE ()`/`MERGE ()`), which bumps the node count `G.n`. `G.lbl` and `G.edges` are
+read by the scans and traversals but are never written, so label and relationship writes
+(and attribute writes) are NOT modelled: `EffectSound` compares the node count only.
+
 Not modelled: conjunct splitting (the repros have one conjunct), filter
 merging and the CP split (`Basic`, `Sequence`), laziness (operators are
 eager), property access (`r.status = 'revoked'` is `r = 1`, the revoked

@@ -2,16 +2,16 @@ import FalkorOpsApply.Delete
 /-
 DELETE after #2846: the unwinds can fail.
 
-`delete_pending_node(id, g)?` (delete.rs:410-414) and
-`remove_pending_relationships_for_node(id, g)?` (:252-258, :447-453) now hand the
+`delete_pending_node(id, g)?` (delete.rs:430-434) and
+`remove_pending_relationships_for_node(id, g)?` (:276-280, :471-475) now hand the
 unwound ids back to the graph's id space themselves and propagate its refusal
-(`Graph::cancel_*_id`, graph.rs:1401/:1414) with `?`. The two hooks are:
+(`Graph::cancel_*_id`, graph.rs:1549/:1562) with `?`. The two hooks are:
 
 * `okP id` — the graph accepts the unwind of pending-created node `id`
   (its id and its pending edges' ids);
 * `okC id` — the graph accepts handing back the pending edges incident on the
   committed node `id` (vacuously `true` when there are none — the fast path
-  at :262-267 never calls it).
+  in `delete_nodes_bulk` (the `has_created_relationships` guard, :272) never calls it).
 
 The `E` functions below are the faithful, fallible versions. Each is proved
 equal to `.ok` of the infallible model in Delete.lean when the hooks accept
@@ -25,7 +25,7 @@ variable (okP okC : Nat → Bool)
 
 def cancelErr : String := "internal error in the id space"
 
-/-- `delete_entity`, node arm (delete.rs:401-467). -/
+/-- `delete_entity`, node arm (delete.rs:421-493). -/
 def delNodeE (st : St) (id : Nat) : Except String St :=
   if st.pd id then .ok st
   else if st.pc id then
@@ -92,7 +92,7 @@ theorem delEntityLE_ok (hP : ∀ i, okP i = true) (hC : ∀ i, okC i = true) :
     | ok st' => exact delEntityLE_ok hP hC vs st'
 end
 
-/-- `delete_nodes_bulk` classification loop (delete.rs:199-209); the
+/-- `delete_nodes_bulk` classification loop (delete.rs:218-229); the
 pending-created branch is `delete_entity` and propagates its error. -/
 def bulkScanE : List Nat → St × List Nat → Except String (St × List Nat)
   | [], acc => .ok acc
@@ -113,7 +113,7 @@ theorem bulkScanE_ok (hP : ∀ i, okP i = true) (hC : ∀ i, okC i = true) :
       · exact bulkScanE_ok hP hC ids _
       · split <;> exact bulkScanE_ok hP hC ids _
 
-/-- delete.rs:245-270: per committed id, the pending-edge cascade (`okC`, `?`),
+/-- delete.rs:268-297: per committed id, the pending-edge cascade (`okC`, `?`),
 then `deleted_node(id)`. -/
 def markCommitted : List Nat → St → Except String St
   | [], st => .ok st
@@ -130,7 +130,7 @@ theorem markCommitted_ok (hC : ∀ i, okC i = true) :
     · have : (j == id) = false := by simp [hj]
       simp [hj, this]
 
-/-- `delete_nodes_bulk` (delete.rs:193). -/
+/-- `delete_nodes_bulk` (delete.rs:213). -/
 def delNodesBulkE (st : St) (ids : List Nat) : Except String St :=
   (bulkScanE okP okC ids (st, [])).bind fun (st1, com) =>
     if com.isEmpty then .ok st1 else markCommitted okC com st1
@@ -149,7 +149,7 @@ theorem delNodesBulkE_ok (hP : ∀ i, okP i = true) (hC : ∀ i, okC i = true) (
     subst this; simp
   · exact markCommitted_ok okC hC com st1
 
-/-- The variable-tree scan (delete.rs:146-159) over the fallible `delete_entity`. -/
+/-- The variable-tree scan (delete.rs:138-171) over the fallible `delete_entity`. -/
 def scanE (st : St) : List DV → Except String (St × List Nat × List Nat)
   | [] => .ok (st, [], [])
   | v :: vs => match v with
@@ -172,7 +172,7 @@ theorem scanE_ok (hP : ∀ i, okP i = true) (hC : ∀ i, okC i = true) :
     | null => simp only [scanE, scan, delEntityE_ok okP okC hP hC, bind]; exact scanE_ok hP hC st vs
     | other => rfl
 
-/-- `delete_batch` (delete.rs:129) over the fallible pieces. -/
+/-- `delete_batch` (delete.rs:130) over the fallible pieces. -/
 def deleteBatchE (st : St) (vals : List DV) (exprs : List (Except String DV)) : Except String St := do
   let (st1, ns, rs) ← scanE okP okC st vals
   let st2 ← if ns.isEmpty then .ok st1 else delNodesBulkE okP okC st1 ns

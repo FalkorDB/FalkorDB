@@ -277,15 +277,15 @@ def buildRoot (c : Cfg) : Nat → Nat → List Node → Node × Nat
 
 /-- The routing sweep of `apply_batch` (`node.rs:284-304`) and `remove_batch` (`node.rs:524-536`),
     since #2278 (3597b3a82): the **last** child takes the rest of the batch outright
-    (`node.rs:293-294`); every other child takes the prefix of the remaining batch strictly below its
-    own separator `seps[child_idx]` (`node.rs:296-299`). (`getD 0` is the out-of-bounds panic of
+    (`node.rs:294-295`); every other child takes the prefix of the remaining batch strictly below its
+    own separator `seps[child_idx]` (`node.rs:297-300`). (`getD 0` is the out-of-bounds panic of
     `seps[child_idx]`, unreachable when `seps.len() == children.len() - 1`.) -/
 def route : List E → List Node → List E → List (Node × List E)
   | _, [], _ => []
-  | _, [ch], rest => [(ch, rest)]                             -- lines 293-294
+  | _, [ch], rest => [(ch, rest)]                             -- lines 294-295
   | seps, ch :: c2 :: cs, rest =>
-    let upper := seps.head?.getD 0                            -- line 296
-    let sl := rest.takeWhile (fun e => decide (e < upper))    -- lines 297-299
+    let upper := seps.head?.getD 0                            -- line 297
+    let sl := rest.takeWhile (fun e => decide (e < upper))    -- lines 298-300
     (ch, sl) :: route seps.tail (c2 :: cs) (rest.drop sl.length)
 
 /-- `Node::apply_batch` (`node.rs:259`). Returns the fragments that replace this node (height `h`). -/
@@ -295,7 +295,7 @@ def applyBatch (c : Cfg) : Nat → Node → List E → List Node
   | h + 1, .branch seps cs, batch =>
     let newChildren := (route seps cs batch).flatMap
       (fun p => if p.2 = [] then [p.1] else applyBatch c h p.1 p.2)   -- lines 302-307
-    packBranches c h newChildren                                      -- line 310
+    packBranches c h newChildren                                      -- line 309
 
 /-- `CowBTree::insert_batch` (`mod.rs:241`). -/
 def insertBatch (c : Cfg) (h : Nat) (root : Node) (batch : List E) : Node × Nat :=

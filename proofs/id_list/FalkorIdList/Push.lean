@@ -1138,8 +1138,8 @@ Fixed by #2920 (`2ef102ae0`, issue #2919): `from_segments` (:1183) now starts
 the run *after* every decoded segment (`start = segments.len()`), the place
 `maybe_collapse_run` leaves it after a collapse. `fromSegments` below is the
 current code; the correctness theorem (`decoded_then_pushed_keeps_order`) is in
-`Decoded.lean`. The pre-fix model and its two counterexamples are kept as a
-historical note. -/
+`Decoded.lean`. The pre-fix model and its two counterexamples were removed in
+bbee75955 (last present at 17ccc5412). -/
 
 /-- `IdList::from_segments` (:1183), since #2920: `run.start = segments.len()`. -/
 def fromSegments (segs : List Seg) : St := ⟨segs, (flat segs).length, segs.length, none⟩

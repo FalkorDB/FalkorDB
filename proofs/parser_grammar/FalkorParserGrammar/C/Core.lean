@@ -54,7 +54,7 @@ def identOf : CT → Option Nat
   | .kw k => some (kwId k)
   | _ => none
 
-/-- The name `format!("_anon_{n}")` (cypher.rs:3017, 3054, 3134) as a name id.
+/-- The name `format!("_anon_{n}")` (cypher.rs:3037, 3085, 3154) as a name id.
 A user may spell the same identifier (`_anon_0` is a valid name). -/
 def anonName (k : Nat) : Nat := 2000000 + k
 
@@ -76,7 +76,7 @@ def ET.root : ET → EOp | .node o _ => o
 def ET.kids : ET → List ET | .node _ cs => cs
 abbrev leaf (o : EOp) : ET := .node o []
 
-/- `find_aggregate_name` (cypher.rs:3533-3544): the first aggregate function
+/- `find_aggregate_name` (cypher.rs:3563-3573): the first aggregate function
 met by a preorder DFS. -/
 mutual
 def aggName : ET → Option Nat

@@ -51,7 +51,7 @@ Grouping (`GroupKey`) puts rows in a `HashMap`. The `HashMap` contract is that e
 | `scMain_total` | `sort_cmp` is reflexive, antisymmetric and transitive on every well-formed value, so `ORDER BY` and `list.sort` can never panic | `Main.lean` |
 | `sc_laws` | The induction behind it: the laws hold for all values of size ≤ n, for **any** lawful f32 comparator | `SortCmp.lean` |
 | `cmpKey_total`, `compareAt_eq_scMain`, `compareRowsAt_eq_scMain` | The three places that sort rows (the sort op, typed batch columns, multi-key rows) all reduce to `sort_cmp` | `Main.lean` |
-| `listSort_perm` | `list.sort` returns a permutation of its input | `Main.lean` |
+| `listSort_perm`, `listSort_sorted` | `list.sort` returns a permutation of its input, and (on well-formed values) one in which no element is `sort_cmp`-greater than a later one | `Main.lean` |
 | `main_hash_consistent` | `sort_cmp`-equal ⇒ equal hash words (the `GroupKey` `HashMap` contract) | `Main.lean` |
 | `main_nans_one_key` | All NaNs (any sign, any payload) are one key and one hash, for floats and vector components | `Main.lean` |
 | `signed_zeros_apart` | Float `-0.0` and `0.0` are one key; inside vectors and points they stay apart, as in C | `Main.lean` |
@@ -72,11 +72,11 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `nan_breaks_antisymmetry` | NaN < 1.0 **and** 1.0 < NaN. `ORDER BY` over stored NaNs (21+ rows) panicked and killed the server | Fixed by #2912 (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) |
+| 1 | `nan_breaks_antisymmetry` | NaN < 1.0 **and** 1.0 < NaN under `compare_value`. `ORDER BY` over stored NaNs (21+ rows) panicked and killed the server | Fixed by #2912: ORDER BY now sorts by `sort_cmp`. The `compare_value` theorem remains; only the ORDER BY sort-comparator counterexample theorems were removed (bbee75955; the last revision that has them is 17ccc5412) |
 | 2 | `mixed_numeric_not_transitive` | `2⁵³ = 2⁵³.0 = 2⁵³+1` but `2⁵³ < 2⁵³+1`: ints were rounded through `f64`. Same panic | Fixed by #2912 |
 | 3 | `map_order_not_transitive` | `compare_map` returned `Equal` at the first mixed-type value pair, which creates a cycle. Same panic | Fixed by #2912 |
 | 4 | removed (17ccc5412) | `{a:1} = {a:'x'}` and `{a:1} <> {a:'x'}` were both false | Fixed by #2917 |
-| 5 | `hash_not_consistent_with_eq` | `2⁵³+1 == 2⁵³.0` under `PartialEq`, but the hashes differ | Harmless: grouping now uses `sort_cmp` |
+| 5 | `hash_not_consistent_with_eq` | `2⁵³+1 == 2⁵³.0` under `PartialEq`, but the hashes differ | Fixed for grouping (`GroupKey` uses `sort_cmp`). **Open outside grouping**: `ValueHashJoin` hashes `Value` then checks `compare_value`, so `2⁵³+1` and `2⁵³.0` can miss a join match (found by reading the Rust, not reproduced live) |
 | 6 | `nan_eq_irreflexive` | `NaN != NaN`, so each NaN row became its own group | Fixed by #2917 (`main_nans_one_key`) |
 | 7 | `fx_row_collision`, `fx_collision_general` | DISTINCT, `count(DISTINCT)` and the MERGE cache keep only the 64-bit Fx hash; a collision is one subtraction away and the second row is dropped | **Present on main** (#2780 closed as not planned) |
 | 8 | removed (17ccc5412) | `min([1.0, NaN, 3.0])` returned 3.0 | Fixed by #2917 (`min_nan_ignored`) |
@@ -110,15 +110,15 @@ Shared foundations (the float model `F`, `fpcmp`, i64 helpers, comparator laws `
 
 ## Coverage
 
-Line numbers are pinned to main 8621212fc (no change to the order, equality or hash code since fb3d516d0).
+Line numbers (`COVERAGE.tsv` and the mapping tables in the Lean headers) are re-pinned to main 5c7af54f2 by function name.
 
-`COVERAGE.tsv` has 85 rows, mostly `value.rs`:
+`COVERAGE.tsv` has 83 rows, mostly `value.rs`:
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 37 |
 | MODELLED | 2 |
-| NOT COVERED | 46 |
+| NOT COVERED | 44 |
 
 - **MODELLED:** `compare_vecf32` and `first_difference` are modelled here and proven in `value_math` (`chunked_eq_firstDiff`).
 - **NOT COVERED:** mostly geometry and accessors (`Point::distance`, `get_numeric`, …), which are outside this project's question. Some are proven in other projects; `bash proofs/coverage.sh` counts each function once, in its best bucket.

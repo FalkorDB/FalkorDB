@@ -5,7 +5,7 @@ import FalkorCore.Int64
 
 `F` represents every class of IEEE value that ordering or hashing can tell apart: NaN with its
 sign bit and payload, both zeros, integral values, non-integral finite values and both
-infinities. `fpcmp` is `partial_cmp`, `cmpF` is `compare_floats` (`value.rs:1801`),
+infinities. `fpcmp` is `partial_cmp`, `cmpF` is `compare_floats` (`value.rs:1915`),
 `roundF` is `i as f64`, `bits64`/`bits32` are `to_bits`, `asI64` is `x as i64`.
 No axiom: non-integral values are abstract (`frac lo r`).
 -/
@@ -61,7 +61,7 @@ def fpcmp (a b : F) : Option Ordering :=
     · subst h2; simp
     · simp [h1, h2]
 
-/-- `compare_floats` (`value.rs:1801`): `partial_cmp`, and NaN answers
+/-- `compare_floats` (`value.rs:1915`): `partial_cmp`, and NaN answers
 `(Less, NaN)` whichever side it is on. -/
 inductive Flag where
   | none | comparedNull | disjoint | nan

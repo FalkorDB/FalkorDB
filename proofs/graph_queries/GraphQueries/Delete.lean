@@ -4,17 +4,17 @@ import GraphQueries.Queries
 
 | here | there (graph.rs) |
 | --- | --- |
-| `resolveRels`  | `delete_relationships` phase 1 (:2864-2887) |
-| `deleteRels`   | `delete_relationships` :2853 (phase 2 :2889-2982; `release(rels, resolved)` :2894) |
-| `collectImplicit` | `delete_implicit_edges` collection loop (:2999-3043) |
-| `deleteImplicit`  | `delete_implicit_edges` :2988 (`release(freed, freed)` :3131-3134) |
-| `createRelsBulk`  | `create_relationships_bulk` :2594 (shape refusals :2614/:2420, `create` :2633) |
+| `resolveRels`  | `delete_relationships` phase 1 (the `Phase 1` block from :2964) |
+| `deleteRels`   | `delete_relationships` :2953 (phase 2 from :2989; `release(rels, resolved)` :2994) |
+| `collectImplicit` | `delete_implicit_edges` collection loop (from :3088) |
+| `deleteImplicit`  | `delete_implicit_edges` :3088 (`release(freed, freed)` :3232) |
+| `createRelsBulk`  | `create_relationships_bulk` :2694 (shape refusals :2714/:2724, `create` :2732) |
 
 Every id-space move goes through `O` (IdContract.lean); theorems that need
 its behaviour take `IdSpaceContract O`.
 
 `remove_mask` builds its mask as `relationship_cap × relationship_types.len()`
-(:2853, :2962). `Mat.removeMask` is a no-op on a dimension mismatch, which is
+(`remove_mask` calls in `delete_relationships`, :3049, :3069). `Mat.removeMask` is a no-op on a dimension mismatch, which is
 what the release build does (`GrB_DIMENSION_MISMATCH` is only
 `debug_assert`ed, matrix.rs:927).
 -/
@@ -162,8 +162,8 @@ theorem collectImplicit_mem (tn : Ten) (dn ex : List Nat) (x : Nat × Nat × Nat
 /-- `RoaringTreemap::from_iter`: the ids as a set (first occurrence kept). -/
 def toSet (l : List Nat) : List Nat := l.foldl ins []
 
-/-- `delete_implicit_edges` (:2988). The tensors, endpoint index and masks
-move first; the freed ids go through `release(freed, freed)` (:3032) at
+/-- `delete_implicit_edges` (:3088). The tensors, endpoint index and masks
+move first; the freed ids go through `release(freed, freed)` (:3232) at
 the end, once, as one set. -/
 def deleteImplicit (O : IdSpaceOps) (g : G V) (dn ex : List Nat) :
     Except String (G V × List (Nat × Nat × Nat × Nat)) :=
@@ -258,9 +258,9 @@ theorem deleteImplicit_freed (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V)
 
 /-! ## `create_relationships_bulk` -/
 
-/-- `create_relationships_bulk` (:2594): refuse slices that disagree in
-length (:2538) or repeat an id (:2548) — both before anything moves — then
-`relationship_ids.create(ids)` (:2557), capacity growth, registration and
+/-- `create_relationships_bulk` (:2694): refuse slices that disagree in
+length (:2714) or repeat an id (:2724) — both before anything moves — then
+`relationship_ids.create(ids)` (:2732), capacity growth, registration and
 the logical effect: tensor, endpoint index, adjacency and type matrix all
 gain the batch. -/
 def createRelsBulk (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V) (ty : String)

@@ -40,8 +40,8 @@ Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 | `indexHit` | `Index::query` `mod.rs:1691` (null node ⇒ empty iterator) |
 | `expandIn`, `indexable`, `canUtilize`, `scanEmits` | `runtime/ops/node_by_index_scan.rs:216,252,249,309` |
 | `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs:324 build_op_query` |
-| `Table.add/del`, `commit` | `add_document` `mod.rs:1907` (ADD_REPLACE), `delete_document` `mod.rs:1929`, `Indexer::commit` `indexer.rs:714` |
-| `Slots.inc/dec/bump/countFor` | `mod.rs:2110/2124/1048/2146`, `indexer.rs:624-717` |
+| `Table.add/del`, `commit` | `add_document` `mod.rs:1907` (ADD_REPLACE), `delete_document` `mod.rs:1929`, `Indexer::commit` `indexer.rs:730` |
+| `Slots.inc/dec/bump/countFor` | `mod.rs:2111/2129/1049/2151`, `indexer.rs:624-717` |
 | `TextOpts.phoneticEnabled`, `PHONETIC_OFF` (`Meta.lean`) | `TextIndexOptions::phonetic_enabled` `text_index_options.rs:48`, `PHONETIC_OFF` `:41`; used by `register_fields` `mod.rs:1245` (#3514) |
 | `rsMatch`, `rsStore`, `inNum`, `inLex` | **axiomatised RediSearch spec** (below) |
 
@@ -287,17 +287,20 @@ matching the live repro (ports 6640 Rust / 6641 C):
   table); live 0 then 3 rows, C "Invalid arguments for procedure". Fix shape:
   `vectorQueryGuarded_requires_operational`.
 - #2781 (`EdgeResync.lean`). The edge arm of `resync_published_indexes`
-  (`pending.rs:1647-1659`) with `commit_edge_index_locked`'s re-resolved key
-  (`graph.rs:3863-3896`), documents keyed by `(src, dst, id)`. Property
+  (`pending.rs:1816-1827`) with `commit_edge_index_locked`'s re-resolved key
+  (`graph.rs:3962-4037`), documents keyed by `(src, dst, id)`. Property
   `RollbackRestoresEdgeIndex`. `bug2781_orphan_edge_doc`, `bug2781_rollback_not_restored`:
   the orphan `(c, d, 0)` survives beside `(a, b, 0)`, as in the live index scan.
   `resyncEdgesFixed_restores` proves the fix (delete the private key when endpoints changed).
 
 ## Re-pinned to 5e475e6c9 (#3436, #2383)
-Re-pin only. `Pending::resync_published_indexes` moved to `pending.rs:1621`. #2383 (the native
+Re-pin only. `Pending::resync_published_indexes` moved to `pending.rs:1789` (at origin/main 5c7af54f2). #2383 (the native
 index serves `IN [...]` as an InList union of point lookups) changes `falkordb/falkordb_index.rs`
-and `falkordb/numeric.rs`, which belong to `native_index`, not to this project; `indexer.rs`,
-`index/mod.rs` and the RediSearch wrapper are unchanged.
+and `falkordb/numeric.rs`, which belong to `native_index`. It also rewrote the `IN` path in
+`runtime/ops/node_by_index_scan.rs` (the `InList` arm and `can_utilize_index`), which is what `expandIn`,
+`indexable` and `canUtilize` in the table above model: that model needs a re-check against the
+new `InList` arm (not redone in this pass). `indexer.rs`, `index/mod.rs` and the RediSearch wrapper are
+unchanged.
 -/
 import FalkorIndexLayer.Model
 import FalkorIndexLayer.Proofs

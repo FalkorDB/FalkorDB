@@ -24,19 +24,19 @@ Yes. `verify_ok_iff` proves `verify` passes exactly when two things hold:
 - the count equation holds (`checked`);
 - the ids the batch took at or above its entry boundary are precisely `[entry, entry + created)`, with no gaps.
 
-`verify_hole` proves a refusal names the highest id taken. `verify_no_underflow` proves the order of the `||` in the Rust keeps its subtractions from wrapping.
+`verify_hole` proves that once the count check passes (`checked = ok`), a refusal from the hole check names the highest id taken; `verify` can instead return `Inconsistent` when the count check fails. `verify_no_underflow` proves the order of the `||` in the Rust keeps its subtractions from wrapping.
 
 **2. Are `create` and `release` all or nothing?**
 
-Yes.
+With respect to their refusals, yes. Once the refusals pass, both apply the whole batch and then run a final consistency check (`checked`); that check can still return `Inconsistent`, and the mutation is kept in that case (`create_spec`, `release_spec` state the new space and the `checked` result together).
 
-- `create_spec` proves `create` either passes all its refusals and applies the whole batch, or changes nothing and returns `AlreadyLive` or `IdOutOfRange`.
+- `create_spec` proves `create` either passes all its refusals and applies the whole batch (returning the trailing `checked` result), or changes nothing and returns `AlreadyLive` or `IdOutOfRange`.
 - `create_out_of_range` proves an id `≥ ID_LIMIT` (`GrB_INDEX_MAX`) is refused before anything is sized; this is the #2892 fix in #2911.
-- `release_spec` proves `release` is all or nothing in the same way, judged over every *requested* id. A free id gives `AlreadyRecycled` and a never-created one gives `NeverCreated`.
+- `release_spec` proves the same refusal-level all-or-nothing for `release`, judged over every *requested* id. A free id gives `AlreadyRecycled` and a never-created one gives `NeverCreated`.
 
 **3. Can the live count underflow?**
 
-No, in any reachable state. `live_eq` proves `live` is exactly the number of live ids. So `release_no_underflow` follows: once `release`'s refusals pass, `live -= freed.len()` cannot wrap.
+No, in any reachable state. `live_eq` proves `live` is exactly the number of live ids. So `release_no_underflow` follows: once `release`'s refusals pass, `live -= freed.len()` cannot wrap. This additionally assumes `freed ⊆ requested` (`hsub`), which Rust enforces only with a `debug_assert!` (compiled out of release builds): refusals passing does not establish it, so it is a caller contract, not a proven fact.
 
 **4. Does every reachable state stay consistent, including across versions?**
 

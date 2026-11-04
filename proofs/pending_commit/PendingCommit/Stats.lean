@@ -1,10 +1,10 @@
 /-
 # `Nodes created` / `Nodes deleted` statistics vs. C
 
-`Pending::commit` (pending.rs:1084, :1163) reports
+`Pending::commit` (pending.rs:1338, counters at :1344, :1415) reports
 `nodes_created += created_nodes.len()` and `nodes_deleted += deleted_nodes.len()`.
 A node created and deleted in the same segment is unwound out of
-`created_nodes` by `delete_pending_node` (pending.rs:600) into
+`created_nodes` by `delete_pending_node` (pending.rs:851, cancel at :886) into
 `cancelled_nodes`, which no statistic reads, so it is reported as neither
 created nor deleted. The C engine counts every create and every delete.
 
@@ -44,7 +44,7 @@ def step (p : P) : Op → P
 
 /-- A CREATE never reuses an id this segment already holds: `IdSpace::reserve`
 excludes its `taken` set (every id the batch created or cancelled) and the
-`issued` set `Pending` lends it (`created_nodes`, create.rs:158) —
+`issued` set `Pending` lends it (`created_nodes`, create.rs:159) —
 proofs/id_space. -/
 def WF (p : P) : Op → Prop
   | .create id => id ∉ p.created ∧ id ∉ p.cancelled ∧ id ∉ p.deleted

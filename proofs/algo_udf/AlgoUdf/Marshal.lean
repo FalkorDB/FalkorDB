@@ -6,7 +6,7 @@ import AlgoUdf.Nesting
 | `F64`                 | f64 as `==`/`floor`/`abs`/`is_finite` see it |
 | `JsV`, `Heap`, `deref` | the QuickJS values `js_to_value` distinguishes; an array/object may also be a `ref` into the QuickJS heap, so shared and *cyclic* values (`a.push(a)`) are representable |
 | `objSet`, `jsKeys`    | AXIOMATISED QuickJS object semantics (ECMA-262 §10.1.9 [[Set]] through the `Object.prototype.__proto__` accessor, §10.1.11 OrdinaryOwnPropertyKeys: array-index keys first, ascending) |
-| `JsKind`              | the object's internal class, as `JS_IsDate` / `JS_IsRegExp` test it (QuickJS FFI, AXIOMATISED by construction) |
+| `JsKind`              | the object's internal class, as `JS_IsDate` / `JS_IsRegExp` test it (QuickJS FFI, AXIOMATISED by construction). `date ms` / `regexp s` carry the value Rust then obtains by *calling the object's `getTime` / `toString` properties* (`obj.get("getTime")`, :412-438): those calls are an ORACLE here, so a Date or RegExp whose `getTime` / `toString` the script overrides (an own property) is outside the model: Rust returns whatever the override returns (or an `Err` if it is not a function / not a number), the model returns the internal time value / source |
 | `ctorName`            | historical only: `obj.get("constructor").name`, the pre-#3074 test |
 | `RV`                  | `runtime::value::Value` (all variants; Path as node/rel id lists) |
 | `MAX`, `nestErr`, `chk` (`Nesting.lean`) | `MAX_UDF_VALUE_NESTING` :67, `udf_nesting_error` :87, `depth >= MAX_UDF_VALUE_NESTING` |
@@ -52,6 +52,8 @@ def F64.toInt : F64 → Int
 /-- `i as f64` for `|i| < 2^53` (exact). -/
 def ofInt (i : Int) : F64 := if i = 0 then .zero false else .integ i
 
+/-- `date ms` / `regexp src`: `ms` is what `getTime()` returns and `src` what `toString()` returns
+(Rust calls the object's own methods; see the header: an overridden method is not modelled). -/
 inductive JsKind | plain | date (ms : F64) | regexp (src : String)
   deriving DecidableEq, Repr
 
@@ -115,10 +117,16 @@ inductive RV where
   | list (xs : List RV) | map (kv : List (List Char × RV))
   | node (id : Nat) | rel (id : Nat) | path (nodes rels : List Nat)
   | point (lat lon : F64) | datetime (ts : Int) | date (ts : Int)
-  | vecf32 (xs : List F64) | time | duration
+  | vecf32 (xs : List F64)  -- the f32 elements widened by `v as f64`; `item as f32` narrows them back exactly
+  | time | duration
   deriving Repr, Inhabited
 
 def i64max : Int := 9223372036854775807
+def i64min : Int := -9223372036854775808
+
+/-- Two's-complement wrap of an unbounded integer into `i64` (what `*ts * 1000` does when the
+workspace release profile, which sets no `overflow-checks`, overflows; a debug build panics). -/
+def wrapI64 (x : Int) : Int := (x + 9223372036854775808) % 18446744073709551616 - 9223372036854775808
 def jsDateMax : Int := 8640000000000000
 
 /-- `new Date(ms)`: time value is NaN outside ±8.64e15 ms (ECMA-262 TimeClip). -/
@@ -151,10 +159,8 @@ def toLevel (conv : RV → R JsV) : RV → R JsV
   | .path ns rs => R.ok (.obj [("__falkor_type".toList, .str "path"),
       ("nodes".toList, .arr (ns.map nodeObj) []), ("relationships".toList, .arr (rs.map relObj) [])] .plain)
   | .point a b => R.ok (.obj [("__falkor_type".toList, .str "point"), ("latitude".toList, .num a), ("longitude".toList, .num b)] .plain)
-  | .datetime ts => if (ts * 1000).natAbs > i64max.toNat then R.err "i64 overflow (debug panic)"
-      else R.ok (.obj [("__falkor_temporal_type".toList, .str "datetime")] (.date (mkDate (ts * 1000))))
-  | .date ts => if (ts * 1000).natAbs > i64max.toNat then R.err "i64 overflow (debug panic)"
-      else R.ok (.obj [("__falkor_temporal_type".toList, .str "date")] (.date (mkDate (ts * 1000))))
+  | .datetime ts => R.ok (.obj [("__falkor_temporal_type".toList, .str "datetime")] (.date (mkDate (wrapI64 (ts * 1000)))))
+  | .date ts => R.ok (.obj [("__falkor_temporal_type".toList, .str "date")] (.date (mkDate (wrapI64 (ts * 1000)))))
   | .vecf32 xs => R.ok (.arr (xs.map .num) [("__falkor_type".toList, .str "vecf32")])
   | .time | .duration => R.err "UDF Exception: unsupported type for JS conversion"
 
@@ -231,7 +237,7 @@ def classify : JsV → Shape
   | .null | .undef => .done (.ok .null)
   | .bool b => .done (.ok (.bool b))
   | .num f => .done (.ok (if f.integral && f.small && !f.negZero then .int f.toInt else .float f))
-  | .big i => .done (if i.natAbs ≤ i64max.toNat then .ok (.int i) else .error "BigInt out of i64 range")
+  | .big i => .done (if i64min ≤ i ∧ i ≤ i64max then .ok (.int i) else .error "BigInt out of i64 range")
   | .str s => .done (.ok (.str s))
   | .sym => .done (.error "Symbol values are not supported")
   | .arr items ps => if tag ps = some "vecf32" then .vec items else .list items

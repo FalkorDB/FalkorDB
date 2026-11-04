@@ -2,7 +2,7 @@
 # GraphBLAS FFI wrappers (`graph/src/graph/graphblas/{matrix,vector,mod}.rs`, `tensor.rs` decode/iter)
 
 **Re-targeted to main e860645bb** (from ca36bfa15): #3492 (a3a99bdbc) rewrites `Matrix::delta_lmxm`
-(matrix.rs:1520) and adds `GrB_GT_UINT64` / `GrB_VALUEEQ_BOOL` / `GrB_Matrix_select_BOOL` imports (+3 lines before :1520,
+(then matrix.rs:1520) and adds `GrB_GT_UINT64` / `GrB_VALUEEQ_BOOL` / `GrB_Matrix_select_BOOL` imports (+3 lines before :1520,
 +55 after, so every `matrix.rs` pin moved). It is now modelled (`DeltaLmxm.lean`) and PROVEN, no longer a
 bare FFI row: `deltaLmxm_spec` (output stored iff `F*M` reaches it with no `F*DM` path, or `F*M` has strictly
 more paths than `F*DM`, or `F*DP` reaches it; no assumption on the layers), `deltaLmxm_correct` (= `F*(M-DM+DP)`
@@ -28,17 +28,17 @@ promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here)
 | --- | --- |
 | `GrbInfo.Info`, `Disposition` | `mod.rs:GrB_Info`; `assert_eq!` / `debug_assert_eq!` / `if info != SUCCESS {Err}` |
 | `Index.matrixNewOk`, `GB_NMAX`, `ME_DIM` | `GB_Matrix_new.c:28` bound; `tensor.rs:144-169` constants |
-| `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs:371 behind `Arc<Handle>` (`Matrix::clone` :403), `Iter::drop` :1744 then its `Arc<Handle>` field (#3090) |
+| `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs:373 behind `Arc<Handle>` (`Matrix::clone` :405), `Iter::drop` :1851 then its `Arc<Handle>` field (#3090) |
 | `Own.step`/`run`/`validTraces` | pre-#3090 `Matrix::drop`/`Iter::drop` (`Arc::get_mut` then Arc drop) |
-| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1823, `Iter::next` :1856 |
+| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1934, `Iter::next` :1967 |
 | `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:256` `Vector<u64>::decode`, `:350` `Vector<bool>::decode` |
-| `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; `Tensor::decode` :1553; layer-size check :1562-1573 (#2996) |
-| `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1263 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
+| `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; `Tensor::decode` :1553; layer-size check :1564-1573 (#2996) |
+| `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1266 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
 | `Decode.tensorLoop`/`decodeCheck`, `PromotionComplete`, `encFwd`/`encTs` | `Tensor::decode` marker count :1617, per-entry check :1632-1636, final count check :1665-1670 (#3033) |
-| `Misc.grownOk`, `iterExpand`, `vecDrain` | `Matrix::grown` matrix.rs:735, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1783, `vector::Iter::next` |
-| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:524, header pointers nulled :541-553 (#3097) |
-| `DeltaLmxm.deltaLmxm`, `cnt`, `mxmCount`, `deltaLmxm_spec`/`_correct`/`_eff` | `Matrix::delta_lmxm` matrix.rs:1520-1655 (#3492: `F*dm` counted, `F*m` counted at the masked positions, `GT` then select, `restored` added back; the dp accumulation unmasked) |
-| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :494 / `ptr` :488, `Matrix::count_in_rows` matrix.rs:808 (#3022) |
+| `Misc.grownOk`, `iterExpand`, `vecDrain` | `Matrix::grown` matrix.rs:738, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1783, `vector::Iter::next` |
+| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:526, header pointers nulled :550-558 (#3097) |
+| `DeltaLmxm.deltaLmxm`, `cnt`, `mxmCount`, `deltaLmxm_spec`/`_correct`/`_eff` | `Matrix::delta_lmxm` matrix.rs:1631-1768 (#3492: `F*dm` counted, `F*m` counted at the masked positions, `GT` then select, `restored` added back; the dp accumulation unmasked) |
+| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :498 / `ptr` :492, `Matrix::count_in_rows` matrix.rs:811 (#3022) |
 
 ## Theorems (all proved, no sorry)
 #3492 (`DeltaLmxm.lean`): **`deltaLmxm_correct`**, `deltaLmxm_spec`, `cnt_split`, `deltaLmxm_eff`, `deltaLmxm_tensor`,
@@ -48,15 +48,15 @@ promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here)
 any interleaving of clones/drops: freed at most once, and iff the count reaches 0),
 `arc_all_drop_frees_once`, `arc_every_interleaving_frees_once`,
 `iter_frees_iterator_before_matrix`, `detached_iter_frees_only_matrix`, `iterDrop_state`,
-`single_owner_frees_once`, `dup_independent_ownership`;
+`single_owner_frees_once`, `dup_independent_ownership`, `dup_copy_drop_leaves_source`;
 `drainL_eq_filter`, `drain_seek_eq_spec` (row iterator = in-range entries,
 row-major, once), `drain_no_duplication`, `drain_empty_matrix`;
 `decodeBlob_never_dies`, `decodeU64_never_dies`, `decodeBlob_safe_on_reachable`,
 `decodeBlob_rejects_invalid_object`, `hardened_eq_blob` (#2996 fix), `assertPanic_deserialize_dos`,
 `decodeBool_safe`, `decodeBool_never_dies`; `checkLayers_ok_iff`,
-`checkLayers_merge_in_bounds`;
+`checkLayers_merge_in_bounds`, `checkLayers_merge_in_bounds_dm` (the size check puts both delta layers inside the base);
 `encodeM_no_heap_addresses`, `scrub_scalars`, `decodeC_encodeM` (#3097);
-`edgeCount_no_panic`, `edgeCount_value`; #3033: `countValueEq_spec`,
+`edgeCount_no_panic`, `edgeCount_value` (checked `u64` additions, `Wf` bounds them); #3033: `countValueEq_spec`,
 `countValueEq_markers`, `mget_eq_some_iff`, `tensorLoop_ok_iff`,
 **`decodeCheck_ok_iff`** (decode accepts iff every tensor entry is an in-bounds
 marker pair and the `me` rows are promotion complete),
@@ -71,7 +71,7 @@ tests `orphan_row_refused`, `single_pair_ids_refused`,
 entries in the selected rows — the double-counting argument over columns), `countInRows_pos`,
 `countInRows_fromSorted`. The four C calls are the hypothesis `BulkSpec`, not axioms.
 
-## Confirmed bugs (repros: `graph/tests/lean_graphblas_wrappers.rs`)
+## Confirmed bugs (the repro tests named below are not in this tree; the only test file kept is `graph/tests/matrix_concurrent_drop.rs`, bug 4's regression test)
 1. **Crafted `GRAPH.RESTORE` kills the server — FIXED by #2996 on main
    1d15bf713** (both wrappers now return `Err`; `decodeBlob_never_dies`; the
    text below is the pre-#2996 state). `Vector::<bool>::decode_blob`

@@ -8,9 +8,9 @@ defaults and the "one source per requested sample" property can be stated.
 
 | here | there |
 | --- | --- |
-| `Config.samplingSize` (existing) | default `16` at `algo_procedures.rs:928` |
-| `samplingSeed`  | `samplingSeed` parse `algo_procedures.rs:938-943` (absent/null → `0`, `i64 as u64`) |
-| `lcg`, `drawLoop`, `rustSources` | source selection `algo_procedures.rs:991-1012` (seed 0: `i % n`; else the 64-bit LCG, `(rng >> 33) % n`, *deduplicated through `used`*) |
+| `Config.samplingSize` (existing) | default `16` at `algo_procedures.rs:966` |
+| `samplingSeed`  | `samplingSeed` parse `algo_procedures.rs:976-981` (absent/null → `0`, `i64 as u64`) |
+| `lcg`, `drawLoop`, `rustSources` | source selection `algo_procedures.rs:1032-1057` (seed 0: `i % n`; else the 64-bit LCG, `(rng >> 33) % n`, *deduplicated through `used`*) |
 | `cDefaultSize`  | C `BETWEENNESS_DEFAULT_SAMPLE_SIZE 32` (`src/procedures/proc_betweenness.c:21`, origin/master d7cf86675) |
 | `cEffSeed`      | C `if(samplingSeed == 0) samplingSeed = (uint32_t)time(NULL)` (`proc_betweenness.c:318-319`) |
 | `xorshift`, `cDraws` | C `_Random_Sources` (`proc_betweenness.c:46-96`) + `simple_rand` (`src/util/simple_rand.h`): exactly `MIN(nvals, samplingSize)` draws, duplicates kept |
@@ -22,7 +22,7 @@ abstracts which node a position names.
 namespace AlgoUdf.Betweenness
 open AlgoUdf
 
-/-! ## Rust (fb3d516d0) -/
+/-! ## Rust (origin/main 5c7af54f2) -/
 
 /-- `samplingSeed`: absent/null → 0, an Int → `*n as u64`, anything else errors. -/
 def samplingSeed (m : List (String × Val)) : Except String Nat :=
@@ -49,7 +49,7 @@ def drawLoop (n : Nat) : Nat → Nat → List Nat → List Nat
 def seed0Loop (n : Nat) (s : Nat) : List Nat :=
   (List.range s).foldl (fun acc i => if i % n ∈ acc then acc else acc ++ [i % n]) []
 
-/-- `sources` (`algo_procedures.rs:991-1012`) for `samplingSize s`, `n` compact
+/-- `sources` (`algo_procedures.rs:1032-1057`) for `samplingSize s`, `n` compact
 indices and seed `seed`. -/
 def rustSources (s n seed : Nat) : List Nat :=
   if n = 0 then []
@@ -60,6 +60,33 @@ def rustSources (s n seed : Nat) : List Nat :=
 /-- The Rust run with no `samplingSeed`: nothing reads a clock (`:966` gives 0 and the
 seed-0 branch `:1035` is `i % n_nodes`), so the clock argument is ignored. -/
 def rustSeedless (s n : Nat) (_clock : Nat) : List Nat := rustSources s n 0
+
+/-- The Rust run from a parsed config map: `samplingSize` (`Config.samplingSize`, :965-974),
+then `samplingSeed` (:976-981), then the source selection over `n` compact indices. -/
+def rustRun (m : List (String × Val)) (n : Nat) : Except String (List Nat) := do
+  let s ← Config.samplingSize m
+  let seed ← samplingSeed m
+  pure (rustSources s n seed)
+
+/-- With no `samplingSeed` (absent or null) the run is the seed-0 run, whatever the clock. -/
+theorem rustRun_no_seed (m : List (String × Val)) (n : Nat) (h : lookup m "samplingSeed" = none) :
+    rustRun m n = (Config.samplingSize m).map (fun s => rustSeedless s n 0) := by
+  unfold rustRun samplingSeed
+  rw [h]
+  cases Config.samplingSize m <;> rfl
+
+/-- An integer `samplingSeed` is reduced modulo 2^64 (`*n as u64`) and reaches the draw loop. -/
+theorem rustRun_int_seed (m : List (String × Val)) (n : Nat) (k : Int)
+    (h : lookup m "samplingSeed" = some (.int k)) :
+    rustRun m n = (Config.samplingSize m).map (fun s => rustSources s n (k % 18446744073709551616).toNat) := by
+  unfold rustRun samplingSeed
+  rw [h]
+  cases Config.samplingSize m <;> rfl
+
+/-- The 20-sample, seed-7 repro of #3380 through the config parser. -/
+theorem rustRun_repro :
+    rustRun [("samplingSize", .int 20), ("samplingSeed", .int 7)] 40 = .ok (rustSources 20 40 7) := by
+  rfl
 
 /-! ## C (origin/master) -/
 

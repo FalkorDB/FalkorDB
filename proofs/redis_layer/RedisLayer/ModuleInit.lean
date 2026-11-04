@@ -5,8 +5,10 @@ Since #3328 (`ded0b7c3f`) load-time configuration has one source: `graph_init`
 (`module_init.rs:139`) collects the arguments (`to_string_lossy`) and calls
 `config::apply_module_args`, refusing the load (`Status::Err`) on any error
 (`:163-168`); `lib.rs` sets `module_args_as_configuration: false`, so redismodule-rs no
-longer reads them. That function is modelled and proven equal to C's `Config_Init` in
-`LoadArgs.lean` (`rust_c_same_accept`, `error_applies_nothing`). `graph_init`'s own
+longer reads them. That function is modelled in `LoadArgs.lean`; `rust_c_same_accept` proves it
+accepts exactly what C's `Config_Init` accepts, for arguments with no embedded NUL, no leading
+whitespace in a value and no Rust-only name, given `FsOk` (`File::create` agrees with
+`access(W_OK)`); `error_applies_nothing` is a separate property (a refused load applies nothing). `graph_init`'s own
 work here is "args → `apply_module_args` → `Err` ⇒ `Status::Err`" (`graphInitArgs`).
 
 `table` (the `redis_module!` `configurations:` list, `lib.rs:97-116`) still registers the

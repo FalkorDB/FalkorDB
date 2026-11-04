@@ -374,7 +374,8 @@ def bulkReply (n e : Nat) : String := toString n ++ " nodes created, " ++ toStri
 def cBulkReply (n e : Nat) : String := toString n ++ " nodes created, " ++ toString e ++ " edges created"
 
 /-- **Fixed by #3301 (dd333fe32)**: the success reply names relationships as C does
-(`bulk_insert.rs:889,1044`; both bulk paths). -/
+(`bulk_insert.rs:889,1044`; both bulk paths). This is `rfl` between two copies of the text, so it
+records the wording only; it would not notice a change to the `format!` in `bulk_insert.rs`. -/
 theorem bulk_reply_c (n e : Nat) : bulkReply n e = cBulkReply n e := rfl
 
 /-! ## GRAPH.PROFILE / GRAPH.EXPLAIN flags (`QueryArgs.profileFront`, `explainFront`)

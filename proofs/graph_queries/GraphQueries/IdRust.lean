@@ -66,7 +66,9 @@ def rChecked (s : IdS) : Bool :=
   let e := s.entryBound + above s.taken s.entryBound
   decide (e < 2 ^ 64) && e == s.bound
 
-/-- `create` (id_space.rs:582). -/
+/-- `create` (id_space.rs:582). `ns` is a `RoaringTreemap` in Rust, so callers must pass a
+duplicate-free list (`IdSpaceContract.create_ok` takes `ns.Nodup`); `ns.length` is then the
+set's `len()`. -/
 def rCreate (s : IdS) (ns : List Nat) : Option IdS :=
   match (smax ns).filter (· ≥ ID_LIMIT) with
   | some _ => none                                   -- IdOutOfRange
@@ -126,7 +128,7 @@ def rustIdOps : IdSpaceOps :=
 /-- **The contract holds for the Rust `IdSpace`.** -/
 theorem rustIdOps_contract : IdSpaceContract rustIdOps where
   create_ok := by
-    intro s ns s' h
+    intro s ns s' _ h
     simp only [rustIdOps, rCreate] at h
     split at h
     · simp at h
@@ -147,6 +149,16 @@ theorem rustIdOps_contract : IdSpaceContract rustIdOps where
       have : (smin (diff ns s.recycled)).filter (· < s.entryBound) = some m := by
         rw [hm]; simp; omega
       simp only [this]
+  create_refuses_taken := by
+    intro s ns n hn hr ht
+    simp only [rustIdOps, rCreate]
+    split
+    · rfl
+    · split
+      · rfl
+      · have hc : n ∈ inter (diff ns s.recycled) s.taken := by simp [inter, diff, hn, hr, ht]
+        have : inter (diff ns s.recycled) s.taken ≠ [] := fun h => by simp [h] at hc
+        simp [this]
   create_refuses_limit := by
     intro s ns n hn hl
     simp only [rustIdOps, rCreate]
@@ -169,6 +181,21 @@ theorem rustIdOps_contract : IdSpaceContract rustIdOps where
     obtain ⟨m, hm, -⟩ := smin_le _ n hi
     have : rRefuseRecycled s req = false := by simp [rRefuseRecycled, hm]
     simp [this]
+  release_refuses_undeletable := by
+    intro s req fr n hn hb ht
+    simp only [rustIdOps, rRelease]
+    have hd : n ∈ diff req s.taken := by simp [diff, hn, ht]
+    obtain ⟨m, hm, hle⟩ := smax_ge _ n hd
+    obtain ⟨m2, hm2, hle2⟩ := smax_ge _ n hn
+    have h1 : rRefuseUndeletable s req = false := by
+      simp only [rRefuseUndeletable, hm2]
+      have : ¬ (m2 < s.entryBound) := by omega
+      simp [this, hm]
+      omega
+    simp [h1]
+  cancel_refuses_taken := by
+    intro s id h
+    simp [rustIdOps, rCancel, h]
   cancel_ok := by
     intro s id s' h
     simp only [rustIdOps, rCancel] at h

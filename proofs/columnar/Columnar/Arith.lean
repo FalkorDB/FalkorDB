@@ -1,14 +1,14 @@
 import Columnar.VectorExpr
 
 /-
-# Arithmetic lanes (`vector_expr.rs:881-988`) against `Value` arithmetic
+# Arithmetic lanes (`vector_expr.rs:880-994`) against `Value` arithmetic
 
 | here | there |
 | --- | --- |
 | `wrap` | two's-complement `i64` wrap-around (`wrapping_add/sub/mul/div/rem`) |
 | `AOp`, `valueArith` | `impl Add/Sub/Mul/Div/Rem for Value` (`value.rs:904-1170`), numeric + null arms; every other shape is an abstract `other` (the generic lane calls it too) |
-| `intLane`, `floatLane`, `floatOperand` | `int_lane`, `float_lane`, `float_operand` (`vector_expr.rs:956-988`) |
-| `arithmetic` | `arithmetic` (`vector_expr.rs:881-953`) |
+| `intLane`, `floatLane`, `floatOperand` | `int_lane`, `float_lane`, `float_operand` (`vector_expr.rs:962-994`) |
+| `arithmetic` | `arithmetic` (`vector_expr.rs:880-959`) |
 -/
 
 namespace Columnar
@@ -67,7 +67,7 @@ def floatOperand (c : EC F) : Bool :=
   | .scalar (.float _) => true
   | _ => false
 
-/-- The int lane (`vector_expr.rs:891-917`). -/
+/-- The int lane (`vector_expr.rs:887-923`). -/
 def intStage (op : AOp) (lhs rhs : EC F) (len : Nat) : Option (EC F) :=
   let nulls := unionNulls lhs rhs len
   match intLane lhs len, intLane rhs len with
@@ -80,7 +80,7 @@ def intStage (op : AOp) (lhs rhs : EC F) (len : Nat) : Option (EC F) :=
     else some (.ints (List.zipWith (intOp op) a b) nulls)
   | _, _ => none
 
-/-- The float lane (`vector_expr.rs:922-936`). -/
+/-- The float lane (`vector_expr.rs:925-942`). -/
 def floatStage (op : AOp) (lhs rhs : EC F) (len : Nat) : Option (EC F) :=
   if floatOperand lhs || floatOperand rhs then
     match floatLane lhs len, floatLane rhs len with
@@ -88,12 +88,12 @@ def floatStage (op : AOp) (lhs rhs : EC F) (len : Nat) : Option (EC F) :=
     | _, _ => none
   else none
 
-/-- The generic lane (`vector_expr.rs:940-952`). -/
+/-- The generic lane (`vector_expr.rs:944-958`). -/
 def genericStage (other : AOp → V F → V F → Except String (V F)) (op : AOp) (lhs rhs : EC F) (len : Nat) :
     Except String (EC F) :=
   ((List.range len).mapM (fun i => valueArith other op (lhs.get i) (rhs.get i))).map EC.values
 
-/-- `arithmetic` (`vector_expr.rs:881-953`). -/
+/-- `arithmetic` (`vector_expr.rs:880-959`). -/
 def arithmetic (other : AOp → V F → V F → Except String (V F)) (op : AOp) (lhs rhs : EC F) (len : Nat) :
     Except String (EC F) :=
   match intStage op lhs rhs len with

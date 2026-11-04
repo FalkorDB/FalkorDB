@@ -44,10 +44,10 @@ namespace GBW
 (tensor.rs:1265-1285): `none` = the panic. -/
 def csub (x y : Nat) : Option Nat := if y ≤ x then some (x - y) else none
 
-/-- Checked add — the two additions in `edge_count`. Overflow needs an `nvals`
-that is not a real matrix size (`> u64`); modelled as always-`some` at the `Nat`
-level, since the additions cannot underflow. -/
-def cadd (x y : Nat) : Option Nat := some (x + y)
+/-- Checked `u64` add — the two additions in `edge_count`
+(`checked_add().unwrap_or_else(panic)`): `none` = the overflow panic, when the
+`Nat` sum does not fit in a `u64`. -/
+def cadd (x y : Nat) : Option Nat := if x + y < 2 ^ 64 then some (x + y) else none
 
 /-- `Tensor::edge_count` (tensor.rs:1231), the exact left-to-right checked
 sequence. `some n` = returns `n`; `none` = panics (server crash). -/
@@ -61,34 +61,40 @@ def edgeCount (m dp dm shadow multi me : Nat) : Option Nat :=
 /-- The delta/promotion invariants `edge_count`'s doc-comment lists as bounding
 each subtraction (tensor.rs:1231-1265):
 `dm ⊆ m` ⇒ `dm ≤ m`; `dp ∩ dm = ∅` bounds the pattern so `shadow ≤ m+dp−dm`;
-promotion-completeness ⇒ `multi ≤ effective pattern`. -/
+promotion-completeness ⇒ `multi ≤ effective pattern`. The two additions are
+bounded by `u64` itself: `|m| + |dp|` and the final `+ |me|` must fit (the
+`checked_add` panics otherwise; `|me|` is a sum of block `nvals`, so it can in
+principle exceed what the pattern leaves room for). -/
 structure Wf (m dp dm shadow multi me : Nat) : Prop where
   dm_le : dm ≤ m
   shadow_le : shadow ≤ m + dp - dm
   multi_le : multi ≤ m + dp - dm - shadow
+  add1_fits : m + dp < 2 ^ 64
+  add2_fits : m + dp - dm - shadow - multi + me < 2 ^ 64
 
-/-- **No underflow while the invariant holds.** For a tensor whose layers
-satisfy `Wf`, `edge_count` returns a value and never panics — the machine-checked
+/-- **No underflow or overflow while the invariant holds.** For a tensor whose
+layers satisfy `Wf` (including the two `u64` bounds), `edge_count` returns a
+value and never panics — the machine-checked
 core of the `# Panics` doc-comment. -/
 theorem edgeCount_no_panic (m dp dm shadow multi me : Nat) (h : Wf m dp dm shadow multi me) :
     (edgeCount m dp dm shadow multi me).isSome := by
-  obtain ⟨h1, h2, h3⟩ := h
+  obtain ⟨h1, h2, h3, h4, h5⟩ := h
   unfold edgeCount cadd csub
   have e1 : dm ≤ m + dp := by omega
-  simp only [Option.bind, if_pos e1]
+  simp only [Option.bind, if_pos h4, if_pos e1]
   have e2 : shadow ≤ m + dp - dm := h2
   simp only [if_pos e2]
   have e3 : multi ≤ m + dp - dm - shadow := h3
-  simp only [if_pos e3]
+  simp only [if_pos e3, if_pos h5]
   rfl
 
 /-- The value it returns is the edge-count identity. -/
 theorem edgeCount_value (m dp dm shadow multi me : Nat) (h : Wf m dp dm shadow multi me) :
     edgeCount m dp dm shadow multi me = some (m + dp - dm - shadow - multi + me) := by
-  obtain ⟨h1, h2, h3⟩ := h
+  obtain ⟨h1, h2, h3, h4, h5⟩ := h
   unfold edgeCount cadd csub
   have e1 : dm ≤ m + dp := by omega
-  simp only [Option.bind, if_pos e1, if_pos h2, if_pos h3]
+  simp only [Option.bind, if_pos h4, if_pos e1, if_pos h2, if_pos h3, if_pos h5]
 
 /-! ## Forward-layer sizes (#2996, tensor.rs:1562-1573)
 
@@ -111,11 +117,19 @@ theorem checkLayers_ok_iff (m dp dm : Dims) : checkLayers m dp dm = .ok () ↔ d
   unfold checkLayers
   by_cases h1 : dp = m <;> by_cases h2 : dm = m <;> simp [h1, h2]
 
-/-- **Main.** A decode that passes the check only merges delta entries that lie
-inside the base: every stored delta entry is within its own layer's dims. -/
+/-- **Delta-plus is inside the base.** A decode that passes the size check
+has `dp = m` (`checkLayers_ok_iff`), so every entry within the delta-plus
+layer's dims is within the base's. This is a rewrite lemma on the size check
+only: the `m.set` merge loop itself is not modelled here; what the check buys
+is that every coordinate `m.set` receives is in bounds. -/
 theorem checkLayers_merge_in_bounds (m dp dm : Dims) (h : checkLayers m dp dm = .ok ())
     (e : Nat × Nat) (he : inDims dp e) : inDims m e := by
   have := ((checkLayers_ok_iff m dp dm).1 h).1; subst this; exact he
+
+/-- Same for the delta-minus layer. -/
+theorem checkLayers_merge_in_bounds_dm (m dp dm : Dims) (h : checkLayers m dp dm = .ok ())
+    (e : Nat × Nat) (he : inDims dm e) : inDims m e := by
+  have := ((checkLayers_ok_iff m dp dm).1 h).2; subst this; exact he
 
 theorem checkLayers_rejects_main_test : checkLayers (4, 4) (8, 8) (4, 4) ≠ .ok () := by
   rw [Ne, checkLayers_ok_iff]; simp
@@ -403,10 +417,13 @@ theorem decodeCheck_ok_complete (S : SelectValueEqSpec) (nrows ncols : Nat) (m :
   subst hr; exact ⟨rfl, hiff.2⟩
 
 /-- **The bug is gone.** A decoded tensor (`dp = dm = ∅`, so `shadow = 0`) has
-`multi = rows.length ≤ |m|`, so `edge_count` cannot panic, whatever `|me|`. -/
+`multi = rows.length ≤ |m|`, so `edge_count` cannot underflow, whatever `|me|`;
+it can only panic by `u64` overflow of `|m|` or of the final `+ |me|` (the two
+`hm`/`hov` bounds, a real matrix and a real store both satisfy `hm`). -/
 theorem decodeCheck_ok_edgeCount_no_panic (S : SelectValueEqSpec) (nrows ncols : Nat)
     (m : MatU) (ts : List (Pair × List Nat)) (rows : List Pair)
-    (h : decodeCheck S nrows ncols m ts = .ok rows) (me : Nat) :
+    (h : decodeCheck S nrows ncols m ts = .ok rows) (me : Nat)
+    (hm : m.length < 2 ^ 64) (hov : m.length - rows.length + me < 2 ^ 64) :
     (edgeCount m.length 0 0 0 rows.length me).isSome := by
   have hlen : rows.length = countValueEq S m MULTI_EDGE := by
     unfold decodeCheck at h
@@ -419,7 +436,7 @@ theorem decodeCheck_ok_edgeCount_no_panic (S : SelectValueEqSpec) (nrows ncols :
       · simp only [hc, ite_false] at h; cases h
   have hle : countValueEq S m MULTI_EDGE ≤ m.length := by
     rw [countValueEq_spec]; exact List.length_filter_le _ _
-  exact edgeCount_no_panic _ _ _ _ _ _ ⟨Nat.zero_le _, by omega, by omega⟩
+  exact edgeCount_no_panic _ _ _ _ _ _ ⟨Nat.zero_le _, by omega, by omega, by omega, by omega⟩
 
 /-! ### Every encoded tensor is accepted -/
 

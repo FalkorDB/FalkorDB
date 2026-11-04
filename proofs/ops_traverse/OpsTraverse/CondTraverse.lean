@@ -42,7 +42,7 @@ def pes (g : Graph) (r : RowIn) (p : Nat × Nat) : List Nat :=
   (edgesBetween g p.1 p.2).filter fun e => !(r.used.contains e)
 
 /-- One matrix pair of `process_pairs`: every unused edge when
-`emit_relationship` (`:1374-1405`), else only the first (`:1354-1372`). -/
+`emit_relationship` (`:1302-1314`), else only the first (`:1282-1299`). -/
 def pairRows (g : Graph) (isRev : Bool) (r : RowIn) (emit : Bool) (p : Nat × Nat) :
     List (Nat × Nat × Nat) :=
   if pcond r isRev p then

@@ -8,11 +8,11 @@ cd proofs/id_list && lake build        # Build completed successfully
 grep -n "sorry\|admit\|^axiom\|native_decide" FalkorIdList/*.lean   # nothing
 ```
 `#print axioms` on the headline theorems: only `propext`, `Classical.choice`, `Quot.sound`.
-89 theorems (43 in `Push.lean`, 46 in `Wire.lean`).
+130 theorems (`Push.lean` 41, `Wire.lean` 46, `CostProps.lean` 19, `Misc.lean` 11, `Decoded.lean` 8, `PushT.lean` 4, `Cost.lean` 1).
 
-Rust repros: `graph/tests/lean_id_list.rs`
-(`cargo test -p graph --test lean_id_list -- --nocapture`): 6 pass, 2 fail on purpose (the
-two confirmed issues below).
+Rust repros: the repro test file `graph/tests/lean_id_list.rs` is not carried in this tree. The
+repros below were run against the real Rust at the time; the one confirmed issue (below) is fixed
+by #2920, so none of them is expected to fail on main.
 
 ## What is modelled
 
@@ -70,12 +70,13 @@ Wire (`Wire.lean`)
 - Concrete refusals (`refuses_*`, by `rfl`): reserved bit, descending Repeat, kind 3, u64 wrap,
   step below zero, count too long/short, truncation (EOF), too many segments for the bytes.
 
-## CONFIRMED issues (Rust repro fails)
+## Confirmed issues (one, historical and fixed; its Rust repros failed before #2920)
 
 1. **FIXED by #2920 (`2ef102ae0`, issue #2919)** — now `from_segments` sets `run.start =
    segments.len()`; Lean `decoded_then_pushed_keeps_order` (`Decoded.lean`) proves every push
-   sequence onto any decoded list keeps the ids in order. Historical record follows (the Lean
-   counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412).
+   sequence onto any decoded list keeps the ids in order. **Everything below under this item is the
+   historical record of the pre-#2920 code, not the current behaviour** (the Lean counterexamples
+   were removed in bbee75955; the last revision that has them is 17ccc5412).
    **Pushing onto a decoded `IdList` reorders ids or panics** — `IdList::from_segments`
    (id_list.rs:1183) sets `run.start = last segment`, `desc = None`, fresh tally, regardless of
    what that segment is. `Inv` does not hold there, and `push` is `pub`.
@@ -126,8 +127,11 @@ of a buffer that did not come from this encoder.
   `serialized_size = ser.length < 2^32`, deserialized sets are sorted u64 sets). Actual blob
   bytes, `optimize()`, and the `prefers_bitmap` cost arithmetic are not modelled (the latter
   is quantified away; `predicted_matches_roaring` tests it).
-- Segment `len: u32` overflow inside `push` (needs ≥ 2^32 pushes; `count()` already panics
-  there) is not modelled; theorems assume `xs.length < 2^32` where the wire needs it.
+- Segment `len: u32` overflow inside `push` (`*len += 1`; needs ≥ 2^32 pushes, or a decoded
+  segment of length `u32::MAX` extended by one push; `count()` already panics there) is not
+  modelled; theorems assume `xs.length < 2^32` where the wire needs it, and
+  `decoded_then_pushed_keeps_order` / `readIds_then_pushed_keeps_order` carry that bound as an
+  explicit hypothesis.
 - Cached `len/min/max` of bitmap segments are derived from the set rather than stored; the
   proof therefore does not check cache maintenance (by inspection: `max = id` after
   `insert(id)` with `id > max` is correct).

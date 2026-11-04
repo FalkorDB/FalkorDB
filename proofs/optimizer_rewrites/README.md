@@ -10,7 +10,7 @@ This project checks each optimizer pass in `graph/src/planner/optimizer/` agains
 - anonymous traversal chains are fused;
 - an edge nobody reads is collapsed.
 
-The passes for scans and indexes (`select_scan_node.rs`, `utilize_index.rs`) are in [`../optimizer_scan`](../optimizer_scan). The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorOptimizer.lean`](FalkorOptimizer.lean) and in the header of each file. This README explains *what* is proven and *why it matters*.
+The passes for scans and indexes (`select_scan_node.rs`, `utilize_index.rs`) are in [`../optimizer_scan`](../optimizer_scan); only `select_scan_node`'s #2556 chain-rebuild model (`PushPlan.selectScan`) lives here. The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorOptimizer.lean`](FalkorOptimizer.lean) and in the header of each file. This README explains *what* is proven and *why it matters*.
 
 ## What "correct" means here
 
@@ -23,13 +23,13 @@ The model gives the plan a reference meaning:
 
 A rewrite is correct if it keeps the multiset of result rows (and their order where ORDER BY applies), and does not make a query that succeeded start to fail.
 
-That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the plan a graph state that `CREATE`/`MERGE` change, and states the stronger `EffectSound`: a rewrite keeps the rows **and** the graph the query leaves behind. `run_readonly` proves a write-free plan leaves the graph unchanged, so between write-free plans `EffectSound` reduces to the rows criterion and the earlier theorems carry over; #748 and #997 are plans where they differ (`bug748_rows_only_blind`).
+That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the plan a graph state that `CREATE`/`MERGE` of a bare node change (the node count only; label, relationship and attribute writes are not modelled), and states the stronger `EffectSound`: a rewrite keeps the rows **and** the graph state the query leaves behind (the node count). `run_readonly` proves a write-free plan leaves the graph unchanged, so between write-free plans `EffectSound` reduces to the rows criterion and the earlier theorems carry over; #748 and #997 are plans where they differ (`bug748_rows_only_blind`).
 
 ## The questions this project answers
 
 **1. Can a `WHERE` conjunct be pushed down safely?**
 
-- **Below a Cartesian product, yes, into the branch that binds its variables** (`push_cp_left`, `push_cp_right`).
+- **Below a Cartesian product, yes, into the branch that binds its variables, provided the other branch binds none of them** (`push_cp_left` needs the conjunct covered by the left rows; `push_cp_right` needs the left rows to bind none of its variables).
 - **Below Unwind, CondTraverse, Apply and ProcedureCall, yes** (`push_extend`): they keep their input columns.
 - **Below Sort, yes:** same rows, still sorted (`push_sort_perm`, `push_sort_sorted`).
 - **Below LIMIT or SKIP, no.** It changes which rows the LIMIT keeps (`limit_not_transparent`, `skip_not_transparent`). The exclusion list in `push_filters_down.rs` does not exclude them (`limit_skip_not_excluded`). Rust and C both return the wrong count here, so it is a shared spec bug, not a Rust regression. The only safe case is a conjunct whose verdict is the same on every row (`push_limit_const`).
@@ -40,7 +40,7 @@ That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the 
 
 **2. Is merging two stacked filters exact?**
 
-- **Only if the inner conjunct is evaluated first.** `merge_child_first_row` proves child-first order is exact.
+- **Only if the inner conjunct is evaluated first, and it gives a boolean.** `merge_child_first_row` proves child-first order is exact when the inner conjunct evaluates to `true` or `false` (not NULL, not an error) on the row.
 - **On main, the outer one is evaluated first.** `MATCH (n:N) WHERE n.v <> 1 MATCH (m:N) WHERE 1/(n.v-1) = 0` fails with "Division by zero"; C returns 15 (`merge_order_rust_errors`).
 
 **3. Is removing an always-true filter exact?**
@@ -63,7 +63,7 @@ That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the 
 
 Several passes collapse an edge, a bound edge or a variable-length path when nobody reads it, using the oracle in `optimizer/references.rs` (added by #2390).
 
-- **Per operator, yes.** `refsNew_complete` proves the oracle reports every read of every IR variant, for plans the planner builds; `refsNew_sound` proves it reports nothing else.
+- **Per operator, yes.** `refsNew_complete` proves the oracle reports every read of every IR variant, for plans the planner builds; `refsNew_sound` proves it reports only variables the operator reads or binds (a binder's own variable only keeps a flag on).
 - **For fusion, yes.** Fusion checks the whole plan (`anyRead_plug`, `wholeRead_covers`, `fuse_unread_sound`).
 - **For the three `reduce_*` passes, no.** They walk ancestors only, so a reader in a sibling subtree is missed: `MATCH (a)-[r]->(b) CALL { WITH r RETURN r.w AS w } RETURN w` → Rust 1 row, C 3 (`main_misses_call_sibling`). The oracle also ignores `sibling_edges` (`refsNew_misses_sibling_edges`).
 
@@ -115,7 +115,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 | 4 (W2-rewrites-2) | `id_eq_null_errors` | `id(n) = null`, `= 1.0`, `> 1.5` → "Node ID must be an integer" (C: 0 rows) | **Open** |
 | 5 (W2-rewrites-3) | `hash_join_drops_row` | The hash join drops Int/Float pairs near 2⁵³: 2 rows where C gives 4 | **Open** |
 | 6 (W2-rewrites-4) | `id_only_routing_unsound` | A filter inside an uncorrelated `CALL {}` was pushed onto the Argument, swapping values (#2557) | No longer reproduces on main (most likely fixed by #2845); the Lean still describes id-only routing |
-| 7 | `pre2390_misses_*`, `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | Per-operator part fixed by #2390; sibling part **open** (PR #2918 not merged) |
+| 7 | `refsNew_sees_*` (the per-operator reads the pre-#2390 oracle missed), `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | Per-operator part fixed by #2390; sibling part **open** (PR #2918 not merged) |
 | 8 (W4-plan-4) | `root_scan_has_no_parent` | `CALL db.labels() YIELD label MATCH (n)` makes a scan the plan root; `utilize_node_by_id` calls `parent().unwrap()` on it | **Repro closed by #3297** (validation now rejects the query, main b84473a7f); the `unwrap()` remains as a hazard |
 | W6-opt-1 | `filter_pushed_through_boundary` | Push-down gives an OPTIONAL MATCH inside `CALL {}` the outer ids: "Variable n not found" where C returns rows. `fixed_keeps_filter` checks the trial fix | **Open** |
 | #748 | `bug748_merge_skipped` (property `EffectSound`; `bug748_rows_only_blind`) | `WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } MATCH () WHERE false RETURN 0`: the constant `false` is pushed into both Apply branches, so the MERGE never runs. Rust 0 nodes, C 1; with `WITH *` both 1 (`bug748_with_star_control`) | **Open** |
@@ -143,7 +143,7 @@ Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time
 | `References2.lean` | The tree walks: ancestors only for the `reduce_*` passes, whole plan for fusion |
 | `Sequence.lean` | `optimize` sequencing, the tree rebuilds (`rebuild_with_hash_joins`), edge-filter absorption |
 | `CallBoundary.lean` | W6-opt-1: push-down across the `CALL {}` entry projection (namespace `Pr2845`) |
-| `PushPlan.lean` | Gap closed 2026-10-20: push-down on a plan tree with graph writes and main's id-only routing; `EffectSound` (rows and writes kept), `RowSound`, `RoutesBound`; #748, #997, #3352. Also `select_scan_node`'s chain rebuild and `KeepsFiltersBound` (#2556) |
+| `PushPlan.lean` | Gap closed 2026-10-20: push-down on a plan tree with graph writes (only creating a bare node, which bumps the node count; labels, relationships and attributes are not written) and main's id-only routing; `EffectSound` (rows and node count kept), `RowSound`, `RoutesBound`; #748, #997, #3352. Also `select_scan_node`'s chain rebuild and `KeepsFiltersBound` (#2556) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies.
@@ -178,7 +178,7 @@ bash proofs/lean_ci.sh optimizer_rewrites    # build + no sorry/admit/native_dec
 bash proofs/coverage.sh                      # repo-wide coverage report
 ```
 
-**When you change a pass in `graph/src/planner/optimizer/` (other than `select_scan_node.rs` and `utilize_index.rs`), or `references.rs`:**
+**When you change a pass in `graph/src/planner/optimizer/` (other than `utilize_index.rs` and, apart from its #2556 chain rebuild modelled in `PushPlan.lean`, `select_scan_node.rs`), or `references.rs`:**
 
 1. Find the function in `COVERAGE.tsv`.
 2. Update its Lean model to match.

@@ -463,7 +463,7 @@ theorem packBranches_chain (c : Cfg) (h : Nat) : ∀ (ns : List Node) (lo hi : N
       · simp only [List.length_cons, List.length_drop] at r2 ⊢; omega
       · rw [List.map_cons, List.flatten_cons, r3, hflat]; rfl
 
-/-- **`build_root` (`node.rs:105-114`)** on a `MinChain`: one well-formed node with the same entries
+/-- **`build_root` (`node.rs:90-99`)** on a `MinChain`: one well-formed node with the same entries
     (`fuel` = the fragment count is enough: each `pack_branches` round shrinks the list). -/
 theorem buildRoot_wf (c : Cfg) : ∀ (fuel h : Nat) (frags : List Node) (lo hi : Nat), frags ≠ [] →
     frags.length ≤ fuel + 1 → MinChain c h lo frags hi →

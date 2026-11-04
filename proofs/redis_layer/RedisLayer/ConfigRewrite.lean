@@ -188,7 +188,8 @@ theorem vkey_rewrite_reloads_load (fs : FS) (td tm : Int) (args : List (List Nat
 
 /-- **Still open (same class as #3413, not filed)**: values the module-load arguments accept
 whose rewritten line the table refuses. `CACHE_SIZE`/`THREAD_COUNT`/`NODE_CREATION_BUFFER`
-are load-only (`validateLoadOnly`); `JS_HEAP_SIZE` is also settable by `GRAPH.CONFIG SET`. -/
+and `INDEX_WORKER_THREADS` are load-only (`validateLoadOnly`); `JS_HEAP_SIZE` and `JS_STACK_SIZE` are also settable by
+`GRAPH.CONFIG SET` (the latter checked here through `validateConfigSet`). -/
 theorem rewrite_reload_counterexamples (fs : FS) :
     validateLoadOnly fs .cacheSize (dec 1001) = some (.ok (.cacheSize 1001)) ∧
     nativeLoad "CACHE_SIZE" (rewriteVal 1001) = none ∧
@@ -198,8 +199,12 @@ theorem rewrite_reload_counterexamples (fs : FS) :
       some (.ok (.nodeCreationBuffer 1073741825)) ∧
     nativeLoad "NODE_CREATION_BUFFER" (rewriteVal 1073741825) = none ∧
     validate .jsHeap (dec 4294967297) = .ok 4294967297 ∧
-    nativeLoad "JS_HEAP_SIZE" (rewriteVal 4294967297) = none := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    nativeLoad "JS_HEAP_SIZE" (rewriteVal 4294967297) = none ∧
+    validateLoadOnly fs .indexWorkerThreads (dec 1025) = some (.ok (.indexWorkerThreads 1025)) ∧
+    nativeLoad "INDEX_WORKER_THREADS" (rewriteVal 1025) = none ∧
+    validateConfigSet (some .jsStack) (dec 4294967297) = .ok 4294967297 ∧
+    nativeLoad "JS_STACK_SIZE" (rewriteVal 4294967297) = none := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · simp [validateLoadOnly, req, rustParseI64_dec 1001 (by decide), Option.filter]
   · exact nativeLoad_out table "CACHE_SIZE" 25 0 1000 1001 (by decide) (by decide) (by decide) (by decide)
   · simp [validateLoadOnly, req, rustParseI64_dec 1025 (by decide), Option.filter]
@@ -208,5 +213,9 @@ theorem rewrite_reload_counterexamples (fs : FS) :
   · exact nativeLoad_out table "NODE_CREATION_BUFFER" 16384 0 1073741824 1073741825 (by decide) (by decide) (by decide) (by decide)
   · simp [validate, rustParseI64_dec 4294967297 (by decide), jsMinSize]
   · exact nativeLoad_out table "JS_HEAP_SIZE" 268435456 0 4294967296 4294967297 (by decide) (by decide) (by decide) (by decide)
+  · simp [validateLoadOnly, req, rustParseI64_dec 1025 (by decide), Option.filter]
+  · exact nativeLoad_out table "INDEX_WORKER_THREADS" 0 0 1024 1025 (by decide) (by decide) (by decide) (by decide)
+  · simp [validateConfigSet, mapE, validate, rustParseI64_dec 4294967297 (by decide), jsMinSize]
+  · exact nativeLoad_out table "JS_STACK_SIZE" 1048576 0 4294967296 4294967297 (by decide) (by decide) (by decide) (by decide)
 
 end RedisLayer.ConfigRewrite

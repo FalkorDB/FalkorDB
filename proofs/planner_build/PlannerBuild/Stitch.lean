@@ -1,6 +1,6 @@
 import PlannerBuild.Core
 /-
-# Clause stitching: `Planner::plan_query` (planner/mod.rs:2824-2971)
+# Clause stitching: `Planner::plan_query` (planner/mod.rs:2719-2866)
 
 Each clause is planned on its own; the plans are then stitched in reverse: the
 last clause's plan is the root, and each earlier plan is inserted at an
@@ -63,7 +63,7 @@ def loopPass : Op → Bool
 
 def isApply : Op → Bool | .apply => true | _ => false
 
-/-- `is_saturated_apply` (mod.rs:958-963). -/
+/-- `is_saturated_apply` (mod.rs:953-958). -/
 def saturated : Plan → Bool
   | .node .apply (_ :: _ :: _) => true
   | _ => false
@@ -95,18 +95,18 @@ def projDescend : Plan → Path
   | _ => []
 
 /-- Minimal children of clause operators whose child 0 may be an Apply chain
-(`descend_one_clause_expr_chain`, mod.rs:994-1007). -/
+(`descend_one_clause_expr_chain`, mod.rs:989-1002). -/
 def clauseMin : Op → Option Nat
   | .forEach _ _ => some 2
   | .unwind _ _ | .set _ | .remove _ | .delete _ | .procCall _ => some 1
   | _ => none
 
-/-- Descend saturated Applies (mod.rs:1012-1014). -/
+/-- Descend saturated Applies (mod.rs:1007-1009). -/
 def satChain : Plan → Path
   | .node .apply (c :: _ :: _) => 0 :: satChain c
   | _ => []
 
-/-- `descend_one_clause_expr_chain` (mod.rs:990-1017). -/
+/-- `descend_one_clause_expr_chain` (mod.rs:985-1012). -/
 def descendOne : Plan → Path
   | .node op (c :: cs) =>
     match clauseMin op with
@@ -114,7 +114,7 @@ def descendOne : Plan → Path
     | none => []
   | .node _ [] => []
 
-/-- `descend_clause_expr_applies` (mod.rs:974-988), with fuel = plan depth. -/
+/-- `descend_clause_expr_applies` (mod.rs:969-983), with fuel = plan depth. -/
 def descendClause : Nat → Plan → Path
   | 0, _ => []
   | fuel + 1, p =>
@@ -152,7 +152,7 @@ def needsApplyWrapping : Plan → Bool
   | .node (.filter _) [] | .node .semiApply [] | .node .antiSemiApply [] | .node .orMux [] => false
   | _ => true
 
-/-- `add_argument_to_leaves` (mod.rs:870-904): every leaf that is not an
+/-- `add_argument_to_leaves` (mod.rs:865-899): every leaf that is not an
 `Argument` gets an `Argument` child; MERGE's match branch (last child) is
 skipped, its input (child 0, if it has two children) is descended. -/
 def addArgs : Plan → Plan

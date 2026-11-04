@@ -184,7 +184,9 @@ theorem mainRows_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) :
       by rw [b2, e6, List.append_assoc]⟩
 
 /-- **MERGE without SET clauses matches openCypher after #3067, for every batching and with
-the rows in the reference's order.** Same graph, same next id; unlike the pre-#3067 model
+the rows in the reference's order, on the non-all-bound path (`allBound = false`).** The
+all-bound shortcut of `rowMain` (`allBoundMain`, merge.rs:378-393) keeps only the first match
+and is outside this theorem (see `Merge.allBound_path_keeps_all`). Same graph, same next id; unlike the pre-#3067 model
 (`rust_eq_ref_noSet`, output a permutation) the emitted rows are EXACTLY the reference's,
 because each row's remaining matches are drained before the next row. -/
 theorem mainMerge_noSet_eq_ref (cl : Clause α) (hs : NoSet cl) (st : SState (α := α))

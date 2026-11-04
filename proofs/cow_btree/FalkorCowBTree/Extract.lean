@@ -152,7 +152,7 @@ theorem rangeTuples_enc (c : Cfg) (h : Nat) (root : Node) (lo hi n : Nat) (hw : 
   simp only [Function.comp, enc, keyOf, docOf, id]
   exact Nat.div_add_mod' e W
 
-/-! ## `heap_bytes` (`mod.rs:419-441`) -/
+/-! ## `heap_bytes` (`mod.rs:419-442`) -/
 
 /-- What `heap_bytes` reads off each page: a leaf's blob length (`leaf.raw().len()`, fixed by the byte
     encoding — `proofs/index_layer` proves it per format), a branch's two `Vec` capacities (not part of
@@ -164,16 +164,16 @@ structure Mem where
   sepSize : Nat := 16
   nodeSize : Nat
 
-/-- One branch's own bytes (`mod.rs:434-436`). -/
+/-- One branch's own bytes (`mod.rs:432-434`). -/
 def Mem.branch (m : Mem) (seps : List E) (cs : List Node) : Nat :=
   m.sepCap seps cs * m.sepSize + m.childCap seps cs * m.nodeSize
 
-/-- The nested `walk` of `heap_bytes` (`mod.rs:420-438`), accumulator-passing as in the Rust. -/
+/-- The nested `walk` of `heap_bytes` (`mod.rs:419-442`), accumulator-passing as in the Rust. -/
 def heapWalk (m : Mem) : Nat → Node → Nat → Nat
-  | _, .leaf es, acc => acc + m.raw es                                          -- line 410
+  | _, .leaf es, acc => acc + m.raw es                                          -- `mod.rs:426`
   | 0, .branch _ _, acc => acc
   | h + 1, .branch seps cs, acc =>
-    cs.foldl (fun a ch => heapWalk m h ch a) (acc + m.branch seps cs)          -- lines 417-420
+    cs.foldl (fun a ch => heapWalk m h ch a) (acc + m.branch seps cs)          -- `mod.rs:432-435`
 
 /-- `CowBTree::heap_bytes` (`mod.rs:419`). -/
 def heapBytes (m : Mem) (h : Nat) (root : Node) : Nat := heapWalk m h root 0

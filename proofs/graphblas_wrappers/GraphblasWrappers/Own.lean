@@ -48,7 +48,8 @@ if let Some(m) = Arc::get_mut(&mut self.m) {   //  <- frees iff last owner
 
 `Arc::get_mut` returns `Some` iff the strong count is 1. So a drop did two
 things: **observe** the count (and free iff it is 1), then **decrement**. Two
-separate atomic operations, no lock across them. The leak is the one (test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs leaked);
+separate atomic operations, no lock across them. This race caused a leak
+(test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs leaked);
 main's regression test is `graph/tests/matrix_concurrent_drop.rs`
 `concurrently_dropped_clones_free_the_matrix_once`.
 -/
@@ -226,15 +227,63 @@ theorem iterDrop_state (a : Bool) (s : St) : (iterDrop a s).1 = arcStep s .relea
 /-! ### `dup` (matrix.rs:1199-1254) — deep copy, fresh ownership
 
 `dup` calls `GrB_Matrix_dup` into a *new* `Arc<Handle>` with a fresh `Mutex`
-and a fresh `has_pending`. So a dup shares no handle with its source: dropping
-either is a single-owner drop, freed once. -/
+and a fresh `has_pending`. So a dup shares no handle with its source: the two
+cells below are independent. -/
 
-/-- After `dup`, source and copy own disjoint `Arc<Handle>` cells (two
-independent counts, each starting at 1). Dropping both frees two distinct
-matrices, once each. -/
-theorem dup_independent_ownership :
-    ((liveRun { count := 1, frees := 0 } [.release]).map (·.frees)).getD 0 +
-    ((liveRun { count := 1, frees := 0 } [.release]).map (·.frees)).getD 0 = 2 := by
-  decide
+/-- Two ownership cells: the source matrix's `Arc<Handle>` and the copy's. -/
+abbrev DupSt := St × St
+
+/-- `Matrix::dup`: `GrB_Matrix_dup` into a *new* `Arc<Handle>`. The source cell
+is untouched; the copy starts with one owner and nothing freed. -/
+def dupOf (src : St) : DupSt := (src, { count := 1, frees := 0 })
+
+/-- An event on one of the two cells: `false` = source, `true` = copy. -/
+abbrev DEv := Bool × AEv
+
+def dupStep (p : DupSt) : DEv → DupSt
+  | (false, e) => (arcStep p.1 e, p.2)
+  | (true, e)  => (p.1, arcStep p.2 e)
+
+/-- Run a schedule of events on both cells, each by a live owner of the cell it
+targets. -/
+def dupRun (p : DupSt) : List DEv → Option DupSt
+  | [] => some p
+  | (false, e) :: t => if p.1.count = 0 then none else dupRun (dupStep p (false, e)) t
+  | (true, e) :: t => if p.2.count = 0 then none else dupRun (dupStep p (true, e)) t
+
+theorem dupRun_inv : ∀ (t : List DEv) (p p' : DupSt),
+    Inv p.1 → Inv p.2 → dupRun p t = some p' → Inv p'.1 ∧ Inv p'.2
+  | [], p, p', h1, h2, hr => by
+      simp only [dupRun, Option.some.injEq] at hr; exact hr ▸ ⟨h1, h2⟩
+  | (false, e) :: t, p, p', h1, h2, hr => by
+      simp only [dupRun] at hr
+      split at hr
+      · cases hr
+      · rename_i hne
+        exact dupRun_inv t (dupStep p (false, e)) p' (arcStep_inv p.1 e h1 hne) h2 hr
+  | (true, e) :: t, p, p', h1, h2, hr => by
+      simp only [dupRun] at hr
+      split at hr
+      · cases hr
+      · rename_i hne
+        exact dupRun_inv t (dupStep p (true, e)) p' h1 (arcStep_inv p.2 e h2 hne) hr
+
+/-- **`dup` gives independent ownership.** From a source with `n+1` owners, after
+a `dup` and *any* schedule of clones and drops on either cell, each of the two
+matrices has been freed at most once, and freed exactly when its own owners are
+all gone: dropping the copy never frees (or leaks) the source, and vice versa. -/
+theorem dup_independent_ownership (n : Nat) (t : List DEv) (p : DupSt)
+    (hr : dupRun (dupOf { count := n + 1, frees := 0 }) t = some p) :
+    (p.1.frees ≤ 1 ∧ (p.1.frees = 1 ↔ p.1.count = 0)) ∧
+    (p.2.frees ≤ 1 ∧ (p.2.frees = 1 ↔ p.2.count = 0)) := by
+  have := dupRun_inv t _ p (by unfold Inv; simp [dupOf]) (by unfold Inv; simp [dupOf]) hr
+  unfold Inv at this; omega
+
+/-- Dropping the lone copy frees exactly the copy and leaves the source's state
+as it was, however many owners the source has. -/
+theorem dup_copy_drop_leaves_source (n : Nat) :
+    dupRun (dupOf { count := n + 1, frees := 0 }) [(true, .release)] =
+      some ({ count := n + 1, frees := 0 }, { count := 0, frees := 1 }) := by
+  simp [dupRun, dupOf, dupStep, arcStep]
 
 end GBW

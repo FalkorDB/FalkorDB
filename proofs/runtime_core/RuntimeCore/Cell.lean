@@ -93,7 +93,7 @@ structure Rt where
   guard : Option Addr
   deriving DecidableEq, Repr
 
-/-- `Runtime::new`'s new lines (`runtime.rs:475-490`): a read runtime clones `g` into
+/-- `Runtime::new`'s new lines (`runtime.rs:476-491`): a read runtime clones `g` into
 `_owner` (same allocation, so same address) and borrows that cell once; a write runtime
 takes nothing. The strong-count side of the clone is in `DropOrder`. -/
 def new {G} (h : Heap G) (g : Addr) (write : Bool) : R (Rt × Heap G) :=

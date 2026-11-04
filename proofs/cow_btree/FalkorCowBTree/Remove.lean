@@ -10,7 +10,8 @@ must repair it (`rebalance`). The flag is computed as `count < LEAF_MAX / 2` for
 `children < BRANCH_MAX / 2` for a branch (`node.rs:212`, reported at `:488`). A weak branch has one child, so the
 contract needs `1 < BRANCH_MAX / 2`, i.e. **`BRANCH_MAX >= 4`**, which the const assert demands since
 #2897 (`mod.rs:152-155`; `Assert.remove_spec_asserted`). Before it the assert only demanded 3; `Bugs.lean`
-shows the contract (and the tree) breaking there (`pre2897_b3_*`).
+describes the contract (and the tree) breaking there; the counterexample theorems were removed in
+bbee75955 (`Assert.constAssert_rejects_B3` records that `BRANCH_MAX = 3` is now rejected).
 -/
 
 namespace CowBTree

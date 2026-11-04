@@ -10,8 +10,8 @@ matrix, one entry per `(src, dst)` — and (b) the *edge* level —
 | --- | --- |
 | `Edge`, `Graph`         | an entry of a relationship `Tensor` (`graph/src/graph/graphblas/tensor.rs`); relationship types are modelled as a pre-filtered edge list |
 | `pairs`                 | the structural iterator of the (merged) relationship matrix: `build_unrestricted_iter` (`runtime/ops/cond_traverse.rs:302`) |
-| `edgesBetween`          | `relationship_tensors()[t].get(src, dst)` (`cond_traverse.rs:824,1286,1305`, `expand_into.rs:208,225`) |
-| `step`                  | `Graph::get_node_relationships_by_type` (`graph/src/graph/graph.rs:2079`) — a self-loop is reported once under `Both` (`graph.rs:2105-2110`) |
+| `edgesBetween`          | `relationship_tensors()[t].get(src, dst)` (`cond_traverse.rs:824,1286,1305`, `expand_into.rs:208,225`); sorted ascending like `Tensor::get` |
+| `step`                  | `Graph::get_node_relationships_by_type` (`graph/src/graph/graph.rs`) — a self-loop is reported once under `Both` (the `*src != id.0` filter on the incoming half) |
 -/
 
 namespace OpsTraverse
@@ -62,20 +62,54 @@ theorem mem_pairs {g : Graph} {s d : Nat} :
 
 theorem nodup_pairs (g : Graph) : (pairs g).Nodup := nodup_dedup _
 
-/-- `Tensor::get(s, d)`: every edge id on the pair. -/
+/-- Insert into an ascending list. -/
+def insertAsc (a : Nat) : List Nat → List Nat
+  | [] => [a]
+  | b :: l => if a ≤ b then a :: b :: l else b :: insertAsc a l
+
+/-- Insertion sort (structural, so `decide` can run it on the example graphs). -/
+def isort : List Nat → List Nat
+  | [] => []
+  | a :: l => insertAsc a (isort l)
+
+theorem mem_insertAsc {x a : Nat} : ∀ {l : List Nat}, x ∈ insertAsc a l ↔ x = a ∨ x ∈ l
+  | [] => by simp [insertAsc]
+  | b :: l => by
+    unfold insertAsc
+    by_cases h : a ≤ b
+    · simp [h]
+    · simp only [h, if_false, List.mem_cons, mem_insertAsc]
+      constructor
+      · rintro (h | h | h)
+        · exact Or.inr (Or.inl h)
+        · exact Or.inl h
+        · exact Or.inr (Or.inr h)
+      · rintro (h | h | h)
+        · exact Or.inr (Or.inl h)
+        · exact Or.inl h
+        · exact Or.inr (Or.inr h)
+
+theorem mem_isort {x : Nat} : ∀ {l : List Nat}, x ∈ isort l ↔ x ∈ l
+  | [] => by simp [isort]
+  | a :: l => by simp [isort, mem_insertAsc, mem_isort]
+
+/-- `Tensor::get(s, d)`: every edge id on the pair, ascending (the real `get` returns ids in id
+order whatever order the model's `Graph` list has, so collapse mode's "first unused id" is the
+smallest). -/
 def edgesBetween (g : Graph) (s d : Nat) : List Nat :=
-  (g.filter fun e => e.src == s && e.dst == d).map Edge.id
+  isort ((g.filter fun e => e.src == s && e.dst == d).map Edge.id)
 
 theorem mem_edgesBetween {g : Graph} {s d e : Nat} :
     e ∈ edgesBetween g s d ↔ ∃ x ∈ g, x.id = e ∧ x.src = s ∧ x.dst = d := by
-  simp only [edgesBetween, List.mem_map, List.mem_filter, Bool.and_eq_true, beq_iff_eq]
+  simp only [edgesBetween, mem_isort, List.mem_map, List.mem_filter, Bool.and_eq_true,
+    beq_iff_eq]
   constructor
   · rintro ⟨x, ⟨hx, h1, h2⟩, rfl⟩; exact ⟨x, hx, rfl, h1, h2⟩
   · rintro ⟨x, hx, rfl, h1, h2⟩; exact ⟨x, ⟨hx, h1, h2⟩, rfl⟩
 
 /-- Adjacency of `cur` as `(edge id, neighbour)`: outgoing edges, plus
 incoming ones when `bidir` (a self-loop only once: the `if` takes the
-outgoing branch first, mirroring the `*src != id` filter at `graph.rs:2110`). -/
+outgoing branch first, mirroring the `*src != id.0` filter in `get_node_relationships_by_type`). -/
 def step (g : Graph) (bidir : Bool) (cur : Nat) : List (Nat × Nat) :=
   g.filterMap fun e =>
     if e.src = cur then some (e.id, e.dst)

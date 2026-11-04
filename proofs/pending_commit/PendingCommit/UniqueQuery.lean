@@ -106,13 +106,13 @@ theorem mapM_length (attr : Nat → Option V) : ∀ (props : List Nat) (vals : L
         simp [mapM_length attr props bs hbs]
 
 /-- **`redisearch_hIdx`**: `uniqueViolated_spec`'s lookup contract, for RediSearch. `hEq` is the
-only assumption, about the index: an `Equal` on a property and an exactly matchable value
+only assumption, about the index: an `Equal` on a constrained property (`p ∈ props`) and an exactly matchable value
 returns every live entity outside the commit holding that value (an FFI fact: the index lags
 only this commit and matches exactly such values). `props ≠ []` (a constraint has a property). -/
 theorem redisearch_hIdx (exact : V → Bool) (indexed : Bool) (props : List Nat)
     (attr : Nat → Nat → Option V) (affected isCand : Nat → Bool) (ix : Nat × V → List Nat)
     (hprops : props ≠ [])
-    (hEq : ∀ (p : Nat) (v : V), exact v = true → ∀ o, affected o = false → isCand o = true →
+    (hEq : ∀ p ∈ props, ∀ (v : V), exact v = true → ∀ o, affected o = false → isCand o = true →
       attr o p = some v → o ∈ ix (p, v)) :
     ∀ vals q, redisearchQuery exact indexed props vals = some q → ∀ o, affected o = false →
       isCand o = true → props.mapM (attr o) = some vals → o ∈ evalQ ix q := by
@@ -128,7 +128,7 @@ theorem redisearch_hIdx (exact : V → Bool) (indexed : Bool) (props : List Nat)
   have hex : ∀ p ∈ props.zip vals, exact p.2 = true := fun p hp =>
     List.all_eq_true.1 hv p.2 (List.of_mem_zip hp).2
   have hmem : ∀ p ∈ props.zip vals, o ∈ ix p := fun p hp =>
-    hEq p.1 p.2 (hex p hp) o ha hc (hz p hp)
+    hEq p.1 (List.of_mem_zip hp).1 p.2 (hex p hp) o ha hc (hz p hp)
   cases hs : props.zip vals with
   | nil =>
     exfalso; apply hprops
@@ -158,7 +158,7 @@ spec, assuming only the index's `Equal` exactness and that the scan lists every 
 theorem checkUnique_redisearch_spec [DecidableEq V] (exact : V → Bool) (indexed : Bool) (props affected : List Nat)
     (member : Nat → Bool) (attr : Nat → Nat → Option V) (isCand : Nat → Bool)
     (ix : Nat × V → List Nat) (scan : List Nat) (hprops : props ≠ [])
-    (hEq : ∀ (p : Nat) (v : V), exact v = true → ∀ o, o ∉ affected → isCand o = true →
+    (hEq : ∀ p ∈ props, ∀ (v : V), exact v = true → ∀ o, o ∉ affected → isCand o = true →
       attr o p = some v → o ∈ ix (p, v))
     (hScan : ∀ o, o ∉ affected → isCand o = true → (props.mapM (attr o)).isSome → o ∈ scan) :
     checkUnique props affected member attr isCand (redisearchQuery exact indexed props) (evalQ ix) scan
@@ -169,7 +169,7 @@ theorem checkUnique_redisearch_spec [DecidableEq V] (exact : V → Bool) (indexe
   checkUnique_spec props affected member attr isCand _ _ scan
     (fun vals q hq o ho hc hk =>
       redisearch_hIdx exact indexed props attr (fun o => decide (o ∈ affected)) isCand ix hprops
-        (fun p v hv o ha hc' hp => hEq p v hv o (by simpa using ha) hc' hp) vals q hq o
+        (fun p hpm v hv o ha hc' hp => hEq p hpm v hv o (by simpa using ha) hc' hp) vals q hq o
         (by simpa using ho) hc hk)
     hScan
 

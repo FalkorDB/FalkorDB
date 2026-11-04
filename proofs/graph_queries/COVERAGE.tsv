@@ -141,7 +141,7 @@ graph/src/graph/graph.rs	commit_index_locked	3940	PROVEN	Index.commitDocs_every_
 graph/src/graph/graph.rs	commit_edge_index	3950	PROVEN	Index.commitEdgeDocs_mem (takes lock)
 graph/src/graph/graph.rs	commit_edge_index_locked	3962	PROVEN	Index.commitEdgeDocs_mem
 graph/src/graph/graph.rs	commit_index_kind	4043	PROVEN	Index.commitDocs_noop, commitDocs_every_id
-graph/src/graph/graph.rs	drop_index	4090	PROVEN	Index.dropIndex_protects, Constraints.drop_blocked
+graph/src/graph/graph.rs	drop_index	4090	PROVEN	Index.dropIndex_protects, Index.dropIndex_none_noattr, Constraints.drop_blocked
 graph/src/graph/graph.rs	is_indexed	4182	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation
 graph/src/graph/graph.rs	get_indexed_nodes	4191	AXIOMATISED	RediSearch Indexer::query, ids wrapped (Accessors.nodeId_roundtrip)
 graph/src/graph/graph.rs	is_edge_indexed	4279	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation

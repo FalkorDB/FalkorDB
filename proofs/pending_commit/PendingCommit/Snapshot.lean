@@ -1,19 +1,19 @@
 /-
 # Deleted-entity snapshots vs. id reuse (#2876 and its other shapes)
 
-`Runtime::deleted_nodes` / `deleted_relationships` (runtime.rs:159) are
+`Runtime::deleted_nodes` / `deleted_relationships` (runtime.rs:193/:195) are
 query-lifetime maps **keyed by id** holding what a deleted entity looked like,
 so a later clause can still read it (`DELETE n WITH n RETURN n.v`). Every
 entity read consults them *first*:
 
 | accessor | runtime.rs |
 | --- | --- |
-| `get_node_attribute`                 | :1459 |
-| `materialize_node_property_values`   | :1569 (the vectorised `n.v` path, used by `WHERE`) |
-| `get_node_labels`, `node_has_label_id` | :1660, :1728 |
-| `get_node_attrs` (`properties`, `keys`, `SET x = n`) | :1739 |
-| `get_relationship_attribute` / `_attrs` | :1510, :1757 |
-| `get_relationship_endpoints`, `get_relationship_type` | :1775, :1788 |
+| `get_node_attribute`                 | :1571 |
+| `materialize_node_property_values`   | :1668 (the vectorised `n.v` path, used by `WHERE`) |
+| `get_node_labels`, `node_has_label_id` | :1787, :1852 |
+| `get_node_attrs` (`properties`, `keys`, `SET x = n`) | :1866 |
+| `get_relationship_attribute` / `_attrs` | :1622, :1884 |
+| `get_relationship_endpoints`, `get_relationship_type` | :1904, :1917 |
 
 A `Value::Node`/`Value::Relationship` carries only the id, and ids freed by a
 committed delete are reissued by the next segment's CREATE (`IdSpace::reserve`,
@@ -59,7 +59,7 @@ structure RS where
   nextGen : Nat
   deriving Repr
 
-/-- `DELETE` of a live node: snapshot it (delete.rs:261-268), drop it from the graph. -/
+/-- `DELETE` of a live node: snapshot it (`delete_nodes_bulk`, delete.rs:301-312; `delete_entity`, :485-491), drop it from the graph. -/
 def del (s : RS) (id : Nat) : RS :=
   match find s.live id with
   | some e => { s with live := s.live.filter (·.1 != id), freed := id :: s.freed,

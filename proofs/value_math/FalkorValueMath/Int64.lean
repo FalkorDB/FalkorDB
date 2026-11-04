@@ -90,7 +90,8 @@ theorem tdiv_inI64 {a b : Int} (ha : InI64 a) (hb : b ≠ 0) (hx : ¬ (a = I64MI
 theorem wDiv_exact {a b : Int} (ha : InI64 a) (hb : b ≠ 0) (hx : ¬ (a = I64MIN ∧ b = -1)) :
     wDiv a b = Int.tdiv a b := wrap_id (tdiv_inI64 ha hb hx)
 
-/-- `MIN / -1` wraps back to `MIN` in Rust (`wrapping_div`). -/
+/-- `MIN / -1` wraps back to `MIN` in the `wrapping_div` model. The Rust `Value` `/` no longer
+wraps here: it raises an overflow error (#3603, `ValueMath.div_min_neg_one`). -/
 theorem wDiv_min_neg1 : wDiv I64MIN (-1) = I64MIN := by decide
 
 theorem tmod_inI64 {a b : Int} (ha : InI64 a) (hb : InI64 b) (hb0 : b ≠ 0) :
@@ -209,7 +210,7 @@ theorem c_div_loses_precision :
   decide
 
 /-- `MIN / -1`: `wrapping_div` gives `MIN` and C's double division `MAX` (2^63 saturates, live-confirmed
-before #3603). Rust's `Value` `/` no longer wraps: it raises an overflow error (`Value.div_min_neg_one`). -/
+before #3603). Rust's `Value` `/` no longer wraps: it raises an overflow error (`ValueMath.div_min_neg_one`). -/
 theorem min_div_neg1_diverges : wDiv I64MIN (-1) = I64MIN ∧ cDivExact I64MIN (-1) = I64MAX := by
   decide
 

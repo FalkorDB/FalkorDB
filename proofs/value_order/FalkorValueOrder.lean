@@ -28,31 +28,34 @@ what does not.
 
 | here | there |
 | --- | --- |
-| `V`                      | `enum Value` (`graph/src/runtime/value.rs:180`) — Null, Bool, Int, Float, String, List, Map, Node, VecF32 (components), Point (lat, lon) |
+| `V`                      | `enum Value` (`graph/src/runtime/value.rs:184`) — Null, Bool, Int, Float, String, List, Map, Node, VecF32 (components), Point (lat, lon) |
 | `F`                      | `f64`/`f32`: NaN (sign, payload), `-0.0`, integral, non-integral (`frac lo r`), ±inf |
 | `fpcmp`, `F.nkey`        | `partial_cmp` on floats (`-0.0 == 0.0`, NaN unordered) |
-| `cmpVec`, `firstDifference`, `cmpPoint` | `compare_vecf32` (`value.rs:1963`), the Point arm of `compare_value` (`:1250`) |
+| `cmpVec`, `firstDifference`, `cmpPoint` | `compare_vecf32` (`value.rs:2003`), the Point arm of `compare_value` (`:1288`) |
 | `bits64`, `bits32`, `asI64`, `diffZero` | `to_bits`, `as i64`, the `x - casted == 0` test of the Float hash arm |
-| `Tag`, `order`           | `impl OrderedEnum for Value` (`value.rs:1181`) — all 16 variants |
+| `Tag`, `order`           | `impl OrderedEnum for Value` (`value.rs:1218`) — all 16 variants |
 | `roundF`                 | `i as f64` for `i: i64` (round-to-nearest, ties-to-even at 53 bits) |
-| `cmpF`                   | `compare_floats` (`value.rs:1875`) — `partial_cmp`, NaN ↦ `(Less, NaN)` |
-| `cmpV`                   | `impl CompareValue for Value::compare_value` (`value.rs:1228`) |
-| `St`, `step`, `listLoop`, `listFinish` | `Value::compare_list` (`value.rs:1402`) — the four counters, line by line |
-| `keysCmp`, `mapVals`     | `Value::compare_map` (`value.rs:1475`), maps held with keys already sorted |
-| `eqV`                    | `impl PartialEq for Value` (`value.rs:1219`) — `compare_value(..).0 == Equal` |
+| `cmpF`                   | `compare_floats` (`value.rs:1915`) — `partial_cmp`, NaN ↦ `(Less, NaN)` |
+| `cmpV`                   | `impl CompareValue for Value::compare_value` (`value.rs:1266`) |
+| `St`, `step`, `listLoop`, `listFinish` | `Value::compare_list` (`value.rs:1442`) — the four counters, line by line |
+| `keysCmp`, `mapVals`     | `Value::compare_map` (`value.rs:1515`), maps held with keys already sorted |
+| `eqV`                    | `impl PartialEq for Value` (`value.rs:1256`) — `compare_value(..).0 == Equal` |
 | `sortCmp`                | `compare_value(..).0`, the ORDER BY comparator *before* #2912; main sorts by `Main.scMain` (`OrderedKey::cmp_key` `ops/sort.rs:76`, `Column::compare_at` `batch.rs:399`: `Main.cmpKey`, `Main.compareAt`) |
 | `evalEq`, `evalNeq`      | `compare_values` `CmpOp::Eq`/`Neq` (`runtime/vectorized.rs:239`; `Neq` as #2917) |
-| `hwords`, `floatWord`, `f32HashBits` | `impl Hash for Value` (`value.rs:823`) as the word stream it feeds a `Hasher`; `f32_hash_bits` (`:1919`) |
+| `hwords`, `floatWord`, `f32HashBits` | `impl Hash for Value` (`value.rs:861`) as the word stream it feeds a `Hasher`; `f32_hash_bits` (`:1959`) |
 | `fxAdd`, `fxFinish`, `fx`| `rustc_hash::FxHasher` 2.1.3 (`add_to_hash`, `finish` = `rotate_left(26)`) |
-| `rowHash`                | `DistinctOp::next` (`ops/distinct.rs:79`), `ValuesDeduper::is_seen` (`value.rs:2015`) |
-| `minFold`                | `min_batch` (`functions/aggregation.rs:495`) |
+| `rowHash`                | `DistinctOp::next` (`ops/distinct.rs:62`), `ValuesDeduper::is_seen` (`value.rs:2055`) |
+| `minFold`                | `min_batch` (`functions/aggregation.rs:498`) |
 
 ## Findings (each one reproduced against the real engine, see REPORT.md)
 
-Status on main 4a4f2a72f: 1–3 are still facts about `compare_value`, but nothing sorts by it
-any more (#2912 b033aecc6: `sort_cmp`, `Main.scMain_total`), so the panics are fixed
-(counterexamples removed in bbee75955; the last revision that has them is 17ccc5412); 4, 6 and 8 are
-fixed by #2917 (7fdf06a0e); 5 is harmless since `GroupKey::eq` is `sort_cmp`; 7 is open.
+Status on main: 1–3 are still facts about `compare_value` (the theorems `nan_breaks_antisymmetry`,
+`mixed_numeric_not_transitive`, `map_order_not_transitive` remain in `Model.lean`), but nothing sorts by it
+any more (#2912 b033aecc6: `sort_cmp`, `Main.scMain_total`), so the ORDER BY panics are fixed. Only the
+separate counterexamples for finding 4 and finding 8 and the other pre-#2912 sort-comparator theorems were
+removed (bbee75955; the last revision that has them is 17ccc5412). 4, 6 and 8 are fixed by #2917
+(7fdf06a0e). 5 is fixed for grouping only (`GroupKey::eq` is `sort_cmp`); `Value`'s own `Hash`/`PartialEq`
+still disagree and the value hash join uses them (see finding 5), so it is open outside grouping. 7 is open.
 
 1. `nan_breaks_antisymmetry` — NaN is `Less` than 1.0 *and* 1.0 is `Less` than
    NaN. Before #2912, `slice::sort_by` (Rust ≥ 1.81) detected this in ORDER BY
@@ -64,7 +67,13 @@ fixed by #2917 (7fdf06a0e); 5 is harmless since `GroupKey::eq` is `sort_cmp`; 7 
 4. Map `<>` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — `{a:1} = {a:'x'}` and `{a:1} <> {a:'x'}` were
    both `false`. Fixed by #2917: `map_neq_true`, `evalNeq_not_evalEq` (`<>` = NOT `=`).
 5. `hash_not_consistent_with_eq` — `2^53+1 == 2^53.0` but their hashes differ.
-   Main's hash agrees with `sort_cmp` instead (`Main.main_hash_consistent`).
+   Fixed for grouping: `GroupKey` hashes/compares by `sort_cmp`, and main's hash agrees with `sort_cmp`
+   (`Main.main_hash_consistent`). **Still open outside grouping**: `Value`'s own `Hash` and `PartialEq`
+   (`compare_value`) remain inconsistent, and `ValueHashJoin` (`ops/value_hash_join.rs`) hashes `Value`
+   (`hash_value`, and the `i64`-keyed `key_as_i64` fast path) and then checks `keys_match`
+   (`compare_value`): `Int(2^53+1)` and `Float(2^53)` compare equal (`compare_floats(i as f64, f)`) but hash
+   to different buckets, so the join can miss a match that `=` in a filter finds. Found by reading the
+   Rust; not reproduced against a live server.
 6. `nan_eq_irreflexive` — `NaN != NaN` under `PartialEq`; before #2917 grouping
    used it, so every NaN row became its own group. `GroupKey::eq` is now `sort_cmp`
    (NaN equal to NaN, `Main.main_nans_one_key`).
@@ -92,7 +101,7 @@ fixed by #2917 (7fdf06a0e); 5 is harmless since `GroupKey::eq` is `sort_cmp`; 7 
   counters do; `lex_swap`, `lex_le_trans` then lift any total preorder on the
   elements to lists — so lists are not where ORDER BY goes wrong; maps are.
 * Main (Main.lean): `scMain_total` (`sort_cmp` is a total preorder), `cmpKey_total`,
-  `compareAt_eq_scMain`, `compareRowsAt_eq_scMain`, `listSort_perm`, `main_hash_consistent`
+  `compareAt_eq_scMain`, `compareRowsAt_eq_scMain`, `listSort_perm`, `listSort_sorted`, `main_hash_consistent`
   (`sort_cmp`-equal ⇒ equal hash words), `main_nans_one_key`, `signed_zeros_apart`.
 
 ## Gaps (what the model does NOT cover)
@@ -116,11 +125,11 @@ fixed by #2917 (7fdf06a0e); 5 is harmless since `GroupKey::eq` is `sort_cmp`; 7 
 
 | here | there |
 | --- | --- |
-| `Glue.W` (16 variants), `W.clone`, `W.order`, `W.getType`, `W.valueOfType`, `W.name` | value.rs:180, :221, :1177, :1328, :1282, :1387 |
-| `DeletedNode.new`, `DeletedRelationship.new` | value.rs:69, :87 |
-| classes `OrderedEnum`, `CompareValue`, `ValueTypeOf`, `ValueGetType`, `Contains` | trait decls value.rs:1174, :1209, :1275, :1324, :1756 |
-| `withCapacity`, `checkAndInsert` | value.rs:1859, :1887 |
-| `Json.fmtS`/`fmtJson`, `writeJsonString`, `writeNodeJson`, `relJson`, `toJsonString` | value.rs:1582, :1704, :1716, :1622, :1374/:1384 |
+| `Glue.W` (16 variants), `W.clone`, `W.order`, `W.getType`, `W.valueOfType`, `W.name` | value.rs:184, :223, :1218, :1369, :1323, :1395 |
+| `DeletedNode.new`, `DeletedRelationship.new` | value.rs:101, :119 |
+| classes `OrderedEnum`, `CompareValue`, `ValueTypeOf`, `ValueGetType`, `Contains` | trait decls value.rs:1214, :1249, :1315, :1364, :1869 |
+| `withCapacity`, `checkAndInsert` | value.rs:2045, :2073 |
+| `Json.fmtS`/`fmtJson`, `writeJsonString`, `writeNodeJson`, `relJson`, `toJsonString` | value.rs:1696, :1818, :1830, :1736, :1417 |
 
 f64/f32 Display, `escape_str` and the runtime accessors are fields of the `JsonEnv`
 structure (no axioms). Theorems: `clone_eq`, `name_eq_iff_order_eq`, `valueOfType_self`,

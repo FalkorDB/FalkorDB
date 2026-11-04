@@ -6,11 +6,11 @@ A model of `graph/src/planner/mod.rs` plan construction (`Planner::plan`,
 reference semantics, with machine-checked agreement against an openCypher
 driving-table semantics (each clause maps a bag of records, plus the graph
 state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
-522 theorems. Rust source: origin/main `b84473a7f` (re-targeted across #2390, d2c42e032
+518 theorems. Rust source: origin/main `5c7af54f2` (planner/mod.rs cites checked against it; re-targeted across #2390, d2c42e032
 "plan an inline property map once", and #3335: `ExprIR::and_of`/`or_of` flattening —
 `AndOf.lean`, `tv_andOf`/`tv_orOf` — and no `Paren` past the binder: `expr_to_plan` no
 longer unwraps one, `PatternMode::descend` no longer treats it as a connective; #3297: the
-clauses after a procedure CALL are validated, `Ast.call_validates_rest`). Rust repros: `cargo test -p graph --test lean_planner_build`
+clauses after a procedure CALL are validated, `Ast.call_validates_rest`; #3289 (`d15d38a10`): the parser rejects a relationship variable repeated in a named-path CREATE or a MERGE, `create_named_path_dup_rejected`, as C does). Rust repros: `cargo test -p graph --test lean_planner_build`
 (`bug_*` tests assert the C/openCypher answer and FAIL today).
 
 ## Lean ↔ Rust
@@ -20,11 +20,11 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`). Rust r
 | `Op`, `Plan` | `enum IR` mod.rs:65-328, `DynTree<IR>` |
 | `ev`, `evUnion`, `evRights`, `evAny` | `Runtime::build_batch_op` / `children_to_recurse` runtime/runtime.rs:654-1180 (child-0 input, `pop_or_once`, CP right branches materialised on the argument row) |
 | `forRows` | openCypher "for each record" |
-| `walkFirst` / `walkLoop` | insertion-point walks mod.rs:2743-2753 / 2712-2729 |
-| `projDescend`, `applyChain` | mod.rs:2756-2769, 2730-2743 |
-| `descendOne`, `descendClause`, `satChain`, `saturated` | mod.rs:974-1017, 836-841 |
+| `walkFirst` / `walkLoop` | insertion-point walks mod.rs:2743-2753 / 2817-2834 |
+| `projDescend`, `applyChain` | mod.rs:2756-2769, 2764-2768 |
+| `descendOne`, `descendClause`, `satChain`, `saturated` | mod.rs:969-1012, 953-958 |
 | `insertStep`, `stitchLoop`, `rustStitch` | mod.rs:2774-2850 (`push_sibling_tree(Left)` / `push_child_tree`, Apply-wrap of a CartesianProduct) |
-| `needsApplyWrapping`, `addArgs` | mod.rs:2874-2907, 748-782 |
+| `needsApplyWrapping`, `addArgs` | mod.rs:2874-2907, 865-899 |
 | `planProject`, `ProjC` | `plan_project` mod.rs:2415-2586 |
 | `planMerge` | MERGE arm mod.rs:3100-3133 |
 | `planProc` | CALL procedure arm mod.rs:2941-3032 |
@@ -35,21 +35,21 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`). Rust r
 | `isPlannerScanSubtree` | optimizer/select_scan_node.rs:239-252 |
 | `E.rsRemove`, `E.specRemove`, `E.project`, `E.VerifiedSound` (RemoveVerified.lean) | REMOVE arm mod.rs:3212-3218, `carried_verified` in `plan_project` mod.rs:2479-2492 |
 | `E.Ex`, `E.D`, `E.QG`, `E.V` (Expr.lean) | `DynTree<ExprIR<Variable>>`, `QueryGraph`, `(id, scope_id)` |
-| `E.containsInlineVar`, `hasPatternExpr`, `patternExprScope`, `Mode`, `needsExtraction`, `inlineAttrsToFilter`, `hasLabelsFilter`, `patternExprVariables` | mod.rs:933, 822, 1223, 660-689, 1247, 543, 574, 1128 |
+| `E.containsInlineVar`, `hasPatternExpr`, `patternExprScope`, `Mode`, `needsExtraction`, `inlineAttrsToFilter`, `hasLabelsFilter`, `patternExprVariables` | `contains_inline_var` :928, `has_pattern_expr` :939, `pattern_expr_scope` :1340, `PatternMode` :773, `needs_extraction` :1364, `inline_attrs_to_filter` :545, `has_labels_filter` :696, `pattern_expr_variables` :1245 |
 | `E.tv` (Decomp.lean) | openCypher three-valued WHERE (Kleene AND/OR/NOT; pattern = has a match) |
-| `E.collect`, `E.mint` | `collect_patterns_and_rebuild` mod.rs:1692-1784 |
-| `E.FP`, `E.run`, `E.toPlan`, `orClass`, `andFold` (ToPlan.lean) | Filter/SemiApply/AntiSemiApply/OrApplyMultiplexer runtime; `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` mod.rs:1493-1670 |
-| `E.planFilter` (FilterPlan.lean) | `plan_filter` mod.rs:2597-2635 |
+| `E.collect`, `E.mint` | `collect_patterns_and_rebuild` mod.rs:1676-1768 |
+| `E.FP`, `E.run`, `E.toPlan`, `orClass`, `andFold` (ToPlan.lean) | Filter/SemiApply/AntiSemiApply/OrApplyMultiplexer runtime; `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` mod.rs:1488-1655 |
+| `E.planFilter` (FilterPlan.lean) | `plan_filter` mod.rs:2597-2636 |
 | `E.PSt`, `E.fresh`, `E.EC`, `E.build`, `E.hoist`, `E.extract` (Nested.lean) | Planner state, `fresh_var`, `ExtractedComprehension`, `build_pattern_comprehension_plan`, `hoist_or_nest`, `extract_pattern_comprehensions` |
 | `E.chainOf`, `extractClause`, `extractFilter` (Nested2.lean) | `extract_clause_expr_comprehensions` / `extract_list_expr_comprehensions` / `extract_filter_comprehensions` |
-| `E.QN`, `QR`, `Comp`, `MSt`, `MP`, `firstRel`, `chainRel`, `nodeOnly`, `planComp`, `planMatch` (PlanMatch*.lean) | `plan_match` mod.rs:1832-2403, `mark_labels_verified`, `unverified_labels`, `build_pattern_sub_plan` |
-| `HopOrder.selfLoopsAfterBinders`, `step`, `flush`, `deferP`; `pre3102_reference` (HopOrder.lean); `E.hopShape`, `E.orderRels` | `self_loops_after_binders` hop_order.rs:25-62; `tests::reference` :84; the call mod.rs:1912-1926 |
+| `E.QN`, `QR`, `Comp`, `MSt`, `MP`, `firstRel`, `chainRel`, `nodeOnly`, `planComp`, `planMatch` (PlanMatch*.lean) | `plan_match` mod.rs:1816-2403, `mark_labels_verified`, `unverified_labels`, `build_pattern_sub_plan` |
+| `HopOrder.selfLoopsAfterBinders`, `step`, `flush`, `deferP`; `pre3102_reference` (HopOrder.lean); `E.hopShape`, `E.orderRels` | `self_loops_after_binders` hop_order.rs:25-62; `tests::reference` :84; the call mod.rs:1899-1909 |
 | `E.lowerInline`, `stripNode`, `stripRel`, `stripEndpoints`, `MP.stripped` (PlanMatch.lean) | `lower_inline_attrs` mod.rs:598, `strip_node_attrs` :623, `strip_rel_attrs` :644, `strip_endpoint_attrs` :673 |
-| `subtreeContains`, `stitchBelow`, `ensureInput`, `setIP`, `isRedundantOptional` (Misc.lean) | mod.rs:331, 900, 2806, 787, 2582 |
+| `subtreeContains`, `stitchBelow`, `ensureInput`, `setIP`, `isRedundantOptional` (Misc.lean) | `subtree_contains` :333, `stitch_below_apply_chain` :1017, `ensure_apply_has_input` :2911, `set_include_pending_on_scans` :904, `is_redundant_optional_match` :2687 |
 | `Fmt.*` | EXPLAIN text mod.rs:341-536 |
 | `Ast.*`, `Ast2.*` | parser/ast.rs: `Variable` impls, `QueryGraph` builders, `filter_visited`, `connected_components`/`dfs`, `validate`/`inner_validate`, `return_column_names`, the `Display` impls |
-| `E.renameProj`, `newPSt` (Rename.lean) | `rename_projection_outputs` mod.rs:2646, `Planner::new` mod.rs:814 |
-| `E.MP.pathVars`, `E.BindsAllPaths`, `E.compVars`, `E.planMatchArm`, `E.MP.toPlan`, `Plan.argIsLeaf` (PathBind.lean) | paths a `plan_match` tree binds (PathBuilder mod.rs:1977-1980, elision :2350-2387); `QueryGraph::variables` ast.rs:816-822; MATCH arm mod.rs:3034-3082; Argument builds no children runtime.rs:658-660, emits one row :1285 |
+| `E.renameProj`, `newPSt` (Rename.lean) | `rename_projection_outputs` mod.rs:2646, `Planner::new` mod.rs:809 |
+| `E.MP.pathVars`, `E.BindsAllPaths`, `E.compVars`, `E.planMatchArm`, `E.MP.toPlan`, `Plan.argIsLeaf` (PathBind.lean) | paths a `plan_match` tree binds (PathBuilder mod.rs:1985, elision :2373); `QueryGraph::variables` ast.rs:816-822; MATCH arm mod.rs:3034-3082; Argument builds no children runtime.rs:658-660, emits one row :1285 |
 
 ## Proven (plain English)
 
@@ -226,10 +226,10 @@ C 0. The binder half (`node_labels`) is in proofs/binder `RemoveLabels.lean`.
 * `Labels added` counts differ (C counts per node) — known (#2655).
 
 ## Suspected, not confirmed
-* `expr_to_plan`/`or_expr_to_plan` key `inline_map` by id only (mod.rs:1499, 1388); ids are per scope.
+* `expr_to_plan`/`or_expr_to_plan` key `inline_map` by id only (mod.rs:1498, 1568); ids are per scope.
   `planFilter_correct` needs all patterns of one WHERE to start in one scope and the predicate's ids to be
   below that scope's length (`Pre`); no query breaking it was found.
-* `emit_rel` path membership and `filter_vars` compare ids without scope (mod.rs:1903, 1882).
+* `emit_rel` path membership and `filter_vars` compare ids without scope (mod.rs:2001-2010, 1825/1887).
 * `connected_components` visited set is id-only (ast.rs:823-893).
 
 ## Gaps

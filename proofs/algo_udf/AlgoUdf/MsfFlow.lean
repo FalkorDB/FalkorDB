@@ -4,11 +4,11 @@
 | --- | --- |
 | `Score`               | f64 score from `msf_score` :144 (abstracted: `num k` finite/±inf ordered, `nan`) |
 | `SE`, `keepMin`       | `ScoredEdge`, `msf_keep_min_score` :238 (binary op + monoid for `GrB_Matrix_reduce_Monoid`) |
-| `identity`            | the monoid identity `{score: +inf, edge: u64::MAX}` :1552 |
-| `componentKeys`       | MSF grouping :1888-1909 (component key = compact rep; isolated fallback keyed by *original* id) |
-| `flowAlign`           | maxFlow identity-compaction :3069-3125 and flow read-back :3297-3330 |
-| `superFresh`          | super source/sink ids `base_dim`, `base_dim + multi_srcs` :3078-3081 |
-| `buildTbl`, `denseTable`, `compactOf`, `bsearch` | the original-id → compact-id map and `compact_of` :1442-1465 (#3586) |
+| `identity`            | the monoid identity `{score: +inf, edge: u64::MAX}` :1561-1564 |
+| `componentKeys`       | MSF grouping :1890-1912 (component key = compact rep; isolated fallback keyed by *original* id) |
+| `flowAlign`           | maxFlow identity-compaction :3091-3151 and flow read-back :3292-3346 |
+| `superFresh`          | super source/sink ids `base_dim`, `base_dim + multi_srcs` :3096-3097 (identity compaction) and :3167-3168 (dense compaction) |
+| `buildTbl`, `denseTable`, `compactOf`, `bsearch` | the original-id → compact-id map and `compact_of` :1452-1465 (#3586) |
 
 GraphBLAS requires a monoid's operator to be associative and commutative with
 an identity (GrB spec §3.5, `GrB_Monoid_new`); `keepMin` is that operator.
@@ -41,7 +41,7 @@ def inf : Int := 1000000000000000000000000
 def identity : SE := ⟨.num inf, 2 ^ 64 - 1⟩
 
 /-- Commutative on NaN-free inputs with distinct edge ids (the tie-break the
-comment at :255 relies on). -/
+tie-break comment in `msf_keep_min_score` (:238-258) relies on). -/
 theorem keepMin_comm (a b : Int) (e f : Nat) (hef : e ≠ f) :
     keepMin ⟨.num a, e⟩ ⟨.num b, f⟩ = keepMin ⟨.num b, f⟩ ⟨.num a, e⟩ := by
   simp only [keepMin, Score.lt, Score.eq, Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq]
@@ -91,7 +91,7 @@ theorem msf_fallback_key_space_mixed :
 
 /-! ## MSF original-id → compact-id map (#3586, fixes #3444) -/
 
-/-- The dense table `map[orig] = compact` filled by the loop at :1442-1445:
+/-- The dense table `map[orig] = compact` filled by the loop at :1454-1457:
 `buildTbl ids 0 (replicate (max_id + 1) none)` (`u64::MAX` = `none`). -/
 def buildTbl : List Nat → Nat → List (Option Nat) → List (Option Nat)
   | [], _, t => t
@@ -123,7 +123,7 @@ theorem buildTbl_get (ids : List Nat) (c : Nat) (t : List (Option Nat))
         simp [hx, hm, List.idxOf_cons, hox]; omega
       · simp [hx, hm, List.getElem?_set_ne, Ne.symm hx]
 
-/-- `compact_of` (:1450-1455) on main: the table when `max_id < 4 n`, else binary search of
+/-- `compact_of` (:1460-1465) on main: the table when `max_id < 4 n`, else binary search of
 the sorted ids. `bsearch`: `slice::binary_search` on a sorted, duplicate-free list is
 `Ok(i)` exactly when `ids[i] = x` (std; AXIOMATISED as this spec). -/
 def bsearch (ids : List Nat) (x : Nat) : Option Nat := if x ∈ ids then some (ids.idxOf x) else none
@@ -158,7 +158,7 @@ theorem compactOf_eq (ids : List Nat) (maxId : Nat) (hmax : ∀ o ∈ ids, o ≤
         · simp [hx, List.getElem?_replicate, hle, Nat.lt_succ_iff]
     · cases hd
 
-/-- **#3444 fixed, memory**: when a table is built its length is at most `4 n + ... `: at
+/-- **#3444 fixed, memory**: when a table is built its length is at most `4 * n` (`n` = `ids.length`): at
 most 4 slots per active node (so at most 32 bytes/node); a sparse id space builds none. -/
 theorem denseTable_len (ids : List Nat) (maxId : Nat) (tbl : List (Option Nat))
     (h : denseTable ids maxId = some tbl) : tbl.length ≤ ids.length * 4 := by

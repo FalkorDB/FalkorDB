@@ -22,7 +22,8 @@ without `CURLOPT_FOLLOWLOCATION`) does.
 | `httpCfgMain` | `http_config` (:224-234) on main: `max_redirects = 0`, `https_only = true` |
 | `pinnedRes` | `PinnedResolver::resolve` (:193-214): `pinned addrs` for every URI |
 | `fetch` | the agent's request loop: resolve, connect, follow a 3xx `Location` while redirects remain; with `https_only` a non-https hop is refused before connecting |
-| `loadRemote` | the remote arm of `open_csv_records` on main: the agent, then a 3xx answer is an error |
+| `Reply`, `serve` | a 3xx response: its status code and its optional `Location` (`none` = header absent, read as `""`) |
+| `loadRemote` | the remote arm of `open_csv_records` on main (:376-399): the agent, then ANY 3xx answer is the error "LOAD CSV does not follow redirects (HTTP {status} to {location})" |
 
 Property `EachHopValidated`: every connection the fetch makes is an https
 request whose addresses were validated for *that request's* host.
@@ -46,8 +47,9 @@ structure Url where
   path : Nat
   deriving DecidableEq
 
-/-- `validate_remote_url` (:81-142) on a parsed URL, as `validateRemote`: https
-only, a non-empty DNS answer, every address public. -/
+/-- `validate_remote_url` (:81-142) on a parsed URL: https only, a non-empty DNS answer, every
+address public. The same gate as `LoadCsv.validateRemote` (which works on the URL string and a
+host/port split); `validateU_matches_validateRemote` ties the two so they cannot drift apart. -/
 def validateU (dns : Nat → List IP) (u : Url) : Except String (List IP) :=
   if u.scheme ≠ .https then .error "Only https:// URLs are allowed for LOAD CSV"
   else if (dns u.host).isEmpty then .error "DNS resolution returned no addresses"
@@ -72,6 +74,40 @@ theorem validateU_spec (dns : Nat → List IP) (u : Url) (as : List IP) (h : val
         · rfl
         · exact absurd (List.any_eq_true.mpr ⟨a, ha, hfa⟩) hf
 
+/-- `validateU` and `LoadCsv.validateRemote` accept exactly the same inputs with the same addresses,
+whenever `u` is the parsed form of `url` (same scheme, and the host/port split of `url` resolves to
+`dns u.host`). Only the error texts differ (`validateRemote` names the host). -/
+theorem validateU_matches_validateRemote
+    (parse : String → Except String (String × Nat))
+    (resolve : String → Nat → Except String (List IP)) (url : String)
+    (dns : Nat → List IP) (u : Url)
+    (hs : url.startsWith "https://" = decide (u.scheme = .https))
+    (host : String) (port : Nat) (hp : parse url = .ok (host, port))
+    (hr : resolve host port = .ok (dns u.host)) :
+    (validateU dns u).toOption = (validateRemote parse resolve url).toOption := by
+  unfold validateU validateRemote
+  cases hsc : u.scheme
+  · rw [hsc] at hs
+    have hs' : url.startsWith "https://" = true := by simpa using hs
+    simp only [hs', Bool.not_true, Bool.false_eq_true, ite_false, bind, Except.bind, hp, hr, pure,
+      Except.pure]
+    by_cases h1 : (dns u.host).isEmpty = true
+    · have e : dns u.host = [] := List.isEmpty_iff.mp h1
+      simp [e, throw, throwThe, MonadExceptOf.throw, Except.toOption]
+    · have h1' : (dns u.host).isEmpty = false := by simpa using h1
+      by_cases h2 : (dns u.host).any ipForbidden = true
+      · simp [h1', h2, throw, throwThe, MonadExceptOf.throw, Except.toOption]
+      · have h2' : (dns u.host).any ipForbidden = false := by simpa using h2
+        simp [h1', h2', throw, throwThe, MonadExceptOf.throw]
+  · rw [hsc] at hs
+    simp [hs, throw, throwThe, MonadExceptOf.throw, bind, Except.bind]
+
+/-- A 3xx response (`response.status().is_redirection()`): its status code and its `Location`
+header when present and readable (`none` = absent, which the error text shows as `""`). -/
+structure Reply where
+  status : Nat
+  loc : Option Url
+
 /-- The two `ureq::config::Config` fields the redirect path reads. -/
 structure Cfg where
   maxRedirects : Nat
@@ -84,10 +120,11 @@ def httpCfgMain : Cfg := ⟨0, true⟩
 /-- `PinnedResolver::resolve` (:193-214): the URI is ignored. -/
 def pinnedRes (addrs : List IP) : Url → Except String (List IP) := fun _ => pinned addrs
 
-/-- The agent's request loop. `serve u = some loc` is a 3xx with `Location: loc`.
+/-- The agent's request loop. `serve u = some r` is a 3xx reply; it is followed only when it
+carries a `Location` and redirects remain.
 Each element is one connection: the request URL and the addresses the resolver
 handed the connector for it. -/
-def fetch (cfg : Cfg) (res : Url → Except String (List IP)) (serve : Url → Option Url) :
+def fetch (cfg : Cfg) (res : Url → Except String (List IP)) (serve : Url → Option Reply) :
     Nat → Url → List (Url × List IP)
   | 0, u =>
     if cfg.httpsOnly && u.scheme != .https then []
@@ -99,13 +136,15 @@ def fetch (cfg : Cfg) (res : Url → Except String (List IP)) (serve : Url → O
     else match res u with
       | .error _ => []
       | .ok as => (u, as) :: match serve u with
-        | some loc => fetch cfg res serve f loc
-        | none => []
+        | some ⟨_, some loc⟩ => fetch cfg res serve f loc
+        | _ => []
 
 /-- The remote arm of `open_csv_records` on main (:376-399): the same agent with
-`httpCfgMain`; when the first URL answers 3xx (`serve u = some _`) the reply is
-returned as is and the function errors with "does not follow redirects". -/
-def loadRemote (dns : Nat → List IP) (serve : Url → Option Url) (u : Url) :
+`httpCfgMain`; when the first URL answers ANY 3xx (`serve u = some r`, with or without a
+`Location`) the reply is returned as is and the function errors with the status and the
+location text (`showU` renders a `Url`; an absent header is `""`). -/
+def loadRemote (showU : Url → String) (dns : Nat → List IP) (serve : Url → Option Reply)
+    (u : Url) :
     Except String (List (Url × List IP)) :=
   match validateU dns u with
   | .error e => .error e
@@ -114,7 +153,7 @@ def loadRemote (dns : Nat → List IP) (serve : Url → Option Url) (u : Url) :
     | [] => .ok []
     | c :: cs =>
       match serve u with
-      | some _ => .error "LOAD CSV does not follow redirects"
+      | some r => .error s!"LOAD CSV does not follow redirects (HTTP {r.status} to {(r.loc.map showU).getD ""})"
       | none => .ok (c :: cs)
 
 /-- **Property**: every connection is https and uses addresses validated for its
@@ -132,7 +171,7 @@ def u0 : Url := ⟨.https, 1, 0⟩
 /-- With no redirects followed (C: libcurl without `CURLOPT_FOLLOWLOCATION`; main
 since #3458) the fetch is the one validated request, so `EachHopValidated` holds
 with `pinnedRes`, whatever `https_only` is (the validated URL is https). -/
-theorem noRedirect_single (dns : Nat → List IP) (serve : Url → Option Url) (u : Url) (addrs : List IP)
+theorem noRedirect_single (dns : Nat → List IP) (serve : Url → Option Reply) (u : Url) (addrs : List IP)
     (b : Bool) (hv : validateU dns u = .ok addrs) :
     EachHopValidated dns (fetch ⟨0, b⟩ (pinnedRes addrs) serve 0 u) := by
   have hsch := (validateU_spec dns u addrs hv).1
@@ -149,8 +188,9 @@ theorem noRedirect_single (dns : Nat → List IP) (serve : Url → Option Url) (
 /-- **`fixed3443_eachHopValidated`**: main's `loadRemote` (https_only, no
 redirects, pinned resolver) makes only connections that are https to an address
 validated for their own host, for every DNS answer and every server. -/
-theorem fixed3443_eachHopValidated (dns : Nat → List IP) (serve : Url → Option Url) (u : Url)
-    (conns : List (Url × List IP)) (h : loadRemote dns serve u = .ok conns) :
+theorem fixed3443_eachHopValidated (showU : Url → String) (dns : Nat → List IP)
+    (serve : Url → Option Reply) (u : Url)
+    (conns : List (Url × List IP)) (h : loadRemote showU dns serve u = .ok conns) :
     EachHopValidated dns conns := by
   unfold loadRemote at h
   split at h
@@ -165,11 +205,14 @@ theorem fixed3443_eachHopValidated (dns : Nat → List IP) (serve : Url → Opti
         rw [← hf]
         exact noRedirect_single dns serve u addrs true hv
 
-/-- **`fixed3443_redirect_is_error`**: a first URL that answers 3xx is an error
-(never a second connection), as in C. -/
-theorem fixed3443_redirect_is_error (dns : Nat → List IP) (serve : Url → Option Url) (u : Url)
-    (loc : Url) (addrs : List IP) (hv : validateU dns u = .ok addrs) (hs : serve u = some loc) :
-    loadRemote dns serve u = .error "LOAD CSV does not follow redirects" := by
+/-- **`fixed3443_redirect_is_error`**: a first URL that answers any 3xx, with or without a
+`Location`, is an error carrying the status and the location text (never a second connection),
+as in C. -/
+theorem fixed3443_redirect_is_error (showU : Url → String) (dns : Nat → List IP)
+    (serve : Url → Option Reply) (u : Url)
+    (r : Reply) (addrs : List IP) (hv : validateU dns u = .ok addrs) (hs : serve u = some r) :
+    loadRemote showU dns serve u =
+      .error s!"LOAD CSV does not follow redirects (HTTP {r.status} to {(r.loc.map showU).getD ""})" := by
   obtain ⟨hsch, -, hne, -⟩ := validateU_spec dns u addrs hv
   have hp : pinned addrs = .ok (addrs.take 16) := by
     unfold pinned
@@ -192,7 +235,7 @@ def perUrlRes (dns : Nat → List IP) : Url → Except String (List IP) :=
 /-- **`fixed_eachHopValidated`**: with `https_only` and a resolver that validates
 and pins per request, every connection of every redirect chain satisfies
 `EachHopValidated`, whatever the servers answer and the redirect budget. -/
-theorem fixed_eachHopValidated (dns : Nat → List IP) (serve : Url → Option Url) (n : Nat) (fuel : Nat) (u : Url) :
+theorem fixed_eachHopValidated (dns : Nat → List IP) (serve : Url → Option Reply) (n : Nat) (fuel : Nat) (u : Url) :
     EachHopValidated dns (fetch ⟨n, true⟩ (perUrlRes dns) serve fuel u) := by
   have head : ∀ (u : Url) (as : List IP), perUrlRes dns u = .ok as →
       u.scheme = .https ∧ ∃ vs, validateU dns u = .ok vs ∧ ∀ a ∈ as, a ∈ vs := by

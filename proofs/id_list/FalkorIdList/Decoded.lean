@@ -28,7 +28,7 @@ theorem fromSegments_dinv (segs : List Seg) (hw : ∀ s ∈ segs, WF s) : DInv (
   ⟨rfl, hw, .inl rfl⟩
 
 /-- A fresh `Range{id,1}` appended past the end opens a run of its own. -/
-theorem inv_fresh (init : List Seg) (len : Nat) (d : Option Bool) (hd : d ≠ none ∨ d = none)
+theorem inv_fresh (init : List Seg) (len : Nat) (d : Option Bool)
     (hw : ∀ s ∈ init, WF s) (id : Nat) (hid : id < W) :
     Inv ⟨init ++ [.range id 1], len, init.length, d⟩ := by
   refine inv_of (Nat.le_refl _) hw (by simp [WF]; omega) (by simp [RL]) (by simp) ?_
@@ -47,10 +47,10 @@ theorem pushTail_fresh (c : Bool) (init : List Seg) (last : Seg) (len : Nat) (de
         Inv st' ∧ flat st'.segs = flat (init ++ [last]) ++ [id] ∧ st'.len = len := by
     intro d
     obtain ⟨st', h1, h2, h3, h4⟩ :=
-      collapse_ok c _ (inv_fresh (init ++ [last]) len (some d) (.inl (by simp)) hw id hid) d rfl
+      collapse_ok c _ (inv_fresh (init ++ [last]) len (some d) hw id hid) d rfl
     exact ⟨st', h1, h2, by rw [h3, flat_snoc]; rfl, h4⟩
   have restart : Inv ⟨init ++ [last] ++ [.range id 1], len, (init ++ [last]).length, none⟩ :=
-    inv_fresh _ len none (.inr rfl) hw id hid
+    inv_fresh _ len none hw id hid
   have hf : flat (init ++ [last] ++ [.range id 1]) = flat (init ++ [last]) ++ [id] := by
     rw [flat_snoc]; rfl
   cases desc with
@@ -301,9 +301,15 @@ theorem pushAll_dinv : ∀ (cs : List Bool) (st : St) (xs : List Nat), (DInv st 
 /-- **#2920's correctness theorem.** Pushing any `xs` onto a decoded list (any
 well-formed segments, whatever the last one is) yields exactly the decoded ids
 followed by `xs`, with `len` counting all of them, for every sequence of collapse
-decisions — no reorder, no `assert!`. (Before the fix: `pre2920_decoded_then_pushed_*`.) -/
+decisions — no reorder, no `assert!`. (Before #2920 `from_segments` started the run at 0 and a push could
+reorder; the pre-fix model was removed in bbee75955, last present at 17ccc5412.)
+
+The model counts lengths in `Nat`; Rust's `*len += 1` on a `u32` segment length is not modelled, so the
+statement is scoped to `hlen`: no segment (hence no id count) reaches 2^32. A decoded segment of length
+`u32::MAX` extended by one push would overflow in Rust (see README "What the model does not cover"). -/
 theorem decoded_then_pushed_keeps_order (cs : List Bool) (segs : List Seg) (xs : List Nat)
-    (hw : ∀ s ∈ segs, WF s) (hx : ∀ x ∈ xs, x < W) :
+    (hw : ∀ s ∈ segs, WF s) (hx : ∀ x ∈ xs, x < W)
+    (_hlen : (flat segs).length + xs.length < 4294967296) :
     ∃ st, pushAll cs (fromSegments segs) xs = some st ∧ flat st.segs = flat segs ++ xs ∧
       st.len = (flat segs).length + xs.length :=
   pushAll_dinv cs _ xs (.inl (fromSegments_dinv segs hw)) hx
@@ -319,11 +325,12 @@ can be extended by any push sequence with every id kept in order after the
 theorem readIds_then_pushed_keeps_order (R : Roaring) (hR : RoaringOK R) (bs : List Nat)
     (count : Nat) (hb : ∀ b ∈ bs, b < 256) (hc : count < 4294967296) {segs : List Seg}
     {rest : List Nat} (h : readIds R bs count = .ok (segs, rest))
-    (cs : List Bool) (xs : List Nat) (hx : ∀ x ∈ xs, x < W) :
+    (cs : List Bool) (xs : List Nat) (hx : ∀ x ∈ xs, x < W)
+    (hlen : count + xs.length < 4294967296) :
     ∃ st, pushAll cs (fromSegments segs) xs = some st ∧ flat st.segs = flat segs ++ xs ∧
       st.len = count + xs.length := by
   obtain ⟨hw, hlen, _⟩ := readIds_safe R hR bs count hb hc h
-  obtain ⟨st, h1, h2, h3⟩ := decoded_then_pushed_keeps_order cs segs xs hw hx
+  obtain ⟨st, h1, h2, h3⟩ := decoded_then_pushed_keeps_order cs segs xs hw hx (by omega)
   exact ⟨st, h1, h2, by rw [h3, hlen]⟩
 
 end IdListWire

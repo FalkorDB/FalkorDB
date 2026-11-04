@@ -4,16 +4,16 @@
 A model of `graph/src/planner/binder.rs` (and the id-minting side of
 `graph/src/planner/mod.rs`) and a machine-checked account of its scoping.
 `lake build` succeeds; no `sorry`, `admit` or `axiom`; every theorem depends at
-most on `propext`, `Quot.sound`, `Classical.choice`. 185 theorems. Rust source: origin/main `0f45a8685`
-(binder.rs re-targeted across #3335: `(x)` binds to `x`'s tree — `bind_paren` — and AND/OR
+most on `propext`, `Quot.sound`, `Classical.choice`. 185 theorems. Rust source: origin/main `5c7af54f2`
+(the line numbers below are read off that tree; binder.rs was re-targeted across #3335: `(x)` binds to `x`'s tree — `bind_paren` — and AND/OR
 bind flat via `and_of`/`or_of` — `bind_andOr_paren`, `flatB_assoc`; planner/mod.rs cites
 re-targeted across #2390).
 
 ## The one invariant that matters
 
 Every id is minted as the **current size of its scope table**: `fresh_var`
-(binder.rs:2243), the parent copy in `resolve_name` (binder.rs:2224), and the
-planner's `fresh_var` (planner/mod.rs:843, also mod.rs:1590/1615), which gets
+(binder.rs:2260), the parent copy in `resolve_name` (binder.rs:2192, calls `fresh_var` at 2200/2211), and the
+planner's `fresh_var` (planner/mod.rs:838, called at 1068, 1108, 1114 and 1461), which gets
 `scope_vars[s] = sorted_scope_vars(env_stack[s])`. `mint_fresh_iff` proves the
 planner's ids `len, len+1, …` avoid every id `H` the bound IR uses iff
 `∀ i ∈ H, i < len`. Minting under a new key keeps that (`mint_new_covers`,
@@ -23,18 +23,18 @@ in two places while the removed ids are still in the IR
 (`erase_breaks_covers`, `where_copy_id_reused`, `comprehension_cleanup_breaks`).
 
 ## Gap closed 2026-10-20: pattern predicates may declare variables (#1334)
-`bind_expr_node`'s `Pattern` arm (binder.rs:2077-2105) binds a WHERE pattern predicate with
+`bind_expr_node`'s `Pattern` arm (binder.rs:2082-2113) binds a WHERE pattern predicate with
 `bind_graph(…, false)`, which mints any unknown alias fresh. Property `PatternPredDeclaresNothing`
 (an accepted pattern predicate names only visible variables); refuted by
 `bug1334_pattern_predicate_declares_var`: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds with
-`n1` fresh (id 2) — live Rust returns every `n0`, C errors ("Unable to locate a value with alias n1").
+`n1` fresh (id 2) — live Rust returns every `n0`, C rejects it (issue #1334; the C error message is not recorded here).
 The slot-reuse family (#3333, #3369, #3375, #3368, #3150) is modelled in proofs/ops_aggregate
 `SlotReuse.lean` (`projLayout` = this binder's per-scope minting fed to the aggregate).
 
 ## Gap closed 2026-10-22: REMOVE does not clear accumulated labels (#3450)
-`LClause` gains `.remove` (`bind_ir` QueryIR::Remove, b84473a7f binder.rs:477-482, leaves `node_labels`
-alone); `bind_projection` copies the parent's label set to the `WITH` child (:1132-1141/:1159-1168) and
-`update_all_node_labels` (:122-134) stamps it on the next MATCH. Property `StampedLabelsHeld` (a stamped
+`LClause` gains `.remove` (`bind_ir` QueryIR::Remove, binder.rs:477-482, leaves `node_labels`
+alone); `bind_projection` copies the parent's label set to the `WITH` child (:1135-1146/:1162-1173) and
+`update_all_node_labels` (:122-153) stamps it on the next MATCH. Property `StampedLabelsHeld` (a stamped
 label is written by that MATCH or still held, point-in-time via `held`); `specStamp_held` proves the fix
 satisfies it, `bug3450_remove_label_kept_across_with` refutes it on main: `MATCH (a:A) REMOVE a:A WITH a
 MATCH (a)-[:R]->(b)` stamps `(a:A)` — Rust 0 rows, C 1. (RemoveLabels.lean; the planner half is in
@@ -45,29 +45,29 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 | here | there |
 | --- | --- |
 | `Env`, `Env.insert/erase/retain` | `HashMap<Arc<String>, Variable>` scope table (binder.rs:47) |
-| `freshVar` | `Binder::fresh_var` binder.rs:2243 |
-| `mint_fresh_iff` | `Planner::fresh_var` planner/mod.rs:843-857 |
+| `freshVar` | `Binder::fresh_var` binder.rs:2260 |
+| `mint_fresh_iff` | `Planner::fresh_var` planner/mod.rs:838-851 |
 | `St`, `pushScope` | `env_stack`, `use_parent_scope`, `parent_to_child_scope`, `copy_from_parent`; `push_scope` :251, `commit_scope` :256 |
-| `resolve`, `lookupLocals` | `resolve_name` binder.rs:2175-2241 |
-| `defineName`, `ensureType` | `define_name_in_scope` :2143, `ensure_type` :2259 |
-| `projectName` | `project_name` :2165 |
-| `bindProjection`, `projectItems` | `bind_projection` :1059-1301 (non-`*` form) |
-| `rustBind` / `specBind`, `Elem`, `split` | `bind_graph` :1328 (nodes, then rels) / C's textual order |
-| `fold`, `bindClauses` | `parse_pattern` loop parser/cypher.rs:1540-1547 (and :2102 for predicates) |
-| `mergeSV`, `lenAt` | `merge_scope_vars` :2694, `Binder::bind` :99 |
+| `resolve`, `lookupLocals` | `resolve_name` binder.rs:2192-2258 |
+| `defineName`, `ensureType` | `define_name_in_scope` :2160, `ensure_type` :2276 |
+| `projectName` | `project_name` :2182 |
+| `bindProjection`, `projectItems` | `bind_projection` :1064-1306 (non-`*` form) |
+| `rustBind` / `specBind`, `Elem`, `split` | `bind_graph` :1333 (nodes 1356, then rels 1373) / C's textual order |
+| `fold`, `bindClauses` | `parse_pattern` part separator parser/cypher.rs:1565-1582 (and :2117 for predicates) |
+| `mergeSV`, `lenAt` | `merge_scope_vars` :2711, `Binder::bind` :99 |
 | `foreachRestore` | FOREACH arm of `bind_ir` :673-709 |
-| `compScope`/`compCleaned` | cleanup in `bind_expr_node` :1922 and :2097 |
-| `callBodyScope` | `bind_call_body` :845 (Query) vs :897-905 (UNION) |
-| `accumulate` / `specScanLabels` | `node_labels` accumulation :1356-1360, `update_all_node_labels` :122 |
-| `held`, `rsStamp`, `specStamp` (RemoveLabels.lean) | REMOVE arm :477 (b84473a7f), WITH label copy :1159-1168, stamp :122-134 |
-| `unionCheck` | UNION arm :267-292 |
-| `validateImport` | `validate_import_with` :1003 |
-| `BSt`, `sortedScopeVars`, `updNode` (Stack.lean) | `env_stack` & co., `default` :74, `scope_vars` :114, `current_env(_mut)` :239/245, `push_scope` :251, `commit_scope` :256, `sorted_scope_vars` :2686, `update_graph_labels` :160 |
-| `NE`/`BE`, `bindNode`, `bindSetItems`, `selfRef` (BindExpr.lean) | `bind_expr_node` :1746, `bind_expr(_with_locals)` :1725/1703, `bind_set_items` :1700, `check_unbound_self_referential` :1682 |
-| `RC`, `bindIR`, `shortestOk`, `mergeOk`, `yieldLoop`, `bindYield`, `bindCallSubquery`, `importProjections`, `createCheck` (BindIR.lean) | `bind_ir` :262, `bind_call_subquery` :716, `build_import_projections` :979, `bind_graph_create` :1557 |
-| `mayBool`, `mayEntity`, `validate` (Types.lean) | `expr_may_return_boolean` :2306, `expr_may_return_entity` :2375, `validate_boolean_operands(_impl)` :2280/2255 |
-| `nodeToValue`, `collectConstArgs`, `foldCall`, `rewriteStruct`, `rewriteRegex` (Fold.lean) | `expr_tree_to_value` :2448, `collect_constant_args` :2480, folding :2114, `rewrite_struct_constructor` :2498, `rewrite_compiled_regex` :2563 |
-| `exprIrEq`, `strip`/`eqS`, `structEq`, `replaceAgg` (AggEq.lean) | `expr_ir_eq` :2665, `nodes_eq` :2635, `raw_exprs_structurally_equal` :2627, `replace_agg_subtrees` :2597 |
+| `compScope`/`compCleaned` | cleanup in `bind_expr_node` :1927 and :2106 |
+| `callBodyScope` | `bind_call_body` :824, stack push :845 (Query) vs UNION branch binder :903 |
+| `accumulate` / `specScanLabels` | `node_labels` accumulation :1360-1366, `update_all_node_labels` :122 |
+| `held`, `rsStamp`, `specStamp` (RemoveLabels.lean) | REMOVE arm :477, WITH label copy :1164-1173, stamp :122-150 |
+| `unionCheck` | UNION arm :267-294 |
+| `validateImport` | `validate_import_with` :1008 |
+| `BSt`, `sortedScopeVars`, `updNode` (Stack.lean) | `env_stack` & co., `default` :74, `scope_vars` :114, `current_env(_mut)` :239/245, `push_scope` :251, `commit_scope` :256, `sorted_scope_vars` :2703, `update_graph_labels` :160 |
+| `NE`/`BE`, `bindNode`, `bindSetItems`, `selfRef` (BindExpr.lean) | `bind_expr_node` :1751, `bind_expr(_with_locals)` :1730/1737, `bind_set_items` :1705, `check_unbound_self_referential` :1687 |
+| `RC`, `bindIR`, `shortestOk`, `mergeOk`, `yieldLoop`, `bindYield`, `bindCallSubquery`, `importProjections`, `createCheck` (BindIR.lean) | `bind_ir` :262, `bind_call_subquery` :716, `build_import_projections` :984, `bind_graph_create` :1562 |
+| `mayBool`, `mayEntity`, `validate` (Types.lean) | `expr_may_return_boolean` :2323, `expr_may_return_entity` :2392, `validate_boolean_operands(_impl)` :2297/2301 |
+| `nodeToValue`, `collectConstArgs`, `foldCall`, `rewriteStruct`, `rewriteRegex` (Fold.lean) | `expr_tree_to_value` :2465, `collect_constant_args` :2497, folding :2124, `rewrite_struct_constructor` :2515, `rewrite_compiled_regex` :2580 |
+| `exprIrEq`, `strip`/`eqS`, `structEq`, `replaceAgg` (AggEq.lean) | `expr_ir_eq` :2682, `nodes_eq` :2652, `raw_exprs_structurally_equal` :2644, `replace_agg_subtrees` :2614 |
 
 ## Proven (one line each)
 * `fresh_not_used`, `mint_new_covers`, `reinsert_covers`: minting under a new key is fresh and keeps the table covering.
@@ -98,35 +98,39 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
   `Pr2845.bodyNew_entry`, `importProj_spec`, `entry_ids_below`, `body_own_unbound`,
   `body_import_value`, `union_branch_label_fixed` (#3027), `pushed_read_unbound` (W6-opt-1).
 
-## Confirmed bugs (repro: `cargo test -p graph --test lean_binder`; tests assert the C answer and fail today)
-1. **Clause fold** (general cause of #2923): parser/cypher.rs:1540-1547 folds `MATCH p MATCH q` (and `CREATE`,
-   and `OPTIONAL MATCH p MATCH q`) into one pattern; cypher.rs:2102 parses a WHERE pattern predicate with the
-   same loop, so it swallows a following MATCH. Combined with `bind_graph` binding nodes before relationships
-   (binder.rs:1351 vs 1368): `bug_node_attrs_cannot_see_rel_of_previous_match` (#2923),
+## Confirmed bugs (repro: `cargo test -p graph --test lean_binder`; tests assert the C answer and fail while the bug is Open)
+1. **Clause fold** (general cause of #2923): `parse_pattern`'s part separator (parser/cypher.rs:1565-1582) folds
+   `MATCH p MATCH q` (and `CREATE`, and `OPTIONAL MATCH p MATCH q`) into one pattern; cypher.rs:2117 parses a
+   WHERE pattern predicate with the same loop, so it swallows a following MATCH. Combined with `bind_graph`
+   binding nodes before relationships (binder.rs:1356 vs 1373): `bug_node_attrs_cannot_see_rel_of_previous_match`
+   (#2923; live: `MATCH (a)-[r:R]->(x) MATCH (c:B {v: id(r)*0+r.w})` → Rust "'r' not defined", C 2 rows),
    `bug_consecutive_create_cannot_see_previous_create` (Rust "'a' not defined", C 1),
    `bug_pattern_predicate_swallows_next_match` (count 1 vs C 2), `bug_relationship_uniqueness_across_match_clauses`
    (0 vs 1), `bug_optional_match_swallows_following_match` (row [null] vs spec none; C rejects).
    Also single-MATCH `(a)-[r]->(b {v: r.w-2})` rejected (C accepts).
 2. **Inline attrs of one component referencing another** are filtered on that component's own scan under the
-   Cartesian product (planner/mod.rs:1964-1980, `lower_inline_attrs` + Filter over the scan since #2390):
+   Cartesian product (planner/mod.rs `lower_inline_attrs` :598, applied at :1919, a Filter over the scan since #2390):
    `bug_inline_attr_referencing_other_component` ([] vs C 2 rows) — #2923's node case. Still present on
-   8743953a8 (live: `MATCH (a:A), (b:B {v: a.v}) RETURN a.v, b.v` → Rust [], C [[1,1],[2,2]]; #2923's
-   `MATCH (a)-[r:R]->(x) MATCH (c:B {v: id(r)*0+r.w})` → Rust "'r' not defined", C 2 rows).
-3. **Removed-key id reuse** (binder.rs:1260-1268 WHERE/SKIP/LIMIT copies; :1922/:2097 comprehension/pattern locals):
+   8743953a8 (live: `MATCH (a:A), (b:B {v: a.v}) RETURN a.v, b.v` → Rust [], C [[1,1],[2,2]]). #2923's
+   relationship repro is the clause fold (item 1), not this scan filter.
+3. **Removed-key id reuse** (binder.rs:1262-1273 WHERE/SKIP/LIMIT copies; :1927/:2106 comprehension/pattern locals):
    `bug_with_where_copy_id_reused_by_next_match` ([] vs [[0,1,0]]), `..._by_pattern_comprehension`,
    `bug_pattern_comprehension_locals_reused` (4 rows vs 3), `bug_where_comprehension_locals_reused`
    (runtime error "Invalid node id for 'to' in relationship pattern").
-4. **CALL { UNION }** branches start at scope 0 (binder.rs:897-905): `bug_call_union_branch_scopes_alias_outer` ([1,1] vs [1,0],[1,5]).
-5. **ORDER BY copies cross the projection** (snapshot at binder.rs:1245 is after ORDER BY): `bug_order_by_variable_crosses_with`
+4. ~~CALL { UNION } branches start at scope 0~~ **Fixed by #3027** (d42d121c6): each branch's `Binder` now starts with
+   `env_stack: vec![HashMap::new(); outer + 1]` (binder.rs:903), so its scopes are above the outer ones
+   (`callBody_union_disjoint`, `union_branch_label_fixed`); the test `bug_call_union_branch_scopes_alias_outer`
+   passes. Kept as a number so the other items keep theirs.
+5. **ORDER BY copies cross the projection** (snapshot at binder.rs:1248 is after ORDER BY): `bug_order_by_variable_crosses_with`
    (`WITH n.v AS k ORDER BY n.v RETURN n` accepted, `RETURN *` returns `k, n`), `bug_order_by_variable_returned_from_call`
    ("Variable `n` already declared in outer scope"; C returns rows).
-6. **Label accumulation leaks** from CREATE and pattern comprehensions into the earlier MATCH scan (binder.rs:1674→1356,
-   1876-1933 lack the save/restore of :338 and :2090): `bug_create_labels_leak_into_match` (0 vs 3),
+6. **Label accumulation leaks** from CREATE and pattern comprehensions into the earlier MATCH scan (binder.rs:1562→1360,
+   1881-1938 lack the save/restore of :339-345 and :2096-2101): `bug_create_labels_leak_into_match` (0 vs 3),
    `bug_pattern_comprehension_labels_leak_into_match` (1 row vs 3).
-7. **Pattern predicate in WITH … WHERE rebinds a parent name** (define_name_in_scope :2150 ignores the parent copy that
+7. **Pattern predicate in WITH … WHERE rebinds a parent name** (define_name_in_scope :2160 ignores the parent copy that
    pattern comprehensions pre-make at :1882): `bug_with_where_pattern_predicate_ignores_outer_variable` (3 rows vs 1).
 
-8. **A subscript is never accepted as a boolean** (NEW, `expr_may_return_boolean` binder.rs:2333-2343 lists
+8. **A subscript is never accepted as a boolean** (NEW, `expr_may_return_boolean` binder.rs:2347-2356 lists
    `GetElement` as non-boolean; also `Negate`, `Length`, `ListComprehension`, `MapProjection`, which can be null).
    Live Rust (release) vs C: `CREATE (:N {flags:[true,false]}), (:N {flags:[false]})` then
    `MATCH (n:N) WHERE n.flags[0] RETURN count(n)` → Rust `Expected boolean predicate`, C `1`;

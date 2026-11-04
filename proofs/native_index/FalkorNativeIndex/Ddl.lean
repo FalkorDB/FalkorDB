@@ -3,9 +3,9 @@ import FalkorNativeIndex.Query
 set_option linter.unusedSimpArgs false
 
 /-!
-# Index DDL (`graph_writes.rs:396-460`), the graph's index entry points
-# (`graph.rs:3858-3888`, `:3889`, `:4181-4224`), the scan routing (`node_by_index_scan.rs:302`,
-# `edge_by_index_scan.rs:318`), and folded-roots MVCC (`graph.rs:1083`)
+# Index DDL (`graph_writes.rs:396-501`), the graph's index entry points
+# (`graph.rs:3879-3924`, `:4205-4246`), the scan routing (`node_by_index_scan.rs:302`,
+# `edge_by_index_scan.rs:318`), and folded-roots MVCC (`graph.rs:1084`)
 -/
 
 namespace NI
@@ -31,8 +31,10 @@ def collectEntries (g : G) (e : EntityType) (label attr : String) : List (Value 
   | .node => collectNodeEntries g label attr
   | .relationship => collectEdgeEntries g label attr
 
-/-- What the graph's matrices promise (GraphBLAS iteration order, a C API fact): the label matrix is
-    iterated in strictly ascending row order, a tensor by `(src, dst)`. -/
+/-- What the graph's matrices are assumed to promise (an assumption about GraphBLAS iteration order,
+    taken as a hypothesis, not proven here; the guarantee is the row-major iteration order of
+    GraphBLAS's `GxB_Iterator` API, see its User Guide section): the label matrix is iterated in
+    strictly ascending row order, a tensor by `(src, dst)`. -/
 structure G.Ordered (g : G) : Prop where
   nodes : ∀ label lm, g.labelNodes label = some lm → lm.Pairwise (· < ·)
   edges : ∀ label t, g.typeEdges label = some t → t.Pairwise pairLe
@@ -42,13 +44,13 @@ structure G.Fits (g : G) : Prop where
   nodes : ∀ label lm, g.labelNodes label = some lm → lm.length ≤ usizeMax
   edges : ∀ label t, g.typeEdges label = some t → t.length ≤ usizeMax
 
-/-- `build_in_one_batch` (`graph_writes.rs:412-425`): create the column `Building`, then one indexer
+/-- `build_in_one_batch` (`graph_writes.rs:412-424`): create the column `Building`, then one indexer
     batch with no limit on its size, which reaches the end and flips it `Ready`. -/
 def buildInOneBatch (g : G) (e : EntityType) (label attr : String) : G :=
   let g := { g with idx := g.idx.createBuilding e label attr }
   (g.indexerPrepare (.column e (label, attr)) usizeMax).1
 
-/-- `create_index` (`graph_writes.rs:396-406`). -/
+/-- `create_index` (`graph_writes.rs:396-408`). -/
 def createIndex (g : G) (t : FalkorDbIndex.IndexType) (e : EntityType) (label : String) (attrs : List String) : G :=
   if t = .range then attrs.foldl (fun g a => buildInOneBatch g e label a) g else g
 
@@ -56,7 +58,7 @@ def createIndex (g : G) (t : FalkorDbIndex.IndexType) (e : EntityType) (label : 
 structure Field where
   ty : FalkorDbIndex.IndexType
 
-/-- `populate` (`graph_writes.rs:434-443`). -/
+/-- `populate` (`graph_writes.rs:490-501`). -/
 def populate (g : G) (e : EntityType) (label : String) (fields : List (String × List Field)) : G :=
   fields.foldl (fun g af => if af.2.any (fun f => f.ty == .range) then buildInOneBatch g e label af.1 else g) g
 
@@ -374,13 +376,13 @@ theorem populate_builds (g : G) (e : EntityType) (label : String) (af : String �
 structure IndexDocs where
   native : PendingIndexWrites
 
-/-- `Graph::apply_index_writes` (`graph.rs:3858-3888`): `apply` with the graph's `place` (a node by its
+/-- `Graph::apply_index_writes` (`graph.rs:3890-3904`): `apply` with the graph's `place` (a node by its
     id, an edge by its endpoints, `None` for an edge this unit deleted). -/
 def applyIndexWrites (g : G) (docs : IndexDocs) : G × IndexDocs :=
   let r := g.idx.apply docs.native g.place
   ({ g with idx := r.1 }, ⟨r.2⟩)
 
-/-- `Graph::commit_index_docs` (`graph.rs:3889-3902`): the native part, then the RediSearch documents
+/-- `Graph::commit_index_docs` (`graph.rs:3913-3924`): the native part, then the RediSearch documents
     (`commit_index` / `commit_edge_index`: the RediSearch C API, AXIOMATISED in index_layer). -/
 def commitIndexDocs (g : G) (docs : IndexDocs) : G × IndexDocs := applyIndexWrites g docs
 
@@ -392,12 +394,12 @@ theorem applyIndexWrites_spec (g : G) (docs : IndexDocs) :
 theorem commitIndexDocs_native (g : G) (docs : IndexDocs) :
     commitIndexDocs g docs = applyIndexWrites g docs := rfl
 
-/-- `Graph::query_index_numeric_nodes` (`graph.rs:4181-4191`): `query_numeric`'s three-way answer,
+/-- `Graph::query_index_numeric_nodes` (`graph.rs:4205-4213`): `query_numeric`'s three-way answer,
     raw docs mapped to `NodeId` (the map is the identity here). -/
 def queryIndexNumericNodes (g : G) (label : String) (q : IndexQuery) : Option (Except ScanFilter (List Nat)) :=
   (g.idx.queryNumeric .node label q).map (fun a => a.map (fun rows => rows.map id))
 
-/-- `Graph::query_index_numeric_edges` (`graph.rs:4199-4224`): endpoints from the `edge_id → (src, dst)`
+/-- `Graph::query_index_numeric_edges` (`graph.rs:4223-4246`): endpoints from the `edge_id → (src, dst)`
     reverse index; an id it does not know (a deleted, not reused edge) is skipped. The map runs on
     `Ok` only, so a `ScanFilter` passes through untouched. -/
 def queryIndexNumericEdges (g : G) (endpoints : Nat → Option (Nat × Nat)) (typeName : String) (q : IndexQuery) :
@@ -528,7 +530,7 @@ theorem nodeScan_native_inList_agrees (g : G) (label key : String) (items : List
 
 /-! ## Folded-roots MVCC -/
 
-/-- `Graph::new_version` (`graph.rs:1083`): the index is a field of the version and is cloned
+/-- `Graph::new_version` (`graph.rs:1084`): the index is a field of the version and is cloned
     with it (`O(1)` per column: root `Arc` bumps; pages are immutable once built, cow_btree
     `Snapshot.lean`), so as a value the new version's index *is* the old one. -/
 def newVersion (g : G) : G := { g with idx := g.idx }
@@ -545,8 +547,13 @@ def runUnit (committed : G) (u : Unit) : G :=
   let priv := (applyIndexWrites priv ⟨staged⟩).1
   if u.refused then committed else priv
 
-/-- **Snapshot isolation**: a reader holding version `v` reads `v`'s index — any query answers the same
-    after any sequence of later units, refused or not. -/
+/-- **Snapshots are values** (model-level only): `runUnit` returns a new `G` and never mutates its
+    argument, so a reader's held version `v` answers any query the same after any sequence of later
+    units, refused or not. This is persistence by construction in the model (the proof is `rfl`, and
+    `_later` is deliberately unused); it does not by itself establish snapshot isolation of the Rust.
+    The content of that claim is that the pages a held tree root reaches are never mutated in place,
+    which is `snapshot_isolated` / `snapshot_reads_committed` in `proofs/cow_btree`
+    (`FalkorCowBTree/Snapshot.lean`), together with `newVersion` cloning the index in `O(1)`. -/
 theorem snapshot_isolated (v : G) (units : List Unit) (e : EntityType) (label : String) (q : IndexQuery) :
     let _later := units.foldl runUnit v
     v.idx.queryNumeric e label q = v.idx.queryNumeric e label q := rfl

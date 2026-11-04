@@ -82,8 +82,9 @@ theorem selfloop_ignores_chain (s : Nat) (scan res res' : Plan) (r : Rec V) (g :
       ev S (.node (.hop .expandInto s) [scan, res']) r g := rfl
 
 /-- **#2999 fixed by #3102 (61284ea4f)**: the planner now builds `ExpandInto(Scan(res))`
-(PlanMatch2 `chainRel_selfloop_unbound`): every row of the chain planned so far is scanned
-and expanded, so the earlier hops' rows reach the output. -/
+(PlanMatch2 `chainRel_selfloop_unbound`): the chain planned so far is the scan's input, and the
+rows of that evaluation are fed to the scan and then the expansion operators (what `S.step` does
+with them is abstract here: the theorem is the structural identity, not that `S.step` keeps them). -/
 theorem selfloop_scan_keeps_chain (s sc : Nat) (res : Plan) (r : Rec V) (g : G) :
     ev S (.node (.hop .expandInto s) [.node (.scan sc) [res]]) r g =
       forRows (S.step (.hop .expandInto s)) (forRows (S.step (.scan sc)) (ev S res r g).1 (ev S res r g).2).1
@@ -181,6 +182,7 @@ theorem where_scan_indistinguishable (φ s t : Nat) :
 spine, outermost first. -/
 def spineFilters : Plan → List Nat
   | .node (.filter φ) [c] => φ :: spineFilters c
+  | .node (.filter φ) _ => [φ]
   | .node _ [c] => spineFilters c
   | .node _ _ => []
 
@@ -188,6 +190,11 @@ def spineFilters : Plan → List Nat
 filters, innermost first, so the original nesting is preserved. -/
 def wrapFilters (fs : List Nat) (scan : Plan) : Plan :=
   fs.foldr (fun φ p => .node (.filter φ) [p]) scan
+
+/-- A `Filter` with no child or several is still collected (`filters_of` pushes it before the
+single-child test), then the walk stops. -/
+theorem spineFilters_filter_branch (φ : Nat) (a b : Plan) (cs : List Plan) :
+    spineFilters (.node (.filter φ) (a :: b :: cs)) = [φ] := rfl
 
 theorem spineFilters_wrap (fs : List Nat) (s : Nat) :
     spineFilters (wrapFilters fs (.node (.scan s) [])) = fs := by

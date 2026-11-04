@@ -23,8 +23,9 @@ only arises for `MAX_QUEUED_QUERIES`, whose value is positive, so `as_i64` is ex
 values are `Int`s here.
 
 Proven:
-* `rust_c_same_accept` — for every argument vector whose values have no leading
-  whitespace and that names no Rust-only config, `apply_module_args` succeeds exactly
+* `rust_c_same_accept` — for every argument vector whose names and values have no embedded
+  NUL (C sees C strings, `cstr`) and no leading whitespace in values, and that names no
+  Rust-only config, `apply_module_args` succeeds exactly
   when C's `Config_Init` does (case-insensitive names, even arity, known names, C's value
   rules, the TIMEOUT/TIMEOUT_DEFAULT/TIMEOUT_MAX interplay), given only that
   `File::create` in a directory succeeds iff `access(W_OK)` does.
@@ -266,18 +267,22 @@ def cSet (fs : FS) (td tm : Int) (n : N) (v : List Nat) : Option (Int × Int) :=
   | .jsHeap | .jsStack => keep (pos.filter (fun x => decide (1048576 ≤ x)))
   | .indexWorkerThreads | .boltPort | .effectsCompression => none   -- not C fields
 
+/-- C reads a `RedisModuleString` as a C string: everything from the first NUL is invisible to
+`strcasecmp`/`strtoll`/`access`. Rust (`to_string_lossy`) keeps the whole string. -/
+def cstr (v : List Nat) : List Nat := v.takeWhile (fun c => c != 0)
+
 /-- `Config_Contains_field`: the first C name equal up to `strcasecmp`. -/
 def cLookup (f : List Nat) : Option N := cList.find? (fun n => eqIC f n.str)
 
 def cLoop (fs : FS) : Int → Int → Bool → Bool → List (List Nat × List Nat) → Bool
   | _, _, old, new, [] => !(old && new)
   | td, tm, old, new, (f, v) :: rest =>
-    match cLookup f with
+    match cLookup (cstr f) with
     | none => false
     | some n =>
       let new' := new || n == .timeoutDefault || n == .timeoutMax
       let old' := old || n == .timeout
-      match cSet fs td tm n v with
+      match cSet fs td tm n (cstr v) with
       | none => false
       | some (td', tm') => cLoop fs td' tm' old' new' rest
 
@@ -353,6 +358,19 @@ theorem timeouts_runtime (fs : FS) (v : List Nat) :
 def TOk (td tm : Int) : Prop := 0 ≤ td ∧ 0 ≤ tm ∧ (td > 0 → tm > 0 → td ≤ tm)
 
 def NoLeadSpace (v : List Nat) : Prop := ∀ c, v.head? = some c → isSpace c = false
+
+/-- No embedded NUL: C's view (`cstr`) of the string is the whole string. -/
+def NoNul (v : List Nat) : Prop := ∀ c ∈ v, c ≠ 0
+
+theorem cstr_noNul (v : List Nat) (h : NoNul v) : cstr v = v := by
+  induction v with
+  | nil => rfl
+  | cons c cs ih =>
+    have hc : c ≠ 0 := h c (List.mem_cons_self ..)
+    have ih' := ih (fun d hd => h d (List.mem_cons_of_mem _ hd))
+    have hb : (c != 0) = true := by simpa using hc
+    simp only [cstr, List.takeWhile, hb] at ih' ⊢
+    rw [ih']
 
 theorem drop_noLead (v : List Nat) (h : NoLeadSpace v) : v.dropWhile isSpace = v := by
   cases v with
@@ -563,15 +581,17 @@ theorem cross_eq (c : Cfg) (vs : List (Name × Int)) :
 
 theorem loop_agree (fs : FS) (hfs : FsOk fs) :
     ∀ (ps : List (List Nat × List Nat)) (td tm : Int) (old new : Bool), TOk td tm →
-      (∀ p ∈ ps, NoLeadSpace p.2) → (∀ p ∈ ps, ∀ n ∈ rustOnly, parseName (upA p.1) ≠ some n) →
+      (∀ p ∈ ps, NoLeadSpace p.2) → (∀ p ∈ ps, NoNul p.1 ∧ NoNul p.2) →
+      (∀ p ∈ ps, ∀ n ∈ rustOnly, parseName (upA p.1) ≠ some n) →
       (match loop fs td tm old new ps with | .ok (_, o, w) => !(o && w) | .error _ => false) =
         cLoop fs td tm old new ps
-  | [], _, _, _, _, _, _, _ => rfl
-  | (f, v) :: rest, td, tm, old, new, ht, hv, hr => by
+  | [], _, _, _, _, _, _, _, _ => rfl
+  | (f, v) :: rest, td, tm, old, new, ht, hv, hz, hr => by
     have hr0 := hr (f, v) (List.mem_cons_self ..)
     have hv0 := hv (f, v) (List.mem_cons_self ..)
+    have hz0 := hz (f, v) (List.mem_cons_self ..)
     simp only [loop, cLoop]
-    rw [cLookup_parse f hr0]
+    rw [cstr_noNul f hz0.1, cstr_noNul v hz0.2, cLookup_parse f hr0]
     cases hn : parseName (upA f) with
     | none => rfl
     | some n =>
@@ -586,24 +606,27 @@ theorem loop_agree (fs : FS) (hfs : FsOk fs) :
         simp only
         have ih := loop_agree fs hfs rest td' tm' (old || n == .timeout)
           (new || n == .timeoutDefault || n == .timeoutMax) (hok a td' tm' hst)
-          (fun p hp => hv p (List.mem_cons_of_mem _ hp)) (fun p hp => hr p (List.mem_cons_of_mem _ hp))
+          (fun p hp => hv p (List.mem_cons_of_mem _ hp)) (fun p hp => hz p (List.mem_cons_of_mem _ hp))
+          (fun p hp => hr p (List.mem_cons_of_mem _ hp))
         rw [← ih]
         cases loop fs td' tm' (old || n == .timeout) (new || n == .timeoutDefault || n == .timeoutMax) rest with
         | error e => rfl
         | ok r => obtain ⟨l, o, w⟩ := r; rfl
 
 /-- **`apply_module_args` accepts exactly what C's `Config_Init` accepts**, for every
-argument vector whose values carry no leading whitespace and that names no Rust-only
-config, given only the libc/`std::fs` agreement `FsOk`. -/
+argument vector whose names and values carry no embedded NUL (C reads them as C strings,
+`cstr`; Rust keeps the whole string, so `CACHE_SIZE 10\0junk` loads in C and not in Rust),
+whose values carry no leading whitespace, and that names no Rust-only config, given only the
+libc/`std::fs` agreement `FsOk`. -/
 theorem rust_c_same_accept (fs : FS) (hfs : FsOk fs) (args : List (List Nat))
-    (hv : ∀ p ∈ pairs args, NoLeadSpace p.2)
+    (hv : ∀ p ∈ pairs args, NoLeadSpace p.2) (hz : ∀ p ∈ pairs args, NoNul p.1 ∧ NoNul p.2)
     (hr : ∀ p ∈ pairs args, ∀ n ∈ rustOnly, parseName (upA p.1) ≠ some n) :
     (match applyModuleArgs fs 0 0 args with | .ok _ => true | .error _ => false) = cInit fs args := by
   unfold applyModuleArgs cInit
   by_cases hp : args.length % 2 = 1
   · simp only [hp, if_true]
   · simp only [hp, if_false]
-    rw [← loop_agree fs hfs (pairs args) 0 0 false false ⟨by omega, by omega, by omega⟩ hv hr]
+    rw [← loop_agree fs hfs (pairs args) 0 0 false false ⟨by omega, by omega, by omega⟩ hv hz hr]
     cases loop fs 0 0 false false (pairs args) with
     | error e => rfl
     | ok r =>

@@ -10,7 +10,7 @@ accepts any non-empty subset, `decode_graph_schema.c:127`). Before #3514 the dec
 kept one type: an attribute with a RANGE and a FULLTEXT (or VECTOR) index
 lost its RANGE index when a C-written RDB loads (#3484, confirmed live: v4.22.2 → 6.0.3 and C
 master → Rust main). **Main now satisfies the property**: `SerialSchema.decField` is the merged
-`decode_index_field` (`src/serializers/mod.rs:637-725`), and the three theorems below hold on it.
+`decode_index_field` (`src/serializers/mod.rs:637-724`), and the three theorems below hold on it.
 
 * `encFieldC` — C's entry for an attribute with the types `r`, `ft`, `v`.
 * `decField_encFieldC` — **main**: every C entry with at least one type decodes to exactly its
@@ -73,7 +73,7 @@ theorem decField_empty_refused (attr ph : Bytes) (w ns : Nat) (vw : VWords) (ts 
     decField U (encFieldC attr false false false w ns ph vw ++ ts) = none := by
   simp [decField, encFieldC, maskOf, Dec.bind, rdB, rdU, rdD, failD]
 
-/-- An unknown bit (here `0x20`) is refused too (`:668-672`). -/
+/-- An unknown bit (here `0x20`) is refused too (`:655-660`). -/
 theorem decField_unknown_bit_refused (attr ph : Bytes) (w ns : Nat) (ts : List W) :
     decField U ([.buf (nullTerm attr), .u 0x20, .d w, .u ns, .buf (nullTerm ph)] ++ ts) = none := by
   simp [decField, Dec.bind, rdB, rdU, rdD, failD, ANYW, RANGEW, NUMERIC, STR, GEO, VECTOR,

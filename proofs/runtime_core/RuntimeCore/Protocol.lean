@@ -27,7 +27,7 @@ main's `g.borrow_mut()`).
 | `runlock t`   | dropping a reader session (`Drop` `:430`) or `escalate`'s `*mode = None` (`:352`). Enabled only once `t`'s read runtime is gone: the runtime is a local of `execute_query` / `execute_profile` (`graph_core.rs:635-671`, `:700-716`) that borrows `&session` from its caller (`:1094-1114`, `:1254-1255`, `:1383-1389`, `:1466-1467`), and `record.rs` drops it explicitly (`:142`) before the session (`:61`) |
 | `wlock t`     | `begin_writer` (`:180-197`) / `escalate` (`:345-365`) → `RwLock::write_arc`; `graph.write()` in `effect.rs:62`, `bulk_insert.rs:847`, `constraint.rs:569` |
 | `wunlock t`   | `release_locks` (`:268`) / session drop |
-| `readNew t`   | `Runtime::new(g = tg.graph.read(), write = false)` — the only three: `graph_core.rs:632→635`, `:698→700`, `record.rs:84→86`, each under its reader session; `owner.borrow()` at `runtime.rs:480` (`owner = Arc::clone(&g)`) |
+| `readNew t`   | `Runtime::new(g = tg.graph.read(), write = false)` — the only three: `graph_core.rs:632→635`, `:698→700`, `record.rs:84→86`, each under its reader session; `owner.borrow()` at `runtime.rs:484` (`owner = Arc::clone(&g)`) |
 | `readDrop`    | `Runtime` drop: `read_guard` released (`DropOrder`) |
 | `fork t`      | `MvccGraph::fork` (`mvcc_graph.rs:130`), takes nothing: reader mode `write_version` → `Version::Unchecked` (`query_session.rs:211-224`); writer mode → `Version::Current` (`cur := some t`), also `tg.graph.fork()` under `graph.write()` in `effect.rs:63`, `bulk_insert.rs:847`, `constraint.rs:324,522` |
 | `check t`     | `check_fork` → `MvccGraph::is_stale` (`query_session.rs:246-261`, `mvcc_graph.rs:144`), writer mode only (`upgrade_to_write` `:319`); success makes the version `Current`, a stale one goes to `abandon` |

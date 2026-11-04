@@ -56,8 +56,8 @@ def MAX_VALUE_NESTING : Nat := 4096
 
 variable (C : Codec)
 
-/-- `read_u32_ne` (`:46`, `w = 4`), `read_u64_ne`/`read_i64_ne`/`read_f64_ne` (`:58`, `:70`,
-`:82`, `w = 8`): bounds check `*idx + w > data.len()`, then `from_ne_bytes` of
+/-- `read_u32_ne` (`:47`, `w = 4`), `read_u64_ne`/`read_i64_ne`/`read_f64_ne` (`:59`, `:71`,
+`:83`, `w = 8`): bounds check `*idx + w > data.len()`, then `from_ne_bytes` of
 `data[*idx..*idx + w]` (`dec`: the core decoder, any total function) and `*idx += w`. -/
 def readNe {α : Type} (w : Nat) (dec : List Nat → α) (data : List Nat) (idx : Nat) :
     Except BErr (α × Nat) :=
@@ -385,7 +385,7 @@ theorem ceiling_sound (P : Nat) (rs : List (List BV)) (hlen : ∀ vs ∈ rs, vs.
     have := encRec_len C vs
     rw [List.flatMap_cons, List.length_append, List.length_cons, Nat.succ_mul]; omega
 
-/-! ## `parse_count` (`bulk_insert.rs:647-669`) -/
+/-! ## `parse_count` (`bulk_insert.rs:647-666`) -/
 
 def parseCount (s : List Nat) : Option Nat :=
   if s = [] then none

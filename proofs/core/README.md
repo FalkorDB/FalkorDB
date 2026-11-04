@@ -8,7 +8,7 @@
 - integer orderings;
 - the generic laws a comparator must satisfy to be a valid sort order.
 
-Each of these now has one definition, so a fix to the float model, for example, reaches every project that compares floats.
+Each of these now has one definition, so a fix to the float model, for example, reaches every project that imports `FalkorCore`. A project that keeps its own abstraction does not get it automatically: `columnar` has its own `FloatModel` class and connects to `core` only through `Columnar/CoreBridge.lean`.
 
 No query feature depends on `core` directly. It matters because the headline theorems of other projects are stated in its terms. For example:
 
@@ -24,7 +24,7 @@ The module table (what each file contains and which project it came from) is in 
 
 **1. What is a FalkorDB `Value`, to a proof?**
 
-`V F` is `enum Value` (`graph/src/runtime/value.rs:180`) with all 16 variants:
+`V F` is `enum Value` (`graph/src/runtime/value.rs:184`) with all 16 variants:
 
 - `null`, `bool`, `int`, `float`;
 - `str`, `list`, `map`;
@@ -51,7 +51,7 @@ On top of `F`:
 | Definition | Rust |
 |---|---|
 | `fpcmp` | `partial_cmp`: `none` exactly when either side is NaN; `-0.0` and `+0.0` are equal |
-| `cmpF` | `compare_floats` (`value.rs:1801`): `partial_cmp`, and NaN answers `(Less, NaN)` whichever side it is on |
+| `cmpF` | `compare_floats` (`value.rs:1915`): `partial_cmp`, and NaN answers `(Less, NaN)` whichever side it is on |
 | `roundF` | `i as f64`: round to 53 significant bits, ties to even |
 | `bits64`, `bits32` | `f64::to_bits` / `f32::to_bits` |
 | `asI64` | `x as i64`: saturating, NaN gives 0, truncation toward zero |

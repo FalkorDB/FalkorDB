@@ -10,7 +10,7 @@
 | `step`                     | one arm of the `match op`, `runtime/runtime.rs:1433-1468` |
 | `evalIdFilter`             | the filter loop of `Runtime::evaluate_id_filter`, `runtime/runtime.rs:1415-1469` |
 | `evalIdFilterMain`         | `Runtime::evaluate_id_filter` on main b84473a7f (#3394): the loop, then `node_count() == 0 → Ok(None)`, `runtime.rs:1470-1479` |
-| `maxNodeId`                | `Graph::max_node_id`, `graph/graph.rs:1624-1604` (since #2846 `node_ids.max_id()`, id_space.rs:320 — same arithmetic) |
+| `maxNodeId`                | `Graph::max_node_id`, `graph/graph.rs:1783-1786` (since #2846 `node_ids.max_id()`, id_space.rs:353 — same arithmetic) |
 | `seek`                     | `NodeByIdSeekOp::next`: range minus `deleted_nodes`, `runtime/ops/node_by_id_seek.rs:63-73` |
 | `pre3394_seek`             | the same before #3394 (b6567cb97): no `node_count` check |
 | `G.wf`                     | `Graph::node_count` is the number of live ids below the id bound (`id_space.rs`) |
@@ -158,7 +158,7 @@ structure G where
 def G.bound (g : G) : Nat := g.nodeCount + g.deleted.length
 def G.live (g : G) (x : Nat) : Bool := decide (x < g.bound) && !g.deleted.contains x
 
-/-- `Graph::max_node_id` (`graph.rs:1624-1604` → `IdSpace::max_id`, id_space.rs:320). -/
+/-- `Graph::max_node_id` (`graph.rs:1783-1786` → `IdSpace::max_id`, id_space.rs:353). -/
 def maxNodeId (g : G) : Nat := if g.nodeCount = 0 then 0 else g.bound - 1
 
 /-- `Runtime::evaluate_id_filter` on main (#3394, `runtime.rs:1415-1479`): the same loop, then

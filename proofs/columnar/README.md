@@ -85,9 +85,9 @@ Both bugs were confirmed on the real code through the public API and were **late
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `empty_batch_ignored`, `concat_obs_eq` (counterexample `empty_batch_binds` replaced) | `Batch::concat`'s fallback loop set `bound_anywhere` from batches with **no active rows**, so a slot bound only in an empty batch came out bound (`Some(Null)`), where the per-row concat leaves it unbound (`None`) | **Fixed by #3059**: the loop skips `active_len() == 0` batches (`batch.rs:1008-1012`) |
+| 1 | `empty_batch_ignored`, `concat_obs_eq` (counterexample `empty_batch_binds` replaced) | `Batch::concat`'s fallback loop set `bound_anywhere` from batches with **no active rows**, so a slot bound only in an empty batch came out bound (`Some(Null)`), where the per-row concat leaves it unbound (`None`) | **Fixed by #3059**: the loop skips `active_len() == 0` batches (`batch.rs:1008-1013`) |
 | 2 | `toOwned_get_eq_view`, `toOwned_trailing_unbound` (counterexample replaced) | `BatchRow::to_owned_row` dropped trailing unbound columns, so `value_at(i)` was `Some(Null)` on the view but `None` on the owned row ("Variable not found") | **Fixed by #3059**: one `Row::push_slot` per column (`batch.rs:1437-1457`), so the owned row answers `value_at` on every slot exactly like the view (`toOwned_get_eq_view`; `Row.pushSlot`, `pushSlots_spec`). Still modelled, not a Rust change: `evalVariable_beyond` (the vectorised `eval_variable` reads Null past the column space where the per-row view errors) |
-| — | removed (17ccc5412) | #2922: LLVM dropped the `cap < BATCH_SIZE` guard of the pack-ceiling `match` on aarch64-apple-darwin, so a cap above a batch came out as the ceiling itself (`miscompiled_differs`). #2973 rewrote it as `cap.clamp(1, BATCH_SIZE)`; the two forms compute the same ceiling for every cap | Fixed by #2973 (a source-form change; the model is the clamp, the guarded arm is history) |
+| — | removed (17ccc5412) | #2922: LLVM dropped the `cap < BATCH_SIZE` guard of the pack-ceiling `match` on aarch64-apple-darwin, so a cap above a batch came out as the ceiling itself (`miscompiled_differs`). #2973 rewrote it as `cap.clamp(1, BATCH_SIZE)`, which has no guard to drop | Fixed by #2973 (a source-form change; the model is the clamp, the guarded arm is history) |
 | — | `skip_u16_wraps` | Selection vectors are `u16`. Past 65536 rows the cast wraps, a row is lost and another duplicated. Batches are kept small only by the `BATCH_SIZE` caps, which is exactly the guard the LLVM miscompile in #2922 dropped on macOS arm64 (`miscompiled_differs`) | Hazard, not a bug today |
 | — | `finishLen_drops` | A no-alias emitter over a zero-column parent with no origins emits a 0-row batch. Since #2845 a parent that carries origins is gathered (`finishLen_origins_kept`) | Hazard, unreachable: ExpandInto always has columns |
 | — | `classifyColumn_lossy` | `classify_column` can lose information | Harmless: it has no caller |
@@ -125,11 +125,11 @@ The project imports `../core` (the engine value) and `../expr_semantics` (the ex
 
 ## Coverage
 
-`COVERAGE.tsv` has 165 rows: 66 in `batch.rs`, 39 in `batched_result_emitter.rs`, 26 in `vector_expr.rs`, 21 in `row.rs`, 7 in `vectorized.rs`, 4 in `runtime.rs` (the `materialize_*` reads) and 2 in `eval.rs` (`eval_batch`).
+`COVERAGE.tsv` has 166 rows: 66 in `batch.rs`, 39 in `batched_result_emitter.rs`, 26 in `vector_expr.rs`, 22 in `row.rs`, 7 in `vectorized.rs`, 4 in `runtime.rs` (the `materialize_*` reads) and 2 in `eval.rs` (`eval_batch`).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 147 |
+| PROVEN | 148 |
 | MODELLED | 16 |
 | NOT COVERED | 2 |
 

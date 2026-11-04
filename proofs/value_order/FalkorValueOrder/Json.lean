@@ -1,8 +1,8 @@
 import FalkorValueOrder.Glue
 /-!
-# JSON rendering of values (value.rs:49-55, :1374-1390, :1579-1753)
+# JSON rendering of values (value.rs:81-87 trait `DisplayJson`, `to_json_string` :1417, `fmt_json` :1694-1830)
 
-`DisplayJson::fmt_json` (the trait at value.rs:50 and the `Value` impl at :1582),
+`DisplayJson::fmt_json` (the trait at value.rs:81 and the `Value` impl at :1694),
 `Value::to_json_string` (:1374) and its `Display` wrapper `fmt` (:1384),
 `write_json_string` (:1704) and `write_node_json` (:1716), modelled as functions that
 return the `String` the `Formatter` receives (every `write!` is `++`; a `fmt::Error`
@@ -40,7 +40,7 @@ structure JsonEnv (F F32 : Type) where
 
 variable {F F32 : Type} (E : JsonEnv F F32)
 
-/-- `write_json_string` (value.rs:1704): `"` ++ escaped chunks ++ `"`. -/
+/-- `write_json_string` (value.rs:1818): `"` ++ escaped chunks ++ `"`. -/
 def writeJsonString (s : String) : String := "\"" ++ E.escape s ++ "\""
 
 /-- The `for (i, x) in xs.enumerate() { if i > 0 { "," } x }` loop used five times. -/
@@ -65,7 +65,7 @@ structure EntityR where
   rel : Nat → String            -- the `Relationship` arm
 
 mutual
-/-- `impl DisplayJson for Value::fmt_json` (value.rs:1582), arm by arm; the entity arms
+/-- `impl DisplayJson for Value::fmt_json` (value.rs:1696), arm by arm; the entity arms
 call `R` (instantiated below with the real `write_node_json` / relationship arm). -/
 def fmtS (R : EntityR) : W F F32 → String
   | .null => "null"
@@ -95,14 +95,14 @@ def fmtM (R : EntityR) : List (String × W F F32) → List String
   | (k, v) :: kvs => (writeJsonString E k ++ ":" ++ fmtS R v) :: fmtM R kvs
 end
 
-/-- `write_node_json` (value.rs:1716) given the renderer for attribute values. -/
+/-- `write_node_json` (value.rs:1830) given the renderer for attribute values. -/
 def writeNodeJson (R : EntityR) (id : Nat) (includeType : Bool) : String :=
   "{" ++ (if includeType then "\"type\":\"node\"," else "") ++
   "\"id\":" ++ toString id ++ ",\"labels\":[" ++
   sepJoin ((E.nodeLabels id).map (writeJsonString E)) ++ "],\"properties\":{" ++
   sepJoin (fmtM E R (E.nodeAttrs id)) ++ "}}"
 
-/-- The `Relationship` arm of `fmt_json` (value.rs:1622-1649). -/
+/-- The `Relationship` arm of `fmt_json` (value.rs:1736-1764). -/
 def relJson (R : EntityR) (r : Nat) : String :=
   let tn := (E.relType r).getD ""
   "{\"type\":\"relationship\",\"id\":" ++ toString r ++ ",\"relationship\":" ++
@@ -117,15 +117,15 @@ def renderers : Nat → EntityR
   | 0 => ⟨fun _ _ => "", fun _ => ""⟩
   | n + 1 => ⟨writeNodeJson E (renderers n), relJson E (renderers n)⟩
 
-/-- `fmt_json` itself (value.rs:1582) at depth 2 (value → entity → attribute values). -/
+/-- `fmt_json` itself (value.rs:1696) at depth 2 (value → entity → attribute values). -/
 def fmtJson (v : W F F32) : String := fmtS E (renderers E 2) v
 
-/-- `DisplayJson` (trait value.rs:50): the single impl is `fmtJson`. -/
+/-- `DisplayJson` (trait value.rs:81): the single impl is `fmtJson`. -/
 class DisplayJson (α : Type) where
   fmtJson : α → String
 
 
-/-- `Value::to_json_string` (value.rs:1374) wraps the value in `JsonWrapper` whose
+/-- `Value::to_json_string` (value.rs:1417) wraps the value in `JsonWrapper` whose
 `Display::fmt` (:1384) calls `fmt_json`; `to_string()` collects that output. -/
 def jsonWrapperFmt (v : W F F32) : String := DisplayJson.fmtJson (self := ⟨fmtJson E⟩) v
 def toJsonString (v : W F F32) : String := jsonWrapperFmt E v

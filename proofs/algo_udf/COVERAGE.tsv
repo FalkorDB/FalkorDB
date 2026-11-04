@@ -101,7 +101,7 @@ graph/src/udf/repository.rs	new	74	PROVEN	UdfRepoOps.rnew_spec
 graph/src/udf/repository.rs	version	83	PROVEN	UdfRepoOps.bump_spec
 graph/src/udf/repository.rs	bump_version	89	PROVEN	UdfRepoOps.bump_spec
 graph/src/udf/repository.rs	load	94	PROVEN	Repo.load, collides, collision_rejected, dotted_collision_rejected, replace_self_ok, case_sensitive, load_preserves_crossFold, keysUnique_of_crossFold (fixed by #3066); UdfGlobals.empty_lib_name_mismatch
-graph/src/udf/repository.rs	delete	156	PROVEN	Repo.delete_preserves, delete_breaks_other
+graph/src/udf/repository.rs	delete	156	PROVEN	Repo.delete_preserves, delete_preserves_after3066 (delete keeps every other library callable under KeysUnique; the pre-#3066 breakage is described in prose only)
 graph/src/udf/repository.rs	flush	173	PROVEN	UdfRepoOps.flush_spec
 graph/src/udf/repository.rs	list	186	PROVEN	UdfRepoOps.list_shows_raw, list_filter, strip_qual
 graph/src/udf/repository.rs	get_all_libraries	221	PROVEN	UdfRepoOps.getAll_spec

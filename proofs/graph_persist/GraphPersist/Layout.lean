@@ -10,7 +10,7 @@ Three structural pieces of `load(save(G)) = G` above the leaf value codec:
 * the deleted-id bitmap round-trips through `RoaringTreemap`'s
   `encode`/`decode_with_count` (serialization.rs:172) — 8 little-endian bytes per
   id, count-checked.
-* `AttributeStore::decode_with_count` (attribute_store.rs:1460) drops any attribute
+* `AttributeStore::decode_with_count` (attribute_store.rs:1476) drops any attribute
   whose id is `≥ attr_limit` or whose value is `Null`. This is the load-side guard
   the comment on `Decode::decode_with_count` (serialization.rs:76) describes; it is
   what keeps a hand-edited or version-skewed RDB from binding a span to attribute 0.
@@ -23,7 +23,7 @@ Here ↔ there:
 | `PEntry`                   | `PayloadEntry {state,count,offset}` (serialization.rs:166) |
 | `roaringRT`                | `RoaringTreemap` encode∘decode (serialization.rs:172,194) |
 | `expectedLen`, `countCheck` | `RoaringTreemap::decode_with_count`'s checks (serialization.rs:216-235, #2996) |
-| `decodeSpanFilter`         | `AttributeStore::decode_with_count` filter (attribute_store.rs:1476-1487) |
+| `decodeSpanFilter`         | `AttributeStore::decode_with_count` filter (attribute_store.rs:1499-1502) |
 -/
 
 namespace GraphPersist
@@ -185,7 +185,7 @@ theorem chunkType_count (cap : Nat) (hcap : 0 < cap) :
 /-! ## `decode_with_count` attribute-id / null filter
 
 Per stored `(attr_id, value)` the decoder keeps it iff `attr_id < attr_limit`
-**and** `value ≠ Null` (attribute_store.rs:1476-1487). Values that fail either
+**and** `value ≠ Null` (attribute_store.rs:1499-1502). Values that fail either
 test are read (to keep the stream in sync) then discarded. -/
 
 /-- A decoded raw entry, as it comes off the wire. `id` is the u64 attribute id

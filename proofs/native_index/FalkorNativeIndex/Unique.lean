@@ -7,8 +7,9 @@ set_option linter.unusedSimpArgs false
 The check itself (comparing candidates' keys with the members') is `unique_violated` in
 `runtime::pending` (project `pending_commit`); this file proves what the native side promises it:
 
-* `nativeUniqueQuery`: one lookup per constrained property whose column can answer *exactly*
-  (`equal_candidates`: a column that is not `Building` and indexes the value), and `None` when no
+* `nativeUniqueQuery`: one lookup per constrained property whose column can cover every holder of the value
+  (`equal_candidates`: a column that is not `Building` and indexes the value; the lookup may return extra
+  entities, which `unique_violated` re-checks), and `None` when no
   column can: a decline is never an empty answer (`nativeUniqueQuery_none_iff`).
 * `fewest`/`fewest_candidates`: the loop reads one entity from every lookup per round and returns the
   lookup that runs out first, i.e. the **first shortest** one (`fewest_eq_minRow`), one of the lookups
@@ -64,7 +65,7 @@ theorem nativeUniqueQuery_mem (x : FalkorDbIndex) (e : EntityType) (label : Stri
   rw [(nativeUniqueQuery_some x e label props values ls).1 h |>.1]
   simp [List.mem_filterMap]
 
-/-! ## `fewest_candidates` (`unique.rs:69-87`) -/
+/-! ## `fewest_candidates` (`unique.rs:69-85`) -/
 
 /-- One round over `(remaining, read)` pairs, one per lookup: take one entity from each in order; the
     first whose lookup has run out returns what it read (`Some(id) => read[i].push(id)`,

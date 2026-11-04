@@ -3,8 +3,8 @@ set_option linter.unusedSimpArgs false
 
 /-!
 # Indexer batches: how a `Building` column is filled (#2351)
-# (`graph_writes.rs:528-632` `scan`/`scan_nodes`/`scan_edges`, `versioned.rs:161-217`,
-# `falkordb_index.rs:197-213`)
+# (`graph_writes.rs:569-673` `scan`/`scan_nodes`/`scan_edges`; in `versioned.rs`: `IndexId`,
+# `Discarded`, `indexer_prepare`, `prepare_batch`; in `falkordb_index.rs`: `indexer_read`, `indexer_add`)
 
 A column is created `Building` (`create_building`) and filled by indexer batches. A batch
 (`Graph::indexer_prepare`) reads the next `budget` entities from the column's cursor at the values
@@ -17,20 +17,20 @@ and that the cursor it returns is exactly the line the writer's filter uses:
   (GraphBLAS row order, a hypothesis about the C API), the entities a batch read are exactly those
   `precedes` the returned cursor, so an entity is in the index iff `place` puts it below the cursor.
 * `edgeLoop_pair_complete` (inside the same theorem): a batch never stops inside a multi-edge pair.
-* `scanNodes_tuples`, `scanEdges_tuples`: the tuples are the encoded pairs of the entities read.
-* `prepareBatch_spec`: a batch changes nothing on a column that is not `Building`.
+* `scanNodes_tuples`, and the second conjunct of `scanEdges_below_cursor`: the tuples are the encoded pairs of the entities read.
+* `prepareBatch_idle` (Ddl.lean): a batch changes nothing on a column that is not `Building`.
 * `kind_*`: cursors never mix kinds, so `precedes`'s `unreachable!` never fires.
 -/
 
 namespace NI
 
-/-- `usize::MAX`, the budget of `build_in_one_batch` (`graph_writes.rs:433`). -/
+/-- `usize::MAX`, the budget of `build_in_one_batch` (`graph_writes.rs:422`). -/
 def usizeMax : Nat := 2 ^ 64 - 1
 
 /-! ## Reading tuples -/
 
 /-- The statement `if let Some(value) = <read attr> { column.push_encoded(&value, id, out) }` of
-    `scan_nodes` (`graph_writes.rs:581-583`) and the `index` closure of `scan_edges` (`:603-607`). -/
+    `scan_nodes` (`graph_writes.rs:614-616`) and the `index` closure of `scan_edges` (`:647-649`). -/
 def pushAttr (col : IndexColumn) (attrOf : Nat → Option Value) (out : EncodedTuples) (id : Nat) : EncodedTuples :=
   match attrOf id with
   | some v => col.pushEncoded v id out
@@ -58,7 +58,7 @@ theorem foldPush_scalar (col : IndexColumn) (attrOf : Nat → Option Value) (ids
   | nil => intro out; simp
   | cons i is ih => intro out; simp only [List.foldl_cons, ih, pushAttr_scalar, List.flatMap_cons, List.append_assoc]
 
-/-! ## `scan_nodes` (`graph_writes.rs:553-587`) -/
+/-! ## `scan_nodes` (`graph_writes.rs:594-619`) -/
 
 /-- The node ids `lm.iter(from, u64::MAX)` yields: rows from `from` on, ascending. -/
 def nodesFrom (lm : List Nat) (from_ : Nat) : List Nat := lm.filter (fun n => decide (from_ ≤ n))
@@ -139,7 +139,7 @@ theorem scanNodes_below_cursor (g : G) (label attr : String) (from_ budget : Nat
     · exact h1
     · rw [this] at h1; simp at h1
 
-/-! ## `scan_edges` (`graph_writes.rs:589-632`) -/
+/-! ## `scan_edges` (`graph_writes.rs:630-673`) -/
 
 /-- The edge-reading loop of `scan_edges`: read edges one at a time while `read < budget`; when
     the budget is reached, also read the rest of the `(src, dst)` pair the last edge belongs to
@@ -157,7 +157,7 @@ def edgeLoop (budget : Nat) (index : Nat → EncodedTuples → EncodedTuples) :
       else edgeLoop budget index (read + 1) es out
     else (out, (s, d, eid) :: es)
 
-/-- The `next_if` skip loop of `scan_edges` (`graph_writes.rs:609-613`): edges of `from_src` with a
+/-- The `next_if` skip loop of `scan_edges` (`graph_writes.rs:653-656`): edges of `from_src` with a
     destination below `from_dst` are skipped, after starting at row `from_src`. -/
 def skipP (fromSrc fromDst : Nat) (e : Nat × Nat × Nat) : Bool := decide (e.1 = fromSrc ∧ e.2.1 < fromDst)
 def skipEdges (t : List (Nat × Nat × Nat)) (fromSrc fromDst : Nat) : List (Nat × Nat × Nat) :=
@@ -363,9 +363,9 @@ theorem scanEdges_below_cursor (g : G) (label attr : String) (fromSrc fromDst bu
     rw [hr] at hein
     simpa using hein
 
-/-! ## `scan` and the batch (`graph_writes.rs:528-551`, `versioned.rs:187-217`) -/
+/-! ## `scan` and the batch (`graph_writes.rs:569-589`; `versioned.rs`: `indexer_prepare`, `prepare_batch`) -/
 
-/-- `scan` (`graph_writes.rs:528-551`): the sorted, deduplicated tuples of one batch and the cursor
+/-- `scan` (`graph_writes.rs:569-589`): the sorted, deduplicated tuples of one batch and the cursor
     where the next one resumes (`none`: the scan reached the end). -/
 def scan (g : G) (label attr : String) (from_ : BuildCursor) (entities : Nat) (col : IndexColumn) :
     EncodedTuples × Option BuildCursor :=
@@ -410,7 +410,7 @@ theorem scan_kind (g : G) (label attr : String) (from_ : BuildCursor) (entities 
 
 theorem kind_new (e : EntityType) : BuildCursor.OfKind e (BuildCursor.new e) := by cases e <;> trivial
 
-/-- The place the graph gives an entity (`Graph::apply_index_writes`, `graph.rs:3798-3807`): a node by
+/-- The place the graph gives an entity (`Graph::build_place`, `graph.rs:3879-3885`): a node by
     its id, an edge by its endpoints, which an edge deleted in this unit no longer has. -/
 def G.place (g : G) : EntityType → Nat → Option BuildCursor
   | .node, id => some (.node id)
@@ -424,7 +424,7 @@ theorem kind_place (g : G) (e : EntityType) (id : Nat) (c : BuildCursor) (h : g.
     simp only [G.place, Option.map_eq_some_iff] at h
     obtain ⟨_, _, rfl⟩ := h; trivial
 
-/-- `IndexColumn::indexer_read` (`falkordb_index.rs:197-205`). -/
+/-- `IndexColumn::indexer_read` (`falkordb_index.rs:350`). -/
 def IndexColumn.indexerRead (c : IndexColumn) (g : G) (name : EntityType × IndexKey) (from_ : BuildCursor)
     (budget : Nat) : EncodedTuples × Option BuildCursor :=
   scan g name.2.1 name.2.2 from_ budget c
@@ -432,7 +432,7 @@ def IndexColumn.indexerRead (c : IndexColumn) (g : G) (name : EntityType × Inde
 theorem indexerRead_spec (c : IndexColumn) (g : G) (e : EntityType) (k : IndexKey) (from_ : BuildCursor)
     (budget : Nat) : c.indexerRead g (e, k) from_ budget = scan g k.1 k.2 from_ budget c := rfl
 
-/-- `IndexColumn::indexer_add` (`falkordb_index.rs:207-212`): `add_encoded`. -/
+/-- `IndexColumn::indexer_add` (`falkordb_index.rs:360`): `add_encoded`. -/
 def IndexColumn.indexerAdd (c : IndexColumn) (batch : EncodedTuples) : IndexColumn × EncodedTuples :=
   c.addEncoded batch
 
@@ -442,11 +442,11 @@ theorem indexerAdd_mem (ix : NumericIndex) (batch : EncodedTuples) (e : Nat) :
     e ∈ ((IndexColumn.numeric ix).indexerAdd batch).1.ix.tree ↔ e ∈ ix.tree ∨ e ∈ batch.scalar :=
   addEncoded_spec ix batch e
 
-/-- `IndexId` (`versioned.rs:47-50`). -/
+/-- `IndexId` (`versioned.rs:86`). -/
 inductive IndexId where
   | column (e : EntityType) (k : IndexKey)
 
-/-- `Graph::prepare_batch::<IndexColumn>` (`versioned.rs:205-217`): read the batch from the column's
+/-- `Graph::prepare_batch::<IndexColumn>` (`versioned.rs:582`): read the batch from the column's
     cursor, then apply it to the same version; `false` (nothing changed) if the column is gone or
     not `Building`. -/
 def G.prepareBatch (g : G) (e : EntityType) (k : IndexKey) (budget : Nat) : G × Bool :=
@@ -460,7 +460,7 @@ def G.prepareBatch (g : G) (e : EntityType) (k : IndexKey) (budget : Nat) : G ×
       let a := g.idx.applyIndexerBatch e k r.1 r.2
       ({ g with idx := a.1 }, a.2)
 
-/-- `Graph::indexer_prepare` (`versioned.rs:191-201`). -/
+/-- `Graph::indexer_prepare` (`versioned.rs:366`). -/
 def G.indexerPrepare (g : G) (id : IndexId) (budget : Nat) : G × Bool :=
   match id with
   | .column e k => g.prepareBatch e k budget

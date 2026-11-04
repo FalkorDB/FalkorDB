@@ -7,16 +7,17 @@ import VersionedMatrix.TensorOps
 | `nrowsT`/`ncolsT` | `nrows` (:810) / `ncols` (:815) |
 | `resizeT`  | `resize` (:823): clamp to `max` (:834-835), early return (:836), grow (:839-874) |
 | `encVal`/`decVal` | value `encode` (:1474) puts in the C forward matrix / C's reading |
-| `sizeHint` | `EdgeIds::size_hint` (:1686) |
-| `baseStream`/`newTIt`/`seekTIt`/`outT` | `Iter::new` (:1714), `Iter::seek` (:1746), remaining output |
+| `sizeHint` | `EdgeIds::size_hint` (:1706) |
+| `baseStream`/`newTIt`/`seekTIt`/`outT` | `Iter::new` (:1734), `Iter::seek` (:1766), remaining output |
 
 **W4-matrix-1, fixed by #3250 (#3246).** `resize` now never shrinks: each
 target dimension is clamped to `max(target, current)` (release; debug builds
 also `debug_assert!` the caller never asks to shrink), and the grow path
 re-emits every layer with unchanged contents. `resizeT_eq` / `resizeT_keeps_st`
-prove the model: no pair state and no `me` row changes, so `resizeT_allInv`,
-`resizeT_blkInv`, `resizeT_edges` (no entry is ever dropped) and
-`resizeT_hasMultiEdge` hold for every tensor, with no hypothesis.
+prove the model: no pair state and no `me` row changes. So `resizeT_edges` (no entry
+is ever dropped) and `resizeT_hasMultiEdge` hold for every tensor, and `resizeT_allInv` /
+`resizeT_blkInv` say resize *preserves* `AllInv` / `BlkInv` (the input must already satisfy
+them); no node-capacity precondition is needed.
 
 History: before #3250 the shrink branch resized `m`/`dp`/`dm`/`mt` but not
 `me`. The counterexample (removed in bbee75955; the last revision that has them is 17ccc5412) was a pair satisfying every invariant
@@ -78,7 +79,8 @@ theorem resizeT_edges (t : TT) (r c : Nat) (p : Pair) :
   rw [(resizeT_keeps_st t r c).1]
 
 /-- The pair invariants (incl. promotion-completeness `single_me`, which the
-pre-#3250 shrink broke) survive every resize, with no hypothesis. -/
+pre-#3250 shrink broke) are preserved by every resize: the input must already satisfy `AllInv`, and no
+node-capacity precondition is added. -/
 theorem resizeT_allInv {t : TT} (hi : AllInv t) (r c : Nat) : AllInv (resizeT t r c) := by
   intro p; rw [(resizeT_keeps_st t r c).1]; exact hi p
 

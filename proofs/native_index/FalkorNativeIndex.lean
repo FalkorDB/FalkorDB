@@ -53,7 +53,7 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
 | `Build.lean`: `pushAttr`, `scanNodes`, `edgeLoop`, `scanEdges`, `scan`, `G.place`, `IndexColumn.indexerRead`/`indexerAdd`, `G.prepareBatch`, `G.indexerPrepare` | `graph_writes.rs:513-620` (`scan` :513, `scan_nodes` :538, `scan_edges` :574); `falkordb_index.rs:235-250`; `versioned.rs:187-230`; `graph.rs:3858-3888` (`place`, in `apply_index_writes`) |
 | `Batch.lean`: `SE`, `discardedAgainst`, `V` (`newBuildVersion`, `createEntry`, `setBatchesPublished`, `batchPublishedSince`, `applyBatch`, `withBatchIndex`), `indexerFit`, `commitIndexerBatch` | `versioned.rs:54-65`, `:173-241` (`IndexEntry`), `:248-340` (`apply_indexer_batch`, `indexer_prepare`, `indexer_fit`, `with_batch_index`, `take_index`); `falkordb_index.rs:452`, `:565`, `:575`; `graph.rs:1138` (`new_build_version`); `mvcc_graph.rs:193`, `:214` |
 | `Rebase.lean`: `Ver`, `tupl`, `entityTuples`, `rawTuples`, `placedBelow`, `IndexColumn.refresh`/`writerRebase`/`indexerCatchUp`, `Written`, `BS`, `EN` (`writerRecord`, `indexerApply`, `publish`, `rebase`, `catchUp`), `overtaken`, `BuildCursor.fromId`, `publishAll`, `columnNames`, `rebaseAll`, `overtakenAny`, `mvccRebase`, `V.rebased` | `falkordb_index.rs:169-244` (`refresh`, `placed_below`), `:326`, `:337`, `:437` (`from_id`), `:716`, `:724`; `versioned.rs:54-81` (`BuildState`, `Written`), `:213`, `:227`, `:280-334`, `:438-565`; `graph_writes.rs:445` (`entity_tuples`); `mvcc_graph.rs:165` (`rebase_onto_indexer_batches`); `graph.rs:3879` (`build_place`) |
-| `Cch.lean`: `Csr` (`row?`, `isWellFormed`, `isSymmetricSimple`), `defNew`, the `unimplemented!()` bodies as always-panicking functions | `cch/mod.rs:57-107` (`Csr`), `:139` (`CchIndexDef::new`), `:193-260` (`Cch::*`), `:314-395` (`VersionedIndex for CchIndex`); `falkordb_index.rs:967-987`; `graph.rs:5225-5274` |
+| `Cch.lean`: `Csr` (`row?`, `isWellFormed`, `isSymmetricSimple`), `defNew`, the `unimplemented!()` bodies as always-panicking functions | `cch/mod.rs:57-107` (`Csr`), `:139` (`CchIndexDef::new`), `:193-271` (`Cch::*`), `:314-395` (`VersionedIndex for CchIndex`); `falkordb_index.rs:967-991`; `graph.rs:5225-5275` |
 | `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries` (specifications), `buildInOneBatch`, `createIndex`, `populate`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanOp`, `newVersion`, `runUnit` | `graph_writes.rs:396-450`; `graph.rs:1083`, `:3858`, `:3889`, `:4181`, `:4199`; `node_by_index_scan.rs:302`, `edge_by_index_scan.rs:318` |
 | `Scan.lean`: `G.nodeMatches`/`relationshipMatches`, `nodeFilteredScan`/`edgeFilteredScan`, `nodeScanOp`/`edgeScanOp`, `redisearchFieldsAll`/`redisearchFields` | `graph.rs:4230` (`node_matches`), `:4244` (`relationship_matches`), `:144`/`:151` (`redisearch_fields`); the `Some(Err(scan_filter))` arms of `node_by_index_scan.rs:~330`, `edge_by_index_scan.rs:~375` |
 | `Unique.lean`: `nativeUniqueQuery`, `roundGo`/`fewestLoop`/`fewest`, `ReadOnce` | `unique.rs:20`, `:48`, `:69` |
@@ -108,8 +108,8 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   entity is recorded). The gap #3567 closed (an unrebased writer's commit published the *older* commit count, so the
   next batch was judged `AnotherBatch`; model-only, not reproduced live; see FINDINGS) is covered by
   `rebased_commit_keeps_chain` and `rebased_batch_fits`. `Frame` (outside the
-  written set, the two versions agree on what each entity contributes and where it sits) is assumed: the two
-  invariant theorems are conditional on it, the rows rest on the unconditional specs.
+  written set, the two versions agree on what each entity contributes and where it sits) is assumed: the three
+  invariant theorems (`refresh_inv`, `rebase_inv`, `catchUp_inv`) are conditional on it, the rows rest on the unconditional specs.
 - **#3319, the CCH contract skeleton** (`Cch.lean`): `Csr::is_well_formed` is exactly the type's shape rules
   (`isWellFormed_iff`), `is_symmetric_simple` exactly a simple undirected adjacency (`isSymmetricSimple_iff`,
   `_any_bs`), `row` never panics on a well-formed `Csr` (`row?_isSome_of_wf`), `CchIndexDef::new` makes equal
@@ -181,9 +181,11 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   `set_node_attributes` only `debug_assert!`s it (CONDITIONAL rows). Created nodes' `new_labels` /
   bulk / replica record labels are taken as the node's labels (the Rust's own premise, doc
   `graph_writes.rs:95-97`, `:131-132`).
+- **Counters** (`Batch.lean`): the `u64` generation / commit / version / batch counters are modelled as unbounded
+  `Nat`; a wrap at 2^64 is assumed unreachable, not proven.
 - **Matrix order and size** (`Build.lean`, `Ddl.lean`): `scanNodes_below_cursor` / `scanEdges_below_cursor` assume
-  the label matrix is iterated in strictly ascending row order and a tensor by `(src, dst)` (GraphBLAS iteration,
-  a C API fact; hypotheses `hasc`), and `buildInOneBatch_entry` that the entity count fits `usize::MAX`
+  the label matrix is iterated in strictly ascending row order and a tensor by `(src, dst)` (an assumption about
+  GraphBLAS iteration order, taken as the hypothesis `hasc` / `G.Ordered`, not proven here), and `buildInOneBatch_entry` that the entity count fits `usize::MAX`
   (`G.Fits`). Not proven: the global invariant "a `Building` column holds exactly the current tuples of the
   entities below its cursor" as an induction over interleaved batches and units of work; its parts are
   proven separately (since #3567 also `Rebase.refresh_inv`/`rebase_inv`/`catchUp_inv`, conditional on `Frame`) (`writerRecord_eq_sequential` + `stateLog_*` for writes, `scan*_below_cursor` +

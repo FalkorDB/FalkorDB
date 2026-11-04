@@ -12,7 +12,7 @@ is the RESP byte stream.
 Graph-API facts used (not code in `src/`): for a live entity, `get_node_attr_count(id)`
 equals the number of pairs `get_node_all_attrs_by_id(id)` yields (`reply.rs:243` — if not,
 `count_mismatch_breaks` shows the stream desynchronises); for a deleted one the attribute and
-type ids are recovered by name (`get_node_attribute_id`, `get_type_id`, `:213`, `:249`),
+type ids are recovered by name (`get_node_attribute_id` `:224`, `get_type_id` `:260`),
 which we take to be the ids themselves. That lookup is partial: `RelLookup.compactRel` models it
 (`get_type_id(..).unwrap()`, `:260`) and `RelLookup.bug3447_compact_cancelled_new_type_panics`
 shows it panics on a cascaded edge of a never-registered type (#3447). `compact_emits` is the

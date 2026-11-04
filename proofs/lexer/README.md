@@ -2,7 +2,7 @@
 
 This project proves that the first stage of every query, turning the query string into tokens, never panics and reads the text the way openCypher says it should. It also proves the depth guards that stop a deeply nested query from overflowing the parser's stack, and shows with counterexamples where those guards are bypassed. Every query depends on it:
 
-- whitespace and comments (`//`, `/* … */`) are skipped exactly where the grammar allows them;
+- space, tab, CR, LF and comments (`//`, `/* … */`) are skipped exactly where the grammar allows them (the grammar's other whitespace characters are not skipped; see question 2);
 - string literals decode escapes like `\n` and `A` as openCypher specifies;
 - integer literals give their exact value or an overflow error, never a wrapped number;
 - `MAX_TREE_DEPTH` and `MAX_NESTING` limit how deep an expression can be.
@@ -23,7 +23,7 @@ Rust panics when it slices a `&str` at a byte that is not a character boundary, 
 
 - **Before #2908, no.** A block comment ended at the first `/`, not at `*/`, so `RETURN 5 /* a/ -1 //*/` returned 4 (C: 5); a lone trailing `/` was skipped as if it were whitespace; and an unterminated `/*` was accepted.
 - **Before #2910, no, for `\r`.** A query with Windows line endings failed to parse.
-- **On main, yes.** `rs_agrees_spec` proves that `read_spaces` skips exactly the openCypher `WHITESPACE`/`Comment` run wherever the spec accepts one. `rs_unterminated_general` proves an unterminated `/*` is not skipped, and `rs_crlf` that `\r` is whitespace.
+- **On main, yes for comments and the four ASCII whitespace characters the Rust skips (space, tab, CR, LF).** `rs_agrees_spec` proves that `read_spaces` skips exactly that run wherever the model of the grammar (`specSkip`) accepts one. The openCypher `WHITESPACE` rule (Cypher.g4:697-728) also lists VT, FF, FS, GS, RS, US and the Unicode spaces; `read_spaces` does not skip them and the model leaves them out, so that divergence is not covered by the theorem. `rs_unterminated_general` proves an unterminated `/*` is not skipped, and `rs_crlf` that `\r` is whitespace.
 
 **3. Do string escapes decode correctly?**
 
@@ -53,7 +53,7 @@ The parser builds expressions on an explicit stack and keeps a *height estimate*
 |---|---|---|
 | `lexAll_total_cover` | On every input the token loop slices only at character boundaries (never panics), and the pieces it walks over concatenate back to the input | `FalkorLexer.lean` |
 | `getTok_ok` | One call of `get_token` never panics: it returns an error, end of input, or a non-empty token that ends on a character boundary | `FalkorLexer.lean` |
-| `rs_agrees_spec` | `read_spaces` skips exactly the openCypher whitespace/comment run | `FalkorLexer.lean` |
+| `rs_agrees_spec` | `read_spaces` skips exactly the openCypher comment run and the four-character whitespace subset (space, tab, CR, LF) wherever the spec accepts one | `FalkorLexer.lean` |
 | `unesc_agrees_spec` | `cypher_unescape` equals the spec's escape decoding | `FalkorLexer.lean` |
 | `int_literal_correct` | Integer literals in any spelling evaluate to their value or to an overflow error | `FalkorLexer.lean` |
 | `litExpr_min` | `2^63` is accepted only directly negated | `FalkorLexer.lean` |
@@ -79,14 +79,14 @@ Every bug was reproduced against the real Rust (`graph/tests/lean_lexer.rs`, not
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | removed (17ccc5412) | A block comment ended at the first `/`: `RETURN 5 /* a/ -1 //*/` gave 4 (C: 5) | Fixed by #2908 (`rs_block_comment_fixed`, `rs_agrees_spec`) |
-| 2 | removed (17ccc5412) | A lone trailing `/` was skipped as whitespace | Fixed by #2908 (`rs_trailing_slash_fixed`) |
-| 3 | removed (17ccc5412) | An unterminated `/*` was accepted | Fixed by #2908 (`rs_unterminated_fixed`, `rs_unterminated_general`) |
-| 4 | removed (17ccc5412) | `\r` was not whitespace, so CRLF queries failed to parse | Fixed by #2910 (`rs_crlf`) |
-| 5 | removed (17ccc5412) | `0e5` lexed as `0` then `e5` | Fixed by #2910 (`lexNum_zero_exp`) |
-| 6 | removed (17ccc5412) | `-0x08000000000000000` was rejected as an overflow (C: `-9223372036854775808`) | Fixed by #2910 (`min_noncanonical_fixed`, `int_literal_correct`) |
-| 7 | removed (17ccc5412) | `9223372036854775808.x` escaped the overflow check | Fixed by #2910 (`litExpr_min`) |
-| 8 | removed (17ccc5412) | `'\u+041'` decoded to `A` | Fixed by #2910 (`unesc_plus_rejected`) |
+| 1 | `pre2908_rs_block_comment_bug` (removed in bbee75955; last held in 17ccc5412) | A block comment ended at the first `/`: `RETURN 5 /* a/ -1 //*/` gave 4 (C: 5) | Fixed by #2908 (`rs_block_comment_fixed`, `rs_agrees_spec`) |
+| 2 | `pre2908_rs_trailing_slash_bug` (removed in bbee75955; last held in 17ccc5412) | A lone trailing `/` was skipped as whitespace | Fixed by #2908 (`rs_trailing_slash_fixed`) |
+| 3 | `pre2908_rs_unterminated_bug` (removed in bbee75955; last held in 17ccc5412) | An unterminated `/*` was accepted | Fixed by #2908 (`rs_unterminated_fixed`, `rs_unterminated_general`) |
+| 4 | `pre2910_crlf_bug` (removed in bbee75955; last held in 17ccc5412) | `\r` was not whitespace, so CRLF queries failed to parse | Fixed by #2910 (`rs_crlf`) |
+| 5 | `pre2910_zero_exp_bug` (removed in bbee75955; last held in 17ccc5412) | `0e5` lexed as `0` then `e5` | Fixed by #2910 (`lexNum_zero_exp`) |
+| 6 | `pre2910_min_noncanonical_bug` (removed in bbee75955; last held in 17ccc5412) | `-0x08000000000000000` was rejected as an overflow (C: `-9223372036854775808`) | Fixed by #2910 (`min_noncanonical_fixed`, `int_literal_correct`) |
+| 7 | `pre2910_min_postfix_bug` (removed in bbee75955; last held in 17ccc5412) | `9223372036854775808.x` escaped the overflow check | Fixed by #2910 (`litExpr_min`) |
+| 8 | `pre2910_unesc_plus_bug` (removed in bbee75955; last held in 17ccc5412) | `'\u+041'` decoded to `A` | Fixed by #2910 (`unesc_plus_rejected`) |
 | 9 | `set_target_unbounded` | `MATCH (n) SET n.a.a…(5000) = 1` builds its target outside `check_depth`; the binder then overflows its stack. C rejects it | **Open** (#2895, PR #2900 not merged) |
 | 10 | `foreach_unbounded` | Nested `FOREACH (x IN [1] \| FOREACH (…))` never goes through `nested`; 100 000 levels abort the process with a stack overflow (C crashes as well) | **Open** (#2895, PR #2900 not merged) |
 | 11 | `hop_truncation_bug` | A hop bound is cast `i as u32`, so `*4294967298` means `*2` | Not filed: C truncates the same way |
@@ -139,4 +139,4 @@ bash proofs/coverage.sh                # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. A fix for #2895 should turn `set_target_unbounded` and `foreach_unbounded` into `pre<PR>_` history and add theorems that the new guards bound both paths.
+If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. A fix for #2895 should replace `set_target_unbounded` and `foreach_unbounded` with theorems that the new guards bound both paths, and note the fix in prose (no `pre<PR>_` history theorems).

@@ -1,5 +1,5 @@
 # Search-layer repros, Rust vs C.  usage: python3 repro_search.py RUST_PORT C_PORT
-# Each case prints both engines' answer. Run on throwaway servers: case 4 crashes Rust.
+# Each case prints both engines' answer. Cases are regression checks: Rust and C should agree now (case 1 fixed by #3087, case 4 by #3088); on a pre-#3088 Rust, case 4 aborts the server, so run on throwaway servers.
 import sys, time, redis
 
 rp, cp = int(sys.argv[1]), int(sys.argv[2])
@@ -23,7 +23,7 @@ def case(name, g, setup, probe):
         time.sleep(0.3)
         print(f"  {eng:4}: {q(r, g, probe)}")
 
-# 1. vector of the wrong dimension drops the node from every other index on its label
+# 1. historical regression (fixed by #3087): a wrong-dimension vector used to drop the node from every other index on its label; Rust must now agree with C
 case("1 vector dim mismatch hides range index", "h1",
      ["CREATE INDEX FOR (n:L) ON (n.name)",
       "CREATE VECTOR INDEX FOR (n:L) ON (n.v) OPTIONS {dimension:2, similarityFunction:'euclidean'}",
@@ -44,12 +44,12 @@ for eng, r in R.items():
         time.sleep(0.1)
     print(f"  {eng:4}: count via index on b = {q(r, 'ti', f'MATCH (n:L) WHERE n.b < {N} RETURN count(n)')} (expect {N})")
 
-# 3. vector index option validation diverges
+# 3. vector index option validation regression checks (these option maps should agree with C)
 for opts in ["{similarityFunction:'euclidean'}", "{dimension:2}",
              "{dimension:2, similarityFunction:'Euclidean'}"]:
     case("3 vector options " + opts, "vo", [], f"CREATE VECTOR INDEX FOR (n:L) ON (n.v) OPTIONS {opts}")
 
-# 4. huge k aborts the Rust server (keep last)
+# 4. huge k: aborted the Rust server before #3088 (clamp); now Rust must return like C (keep last)
 case("4 huge k", "vk",
      ["CREATE VECTOR INDEX FOR (n:L) ON (n.v) OPTIONS {dimension:2, similarityFunction:'euclidean'}",
       "CREATE (:L {v:vecf32([1,2])})"],

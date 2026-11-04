@@ -55,9 +55,9 @@ graph/src/index/falkordb/pending_writes.rs	PendingIndexWrites::drain	121	PROVEN	
 graph/src/index/falkordb/pending_writes.rs	PendingIndexWrites::clear	132	PROVEN	PendingIndexWrites.clear: clear_isEmpty
 graph/src/index/falkordb/pending_writes.rs	PendingIndexWrites::extend	138	PROVEN	PendingIndexWrites.extend/pushWrite: extend_log, extend_isSome, hmGet_pushWrite
 graph/src/index/falkordb/pending_writes.rs	last_write_wins	158	PROVEN	lastWriteWins (stable mergeSort): sortLog_filter, lwwGo_spec, lastWriteWins_spec, set_then_delete
-graph/src/index/falkordb/graph_writes.rs	node_attrs_set	50	PROVEN	nodeAttrsSet: nodeAttrsSet_changes, nodeAttrsSet_miss; nodeAttrsSet_hit (update removes old/adds new) assumes caller-unique attr ids per node (Pending::set_node_attributes only debug_assert!s it)
+graph/src/index/falkordb/graph_writes.rs	node_attrs_set	50	CONDITIONAL	nodeAttrsSet: nodeAttrsSet_changes, nodeAttrsSet_miss; nodeAttrsSet_hit (update removes old/adds new) rests on the undischarged hypothesis of caller-unique attr ids per node (Pending::set_node_attributes only debug_assert!s it)
 graph/src/index/falkordb/graph_writes.rs	node_rows_set	86	PROVEN	nodeRowsSet/chunksExact: nodeRowsSet_changes, lastOp_ops
-graph/src/index/falkordb/graph_writes.rs	new_node_attrs	121	PROVEN	newNodeAttrs: newNodeAttrs_changes; newNodeAttrs_hit (caller-unique attr ids)
+graph/src/index/falkordb/graph_writes.rs	new_node_attrs	121	CONDITIONAL	newNodeAttrs: newNodeAttrs_changes; newNodeAttrs_hit (rests on the undischarged hypothesis of caller-unique attr ids)
 graph/src/index/falkordb/graph_writes.rs	bulk_node_attrs	149	PROVEN	bulkNodeAttrs: bulkNodeAttrs_changes, lastOp_ops
 graph/src/index/falkordb/graph_writes.rs	labels_added	177	PROVEN	labelsAdded: labelsAdded_changes, labelsAdded_hit
 graph/src/index/falkordb/graph_writes.rs	labels_product_added	194	PROVEN	labelsProductAdded: labelsProductAdded_changes, lastOp_ops
@@ -65,7 +65,7 @@ graph/src/index/falkordb/graph_writes.rs	labels_removed	214	PROVEN	labelsRemoved
 graph/src/index/falkordb/graph_writes.rs	nodes_deleted	231	PROVEN	nodesDeleted: nodesDeleted_changes, nodesDeleted_hit, nodesDeleted_noadd
 graph/src/index/falkordb/graph_writes.rs	edge_attrs_set	261	PROVEN	edgeAttrsSet: edgeAttrsSet_spec, edgeAttrsSetWith_changes
 graph/src/index/falkordb/graph_writes.rs	edge_attrs_set_of_type	270	PROVEN	edgeAttrsSetOfType: edgeAttrsSet_spec, edgeAttrsSetWith_changes
-graph/src/index/falkordb/graph_writes.rs	edge_attrs_set_with	279	PROVEN	edgeAttrsSetWith/edgeTypeOf: edgeAttrsSetWith_changes; edgeAttrsSetWith_hit (caller-unique attr ids)
+graph/src/index/falkordb/graph_writes.rs	edge_attrs_set_with	279	CONDITIONAL	edgeAttrsSetWith/edgeTypeOf: edgeAttrsSetWith_changes; edgeAttrsSetWith_hit (rests on the undischarged hypothesis of caller-unique attr ids)
 graph/src/index/falkordb/graph_writes.rs	new_edge_attrs	312	PROVEN	newEdgeAttrs: newEdgeAttrs_changes, lastOp_ops
 graph/src/index/falkordb/graph_writes.rs	bulk_edge_attrs	338	PROVEN	bulkEdgeAttrs: bulkEdgeAttrs_changes, lastOp_ops
 graph/src/index/falkordb/graph_writes.rs	edges_deleted	360	PROVEN	edgesDeleted: edgesDeleted_changes, edgesDeleted_hit, edgesDeleted_noadd

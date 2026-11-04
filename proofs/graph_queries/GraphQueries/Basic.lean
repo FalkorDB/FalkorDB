@@ -12,7 +12,7 @@ coordinates; `VMTensor.edges`: a `Tensor` pair holds a set of edge ids):
 | `Ten` | `Tensor` — `(src, dst, edge_id)` triples |
 | `Mat.get` | `VersionedMatrix::get` (versioned_matrix.rs:1009); `None` out of bounds = GrB_INVALID_INDEX (matrix.rs:1345) |
 | `Mat.row`, `Ten.out`, `Ten.inc` | `iter(i, i)`, `Tensor::iter(i, i, false/true)` (original orientation) |
-| `G` | `struct Graph` (graph.rs:366) |
+| `G` | `struct Graph` (graph.rs:418) |
 
 Machine integers: ids are `Nat`; every u64 count in `G` stays far below 2^64
 (ids are dense, see `Ids.lean`), so wrap never happens; the one narrowing cast
@@ -27,13 +27,38 @@ structure Mat where
   ents : List (Nat × Nat)
 deriving Repr, DecidableEq, Inhabited
 
+/-- Number of distinct elements (each value counted at its last occurrence). -/
+def distinctCount : List (Nat × Nat) → Nat
+  | [] => 0
+  | x :: xs => (if x ∈ xs then 0 else 1) + distinctCount xs
+
+theorem distinctCount_eq_zero : ∀ l : List (Nat × Nat), distinctCount l = 0 → l = []
+  | [], _ => rfl
+  | x :: xs, h => by
+    simp only [distinctCount] at h
+    have h2 := distinctCount_eq_zero xs (by omega)
+    subst h2
+    simp at h
+
+theorem distinctCount_eq_length : ∀ l : List (Nat × Nat), l.Nodup → distinctCount l = l.length
+  | [], _ => rfl
+  | x :: xs, h => by
+    have hx := (List.nodup_cons.mp h)
+    simp [distinctCount, hx.1, distinctCount_eq_length xs hx.2]; omega
+
 namespace Mat
 def empty (r c : Nat) : Mat := ⟨r, c, []⟩
 /-- `get` (versioned_matrix.rs:1009): `GrB_Matrix_extractElement` fails
 (→ `None`) outside the dimensions. -/
 def get (m : Mat) (i j : Nat) : Bool :=
   decide (i < m.nr) && decide (j < m.nc) && decide ((i, j) ∈ m.ents)
-def nvals (m : Mat) : Nat := m.ents.length
+/-- `GrB_Matrix_nvals` counts distinct coordinates, so duplicates in the list form are
+collapsed (`Mat.set` never adds one, but the field is a plain list). -/
+def nvals (m : Mat) : Nat := distinctCount m.ents
+theorem nvals_eq_zero (m : Mat) : m.nvals = 0 ↔ m.ents = [] :=
+  ⟨distinctCount_eq_zero _, fun h => by simp [nvals, h, distinctCount]⟩
+theorem nvals_of_nodup (m : Mat) (h : m.ents.Nodup) : m.nvals = m.ents.length :=
+  distinctCount_eq_length _ h
 def row (m : Mat) (i : Nat) : List (Nat × Nat) := m.ents.filter (·.1 == i)
 def rowsFrom (m : Mat) (lo : Nat) : List (Nat × Nat) := m.ents.filter (lo ≤ ·.1)
 /-- `set` when in bounds (GraphBLAS rejects out-of-range indices). -/
@@ -76,12 +101,12 @@ structure Constraint where
   status : CStatus
 deriving DecidableEq, Repr
 
-/-- `struct Graph` (graph.rs:366). Attribute values are abstract (`V`), the
+/-- `struct Graph` (graph.rs:418). Attribute values are abstract (`V`), the
 attribute store is the map `entity → [(attr id, value)]`. Indexers are not
 part of the state; their behaviour is a parameter of each index theorem.
 
 Since #2846 the graph keeps no counters of its own: `node_ids` /
-`relationship_ids : IdSpace` (graph.rs:377/:358). Their four fields are
+`relationship_ids : IdSpace` (graph.rs:429/:432). Their four fields are
 spelled out here — `nodeCount`/`delNodes` are `node_ids.live`/`.recycled`,
 `nodeEB`/`nodeTaken` its `entry_bound`/`taken` (id_space.rs:164) — and
 reassembled by `nodeIds`/`relIds` (Ids.lean). -/

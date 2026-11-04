@@ -343,7 +343,7 @@ theorem unwind_batches (n : Nat) (bs : List (List UV)) :
 
 theorem unwind_null : unwindOne .null = [] := rfl
 
-/-! ## Grouping (ops/aggregate.rs `GroupMap`, :59) — bag semantics -/
+/-! ## Grouping (ops/aggregate.rs `GroupMap`, :65) — bag semantics -/
 
 /-- `groups.entry(key).or_insert_with(..)` then fold: an association list,
 new keys appended (HashMap iteration order is not modelled). -/
@@ -391,7 +391,7 @@ theorem groupAll_spec {K A : Type} [DecidableEq K] (rows : List (K × A)) (k : K
   simpa [groupAll, lookupG] using this []
 
 /-- Keyed aggregation over no rows has no groups; keyless aggregation
-pre-inserts the single empty-key group (aggregate.rs:524, :879), so it always
+pre-inserts the single empty-key group (aggregate.rs:533-540, :891-898), so it always
 emits one row of initial accumulators (`count`=0, `sum`=0.0, `avg`=null,
 `collect`=[] …; checked in `agrees_empty_input_aggregates`). -/
 theorem keyed_empty {K A : Type} [DecidableEq K] : groupAll ([] : List (K × A)) = [] := rfl
@@ -401,7 +401,7 @@ def keylessGroups {A : Type} (rows : List A) : List (Unit × List A) :=
 
 theorem keyless_one_row {A : Type} (rows : List A) : (keylessGroups rows).length = 1 := rfl
 
-/-! ## DISTINCT state keyed by a hash (history: distinct.rs:79, aggregate.rs:715/:959 at ca36bfa15)
+/-! ## DISTINCT state keyed by a hash (history: distinct.rs:79, aggregate.rs:724/:968 at ca36bfa15)
 
 #2977 (c652e505e) keys the per-group state by a group id instead; see `GroupId.lean`
 (`distinct_by_group_id_exact`, `fixed2977_collision_example`). The definitions below are the
@@ -439,7 +439,7 @@ theorem dedup_collision_drops :
   decide
 
 /-- Per-group DISTINCT, pre-#2977: the dedup table was keyed by `(distinct node,
-hash(group key row))`, not by the group key (aggregate.rs:715, :959 at ca36bfa15). Two
+hash(group key row))`, not by the group key (aggregate.rs:724, :968 at ca36bfa15). Two
 groups whose key rows collide shared one `seen` set. -/
 def dcgGo {K : Type} [DecidableEq K] (hk : K → Nat) (k : K) :
     List (Nat × Nat) → List (K × Nat) → Nat

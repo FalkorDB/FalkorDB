@@ -3,15 +3,15 @@ import FalkorCowBTree.Batch
 /-!
 # #2278 (3597b3a82) read-side and accounting additions
 
-* `insertFlag_spec`, `removeFlag_spec` — `CowBTree::insert` / `remove` now return a `bool`; it is
+* `insertFlag_spec`, `removeRet_spec` — `CowBTree::insert` / `remove` now return a `bool`; it is
   exactly "the tuple was absent" / "the tuple was present".
 * `firstDoc_spec`, `containsKey_spec`, `firstDoc_eq_point` (headline) — the reference descent of
   `first_doc` (with its nearest-right-subtree fallback) returns the doc of the first entry with the
   key, i.e. the head of the point-lookup filter of the sorted multiset.
-* `nextWith_eq`, `rangeWith_spec`, `rangeTuples_spec`, `rangeDocs_spec` — the generic cursor
+* `nextWith_eq`, `rangeWith_spec`, `rangeTuples_spec`, `rangeDocs_spec` (in `Extract.lean`) — the generic cursor
   (`Extract`, `DocExtract`, `TupleExtract`) yields `make(key, doc)` of exactly the entries in range,
   in order; the key is read lazily but never wrongly.
-* `heapBytes_eq`, `heapBytes_split`, `heapBytes_aos` — `heap_bytes` counts every page exactly once;
+* `heapBytes_eq`, `heapSum_split`, `heapBytes_aos` (in `Extract.lean`) — `heap_bytes` counts every page exactly once;
   its leaf part is the sum of the leaf blob lengths.
 -/
 
@@ -20,7 +20,7 @@ namespace CowBTree
 /-! ## `insert` / `remove` report whether they changed the tree -/
 
 /-- The `inserted` half of `Node::insert_one`'s `(bool, Option<Split>)` (`node.rs:321-379`):
-    `false` iff the leaf found the tuple already present (line 316); a branch forwards its child's. -/
+    `false` iff the leaf found the tuple already present (line 329); a branch forwards its child's. -/
 def insertFlag (c : Cfg) : Nat → Node → E → Bool
   | _, .leaf es, x => (leafInsert c es x).isSome
   | 0, .branch _ _, _ => false
@@ -144,7 +144,7 @@ theorem removeOne_flag (c : Cfg) : ∀ (h : Nat) (n : Node) (x : E) (n' : Node) 
 
 /-! ## `first_doc` / `contains_key` -/
 
-/-- `CowBTree::first_doc`'s loop (`mod.rs:357-404`). `rs` is `right_subtree` with its (ghost) height;
+/-- `CowBTree::first_doc`'s loop (`mod.rs:357-400`). `rs` is `right_subtree` with its (ghost) height;
     `minOpt = none` is `Node::min`'s panic on an empty subtree (unreachable on a well-formed tree). -/
 def firstDocGo (k : Nat) : Nat → Node → Option (Nat × Node) → Option Nat
   | _, .leaf es, rs =>

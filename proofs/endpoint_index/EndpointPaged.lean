@@ -4,21 +4,21 @@ import EndpointPaged.Arc
 
 Companion to `FalkorEndpointIndex` (which treats a tier as its flat slot list and
 proves the page arithmetic of `Paged::at` / `ensure_pages`). This file closes the rest
-of `graph/src/graph/endpoint_index.rs` (origin/main `1d15bf713`; the `TierOps for Paged` lines below moved +3 there, :735-764):
+of `graph/src/graph/endpoint_index.rs` (origin/main `1d15bf713`; the `TierOps for Paged` lines below are :735-764):
 
 | here | there |
 | --- | --- |
 | `u24Put`/`u24Get`, `get_put_contract` | `impl Endpoint for U24/u16/u32/u64` (:81-124) and the trait decls `Endpoint::get/put` (:64-65) |
 | `PG`, `PG.view`, `PG.WF`          | `struct Paged<T> { pages, len }` (:150-153); `WF` = every page but the last full, `len` within the pages, slack past `len` all `EMPTY` |
-| `PG.dflt`, `PG.isEmpty`, `PG.len` | `Paged::default` (:165), `is_empty` (:187), `len` (:183, `TierOps::len` :758) |
+| `PG.dflt`, `PG.isEmpty`, `PG.len` | `Paged::default` (:165), `is_empty` (:187), `len` (:183, `TierOps::len` :761) |
 | `emptyPage`                       | `empty_page` (:178) |
 | `PG.at`, `PG.iter`                | `Paged::at` (:192), `iter` (:199) |
 | `allocBytes`, `usedBytes`, `sz`   | `allocated_bytes` (:204), `used_bytes` (:213), `size_of::<(T, T)>()` |
 | `fromSlots`                       | `Paged::from_slots` (:234) |
 | `promoteSlots`                    | the iterator `promote` (:336) hands `from_slots` |
-| `pagePut`, `PG.put`, `PG.vacate`  | `TierOps::put` (:741) / `vacate` (:750): `page_mut(at)[at % PAGE_SLOTS] = …` |
-| `PG.growTo`                       | `TierOps::grow_to` (:732): `ensure_pages(len)` then `self.len = len` |
-| `reserveCap`                      | `TierOps::reserve_exact` (:761) |
+| `pagePut`, `PG.put`, `PG.vacate`  | `TierOps::put` (:744) / `vacate` (:753): `page_mut(at)[at % PAGE_SLOTS] = …` |
+| `PG.growTo`                       | `TierOps::grow_to` (:735): `ensure_pages(len)` then `self.len = len` |
+| `reserveCap`                      | `TierOps::reserve_exact` (:764) |
 | `Heap`, `pageMut`, `cloneV`, `dropV`, `pushFresh`, `replace` | `Arc` strong counts: `page_mut` (:293, `Arc::get_mut`-or-copy), `Paged::clone` (:156, clones page pointers), drop, `empty_page`/`from_slots` (fresh `Arc::from`), `regrow` (:218, `*page = Arc::from(next)`); the same shape is `Arc::make_mut` in `with_tier` / `raise_to` (tier granularity) |
 | `bytesOf`, `memUsage`             | `EndpointIndex::memory_usage` (:427), `bytes_per_edge` (:437) |
 

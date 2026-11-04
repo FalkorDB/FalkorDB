@@ -1,15 +1,15 @@
 import AlgoUdf.Graph
-/-! # `bfs_find_bound` (algo_procedures.rs:2322-2402)
+/-! # `bfs_find_bound` (algo_procedures.rs:2388-2469)
 
 | here | there |
 | --- | --- |
-| `BS.parents`, `BS.seen`, `BS.next` | `parents`, `seen`, `next_frontier` :2384-2389 |
+| `BS.parents`, `BS.seen`, `BS.next` | `parents`, `seen`, `next_frontier` :2398-2403 |
 | `BS.dist`                | ghost: the hop level at which a node was first seen |
-| `scanRels`               | the inner `for (edge_src, edge_dst, edge_id)` loop :2402-2417; `inl` = `found = true; break 'levels` |
-| `scanFrontier`           | `for &node in &frontier` :2395-2418 |
-| `levels h`               | `'levels: for _hop in 1..=config.max_len` :2392-2421, `h + 1 = _hop` (`swap` + `clear` = the new frontier is `next`) |
-| `chain`                  | the parent walk :2435-2442 (outer `none` = a `parents[&cur]` panic) |
-| `bfsFindBound`           | the whole function; `some none` = `Ok(None)`, `some (some es)` = `Ok(Some(..))` where the reported `(weight, cost)` are the forward folds over `es` :2447-2452 |
+| `scanRels`               | the inner `for (edge_src, edge_dst, edge_id)` loop :2418-2433; `inl` = `found = true; break 'levels` |
+| `scanFrontier`           | `for &node in &frontier` :2411-2434 |
+| `levels h`               | `'levels: for _hop in 1..=config.max_len` :2407-2437, `h + 1 = _hop` (`swap` + `clear` = the new frontier is `next`) |
+| `chain`                  | the parent walk :2450-2457 (outer `none` = a `parents[&cur]` panic) |
+| `bfsFindBound`           | the whole function; `some none` = `Ok(None)`, `some (some es)` = `Ok(Some(..))` where the reported `(weight, cost)` are the forward folds over `es` :2459-2466 |
 
 `parents` records the whole stored relationship (the Rust records its id,
 `r.2.2`). Timeout / memory polls are not modelled.
@@ -20,7 +20,7 @@ Results:
   the parent walk never panics.
 * `bfs_complete` — `None` (with `source ≠ target`) means no hop-walk
   source→target of at most `maxLen` edges exists, so skipping the enumeration
-  (run_path_algo :2685-2687) loses no path.
+  (run_path_algo :2703-2705) loses no path.
 * `bfs_src_eq_tgt` — `source = target` always gives `None`.
 -/
 namespace AlgoUdf.BfsBound

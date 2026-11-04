@@ -29,8 +29,8 @@ errors — so no bound tree holds a `Paren`, which `BE` has no constructor for),
 `prop_on_paren_path` (the `(p).prop` rejection now comes from that, not from a
 look-through in the `Property` arm), `bind_andOr_paren` / `flatB_assoc` (a
 parenthesised run of the same connective binds flat: `(a AND b) AND c` gives
-the bound tree of `a AND b AND c`), `flatB_other` (a different connective is a
-single operand).
+the bound tree of `a AND b AND c`), `spliceB_other` (a different connective is a
+single operand: it splices as itself).
 -/
 namespace FalkorBinder
 
@@ -649,14 +649,14 @@ theorem selfRef_direct (a k : Name) (h : isAnon a = false) :
 
 /-! ## #1334: a pattern predicate may declare a new variable (gap closed 2026-10-20)
 
-The `ExprIR::Pattern` arm of `bind_expr_node` (binder.rs:2077-2105) binds the predicate with
+The `ExprIR::Pattern` arm of `bind_expr_node` (binder.rs:2082-2113) binds the predicate with
 `bind_graph(&pattern, false)`, which `define_name_in_scope`s every alias (`allow_reuse`), minting
 a fresh variable for a name that is not in scope; the cleanup then only hides it again. Nothing
 checks that a *named* alias already existed, so `WHERE () -- (n1)` with no `n1` in scope binds
 and runs as "some edge exists anywhere". -/
 
-/-- **A pattern predicate declares nothing** (openCypher; C rejects with "Unable to resolve
-filtered alias"): whenever `bind_expr_node` accepts a pattern predicate, every named
+/-- **A pattern predicate declares nothing** (openCypher; C rejects it, issue #1334; the
+exact C error message is not recorded here): whenever `bind_expr_node` accepts a pattern predicate, every named
 (non-`_anon`) variable in it was already visible where the predicate stands. A fix proves this
 by rejecting the pattern otherwise. -/
 def PatternPredDeclaresNothing (st : St) (locals : List Env) (vars : List Name) : Prop :=

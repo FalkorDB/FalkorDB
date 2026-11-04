@@ -165,7 +165,9 @@ Headline theorems:
   `retain_sound`/`pass2Step_sound` (re-keying), `group_keeps_order` (per-graph arrival order
   survives the sort), `iter_replica_never_writes`.
 * `LoadArgs.rust_c_same_accept` (#3328) — module-load arguments accepted exactly as C's
-  `Config_Init` (modulo leading whitespace and Rust-only names, both confirmed live);
+  `Config_Init` (modulo leading whitespace and Rust-only names, both confirmed live; for
+  arguments without embedded NUL, since C reads C strings; given `FsOk`, i.e. `File::create`
+  agrees with `access(W_OK)`);
   `error_applies_nothing`; `cross_eq`; historical `ModuleInit.pre3328_*`;
   `Bulk.deep_refused` (#3339 depth cap); `QuerySession.checkFork_spec`, `upgrade_stale`, `current_kept`, `ofCommit_ne`,
   `GraphCore.executeWrite_first` (#3290); `GraphCore.admit_bounded` (#3014); `cGraphName_key`; `rename_moves`; `loopExit_safe`; `escalate_order`,
@@ -215,7 +217,7 @@ gains `WriteSlotBusy`/`Invalid` (`writeAbortMsg_invalid`). The bulk token loops 
 their `IdSpace` parameter only (`processTokens` unchanged).
 
 ## Re-target to fb3d516d0 (#3090, #3026; previously 73077bb4a)
-#3090 touches only `matrix.rs` (proofs/graphblas_wrappers). #3026 adds `PropColumns`
+#3090 touches `matrix.rs` (proofs/graphblas_wrappers) and adds `graph/tests/matrix_concurrent_drop.rs`. #3026 adds `PropColumns`
 to `bulk_insert.rs`: `Bulk.PropColumns.new` (`new_spec`: column `i` holds `ids[i]` and the
 index of that attribute among the distinct ones; `slot_inj`: two columns share a slot iff
 they name the same attribute), `Bulk.PropColumns.readRecord` (`readRecord_enc`: whatever
@@ -261,7 +263,7 @@ starts `true`).
 
 ## Gap closed 2026-10-20 (bugs the model missed; both **Open**, live-checked on main 9d3869aa8 vs C)
 * #2782 `MultiDb`: keyspace keyed by `(db, key)` over the name-only `GRAPH_REGISTRY`.
-  `bug2782_same_name_other_db_aborts` (db0, db1, db0 → ok, ok, aborted; C ok×3), property
+  `bug2782_same_name_other_db_aborts` (db0, db1, db0 → ok, ok, aborted in a release build, where the writer check aborts; a debug build trips the `debug_assert!` in `register_graph` (`graph_core.rs:152`) on the db1 create first; C ok×3), property
   `KeyspaceRegistered` / `WritesSucceed`; `existing_ok` shows the invariant suffices.
 * #2653 `KeyName`: key names as bytes with a concrete `from_utf8_lossy`.
   `bug2653_nonutf8_key_mangled` (`\xc3(bin` → `\xef\xbf\xbd(bin`, `\xff\xfe` → two U+FFFD),

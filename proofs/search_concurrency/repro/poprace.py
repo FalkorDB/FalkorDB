@@ -29,7 +29,9 @@ for rnd in range(ROUNDS):
     for v,c in vals:
         ci=r.execute_command("GRAPH.QUERY","pr",f"MATCH (n:L) WHERE n.v = {v} RETURN count(n)")[1][0][0]
         if ci!=c: mism.append((v,c,ci))
-    # also: index hits whose actual value differs
+    # also: index hits whose actual value differs. Not vacuous: `n.v = q` is served by the
+    # index (Node By Index Scan in GRAPH.EXPLAIN), and the `WITH ... WHERE n.v <> q` filter after
+    # the WITH re-reads the node's stored property, so a stale index entry shows up here.
     wrong=r.execute_command("GRAPH.QUERY","pr","UNWIND range(0,200) AS q MATCH (n:L) WHERE n.v = q WITH q, n WHERE n.v <> q RETURN count(n)")[1][0][0]
     print(f"round {rnd}: distinct v={len(vals)} mismatches={mism[:5]} n_mism={len(mism)} wrong_hits={wrong}", flush=True)
     bad+=len(mism)>0 or wrong>0

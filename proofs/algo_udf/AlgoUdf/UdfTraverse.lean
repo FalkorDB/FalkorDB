@@ -1,14 +1,14 @@
 import AlgoUdf.Neighbors
-/-! # `graph.traverse` (`js_traverse_impl`, udf/js_classes.rs:676-859)
+/-! # `graph.traverse` (`js_traverse_impl`, udf/js_classes.rs:709-892)
 
 | here | there |
 | --- | --- |
-| `TCfg`              | parsed config :683-718 (`direction`, `types`, `labels`, `returnType`, `maxDepth`; `labelOk n` = the label filter :766-774 for neighbour `n`) |
-| `edgesOf`           | `collect_edges` + the `types` retain :755-764 (`Neighbors.collectEdges`, `applyTypes`) |
+| `TCfg`              | parsed config :714-750 (`direction`, `types`, `labels`, `returnType`, `maxDepth`; `labelOk n` = the label filter :817-825 for neighbour `n`) |
+| `edgesOf`           | `collect_edges` + the `types` retain :803-812 (`Neighbors.collectEdges`, `applyTypes`) |
 | `TS`                | per-source state: `visited`, `seen_edges` (as `(node, rel)` pairs), `next_frontier`, `edges_to_create` |
-| `visitEdge`         | loop body :766-800 |
-| `level`             | one depth :749-803 |
-| `runLevels`         | `for _ in 0..max_depth` :741-835 (deadline checks are an extra `Err` exit, not modelled) |
+| `visitEdge`         | loop body :814-850 |
+| `level`             | one depth :796-852 |
+| `runLevels`         | `for _ in 0..max_depth` from :788 (deadline checks are an extra `Err` exit, not modelled) |
 | `traverse1`         | one source's inner result array |
 
 Results:
@@ -34,7 +34,7 @@ structure TCfg where
 /-- Incident edges of `n` after the type filter. -/
 def edgesOf (es : List E) (c : TCfg) (n : Nat) : List E := applyTypes c.types (collectEdges es n c.dir)
 
-/-- `dedup_edges = return_type == "edges" && direction == "both"` :745. -/
+/-- `dedup_edges = return_type == "edges" && direction == "both"` :783. -/
 def dedup (c : TCfg) : Bool := c.retEdges && c.dir == .both
 
 structure TS where

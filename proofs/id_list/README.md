@@ -26,7 +26,7 @@ Yes. `push_encode_decode` proves that building a list, encoding it and decoding 
 
 **3. Can a malformed buffer crash the decoder or make it over-read?**
 
-No. `readIds_never_panics` proves no input reaches the debug-build `u64` underflow in `read_ids`, or any other modelled panic. `readIds_safe` proves that whatever `read_ids` accepts from arbitrary bytes has these properties:
+For the modelled decoder, no. `readIds_never_panics` proves no input reaches the debug-build `u64` underflow in `read_ids`, or any other modelled panic. `readIds_safe` proves that whatever `read_ids` accepts from arbitrary bytes has these properties:
 
 - every segment is well-formed, so iterating cannot panic or wrap;
 - it totals exactly `count` ids;
@@ -35,10 +35,12 @@ No. `readIds_never_panics` proves no input reaches the debug-build `u64` underfl
 
 The concrete refusals are each a theorem (`refuses_reserved_bit`, `refuses_wrap`, `refuses_truncated`, `refuses_too_many_segments`, …).
 
+This is a guarantee about the modelled decoder, not about every malformed real payload: `Roaring` is abstract (`RoaringOK`), so failures and allocation behaviour inside `RoaringTreemap::deserialize_from` are not modelled (see "What the model does not cover").
+
 **4. Is it safe to push onto a decoded list?**
 
 - **Before #2920, no.** `from_segments` started the run at the last decoded segment. A later collapse could read a descending range back ascending (decoded `[10,9,8]` plus `20,22` came back `[8,9,10,20,22]`) or hit the `assert!`.
-- **On main, yes.** `decoded_then_pushed_keeps_order` proves pushing any ids onto any well-formed decoded list gives the decoded ids followed by the new ones. `readIds_then_pushed_keeps_order` proves the same end to end from the wire.
+- **On main, yes.** `decoded_then_pushed_keeps_order` proves pushing any ids onto any well-formed decoded list gives the decoded ids followed by the new ones. `readIds_then_pushed_keeps_order` proves the same end to end from the wire. Both assume the total id count stays below 2^32 (the `u32` segment length is not modelled; see "What the model does not cover").
 
 **5. Does collapsing to a bitmap actually save space?**
 
@@ -93,7 +95,7 @@ Suspected, not confirmed: a roaring blob with the same high key twice keeps only
 
 | File | What's in it |
 |---|---|
-| `Push.lean` | `Seg`, `St`, `push`, `collapse`, `from_segments`; the invariant `Inv`, `push_ok`, `pushAll_ok`, `fromIter_iter`; the pre-#2920 counterexamples |
+| `Push.lean` | `Seg`, `St`, `push`, `collapse`, `from_segments`; the invariant `Inv`, `push_ok`, `pushAll_ok`, `fromIter_iter` (the pre-#2920 counterexamples were removed in bbee75955) |
 | `Decoded.lean` | The decoded-list invariant `DInv` and `decoded_then_pushed_keeps_order` (#2920) |
 | `Wire.lean` | The byte format: narrow integers, headers, `Segment::encode`/`decode`, `read_ids`; round trip, safety, refusals, non-canonical inputs |
 | `Cost.lean` | The collapse arithmetic: `bucket_body`, `bitmap_header`, `Run` and its tally, `encoded_len` |
@@ -123,7 +125,7 @@ Every function is proven.
   - whatever deserializes is a sorted set of `u64`s.
 
   The actual blob bytes and `optimize()` are not modelled. That `serialized_size()` equals the tally is a hypothesis of `collapse_shrinks`, checked by the Rust test `predicted_matches_roaring`.
-- A segment's `u32` length overflowing inside `push` (2^32 pushes) is not modelled; the wire theorems assume fewer than 2^32 ids.
+- A segment's `u32` length overflowing inside `push` (`*len += 1`) is not modelled: lengths are `Nat`. It needs 2^32 pushes, or a decoded segment of length `u32::MAX` extended by one push. The wire theorems and the two decoded-push theorems therefore assume fewer than 2^32 ids.
 - The cached `len`/`min`/`max` of bitmap segments are derived from the set, so cache maintenance is not checked.
 - `Reader` is a byte list. Allocation bounds inside roaring's deserializer were read, not modelled.
 

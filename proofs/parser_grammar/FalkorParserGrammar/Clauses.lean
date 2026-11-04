@@ -1,12 +1,12 @@
 /-
-# Clause-level fragments: the shortestPath filter skipper, SET/REMOVE
-# targets, and the pattern-predicate comma
+# Clause-level fragments: the shortestPath filter skipper and SET/REMOVE
+# targets
 -/
 import FalkorParserGrammar.Model
 
 namespace FalkorParserGrammar
 
-/-! ## `parse_shortest_path_expr`'s filter skipper (cypher.rs:1835-1862)
+/-! ## `parse_shortest_path_expr`'s filter skipper (cypher.rs:1833-1858)
 
 ```rust
 let mut depth = 0i32;
@@ -43,7 +43,7 @@ theorem skipFilter_prefix_diverges (n : Nat) (d : Int) :
   | 0 | 1 | 2 | 3 | 4 => rfl
   | k + 5 => simp only [skipFilter, cur, adv]; exact skipFilter_eof_diverges k _
 
-/-! ## `parse_set_items` / `parse_remove_items` targets (cypher.rs:3341-3347, 3439-3445)
+/-! ## `parse_set_items` / `parse_remove_items` targets (cypher.rs:3341-3347, 3437-3443)
 
 ```rust
 let (mut expr, recurse) = self.parse_primary_expr(false)?;
@@ -54,10 +54,10 @@ if recurse {
 }
 ```
 `recurse` is also `true` for a list literal `[` (2880-2884); since #3060
-(`fe619ac5f`) `reject_unparenthesized_target` (3380-3389) refuses any root but
+(`fe619ac5f`) `reject_unparenthesized_target` (3395-3402) refuses any root but
 `Paren` before the `)` is demanded. -/
 
-/-- `reject_unparenthesized_target` (3380): `Ok` iff the root is `ExprIR::Paren`. -/
+/-- `reject_unparenthesized_target` (3395): `Ok` iff the root is `ExprIR::Paren`. -/
 def rejectUnparen (e : RT) (ts : List Tok) : Res Unit :=
   if e.root = .paren then .ok () ts else .err ts
 
@@ -95,8 +95,10 @@ theorem set_paren_needs_dot :
     setTarget (parseExpr 100) 100 [.lparen, .ident 3, .rparen, .dot, .ident 4] =
       .ok (lf (.var 3)) [.dot, .ident 4] ∧
     (∃ e, setTarget (parseExpr 100) 100 [.lparen, .ident 3, .rparen, .eq, .int 5] = .err e) ∧
-    (∃ e, setTarget (parseExpr 100) 100 [.lparen, .ident 3, .rparen, .colon, .ident 4] = .err e) := by
-  refine ⟨rfl, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
+    (∃ e, setTarget (parseExpr 100) 100 [.lparen, .ident 3, .rparen, .colon, .ident 4] = .err e) ∧
+    (∃ e, setTarget (parseExpr 100) 100
+      [.lparen, .ident 3, .dot, .ident 4, .rparen, .eq, .int 5] = .err e) := by
+  refine ⟨rfl, ⟨_, rfl⟩, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
 
 /-- Only a `(` opens a nested target: whenever `recurse` holds for a non-`Paren`
 primary, the target is refused before anything after it is read. -/

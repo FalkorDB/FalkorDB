@@ -28,7 +28,7 @@ graph/src/runtime/value.rs	civil_from_days	804	PROVEN	proofs/functions_temporal
 graph/src/runtime/value.rs	civil_from_days_wide	812	PROVEN	proofs/functions_temporal civilFromDaysI
 graph/src/runtime/value.rs	push_date	828	PROVEN	proofs/functions_temporal Components.pushDate
 graph/src/runtime/value.rs	write_two_digits	853	PROVEN	proofs/functions_temporal Components.twoDigits
-graph/src/runtime/value.rs	hash	862	PROVEN	proofs/value_order: Main.main_hash_consistent (sort_cmp-equal => equal hash, #2917), sane_hash_consistent, hash_not_consistent_with_eq
+graph/src/runtime/value.rs	hash	862	PROVEN	proofs/value_order: Main.main_hash_consistent (sort_cmp-equal => equal hash, #2917; Str words abstracted, Path/Rel/temporal arms not modelled), sane_hash_consistent, hash_not_consistent_with_eq
 graph/src/runtime/value.rs	add	952	PROVEN	add_int, add_mixed, add_overflow_wraps, add_int_comm, add_null_*
 graph/src/runtime/value.rs	add_slow	967	PROVEN	add_list_*, lookup_omExtend, nodup_omExtend, add_str_*, add_*_dur_comm, str_plus_date_diverges, add_time_dur_in_day/time_add_whole_days/time_add_dur_mod (Time+Duration keeps only the time of day, #2985)
 graph/src/runtime/value.rs	sub	1084	PROVEN	sub_int, sub_null_*, sub_dur_date, wSub_eq_wAdd_neg, sub_time_dur_in_day/time_sub_add_dur (#2985)
@@ -64,7 +64,7 @@ graph/src/runtime/value.rs	with_capacity	2045	NOT COVERED	constructor
 graph/src/runtime/value.rs	is_seen	2055	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
 graph/src/runtime/value.rs	has_hash	2066	PROVEN	dedup_second_seen
 graph/src/runtime/value.rs	check_and_insert_hash	2073	PROVEN	dedup_second_seen, dedup_first_unseen
-graph/src/runtime/value.rs	value_nesting_error	76	PROVEN	Nesting.valueNestingError_text (the message; decode/validate return it: decodeValue_refuses_past_cap, decode_nest_deep)
+graph/src/runtime/value.rs	value_nesting_error	76	PROVEN	Nesting.valueNestingError_text (decoder message; decodeValue_refuses_past_cap, decode_nest_deep); the property validator's own message (`validate_list_property`, "Property values can only be nested up to N levels deep") is a different string and its text is not proved
 graph/src/runtime/value.rs	encode	2085	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
 graph/src/runtime/value.rs	decode	2171	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
 graph/src/runtime/value.rs	decode_value	2183	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1)

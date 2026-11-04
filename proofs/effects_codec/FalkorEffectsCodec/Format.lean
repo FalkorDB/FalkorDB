@@ -156,7 +156,7 @@ theorem buildLoop_after_fail {Rec} (enc : Rec → Except EErr Bytes) :
   | [], _, _, _ => rfl
   | _ :: rs, buf, n, e => by simp only [buildLoop]; exact buildLoop_after_fail enc rs buf n e
 
-/-- `apply`, `build_index`, `build_constraint` (`format.rs:106/144/154`) delegate. -/
+/-- `apply`, `build_index`, `build_constraint` (`format.rs:106/142/152`) delegate. -/
 def fmtApply {G E} (applyEffects : G → Bytes → Except E G) (g : G) (buf : Bytes) := applyEffects g buf
 theorem fmtApply_eq {G E} (f : G → Bytes → Except E G) (g : G) (b : Bytes) : fmtApply f g b = f g b := rfl
 def fmtBuildIndex {P G X} (bib : P → G → Bool → X → Bytes → Except String Bytes) := bib

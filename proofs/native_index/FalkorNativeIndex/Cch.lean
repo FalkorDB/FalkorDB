@@ -56,10 +56,13 @@ structure Def where
   relTypes : List Nat
   weightAttr : Nat
 
-/-- `Cch::build` (`:193`, `unimplemented!`, #3208). -/
+/-- The `Cch`/`Def`/graph types are opaque type parameters in this file (the bodies never return), so only
+    each result's *shape* is pinned to the Rust signature: `customize` returns `Result<(), CchError>`, hence
+    `Res Unit`; the `Err` arm is unreachable while the body panics.
+    `Cch::build` (`:193`, `unimplemented!`, #3208). -/
 def cchBuild {Input Cch : Type} (_ : Input) : Res Cch := unimpl
 /-- `Cch::customize` (`:204`, #3209). -/
-def cchCustomize {Cch W : Type} (_ : Cch) (_ : W) : Res Cch := unimpl
+def cchCustomize {Cch W : Type} (_ : Cch) (_ : W) : Res Unit := unimpl
 /-- `Cch::recustomize_scoped` (`:236`, #3217). -/
 def cchRecustomizeScoped {Cch S R : Type} (_ : Cch) (_ : S) : Res R := unimpl
 /-- `Cch::query` (`:249`, #3210). -/
@@ -72,15 +75,15 @@ def indexCchIndex {X Cch : Type} (_ : X) (_ : Def) : Res (Option Cch) := unimpl
 def indexCchDefs {X : Type} (_ : X) : Res (List Def) := unimpl
 /-- `FalkorDbIndex::drop_cch` (`:987`, #3212). -/
 def indexDropCch {X : Type} (_ : X) (_ : Def) : Res Unit := unimpl
-/-- `Graph::create_cch_index` (`graph.rs:5233`, #3212). -/
+/-- `Graph::create_cch_index` (`graph.rs:5225`, #3212). -/
 def graphCreateCchIndex {G : Type} (_ : G) (_ : Def) : Res Unit := unimpl
 /-- `Graph::rebuild_cch_indexes` (`:5274`, #3212). -/
 def graphRebuildCchIndexes {G : Type} (_ : G) : Res Unit := unimpl
-/-- `Graph::drop_cch_index` (`:5244`): `self.falkordb_index.drop_cch(def)`. -/
+/-- `Graph::drop_cch_index` (`:5237`): `self.falkordb_index.drop_cch(def)`. -/
 def graphDropCchIndex {G X : Type} (g : G) (index : G → X) (d : Def) : Res Unit := indexDropCch (index g) d
-/-- `Graph::cch_indexes` (`:5254`): `self.falkordb_index.cch_defs()`. -/
+/-- `Graph::cch_indexes` (`:5248`): `self.falkordb_index.cch_defs()`. -/
 def graphCchIndexes {G X : Type} (g : G) (index : G → X) : Res (List Def) := indexCchDefs (index g)
-/-- `Graph::cch_index` (`:5267`): `self.falkordb_index.cch_index(def)`. -/
+/-- `Graph::cch_index` (`:5258`): `self.falkordb_index.cch_index(def)`. -/
 def graphCchIndex {G X Cch : Type} (g : G) (index : G → X) (d : Def) : Res (Option Cch) := indexCchIndex (index g) d
 
 /-- The `VersionedIndex for CchIndex` bodies that are `unreachable!` (`:330-395`): `writer_record`,

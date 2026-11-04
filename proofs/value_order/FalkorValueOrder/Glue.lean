@@ -7,26 +7,26 @@ snapshots, `Clone for Value`, the four trait *declarations* (`OrderedEnum::order
 `CompareValue::compare_value`, `ValueTypeOf::value_of_type`, `ValueGetType::get_type`,
 `Contains::contains`), `Value::name`, and `ValuesDeduper::with_capacity`.
 
-The value type `W` here has all 16 variants of `enum Value` (value.rs:180). `f64` and `f32`
+The value type `W` here has all 16 variants of `enum Value` (value.rs:184). `f64` and `f32`
 are *abstract* type parameters `F`, `F32`: nothing about them is assumed in this file.
 
 | here | there |
 | --- | --- |
-| `W` | `enum Value` value.rs:180 (16 variants) |
-| `DeletedNode`, `DeletedNode.new` | value.rs:62-75 |
-| `DeletedRelationship`, `DeletedRelationship.new` | value.rs:77-99 |
-| `W.clone` | `impl Clone for Value` value.rs:219-240 |
-| `W.order`, `OrderedEnum` | trait value.rs:1173, impl :1177 |
-| `CompareValue` | trait value.rs:1208 |
-| `Ty`, `W.getType`, `ValueGetType` | trait value.rs:1323, impl :1327 |
-| `W.valueOfType`, `ValueTypeOf` | trait value.rs:1274, impl :1281 |
-| `W.name` | value.rs:1387 |
-| `Deduper`, `withCapacity`, `checkAndInsert` | value.rs:1854-1896 |
+| `W` | `enum Value` value.rs:184 (16 variants) |
+| `DeletedNode`, `DeletedNode.new` | value.rs:94-107 (`DeletedNode`, `new` :101) |
+| `DeletedRelationship`, `DeletedRelationship.new` | value.rs:110-130 (`DeletedRelationship`, `new` :119) |
+| `W.clone` | `impl Clone for Value` value.rs:223-245 |
+| `W.order`, `OrderedEnum` | trait value.rs:1214, impl :1218 |
+| `CompareValue` | trait value.rs:1249 |
+| `Ty`, `W.getType`, `ValueGetType` | trait value.rs:1364, impl :1369 |
+| `W.valueOfType`, `ValueTypeOf` | trait value.rs:1315, impl :1323 |
+| `W.name` | value.rs:1395 |
+| `Deduper`, `withCapacity`, `checkAndInsert` | value.rs:2043-2090 |
 -/
 
 namespace ValueOrder.Glue
 
-/-- All 16 variants of `enum Value` (value.rs:180). Ids are `Nat`, maps are association
+/-- All 16 variants of `enum Value` (value.rs:184). Ids are `Nat`, maps are association
 lists (`OrderMap` keeps insertion order), `f64`/`f32` are abstract. -/
 inductive W (F F32 : Type) where
   | null
@@ -48,29 +48,29 @@ inductive W (F F32 : Type) where
 
 variable {F F32 : Type}
 
-/-! ## Deleted-entity snapshots (value.rs:62-99) -/
+/-! ## Deleted-entity snapshots (value.rs:94-130) -/
 
-/-- `struct DeletedNode { labels, attrs }` (value.rs:62). Labels are a set in Rust
+/-- `struct DeletedNode { labels, attrs }` (value.rs:94). Labels are a set in Rust
 (`HashSet<LabelId>`); a list up to permutation here. -/
 structure DeletedNode (V : Type) where
   labels : List Nat
   attrs : List (String × V)
 
-/-- `DeletedNode::new` (value.rs:69). -/
+/-- `DeletedNode::new` (value.rs:101). -/
 def DeletedNode.new {V} (labels : List Nat) (attrs : List (String × V)) : DeletedNode V :=
   { labels, attrs }
 
 theorem DeletedNode.new_fields {V} (l : List Nat) (a : List (String × V)) :
     (DeletedNode.new l a).labels = l ∧ (DeletedNode.new l a).attrs = a := ⟨rfl, rfl⟩
 
-/-- `struct DeletedRelationship { src, dst, type_name, attrs }` (value.rs:77). -/
+/-- `struct DeletedRelationship { src, dst, type_name, attrs }` (value.rs:110). -/
 structure DeletedRelationship (V : Type) where
   src : Nat
   dst : Nat
   typeName : String
   attrs : List (String × V)
 
-/-- `DeletedRelationship::new` (value.rs:87). -/
+/-- `DeletedRelationship::new` (value.rs:119). -/
 def DeletedRelationship.new {V} (src dst : Nat) (typeName : String) (attrs : List (String × V)) :
     DeletedRelationship V := { src, dst, typeName, attrs }
 
@@ -95,7 +95,7 @@ theorem DeletedNode.new_injective {V} (l l' : List Nat) (a a' : List (String × 
   · intro h; cases h; exact ⟨rfl, rfl⟩
   · rintro ⟨rfl, rfl⟩; rfl
 
-/-! ## `Clone for Value` (value.rs:219-240)
+/-! ## `Clone for Value` (value.rs:223-245)
 
 Every arm is a plain copy or an `Arc::clone` (refcount bump, same pointee). As a value
 the clone is therefore the same value; the model states each arm explicitly. -/
@@ -120,12 +120,12 @@ def W.clone : W F F32 → W F F32
 
 theorem W.clone_eq (v : W F F32) : v.clone = v := by cases v <;> rfl
 
-/-! ## `OrderedEnum` (trait value.rs:1173, impl :1177) -/
+/-! ## `OrderedEnum` (trait value.rs:1214, impl :1218) -/
 
 class OrderedEnum (α : Type) where
   order : α → Nat
 
-/-- `impl OrderedEnum for Value::order` (value.rs:1178), all 16 arms. -/
+/-- `impl OrderedEnum for Value::order` (value.rs:1219), all 16 arms. -/
 def W.order : W F F32 → Nat
   | .null => 2^15 | .bool _ => 2^12 | .int _ => 2^13 | .float _ => 2^14
   | .str _ => 2^11 | .list _ => 2^3 | .map _ => 2^0 | .node _ => 2^1 | .rel _ => 2^2
@@ -143,20 +143,20 @@ theorem order_null_gt (v : W F F32) (h1 : ∀ x, v ≠ .vecf32 x) (h2 : v ≠ .n
     v.order < (W.null : W F F32).order := by
   cases v <;> simp_all [W.order]
 
-/-! ## `CompareValue` (trait value.rs:1208) -/
+/-! ## `CompareValue` (trait value.rs:1249) -/
 
-/-- The result flag `DisjointOrNull` (value.rs:1200). -/
+/-- The result flag `DisjointOrNull` (value.rs:1242). -/
 inductive DisjointOrNull | disjoint | comparedNull | nan | none
   deriving DecidableEq, Repr
 
 class CompareValue (α : Type) where
   compareValue : α → α → Ordering × DisjointOrNull
 
-/-- `impl PartialEq for Value` (value.rs:1215) is generic in the trait: equality is
+/-- `impl PartialEq for Value` (value.rs:1256) is generic in the trait: equality is
 `compare_value(..).0 == Equal`, whatever the impl. -/
 def eqVia {α} [CompareValue α] (a b : α) : Bool := (CompareValue.compareValue a b).1 == .eq
 
-/-- `impl PartialOrd for Value` (value.rs:1788): `None` exactly on `ComparedNull`. -/
+/-- `impl PartialOrd for Value` (value.rs:1901): `None` exactly on `ComparedNull`. -/
 def partialCmpVia {α} [CompareValue α] (a b : α) : Option Ordering :=
   if (CompareValue.compareValue a b).2 = .comparedNull then none
   else some (CompareValue.compareValue a b).1
@@ -170,7 +170,7 @@ theorem partialCmpVia_some {α} [CompareValue α] (a b : α)
     partialCmpVia a b = some (CompareValue.compareValue a b).1 := by
   unfold partialCmpVia; simp [h]
 
-/-! ## Types: `get_type` and `value_of_type` (value.rs:1274-1350) -/
+/-! ## Types: `get_type` and `value_of_type` (value.rs:1315-1395) -/
 
 /-- `enum Type` (functions/mod.rs), the constructors `value_of_type` inspects. -/
 inductive Ty where
@@ -182,7 +182,7 @@ inductive Ty where
 class ValueGetType (α : Type) where
   getType : α → Ty
 
-/-- `impl ValueGetType for Value::get_type` (value.rs:1328). -/
+/-- `impl ValueGetType for Value::get_type` (value.rs:1369). -/
 def W.getType : W F F32 → Ty
   | .null => .null | .bool _ => .bool | .int _ => .int | .float _ => .float
   | .str _ => .string | .list _ => .list .any | .map _ => .map | .node _ => .node
@@ -198,7 +198,7 @@ theorem getType_concrete (v : W F F32) :
     (∀ t, v.getType ≠ .optional t) ∧ (∀ ts, v.getType ≠ .union ts) ∧ v.getType ≠ .any := by
   cases v <;> simp [W.getType]
 
-/-- `Value::name` (value.rs:1387). Since #2954 (b6567cb97) it spells C's `SIType_ToString`
+/-- `Value::name` (value.rs:1395). Since #2954 (b6567cb97) it spells C's `SIType_ToString`
 names (`Edge`, `Vectorf32`; before: `Relationship`, `VecF32`), and `typeOf()` returns it. -/
 def W.name : W F F32 → String
   | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float _ => "Float"
@@ -212,7 +212,7 @@ def W.name : W F F32 → String
 theorem name_eq_iff_order_eq (a b : W F F32) : a.name = b.name ↔ a.order = b.order := by
   cases a <;> cases b <;> simp [W.name, W.order]
 
-/-- `impl ValueTypeOf for Value::value_of_type` (value.rs:1282), arm by arm. `none` means
+/-- `impl ValueTypeOf for Value::value_of_type` (value.rs:1323), arm by arm. `none` means
 "accepted"; `some (actual, expected)` is the mismatch reported. -/
 def W.valueOfType : W F F32 → Ty → Option (Ty × Ty)
   | .list vs, .list ty => listFirst vs ty
@@ -261,12 +261,12 @@ theorem valueOfType_self (v : W F F32) : v.valueOfType v.getType = none := by
     | cons x xs ih => simp [W.valueOfType.listFirst, valueOfType_any, ih]
   | _ => simp [W.getType, W.valueOfType]
 
-/-! ## `Contains` (trait value.rs:1756, impl for `ThinVec<Value>` :1762) -/
+/-! ## `Contains` (trait value.rs:1869, impl for `ThinVec<Value>` :1876) -/
 
 class Contains (C V : Type) where
   contains : C → V → V
 
-/-- `impl Contains for ThinVec<Value>` (value.rs:1763), generic in the comparator. -/
+/-- `impl Contains for ThinVec<Value>` (value.rs:1876), generic in the comparator. -/
 def containsImpl {V} (cmp : V → V → Ordering × DisjointOrNull) (mkNull : V) (mkBool : Bool → V) :
     List V → V → V :=
   fun items value => go value items false
@@ -296,16 +296,16 @@ theorem containsImpl_false {V} (cmp : V → V → Ordering × DisjointOrNull) (n
     simp only [h1, ite_false, hacc, this, Bool.or_self]
     exact ih (fun j hj => h j (by simp [hj])) _ rfl
 
-/-! ## `ValuesDeduper::with_capacity` (value.rs:1859) and the insert protocol -/
+/-! ## `ValuesDeduper::with_capacity` (value.rs:2045) and the insert protocol -/
 
 /-- The deduper state: the set of hashes seen (a list; capacity is only a hint). -/
 structure Deduper where
   seen : List UInt64
 
-/-- `with_capacity(capacity)` (value.rs:1859): an empty set, whatever the capacity. -/
+/-- `with_capacity(capacity)` (value.rs:2045): an empty set, whatever the capacity. -/
 def withCapacity (_capacity : Nat) : Deduper := ⟨[]⟩
 
-/-- `check_and_insert_hash` (value.rs:1887): `!seen.insert(h)`. -/
+/-- `check_and_insert_hash` (value.rs:2073): `!seen.insert(h)`. -/
 def checkAndInsert (d : Deduper) (h : UInt64) : Bool × Deduper :=
   if h ∈ d.seen then (true, d) else (false, ⟨h :: d.seen⟩)
 

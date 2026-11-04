@@ -23,8 +23,9 @@ import FalkorValueMath.Misc
   `depth ≤ MAX` (always loads) and `depth ≥ MAX + 2` (always refused).
 * `validateProperty_depth`, **`stored_roundtrip`** — every value a property write accepts
   has `depth ≤ MAX` and round-trips through the RDB codec (the save/load guarantee).
-* History (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412): before #3339 every nesting decoded, one frame per level,
-  and any depth was storable.
+* History: before #3339 every nesting decoded, one frame per level, and any depth was
+  storable (the `pre3339_*` counterexamples were removed in bbee75955; the last revision
+  that has them is 17ccc5412).
 -/
 
 namespace ValueMath
@@ -699,9 +700,10 @@ theorem validateProperty_nest (k : Nat) (x : V F) (hx : ∀ l, x ≠ .list l) (h
   simp only [nest, validateProperty, validateListProperty]
   rw [if_neg (by decide), validateItems_nest k 1 x hx hp (by decide), Nat.add_comm 1 k]
 
-/-! ## History (before #3339) -/
+/-! ## The decoder past the cap -/
 
-/-- …while the decoder now refuses the same input past the cap, with the nesting error. -/
+/-- The decoder refuses an encoded `k`-fold nesting with `k > MAX_VALUE_NESTING`, with the
+nesting error (before #3339 it decoded every depth). -/
 theorem decode_nest_deep (k : Nat) (hk : k > MAX_VALUE_NESTING) :
     decode co (sizeOf (nest k (.null : V F)) + 1) (encode co (nest k .null)) = .error .nesting := by
   have hs : ∀ k, Storable (nest k (.null : V F)) := by

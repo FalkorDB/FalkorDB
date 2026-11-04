@@ -2,29 +2,29 @@ import GraphQueries.IdContract
 /-
 # Id spaces, construction and versioning (graph.rs after #2846)
 
-`Graph` keeps two `IdSpace`s (`node_ids`/`relationship_ids`, graph.rs:377/358)
+`Graph` keeps two `IdSpace`s (`node_ids`/`relationship_ids`, graph.rs:429/432)
 and no counter of its own. `nodeIds g`/`relIds g` reassemble one from `G`'s
 fields; `setNodeIds`/`setRelIds` write one back. Every mutation goes through
 `O : IdSpaceOps`, whose behaviour is the hypothesis `IdSpaceContract O`
 (IdContract.lean; proofs/id_space owns its proof). Errors carry the entity
-kind (`NodeOpError::node`/`relationship`, graph.rs:330/317) as `Except String`.
+kind (`NodeOpError::node`/`relationship`, graph.rs:382/391) as `Except String`.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `nodeBound`/`relBound` | `node_id_bound` :1607 / `relationship_id_bound` :1613 |
-| `maxNodeId`/`maxRelId` | :1683 / :1688 (`IdSpace::max_id`) |
-| `nodeIds`/`relIds` | `node_id_space` :1593 / `relationship_id_space` :1599 |
-| `cancelNodeId`/`cancelRelId` | `cancel_node_id` :1449 / `cancel_relationship_id` :1462 |
-| `openIdBatches` | `open_id_batches` :1492 |
-| `rollIdBatches` | `roll_id_batches` :1511 |
-| `verifyIdBatches` / `validateGraph` | `verify_id_batches` :1579 / `validate` :1529 (#3022: then `verify_created_relationships`) |
-| `verifyCreatedRels`, `nodeLive` | `verify_created_relationships` :1546 (#3022) |
-| `growForNodes` | `grow_for_nodes` :1665 |
-| `createNodes` | `create_nodes` :1646 |
-| `newG` | `Graph::new` :818 |
-| `restoreCaps`, `clampTiers`, `collectIdx` | `Graph::restore` :863 (id spaces :913-914, caps :915-921, tier clamp :899-902, `node_labels_index` :952) |
-| `newVersion` | `new_version` :1006 |
-| `rebuildRelType` | `rebuild_derived_matrices` :976 (type-matrix half; `rebuild_backward` is a GraphBLAS transpose) |
+| `nodeBound`/`relBound` | `node_id_bound` :1707 / `relationship_id_bound` :1713 |
+| `maxNodeId`/`maxRelId` | `max_node_id` :1783 / `max_relationship_id` :1788 (`IdSpace::max_id`) |
+| `nodeIds`/`relIds` | `node_id_space` :1693 / `relationship_id_space` :1699 |
+| `cancelNodeId`/`cancelRelId` | `cancel_node_id` :1549 / `cancel_relationship_id` :1562 |
+| `openIdBatches` | `open_id_batches` :1592 |
+| `rollIdBatches` | `roll_id_batches` :1611 |
+| `verifyIdBatches` / `validateGraph` | `verify_id_batches` :1679 / `validate` :1629 (#3022: then `verify_created_relationships`) |
+| `verifyCreatedRels`, `nodeLive` | `verify_created_relationships` :1646 (#3022) |
+| `growForNodes` | `grow_for_nodes` :1765 |
+| `createNodes` | `create_nodes` :1746 |
+| `newG` | `Graph::new` :882 |
+| `restoreCaps`, `clampTiers`, `collectIdx` | `Graph::restore` :927 (id spaces :993-994, caps :1000-1001, tier clamp :978-981, `node_labels_index` :1016) |
+| `newVersion` | `new_version` :1084 |
+| `rebuildRelType` | `rebuild_derived_matrices` :1040 (type-matrix half; `rebuild_backward` is a GraphBLAS transpose) |
 -/
 namespace GQ
 variable {V : Type}
@@ -36,10 +36,10 @@ def setNodeIds (g : G V) (s : IdS) : G V :=
 def setRelIds (g : G V) (s : IdS) : G V :=
   { g with relCount := s.live, delRels := s.recycled, relEB := s.entryBound, relTaken := s.taken }
 
-/-- `node_id_bound` (:1607) = `node_ids.bound()`. -/
+/-- `node_id_bound` (:1707) = `node_ids.bound()`. -/
 def nodeBound (g : G V) : Nat := (nodeIds g).bound
 def relBound (g : G V) : Nat := (relIds g).bound
-/-- `max_node_id` (:1683) = `node_ids.max_id()`. -/
+/-- `max_node_id` (:1783) = `node_ids.max_id()`. -/
 def maxNodeId (g : G V) : Nat := (nodeIds g).maxId
 def maxRelId (g : G V) : Nat := (relIds g).maxId
 
@@ -50,19 +50,19 @@ theorem maxNodeId_lt (g : G V) (h : g.nodeCount ≠ 0) : maxNodeId g + 1 = nodeB
   simp [maxNodeId, IdS.maxId, nodeIds, h, nodeBound, IdS.bound]; omega
 theorem maxRelId_lt (g : G V) (h : g.relCount ≠ 0) : maxRelId g + 1 = relBound g := by
   simp [maxRelId, IdS.maxId, relIds, h, relBound, IdS.bound]; omega
-/-- `node_id_space` (:1593) is a read-only view: the space it lends is
+/-- `node_id_space` (:1693) is a read-only view: the space it lends is
 exactly the graph's fields. -/
 theorem openNodeSpace_eq (g : G V) : (nodeIds g).bound = g.nodeCount + g.delNodes.length ∧
     setNodeIds g (nodeIds g) = g := ⟨rfl, rfl⟩
 theorem openRelSpace_eq (g : G V) : (relIds g).bound = g.relCount + g.delRels.length ∧
     setRelIds g (relIds g) = g := ⟨rfl, rfl⟩
 
-/-- `cancel_node_id` (:1449): `node_ids.cancel(id).map_err(NodeOpError::node)`. -/
+/-- `cancel_node_id` (:1549): `node_ids.cancel(id).map_err(NodeOpError::node)`. -/
 def cancelNodeId (O : IdSpaceOps) (g : G V) (id : Nat) : Except String (G V) :=
   match O.cancel (nodeIds g) id with
   | some s => .ok (setNodeIds g s)
   | none => .error "node"
-/-- `cancel_relationship_id` (:1462). -/
+/-- `cancel_relationship_id` (:1562). -/
 def cancelRelId (O : IdSpaceOps) (g : G V) (id : Nat) : Except String (G V) :=
   match O.cancel (relIds g) id with
   | some s => .ok (setRelIds g s)
@@ -115,27 +115,34 @@ theorem cancelRelId_err (O : IdSpaceOps) (g : G V) (id : Nat) (h : O.cancel (rel
 
 /-! ## Batches -/
 
-/-- `verify_id_batches` (:1579): node first, then relationship; the error
+/-- `verify_id_batches` (:1679): node first, then relationship; the error
 names which. -/
 def verifyIdBatches (O : IdSpaceOps) (g : G V) : Except String Unit :=
   if !O.verify (nodeIds g) then .error "node"
   else if !O.verify (relIds g) then .error "relationship" else .ok ()
-/-- The `live` closure of `verify_created_relationships` (:1531-1536):
+/-- The `live` closure of `verify_created_relationships` (:1651-1656):
 `n < bound && !(check_free && free.contains(n))`, `check_free = !free.is_empty()`. -/
 def liveB (g : G V) (n : Nat) : Bool :=
   decide (n < (nodeIds g).bound) && !(!(nodeIds g).recycled.isEmpty && decide (n ∈ (nodeIds g).recycled))
 
-/-- The loop body (:1540-1547): not skipped as freed (`skip_freed && is_free(id)`,
+/-- The loop body (:1660-1669): not skipped as freed (`skip_freed && is_free(id)`,
 `skip_freed = !rels.recycled().is_empty()`), and `endpoints_for_edge(id)`
-(:3240) is not `Some` with both ends live. -/
+(:3439) is not `Some` with both ends live. -/
 def offends (g : G V) (id : Nat) : Bool :=
   !(!(relIds g).recycled.isEmpty && (relIds g).isFree id) &&
   !((g.endpoints id).any (fun p => liveB g p.1 && liveB g p.2))
 
-/-- `verify_created_relationships` (:1546, #3022): the first id of the batch's
-`taken` (roaring: ascending) that `offends` is `DanglingRelationship { id }`. -/
+/-- `rels.taken()` iterates a `RoaringTreemap`, i.e. in ascending order; `taken` is a plain list
+here, so it is sorted before the search. -/
+def sortedTaken (g : G V) : List Nat := (relIds g).taken.mergeSort (fun a b => decide (a ≤ b))
+
+theorem mem_sortedTaken (g : G V) (x : Nat) : x ∈ sortedTaken g ↔ x ∈ (relIds g).taken := by
+  simp [sortedTaken]
+
+/-- `verify_created_relationships` (`verify_created_relationships`, #3022): the first id of the
+batch's `taken` in ascending order that `offends` is `DanglingRelationship { id }`. -/
 def verifyCreatedRels (g : G V) : Except Nat Unit :=
-  match (relIds g).taken.find? (offends g) with
+  match (sortedTaken g).find? (offends g) with
   | some id => .error id
   | none => .ok ()
 
@@ -195,26 +202,49 @@ theorem verifyCreatedRels_spec (g : G V) :
         ¬ ∃ s d, g.endpoints id = some (s, d) ∧ nodeLive g s ∧ nodeLive g d) := by
   unfold verifyCreatedRels
   constructor
-  · cases hf : (relIds g).taken.find? (offends g) with
+  · cases hf : (sortedTaken g).find? (offends g) with
     | some id =>
       simp only [reduceCtorEq, false_iff, Classical.not_forall]
-      have hm := List.mem_of_find?_eq_some hf
+      have hm := (mem_sortedTaken g id).mp (List.mem_of_find?_eq_some hf)
       have := (offends_iff g id).mp (List.find?_some hf)
       exact ⟨id, hm, this.1, this.2⟩
     | none =>
       simp only [true_iff]
       intro id hm hr
-      have := List.find?_eq_none.mp hf id hm
+      have := List.find?_eq_none.mp hf id ((mem_sortedTaken g id).mpr hm)
       apply Classical.byContradiction; intro hn
       exact this ((offends_iff g id).mpr ⟨hr, hn⟩)
   · intro id h
-    cases hf : (relIds g).taken.find? (offends g) with
+    cases hf : (sortedTaken g).find? (offends g) with
     | none => rw [hf] at h; cases h
     | some id' =>
       rw [hf] at h; cases h
-      exact ⟨List.mem_of_find?_eq_some hf, (offends_iff g _).mp (List.find?_some hf)⟩
+      exact ⟨(mem_sortedTaken g _).mp (List.mem_of_find?_eq_some hf),
+        (offends_iff g _).mp (List.find?_some hf)⟩
 
-/-- `validate` (:1529): `verify_id_batches()?`, then (#3022)
+/-- The reported offender is the lowest one (Rust returns the first in ascending order). -/
+theorem verifyCreatedRels_lowest (g : G V) (id : Nat) (h : verifyCreatedRels g = .error id) :
+    ∀ id' ∈ (relIds g).taken, offends g id' = true → id ≤ id' := by
+  unfold verifyCreatedRels at h
+  cases hf : (sortedTaken g).find? (offends g) with
+  | none => rw [hf] at h; cases h
+  | some id =>
+    rw [hf] at h; cases h
+    intro id' hm ho
+    have hsorted : (sortedTaken g).Pairwise (fun a b => decide (a ≤ b) = true) :=
+      List.pairwise_mergeSort (le := fun a b => decide (a ≤ b))
+        (fun a b c h1 h2 => by simp at *; omega) (fun a b => by simp; omega) _
+    obtain ⟨-, as, bs, hsplit, hnone⟩ := List.find?_eq_some_iff_append.mp hf
+    have hm' : id' ∈ as ++ id :: bs := hsplit ▸ (mem_sortedTaken g id').mpr hm
+    have hsorted' : (as ++ id :: bs).Pairwise (fun a b => decide (a ≤ b) = true) := hsplit ▸ hsorted
+    rcases List.mem_append.mp hm' with h1 | h1
+    · have := hnone id' h1; simp [ho] at this
+    · rcases List.mem_cons.mp h1 with rfl | h2
+      · exact Nat.le_refl _
+      · have := (List.pairwise_cons.mp (List.pairwise_append.mp hsorted').2.1).1 id' h2
+        simpa using this
+
+/-- `validate` (:1629): `verify_id_batches()?`, then (#3022)
 `verify_created_relationships()` (`NodeOpError::DanglingRelationship`). -/
 def validateGraph (O : IdSpaceOps) (g : G V) : Except String Unit :=
   match verifyIdBatches O g with
@@ -223,7 +253,7 @@ def validateGraph (O : IdSpaceOps) (g : G V) : Except String Unit :=
     | .error id => .error s!"dangling relationship {id}"
     | .ok () => .ok ()
 
-/-- `open_id_batches` (:1492). -/
+/-- `open_id_batches` (:1592). -/
 def openIdBatches (O : IdSpaceOps) (g : G V) : Except String (G V) :=
   match O.openBatch (nodeIds g) with
   | none => .error "node"
@@ -233,7 +263,7 @@ def openIdBatches (O : IdSpaceOps) (g : G V) : Except String (G V) :=
     | none => .error "relationship"
     | some r => .ok (setRelIds g1 r)
 
-/-- `roll_id_batches` (:1511): verify, then open. -/
+/-- `roll_id_batches` (:1611): verify, then open. -/
 def rollIdBatches (O : IdSpaceOps) (g : G V) : Except String (G V) :=
   match verifyIdBatches O g with
   | .error e => .error e
@@ -291,7 +321,7 @@ theorem rollIdBatches_refused (O : IdSpaceOps) (g : G V) (e : String)
 
 /-! ## Creating nodes -/
 
-/-- `grow_for_nodes` (:1665), up to the final `resize`. -/
+/-- `grow_for_nodes` (:1765), up to the final `resize`. -/
 def mnl2 (chunk : Nat) (hc : 0 < chunk) (g : G V) (nodes : List Nat) : G V :=
   match nodes.max? with
   | some m =>
@@ -300,7 +330,7 @@ def mnl2 (chunk : Nat) (hc : 0 < chunk) (g : G V) (nodes : List Nat) : G V :=
     else g
   | none => g
 
-/-- `grow_for_nodes` (:1665). -/
+/-- `grow_for_nodes` (:1765). -/
 def growForNodes (chunk : Nat) (hc : 0 < chunk) (g : G V) (nodes : List Nat) : G V :=
   resize chunk hc (mnl2 chunk hc g nodes)
 
@@ -344,7 +374,7 @@ theorem growForNodes_spec (chunk : Nat) (hc : 0 < chunk) (g : G V) (nodes : List
   simp only [growForNodes]
   exact ⟨fun n hn => Nat.lt_of_lt_of_le (a1 n hn) b1, by rw [b2, a2], by rw [b3, a3]⟩
 
-/-- `create_nodes` (:1646): `node_ids.create(nodes)` then `grow_for_nodes`. -/
+/-- `create_nodes` (:1746): `node_ids.create(nodes)` then `grow_for_nodes`. -/
 def createNodes (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V) (nodes : List Nat) :
     Except String (G V) :=
   match O.create (nodeIds g) nodes with
@@ -355,7 +385,8 @@ def createNodes (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V) (nodes
 moved by the batch size, and the bin lost exactly the batch (the former
 `markNodesLive_spec`, now through the id space). -/
 theorem markNodesLive_spec (O : IdSpaceOps) (hC : IdSpaceContract O) (chunk : Nat) (hc : 0 < chunk)
-    (g r : G V) (nodes : List Nat) (h : createNodes O chunk hc g nodes = .ok r) :
+    (g r : G V) (nodes : List Nat) (hnd : nodes.Nodup)
+    (h : createNodes O chunk hc g nodes = .ok r) :
     (∀ n ∈ nodes, n < r.nodeCap) ∧ r.nodeCount = g.nodeCount + nodes.length ∧
     (∀ x, x ∈ r.delNodes ↔ x ∈ g.delNodes ∧ x ∉ nodes) := by
   unfold createNodes at h
@@ -363,7 +394,7 @@ theorem markNodesLive_spec (O : IdSpaceOps) (hC : IdSpaceContract O) (chunk : Na
   · cases h
   · rename_i s hs
     cases h
-    obtain ⟨a1, a2⟩ := hC.create_ok _ _ _ hs
+    obtain ⟨a1, a2⟩ := hC.create_ok _ _ _ hnd hs
     have hlim : ∀ n ∈ nodes, n < grbMax := fun n hn => by
       apply Nat.lt_of_not_le; intro hge
       rw [hC.create_refuses_limit _ _ n hn hge] at hs; cases hs
@@ -399,11 +430,11 @@ theorem newG_spec (n e v : Nat) (name : String) :
   simp [newG, LInv, TInv, nodeBound, relBound, maxNodeId, idx, nodeIds, relIds, IdS.new,
     IdS.bound, IdS.maxId]
 
-/-- `restore` caps (:913-921): `IdSpace::restored(count, deleted).bound()
+/-- `restore` caps (:1000-1001): `IdSpace::restored(count, deleted).bound()
 .next_multiple_of(chunk).max(64)`. -/
 def restoreCap (chunk count ndel : Nat) : Nat := max (nextMul chunk (count + ndel)) 64
 
-/-- `restore`'s id spaces (:913-914) and caps: the restored space opens a
+/-- `restore`'s id spaces (:993-994) and caps: the restored space opens a
 batch exactly at the decoded boundary, and the cap covers it. -/
 theorem restore_ids (chunk count : Nat) (del : List Nat) :
     let s := IdS.restored count del
@@ -417,7 +448,7 @@ theorem restoreCap_covers (chunk count ndel : Nat) :
   have := nextMul_ge chunk (count + ndel)
   unfold restoreCap; omega
 
-/-- Tier clamp (:898-902): `acc = len; for slot in starts.rev() { acc = min(acc, slot); slot = acc }`. -/
+/-- Tier clamp (:978-981): `acc = len; for slot in starts.rev() { acc = min(acc, slot); slot = acc }`. -/
 def clampTiers (len s0 s1 s2 : Nat) : Nat × Nat × Nat :=
   let a2 := min len s2
   let a1 := min a2 s1
@@ -501,7 +532,7 @@ theorem newVersion_spec (g : G V) :
   simp [newVersion, setNodeIds, setRelIds, nodeIds, relIds, IdS.newVersion, IdS.restored,
     nodeBound, relBound, IdS.bound]
 
-/-- Type-matrix half of `rebuild_derived_matrices` (:976): resize to
+/-- Type-matrix half of `rebuild_derived_matrices` (:1040): resize to
 `relationship_cap × |types|`, then `(edge, type_idx)` for every tensor edge. -/
 def rebuildRelType (g : G V) : G V :=
   let m := g.relType.resize g.relCap g.types.length
@@ -538,7 +569,7 @@ theorem le_maxL : ∀ {l : List Nat} {x : Nat}, x ∈ l → x ≤ maxL l
   | _ :: _, _, .head _ => Nat.le_max_left _ _
   | y :: ys, x, .tail _ h => by have := le_maxL h; simp [maxL]; omega
 
-/-- `saved` (:982-992): the largest node dimension of the decoded matrices. -/
+/-- `saved` (:1046-1056, in `rebuild_derived_matrices`): the largest node dimension of the decoded matrices. -/
 def savedDim (g : G V) : Nat :=
   maxL (g.adj.nr :: g.adj.nc :: g.nodeLabels.nr :: g.labelMs.map (·.nr))
 
@@ -566,8 +597,11 @@ theorem rebuild_never_shrinks (g : G V) :
   obtain ⟨m', _, rfl⟩ := hm
   rfl
 
-/-- …and keeps every entry a decoded matrix held in its own bounds: no node, edge
-or label pair is cut off by the load. -/
+/-- …and keeps every decoded entry that lies inside the dimensions the load resizes to: for
+`adj` its own `nr × nc`; for `node_labels` its own rows and the label count as columns; for a label
+matrix its own rows and, label matrices being square (`nodeCap × nodeCap`), its rows as columns.
+Scope: this does not cover a decoded `node_labels` with more columns than labels, or a non-square
+label matrix, whose extra columns `Mat.resize` does cut; the statement makes no claim about them. -/
 theorem rebuild_keeps_entries (g : G V) :
     (∀ p ∈ g.adj.ents, p.1 < g.adj.nr → p.2 < g.adj.nc → p ∈ (rebuildNodeMs g).adj.ents) ∧
     (∀ p ∈ g.nodeLabels.ents, p.1 < g.nodeLabels.nr → p.2 < g.labelMs.length →
@@ -588,7 +622,7 @@ theorem rebuild_keeps_entries (g : G V) :
     simp only [rebuildNodeMs, resizeNodeMs, List.getElem_map, Mat.resize, List.mem_filter]
     exact ⟨hp, by simp; omega⟩
 
-/-- `trim_attr_stores` (:1000): arena slop only — the logical stores are unchanged. -/
+/-- `trim_attr_stores` (:1078): arena slop only — the logical stores are unchanged. -/
 def trimAttrStores (g : G V) : G V := g
 theorem trimAttrStores_id (g : G V) : trimAttrStores g = g := rfl
 

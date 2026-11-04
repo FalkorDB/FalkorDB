@@ -9,7 +9,7 @@ namespace FalkorParserGrammar.C
 structure GExt where
   /-- A repeated relationship variable inside one pattern is silently dropped instead of
   rejected. It was the case for MERGE, and for CREATE in a named path, until #3289
-  (`add_pattern_relationship`, cypher.rs:1380, rejects it in every clause): no extension is left,
+  (`add_pattern_relationship`, cypher.rs:1378, rejects it in every clause): no extension is left,
   so `GExt.rust = GExt.g4`. -/
   dupDrop : Bool
 
@@ -256,9 +256,9 @@ theorem patternLoop_sound (o : Oracle) (F : Nat) (cl : CK) : ∀ (n : Nat) gs (s
 
 /-- **parse_pattern is sound**: an accepted MATCH / CREATE / MERGE pattern
 is an `oC_Pattern` (one `oC_PatternPart` for MERGE) under the extensions
-`[:A:B]`, keyword folding, `allShortestPaths` and silently dropped
-duplicate relationship variables, and the query graph is the one the
-rules build. -/
+keyword folding and `allShortestPaths` (the two flags of `Ext.rust`); `[:A:B]` and a silently
+dropped duplicate relationship variable are not extensions any more (#3300, #3289: a repeated
+relationship variable is rejected), and the query graph is the one the rules build. -/
 theorem patternP_sound (o : Oracle) (F : Nat) (cl : CK) (s : PS) g s'
     (h : patternP o F cl s = .ok g s') : GPat o Ext.rust GExt.rust cl (QG.empty, []) s g s' :=
   patternLoop_sound o F cl F _ _ _ _ h

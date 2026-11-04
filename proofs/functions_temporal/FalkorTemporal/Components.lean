@@ -1,7 +1,7 @@
 import FalkorTemporal.Pure
 import FalkorTemporal.CalendarLaws
 /-!
-# Temporal accessors and formatting (value.rs:256-605), `Point` (value.rs:110-141)
+# Temporal accessors and formatting (value.rs:261-607)
 
 chrono's `Utc.timestamp_opt(t, 0)` is modelled by `ChronoDT`: whether it yields
 `LocalResult::Single` (`valid`), and the two derived fields we do not recompute
@@ -42,7 +42,7 @@ def dayOfQuarter (t : Int) : Int :=
   dayOf t - daysFromCivil (yearOf t) ((quarterOf t - 1) * 3 + 1) 1 + 1
 def weekDayIso (t : Int) : Int := let w := K.dowSun (dayOf t); if w = 0 then 7 else w
 
-/-- `get_datetime_component` (value.rs:473), the `if … else if` chain in source order. -/
+/-- `get_datetime_component` (value.rs:478), the `if … else if` chain in source order. -/
 def getDatetimeComponent (t : Int) (c : String) : Except String (Option Int) :=
   if !K.valid t then .ok none else
   if eqIC c "second" then .ok (some (secondOf t))
@@ -62,7 +62,7 @@ def getDatetimeComponent (t : Int) (c : String) : Except String (Option Int) :=
   else if eqIC c "microsecond" || eqIC c "nanosecond" then .ok (some 0)
   else .error s!"unknown datetime component {c}"
 
-/-- `get_date_component` (value.rs:532). -/
+/-- `get_date_component` (value.rs:537). -/
 def getDateComponent (t : Int) (c : String) : Except String (Option Int) :=
   if !K.valid t then .ok none else
   if eqIC c "day" then .ok (some (mdayOf t))
@@ -77,7 +77,7 @@ def getDateComponent (t : Int) (c : String) : Except String (Option Int) :=
   else if eqIC c "dayOfQuarter" || eqIC c "quarterDay" then .ok (some (dayOfQuarter t))
   else .error s!"unknown date component {c}"
 
-/-- `get_time_component` (value.rs:580). -/
+/-- `get_time_component` (value.rs:585). -/
 def getTimeComponent (t : Int) (c : String) : Except String (Option Int) :=
   if !K.valid t then .ok none else
   if eqIC c "second" then .ok (some (secondOf t))
@@ -146,7 +146,7 @@ def pad (w : Nat) (n : Nat) : String :=
 def twoDigits (v : Nat) : String :=
   String.ofList [Char.ofNat (48 + v / 10 % 10), Char.ofNat (48 + v % 10)]
 
-/-- `push_date` (value.rs:836): years `0..=9999` through `write_two_digits` (4 digits), any
+/-- `push_date` (value.rs:828): years `0..=9999` through `write_two_digits` (4 digits), any
 other year as `{sign}{:04}` of its magnitude, so no digit is lost and a negative year keeps
 its `-`. -/
 def pushDate (y : Int) (m d : Nat) : String :=

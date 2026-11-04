@@ -55,7 +55,7 @@ Tiers are split into pages held by `Arc`s, so a new MVCC version shares pages un
 
 **7. What does it cost in memory?**
 
-`bytes_per_edge_bounds` proves the index uses between 4 and 16 bytes per edge id.
+`bytes_per_edge_bounds` proves the *used-slot* bytes, the numerator of `bytes_per_edge` (`used_bytes` summed over the tiers), are between 4 and 16 per stored slot. That is not the allocated memory: `memory_usage` (what `GRAPH.MEMORY` reports) sums `allocated_bytes`, which includes page slack and reserved capacity, so it can exceed 16 bytes per edge. `memUsage_ge_used` proves allocated bytes are at least the used bytes.
 
 ## The headline theorems
 
@@ -70,7 +70,7 @@ Tiers are split into pages held by `Arc`s, so a new MVCC version shares pages un
 | `pageMut_spec` | A page write through one version is invisible to every other version | `EndpointPaged/Arc.lean` |
 | `set_inplace_in_range`, `set_promote_in_range`, `set_append_in_range` | Every write `set` issues is in range | `EndpointPaged.lean` |
 | `get_put_contract` | Each width's `put`/`get` is a truncating cast, and the tombstone value always fits | `EndpointPaged/Layout.lean` |
-| `bytes_per_edge_bounds` | 4 to 16 bytes per edge id | `EndpointPaged/Layout.lean` |
+| `bytes_per_edge_bounds` | used-slot bytes are 4 to 16 per stored slot (not allocated memory) | `EndpointPaged/Layout.lean` |
 
 ### How `run_refines` is proved
 

@@ -6,19 +6,19 @@ import GraphQueries.Basic
 | --- | --- |
 | `nextMul`      | `u64::next_multiple_of` (core) |
 | `grbMax`, `ckAdd`, `ckNextMul` | `GrB_INDEX_MAX` (tensor.rs:144), `checked_add`, `checked_next_multiple_of` |
-| `growStep`, `growCap` | `grow_cap` :772 (loop body :782-785) |
-| `resizeNodeMs`/`resizeRelMs`/`resize` | :3210 / :3222 / :3227 |
+| `growStep`, `growCap` | `grow_cap` :866 (loop body :871-876) |
+| `resizeNodeMs`/`resizeRelMs`/`resize` | `resize_node_matrices` :3527 / `resize_relationship_matrices` :3539 / `resize` :3544 |
 | `idx`          | `iter().position(..)` |
-| `internLabel`  | `intern_label` :1121 |
-| `getLabelId`   | `get_label_id` :1155 |
-| `getLabelIdMut`| `get_label_id_mut` :1135 |
-| `getTypeId`    | `get_type_id` :1162 |
-| `getTypeIdMut`, `registerRelType` | `get_type_id_mut` :1251, `register_relationship_type` :1274 (#3277: resizes) |
-| `getRelMatMut` | `get_relationship_matrix_mut` :1340 |
-| `getRelMat`    | `get_relationship_matrix` :1366 |
-| `getLabelMat`/`getLabelMatMut` | :1306 / :1327 |
-| `nodeHasLabel`/`nodeHasLabelId`/`edgeHasType`/`edgeHasTypeId` | :1174 / :1188 / :1326 / :1338 |
-| `labelNodeCount`/`..ByIdx`/`typeEdgeCount` | :1030 / :1047 / :1056 |
+| `internLabel`  | `intern_label` :1248 |
+| `getLabelId`   | `get_label_id` :1282 |
+| `getLabelIdMut`| `get_label_id_mut` :1262 |
+| `getTypeId`    | `get_type_id` :1289 |
+| `getTypeIdMut`, `registerRelType` | `get_type_id_mut` :1349, `register_relationship_type` :1371 (#3277: resizes) |
+| `getRelMatMut` | `get_relationship_matrix_mut` :1475 |
+| `getRelMat`    | `get_relationship_matrix` :1491 |
+| `getLabelMat`/`getLabelMatMut` | `get_label_matrix` :1454 / `get_label_matrix_mut` :1462 |
+| `nodeHasLabel`/`nodeHasLabelId`/`edgeHasType`/`edgeHasTypeId` | `node_has_label` :1301 / `node_has_label_id` :1315 / `edge_has_type` :1327 / `edge_has_type_id` :1338 |
+| `labelNodeCount`/`..ByIdx`/`typeEdgeCount` | `label_node_count` :1157 / `label_node_count_by_idx` :1174 / `type_edge_count` :1183 |
 -/
 namespace GQ
 variable {V : Type}
@@ -53,7 +53,7 @@ def ckAdd (a b : Nat) : Option Nat := if a + b < 2 ^ 64 then some (a + b) else n
 /-- `u64::checked_next_multiple_of(c)` (core: `r == 0 ? Some(x) : x.checked_add(c - r)`). -/
 def ckNextMul (c x : Nat) : Option Nat := if nextMul c x < 2 ^ 64 then some (nextMul c x) else none
 
-/-- One step of `grow_cap`'s loop (:782-785):
+/-- One step of `grow_cap`'s loop (:871-876):
 `cap.checked_add(max(cap/4, chunk)).and_then(|c| c.checked_next_multiple_of(chunk))
  .map_or(GrB_INDEX_MAX, |c| c.min(GrB_INDEX_MAX))`. -/
 def growStep (chunk cap : Nat) : Nat :=
@@ -78,7 +78,7 @@ theorem growStep_gt (chunk cap : Nat) (hc : 0 < chunk) (h : cap < grbMax) : cap 
     · cases hcs
   · exact h
 
-/-- `grow_cap` (:772), #2911 (`fe619ac5f`): `while needed > cap && cap < GrB_INDEX_MAX { cap = step }`.
+/-- `grow_cap` (:866), #2911 (`fe619ac5f`): `while needed > cap && cap < GrB_INDEX_MAX { cap = step }`.
 `chunk` is `NODE_CREATION_BUFFER`, normalised to a power of two ≥ 128, so `0 < chunk`.
 The model is total (`termination_by grbMax - cap`): the loop always ends. -/
 def growCap (chunk cap needed : Nat) (hc : 0 < chunk) : Nat :=
@@ -157,7 +157,7 @@ theorem growStep_small (chunk cap : Nat) (h : nextMul chunk (cap + max (cap / 4)
   rw [if_pos (by omega)]
   exact Nat.min_eq_left h
 
--- The Rust tests `grow_cap_tests` (graph.rs:5645-5808), `chunk = DEFAULT_NODE_CREATION_BUFFER = 16384`.
+-- The Rust tests `grow_cap_tests` (the `mod grow_cap_tests` at the end of graph.rs), `chunk = DEFAULT_NODE_CREATION_BUFFER = 16384`.
 #guard growCap 16384 16384 (2 ^ 64 - 2) (by decide) == grbMax
 #guard growCap 16384 16384 grbMax (by decide) == grbMax
 #guard growCap 16384 (grbMax - 1) grbMax (by decide) == grbMax
@@ -268,7 +268,7 @@ theorem internLabel_spec (g : G V) (s : String) (h : ∀ t, g.labelsIndex t = id
     · subst ht; rw [← h, hs]
     · simp only [ht, ite_false, ← h]; cases g.labelsIndex t <;> simp [Ne.symm ht]
 
-/-- `get_label_id_mut` (:1173): existing id, or intern + push a
+/-- `get_label_id_mut` (:1262): existing id, or intern + push a
 `node_cap × node_cap` matrix + `resize`. -/
 def getLabelIdMut (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) : G V × Nat :=
   match getLabelId g s with
@@ -311,21 +311,21 @@ def vecInsert {α} (l : List α) (i : Nat) (x : α) : List α := l.take i ++ x :
 theorem vecInsert_end {α} (l : List α) (x : α) : vecInsert l l.length x = l ++ [x] := by
   simp [vecInsert]
 
-/-- `register_relationship_type` (:1274, #3277): push the name, insert its tensor, then
+/-- `register_relationship_type` (:1371, #3277): push the name, insert its tensor, then
 `self.resize()` — every registration path goes through it. -/
 def registerRelType (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) : G V × Nat :=
   let types := g.types ++ [s]
   (resize chunk hc { g with types := types, relMs := vecInsert g.relMs (types.length - 1) [] },
    types.length - 1)
 
-/-- `get_type_id_mut` (:1251) since #3277: an existing type's position, else
+/-- `get_type_id_mut` (:1349) since #3277: an existing type's position, else
 `register_relationship_type`. -/
 def getTypeIdMut (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) : G V × Nat :=
   match idx g.types s with
   | some p => (g, p)
   | none => registerRelType chunk hc g s
 
-/-- `get_relationship_matrix_mut` (:1377): a new type goes through
+/-- `get_relationship_matrix_mut` (:1475): a new type goes through
 `register_relationship_type` (`getRelMatMut_new`), which resizes. Returns the type index. -/
 def getRelMatMut (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) : G V × Nat :=
   let g1 := if s ∈ g.types then g else
@@ -408,7 +408,7 @@ theorem getRelMatMut_new (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) (
 
 def getLabelMat (g : G V) (s : String) : Option Mat := (getLabelId g s).bind (g.labelMs[·]?)
 
-/-- `get_label_matrix_mut` (:1352). Returns the label id. -/
+/-- `get_label_matrix_mut` (:1462). Returns the label id. -/
 def getLabelMatMut (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) : G V × Nat :=
   let (g1, id) := internLabel g s
   if id = g1.labelMs.length then
@@ -444,7 +444,7 @@ def nodeHasLabel (g : G V) (n : Nat) (s : String) : Bool :=
   match getLabelId g s with | some l => g.nodeLabels.get n l | none => false
 /-- `edge_has_type_id` (`graph.rs:1338`, #3567): the relationship-type matrix at `(edge, type)`, no string lookup. -/
 def edgeHasTypeId (g : G V) (e t : Nat) : Bool := g.relType.get e t
-/-- `edge_has_type` (`graph.rs:1326`): the type's id by name, then `edge_has_type_id` (before #3567 the matrix
+/-- `edge_has_type` (`graph.rs:1327`): the type's id by name, then `edge_has_type_id` (before #3567 the matrix
     read was inline). -/
 def edgeHasType (g : G V) (e : Nat) (s : String) : Bool :=
   match getTypeId g s with | some t => edgeHasTypeId g e t | none => false

@@ -1,7 +1,7 @@
 import Columnar.CoreOps
 
 /-!
-# `VectorEval::eval_and_or` (vector_expr.rs:391-475) against the per-row `AND` / `OR`
+# `VectorEval::eval_and_or` (vector_expr.rs:391-467) against the per-row `AND` / `OR`
 
 The lane keeps, per position into `rows`, the verdict `result[pos]` (starting at the neutral
 element `!sc`), a null bit, and the `live` positions; each child is evaluated over the live

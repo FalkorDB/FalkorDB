@@ -41,7 +41,8 @@ What is proved here:
    the fragment lacks), so the theorem stays conditional on it. (b) holds when an attempt's outcome is a function of
    the key (`memo_hits_fail`); the key leaves out `anon_counter`, which the
    outcome can read through anonymous names (see the project header).
-3. **Failed attempts are linear in the input** (`failed_attempts_linear`):
+3. **Failed attempts are linear in the input** (`failed_attempts_linear`, a result about the
+   abstract `memoRun` model over any visit list, not linked to parser runs):
    along any run, each key fails at most once, so with keys bounded by the
    input length `n`, `MAX_NESTING = 100` and the three
    `ForbiddenPatternComprehension` places, at most `808 * (n + 1)` attempts
@@ -746,11 +747,13 @@ theorem nodup_map_code : ∀ (l : List PCKey), l.Nodup → (∀ k ∈ l, k.depth
     have := PCKey.code_inj (hd k' (by simp [hk'])) (hd k (by simp)) he
     exact hk (this ▸ hk')
 
-/-- **Failed attempts are linear in the input** (W3-parser-9): on an input of
-`n` bytes, with nesting bounded by `MAX_NESTING = 100` (every key's depth is at
-most 100 — `nested` refuses deeper, `proofs/lexer` `nested_depth_bound`), the
-attempts that fail in a whole parse number at most `808 · (n + 1)`, however the
-enclosing parsers backtrack. -/
+/-- **Failed attempts are linear in the input** (W3-parser-9), as a statement about the abstract
+`memoRun` model: for ANY caller-supplied list `vs` of attempts (in the order they are tried)
+whose keys have `pos ≤ n` and `depth ≤ 100`, the attempts `memoRun` records as failed number at
+most `808 · (n + 1)`, however the enclosing parsers backtrack. The theorem does not link `vs` to a
+run of the parser: that a whole parse of an `n`-byte input only produces such visits is by
+inspection (`pos` is a token index; `nested` refuses nesting deeper than `MAX_NESTING = 100`,
+`proofs/lexer` `nested_depth_bound`). -/
 theorem failed_attempts_linear (n : Nat) (vs : List Visit)
     (hpos : ∀ v ∈ vs, v.key.pos ≤ n) (hdep : ∀ v ∈ vs, v.key.depth ≤ 100) :
     (memoRun [] vs).2.length ≤ 808 * (n + 1) := by

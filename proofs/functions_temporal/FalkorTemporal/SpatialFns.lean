@@ -1,7 +1,7 @@
 import FalkorTemporal.Pure
 /-!
-# Spatial and vector functions (functions/spatial.rs:38-229), `Point::new` / `Point::distance`
-(value.rs:133-176)
+# Spatial and vector functions (functions/spatial.rs:38-193), `Point::new` / `Point::distance`
+(value.rs:142-176)
 
 f64/f32 are abstract (`Flt`), with only the IEEE facts the theorems use stated as fields.
 `simsimd` (vec_distance.rs, FFI) is two partial functions whose only assumed law is the
@@ -42,8 +42,26 @@ structure Flt (F F32 : Type) where
   two_mul_zero : mul two zero = zero
   r_mul_zero : mul radius zero = zero
   clamp01_zero : clamp01 zero = zero
-  cos_finite : ∀ x, finite x = true → finite (cos x) = true
-  mul_finite : ∀ x y, finite x = true → finite y = true → finite (mul x y) = true
+  /-- Magnitude bounds, the only way a product or sum is known not to overflow (finite times
+  finite is NOT finite in general, so no such general law is assumed). `bounded1 x` is
+  `|x| ≤ 1`; `finite32` is "an `f32` that is neither NaN nor infinite". Each field below is a
+  binary64 fact: `|sin|, |cos| ≤ 1`; products and squares of numbers in `[-1, 1]` stay there;
+  `fma` of three numbers in `[-1, 1]` is at most 2; `f32::to_radians` of a finite `f32` is
+  below 6.0e36 so the f64 conversion and the difference of two of them (`dlat`, `dlon`) are
+  finite; halving a finite number is finite. -/
+  bounded1 : F → Bool
+  finite32 : F32 → Bool
+  bounded_finite : ∀ x, bounded1 x = true → finite x = true
+  cos_bounded : ∀ x, finite x = true → bounded1 (cos x) = true
+  sin_bounded : ∀ x, finite x = true → bounded1 (sin x) = true
+  mul_bounded : ∀ x y, bounded1 x = true → bounded1 y = true → bounded1 (mul x y) = true
+  sq_bounded : ∀ x, bounded1 x = true → bounded1 (sq x) = true
+  mulAdd_bounded : ∀ a b c, bounded1 a = true → bounded1 b = true → bounded1 c = true →
+    finite (mulAdd a b c) = true
+  toRad_finite : ∀ x, finite32 x = true → finite (toRadF64 x) = true
+  toRad_sub_finite : ∀ x y, finite32 x = true → finite32 y = true →
+    finite (sub (toRadF64 x) (toRadF64 y)) = true
+  div_two_finite : ∀ x, finite x = true → finite (div x two) = true
 
 variable {F F32 : Type} (L : Flt F F32)
 
@@ -51,14 +69,14 @@ structure Point (F32 : Type) where
   latitude : F32
   longitude : F32
 
-/-- `Point::new` (value.rs:133). -/
+/-- `Point::new` (value.rs:142). -/
 def Point.new (latitude longitude : F32) : Point F32 := { latitude, longitude }
 
 theorem Point.new_fields (a b : F32) : (Point.new a b).latitude = a ∧ (Point.new a b).longitude = b :=
   ⟨rfl, rfl⟩
 
 /-- The haversine term `a = cos φ₁ cos φ₂ · sin²(Δλ/2) + sin²(Δφ/2)` of `Point::distance`
-(value.rs:144-160), before the clamp. -/
+(value.rs:167-171), before the clamp. -/
 def havA (p q : Point F32) : F :=
   let lat1 := L.toRadF64 p.latitude
   let lon1 := L.toRadF64 p.longitude
@@ -69,18 +87,18 @@ def havA (p q : Point F32) : F :=
   L.mulAdd (L.mul (L.cos lat1) (L.cos lat2)) (L.sq (L.sin (L.div dlon L.two)))
     (L.sq (L.sin (L.div dlat L.two)))
 
-/-- `c = 2·atan2(√a, √(1 − a))`, times `EARTH_RADIUS` (value.rs:163-167). -/
+/-- `c = 2·atan2(√a, √(1 − a))`, times `EARTH_RADIUS` (value.rs:172-175). -/
 def havFinish (a : F) : F :=
   L.mul L.radius (L.mul L.two (L.atan2 (L.sqrt a) (L.sqrt (L.sub L.one a))))
 
-/-- `Point::distance` (value.rs:144), haversine, operation by operation; since #2983
+/-- `Point::distance` (value.rs:153), haversine, operation by operation; since #2983
 (86dcd5a11) `a` is clamped to `[0, 1]`. -/
 def distance (p q : Point F32) : F := havFinish L (L.clamp01 (havA L p q))
 
 /-- The distance from a (finite) point to itself is exactly 0. -/
 theorem distance_self (p : Point F32) (h1 : L.finite (L.toRadF64 p.latitude) = true)
     (h2 : L.finite (L.toRadF64 p.longitude) = true) : distance L p p = L.zero := by
-  have hc := L.mul_finite _ _ (L.cos_finite _ h1) (L.cos_finite _ h1)
+  have hc := L.bounded_finite _ (L.mul_bounded _ _ (L.cos_bounded _ h1) (L.cos_bounded _ h1))
   simp only [distance, havA, havFinish, L.sub_self _ h1, L.sub_self _ h2, L.div_zero_two,
     L.sin_zero, L.sq_zero, L.mulAdd_zero _ hc, L.clamp01_zero, L.sqrt_zero, L.one_sub_zero,
     L.sqrt_one, L.atan2_zero_one, L.two_mul_zero, L.r_mul_zero]
@@ -94,7 +112,8 @@ The IEEE facts the NaN argument needs, stated over the same abstract `F`. `le` i
 `clamp_unit`/`clamp_id`/`clamp_nan` are `f64::clamp(0.0, 1.0)`'s documented contract;
 `one_sub_unit`: `1 − a ≥ 0` for `a ∈ [0, 1]` (rounding is monotone and `1 − 1 = 0`);
 `one_sub_above`: `1 − a < 0` for finite `a > 1`; `sqrt_*`: `√x` is NaN iff `x < 0` or NaN;
-`atan2_*`: `atan2` of non-NaN operands is in `[−π, π]`, of a NaN operand NaN;
+`atan2_nan_right`: `atan2` of a NaN operand is NaN; `scaled_atan2_finite`: `atan2` of non-NaN
+operands is in `[−π, π]`, so `R · 2 · atan2` is finite (about 4.0e7 at most);
 `mul_nan_right`: NaN propagates through `*`. -/
 structure NanLaws (L : Flt F F32) where
   nan : F → Bool
@@ -107,27 +126,51 @@ structure NanLaws (L : Flt F F32) where
     ¬ le L.zero (L.sub L.one a) ∧ nan (L.sub L.one a) = false
   sqrt_nonneg : ∀ x, le L.zero x → nan (L.sqrt x) = false
   sqrt_neg : ∀ x, nan x = false → ¬ le L.zero x → nan (L.sqrt x) = true
-  atan2_finite : ∀ y x, nan y = false → nan x = false → L.finite (L.atan2 y x) = true
+  /-- `atan2` of non-NaN operands lies in `[−π, π]`, so `EARTH_RADIUS · (2 · atan2 ..)` is at
+  most about 4.0e7, far below `f64::MAX`: the product cannot overflow. -/
+  scaled_atan2_finite : ∀ y x, nan y = false → nan x = false →
+    L.finite (L.mul L.radius (L.mul L.two (L.atan2 y x))) = true
   atan2_nan_right : ∀ y x, nan x = true → nan (L.atan2 y x) = true
-  two_finite : L.finite L.two = true
-  radius_finite : L.finite L.radius = true
   mul_nan_right : ∀ x y, nan y = true → nan (L.mul x y) = true
 
 variable {L} (N : NanLaws L)
 
 /-- **W2-temporal-4 fixed.** On main `distance` is finite (so never NaN) for every pair of
-points whose haversine term is not NaN (i.e. finite coordinates), antipodal ones included. -/
+points whose haversine term is not NaN, antipodal ones included. (That the term is non-NaN for
+finite coordinates is not derived here: it is the hypothesis `hn`.) -/
 theorem distance_finite (p q : Point F32) (hn : N.nan (havA L p q) = false) :
     L.finite (distance L p q) = true := by
   unfold distance havFinish
   obtain ⟨h0, h1⟩ := N.clamp_unit _ hn
   have hs1 := N.sqrt_nonneg _ h0
   have hs2 := N.sqrt_nonneg _ (N.one_sub_unit _ h0 h1)
-  exact L.mul_finite _ _ N.radius_finite
-    (L.mul_finite _ _ N.two_finite (N.atan2_finite _ _ hs1 hs2))
+  exact N.scaled_atan2_finite _ _ hs1 hs2
 
 theorem distance_not_nan (p q : Point F32) (hn : N.nan (havA L p q) = false) :
     N.nan (distance L p q) = false := N.nan_of_finite _ (distance_finite N p q hn)
+
+/-- The haversine term of two points with finite (`f32`) coordinates is finite, hence not NaN:
+`cos`/`sin` are bounded by 1, so the fused `a = cos φ₁ cos φ₂ · sin²(Δλ/2) + sin²(Δφ/2)` is at
+most 2 and cannot overflow. Discharges the `hn` hypothesis of `distance_finite`. -/
+theorem havA_finite (p q : Point F32)
+    (h1 : L.finite32 p.latitude = true) (h2 : L.finite32 p.longitude = true)
+    (h3 : L.finite32 q.latitude = true) (h4 : L.finite32 q.longitude = true) :
+    L.finite (havA L p q) = true := by
+  unfold havA
+  have hc1 := L.cos_bounded _ (L.toRad_finite _ h1)
+  have hc2 := L.cos_bounded _ (L.toRad_finite _ h3)
+  have hs1 := L.sq_bounded _ (L.sin_bounded _ (L.div_two_finite _ (L.toRad_sub_finite _ _ h4 h2)))
+  have hs2 := L.sq_bounded _ (L.sin_bounded _ (L.div_two_finite _ (L.toRad_sub_finite _ _ h3 h1)))
+  exact L.mulAdd_bounded _ _ _ (L.mul_bounded _ _ hc1 hc2) hs1 hs2
+
+/-- **#2983, unconditional on the haversine term:** for any two points with finite coordinates
+(every point `point()` builds: NaN is refused and the range checked) `distance` is finite, so
+never NaN, antipodal pairs included. Only the binary64 laws of `NanLaws` / `Flt` remain. -/
+theorem distance_finite_coords (N : NanLaws L) (p q : Point F32)
+    (h1 : L.finite32 p.latitude = true) (h2 : L.finite32 p.longitude = true)
+    (h3 : L.finite32 q.latitude = true) (h4 : L.finite32 q.longitude = true) :
+    L.finite (distance L p q) = true :=
+  distance_finite N p q (N.nan_of_finite _ (havA_finite (L := L) p q h1 h2 h3 h4))
 
 end Antipodal
 
@@ -137,7 +180,7 @@ inductive SV (F F32 : Type) where
   | null | int (i : Int) | float (f : F) | str (s : String) | map (kvs : List (String × SV F F32))
   | list (vs : List (SV F F32)) | vec (v : List F32) | point (p : Point F32) | other (name : String)
 
-/-- `Value::name` (value.rs:1387) on the variants spatial.rs inspects; `Vectorf32` since
+/-- `Value::name` (value.rs:1395) on the variants spatial.rs inspects; `Vectorf32` since
 #2954 (b6567cb97), `VecF32` before. -/
 def SV.name {F F32} : SV F F32 → String
   | .null => "Null" | .int _ => "Integer" | .float _ => "Float" | .str _ => "String"
@@ -167,7 +210,7 @@ def numeric (R : PtRng F) : SV F F32 → Option F
   | .int i => some (R.ofInt i)
   | _ => none
 
-/-- `point_from_map_entries` (spatial.rs:38-79, since #3301): C's checks and messages.
+/-- `point_from_map_entries` (spatial.rs:38-72, since #3301): C's checks and messages.
 `keyCount` is the map's length; `lat`/`lon` are `map.get_str(..)` (`none` = key absent,
 `some .null` = key set to `null`). The range tests run on the `f64`s; `as f32` happens only
 in the result. -/
@@ -187,7 +230,7 @@ def pointFromMapEntries (L : Flt F F32) (R : PtRng F) (keyCount : Nat)
     else .err "latitude should be within the -90 to 90 range"
   | _, _ => .err "'latitude' and 'longitude' values in point map were not both valid numerics"
 
-/-- The `point` fn (spatial.rs:95): a map goes to `pointFromMapEntries`, `null` to `null`. -/
+/-- The `point` fn (spatial.rs:110): a map goes to `pointFromMapEntries`, `null` to `null`. -/
 def point (L : Flt F F32) (R : PtRng F) : List (SV F F32) → Res (SV F F32)
   | .map m :: _ => pointFromMapEntries L R m.length (m.lookup "latitude") (m.lookup "longitude")
   | .null :: _ => .ok .null
@@ -239,8 +282,8 @@ theorem point_ok_iff (lat lon : SV F F32) (p : SV F F32) :
       all_goals (try (intro h; cases h))
       all_goals (try exact eq_comm)
 
-/-- Both in range but a bound broken on one side: the message names that side
-(longitude when latitude is fine). -/
+/-- Neither coordinate is NaN: a broken bound yields the message for the side that breaks it
+(longitude when latitude is in range). -/
 theorem point_range_msgs (lat lon : SV F F32) (la lo : F) (ha : numeric R lat = some la)
     (hlo : numeric R lon = some lo) (h1 : R.isNan la = false) (h2 : R.isNan lo = false) :
     (R.inLat la = true → R.inLon lo = false →
@@ -261,7 +304,7 @@ def numF32 : SV F F32 → F32
   | .float f => L.ofF64 f
   | _ => L.ofI64 0
 
-/-- `vecf32` (spatial.rs:74). -/
+/-- `vecf32` (spatial.rs:89). -/
 def vecf32 : List (SV F F32) → Res (SV F F32)
   | .list vs :: _ =>
     if vs.all isNum then .ok (.vec (vs.map (numF32 L)))
@@ -275,7 +318,7 @@ theorem vecf32_ok (vs : List (SV F F32)) (v : List F32) (h : vecf32 L [.list vs]
   · cases h; simp_all
   · cases h
 
-/-- `distance` (spatial.rs:141): `Null` (here `none`) if either side is null, else
+/-- `distance` (spatial.rs:130): `Null` (here `none`) if either side is null, else
 `Point::distance`. -/
 def distanceV (args : List (SV F F32)) : Res (Option F) :=
   match args with
@@ -298,7 +341,7 @@ structure Simd (F F32 : Type) where
   euclidean_some : ∀ a b, a.length = b.length → (euclidean a b).isSome
   cosine_some : ∀ a b, a.length = b.length → (cosine a b).isSome
 
-/-- `vec.euclideanDistance` / `vec.cosineDistance` (spatial.rs:157, :187); `dflt` is the
+/-- `vec.euclideanDistance` / `vec.cosineDistance` (spatial.rs:146, :176); `dflt` is the
 `unwrap_or` value (0.0 resp. 1.0). -/
 def vecDist (k : List F32 → List F32 → Option F) (dflt : F) (args : List (SV F F32)) : Res (Option F) :=
   match args with
@@ -331,10 +374,10 @@ theorem vecDist_mismatch (k : List F32 → List F32 → Option F) (d : F) (a b :
     vecDist k d [.vec a, .vec b] = .err s!"Vector dimension mismatch, expected {a.length} but got {b.length}" := by
   simp [vecDist, h]
 
-/-- `register` (spatial.rs:67): five `cypher_fn!`s. -/
+/-- `register` (spatial.rs:82): five `cypher_fn!`s. -/
 def registered : List (String × Nat) :=
   [("vecf32", 1), ("point", 1), ("distance", 2), ("vec.euclideanDistance", 2), ("vec.cosineDistance", 2)]
-/-- `register` (spatial.rs:67): since #3301 `point` has no struct form any more
+/-- `register` (spatial.rs:82): since #3301 `point` has no struct form any more
 (`set_struct_fn("point", ..)` is gone). -/
 theorem register_wf : (registered.map (·.1)).Nodup := by decide
 

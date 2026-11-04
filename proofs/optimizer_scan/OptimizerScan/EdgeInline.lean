@@ -139,8 +139,11 @@ theorem edge_utilize_sound (eidx : Nat → List Nat) (opq : Nat → Node → Boo
 Until #2390 `try_index_rewrite` had a second path for patterns carrying inline attributes. #2390
 removed it (with `IndexSubject::inline_attrs`): the planner now lowers inline attributes to an
 `IR::Filter` and strips them from the pattern, so they reach the index through the filter path.
-That removal loses nothing on literal values: the old inline rewrite (`get_inline_attr_index` 721, `needs_inline_post_filter` 897, `apply_inline_rewrite` 1038 at a9377c636) was already exactly `utilize` of the equivalent filter `n.k = v`. Lines below cite
-a9377c636. -/
+Unchecked historical note: the removed inline rewrite (`get_inline_attr_index` 721,
+`needs_inline_post_filter` 897, `apply_inline_rewrite` 1038, all at a9377c636, the last revision that
+has them) was meant to be the same as `utilize` of the equivalent filter `n.k = v`. The theorem that
+stated this (`pre2390_applyInline_eq_utilize`) was deleted with the pre-#2390 model, so nothing in
+this project checks the claim any more; it is context only. -/
 
 /-! ## `distance()` scans -/
 

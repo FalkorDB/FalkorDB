@@ -2,11 +2,11 @@ import VersionedMatrix.Mat
 import VersionedMatrix.RowFilter
 import VersionedMatrix.Policy
 /-
-# `Delta<T>`: one delta layer plus its bookkeeping (`versioned_matrix.rs:297-641`)
+# `Delta<T>`: one delta layer plus its bookkeeping (`versioned_matrix.rs:301-634`)
 
 | here | there |
 | --- | --- |
-| `Delta`        | `struct Delta<T>` (:297): layer, `count`, `tx_nvals`, `fold`, `rows` |
+| `Delta`        | `struct Delta<T>` (:301): layer, `count`, `tx_nvals`, `fold`, `rows` |
 | `ofLayer`      | `Delta::new` (:347) |
 | `relayer`/`clone` | `relayer` (:375) / `impl Clone` (:331) |
 | `deref`        | `impl Deref` (:339) |

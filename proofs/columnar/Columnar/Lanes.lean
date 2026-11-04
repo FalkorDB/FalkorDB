@@ -6,11 +6,11 @@ import Columnar.Row
 
 | here | there |
 | --- | --- |
-| `notRow`, `negate` | per-row `ExprIR::Not` (`eval.rs:708-717`) / `negate_bools` (`vector_expr.rs:857-876`) |
+| `notRow`, `negate` | per-row `ExprIR::Not` (`eval.rs:708-717`) / `negate_bools` (`vector_expr.rs:856-875`) |
 | `caseMatch`, `caseRow` | `ExprEval::eval_case` (`eval.rs:485-518`) |
-| `caseArm`, `caseArms`, `caseCol` | `VectorEval::eval_case` (`vector_expr.rs:478-552`): arm-by-arm narrowing of `unclaimed`, scatter into `out` |
-| `foldCall` | `VectorEval::eval_function` (`vector_expr.rs:558-623`) |
-| `evalVariable` | `VectorEval::eval_variable` (`vector_expr.rs:310-329`) |
+| `caseArm`, `caseArms`, `caseCol` | `VectorEval::eval_case` (`vector_expr.rs:477-551`): arm-by-arm narrowing of `unclaimed`, scatter into `out` |
+| `foldCall` | `VectorEval::eval_function` (`vector_expr.rs:557-622`) |
+| `evalVariable` | `VectorEval::eval_variable` (`vector_expr.rs:309-328`) |
 | `filterPass` | `FilterOp` verdict → passing rows (`filter.rs:69-108`) |
 -/
 

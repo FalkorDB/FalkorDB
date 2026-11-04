@@ -24,7 +24,7 @@ def outerL : List (Ex Z) → List (Fn Z × List (Ex Z))
   | e :: es => outer e ++ outerL es
 end
 
-/-! ## `set_agg_expr_zero` (aggregate.rs:1082) — `none` = the `unreachable!()` / underflow panic -/
+/-! ## `set_agg_expr_zero` (aggregate.rs:1099) — `none` = the `unreachable!()` / underflow panic -/
 
 mutual
 def setZero : Ex Z → Env Z → Option (Env Z)
@@ -113,7 +113,7 @@ theorem setZero_spec (e : Ex Z) (env : Env Z) (hw : AccWF (outer e)) :
   rw [setZero_eq]
   exact ⟨rfl, foldlM_stepZ_ok _ env hw (outer_agg e)⟩
 
-/-! ## `unbind_agg_accumulators` (aggregate.rs:1230) -/
+/-! ## `unbind_agg_accumulators` (aggregate.rs:1251) -/
 
 mutual
 def unbindAcc : Ex Z → Env Z → Env Z
@@ -224,9 +224,9 @@ theorem one_child_not_unbound (f : Fn Z) (z : Z) (k : Nat) (env : Env Z) (hf : f
     unbindAcc (.func f [.var k]) env = env ∧ setZero (.func f [.var k]) env = some (upd env k z) := by
   simp [unbindAcc, setZero, hf]
 
-/-! ## `GroupKey` (aggregate.rs:94 `eq`, :110 `hash`) -/
+/-! ## `GroupKey` (aggregate.rs:99 `eq`, :114 `hash`) -/
 
-/-- `GroupKey::eq` (aggregate.rs:94): same length and pairwise `veq`; on main (#2917
+/-- `GroupKey::eq` (aggregate.rs:99): same length and pairwise `veq`; on main (#2917
 7fdf06a0e) `veq a b` is `a.sort_cmp(b) == Equal` (before: `Value::eq`). Instantiated in
 `Discharge.lean`. -/
 def gkEq (veq : Z → Z → Bool) : List Z → List Z → Bool
@@ -290,7 +290,7 @@ theorem hashU64_spec {R S : Type} (d : S) (rh : S → R → S) (fin : S → Nat)
     hashU64 d rh fin r₁ = fin (rh d r₁) := by
   simp [hashU64, heq]
 
-/-! ## `VectorizableAgg::args_for` (aggregate.rs:208) -/
+/-! ## `VectorizableAgg::args_for` (aggregate.rs:222) -/
 
 def argsFor (vt vd : List Z → Except String Unit) (value : Z) (extra : List Z) :
     Except String (List Z) := do
@@ -312,7 +312,7 @@ theorem argsFor_spec (vt vd : List Z → Except String Unit) (v : Z) (extra : Li
   cases h1 : vt (v :: extra) <;> cases h2 : vd (v :: extra) <;>
     simp [h1, h2, bind, Except.bind, pure, Except.pure]
 
-/-! ## `AggregateOp::new` (aggregate.rs:280) -/
+/-! ## `AggregateOp::new` (aggregate.rs:294) -/
 
 structure AggSt (C E G A : Type) (Z : Type) where
   child : Option C

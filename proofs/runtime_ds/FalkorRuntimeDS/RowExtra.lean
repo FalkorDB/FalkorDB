@@ -25,10 +25,18 @@ structure RowView (R β : Type) where
   valueAt : R → Nat → Option (Option β)
   toOwnedRow : R → Row β
 
-/-- The trait contract (row.rs:38-43): `value_at` is `None` exactly when the slot is out of
-range, and the owned snapshot answers `value_at` identically. -/
+/-- The trait contract (row.rs:38-43): the owned snapshot answers `value_at` identically. The
+snapshot is what defines the row a view stands for (`R` is abstract), so this is the contract
+relative to it; the out-of-range clause (`value_at` is `None` exactly when the slot is out of the
+snapshot's range) follows (`RowView.Lawful.valueAt_none_iff`). A view that always answers `none`
+with `Row.new` as its snapshot is lawful: it stands for the empty row. -/
 def RowView.Lawful (v : RowView R β) : Prop :=
   ∀ r i, getById (v.toOwnedRow r) i = v.valueAt r i
+
+/-- The out-of-range clause of the contract: `value_at` is `None` exactly past the snapshot's slots. -/
+theorem RowView.Lawful.valueAt_none_iff {v : RowView R β} (h : v.Lawful) (r : R) (i : Nat) :
+    v.valueAt r i = none ↔ (v.toOwnedRow r).values.length ≤ i := by
+  rw [← h r i]; unfold getById; simp
 
 /-- `impl RowView for Row` (row.rs:230-240). -/
 def rowView : RowView (Row β) β := ⟨getById, fun r => r⟩
@@ -36,7 +44,9 @@ def rowView : RowView (Row β) β := ⟨getById, fun r => r⟩
 /-- row.rs:47 / row.rs:56 (trait declarations): `Row`'s implementation is lawful. -/
 theorem rowView_lawful : (rowView : RowView (Row β) β).Lawful := fun _ _ => rfl
 
-/-- row.rs:238 — `to_owned_row` is `clone`: identical values, bound bits (and origin). -/
+/-- row.rs:238 — `to_owned_row` is `clone`: identical values and bound bits. `Row::origin_row` is
+not in the `Row` model, so that field's preservation is not stated here (README, "What the model does
+not cover"). -/
 def toOwnedRow (r : Row β) : Row β := r
 theorem toOwnedRow_eq (r : Row β) : toOwnedRow r = r ∧ ∀ i,
     getById (toOwnedRow r) i = getById r i ∧ isBound (toOwnedRow r) i = isBound r i :=

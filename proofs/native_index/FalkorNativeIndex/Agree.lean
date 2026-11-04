@@ -156,7 +156,7 @@ theorem i64min_hole :
 /-- The rounding window: `i64::MIN + 512` still collides, `i64::MIN + 513` does not. -/
 theorem i64min_window :
     encodeNumeric (.int (-9223372036854775808 + 512)) = encodeNumeric (.int (-9223372036854775808)) ∧
-    encodeNumeric (.int (-9223372036854775808 + 1025)) ≠ encodeNumeric (.int (-9223372036854775808)) := by
+    encodeNumeric (.int (-9223372036854775808 + 513)) ≠ encodeNumeric (.int (-9223372036854775808)) := by
   decide
 
 /-- `int_loses_f64_precision` does reject `2^53` (the test's exempted pair). -/

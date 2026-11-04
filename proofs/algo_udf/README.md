@@ -35,9 +35,10 @@ For `pathCount ≥ 2`, `dfs_complete` assumes the bound only tightens as the sea
 
 **3. Do values survive a round trip through a UDF?**
 
-Yes, for every value C round-trips, since #3074. Take an identity UDF `function id(x) { return x; }`; then `RETURN mylib.id(v)` returns `v`:
+Yes, for every value C round-trips, since #3074, within the limits listed here (an integral float and a `__proto__` key change as in C; datetimes need the JS-Date bound). Take an identity UDF `function id(x) { return x; }`; then `RETURN mylib.id(v)` returns `v`:
 
-- integers, nodes, relationships, points, datetimes: `int_roundtrip`, `node_rt`, `rel_rt`, `point_rt`, `datetime_rt`;
+- integers within the i64 range, nodes, relationships, points: `int_roundtrip`, `node_rt`, `rel_rt`, `point_rt`;
+- datetimes whose millisecond value fits a JS `Date` (`|ts * 1000| ≤ 8.64e15`): `datetime_rt`. Beyond that `new Date(ms)` is invalid and the value does not round-trip;
 - floats: `float_rt_iff`, and `-0.0` stays a float since #3074 (`neg_zero_rt`);
 - vectors, including ones holding ±inf since #3074: `vecf32_rt`, `vecf32_inf_rt`;
 - maps with a key named `constructor`: `constructor_key_roundtrips`. Before #3074, `{constructor: {name: 'Date'}}` was taken for a JS `Date` and failed.
@@ -50,6 +51,7 @@ Not since #3336 (security advisory GHSA-frmf-ffvc-mxx5). Before it, `value_to_js
 
 - `fromJs_frames`, `toJs_frames`: at most cap + 1 levels are ever used, for any input, cyclic ones included;
 - `fromJs_past_cap`, `toJs_past_cap`: past the cap the result is an error, never an overflow;
+- `fromF_fits_eq_uncapped`, `toF_fits_eq_uncapped` (from `Nesting.run_eq_uncapped`): a value that nests at most `MAX_UDF_VALUE_NESTING` levels converts exactly as it did before #3336, for every stack size;
 
 The JavaScript side is modelled over a QuickJS heap, so a value that contains itself is a legal input to these theorems.
 
@@ -109,7 +111,7 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 | 16 | `getNeighbors_no_arg_errors` | `node.getNeighbors()` with no argument throws "Error converting from js 'undefined'"; C returns the neighbours (W5-udf-3) | **Open** |
 | 17 | `empty_lib_name_mismatch` | `GRAPH.UDF LOAD ""` is accepted, but its functions can never be called (registered as `.f`, stored as `f`); C refuses the empty name (W5-udf-4) | **Open** |
 | 18 | `bug3380_default_size_16`, `bug3380_seedless_deterministic`, `bug3380_seeded_fewer_sources` (`Betweenness.lean`) | betweenness defaults to 16 sources (C 32), never randomises without a seed (C seeds from the clock), and drops colliding seeded draws: `samplingSize:20, samplingSeed:7` on 40 nodes uses 15 sources (C 20). Properties `DefaultSizeMatchesC`, `SeedlessRunVaries`, `SourcesExact` | **Open** (#3380) |
-| 19 | `fastpath_missing_cost_one`, `fast_eq_enum` (`CostProp.lean`) | On the Dijkstra fast path a configured `costProp` that an edge lacks cost 0; C charges 1 (pathCost 2 vs 3). Property `MissingCostIsOne` now holds on both paths | Fixed by #3580 (#3121) |
+| 19 | `fastpath_missing_cost_one`, `fast_eq_enum` (`CostProp.lean`) | On the Dijkstra fast path a configured `costProp` that an edge lacks used to cost 0; C charges 1 (pathCost 2 vs 3). Property `MissingCostIsOne` now holds on both paths | Fixed by #3580 (#3121) |
 | 20 | `bug3349_one_node_projection_fails` (`LagContract.lean`) | `algo.WCC`/`pageRank` (and betweenness) on a one-node `nodeLabels` projection fail with -1000: the 1×1 compact matrix is stored by column, which `LAGraph_CheckGraph` rejects. Property `ProjectionTotal`; CDLP satisfies it (`cdlp_total`) | **Open** (#3349) |
 | 21 | removed (17ccc5412) | `create_js_node` read the committed graph, not the query's runtime: after `MATCH (n:P) DELETE n`, `test.inspect_node(n)` saw `labels []`, `name NULL` while `labels(n)` is `[P]`; `r.source` after DETACH DELETE was likewise empty | Fixed by #3464 (#3454): `rs_runtime_first`, `rs_edge_ok`, `fixed3454_deleted_node`, `fixed3454_edge_source`, `RT.not_differs` |
 

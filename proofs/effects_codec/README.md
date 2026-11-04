@@ -20,7 +20,7 @@ The full Lean↔Rust mapping is in the header of [`FalkorEffectsCodec.lean`](Fal
 The payload is a list of records. There are fourteen opcodes (`Opcode` in `v3/mod.rs`): `UPDATE_NODE`, `UPDATE_EDGE`, `CREATE_NODE`, `CREATE_EDGE`, `DELETE_NODE`, `DELETE_EDGE`, `SET_LABELS`, `REMOVE_LABELS`, `ADD_SCHEMA` (a new label or relationship type), `ADD_ATTRIBUTE`, `CREATE_INDEX`, `DROP_INDEX`, `CREATE_CONSTRAINT` and `DROP_CONSTRAINT`.
 
 - **Before #2916, no.** `Record::encode` happily wrote two shapes that `read_record` cannot read: a batch with zero ids, and a row block whose length is not `count × attrs`. A `CREATE_NODE` with one id, one attribute and two values was written fine; the reader took one value, then parsed the spare value as the next opcode.
-- **On main, yes.** `readRecord_encRecord_wf`: for every one of the fourteen variants, if the encoder returns bytes, the reader returns exactly that record and leaves whatever follows untouched. The only conditions left are per value: integers fit their width and strings are valid UTF-8. Both hold for anything the engine stores.
+- **On main, yes.** `readRecord_encRecord_wf`: for every one of the fourteen variants, if the encoder returns bytes, the reader returns exactly that record and leaves whatever follows untouched. The conditions left are the model's explicit well-formedness predicate `RecWF` (`RecShape.lean`): integers fit their width (label and attribute ids, relation ids), strings are valid UTF-8 (including the values in the row block), and, for the index and constraint records, the schema list is sorted by id and the similarity name is canonical. The id lists are an abstract `IdCodec` parameter whose round trip (`IdCodec.roundtrip`) is a field of the structure; it is proven for the real `IdList` in `id_list`, not here. The encoder already enforces the batch shape (at least one id, rows = count × attrs). Anything the engine stores satisfies the per-value conditions.
 
 **2. Can a hostile or corrupt payload crash the replica?**
 
@@ -31,7 +31,7 @@ No, for the value decoder. `decodeV_safe` says that for *any* bytes, `Value::dec
 - terminates (the Lean model needs a step budget, and `loop_fuel_enough` proves the budget never runs out: every turn reads a 4-byte tag);
 - reserves memory linearly (`decode_reserves_linear`): the list capacities one decode asks for sum to at most a quarter of the input's length.
 
-- **Before #3267, not the last one.** Each list's claimed width was checked against the remaining bytes alone, so every level of `[[[…` could claim the whole remainder. `hostile 10` (80 bytes) reserved 90 elements; 1 MB reserved about 256 GB, and the Rust test measured 2.3 GB of RSS from a client-sent `GRAPH.EFFECT`.
+- **Before #3267, not the last one.** Each list's claimed width was checked against the remaining bytes alone, so every level of `[[[…` could claim the whole remainder. `hostile 10` (80 bytes) reserved 90 elements; 1 MB asked for about 256 GB of capacity (a reservation, not resident memory), while a client-sent `GRAPH.EFFECT` was observed at 2.3 GB RSS (per the comment at `value.rs:459`, not a test assertion).
 - **On main, yes.** `read_one` checks the claim together with the siblings its ancestors still owe (`guard_count(n + owed)`). `capTrace_linear` proves the bound for every input, and `hostile_refused_second_level` shows the crafted input is refused at its second level, as the Rust test asserts.
 
 **3. Do floats survive exactly, including NaN and `-0.0`?**
@@ -138,7 +138,7 @@ The project has no Lake dependencies.
 - **`IdList`** is the abstract `IdCodec`; its round trip is proven in `id_list`, not here.
 - **Applying the records to the graph**, and which records a query emits, are parameters here (`fmtApply`, `fmtBuildIndex`, `fmtBuildConstraint`). They are proven in `effects_emit_apply`.
 - **Stack depth on drop.** The decoder is iterative, but `Value` is recursive and its `Drop` is not. The model proves arbitrarily deep values decode (`nest_decodes`); it says nothing about the stack used to drop them.
-- **Allocation.** Memory is not modelled byte for byte; what is proven is the sum of the `with_capacity` requests (`capTrace_linear`), not the allocator's behaviour.
+- **Allocation.** Memory is not modelled byte for byte; `capTrace_linear` covers the list-frame capacities (the `ThinVec::with_capacity(n)` of each `Frame::List`), not every `with_capacity` request (the `T_VECTOR_F32` read allocates its own, `value.rs:269`), and not the allocator's behaviour.
 
 ## Build and check
 

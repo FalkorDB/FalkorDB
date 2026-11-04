@@ -26,7 +26,7 @@ Comparison, equality and hashing laws are not here: they are in [`../value_order
 
 **1. Can a built-in function panic on a bad argument?**
 
-No. Every numeric function body ends in `_ => unreachable!()`. `unary_no_panic` proves those arms are dead: once argument validation accepts `Int | Float | Null`, only those three variants reach the body. The type check itself is proven to mean what it says. `valueOfType_none_iff` shows that `value_of_type` returns `None` exactly when the value matches the declared type:
+Not through the nine modelled unary numeric functions (`unaryFns`: `abs`, `ceil`, `floor`, `round`, `exp`, `log`, `log10`, `sign`, `sqrt`); each body ends in `_ => unreachable!()`. `unary_no_panic` proves those arms are dead: once argument validation accepts `Int | Float | Null`, only those three variants reach each of those bodies. The type check itself is proven to mean what it says. `valueOfType_none_iff` shows that `value_of_type` returns `None` exactly when the value matches the declared type:
 
 - `Any` accepts everything;
 - a plain type needs the same variant;
@@ -36,7 +36,7 @@ No. Every numeric function body ends in `_ => unreachable!()`. `unary_no_panic` 
 
 **2. What do `/` and `%` do on integers?**
 
-They wrap, as in a Rust release build. They agree with exact arithmetic everywhere except `i64::MIN / -1` (`wDiv_exact`, `wRem_exact`). The division identity `(a / b) * b + a % b = a` always holds (`div_rem_identity`). Every operator propagates null, and each one has an exact error condition. For example, `mul_ok_iff` says `*` fails exactly when a non-null operand isn't a number. Map `+` is a right-biased merge: `{a:1} + {a:2}` is `{a:2}` (`lookup_omExtend`), and the result never has duplicate keys (`nodup_omExtend`).
+`+`, `-`, `*` wrap, as in a Rust release build. The wrapping model `wDiv`/`wRem` agrees with exact arithmetic (`wDiv_exact` excludes `i64::MIN / -1`, `wRem_exact`), and the real `Value` `/` raises an overflow error on `i64::MIN / -1` instead of wrapping (#3603: `ValueMath.div_min_neg_one`, `div_int_ok`). The division identity `(a / b) * b + a % b = a` always holds (`div_rem_identity`). Every operator propagates null, and each one has an exact error condition. For example, `mul_ok_iff` says `*` fails exactly when a non-null operand isn't a number. Map `+` is a right-biased merge: `{a:1} + {a:2}` is `{a:2}` (`lookup_omExtend`), and the result never has duplicate keys (`nodup_omExtend`).
 
 **3. Does `toInteger('…')` agree with C?**
 
@@ -54,7 +54,7 @@ No, since #3339:
 **5. Are the trig functions and the procedures the same as C?**
 
 - **Trig.** `unary_rust_eq_c` proves that every unary trig function is C's expression tree, with the same null, type and arity handling. `atan2_spec` covers `atan2`.
-- **Procedures.** The `yields_*` theorems prove that every procedure returns one column per declared `YIELD`. `dbms.functions()` merges built-ins and UDFs by hand; `mergePicks_eq` proves that merge is `List.merge`, so the output is sorted and is a permutation of the inputs.
+- **Procedures.** For the modelled procedures with a body, the `yields_*` theorems prove one column per declared `YIELD` on a successful run (the unsupported full-text and vector procedures return errors instead). `dbms.functions()` merges built-ins and UDFs by hand; `mergePicks_eq` proves that merge is `List.merge`, so the output is sorted and is a permutation of the inputs.
 
 The divergences that remain are listed under [Bugs found](#bugs-found).
 
@@ -63,8 +63,8 @@ The divergences that remain are listed under [Bugs found](#bugs-found).
 | Theorem | In plain words | File |
 |---|---|---|
 | `valueOfType_none_iff` | The argument type check accepts exactly the values that match the declared type | `TypeCheck.lean` |
-| `unary_no_panic` | No math function reaches its `unreachable!()` after validation | `MathFns.lean` |
-| `div_rem_identity`, `wDiv_exact`, `wRem_exact` | Integer `/` and `%` are exact except `MIN / -1`, and `(a/b)*b + a%b = a` | `Int64.lean` |
+| `unary_no_panic` | None of the nine modelled unary math functions reaches its `unreachable!()` after validation | `MathFns.lean` |
+| `div_rem_identity`, `wDiv_exact`, `wRem_exact` | In the wrapping model, integer `/` and `%` are exact except `MIN / -1` (which `Value` `/` refuses with an overflow error, `div_min_neg_one`), and `(a/b)*b + a%b = a` | `Int64.lean` |
 | `mul_ok_iff`, `div_ok_iff`, `rem_ok_iff` | The exact conditions under which `*`, `/`, `%` return an error | `Value.lean` |
 | `lookup_omExtend`, `nodup_omExtend` | Map `+` is a right-biased merge with no duplicate keys | `Value.lean` |
 | `mul_agree_on_numeric`, `add_agree_int_int` | Rust `+` and `*` equal C's on the inputs both accept | `CArith.lean` |
@@ -98,7 +98,7 @@ Each bug was confirmed with a Rust repro and live against C (see [`../FINDINGS.m
 | 3 | removed (17ccc5412) | Stored values had no nesting limit, so a deeply nested value could overflow the stack on load (GHSA-mwvh-8fq5-x2j8, #2722) | Fixed by #3339 (`decode_reach`, `stored_roundtrip`) |
 | 4 | removed (17ccc5412) | `sign(-2.5)` returned a Float | Fixed by #2907 |
 | 5 | removed (17ccc5412) | `^` with a non-numeric operand (`true ^ 2`, `2 ^ 'a'`) returned `null` instead of a type error (C: `Type mismatch: expected Integer, Float, or Null but was Boolean`) | Fixed by #2904 (closes #2902): `pow_nonnumeric_base_errors`, `pow_nonnumeric_exp_errors`, `pow_bool_errors`; numeric results unchanged (`pow_numeric_unchanged`), `pow()` never hits the error on its declared domain (`pow_fn_in_domain`) |
-| 6 | removed (17ccc5412) | `percentileDisc`/`percentileCont` with a row-dependent percentile used the *last* row's percentile (C: the first row's) | Fixed by #3007 (closes #2980): `percentile_first_row`, `percentile_keeps` |
+| 6 | removed (17ccc5412) | `percentileDisc`/`percentileCont` with a row-dependent percentile used the *last non-null* row's percentile (C: the first non-null row's) | Fixed by #3007 (closes #2980): `percentile_first_row`, `percentile_keeps` |
 | — | `isAggregate_case_sensitive` | `Functions::is_aggregate("COUNT")` is false although `count` is registered, because it doesn't lowercase | Latent: no caller today |
 | — | `encode_map_is_null` | `Encode<19>` writes a Map, Node, Relationship or Path as `NULL` behind only a `debug_assert!` | Latent: property writes never store those types |
 | — | `within_nest_empty` | The decoder accepts one level more than writers produce (`MAX` arrays around `[]`) | Harmless: still bounded, never stored |
@@ -106,7 +106,7 @@ Each bug was confirmed with a Rust repro and live against C (see [`../FINDINGS.m
 
 Other live divergences from C are recorded in the header, not as bugs, because Rust is often the better answer:
 
-- `MIN / -1` gives `MIN` in Rust and `MAX` in C. `(2^53+1)/1` is exact in Rust; C divides through a double.
+- `MIN / -1` was `MIN` in Rust and `MAX` in C; Rust now raises an overflow error (#3603, `ValueMath.div_min_neg_one`). `(2^53+1)/1` is exact in Rust; C divides through a double.
 - `abs(MIN)` errors in Rust. `abs(-0.0)` is `0` in Rust and `-0` in C.
 - Some `+` typing differs. `'a' + {b:1}` is an error in Rust, while C concatenates. `true + 1` is an error in Rust, while C returns a Float.
 - `toJSON` of floats and maps is formatted differently.
@@ -143,13 +143,13 @@ Shared foundations (the engine `Value` as `V F`, `wrap` and the `wrapping_*` hel
 
 Line numbers are pinned to main 8621212fc.
 
-`COVERAGE.tsv` has 185 rows: 68 in `value.rs`, 36 in `functions/mod.rs`, 20 in `procedures.rs`, 17 in `math.rs`, 14 in `trig.rs`, 12 in `aggregation.rs`, 11 in `conversion.rs`, 3 each in `path.rs` and `index_ddl.rs`, and 1 in `entity_type.rs`.
+`COVERAGE.tsv` has 187 rows: 69 in `value.rs`, 36 in `functions/mod.rs`, 21 in `procedures.rs`, 17 in `math.rs`, 14 in `trig.rs`, 12 in `aggregation.rs`, 11 in `conversion.rs`, 3 each in `path.rs` and `index_ddl.rs`, and 1 in `entity_type.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 162 |
+| PROVEN | 165 |
 | MODELLED | 3 |
-| NOT COVERED | 20 |
+| NOT COVERED | 19 |
 
 All non-PROVEN rows are in `value.rs`:
 

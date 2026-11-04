@@ -3,12 +3,12 @@
 
 | here | there |
 | --- | --- |
-| `Anc`                 | the `IR` variants the walks distinguish, `runtime/runtime.rs:687-706`, `:616-631` |
+| `Anc`                 | the `IR` variants the walks distinguish, `runtime/runtime.rs:687-706`, `:716-742` |
 | `effectiveLimit`      | `Runtime::effective_limit`, `runtime/runtime.rs:681-711` |
 | `effectiveSkip`       | `Runtime::effective_skip`, `runtime/runtime.rs:716-742` |
 | `recordCap`           | `Runtime::record_cap`, `runtime/runtime.rs:748-754` |
 | `Anc.sem`, `run`      | what each ancestor does to the row stream it pulls (LimitOp / SkipOp / ProjectOp / CondTraverseOp / ExpandIntoOp) |
-| `hardCap`             | the `produced >= cap` stop + trim of `CondTraverseOp` (`ops/cond_traverse.rs:1030-1049,1179`) and `ExpandIntoOp` (`ops/expand_into.rs:246-293`), and SortOp's top-`limit+skip` heap (`ops/sort.rs:491-493`) |
+| `hardCap`             | the `produced >= cap` stop + trim of `CondTraverseOp` (`ops/cond_traverse.rs`: `next`'s stop `:1378-1383`, `trim_to_cap` `:1321-1340` and its call sites `:1409,1445,1458`) and `ExpandIntoOp` (`ops/expand_into.rs`: stop `:253`, trim `:294-300`), and SortOp's top-`limit+skip` heap (`ops/sort.rs:509-511`, `build_top_k`) |
 | `need`                | the smallest sound budget (reference) |
 
 The walks start at the *parent* of the operator (`self.plan.node(cur).parent()`), so an

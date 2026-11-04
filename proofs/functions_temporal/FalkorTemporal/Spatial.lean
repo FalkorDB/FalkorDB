@@ -1,5 +1,5 @@
 /-!
-# `Point::distance` (`graph/src/runtime/value.rs:144-176`)
+# `Point::distance` (`graph/src/runtime/value.rs:153-176`)
 
 `a = cos φ₁ cos φ₂ · sin²(Δλ/2) + sin²(Δφ/2)` is ≤ 1 over the reals, but in f64 it can
 round to `1 + 2⁻⁵²` for antipodal points; before #2983 (86dcd5a11) `(1.0 - a).sqrt()` was

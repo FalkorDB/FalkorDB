@@ -5,7 +5,7 @@ import FalkorParserGrammar.C.ExprC3
 
 namespace FalkorParserGrammar.C
 
-/-- shortestPath's type list: pushed in order (`parse_relationship_types`, cypher.rs:3054-3064,
+/-- shortestPath's type list: pushed in order (`parse_relationship_types`, cypher.rs:3057-3064,
 #3300): a name, then a `|` (with an optional `:` after it) and another name. A bare `:` after a
 name does not continue the list. -/
 inductive GSpTypes : PS → List Nat → List Nat → PS → Prop

@@ -476,8 +476,8 @@ theorem flushUdfs_spec (st : UdfState S) (m : Fns S) (h : st.reg = some m) :
     getUdfFunctions S (flushUdfs S st) = [] ∧ (flushUdfs S st).version = st.version + 1 := by
   simp [flushUdfs, h, getUdfFunctions, iter]
 
-/-- **#3066 (fixed)**: UDF names are case-sensitive, as in C. A UDF registered as `n` is not
-found under a different spelling `m ≠ n`, and unregistering `m` leaves it in place.
+/-- **#3066 (fixed)**: UDF names are case-sensitive, as in C. Registering `n` does not change
+the lookup of any other name `m ≠ n`, and unregistering `m` leaves `n` in place.
 (Pre-#3066 both keys went through `to_lowercase`, so `Foo` and `foo` collided.) -/
 theorem udf_case_sensitive (st : UdfState S) (m0 : Fns S) (h : st.reg = some m0)
     (n m : String) (g : GraphFn S) (hne : n ≠ m) :

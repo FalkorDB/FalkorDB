@@ -7,7 +7,7 @@ touches `GrB_Index` is a `u64` (`pub type GrB_Index = u64;`, mod.rs), so the
 *can* lose information are:
 
 * `rows.len() as u64` in `Matrix::build` / `assign_product_true` /
-  `Matrix::<u64>::build` (matrix.rs:1308, 1414, 1437) — `usize → u64`;
+  `Matrix::<u64>::build` (matrix.rs) — `usize → u64`;
 * `n_bytes as usize` / `blob_size as usize` in `vector.rs` (`Decode`, blob io) —
   `u64 → usize`;
 * the dimension bounds GraphBLAS itself enforces (`GB_NMAX = 2^60`).
@@ -59,12 +59,17 @@ theorem me_dim_wide_constructs : matrixNewOk ME_DIM ME_DIM = true := by
   simp only [matrixNewOk, ME_DIM, GrB_INDEX_MAX, GB_NMAX]
   decide
 
-/-! ### `record_created` / bug #2892 boundary (already filed; modelled here)
+/-! ### Node-id boundary / bug #2892 (HISTORICAL; fixed by #2911)
 
-`IdSpace::record_created` (id_space.rs:325) refuses only `u64::MAX`, so an id in
-`(GrB_INDEX_MAX, u64::MAX)` reaches `mark_nodes_live`, which resizes a matrix to
-`id + 1`. If `id + 1 > GB_NMAX` the resize returns `GrB_INVALID_VALUE` and the
-`assert_eq!` at matrix.rs:1332/1064 panics. This is the arithmetic of that. -/
+Before #2911 the id-space create path (`IdSpace::record_created`, no longer a
+symbol) refused only `u64::MAX`, so an id in `(GrB_INDEX_MAX, u64::MAX)` reached
+`mark_nodes_live`, which resizes a matrix to `id + 1`. If `id + 1 > GB_NMAX` the
+resize returns `GrB_INVALID_VALUE`, which the pre-fix code asserted on and
+panicked. On main `IdSpace::create` (id_space.rs, fn `create`) refuses every id
+`>= ID_LIMIT` (`= GrB_INDEX_MAX`) with `IdOutOfRange` before any matrix is
+sized; `Matrix::resize` itself only `debug_assert`s the status. The theorems
+below are the arithmetic of the boundary, not a model of any current Rust
+function. -/
 
 /-- A create of node `id` resizes matrices to `id + 1`. It survives iff that
 dimension is within the GraphBLAS bound. -/
@@ -83,14 +88,14 @@ theorem create_2pow61_crashes : resizeForIdOk (1 <<< 61) = false := by
   simp only [resizeForIdOk, matrixNewOk, GB_NMAX]
   decide
 
-/-- And `record_created`'s only guard (`id ≠ u64::MAX`) lets it through: the
+/-- And the pre-#2911 guard (`id ≠ u64::MAX`) let it through: the
 id `2^61` is far below `u64::MAX`, so the wrapper never sees the code that would
 have refused it. (`u64::MAX = 2^64 - 1`.) -/
 theorem guard_misses_2pow61 : (1 <<< 61 : Nat) ≠ 2^64 - 1 := by decide
 
 /-! ### `usize → u64` on `.len()` casts
 
-`rows.len() as u64` (matrix.rs:1308 etc.). On a 64-bit target `usize` is 64-bit,
+`rows.len() as u64` (matrix.rs, fns `build` etc.). On a 64-bit target `usize` is 64-bit,
 so this is lossless for any real slice; the model records the fact so a future
 32-bit port would flag it. Here `usize` is `Nat` bounded by `2^64`. -/
 
@@ -101,7 +106,7 @@ theorem len_cast_lossless (n : Nat) (h : n < 2 ^ 64) : (n % 2 ^ 64) = n := Nat.m
 /-! ### `u64 → usize` blob-size casts (`vector.rs`)
 
 `n_bytes as usize`, `blob_size as usize`. On 64-bit this is the identity. The
-`Decode` path *validates* `n_bytes as usize == arr_data.len()` (vector.rs:336)
+`Decode` path *validates* `n_bytes as usize == arr_data.len()` (vector.rs:365)
 before the cast drives `copy_nonoverlapping`, so even under truncation the copy
 length matches the source buffer. This is the check that makes it safe. -/
 

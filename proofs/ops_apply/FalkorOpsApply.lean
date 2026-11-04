@@ -56,7 +56,7 @@ asserts C's answer and FAILS today).
 * `union_drain`, `drain_eq`, `next_spec`, `stream_all_ok`, `next_none_stays` — UNION ALL = concatenation; failed branch instantiation ends the stream with its error.
 * `chunks_flatten`, `chunks_size`, `inner_ok`, `go_ok`, `next_ok`, `run_ok`, `foreach_correct`, `calls_items` — FOREACH passes every row through unchanged, in order, in batches of 1..B rows, and runs the body on every item of every row exactly once, in order, in chunks ≤ B.
 * `phaseA_ref`, `rustBatch_ref`, `rust_eq_ref_noSet`, `merge_noSet_any_batch_size`, `heads_tails_perm` — MERGE without SET equals per-row openCypher for EVERY batching (same graph, same ids, output rows a permutation).
-* Counterexamples (by `decide`): `batch_dependent`, `optionalBatched_order_differs`; fixed by #3050/#3055: `cross_clause_keyed`, `per_clause_cache_fixes`, `allBound_path_keeps_all`, `path_shortcut_off`.
+* Counterexamples (by `decide`): `optionalBatched_order_differs`; fixed by #3050/#3055/#3067: `cross_clause_keyed`, `per_clause_cache_fixes`, `allBound_path_keeps_all`, `path_shortcut_off`, `fixed3067_batch_independent`.
 
 ## CONFIRMED bugs (Rust repro + live Rust vs C, ports 18240/18241)
 
@@ -75,8 +75,10 @@ asserts C's answer and FAILS today).
    `match_all` (`merge.rs:260-297`) matches every row before any creation. Was (`merge.rs:313-343` at ca36bfa15): the match ran once
    per batch and saw earlier batches' creations only. Lean: `MergeEager.fixed3067_batch_independent`, `mainMerge_batch_independent`, `mainMerge_noSet_eq_ref`.  `UNWIND range(1,N) AS x WITH x
    WHERE x = 1 OR x = N MERGE (n:L {v: CASE x WHEN 1 THEN 1 ELSE 2 END}) ON CREATE SET n.v = 2`:
-   N=2 → 2 nodes, N=1025 → 1 node (C: 2 and 2) before the fix.  Test `bug_merge_result_depends_on_batch_boundary` (now passes?
-   not re-run here).
+   N=2 → 2 nodes, N=1025 → 1 node (C: 2 and 2) before the fix.  The Rust test
+   `bug_merge_result_depends_on_batch_boundary` lived in the uncommitted local
+   `lean_ops_apply.rs` and was not re-run after the fix; the fixed behaviour is the
+   Lean theorem `fixed3067_batch_independent`.
 4. **All-bound shortcut drops matches visible through a path** — FIXED by #3055
    (closes #3040, main 5e475e6c9): the shortcut applies only when every relationship is
    bound or anonymous and not exposed by a path variable (`merge.rs:378-393`).
@@ -111,7 +113,7 @@ asserts C's answer and FAILS today).
 `create_batch` reserves through the graph's batch (`g.node_id_space().reserve(n,
 &pending.created_nodes)`, create.rs:158; relationships :280) — the abstract
 `reserveN`/`reserveR` hooks are unchanged. DELETE's unwinds now return the ids to
-the graph themselves and can fail (`?` at delete.rs:254-260, :408-412, :447-453):
+the graph themselves and can fail (`?` at delete.rs:276-280, :430-434, :471-475):
 `DeleteCancel.lean`. #2776 re-checked live: **still present** (`CREATE (a {x:1}),(b
 {y:2}) SET a = b` Rust `{x: 1, y: 2}`, C `{y: 2}`). W2-pending-3 (writes to a
 DETACH-deleted relationship are applied/counted): **still present** (`... DETACH DELETE

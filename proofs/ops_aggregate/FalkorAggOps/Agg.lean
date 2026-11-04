@@ -166,8 +166,12 @@ def maxScalar {α : Type} (c : Cmp α) (a : α) (b : Option α) : Option α :=
 
 /-- For a comparison that is antisymmetric where no NaN is involved
 (`ord b a = lt ↔ ord a b = gt`), whose NaN flag is symmetric, and that never flags two
-non-null values as a null comparison, the scalar `max` and `max_batch` agree — NaN
-included (since #2917). -/
+non-null values as a null comparison, the scalar `max` and `max_batch` agree. The premises are
+about the abstract comparison `c`; they are NOT instantiated for `Value` here. They hold for the
+scalar kinds, but not for lists with a nested NaN: `Value::compare_list` (value.rs:1442) drops the
+inner NaN flag, so `[NaN]` vs `[5]` is `(Less, None)` in both directions and `anti` fails. The scalar
+`max` body is dead code anyway (`batch_agg` is always preferred), so `max_batch` is covered by
+`minmax_hom`, not by this theorem. -/
 theorem maxScalar_eq_batch {α : Type} (c : Cmp α)
     (anti : ∀ a b, c.nanFlag a b = false → (c.ord b a = .lt ↔ c.ord a b = .gt))
     (nanSymm : ∀ a b, c.nanFlag b a = c.nanFlag a b)
@@ -191,8 +195,9 @@ def nanCmp : Cmp Nat where
   nullFlag _ _ := false
   nanFlag a b := a == 0 || b == 0
 
-/-- **Fixed by #2917**: with NaN comparisons ignored, scalar `max` and `max_batch` agree on
-NaN (`maxScalar_eq_batch` with `nanCmp`); a NaN never replaces nor is replaced. -/
+/-- **Fixed by #2917** for a scalar NaN: with NaN comparisons ignored, scalar `max` and `max_batch`
+agree on the toy comparator `nanCmp` (one flagged NaN element over `Nat`); a NaN never replaces nor
+is replaced. A NaN nested inside a list is not modelled (see `maxScalar_eq_batch`). -/
 theorem maxScalar_eq_batch_nan : maxScalar nanCmp 0 (some 5) = mmStep nanCmp .gt (some 5) 0 ∧
     mmStep nanCmp .gt (some 5) 0 = some 5 ∧ mmStep nanCmp .gt (some 0) 5 = some 0 := by
   decide

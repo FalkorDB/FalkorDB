@@ -25,7 +25,7 @@ graph/src/runtime/value.rs	days_in_month	765	NOT COVERED	calendar helper; outsid
 graph/src/runtime/value.rs	is_leap	777	NOT COVERED	calendar helper; outside the order model
 graph/src/runtime/value.rs	days_from_civil	784	NOT COVERED	calendar helper; outside the order model
 graph/src/runtime/value.rs	civil_from_days	804	NOT COVERED	calendar helper; outside the order model
-graph/src/runtime/value.rs	Hash::hash	862	PROVEN	hwords/floatWord/f32HashBits (main since #2917 7fdf06a0e; Fx stream): Main.main_hash_consistent (sort_cmp-equal => equal words, every wf value), Main.main_nans_one_key (W9-hash-1 fixed), Main.float_nans_one_key, float_signed_zero_one_key, vec_nans_one_key, point_nans_one_key (#2917 claims), sane_hash_consistent, hash_not_consistent_with_eq (vs Value::eq, harmless: GroupKey uses sort_cmp); counterexamples removed (17ccc5412); Str words abstracted; Path/Rel/temporal arms not modelled
+graph/src/runtime/value.rs	Hash::hash	862	PROVEN	hwords/floatWord/f32HashBits (main since #2917 7fdf06a0e; Fx stream): Main.main_hash_consistent (sort_cmp-equal => equal words, every wf value), Main.main_nans_one_key (W9-hash-1 fixed), Main.float_nans_one_key, float_signed_zero_one_key, vec_nans_one_key, point_nans_one_key (#2917 claims), sane_hash_consistent, hash_not_consistent_with_eq (vs Value::eq: harmless for grouping since GroupKey uses sort_cmp, but OPEN for ValueHashJoin, which hashes Value then compare_value: finding 5, 2^53+1 vs 2^53.0 can miss a join match); counterexamples removed (17ccc5412); Str words abstracted; Path/Rel/temporal arms not modelled
 graph/src/runtime/value.rs	Add::add	952	NOT COVERED	arithmetic; outside the order model
 graph/src/runtime/value.rs	Value::add_slow	967	NOT COVERED	arithmetic; outside the order model
 graph/src/runtime/value.rs	Sub::sub	1084	NOT COVERED	arithmetic; outside the order model
@@ -81,4 +81,4 @@ graph/src/runtime/value.rs	sort_cmp_f32	1945	PROVEN	Main.scF32: Main.scF32_key (
 graph/src/runtime/value.rs	f32_hash_bits	1959	PROVEN	f32HashBits (Model): Main.f32HashBits_of_eq, Main.main_nans_one_key
 graph/src/runtime/value.rs	sort_cmp_int_float	1971	PROVEN	SC.scIntFloat: SC.scIntFloat_key (exact, no rounding, every i64)
 graph/src/runtime/batch.rs	Batch::compare_rows_at	1287	PROVEN	Main.compareRowsAt: Main.compareRowsAt_eq_scMain (Unbound ties, else sort_cmp)
-graph/src/runtime/functions/list.rs	list_sort	197	PROVEN	Main.listSort (sort_by(Value::sort_cmp)): Main.listSort_perm, Main.scMain_total (total order: W2-strlist-1 panic fixed by #2912)
+graph/src/runtime/functions/list.rs	list_sort	197	PROVEN	Main.listSort (sort_by(Value::sort_cmp)): Main.listSort_perm, Main.listSort_sorted (output pairwise sort_cmp-ordered, well-formed input), Main.scMain_total (total order: W2-strlist-1 panic fixed by #2912)

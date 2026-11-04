@@ -9,11 +9,11 @@ rollback with documents keyed by id, so it proves the buggy rule faithfully
 (`PD.resync_spec`) and cannot state the mismatch. This file keys them by
 `(src, dst, id)`.
 
-| Lean | Rust (fb3d516d0) |
+| Lean | Rust (origin/main 5c7af54f2, located by name) |
 | --- | --- |
 | `Ep` | `endpoints_for_edge` of one graph version (`committed` or the query's discarded `private`) |
-| `resyncEdgeKeys` | `Pending::resync_published_indexes`, edge arm (`runtime/pending.rs:1647-1659`): id live in committed ⇒ re-add, else if `private` knows it ⇒ delete under the private endpoints |
-| re-add key | `Graph::commit_edge_index_locked` (`graph/graph.rs:3863-3896`): re-resolves `(src, dst)` from the **committed** tensor; an id with no endpoints is skipped |
+| `resyncEdgeKeys` | `Pending::resync_published_indexes`, edge arm (`runtime/pending.rs:1816-1827`): id live in committed ⇒ re-add, else if `private` knows it ⇒ delete under the private endpoints |
+| re-add key | `Graph::commit_edge_index_locked` (`graph/graph.rs:3962-4037`): re-resolves `(src, dst)` from the **committed** tensor; an id with no endpoints is skipped |
 | `resyncEdges` | the above then `Indexer::commit_edge` (`indexer.rs:760`, `Iter.commitEdge`: adds, then deletes) |
 | `EdgeIndexMatches`, `RollbackRestoresEdgeIndex` | the property: after rollback the edge index is exactly the committed graph's documents |
 | `resyncEdgesFixed` | a fix: also delete the private key when the endpoints changed |

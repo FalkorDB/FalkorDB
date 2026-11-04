@@ -4,17 +4,17 @@ import PlannerBuild.Expr
 
 | here | there |
 | --- | --- |
-| `PSt` | `Planner` fields `scope_vars` (as lengths), `visited`, `loop_vars`, `pattern_vars`, `nested_plans` (mod.rs:719-752); `minted` is a ghost log of `fresh_var` results |
-| `fresh` | `Planner::fresh_var` mod.rs:843-857 |
-| `EC` | `ExtractedComprehension` mod.rs:756-773 |
+| `PSt` | `Planner` fields `scope_vars` (as lengths), `visited`, `loop_vars`, `pattern_vars`, `nested_plans` (mod.rs:719-746); `minted` is a ghost log of `fresh_var` results |
+| `fresh` | `Planner::fresh_var` mod.rs:837-852 |
+| `EC` | `ExtractedComprehension` mod.rs:751-766 |
 | `CP` | the IR built for a comprehension (Aggregate / Filter / Apply / PathBuilder / plan_match) |
-| `build`, `buildL` | `build_pattern_comprehension_plan` mod.rs:1406-1488 |
-| `interleave` | path components, mod.rs:1123-1129 |
-| `hoist` | `hoist_or_nest` mod.rs:1200-1245 |
-| `extract`, `extractL` | `extract_pattern_comprehensions` mod.rs:1064-1193 |
-| `chainOf`, `extractClause` | `extract_clause_expr_comprehensions` mod.rs:1309-1340 / `extract_list_expr_comprehensions` mod.rs:1292-1298 |
-| `extractFilter` | `extract_filter_comprehensions` mod.rs:1364-1402 |
-| `finish` | `Planner::finish` mod.rs:828-840 |
+| `build`, `buildL` | `build_pattern_comprehension_plan` mod.rs:1401-1482 |
+| `interleave` | path components, mod.rs:1115-1121 |
+| `hoist` | `hoist_or_nest` mod.rs:1195-1240 |
+| `extract`, `extractL` | `extract_pattern_comprehensions` mod.rs:1059-1187 |
+| `chainOf`, `extractClause` | `extract_clause_expr_comprehensions` mod.rs:1304-1336 / `extract_list_expr_comprehensions` mod.rs:1287-1294 |
+| `extractFilter` | `extract_filter_comprehensions` mod.rs:1359-1396 |
+| `finish` | `Planner::finish` mod.rs:823-835 |
 
 `plan_match`'s own plan is abstract (`CP.matchG g visited`); it marks the
 pattern's variables visited (here: `g.vars`); verified-label bookkeeping is in
@@ -72,7 +72,7 @@ def buildL (st : PSt) (sub : CP) : List EC → CP × PSt
     buildL p.2 (.apply sub p.1) is
 end
 
-/-- Path components: node, rel, node, rel, …, node (mod.rs:1123-1129). -/
+/-- Path components: node, rel, node, rel, …, node (mod.rs:1115-1121). -/
 def interleave : List V → List V → List V
   | [], _ => []
   | n :: ns, r :: rs => n :: r :: interleave ns rs
@@ -189,7 +189,7 @@ theorem fresh_frame (st : PSt) (s : Nat) : Frame st (fresh st s).2 := ⟨rfl, rf
 
 mutual
 /-- Extraction restores `visited`, `loop_vars` and `pattern_vars` (the
-truncations at mod.rs:1098 and 1063; the visited save/restore at mod.rs:1223/1110). -/
+truncations at mod.rs:1095 and 1181; the visited save/restore at mod.rs:1216/1228). -/
 theorem extract_frame (sc : Nat) : ∀ (st : PSt) acc m (e : Ex), Frame st (extract sc st acc m e).2.1
   | st, acc, m, .node d cs => by
     have hL := extractL_frame sc st acc d (binds d).1 (binds d).2 (m.descend d) 0 cs
@@ -348,7 +348,7 @@ theorem extract_fresh (sc : Nat) (st : PSt) (acc : List EC) (m : Mode) (e : Ex) 
 
 mutual
 /-- `PatternComprehension` nodes carry their WHERE and result children (the parser
-always builds both, mod.rs:1082/968 read `child(0)`/`child(1)`). -/
+always builds both, parser/cypher.rs:2957-3006; planner mod.rs:1078/1090 read `child(0)`/`child(1)`). -/
 def pcOK : Ex → Bool
   | .node (.patComp _) cs => decide (2 ≤ cs.length) && pcOKL cs
   | .node _ cs => pcOKL cs

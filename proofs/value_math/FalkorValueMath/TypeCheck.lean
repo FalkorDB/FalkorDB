@@ -308,7 +308,7 @@ theorem accepts_numArg (v : V F) :
 
 /-- A single-argument numeric function reaches its body only with Int, Float or Null:
 the `_ => unreachable!()` arms of `abs`, `ceil`, `exp`, `floor`, `log`, `log10`,
-`round`, `sign`, `sqrt` (math.rs:55-242) are dead after `validate_args_type`. -/
+`round`, `sign`, `sqrt` (math.rs:55-243) are dead after `validate_args_type`. -/
 theorem numeric_body_cases (v : V F) (h : validateArgsType (.fixed [numArg]) [v] = none) :
     (∃ i, v = .int i) ∨ (∃ f, v = .float f) ∨ v = .null := by
   have := ((validateArgsType_go_none [numArg] [v] 0).1 h).1
@@ -487,8 +487,9 @@ structure Entry where
   kind : FnKind
   args : FnArgs
 
-/-- Registry: association list keyed by the lowered name. `lower` is Rust's
-`str::to_lowercase`, taken as an idempotent function. -/
+/-- Registry: two association lists. `builtins` is keyed by the lowered name (`lower` is Rust's
+`str::to_lowercase`, taken as an idempotent function); `udfs` is keyed by the exact,
+case-sensitive name (#3066). -/
 structure Registry where
   lower : String → String
   builtins : List (String × Entry)
@@ -523,7 +524,7 @@ theorem regGet_udf_case_sensitive (r : Registry) (name : String) (k : FnKind)
     regGet r name k = alookup r.udfs name := by
   simp [regGet, hb, regGet.udfFallback, hk]
 
-/-- `Functions::is_aggregate(name)` (mod.rs:1079) does **not** lower its argument. -/
+/-- `Functions::is_aggregate(name)` (mod.rs:1080) does **not** lower its argument. -/
 def regIsAggregate (r : Registry) (name : String) : Bool :=
   match alookup r.builtins name with
   | some e => e.kind = .aggregation

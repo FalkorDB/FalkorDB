@@ -100,24 +100,35 @@ theorem comprehension_cleanup_breaks :
   · intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
   · intro h; exact absurd (h 1 (by decide)) (by decide)
 
-/-! ## `CALL { … UNION … }` scope numbering (binder.rs:845, 897-905) -/
+/-! ## `CALL { … UNION … }` scope numbering (`bind_call_body`, binder.rs:824-925) -/
 
-/-- Scope id of the first scope of a CALL body, with `outerLen =
-env_stack.len()` at the CALL. A plain body is pushed on the stack; since #3027
-each UNION branch gets `Binder { env_stack: vec![HashMap::new(); outerLen + 1], .. }`
-(binder.rs:897-905), so both start at `outerLen`. -/
-def callBodyScope (outerLen : Nat) (_isUnion : Bool) : Nat := outerLen
+/-- The `env_stack` of a plain CALL body: the `outerLen` live outer scopes (only their number
+matters here) with the body's own scope pushed on top (`self.env_stack.push(HashMap::new())`,
+binder.rs:845). -/
+def queryBodyStack (outerLen : Nat) : List Env := List.replicate outerLen [] ++ [[]]
+
+/-- The `env_stack` of a UNION branch's own `Binder` since #3027:
+`vec![HashMap::new(); self.env_stack.len() + 1]` (binder.rs:903), the outer scopes as empty
+placeholders and one more on top. (Before #3027 it was a one-scope stack, so the branch's first
+scope had the id of outer scope 0.) -/
+def unionBranchStack (outerLen : Nat) : List Env := List.replicate (outerLen + 1) []
+
+/-- Scope id of the first scope a CALL body binds into: the top of its `env_stack`
+(`current_env`), with `outerLen = env_stack.len()` at the CALL. Each case is read off its own
+stack construction, so a regression of either constructor changes the matching theorem. -/
+def callBodyScope (outerLen : Nat) (isUnion : Bool) : Nat :=
+  (if isUnion then unionBranchStack outerLen else queryBodyStack outerLen).length - 1
 
 /-- A plain body's scopes are disjoint from the live outer scopes … -/
 theorem callBody_query_disjoint (outerLen : Nat) (s : Nat) (h : s < outerLen) :
     callBodyScope outerLen false ≠ s := by
-  simp [callBodyScope]; omega
+  simp [callBodyScope, queryBodyStack]; omega
 
 /-- … and, since #3027 (fixes W2-binder-4, formerly `callBody_union_aliases`:
 a UNION branch's first scope was outer scope 0), so are a UNION branch's. -/
 theorem callBody_union_disjoint (outerLen : Nat) (s : Nat) (h : s < outerLen) :
     callBodyScope outerLen true ≠ s := by
-  simp [callBodyScope]; omega
+  simp [callBodyScope, unionBranchStack]; omega
 
 /-! ## Label accumulation (binder.rs:1356-1360, 122-154) -/
 

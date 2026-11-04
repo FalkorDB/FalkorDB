@@ -6,9 +6,9 @@ graph/src/planner/mod.rs	fmt_rel_with_labels_dir	381	PROVEN	Fmt.fmtRelDir, arrow
 graph/src/planner/mod.rs	IR::fmt	422	PROVEN	Fmt.irFmt (every variant), fmt_set_remove, fmt_fused (hop/hops), fmt_condTraverse_plain
 graph/src/planner/mod.rs	inline_attrs_to_filter	545	PROVEN	E.inlineAttrsToFilter = and_of of the equalities; inlineAttrsToFilter_eq (and_of = the pre-#3335 f / And(fs) split, an equality is never an AND), inlineAttrsToFilter_none, inlineAttrsToFilter_conj, Rename.inlineAttrs_passes (passes iff every n.k = v is true)
 graph/src/planner/mod.rs	lower_inline_attrs	598	PROVEN	E.lowerInline: lowerInline_fresh, lowerInline_once (at most once per (alias, map)), lowerInline_two_maps (identity, not equality), lowerInline_mem/_mono/_other
-graph/src/planner/mod.rs	strip_node_attrs	623	PROVEN	E.stripNode: stripNode_spec (attrs [], alias/labels kept), stripNode_self (same node when nothing to strip)
-graph/src/planner/mod.rs	strip_rel_attrs	644	PROVEN	E.stripRel: stripRel_spec (edge and endpoint attrs [], everything else kept)
-graph/src/planner/mod.rs	strip_endpoint_attrs	673	PROVEN	E.stripEndpoints: stripEndpoints_spec (edge attrs kept, endpoint attrs []), walk_keeps_edge_attrs
+graph/src/planner/mod.rs	strip_node_attrs	623	PROVEN	E.stripNode: stripNode_spec (attrs [], alias/labels/map identity kept), stripNode_self (same node when nothing to strip)
+graph/src/planner/mod.rs	strip_rel_attrs	644	PROVEN	E.stripRel: stripRel_spec (edge and endpoint attrs [], alias/named/kind, endpoint alias/labels and the attrs-map identities kept; the model's QR carries no relationship types, direction, hop bounds or all_shortest_paths, so those are outside the claim)
+graph/src/planner/mod.rs	strip_endpoint_attrs	673	PROVEN	E.stripEndpoints: stripEndpoints_spec (edge attrs kept, endpoint attrs [], same fields as stripRel_spec kept; relationship types/direction/hop bounds not modelled), walk_keeps_edge_attrs
 graph/src/planner/mod.rs	has_labels_filter	696	PROVEN	E.hasLabelsFilter_shape (hasLabels(var, [labels...]) exactly)
 graph/src/planner/mod.rs	PatternMode::descend	795	PROVEN	E.descend_table (SemiApply survives only under AND/OR/NOT, else Exists; Paren dropped by #3335 since the binder removes it — Decomp.needs_of_exists keeps collect_value/collect_wf for a Paren)
 graph/src/planner/mod.rs	Planner::new	809	PROVEN	E.newPSt_spec (nothing bound, no nested plans, first fresh id = binder length)

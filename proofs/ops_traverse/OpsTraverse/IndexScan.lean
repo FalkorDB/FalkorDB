@@ -31,8 +31,9 @@ inductive IQ (E : Type) where
   | or (qs : List (IQ E))
   | arr (key : String) (v : E)
   | inList (key : String) (l : E)
-  /-- `IndexQuery::InList { list: Value::List(items) }`, the evaluated form (#2383): the list is
-  kept whole instead of being expanded to `Or(Equal, ..)`. Only `evalIQ` produces it. -/
+  /-- `IndexQuery::InList { list: Value::List(items) }`, the evaluated form (#2383): only the
+  scalar items of the list are kept, in order, instead of being expanded to `Or(Equal, ..)`. Only
+  `evalIQ` produces it. -/
   | inListV (key : String) (items : List V)
 
 def isScalar : V → Bool

@@ -10,7 +10,7 @@ import FalkorEffectsEmitApply.CancelGap
 
 Target: `graph/src/effects/v3/emit.rs`, `graph/src/effects/v3/apply.rs`, and the
 gate in front of the emitter (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1655`). Coverage per Rust fn:
+`Pending::effects_count` at `runtime/pending.rs:1958`). Coverage per Rust fn:
 `COVERAGE.tsv` (36 rows, all PROVEN). Repros:
 `graph/tests/lean_effects_emit_apply.rs`
 (`cargo test -p graph --test lean_effects_emit_apply -- --nocapture --test-threads=1`).
@@ -27,18 +27,18 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 | `Emit.schemaAdditions`                 | `emit_schema_additions`, `emit.rs:60`                       |
 | `Emit.digestCancelled`                 | `digest_cancelled`, `emit.rs:395`                           |
 | `Emit.forEachRecord`                   | `for_each_record`, `emit.rs:323` (opcode granularity)       |
-| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:1655`                 |
+| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:1958`                 |
 | `Emit.commitShips`                     | `if estimated > 0 { buf.build(..) }`, `commit.rs:108`       |
-| `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:519,516`        |
+| `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:532,552`        |
 | `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs:210`                    |
-| `Apply.updateNode`                     | `Record::UpdateNode` arm, `apply.rs:305`                    |
-| `Apply.setLabels`                      | `Record::SetLabels` arm, `apply.rs:339`                     |
-| `Apply.deleteNode`, `okDelete`         | `Record::DeleteNode` arm, `apply.rs:365`                    |
+| `Apply.updateNode`                     | `Record::UpdateNode` arm, `apply.rs:318`                    |
+| `Apply.setLabels`                      | `Record::SetLabels` arm, `apply.rs:352`                     |
+| `Apply.deleteNode`, `okDelete`         | `Record::DeleteNode` arm, `apply.rs:378`                    |
 | `Apply.RG.WF`                          | "nothing hangs off a dead id; edge endpoints live"          |
 | `Live.applyRec`, `Live.applyAll`       | the checked arms of `apply_record` since #3022 (`apply.rs:160`) |
-| `Live.needLive`, `ApplyHelpers.requireLive` | `require_live`, `apply.rs:634` (#3022)                  |
-| `Live.firstWithRels`                   | `Graph::first_node_with_relationships`, `graph.rs:2321` (spec) |
-| `Live.danglingRel`                     | `verify_created_relationships`, `graph.rs:1546`            |
+| `Live.needLive`, `ApplyHelpers.requireLive` | `require_live`, `apply.rs:647` (#3022)                  |
+| `Live.firstWithRels`                   | `Graph::first_node_with_relationships`, `graph.rs:2421` (spec) |
+| `Live.danglingRel`                     | `verify_created_relationships`, `graph.rs:1646`            |
 
 ## Proven (53 theorems)
 
@@ -62,7 +62,7 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
   arm preserves well-formedness (the fix, proved).
 * Counterexamples (all by `decide`, all reproduced in Rust):
   `gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`,
-  `cancelled_edge_attr_dropped`. The ones fixed by #3022 (`18fc277b9`) are removed (in 17ccc5412).
+  `cancelled_edge_attr_dropped`. The ones fixed by #3022 (`18fc277b9`) were removed after 17ccc5412, the last commit that holds them.
 
 ## #3022 (`Liveness.lean`): every record that acts on an entity checks it is live
 
@@ -85,10 +85,10 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 ## Re-target to origin/main `1d15bf713` (from `0f45a8685`)
 
 * **#3298 (`2bb51088b`, issue #3247)** — the `CREATE_NODE` arm refuses an id list with
-  a repeat (`nodes.len() != ids.count()`, `apply.rs:222`). `applyRec .createNode` now
+  a repeat (`nodes.len() != ids.count()`, `apply.rs:223`). `applyRec .createNode` now
   checks `ids.Nodup` first; `applyRec_binv`/`apply_wf` re-proved. New
   `createNode_repeat_refused`, `createNode_ok_nodup`,
-  `a_repeated_node_id_in_one_create_is_refused` (the Rust test, by `decide`). The commit gate (W2-effects-1, `commit.rs:107-108`) is unchanged.
+  `a_repeated_node_id_in_one_create_is_refused` (an abstract refusal check on the Rust test's input `[2, 3, 2]`: the `.graph` constructor only, the message text is not modelled). The commit gate (W2-effects-1, `commit.rs:107-108`) is unchanged.
 
 ## Wave 4 additions (`Digests`, `ApplyHelpers`, `EmitDDL`)
 
@@ -144,7 +144,7 @@ node) — refused since #3298 (`createNode_repeat_refused`).
 
 1. **A write that only registers schema or only cancels entities replicates
    nothing** — `runtime/ops/commit.rs:108` gates `buf.build` on
-   `effects_count() > 0` (`pending.rs:1655`), which counts neither
+   `effects_count() > 0` (`pending.rs:1958`), which counts neither
    `cancelled_nodes`/`cancelled_relationships` nor names registered since the
    `SchemaBaseline`, so `digest_cancelled` and `emit_schema_additions` never run.
    The master keeps the new label/attr and the moved id space; the next payload's
@@ -164,7 +164,7 @@ node) — refused since #3298 (`createNode_repeat_refused`).
    C agrees). Fix: gate on "the emitter produced a record" (or add
    `cancelled_*` and the schema delta to the count).
 2. **UPDATE_NODE / UPDATE_EDGE / SET_LABELS / REMOVE_LABELS never check
-   liveness** (`apply.rs:305,303,322,333`; `checked_label_ids` bounds-checks
+   liveness** (`apply.rs:318,332,352,359`; `checked_label_ids` bounds-checks
    label ids only). A `GRAPH.EFFECT` naming a recycled id is accepted, and the
    next node that recycles that id is born with the property / label
    (`hostile_update_node_on_dead_id`: fresh node gets `{x: 666}`;
@@ -174,15 +174,15 @@ node) — refused since #3298 (`createNode_repeat_refused`).
    (`update_dead` → next CREATE id 5 `{x: 666}`). Fix: route these ids through
    `IdSpace` like CREATE/DELETE (`wf_updateNode_live` proves it suffices).
    REMOVE_LABELS / SET_LABELS on 2^40 trip a GraphBLAS `debug_assert`
-   (`matrix.rs:1139,1339`) in debug and are silently accepted in release —
+   (`Matrix::set` / `Matrix::remove`, `matrix.rs:1549,1187`) in debug and are silently accepted in release —
    same family as #2892 (not re-reported).
-3. **DELETE_NODE of a node with edges is accepted** (`apply.rs:365`,
+3. **DELETE_NODE of a node with edges is accepted** (`apply.rs:378`,
    `delete_nodes` does not cascade or refuse): a dangling edge remains and the
    next created node inherits it (`hostile_delete_node_with_edges`; live server
    same). Sibling of #2924 (CREATE_EDGE to non-live endpoints), different
    record.
 4. **A refused buffer is not rolled back for CREATE_INDEX**
-   (`apply_effects`, `apply.rs:54`; `Graph::create_index`, `graph.rs:3431`): the
+   (`apply_effects`, `apply.rs:54`; `Graph::create_index`, `graph.rs:3670`): the
    `Indexer` is shared by `Arc` across versions (`Graph::new_version` clones the
    handle), so `MvccGraph::rollback` cannot undo it. Live: payload
    `[ADD_ATTRIBUTE 1 zz, CREATE_INDEX A(zz), CREATE_NODE 0]` → `ERR ... the
@@ -222,7 +222,7 @@ master's pre-segment state accepts. Two properties, both refuted on b84473a7f:
   hole. Fix property `relIdsCovered_of_registered` (holds for every `Pending`
   once all created and cancelled types are registered).
 * **#3448** (property `ReplayApplies`): `digest_labels(&p.remove_labels, None,
-  …)` (emit.rs:370) precedes `digest_cancelled` (:376); `delete_pending_node`
+  …)` (emit.rs:370) precedes `digest_cancelled` (:374); `delete_pending_node`
   keeps the node's `remove_labels` (pending_commit
   `bug3448_cancelled_node_keeps_remL`). `bug3448_removeLabels_before_create_refused`:
   `CREATE (n:Foo) REMOVE n:Foo DELETE n` → `AddLabel Foo, RemoveLabels [0],

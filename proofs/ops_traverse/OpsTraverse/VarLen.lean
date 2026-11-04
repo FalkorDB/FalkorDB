@@ -1,4 +1,5 @@
 import OpsTraverse.Basic
+import FalkorAggOps.StreamOps
 /-
 # CondVarLenTraverse: the DFS enumerates exactly the trails of the requested length
 
@@ -188,16 +189,26 @@ def edgeVerdict : Except String PV → EdgeVerdict
   | .ok (.other n) => .err s!"Type mismatch: expected Boolean but was {n}"
   | .error e => .err e
 
-/-- FilterOp on one row (filter.rs:95-101): keep `true`, drop `false`/`null`, error otherwise. -/
-def filterRow : Except String PV → EdgeVerdict
-  | .error e => .err e
-  | .ok v => match v with
-    | .t => .keep
-    | .f | .null => .skip
-    | .other n => .err s!"Type mismatch: expected Boolean but was {n}"
+/-- The predicate value as `FilterOp` sees it (`StreamOps.PV`, proofs/ops_aggregate). -/
+def toFilterPV : PV → FalkorAggOps.StreamOps.PV
+  | .t => .t
+  | .f => .f
+  | .null => .null
+  | .other n => .other n
 
-/-- **Parity**: the per-edge filter of a var-length walk answers every value as a `Filter` does. -/
-theorem edgeVerdict_eq_filterRow (r : Except String PV) : edgeVerdict r = filterRow r := by
-  rcases r with e | (_ | _ | _ | n) <;> rfl
+/-- **Parity**: for every evaluated value, the per-edge filter of a var-length walk answers as
+`FilterOp` does on a one-row batch, the very model `StreamOps.filterEval` that proves the
+`FilterOp` rows: `keep` is the row passing, `skip` nothing passing, `err` the same type error
+(#2390). -/
+theorem edgeVerdict_eq_filterEval (v : PV) :
+    match edgeVerdict (.ok v) with
+    | .keep => FalkorAggOps.StreamOps.filterEval [0] (.values [toFilterPV v]) = .ok (some [0])
+    | .skip => FalkorAggOps.StreamOps.filterEval [0] (.values [toFilterPV v]) = .ok none
+    | .err m => FalkorAggOps.StreamOps.filterEval [0] (.values [toFilterPV v]) = .error m := by
+  cases v <;> rfl
+
+/-- An evaluator error ends the walk with that error, as a failed `FilterOp` evaluation does
+(`StreamOps.filterNext` returns it). -/
+theorem edgeVerdict_error (e : String) : edgeVerdict (.error e) = .err e := rfl
 
 end OpsTraverse.VarLen

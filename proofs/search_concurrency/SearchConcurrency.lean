@@ -1,5 +1,5 @@
 /-
-# Search layer and concurrency: models, proofs, and five confirmed bugs (all fixed on main)
+# Search layer and concurrency: models, proofs, five confirmed bugs fixed on main, and one open bug (#3226)
 
 Project `proofs/search_concurrency`. Modules:
 
@@ -50,7 +50,7 @@ escalate, release, mutate, commit, indexer batch, delete, fork):
 * `delete_blocks_writes` — after GRAPH.DELETE no mutate/commit is enabled.
 * `fork_excludes_commit` — fork and delete need the GIL a committing writer holds.
 * #3290/#3657: `one_commit_per_version`, `checkFork_stale`, `checkFork_on_committed`,
-  `inline_write_ok`, `stale_then_rerun`, `reader_cannot_commit`; refused commits
+  `inline_write_ok`, `stale_then_rerun`, `unchecked_fork_cannot_write` (every reachable state; `reader_cannot_commit` is its one-trace instance); refused commits
   (`refused_commit_publishes_nothing`, `stale_commit_publishes_nothing`, `commit_publishes`);
   indexer batches keep the data version (`batch_keeps_forks`, `batch_then_check`,
   `batch_does_not_stale`, #3566).
@@ -68,7 +68,7 @@ escalate, release, mutate, commit, indexer batch, delete, fork):
 `paths_release_once`, `count_eq_live`, `spawn_never_blocks`.
 `Tickets` (re-targeted to 73077bb4a, #3086): `inc_inv`, `dec_inv`, `bump_inv`, `release_exact`,
 `operational_iff`, `stale_release_isolated`; on main `create_index` bumps the generation
-whenever the label already has an entry (indexer.rs:357-359): `main_operational_complete`
+whenever the label already has an entry (indexer.rs:359-361): `main_operational_complete`
 (key property: over every interleaving of any number of `CREATE INDEX`es on a label and the
 batches of every populate job, an OPERATIONAL index has every field in every batch, outside
 the store→`populate_index` window), via the inductive invariant `MInv` (`reach_inv`);
@@ -87,8 +87,8 @@ value, any field options — a vector add always has the field's own non-zero di
 `phonetic_false_no_flag`, `phonetic_true_flag`,
 `capped_capacity_ok`, `evalK_accepts_huge`; plus `#guard`s for the option checks.
 
-`Knn` (89d68334a, #3088): `vector_query_nodes` / `vector_query_edges` (`graph.rs:4188`,
-`:4038`) with `k` clamped to `count.max(1)`: `alloc_bounded` (every buffer and the RediSearch
+`Knn` (89d68334a, #3088): `vector_query_nodes` / `vector_query_edges` (`graph.rs:4355`,
+`:4415`) with `k` clamped to `count.max(1)`: `alloc_bounded` (every buffer and the RediSearch
 `k` ≤ live entity count, for any user `k`), `no_abort_any_k`, `candidates_topk` (clamped
 query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_one_row`
 (the #3085 repro now returns its 1 row, as C), `empty_graph`.
@@ -109,14 +109,14 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    A second cycle with one graph: workers block on the full 1024 write channel
    (`graph_core.rs:547`, `tg.sender.send` `:1082`) while holding a pool worker.
 2. **FIXED by #3086 (73077bb4a)** — HISTORICAL (#3069, 1d15bf713): **Second index on a
-   label was never populated** (`graph/src/graph/graph.rs:577`
+   label was never populated** (`graph/src/graph/graph.rs:637`
    `ticket_pending_changes > 1` bail + old `index/indexer.rs:319-331` no `bump_id` for
    non-vector fields). `CREATE INDEX … (n.a)` then `(n.b)` on 300k nodes: Rust
    OPERATIONAL, `MATCH (n:L) WHERE n.b < 300000` via index = 0; C = 300000. Same
    mechanism loses index entries when writes race population (`repro/poprace.py`:
    8/8 rounds mismatched on Rust, 0/5 on C; not re-run at 73077bb4a, and it creates one
    index per round, so its cause may differ). (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.) Now `create_index` calls `bump_id` when the
-   entry exists (indexer.rs:357-359), so the older job fails `is_ticket_current` and the
+   entry exists (indexer.rs:359-361), so the older job fails `is_ticket_current` and the
    new one indexes everything: `main_operational_complete`, `main_lost_order_complete`.
 3. **FIXED by #3087 (49f698d22)** — HISTORICAL (fe619ac5f): a vector of the wrong
    dimension (or any vector on a `{dimension:0}` / no-options vector field) removed the
@@ -128,10 +128,10 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    `docSet_vector_sound`, `doc_always_accepted`, `other_fields_never_dropped`,
    `vector_dim_mismatch_keeps_range_entry`, `dim0_keeps_range_entry`, `noopts_keeps_range_entry`.
 4. **FIXED by #3088 (89d68334a)** — HISTORICAL (W3-conc-4 / #3085, 49f698d22): huge `k`
-   killed the server (old `graph.rs:4211,3938` `Vec::with_capacity(k)`). `CALL
+   killed the server (old `graph.rs:3883,3938` @ 49f698d22 `Vec::with_capacity(k)`). `CALL
    db.idx.vector.queryNodes('L','v', 1000000000000000, vecf32([1,2]))`: Rust crashed
-   (SIGSEGV in the OOM path); C returns the 1 row. (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.) Now `graph.rs:4208,3939` clamp `k` to
-   `node_count().max(1)` / `relationship_count().max(1)` and `:4014,3955` size by results:
+   (SIGSEGV in the OOM path); C returns the 1 row. (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.) Now `graph.rs:4375,4434` clamp `k` to
+   `node_count().max(1)` / `relationship_count().max(1)` and `:4391,4450` size by results (main 5c7af54f2):
    `Knn.alloc_bounded`, `no_abort_any_k`, `candidates_topk`, `huge_k_one_row`.
 5. **FIXED by #3290 (66d4d9d40)** — HISTORICAL (#3093, 4a4f2a72f): **Inline (MULTI/EXEC) write fails with "another write is in progress"**
    (`src/graph_core.rs:748` slot claimed as a reader, before escalation). A queued
@@ -177,7 +177,7 @@ fork — the property the Rust test `a_refused_commit_publishes_nothing` checks;
 
 ## Re-target to 73077bb4a (#3086, #3033)
 #3086 (issue #3069) bumps the generation in `create_index` whenever the label already has an entry
-(indexer.rs:357-359), fixing BUG 2. `Tickets` keeps the old `create_index` as `pre3086_createRange` and adds
+(indexer.rs:359-361), fixing BUG 2. `Tickets` keeps the old `create_index` as `pre3086_createRange` and adds
 `store`/`acquire`/`step`/`Reach`, the invariant `MInv` (`inv_create`, `inv_populate`, `inv_batch`,
 `reach_inv`) and `main_operational_complete`. indexer.rs lines from `drop_index` on moved +16
 (COVERAGE updated). #3033 touches only `graphblas/tensor.rs`/`matrix.rs`, outside this project.
@@ -185,7 +185,7 @@ fork — the property the Rust test `a_refused_commit_publishes_nothing` checks;
 ## Gaps
 
 Index population (73077bb4a): between `Indexer::create_index` storing the entry and
-`populate_index` acquiring its ticket (graph.rs:3598-3604, no lock held across them) the
+`populate_index` acquiring its ticket (graph.rs:3681-3688, no lock held across them) the
 entry has pending 0, so `is_label_indexed` (indexer.rs:454) reports the new field usable
 while no document has it (`store_window_operational_incomplete`). Unconfirmed live; the
 window is a few instructions. `Tickets` does not model write-path tickets, `drop_index`
@@ -197,7 +197,7 @@ versioned matrices (covered elsewhere); the drain check is exhaustive for 2
 producers only; memory ordering (Acquire/Release) is assumed SC; fork child
 behaviour beyond "sees `pub`" (GraphBLAS `wait_all`, OpenMP) is not modelled.
 
-## Gap closed 2026-10-20 (#3226; proofs cite fb3d516d0, repro on main 9d3869aa8)
+## Open bug 2026-10-20 (#3226; proofs cite fb3d516d0, repro on main 9d3869aa8): model gap closed, bug still open
 `Locks` now ranks RediSearch's global `RWLOCK` (`rsGlobal`) and per-spec `rwlock`
 (`rsSpec`) above the indexer lock. Both are taken by `handleIterCommon`
 (`deps/RediSearch src/redisearch_api.c:904-905`) and released only by

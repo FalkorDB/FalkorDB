@@ -14,16 +14,16 @@ here: `scF32`, `fkey32`, the hash-consistency proof, the per-shape key claims an
 | `scMain`     | `Value::sort_cmp` (:1529) / `sort_cmp_map` (:1566) = `sc scF32` |
 | `hwords`, `floatWord`, `f32HashBits` | `Hash for Value` (:823, Float arm :839-850, VecF32/Point :876-886), `f32_hash_bits` (:1919) — Model.lean |
 | `cmpKey`     | `OrderedKey::cmp_key` (ops/sort.rs:76) |
-| `compareAt`  | `Column::compare_at` (batch.rs:400) |
-| `compareRowsAt` | `Batch::compare_rows_at` (batch.rs:1282) |
-| `listSort`   | `list.sort` (functions/list.rs:210): `sort_by(Value::sort_cmp)` |
+| `compareAt`  | `Column::compare_at` (batch.rs:399) |
+| `compareRowsAt` | `Batch::compare_rows_at` (batch.rs:1287) |
+| `listSort`   | `list.sort` (functions/list.rs:197): `sort_by(Value::sort_cmp)` |
 -/
 namespace ValueOrder.Main
 open FalkorCore ValueOrder FalkorCore.Laws ValueOrder.SC
 
 /-! ## `sort_cmp_f32` -/
 
-/-- `sort_cmp_f32` (value.rs:1905). -/
+/-- `sort_cmp_f32` (value.rs:1945). -/
 def scF32 (a b : F) : Ordering :=
   match fpcmp a b with
   | some .eq => cmpB (isSignNeg b) (isSignNeg a)
@@ -96,7 +96,7 @@ theorem scF32_refl (x : F) : scF32 x x = .eq := by rw [scF32_key]; exact cmp3_re
 
 /-! ## Main's `sort_cmp` is a total preorder -/
 
-/-- `Value::sort_cmp` on main (value.rs:1529). -/
+/-- `Value::sort_cmp` on main (value.rs:1569). -/
 def scMain : V → V → Ordering := sc scF32
 
 /-- **Main's `sort_cmp` is a total preorder** on every well-formed value (Ints are `i64`,
@@ -312,7 +312,7 @@ def Col.get : Col → Nat → V
   | .nodeIds v, i => .node (v.getD i 0)
   | .unbound, _ => .null
 
-/-- `Column::compare_at` (batch.rs:400): raw lanes, else `sort_cmp` on `get`. -/
+/-- `Column::compare_at` (batch.rs:399): raw lanes, else `sort_cmp` on `get`. -/
 def compareAt : Col → Nat → Nat → Ordering
   | .ints v, a, b => cmpI (v.getD a 0) (v.getD b 0)
   | .floats v, a, b => scF64 (v.getD a (.num 0)) (v.getD b (.num 0))
@@ -324,7 +324,7 @@ fast paths sort exactly like the `Values` path, and like `list.sort`). -/
 theorem compareAt_eq_scMain (c : Col) (a b : Nat) : compareAt c a b = scMain (c.get a) (c.get b) := by
   cases c <;> rfl
 
-/-- `Batch::compare_rows_at` (batch.rs:1282): Unbound columns tie, else `sort_cmp`. -/
+/-- `Batch::compare_rows_at` (batch.rs:1287): Unbound columns tie, else `sort_cmp`. -/
 def compareRowsAt (c : Col) (a b : Nat) : Ordering :=
   match c with
   | .unbound => .eq
@@ -334,7 +334,7 @@ theorem compareRowsAt_eq_scMain (c : Col) (a b : Nat) :
     compareRowsAt c a b = scMain (c.get a) (c.get b) := by
   cases c <;> simp [compareRowsAt, Col.get, scMain, sc, order, V.tag, orderTag, cmpN, cmpI]
 
-/-- `list.sort`'s comparator (functions/list.rs:210) is `sort_cmp`; with `scMain_total`,
+/-- `list.sort`'s comparator (functions/list.rs:197) is `sort_cmp`; with `scMain_total`,
 `sort_by` sees a total order (W2-strlist-1 fixed by #2912). Its insertion-sort model: -/
 def insertBy (c : V → V → Ordering) (x : V) : List V → List V
   | [] => [x]
@@ -358,6 +358,46 @@ theorem listSort_perm (xs : List V) : (listSort xs).Perm xs := by
   | cons x xs ih =>
     simp only [listSort, List.foldr_cons]
     exact (insertBy_perm scMain x _).trans (ih.cons x)
+
+/-- Inserting a well-formed `x` into a `sort_cmp`-sorted list of well-formed values keeps it sorted. -/
+theorem insertBy_sorted (x : V) (wx : wf x = true) :
+    ∀ ys : List V, (∀ y ∈ ys, wf y = true) → ys.Pairwise (fun a b => scMain a b ≠ .gt) →
+      (insertBy scMain x ys).Pairwise (fun a b => scMain a b ≠ .gt)
+  | [], _, _ => by simp [insertBy]
+  | y :: ys, hw, hp => by
+    have wy := hw y (by simp)
+    have wys : ∀ z ∈ ys, wf z = true := fun z hz => hw z (by simp [hz])
+    rw [List.pairwise_cons] at hp
+    unfold insertBy
+    split
+    · rename_i hgt
+      have ih := insertBy_sorted x wx ys wys hp.2
+      rw [List.pairwise_cons]
+      refine ⟨?_, ih⟩
+      intro b hb
+      have hb' := (insertBy_perm scMain x ys).mem_iff.1 hb
+      rcases List.mem_cons.1 hb' with rfl | hb''
+      · have hsw := (scMain_total b y y wx wy wy).2.1
+        rw [hsw, hgt]; simp
+      · exact hp.1 b hb''
+    · rename_i hng
+      rw [List.pairwise_cons]
+      refine ⟨?_, List.pairwise_cons.2 hp⟩
+      intro b hb
+      rcases List.mem_cons.1 hb with rfl | hb''
+      · exact hng
+      · exact (scMain_total x y b wx wy (hw b (by simp [hb''])) ).2.2 hng (hp.1 b hb'')
+
+/-- **`list.sort` returns a sorted list**: on well-formed values every element is `sort_cmp`-below-or-equal
+every later one (with `listSort_perm`: the sorted permutation of the input). -/
+theorem listSort_sorted :
+    ∀ xs : List V, (∀ x ∈ xs, wf x = true) → (listSort xs).Pairwise (fun a b => scMain a b ≠ .gt)
+  | [], _ => by simp [listSort]
+  | x :: xs, hw => by
+    have ih := listSort_sorted xs (fun z hz => hw z (by simp [hz]))
+    show (insertBy scMain x (listSort xs)).Pairwise _
+    exact insertBy_sorted x (hw x (by simp)) _
+      (fun y hy => hw y (by simp [(listSort_perm xs).mem_iff.1 hy])) ih
 
 /-! ## #2917's per-shape key claims (folded in from the retired proofs/pr2917_review) -/
 
@@ -447,5 +487,6 @@ theorem pre14e341_point_zero_eq_but_hash_differs :
 #print axioms compareAt_eq_scMain
 #print axioms compareRowsAt_eq_scMain
 #print axioms listSort_perm
+#print axioms listSort_sorted
 
 end ValueOrder.Main

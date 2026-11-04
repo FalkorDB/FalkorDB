@@ -26,7 +26,10 @@ created node — contain the pattern. On b84473a7f the three live repros refuted
 (#3453); #3467 made `get_pending_nodes_with_labels` return exactly the live nodes
 that gain a pattern label and made Phase 1 skip them, and `includePendingMain_exact`
 proves the property for main: for every non-empty pattern, given the pending maps
-are keyed uniquely (`FxHashMap`) and name only live-or-created nodes. The three repros are
+are keyed uniquely (`FxHashMap`) and name only committed-or-created nodes (a deleted node may still
+appear in `set_labels`), the committed node ids are distinct and created ids are apart from them.
+Those are hypotheses about `Pending`/the committed graph (other code), not discharged here, and the
+composition covers an uncorrelated scan only (`argument_rows` empty). The three repros are
 `fixed3453_deleted_node`, `fixed3453_duplicate_row`, `fixed3453_split_multilabel`.
 -/
 namespace FalkorAggOps.IncludePendingExact
@@ -199,8 +202,8 @@ theorem mem_pendingWith (g : Gc) (p : Pd) (ls : List Nat) (hls : ls ≠ []) (hsk
         intro hall; have := hall l0 hl0; simp [hc0] at this
       simp [this]
 
-/-- **`includePendingMain_exact`** (#3453 fixed by #3467): for every non-empty pattern, when committed and
-created ids are apart, `set_labels` and `remove_labels` are keyed uniquely (they are `FxHashMap`s) and
+/-- **`includePendingMain_exact`** (#3453 fixed by #3467): for every non-empty pattern, when committed node
+ids are distinct (`g.nodes.Nodup`), created ids are apart from the committed ones, `set_labels` and `remove_labels` are keyed uniquely (they are `FxHashMap`s) and
 `set_labels` names only committed or created nodes, main's operator emits each live node whose effective
 labels contain the pattern exactly once, and nothing else. -/
 theorem includePendingMain_exact (g : Gc) (p : Pd) (ls : List Nat) (hls : ls ≠ [])

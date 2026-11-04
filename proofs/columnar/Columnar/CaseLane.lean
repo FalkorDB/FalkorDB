@@ -1,7 +1,7 @@
 import Columnar.AndOrLane
 
 /-!
-# `VectorEval::eval_case` (vector_expr.rs:477-555) against the per-row `eval_case`
+# `VectorEval::eval_case` (vector_expr.rs:477-551) against the per-row `eval_case`
 
 The lane evaluates the subject over all rows, then each `WHEN` over the positions no arm has
 claimed yet, its `THEN` over the positions it claims (scattered into `out`), and finally the

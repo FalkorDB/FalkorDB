@@ -186,7 +186,7 @@ inductive Abort | paused | unregistered | notMaster | invalid | stale
   deriving DecidableEq, Repr
 
 /-- `attempt_settle`'s outcome given: nothing pending, the upgrade result, and `commit`'s
-refusal if any (constraint.rs:327, `tg.graph.commit(g_arc)?`). The closure forks under the write
+refusal if any (constraint.rs:329, `tg.graph.commit(g_arc)?`). The closure forks under the write
 lock, so its version is current: `commit` cannot report `stale` here
 (`QuerySession.current_kept`), but the mapping is total. -/
 def attempt (nothingPending : Bool) (upgrade : Option Abort) (commit : Option Abort := none) :
@@ -199,7 +199,7 @@ def attempt (nothingPending : Bool) (upgrade : Option Abort) (commit : Option Ab
 theorem attempt_nothing (u c : Option Abort) : attempt true u c = none := rfl
 theorem attempt_ok : attempt false none none = none := rfl
 theorem attempt_upgrade_fail (a : Abort) (c : Option Abort) : attempt false (some a) c = some a := rfl
-/-- A refused version is reported as `Invalid`, not flattened to a transient (constraint.rs:305-310):
+/-- A refused version is reported as `Invalid`, not flattened to a transient (constraint.rs:316-329: the comment on the mapping, then the `?`):
 the retry loop must not spend its whole budget on a permanent engine fault. -/
 theorem attempt_invalid : attempt false none (some .invalid) = some .invalid := rfl
 theorem attempt_stale : attempt false none (some .stale) = some .stale := rfl

@@ -518,13 +518,20 @@ theorem rebased_commit_keeps_chain (ours theirs : SE) (f : IndexColumn) (h : ove
     (rebasedSE ours theirs f).en.state = theirs.en.state := by
   simp [rebasedSE, h]
 
-/-- **...and the next batch fits**: a batch prepared on the published copy (`p.commits + 1`) is judged against
-    the writer's rebased commit, which has `p.commits`: not discarded (it is a `CatchUp`, the writer having
-    moved the data version). -/
-theorem rebased_batch_fits {R : Type} (prepared after : V R) (p : SE) (hprep : prepared.entry = some ⟨p.en, p.generation, p.commits + 1⟩)
-    (hafter : after.entry = some p) (hv : after.version ≠ prepared.version) :
-    indexerFit prepared after = .catchUp := by
-  simp [indexerFit, hprep, hafter, discardedAgainst, hv]
+/-- **...and the next batch fits**: the writer commits `after := fork.rebased pub f` (derived here from the
+    rebase itself, not assumed). A batch prepared on the published copy has that copy's generation and
+    `p.commits + 1`; judged against the writer's rebased commit, which has `p.commits`, it is not discarded
+    (it is a `CatchUp`, the writer having moved the data version). The fit reads only the generation and
+    the commit count, so the refreshed column `f` is irrelevant. -/
+theorem rebased_batch_fits {R : Type} (fork pub prepared : V R) (f : SE → SE → IndexColumn) (o p : SE)
+    (ho : fork.entry = some o) (hp : pub.entry = some p) (hov : overtakenSE o p = true)
+    (en : IndexEntry) (hprep : prepared.entry = some ⟨en, p.generation, p.commits + 1⟩)
+    (hv : (fork.rebased pub f).version ≠ prepared.version) :
+    indexerFit prepared (fork.rebased pub f) = .catchUp := by
+  have hafter : (fork.rebased pub f).entry = some (rebasedSE o p (f o p)) := by
+    simp [V.rebased, ho, hp]
+  have hk := rebased_commit_keeps_chain o p (f o p) hov
+  simp [indexerFit, hprep, hafter, discardedAgainst, hk.1, hk.2.1, hv]
 
 /-! ## The smaller functions around them -/
 

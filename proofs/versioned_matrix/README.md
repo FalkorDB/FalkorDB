@@ -49,7 +49,7 @@ No. `mayHold_sound` (bit-exact over `BitVec 64`) proves `may_hold` never answers
 
 **7. Is `count_in_rows` exact?**
 
-`vmCountInRows_spec` proves `VersionedMatrix::count_in_rows` returns the number of logical entries in the selected rows, and that its `u64` subtraction cannot underflow (#3022). This is **CONDITIONAL** on `LayerCount`, the spec of `Matrix::count_in_rows` per layer. `countPairsInto_spec` covers `Tensor::count_pairs_into`.
+`vmCountInRows_spec` proves `VersionedMatrix::count_in_rows` returns the number of logical entries in the selected rows, and that its `u64` subtraction cannot underflow (#3022). This is **CONDITIONAL** on `LayerCount`, the spec of `Matrix::count_in_rows` per layer. `vmCountInRows_distinct` adds that, given `dp` duplicate-free and disjoint from `m`, the counted list has no repeated coordinate, so the result is a count of distinct effective entries. `countPairsInto_spec` covers `Tensor::count_pairs_into`; `countPairsInto_distinct` adds the same for a duplicate-free pair list.
 
 ## The headline theorems
 
@@ -94,7 +94,7 @@ See [`../FINDINGS.md`](../FINDINGS.md) for the repro of each.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W4-matrix-1 | removed (17ccc5412) | `Tensor::resize`'s shrink never trimmed `me`. Orphan multi-edge rows survived: `iter_edges` yielded phantom ids and `edge_count` was too high (repro `tensor_shrink_keeps_orphan_me_rows`) | **Fixed by #3250 (#3246):** `resize` never shrinks; `resizeT_edges` and `resizeT_allInv` prove no entry is dropped and every invariant holds, with no hypothesis |
+| W4-matrix-1 | removed (17ccc5412) | `Tensor::resize`'s shrink never trimmed `me`. Orphan multi-edge rows survived: `iter_edges` yielded phantom ids and `edge_count` was too high (repro `tensor_shrink_keeps_orphan_me_rows`) | **Fixed by #3250 (#3246):** `resize` never shrinks; `resizeT_edges` proves no entry is dropped, and `resizeT_allInv` keeps every invariant whenever the input satisfies `AllInv`, with no node-capacity precondition |
 | #2898 | — (mechanism shown by `clone_of_owned_is_not_isolated`) | `versioned_matrix::Iter` holds its layer's handle with no borrow of the owner, so an in-place write can land under a live iterator (Rust probe `probe_iter_outlives_in_place_mutation`) | **Open, latent:** issue #2898, needs a design choice; no PR |
 | #2903 | `old_write_leaks_into_new_version` | Copy-on-write is one-directional: a write through an older version leaks into the newer one. Safe today because only the in-flight version is ever written (repro `cow_is_one_directional_old_version_write_leaks`) | **Latent, documented (release):** PR #2905 (merged, main 1d15bf713) documents the contract and debug builds assert it; release behaviour, and so this counterexample, is unchanged |
 
@@ -127,11 +127,11 @@ The lakefile has no path dependencies. Other projects rely on its results by cit
 
 ## Coverage
 
-`COVERAGE.tsv` has 132 rows: 69 in `versioned_matrix.rs`, 51 in `tensor.rs`, 7 in `mvcc_graph.rs` and 5 in `cow.rs`.
+`COVERAGE.tsv` has 134 rows: 69 in `versioned_matrix.rs`, 51 in `tensor.rs`, 9 in `mvcc_graph.rs` and 5 in `cow.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 131 |
+| PROVEN | 133 |
 | CONDITIONAL | 1 |
 
 - **CONDITIONAL:** `VersionedMatrix::count_in_rows`, on `LayerCount` (above).
@@ -140,7 +140,7 @@ The lakefile has no path dependencies. Other projects rely on its results by cit
 
 - **GraphBLAS calls are definitions with their spec meaning,** not checked against the C library. Pending tuples, `wait` and `resync` never change which coordinates a layer stores, so the set-level model leaves them out. `DeltaBook.lean` and `VMOps.lean` model the counters and pending flags separately.
 - **The `Tensor` proofs work one pair at a time.** That pairs are independent rests on `compound_key` being injective (`compoundKey_inv`) and on each batch decision touching only its own pair.
-- **Concurrency is modelled as a sequence of events with one writer.** Atomics are plain values (every access is `Relaxed` under the single-writer rule). Thread interleavings and `Arc` reference counts are not modelled here; `proofs/endpoint_index` and `proofs/graphblas_wrappers` model those for their own types.
+- **Concurrency is modelled as a sequence of events with one writer and one in-flight version.** `begin` while a version is in flight replaces it (an implicit abandon); the engine's concurrent forks are not modelled together. Atomics are plain values (every access is `Relaxed` under the single-writer rule). Thread interleavings and `Arc` reference counts are not modelled here; `proofs/endpoint_index` and `proofs/graphblas_wrappers` model those for their own types.
 - **`Iter`'s missing lifetime (#2898) is documented, not modelled:** the iterator model consumes values, not live handles.
 - **The `Pre` caller contracts** of `set` and the bulk inserts are assumed, not proven for each caller.
 

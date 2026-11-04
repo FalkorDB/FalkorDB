@@ -17,7 +17,7 @@ Rust (`MergeOp::next`, `merge.rs:279-447`): per input batch of up to
 `BATCH_SIZE` rows, the match sub-plan runs ONCE over all rows (`merge.rs:313-343`)
 against the graph as it is at the start of the batch (the scans see pending
 creations of *earlier batches* through `IncludePending`,
-`planner/mod.rs:3113`); then rows are processed in order (`merge.rs:347-434`):
+`planner/mod.rs:3112`); then rows are processed in order (`merge.rs:347-434`):
 
 * no match → `do_create_fallback` (`merge.rs:113-178`): look the pattern hash up
   in `runtime.merge_pattern_cache` (`runtime.rs:201`); on a hit bind the cached
@@ -105,7 +105,7 @@ def refMerge (cl : Clause α) (st : RState (α := α)) (rows : List α) : RState
 
 /-! ## Rust -/
 
-/-- `merge_pattern_cache`: hash ↦ cached `(var id, entity id)` bindings. -/
+/-- `merge_pattern_cache`: key `(operator idx, pattern hash)` ↦ cached `(var id, entity id)` binding. -/
 abbrev Cache := List ((Nat × Nat) × (Nat × Nat))
 
 /-- Since #3050 the key is `(operator idx, pattern hash)` (`merge.rs:124,174`). -/

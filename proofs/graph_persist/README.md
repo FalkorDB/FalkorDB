@@ -15,7 +15,7 @@ The full Lean↔Rust mapping is in the header of [`GraphPersist.lean`](GraphPers
 
 **1. Does loading a saved graph give back the same graph?**
 
-Yes, for a graph saved in one key: `load_encode`. Decoding the payload that `encode_graph` writes gives exactly the arguments `Graph::restore` needs to rebuild that graph:
+Yes, for a graph saved in one key, **provided** the graph is well-formed (`WF`) and the sub-codecs obey their round-trip laws (the fields of `Codecs`: the header and schema codecs are proved in `redis_layer`; the GraphBLAS matrix and tensor serialisation is trusted, not linked to the Rust code here): `load_encode`. Decoding the payload that `encode_graph` writes gives exactly the arguments `Graph::restore` needs to rebuild that graph:
 
 - node and edge counts and the deleted-id sets;
 - both attribute stores;

@@ -15,7 +15,10 @@ logic is a `theorem`.
 namespace GBW
 
 /-- `mod.rs:GrB_Info` (bindgen enum, `#[repr(i32)]`). Only the codes the
-wrappers actually branch on are named; the rest fold into `other`. -/
+wrappers actually branch on, or that a call is documented to return, are named;
+every other `GrB_Info` value (`GrB_UNINITIALIZED_OBJECT`, `GrB_OUTPUT_NOT_EMPTY`,
+`GrB_ALREADY_SET`, `GrB_INSUFFICIENT_SPACE`, `GrB_EMPTY_OBJECT`, `GxB_JIT_ERROR`,
+`GxB_GPU_ERROR`, `GxB_OUTPUT_IS_READONLY`) folds into `other`. -/
 inductive Info where
   | success            -- GrB_SUCCESS = 0
   | noValue            -- GrB_NO_VALUE = 1
@@ -23,12 +26,14 @@ inductive Info where
   | nullPointer        -- GrB_NULL_POINTER = -2
   | invalidValue       -- GrB_INVALID_VALUE = -3
   | invalidIndex       -- GrB_INVALID_INDEX = -4
+  | domainMismatch     -- GrB_DOMAIN_MISMATCH = -5
   | dimensionMismatch  -- GrB_DIMENSION_MISMATCH = -6
   | notImplemented     -- GrB_NOT_IMPLEMENTED = -8
   | outOfMemory        -- GrB_OUT_OF_MEMORY = -102
   | invalidObject      -- GrB_INVALID_OBJECT = -104
   | indexOutOfBounds   -- GrB_INDEX_OUT_OF_BOUNDS = -105
   | panic              -- GrB_PANIC = -101
+  | other              -- any other GrB_Info value (see above)
 deriving DecidableEq, Repr
 
 /-- Is this the success code? The `info == GrB_Info::GrB_SUCCESS` test the

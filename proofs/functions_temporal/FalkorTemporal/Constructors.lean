@@ -14,9 +14,9 @@ import FalkorTemporal.Duration
 | `quarterPath`       | `date_from_components`, `quarter` branch — `temporal.rs:109-119` |
 | `ymdPath`           | `date_from_components`, year/month/day tail — `temporal.rs:122-128` |
 | `dateFromComponents`| `date_from_components` — `temporal.rs:82` |
-| `weekSlice`         | `rest.split_at_checked(2)` in `parse_week_date` — `temporal.rs:285-287` |
-| `sliceOk`           | byte 2 of `rest` is a char boundary |
-| (`formatDate` moved to `Components.lean`) | `format_date` — `value.rs:285`, `push_date` `value.rs:836` (#2986) |
+| `weekSlice`         | the `rest.len() <= 2` branch and `rest.split_at_checked(2)` in `parse_week_date` — `temporal.rs:279-289` |
+| `sliceOk`, `byteLen` | byte 2 of `rest` is a char boundary / `rest.len()` |
+| (`formatDate` moved to `Components.lean`) | `format_date` — `value.rs:281`, `push_date` `value.rs:828` (#2986) |
 | pre-#2950 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412)         | the same before #2950 (737dfb5da): unchecked `NaiveDate ± TimeDelta`, `&rest[..2]` (history) |
 -/
 namespace FalkorTemporal
@@ -259,8 +259,6 @@ theorem dayOfWeek_zero_rejected : weekPath 2021 1 0 = .err := by decide +kernel
 theorem dayOfWeek_out_of_range_errors :
     weekPath 2021 1 8 = .err ∧ weekPath 2021 1 (-1) = .err := by decide +kernel
 
-/-! ## Before #2950 (history): unchecked chrono arithmetic -/
-
 /-! ## `parse_week_date`: splitting a `str` at byte 2 -/
 
 /-- UTF-8 width of a code point. -/
@@ -272,21 +270,37 @@ def boundaries : List Char → Nat → List Nat
   | [], off => [off]
   | c :: cs, off => off :: boundaries cs (off + utf8Len c)
 
-/-- Byte 2 is a char boundary: `&rest[..2]` does not panic, `split_at_checked(2)` is `Some`. -/
+/-- Byte 2 is a char boundary: `split_at_checked(2)` is `Some` (it is `None` when byte 2 falls
+inside a multi-byte character, or past the end). -/
 def sliceOk (rest : List Char) : Bool := (boundaries rest 0).contains 2
 
+/-- Length of `rest` in UTF-8 bytes (`rest.len()`). -/
+def byteLen (rest : List Char) : Nat := (rest.map utf8Len).sum
+
 inductive SliceOutcome where
-  | panic
   | err
   | ok
   deriving DecidableEq, Repr
 
-/-- Main (`temporal.rs:285-287`): `rest.split_at_checked(2).ok_or_else(..)?`. -/
-def weekSlice (rest : List Char) : SliceOutcome := if sliceOk rest then .ok else .err
+/-- `parse_week_date` (`temporal.rs:279-289`) up to the two numeric parses: `rest.len() <= 2`
+takes `rest` whole as the week (no slice), otherwise `rest.split_at_checked(2).ok_or_else(..)?`
+errors exactly when byte 2 is not a char boundary. The result only says whether the split is
+reached and succeeds; the numeric parses behind it (`Parse.parseWeek`) are abstract. The
+no-panic guarantee itself is the type of `split_at_checked` (an `Option`), not a theorem
+here. -/
+def weekSlice (rest : List Char) : SliceOutcome :=
+  if byteLen rest ≤ 2 then .ok else if sliceOk rest then .ok else .err
 
-/-- **#2950 (W2-temporal-3 fixed)**: the week-string split never panics. -/
-theorem weekSlice_total (rest : List Char) : weekSlice rest ≠ .panic := by
-  unfold weekSlice; split <;> intro h <;> cases h
+/-- **#2950 (W2-temporal-3 fixed)**: the split step errors exactly for a long `rest` whose byte
+2 is not a char boundary (where `&rest[..2]` used to panic). -/
+theorem weekSlice_err_iff (rest : List Char) :
+    weekSlice rest = .err ↔ 2 < byteLen rest ∧ sliceOk rest = false := by
+  unfold weekSlice
+  by_cases h1 : byteLen rest ≤ 2 <;> by_cases h2 : sliceOk rest = true <;> simp_all
+
+/-- A `rest` of at most two bytes is not sliced at all. -/
+theorem weekSlice_short_ok (rest : List Char) (h : byteLen rest ≤ 2) : weekSlice rest = .ok := by
+  simp [weekSlice, h]
 
 /-- `date('2020W1é')` is now an error ("Invalid week"), as in C ("Failed to parse date"). -/
 theorem week_slice_errors : weekSlice ['1', 'é'] = .err := by decide

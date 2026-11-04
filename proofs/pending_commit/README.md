@@ -31,11 +31,11 @@ No. A `Block` tracks `dead` and `slack` entries in `u32` counters updated with p
 
 **4. Do properties survive an RDB save and load?**
 
-Yes. `encode_decode_roundtrip` proves decoding what was encoded into an empty store restores exactly the encoded entities' spans. `pack_unpack` proves the 12-byte packed value round-trips, with floats as IEEE bits so NaN payloads and `-0.0` survive.
+Yes, under the model's preconditions. `encode_decode_roundtrip` assumes a well-formed store (`SInv`) whose spans are sorted and null-free (`SOK`), attribute ids below both the decode limit and 65,536, and at most 65,535 entries per entity; it proves decoding what was encoded into an empty store restores exactly the encoded entities' spans. `pack_unpack` assumes a well-formed block heap (`HInv`) of fewer than 2^32 cells and proves the 12-byte packed value round-trips, with floats as IEEE bits so NaN payloads and `-0.0` survive. A malformed RDB or an oversized store is outside what these theorems cover.
 
 **5. Are UNIQUE constraints enforced correctly since #3334?**
 
-Since #3334, a `UNIQUE` check looks each affected member's key up in the constraint's index instead of scanning the whole label. `uniqueViolated_spec` proves the check reports a violation iff two members share a full key, or a member's key is held by a live entity outside the affected set. `uniqueViolated_agrees` proves this equals the old label-scan verdict. Both need the index to be complete (see CONDITIONAL below).
+Since #3334, a `UNIQUE` check looks each affected member's key up through the constraint's index (`query_for` then `lookup`) instead of scanning the whole label. When the index cannot answer for a member (no operational index, or a value that is not exactly indexable, such as NaN) the whole set falls back to a label or type scan (`uniqueViolated_declined`: no lookup runs and the verdict does not depend on it). `uniqueViolated_spec` proves the check reports a violation iff two members share a full key, or a member's key is held by a live entity outside the affected set. `uniqueViolated_agrees` proves this equals the old label-scan verdict. Both rely on two separate completeness contracts (see CONDITIONAL below): `hIdx`, the index returns every live candidate carrying the key that this commit did not write, and `hScan`, the label matrix or tensor lists every live member.
 
 **6. Does a deleted entity keep reading correctly for the rest of the query?**
 
@@ -79,7 +79,7 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 | #2776 | removed (17ccc5412); `fixed3524_replace_clears_staged`, `replace_reads_src` | `SET x = m` / `SET r = {…}` kept attributes staged earlier in the query instead of replacing them | Fixed by #3524 (af45ca776) |
 | setSpan u16 | `setSpan_u16_wrap` | `set_span` stores `n as u16`, so 65,536+ attributes on one entity wrap and the span reads empty. Only a GRAPH.BULK header with that many columns or a malformed RDB can reach it; `setSpan_cast_exact` shows sorted unique ids always fit | Bulk side fixed by #3063 (`normResolved_fits`); the malformed-RDB side remains, not reproduced |
 | #3063 | removed (17ccc5412) | A GRAPH.BULK header naming a property twice stored two entries for one id | Fixed by #3063 (`resolved_duplicate_fixed`: the first column wins, as in C) |
-| #3448 | `bug3448_remove_of_staged_label` (property `RemLCommitted`), `bug3448_cancelled_node_keeps_remL` (property `RemLLive`) | `remove_node_labels` stages the removal of a label the node only had staged (a created node, an earlier `SET`), and `delete_pending_node` keeps the node's `remove_labels`. `CREATE (n:Foo) REMOVE n:Foo DELETE n` then ships `RemoveLabels` before the node's `CreateNode` and the replica forces a full resync (effects_emit_apply). The inflated `Labels removed` stat is the same in C | **Open** (#3448) |
+| #3448 | `bug3448_remove_of_staged_label` (property `RemLCommitted`), `bug3448_cancelled_node_keeps_remL` (property `RemLLive`) | `remove_node_labels` stages the removal of a label the node only had staged (a created node, an earlier `SET`), and `delete_pending_node` keeps the node's `remove_labels`. `CREATE (n:Foo) REMOVE n:Foo DELETE n` then ships `RemoveLabels` before the node's `CreateNode` and the replica forces a full resync (effects_emit_apply). The `Labels removed` statistic is also inflated by the removals of labels that were never committed | **Open** (#3448) |
 | #3453 | `pendingWithLabels_live` (property `PendingWithLabelsLive`), `fixed3453_*` | `get_pending_nodes_with_labels` ignored deletion and committed labels. Now it takes the graph and returns the live nodes gaining a pattern label. The composed MERGE scan property is in ops_aggregate | **Fixed** by #3467 (a477d9aa3) |
 | #3447 | `bug3447_cascade_drops_type_key` (property `CancelledTypeRegistered`) | A pending edge of a new type cascaded by `DETACH DELETE` empties its `created_rels_by_type` group, which is dropped, so commit never registers the type; the replica then sees an id gap (effects_emit_apply) | **Open** (#3447) |
 | #3339 | removed (17ccc5412) | Property validation accepted lists nested to any depth | Fixed by #3339 (`validate_depth`: accepted values have depth ≤ 4096) |
@@ -105,12 +105,12 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `rust_reads_dead_entity`, `deferred_preserves_Good` |
 | `EvictPR2964.lean` | **Models open PR #2964, not main**: `evict_preserves_Good` |
 | `Stats.lean` | Write statistics: `c_eq_rust_plus_cancelled`, `cancel_example` |
-| `PendingAttrs.lean`, `PendingState.lean`, `PendingRels.lean`, `PendingDeg.lean`, `PendingDocs.lean` | All of `pending.rs`: validation, staging, reads, created relationships, degrees (`deg_panics_on_pending_deleted`), `IndexDocs`, `clear`, `effects_count` |
+| `PendingAttrs.lean`, `PendingState.lean`, `PendingRels.lean`, `PendingDeg.lean`, `PendingDocs.lean` | All of `pending.rs`: validation, staging, reads, created relationships, degrees (`fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted`), `IndexDocs`, `clear`, `effects_count` |
 | `PendingCommitOp.lean` | `Pending::commit` and constraint enforcement: `commit_spec`, `check_spec`, `enforce_spec` |
 | `UniqueIndex.lean` | #3334's index-lookup UNIQUE check: `uniqueViolated_spec`, `uniqueViolated_agrees`, `checkUnique_spec` |
 | `PendingCancel.lean`, `CancelRust.lean` | Unwinding a pending node and handing ids back to the graph: `deletePendingNode_spec_rust`, `cancelN_spec` |
 | `CommitOpNext.lean` | `CommitOp::next` with `end_segment`: `commitNext_ok` |
-| `StagedBugs.lean` | Staged label/type state that outlives its entity: #3447, #3448, #3453 counterexamples, `deletePendingNode_keeps_remL` |
+| `StagedBugs.lean` | Staged label/type state that outlives its entity: #3447 and #3448 counterexamples, #3453's `fixed3453_*` repros (fixed by #3467), `deletePendingNode_keeps_remL` |
 | `Hold.lean` | #3436/#3439-era borrow holding: a caller-held `graph_mut()` / `graph()` across `Pending::commit`, `end_segment`, `IndexDocs::commit` equals main's sequential borrows (`commit_same`, `single_mut_same`, `single_rd_same`), on `runtime_core`'s `RuntimeCore.Cell` borrow-word model |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
@@ -118,17 +118,17 @@ Path dependencies (`lakefile.toml`): [`../runtime_core`](../runtime_core), for t
 
 ## Coverage
 
-`COVERAGE.tsv` has 180 rows: all of `attribute_store.rs` (66) and `pending.rs` (67), plus 21 `graph.rs` functions and 26 operator functions (`ops/{commit,create,set,delete,remove}.rs`).
+`COVERAGE.tsv` has 188 rows: all of `attribute_store.rs` (66) and `pending.rs` (72), plus 21 `graph.rs` functions and 29 operator functions (`ops/{commit,create,set,delete,remove}.rs`).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 136 |
+| PROVEN | 144 |
 | MODELLED | 12 |
 | NOT COVERED | 27 |
 | AXIOMATISED | 3 |
 | CONDITIONAL | 2 |
 
-- **All of `attribute_store.rs` is PROVEN**, and 65 of 67 `pending.rs` functions; the other two are the CONDITIONAL constraint checks.
+- **All of `attribute_store.rs` is PROVEN**, and 70 of 72 `pending.rs` functions; the other two are the CONDITIONAL constraint checks.
 - **AXIOMATISED:** `set_node_labels_product`, `set_nodes_labels_bulk`, `remove_nodes_labels`. They call GraphBLAS on the label matrices, which is assumed to behave as set insert and delete, so commit is `(C ∪ set) \ remove`.
 - **MODELLED:** operator and graph functions whose effect is modelled here but proven elsewhere or only as part of a larger step: `create_batch`, `set_batch`, `set_inner`, the delete paths, `remove`, `create_nodes` and the id bounds (proven in `graph_queries`), `delete_nodes`, `import_node_attrs_resolved`.
 - **NOT COVERED:** operator plumbing (`new`, `next`, pattern and attribute resolution), the relationship tensor (`create_relationships_bulk`, `delete_relationships`, `delete_implicit_edges`, proven in `versioned_matrix`), name interning, and the RediSearch commit boundary.
@@ -143,7 +143,7 @@ Path dependencies (`lakefile.toml`): [`../runtime_core`](../runtime_core), for t
 - **The graph and RediSearch.** Operations `Pending::commit` calls on the graph and RediSearch are uninterpreted. `get_relationship_endpoints` is a partial function, where `none` is the panic.
 - **Collections.** `FxHashMap` and `RoaringTreemap` are duplicate-free association lists and lists.
 - **Other projects.** Relationship tensors, id spaces and effects emission are proven in `versioned_matrix`, `id_space` and the effects projects.
-- **Constraint index.** The UNIQUE check's index completeness is a hypothesis (CONDITIONAL above). Composite keys are taken as injective.
+- **Constraint index.** The UNIQUE check's index completeness is a hypothesis (CONDITIONAL above). Composite keys are the `Debug` renderings of the values, taken as injective except that every floating-point NaN renders alike (so NaN-valued members share a key; see `UniqueIndex.lean`).
 
 ## Build and check
 

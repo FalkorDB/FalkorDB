@@ -1,6 +1,6 @@
-# functions_str_list: string, list and entity functions never panic and match the spec
+# functions_str_list: models and proofs for the string, list and entity functions
 
-This project proves that FalkorDB's Cypher string and list functions are *total*: no `i64` argument can make them panic or overflow. It also proves that they return what the openCypher spec says and, where both have an answer, what C FalkorDB returns. It covers the list parts of expression evaluation too (indexing, slicing, `IN`, quantifiers, comprehensions, `reduce`), the `=~` regex match, and the graph-entity functions (`labels`, `type`, `properties`, `startNode`, …), including what they return for an entity deleted earlier in the same query.
+This project proves that FalkorDB's Cypher string and list functions are *total* (no `i64` argument can make a modelled function panic or overflow), that they return what the openCypher spec says and, where both have an answer, what C FalkorDB returns. The exceptions are called out below: the open bug C (`=~` is unanchored) and the deliberate divergences from C and from the spec; and `ListComprehension` and `eval_iter_expr` are modelled for their source dispatch only (MODELLED). It covers the list parts of expression evaluation too (indexing, slicing, `IN`, quantifiers, comprehensions, `reduce`), the `=~` regex match, and the graph-entity functions (`labels`, `type`, `properties`, `startNode`, …), including what they return for an entity deleted earlier in the same query.
 
 User-facing behaviour that depends on it:
 
@@ -35,7 +35,7 @@ Not on main:
 - `list.insert` normalisation can't overflow (`insertNorm_safe`).
 - Every element of the eager `range(a, b, step)` lies between start and end, so it never overflows (`range_elems_between`, `range_noOverflow`).
 
-The lazy `UNWIND range(a, b, step)` yields exactly the eager list and never overflows, for every `i64` input (`rangeIter_eq_range`), since #2899. Before it, `UNWIND range(10, 0, -9223372036854775808)` panicked in debug, a variant of #2894; see also `expr_semantics`.
+The lazy `UNWIND range(a, b, step)` yields exactly the eager list and never overflows, for every `i64` input (`rangeLazy_eq_range`: the early returns for `step = 0`, an empty range and "Range too large", then `rangeIter_eq_range` for the iterator itself), since #2899. A null or non-integer argument is rejected by `validate_args_type` before the iterator exists and is not modelled. Before it, `UNWIND range(10, 0, -9223372036854775808)` panicked in debug, a variant of #2894; see also `expr_semantics`.
 
 **3. Are the quantifiers and `IN` three-valued logic?**
 
@@ -55,15 +55,15 @@ On every input, for these:
 | `left`, `right` | `left_agrees_C`, `right_agrees_C` |
 | `reverse` | `reverse_agrees_C`: C's bytes are the UTF-8 of Rust's `chars().rev()` |
 | `trim` | `trim_agrees_C`: Rust's `ltrim∘rtrim` equals C's `rtrim∘ltrim` |
-| `split` | `splitAux_eq_cSplit` for every non-empty delimiter, and `split_agrees_C` for the empty-string branches |
+| `split` | `splitAux_eq_cSplit` for every non-empty delimiter, and `split_agrees_C` for the empty-string branches, both under the assumption that C's byte-wise `strstr` matching coincides with the model's code-point matching (not proven, see below) |
 
 `string.join` precomputes its length. `joinLen_correct` proves that the length is right, so its `debug_assert_eq!` can't fire.
 
-`toLower`/`toUpper` never error since #2953, including on strings holding U+FFFD (`toLower_total`), and equal C whenever the case mapping is one-to-one (`case_agrees_C_if_simple`). Case mapping itself is a deliberate difference. Rust uses full Unicode mapping, and C uses simple mapping: `toUpper('ß')` is `'SS'` in Rust and `'ẞ'` in C. Neo4j matches Rust.
+`toLower`/`toUpper` never error since #2953, including on strings holding U+FFFD (`toLower_total`), and equal C whenever the case mapping is simple, one character to one character (`case_agrees_C_if_simple`). Case mapping itself is a deliberate difference. Rust uses full Unicode mapping, and C uses simple mapping: `toUpper('ß')` is `'SS'` in Rust and `'ẞ'` in C. Neo4j matches Rust.
 
 **5. What does a deleted entity return later in the same query?**
 
-The team decided on 2026-09-25 that a deleted entity keeps returning *all* its details for the rest of the query. `deleteRel_preserves`, `deleteNode_preserves` and `deleteNode_preserves_all` prove this holds for type, endpoints, properties, keys and id, and `deleteNode_labels_preserved` for node labels, including labels the query staged before the DELETE (bug W4-fn-1, fixed by #3288).
+The team decided on 2026-09-25 that a deleted entity keeps returning *all* its details for the rest of the query. `deleteRel_preserves`, `deleteNode_preserves` and `deleteNode_preserves_all` prove this holds for type, endpoints, properties, keys and id, and `deleteNode_labels_preserved` for node labels (as a set: Rust gives the snapshot no label order), including labels the query staged before the DELETE (bug W4-fn-1, fixed by #3288).
 
 ## The headline theorems
 
@@ -73,16 +73,16 @@ The team decided on 2026-09-25 that a deleted entity keeps returning *all* its d
 | `getElements_bounds`, `getElements_spec` | `l[a..b]` never panics and is the clamped slice | `FalkorStrList.lean` |
 | `listRemove_eq_spec` | `list.remove` equals the spec for all `i64` inputs, debug and release (#2952) | `FalkorStrList.lean` |
 | `range_noOverflow` | The eager `range()` never overflows | `FalkorStrList.lean` |
-| `rangeIter_eq_range` | The lazy `UNWIND range()` iterator yields exactly the eager `range()` list and never overflows, for every `i64` input (#2899) | `FalkorStrList.lean` |
+| `rangeLazy_eq_range`, `rangeIter_eq_range` | The lazy `UNWIND range()` yields exactly the eager `range()` result (empty and `step = 0` cases included) and never overflows, for every `i64` input (#2899); `rangeIter_eq_range` is the iterator itself on non-empty results | `FalkorStrList.lean` |
 | `all_is_kand`, `any_is_kor`, `none_is_not_any`, `single_spec` | The list quantifiers are three-valued logic | `FalkorStrList.lean` |
 | `contains_false_iff` | When `IN` returns `false` rather than `null` | `FalkorStrList.lean` |
-| `substring3_agrees_C`, `left_agrees_C`, `right_agrees_C`, `trim_agrees_C`, `reverse_agrees_C`, `split_agrees_C` | These string functions equal C on every input | `FalkorStrList.lean` |
+| `substring3_agrees_C`, `left_agrees_C`, `right_agrees_C`, `trim_agrees_C`, `reverse_agrees_C`, `split_agrees_C` | These string functions equal C on every input (`split`: given that C's byte matching coincides with code-point matching, see the note under the table) | `FalkorStrList.lean` |
 | `joinLen_correct` | `string.join`'s precomputed length is exact | `FalkorStrList.lean` |
-| `toLower_total`, `case_agrees_C_if_simple` | `toLower`/`toUpper` never error, and equal C under a one-to-one mapping (#2953) | `FalkorStrList.lean` |
+| `toLower_total`, `case_agrees_C_if_simple` | `toLower`/`toUpper` never error, and equal C under a simple (one character to one character) mapping (#2953) | `FalkorStrList.lean` |
 | `listSort_float_cmp_antisymmetric`, `listSort_perm` | `list.sort`'s float comparison is antisymmetric (#2912), and the sort returns a permutation | `FalkorStrList.lean`, `Misc.lean` |
 | `deleteNode_preserves_all`, `deleteNode_labels_preserved` | Deleted entities keep their details, labels staged earlier in the query included (#3288) | `Entity.lean` |
 | `startEndNode_null`, `startEndNode_total` | `startNode(null)`/`endNode(null)` is `null` (#3132) | `Entity.lean` |
-| `comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err` | `[x IN src \| …]` equals C on every source: null gives `null`, a scalar a type error, list/`range` sources unchanged (#2954) | `FalkorStrList.lean` |
+| `comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err` | `[x IN src \| …]` equals C on every source (source dispatch only, no `WHERE`, identity projection): null gives `null`, a scalar a type error, list and integer-argument `range` sources unchanged (#2954) | `FalkorStrList.lean` |
 | `typeName_eq_valueName`, `comprehensionSourceCheck_err` | `typeOf()` is `Value::name` (`Edge`, `Vectorf32`), the name the comprehension type error prints (#2954) | `Entity.lean` |
 
 ### How `splitAux_eq_cSplit` is proved
@@ -104,9 +104,9 @@ Each bug has a Rust repro test (`graph/tests/lean_functions_str_list.rs`, run lo
 | B (W2-strlist-2) | removed (17ccc5412) | `list.remove([1,2,3], 1, i64::MAX)` panicked in debug; release returned `[1]` by accident (`listRemoveRelease_eq_spec`) | Fixed by #2952 (closes #2926; `listRemove_eq_spec`) |
 | C (W2-strlist-3) | `regexMatches_unanchored` | `=~` matches substrings: `'abc' =~ 'b'` is `true`; openCypher requires a whole-string match. C rejects `=~` | **Open** |
 | D (W2-strlist-4) | removed (17ccc5412) | `toLower('A�')` errored with "Invalid UTF8 string"; a Rust `String` is always valid UTF-8, so the check could only misfire. C returns `'a�'` | Fixed by #2953 (`toLower_total`, `case_agrees_C_if_simple`) |
-| E (W2-strlist-5) | `replaceRegex_literal`, `spliceLit_single` | `string.replaceRegEx('abc', 'b', '$0x')` returned `'ac'` because `$` was expanded; C copies the replacement literally (`'a$0xc'`) | **Fixed by #3604** (53d694496; `NoExpand`) |
+| E (W2-strlist-5) | `replaceRegex_literal`, `spliceLit_single`, `spliceRepl_callSite`, `expand_differs_from_callSite` | `string.replaceRegEx('abc', 'b', '$0x')` returned `'ac'` because `$` was expanded; C copies the replacement literally (`'a$0xc'`) | **Fixed by #3604** (53d694496; `NoExpand`) |
 | F (W2-strlist-6) | removed (17ccc5412) | `[x IN null \| x]` returned `[]` (C: `null`); `[x IN 5 \| x]` returned `[5]` (C: type error) | Fixed by #2954 (`b6567cb97`, closes #2928; `comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err`) |
-| W4-fn-1 | `staged_set_kept_after_delete`, `staged_remove_kept_after_delete`, `deleteNode_labels_preserved` | `MATCH (n:A) SET n:C DELETE n RETURN labels(n)` returned `['A']` instead of `['A','C']`: the DELETE snapshot copied the *committed* labels | **Fixed by #3288** (`7fd3c12a0`; closes #3245): the snapshot takes `staged_label_ids` (`ops/delete.rs:197`) |
+| W4-fn-1 | `staged_set_kept_after_delete`, `staged_remove_kept_after_delete`, `deleteNode_labels_preserved` | `MATCH (n:A) SET n:C DELETE n RETURN labels(n)` returned `['A']` instead of `['A','C']`: the DELETE snapshot copied the *committed* labels | **Fixed by #3288** (`7fd3c12a0`; closes #3245): the snapshot takes `staged_label_ids` (`ops/delete.rs:196`) |
 | — | removed (17ccc5412) | `UNWIND range(10, 0, i64::MIN)` panicked in debug ("attempt to negate with overflow"); release was correct | Fixed by #2899 (`e63165cb5`; `rangeIter_eq_range`, `rangeIter_examples`) |
 
 C bugs recorded for comparison:
@@ -121,7 +121,7 @@ This project has no CONDITIONAL rows. The string pool contract (`intern`) is dis
 
 | File | What's in it |
 |---|---|
-| `FalkorStrList.lean` | The report header; indexing and slicing, `list.remove`/`insert`, `head`/`last`/`tail`/`size`/`reverse`, `range`, quantifiers, `IN`, comprehension and `reduce`, the string functions against C, regex match and `$` expansion, `string.join`; bugs A–F (A, B, D, F fixed; their counterexamples kept as `pre<PR>_` history) |
+| `FalkorStrList.lean` | The report header; indexing and slicing, `list.remove`/`insert`, `head`/`last`/`tail`/`size`/`reverse`, `range`, quantifiers, `IN`, comprehension and `reduce`, the string functions against C, regex match and the two `replace_all` replacers, `string.join`; bugs A–F (A, B, D, E, F fixed, C open; the counterexamples of the fixed ones were removed after 17ccc5412, in bbee75955) |
 | `Entity.lean` | `functions/entity.rs` over the runtime accessor model (deleted snapshot > pending > committed): deleted-entity theorems, `hasLabels`, degree arguments, `startNode`/`endNode`, `typeOf` = `Value::name`, the comprehension source check; W4-fn-1 |
 | `Misc.lean` | The remaining `string.rs`, `list.rs` and `internal.rs` functions: `STARTS WITH`/`ENDS WITH`/`CONTAINS`, `isNull`, string interning, `toStringList`, `matchRegEx`, `list.sort`, `list.dedup`, registration |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -138,9 +138,9 @@ Shared foundations (`InI64`, `wrap`, `I64MIN`/`I64MAX`) come from [`../core`](..
 | MODELLED | 3 |
 | NOT COVERED | 1 |
 
-- **MODELLED:** these `eval.rs` functions are modelled to state a bug, not proven correct, because the bugs are still open:
-  - the `ListComprehension` arm and `eval_iter_expr` (bug F);
-  - `eval_compiled_regex` (bugs C and E).
+- **MODELLED:** these `eval.rs` rows are modelled, not proven correct:
+  - the `ListComprehension` arm and `eval_iter_expr`: source dispatch only (bug F is fixed), not the per-element `WHERE`/projection evaluation. `coverage.sh` counts `eval_compound` once, in its best bucket, so the `ListComprehension` arm row does not lower the repo-wide count: its honest bucket is this row;
+  - `eval_compiled_regex` (bug C, still open; E is fixed).
 - **NOT COVERED:** `check_string_or_null`, a bare type check.
 
 Every row gives the full path (bare names such as `list.rs` or `value.rs` matched two files). Arm-level rows (`eval_compound/GetElement`, `add_slow (String/List arms)`) are pinned to the enclosing function's line, with the arm's line in the reason. `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
@@ -167,4 +167,4 @@ bash proofs/coverage.sh                       # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-When you fix one of the open bugs (C), rename its counterexample to `pre<PR>_…`, add the correctness theorem, and move the row to PROVEN. Any change to `ops/delete.rs`'s snapshot also affects `Entity.lean`.
+When you fix the open bug (C), replace its counterexample by the correctness theorem (no `pre<PR>_` history is kept: note the fix in prose and the last revision that has the counterexample) and move the row to PROVEN. Any change to `ops/delete.rs`'s snapshot also affects `Entity.lean`.

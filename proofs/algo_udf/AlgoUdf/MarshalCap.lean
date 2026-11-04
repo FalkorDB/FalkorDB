@@ -593,6 +593,19 @@ theorem toJs_past_cap (v : RV) (h : fitsV v = false) : ∃ e, toJs v = .error e 
   refine ⟨e, ?_⟩
   unfold toJs; rw [toF_eq_run, he]; rfl
 
+/-- **A value within the cap converts exactly as before #3336** (the uncapped code, `cap = none`),
+for every stack size: the new depth check never fires on a JS value that fits. -/
+theorem fromF_fits_eq_uncapped (H : Heap) (v : JsV) (f : Nat) (h : fitsJs H v = true) :
+    fromF H none f 0 v = fromF H (some MAX) f 0 v := by
+  rw [fromF_eq_run, fromF_eq_run]
+  exact (fromStep H).run_eq_uncapped MAX f 0 v (by simpa [fitsJs] using h)
+
+/-- The same for `value_to_js`: a Cypher value that nests at most `MAX` lists / maps converts as before. -/
+theorem toF_fits_eq_uncapped (v : RV) (f : Nat) (h : fitsV v = true) :
+    toF none f 0 v = toF (some MAX) f 0 v := by
+  rw [toF_eq_run, toF_eq_run]
+  exact toStep.run_eq_uncapped MAX f 0 v (by simpa [fitsV] using h)
+
 theorem toF_nestList_ok (c : Nat) : ∀ n f d, n + d ≤ c → n + 1 ≤ f →
     toF (some c) f d (nestList n) = R.ok (nestArr n)
   | 0, f + 1, d, _, _ => rfl

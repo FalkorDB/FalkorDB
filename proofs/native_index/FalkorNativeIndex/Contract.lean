@@ -9,7 +9,8 @@ import FalkorCowBTree.Extract
 are proven in `proofs/cow_btree` for well-formed trees (`TreeWF`). Since #3283 (799968a8b, W7-btree-1
 fixed) every tree the Rust API can build is well-formed (`CowBTree.Reachable_wf_asserted`: `new`,
 `from_sorted`, then any sequence of `insert`, `remove`, `insert_batch`, `remove_batch`), so the
-hypothesis the numeric-index rows rested on is discharged. Each theorem below takes a reachable tree
+hypothesis the numeric-index rows rested on is discharged. Each theorem below, except
+`contract_fromSorted` (which constructs its tree and needs no const assert), takes a reachable tree
 on a configuration the const assert admits and shows the Rust operation (the cow_btree model) returns
 a reachable tree whose entries are exactly this project's `t*` model of it.
 -/

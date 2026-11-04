@@ -184,7 +184,7 @@ inductive CV where
   | list (vs : List CV)
   | map (kvs : List (String × CV))
 
-/-- load_csv.rs:357-393: header name ↦ column index; a duplicated name keeps its FIRST position
+/-- load_csv.rs:425-445 (in `open_csv_records`): header name ↦ column index; a duplicated name keeps its FIRST position
 in the plan but reads the LAST column carrying it. -/
 def headerPlan (hdr : List String) : List (String × Nat) :=
   (hdr.zipIdx).foldl (fun acc (n, i) =>

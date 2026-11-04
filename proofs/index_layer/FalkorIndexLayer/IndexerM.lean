@@ -657,8 +657,9 @@ theorem createIndex_regen (E : Env) (I : Ixr) (t : IType) (l : String) (as : Lis
   · rw [sl2, sl1]; omega
   · rw [sl2, sl1]; simp [Slots.bump]; omega
 
-/-- Hence a populate job of any earlier generation fails `is_ticket_current` at
-its next batch, and the job `populate_index` spawns for `regenTo` passes it. -/
+/-- Hence the job `populate_index` spawns for `regenTo` passes `is_ticket_current`, and a populate job
+of any generation other than `regenTo` fails it at its next batch (`createIndex_old_ticket_stale_ne`;
+an earlier generation is stale exactly when it is not `regenTo`). -/
 theorem createIndex_old_ticket_stale (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String)
     (tot : Nat) (o : Option IdxOptions) (I' : Ixr) (x0 : Idx) (hx0 : I.map.get l = some x0)
     (h : createIndex E I t l as tot o = .ok I') (g : Nat) :
@@ -669,6 +670,14 @@ theorem createIndex_old_ticket_stale (E : Env) (I : Ixr) (t : IType) (l : String
   · subst hg; simp only [beq_self_eq_true]
   · have : E.regenTo ≠ g := fun e => hg e.symm
     rw [beq_false_of_ne hg, beq_false_of_ne this]
+
+/-- A populate job of a generation other than `regenTo` (in particular any earlier one) is stale. -/
+theorem createIndex_old_ticket_stale_ne (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String)
+    (tot : Nat) (o : Option IdxOptions) (I' : Ixr) (x0 : Idx) (hx0 : I.map.get l = some x0)
+    (h : createIndex E I t l as tot o = .ok I') (g : Nat) (hg : g ≠ E.regenTo) :
+    I'.isTicketCurrent ⟨l, g⟩ = false := by
+  rw [createIndex_old_ticket_stale E I t l as tot o I' x0 hx0 h g]
+  exact beq_false_of_ne hg
 
 /-- A brand-new entry is not bumped: it keeps `Index::default`'s generation. -/
 theorem createIndex_new_entry (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String) (tot : Nat)

@@ -2,7 +2,7 @@ import Columnar.Arith
 import FalkorExprSemantics.Frame
 
 /-!
-# `VectorEval::eval` over expr_semantics' expression trees (vector_expr.rs:211-283)
+# `VectorEval::eval` over expr_semantics' expression trees (vector_expr.rs:211-271)
 
 `Dispatch.lean` models the tree walk over an abstract `Kind`/`Node`; this module models it over
 proofs/expr_semantics' `E` — the `ExprIR` model whose per-row evaluator is `evalNode`
@@ -319,7 +319,7 @@ theorem eval_sound {Scope : Nat → Prop} {Rows : Nat → Prop} {HL : Fn Val →
 termination_by e => sizeOf e
 decreasing_by all_goals simp_wf; omega
 
-/-! ## `eval_values` (vector_expr.rs:285-307) -/
+/-! ## `eval_values` (vector_expr.rs:285-306) -/
 
 variable (A)
 

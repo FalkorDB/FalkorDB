@@ -1,17 +1,17 @@
 import GraphPersist.Codec
 /-! # `src/redis_type.rs`: aux fields, persistence events, fork hook, `graphmeta` stubs
 
-Source: origin/main `3fec7d7c9`.
+Source: origin/main `5c7af54f2` (line numbers re-pinned there).
 
 | here | there |
 | --- | --- |
 | `It`, `loadU`, `loadBuf` | the RDB aux stream: `save_unsigned`/`save_string`, `load_unsigned`/`load_string_buffer` |
-| `auxSave`               | `graph_aux_save` (:272-291) |
-| `auxLoad`               | `graph_aux_load` (:293-342) |
-| `metaAuxLoad`           | `graphmeta_aux_load` (:903-914) |
-| `Sub`, `onPersistence`  | `on_persistence` (:375-404) |
+| `auxSave`               | `graph_aux_save` (:272-290) |
+| `auxLoad`               | `graph_aux_load` (:293-334) |
+| `metaAuxLoad`           | `graphmeta_aux_load` (:981-991) |
+| `Sub`, `onPersistence`  | `on_persistence` (:375-400) |
 | `preFork`               | `pre_fork_prepare` (:357-368) |
-| `metaFree`              | `graphmeta_free` (:894-901); `graphmeta_rdb_save` is `VKeys.metaSave` since #3161 |
+| `metaFree`              | `graphmeta_free` (:971-977); `graphmeta_rdb_save` is `VKeys.metaSave` since #3161 |
 
 Names and scripts are byte strings; `String::from_utf8_lossy` is the identity on the UTF-8
 the module itself writes (a Rust `String`), so it is not modelled further.

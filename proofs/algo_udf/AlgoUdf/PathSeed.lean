@@ -1,5 +1,5 @@
 import AlgoUdf.PathDispatch
-/-! # The BFS-seeded bound never empties the answer (run_path_algo :2680-2698)
+/-! # The BFS-seeded bound never empties the answer (run_path_algo :2701-2716)
 
 For `pathCount ∈ {0, 1}` with a finite-weight BFS path within `maxCost`, the
 enumeration starts with `bound = weight(BFS path)`. `bfs_seed_keeps_answer`

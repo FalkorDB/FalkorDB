@@ -21,8 +21,9 @@ killed the server (repro then: `graph/tests/lean_graphblas_wrappers.rs`
 `if info != SUCCESS { return Err(..) }` (vector.rs:226-228, 271-273) and pass the
 expected type (`GrB_BOOL` / `GrB_UINT64`) so a well-formed blob of another type
 is refused too (`GrB_DOMAIN_MISMATCH`). `decodeBlob_never_dies` /
-`decodeU64_never_dies` prove no code kills the process; the old wrappers are
-kept as pre-#2996 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history.
+`decodeU64_never_dies` prove no code kills the process. The pre-#2996
+wrapper-specific counterexamples were removed from this revision (bbee75955);
+they remain available in 17ccc5412 for historical reference.
 -/
 
 import GraphblasWrappers.GrbInfo
@@ -36,7 +37,7 @@ mismatch (`:136,148,156`), `GrB_NULL_POINTER`/`GrB_OUT_OF_MEMORY` otherwise, and
 `GrB_SUCCESS` only on a well-formed blob. So a corrupt blob is a *reachable*
 non-success code. -/
 def vector_deserialize_reachable_codes : List Info :=
-  [.success, .invalidObject, .nullPointer, .outOfMemory, .invalidValue]
+  [.success, .invalidObject, .domainMismatch, .nullPointer, .outOfMemory, .invalidValue]
 theorem vector_deserialize_corrupt_returns_invalid_object :
     Info.invalidObject ∈ vector_deserialize_reachable_codes := by decide
 

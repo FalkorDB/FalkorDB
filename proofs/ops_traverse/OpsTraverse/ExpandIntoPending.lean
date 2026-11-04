@@ -12,7 +12,7 @@ the pending deletes the operator sees.
 | `Pending.delNodes` | `Pending::deleted_nodes` (`runtime/pending.rs:304`), read by `is_node_deleted` (`:1115-1120`); `DETACH DELETE` of a committed node only inserts it here (`runtime/ops/delete.rs:191-216`, `pending.rs:771-777`) and defers its incident edges to commit (`delete_implicit_edges`, `pending.rs:1325-1330`) |
 | `Pending.delRels`  | `Pending::deleted_relationships`, read by `is_relationship_deleted` (`pending.rs:1129-1134`) |
 | `expandIntoP`      | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs:125-245`): no row when `pending.is_node_deleted(src) \|\| is_node_deleted(dst)` (`:158-160`, added by #3463); pairs `:183-184`; collapse `:204-222` and emit `:224-235` skip `pending.is_relationship_deleted(id)` and sibling-used edges |
-| `expandIntoPre`    | the operator before #3463 (b29a2885c^): the same without the endpoint check; kept for the `pre3463_` counterexamples |
+| `expandIntoPre`    | the operator before #3463 (b29a2885c^): the same without the endpoint check; the historical model, still the fall-through branch of `expandIntoP` |
 
 `expandIntoP` with empty `Pending` is literally `CondTraverse.expandInto`
 (`expandIntoP_empty`), so every earlier ExpandInto theorem is the
@@ -27,7 +27,7 @@ so the pre-#3463 ExpandInto matched it: Rust returned 1 with "Relationships
 created: 0". The edge is doomed (deleted implicitly at commit). Main now yields
 no row for a pending-deleted endpoint, so MERGE takes its create branch, which
 refuses a deleted endpoint. Property `LiveExpandInto`: proved for main
-(`expandIntoP_live`); the old counterexamples are pre-#3463 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) on `expandIntoPre`.
+(`expandIntoP_live`); the pre-#3463 counterexamples on `expandIntoPre` were removed in bbee75955 (the last revision that has them is 17ccc5412).
 
 The issue's other half (the `synthetic_label` branch, `expand_into.rs:162-173`,
 reads committed labels only) has no valid-Cypher route to pending label state

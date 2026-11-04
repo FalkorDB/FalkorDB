@@ -1,16 +1,16 @@
 /-
 # `Field` and the `Index` metadata (`graph/src/index/mod.rs`)
 
-Line numbers are from origin/main (49f698d22).
+Line numbers are from origin/main (5c7af54f2), located by item name.
 
 | Lean | Rust |
 | --- | --- |
-| `IType` | `IndexType` `mod.rs:96` |
-| `Field`, `makeArrNames`, `Field.new`, `Field.newVec` | `mod.rs:107-168` |
+| `IType` | `IndexType` `mod.rs:97` |
+| `Field`, `makeArrNames`, `Field.new`, `Field.newVec` | `mod.rs:108-168` |
 | `Field.beqF`, `Field.hashF` | `PartialEq::eq` `mod.rs:193`, `Hash::hash` `mod.rs:204` |
-| `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs:887`) |
-| `Idx` | `Index` `mod.rs:875` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
-| `Idx.*` accessors / mutators | `mod.rs:1039-2239` (each cited below) |
+| `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs:888`) |
+| `Idx` | `Index` `mod.rs:876` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
+| `Idx.*` accessors / mutators | `mod.rs:1049-2241` (each cited below) |
 
 A Rust `HashMap` is modelled as an association list with unique keys; its
 iteration order is unspecified in Rust, so every theorem below is either

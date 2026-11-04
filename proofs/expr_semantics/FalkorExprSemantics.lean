@@ -57,7 +57,7 @@ advances only while another element is due — re-modelled as `rangeIter` (debug
 nonzero step the caller accepts, it yields exactly the eager range (`rangeList`, and
 `rangeMath` with any fuel ≥ the length) and never overflows; `evalIter_range_is_iter`,
 `rangeIter_sizeHint_exact` (new `size_hint`), `rangeIter_bounds_examples`,
-`rangeIter_max_fixed`. The old model and its counterexamples were removed (in 17ccc5412).
+`rangeIter_max_fixed`. The old model and its counterexamples were removed in bbee75955 (the last revision that has them is 17ccc5412).
 #2950 (temporal.rs) and #3041 (parser) touch nothing modelled here. COVERAGE.tsv
 eval.rs line numbers re-pinned to 737dfb5da.
 
@@ -65,11 +65,13 @@ Earlier: re-targeted to main 8621212fc (from 289c201fe). #2904 (#2902): `^` prop
 operand errors (`?` instead of `flat_map`) and `apply_pow` type-checks its operands
 (`Type mismatch: expected Integer, Float, or Null but was …`) — `applyPow`/`powFold`
 re-modelled, `pow_propagates_error`, `pow_constant_not_true`, `pow_bool_type_error`,
-`pow_binary_eq_spec`, `pow_agrees_without_errors`; the old model and its counterexamples were removed (in 17ccc5412). COVERAGE.tsv line numbers re-pinned to 8621212fc.
+`pow_binary_eq_spec`, `pow_agrees_without_errors`; the old model and its counterexamples were removed in bbee75955 (the last revision that has them is 17ccc5412). COVERAGE.tsv line numbers re-pinned to 8621212fc.
 
 Earlier: re-targeted to main 289c201fe (from fb3d516d0). #3294 (#3292): the `AND`/`OR`/`XOR`
 operand type error now names the operand's type like C (`expected Boolean or Null but
-was Integer`), on both the per-row and the columnar path — `boolMismatch` takes the
+was Integer`) — proven for the per-row path on the scalar subset (`scalarAndOr`, `scalarXor`);
+the columnar `vecAndOr` is `Option`-valued and carries no message, so the columnar wording is
+not verified here (see the error-text caveat below) — `boolMismatch` takes the
 value, `and_or_mismatch_names_type`, `xor_mismatch_names_type`. #2951 (#2945) changes
 only `eval_compound`'s aggregate-finalizer arm, which this project does not model
 (proofs/ops_aggregate does). The `init_functions` name set (`FnRegistry`) is unchanged.
@@ -139,7 +141,7 @@ and with counterexamples, each reproduced against the real engine
 | `applyPow`, `powStep`, `powFold` | `apply_pow` (`math.rs:328`); `ExprIR::Pow` in `eval_compound` (`eval.rs:828-834`, `reduce` calling `apply_pow(acc?, value?)`) |
 | `pow_constant_not_true`  | `is_constant_true` (`graph/src/planner/optimizer/eliminate_true_filters.rs:48`) |
 | `rangeIter` / `rangeIterRel` | `RangeIter::next` (`eval.rs:114-127`), debug / release build |
-| `rangeIterSizeHint`      | `RangeIter::size_hint` (`eval.rs:129-132`) |
+| `rangeIterSizeHint`      | `RangeIter::size_hint` (`eval.rs:130-133`, `usize::try_from(remaining).unwrap_or(usize::MAX)`) |
 | `rangeLen`, `rangeList`  | `length` in `eval_iter_expr` (`eval.rs:1224-1233`); the eager `range()` list |
 | `rangeMath`              | `range()` (`graph/src/runtime/functions/math.rs:251`) |
 | `signRust`               | `sign` (`math.rs:210`) |
@@ -1183,23 +1185,26 @@ def scalarXor : List (V F) → Option Bool → Except String (V F)
 
 /-- #3294: a non-Boolean, non-null `AND`/`OR` operand fails with C's message naming its
 type, e.g. `1 AND true` → `Type mismatch: expected Boolean or Null but was Integer`,
-and so does an `XOR` operand. -/
+and so does an `XOR` operand. Scalar subset only: `ho` excludes `V.other`, whose `V.name`
+here is the placeholder `"Other"` and not Rust's `List`/`Map`/`Node`/… name. -/
 theorem and_or_mismatch_names_type (sc : Bool) (r : R) (v : V F) (cs : List (R → Except String (V F)))
-    (n : Bool) (hb : ∀ b, v ≠ .bool b) (hn : v ≠ .null) :
+    (n : Bool) (hb : ∀ b, v ≠ .bool b) (hn : v ≠ .null) (ho : ∀ t, v ≠ .other t) :
     scalarAndOr sc r (constChild v :: cs) n =
       .error s!"Type mismatch: expected Boolean or Null but was {v.name}" := by
   cases v with
   | bool b => exact absurd rfl (hb b)
   | null => exact absurd rfl hn
+  | other t => exact absurd rfl (ho t)
   | _ => rfl
 
 theorem xor_mismatch_names_type (v : V F) (vs : List (V F)) (last : Option Bool)
-    (hb : ∀ b, v ≠ .bool b) (hn : v ≠ .null) :
+    (hb : ∀ b, v ≠ .bool b) (hn : v ≠ .null) (ho : ∀ t, v ≠ .other t) :
     scalarXor (v :: vs) last =
       .error s!"Type mismatch: expected Boolean or Null but was {v.name}" := by
   cases v with
   | bool b => exact absurd rfl (hb b)
   | null => exact absurd rfl hn
+  | other t => exact absurd rfl (ho t)
   | _ => rfl
 
 example (r : R) : scalarAndOr false r [constChild (.int 1 : V F), constChild (.bool true)] false =
@@ -1505,8 +1510,8 @@ theorem null_in (l : List (V F)) :
 /-! ## `^`: operand errors propagate and operands are type-checked (#2904)
 
 Before #2904 (main 289c201fe) the `Pow` arm folded its children with `flat_map`,
-which drops an `Err` (W-expr bug, issue #2902); that model is kept below as
-`pre2904_*` history. -/
+which drops an `Err` (W-expr bug, issue #2902); that model was removed in bbee75955
+(the last revision that has it is 17ccc5412). -/
 
 /-- The `apply_pow` type error (math.rs:328): `… but was {v.name()}`. -/
 def powMismatch (v : V F) : String :=
@@ -1610,12 +1615,10 @@ theorem pow_bool_type_error (pw : F → F → F) (x : V F) (hx : x.numOrNull = t
       .error "Type mismatch: expected Integer, Float, or Null but was Boolean" := by
   cases x <;> simp_all [powFold, List.foldl, powStep, applyPow, V.numOrNull, powMismatch, V.name] <;> rfl
 
-/-! ### History: the `flat_map` that dropped errors (fixed by #2904) -/
+/-! ## `UNWIND range(..)`: the eager sequence
 
-/-! ## `UNWIND range(..)`: the lazy iterator before #2899 (BUG, fixed)
-
-Kept for history: before #2899 (`e63165cb5`) `RangeIter` stored `end`, the step's
-magnitude and a direction flag, and stepped past the last element. -/
+Before #2899 (`e63165cb5`) `RangeIter` stored `end`, the step's magnitude and a direction
+flag, and stepped past the last element (that model was removed in bbee75955). -/
 
 /-- The mathematical sequence, which is what the eager `range()` function
 (math.rs:251, `(start..=end).step_by(step)`) returns. -/
@@ -1773,20 +1776,33 @@ theorem rangeIter_correct (a e s : Int) (ha : InI64 a) (he : InI64 e) (hs : s �
         · simp [h]; exact hdn (by omega))
   rw [this, hsa]
 
-/-- `RangeIter::size_hint` (`eval.rs:129-132`) is `(remaining, Some(remaining))`:
-exact, because the iterator yields exactly `remaining` items. -/
-def rangeIterSizeHint (r : Nat) : Nat × Option Nat := (r, some r)
+/-- `RangeIter::size_hint` (`eval.rs:130-133`) is
+`let n = usize::try_from(self.remaining).unwrap_or(usize::MAX); (n, Some(n))`, with
+`remaining: u64`. `usizeMax` is `usize::MAX` of the target (`2^64 - 1` on a 64-bit target,
+where the conversion never fails; `2^32 - 1` on a 32-bit one, where it saturates). -/
+def rangeIterSizeHint (usizeMax r : Nat) : Nat × Option Nat := (min r usizeMax, some (min r usizeMax))
 
-theorem rangeIter_sizeHint_exact (step : Int) :
-    ∀ (r : Nat) (cur : Int), (rangeIterRel step r cur).length = (rangeIterSizeHint r).1 ∧
-      (rangeIterSizeHint r).2 = some (rangeIterRel step r cur).length
-  | 0, _ => ⟨rfl, rfl⟩
+theorem rangeIterRel_length (step : Int) :
+    ∀ (r : Nat) (cur : Int), (rangeIterRel step r cur).length = r
+  | 0, _ => rfl
   | r + 1, cur => by
     by_cases hr : r = 0
-    · subst hr; simp [rangeIterRel, rangeIterSizeHint]
-    · have ih := (rangeIter_sizeHint_exact step r (wrap (cur + step))).1
-      simp only [rangeIterSizeHint] at ih ⊢
-      simp [rangeIterRel, hr, ih]
+    · subst hr; simp [rangeIterRel]
+    · simp [rangeIterRel, hr, rangeIterRel_length step r (wrap (cur + step))]
+
+/-- The hint is exact whenever `remaining` fits in `usize` (always, on a 64-bit target:
+`remaining` is a `u64`): it yields exactly `remaining` items. -/
+theorem rangeIter_sizeHint_exact (usizeMax : Nat) (step : Int) (r : Nat) (cur : Int)
+    (hr : r ≤ usizeMax) :
+    (rangeIterRel step r cur).length = (rangeIterSizeHint usizeMax r).1 ∧
+      (rangeIterSizeHint usizeMax r).2 = some (rangeIterRel step r cur).length := by
+  simp [rangeIterSizeHint, rangeIterRel_length, Nat.min_eq_left hr]
+
+/-- Past `usize::MAX` the hint saturates (a 32-bit target with a long range): it is a
+lower bound, not the length. -/
+theorem rangeIter_sizeHint_saturates (usizeMax : Nat) (r : Nat) (hr : usizeMax < r) :
+    rangeIterSizeHint usizeMax r = (usizeMax, some usizeMax) := by
+  simp [rangeIterSizeHint, Nat.min_eq_right (Nat.le_of_lt hr)]
 
 /-- The four cases of `range_iter_stops_at_i64_bounds` (eval.rs tests): the last
 element may sit on `i64::MAX`/`i64::MIN`, and a step of `i64::MIN` is fine

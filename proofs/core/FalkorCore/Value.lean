@@ -1,9 +1,9 @@
 /-!
-# The engine `Value` (`graph/src/runtime/value.rs:180`)
+# The engine `Value` (`graph/src/runtime/value.rs:184`)
 
 `V F` is `enum Value` with the `f64` payload abstracted to a type `F` (instantiate it with
 `FalkorCore.F`, `Float`, or a record of operations); `Arc`s are transparent. `V.order` is
-`OrderedEnum::order` (value.rs:1178), `V.name` is `Value::name` (value.rs:1352).
+`OrderedEnum::order` (value.rs:1219), `V.name` is `Value::name` (value.rs:1395).
 From proofs/value_math (pilot of the shared core).
 -/
 namespace FalkorCore
@@ -29,7 +29,7 @@ inductive V (F : Type) where
 
 variable {F : Type}
 
-/-- `Value::name` (value.rs:1387; C's `SIType_ToString` spellings since #2954). -/
+/-- `Value::name` (value.rs:1395; C's `SIType_ToString` spellings since #2954). -/
 def V.name : V F → String
   | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float _ => "Float"
   | .str _ => "String" | .list _ => "List" | .map _ => "Map" | .node _ => "Node"
@@ -37,7 +37,7 @@ def V.name : V F → String
   | .datetime _ => "Datetime" | .date _ => "Date" | .time _ => "Time"
   | .duration _ => "Duration"
 
-/-- `OrderedEnum::order` (value.rs:1178). -/
+/-- `OrderedEnum::order` (value.rs:1219). -/
 def V.order : V F → Nat
   | .null => 2 ^ 15 | .bool _ => 2 ^ 12 | .int _ => 2 ^ 13 | .float _ => 2 ^ 14
   | .str _ => 2 ^ 11 | .list _ => 2 ^ 3 | .map _ => 2 ^ 0 | .node _ => 2 ^ 1

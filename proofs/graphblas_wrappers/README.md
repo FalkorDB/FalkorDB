@@ -17,20 +17,20 @@ The full Lean↔Rust mapping is in the header of [`GraphblasWrappers.lean`](Grap
 **Not through a corrupt id blob any more: #2996 fixed it.** Every GraphBLAS call returns a status code. A wrapper either `assert_eq!`s it (a panic, which in the module is a process exit), `debug_assert_eq!`s it (ignored in release), or returns it as an `Err`.
 
 - Before #2996, `Vector::<bool>::decode_blob` and `Vector::<u64>::decode` `assert_eq!`ed on `GxB_Vector_deserialize`, which returns `GrB_INVALID_OBJECT` on a corrupt blob. `assertPanic_deserialize_dos` proves that the error was reachable and killed the process (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412).
-- On main both return the code as an `Err`, and pass the expected type so a blob of the wrong type is refused too. `decodeBlob_never_dies`, `decodeU64_never_dies` and `decodeBlob_safe_on_reachable` prove no code can crash through them; `hardened_eq_blob` says `decode_blob` now behaves exactly like the already-hardened `Vector::<bool>::decode` (`decodeBool_safe`, `decodeBool_never_dies`).
-- #2996 also made `Tensor::decode` refuse delta layers whose size differs from the base: `checkLayers_merge_in_bounds` proves an accepted payload only merges entries inside the base.
+- On main both return the code as an `Err`, and pass the expected type so a blob of the wrong type is refused too. `decodeBlob_never_dies`, `decodeU64_never_dies` and `decodeBlob_safe_on_reachable` prove no code can crash through them; `hardened_eq_blob` proves only that `decode_blob` and the already-hardened `Vector::<bool>::decode` (`decodeBool_safe`, `decodeBool_never_dies`) share the same status-code disposition: both propagate the deserialize error code. It says nothing about their decoding of valid input.
+- #2996 also made `Tensor::decode` refuse delta layers whose size differs from the base: `checkLayers_merge_in_bounds` (delta-plus) and `checkLayers_merge_in_bounds_dm` (delta-minus) prove that an accepted payload has both delta layers at the base's size, so every coordinate `m.set` receives is inside the base. They are rewrite lemmas on the size check; the merge loop itself is not modelled.
 
 **2. Can a decoded tensor break its own invariant?**
 
 **Not any more: #3033 fixed it.** Promotion completeness says a pair has an `me` row exactly when its forward value is the `MULTI_EDGE` marker. Before #3033, `Tensor::decode` did not check it.
 
-- `edgeCount_no_panic` and `edgeCount_value` prove `edge_count` cannot underflow while the invariant `Wf` holds.
+- `edgeCount_no_panic` and `edgeCount_value` prove `edge_count` cannot underflow or overflow while the invariant `Wf` holds. `Wf` carries the subtraction bounds and the two `u64` bounds on the checked additions (`cadd` panics past `u64::MAX`).
 - Before #3033, a crafted payload produced a tensor with an orphan `me` row, in which `edge_count` panicked (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). `Tensor::encode` calls `edge_count`, so a graph restored from such a payload could no longer be saved.
 - Now `decode` counts the markers with `Matrix::<u64>::count_value_eq` (a `GrB_select` with `GrB_VALUEEQ_UINT64`, stated as the hypothesis `SelectValueEqSpec`). It refuses a tensor entry that is not an in-bounds marker, and refuses a marker count that differs from the number of `me` pairs with ids.
 - `decodeCheck_ok_iff` proves decode accepts exactly when every tensor entry is an in-bounds marker and the rows it builds are promotion complete. `decodeCheck_refuses_incomplete` is the direction that matters for safety: every payload that would break the invariant is refused.
-- `decodeCheck_ok_edgeCount_no_panic` proves `edge_count` cannot panic on an accepted tensor.
+- `decodeCheck_ok_edgeCount_no_panic` proves `edge_count` cannot underflow on an accepted tensor; the only remaining panic is a `u64` overflow of `|m|` or of the final `+ |me|`, which the theorem takes as the explicit bounds `hm` and `hov`.
 - `decodeCheck_accepts_encoded` proves no valid payload is refused: decode accepts every tensor `encode` writes.
-- main's three new tests are `orphan_row_refused`, `single_pair_ids_refused` and `marker_without_ids_refused`.
+- The three new Lean theorems modelling main's tests are `orphan_row_refused`, `single_pair_ids_refused` and `marker_without_ids_refused` (they are Lean declarations, not Rust test names).
 
 **3. Is a GraphBLAS matrix freed exactly once?**
 
@@ -40,7 +40,8 @@ The full Lean↔Rust mapping is in the header of [`GraphblasWrappers.lean`](Grap
 - `arc_all_drop_frees_once`: `n ≥ 1` owners dropping in any order free it exactly once;
 - `arc_every_interleaving_frees_once`: the six two-owner interleavings, the one that leaked before included, all free exactly once;
 - `iter_frees_iterator_before_matrix`: `Iter::drop` frees its `GxB_Iterator` before its `Arc<Handle>` can free the matrix (`detached_iter_frees_only_matrix` covers a detached iterator);
-- `single_owner_frees_once`, `dup_independent_ownership`: a single owner frees once, and `dup` gives a copy that shares nothing.
+- `single_owner_frees_once`: a single owner frees once;
+- `dup_independent_ownership`, `dup_copy_drop_leaves_source`: `dup` makes a fresh `Arc<Handle>`; for any schedule of clones and drops on the source and the copy, each of the two matrices is freed at most once and exactly when its own owners are gone, and dropping the copy never touches the source.
 
 History: before #3090, `Matrix::drop` checked `Arc::get_mut` (the count is 1) and then dropped the `Arc`, as two separate steps. An interleaving let both owners see a count of 2 so neither freed: a leak, and only under concurrency (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 
@@ -72,8 +73,7 @@ Yes. `drain_seek_eq_spec` proves `Iter::seek` followed by `next` until the end y
 | `deltaLmxm_correct`, `deltaLmxm_eff`, `deltaLmxm_spec` | `delta_lmxm` computes `F*(M - DM + DP)` on the pattern; an output a deleted and a live base edge both reach is kept (#3492) | `DeltaLmxm.lean` |
 | `drain_seek_eq_spec`, `drain_no_duplication` | A row-range scan yields exactly the in-range entries, in order, once | `RowIter.lean` |
 | `create_safe_iff`, `me_dim_is_max` | Which ids and dimensions GraphBLAS accepts | `Index.lean` |
-| `countInRows_spec`, `countInRows_pos` | `count_in_rows` counts the stored entries in the selected rows | `DeltaLmxm.lean` | `Matrix::delta_lmxm` (#3492): the path-count model, `F*(M-DM+DP)`, the `dm ⊆ m` discharge from versioned_matrix |
-| `Bulk.lean` |
+| `countInRows_spec`, `countInRows_pos` | `count_in_rows` counts the stored entries in the selected rows | `Bulk.lean` |
 | `fromSortedIndices_spec` | `from_sorted_indices` builds exactly the indicator vector of its input | `Bulk.lean` |
 | `grown_rejects_shrink`, `resize_clamp_grownOk`, `iterExpand_eq_flatMap` | `grown` refuses a shrink, and `Tensor::resize`'s clamped dims (#3250) always pass that check; the tensor iterator expands each pair to its edge ids | `Misc.lean` |
 
@@ -83,27 +83,27 @@ Yes. `drain_seek_eq_spec` proves `Iter::seek` followed by `next` until the end y
 2. **State the C calls as a hypothesis.** `BulkSpec` gives each of the four calls its GraphBLAS user-guide meaning:
    - `GrB_Vector_new` makes an empty vector;
    - `GxB_Vector_build_Scalar` stores exactly the given sorted, in-range indices;
-   - `GrB_mxv` with `PLUS_PAIR` and `DESC_T0` puts, at column `j`, the number of selected rows with an entry in column `j`;
-   - `GrB_Vector_reduce_UINT64` with `PLUS` is the sum.
+   - `GrB_mxv` with `PLUS_PAIR` and `DESC_T0` puts, at column `j`, the number of selected rows with an entry in column `j`, for the inputs `GrB_mxv` accepts (`MxvOk`: matching dimensions, unique in-bounds stored coordinates);
+   - `GrB_Vector_reduce_UINT64` with `PLUS` is the sum modulo `2^64` (a `u64` reduction wraps).
 
    It is a structure passed as an argument, not a Lean `axiom`.
 3. **Model the function.** `countInRows` follows `Matrix::count_in_rows`: a fresh `u64` vector of `ncols`, one `mxv`, one `sum`.
-4. **Prove the count.** Summing the per-column counts over all columns counts each stored entry in a selected row exactly once (`double_count`), as long as every stored column is `< ncols`.
-5. **Hypotheses.** `BulkSpec` is the C library's documented behaviour, which Lean cannot check. The column bound `hc` is a GraphBLAS matrix invariant.
+4. **Prove the count.** Summing the per-column counts over all columns counts each stored entry in a selected row exactly once (`double_count`), as long as every stored column is `< ncols`. The `u64` reduction does not wrap because the total is at most `nvals < 2^64`.
+5. **Hypotheses.** `BulkSpec` is the C library's documented behaviour, which Lean cannot check. The precondition `MxvOk` (matrix well-formedness: unique in-bounds coordinates, `nvals < 2^64`; selection of matching dimension) is what any GraphBLAS matrix and vector satisfy.
 
 The bug theorems are smaller. `Disposition.run` models what each style of status check does in a release build. Each wrapper is assigned its style at its cited Rust line. `vector_deserialize_reachable_codes` lists the codes the C deserializer can return, taken from the GraphBLAS source. The theorems then follow by `decide`.
 
 ## Bugs found
 
-The repros are in `graph/tests/lean_graphblas_wrappers.rs` (see [`../FINDINGS.md`](../FINDINGS.md); bug 1 is W3-gb-1). Status is as of main fb3d516d0.
+The repro tests for these bugs are not part of this PR (the file `graph/tests/lean_graphblas_wrappers.rs` is not in the tree); the one test file kept is bug 4's regression test, `graph/tests/matrix_concurrent_drop.rs`. See [`../FINDINGS.md`](../FINDINGS.md); bug 1 is W3-gb-1.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | 1 | removed (17ccc5412) | A corrupt multi-edge blob in `GRAPH.RESTORE`, an RDB or a full sync hit `assert_eq!` on `GxB_Vector_deserialize` and the server exited (confirmed live with a truncated COPY payload) | **Fixed by #2996** (`decodeBlob_never_dies`) |
 | 2 | removed (17ccc5412) | `Tensor::decode` accepted an `me` row with no forward pair. `iter_edges` then yielded a phantom edge, `edge_count` panicked, and the restored graph could not be saved | **Fixed by #3033** (`decodeCheck_ok_iff`, `decodeCheck_accepts_encoded`) |
-| 3 | — (Rust test only) | `Matrix::decode` leaks 5 heap blocks per matrix, and 8 on an error path: `copy_nonoverlapping` overwrites vectors `GxB_Container_new` allocated. This happens on every RDB load, RESTORE and full sync | **Open** |
+| 3 | — (no repro in tree) | `Matrix::decode` leaks 5 heap blocks per matrix, and 8 on an error path: `copy_nonoverlapping` overwrites vectors `GxB_Container_new` allocated. This happens on every RDB load, RESTORE and full sync | **Open** |
 | 4 | removed (17ccc5412) | Two `Matrix` clones dropped concurrently could both see a count of 2, so the GraphBLAS matrix was never freed (19 of 200,000 pairs leaked in the test) | **Fixed by #3090** (`arc_frees_once`, `arc_every_interleaving_frees_once`; main's test `concurrently_dropped_clones_free_the_matrix_once`) |
-| 5 | — (Rust test only) | `vector::Iter` has no lifetime, so safe code can drop the vector and keep iterating freed memory | **Open, latent:** the only in-scope use is `Tensor::decode`; same class as #2898 |
+| 5 | — (no repro in tree) | `vector::Iter` has no lifetime, so safe code can drop the vector and keep iterating freed memory | **Open, latent:** the only in-scope use is `Tensor::decode`; same class as #2898 |
 
 Also noted, not confirmed:
 
@@ -124,27 +124,28 @@ There are no CONDITIONAL rows.
 | `Decode.lean` | `edge_count`'s checked arithmetic; the #2996 layer-size check; `count_value_eq` and the #3033 promotion-completeness check (bug 2 and its fix) |
 | `Misc.lean` | `grown`/`resize` policy, `vector::Iter`, the multi-edge `Iter` expansion |
 | `Glue.lean` | Operator/type selection, the descriptor table, accessors, encode round trip, the #3097 header scrub |
-| `Serial.lean` | `EncodeState::from_u64` and the `Encode`/`Decode` trait contract |
+| `Serial.lean` | `EncodeState::from_u64` and the `Encode`/`Decode` trait contract (a stated obligation, not a proof about any impl) |
 | `Bulk.lean` | `from_sorted_indices`, `Vector::<u64>::sum`/`ptr`, `count_in_rows` (#3022) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
-The lakefile has no path dependencies.
+The lakefile depends on `../versioned_matrix` (path dependency), because `DeltaLmxm.lean` states `Matrix::delta_lmxm` against the versioned-matrix layer invariant.
 
 ## Coverage
 
-`COVERAGE.tsv` has 1212 rows. Most are bindgen `extern` declarations in `mod.rs` and the LAGraph bindings.
+`COVERAGE.tsv` has 1216 rows (1212 below plus 4 NOT COVERED rows for the `#[cfg(test)] impl Matrix<f64>` test kit). Most are bindgen `extern` declarations in `mod.rs` and the LAGraph bindings.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 67 |
-| AXIOMATISED | 1145 |
+| PROVEN | 65 |
+| AXIOMATISED | 1147 |
 
 **AXIOMATISED** means the function is the C library, or a wrapper whose only content is one C call:
 
 - 978 are GraphBLAS `extern` declarations (the spec is `GraphBLAS.h`);
-- 117 are LAGraph and LAGraphX `extern` declarations, called from the algorithm procedures, outside this project;
-- 47 are thin wrappers over one `GrB`/`GxB` call whose status is `debug_assert`ed;
-- 4 are free, finalize and iterator-construction calls.
+- 118 are LAGraph and LAGraphX `extern` declarations, called from the algorithm procedures, outside this project;
+- 46 are thin wrappers over one `GrB`/`GxB` call whose status is `debug_assert`ed;
+- 3 are free, finalize and iterator-construction calls;
+- 2 are the bodiless `Encode::encode` / `Decode::decode` trait methods: the contract `GBWSerial.Codec` is an obligation on each impl, not something proved about one.
 
 None of these has Rust logic left to prove.
 
@@ -153,7 +154,7 @@ None of these has Rust logic left to prove.
 - GraphBLAS semantics (eWise, mxm, resize, the serialized byte format) are taken from the C documentation, not modelled or checked.
 - The row-iterator model treats "skip empty rows that return `GrB_NO_VALUE`" as "advance to the next stored entry", which the GraphBLAS header documents.
 - The `Own` model of main covers any number of owners; it takes `Arc`'s contract (one atomic decrement, the drop runs on the thread that took the count to zero) from std rather than proving it. The pre-#3090 history covers two owners exhaustively. `has_pending` and lock concurrency beyond `drop` are not modelled.
-- Bugs 3 and 5 have Rust repros but no Lean theorem; the leak and the dangling iterator are outside what the model expresses.
+- Bugs 3 and 5 have no Lean theorem (and no repro test in this tree); the leak and the dangling iterator are outside what the model expresses.
 
 ## Build and check
 

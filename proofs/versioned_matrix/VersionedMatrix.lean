@@ -57,8 +57,10 @@ uncommitted version); `single_writer` is replaced by `fork_takes_nothing` and
 `refused_commit_rolls_back` by `refused_commit_publishes_nothing`; `snapshot_isolation` and
 `reader_view_frozen` are unchanged in statement and hold without the flag invariant. New
 `MvccGraph::commit_indexer_batch`/`commit_version` publish a version at the same data
-version (see `search_concurrency` `Mvcc.batch_keeps_forks`); they write no matrix, so
-isolation is untouched.
+version (see `search_concurrency` `Mvcc.batch_keeps_forks`); the batch changes no logical data
+(it only folds deltas and trims attribute stores), so logical content and isolation are
+unchanged. The shared `commit_version` tail (`fold_oversized_deltas`, `trim_attr_stores`,
+schema bump) is not modelled.
 -/
 import VersionedMatrix.Delta
 import VersionedMatrix.DeltaProofs

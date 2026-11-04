@@ -14,11 +14,11 @@ theorem toJs_float (f : F64) : toJs (.float f) = .ok (.num f) := rfl
 theorem toJs_eq (v : RV) : toJs v = Rget (toF (some MAX) (MAX + 1) 0 v) := rfl
 theorem fromJs_eq (H : Heap) (v : JsV) : fromJs H v = Rget (fromF H (some MAX) (MAX + 1) 0 v) := rfl
 
+/-- `*ts * 1000` is unchecked: the release profile wraps (`wrapI64`), a debug build would panic. -/
 theorem toJs_datetime (ts : Int) : toJs (.datetime ts) =
-    if (ts * 1000).natAbs > i64max.toNat then .error "i64 overflow (debug panic)"
-    else .ok (.obj [("__falkor_temporal_type".toList, .str "datetime")] (.date (mkDate (ts * 1000)))) := by
+    .ok (.obj [("__falkor_temporal_type".toList, .str "datetime")] (.date (mkDate (wrapI64 (ts * 1000))))) := by
   rw [toJs_eq]
-  by_cases h : (ts * 1000).natAbs > i64max.toNat <;> simp [toF, needsV, toLevel, h, Rget, R.err, R.ok]
+  simp [toF, needsV, toLevel, Rget, R.err, R.ok]
 
 /-- An object with no `__falkor_type` marker and a Date / RegExp class is converted by `fromObjWith`. -/
 theorem classify_kind (ps : List (List Char × JsV)) (k : JsKind) (ht : tag ps = none) (hk : k ≠ .plain) :
@@ -36,15 +36,15 @@ theorem toJs_vecf32 (xs : List F64) : toJs (.vecf32 xs) = .ok (.arr (xs.map .num
 theorem fromJs_num (H : Heap) (f : F64) :
     fromJs H (.num f) = .ok (if f.integral && f.small && !f.negZero then .int f.toInt else .float f) := rfl
 theorem fromJs_big (H : Heap) (i : Int) :
-    fromJs H (.big i) = if i.natAbs ≤ i64max.toNat then .ok (.int i) else .error "BigInt out of i64 range" := by
-  rw [fromJs_eq]; by_cases h : i.natAbs ≤ i64max.toNat <;> simp [fromF, fromLevel, deref, classify, runShape, h, Rget]
+    fromJs H (.big i) = if i64min ≤ i ∧ i ≤ i64max then .ok (.int i) else .error "BigInt out of i64 range" := by
+  rw [fromJs_eq]; by_cases h : i64min ≤ i ∧ i ≤ i64max <;> simp [fromF, fromLevel, deref, classify, runShape, h, Rget]
 
 theorem null_rt : rt .null := rfl
 theorem bool_rt (b : Bool) : rt (.bool b) := rfl
 theorem str_rt (s : String) : rt (.str s) := rfl
 
 /-- i64 round trips: |i| < 2^53 as a Number, otherwise as a BigInt. -/
-theorem int_roundtrip (i : Int) (h : i.natAbs ≤ i64max.toNat) : rt (.int i) := by
+theorem int_roundtrip (i : Int) (h : i64min ≤ i ∧ i ≤ i64max) : rt (.int i) := by
   unfold rt
   rw [toJs_int]
   by_cases hs : i.natAbs < two53.toNat
@@ -54,7 +54,7 @@ theorem int_roundtrip (i : Int) (h : i.natAbs ≤ i64max.toNat) : rt (.int i) :=
     · subst h0; rfl
     · simp only [h0, ite_false, F64.integral, F64.small, F64.toInt, F64.negZero, hs, decide_true,
         Bool.and_self, Bool.not_false, ite_true]
-  · simp only [hs, ite_false, bind, Except.bind, fromJs_big, h, ite_true]
+  · simp only [hs, ite_false, bind, Except.bind, fromJs_big, h, and_self, if_true]
 
 /-- Float round trips iff it is not an integral value below 2^53 in magnitude other
 than -0.0 (#3074). -/
@@ -86,10 +86,11 @@ theorem point_rt (a b : F64) : rt (.point a b) := rfl
 /-- Datetime round trips inside the JS Date range (|ts| ≤ 8.64e12 s). -/
 theorem datetime_rt (ts : Int) (h : (ts * 1000).natAbs ≤ jsDateMax.toNat) : rt (.datetime ts) := by
   unfold rt
-  have h1 : ¬ (ts * 1000).natAbs > i64max.toNat := by
-    simp only [i64max, jsDateMax] at *; omega
+  have h1 : wrapI64 (ts * 1000) = ts * 1000 := by
+    simp only [wrapI64, jsDateMax] at *
+    omega
   rw [toJs_datetime]
-  simp only [h1, ite_false, bind, Except.bind, mkDate, h, ite_true]
+  simp only [h1, bind, Except.bind, mkDate, h, ite_true]
   unfold ofInt
   by_cases h0 : ts * 1000 = 0
   · have : ts = 0 := by omega
@@ -113,7 +114,12 @@ theorem vecf32_fromVec (xs : List F64) : fromVec (xs.map .num) = .ok (.vecf32 xs
     rw [ih]
     rfl
 
-/-- **#3074: every vecf32 round trips**, non-finite elements included (as in C). -/
+/-- **#3074: every vecf32 round trips**, non-finite elements included (as in C). The model's
+`xs` are the f32 elements already widened (`Value::VecF32` holds `f32`; `value_to_js` writes
+`v as f64`, and `js_to_value` narrows back with `item as f32`): f32 -> f64 -> f32 is the identity, so
+no f64 outside the f32 image is ever a state of the model and no cast-stability hypothesis is needed.
+(A JS array that a script itself marks `vecf32` with arbitrary doubles is narrowed by Rust, but that
+is a conversion, not a round trip of a Cypher value.) -/
 theorem vecf32_rt (xs : List F64) : rt (.vecf32 xs) := by
   unfold rt
   rw [toJs_vecf32]

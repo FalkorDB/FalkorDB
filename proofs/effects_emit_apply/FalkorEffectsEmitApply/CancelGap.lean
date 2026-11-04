@@ -3,7 +3,7 @@ import FalkorEffectsEmitApply.Liveness
 /-!
 # Emit then apply, with cancellation: two open replica divergences (#3447, #3448)
 
-`Emit.forEachRecord` (`for_each_record`, emit.rs:323-375 on b84473a7f) and
+`Emit.forEachRecord` (`for_each_record`, emit.rs:323-375 on 5e475e6c9) and
 `Live.applyAll` (the checked arms of `apply_record`) were proven separately;
 nothing related what the master emits to what a replica *at the master's
 pre-segment state* accepts. Two properties, both refuted on main:
@@ -25,7 +25,7 @@ pre-segment state* accepts. Two properties, both refuted on main:
   `Pending`.
 * **`ReplayApplies`** (#3448) — the emitted stream, translated to apply records
   (`toLive`), applies on the replica. `digest_labels(&p.remove_labels, None, …)`
-  (emit.rs:370) runs before `digest_cancelled` (:376) and does not skip created
+  (emit.rs:370) runs before `digest_cancelled` (:374) and does not skip created
   or cancelled nodes; `delete_pending_node` keeps the node's `remove_labels`
   (proofs/pending_commit `bug3448_cancelled_node_keeps_remL`); the
   `RemoveLabels` arm calls `require_live` (apply.rs:359-360).

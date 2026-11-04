@@ -1,16 +1,17 @@
 import PendingCommit.PendingDocs
 import PendingCommit.Labels
+import RuntimeCore.Accessors
 /-
-# `Pending::commit` and constraint enforcement (pending.rs:1078-1461)
+# `Pending::commit` and constraint enforcement (pending.rs:1338-1700: `Pending::commit` to `check_edge_constraint`)
 
-* `constraintHas_eq` — `constraint_node_has_label` (:1310) answers from the
+* `constraintHas_eq` — `constraint_node_has_label` (:1556) answers from the
   staged label sets, then "created ⇒ no committed label", then the matrix; when
   created nodes carry no committed labels (fresh ids; reclaimed ids carry
   tombstones) that is exactly `Labels.overlay`, the query's own view.
 * `scan_ok` — the `seen` map scan of a UNIQUE check as it was before #3334
-  (cab3cf192 :1375-1395, :1466-1486): passes iff no two distinct entities with a full
+  (cab3cf192 :1412-1429, :1485-1502): passes iff no two distinct entities with a full
   composite key share it.
-* `checkNode_spec`, `checkEdge_spec` — `check_node_constraint` /
+* `checkNode_spec`, `check_spec` — `check_node_constraint` /
   `check_edge_constraint` before #3334: MANDATORY passes iff every affected member
   has every property; UNIQUE iff, when some affected member participates, the
   label's (type's) scan passes. Membership of an edge created in this batch
@@ -19,10 +20,10 @@ import PendingCommit.Labels
   `uniqueViolated_agrees` shows it equals this label-scan spec under the
   constraint's pre-commit invariant; `check` stays as that reference spec, and
   `UQ.checkMandatory_eq_old` shows MANDATORY is unchanged.
-* `affected_spec`, `enforce_spec` — `enforce_constraints` (:1237): affected =
+* `affected_spec`, `enforce_spec` — `enforce_constraints` (:1484): affected =
   (created ∪ staged-attr ∪ staged-label nodes) \ deleted, edges likewise; the
   query fails iff some *operational* constraint's check fails.
-* `commit_spec` — `Pending::commit` (:1080), graph operations uninterpreted
+* `commit_spec` — `Pending::commit` (:1338), graph operations uninterpreted
   (`GOps`): the statistics it adds are `|created_nodes|`,
   `|created_rel_types|`, `Σ|remove_labels|`, the attribute writers' counts,
   `|deleted_nodes|` and the implicit + actually-deleted explicit edges;
@@ -143,12 +144,12 @@ def check (ct : CT) (props : List Nat) (affected : List Nat) (member : Nat → B
     | .mandatory => props.all (present e)
     | .unique => key e = [] || scan key [] all
 
-/-- `check_node_constraint` (:1334): no such label ⇒ nothing to check. -/
+/-- `check_node_constraint` (:1580): no such label ⇒ nothing to check. -/
 def checkNode (labelExists : Bool) (ct : CT) (props affected : List Nat) (member : Nat → Bool)
     (present : Nat → Nat → Bool) (key : Nat → List Nat) (all : List Nat) : Bool :=
   !labelExists || check ct props affected member present key all
 
-/-- `check_edge_constraint` (:1404): type from `created_rel_types` for edges
+/-- `check_edge_constraint` (:1672): type from `created_rel_types` for edges
 created in this batch, else the graph. -/
 def edgeMember (p : P) (gHasType : Nat → Bool) (ty : Nat) (e : Nat) : Bool :=
   match fget p.relTypes e with
@@ -226,7 +227,7 @@ structure Constraint where
   isNode : Bool
   ok : Bool   -- the value of `checkNode` / `check_edge_constraint` for it
 
-/-- `enforce_constraints` (:1237): no constraints ⇒ `Ok`; otherwise every
+/-- `enforce_constraints` (:1484): no constraints ⇒ `Ok`; otherwise every
 operational constraint's check, in order, `?` on the first failure. -/
 def enforce (cs : List Constraint) : Bool := cs.all fun c => !c.operational || c.ok
 
@@ -266,7 +267,7 @@ structure GOps (G : Type) where
   deleteNodes : G → List Nat → Option G
   implicitEdges : G → List Nat → List Nat → Option (G × List Nat)
   deleteRels : G → List Nat → Option (G × List Nat)
-  /-- `Graph::apply_index_writes` (graph.rs:3768): applies the staged native-index changes
+  /-- `Graph::apply_index_writes` (graph.rs:3890): applies the staged native-index changes
   (`index_docs.native`) to this version; a no-op without `index-falkordb`. Its semantics are
   proofs/index_layer's. -/
   applyIndexWrites : G → G
@@ -323,9 +324,9 @@ def stExplicit (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
 def stDelete (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
   (stDelNodes o p c).bind fun c9 => (stImplicit o p c9).bind (stExplicit o p)
 
-/-- `Pending::commit` (:1080): once every write is done, `apply_index_writes` (:1218, once
-for the whole `Commit`, since #3307) and then `enforce_constraints` (:1224, fn :1237) on that graph;
-the index-document absorb (:1231) is `PD.absorb_spec`. -/
+/-- `Pending::commit` (:1338): once every write is done, `apply_index_writes` (:1465, once
+for the whole `Commit`, since #3307) and then `enforce_constraints` (:1471, fn :1484) on that graph;
+the index-document absorb (:1478) is `PD.absorb_spec`. -/
 def finish (o : GOps G) (p : P) (c : CS G) : Option (P × G × Stats) :=
   let p' := { p with deletedR := c.imp.foldl sins [] ++ c.act }
   let g' := o.applyIndexWrites c.g
@@ -439,7 +440,7 @@ theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × St
       ⟨c5.imp, c5.act, rfl, by simp [d5, f5, e3, e2, e1]⟩, rfl, rfl, hok⟩
   · cases h6
 
-/-! ## `node_has_changes` (#3464, pending.rs:760)
+/-! ## `node_has_changes` (#3464, pending.rs:784)
 
 The O(1) guard the runtime uses to skip building the `get_node_labels` /
 `get_node_attrs` copies: true iff the node is a key of one of the four staged maps
@@ -447,10 +448,10 @@ The O(1) guard the runtime uses to skip building the `get_node_labels` /
 has no key). When it is false, both overlays (`update_node_labels`, `update_node_attrs`)
 are the identity. -/
 
-/-- inner `fn has` (:764): `!m.is_empty() && m.contains_key(&id)`. -/
+/-- inner `fn has` (:788): `!m.is_empty() && m.contains_key(&id)`. -/
 def hasKey {V : Type} (m : FMap V) (id : Nat) : Bool := !m.isEmpty && (fget m id).isSome
 
-/-- `Pending::node_has_changes` (:760). -/
+/-- `Pending::node_has_changes` (:784). -/
 def nodeHasChanges (p : P) (id : Nat) : Bool :=
   hasKey p.setL id || hasKey p.remL id || hasKey p.newN id || hasKey p.existN id
 
@@ -497,5 +498,25 @@ theorem nodeHasChanges_overapprox :
       ∀ l, Labels.overlay (fun _ => true) ⟨(fget p.setL 0).getD [], (fget p.remL 0).getD []⟩ l = true := by
   refine ⟨(⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [1])], []⟩ : P), by decide, ?_⟩
   intro l; simp [Labels.overlay, fget]
+
+/-- `(fget m id).isSome` is key membership. -/
+theorem fget_isSome_eq {V : Type} (m : FMap V) (id : Nat) :
+    (fget m id).isSome = decide (id ∈ m.map (·.1)) := by
+  induction m with
+  | nil => simp [fget]
+  | cons q m ih =>
+    by_cases h : q.1 = id
+    · simp [fget, h]
+    · simp [fget, h, ih, Ne.symm h]
+
+/-- **`nodeHasChanges_eq_core`**: this project's model of `Pending::node_has_changes` is
+proofs/runtime_core's `RuntimeCore.Accessors.nodeHasChanges` on the four staged maps' key sets,
+so the guard theorems proved there (`differs_spec`, `not_differs_labels`, `not_differs_attrs`)
+apply to it, and `nodeHasChanges_spec`/`_false_*` here to the same function. -/
+theorem nodeHasChanges_eq_core (p : P) (id : Nat) :
+    nodeHasChanges p id = RuntimeCore.Accessors.nodeHasChanges
+      ⟨p.setL.map (·.1), p.remL.map (·.1), p.newN.map (·.1), p.existN.map (·.1)⟩ id := by
+  simp [nodeHasChanges, RuntimeCore.Accessors.nodeHasChanges, hasKey_eq,
+    RuntimeCore.Accessors.hasKey_eq, fget_isSome_eq]
 
 end PendingCommit.PC

@@ -79,7 +79,7 @@ theorem call_trailing_comma_refused :
         .kw .return_, .ident 5]).isOk = false := by decide
 
 /-- **`SET (n.x) = 5`, `SET (n) = {..}`, `SET (n) += {..}`, `SET (n):L` and `REMOVE (n):L` are
-refused** (#3300, W4-parse-4; C: syntax error): `expect_property_after_paren` (cypher.rs:3406)
+refused** (#3300, W4-parse-4; C: syntax error): `expect_property_after_paren` (cypher.rs:3409)
 lets a parenthesised target open only a property lookup, `(n).x`. Before it the `=` arm took any
 primary, so `CREATE (n {a:1}) SET (n.x) = 5 RETURN n` set x. `SET (n).x = 5` and
 `REMOVE (n).x` still parse. -/

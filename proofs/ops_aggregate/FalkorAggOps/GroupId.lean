@@ -5,14 +5,21 @@ import FalkorAggOps.Ops
 Before c652e505e the dedup table `Runtime::value_dedupers` was keyed `(distinct node,
 hash(group key row))` (`hash_u64`, aggregate.rs:1267 at ca36bfa15), so two groups whose key rows
 collided in FxHash shared one seen-set (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now `GroupMap`'s value carries the group's id
-(aggregate.rs:59-65): `groups.len()` at insertion (`next_group_id`, :709 vectorized, :970 per-row,
-`0` for the keyless pre-insert :532-535, :893-897), and both paths read it back (`entry.2`, :728,
+(aggregate.rs `GroupMap`, :65): `groups.len()` at insertion (`next_group_id`, :709 vectorized, :970 per-row,
+`0` for the keyless pre-insert :533-540, :891-898), and both paths read it back (`entry.2`, :728,
 :976) as the key. The `hash_u64` trait and its `Row` impl were removed.
+
+Scope: this separates GROUPS (two groups never share a seen-set). It does not make the value
+dedup exact: inside one group `ValuesDeduper::is_seen` (value.rs) still stores only the 64-bit
+FxHash of the value (`seen: FxHashSet<u64>`), so two distinct values of one group that collide are
+still counted once (`Ops.dedup_collision_drops`, #2780). `dcgIdGo` models the seen-set as exact
+`(group id, value)` membership, so `distinct_by_group_id_exact` is exact relative to that
+abstraction of the per-group value hashing.
 
 | here | there |
 | --- | --- |
 | `insertKey`, `gid` | `groups.entry(key).or_insert_with(.. next_group_id)`; `entry.2` |
-| `dcgIdGo` | the per-row DISTINCT check `value_dedupers.entry((didx, group_id))` (aggregate.rs:753, eval.rs:854) |
+| `dcgIdGo` | the per-row DISTINCT check `value_dedupers.entry((didx, group_id))` (aggregate.rs:746, eval.rs:854) |
 | `dcgRef` | the exact per-group semantics (`dedupBy` on the group's own values) |
 -/
 namespace FalkorAggOps.GroupId
@@ -159,9 +166,11 @@ theorem dcgIdGo_eq_ref (k : K) :
             exact Or.inl (by rw [← hg])
           · exact Or.inr ⟨k, hk, hg, hp⟩
 
-/-- **Per-group DISTINCT is exact on main** (#2977): with the seen-set keyed by group ids,
+/-- **Groups never share a seen-set on main** (#2977): with the seen-set keyed by group ids,
 the count for group `k` equals the reference that dedups `(key, value)` pairs, for any input
-and any number of groups (no hash, so no collision). -/
+and any number of groups. Group-key hash collisions cannot merge groups any more. The residual
+value-hash collision inside one group (`ValuesDeduper` keeps only an FxHash of the value) is NOT
+modelled here, see `Ops.dedup_collision_drops`. -/
 theorem distinct_by_group_id_exact (rows : List (K × Nat)) (k : K) :
     dcgIdGo k [] [] rows = dcgRef k [] rows :=
   dcgIdGo_eq_ref k rows [] [] [] ⟨by simp, by simp⟩

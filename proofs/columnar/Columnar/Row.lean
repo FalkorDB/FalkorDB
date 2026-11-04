@@ -11,7 +11,7 @@ import Columnar.Batch
 | `Row.unbind` | `Row::unbind_by_id` / `unbind` (`row.rs:160-165`, `:222-227`) |
 | `Row.take` | `Row::take` (`row.rs:147-157`) |
 | `Row.cloneWith` | `Row::clone_with` (`row.rs:187-195`) |
-| `fillRow` | the shared loop shape of `Row::merge` and `BatchRow::to_owned_row` |
+| `fillRow` | the loop of `Row::merge` (`BatchRow::to_owned_row` no longer shares it: it pushes one slot per column, `pushSlots`) |
 | `Row.merge` | `Row::merge` (`row.rs:209-218`) |
 | `viewAt` | `BatchRow::value_at` (`batch.rs:1422-1435`) |
 | `toOwned`, `pushSlots`, `Row.pushSlot` | `BatchRow::to_owned_row` (`batch.rs:1437-1457`), `Row::push_slot` (`row.rs:224`) |
@@ -128,7 +128,7 @@ end Row
 
 open Row
 
-/-- Loop shape shared by `Row::merge` and `to_owned_row`: for each slot `id < n`
+/-- The loop of `Row::merge` (`to_owned_row` uses `pushSlots`, not this): for each slot `id < n`
 in order, `f id = some (v, keep)` inserts `v` and then unbinds unless `keep`. -/
 def fillRow (n : Nat) (f : Nat → Option (V F × Bool)) (acc : Row F) : Row F :=
   (List.range n).foldl (fun acc id =>
@@ -408,7 +408,7 @@ answers `Some(Null)` and so does the owned snapshot (it used to answer `None`, w
 def trailingEx (F : Type) : Batch F :=
   { len := 1, sel := none, cols := [.ints [1], .unbound, .unbound], origins := none, vo := fun _ => false }
 
-theorem toOwned_trailing_unbound (F : Type) [FloatModel F] :
+theorem toOwned_trailing_unbound (F : Type) :
     viewAt (trailingEx F) 0 2 = some .null ∧ (toOwned (trailingEx F) 0).get 2 = some .null ∧
     viewAt (trailingEx F) 0 3 = none ∧ (toOwned (trailingEx F) 0).get 3 = none ∧
     (toOwned (trailingEx F) 0).bound 0 = true ∧ (toOwned (trailingEx F) 0).bound 1 = false ∧

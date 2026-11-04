@@ -2,14 +2,14 @@
 
 | here | there (`graph/src/runtime/functions/algo_procedures.rs`) |
 | --- | --- |
-| `Dir`, `farEndpoint`  | `EdgeDirection`, `far_endpoint` :2173 |
-| `Found`, `cmpFound`   | `FoundPath`, `cmp_found_path` :2144 (weights modelled as `Int`: finite weights only) |
-| `record`              | `record_found_path` :2459 |
-| `pathCostRust`        | cost accumulation `edge_numeric_attr(.., cost_prop, 1.0)` in `bfs_find_bound` :2451 and `enumerate_paths` :2573 (since #3113) |
-| `dijkstraCostRust`    | `dijkstra_single_path`'s reported cost, `edge_numeric_attr(.., cost_prop, missing_cost)` with `missing_cost` 1 if `costProp` is configured else 0 (:2369-2375, since #3580) |
+| `Dir`, `farEndpoint`  | `EdgeDirection`, `far_endpoint` :2184 |
+| `Found`, `cmpFound`   | `FoundPath`, `cmp_found_path` :2155 (weights modelled as `Int`: finite weights only) |
+| `record`              | `record_found_path` :2473 |
+| `pathCostRust`        | cost accumulation `edge_numeric_attr(.., cost_prop, 1.0)` in `bfs_find_bound` :2465 and `enumerate_paths` :2587 (since #3113) |
+| `dijkstraCostRust`    | `dijkstra_single_path`'s reported cost, `edge_numeric_attr(.., cost_prop, missing_cost)` with `missing_cost` 1 if `costProp` is configured else 0 (:2372-2375, since #3580) |
 | `pathCostC`           | C `_get_value_or_default(.., SI_LongVal(1))` (proc_sp_paths.c:605) |
-| `nextNode`            | `build_path_batch` :2627 node reconstruction |
-| `useDijkstra`         | `run_path_algo` fast-path guard :2671-2681 |
+| `nextNode`            | `build_path_batch` :2641 node reconstruction |
+| `useDijkstra`         | `run_path_algo` fast-path guard :2687-2691 |
 -/
 namespace AlgoUdf.Paths
 
@@ -149,7 +149,7 @@ theorem cost_no_prop_hops (n : Nat) : pathCostRust (List.replicate n none) = n :
     rw [foldl_add_start, ih]; simp; omega
 
 /-- `dijkstra_single_path` (the `pathCount 1`, no `maxCost`, no `maxLen` fast path) reports
-a missing cost as 1 when `costProp` is configured and 0 when it is not (:2369-2375, since
+a missing cost as 1 when `costProp` is configured and 0 when it is not (:2372-2375, since
 #3580, fixes #3121). `cfg`: `config.cost_prop.is_some()`. C's single-path fast path charges 1
 for an edge lacking a configured `costProp`; with no `costProp` at all the C builds checked
 live (`bin/macos-arm64v8-release/falkordb.so`) report `pathCost 0`, as Rust does. -/

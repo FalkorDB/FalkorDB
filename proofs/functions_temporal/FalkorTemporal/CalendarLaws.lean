@@ -4,7 +4,7 @@ import FalkorTemporal.EraAll
 
 The two headline theorems (`dfc_civil`, `civil_dfc`) are about the *unbounded*
 Int functions; `civilFromDays_trunc` says where the Rust `y as i32` cast
-(`value.rs:800`) starts to matter.
+(`civil_from_days`, `value.rs:804`) starts to matter.
 -/
 namespace FalkorTemporal
 

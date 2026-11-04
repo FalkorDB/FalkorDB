@@ -299,9 +299,13 @@ theorem admitted_fromPairs_roundtrip (D : Nat) (hD : docBytesAssert D = true) (p
 def constAssert (L B D : Nat) : Bool := 2 ≤ L && L ≤ 256 && 4 ≤ B && docBytesAssert D
 
 /-- **`CowBTree::from_sorted` under its const assert** (`mod.rs:190`): every tree the assert lets
-    through holds exactly its (sorted, unique) input — no extra premise left on `LEAF_MAX`/`BRANCH_MAX`. -/
+    through holds exactly its (sorted, unique) input whose docs fit `DOC_BYTES` (`DocsFit D ps`) — no
+    extra premise left on `LEAF_MAX`/`BRANCH_MAX`. `fromSorted` itself ignores `D`; the Rust does not: a doc
+    `>= 256^DOC_BYTES` makes `from_pairs` fall back to the AoS page and `doc_le_bytes` panics (`fromPairsD`
+    is `none`), so the premise is the precondition under which the Rust builds the tree at all
+    (`fromPairsD_roundtrip` is the per-page statement). -/
 theorem asserted_fromSorted_contents (L B D : Nat) (h : constAssert L B D = true) (ps : List P)
-    (hs : Sorted2 ps) (hu : AllU64 ps) : (fromSorted L B ps).contents = ps := by
+    (hs : Sorted2 ps) (hu : AllU64 ps) (_hf : DocsFit D ps) : (fromSorted L B ps).contents = ps := by
   simp only [constAssert, Bool.and_eq_true, decide_eq_true_eq] at h
   exact fromSorted_contents L B (by omega) h.1.1.2 (by omega) ps hs hu
 

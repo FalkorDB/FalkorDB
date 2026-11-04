@@ -19,7 +19,7 @@ inductive Tag where
   | point | datetime | date | time | duration | vecf32
 deriving DecidableEq, Repr
 
-/-- `OrderedEnum::order` (`value.rs:1177`). -/
+/-- `OrderedEnum::order` (`value.rs:1219`). -/
 def orderTag : Tag → Nat
   | .null => 2 ^ 15 | .bool => 2 ^ 12 | .int => 2 ^ 13 | .float => 2 ^ 14
   | .string => 2 ^ 11 | .list => 2 ^ 3 | .map => 2 ^ 0 | .node => 2 ^ 1
@@ -71,19 +71,19 @@ def fne (x y : F) : Bool := fpcmp x y != some .eq
 /-- IEEE `x > y`. -/
 def fgt (x y : F) : Bool := fpcmp x y == some .gt
 
-/-- `first_difference` (`value.rs:1821`): the first pair with `x != y` decides by `x > y`. -/
+/-- `first_difference` (`value.rs:2007`): the first pair with `x != y` decides by `x > y`. -/
 def firstDifference : List F → List F → Ordering
   | x :: xs, y :: ys => if fne x y then (if fgt x y then .gt else .lt) else firstDifference xs ys
   | _, _ => .eq
 
-/-- `compare_vecf32` (`value.rs:1817`): length, then `first_difference` (the chunked
+/-- `compare_vecf32` (`value.rs:2003`): length, then `first_difference` (the chunked
 scan equals the plain one: proofs/value_math `chunked_eq_firstDiff`). -/
 def cmpVec (a b : List F) : Ordering :=
   match cmpI a.length b.length with
   | .eq => firstDifference a b
   | o => o
 
-/-- The `(Point, Point)` arm of `compare_value` (`value.rs:1247`): longitude, then
+/-- The `(Point, Point)` arm of `compare_value` (`value.rs:1288`): longitude, then
 latitude, each by `partial_cmp`; NaN answers `(Less, NaN)`. -/
 def cmpPoint (alat alon blat blon : F) : Ordering × Flag :=
   match fpcmp alon blon with
@@ -136,7 +136,7 @@ def isNull : V → Bool
   | _ => false
 
 mutual
-/-- `compare_value` (`value.rs:1224`), arm by arm. -/
+/-- `compare_value` (`value.rs:1266`), arm by arm. -/
 def cmpV : V → V → Ordering × Flag
   | .bool a, .bool b => (cmpB a b, .none)
   | .flt a, .flt b => cmpF a b
@@ -173,7 +173,7 @@ def mapVals : List V → List V → Ordering × Flag
   | _, _ => (.eq, .none)
 end
 
-/-- `PartialEq for Value` (`value.rs:1215`). -/
+/-- `PartialEq for Value` (`value.rs:1256`). -/
 def eqV (a b : V) : Bool := (cmpV a b).1 = .eq
 
 /-- The ordering half of `compare_value`: `compare_value(..).0`. Before #2912
@@ -199,7 +199,7 @@ def evalNeq (a b : V) : Option Bool :=
 /-! ## Hashing -/
 
 
-/-- `Self::Float(x)` arm of `Hash for Value` (`value.rs:839-850`, main since #2917
+/-- `Self::Float(x)` arm of `Hash for Value` (`value.rs:878-891`, main since #2917
 7fdf06a0e): hash as the integer if `x - (x as i64) as f64 == 0`, else one word for
 every NaN (`f64::NAN.to_bits()`, whatever the sign/payload), else `to_bits`. -/
 def floatWord (f : F) : UInt64 :=
@@ -211,11 +211,11 @@ example : floatWord (.nan true 5) = NAN_BITS := by decide
 /-- `f32::NAN.to_bits()`. -/
 def F32_NAN_BITS : Nat := 0x7fc00000
 
-/-- `f32_hash_bits` (`value.rs:1919`): one value for every NaN, else `to_bits`. -/
+/-- `f32_hash_bits` (`value.rs:1959`): one value for every NaN, else `to_bits`. -/
 def f32HashBits (f : F) : Nat := if f.nkey.isNone then F32_NAN_BITS else bits32 f
 
 mutual
-/-- The words `Hash for Value` (`value.rs:823`) writes, in order (each `write_*` is one
+/-- The words `Hash for Value` (`value.rs:861`) writes, in order (each `write_*` is one
 Fx `add_to_hash`). VecF32/Point components go through `f32_hash_bits` (`:876-886`). -/
 def hwords : V → List UInt64
   | .null => [0]
@@ -333,7 +333,7 @@ theorem fx_collision_general (s a b : UInt64) :
     rw [UInt64.add_assoc, UInt64.add_comm (K * K), UInt64.sub_add_cancel]
   rw [h1, h2, h3]
 
-/-- `min_batch` (`functions/aggregation.rs:497`, main since #2917): replace `best`
+/-- `min_batch` (`functions/aggregation.rs:498`, main since #2917): replace `best`
 when the new value compares `Less`, and neither against a null nor a NaN. -/
 def minFold (xs : List V) : V :=
   xs.foldl (fun best v =>

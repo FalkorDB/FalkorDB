@@ -17,7 +17,8 @@ def Oracle.PPRec (o : Oracle) : Prop :=
     (s.cur = .lparen ∧ t.root = .paren) ∨ (s.cur = .lbrack ∧ t.root = .list)
 
 /-- The atom of a SET / REMOVE target: `oC_Atom`, where a parenthesised
-expression must be closed by `)`. -/
+expression must be closed by `)` and then followed by `.` (`expect_property_after_paren`, #3300:
+`(n).x` only; `(n) = ..`, `(n):L` and `(n.x) = 5` are refused). -/
 inductive GTarget : PS → ET → PS → Prop
   | plain {s t s1} : o.pp s = .ok (t, false) s1 → GTarget s t s1
   | paren {s t0 s1 t s2} : o.pp s = .ok (t0, true) s1 → s.cur = .lparen →

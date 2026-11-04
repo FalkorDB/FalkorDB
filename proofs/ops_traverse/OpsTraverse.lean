@@ -40,12 +40,12 @@ heads start empty, `next_new`; each per-type stream ascending by `layerStream_sp
 live-path-through-a-deleted-edge bug). `expand_union_row` (:1121): `union_emit_directed_iff`,
 `union_emit_bidir_iff`, `union_collapse_directed_keys_nodup`. `delta_lmxm_into`, `build_unrestricted_iter`,
 `build_transposed_iter` are now PROVEN (no FFI rows left in `cond_traverse.rs`); every `cond_traverse.rs` pin
-moved (+151 from `:900`, +291 from `:1235`). The project now depends on graphblas_wrappers and versioned_matrix.
+moved (`expand_row` +151 from `:749`, `process_pairs` +291 from `:944`). The project now depends on graphblas_wrappers and versioned_matrix.
 
 **Re-targeted to main b29a2885c** (from 5e475e6c9): #3463 adds the pending-deleted endpoint
 check to `ExpandIntoOp::expand_row` (`expand_into.rs:158-160`); `expandIntoP` is now the fixed
-model and satisfies `LiveExpandInto` (`expandIntoP_live`), old counterexamples renamed
-pre-#3463 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412); `expand_into.rs` pins after `:158` moved +7. New open item: CondTraverse ignores
+model and satisfies `LiveExpandInto` (`expandIntoP_live`); the pre-#3463 counterexamples
+were removed in bbee75955 (the last revision that has them is 17ccc5412); `expand_into.rs` pins after `:158` moved +7. New open item: CondTraverse ignores
 `Pending` (`bug_condTraverse_*`).
 
 **Re-targeted to main 5e475e6c9** (from b84473a7f). #2383 (index serves `IN [...]` natively): the node and
@@ -73,7 +73,7 @@ operators; COVERAGE.tsv line numbers in `eval.rs` and `algo_procedures.rs` re-pi
 A Lean 4 model of FalkorDB-rs's pattern-matching operators, checked against
 openCypher's semantics (relationship isomorphism inside one MATCH, direction,
 self-loops, `*min..max` including `*0`) and against C FalkorDB on live servers.
-252 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
+249 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
 the only FFI primitive the batched-path proofs lean on, and it enters as a *hypothesis*
 (`CondTraverse.MxmSpec`: the GrB_mxm ANY_PAIR spec), discharged once by the
 reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
@@ -83,7 +83,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 
 | here | there |
 | --- | --- |
-| `Basic.pairs`, `edgesBetween`, `step` | relationship-matrix pair iterator, `Tensor::get`, `Graph::get_node_relationships_by_type` (`graph/graph.rs:2079`) |
+| `Basic.pairs`, `edgesBetween`, `step` | relationship-matrix pair iterator, `Tensor::get`, `Graph::get_node_relationships_by_type` (`graph/src/graph/graph.rs`) |
 | `CondTraverse.processPairs`, `expandRow` | `CondTraverseOp::process_pairs` / `expand_row` (`runtime/ops/cond_traverse.rs:1235`, `:900`) |
 | `CondTraverse.expandInto` | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs:125`) |
 | `CondTraverse.MxmSpec`, `chain` | `Matrix::delta_lmxm` + `expand_batch` (`cond_traverse.rs:594-893`); the multiply itself: `UnionGlue.deltaInto` (`TraversalMatrix::delta_lmxm_into` :86) over `GBWDelta.deltaLmxm` (`matrix.rs:1520`) |
@@ -91,7 +91,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `UnionStream.layerStream` | the per-type `versioned_matrix::Iter` merge of `m`, `dp`, `dm` (`VMIter`), keyed by row-major position |
 | `UnionGlue.relationshipTensors`, `buildUnion`, `pickMatrix`, `deltaInto`, `expandUnionRow` | `relationship_tensors` (:288), `build_union_iter` (:317), the `TraversalMatrix` selection (:615-680), `delta_lmxm_into` (:86), `expand_union_row` (:1121) |
 | `CondTraverse.twoHop` | two chained traverses with sibling uniqueness (`ops/mod.rs:155`) |
-| `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:1087-1110`, reset `:1467`) |
+| `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:1087-1107`, reset `:1465-1469`) |
 | `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
 | `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:85-305`) |
 | `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:148-172`) |
@@ -150,7 +150,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
   attr-free `processPairs` / `expandInto` are now literal; the batched F·A path lost its
   inline-attr gate (`ctNew_eligible_iff`: it only widened); and a
   var-length walk's absorbed edge filter now raises a type error on a non-boolean value,
-  exactly as `FilterOp` (`edgeVerdict_eq_filterRow`; was a silent skip).
+  exactly as `FilterOp` (`edgeVerdict_eq_filterEval`; was a silent skip).
 
 ## Confirmed bugs (Rust repro fails; C and/or openCypher disagree)
 
@@ -164,7 +164,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    `optimizer/references.rs`, which still classifies `CondTraverse`/`ExpandInto` (and so their
    `sibling_edges`) as reading nothing.
 2. **Bidirectional dedup of chained anonymous undirected hops drops rows**
-   (`cond_traverse.rs:391-417, 1237-1258, 1087-1110`): key ignores other columns
+   (`cond_traverse.rs`: setup :381-417, dedup block :1087-1107, per-batch reset :1465-1469): key ignores other columns
    (`UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b)`: Rust 5 rows, C 10), uses an
    intermediate node as source for ≥3 hops (`(a)-[]-()-[]-()-[]-(b)`: Rust 7
    pairs, C 12), and is reset per batch (K(2,3000): Rust counts 3/4, C 1).
