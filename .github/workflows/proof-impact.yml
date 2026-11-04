@@ -9,12 +9,15 @@
 #            removed/renamed functions that still have rows, and keeps one sticky
 #            comment with the result. No Lean build, a few seconds.
 #   reprove  only when a verified function changed, and only for branches of
-#            this repo (a fork PR's token cannot push or bill Copilot): the
-#            GitHub Copilot CLI, on the model in COPILOT_MODEL (Claude Opus 5.5),
-#            updates the Lean models for the change, re-runs the affected
-#            projects' proofs, and pushes
-#            the update to proofs/pr-<N>, or reports a counterexample when a
-#            theorem no longer holds. It never pushes to the PR's branch.
+#            this repo (a fork PR's token cannot bill Copilot): the GitHub
+#            Copilot CLI, on the model in COPILOT_MODEL (Claude Opus 5.5),
+#            edits the Lean models for the change and writes its verdicts. The
+#            job's token can only read the repo and call Copilot: the agent
+#            cannot push or comment. Trusted steps then run the gates with the
+#            pristine gate scripts and hand a patch to publish.
+#   publish  no PR code runs here: applies the patch to proofs/pr-<N> (whose
+#            tree is rebuilt from the proofs base on every run, so edits a later
+#            push made obsolete do not linger) and keeps one re-prove comment.
 #
 # Advisory: not part of ci-gate. The proofs come from proofs/lean4-verification
 # until #3172 merges; after that, point PROOFS_REF at the PR's own proofs/.
@@ -23,11 +26,11 @@ name: Proof impact
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review]
-    # Mirrors rust-pr.yml's trunks.
-    branches:
-      - "main"
-      - "[0-9]*.[0-9]*"
+    # `edited` so a base-branch change re-runs; title/body edits are skipped below.
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+    # Like rust-pr.yml: every base but master (the C tree), so stacks are covered.
+    branches-ignore:
+      - "master"
     paths:
       - "graph/src/**"
       - "src/**"
@@ -44,10 +47,17 @@ env:
   PROOFS_REF: proofs/lean4-verification
   # Copilot CLI model id for the re-prove; needs the org's Copilot to offer it.
   COPILOT_MODEL: claude-opus-5.5
+  # elan from a pinned release asset (same pin as lean-proofs.yml); bump both together.
+  ELAN_VERSION: v4.2.4
+  ELAN_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
+  # Only comments this workflow wrote are reused.
+  BOT_LOGIN: github-actions[bot]
 
 jobs:
   impact:
-    if: ${{ !github.event.pull_request.draft }}
+    if: >-
+      !github.event.pull_request.draft &&
+      (github.event.action != 'edited' || github.event.changes.base != null)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -62,11 +72,13 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           path: code
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ env.PROOFS_REF }}
           path: proofs-src
           sparse-checkout: proofs
+          persist-credentials: false
       - name: Map the diff to verified functions
         id: impact
         env:
@@ -84,19 +96,32 @@ jobs:
         with:
           name: proof-impact
           path: impact.json
-      - name: Keep one sticky comment
+      - name: Keep the sticky comments
         # A fork PR's token cannot comment; the job summary still has the report.
         if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          CHANGED: ${{ steps.impact.outputs.changed }}
         run: |
-          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
-            -q '.[] | select(.body | startswith("<!-- proof-impact -->")) | .id' | head -1)
-          if [[ -n "$id" ]]; then
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@impact.md >/dev/null
-          else
-            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@impact.md >/dev/null
+          # upsert <marker> <file>: edit this workflow's comment with that marker, or post one.
+          upsert() {
+            local id
+            id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+              -q ".[] | select(.user.login == \"$BOT_LOGIN\" and (.body | startswith(\"$1\"))) | .id" | head -1)
+            if [[ -n "$id" ]]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$2" >/dev/null
+            elif [[ "${3:-}" != "existing-only" ]]; then
+              gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$2" >/dev/null
+            fi
+          }
+          upsert "<!-- proof-impact -->" impact.md
+          # No verified function left: retire an earlier re-prove verdict, if any.
+          if [[ "$CHANGED" == "0" ]]; then
+            printf '<!-- proof-reprove -->\n### Lean re-prove\n\nNothing to re-prove at %s: no verified function is changed.\n' \
+              "${HEAD:0:9}" > reprove.md
+            upsert "<!-- proof-reprove -->" reprove.md existing-only
           fi
 
   reprove:
@@ -105,47 +130,54 @@ jobs:
       needs.impact.outputs.changed != '0' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     permissions:
-      contents: write          # push proofs/pr-<N>
-      pull-requests: write     # the re-prove comment
+      contents: read           # the agent's token: read the repo, nothing else
       copilot-requests: write  # Copilot CLI on the job's own token
+    outputs:
+      gates: ${{ steps.gates.outputs.gates }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           path: code
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.impact.outputs.proofs_sha }}
-          fetch-depth: 0
           path: proofs-src
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: proof-impact
-      - name: Install Lean (elan)
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            | sh -s -- -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
-            ~/.elan/toolchains
+            ~/.elan
             proofs-src/proofs/*/.lake
-          key: lean-${{ hashFiles('proofs-src/proofs/*/lean-toolchain', 'proofs-src/proofs/*/lake-manifest.json') }}-${{ needs.impact.outputs.proofs_sha }}
+          key: lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs-src/proofs/*/lean-toolchain') }}-${{ needs.impact.outputs.proofs_sha }}
           restore-keys: |
-            lean-${{ hashFiles('proofs-src/proofs/*/lean-toolchain', 'proofs-src/proofs/*/lake-manifest.json') }}-
+            lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs-src/proofs/*/lean-toolchain') }}-
+      - name: Install elan
+        run: |
+          set -euo pipefail
+          asset=elan-x86_64-unknown-linux-gnu.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$asset" \
+            "https://github.com/leanprover/elan/releases/download/${ELAN_VERSION}/${asset}"
+          echo "${ELAN_SHA256}  $RUNNER_TEMP/$asset" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/elan"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/elan"
+          "$RUNNER_TEMP/elan/elan-init" -y --default-toolchain none --no-modify-path
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Install the Copilot CLI
         run: npm install -g @github/copilot@1.0.102
       - name: Re-prove with Copilot
         env:
-          # The Copilot CLI and gh both authenticate with the job's token; the
-          # org policy "Allow use of Copilot CLI billed to the organization"
-          # must be on.
+          # The Copilot CLI authenticates with the job's token (read-only apart
+          # from Copilot); the org policy "Allow use of Copilot CLI billed to the
+          # organization" must be on.
           GITHUB_TOKEN: ${{ github.token }}
-          GH_TOKEN: ${{ github.token }}
           PROMPT: |
             You re-check FalkorDB's Lean 4 proofs against a pull request's Rust change.
 
@@ -176,27 +208,126 @@ jobs:
             proofs; new fns get a row, with a model and proof when they are small, else
             NOT COVERED with a reason). Line numbers in rows must match ./code.
 
-            Gates, run from ./proofs-src: `proofs/lean_ci.sh <project> ...` for every project
-            you touched and every project that requires it (lakefile path dependencies) must
-            pass (it rejects sorry, admit, native_decide and unjustified axioms), and
-            `COVERAGE_RUST_ROOT=$PWD/../code proofs/coverage.sh --unmatched` must list no
-            unmatched rows for the files the PR changed.
+            Check your work from ./proofs-src with `proofs/lean_ci.sh <project> ...` for every
+            project you touched and every project that requires it (lakefile path
+            dependencies), and `COVERAGE_RUST_ROOT=$PWD/../code proofs/coverage.sh --unmatched`.
+            Do not edit proofs/lean_ci.sh or proofs/coverage.sh: the workflow re-runs both from
+            the original commit and drops any patch that touches them.
 
-            If you changed anything under ./proofs-src: commit there on branch
-            proofs/pr-${{ github.event.pull_request.number }} (create it from the checked-out
-            commit; if it already exists on origin, fetch it and merge your work into it with a
-            normal merge), message ending with
-            `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`, and `git push origin
-            proofs/pr-${{ github.event.pull_request.number }}`. Never force-push, never push to
-            the PR's branch, never edit ./code.
+            Leave your edits as uncommitted changes in ./proofs-src; do not commit, push or
+            comment (the workflow publishes them). Never edit ./code.
 
-            Finally keep exactly one PR comment whose body starts with `<!-- proof-reprove -->`
-            (edit it with `gh api -X PATCH repos/${{ github.repository }}/issues/comments/<id>`
-            if it exists, else create it on issue ${{ github.event.pull_request.number }}). Body:
-            a heading "Lean re-prove", one line per fn with its verdict (unchanged / model
-            updated / counterexample) and the Lean theorem names, the gate results, and a link
-            to the compare view of proofs/pr-${{ github.event.pull_request.number }} against
-            ${{ env.PROOFS_REF }} when you pushed. Put counterexamples first, each with its
-            Cypher repro. Keep it short; no preamble.
+            Finally write ./reprove.md: a heading "### Lean re-prove", one line per fn with its
+            verdict (unchanged / model updated / counterexample) and the Lean theorem names.
+            Put counterexamples first, each with its Cypher repro. Keep it short; no preamble.
         run: |
           copilot -p "$PROMPT" -s --model "$COPILOT_MODEL" --allow-all-tools --no-ask-user
+      - name: Gates on the result, with the original gate scripts
+        id: gates
+        env:
+          BASE_SHA: ${{ needs.impact.outputs.proofs_sha }}
+        run: |
+          set -uo pipefail
+          cd proofs-src
+          git add -A
+          if git diff --cached --name-only | grep -qE '^proofs/(lean_ci|coverage)\.sh$'; then
+            echo "The re-prove edited a gate script; its patch is dropped." >> ../gates.md
+            git reset -q --hard
+            echo "gates=tampered" >> "$GITHUB_OUTPUT"
+          else
+            git diff --cached --binary > ../proofs.patch
+            ok=pass
+            projects=$(git diff --cached --name-only | sed -n 's|^proofs/\([^/]*\)/.*|\1|p' | sort -u)
+            # Every project, so dependents of a touched project are rebuilt too; the
+            # cache keeps unchanged ones fast.
+            [[ -n "$projects" ]] && { proofs/lean_ci.sh > ../lean_ci.log 2>&1 || ok=fail; }
+            COVERAGE_RUST_ROOT="$GITHUB_WORKSPACE/code" proofs/coverage.sh --unmatched > ../coverage.log 2>&1 || ok=fail
+            { echo "Gates: \`lean_ci.sh\` and \`coverage.sh --unmatched\`: **$ok**"; } >> ../gates.md
+            echo "gates=$ok" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ always() }}
+        with:
+          name: proof-reprove
+          path: |
+            proofs.patch
+            reprove.md
+            gates.md
+            lean_ci.log
+            coverage.log
+          if-no-files-found: ignore
+
+  publish:
+    needs: [impact, reprove]
+    if: ${{ always() && needs.reprove.result != 'skipped' && needs.reprove.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write        # push proofs/pr-<N>
+      pull-requests: write   # the re-prove comment
+    steps:
+      # Only the proofs tree is checked out; no PR code runs in this job.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.impact.outputs.proofs_sha }}
+          fetch-depth: 0
+          path: proofs-src
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        # Absent when the re-prove job failed before uploading; the comment says so.
+        continue-on-error: true
+        with:
+          name: proof-reprove
+          path: out
+      - name: Push proofs/pr-${{ github.event.pull_request.number }} and keep the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ needs.impact.outputs.proofs_sha }}
+          GATES: ${{ needs.reprove.outputs.gates }}
+          REPROVE_RESULT: ${{ needs.reprove.result }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          branch="proofs/pr-$PR"
+          mkdir -p ../out
+          cd proofs-src
+          note=""
+          if [[ "$GATES" == "pass" && -s ../out/proofs.patch ]]; then
+            git apply --index ../out/proofs.patch
+            git commit -q -m "proofs: re-prove for #$PR at ${HEAD:0:9}" \
+              -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+            tree=$(git rev-parse 'HEAD^{tree}')
+            # The branch keeps its history, but each run's tree is this run's result on
+            # the proofs base, so edits an earlier push needed and this one doesn't go.
+            parent=()
+            if git fetch -q origin "$branch" 2>/dev/null; then parent=(-p FETCH_HEAD); fi
+            parent+=(-p HEAD)
+            commit=$(git log -1 --format=%B HEAD | git commit-tree "$tree" "${parent[@]}")
+            git push -q origin "${commit}:refs/heads/${branch}"
+            note="Proof update: [\`$branch\`](https://github.com/$GITHUB_REPOSITORY/compare/$PROOFS_REF...$branch)"
+          elif [[ "$GATES" == "pass" ]]; then
+            note="No proof change was needed."
+          else
+            note="Not published: gates **${GATES:-did not run}** (re-prove job: $REPROVE_RESULT); logs are in the run's \`proof-reprove\` artifact."
+          fi
+          {
+            echo "<!-- proof-reprove -->"
+            if [[ -s ../out/reprove.md ]]; then cat ../out/reprove.md; else echo "### Lean re-prove"; echo; echo "No verdicts were written."; fi
+            echo
+            [[ -s ../out/gates.md ]] && cat ../out/gates.md
+            echo
+            echo "$note"
+            echo
+            echo "<sub>At ${HEAD:0:9}. Advisory, not part of ci-gate.</sub>"
+          } > ../comment.md
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            -q ".[] | select(.user.login == \"$BOT_LOGIN\" and (.body | startswith(\"<!-- proof-reprove -->\"))) | .id" | head -1)
+          if [[ -n "$id" ]]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@../comment.md >/dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@../comment.md >/dev/null
+          fi
