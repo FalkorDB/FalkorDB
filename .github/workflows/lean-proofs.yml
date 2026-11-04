@@ -5,27 +5,28 @@ name: Lean proofs
 # native_decide and unjustified axioms; `proofs/coverage.sh --unmatched` checks
 # every Rust fn is listed in a COVERAGE.tsv and every row still points at a fn.
 #
-# A separate check, deliberately not part of ci-gate (yet). Lean builds read only
-# proofs/, but the coverage gate reads graph/src and src, so a Rust change that
-# adds, removes or renames a fn can break it: that is why the Rust paths trigger it.
+# Built to be a REQUIRED check, which drives two deliberate choices:
+#
+#   1. No `paths:` filter on the triggers. A required status check that never
+#      reports leaves a PR blocked forever (see the top of pr-linked-issue.yml),
+#      so the job runs on every PR to a covered branch and the job name
+#      ("Lean proofs") stays stable.
+#   2. The job decides relevance itself. Lean builds read only proofs/, but the
+#      coverage gate reads graph/src and src (a Rust change that adds, removes or
+#      renames a fn can break it), so a PR that touches none of proofs/**,
+#      graph/src/**, src/** or this file reports success at once, with a summary
+#      line saying it was skipped. Every other PR, and every push to main, runs
+#      both gates in full.
+#
+# It is not part of ci-gate; whether to require it is a branch-protection setting.
 on:
   pull_request:
     branches:
       - main
       - "[0-9]*.[0-9]*"
-    paths:
-      - "proofs/**"
-      - "graph/src/**"
-      - "src/**"
-      - ".github/workflows/lean-proofs.yml"
   push:
     branches:
       - main
-    paths:
-      - "proofs/**"
-      - "graph/src/**"
-      - "src/**"
-      - ".github/workflows/lean-proofs.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -54,12 +55,37 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # A PR is checked out as its merge commit; two levels give its first
+          # parent (the base tip), which the scope step diffs against.
+          fetch-depth: 2
+
+      # A PR that touches nothing the proofs read reports success here, without
+      # installing or building anything. A push always runs the gates, and so does
+      # anything this step cannot decide (no merge parent).
+      - name: Decide whether the proofs are in scope
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          run=true
+          if [[ "$EVENT_NAME" == pull_request ]] && git rev-parse --verify --quiet 'HEAD^2' >/dev/null; then
+            changed=$(git diff --name-only 'HEAD^1' HEAD)
+            if grep -qE '^(proofs/|graph/src/|src/|\.github/workflows/lean-proofs\.yml$)' <<<"$changed"; then
+              echo "This PR touches proofs/**, graph/src/**, src/** or the workflow: running both gates." >> "$GITHUB_STEP_SUMMARY"
+            else
+              run=false
+              echo "Skipped: this PR touches none of proofs/**, graph/src/**, src/** or .github/workflows/lean-proofs.yml, so the proofs and the coverage gate are unaffected." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "run=${run}" >> "$GITHUB_OUTPUT"
 
       # The Lean build is incremental on its own trace files, so a restored
       # proofs/*/.lake makes an unchanged project a no-op. The exact key hits when
       # no .lean file changed; otherwise the newest cache for the same toolchains is
       # restored and only the changed modules (and their dependents) are rebuilt.
       - name: Cache elan and the Lake build directories
+        if: steps.scope.outputs.run == 'true'
         id: cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
@@ -71,6 +97,7 @@ jobs:
             lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs/*/lean-toolchain') }}-
 
       - name: Install elan
+        if: steps.scope.outputs.run == 'true'
         env:
           RUNNER_TEMP_DIR: ${{ runner.temp }}
         run: |
@@ -85,6 +112,7 @@ jobs:
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Build and check every project (lean_ci.sh)
+        if: steps.scope.outputs.run == 'true'
         run: |
           set -euo pipefail
           bash proofs/lean_ci.sh
@@ -94,6 +122,7 @@ jobs:
       # (0 unmatched), no row in an unknown bucket, no project without a
       # COVERAGE.tsv, no TEST-ONLY row on a fn the scanner sees as production code.
       - name: Coverage gate (coverage.sh --unmatched)
+        if: steps.scope.outputs.run == 'true'
         run: |
           set -euo pipefail
           bash proofs/coverage.sh --unmatched | tee "$RUNNER_TEMP/coverage.txt"

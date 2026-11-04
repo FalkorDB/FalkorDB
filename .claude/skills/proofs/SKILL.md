@@ -15,7 +15,7 @@ Mathlib. The toolchain comes from each project's `lean-toolchain`
 - `proofs/<area>/<Root>.lean` — the header is the report: Lean↔Rust `file:line` table, theorems, bugs, gaps.
 - `proofs/<area>/COVERAGE.tsv` — one row per Rust fn: bucket PROVEN / CONDITIONAL / AXIOMATISED / MODELLED / NOT COVERED.
 - `proofs/FINDINGS.md` — the bug ledger. Each bug is confirmed by a repro unless its entry is marked Lean-only, Unconfirmed or a model note; later notes record which commits fixed it.
-- `proofs/lean_ci.sh`, `proofs/coverage.sh` — the two gates. `.github/workflows/lean-proofs.yml` runs both on pull requests that touch `proofs/**`, `graph/src/**` or `src/**` and on pushes to `main` (a separate check, not in `ci-gate`).
+- `proofs/lean_ci.sh`, `proofs/coverage.sh` — the two gates. `.github/workflows/lean-proofs.yml` (check name `Lean proofs`) reports on every pull request, so it can be a required check: the job itself skips, with a summary line, a PR that touches none of `proofs/**`, `graph/src/**`, `src/**` or the workflow file, and otherwise (and on pushes to `main`) runs both (a separate check, not in `ci-gate`).
 
 ## Quick start
 

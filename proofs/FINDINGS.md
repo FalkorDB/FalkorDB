@@ -20,8 +20,7 @@ Lean definitions to Rust `file:line`, the theorems, the bugs and the gaps.
 under an undischarged hypothesis about other Rust code, named in the row);
 1290 FFI functions are AXIOMATISED; 0 unlisted, 0 unmatched.
 See `.claude/skills/proofs/SKILL.md` for how to work with them.
-The workflow `.github/workflows/lean-proofs.yml` runs both gates (`lean_ci.sh`, `coverage.sh --unmatched`) on every
-pull request to `main` or a release branch (`N.M`) that touches `proofs/**`, `graph/src/**` or `src/**`, and on every push to `main`; it is a separate check,
+The workflow `.github/workflows/lean-proofs.yml` (check name `Lean proofs`) runs on every pull request to `main` or a release branch (`N.M`) and on every push to `main`, with no `paths:` filter so that it can be a required check; inside the job a PR that touches none of `proofs/**`, `graph/src/**`, `src/**` or the workflow file reports success at once with a summary line saying it was skipped, and every other run executes both gates (`lean_ci.sh`, `coverage.sh --unmatched`). It is a separate check,
 not part of `ci-gate`.
 
 A bug is **confirmed** only if a repro against the real Rust shows it, and it is
