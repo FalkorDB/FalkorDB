@@ -44,19 +44,24 @@ def git(repo, *args):
                           capture_output=True, text=True).stdout
 
 
-def fns_of(proofs, rel, text):
-    """[(line, name, is_test)] for one Rust file, via coverage.sh --fns, so test
-    detection matches the coverage gate exactly."""
-    if text is None:
+def tree(repo, sha, root):
+    """graph/src and src of `sha`, extracted under `root`, so coverage.sh sees
+    each file in its crate (an out-of-line `#[cfg(test)] mod x;` lives in the
+    parent file, not in x.rs)."""
+    archive = subprocess.run(['git', '-C', repo, 'archive', sha, '--', *TOPS],
+                             check=True, capture_output=True).stdout
+    subprocess.run(['tar', '-x', '-C', root], input=archive, check=True)
+    return root
+
+
+def fns_of(proofs, root, rel):
+    """[(line, name, is_test)] for one Rust file of an extracted tree, via
+    coverage.sh --fns, so test detection matches the coverage gate exactly."""
+    if not os.path.exists(os.path.join(root, rel)):
         return []
-    with tempfile.TemporaryDirectory() as root:
-        path = os.path.join(root, rel)
-        os.makedirs(os.path.dirname(path))
-        with open(path, 'w') as f:
-            f.write(text)
-        out = subprocess.run([os.path.join(proofs, 'coverage.sh'), '--fns', rel],
-                             env={**os.environ, 'COVERAGE_RUST_ROOT': root},
-                             check=True, capture_output=True, text=True).stdout
+    out = subprocess.run([os.path.join(proofs, 'coverage.sh'), '--fns', rel],
+                         env={**os.environ, 'COVERAGE_RUST_ROOT': root},
+                         check=True, capture_output=True, text=True).stdout
     res = []
     for l in out.splitlines():
         line, name, kind = l.split('\t')
@@ -110,6 +115,11 @@ def show(repo, sha, rel):
 
 
 def analyse(repo, base, head, proofs):
+    with tempfile.TemporaryDirectory() as b, tempfile.TemporaryDirectory() as h:
+        return _analyse(repo, base, head, proofs, tree(repo, base, b), tree(repo, head, h))
+
+
+def _analyse(repo, base, head, proofs, base_root, head_root):
     rows = load_rows(proofs)
     names = git(repo, 'diff', '--name-status', '-M', base, head, '--', *TOPS).splitlines()
     changed, added, removed = [], [], []
@@ -119,8 +129,8 @@ def analyse(repo, base, head, proofs):
         old_rel, new_rel = paths[0], paths[-1]
         if not new_rel.endswith('.rs') and not old_rel.endswith('.rs'):
             continue
-        old_fns = fns_of(proofs, old_rel, show(repo, base, old_rel)) if status[0] != 'A' else []
-        new_fns = fns_of(proofs, new_rel, show(repo, head, new_rel)) if status[0] != 'D' else []
+        old_fns = fns_of(proofs, base_root, old_rel) if status[0] != 'A' else []
+        new_fns = fns_of(proofs, head_root, new_rel) if status[0] != 'D' else []
         diff = git(repo, 'diff', '-U0', '-M', base, head, '--', *dict.fromkeys([old_rel, new_rel]))
         touched_new, touched_old = set(), set()
         for l in diff.splitlines():
