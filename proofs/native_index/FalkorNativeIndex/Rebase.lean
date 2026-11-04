@@ -27,7 +27,8 @@ Both use one function, `IndexColumn::refresh` (`falkordb_index.rs:169`).
 | `G.ver` | the model `G` read as a `Ver` of one column |
 | `rawTuples` | the removes of `refresh` (`:178-199`): the attribute read from `from`, no label check |
 | `entityTuples` | `graph_writes::entity_tuples` (`graph_writes.rs:444`): the label or type is checked per id |
-| `placedBelow` | `placed_below` (`falkordb_index.rs:225`) |
+| `placedBelow` | `placed_below` (before #3568; `refresh` now calls `placed_in(.., None, Some(next), ..)`: `placedIn_none_eq_placedBelow_*`) |
+| `placedIn`, `IndexColumn.indexerInsert`, `catchUpBy` | `placed_in` (`falkordb_index.rs:222`), `indexer_insert` (`:356`), `catch_up_by` (`versioned.rs:182`) (#3568) |
 | `IndexColumn.refresh` | `IndexColumn::refresh` (`:169`), `writer_rebase` (`:326`), `indexer_catch_up` (`:337`) |
 | `Written`, `BS`, `EN` | `Written`, `BuildState<BuildCursor>`, `IndexEntry<IndexColumn>` |
 | `EN.writerRecord`, `EN.indexerApply`, `EN.publish` | `IndexEntry::writer_record` (`:280`), `indexer_apply` (`:293`), `publish` (`:324`) |
@@ -479,6 +480,131 @@ theorem catchUp_inv (ours theirs : EN) (batchVer published : Ver)
     (hb : ∀ id, tupl ours.index batchVer id ≠ [] → id < W) :
     Inv (ours.catchUp theirs batchVer published).index ours.state.proj published :=
   refresh_inv _ _ _ _ _ hk hinv hf hws hb
+
+/-! ## Catching up by insertion (#3568)
+
+A batch that writers overtook either refreshes the entities they changed (above) or, when that costs
+more, inserts itself into the *published* copy of the index (`CatchUp::Insert`, `versioned.rs:146-183`,
+`Graph::insert_index`, `VersionedIndex::indexer_insert`, `falkordb_index.rs:356-374`). `placed_below` became
+`placed_in`, with an optional lower end. -/
+
+/-- `placed_in` (`falkordb_index.rs:222-254`): the ids of `ws` whose place in `to` is at or after `frm` and
+    before `next` (a `None` end leaves that side open). A node column cuts the set by id at the ends
+    (`remove_range`, whatever `to` says of the place); a relationship column keeps the edges `to` still has
+    whose place is not before `frm` and is before `next`, one `build_place` lookup each. -/
+def placedIn (e : EntityType) (to : Ver) (ws : List Nat) (frm next : Option BuildCursor) : List Nat :=
+  match e with
+  | .node =>
+    ws.filter (fun id =>
+      (match frm with | some (.node f) => decide (f ≤ id) | _ => true) &&
+      (match next with | some (.node n) => decide (id < n) | _ => true))
+  | .relationship =>
+    ws.filter (fun id => (to.place id).any (fun pl =>
+      (match frm with | none => true | some f => !pl.precedes f) &&
+      (match next with | none => true | some n => pl.precedes n)))
+
+/-- What `placed_in` keeps, for cursors of the column's kind: the ids of `ws` placed in `[frm, next)`. For a
+    node column the range test is the place test whenever `to` places a node at its own id. -/
+theorem placedIn_mem (to : Ver) (ws : List Nat) (frm next : Option BuildCursor) (id : Nat)
+    (hk : ∀ id, to.place id = some (.node id)) :
+    id ∈ placedIn .node to ws frm next ↔
+      id ∈ ws ∧ (match frm with | some (.node f) => f ≤ id | _ => True) ∧
+        (match next with | some (.node n) => id < n | _ => True) := by
+  simp only [placedIn, List.mem_filter, Bool.and_eq_true]
+  rcases frm with _ | _ | _ <;> rcases next with _ | _ | _ <;> simp
+
+/-- With no lower end, `placed_in` is the old `placed_below` (the call `refresh` now makes,
+    `placed_in(written, entity, None, Some(next), to)`, `falkordb_index.rs:213`). -/
+theorem placedIn_none_eq_placedBelow_node (to : Ver) (ws : List Nat) (m : Nat) :
+    placedIn .node to ws none (some (.node m)) = placedBelow to ws (.node m) := by
+  simp [placedIn, placedBelow]
+
+theorem placedIn_none_eq_placedBelow_edge (to : Ver) (ws : List Nat) (s d : Nat) :
+    placedIn .relationship to ws none (some (.edge s d)) = placedBelow to ws (.edge s d) := by
+  simp [placedIn, placedBelow]
+
+/-- `VersionedIndex::indexer_insert` for `IndexColumn` (`falkordb_index.rs:356-374`): the batch's tuples of the
+    entities writers did not change, plus the written entities placed in `[frm, next)` with their values in
+    `published`, added to `c` (the published copy's column, whose cursor is at `frm`). -/
+def IndexColumn.indexerInsert (c : IndexColumn) (e : EntityType) (published : Ver) (batch : EncodedTuples)
+    (written : List Nat) (frm : BuildCursor) (next : Option BuildCursor) : IndexColumn :=
+  let kept := batch.scalar.filter (fun t => !written.contains (docOf t))
+  let inRange := placedIn e published written (some frm) next
+  (c.addEncoded ⟨kept ++ entityTuples c published inRange⟩).1
+
+/-- **What `indexer_insert` does to the column, exactly**: the published column keeps its tuples; the batch
+    contributes those of entities no writer changed; each written entity placed in the batch's range
+    contributes its tuple as `published` has it (an entity below `frm` is already right in `c`, one at or past
+    `next` is a later batch's). -/
+theorem indexerInsert_mem (c : IndexColumn) (e : EntityType) (published : Ver) (batch : EncodedTuples)
+    (written : List Nat) (frm : BuildCursor) (next : Option BuildCursor) (t : Nat) :
+    t ∈ (c.indexerInsert e published batch written frm next).ix.tree ↔
+      t ∈ c.ix.tree ∨ (t ∈ batch.scalar ∧ docOf t ∉ written) ∨
+        ∃ id ∈ placedIn e published written (some frm) next, t ∈ tupl c published id := by
+  have hc : ∀ x : Nat, ((!written.contains x) = true ↔ x ∉ written) := by intro x; simp
+  cases c with
+  | numeric ix =>
+    simp only [IndexColumn.indexerInsert, IndexColumn.addEncoded, IndexColumn.ix, addEncoded_spec,
+      List.mem_append, List.mem_filter, entityTuples_spec, hc]
+
+/-- `Graph::insert_index` (`versioned.rs:538-575`) on a `V`: `published`'s copy of the index (generation
+    included) with the batch inserted (`g o p` is the column `indexer_insert` leaves), carrying the batch's state
+    and commit count. An index that is no longer `Building` in `published` is left as it is. -/
+def V.insertedOnto {R : Type} (ours pub : V R) (g : SE → SE → IndexColumn) : V R :=
+  match ours.entry, pub.newBuildVersion.entry with
+  | some o, some p =>
+    if p.en.isBuilding then
+      { pub.newBuildVersion with entry := some ⟨⟨g o p, o.en.state⟩, p.generation, o.commits⟩ }
+    else pub.newBuildVersion
+  | _, _ => pub.newBuildVersion
+
+/-- **Both catch-ups publish the same shape of entry.** When the batch fits (same generation, so
+    `discardedAgainst` found nothing) and the published index is still `Building`, inserting leaves exactly
+    the entry that refreshing does, with the column the only difference: `commit_catchUp` therefore covers
+    `CatchUp::Insert` as well, with `f` the column `indexer_insert` builds. -/
+theorem insertedOnto_eq_caughtUpOnto {R : Type} (ours pub : V R) (g : SE → SE → IndexColumn)
+    (o p : SE) (ho : ours.entry = some o) (hp : pub.entry = some p)
+    (hg : o.generation = p.generation) (hb : p.en.isBuilding = true) :
+    V.insertedOnto ours pub g = V.caughtUpOnto ours pub g := by
+  simp only [V.insertedOnto, V.caughtUpOnto, V.newBuildVersion, V.newVersion, ho, hp, hb, if_true]
+  cases o with | mk oen og oc => cases oen; simp_all
+
+/-- `catch_up_by` (`versioned.rs:179-191`): which way a batch catches up. -/
+inductive CatchUp where
+  | refresh | insert
+deriving DecidableEq, Repr
+
+/-- `REFRESH_COST` (`versioned.rs:171`): refreshing one entity costs as much as inserting ten tuples. -/
+def REFRESH_COST : Nat := 10
+
+/-- `catch_up_by` (`versioned.rs:182`): refresh iff `written * REFRESH_COST < batch` (`u64::saturating_mul`,
+    see `catchUpBy_saturating`). -/
+def catchUpBy (written batch : Nat) : CatchUp :=
+  if written * REFRESH_COST < batch then .refresh else .insert
+
+theorem catchUpBy_refresh_iff (written batch : Nat) :
+    catchUpBy written batch = .refresh ↔ written * REFRESH_COST < batch := by
+  unfold catchUpBy; split <;> simp_all
+
+/-- The first writer-free case: nothing written since, a non-empty batch refreshes (nothing to refresh, so
+    cheapest); an empty batch inserts itself (nothing to insert). -/
+theorem catchUpBy_no_writes (batch : Nat) (h : 0 < batch) : catchUpBy 0 batch = .refresh := by
+  simp [catchUpBy, REFRESH_COST, h]
+
+theorem catchUpBy_empty_batch (written : Nat) : catchUpBy written 0 = .insert := by
+  simp [catchUpBy]
+
+/-- Many writes make the batch insert itself. -/
+theorem catchUpBy_many_writes (written batch : Nat) (h : batch ≤ written * REFRESH_COST) :
+    catchUpBy written batch = .insert := by
+  simp [catchUpBy]; omega
+
+/-- `written.saturating_mul(10)` on `u64` against a `usize` batch length (< 2^64): the saturated product
+    compares like the exact one. -/
+theorem catchUpBy_saturating (written batch : Nat) (hb : batch < W) :
+    (min (written * REFRESH_COST) (W - 1) < batch) ↔ written * REFRESH_COST < batch := by
+  have : (W : Nat) = 18446744073709551616 := rfl
+  omega
 
 /-! ## Entries as the fit sees them: the gap before #3567 and its closure -/
 

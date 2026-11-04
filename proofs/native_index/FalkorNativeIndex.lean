@@ -17,6 +17,7 @@ import FalkorNativeIndex.Decline
 import FalkorNativeIndex.Batch
 import FalkorNativeIndex.Rebase
 import FalkorNativeIndex.Cch
+import FalkorNativeIndex.Memory
 
 /-!
 # `native_index`: the FalkorDB native numeric index (#2350 ec2448f32, #3307 18836a355)

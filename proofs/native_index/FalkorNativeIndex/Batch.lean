@@ -24,6 +24,9 @@ published version.
 | `V.withBatchIndex` | `Graph::with_batch_index` (`:316`) with `take_index` (`:329`) |
 | `commitIndexerBatch` | `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:235`) and `commit_version(_, false)` (`:261`) |
 
+Since #3545 a commit publishes by compare-and-swap against the version it loaded (`CommitError::Stale` if
+another publisher slipped in); the model is the single-publisher regime the host's global lock provides.
+
 `Graph::validate` is the abstract predicate `valid`; schema-version bump, `trim_attr_stores`,
 `fold_oversized_deltas` and `set_indexer_graph` do not touch the version, the batch's entry or the
 counters, and are not modelled.
@@ -80,7 +83,10 @@ inductive Discarded where
   | gone | anotherBatch
 deriving DecidableEq, Repr
 
-/-- `IndexerCommit` (`versioned.rs:128-143`); `CatchUp(CatchUp::Refresh)` is `catchUp`. -/
+/-- `IndexerCommit` (`versioned.rs:128-143`); `CatchUp(how)` is `catchUp`: since #3568 the fit picks
+`Refresh` or `Insert` (`Rebase.catchUpBy`, from the published copy's `since` count and the batch's length),
+and both publish an entry of the same shape (`Rebase.insertedOnto_eq_caughtUpOnto`), so `f` below stands for
+whichever column the chosen catch-up builds. -/
 inductive IndexerCommit where
   | same | swap | catchUp | discarded (why : Discarded)
 deriving DecidableEq, Repr

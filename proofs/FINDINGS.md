@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-11-04): the proofs were re-targeted to `origin/main` @ 5c7af54f2; each project's header carries its own revision pin where a section was last checked against an older one (the COVERAGE.tsv rows are the authoritative per-function list).
+Current state (2026-11-04): the proofs were re-targeted to `origin/main` @ 43936bab9 (native_index: #3568 `CatchUp::Insert`/`placed_in`/`catch_up_by`, #3569 `memory_usage`; #3545's compare-and-swap commit is noted on the commit rows, single-publisher model); each project's header carries its own revision pin where a section was last checked against an older one (the COVERAGE.tsv rows are the authoritative per-function list).
 There is one Lake project per area under `proofs/<area>/` (38 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
@@ -16,7 +16,7 @@ Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.
 Each project's root `.lean` file holds its report in the header: a table mapping
 Lean definitions to Rust `file:line`, the theorems, the bugs and the gaps.
 `bash proofs/coverage.sh` aggregates the per-function `COVERAGE.tsv` files: of
-2766 non-FFI, non-test functions, 2742 are PROVEN and 24 CONDITIONAL (proven only
+2780 non-FFI, non-test functions, 2756 are PROVEN and 24 CONDITIONAL (proven only
 under an undischarged hypothesis about other Rust code, named in the row);
 1290 FFI functions are AXIOMATISED; 0 unlisted, 0 unmatched.
 See `.claude/skills/proofs/SKILL.md` for how to work with them.
