@@ -143,11 +143,44 @@ pub enum IndexerCommit {
     Discarded(Discarded),
 }
 
-/// How an indexer batch caught up on writers' changes ([`IndexerCommit::CatchUp`]).
+/// How an indexer batch caught up with writes committed after it was read
+/// ([`IndexerCommit::CatchUp`]). The commit takes the cheaper way, as [`REFRESH_COST`] decides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CatchUp {
     /// The entities the writers changed were refreshed in the batch's index.
     Refresh,
+    /// The batch was inserted into the published index, without the entities the writers
+    /// changed. Those of them in the batch's range were then added with their published values.
+    Insert,
+}
+
+/// The cost of refreshing one entity, counted in inserted tuples; both happen under the host's
+/// locks. When writers committed after a batch was read, the batch refreshes the entities they
+/// changed if `changed * REFRESH_COST` is less than its tuple count, and inserts itself otherwise
+/// ([`CatchUp`]).
+///
+/// The real ratio depends on how the batch's values are spread over the column. Measured on 2M
+/// nodes with batches of 10,000 (`0742bcefb`, the online build's first branch):
+///
+/// - refreshing an entity cost 0.5–1.8 µs;
+/// - inserting a tuple cost 0.31–0.35 µs when the values were scattered, and 0.010–0.015 µs when
+///   they were consecutive.
+///
+/// That is a ratio of about 2–5 for scattered values and 40–100 for consecutive ones. At 10, the
+/// wrong choice costs about 1.5 ms of extra lock time either way.
+pub(crate) const REFRESH_COST: u64 = 10;
+
+/// Whether a batch of `batch` tuples refreshes the `written` entities or inserts itself: refresh
+/// if that is cheaper, counting each entity as [`REFRESH_COST`] tuples.
+fn catch_up_by(
+    written: u64,
+    batch: usize,
+) -> CatchUp {
+    if written.saturating_mul(REFRESH_COST) < batch as u64 {
+        CatchUp::Refresh
+    } else {
+        CatchUp::Insert
+    }
 }
 
 /// Why an indexer batch's own work was discarded ([`IndexerCommit::Discarded`]): it published
@@ -232,6 +265,24 @@ pub(crate) trait VersionedIndex: Clone + Sized {
         batch_version: &Graph,
         published: &Graph,
     );
+
+    /// Indexer side, under the lock: catch up by inserting ([`CatchUp::Insert`]). `self` is
+    /// `published`'s copy of index `name`, with its cursor at `from`. `batch` was read from `from`
+    /// up to `next` on an older version, and `written` holds the entities writers changed since.
+    /// Insert `batch` without the `written` entities, then add the `written` entities that
+    /// `published` places from `from` up to `next`, with their values in `published`.
+    fn indexer_insert(
+        &mut self,
+        name: &Self::Name,
+        batch: &Self::Batch,
+        written: &RoaringTreemap,
+        from: Self::Cursor,
+        next: Option<Self::Cursor>,
+        published: &Graph,
+    );
+
+    /// The number of tuples in `batch`: what inserting it costs.
+    fn batch_len(batch: &Self::Batch) -> usize;
 
     /// Indexer side, off the lock: read index `name`'s batch from `from`, at most `budget`
     /// entities, at the values `version` holds. Also returns where the next batch resumes, or
@@ -402,7 +453,14 @@ impl Graph {
             return IndexerCommit::Discarded(why);
         }
         if published.version != self.version {
-            return IndexerCommit::CatchUp(CatchUp::Refresh);
+            let written = theirs.map_or(0, |theirs| match &theirs.state {
+                BuildState::Building { written, .. } => written.since_last_indexer_step.len(),
+                BuildState::Ready => 0,
+            });
+            return IndexerCommit::CatchUp(catch_up_by(
+                written,
+                IndexColumn::batch_len(&column.work),
+            ));
         }
         // No writer committed, so only batches can have changed an index since, and none did if
         // none was published.
@@ -431,22 +489,70 @@ impl Graph {
         version
     }
 
-    /// A new build version of `published` with `batch`'s index as this version has it, caught up
-    /// on the entities writers changed in it since this version was made
-    /// ([`VersionedIndex::indexer_catch_up`]): for a batch that writers committed after
-    /// ([`IndexerCommit::CatchUp`]).
+    /// Used when writers committed after this version was made ([`IndexerCommit::CatchUp`]).
+    /// Returns a new build version of `published` in which `batch`'s index is caught up with what
+    /// those writers changed, the way `how` says:
+    /// - [`CatchUp::Refresh`]: this version's copy, with the changed entities refreshed
+    ///   ([`VersionedIndex::indexer_catch_up`]);
+    /// - [`CatchUp::Insert`]: `published`'s copy, with the batch inserted
+    ///   ([`VersionedIndex::indexer_insert`]).
     pub(crate) fn caught_up_onto(
         &self,
         published: &Self,
         batch: &PreparedBatch,
+        how: CatchUp,
     ) -> Self {
         let mut version = published.new_build_version();
-        match &batch.0 {
-            Prepared::Column(batch) => {
+        match (&batch.0, how) {
+            (Prepared::Column(batch), CatchUp::Refresh) => {
                 version.catch_up_index::<IndexColumn>(self, published, &batch.name);
+            }
+            (Prepared::Column(batch), CatchUp::Insert) => {
+                version.insert_index::<IndexColumn>(self, published, &batch.name, &batch.work);
             }
         }
         version
+    }
+
+    /// The [`CatchUp::Insert`] case of [`Self::caught_up_onto`], for one kind of index: take
+    /// `published`'s copy of index `name` and insert `work`, the batch read on `batch_version`
+    /// ([`VersionedIndex::indexer_insert`]). The index's build then goes on from where the batch
+    /// left it.
+    fn insert_index<K: VersionedIndex>(
+        &mut self,
+        batch_version: &Self,
+        published: &Self,
+        name: &K::Name,
+        work: &K::Batch,
+    ) {
+        let (Some(ours), Some(theirs)) = (
+            K::entry(&batch_version.falkordb_index, name),
+            K::entry(&published.falkordb_index, name),
+        ) else {
+            return;
+        };
+        let BuildState::Building {
+            next: from,
+            written,
+        } = &theirs.state
+        else {
+            return;
+        };
+        let mut merged = theirs.clone();
+        merged.index.indexer_insert(
+            name,
+            work,
+            &written.since_last_indexer_step,
+            *from,
+            ours.cursor(),
+            published,
+        );
+        // The batch's state: its cursor, with nothing written since it.
+        merged.state = ours.state.clone();
+        merged.indexer_commits = ours.indexer_commits;
+        if let Some(slot) = K::entry_mut(&mut self.falkordb_index, name) {
+            *slot = merged;
+        }
     }
 
     /// [`Self::caught_up_onto`] for one kind: index `name` as `batch_version` has it, caught up on

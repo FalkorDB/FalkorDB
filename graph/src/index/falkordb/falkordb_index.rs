@@ -210,7 +210,7 @@ impl IndexColumn {
                 graph_writes::entity_tuples(to, *entity, key, written, self, &mut adds);
             }
             BuildState::Building { next, .. } => {
-                let below = placed_below(written, *entity, *next, to);
+                let below = placed_in(written, *entity, None, Some(*next), to);
                 graph_writes::entity_tuples(to, *entity, key, &below, self, &mut adds);
             }
         }
@@ -219,27 +219,35 @@ impl IndexColumn {
     }
 }
 
-/// The entities of `written` that `version` places below `next`, a column's cursor: the nodes
-/// below it, one range of the set, or the edges whose endpoints come before it, one lookup each. An
-/// edge `version` no longer has is not below it.
-fn placed_below(
+/// The entities of `written` whose place in a column's build order, in `version`, is at or after
+/// `from` and before `next`. A `None` end leaves that side open. Nodes are found by cutting the
+/// set at the ends; each edge costs one endpoint lookup. An edge that `version` no longer has is
+/// left out.
+fn placed_in(
     written: &RoaringTreemap,
     entity: EntityType,
-    next: BuildCursor,
+    from: Option<BuildCursor>,
+    next: Option<BuildCursor>,
     version: &Graph,
 ) -> RoaringTreemap {
-    match next {
-        BuildCursor::Node(next) => {
-            let mut below = written.clone();
-            below.remove_range(u64::from(next)..);
-            below
+    match entity {
+        EntityType::Node => {
+            let mut placed = written.clone();
+            if let Some(BuildCursor::Node(from)) = from {
+                placed.remove_range(..u64::from(from));
+            }
+            if let Some(BuildCursor::Node(next)) = next {
+                placed.remove_range(u64::from(next)..);
+            }
+            placed
         }
-        BuildCursor::Edge { .. } => written
+        EntityType::Relationship => written
             .iter()
             .filter(|&id| {
-                version
-                    .build_place(entity, id)
-                    .is_some_and(|at| at.precedes(next))
+                version.build_place(entity, id).is_some_and(|at| {
+                    from.is_none_or(|from| !at.precedes(from))
+                        && next.is_none_or(|next| at.precedes(next))
+                })
             })
             .collect(),
     }
@@ -343,6 +351,36 @@ impl VersionedIndex for IndexColumn {
         published: &Graph,
     ) {
         self.refresh(state, name, written, batch_version, published);
+    }
+
+    fn indexer_insert(
+        &mut self,
+        (entity, key): &(EntityType, IndexKey),
+        batch: &EncodedTuples,
+        written: &RoaringTreemap,
+        from: BuildCursor,
+        next: Option<BuildCursor>,
+        published: &Graph,
+    ) {
+        let mut adds = EncodedTuples::scalars(
+            batch
+                .scalar
+                .iter()
+                .filter(|&&(_, id)| !written.contains(id))
+                .copied()
+                .collect(),
+        );
+        // Add the written entities in the batch's range, with their values in `published`. Those
+        // below `from` are already right in this copy. Their places are found before any value is
+        // read, so a written entity outside the range costs no attribute read under the host's
+        // locks.
+        let in_range = placed_in(written, *entity, Some(from), next, published);
+        graph_writes::entity_tuples(published, *entity, key, &in_range, self, &mut adds);
+        self.add_encoded(&mut adds);
+    }
+
+    fn batch_len(batch: &EncodedTuples) -> usize {
+        batch.len()
     }
 
     /// The column's next `budget` nodes or edges from `from`, at their values in `version`,
