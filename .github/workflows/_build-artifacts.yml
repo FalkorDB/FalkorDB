@@ -269,6 +269,27 @@ jobs:
           if [ "$UIDS" != "999" ]; then echo "::error::redis-server runs as uid '$UIDS', expected 999"; exit 1; fi
           echo "OK: falkordb-server:${SUFFIX} loads the module, answers, and runs as falkordb"
 
+      # Trivy as _ci-pipeline.yml's security-scan installs it: from its GitHub
+      # release, checked against the release's checksums file. setup-trivy
+      # (which trivy-action calls by default) downloads through get.trivy.dev,
+      # and a DNS outage there failed every scan, so both trivy-action steps
+      # below skip it. The server images are built on x64 runners only.
+      - name: Install Trivy
+        if: matrix.image
+        env:
+          TRIVY_VERSION: '0.76.1'
+        run: |
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          dir="$RUNNER_TEMP/trivy-bin"
+          mkdir -p "$dir"
+          cd "$RUNNER_TEMP"
+          curl -sSfL --retry 3 -O "$base/$tarball" -O "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "$tarball" -C "$dir" trivy
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/trivy" --version
+
       # The same scan and gate as _ci-pipeline.yml's security-scan, which covers
       # the Debian images: fail on a HIGH or CRITICAL vulnerability that has a
       # fixed version, and keep the full report. These images are built only
@@ -282,7 +303,7 @@ jobs:
           format: json
           output: ${{ runner.temp }}/trivy-report-${{ matrix.suffix }}.json
           exit-code: '0'
-          version: 'v0.69.2'
+          skip-setup-trivy: true
 
       - name: Upload Trivy report (${{ matrix.suffix }})
         if: ${{ !cancelled() && matrix.image }}
@@ -303,7 +324,6 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
           skip-setup-trivy: true
-          version: 'v0.69.2'
 
       - name: Summarise blocking findings (${{ matrix.suffix }})
         if: ${{ failure() && matrix.image }}

@@ -40,7 +40,7 @@ A statement is `not_affected` when the image as we ship it, including its
 documented settings such as `TLS=1`, cannot reach the flaw. When a choice of
 yours could, the statement's `impact_statement` names it.
 
-We test the documents with Trivy 0.69.
+We test the documents with Trivy 0.76, and they give the same results with 0.69.
 
 ### If you supply your own TLS key
 
