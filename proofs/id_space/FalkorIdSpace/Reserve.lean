@@ -60,21 +60,60 @@ def IdSpace.start (N : Nat) (sp : IdSpace) (issued : IdSet) : Nat :=
   sp.eb + above N sp.taken sp.eb + above N issued sp.eb
 
 /-- `reserve` succeeds iff the allocation does, and then returns the reclaimed
-ids followed by the fresh run `[start, start + (count - reclaimed))`. -/
+ids followed by the fresh run `start..start + (count - reclaimed)`, whose end is a `u64` and wraps at `N`
+(release build): exact, with no premise about the bounds. -/
 theorem reserve_spec (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSet) :
     sp.reserve N true count issued =
       .ok ((asc N (freeOf sp.recycled sp.taken issued)).take count ++
            List.range' (sp.start N issued)
-             (count - min count (cnt N (freeOf sp.recycled sp.taken issued)))) := by
+             ((sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued)))) % N
+               - sp.start N issued)) := by
   simp [IdSpace.reserve, reclaimIds_spec, IdSpace.start]
+
+/-- When the end of the run fits in a `u64` (`start + (count - reclaimed) < N`) nothing wraps: the run is
+`[start, start + (count - reclaimed))`. -/
+theorem reserve_spec_nowrap (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSet)
+    (hfit : sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued))) < N) :
+    sp.reserve N true count issued =
+      .ok ((asc N (freeOf sp.recycled sp.taken issued)).take count ++
+           List.range' (sp.start N issued)
+             (count - min count (cnt N (freeOf sp.recycled sp.taken issued)))) := by
+  rw [reserve_spec, Nat.mod_eq_of_lt hfit]
+  congr 3
+  omega
+
+/-- **The overflow case, exactly**: when the end wraps (`start + (count - reclaimed) ≥ N`, with `start` and
+`count` themselves `u64`s) the run is empty (the end is below `start`), so `reserve` returns only the reclaimed
+ids, fewer than `count` when it reclaimed fewer. (A debug build panics on the add instead.) Reachable only
+from a space whose boundary is within `count - reclaimed` of `2^64`: `reserve_wraps_example`. -/
+theorem reserve_wraps (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSet)
+    (hstart : sp.start N issued < N) (hcount : count < N)
+    (hwrap : N ≤ sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued)))) :
+    sp.reserve N true count issued = .ok ((asc N (freeOf sp.recycled sp.taken issued)).take count) := by
+  rw [reserve_spec]
+  have h1 : (sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued)))) % N
+      = sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued))) - N := by
+    rw [Nat.mod_eq_sub_mod hwrap]
+    exact Nat.mod_eq_of_lt (by omega)
+  rw [h1]
+  have : sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued))) - N
+      - sp.start N issued = 0 := by omega
+  rw [this]; simp
+
+/-- A reachable-in-the-model case: one id from a space restored at `live = u64::MAX` (here a 32-id universe,
+`u64::MAX = 31`) comes back as no id at all. -/
+theorem reserve_wraps_example :
+    (IdSpace.restored 32 31 sEmpty).reserve 32 true 1 sEmpty = .ok [] := by rfl
 
 theorem reserve_alloc_fail (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSet) :
     sp.reserve N false count issued = .error s!"failed to reserve {count} ids" := rfl
 
-/-- It always hands out exactly `count` ids. -/
+/-- It hands out exactly `count` ids when the end of the run fits in a `u64` (`reserve_wraps` is the case it
+does not). -/
 theorem reserve_length (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSet) (ids : List Nat)
+    (hfit : sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued))) < N)
     (h : sp.reserve N true count issued = .ok ids) : ids.length = count := by
-  rw [reserve_spec] at h
+  rw [reserve_spec_nowrap N sp count issued hfit] at h
   cases h
   simp [List.length_take, asc_length]
   omega

@@ -49,8 +49,10 @@ the mutated state behind, every other refusal returns before any mutation.
 * `above_spec`, `select_above`, `sMax_sFrom` — the rank/select arithmetic is "members ≥ bound",
   "lowest member ≥ bound", and the max is the max of that part.
 * `new_spec`, `restored_spec`, `newVersion_spec`, `maxId_spec` (no underflow).
-* `freeOf_spec`, `reclaimIds_spec`, `reclaimed_free`, `reclaimed_sorted`; `reserve_spec`,
-  `reserve_length`, `reserve_alloc_fail`.
+* `freeOf_spec`, `reclaimIds_spec`, `reclaimed_free`, `reclaimed_sorted`; `reserve_spec`
+  (exact, the run's `u64` end included: release wraps), `reserve_spec_nowrap`, `reserve_length` (needs
+  the end to fit in a `u64`), `reserve_wraps` / `reserve_wraps_example` (the overflow case: the run is empty
+  and fewer than `count` ids come back), `reserve_alloc_fail`.
 * `reserve_fresh` — under the Rust-doc precondition (what the batch took/issued at or above the
   boundary lies below `start`) and `binOk`: duplicate-free, disjoint from `taken` and `issued`;
   reclaimed ids are free and below the boundary, fresh ones at or above `start`.
@@ -86,9 +88,14 @@ the mutated state behind, every other refusal returns before any mutation.
 
 ## Gaps
 * `u64` arithmetic outside `checked_add`/`live -=` is `Nat` here: `bound()`, `restored`'s sum,
-  `reserve`'s `start + (count - reclaimed)`, `live += nodes.len()`. In a reachable state
-  `bound = eb + |taken ≥ eb| < 2^64` (from `checked`), so only `reserve`'s run end could exceed it,
-  which needs `count` near 2^64 (refused first by `try_reserve_exact`).
+  `start`'s two adds, `live += nodes.len()`. `reserve`'s run end `start + (count - reclaimed)` is modelled
+  (release build: it wraps at `N`, `reserve_spec`; a debug build panics). `checked` keeps `eb + |taken ≥ eb|`
+  below 2^64 but says nothing about `issued` or `count`, and `restored` takes any `live` (the RDB's
+  number), so the end can wrap for a boundary within `count - reclaimed` of `2^64`
+  (`restored(u64::MAX, ∅)` and one id: `reserve_wraps_example`). `try_reserve_exact` caps `count` at 2^60,
+  and `create` refuses ids `≥ ID_LIMIT` (2^60 - 1), so a space built by this API stays far below; whether an
+  RDB can restore a boundary that high is not proven here. `reserve_length` therefore takes the end-fits
+  hypothesis; `reserve_fresh` does not need it.
 * `cancel_succeeds`/`reserve_then_cancel` assume the id is not `u64::MAX` (`cancel` itself does not
   check; `Inv.noMax` would otherwise fail).
 * That callers (`Graph`, `Pending`, bulk) settle every reservation before `open_batch` (the

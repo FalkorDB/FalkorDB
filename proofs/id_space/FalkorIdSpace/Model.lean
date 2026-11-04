@@ -117,14 +117,16 @@ def IdSpace.openBatch (sp : IdSpace) : Except IdSpaceError IdSpace :=
   | .error e => .error e
   | .ok () => .ok { sp with eb := sp.bound N, taken := sEmpty, released := sEmpty }
 
-/-- `reserve` (`:483`). `allocOk` is whether `try_reserve_exact(count)`
-succeeded (an allocator boundary). -/
+/-- `reserve` (`:483`), release build. `allocOk` is whether `try_reserve_exact(count)`
+succeeded (an allocator boundary). The run `start..start + (count - reclaimed)` is a `u64` range whose end
+wraps at `2^64` (`N`): a wrapped end is at or below `start`, so the range is empty and fewer than `count` ids
+come back (a debug build panics on the add instead). -/
 def IdSpace.reserve (sp : IdSpace) (allocOk : Bool) (count : Nat) (issued : IdSet) :
     Except String (List Nat) :=
   if !allocOk then .error s!"failed to reserve {count} ids" else
   let (ids, reclaimed) := reclaimIds N sp.recycled sp.taken issued count []
   let start := sp.eb + above N sp.taken sp.eb + above N issued sp.eb
-  .ok (ids ++ List.range' start (count - reclaimed))
+  .ok (ids ++ List.range' start ((start + (count - reclaimed)) % N - start))
 
 /-- `cancel` (`:529`): `if !taken.insert(id) {AlreadyTaken}; recycled.insert(id); checked()`. -/
 def IdSpace.cancel (sp : IdSpace) (id : Nat) : IdSpace × Except IdSpaceError Unit :=

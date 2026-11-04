@@ -119,7 +119,7 @@ theorem lifecycle_fresh (N L live n : Nat) (hN : live + n < N) (hL : L < N) (hn 
   refine ⟨?_, hcr, ?_⟩
   · rw [reserve_spec]
     simp only [IdSpace.restored, IdSpace.start, sLen, h0, Nat.add_zero, hab] at hasc hfree ⊢
-    simp [hasc, hfree]
+    simp [hasc, hfree, Nat.mod_eq_of_lt hN]
   · apply (verify_ok_iff N _).mpr
     refine ⟨hinv'.checked, fun i hi => ?_⟩
     have heb : (IdSpace.created N (IdSpace.restored N live sEmpty) (ival live (live + n))).eb = live := by

@@ -130,7 +130,7 @@ Every function is proven.
 
 ## What the model does not cover
 
-- `u64` arithmetic outside `checked_add` and `live -=` is `Nat` here: `bound()`, `restored`'s sum, `reserve`'s run end, and `live += nodes.len()`. In a reachable state `checked` keeps the boundary below 2^64. Only `reserve`'s run end could exceed it, and that needs a `count` near 2^64, which `try_reserve_exact` refuses first.
+- `u64` arithmetic outside `checked_add` and `live -=` is `Nat` here: `bound()`, `restored`'s sum, `start`'s adds and `live += nodes.len()`. `reserve`'s run end is modelled: it wraps at 2^64 in a release build (`reserve_spec`; a debug build panics), so a space restored with a boundary within `count` of 2^64 (`restored(u64::MAX, ∅)`, one id: `reserve_wraps_example`) gets fewer ids than asked. `reserve_length` takes the end-fits hypothesis; whether an RDB can restore such a boundary is not proven here (a space built through this API stays below `ID_LIMIT`).
 - That callers settle every reservation before `open_batch` is not proven; `roll_inv` covers the verified path.
 - Error messages are modelled only as the variant and its fields.
 - The header's title still cites `e8f8a3017`. `id_space.rs` has had one small change since (#3307), and the `COVERAGE.tsv` line numbers match main.
