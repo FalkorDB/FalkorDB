@@ -50,7 +50,7 @@ graph/src/graph/graph.rs	Graph::delete_nodes	2300	PROVEN	deleteOne (id-space hal
 graph/src/graph/id_space.rs	IdSpace::reserve	483	PROVEN	idsOf = reserve on a fresh batch (taken = issued = {}): idsOf_refines; faithful: proofs/id_space reserve_spec, reserve_fresh
 graph/src/graph/id_space.rs	IdSpace::refuse_recycled	550	PROVEN	okDelete (!free); faithful: proofs/id_space refuseRecycled_ok, release_spec
 graph/src/graph/id_space.rs	IdSpace::create	582	PROVEN	okCreate (free or (>= entry and not taken); every id < ID_LIMIT, #2911) + createOne_refines, emit_apply (PendingWF.inLimit); faithful: proofs/id_space create_spec, create_out_of_range, create_succeeds
-graph/src/graph/id_space.rs	IdSpace::release	703	PROVEN	okDelete + deleteOne_refines; faithful: proofs/id_space release_spec, release_succeeds, release_no_underflow
+graph/src/graph/id_space.rs	IdSpace::release	703	CONDITIONAL	okDelete + deleteOne_refines; faithful: proofs/id_space release_spec, release_succeeds, release_no_underflow; CONDITIONAL like proofs/id_space: the model subtracts with Nat, Rust with u64, and they agree only under the undischarged caller contract freed ⊆ requested (debug_assert! at id_space.rs:711)
 graph/src/graph/id_space.rs	IdSpace::refuse_undeletable	638	PROVEN	okDelete (< entry or taken); faithful: proofs/id_space refuseUndeletable_ok
 graph/src/graph/id_space.rs	IdSpace::verify	737	PROVEN	Batch.verify (created = [entry, bound)); faithful: proofs/id_space verify_ok_iff (checked + same interval statement)
 src/divergence_guard.rs	is_replayed	41	PROVEN	Guard.isReplayed: isReplayed_iff, onFailure_client_noop

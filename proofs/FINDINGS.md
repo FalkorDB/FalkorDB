@@ -16,7 +16,7 @@ Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.
 Each project's root `.lean` file holds its report in the header: a table mapping
 Lean definitions to Rust `file:line`, the theorems, the bugs and the gaps.
 `bash proofs/coverage.sh` aggregates the per-function `COVERAGE.tsv` files: of
-2780 non-FFI, non-test functions, 2756 are PROVEN and 24 CONDITIONAL (proven only
+2780 non-FFI, non-test functions, 2755 are PROVEN and 25 CONDITIONAL (proven only
 under an undischarged hypothesis about other Rust code, named in the row);
 1290 FFI functions are AXIOMATISED; 0 unlisted, 0 unmatched.
 See `.claude/skills/proofs/SKILL.md` for how to work with them.
