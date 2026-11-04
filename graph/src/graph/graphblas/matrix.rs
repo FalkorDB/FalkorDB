@@ -103,7 +103,8 @@ use super::{
     GxB_unload_Matrix_into_Container,
 };
 use super::{
-    GrB_FP64, GrB_Matrix_build_FP64, GrB_Matrix_extractTuples_FP64, GrB_Matrix_setElement_FP64,
+    GrB_FP64, GrB_Matrix_build_FP64, GrB_Matrix_extractTuples_FP64, GrB_Matrix_select_INT64,
+    GrB_Matrix_setElement_FP64, GrB_OFFDIAG,
 };
 use super::{
     GrB_GT_UINT64, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_select_BOOL, GrB_VALUEEQ_BOOL,
@@ -969,6 +970,30 @@ impl<T> Matrix<T> {
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Remove every entry on the main diagonal (`GrB_select` with
+    /// `GrB_OFFDIAG`, whose thunk 0 names the main diagonal), in place.
+    /// So far only the CCH test kit uses it, to drop a weight matrix's self-loops.
+    #[cfg(test)]
+    pub(crate) fn drop_diagonal(&mut self) {
+        let info = unsafe {
+            GrB_Matrix_select_INT64(
+                self.inner(),
+                null_mut(),
+                null_mut(),
+                GrB_OFFDIAG,
+                self.inner(),
+                0,
+                null_mut(),
+            )
+        };
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GrB_Matrix_select_INT64: {info:?}"
+        );
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
