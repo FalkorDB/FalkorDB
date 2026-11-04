@@ -53,14 +53,36 @@ fix_data_dir_perms() {
 # The files gen-certs.sh generates in the TLS directory.
 TLS_FILES="ca.key ca.crt ca.txt openssl.cnf server.key server.crt
            client.key client.crt redis.key redis.crt redis.dh"
-# A CA supplied to sign with: gen-certs.sh only reads these when they exist.
-TLS_CA_FILES="ca.key ca.crt"
+# The ones gen-certs.sh writes on every start. It writes the others only when
+# [ -f ] finds no regular file there, and otherwise only reads them.
+TLS_REWRITTEN_FILES="ca.txt server.crt client.crt redis.crt"
 
-is_tls_ca_file() {
-    case " $TLS_CA_FILES " in
-        *" $1 "*) return 0 ;;
-    esac
-    return 1
+# Run as root inside a TLS directory falkordb does not control, before root
+# generates the files there: refuse what root would write through. A file
+# rewritten on every start must be absent or a regular file with a single
+# link. Any other may also be a link to a regular file (a CA or a key
+# supplied to use), but not a link that leads nowhere, or something else.
+# Root or the operator left it there, or falkordb did when it could still
+# change the directory. Where falkordb controls the directory, root writes
+# nothing there (see the TLS block below).
+check_tls_files() {
+    for f in $TLS_FILES; do
+        case " $TLS_REWRITTEN_FILES " in
+            *" $f "*)
+                if [ -L "$f" ] || { [ -e "$f" ] &&
+                    [ -z "$(find "$f" -maxdepth 0 -type f -links 1)" ]; }; then
+                    echo "Error: ${FALKORDB_TLS_PATH}/$f is a link or not a regular file. Remove it to have it generated again."
+                    return 1
+                fi
+                ;;
+            *)
+                if { [ -L "$f" ] || [ -e "$f" ]; } && [ ! -f "$f" ]; then
+                    echo "Error: ${FALKORDB_TLS_PATH}/$f is a link that leads nowhere, or not a regular file."
+                    return 1
+                fi
+                ;;
+        esac
+    done
 }
 
 # falkordb_can_change PATH: does falkordb own PATH, or may it write it by its
@@ -170,15 +192,33 @@ falkordb_reads_tls() {
         done' sh $TLS_FILES
 }
 
+# Is $1/ca.crt a certificate for $1/ca.key's public key, signed by that key?
+# Only whoever holds the key can make one: falkordb cannot when it cannot read
+# the key. $1/ca.crt is first cut down to its first certificate, the one
+# openssl x509 and gen-certs.sh read: with another one after it, openssl
+# verify would build a chain to that one and check its signature instead.
+# -check_ss_sig has the signature checked; without it, openssl accepts a
+# certificate given as its own trust anchor unsigned.
+ca_crt_from_ca_key() {
+    openssl x509 -in "$1/ca.crt" -out "$1/ca.crt.first" 2>/dev/null &&
+        cat "$1/ca.crt.first" > "$1/ca.crt" && rm -f "$1/ca.crt.first" &&
+        key_pub=$(openssl pkey -in "$1/ca.key" -pubout 2>/dev/null) &&
+        [ -n "$key_pub" ] &&
+        [ "$(openssl x509 -in "$1/ca.crt" -noout -pubkey 2>/dev/null)" = "$key_pub" ] &&
+        openssl verify -no-CApath -no-CAstore -no_check_time -check_ss_sig \
+            -CAfile "$1/ca.crt" "$1/ca.crt" > /dev/null 2>&1
+}
+
 # For a TLS directory falkordb controls, when falkordb cannot read every file
 # there (a CA it cannot read, say): root generates the files in a directory
 # only root can reach, and falkordb copies the results in. falkordb hands
 # root the files it can read. Root reads the others itself, and only regular
 # files falkordb cannot change, not through links; it never copies them back.
-# With a CA key falkordb cannot read, root reads ca.crt itself too, and it
-# always writes ca.txt and openssl.cnf afresh. So falkordb chooses nothing
-# about what root signs but its own keys. An existing openssl.cnf is left as
-# it is.
+# With a CA key falkordb cannot read, root reads ca.crt itself too, and
+# accepts one falkordb can change only if that key signed it for itself (the
+# one an earlier start generated, which falkordb copied in). Root always
+# writes ca.txt and openssl.cnf afresh. So falkordb chooses nothing about
+# what root signs but its own keys. An existing openssl.cnf is left as it is.
 gen_certs_staged() {
     # /dev/shm when /tmp is read-only (docker run --read-only)
     staging=$(mktemp -d /tmp/falkordb-tls.XXXXXX 2>/dev/null ||
@@ -208,9 +248,24 @@ gen_certs_staged() {
             continue
         fi
         echo "Notice: root reads ${FALKORDB_TLS_PATH}/$f itself, to sign the certificates; it is not copied back."
-        if [ ! -f "$f" ] || ! (exec 3< "$f" && fd3_is "$f" &&
-            ! falkordb_can_change -L /proc/self/fd/3 && cat <&3) > "$staging/$f"; then
-            echo "Error: root reads ${FALKORDB_TLS_PATH}/$f only as a regular file that $FALKORDB_USER cannot change, not through a link. Make it readable by $FALKORDB_USER, or a file only root can change."
+        # 0: read, and falkordb cannot change it; 10: read, but falkordb can.
+        # Anything else: not read.
+        read_rc=1
+        if [ -f "$f" ]; then
+            (exec 3< "$f" && fd3_is "$f" && cat <&3 > "$staging/$f" || exit 1
+                ! falkordb_can_change -L /proc/self/fd/3 || exit 10)
+            read_rc=$?
+        fi
+        if [ "$read_rc" -eq 10 ] && [ "$f" = ca.crt ] && [ -n "$root_ca" ] &&
+            ca_crt_from_ca_key "$staging"; then
+            read_rc=0
+        fi
+        if [ "$read_rc" -ne 0 ]; then
+            if [ "$f" = ca.crt ] && [ -n "$root_ca" ]; then
+                echo "Error: root reads ${FALKORDB_TLS_PATH}/ca.crt only as a regular file, not through a link, that $FALKORDB_USER cannot change or that ca.key signed for itself. Make it a file only root can change."
+            else
+                echo "Error: root reads ${FALKORDB_TLS_PATH}/$f only as a regular file that $FALKORDB_USER cannot change, not through a link. Make it readable by $FALKORDB_USER, or a file only root can change."
+            fi
             rm -rf "$staging"
             exit 1
         fi
@@ -311,12 +366,14 @@ if [ "${TLS:-0}" -eq "1" ]; then
     # link, or move another file in, while root works. That holds when
     # redis-server stays root for the data directory too. A link falkordb
     # planted there leads only its own gen-certs.sh, with its own rights.
-    # falkordb takes over the files it can read and generates the rest. When it cannot read them all (a CA it cannot read, say), root
-    # generates them elsewhere and falkordb copies them in. Where falkordb does
-    # not control the directory, root generates the files there and then hands
-    # them over. SKIP_FIX_PERMS skips the taking and handing over. When root
-    # cannot switch users at all, whoever runs redis-server generates the
-    # files in place, as before this image dropped privileges.
+    # falkordb takes over the files it can read and generates the rest. When
+    # it cannot read them all (a CA it cannot read, say), root generates them
+    # elsewhere and falkordb copies them in. Where falkordb does not control
+    # the directory, root refuses links it would write through
+    # (check_tls_files), generates the files there and then hands them over.
+    # SKIP_FIX_PERMS skips the taking and handing over. When root cannot
+    # switch users at all, whoever runs redis-server generates the files in
+    # place, as before this image dropped privileges.
     if [ -n "$can_switch" ] && falkordb_controls; then
         if [ -z "${SKIP_FIX_PERMS:-}" ]; then
             adopt_tls_files
@@ -338,6 +395,9 @@ if [ "${TLS:-0}" -eq "1" ]; then
                     rm -f "$f"
                 fi
             done
+            if ! check_tls_files; then
+                exit 1
+            fi
             # shellcheck disable=SC2016 # $1 is the inner shell's
             if [ -e ca.key ] && [ -e ca.crt ] && falkordb_can_change -L ca.crt &&
                 ! gosu "$FALKORDB_USER" sh -c '[ -r "$1" ]' sh ca.key; then
