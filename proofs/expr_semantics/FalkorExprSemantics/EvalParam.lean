@@ -1,11 +1,11 @@
 import FalkorExprSemantics.Eval
 /-!
-# `evaluate_param` (eval.rs:1814): parameter expressions of `CYPHER p=…`
+# `evaluate_param` (eval.rs:1815): parameter expressions of `CYPHER p=…`
 (split out of `Eval.lean` on 2026-10-21)
 -/
 namespace FalkorExpr.Eval
 
-/-! ## `evaluate_param` (eval.rs:1762) — parameter expressions of `CYPHER p=…` -/
+/-! ## `evaluate_param` (eval.rs:1815) — parameter expressions of `CYPHER p=…` -/
 
 inductive PV where
   | null | int (i : Int) | float (f : Int) | str (s : String) | list (vs : List PV)
@@ -30,6 +30,8 @@ mutual
 def evalParam : PE → Except String PV
   | .const v => .ok v
   | .list cs => do let vs ← evalParams cs; .ok (.list vs)
+  -- `evaluate_param` collects the entries into an `OrderMap` (`from_iter` inserts in order):
+  -- a repeated key keeps its first position and takes the last value
   | .map kvs => do let ps ← evalParamPairs kvs; .ok (.map (ps.foldl omInsertP []))
   | .neg e => do
     let v ← evalParam e
@@ -49,12 +51,6 @@ def evalParamPairs : List (Option String × PE) → Except String (List (String 
   | (some k, c) :: cs => do let v ← evalParam c; let r ← evalParamPairs cs; .ok ((k, v) :: r)
   | (none, _) :: _ => .error "Map parameter key must be a string"
 end
-
-/-- `evaluate_param` collects the entries into an `OrderMap`: a repeated key keeps its first position and
-takes the last value (`from_iter` inserts in order). -/
-def evalParamMap (kvs : List (Option String × PE)) : Except String (List (String × PV)) := do
-  let ps ← evalParamPairs kvs
-  .ok (ps.foldl omInsertP [])
 
 /-- Constants and lists of constants evaluate to themselves. -/
 theorem evalParams_consts (vs : List PV) : evalParams (vs.map .const) = .ok vs := by

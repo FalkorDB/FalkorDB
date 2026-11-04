@@ -6,7 +6,9 @@ graph/src/planner/optimizer/push_filters_down.rs:207-249 (merged tree, and
 unchanged by the PR): from a Filter, walk the ancestors; at the first
 `Apply` whose left child does not contain the Filter, every variable id of
 that left subtree (`collect_subtree_variables`, ids only, `HashSet<u32>`)
-is "inherited"; the walk stops at `Merge`, and at nothing else. Inherited
+is "inherited"; the walk stops at the first `Apply` (inheriting its left variables, or
+nothing when the Filter sits in its left child) and at `Merge` (inheriting nothing), and at
+nothing else. Inherited
 ids are added to every child subtree that contains an `Argument` and is not
 env-resetting (:252-262); a conjunct is pushed into a child whose set covers
 its variables.
@@ -38,8 +40,9 @@ def inherited : List K → List Nat
   | _ :: rest => inherited rest
 
 /-- Proposed fix: an `Optional` whose right branch holds the Filter installs
-its own argument batch (its left input), so it ends the walk and supplies
-that input's variables — the same treatment `Merge` already gets. -/
+its own argument batch (its left input), so the walk ends at the `Optional` and supplies
+its left input's variables. (`Merge` also ends the walk, but supplies none: `inherited` returns
+`[]` there.) -/
 def inheritedFixed : List K → List Nat
   | [] => []
   | .apply lv inLeft :: _ => if inLeft then [] else lv
@@ -89,8 +92,10 @@ theorem fixed_conservative : ∀ (as : List K), NoOpt as → inheritedFixed as =
   | .other :: rest, h => fixed_conservative rest h
 
 /-- With the fix, what an Optional's right branch inherits is exactly what
-its left input binds; under the PR's entry projection that is the import
-targets, whose slots `body_import_value` shows carry the outer values. -/
+its left input binds. True by definition (`rfl`): it only restates `inheritedFixed`. The
+further claim that, under the PR's entry projection, those are the import targets whose
+slots carry the outer values is `body_import_value` in proofs/binder, which this project
+does not import, so that link is unchecked here. -/
 theorem fixed_optional_inherits_left (lo : List Nat) (rest : List K) :
     inheritedFixed (.optional lo false :: rest) = lo := rfl
 

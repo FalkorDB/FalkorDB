@@ -10,6 +10,13 @@ id it just reissued (`forget_deleted_nodes` / `_relationships`, called from
 the deleted entity then reads the entity that holds the id, which is also C's
 answer.
 
+Scope: `RS` models **one** id space (the nodes, or the relationships; the engine keeps
+separate `deleted_nodes` / `deleted_relationships` maps and separate allocators). So
+`createEvict` is `forget_deleted_nodes` for a node CREATE or `forget_deleted_relationships`
+for a relationship CREATE, each applied to its own kind's snapshot; it never touches the other
+kind's map, and the theorems cover same-kind reissue only (a node id never indexes the
+relationship snapshot, so there is nothing cross-kind to prove).
+
 * `evict_preserves_Good` — eviction keeps the `Good` invariant (no snapshotted
   id is live), so with `Snapshot.sound_under_Good` every snapshot-first read
   stays correct; unlike `deferred_preserves_Good` no freshness side condition
@@ -22,7 +29,8 @@ No other module depends on this file; revisit it only if the PR changes.
 namespace PendingCommit.Snapshot
 
 /-- The PR's allocation: allocate as today (bin first), then drop the snapshot
-of the id just reissued. -/
+of the id just reissued. `s.snap` is the snapshot map of the one kind being created
+(see the scope note above), so only that kind's entries are dropped. -/
 def createEvict (s : RS) (d : Nat) : RS × Nat :=
   let (s', id) := createRust s d
   ({ s' with snap := s'.snap.filter (·.1 != id) }, id)

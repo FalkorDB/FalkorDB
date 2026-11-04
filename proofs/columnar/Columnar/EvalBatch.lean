@@ -9,9 +9,11 @@ expr_semantics proves `evalBatch_eq_perRow` (the bulk `var.attr` path of `eval_b
 per-row evaluation gives) under `BatchLaws`: (1) `materialize_node_property_values` is
 `get_node_attribute` per id, and (2) a node column holds the rows' nodes. Here both are proved
 for the real pieces: the batch is columnar's `Batch` with the `BatchRow` views of the `active`
-rows (`batchM`; `extract_node_ids` is `Batch.extractNodeIds`, batch.rs:1371), and the runtime
+rows (`batchM`; `extract_node_ids` is `Batch.extractNodeIds`, batch.rs:1377), and the runtime
 is `RuntimeReads.rtOf` of its attribute state (`matNode_eq`). **`laws`** is the instance;
-**`evalBatch_sound`**: `eval_batch` = `eval_batch_per_row` with no premise.
+**`evalBatch_sound`**: `eval_batch` = `eval_batch_per_row` for every tree and runtime state,
+on a well-formed batch (`hwf : b.WF`) with every active row in range (`hact`); it takes no
+hypothesis about the Rust runtime.
 -/
 
 namespace Columnar.EvalBatch
@@ -54,7 +56,8 @@ def laws (b : Batch F) (hwf : b.WF) (active : List Nat) (hact : ∀ r ∈ active
       exact colMatches_of b hwf rt s v _ hcol active hact
     · simp at hids
 
-/-- **`eval_batch` = `eval_batch_per_row`** for every tree, batch and runtime state. -/
+/-- **`eval_batch` = `eval_batch_per_row`** for every tree and runtime state, on a
+well-formed batch (`hwf`) with in-range active rows (`hact`). -/
 theorem evalBatch_sound (b : Batch F) (hwf : b.WF) (active : List Nat) (hact : ∀ r ∈ active, r < b.len)
     (s : St F) (rt : RT F) (toJV : V F → JV W) (c : Compound (V F)) (root : E (V F)) :
     evalBatch (coreOps (rtOf s rt)) toJV (Ev.fromRuntime rt.params) c (laws b hwf active hact s rt toJV) root =

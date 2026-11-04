@@ -36,6 +36,8 @@ schema, payload directory, then each payload. This file models the encoder
 
 Sub-codecs proved elsewhere enter as the fields of `Codecs` (laws, not axioms): header and
 schema (`redis_layer` `decH_encH`, `decSchema_encSchema`), GraphBLAS matrix/tensor
-(AXIOMATISED GraphBLAS serialisation). Scalar values use `Codec.Val` with the `Out`-style
-reader `decV` proved here (`decV_rt`); list/vector values are a parameter `VGood`.
+(AXIOMATISED GraphBLAS serialisation). Scalar values (`Val.isScalar`, `Codec.lean`) use
+`Codec.Val` with the `Out`-style reader `decV` of `Persist.Reader`, whose round trip is
+`decV_rt` (hypothesis `v.isScalar = true`); list and vector values are not scalar and are
+outside that theorem.
 -/

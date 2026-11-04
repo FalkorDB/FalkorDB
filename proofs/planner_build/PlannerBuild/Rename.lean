@@ -6,7 +6,7 @@ import PlannerBuild.Nested
 | here | there |
 | --- | --- |
 | `Proj`, `outerOf`, `renameProj` | `rename_projection_outputs` mod.rs:2646-2679 |
-| `newPSt` | `Planner::new` mod.rs:814-824 |
+| `newPSt` | `Planner::new` mod.rs:809-818 |
 | `inlineAttrs_passes` | `inline_attrs_to_filter` mod.rs:543-571 (meaning of the filter) |
 -/
 namespace PlannerBuild.E
@@ -31,7 +31,7 @@ def renameProj (remap : List (V × V)) : Root → Option Proj
     else none
   | .other => none
 
-/-- `false` exactly when the root is not a `Project` or some output is not remapped. -/
+/-- `none` exactly when the root is not a `Project` or some output is not remapped. -/
 theorem renameProj_none (remap : List (V × V)) (r : Root) :
     renameProj remap r = none ↔
       ∀ p, r = .project p → (∃ x ∈ p.exprs, outerOf remap x.1 = none) ∨ (∃ x ∈ p.copies, outerOf remap x.2 = none) := by

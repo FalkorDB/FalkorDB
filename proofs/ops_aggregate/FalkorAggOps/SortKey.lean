@@ -4,7 +4,7 @@
 
 Proven: the classified key column reads back, row for row, exactly the evaluated key
 with nulls re-inserted (`classifySortKey_get`), so typed-lane comparisons see the same
-values as `Value::compare_value` on the `Values` lane.
+values as `Value::sort_cmp` on the `Values` lane (`Column::compare_at`, batch.rs:407).
 -/
 namespace FalkorAggOps.SortKey
 

@@ -14,7 +14,7 @@ Modules (each file's header has its Lean ↔ Rust table):
   (`encRecord_ok_shape`, `encRecord_rowShape_refused`, `encRecord_empty_refused`, `readRecord_empty`), so
   `readRecord_encRecord_wf`: every record the encoder writes reads back with no shape hypothesis. The wave-1
   counterexample (a spare row read as the next opcode, `Records.lean`) is now a refusal `#guard`.
-* `RecFull`, `RecRT` — **all fourteen `Record` variants**, `write_header`, `check_row_shape`, `Record::encode`, `read_record`;
+* `RecFull`, `RecRT` — **all fifteen `Record` constructors** (fourteen opcodes: `ADD_SCHEMA` has separate label and relationship-type constructors), `write_header`, `check_row_shape`, `Record::encode`, `read_record`;
   `readRecord_encRecord`: every record round-trips whatever follows it (UPDATE_EDGE, ADD_SCHEMA, index and
   constraint DDL included); `checkEndpoints_ok`, `checkIndex_ok`, `writeHeader_spec`, `relType_rt`.
 * `Payload` — `open_payload`, `maybe_compress`, `frame_prefix`, `Records::next`: `openPayload_maybeCompress`

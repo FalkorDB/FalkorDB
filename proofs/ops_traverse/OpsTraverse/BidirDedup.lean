@@ -87,7 +87,12 @@ theorem dedupRows_keys_complete : ∀ (seen : List (Nat × Nat)) (rs : List Row)
           obtain ⟨r', hr', he⟩ := dedupRows_keys_complete _ _ _ h hs'
           exact ⟨r', List.mem_cons_of_mem _ hr', he⟩
 
-/-! ## Counterexamples (each reproduced against the engine) -/
+/-! ## Counterexamples (each reproduced against the engine)
+
+The `lean_ops_traverse::bug_*` Rust tests cited below are not in this PR: as for every area
+(see the FINDINGS.md header) they were run locally against the real engine and are not
+committed, because many `bug_*` tests fail on purpose. The Rust and C counts quoted are from
+those runs; the tests land with their fixes. -/
 
 /-- (a) Rows that differ only in an outer column collapse:
 `UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b)` loses every `x = 2` row.

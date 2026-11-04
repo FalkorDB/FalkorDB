@@ -63,5 +63,8 @@ theorem set_append_in_range (r at_ : Nat) (v : List Slot) : at_ < (growTo r (at_
 #print axioms growTo_spec
 #print axioms fromSlots_spec
 #print axioms flatten_pagePut
+#print axioms set_inplace_in_range
+#print axioms set_promote_in_range
+#print axioms set_append_in_range
 
 end Falkor.EndpointIndex.Paged

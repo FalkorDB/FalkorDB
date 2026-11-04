@@ -4,9 +4,9 @@
 | --- | --- |
 | `nodeRels`       | AXIOMATISED `Graph::get_node_relationships` contract: every outgoing edge of `v`, then every incoming edge of `v` (a self-loop is in both) |
 | `collectEdges`   | `collect_edges` :97 |
-| `typeFilters`    | `types` parsing in `js_get_neighbors` :386-397 (non-string elements skipped) |
-| `applyTypes`     | the `type_filters` retain :452-459 |
-| `neighborNodes`  | node result with `seen_neighbors` dedup :476-487 |
+| `typeFilters`    | `types` parsing in `js_get_neighbors` :419-428 (non-string elements skipped) |
+| `applyTypes`     | the `type_filters` retain :486-493 |
+| `neighborNodes`  | node result with `seen_neighbors` dedup :507-517 |
 -/
 namespace AlgoUdf.Neighbors
 
