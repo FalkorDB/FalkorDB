@@ -10,12 +10,17 @@ r.execute_command("GRAPH.QUERY","pr",f"UNWIND range(0,{N-1}) AS x CREATE (:L {{k
 bad=0
 for rnd in range(ROUNDS):
     stop=False
+    wfail=[]
     def w():
-        c=conn(); i=0
-        while not stop:
-            m=random.randrange(50)
-            c.execute_command("GRAPH.QUERY","pr",f"MATCH (n:L) WHERE n.k % 50 = {m} SET n.v = n.v + 1"); i+=1
-    t=threading.Thread(target=w); t.start()
+        try:
+            c=conn(); i=0
+            while not stop:
+                m=random.randrange(50)
+                c.execute_command("GRAPH.QUERY","pr",f"MATCH (n:L) WHERE n.k % 50 = {m} SET n.v = n.v + 1"); i+=1
+        except Exception as e:
+            wfail.append(repr(e)[:80])
+    # daemon: if this round raises, the writer must not keep the process alive
+    t=threading.Thread(target=w, daemon=True); t.start()
     time.sleep(0.05)
     r.execute_command("GRAPH.QUERY","pr","CREATE INDEX FOR (n:L) ON (n.v)")
     # wait for population
@@ -24,6 +29,9 @@ for rnd in range(ROUNDS):
         if st and st[0][0]==b'OPERATIONAL': break
         time.sleep(0.01)
     time.sleep(0.2); stop=True; t.join()
+    if wfail:   # the writer died: this round did not race the index build
+        print(f"round {rnd}: WRITER FAILED {wfail[0]}", flush=True); bad+=1
+        r.execute_command("GRAPH.QUERY","pr","DROP INDEX FOR (n:L) ON (n.v)"); continue
     vals=r.execute_command("GRAPH.QUERY","pr","MATCH (n:L) RETURN n.v, count(n) ORDER BY n.v")[1]
     mism=[]
     for v,c in vals:

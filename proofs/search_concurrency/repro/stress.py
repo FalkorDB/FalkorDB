@@ -16,10 +16,10 @@ acked={}  # writer id -> list of seq acked
 def writer(wid, g="s"):
     r=conn(); seq=0; acked[wid]=[]
     while not stop:
-        seq+=1
         try:
-            q(r,g,f"CREATE (:A {{w:{wid}, s:{seq}}}), (:B {{w:{wid}, s:{seq}}})")
-            acked[wid].append(seq); note('w_ok')
+            # advance only after the CREATE is acked: a failed write must not leave a gap
+            q(r,g,f"CREATE (:A {{w:{wid}, s:{seq+1}}}), (:B {{w:{wid}, s:{seq+1}}})")
+            seq+=1; acked[wid].append(seq); note('w_ok')
         except Exception as e: note('w_err:'+str(e)[:50])
 def reader(rid, g="s"):
     r=conn(); last={}
@@ -76,7 +76,11 @@ while time.time()-t0<DUR:
     except Exception as e: alive=repr(e)[:40]
     print(f"t={time.time()-t0:.0f} alive={alive} {dict(stats)} viol={len(violations)}",flush=True)
 stop=True
-for t in th: t.join(timeout=30)
+# worker sockets time out after 120 s, so wait longer than that; a worker still inside a
+# query would make the final-state checks below race with it, so fail instead
+for t in th: t.join(timeout=150)
+if any(t.is_alive() for t in th):
+    viol("workers still running after stop: final-state checks are unreliable")
 r=conn()
 res=q(r,"s","MATCH (a:A) RETURN a.w, count(a), max(a.s)")[1]
 for w,c,m in res:

@@ -6,6 +6,8 @@ Rust module (port 18300) and the C module (port 18301).
   redis-server --port 18301 --dir . --loadmodule bin/macos-arm64v8-release/falkordb.so
   venv/bin/python proofs/index_layer/repro.py
 """
+import time
+
 import redis
 
 PORTS = {"rust": 18300, "c": 18301}
@@ -53,6 +55,17 @@ CASES = [
 ]
 
 
+def wait_operational(r, g):
+    """Block until every index on g is OPERATIONAL: a query sent while one is still
+    populating takes the full-scan path and would report a false rust-ok."""
+    for _ in range(300):
+        rows = r.execute_command("GRAPH.QUERY", g, "CALL db.indexes() YIELD status RETURN status")[1]
+        if all(row[0] == b"OPERATIONAL" for row in rows):
+            return
+        time.sleep(0.1)
+    raise SystemExit("index on %s still not OPERATIONAL after 30 s" % g)
+
+
 def run(r, g, q):
     try:
         res = r.execute_command("GRAPH.QUERY", g, q)
@@ -75,6 +88,8 @@ for name, idx, setup, q in CASES:
                 for s in idx:
                     r.execute_command("GRAPH.QUERY", g, s)
             r.execute_command("GRAPH.QUERY", g, setup)
+            if mode == "index":
+                wait_operational(r, g)
             line[(side, mode)] = run(r, g, q)
     rust_bad = line[("rust", "scan")] != line[("rust", "index")]
     c_bad = line[("c", "scan")] != line[("c", "index")]

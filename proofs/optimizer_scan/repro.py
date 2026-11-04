@@ -42,7 +42,22 @@ DATA = ["CREATE (:L {k:1, a:1, v:1}), (:L {k:2, a:-1, v:2}), (:L {k:3, a:2, b:7}
 setup("gi", DATA + ["CREATE INDEX FOR (n:L) ON (n.a)", "CREATE INDEX FOR (n:L) ON (n.v)",
                     "CREATE INDEX FOR (n:L) ON (n.arr)"])
 setup("gn", DATA)
-time.sleep(1)
+
+
+def wait_indexes(timeout=60):
+    """Poll db.indexes() on both servers until no index is UNDER CONSTRUCTION; fail on timeout."""
+    t0 = time.time()
+    for name, r in (("rust", rs), ("c", c)):
+        while True:
+            rows = r.execute_command("GRAPH.QUERY", "gi", "CALL db.indexes() YIELD status RETURN status")[1]
+            if rows and all(row[0] == b"OPERATIONAL" for row in rows):
+                break
+            if time.time() - t0 > timeout:
+                raise SystemExit("indexes on %s still under construction after %d s" % (name, timeout))
+            time.sleep(0.1)
+
+
+wait_indexes()
 compare([
     # C4: computed constant >= 2^52 -> filter dropped, fallback label scan
     "MATCH (n:L) WHERE n.v = 4503599627370495 + 4503599627370495 + 3 RETURN n.k ORDER BY n.k",

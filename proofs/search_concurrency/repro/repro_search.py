@@ -8,8 +8,11 @@ R = {"rust": redis.Redis(port=rp, socket_timeout=30), "c": redis.Redis(port=cp, 
 def q(r, g, s):
     try:
         out = r.execute_command("GRAPH.QUERY", g, s)
-        # [header, rows, stats] with a RETURN; a query without one replies with [stats] only
-        return out[1] if len(out) > 1 else out[0]
+        # [header, rows, stats] with a RETURN; a query without one replies with [stats] only,
+        # whose timing lines differ per run, so drop them to keep Rust and C comparable
+        if len(out) > 1:
+            return out[1]
+        return [s for s in out[0] if not s.startswith((b"Query internal execution time", b"Cached execution"))]
     except Exception as e:
         return "ERR " + str(e)[:90]
 
@@ -41,7 +44,7 @@ case("2 second index lost during population", "ti",
 for eng, r in R.items():
     for _ in range(300):
         st = q(r, "ti", "CALL db.indexes() YIELD status RETURN status")
-        if st and st[0][0] == b"OPERATIONAL":
+        if st and all(row[0] == b"OPERATIONAL" for row in st):   # every index, not just the first
             break
         time.sleep(0.1)
     print(f"  {eng:4}: count via index on b = {q(r, 'ti', f'MATCH (n:L) WHERE n.b < {N} RETURN count(n)')} (expect {N})")

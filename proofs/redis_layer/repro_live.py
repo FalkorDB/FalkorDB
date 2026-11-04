@@ -70,3 +70,19 @@ show("K2 CONSTRAINT entity LABEL", "GRAPH.CONSTRAINT", "CREATE", "g", "MANDATORY
 show("T1 write ignores TIMEOUT (TIMEOUT_MAX set)", "GRAPH.QUERY", "t", "UNWIND range(1,300000) AS x CREATE (:T)", "TIMEOUT", "1",
      setup=[("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", "100000")])
 show("T1b", "GRAPH.QUERY", "t", "MATCH (n) RETURN count(n)")
+
+# #2782 (MultiDb.bug2782_same_name_other_db_aborts): the same graph name created in db0, then db1,
+# then db0 again. C: ok, ok, ok. Rust release: the second create re-registers the name, the third
+# trips the writer check and ABORTS the server (a debug build asserts on the db1 create). Keep this
+# LAST: it kills the Rust server, and each step must run on its own db-selected connection.
+print("## #2782 cross-database: CREATE shared in db0, db1, db0")
+for label, port in (("Rust", 18430), ("C", 18431)):
+    steps = []
+    for db in (0, 1, 0):
+        try:
+            x = redis.Redis(port=port, db=db, socket_timeout=60, retry_on_timeout=False)
+            x.execute_command("GRAPH.QUERY", "shared", "CREATE (:S)")
+            steps.append(f"db{db}: ok")
+        except Exception as e:  # noqa: BLE001
+            steps.append(f"db{db}: ERR {str(e)[:60]}")
+    print(f"   {label:4}: {' | '.join(steps)}")

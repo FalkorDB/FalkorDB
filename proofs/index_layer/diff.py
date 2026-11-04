@@ -53,6 +53,7 @@ def explain(r, g, q):
 def main(queries, idx_stmts=("CREATE INDEX FOR (n:L) ON (n.v)",), setup_fn=setup):
     bad = 0
     res = {}
+    no_index = []      # (engine, query) pairs whose indexed run did not use an index scan
     for p, r in conns.items():
         g = "diff%d" % p
         setup_fn(r, g)
@@ -70,6 +71,10 @@ def main(queries, idx_stmts=("CREATE INDEX FOR (n:L) ON (n.v)",), setup_fn=setup
         res[p]["idx"] = [run(r, g, q) for q in queries]
         res[p]["plan"] = [explain(r, g, q) for q in queries]
     for k, q in enumerate(queries):
+        # the indexed run only tests the index if the plan has an index scan
+        for name, p in (("rust", RUST), ("c", C)):
+            if "Index Scan" not in res[p]["plan"][k]:
+                no_index.append((name, q))
         rn, ri = res[RUST]["noidx"][k], res[RUST]["idx"][k]
         cn, ci = res[C]["noidx"][k], res[C]["idx"][k]
         tag = []
@@ -87,7 +92,11 @@ def main(queries, idx_stmts=("CREATE INDEX FOR (n:L) ON (n.v)",), setup_fn=setup
             print("   c    noidx:", cn)
             print("   c    idx  :", ci)
             print("   rust plan :", res[RUST]["plan"][k])
-    print("cases", len(queries), "flagged", bad)
+    if no_index:
+        print("NOT INDEX-SERVED (the optimizer left a scan, so 'idx' = 'noidx' proves nothing for these):")
+        for name, q in no_index:
+            print("  ", name, "::", q)
+    print("cases", len(queries), "flagged", bad, "not index-served", len(no_index))
 
 
 if __name__ == "__main__":

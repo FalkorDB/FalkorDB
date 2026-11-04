@@ -6,11 +6,15 @@ if r.exists("ti"): r.execute_command("GRAPH.DELETE","ti")
 r.execute_command("GRAPH.QUERY","ti",f"UNWIND range(0,{N-1}) AS x CREATE (:L {{a:x, b:x}})")
 r.execute_command("GRAPH.QUERY","ti","CREATE INDEX FOR (n:L) ON (n.a)")
 time.sleep(delay)
+st=r.execute_command("GRAPH.QUERY","ti","CALL db.indexes() YIELD status RETURN status")[1]
+if st and all(row[0]==b'OPERATIONAL' for row in st):
+    sys.exit("index a was already OPERATIONAL when b was created: raise N or lower delay, this run would not exercise the race")
 r.execute_command("GRAPH.QUERY","ti","CREATE INDEX FOR (n:L) ON (n.b)")
 t0=time.time()
 while True:
     st=r.execute_command("GRAPH.QUERY","ti","CALL db.indexes() YIELD status RETURN status")[1]
-    if st and st[0][0]==b'OPERATIONAL': break
+    if st and all(row[0]==b'OPERATIONAL' for row in st): break
+    if time.time()-t0>300: sys.exit("TIMEOUT: an index is still UNDER CONSTRUCTION after 300 s")
     time.sleep(0.01)
 print("operational after", round(time.time()-t0,2))
 plan=r.execute_command("GRAPH.EXPLAIN","ti",f"MATCH (n:L) WHERE n.b < {N} RETURN count(n)")
