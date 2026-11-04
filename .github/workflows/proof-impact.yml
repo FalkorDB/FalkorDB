@@ -31,10 +31,9 @@ on:
     # Like rust-pr.yml: every base but master (the C tree), so stacks are covered.
     branches-ignore:
       - "master"
-    paths:
-      - "graph/src/**"
-      - "src/**"
-      - ".github/workflows/proof-impact.yml"
+    # No `paths:` filter: a push that reverts a PR's last Rust change must still run,
+    # so the zero-impact path can retire the earlier verdict and proofs/pr-<N>. The
+    # impact job is a few seconds and finds nothing to do on other PRs.
 
 concurrency:
   # A title/body edit (bots rewrite PR bodies after each push) gets its own group:
@@ -225,9 +224,16 @@ jobs:
             Leave your edits as uncommitted changes in ./proofs-src; do not commit, push or
             comment (the workflow publishes them). Never edit ./code.
 
-            Finally write ./reprove.md: a heading "### Lean re-prove", one line per fn with its
-            verdict (unchanged / model updated / counterexample) and the Lean theorem names.
-            Put counterexamples first, each with its Cypher repro. Keep it short; no preamble.
+            Never add build-time code to a .lean file: no #eval, #exit, run_cmd, run_elab,
+            run_meta, initialize, elab / elab_rules, IO., unsafe, implemented_by or extern. The
+            workflow rejects a patch that adds any of them.
+
+            Finally write ./verdicts.json, a JSON list with one object per entry of
+            impact.json `changed`: {"file", "fn", "line"} copied from that entry, "verdict" one
+            of "unchanged", "model updated", "counterexample", and "theorems" (Lean names).
+            And write ./reprove.md: a heading "### Lean re-prove", one line per fn with its
+            verdict and the Lean theorem names. Put counterexamples first, each with its Cypher
+            repro. Keep it short; no preamble.
         run: |
           copilot -p "$PROMPT" -s --model "$COPILOT_MODEL" --allow-all-tools --no-ask-user
       - name: Export the patch (untrusted; the gate job checks it on a fresh runner)
@@ -237,13 +243,14 @@ jobs:
           cd proofs-src
           git add -A
           git diff --cached --binary --no-renames "$BASE_SHA" > ../proofs.patch
-          touch ../reprove.md
+          touch ../reprove.md ../verdicts.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: proof-reprove
           path: |
             proofs.patch
             reprove.md
+            verdicts.json
 
   # Fresh runner: none of the agent's processes or files reach it, only the two
   # uploaded files. It validates the patch and runs the gates on base + patch with
@@ -275,14 +282,9 @@ jobs:
         with:
           name: proof-impact
           path: in
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            ~/.elan
-            proofs-src/proofs/*/.lake
-          key: lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs-src/proofs/*/lean-toolchain') }}-${{ needs.impact.outputs.proofs_sha }}
-          restore-keys: |
-            lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs-src/proofs/*/lean-toolchain') }}-
+      # No cache restore here: the re-prove job writes the same cache keys, so a
+      # restored toolchain or .lake could carry the agent's changes. A cold build
+      # takes about 20 minutes and only runs when a verified function changed.
       - name: Install elan
         run: |
           set -euo pipefail
@@ -320,29 +322,140 @@ jobs:
             { echo "Patch dropped: it touches files outside the proof allowlist:"; echo; printf '%s\n' "$bad" | sed 's/^/- `/; s/$/`/'; } > ../out/gates.md
             verdict rejected; exit 0
           fi
-          # Existing theorem statements may not change without a human: a statement
-          # replaced by something weaker would still build. New theorems are fine.
-          python3 - "$(git rev-parse HEAD)" > ../out/statements.md <<'EOF'
-          import re, subprocess, sys
-          base = sys.argv[1]
-          DECL = re.compile(r'^[ \t]*(?:@\[[^\]]*\][ \t]*)?(?:private[ \t]+|protected[ \t]+)?(?:theorem|lemma)[ \t]+([^\s(:{\[]+)(.*?):=',
-                            re.M | re.S)
+          # Checks that need no Lean, so nothing in the patch runs before them:
+          #   - no build-time code added to a .lean file (#eval, elab, IO, ...): with
+          #     none, `lake build` only checks proofs and cannot touch this runner;
+          #   - existing theorem statements unchanged (a weaker one would still build);
+          #   - an explicit verdict for every changed function.
+          python3 - "$(git rev-parse HEAD)" ../in/impact.json ../in/verdicts.json > ../out/checks.md <<'EOF'
+          import json, re, subprocess, sys
+          base, impact_path, verdicts_path = sys.argv[1:]
+
+          def git(*a):
+              return subprocess.run(['git', *a], capture_output=True, text=True).stdout
+
+          def strip_comments(src):
+              """Blank -- and nested /- -/ comments, keeping string literals and newlines."""
+              out, i, n, depth, in_str = [], 0, len(src), 0, False
+              while i < n:
+                  c = src[i]
+                  if in_str:
+                      if c == '\\' and i + 1 < n:
+                          out.append(src[i:i + 2]); i += 2; continue
+                      if c == '"':
+                          in_str = False
+                      out.append(c); i += 1; continue
+                  if depth == 0 and c == '"':
+                      in_str = True; out.append(c); i += 1; continue
+                  if src.startswith('/-', i):
+                      depth += 1; out.append('  '); i += 2; continue
+                  if depth and src.startswith('-/', i):
+                      depth -= 1; out.append('  '); i += 2; continue
+                  if depth:
+                      out.append('\n' if c == '\n' else ' '); i += 1; continue
+                  if src.startswith('--', i):
+                      j = src.find('\n', i)
+                      j = n if j < 0 else j
+                      out.append(' ' * (j - i)); i = j; continue
+                  out.append(c); i += 1
+              return ''.join(out)
+
+          HEAD_RE = re.compile(r'(?:theorem|lemma)\s+([^\s(:{\[]+)')
+          NS_RE = re.compile(r'^\s*(namespace|section|end)\b\s*([^\s]*)', re.M)
+
+          def statement(src, k):
+              """Text from k to the first := outside brackets and strings."""
+              depth, i, in_str = 0, k, False
+              while i < len(src):
+                  c = src[i]
+                  if in_str:
+                      if c == '\\':
+                          i += 2; continue
+                      if c == '"':
+                          in_str = False
+                  elif c == '"':
+                      in_str = True
+                  elif c in '([{':
+                      depth += 1
+                  elif c in ')]}':
+                      depth -= 1
+                  elif depth == 0 and src.startswith(':=', i):
+                      break
+                  i += 1
+              return ' '.join(src[k:i].split())
+
           def decls(text):
-              return {m.group(1): ' '.join(m.group(2).split()) for m in DECL.finditer(text)}
-          files = subprocess.run(['git', 'diff', '--cached', '--name-only', '--no-renames', '--diff-filter=MD', '--', '*.lean'],
-                                 capture_output=True, text=True, check=True).stdout.split()
+              """Fully qualified name -> statement; a name seen twice maps to None."""
+              src = strip_comments(text)
+              scopes, events = [], []
+              for m in NS_RE.finditer(src):
+                  events.append((m.start(), m.group(1), m.group(2)))
+              for m in HEAD_RE.finditer(src):
+                  if m.start() and src[m.start() - 1] not in ' \t\n]':
+                      continue
+                  events.append((m.start(), 'decl', m))
+              found = {}
+              for pos, kind, arg in sorted(events, key=lambda e: e[0]):
+                  if kind in ('namespace', 'section'):
+                      scopes.append((kind, arg))
+                  elif kind == 'end':
+                      if scopes:
+                          scopes.pop()
+                  else:
+                      ns = [name for k2, name in scopes if k2 == 'namespace' and name]
+                      full = '.'.join(ns + [arg.group(1)])
+                      st = statement(src, arg.end())
+                      found[full] = None if full in found else st
+              return found
+
+          problems = []
+          # Build-time code added to a .lean file.
+          FORBID = re.compile(r'(#eval|#exit|\brun_cmd\b|\brun_elab\b|\brun_meta\b|\binitialize\b|'
+                              r'\bbuiltin_initialize\b|\belab\b|\belab_rules\b|\bIO\.|\bunsafe\b|'
+                              r'\bimplemented_by\b|\bextern\b)')
+          for line in git('diff', '--cached', '--no-renames', '-U0', '--', '*.lean').splitlines():
+              if line.startswith('+') and not line.startswith('+++'):
+                  m = FORBID.search(strip_comments(line[1:]))
+                  if m:
+                      problems.append(f'- adds build-time code `{m.group(1)}`: `{line[1:].strip()[:120]}`')
+          if problems:
+              print('Patch dropped: build-time code is not allowed in a re-prove patch:')
+              print('\n'.join(problems))
+              print('REJECT')
+              sys.exit(0)
+
+          held = []
+          files = git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=MD', '--', '*.lean').split()
           for f in files:
-              old = decls(subprocess.run(['git', 'show', f'{base}:{f}'], capture_output=True, text=True).stdout)
-              new = decls(subprocess.run(['git', 'show', f':{f}'], capture_output=True, text=True).stdout)
-              for name, stmt in old.items():
+              old, new = decls(git('show', f'{base}:{f}')), decls(git('show', f':{f}'))
+              for name, st in old.items():
                   if name not in new:
-                      print(f'- `{f}` `{name}`: removed')
-                  elif new[name] != stmt:
-                      print(f'- `{f}` `{name}`: statement changed')
+                      held.append(f'- `{f}` `{name}`: removed')
+                  elif st is None or new[name] is None:
+                      held.append(f'- `{f}` `{name}`: name declared more than once; review by hand')
+                  elif new[name] != st:
+                      held.append(f'- `{f}` `{name}`: statement changed')
+          if held:
+              print('Held for review, existing theorem statements changed:')
+              print('\n'.join(held))
+
+          VERDICTS = {'unchanged', 'model updated', 'counterexample'}
+          try:
+              given = json.load(open(verdicts_path))
+              given = {(v['file'], v['fn'], int(v['line'])): v.get('verdict') for v in given}
+          except Exception:
+              given = {}
+          missing = [c for c in json.load(open(impact_path))['changed']
+                     if given.get((c['file'], c['fn'], int(c['line']))) not in VERDICTS]
+          if missing:
+              print('No valid verdict for:')
+              print('\n'.join(f"- `{c['file']}` `{c['fn']}` (line {c['line']})" for c in missing))
+          print('HELD' if held else '', 'INCOMPLETE' if missing else '')
           EOF
-          # Every changed function must have a verdict.
-          missing=$(jq -r '.changed[].fn' ../in/impact.json | sort -u | while read -r fn; do
-            grep -qF -- "$fn" ../out/reprove.md || echo "$fn"; done)
+          if grep -q '^REJECT$' ../out/checks.md; then
+            sed '$d' ../out/checks.md > ../out/gates.md
+            verdict rejected; exit 0
+          fi
           lean=skipped; cov=pass; ok=pass
           if [[ -s ../out/proofs.patch ]]; then
             lean=pass; proofs/lean_ci.sh > ../out/lean_ci.log 2>&1 || { lean=fail; ok=fail; }
@@ -354,14 +467,14 @@ jobs:
           badb=$(sed -nE 's/.* ([0-9]+) bad buckets.*/\1/p' ../out/coverage.log)
           if [[ "${unlisted:-}" != 0 || "${unmatched:-}" != 0 || "${badb:-}" != 0 ]]; then cov=fail; fi
           [[ "$cov" == fail ]] && ok=fail
+          tags=$(tail -n 1 ../out/checks.md)
           {
             echo "Gates: \`lean_ci.sh\` **$lean**; \`coverage.sh --unmatched\` **$cov** (unlisted=${unlisted:-?}, unmatched=${unmatched:-?}, bad buckets=${badb:-?})."
-            # shellcheck disable=SC2016  # literal Markdown backticks
-            if [[ -n "$missing" ]]; then echo; echo "No verdict for:"; printf '%s\n' "$missing" | sed 's/^/- `/; s/$/`/'; fi
-            if [[ -s ../out/statements.md ]]; then echo; echo "Held for review, existing theorem statements changed:"; cat ../out/statements.md; fi
+            echo
+            sed '$d' ../out/checks.md
           } > ../out/gates.md
-          if [[ "$ok" == pass && -n "$missing" ]]; then ok=incomplete; fi
-          if [[ "$ok" == pass && -s ../out/statements.md ]]; then ok=held; fi
+          if [[ "$ok" == pass && "$tags" == *INCOMPLETE* ]]; then ok=incomplete; fi
+          if [[ "$ok" == pass && "$tags" == *HELD* ]]; then ok=held; fi
           verdict "$ok"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: ${{ always() }}
@@ -451,6 +564,9 @@ jobs:
               # makes the update a compare-and-swap against the tip just fetched.
               parents=(-p HEAD); [[ -n "$old" ]] && parents=(-p "$old" -p HEAD)
               commit=$(printf 'proofs: re-prove for #%s at %s\n' "$PR" "${HEAD:0:9}" | git commit-tree "$tree" "${parents[@]}")
+              if [[ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" -q .head.sha)" != "$HEAD" ]]; then
+                echo "PR head moved while publishing; this run is superseded."; exit 0
+              fi
               git push -q --force-with-lease="refs/heads/${branch}:${old}" origin "${commit}:refs/heads/${branch}"
               if [[ "$CHANGED" == 0 || ! -s ../out/proofs.patch ]]; then
                 note="\`$branch\` reset to the proofs base: nothing left to re-prove."
