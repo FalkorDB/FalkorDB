@@ -89,7 +89,7 @@ the old decoder succeeds with a value `within` the cap), `decode_encode` /
 nesting error), `within_of_depth` / `not_within_of_depth` (depth ≤ MAX always loads, ≥ MAX+2
 never), **`validateProperty_depth`** (every accepted property has depth ≤ MAX), **`stored_roundtrip`**
 (every accepted property — vectors < 2³² — saves and loads back), `validateProperty_nest`.
-History: `decode_nest_deep` (before #3339 any depth was decoded and storable; counterexamples removed; in 17ccc5412).
+History: `decode_nest_deep` (before #3339 any depth was decoded and storable; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412).
 Note (`within_nest_empty`): the decoder's cut is one level more lenient than the writers' —
 `MAX` arrays around `[]` (depth MAX+1) decode; harmless (still bounded, never stored).
 `GRAPH.BULKINSERT`'s bound (bulk_insert.rs:132) is in proofs/redis_layer (`Bulk`).
@@ -125,8 +125,8 @@ Note (`within_nest_empty`): the decoder's cut is one level more lenient than the
 - `p.LATITUDE` Rust 1.5, C null (Rust component names are ASCII case-insensitive).
 - `toString(duration('PT0S'))` 'PT0S' vs C 'P' (C bug).
 - Fixed: `sign(-2.5)` Float (#2906) — fixed by #2907 (`f04c3557a`): `sign_float_is_int`
-  (counterexample removed; in 17ccc5412).
-- Fixed: `^` not type-checked (#2902) — fixed by #2904 (counterexample removed; in 17ccc5412).
+  (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
+- Fixed: `^` not type-checked (#2902) — fixed by #2904 (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 - Also seen (known):
   `toString(1.0)` '1', `toInteger('1e3')`, leading whitespace (functions_temporal).
 

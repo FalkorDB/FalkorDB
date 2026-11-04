@@ -16,7 +16,7 @@ The full Lean↔Rust mapping is in the header of [`GraphblasWrappers.lean`](Grap
 
 **Not through a corrupt id blob any more: #2996 fixed it.** Every GraphBLAS call returns a status code. A wrapper either `assert_eq!`s it (a panic, which in the module is a process exit), `debug_assert_eq!`s it (ignored in release), or returns it as an `Err`.
 
-- Before #2996, `Vector::<bool>::decode_blob` and `Vector::<u64>::decode` `assert_eq!`ed on `GxB_Vector_deserialize`, which returns `GrB_INVALID_OBJECT` on a corrupt blob. `assertPanic_deserialize_dos` proves that the error was reachable and killed the process (counterexamples removed; in 17ccc5412).
+- Before #2996, `Vector::<bool>::decode_blob` and `Vector::<u64>::decode` `assert_eq!`ed on `GxB_Vector_deserialize`, which returns `GrB_INVALID_OBJECT` on a corrupt blob. `assertPanic_deserialize_dos` proves that the error was reachable and killed the process (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412).
 - On main both return the code as an `Err`, and pass the expected type so a blob of the wrong type is refused too. `decodeBlob_never_dies`, `decodeU64_never_dies` and `decodeBlob_safe_on_reachable` prove no code can crash through them; `hardened_eq_blob` says `decode_blob` now behaves exactly like the already-hardened `Vector::<bool>::decode` (`decodeBool_safe`, `decodeBool_never_dies`).
 - #2996 also made `Tensor::decode` refuse delta layers whose size differs from the base: `checkLayers_merge_in_bounds` proves an accepted payload only merges entries inside the base.
 
@@ -25,7 +25,7 @@ The full Lean↔Rust mapping is in the header of [`GraphblasWrappers.lean`](Grap
 **Not any more: #3033 fixed it.** Promotion completeness says a pair has an `me` row exactly when its forward value is the `MULTI_EDGE` marker. Before #3033, `Tensor::decode` did not check it.
 
 - `edgeCount_no_panic` and `edgeCount_value` prove `edge_count` cannot underflow while the invariant `Wf` holds.
-- Before #3033, a crafted payload produced a tensor with an orphan `me` row, in which `edge_count` panicked (counterexamples removed; in 17ccc5412). `Tensor::encode` calls `edge_count`, so a graph restored from such a payload could no longer be saved.
+- Before #3033, a crafted payload produced a tensor with an orphan `me` row, in which `edge_count` panicked (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). `Tensor::encode` calls `edge_count`, so a graph restored from such a payload could no longer be saved.
 - Now `decode` counts the markers with `Matrix::<u64>::count_value_eq` (a `GrB_select` with `GrB_VALUEEQ_UINT64`, stated as the hypothesis `SelectValueEqSpec`). It refuses a tensor entry that is not an in-bounds marker, and refuses a marker count that differs from the number of `me` pairs with ids.
 - `decodeCheck_ok_iff` proves decode accepts exactly when every tensor entry is an in-bounds marker and the rows it builds are promotion complete. `decodeCheck_refuses_incomplete` is the direction that matters for safety: every payload that would break the invariant is refused.
 - `decodeCheck_ok_edgeCount_no_panic` proves `edge_count` cannot panic on an accepted tensor.
@@ -42,7 +42,7 @@ The full Lean↔Rust mapping is in the header of [`GraphblasWrappers.lean`](Grap
 - `iter_frees_iterator_before_matrix`: `Iter::drop` frees its `GxB_Iterator` before its `Arc<Handle>` can free the matrix (`detached_iter_frees_only_matrix` covers a detached iterator);
 - `single_owner_frees_once`, `dup_independent_ownership`: a single owner frees once, and `dup` gives a copy that shares nothing.
 
-History: before #3090, `Matrix::drop` checked `Arc::get_mut` (the count is 1) and then dropped the `Arc`, as two separate steps. An interleaving let both owners see a count of 2 so neither freed: a leak, and only under concurrency (counterexample removed; in 17ccc5412).
+History: before #3090, `Matrix::drop` checked `Arc::get_mut` (the count is 1) and then dropped the `Arc`, as two separate steps. An interleaving let both owners see a count of 2 so neither freed: a leak, and only under concurrency (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 
 **4. Does a row-range scan visit each stored entry once?**
 
@@ -158,7 +158,7 @@ None of these has Rust logic left to prove.
 ## Build and check
 
 ```bash
-cd proofs/graphblas_wrappers && lake build    # this project
+(cd proofs/graphblas_wrappers && lake build)    # this project
 bash proofs/lean_ci.sh graphblas_wrappers     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                       # repo-wide coverage report
 ```

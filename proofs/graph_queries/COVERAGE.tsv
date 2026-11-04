@@ -38,7 +38,7 @@ graph/src/graph/graph.rs	get_type_id	1289	PROVEN	Schema.getTypeIdMut_spec, Acces
 graph/src/graph/graph.rs	node_has_label	1301	PROVEN	Schema.nodeHasLabel_iff
 graph/src/graph/graph.rs	node_has_label_id	1315	PROVEN	Schema.nodeHasLabel_iff
 graph/src/graph/graph.rs	edge_has_type	1327	PROVEN	Schema.edgeHasType_iff
-graph/src/graph/graph.rs	get_type_id_mut	1349	PROVEN	Schema.getTypeIdMut (#3277: registers via register_relationship_type): getTypeIdMut_spec, getTypeIdMut_width; Delete.type_cleared_after_registration (W4-graph-1, confirmed live then; counterexample removed; in 17ccc5412)
+graph/src/graph/graph.rs	get_type_id_mut	1349	PROVEN	Schema.getTypeIdMut (#3277: registers via register_relationship_type): getTypeIdMut_spec, getTypeIdMut_width; Delete.type_cleared_after_registration (W4-graph-1, confirmed live then; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/graph/graph.rs	register_relationship_type	1371	PROVEN	Schema.registerRelType: registerRelType_width (relationship_type_matrix stays relationship_cap × |types|), getTypeIdMut_spec, getRelMatMut_new; Delete.type_cleared_after_registration
 graph/src/graph/graph.rs	get_plan	1383	PROVEN	Index.getPlan_hit, getPlan_stale, getPlan_then_hit (parser/planner abstract)
 graph/src/graph/graph.rs	get_label_matrix	1454	PROVEN	Schema.labelNodeCount_eq (getLabelMat)

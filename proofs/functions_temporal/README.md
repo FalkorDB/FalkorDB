@@ -94,7 +94,7 @@ Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run lo
 | W2-temporal-6 | removed (17ccc5412) | `localtime('01:00') + duration({days:1}) = localtime('01:00')` was `false` (C: `true`): time arithmetic wasn't reduced mod 86400 | Fixed by #2985 (`timeAddDur_eq_tod`, `timeSub_timeAdd`, `time_normalised`) |
 | W2-temporal-7 | `formatDate_spec`, `format_extremes`, `format_wide_years`, `formatDate_wide_distinct`, `checkDateRange_iff` (counterexample replaced) | `toString(date({year:12345}))` was `"2345-01-01"` (C: `"12345-01-01"`), `-5` printed `0005`, and a datetime past chrono's range printed `<invalid timestamp>` | **Fixed** (#2986, #2746/#3575): all digits and the sign; `format_datetime` no longer uses chrono; dates range-checked at `MAX_DATE_YEAR` |
 | W2-temporal-8 | removed (17ccc5412) | `duration('P2635249153387078803W')` was `P5D` in release (`n * 7` wrapped) and panicked in debug | Fixed by #2987 (`dateLoop_week_overflow`, `dateLoop_days_i64`: now an error, never a wrap) |
-| W2-temporal-9 | `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `dayOfWeek_out_of_range_errors` (counterexamples removed; in 17ccc5412) | The map form's `dayOfWeek` was 0..6 with 0 = Sunday, so `dayOfWeek:7` errored (C: accepted); the string form uses 1..7 | **Fixed** (#2988, closes #2936): ISO 1..7, 7 = Sunday |
+| W2-temporal-9 | `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `dayOfWeek_out_of_range_errors` (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412) | The map form's `dayOfWeek` was 0..6 with 0 = Sunday, so `dayOfWeek:7` errored (C: accepted); the string form uses 1..7 | **Fixed** (#2988, closes #2936): ISO 1..7, 7 = Sunday |
 | — | `neg_days_encoding` | `date('2020-03-01') + duration({days:-1})` is 2020-03-02 (spec: 02-29), because negative durations are encoded as an instant before 1970 | Shared with C |
 | — | `civilFromDays_trunc` | `y - 1970` in `i32` inside `decompose_duration` overflows for durations whose year wraps | Suspected, not triggered in release |
 | — | `point_null_lat_msgs` | `point({latitude:null, …})` gives two different error messages for a literal map and a map value | Message only |
@@ -151,7 +151,7 @@ The project is self-contained: its `lakefile.toml` has no dependencies, and it d
 ## Build and check
 
 ```bash
-cd proofs/functions_temporal && lake build    # this project (the era check takes ~10 CPU-minutes)
+(cd proofs/functions_temporal && lake build)    # this project (the era check takes ~10 CPU-minutes)
 bash proofs/lean_ci.sh functions_temporal     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                       # repo-wide coverage report
 ```

@@ -178,7 +178,7 @@ Wave-4 findings:
   deduplicates ids; `setSpan_cast_exact` shows strictly ascending ids below
   `ATTRIBUTE_ID_NONE` always fit. Not reproduced (needs a 65,536-column bulk
   payload).
-* `import_attrs_resolved` (**fixed by #3063**: `resolved_duplicate_fixed`; counterexample removed; in 17ccc5412) — kept duplicate ids
+* `import_attrs_resolved` (**fixed by #3063**: `resolved_duplicate_fixed`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — kept duplicate ids
   (`GRAPH.BULK` header repeating a column name): two entries for one id are
   stored, reads return the second (binary search), `attr_count` says 2. C
   stores duplicates too (`AttributeSet_AddNoClone` only asserts in debug); not

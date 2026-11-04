@@ -72,7 +72,7 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `nan_breaks_antisymmetry` | NaN < 1.0 **and** 1.0 < NaN. `ORDER BY` over stored NaNs (21+ rows) panicked and killed the server | Fixed by #2912 (counterexample removed; in 17ccc5412) |
+| 1 | `nan_breaks_antisymmetry` | NaN < 1.0 **and** 1.0 < NaN. `ORDER BY` over stored NaNs (21+ rows) panicked and killed the server | Fixed by #2912 (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) |
 | 2 | `mixed_numeric_not_transitive` | `2⁵³ = 2⁵³.0 = 2⁵³+1` but `2⁵³ < 2⁵³+1`: ints were rounded through `f64`. Same panic | Fixed by #2912 |
 | 3 | `map_order_not_transitive` | `compare_map` returned `Equal` at the first mixed-type value pair, which creates a cycle. Same panic | Fixed by #2912 |
 | 4 | removed (17ccc5412) | `{a:1} = {a:'x'}` and `{a:1} <> {a:'x'}` were both false | Fixed by #2917 |
@@ -133,7 +133,7 @@ Line numbers are pinned to main 8621212fc (no change to the order, equality or h
 ## Build and check
 
 ```bash
-cd proofs/value_order && lake build    # this project
+(cd proofs/value_order && lake build)    # this project
 bash proofs/lean_ci.sh value_order     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                # repo-wide coverage report
 ```

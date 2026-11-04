@@ -22,7 +22,7 @@ killed the server (repro then: `graph/tests/lean_graphblas_wrappers.rs`
 expected type (`GrB_BOOL` / `GrB_UINT64`) so a well-formed blob of another type
 is refused too (`GrB_DOMAIN_MISMATCH`). `decodeBlob_never_dies` /
 `decodeU64_never_dies` prove no code kills the process; the old wrappers are
-kept as pre-#2996 counterexamples (removed; in 17ccc5412) history.
+kept as pre-#2996 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history.
 -/
 
 import GraphblasWrappers.GrbInfo

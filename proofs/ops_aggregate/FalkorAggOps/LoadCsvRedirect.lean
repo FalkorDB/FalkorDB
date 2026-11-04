@@ -27,7 +27,7 @@ without `CURLOPT_FOLLOWLOCATION`) does.
 Property `EachHopValidated`: every connection the fetch makes is an https
 request whose addresses were validated for *that request's* host.
 On b84473a7f a cross-host redirect connected to the first host's IP and an http
-hop was attempted (counterexamples removed; in 17ccc5412). `fixed3443_eachHopValidated` proves it for
+hop was attempted (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). `fixed3443_eachHopValidated` proves it for
 main's `loadRemote` for every server and DNS answer; `fixed3443_redirect_is_error`
 says a redirecting first URL ends in an error, never a second connection.
 `fixed_eachHopValidated` (https_only + per-URL validate-then-pin resolver,

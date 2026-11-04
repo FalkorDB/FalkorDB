@@ -147,7 +147,7 @@ The lakefile has no path dependencies. Other projects rely on its results by cit
 ## Build and check
 
 ```bash
-cd proofs/versioned_matrix && lake build    # this project
+(cd proofs/versioned_matrix && lake build)    # this project
 bash proofs/lean_ci.sh versioned_matrix     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                     # repo-wide coverage report
 ```

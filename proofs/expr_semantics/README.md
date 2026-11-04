@@ -147,7 +147,7 @@ Line numbers are pinned to main 737dfb5da, re-checked at 5e475e6c9 (only `eval_s
 ## Build and check
 
 ```bash
-cd proofs/expr_semantics && lake build    # this project
+(cd proofs/expr_semantics && lake build)    # this project
 bash proofs/lean_ci.sh expr_semantics     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                   # repo-wide coverage report
 ```

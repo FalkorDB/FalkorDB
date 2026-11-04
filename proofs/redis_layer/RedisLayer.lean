@@ -96,13 +96,13 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 2. **FIXED by #3000 (`2e8172d76`, issue #2998)** — formerly writes ignored the per-query
    TIMEOUT: with TIMEOUT_MAX = 100000, `UNWIND range(1,300000) … CREATE … TIMEOUT 1`
    created 300000 nodes on Rust; C times out and creates none
-   (counterexample removed; in 17ccc5412). Now `timeout_rw` (`graph_core.rs:895`) applies it:
+   (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now `timeout_rw` (`graph_core.rs:895`) applies it:
    `write_timeout_agrees`, `Args.rustTimeout_write_pq`, `rustTimeout_rw_uniform`.
 3. **FIXED by #3021 (`30b4fb7dc`, issue #3020)** — formerly GRAPH.CONFIG:
    `VKEY_MAX_ENTITY_COUNT -5` accepted (then read as `as u64`), `CMD_INFO 1/TRUE`
    accepted, `JS_HEAP_SIZE 5` accepted (C: ≥ 1 MB), `GET x extra` accepted, non-ASCII
    names case-fold (`tımeout` → TIMEOUT via `to_uppercase`), ASYNC_DELETE reports 0
-   (C 1), error text "Unknown configuration field 'X'". Counterexamples removed; in 17ccc5412. Now: `fixed3021_counterexamples`, `vkey_ok_nonneg`,
+   (C 1), error text "Unknown configuration field 'X'". Counterexamples removed in bbee75955; the last revision that has them is 17ccc5412. Now: `fixed3021_counterexamples`, `vkey_ok_nonneg`,
    `jsheap_ok_ge`, `cmdinfo_ok_iff`, `get_extra_wrong_arity`, `set_pairs_complete`,
    `dotless_i_not_folded`, `asyncDelete_default_matches_C`, `getOne_unknown_text`.
 4. GRAPH.BULK header naming a property twice (`p,q,p`): Rust stored both span entries
@@ -137,7 +137,7 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | --- | --- |
 | `BufferedIO.*`, `BufferedReader`, `RoundTrip` | `src/serializers/buffered_io.rs` (all 55 fns) |
 | `Serial`, `SerialSchema`, `SerialEntry`, `SerialProof` | `src/serializers/mod.rs` (header/schema encode+decode; `SerialSchema.decField` = `decode_index_field` `:637-725`, `encField`/`encPh` = field loop `:383-427`) |
-| `SerialCLayout` | C's multi-type index-field entry vs `decode_index_field` (#3484, fixed by #3514 `a0ba12950`); pre-#3514 counterexamples (removed; in 17ccc5412) history |
+| `SerialCLayout` | C's multi-type index-field entry vs `decode_index_field` (#3484, fixed by #3514 `a0ba12950`); pre-#3514 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history |
 | `Resp`, `RespCompact`, `RespVerbose` | `src/reply.rs` (call streams, postponed lengths, RESP2 bytes) |
 | `Telemetry`, `TelemetryReg`, `TelemetryLoop` | `src/telemetry.rs` |
 | `ModuleInit` | `src/module_init.rs`, `src/lib.rs` config table, `src/config.rs` |
@@ -175,27 +175,27 @@ Headline theorems:
 New confirmed findings (live, Rust `target/release` vs C `bin/…/falkordb.so`, ports 18820-3):
 8. **Crash — FIXED by #3234 (`3660a5fc3`)**: `src/slow_log.rs` (`entry_hash`, `truncate`)
    sliced the query at byte 2048; a query > 2048 bytes, slower than 10 ms, with a multi-byte
-   char across byte 2048 panicked and the server exited (counterexamples removed; in 17ccc5412; repro scratch `slowlog_utf8.py`). Now both cut at
+   char across byte 2048 panicked and the server exited (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412; repro scratch `slowlog_utf8.py`). Now both cut at
    `prefix` (`:32`, `floor_char_boundary(2048)`): `SlowLog.hashInput_total`,
    `truncate_total` (no panic for any string), `prefix_le`/`prefix_isPrefix`/
    `prefix_boundary`/`prefix_longest` (longest char-boundary prefix ≤ 2048 bytes).
 9. **FIXED by #3252 (`cfe6e7945`)**: an index on an attribute literally named `range:x` (or
    `vector:x`) was rebuilt on `x` after RDB reload (cab3cf192 `serializers/mod.rs:642-646`;
-   counterexample removed; in 17ccc5412): Rust `db.indexes()` → `[x]`, C `[range:x]`.
+   counterexample removed in bbee75955; the last revision that has them is 17ccc5412): Rust `db.indexes()` → `[x]`, C `[range:x]`.
    Now `decode_index_field` keeps the name verbatim (`field_name_kept`; `decField_encField`
    round-trips every name).
 9b. **FIXED by #3514 (`a0ba12950`, closes #3484)**: a C-written RDB entry carries every index type
    of an attribute in one type word; `decode_index_field` kept one, so RANGE was lost next to a
-   FULLTEXT or VECTOR index (counterexamples removed; in 17ccc5412). Main decodes every set type (`SerialSchema.decField`;
+   FULLTEXT or VECTOR index (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). Main decodes every set type (`SerialSchema.decField`;
    `SerialCLayout.decField_encFieldC`: every C entry decodes to exactly its types;
    `decField_encField`: Rust's own entries unchanged; `decField_empty_refused`,
    `decField_unknown_bit_refused`: no type / unknown bit refused as C does). Same PR, phonetic:
    C's `"no"` (off) read as a code, so every C-loaded fulltext index turned phonetic ON, and we wrote an empty string for off, which C reads as ON
-   (counterexamples removed; in 17ccc5412). Now `"no"` reads as off and off is written `"no"`
+   (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). Now `"no"` reads as off and off is written `"no"`
    (`decField_c_phonetic_no_off`, `encPh_c_on_iff`; `index_layer` `Meta.TextOpts.phoneticEnabled`).
 10. Module-load args: `CMD_INFO YES` → Rust 0 / C 1; `CMD_INFO garbage` → Rust loads with 0,
     C refuses to load; `cache_size 10` → Rust ignores (25), C 10; `ASYNC_DELETE yes` → Rust
-    ignores (0), C 1 (FIXED by #3328: counterexamples removed; in 17ccc5412; now `LoadArgs.fixed3328_counterexamples`; cause:
+    ignores (0), C 1 (FIXED by #3328: counterexamples removed in bbee75955; the last revision that has them is 17ccc5412; now `LoadArgs.fixed3328_counterexamples`; cause:
     redismodule-rs `find_config_value` is case-sensitive and bools are `== "yes"`).
 11. `GRAPH.BULK` success reply said `relations created`, C `edges created` (FIXED by #3301
     dd333fe32; now `Commands.bulk_reply_c`).
@@ -277,14 +277,14 @@ is sound and the `-…\r\n` frame of `Resp.respT` holds), `legalResp_length`,
 `legalResp_high_bytes` (every byte ≥ 0x80 kept in place: error text is byte-preserving for
 non-ASCII), `legalResp_clean`, `legalResp_cjk`, `legalResp_latin1`, `bytesOf_toUTF8`;
 before #3428 `一` → NUL → `CString::new(..).unwrap()` panic and `é` → lone 0xE9 (counterexamples
-removed; in 17ccc5412). `Resp.Call.err s` / `respT (.err s)`
+removed in bbee75955; the last revision that has them is 17ccc5412). `Resp.Call.err s` / `respT (.err s)`
 take `s` to be that already-scrubbed text.
 
 ## Gap closed 2026-10-22 (re-targeted to 5e475e6c9: #3442 and #3449 now **Fixed**)
 * #3442 `SlowLog` (fixed by #3456, closes #3442): on b84473a7f `add`'s `some _` arm
   (`slow_log.rs:120-132`) kept the stale `minLat` (recompute at `:172-177` on b84473a7f). Main's update arm
   falls through to the recompute (`slow_log.rs:121-139`, `:162-169`): `SlowLog.add` is that code.
-  Old model and counterexamples removed; in 17ccc5412 (the issue's trace: Q11 at 25 ms evicted Q2 at 30 ms;
+  Old model and counterexamples removed in bbee75955; the last revision that has them is 17ccc5412 (the issue's trace: Q11 at 25 ms evicted Q2 at 30 ms;
   properties `MinCache`, `SlowestKept`). On main: `add_minCache` (preserved for every input),
   `fixed3442_update_keeps_min_cache`, `fixed3442_trace` (Q2 kept, Q11 rejected), and
   `add_repeat_max` now assumes
@@ -301,7 +301,7 @@ take `s` to be that already-scrubbed text.
   a pending edge's type. #3462 snapshots when `runtime.inspect || snapshot_required`
   (`delete.rs:99-101`, `snapshot`) and resolves the verbose type through
   `Runtime::get_relationship_type` (deleted -> pending -> graph, `runtime.rs:1902-1914`,
-  `verboseRel`). Old model and counterexample removed; in 17ccc5412. On main: `fixed3449_record_snapshot` (`RecordedLive` holds and the
+  `verboseRel`). Old model and counterexample removed in bbee75955; the last revision that has them is 17ccc5412. On main: `fixed3449_record_snapshot` (`RecordedLive` holds and the
   row renders from its snapshot), `snapshot_inspect`, `fixed3449_record_abort`,
   `verboseRelFixed_total` (the verbose encoder is total on every known id). The compact encoder
   still reads the committed graph for a pending edge's type; `GRAPH.RECORD` renders verbose only.

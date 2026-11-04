@@ -26,7 +26,7 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, claim the write slot,
 
 **2. Can an inline write fail because a queued write is in progress?**
 
-- **Before #3290, yes.** A queued write claimed the write slot while still matching, as a reader. A `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC` arriving then was refused with "another write is in progress" (counterexample removed; in 17ccc5412); C creates the node (`multi_write_ok_in_c`).
+- **Before #3290, yes.** A queued write claimed the write slot while still matching, as a reader. A `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC` arriving then was refused with "another write is in progress" (counterexample removed in bbee75955; the last revision that has them is 17ccc5412); C creates the node (`multi_write_ok_in_c`).
 - **On main, no.** The queued write builds on a fork that takes nothing (since #3657 there is no write slot at all) and checks it only after it holds the GIL. If an inline write committed in between, the check finds it stale and the queued write re-runs (`checkFork_stale`, `stale_then_rerun`); the inline write succeeds (`inline_write_ok`). `reader_cannot_commit` is one trace: right after `forkW` from the initial state a `commit` is refused. The general claim (no reachable state lets a thread with an unchecked fork and no `Current` version mutate or commit) is not proven: the model's `forkCur` can still fire for a thread that holds an unchecked fork, which a real session (one version at a time) cannot do; an indexer batch in between does not make it stale (`batch_does_not_stale`).
 
 **3. Can the server deadlock?**
@@ -34,11 +34,11 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, claim the write slot,
 - **Lock order.** `no_cycle` proves threads that acquire locks in rank order cannot form a wait-for cycle. `all_programs_ordered` checks that every locking path (the writer including escalation, the inline writer, index population, background index drop, the fork preparation, telemetry flush) obeys GIL < graph < indexer < registry. `bad_escalate_rejected` shows the checker catches a wrong order.
 - **RediSearch's locks (gap closed 2026-10-20, #3226).** The ranks now include RediSearch's global `RWLOCK` and per-spec lock, which an index scan holds from opening to dropping. A write that commits with its scan still open re-takes the spec lock as a writer (`bug3226_open_scan_upgrade`, a live abort) and takes the GIL while holding RediSearch's locks (`bug3226_open_scan_unordered`, `bug3226_restore_stall_cycle`). Read scans, population, `RESTORE` and writers whose scan closes before the commit are ordered (`spec_programs_ordered`).
 - **The write queue hand-off.** `drain_no_lost_message` checks exhaustively, for 2 producers, that the `write_loop` flag protocol never strands a queued write; `recheck_needed` shows it would without its `is_empty` re-check.
-- **Queue overflow.** Before #3014, more than 1024 queued queries hung the server forever (counterexample removed; in 17ccc5412). On main, `never_stuck_3014` and `main_never_blocks` prove the main thread never waits and some step is always possible, and `flood_drains` that a flood drains.
+- **Queue overflow.** Before #3014, more than 1024 queued queries hung the server forever (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). On main, `never_stuck_3014` and `main_never_blocks` prove the main thread never waits and some step is always possible, and `flood_drains` that a flood drains.
 
 **4. Is a new index always populated?**
 
-- **Before #3086, not a second one on the same label.** After `CREATE INDEX … (n.a)` and then `(n.b)` on a label, the new job saw two pending tickets and bailed, the old job finished with its `{a}` field list, and the index reported OPERATIONAL with `b` in no document (Bug 2 below; counterexample removed; in 17ccc5412).
+- **Before #3086, not a second one on the same label.** After `CREATE INDEX … (n.a)` and then `(n.b)` on a label, the new job saw two pending tickets and bailed, the old job finished with its `{a}` field list, and the index reported OPERATIONAL with `b` in no document (Bug 2 below; counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 - **On main, yes.** `create_index` now bumps the generation whenever the label already has an index, so the old job fails `is_ticket_current` at its next batch and the new job indexes everything. `main_operational_complete` proves, over every interleaving of any number of `CREATE INDEX`es on a label with the batches of every populate job, that an OPERATIONAL index has every field in every batch. The proof is an inductive invariant (`MInv`, `reach_inv`): at most one job owns the current generation, it holds the current field list, and the batches before its cursor are complete. `main_lost_order_complete` replays the interleaving that used to lose `b`.
 - **One remaining window.** The theorem excludes the moment between `Indexer::create_index` storing the entry and `populate_index` taking its ticket. In that window the entry has no pending ticket, so it looks OPERATIONAL while the new field is in no document (`store_window_operational_incomplete`). The window is a few instructions long and has not been seen on a live server.
 
@@ -46,12 +46,12 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 
 **5. Can a bad vector remove an entity from its other indexes?**
 
-- **Before #3087, yes.** A vector of the wrong dimension made RediSearch reject the whole document, so the node vanished from every index on its label (counterexample removed; in 17ccc5412).
+- **Before #3087, yes.** A vector of the wrong dimension made RediSearch reject the whole document, so the node vanished from every index on its label (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 - **On main, no.** `docSet_vector_sound` proves a vector is added only with the field's own non-zero dimension, for any value and any options; `doc_always_accepted` and `other_fields_never_dropped` prove the document is accepted and the other fields stay.
 
 **6. Can a KNN query with a huge `k` crash the server?**
 
-- **Before #3088, yes.** `db.idx.vector.queryNodes('L', 'v', 1000000000000000, …)` allocated `k` entries up front and crashed (counterexample removed; in 17ccc5412).
+- **Before #3088, yes.** `db.idx.vector.queryNodes('L', 'v', 1000000000000000, …)` allocated `k` entries up front and crashed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 - **On main, no.** `k` is clamped to the entity count: `alloc_bounded` proves every buffer is at most the live entity count, and `candidates_topk` that the result is still the top `k` (the query from #3085 returns its one row, `huge_k_one_row`).
 
 ## The headline theorems
@@ -144,7 +144,7 @@ No path dependencies.
 ## Build and check
 
 ```bash
-cd proofs/search_concurrency && lake build   # this project
+(cd proofs/search_concurrency && lake build)   # this project
 bash proofs/lean_ci.sh search_concurrency    # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                      # repo-wide coverage report
 ```

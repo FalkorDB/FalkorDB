@@ -99,7 +99,7 @@ graph.rs:974). 234 theorems.
    `GRAPH.CONSTRAINT CREATE g MANDATORY RELATIONSHIP B PROPERTIES 1 x`;
    `MATCH ()-[r:A]->() DELETE r`; `MATCH (a{i:1}),(b{i:2}) CREATE (a)-[:C]->(b)`;
    `MATCH ()-[r]->() RETURN type(r)` → Rust `A`, C `C`. Same via replica
-   schema apply (effects/v3/apply.rs:559). Lean: now `type_cleared_after_registration` (counterexample removed; in 17ccc5412).
+   schema apply (effects/v3/apply.rs:559). Lean: now `type_cleared_after_registration` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
    Test `deleted_edge_type_survives_type_registration` (debug: panics
    GrB_DIMENSION_MISMATCH). Fix: call `self.resize()` in `get_type_id_mut`.
    (2c874022a: Rust `A`, C `C`.)

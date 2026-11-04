@@ -25,7 +25,7 @@ presence of vector fields. The end-to-end acceptance theorem over the RediSearch
 contract is `SC.Search.doc_always_accepted` (proofs/search_concurrency).
 
 HISTORICAL (fe619ac5f, before #3087): `setVectorPre3087` added every `VecF32`
-unchecked; pre-#3087 counterexamples (removed; in 17ccc5412) below are the counterexamples (W3-conc-3 / #3075, and
+unchecked; pre-#3087 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) below are the counterexamples (W3-conc-3 / #3075, and
 W5-idx-2's no-options shape), fixed by #3087 (49f698d22).
 -/
 namespace IndexLayer.Meta

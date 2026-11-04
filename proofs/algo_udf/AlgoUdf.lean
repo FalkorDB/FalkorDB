@@ -127,7 +127,7 @@ Known before this wave (counterexamples added):
   `Marshal.forged_node_marker`, `forged_edge_marker`.
 * -0.0 → Int 0 — **FIXED by #3074** (see "Fixed on main").
 * Qualified-name collision / case folding (repository.rs:94-137, functions/mod.rs:1121) — **FIXED by #3066**
-  (counterexamples removed; in 17ccc5412; `dotted_collision` stays as the reason the check compares qualified names).
+  (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412; `dotted_collision` stays as the reason the check compares qualified names).
 * getNeighbors self-loop twice (js_classes.rs:97-127) — `Neighbors.self_loop_twice`.
 New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 1. **FIXED by #3113 (`8a66c01e5`)** — SPpaths/SSpaths charged a missing cost as 0

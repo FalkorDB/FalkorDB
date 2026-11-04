@@ -18,7 +18,7 @@ import FalkorEffectsCodec.Prim
 **#3267 (`eaa65eeba`).** `read_one`'s array arm now checks the claimed width against
 the whole stack, `guard_count(n + owed, MIN_VALUE_BYTES)`, where `owed` counts the
 children the open frames still need after this one. Before, it checked `n` alone and
-every level of `[[[…` could claim the whole remainder (pre-#3267 counterexamples (removed; in 17ccc5412) below: the
+every level of `[[[…` could claim the whole remainder (pre-#3267 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) below: the
 reservations sum to `k (k-1)` elements from `8k` bytes). Now `capTrace_linear`: the
 capacities one decode reserves sum to at most `remaining / 4`.
 | `propValid`        | `pending::is_valid_property` (`graph/src/runtime/pending.rs:63`) |

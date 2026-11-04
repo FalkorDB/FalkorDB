@@ -29,7 +29,7 @@ Headline: **`apply_wf`** — from a well-formed replica at a batch boundary, any
 sequence of records that applies, followed by a `validate` that passes, leaves a
 well-formed replica: no dead id carries a label, property or relationship, and
 every relationship's endpoints are live. The pre-#3022 counterexamples
-(`Apply.lean`, pre-#3022 counterexamples (removed; in 17ccc5412)) are each refused here (`*_refused`).
+(`Apply.lean`, pre-#3022 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412)) are each refused here (`*_refused`).
 -/
 
 namespace FalkorEA.Live

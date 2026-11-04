@@ -156,7 +156,7 @@ Every row gives the full path (bare names such as `list.rs` or `value.rs` matche
 ## Build and check
 
 ```bash
-cd proofs/functions_str_list && lake build    # this project
+(cd proofs/functions_str_list && lake build)    # this project
 bash proofs/lean_ci.sh functions_str_list     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                       # repo-wide coverage report
 ```

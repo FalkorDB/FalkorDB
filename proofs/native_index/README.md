@@ -187,7 +187,7 @@ Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entr
 ## Build and check
 
 ```bash
-cd proofs/native_index && lake build   # this project (also builds ../cow_btree and ../core)
+(cd proofs/native_index && lake build)   # this project (also builds ../cow_btree and ../core)
 bash proofs/lean_ci.sh native_index    # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                # repo-wide coverage report
 ```

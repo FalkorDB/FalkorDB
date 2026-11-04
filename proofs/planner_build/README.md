@@ -157,7 +157,7 @@ Every function listed is PROVEN. For the functions involved in the open bugs, th
 ## Build and check
 
 ```bash
-cd proofs/planner_build && lake build    # this project
+(cd proofs/planner_build && lake build)    # this project
 bash proofs/lean_ci.sh planner_build     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                  # repo-wide coverage report
 ```

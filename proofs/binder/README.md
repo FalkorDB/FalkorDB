@@ -148,7 +148,7 @@ Every function in `binder.rs` is PROVEN. "PROVEN" here means the function's mode
 ## Build and check
 
 ```bash
-cd proofs/binder && lake build         # this project
+(cd proofs/binder && lake build)         # this project
 bash proofs/lean_ci.sh binder          # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                # repo-wide coverage report
 ```

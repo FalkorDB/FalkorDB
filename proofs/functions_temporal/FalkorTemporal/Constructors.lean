@@ -17,7 +17,7 @@ import FalkorTemporal.Duration
 | `weekSlice`         | `rest.split_at_checked(2)` in `parse_week_date` — `temporal.rs:285-287` |
 | `sliceOk`           | byte 2 of `rest` is a char boundary |
 | (`formatDate` moved to `Components.lean`) | `format_date` — `value.rs:285`, `push_date` `value.rs:836` (#2986) |
-| pre-#2950 counterexamples (removed; in 17ccc5412)         | the same before #2950 (737dfb5da): unchecked `NaiveDate ± TimeDelta`, `&rest[..2]` (history) |
+| pre-#2950 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412)         | the same before #2950 (737dfb5da): unchecked `NaiveDate ± TimeDelta`, `&rest[..2]` (history) |
 -/
 namespace FalkorTemporal
 

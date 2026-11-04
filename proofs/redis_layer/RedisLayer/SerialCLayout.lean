@@ -18,7 +18,7 @@ master → Rust main). **Main now satisfies the property**: `SerialSchema.decFie
 * `decField_empty_refused` — a word with no type is refused, as C's `_RdbLoadIndex` does
   (an unknown bit too: `decField_unknown_bit_refused`).
 * `decField_encField` (in `SerialSchema`) — Rust's own single-type entries still decode as before.
-* History (the pre-#3514 decoder and its counterexamples, removed; in 17ccc5412): C's `"no"` came back
+* History (the pre-#3514 decoder and its counterexamples, removed in bbee75955; the last revision that has them is 17ccc5412): C's `"no"` came back
   as a code, which `phonetic_enabled` read as ON; Rust wrote an empty string for off, and C enables
   phonetic for any other string than `"no"`; the fix is `encPh_c_on_iff`.
 -/

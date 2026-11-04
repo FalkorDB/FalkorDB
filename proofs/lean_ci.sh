@@ -76,7 +76,7 @@ for dp, dns, fns in os.walk(root):
 for dp, dns, fns in os.walk(root):
     dns[:] = [d for d in dns if d != '.lake' and os.path.join(dp, d) not in nested]
     for fn in sorted(fns):
-        if not fn.endswith('.lean') or fn == 'lakefile.lean':
+        if not fn.endswith('.lean'):
             continue
         p = os.path.join(dp, fn)
         src = open(p, encoding='utf-8', errors='replace').read()

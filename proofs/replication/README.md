@@ -141,7 +141,7 @@ The lakefile requires [`../effects_emit_apply`](../effects_emit_apply) as a path
 ## Build and check
 
 ```bash
-cd proofs/replication && lake build    # this project (builds ../effects_emit_apply too)
+(cd proofs/replication && lake build)    # this project (builds ../effects_emit_apply too)
 bash proofs/lean_ci.sh replication     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                # repo-wide coverage report
 ```

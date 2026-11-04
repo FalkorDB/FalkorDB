@@ -72,14 +72,14 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
 - `snapshot_isolated`, `snapshot_reads_committed`, `insertOne_shares_siblings` (`Snapshot.lean`).
 
 ## Bugs
-1. FIXED by #2278 (3597b3a82): `insert_batch` dropped `(u64::MAX, u64::MAX)` (counterexample removed; in 17ccc5412) (W1 #13, #2893 / PR #2897).
+1. FIXED by #2278 (3597b3a82): `insert_batch` dropped `(u64::MAX, u64::MAX)` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) (W1 #13, #2893 / PR #2897).
 2. FIXED by #2897 (7b60f28db): `BRANCH_MAX = 3` passed the const assert but broke `remove` (and
-   `remove_batch`) (counterexamples removed; in 17ccc5412) (W1 #13). The assert now requires
+   `remove_batch`) (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412) (W1 #13). The assert now requires
    `BRANCH_MAX >= 4`: `constAssert_rejects_B3`, `asserted_single_child_underfull`, and
    `remove_spec_asserted` / `removeRet_spec_asserted` (no `4 ≤ B` premise left) in `Assert.lean`.
 3. FIXED by #3283 (799968a8b, issue #3237, W7-btree-1): `remove_batch` left a single-child non-root
    branch at any `BRANCH_MAX >= 4`; one later `remove` then left an empty non-root leaf and
-   `insert_batch` panicked in `Node::min`. (Counterexamples removed; in 17ccc5412.)
+   `insert_batch` panicked in `Node::min`. (Counterexamples removed in bbee75955; the last revision that has them is 17ccc5412.)
    (`BugsBatch.lean`, with the Rust repro, now the test `remove_batch_never_leaves_a_single_child_branch`). On main:
    `removeBatchTree_wf`, `removeBatchTree_wf_asserted`, `rb_remove_batch_fixed`, `rb_then_remove_fixed`.
 

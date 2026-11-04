@@ -34,7 +34,7 @@ Related results about the parser itself:
 
 **2. Does a write query honour `TIMEOUT`?**
 
-- **Before #3000, no.** With `TIMEOUT_MAX` set to 100000, `UNWIND range(1,300000) AS x CREATE (:N {x:x}) TIMEOUT 1` created all 300000 nodes on Rust; C timed out and created none (counterexample removed; in 17ccc5412).
+- **Before #3000, no.** With `TIMEOUT_MAX` set to 100000, `UNWIND range(1,300000) AS x CREATE (:N {x:x}) TIMEOUT 1` created all 300000 nodes on Rust; C timed out and created none (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 - **On main, yes, once `TIMEOUT_MAX` or `TIMEOUT_DEFAULT` is set.** The per-query value then applies to writes exactly as to reads (`rustTimeout_write_pq`, `rustTimeout_rw_uniform`). Only under the deprecated `TIMEOUT` setting on its own do writes ignore it, as in C (`rustTimeout_write_ignores_pq`).
 - The effective timeout never exceeds `TIMEOUT_MAX` (`rustTimeout_le_max`).
 
@@ -160,7 +160,7 @@ C-side bugs seen along the way: C crashes on some malformed bulk tokens, and cou
 | `GraphCore.lean` | `graph_core.rs`: names, registry, write commit, dispatch, queue admission |
 | `MultiDb.lean` | #2782: several Redis databases over the name-keyed registry; `graph_query`'s create/open path |
 | `KeyName.lean` | #2653: key names as bytes, a concrete `from_utf8_lossy`, the replicated key |
-| `ErrorText.lean` | #3428: `str_as_legal_resp_string` (error and simple-string reply text) on bytes; history pre-#3428 counterexamples (removed; in 17ccc5412) |
+| `ErrorText.lean` | #3428: `str_as_legal_resp_string` (error and simple-string reply text) on bytes; history pre-#3428 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) |
 | `Commands.lean`, `Commands2.lean` | The smaller command handlers: constraint, record, copy, bulk, memory, config get, and others |
 | `Telemetry.lean`, `TelemetryReg.lean`, `TelemetryLoop.lean` | `telemetry.rs`: stream names, the query registry, batching, the flusher |
 | `SlowLog.lean` | `slow_log.rs` (incl. #3442, fixed by #3456: `MinCache`, `SlowestKept`, `add`) |
@@ -194,7 +194,7 @@ All `.lean` files except the root are under `RedisLayer/`. The project has no La
 ## Build and check
 
 ```bash
-cd proofs/redis_layer && lake build    # this project
+(cd proofs/redis_layer && lake build)    # this project
 bash proofs/lean_ci.sh redis_layer     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                # repo-wide coverage report
 venv/bin/python proofs/redis_layer/repro_live.py   # live Rust-vs-C repros (Rust on 18430, C on 18431)

@@ -30,7 +30,7 @@ What is proved here:
    **(a) was false for the Rust expression parser before #3041**: a failed
    slice bound was swallowed, so
    `[1][(1..2]` was accepted while consuming an unmatched `(`.
-   The resulting counterexample (removed; in 17ccc5412):
+   The resulting counterexample (removed in bbee75955; the last revision that has them is 17ccc5412):
    `[(a)-->(b) WHERE [1][(1..2] | b]` was a pattern comprehension before #3104
    and a syntax error after it (CONFIRMED live, see the project header).
    #3041 (`2023af648`) makes a failed bound an error, which removes that

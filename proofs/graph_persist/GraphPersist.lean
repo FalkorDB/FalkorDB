@@ -136,7 +136,7 @@ ports 18910/18911, `CACHE_SIZE 1`):
 ## Re-target to origin/main 1d15bf713 (from 0f45a8685)
 * **#3286 (`bf11a2774`)** — `uuid_v4` prints `uuid_fields(t, seq)`: clock and counter in
   separate fields. `Uuid.lean` models `uuidFields`/`uuid` anew; the old `t ^ seq` model and
-  its theorems are kept as pre-#3286 counterexamples (removed; in 17ccc5412) history. Bug 6 fixed.
+  its theorems are kept as pre-#3286 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history. Bug 6 fixed.
 * **#2996 (`d99861124`)** — `RoaringTreemap::decode_with_count` refuses a count whose byte
   length overflows (`Layout.countCheck`). Bug 5 (#2537, `RM_LoadStringBuffer`) is in
   `buffered_io.rs`, which #2996 does not touch: still open.

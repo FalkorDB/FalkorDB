@@ -68,7 +68,7 @@ Yes:
 
 **6. Are virtual-key names unique?**
 
-- **Before #3286, only as long as the clock moved.** `uuid_v4` mixed the wall clock with a counter, `a = nanos ^ seq`, and printed only `a`. Two calls gave the same name exactly when `t₁ ⊕ s₁ = t₂ ⊕ s₂` (counterexample removed; in 17ccc5412); counters 2 and 3 at clocks 4 ns and 5 ns collided, and the second virtual key replaced the first one's slice.
+- **Before #3286, only as long as the clock moved.** `uuid_v4` mixed the wall clock with a counter, `a = nanos ^ seq`, and printed only `a`. Two calls gave the same name exactly when `t₁ ⊕ s₁ = t₂ ⊕ s₂` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412); counters 2 and 3 at clocks 4 ns and 5 ns collided, and the second virtual key replaced the first one's slice.
 - **On main, yes, within a process.** `uuid_fields` keeps the clock in the first three fields and `seq × odd constant + c` in the last two. `counter_field_bijective` proves the last field is a bijection of `seq` modulo 2^48, and `uuid_counter_distinct` that two calls whose counters differ mod 2^48 never share a name, whatever the clock reads. `vkeyName_uuid_counter` lifts this to the full key names, and `names_vname_inj` discharges the `vname_inj` part of the naming assumption the SAVE theorems take (`VKeys.Names`).
 
 **7. Do UNIQUE constraints agree with C?**
@@ -184,7 +184,7 @@ The project has no Lake dependencies.
 ## Build and check
 
 ```bash
-cd proofs/graph_persist && lake build    # this project
+(cd proofs/graph_persist && lake build)    # this project
 bash proofs/lean_ci.sh graph_persist     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                  # repo-wide coverage report
 ```

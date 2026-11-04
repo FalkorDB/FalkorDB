@@ -46,7 +46,7 @@ A few changes are shared with C and are not bugs: an integral float comes back a
 
 **4. Can a deep or cyclic value crash the server through a UDF?**
 
-Not since #3336 (security advisory GHSA-frmf-ffvc-mxx5). Before it, `value_to_js`/`js_to_value` recursed with no limit, so a UDF returning a self-containing array (`a = [a]`) overflowed the stack (counterexample removed; in 17ccc5412). Now both directions count depth against `MAX_UDF_VALUE_NESTING = 1024`:
+Not since #3336 (security advisory GHSA-frmf-ffvc-mxx5). Before it, `value_to_js`/`js_to_value` recursed with no limit, so a UDF returning a self-containing array (`a = [a]`) overflowed the stack (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now both directions count depth against `MAX_UDF_VALUE_NESTING = 1024`:
 
 - `fromJs_frames`, `toJs_frames`: at most cap + 1 levels are ever used, for any input, cyclic ones included;
 - `fromJs_past_cap`, `toJs_past_cap`: past the cap the result is an error, never an overflow;
@@ -181,7 +181,7 @@ The four AXIOMATISED rows are FFI: `extract_vector_f64`, `extract_vector_i64` an
 ## Build and check
 
 ```bash
-cd proofs/algo_udf && lake build    # this project
+(cd proofs/algo_udf && lake build)    # this project
 bash proofs/lean_ci.sh algo_udf     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh             # repo-wide coverage report
 ```

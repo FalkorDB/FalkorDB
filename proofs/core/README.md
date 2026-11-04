@@ -151,7 +151,7 @@ path = "../core"
 ## Build and check
 
 ```bash
-cd proofs/core && lake build    # this library
+(cd proofs/core && lake build)    # this library
 bash proofs/lean_ci.sh core     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh         # repo-wide coverage report
 ```

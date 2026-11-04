@@ -53,7 +53,7 @@ Before #3104, `[(x {k: [(x {k: …})]})]` nested 18 levels deep (206 bytes) took
 
 - **The gate is exact on balanced brackets** (`pipeScan_exact`).
 - **Failed attempts are linear**: at most `808·(n+1)` on `n` bytes (`failed_attempts_linear`, `memoRun_nodup`).
-- **"The gate never changes the parse" is CONDITIONAL.** `listLitP_eq_ungated` holds under two premises, `Oracle.Bal` and `MemoSound`. `Oracle.Bal` was **false** for the Rust until #3041 because of the slice-bound bug (counterexample removed; in 17ccc5412): `MATCH (a) RETURN [(a)-->(b) WHERE [1][(1..2] | b]` was accepted before #3104 and a syntax error after (C's answer). #3041 makes a failed slice bound an error, so `[1][(1..2]` is refused (`slice_unclosed_paren_refused`), and the expression fragment consumes balanced runs on every input checked (`bounded_bal`). `Oracle.Bal` is no longer refuted, but it is not proved for the whole expression parser (CASE, comprehensions, maps, … are outside the fragment). `MemoSound` is unproven: the memo key omits the anonymous counter, and no input was found where that matters (`memoRun_sound`).
+- **"The gate never changes the parse" is CONDITIONAL.** `listLitP_eq_ungated` holds under two premises, `Oracle.Bal` and `MemoSound`. `Oracle.Bal` was **false** for the Rust until #3041 because of the slice-bound bug (counterexample removed in bbee75955; the last revision that has them is 17ccc5412): `MATCH (a) RETURN [(a)-->(b) WHERE [1][(1..2] | b]` was accepted before #3104 and a syntax error after (C's answer). #3041 makes a failed slice bound an error, so `[1][(1..2]` is refused (`slice_unclosed_paren_refused`), and the expression fragment consumes balanced runs on every input checked (`bounded_bal`). `Oracle.Bal` is no longer refuted, but it is not proved for the whole expression parser (CASE, comprehensions, maps, … are outside the fragment). `MemoSound` is unproven: the memo key omits the anonymous counter, and no input was found where that matters (`memoRun_sound`).
 
 **5. Does `connected_components` split a pattern correctly?**
 
@@ -175,7 +175,7 @@ Every function listed is PROVEN. For the functions involved in open bugs (for ex
 ## Build and check
 
 ```bash
-cd proofs/parser_grammar && lake build   # this project
+(cd proofs/parser_grammar && lake build)   # this project
 bash proofs/lean_ci.sh parser_grammar    # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                  # repo-wide coverage report
 ```

@@ -144,7 +144,7 @@ The lakefile has no path dependencies. `IdRust.lean` copies `proofs/id_space`'s 
 ## Build and check
 
 ```bash
-cd proofs/graph_queries && lake build    # this project
+(cd proofs/graph_queries && lake build)    # this project
 bash proofs/lean_ci.sh graph_queries     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                  # repo-wide coverage report
 ```

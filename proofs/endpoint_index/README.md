@@ -39,7 +39,7 @@ No. `raiseTo_spec` proves `raise_to` changes no answer: live pairs, tombstones a
 
 `restore_agrees` proves `Graph::restore`'s path (`prepare_tiers` with any tier boundaries, then `set` for every edge) gives exactly the restored edge set.
 
-Since #2905 `prepare_tiers` clamps the tier starts monotone itself (`clampStarts`). `clampStarts_mono` proves the tier sizes then never underflow and sum to the slot count, whatever the caller passes; `clampStarts_ordered` that the clamp changes nothing for the ordered starts `restore` already computes. Before #2905 only a `debug_assert!` guarded the order (the Rust test's `[10, 5, 0]` would subtract 10 from 5; counterexample removed; in 17ccc5412). `restore` never passed such starts, so this was an unchecked contract rather than a reachable bug.
+Since #2905 `prepare_tiers` clamps the tier starts monotone itself (`clampStarts`). `clampStarts_mono` proves the tier sizes then never underflow and sum to the slot count, whatever the caller passes; `clampStarts_ordered` that the clamp changes nothing for the ordered starts `restore` already computes. Before #2905 only a `debug_assert!` guarded the order (the Rust test's `[10, 5, 0]` would subtract 10 from 5; counterexample removed in bbee75955; the last revision that has them is 17ccc5412). `restore` never passed such starts, so this was an unchecked contract rather than a reachable bug.
 
 **4. Does `DETACH DELETE` leave stale endpoints?**
 
@@ -125,7 +125,7 @@ The lakefile builds two libraries, `FalkorEndpointIndex` and `EndpointPaged`; bo
 ## Build and check
 
 ```bash
-cd proofs/endpoint_index && lake build    # this project (both libraries)
+(cd proofs/endpoint_index && lake build)    # this project (both libraries)
 bash proofs/lean_ci.sh endpoint_index     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                   # repo-wide coverage report
 ```

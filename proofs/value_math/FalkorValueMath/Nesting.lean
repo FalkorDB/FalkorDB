@@ -23,7 +23,7 @@ import FalkorValueMath.Misc
   `depth ≤ MAX` (always loads) and `depth ≥ MAX + 2` (always refused).
 * `validateProperty_depth`, **`stored_roundtrip`** — every value a property write accepts
   has `depth ≤ MAX` and round-trips through the RDB codec (the save/load guarantee).
-* History (counterexamples removed; in 17ccc5412): before #3339 every nesting decoded, one frame per level,
+* History (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412): before #3339 every nesting decoded, one frame per level,
   and any depth was storable.
 -/
 

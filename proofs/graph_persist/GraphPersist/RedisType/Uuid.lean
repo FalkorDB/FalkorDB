@@ -17,7 +17,7 @@ fields: `uuid_fields(t, seq)` prints `t` in the first three fields and
   `(graph, slot)` its own counter value; `sameFields_iff`, `const_check_holds` — `same_fields`
   and the `const _` block's assertions, for every clock reading.
 
-Before #3286, `a = (nanos as u64) ^ seq` fed all five fields (counterexample removed; in 17ccc5412).
+Before #3286, `a = (nanos as u64) ^ seq` fed all five fields (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 -/
 namespace GraphPersist.RedisType
 

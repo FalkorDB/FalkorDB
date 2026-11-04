@@ -113,7 +113,7 @@ Four rows are proven only under the hypothesis that the sub-plan is separable:
 
 Fixing W2-apply-1 (adding `IR::ValueHashJoin` to both blacklists) removes the known counterexample but does not by itself turn these rows PROVEN: that needs a proof that every operator the blacklist admits is separable.
 
-Re-targeted to main 5e475e6c9: #3050 and #3055 fix W2-apply-2 and W2-apply-4 (the old refutations are kept as pre-#3050 counterexamples (removed; in 17ccc5412) / pre-#3055 counterexamples (removed; in 17ccc5412) and the fixed behaviour is proved on the new model), #3050 also removes the cross-operator cache sharing behind #3368/#3369 as filed (a same-operator collision of equal leftovers remains, model only), #3462 adds `inspect` to `DeleteSt.new`, #3436 only shifts lines.
+Re-targeted to main 5e475e6c9: #3050 and #3055 fix W2-apply-2 and W2-apply-4 (the old refutations are kept as pre-#3050 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) / pre-#3055 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) and the fixed behaviour is proved on the new model), #3050 also removes the cross-operator cache sharing behind #3368/#3369 as filed (a same-operator collision of equal leftovers remains, model only), #3462 adds `inspect` to `DeleteSt.new`, #3436 only shifts lines.
 
 ## Files
 
@@ -166,7 +166,7 @@ The project has no dependencies beyond Lean core. The id-space `reserve` it call
 ## Build and check
 
 ```bash
-cd proofs/ops_apply && lake build    # this project
+(cd proofs/ops_apply && lake build)    # this project
 bash proofs/lean_ci.sh ops_apply     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh              # repo-wide coverage report
 ```

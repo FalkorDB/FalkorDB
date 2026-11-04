@@ -11,7 +11,7 @@ graph/src/graph/graphblas/matrix.rs	new_matrix	297	PROVEN	GBWGlue.newMatrix: new
 graph/src/graph/graphblas/matrix.rs	new_matrix	304	PROVEN	GBWGlue.newMatrix .bool: newMatrix_spec
 graph/src/graph/graphblas/matrix.rs	new_matrix	313	PROVEN	GBWGlue.newMatrix .u64: newMatrix_spec
 graph/src/graph/graphblas/matrix.rs	from	322	PROVEN	GBWGlue.descOf: descOf_injective, descOf_nondefault, descOf_RC, allDesc_complete
-graph/src/graph/graphblas/matrix.rs	drop	374	PROVEN	Handle::drop (#3090): Own.arc_frees_once (freed at most once, iff count reaches 0), arc_all_drop_frees_once, arc_every_interleaving_frees_once; fixed the Matrix::drop Arc::get_mut leak (counterexample removed; in 17ccc5412)
+graph/src/graph/graphblas/matrix.rs	drop	374	PROVEN	Handle::drop (#3090): Own.arc_frees_once (freed at most once, iff count reaches 0), arc_all_drop_frees_once, arc_every_interleaving_frees_once; fixed the Matrix::drop Arc::get_mut leak (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/graph/graphblas/matrix.rs	clone	406	PROVEN	Own.arcStep .clone (Arc<Handle> fetch_add): arc_frees_once (any n, any interleaving of clones and drops)
 graph/src/graph/graphblas/matrix.rs	pin_sparse	423	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/matrix.rs	decode	447	PROVEN	Codes.matrix_decode_internal_new_ok; component decode propagates; CONFIRMED leak bug_matrix_decode_leaks_container_components / _on_error_path

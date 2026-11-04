@@ -38,16 +38,16 @@ Theorems:
   for every batch size: same final graph, same next id, and the emitted rows are
   a permutation of the reference's (the within-batch cache exactly simulates the
   visibility of earlier rows' creations).
-* Batch dependence (fixed by #3067; counterexample removed; in 17ccc5412) — with `ON CREATE SET` touching the merged property the
+* Batch dependence (fixed by #3067; counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — with `ON CREATE SET` touching the merged property the
   result depends on `BATCH_SIZE`: rows that straddle a batch boundary see the
   earlier row's creation, rows inside one batch do not. CONFIRMED live.
-* Cross-clause cache (counterexample removed; in 17ccc5412) — before #3050 the cache was keyed by the hash
+* Cross-clause cache (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — before #3050 the cache was keyed by the hash
   only and shared by all MERGE clauses of the query: a second clause whose
   pattern hashes equal bound the FIRST clause's variable id and left its own
   unbound ("Variable b not found"). Fixed on main: the key is `(operator idx,
   hash)` (`Clause.op`); `cross_clause_keyed` proves the second clause creates and
   binds its own node.
-* All-bound shortcut (counterexample removed; in 17ccc5412) — before #3055 the all-bound shortcut returned one
+* All-bound shortcut (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — before #3055 the all-bound shortcut returned one
   row where the reference returns one per match (visible through a path variable).
   Fixed on main: `allBoundMain` is off for a relationship exposed by a path;
   `allBound_path_keeps_all` proves it emits the reference rows.

@@ -115,7 +115,7 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    OPERATIONAL, `MATCH (n:L) WHERE n.b < 300000` via index = 0; C = 300000. Same
    mechanism loses index entries when writes race population (`repro/poprace.py`:
    8/8 rounds mismatched on Rust, 0/5 on C; not re-run at 73077bb4a, and it creates one
-   index per round, so its cause may differ). (Counterexample removed; in 17ccc5412.) Now `create_index` calls `bump_id` when the
+   index per round, so its cause may differ). (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.) Now `create_index` calls `bump_id` when the
    entry exists (indexer.rs:357-359), so the older job fails `is_ticket_current` and the
    new one indexes everything: `main_operational_complete`, `main_lost_order_complete`.
 3. **FIXED by #3087 (49f698d22)** — HISTORICAL (fe619ac5f): a vector of the wrong
@@ -123,21 +123,21 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    node from all of its label's indexes (old `mod.rs:723-733` added the blob unchecked;
    C `src/index/index.c:470-476` skips). `CREATE INDEX (n.name)`, vector index dim 2,
    `CREATE (:L {name:'a', v:vecf32([1,2,3])})`, `MATCH (n:L) WHERE n.name='a'`: Rust
-   was `[]`, C `a`. (Counterexamples removed; in 17ccc5412.) Now `mod.rs:730-744` adds the vector only if
+   was `[]`, C `a`. (Counterexamples removed in bbee75955; the last revision that has them is 17ccc5412.) Now `mod.rs:730-744` adds the vector only if
    `vector_options.is_some_and(|o| o.dimension != 0 && o.dimension == vec.len())`:
    `docSet_vector_sound`, `doc_always_accepted`, `other_fields_never_dropped`,
    `vector_dim_mismatch_keeps_range_entry`, `dim0_keeps_range_entry`, `noopts_keeps_range_entry`.
 4. **FIXED by #3088 (89d68334a)** — HISTORICAL (W3-conc-4 / #3085, 49f698d22): huge `k`
    killed the server (old `graph.rs:4211,3938` `Vec::with_capacity(k)`). `CALL
    db.idx.vector.queryNodes('L','v', 1000000000000000, vecf32([1,2]))`: Rust crashed
-   (SIGSEGV in the OOM path); C returns the 1 row. (Counterexample removed; in 17ccc5412.) Now `graph.rs:4208,3939` clamp `k` to
+   (SIGSEGV in the OOM path); C returns the 1 row. (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.) Now `graph.rs:4208,3939` clamp `k` to
    `node_count().max(1)` / `relationship_count().max(1)` and `:4014,3955` size by results:
    `Knn.alloc_bounded`, `no_abort_any_k`, `candidates_topk`, `huge_k_one_row`.
 5. **FIXED by #3290 (66d4d9d40)** — HISTORICAL (#3093, 4a4f2a72f): **Inline (MULTI/EXEC) write fails with "another write is in progress"**
    (`src/graph_core.rs:748` slot claimed as a reader, before escalation). A queued
    write in its match phase + `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC`: Rust
    replies `another write is in progress, retry the query` and `M` is not created
-   (3/3); C creates it (3/3). `repro/multi_race.py`. (Counterexample removed; in 17ccc5412.)
+   (3/3); C creates it (3/3). `repro/multi_race.py`. (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.)
    Now the queued write forks without the slot and checks it under the write lock (since
    #3657 there is no slot at all: forking takes nothing and `commit` refuses a stale fork);
    `inline_write_ok`, `stale_then_rerun`, `one_commit_per_version`.

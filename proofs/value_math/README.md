@@ -170,7 +170,7 @@ The header's own count ("72 PROVEN, 11 MODELLED, 46 NOT COVERED of 129") predate
 ## Build and check
 
 ```bash
-cd proofs/value_math && lake build    # this project
+(cd proofs/value_math && lake build)    # this project
 bash proofs/lean_ci.sh value_math     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh               # repo-wide coverage report
 ```

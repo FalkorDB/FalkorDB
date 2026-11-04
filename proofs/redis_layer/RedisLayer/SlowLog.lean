@@ -14,7 +14,7 @@
 
 **Fixed crash** (W4-redis-1, fixed by #3234 `3660a5fc3`): `entry_hash` and `truncate`
 used to cut the query at *byte* 2048, so a query longer than 2048 bytes with a multi-byte
-character across byte 2048 panicked (counterexamples removed; in 17ccc5412). Both now
+character across byte 2048 panicked (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). Both now
 go through `prefix`, which backs up to `floor_char_boundary(2048)`:
 `hashInput_total`/`truncate_total` (never panics, for every byte string),
 `prefix_le`/`prefix_isPrefix`/`prefix_boundary`/`prefix_longest` (the cut is the longest

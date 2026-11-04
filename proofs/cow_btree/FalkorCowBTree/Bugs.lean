@@ -20,7 +20,7 @@ branch is `children < BRANCH_MAX / 2 = 1` (`node.rs:197`, reported at `:473`): a
 down to ONE child is not reported, so its parent never repairs it. Its lone child then cannot
 rebalance (`node.rs:212` guard) and drains to an empty non-root leaf. `is_empty()` then lies, and
 a later `insert_batch` hits `Node::min` on the empty leaf (out-of-bounds panic, `node.rs:234`) or the
-single-child `debug_assert` (`node.rs:71`). The `pre2897_b3_*` counterexamples (removed; in 17ccc5412) replayed it on
+single-child `debug_assert` (`node.rs:71`). The `pre2897_b3_*` counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) replayed it on
 `CowBTree::<2, 3>`, which no longer compiles (`Assert.lean`: `constAssert_rejects_B3`, and
 `remove_spec_asserted` for every configuration the assert admits). -/
 

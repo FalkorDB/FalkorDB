@@ -45,7 +45,7 @@ moved (+151 from `:900`, +291 from `:1235`). The project now depends on graphbla
 **Re-targeted to main b29a2885c** (from 5e475e6c9): #3463 adds the pending-deleted endpoint
 check to `ExpandIntoOp::expand_row` (`expand_into.rs:158-160`); `expandIntoP` is now the fixed
 model and satisfies `LiveExpandInto` (`expandIntoP_live`), old counterexamples renamed
-pre-#3463 counterexamples (removed; in 17ccc5412); `expand_into.rs` pins after `:158` moved +7. New open item: CondTraverse ignores
+pre-#3463 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412); `expand_into.rs` pins after `:158` moved +7. New open item: CondTraverse ignores
 `Pending` (`bug_condTraverse_*`).
 
 **Re-targeted to main 5e475e6c9** (from b84473a7f). #2383 (index serves `IN [...]` natively): the node and
@@ -209,7 +209,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 10. **#3452: ExpandInto matched an edge whose endpoint is pending-deleted** — FIXED by
    #3463 (b29a2885c): `expand_into.rs:158-160` now yields no row when either endpoint
    is `is_node_deleted`. Property `EIP.LiveExpandInto` is proved for main
-   (`EIP.expandIntoP_live`); the old counterexamples were removed; in 17ccc5412.
+   (`EIP.expandIntoP_live`); the old counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412.
 
 11. **#3463 follow-up: CondTraverse still matches an edge of a pending-deleted node**
    (`cond_traverse.rs` never reads `Pending`; `expand_row` `:900`, `process_pairs` `:1235`).

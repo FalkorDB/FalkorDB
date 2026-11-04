@@ -20,7 +20,7 @@ server (#3413).
 
 **Fixed by #3419 (`8621212fc`, closes #3413):** `VKEY_MAX_ENTITY_COUNT` was registered with
 range `1..1073741824` while both other paths accept every `0..i64::MAX`
-(FalkorDB Cloud's `4611686000000000000`, and `0`; counterexample removed; in 17ccc5412). Now
+(FalkorDB Cloud's `4611686000000000000`, and `0`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now
 `vkey_rewrite_reloads_config` / `vkey_rewrite_reloads_load`: any value either path accepts
 is written by `CONFIG REWRITE` as a line the next start accepts, reading back the same value.
 

@@ -164,7 +164,7 @@ Every operator file under `runtime/ops/` in scope is fully PROVEN (no FFI rows a
 ## Build and check
 
 ```bash
-cd proofs/ops_traverse && lake build    # this project
+(cd proofs/ops_traverse && lake build)    # this project
 bash proofs/lean_ci.sh ops_traverse     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                 # repo-wide coverage report
 ```

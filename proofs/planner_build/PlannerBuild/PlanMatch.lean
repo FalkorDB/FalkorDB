@@ -26,7 +26,7 @@ and `chainRel_lowers_from`/`_to` (both endpoints lowered for every operator kind
 not), `firstRel_edge_pred`/`chainRel_edge_pred` (a fixed hop's edge map is a Filter directly
 above an operator that emits every parallel edge), `walk_keeps_edge_attrs`,
 `firstRel_stripped`/`chainRel_stripped`/`planComp_stripped`/`planMatch_stripped`, and the
-fixed bug (counterexamples removed; in 17ccc5412).
+fixed bug (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412).
 | `buildPatternSubPlan` | `build_pattern_sub_plan` mod.rs:1038-1049 |
 
 Expressions and the WHERE (`plan_filter`, FilterPlan.lean) are parameters;

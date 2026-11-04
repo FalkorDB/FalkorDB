@@ -30,7 +30,7 @@ widths `read_width` loads. `docBytesAssert_iff`, `admitted_doc_read`, `admitted_
 every width a tree can be built with reads its docs back. Before #3285 the assert was
 `1 <= DOC_BYTES <= 8`, so `DOC_BYTES = 3` (5, 6, 7) read every doc wrong (Rust panicked "range end index 16
 out of range for slice of length 11" on the second `insert` of a `CowBTree::<256, 256, 3>`; counterexamples
-removed, in 17ccc5412); `docBytesAssert_rejects_3`: the old assert admitted 3, the new one does not.
+removed in bbee75955; the last revision that has them is 17ccc5412); `docBytesAssert_rejects_3`: the old assert admitted 3, the new one does not.
 -/
 namespace IndexLayer.Leaf
 

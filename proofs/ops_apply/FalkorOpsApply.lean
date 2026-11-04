@@ -70,7 +70,7 @@ asserts C's answer and FAILS today).
 2. **`merge_pattern_cache` shared by all MERGE clauses** — FIXED by #3050 (closes
    #3038, main 5e475e6c9): the cache is keyed by `(operator idx, pattern hash)`
    (`merge.rs:126,176`; `runtime.rs:201`). `MERGE (a:M {v:1}) ON CREATE SET a.v = 2 MERGE (b:M {v:1})
-   RETURN a.v, b.v` used to give `Variable b not found`. Lean: `Merge.cross_clause_keyed` (main; counterexample removed; in 17ccc5412).
+   RETURN a.v, b.v` used to give `Variable b not found`. Lean: `Merge.cross_clause_keyed` (main; counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 3. **MERGE result depends on BATCH_SIZE** — FIXED by #3067 (closes #3039, b47d6d6a3):
    `match_all` (`merge.rs:260-297`) matches every row before any creation. Was (`merge.rs:313-343` at ca36bfa15): the match ran once
    per batch and saw earlier batches' creations only. Lean: `MergeEager.fixed3067_batch_independent`, `mainMerge_batch_independent`, `mainMerge_noSet_eq_ref`.  `UNWIND range(1,N) AS x WITH x
@@ -166,13 +166,13 @@ variable's id (ops_aggregate `bug3368/3369_count_acc_in_merge_slot`) becomes the
 equal leftovers in two MERGEs share a cache entry (merge.rs:126-131).
 Properties: `KeyFromBoundNodeOnly`, `MergeBindsOwnNode` (fix target: `fixKey_from_bound_node`,
 `fixed_binds_own_node`). Refuted, live-reproduced Rust vs C:
-* #3368 (`c` = `[B] b1`; filed repro fixed by #3050; counterexamples removed; in 17ccc5412);
-* #3369 (`c` = `Int 1`; filed repro fixed by #3050; counterexamples removed; in 17ccc5412).
+* #3368 (`c` = `[B] b1`; filed repro fixed by #3050; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412);
+* #3369 (`c` = `Int 1`; filed repro fixed by #3050; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412).
 
 ## Re-target to 5e475e6c9 (#3050, #3055, #3462, #3436)
 `Merge.Clause.op` / `MergeSlot.MClause.op` carry the operator idx and the cache key is
 `(op, hash)` (#3050); the pre-#3050 shared cache is the model with every `op` equal
-(pre-#3050 counterexamples (removed; in 17ccc5412)). `Merge.allBoundMain` is the #3055 shortcut condition. `Delete.DeleteSt.new`
+(pre-#3050 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412)). `Merge.allBoundMain` is the #3055 shortcut condition. `Delete.DeleteSt.new`
 takes `inspect` (`snapshot = inspect || snapshot_required`, #3462). #3436 (`self.g.borrow()`
 → `self.graph()`) moves lines in create/delete only; no model change. #3368/#3369 as filed
 (two different MERGE operators sharing an entry) no longer share one: `MergeSlot.bug3368_filed_repro_fixed_by_3050`.

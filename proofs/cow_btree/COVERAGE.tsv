@@ -19,7 +19,7 @@ graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::range_tuples
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::heap_bytes	419	PROVEN	heapBytes: heapBytes_eq, heapSum_split, heapBytes_aos
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk (heap_bytes)	420	PROVEN	heapWalk: heapWalk_eq, foldl_heapWalk
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::count	448	NOT COVERED	nested helper of #[cfg(test)] len (PROVEN in proofs/index_layer: Leaf.walk_spec)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::is_empty	463	PROVEN	isEmpty (the BRANCH_MAX=3 counterexample was removed, in 17ccc5412; BRANCH_MAX=3 is now rejected by the assert)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::is_empty	463	PROVEN	isEmpty (the BRANCH_MAX=3 counterexample was removed in bbee75955; the last revision that has them is 17ccc5412; BRANCH_MAX=3 is now rejected by the assert)
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk (leaves)	474	NOT COVERED	nested helper of #[cfg(test)] leaves (PROVEN in proofs/index_layer: Leaf.walk_spec)
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	pack_branches	56	PROVEN	packBranches: packBranches_chain (MinChain of >= 2 fragments -> shorter MinChain one level up, 2..=BRANCH_MAX children each, same entries), packBranches_head, minE_packBranches; contents also PROVEN in proofs/index_layer
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	build_root	90	PROVEN	buildRoot: buildRoot_wf (one well-formed node, same entries; fuel = fragment count suffices); contents also PROVEN in proofs/index_layer

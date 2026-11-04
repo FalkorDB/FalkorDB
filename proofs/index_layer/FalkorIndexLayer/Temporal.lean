@@ -6,7 +6,7 @@ import FalkorIndexLayer.Proofs
 contributes nothing to its attribute's RediSearch document, and every numeric or scalar index query
 over that attribute is exact for it: the index does not return it, and Cypher's comparison of a
 temporal with a number or string is null (not true). This turns the old counterexample
-(W2-index-5; removed, in 17ccc5412) into theorems. -/
+(W2-index-5; removed in bbee75955; the last revision that has them is 17ccc5412) into theorems. -/
 
 namespace IndexLayer
 

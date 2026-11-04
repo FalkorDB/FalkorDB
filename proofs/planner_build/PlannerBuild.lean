@@ -94,7 +94,7 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`). Rust r
   `firstRel_edge_pred`/`chainRel_edge_pred` (a fixed hop's edge map is a Filter right above an
   operator with `emit_relationship` set); `walk_keeps_edge_attrs`; `planMatch_stripped` (no scan or
   fixed-length operator carries an inline map — the precondition of proofs/optimizer_rewrites
-  `refsNew_complete`); fixed bug (counterexample removed; in 17ccc5412) (live: `MATCH (a:N) WITH a MATCH
+  `refsNew_complete`); fixed bug (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) (live: `MATCH (a:N) WITH a MATCH
   (a {x: 1})-[:R*1..2]->(b)` gave 2, 3, 3; now 2, 3 as C). Match: `rebuild_keeps_where` (bug 3 fixed).
 * Helpers (Misc/Fmt/Rename): `subtreeContains_iff`, `addArgs_leaves`, `stitchBelow_get`/`_ev`,
   `ensureInput_ev_local`/`_saturates`, `setIP_scansLeaf`, `redundant_optional_identity`, `renameProj_*`,
@@ -124,7 +124,7 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    Fix: Apply-wrap whenever `n` binds a variable any CP branch uses (or always for a previous clause).
    Tests `bug_prior_match_stitched_as_cartesian_branch`, `bug_prior_match_cartesian_branch_incoming`.
 3. **(FIXED by #2390, d2c42e032 — select_scan_node `filters_of` keeps the spine's Filters on
-   rebuild; live on 8743953a8: Rust 0 = C 0; Lean `rebuild_keeps_where`; counterexample removed, in 17ccc5412.)** **The WHERE of a `MATCH (a) WHERE φ` is dropped when the next MATCH traverses from `a`**:
+   rebuild; live on 8743953a8: Rust 0 = C 0; Lean `rebuild_keeps_where`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412.)** **The WHERE of a `MATCH (a) WHERE φ` is dropped when the next MATCH traverses from `a`**:
    stitching puts `Filter(φ, Scan a)` under the next clause's leaf CondTraverse (mod.rs:2815), the
    exact shape `is_planner_scan_subtree` (select_scan_node.rs:239) prunes and rebuilds as a bare scan.
    `MATCH (a) WHERE a.v = 99 MATCH (a)-[r:R]->(b) RETURN count(r)` → Rust 2, C 0; also into writes:

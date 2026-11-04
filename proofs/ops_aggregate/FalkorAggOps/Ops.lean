@@ -405,7 +405,7 @@ theorem keyless_one_row {A : Type} (rows : List A) : (keylessGroups rows).length
 
 #2977 (c652e505e) keys the per-group state by a group id instead; see `GroupId.lean`
 (`distinct_by_group_id_exact`, `fixed2977_collision_example`). The definitions below are the
-pre-#2977 model (its counterexample was removed; in 17ccc5412). -/
+pre-#2977 model (its counterexample was removed in bbee75955; the last revision that has them is 17ccc5412). -/
 
 /-- Keep the first row of each `key` class (`ValuesDeduper::is_seen`). -/
 def dedupBy {α β : Type} [DecidableEq β] (key : α → β) : List β → List α → List α

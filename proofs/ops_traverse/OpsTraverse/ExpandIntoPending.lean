@@ -27,7 +27,7 @@ so the pre-#3463 ExpandInto matched it: Rust returned 1 with "Relationships
 created: 0". The edge is doomed (deleted implicitly at commit). Main now yields
 no row for a pending-deleted endpoint, so MERGE takes its create branch, which
 refuses a deleted endpoint. Property `LiveExpandInto`: proved for main
-(`expandIntoP_live`); the old counterexamples are pre-#3463 counterexamples (removed; in 17ccc5412) on `expandIntoPre`.
+(`expandIntoP_live`); the old counterexamples are pre-#3463 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) on `expandIntoPre`.
 
 The issue's other half (the `synthetic_label` branch, `expand_into.rs:162-173`,
 reads committed labels only) has no valid-Cypher route to pending label state

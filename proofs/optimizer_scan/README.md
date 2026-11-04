@@ -25,7 +25,7 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 
 - **With non-negative integer bounds, yes — on any graph since #3394.** `seek_sound` proves `NodeByIdSeek` equals `Filter(id(n) op v …)` over `AllNodeScan` on every well-formed graph (`node_count` counts the live ids), including one that never held a node (main b84473a7f).
 - `step_some`, `step_none` and `step_nonempty` prove each arm of `evaluate_id_filter` keeps exactly the ids that satisfy it, and the running range never inverts.
-- **On a graph that never held a node, not before #3394.** `MATCH (n) WHERE id(n) = 0 RETURN n` returned a phantom node 0, and writes to it persisted into the next `CREATE` (counterexample removed; in 17ccc5412). #3394 returns no range when `node_count() == 0` (`empty_graph_seek_none`).
+- **On a graph that never held a node, not before #3394.** `MATCH (n) WHERE id(n) = 0 RETURN n` returned a phantom node 0, and writes to it persisted into the next `CREATE` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). #3394 returns no range when `node_count() == 0` (`empty_graph_seek_none`).
 
 **3. Does reordering the hops keep the rows?**
 
@@ -131,7 +131,7 @@ The project has no Lake dependencies.
 ## Build and check
 
 ```bash
-cd proofs/optimizer_scan && lake build       # this project
+(cd proofs/optimizer_scan && lake build)       # this project
 bash proofs/lean_ci.sh optimizer_scan        # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                      # repo-wide coverage report
 venv/bin/python proofs/optimizer_scan/repro.py   # live index repros (Rust on 18200, C on 18201)

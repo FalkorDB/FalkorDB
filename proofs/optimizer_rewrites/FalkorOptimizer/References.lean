@@ -21,7 +21,7 @@ one per-operator oracle, `optimizer/references.rs`.
 Theorems: `iqLoop_iff` (the stack loop = "some operand mentions v", at any And/Or depth),
 `refsNew_complete` (under `PlanInv`, every read is seen), `refsNew_sound` (only reads or
 bound variables are reported), `refsPR_complete`; the fixed counterexamples
-(removed; in 17ccc5412) are replaced by `refsNew_sees_*`; still open:
+(removed in bbee75955; the last revision that has them is 17ccc5412) are replaced by `refsNew_sees_*`; still open:
 `refsNew_misses_sibling_edges` (W2-traverse-1). The tree walks are in References2.lean.
 -/
 import FalkorOptimizer.Basic

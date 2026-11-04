@@ -128,7 +128,7 @@ The project has no Lake dependencies.
 ## Build and check
 
 ```bash
-cd proofs/lexer && lake build          # this project
+(cd proofs/lexer && lake build)          # this project
 bash proofs/lean_ci.sh lexer           # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                # repo-wide coverage report
 ```

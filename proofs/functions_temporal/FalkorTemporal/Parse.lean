@@ -269,7 +269,7 @@ structure DurAcc where
   seconds : Int := 0
 
 /-- `n * 7` on i64 in a release build wraps (`wrapMul` in Duration.lean). Used only by
-the pre-#2987 loop (removed; in 17ccc5412). -/
+the pre-#2987 loop (removed in bbee75955; the last revision that has them is 17ccc5412). -/
 def wrap64 (x : Int) : Int := (x + 2 ^ 63) % 2 ^ 64 - 2 ^ 63
 
 /-- `i64::checked_*`: `some x` iff `x` is in i64 range. -/

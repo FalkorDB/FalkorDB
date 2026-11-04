@@ -16,7 +16,7 @@ mvcc_graph.rs is PROVEN; see COVERAGE.tsv):
                widening, multi_pairs, degrees (no `unreachable!`), fold/dup/wait,
                encode's MSB values, `Iter::new/seek`.
 - **W4-matrix-1, fixed by #3250 (history):** `Tensor::resize` shrink never trimmed `me`
-  (0f45a8685 tensor.rs:814-828; counterexample removed; in 17ccc5412); repro then
+  (0f45a8685 tensor.rs:814-828; counterexample removed in bbee75955; the last revision that has them is 17ccc5412); repro then
   `cargo test -p graph --test lean_versioned_matrix tensor_shrink_keeps_orphan_me_rows`
   → after shrink `iter_edges` = [(0,0,3),(5,5,1),(5,5,2)], `edge_count` = 2
   (expected [(0,0,3)], 1); after grow + re-add (5,5,9): `get` = [9] but

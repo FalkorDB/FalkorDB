@@ -130,7 +130,7 @@ Every function is proven.
 ## Build and check
 
 ```bash
-cd proofs/id_list && lake build    # this project
+(cd proofs/id_list && lake build)    # this project
 bash proofs/lean_ci.sh id_list     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh            # repo-wide coverage report
 ```

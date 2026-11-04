@@ -148,7 +148,7 @@ No path dependencies.
 ## Build and check
 
 ```bash
-cd proofs/index_layer && lake build    # this project
+(cd proofs/index_layer && lake build)    # this project
 bash proofs/lean_ci.sh index_layer     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                # repo-wide coverage report
 ```

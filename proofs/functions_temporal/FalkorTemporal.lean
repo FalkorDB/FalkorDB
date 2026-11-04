@@ -52,7 +52,7 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 | `SpatialFns.pointFromMapEntries`, `numeric`, `point` | `point_from_map_entries` `spatial.rs:38`, `numeric` `spatial.rs:74`, `point` `spatial.rs:110` (#3301; `Point::validate` and `point_struct_pure` are gone) |
 | `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:391` / `ExprIR::And`,`Or` in `eval.rs:629-706` |
 | `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs:880` / `Add..Rem for Value` `value.rs:933-1200` |
-| `Spatial2.distance` / `Spatial.haversine` | `Point::distance` `value.rs:151` (clamped `a`, #2983); pre-#2983 counterexamples (removed; in 17ccc5412): history |
+| `Spatial2.distance` / `Spatial.haversine` | `Point::distance` `value.rs:151` (clamped `a`, #2983); pre-#2983 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412): history |
 
 ## Proven (160 theorems + 30 kernel-checked era chunks)
 
@@ -77,7 +77,7 @@ incl. the divide-by-zero fallback), `mapM_bind_mapM`, `colEval_rows`, `rowK_eq`.
 `subDur_eq_shift`.
 Counterexamples as theorems: `neg_days_encoding`,
 `time_not_normalised`, `week_string_wraps`, `civilFromDays_trunc`
-(the pre-#2950/#2984/#2988 ones were removed; in 17ccc5412).
+(the pre-#2950/#2984/#2988 ones were removed in bbee75955; the last revision that has them is 17ccc5412).
 Fixed forms on main: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `dayOfWeek_out_of_range_errors`.
 
 ## Confirmed bugs (Rust repro + live Rust-vs-C)
@@ -89,7 +89,7 @@ Fixed forms on main: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `da
    `week ∈ 1..=53` and use `checked_add_signed`/`try_days`. Main does exactly that:
    `dateFromComponents_total`, `week_huge_errors`, `week_min_errors`. Also crashed, now an error: an
    in-range week at chrono's year edge, `date({year:-262143, week:1})`
-   (`week_edge_errors`). Counterexamples removed; in 17ccc5412.
+   (`week_edge_errors`). Counterexamples removed in bbee75955; the last revision that has them is 17ccc5412.
 2. **FIXED by #2950 (737dfb5da).** Was: **server crash** `date({year:2020, quarter:2, dayOfQuarter: 9223372036854775807})` —
    `TimeDelta::days` panics (`temporal.rs:95`, `doq - 1` also overflows for i64::MIN);
    C: "Invalid value for dayOfQuarter (valid values 1 - 92)". Test

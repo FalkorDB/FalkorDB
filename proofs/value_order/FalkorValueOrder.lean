@@ -51,7 +51,7 @@ what does not.
 
 Status on main 4a4f2a72f: 1–3 are still facts about `compare_value`, but nothing sorts by it
 any more (#2912 b033aecc6: `sort_cmp`, `Main.scMain_total`), so the panics are fixed
-(counterexamples removed; in 17ccc5412); 4, 6 and 8 are
+(counterexamples removed in bbee75955; the last revision that has them is 17ccc5412); 4, 6 and 8 are
 fixed by #2917 (7fdf06a0e); 5 is harmless since `GroupKey::eq` is `sort_cmp`; 7 is open.
 
 1. `nan_breaks_antisymmetry` — NaN is `Less` than 1.0 *and* 1.0 is `Less` than
@@ -61,7 +61,7 @@ fixed by #2917 (7fdf06a0e); 5 is harmless since `GroupKey::eq` is `sort_cmp`; 7 
    Same (pre-#2912) panic from `ORDER BY` over a mixed int/float column near 2^53.
 3. `map_order_not_transitive` — `compare_map` answers `Equal` at the first value
    pair that is disjoint or null, without looking further. Same (pre-#2912) panic.
-4. Map `<>` (counterexample removed; in 17ccc5412) — `{a:1} = {a:'x'}` and `{a:1} <> {a:'x'}` were
+4. Map `<>` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — `{a:1} = {a:'x'}` and `{a:1} <> {a:'x'}` were
    both `false`. Fixed by #2917: `map_neq_true`, `evalNeq_not_evalEq` (`<>` = NOT `=`).
 5. `hash_not_consistent_with_eq` — `2^53+1 == 2^53.0` but their hashes differ.
    Main's hash agrees with `sort_cmp` instead (`Main.main_hash_consistent`).
@@ -73,7 +73,7 @@ fixed by #2917 (7fdf06a0e); 5 is harmless since `GroupKey::eq` is `sort_cmp`; 7 
    collision is one subtraction away: rows `(a, b)` and `(a+1, b - K²)` always
    collide, and the second one is silently dropped (or, for MERGE, never
    created).
-8. `min` over NaN (counterexample removed; in 17ccc5412) — `min([1.0, NaN, 3.0])` was `3.0`. Fixed by #2917:
+8. `min` over NaN (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — `min([1.0, NaN, 3.0])` was `3.0`. Fixed by #2917:
    `min_nan_ignored` (1.0; a leading NaN survives, as C).
 
 ## What is proved to hold
@@ -160,7 +160,7 @@ Model.lean: `F` gained NaN sign/payload, `-0.0`, fractions and ±inf; `V` gained
 * **`SC.sc_laws`** (then `scMain_total`) — #2912's `sort_cmp` is a total preorder on every
   well-formed value, nested lists/maps/vectors/points included (generic in `sort_cmp_f32`).
 * **Refuted at b033aecc6** (fixed by #2917, see Main.lean) — `sort_cmp`-equal ⇒ hash-equal
-  (counterexamples removed; in 17ccc5412): `NaN` vs `-NaN`, vector and point NaN / signed zero.
+  (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412): `NaN` vs `-NaN`, vector and point NaN / signed zero.
   The Float NaN half was observable then through hash-only DISTINCT: `UNWIND [0.0/0.0,
   -(0.0/0.0)] AS x RETURN count(DISTINCT x)` was 2, 1 in C (FINDINGS W9-hash-1); main: 1 (`Main.main_nans_one_key`).
 * `SC.vec_zero_eq_but_hash_differs` — `Value::eq` merges `vecf32([-0.0])`/`vecf32([0.0])` and

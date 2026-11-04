@@ -19,7 +19,7 @@ prove the model: no pair state and no `me` row changes, so `resizeT_allInv`,
 `resizeT_hasMultiEdge` hold for every tensor, with no hypothesis.
 
 History: before #3250 the shrink branch resized `m`/`dp`/`dm`/`mt` but not
-`me`. The counterexample (removed; in 17ccc5412) was a pair satisfying every invariant
+`me`. The counterexample (removed in bbee75955; the last revision that has them is 17ccc5412) was a pair satisfying every invariant
 whose shrink left `Inv.single_me` false: the pair read as edgeless while its
 `me` row still held two ids (repro then:
 `graph/tests/lean_versioned_matrix.rs::tensor_shrink_keeps_orphan_me_rows`:

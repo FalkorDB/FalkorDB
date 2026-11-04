@@ -150,7 +150,7 @@ The project imports `../core` (the engine value) and `../expr_semantics` (the ex
 ## Build and check
 
 ```bash
-cd proofs/columnar && lake build      # this project
+(cd proofs/columnar && lake build)      # this project
 bash proofs/lean_ci.sh columnar       # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh               # repo-wide coverage report
 ```

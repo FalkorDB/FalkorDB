@@ -177,7 +177,7 @@ All operator files (`aggregate.rs`, `sort.rs`, `limit.rs`, `skip.rs`, `distinct.
 ## Build and check
 
 ```bash
-cd proofs/ops_aggregate && lake build    # this project (also builds ../value_order and ../core)
+(cd proofs/ops_aggregate && lake build)    # this project (also builds ../value_order and ../core)
 bash proofs/lean_ci.sh ops_aggregate     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                  # repo-wide coverage report
 ```

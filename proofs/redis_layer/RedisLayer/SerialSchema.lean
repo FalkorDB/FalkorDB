@@ -7,12 +7,12 @@ Faithful to the token layout; the index/constraint structures keep only what is 
 abstracted as `simCode`), weights are `f64` bit patterns (`one` = `1.0`).
 
 Findings proven here:
-* Field-prefix loss (counterexample removed; in 17ccc5412; **fixed by #3252**, cfe6e7945) — an index on an
+* Field-prefix loss (counterexample removed in bbee75955; the last revision that has them is 17ccc5412; **fixed by #3252**, cfe6e7945) — an index on an
   attribute whose own name starts with `range:` (range index) or `vector:` (vector index)
   came back on a *different* attribute: the encoder writes the bare attribute name (`:384`)
   but the decoder stripped the RediSearch prefix (cab3cf192 `:642-646`). Confirmed live then.
   Now the name is used verbatim: `field_name_kept`, and `decField_encField` round-trips it.
-* Multi-type index loss (counterexamples removed; in 17ccc5412; **fixed by #3514**, a0ba12950, closes #3484) — see below and
+* Multi-type index loss (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412; **fixed by #3514**, a0ba12950, closes #3484) — see below and
   `SerialCLayout`: C writes ONE field entry per attribute with every type in the bitmask, but
   `decode_index_field` kept one type, so an attribute with a RANGE and a FULLTEXT or VECTOR index
   lost its RANGE index on loading a C-written RDB. Main now decodes every set type into its own

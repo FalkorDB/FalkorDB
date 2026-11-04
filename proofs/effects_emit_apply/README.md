@@ -29,7 +29,7 @@ The counterexamples are concrete queries:
 
 **2. Can a payload that the replica accepts leave its graph broken?**
 
-- **Before #3022, yes.** `UPDATE_NODE`, `UPDATE_EDGE`, `SET_LABELS` and `REMOVE_LABELS` did not check that their ids were live, and `DELETE_NODE` accepted a node that still had edges. A `GRAPH.EFFECT` naming a deleted id was accepted, and the next `CREATE` that recycled the id returned a node that already had `{x: 666}`, or an extra label, or someone else's edge (counterexample removed; in 17ccc5412).
+- **Before #3022, yes.** `UPDATE_NODE`, `UPDATE_EDGE`, `SET_LABELS` and `REMOVE_LABELS` did not check that their ids were live, and `DELETE_NODE` accepted a node that still had edges. A `GRAPH.EFFECT` naming a deleted id was accepted, and the next `CREATE` that recycled the id returned a node that already had `{x: 666}`, or an extra label, or someone else's edge (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 - **On main, no.** `apply_wf`: start from a well-formed replica, apply any list of records that the replica accepts, and pass the end-of-buffer `validate`. The result is well formed:
   - a dead node has no labels and no properties;
   - a dead relationship has no properties;
@@ -135,7 +135,7 @@ Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model 
 ## Build and check
 
 ```bash
-cd proofs/effects_emit_apply && lake build    # this project
+(cd proofs/effects_emit_apply && lake build)    # this project
 bash proofs/lean_ci.sh effects_emit_apply     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                       # repo-wide coverage report
 ```

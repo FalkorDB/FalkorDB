@@ -104,11 +104,11 @@ scan.
    - `WHERE n.x = 1 AND n.y = 2` → `[]`. `WHERE n.y = 2 OR n.x = 1` loses rows. `{x:1, y:2}` → `[]`.
    - C returns the rows.
    - Fix: merge only conjuncts and disjuncts whose label matches the first one. Leave the rest in the post-filter, and bail on OR.
-5. FIXED by #3076 (e20300436) (old `mod.rs:797`; counterexample removed; in 17ccc5412).
+5. FIXED by #3076 (e20300436) (old `mod.rs:797`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
    - Query: `n.v > 0` matched a stored date: `['int']` → `['date','int']`. C: `['int']`.
    - Now temporals are not indexed (`mod.rs:803`): `Temporal.temporal_not_indexed`,
      `temporal_numRange_exact`, `temporal_equal_exact`, `fixed3076_temporal_in_numeric_range`.
-6. FIXED by #3072 (1c9994e37) (old `mod.rs:1434`; counterexample removed; in 17ccc5412).
+6. FIXED by #3072 (1c9994e37) (old `mod.rs:1434`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
    - Query: `n.v > 'a' AND n.v < 'a'`: Rust `[]` → `['a']`. C: `[]`.
    - Now an exclusive side with equal bounds is the empty node (`mod.rs:1433-1438`):
      `fixed3072_exclusive_equal_bounds`, and `strRange_exact` lost its equal-bounds premise.
@@ -120,7 +120,7 @@ scan.
 8. `bug_bool_eq_int` (`mod.rs:760,1360`).
    - Query: `n.v = 1` also returns `v = true`, and `n.v = true` returns `v = 1`: `['int']` → `['bool','int']`.
    - C has the same bug.
-9. FIXED by #3081 (ff3d24ba7) (old `mod.rs:1388,1395`; counterexample removed; in 17ccc5412).
+9. FIXED by #3081 (ff3d24ba7) (old `mod.rs:1388,1395`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
    - An absent bound became ±inf with an exclusive flag, so `n.v > 0`, `n.v >= 1.0/0.0` and `n.v <= -1.0/0.0` missed stored ±inf: `['-inf','inf']` → `[]`. C has the same bug.
    - Now an absent bound is inclusive (`mod.rs:1402-1403`): `fixed3081_open_bound_includes_inf`, and `numRange_exact` covers stored ±inf.
 10. `bug_empty_string_not_indexed`: `n.v = ''` → `[]`, and `n.v < 'a'` misses `''`. C has the same bug. Fix: an INDEXEMPTY equivalent, or a sentinel encoding for the empty string.
@@ -200,7 +200,7 @@ carries the field's own non-zero dimension), `setVector_good`, `setVector_wrong_
 `registerOne`: an add only ever targets a field registered *with* params), `setVector_sub_pre`.
 This discharges, for vector fields, the `ht` premise of `query_eq_scan_filter` (the RS table
 holds `docOf` of every entity: a vector can no longer make RediSearch reject the document).
-Fixed by #3087 (W3-conc-3 / #3075 and the W5-idx-2 no-options shape; counterexamples removed; in 17ccc5412).
+Fixed by #3087 (W3-conc-3 / #3075 and the W5-idx-2 no-options shape; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412).
 
 ## Re-target to 8743953a8 (#3072, #3076, #2278)
 - `index/mod.rs`: #3076 dropped the temporal arm of `Document::set` (one line shorter from `mod.rs:797`)
@@ -212,7 +212,7 @@ Fixed by #3087 (W3-conc-3 / #3075 and the W5-idx-2 no-options shape; counterexam
   for every `DOC_BYTES ∈ {1, 2, 4, 8}`) and proves it is the old model at 8 (`aosD8_*`, `fromPairsD8`).
   NEW BUG 14 (latent: no production `CowBTree` yet): the const assert admits `DOC_BYTES ∈ 1..=8`,
   but `read_width` (`cow_btree/mod.rs:88-102`) reads 8 bytes for any width outside {1, 2, 4, 8}, so
-  `DOC_BYTES = 3/5/6/7` reads garbage docs or panics (FIXED by #3285, see below; counterexamples removed; in 17ccc5412). Confirmed on the Rust sources: `CowBTree::<256, 256, 3>` panics on its second
+  `DOC_BYTES = 3/5/6/7` reads garbage docs or panics (FIXED by #3285, see below; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). Confirmed on the Rust sources: `CowBTree::<256, 256, 3>` panics on its second
   `insert` ("range end index 16 out of range for slice of length 11", `mod.rs:99`). Fix: assert
   `DOC_BYTES ∈ {1, 2, 4, 8}`.
 - Still present: bugs 1-4, 7-13 (code unchanged at the cited lines).

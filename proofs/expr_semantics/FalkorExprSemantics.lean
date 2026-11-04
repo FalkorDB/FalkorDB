@@ -28,7 +28,7 @@ reported — `list_error_rightmost`, `evalRev_ok`; C reports the same element, c
 subscripts (`getElem`, `getElement_index`), map projections (`projLoop`) and `DISTINCT`. The
 catch-all `compound` (every other arm: `Length`, `Negate`, `Pow`, n-ary operators, binders,
 aggregates, …) now receives its children as **thunks**, so it can be lazy; the eager form it had
-cannot short-circuit (counterexample removed; in 17ccc5412).
+cannot short-circuit (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 `all_equals` / `all_not_equals` are modelled over their lazy iterators (`allEquals`,
 `allNotEquals`: `allEquals_two`, `allNotEquals_two`, `allEquals_stops`). **`evalNode_frame`**:
 evaluation reads the row only through the expression's `Variable` nodes (`E.vars`), for every
@@ -103,9 +103,9 @@ and with counterexamples, each reproduced against the real engine
 
 * `^` silently dropping an operand's error — fixed by #2904 (`fd2c76a6c`), now
   `pow_propagates_error` (the optimizer
-  deleting `WHERE x ^ true` as constant-true is covered too; counterexamples removed; in 17ccc5412);
+  deleting `WHERE x ^ true` as constant-true is covered too; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412);
 * the lazy `UNWIND range(..)` iterator overflowing after yielding `i64::MAX` — fixed by
-  #2899 (`e63165cb5`), now `rangeIter_correct` (panic in debug, wrong rows and non-termination in release; counterexamples removed; in 17ccc5412);
+  #2899 (`e63165cb5`), now `rangeIter_correct` (panic in debug, wrong rows and non-termination in release; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412);
 * `sign(<float>)` returning a Float — fixed by #2907 (`f04c3557a`), now
   `sign_float_is_int`;
 * mixed Int/Float equality not being transitive (`int_float_eq_not_transitive`).

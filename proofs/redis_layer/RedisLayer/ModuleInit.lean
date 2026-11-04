@@ -16,7 +16,7 @@ work here is "args → `apply_module_args` → `Err` ⇒ `Status::Err`" (`graphI
 The table was also fed the module arguments (`module_args_as_configuration: true`,
 redismodule-rs `get_*_default_config_value`: the value after the first argument
 *byte-equal* to the name; a bool is `value == "yes"`), and `graph_init` had its own
-upper-casing loop for the atomics. Confirmed live then (counterexamples removed; in 17ccc5412):
+upper-casing loop for the atomics. Confirmed live then (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412):
 `CMD_INFO YES` → Rust 0, C 1; `CMD_INFO garbage` loaded with 0,
 C refuses; `cache_size 10` ignored;
 `ASYNC_DELETE yes` ignored. All four now load as in C

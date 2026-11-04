@@ -8,7 +8,7 @@ step it calls the new `Node::merge_underfull_below` (`node.rs:560-573`) on every
 produced (one after a merge, two after a borrow), and then re-examines index `left`. `merge_underfull_below`
 re-runs `merge_underfull` over a produced branch's children when one of them is under-full. That
 repairs the lone-child branch that a combine used to carry one level up untouched (Bug 3,
-`BugsBatch.lean`, now pre-#3283 counterexamples (removed; in 17ccc5412)).
+`BugsBatch.lean`, now pre-#3283 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412)).
 
 ## Model
 

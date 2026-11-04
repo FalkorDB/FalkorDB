@@ -211,7 +211,7 @@ theorem c_breaks_inv :
 /-! ## Per-field validators: the pre-#3021 divergences (historical) and the fix
 
 Before #3021 these were divergences from C, all confirmed live; #3021 (30b4fb7dc,
-issue #3020) fixed each one (the original counterexamples were removed; in 17ccc5412). -/
+issue #3020) fixed each one (the original counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412). -/
 
 /-- `MAX_INFO_QUERIES` is clamped, not rejected, as in C. -/
 theorem maxinfo_clamped : validate .maxInfo (b "5000") = .ok 1000 := by decide

@@ -18,7 +18,7 @@ The per-element evaluator is proofs/expr_semantics' `FalkorExpr.Eval.evalNode`
 * The frame property is expr_semantics' `evalNode_frame` (every arm); `RowAgree` on the real
   chunk batch and `Col.Sound` (the former premise `hS`) are `Concrete.rowAgree` /
   `Concrete.colOf_sound`.
-* History (closed 2026-10-21; counterexample removed; in 17ccc5412): with an eager
+* History (closed 2026-10-21; counterexample removed in bbee75955; the last revision that has them is 17ccc5412): with an eager
   catch-all, `E` could not express `false AND <error>` = `false`; the faithful arm does
   (`and_short_circuits`).
 -/

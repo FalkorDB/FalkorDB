@@ -8,7 +8,7 @@ bare FFI row: `deltaLmxm_spec` (output stored iff `F*M` reaches it with no `F*DM
 more paths than `F*DM`, or `F*DP` reaches it; no assumption on the layers), `deltaLmxm_correct` (= `F*(M-DM+DP)`
 when `dm ⊆ m`), `deltaLmxm_eff` / `deltaLmxm_tensor` (`dm ⊆ m` discharged from `VM.Inv` / `VMTensor.Inv`, so the
 project now depends on versioned_matrix). Fixed by #3492 (a3a99bdbc): the old pattern mask lost an output that
-one deleted and one live base edge both reach (counterexample removed; in 17ccc5412); `needs_dm_sub_m` shows the counting
+one deleted and one live base edge both reach (counterexample removed in bbee75955; the last revision that has them is 17ccc5412); `needs_dm_sub_m` shows the counting
 needs the invariant.
 
 Lean 4 model of the Rust-side logic around the GraphBLAS C API. The C calls are
@@ -102,7 +102,7 @@ entries in the selected rows — the double-counting argument over columns), `co
    #3090 on main e45be4965** (`arc_frees_once`, `arc_every_interleaving_frees_once`;
    text below is the pre-#3090 state). `Matrix::drop` (then
    matrix.rs:390 at the time, same in `Iter::drop`): `Arc::get_mut` then Arc decrement was
-   not atomic (witness removed; in 17ccc5412); it was only a leak. Test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs
+   not atomic (witness removed in bbee75955; the last revision that has them is 17ccc5412); it was only a leak. Test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs
    leaked. The fix is the suggested one: the free moved into `Handle::drop`
    inside the Arc; main's test `concurrently_dropped_clones_free_the_matrix_once`.
 5. **`vector::Iter` has no lifetime** (`fn iter(&self) -> Iter<bool>`): safe

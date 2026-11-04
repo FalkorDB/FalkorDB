@@ -148,7 +148,7 @@ Path dependencies (`lakefile.toml`): [`../runtime_core`](../runtime_core), for t
 ## Build and check
 
 ```bash
-cd proofs/pending_commit && lake build   # this project (also builds ../graph_queries, ../runtime_core and its ../redis_layer)
+(cd proofs/pending_commit && lake build)   # this project (also builds ../graph_queries, ../runtime_core and its ../redis_layer)
 bash proofs/lean_ci.sh pending_commit    # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                  # repo-wide coverage report
 ```

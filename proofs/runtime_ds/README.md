@@ -146,7 +146,7 @@ By file: `row.rs` 21, `ordermap.rs` 20, `orderset.rs` 15, `cow.rs` 6, `bitset.rs
 ## Build and check
 
 ```bash
-cd proofs/runtime_ds && lake build    # this project
+(cd proofs/runtime_ds && lake build)    # this project
 bash proofs/lean_ci.sh runtime_ds     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh               # repo-wide coverage report
 ```

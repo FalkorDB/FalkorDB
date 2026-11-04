@@ -149,7 +149,7 @@ Its `lakefile.toml` requires [`../redis_layer`](../redis_layer) (for `Reuse.lean
 ## Build and check
 
 ```bash
-cd proofs/runtime_core && lake build    # this project
+(cd proofs/runtime_core && lake build)    # this project
 bash proofs/lean_ci.sh runtime_core     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                 # repo-wide coverage report
 ```

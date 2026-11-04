@@ -125,7 +125,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 
 Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time, so a count after a write in the same query reads 0 (`reduce_count_stale`); fusion returns one row per (start, end) pair (`fuse_changes_multiplicity`).
 
-**Fixed: #2902 (`^` made `eliminate_true_filters` drop a live filter).** `is_constant_true` and `eliminate_true_filters` used to be CONDITIONAL on `hconst`, the assumption that the plan-time constant evaluator agrees with runtime evaluation. That was false for `^` until #2904 (`fd2c76a6c`). `ConstEval.constEval_sound` now proves it for the modelled expression language, which includes `^`, so both rows are PROVEN. The counterexample was removed; in 17ccc5412.
+**Fixed: #2902 (`^` made `eliminate_true_filters` drop a live filter).** `is_constant_true` and `eliminate_true_filters` used to be CONDITIONAL on `hconst`, the assumption that the plan-time constant evaluator agrees with runtime evaluation. That was false for `^` until #2904 (`fd2c76a6c`). `ConstEval.constEval_sound` now proves it for the modelled expression language, which includes `^`, so both rows are PROVEN. The counterexample was removed in bbee75955; the last revision that has them is 17ccc5412.
 
 `refsNew_complete` also assumes `PlanInv`: inline property maps have already been turned into Filters. That is proven in [`../planner_build`](../planner_build) (`planMatch_stripped`), but the two projects are not linked, so here it is a stated assumption.
 
@@ -173,7 +173,7 @@ The project has no Lake dependencies.
 ## Build and check
 
 ```bash
-cd proofs/optimizer_rewrites && lake build   # this project
+(cd proofs/optimizer_rewrites && lake build)   # this project
 bash proofs/lean_ci.sh optimizer_rewrites    # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                      # repo-wide coverage report
 ```

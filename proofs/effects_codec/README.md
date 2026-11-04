@@ -42,7 +42,7 @@ Yes. On this wire a float *is* its 64-bit pattern, so "round-trips" means bit fo
 
 Yes, under one stated assumption about zstd. `openPayload_maybeCompress`: whatever `maybe_compress` produces, `open_payload` returns the original record bytes, for payloads of any length.
 
-- **Before #3278, only below 4 GiB.** Both frame lengths were written `as u32`. A payload of 4 GiB of records or more that zstd shrank was framed with a wrapped length, and no zstd can make such a frame open to its records (counterexample removed; in 17ccc5412). The replica would refuse it and loop on forced resyncs.
+- **Before #3278, only below 4 GiB.** Both frame lengths were written `as u32`. A payload of 4 GiB of records or more that zstd shrank was framed with a wrapped length, and no zstd can make such a frame open to its records (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). The replica would refuse it and loop on forced resyncs.
 - **On main, yes.** `maybe_compress` leaves such a payload uncompressed, and `frame_prefix` refuses a length that does not fit (`framePrefix_none`). `fmtReplicate_transparent` lifts this to `EffectsFormat::replicate`: what the replica receives opens to exactly the records the master built. `maybeCompress_shrinks`: a payload is only ever compressed when that makes it smaller.
 
 zstd and crc32 are outside Rust, so the proof does not model them. It takes their contract as the hypothesis `CodecOK`: decompressing what zstd compressed gives the input back, and crc32 returns a 32-bit number.
@@ -102,7 +102,7 @@ Two findings are modelled but not bugs on main:
 | `FalkorEffectsCodec.lean` | Root: the report header, imports, `#print axioms` for the headline theorems |
 | `Prim.lean` | `Bytes`, decode errors `DErr`, little-endian integers, `take`, `guardCount`, strings; "never panics" and "only consumes" combinators |
 | `Cursor.lean` | The real `Reader { buf, pos }` (`Rd`) and `EffectWrite`; every method refines the suffix model |
-| `Value.lean` | `Val`, the type tags, `encV`, the iterative `decodeV` with #3267's `owed`; `decodeV_encV`, `decodeV_safe`, `encV_total`, `capTrace_linear`; the pre-#3267 counterexamples (removed; in 17ccc5412) history |
+| `Value.lean` | `Val`, the type tags, `encV`, the iterative `decodeV` with #3267's `owed`; `decodeV_encV`, `decodeV_safe`, `encV_total`, `capTrace_linear`; the pre-#3267 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history |
 | `Records.lean` | The original model of a subset of records (`Rec`, `encRec`, `readRec`, `readAll`), the abstract `IdCodec`, `readAll_concat`, the refused-shape `#guard`s |
 | `RecBlocks.lean` | `Blk` and `Blk.seq`: blocks for integers, strings, label sets, attribute ids, ids, rows, optional fields, counted lists |
 | `RecArms.lean` | Entity, constraint and status tags; `indexTypeOf`; attribute and schema references; index schemas (the encoder sorts them by id) |
@@ -110,7 +110,7 @@ Two findings are modelled but not bugs on main:
 | `RecFull.lean` | `Record` with all fourteen variants, `writeHeader`, `checkRowShape`, `encRecord`, `readRecord` |
 | `RecRT.lean` | `readRecord_encRecord` for every variant, `writeHeader_spec`, `checkEndpoints_ok`, `checkIndex_ok`, `relType_rt` |
 | `RecShape.lean` | #2916: `encRecord_ok_shape`, the refusal theorems, `readRecord_empty`, `readRecord_encRecord_wf` |
-| `Payload.lean` | `openPayload`, `maybeCompress`, `framePrefix`, the `Codec`/`CodecOK` hypothesis, `readAllRecords`, `records_concat`; the pre-#3278 counterexamples (removed; in 17ccc5412) history |
+| `Payload.lean` | `openPayload`, `maybeCompress`, `framePrefix`, the `Codec`/`CodecOK` hypothesis, `readAllRecords`, `records_concat`; the pre-#3278 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history |
 | `Format.lean` | `format.rs`: `fmtReplicate_transparent`, `describe_spec`, `build_ok`, `payload.rs`/`announce.rs` glue, `LocalName` |
 | `ModRs.lean` | `effects/mod.rs`: version dispatch (`describeTop_spec`, `applyTop_spec`), `EffectsBuffer`; `v3/mod.rs` tags and `seal` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -143,7 +143,7 @@ The project has no Lake dependencies.
 ## Build and check
 
 ```bash
-cd proofs/effects_codec && lake build    # this project
+(cd proofs/effects_codec && lake build)    # this project
 bash proofs/lean_ci.sh effects_codec     # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                  # repo-wide coverage report
 ```

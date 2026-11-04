@@ -15,7 +15,7 @@ import PlannerBuild.Clauses
   stitches into the exact tree shape `is_planner_scan_subtree`
   (optimizer/select_scan_node.rs:315) treats as prunable. **Fixed by #2390 (d2c42e032)**:
   the rebuild now carries the spine's Filters along (`filters_of`, select_scan_node.rs:250,
-  re-wrapped by `make_scan_subtree` :214) — `rebuild_keeps_where` (old bare rebuild: counterexample removed; in 17ccc5412).
+  re-wrapped by `make_scan_subtree` :214) — `rebuild_keeps_where` (old bare rebuild: counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 -/
 namespace PlannerBuild
 
