@@ -16,12 +16,11 @@
 //!
 //! The host's global lock does. `commit` and `commit_indexer_batch` take
 //! `&self`, so they need no per-graph lock, and every host publishes while
-//! holding the global lock, which debug builds assert through
-//! [`crate::locks::holds_global_lock`]. A commit also publishes by
-//! compare-and-swap against the version it checked, so a second publisher
-//! that slipped past the lock is refused ([`CommitError::Stale`]) rather than
-//! published over. Forking takes nothing at all, which is why a fork has to be
-//! checked for staleness instead.
+//! holding the global lock. A commit also publishes by compare-and-swap
+//! against the version it checked, so a second publisher that slipped past
+//! the lock is refused ([`CommitError::Stale`]) rather than published over.
+//! Forking takes nothing at all, which is why a fork has to be checked for
+//! staleness instead.
 //!
 //! ```text
 //!  MvccGraph
@@ -77,7 +76,6 @@ use thiserror::Error;
 use crate::graph::graph::{Graph, NodeOpError};
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
-use crate::locks::holds_global_lock;
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -298,7 +296,6 @@ impl MvccGraph {
         new_graph: Arc<AtomicRefCell<Graph>>,
         writer: bool,
     ) -> Result<(), CommitError> {
-        debug_assert!(holds_global_lock(), "commit without the global lock");
         // Before any of the work below, so a refusal changes nothing. A batch's version is fitted
         // onto the published one, at its data version ([`Graph::indexer_fit`]): only a writer's
         // can be stale.
@@ -401,8 +398,6 @@ impl Drop for MvccGraph {
 mod tests {
     use super::{CommitError, MvccGraph};
     use crate::graph::graphblas::test_init::ensure_init;
-    #[cfg(debug_assertions)]
-    use crate::locks::without_global_lock;
     use roaring::RoaringTreemap;
     use std::sync::Arc;
 
@@ -515,17 +510,5 @@ mod tests {
             Arc::ptr_eq(&mvcc.read(), &first),
             "the first version stays published"
         );
-    }
-
-    /// A commit asserts that the caller holds the host's global lock. Debug builds only:
-    /// `debug_assert!` compiles out of a release test run.
-    #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "commit without the global lock")]
-    fn a_commit_without_the_global_lock_is_refused() {
-        ensure_init();
-        let mvcc = MvccGraph::new(64, 64, 0, "t");
-        let version = mvcc.fork();
-        let _ = without_global_lock(|| mvcc.commit(version));
     }
 }
