@@ -7,7 +7,9 @@ R = {"rust": redis.Redis(port=rp, socket_timeout=30), "c": redis.Redis(port=cp, 
 
 def q(r, g, s):
     try:
-        return r.execute_command("GRAPH.QUERY", g, s)[1]
+        out = r.execute_command("GRAPH.QUERY", g, s)
+        # [header, rows, stats] with a RETURN; a query without one replies with [stats] only
+        return out[1] if len(out) > 1 else out[0]
     except Exception as e:
         return "ERR " + str(e)[:90]
 

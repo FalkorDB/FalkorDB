@@ -7,7 +7,8 @@ res = {}
 def slow():
     t=time.time()
     try:
-        res['slow'] = r2.execute_command("GRAPH.QUERY", "mr", "UNWIND range(1,4000000) AS x WITH count(x) AS c CREATE (:N {c:c})")[1]
+        out = r2.execute_command("GRAPH.QUERY", "mr", "UNWIND range(1,4000000) AS x WITH count(x) AS c CREATE (:N {c:c})")
+        res['slow'] = out[1] if len(out) > 1 else out[0]   # no RETURN: the reply is [stats] only
     except Exception as e:
         res['slow'] = 'ERR ' + str(e)
     res['slow_t'] = time.time()-t
