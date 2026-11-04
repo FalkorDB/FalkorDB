@@ -7,10 +7,11 @@ use crate::entity_type::EntityType;
 use crate::graph::mvcc_graph::{CommitError, MvccGraph};
 use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
-use crate::index::falkordb::falkordb_index::{BuildCursor, IndexKey};
+use crate::index::falkordb::falkordb_index::{BuildCursor, IndexColumn, IndexKey};
 use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::versioned::{
     BuildState, CatchUp, Discarded, IndexId, IndexerCommit, PreparedBatch, REFRESH_COST,
+    VersionedIndex,
 };
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
@@ -2809,8 +2810,9 @@ fn check_column(
 /// write side, and a batch is read with no lock held.
 ///
 /// After every commit, the published version must keep the rules on [`BuildState`] against its
-/// own data ([`check_column`]). At the end every column must be `Ready` and equal a one-pass
-/// build of the final data. The test runs until every outcome of a commit has been seen, so a run
+/// own data ([`check_column`]), and no column's build may have moved back since the version
+/// published before it, unless the column was dropped and created again. At the end every column
+/// must be `Ready` and equal a one-pass build of the final data. The test runs until every outcome of a commit has been seen, so a run
 /// in which the threads never raced fails.
 #[test]
 fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
@@ -2865,14 +2867,34 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
         SEEN.iter()
             .all(|how| counts.get(how).copied().unwrap_or(0) > 0)
     };
-    // Check the version a commit published, captured while the commit still held the lock. By the
+    // Check the version a commit published against the rules, and against the version published
+    // just before it: within a column's generation, a build only stays or moves on, and a `Ready`
+    // column stays `Ready`. Both versions are captured while the commit holds the lock; by the
     // time the check runs, another thread may have published a newer one.
-    let check = |published: &Arc<AtomicRefCell<Graph>>, what: &str| {
-        let g = published.borrow();
-        for (entity, key) in &columns {
-            check_column(&g, *entity, key, what);
-        }
-    };
+    let check =
+        |before: &Arc<AtomicRefCell<Graph>>, published: &Arc<AtomicRefCell<Graph>>, what: &str| {
+            let (before, g) = (before.borrow(), published.borrow());
+            for name in &columns {
+                check_column(&g, name.0, &name.1, what);
+                let (Some(old), Some(new)) = (
+                    IndexColumn::entry(&before.falkordb_index, name),
+                    IndexColumn::entry(&g.falkordb_index, name),
+                ) else {
+                    continue;
+                };
+                let moved_back = match (old.cursor(), new.cursor()) {
+                    (Some(old), Some(new)) => new.precedes(old),
+                    (None, Some(_)) => true,
+                    _ => false,
+                };
+                assert!(
+                    old.generation != new.generation || !moved_back,
+                    "{what}: {}.{}'s build moved back",
+                    (name.1).0,
+                    (name.1).1
+                );
+            }
+        };
     // One random write on `g`, chosen by `op`: re-create a column, delete a node and its edges,
     // create a node, take a node off `:Person`, add an edge, or re-value an edge or a node. Half
     // the time the node it picks is just past a node column's cursor, where that column's next
@@ -2978,12 +3000,13 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                     // A full-size batch takes milliseconds to read; one this small takes
                     // microseconds. The wait lets writers commit between its read and its commit.
                     thread::sleep(Duration::from_micros(rng.random_range(0..200)));
-                    let (how, published) = {
+                    let (how, before, published) = {
                         let mvcc = &mut mvcc.write();
+                        let before = mvcc.read();
                         let how = mvcc
                             .commit_indexer_batch(&prepared, &batch)
                             .expect("the batch commits");
-                        (how, mvcc.read())
+                        (how, before, mvcc.read())
                     };
                     count(match how {
                         IndexerCommit::Same => "batch same",
@@ -2996,6 +3019,7 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                         }
                     });
                     check(
+                        &before,
                         &published,
                         &format!("a batch on {}.{} ({how:?})", key.0, key.1),
                     );
@@ -3020,13 +3044,14 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                     let op = rng.random_range(0..100);
                     if rng.random_bool(0.3) {
                         let mut mvcc = mvcc.write();
+                        let before = mvcc.read();
                         let version = mvcc.fork();
                         random_write(&mut version.borrow_mut(), op, &mut rng);
                         mvcc.commit(version).expect("the writer commits");
                         let published = mvcc.read();
                         drop(mvcc);
                         count("writer under the lock");
-                        check(&published, "a write under the lock");
+                        check(&before, &published, "a write under the lock");
                         continue;
                     }
                     loop {
@@ -3039,7 +3064,8 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                         // escalate.
                         thread::sleep(Duration::from_micros(rng.random_range(0..200)));
                         let mut mvcc = mvcc.write();
-                        let over_batches = !Arc::ptr_eq(&mvcc.read(), &base);
+                        let before = mvcc.read();
+                        let over_batches = !Arc::ptr_eq(&before, &base);
                         match escalate(&mvcc, &fork) {
                             Ok(()) => {
                                 mvcc.commit(fork).expect("the writer commits");
@@ -3050,7 +3076,7 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                                 } else {
                                     "writer committed"
                                 });
-                                check(&published, "an escalated write");
+                                check(&before, &published, "an escalated write");
                                 break;
                             }
                             Err(CommitError::Stale) => count("writer stale"),
