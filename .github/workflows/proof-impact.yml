@@ -55,6 +55,13 @@ env:
   ELAN_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
   # Only comments this workflow wrote are reused.
   BOT_LOGIN: github-actions[bot]
+  # The only paths a re-prove patch may touch: Lean sources (no dot directories,
+  # so never .lake/), each project's COVERAGE.tsv, README.md and declarative
+  # lakefile.toml, and FINDINGS.md. Not the gate scripts, lakefile.lean,
+  # lake-manifest.json, lean-toolchain, or anything outside proofs/.
+  # lakefile.lean is build-time code, so it is denied even though it ends in .lean.
+  PROOF_DENY: '(^|/)lakefile\.lean$'
+  PROOF_PATHS: '^proofs/(FINDINGS\.md|[A-Za-z0-9_]+/(COVERAGE\.tsv|README\.md|lakefile\.toml|([A-Za-z0-9_]+/)*[A-Za-z0-9_]+\.lean))$'
 
 jobs:
   impact:
@@ -232,22 +239,35 @@ jobs:
         run: |
           set -uo pipefail
           cd proofs-src
+          # Everything is compared with the pinned BASE_SHA, not HEAD: the agent could
+          # have committed or moved HEAD.
           git add -A
-          if git diff --cached --name-only | grep -qE '^proofs/(lean_ci|coverage)\.sh$'; then
-            echo "The re-prove edited a gate script; its patch is dropped." >> ../gates.md
-            git reset -q --hard
-            echo "gates=tampered" >> "$GITHUB_OUTPUT"
-          else
-            git diff --cached --binary > ../proofs.patch
-            ok=pass
-            projects=$(git diff --cached --name-only | sed -n 's|^proofs/\([^/]*\)/.*|\1|p' | sort -u)
-            # Every project, so dependents of a touched project are rebuilt too; the
-            # cache keeps unchanged ones fast.
-            [[ -n "$projects" ]] && { proofs/lean_ci.sh > ../lean_ci.log 2>&1 || ok=fail; }
-            COVERAGE_RUST_ROOT="$GITHUB_WORKSPACE/code" proofs/coverage.sh --unmatched > ../coverage.log 2>&1 || ok=fail
-            { echo "Gates: \`lean_ci.sh\` and \`coverage.sh --unmatched\`: **$ok**"; } >> ../gates.md
-            echo "gates=$ok" >> "$GITHUB_OUTPUT"
+          git diff --cached --name-only "$BASE_SHA" > ../changed.txt
+          bad=$(grep -vE "$PROOF_PATHS" ../changed.txt || true)
+          bad+=$(grep -E "$PROOF_DENY" ../changed.txt || true)
+          # Only regular files: no executables, symlinks or submodules.
+          bad+=$(git diff --cached --summary "$BASE_SHA" | grep -E 'mode (100755|120000|160000)' || true)
+          : > ../proofs.patch
+          if [[ -n "$bad" ]]; then
+            # shellcheck disable=SC2016  # literal Markdown backticks
+            { echo "Patch dropped: it touches files outside the proof allowlist:"; echo; echo "$bad" | sed 's/^/- `/; s/$/`/'; } > ../gates.md
+            echo "gates=rejected" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          git diff --cached --binary "$BASE_SHA" > ../proofs.patch
+          # Gate with the pristine scripts and nothing else of the agent's state.
+          git reset -q --hard "$BASE_SHA"
+          [[ -s ../proofs.patch ]] && git apply --index ../proofs.patch
+          ok=pass
+          if [[ -s ../proofs.patch ]]; then proofs/lean_ci.sh > ../lean_ci.log 2>&1 || ok=fail; fi
+          COVERAGE_RUST_ROOT="$GITHUB_WORKSPACE/code" bash proofs/coverage.sh --unmatched > ../coverage.log 2>&1 || ok=fail
+          # coverage.sh exits 0 with findings; the counts decide (as in lean-proofs.yml).
+          unlisted=$(awk '/^TOTAL over all/ { print $(NF-3) }' ../coverage.log)
+          unmatched=$(sed -nE 's/.* ([0-9]+) rows unmatched.*/\1/p' ../coverage.log)
+          badb=$(sed -nE 's/.* ([0-9]+) bad buckets.*/\1/p' ../coverage.log)
+          if [[ "${unlisted:-}" != 0 || "${unmatched:-}" != 0 || "${badb:-}" != 0 ]]; then ok=fail; fi
+          echo "Gates: \`lean_ci.sh\` and \`coverage.sh --unmatched\` (unlisted=${unlisted:-?}, unmatched=${unmatched:-?}, bad buckets=${badb:-?}): **$ok**" > ../gates.md
+          echo "gates=$ok" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: ${{ always() }}
         with:
@@ -276,6 +296,7 @@ jobs:
           fetch-depth: 0
           path: proofs-src
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        id: download
         # Absent when the re-prove job failed before uploading; the comment says so.
         continue-on-error: true
         with:
@@ -289,6 +310,7 @@ jobs:
           BASE_SHA: ${{ needs.impact.outputs.proofs_sha }}
           GATES: ${{ needs.reprove.outputs.gates }}
           REPROVE_RESULT: ${{ needs.reprove.result }}
+          DOWNLOAD: ${{ steps.download.outcome }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]
@@ -299,8 +321,18 @@ jobs:
           mkdir -p ../out
           cd proofs-src
           note=""
-          if [[ "$GATES" == "pass" && -s ../out/proofs.patch ]]; then
+          if [[ "$DOWNLOAD" != "success" || ! -f ../out/proofs.patch || ! -f ../out/gates.md ]]; then
+            GATES="artifact missing"
+          elif [[ "$GATES" == "pass" && -s ../out/proofs.patch ]]; then
+            # Re-check here, before anything is committed with the write token.
             git apply --index ../out/proofs.patch
+            bad=$(git diff --cached --name-only | grep -vE "$PROOF_PATHS" || true)
+            bad+=$(git diff --cached --name-only | grep -E "$PROOF_DENY" || true)
+            bad+=$(git diff --cached --summary | grep -E 'mode (100755|120000|160000)' || true)
+            if [[ -n "$bad" ]]; then
+              echo "::error::patch touches paths outside the proof allowlist: $bad"
+              exit 1
+            fi
             git commit -q -m "proofs: re-prove for #$PR at ${HEAD:0:9}" \
               -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
             tree=$(git rev-parse 'HEAD^{tree}')
@@ -312,7 +344,11 @@ jobs:
             commit=$(git log -1 --format=%B HEAD | git commit-tree "$tree" "${parent[@]}")
             git push -q origin "${commit}:refs/heads/${branch}"
             note="Proof update: [\`$branch\`](https://github.com/$GITHUB_REPOSITORY/compare/$PROOFS_REF...$branch)"
+          fi
+          if [[ -n "$note" ]]; then
+            :
           elif [[ "$GATES" == "pass" ]]; then
+            # proofs.patch is present (checked above) and empty.
             note="No proof change was needed."
           else
             note="Not published: gates **${GATES:-did not run}** (re-prove job: $REPROVE_RESULT); logs are in the run's \`proof-reprove\` artifact."
