@@ -81,6 +81,8 @@ pub mod parser;
 pub mod planner;
 pub mod runtime;
 pub mod storage;
+#[cfg(test)]
+pub(crate) mod testkit;
 pub mod thread_id;
 pub mod threadpool;
 pub mod udf;
