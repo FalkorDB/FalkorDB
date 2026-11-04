@@ -34,7 +34,7 @@ Yes:
 Yes, for every lane:
 
 - **Comparisons.** `compareColumns_agree`: `compare_columns` equals the per-row comparison at every row. That holds for the int lane, the float lane, int→float promotion, a flipped constant (`5 < n.x` evaluated as `n.x > 5`), the pairwise lanes and the generic `compare_value` loop. NaN makes every ordering false and `<>` true, as in the per-row path.
-- **Arithmetic.** `arithmetic_agree`: the int and float lanes equal `Value` arithmetic row by row, including the *first* error. A zero divisor sends `/` and `%` to the generic lane, and `Int ⊕ Int` never takes the float lane.
+- **Arithmetic.** `arithmetic_agree`: the int and float lanes equal `Value` arithmetic row by row, including the *first* error. A zero divisor sends `/` and `%` to the generic lane, and so does `i64::MIN / -1` for `/` (#3603: `Int / Int` is `checked_div` and raises "integer overflow in division", `div_min_neg_one`, `intStage_min_div_neg_one`, `arithmetic_min_div_neg_one`; `i64::MIN % -1` is still 0, `rem_min_neg_one`). `Int ⊕ Int` never takes the float lane.
 - **`CASE`.** `caseCol_agree` gives the same result, and `caseArm_then_only_on_hits` proves the laziness that matters in practice: in `CASE WHEN n.d <> 0 THEN 1 / n.d ELSE 0 END`, the `THEN` is only evaluated on rows whose `WHEN` matched, so the query can't divide by zero.
 - **The rest.** `NOT` (`negate_agree`), scalar function folding (`foldCall_agree`), variable reads (`evalVariable_agree`) and the Filter mask (`filterPass_agree`).
 

@@ -35,13 +35,22 @@ def floatOp : AOp → F → F → F
   | .add => FloatModel.add | .sub => FloatModel.sub | .mul => FloatModel.mul
   | .div => FloatModel.div | .rem => FloatModel.rem
 
-/-- `Value` arithmetic: nulls propagate, `Int ⊕ Int` wraps (`/` and `%` by zero
-error), mixed numerics promote the int with `as f64`. -/
+/-- The error `Value / Value` raises for `i64::MIN / -1` (`value.rs:1163-1167`, `checked_div`, #3603). -/
+def divOverflow : String := "ArgumentError: integer overflow in division"
+
+/-- The one `Int / Int` quotient that is not an `i64`. -/
+def minDivNegOne (a b : Int) : Bool := a == -2 ^ 63 && b == -1
+
+/-- `Value` arithmetic: nulls propagate, `Int + - *` wrap, `Int / Int` is `checked_div` (zero divisor
+and `i64::MIN / -1` error, #3603), `Int % Int` is `wrapping_rem` (zero divisor errors,
+`i64::MIN % -1 = 0`), mixed numerics promote the int with `as f64`. -/
 def valueArith (other : AOp → V F → V F → Except String (V F)) (op : AOp) : V F → V F → Except String (V F)
   | .null, _ => .ok .null
   | _, .null => .ok .null
   | .int a, .int b =>
-    if (op = .div ∨ op = .rem) ∧ b = 0 then .error "Division by zero" else .ok (.int (intOp op a b))
+    if (op = .div ∨ op = .rem) ∧ b = 0 then .error "Division by zero"
+    else if op = .div ∧ minDivNegOne a b = true then .error divOverflow
+    else .ok (.int (intOp op a b))
   | .float a, .float b => .ok (.float (floatOp op a b))
   | .float a, .int b => .ok (.float (floatOp op a (FloatModel.ofInt b)))
   | .int a, .float b => .ok (.float (floatOp op (FloatModel.ofInt a) b))
@@ -67,13 +76,17 @@ def floatOperand (c : EC F) : Bool :=
   | .scalar (.float _) => true
   | _ => false
 
-/-- The int lane (`vector_expr.rs:887-923`). -/
+/-- The int lane (`vector_expr.rs:887-923`). `/` and `%` take it only when no divisor is zero, and `/`
+also only when no non-null row is `i64::MIN / -1` (#3603: that row is left to the generic lane,
+which raises the overflow error). -/
 def intStage (op : AOp) (lhs rhs : EC F) (len : Nat) : Option (EC F) :=
   let nulls := unionNulls lhs rhs len
   match intLane lhs len, intLane rhs len with
   | some a, some b =>
     if op = .div ∨ op = .rem then
-      if (List.range len).all (fun i => b[i]?.getD 0 != 0 || nulls.isNull i) then
+      if (List.range len).all (fun i => b[i]?.getD 0 != 0 || nulls.isNull i) &&
+          (op != .div || (List.range len).all (fun i =>
+            !minDivNegOne (a[i]?.getD 0) (b[i]?.getD 0) || nulls.isNull i)) then
         some (.ints ((List.range len).map (fun i =>
           if nulls.isNull i then 0 else intOp op (a[i]?.getD 0) (b[i]?.getD 0))) nulls)
       else none
@@ -253,7 +266,9 @@ theorem intStage_agree (other : AOp → V F → V F → Except String (V F)) (op
       by_cases hdr : op = .div ∨ op = .rem
       · rw [if_pos hdr] at hs
         split at hs
-        · rename_i hall
+        · rename_i hall2
+          simp only [Bool.and_eq_true] at hall2
+          obtain ⟨hall, hdv⟩ := hall2
           simp only [Option.some.injEq] at hs
           subst hs
           have hb := List.all_eq_true.mp hall i (by simp [hi])
@@ -265,7 +280,14 @@ theorem intStage_agree (other : AOp → V F → V F → Except String (V F)) (op
             · simp [h1, h2, valueArith_null_r]
             · rw [hn, hy] at hb
               simp [h1, h2] at hb
-              simp [h1, h2, valueArith, hb, hx, hy]
+              have hm : op = .div → minDivNegOne x y = false := by
+                intro hop; subst hop
+                simp only [bne_self_eq_false, Bool.false_or] at hdv
+                have := List.all_eq_true.mp hdv i (by simp [hi])
+                simpa [hx, hy, hn, h1, h2] using this
+              by_cases hdv' : op = .div
+              · simp [h1, h2, valueArith, hb, hx, hy, hm hdv', hdv']
+              · simp [h1, h2, valueArith, hb, hx, hy, hdv']
         · simp at hs
       · rw [if_neg hdr] at hs
         simp only [Option.some.injEq] at hs
@@ -275,7 +297,9 @@ theorem intStage_agree (other : AOp → V F → V F → Except String (V F)) (op
         · simp [h1, valueArith_null_l]
         · by_cases h2 : rhs.isNull i
           · simp [h1, h2, valueArith_null_r]
-          · simp [h1, h2, valueArith, hdr]
+          · have hnd : op ≠ .div := fun h => hdr (Or.inl h)
+            have hnr : op ≠ .rem := fun h => hdr (Or.inr h)
+            simp [h1, h2, valueArith, hnd, hnr]
 
 theorem floatStage_agree (other : AOp → V F → V F → Except String (V F)) (op : AOp) (lhs rhs c : EC F)
     (len : Nat) (hl : lhs.WF len) (hr : rhs.WF len) (hs : floatStage op lhs rhs len = some c) :
@@ -325,5 +349,32 @@ theorem arithmetic_agree (other : AOp → V F → V F → Except String (V F)) (
     cases hf : floatStage op lhs rhs len with
     | some c => exact ok_agree other op lhs rhs c len (floatStage_agree other op lhs rhs c len hl hr hf)
     | none => exact genericStage_agree other op lhs rhs len
+
+/-! ### #3603: `i64::MIN / -1` is an error, `i64::MIN % -1` stays 0 -/
+
+/-- **PROVEN** (`value.rs:1163-1167`): `Int / Int` is `checked_div`, so the one unrepresentable
+quotient raises the overflow error instead of wrapping (formerly `wrap (tdiv MIN -1) = MIN`). -/
+theorem div_min_neg_one (other : AOp → V F → V F → Except String (V F)) :
+    valueArith other .div (.int (-2 ^ 63)) (.int (-1)) = .error divOverflow := by
+  simp [valueArith, minDivNegOne]
+
+/-- `i64::MIN % -1` stays `0` (`wrapping_rem`, `value.rs:1195`). -/
+theorem rem_min_neg_one (other : AOp → V F → V F → Except String (V F)) :
+    valueArith other .rem (.int (-2 ^ 63)) (.int (-1)) = .ok (.int 0) := by
+  simp [valueArith, minDivNegOne, intOp, wrap]
+
+/-- **PROVEN**: the int lane refuses a `/` batch holding `i64::MIN / -1` (the generic lane then
+raises the error), but keeps `%` on it. -/
+theorem intStage_min_div_neg_one :
+    intStage (F := F) .div (.scalar (.int (-2 ^ 63))) (.scalar (.int (-1))) 1 = none := by
+  simp [intStage, intLane, minDivNegOne]
+  rfl
+
+/-- **PROVEN**: end to end, the columnar `/` of `i64::MIN` by `-1` errors exactly as the scalar one. -/
+theorem arithmetic_min_div_neg_one (other : AOp → V F → V F → Except String (V F)) :
+    arithmetic other .div (.scalar (.int (-2 ^ 63))) (.scalar (.int (-1))) 1 = .error divOverflow := by
+  simp [arithmetic, intStage_min_div_neg_one, floatStage, floatOperand, genericStage, valueArith,
+    minDivNegOne, EC.get, divOverflow, List.range, List.range.loop]
+  rfl
 
 end Columnar

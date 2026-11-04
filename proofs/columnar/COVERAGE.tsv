@@ -94,7 +94,7 @@ graph/src/runtime/vector_expr.rs	compare_i64_pairs	797	PROVEN	VExpr kernelI_get 
 graph/src/runtime/vector_expr.rs	compare_f64_pairs	820	PROVEN	VExpr kernelF_get (pairs case of typedLane_agree)
 graph/src/runtime/vector_expr.rs	mask_out_nulls	842	PROVEN	VExpr maskOut_get
 graph/src/runtime/vector_expr.rs	negate_bools	856	PROVEN	Lanes negate_agree; LaneWF negate_wf; CoreOps notRow_eq (= ExprEval Not arm)
-graph/src/runtime/vector_expr.rs	arithmetic	880	PROVEN	Arith arithmetic_agree (intStage_agree, floatStage_agree, genericStage_agree); LaneWF arithmetic_wf
+graph/src/runtime/vector_expr.rs	arithmetic	880	PROVEN	Arith arithmetic_agree (intStage_agree, floatStage_agree, genericStage_agree); #3603 gate: div_min_neg_one, rem_min_neg_one (MIN % -1 = 0), intStage_min_div_neg_one, arithmetic_min_div_neg_one; LaneWF arithmetic_wf
 graph/src/runtime/vector_expr.rs	int_lane	962	PROVEN	Arith intLane_spec
 graph/src/runtime/vector_expr.rs	float_lane	974	PROVEN	Arith floatLane_spec
 graph/src/runtime/vector_expr.rs	float_operand	989	PROVEN	Arith floatStage_agree

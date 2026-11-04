@@ -41,7 +41,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 | `Concat` | `Batch::concat`, `concat_typed_column` vs `BatchBuilder` (`batch.rs:525-797`, `:979-1151`) |
 | `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:487-787`), ExpandInto trim (`expand_into.rs:285-294`) |
 | `VectorExpr` | `CmpOp`, comparison kernels, `ExprColumn`, `union_nulls`, `compare_columns` |
-| `Arith` | `arithmetic`, `int_lane`, `float_lane` vs `Value` `+ - * / %` |
+| `Arith` | `arithmetic`, `int_lane`, `float_lane` vs `Value` `+ - * / %` (`/` is `checked_div` since #3603: `i64::MIN / -1` errors and the int lane refuses it; `%` still wraps to 0) |
 | `Lanes` | `negate_bools`, `eval_case`, `eval_function` folding, `eval_variable`, filter mask |
 
 ## 2026-10-21: `VectorEval` is `ExprEval`, row by row, over the full engine value
@@ -100,7 +100,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
   promotion, flipped constant, pairwise, generic); `CmpOp::flip` sound (ints;
   floats via IEEE antisymmetry); NaN makes orderings false and `<>` true.
 * `union_nulls` exact except (Values, non-null constant), which no typed lane sees.
-* Arithmetic lanes = `Value` arithmetic row by row, including the first error
+* Arithmetic lanes = `Value` arithmetic row by row, including the first error (and #3603's `i64::MIN / -1` overflow error: `arithmetic_min_div_neg_one`)
   (zero divisors fall to the generic lane; `Int ⊕ Int` never takes the float lane).
 * NOT, CASE (incl. laziness: THEN only on matched rows; value-form test =
   `compare_value == (Equal, None)`), scalar function folding, `eval_variable`
