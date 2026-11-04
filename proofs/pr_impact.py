@@ -86,7 +86,8 @@ def load_rows(proofs):
             if len(f) < 4:
                 continue
             bucket = f[3].strip().upper().replace('_', ' ')
-            rows[(f[0], f[1])].append(dict(project=project, line=int(f[2]) if f[2].isdigit() else 0,
+            # bare identifier, as coverage.sh matches: `CondTraverseOp::new` -> `new`
+            rows[(f[0], f[1].split('::')[-1])].append(dict(project=project, line=int(f[2]) if f[2].isdigit() else 0,
                                            bucket=bucket, lean=f[4] if len(f) > 4 else '',
                                            tsv=f'proofs/{project}/COVERAGE.tsv:{n}'))
     return rows
