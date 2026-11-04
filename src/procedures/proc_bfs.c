@@ -114,8 +114,22 @@ static ProcedureResult Proc_BFS_Invoke
 		rel_id = &bfs_ctx->reltype_id;
 	}
 
-	GrB_Info info = Build_Matrix(&R, NULL, g, NULL, 0, rel_id,
-			(rel_id != NULL) ? 1 : 0, false, true);
+	PGTM_config conf = {
+		.g           = g,
+		.lbls        = NULL,
+		.n_lbls      = 0,
+		.rels        = rel_id,
+		.n_rels      = (rel_id != NULL) ? 1 : 0,
+		.edge_weight = ATTRIBUTE_ID_NONE,
+		.default_ew  = SI_NullVal(),
+		.node_weight = ATTRIBUTE_ID_NONE,
+		.default_nw  = SI_NullVal(),
+		.strategy    = PROJECT_TO_ANY,
+		.direction   = GRAPH_EDGE_DIR_OUTGOING,
+		.compact     = false
+	};
+
+	GrB_Info info = project_graph_to_matrix(&R, NULL, conf);
 	ASSERT(info == GrB_SUCCESS);
 
 	// if we're not collecting edges, pass a NULL parent pointer
@@ -300,4 +314,3 @@ ProcedureCtx *Proc_BFS_Ctx() {
 								   true);
 	return ctx;
 }
-

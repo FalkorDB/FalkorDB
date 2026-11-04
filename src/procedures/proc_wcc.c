@@ -232,12 +232,17 @@ ProcedureResult Proc_WCCInvoke
 	GrB_Matrix    A = NULL;
 	LAGraph_Graph G = NULL;
 
-	bool sym     = true;
-	bool compact = true;
+	PGTM_config conf = DEFAULT_PGTM_CONFIG;
+	conf.g         = g;
+	conf.lbls      = lbls;
+	conf.n_lbls    = arr_len(lbls);
+	conf.rels      = rels;
+	conf.n_rels    = arr_len(rels);
+	conf.direction = GRAPH_EDGE_DIR_BOTH;
+	conf.compact   = false;
 
 	// TODO: think of a better name
-	info = Build_Matrix(&A, &pdata->N, g, lbls, arr_len(lbls), rels,
-			arr_len(rels), sym, compact);
+	info = project_graph_to_matrix(&A, &pdata->N, conf);
 
 	arr_free(lbls);
 	arr_free(rels);
