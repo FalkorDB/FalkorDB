@@ -78,6 +78,30 @@ for top in ('graph/src', 'src'):
         dns[:] = sorted(d for d in dns if d not in ('tests', 'target'))
         files += [os.path.join(dp, f) for f in sorted(fns) if f.endswith('.rs')]
 
+def is_cfg_test(s):
+    """True for `#[cfg(test)]` and `#[cfg(all(.., test, ..))]` (parentheses balanced, so
+    `all(any(unix, windows), test)` counts: `test` is a top-level argument of `all`)."""
+    m = re.match(r'#\[cfg\((.*)\)\]\s*(//.*)?$', s)
+    if not m:
+        return False
+    def top(arg):
+        out, d, cur = [], 0, ''
+        for ch in arg:
+            if ch == '(': d += 1
+            if ch == ')': d -= 1
+            if ch == ',' and d == 0:
+                out.append(cur.strip()); cur = ''
+            else:
+                cur += ch
+        out.append(cur.strip())
+        return out
+    inner = m.group(1).strip()
+    if inner == 'test':
+        return True
+    if inner.startswith('all(') and inner.endswith(')'):
+        return 'test' in top(inner[4:-1])
+    return False
+
 def scan(p):
     rel = os.path.relpath(p, repo)
     lines = open(p, encoding='utf-8', errors='replace').read().split('\n')
@@ -97,14 +121,14 @@ def scan(p):
             if depth <= 0:
                 in_test = False
             continue
-        if s.startswith('#[cfg(test)]') or re.match(r'#\[cfg\(all\((?:[^)]*,\s*)?test\s*(?:,|\))', s):
+        if is_cfg_test(s):
             pending_cfg_test = True
             continue
         if pending_cfg_test:
             if s.startswith('#['):
                 continue
             pending_cfg_test = False
-            if MOD_BLOCK.match(s):
+            if MOD_BLOCK.match(s) or re.match(r'(unsafe\s+)?impl\b', s):
                 in_test, depth = True, line.count('{') - line.count('}')
                 if depth <= 0:
                     in_test = False

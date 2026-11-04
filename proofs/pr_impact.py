@@ -131,7 +131,7 @@ def analyse(repo, base, head, proofs):
                 i = owner(new_fns, ln)
                 if i is not None:
                     touched_new.add(i)
-            for ln in range(os_, os_ + max(oc, 1)):
+            for ln in range(os_, os_ + oc):   # a pure insertion (-N,0) removes no old line
                 i = owner(old_fns, ln)
                 if i is not None:
                     touched_old.add(i)
@@ -165,7 +165,10 @@ def analyse(repo, base, head, proofs):
                 changed.append(dict(file=new_rel, fn=nm, line=new_fns[ni][0], rows=r))
         for nm, idx in new_names.items():
             extra = len(idx) - len(old_names.get(nm, []))
-            if extra > 0 and not all(new_fns[i][2] for i in idx) and not rows.get((new_rel, nm)):
+            prod = [i for i in idx if not new_fns[i][2]]
+            # a new fn sharing a name with a listed one is still unlisted unless there is a
+            # row for each production occurrence
+            if extra > 0 and prod and len(rows.get((new_rel, nm), [])) < len(prod):
                 for i in idx[-extra:]:
                     if not new_fns[i][2]:
                         added.append(dict(file=new_rel, fn=nm, line=new_fns[i][0]))

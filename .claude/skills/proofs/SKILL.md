@@ -14,7 +14,7 @@ Mathlib. The toolchain comes from each project's `lean-toolchain`
 
 - `proofs/<area>/<Root>.lean` — the header is the report: Lean↔Rust `file:line` table, theorems, bugs, gaps.
 - `proofs/<area>/COVERAGE.tsv` — one row per Rust fn: bucket PROVEN / CONDITIONAL / AXIOMATISED / MODELLED / NOT COVERED.
-- `proofs/FINDINGS.md` — the bug ledger. Every bug has a confirmed repro, and later notes record which commits fixed it.
+- `proofs/FINDINGS.md` — the bug ledger. Each bug is confirmed by a repro unless its entry is marked Lean-only, Unconfirmed or a model note; later notes record which commits fixed it.
 - `proofs/lean_ci.sh`, `proofs/coverage.sh` — the two gates. `.github/workflows/lean-proofs.yml` runs both on pull requests that touch `proofs/**`, `graph/src/**` or `src/**` and on pushes to `main` (a separate check, not in `ci-gate`).
 
 ## Quick start
@@ -37,7 +37,7 @@ a clean worktree: `git worktree add --detach ../fdb-main origin/main` then
 2. Find the projects to update: `grep -l "<file>" proofs/*/COVERAGE.tsv` for each changed file.
 3. For each changed fn: update the Lean model to the new code, re-prove, fix `file:line` cites. Add rows for new fns and delete rows for removed ones.
 4. If the commit fixed a bug, turn its counterexample theorem into a correctness theorem. Keep the old one as a labelled historical note: `pre<PR>_…`, fixed by `#PR (sha)`.
-5. Run `lean_ci.sh` (all green) and `coverage.sh` (0 unlisted; PROVEN + CONDITIONAL = 100% non-FFI, and no new CONDITIONAL), then update FINDINGS.md "Current state".
+5. Run `lean_ci.sh` (all green) and `COVERAGE_RUST_ROOT=../fdb-main bash proofs/coverage.sh` (the worktree override above, when this checkout is not main; 0 unlisted; PROVEN + CONDITIONAL = 100% non-FFI, and no new CONDITIONAL), then update FINDINGS.md "Current state".
 
 **Prove a new or changed function**: model it in the owning project, or start a new
 project by copying the shape of an existing one. Then add the COVERAGE row and prove.

@@ -26,7 +26,7 @@ path = "../value_order"
 then `lake update` (commit the generated `lake-manifest.json`) and `import
 FalkorValueOrder.Model`. Shared foundations live in `proofs/core` (`FalkorCore`: the
 engine Value `V F`, the float model `F`, `i64` helpers, `cmpI`/comparator laws); reuse
-them with `open FalkorCore` rather than defining another copy (pilot: value_order,
+them with `open FalkorCore` (and `open FalkorCore.Laws` for the comparator laws `Lw`, `lexA`, `thn`) rather than defining another copy (pilot: value_order,
 value_math, expr_semantics, functions_str_list use it). `export Ns (a b c)` inside your namespace keeps local short
 names. All projects pin the same toolchain; `lean_ci.sh` builds dependencies first
 (inside their own `.lake`) and scans only each project's own files.
@@ -68,11 +68,19 @@ non-test fns PROVEN, with 0 unlisted.
 
 ## Live repros
 
+Query repros: start a server by hand on a free port (a concrete number, e.g. 7431).
+
 ```bash
-cp target/release/libfalkordb.dylib /tmp/fdb_$(date +%s).dylib    # fresh path
-redis-server --port 19xyz --loadmodule /tmp/fdb_….dylib --daemonize yes --save ''
-# wait for PING (RediSearch init takes a few seconds), run queries, then shutdown nosave
-RLTest -t tests/flow/test_x.py --module <dylib> --redis-config-file "$PWD/tests/flow/redis.conf" -p 19xyz
+MOD=/tmp/fdb_$(date +%s).dylib                    # fresh path each rebuild (macOS kills redis if a loaded dylib is overwritten)
+cp "$PWD/target/release/libfalkordb.dylib" "$MOD"
+redis-server --port 7431 --loadmodule "$MOD" --daemonize yes --save ''
+# wait for PING (RediSearch init takes a few seconds), run queries, then: redis-cli -p 7431 shutdown nosave
+```
+
+Flow tests: use RLTest alone (it spawns its own server on the port; do not also start one by hand on that port).
+
+```bash
+RLTest -t tests/flow/test_x.py --module "$MOD" --redis-config-file "$PWD/tests/flow/redis.conf" -p 7432
 ```
 
 Use `-p <port>`, not `--randomize-ports`: `Env()` in `tests/flow/common.py` connects
