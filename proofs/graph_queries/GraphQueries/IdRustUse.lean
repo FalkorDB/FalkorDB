@@ -22,8 +22,10 @@ theorem deleteNodes_refused_rust : type_of% (@deleteNodes_refused V rustIdOps ru
 theorem deleteRels_clears_rust : type_of% (@deleteRels_clears V rustIdOps rustIdOps_contract) := @deleteRels_clears V rustIdOps rustIdOps_contract
 theorem deleteRels_refused_rust : type_of% (@deleteRels_refused V rustIdOps rustIdOps_contract) := @deleteRels_refused V rustIdOps rustIdOps_contract
 theorem deleteImplicit_freed_rust : type_of% (@deleteImplicit_freed V rustIdOps rustIdOps_contract) := @deleteImplicit_freed V rustIdOps rustIdOps_contract
+theorem type_cleared_after_registration_rust : type_of% (@type_cleared_after_registration V rustIdOps rustIdOps_contract) := @type_cleared_after_registration V rustIdOps rustIdOps_contract
 end
 
 #print axioms rollIdBatches_spec_rust
+#print axioms type_cleared_after_registration_rust
 
 end GQ
