@@ -143,7 +143,7 @@ and with counterexamples, each reproduced against the real engine
 | `pow_constant_not_true`  | `is_constant_true` (`graph/src/planner/optimizer/eliminate_true_filters.rs:48`) |
 | `FalkorCore.rangeIter` / `rangeIterRel` (`core/FalkorCore/Range.lean`, shared with functions_str_list) | `RangeIter::next` (`eval.rs:114-127`), debug / release build |
 | `rangeIterSizeHint`      | `RangeIter::size_hint` (`eval.rs:130-133`, `usize::try_from(remaining).unwrap_or(usize::MAX)`) |
-| `rangeLen`, `rangeList`  | `length` in `eval_iter_expr` (`eval.rs:1224-1233`); the eager `range()` list |
+| `rangeLen`, `rangeList`  | `length` in `eval_iter_expr` (`eval.rs:1252-1263`; `core/FalkorCore/Range.lean`); the eager `range()` list |
 | `rangeMath`              | `range()` (`graph/src/runtime/functions/math.rs:251`) |
 | `signRust`               | `sign` (`math.rs:210`) |
 | `toIntegerFloat` / `toIntegerString` | `tointeger` (`graph/src/runtime/functions/conversion.rs:41-88`) |

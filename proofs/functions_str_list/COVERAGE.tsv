@@ -54,7 +54,7 @@ graph/src/runtime/functions/entity.rs	indegree	257	PROVEN	Entity.indegree/degree
 graph/src/runtime/functions/entity.rs	outdegree	273	PROVEN	Entity.outdegree/degree: degree_null, degree_deleted
 graph/src/runtime/functions/entity.rs	parse_degree_args	293	PROVEN	Entity.parseDegreeArgs/collectTypes/tyDisp: parseDegreeArgs_forms, collectTypes_strs, parseDegreeArgs_mismatch_names, parseDegreeArgs_examples (#3127 d739765e1)
 graph/src/runtime/functions/math.rs	range	251	PROVEN	range_elems_between, range_noOverflow, range_examples; lazy UNWIND form agrees: rangeIter_eq_range
-graph/src/runtime/eval.rs	RangeIter::next	115	PROVEN	FalkorCore.rangeIter (core/Range.lean, shared with expr_semantics): rangeIter_eq_range, rangeLazy_eq_range (lazy = eager range for every i64 input, never overflows), FalkorCore.rangeIter_of_inRange, rangeIter_examples
+graph/src/runtime/eval.rs	RangeIter::next	115	PROVEN	FalkorCore.rangeIter (core/FalkorCore/Range.lean, shared with expr_semantics) and FalkorCore.rangeIter_of_inRange (same file); defined in functions_str_list/FalkorStrList.lean: FalkorStrList.rangeIter_eq_range, FalkorStrList.rangeLazy_eq_range (lazy = eager range for every i64 input, never overflows), FalkorStrList.rangeIter_examples
 graph/src/runtime/eval.rs	eval_compound/GetElement	536	PROVEN	getElement_spec, getElement_noOverflow, getElement_inBounds (arm at eval.rs:584)
 graph/src/runtime/eval.rs	eval_compound/GetElements	536	PROVEN	getElements_spec, getElements_bounds (arm at eval.rs:624)
 graph/src/runtime/eval.rs	eval_compound/In	536	PROVEN	contains_false_iff, contains_nil (arm at eval.rs:794)

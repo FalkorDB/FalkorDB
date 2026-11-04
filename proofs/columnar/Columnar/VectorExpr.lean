@@ -20,7 +20,7 @@ Every lane is compared against the per-row definition: the `Value` operator
 | `EC.isNull`, `EC.constNull`, `EC.nullsOrNone`, `unionNulls` | `is_null`, `constant_nullness`, `nulls_or_none`, `union_nulls` (`vector_expr.rs:127-189`) |
 | `EC.intoValues` | `ExprColumn::into_values` (`vector_expr.rs:114-123`) |
 | `compareColumns` | `compare_columns` (`vector_expr.rs:733-794`) |
-| `wrap`, `valueArith` | `i64::wrapping_*` and `impl Add/Sub/Mul/Div/Rem for Value` (`value.rs:904-1170`) |
+| `wrap`, `valueArith` | `i64::wrapping_{add,sub,mul,rem}` (`Int / Int` is `checked_div`, an error on `MIN / -1`: `Arith.lean`) and `impl Add/Sub/Mul/Div/Rem for Value` (`value.rs:904-1170`) |
 | `intLane`, `floatLane`, `floatOperand`, `arithmetic` | `int_lane`, `float_lane`, `float_operand`, `arithmetic` (`vector_expr.rs:880-994`) |
 | `negate`, `notRow` | `negate_bools` (`vector_expr.rs:856-875`) / per-row `ExprIR::Not` (`eval.rs:708-717`) |
 | `caseCol`, `caseRow` | `VectorEval::eval_case` (`vector_expr.rs:477-551`) / `ExprEval::eval_case` (`eval.rs:485-518`) |
