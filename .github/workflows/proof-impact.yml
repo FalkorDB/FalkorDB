@@ -37,7 +37,10 @@ on:
       - ".github/workflows/proof-impact.yml"
 
 concurrency:
-  group: proof-impact-${{ github.event.pull_request.number }}
+  # A title/body edit (bots rewrite PR bodies after each push) gets its own group:
+  # sharing the run group would cancel the push's run before the job-level `if:`
+  # skips the edit.
+  group: proof-impact-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && github.event.changes.base == null && '-edit' || '' }}
   cancel-in-progress: true
 
 permissions:
