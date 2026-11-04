@@ -10,8 +10,7 @@ use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::{BuildCursor, IndexKey};
 use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::versioned::{
-    BuildState, CATCH_UP_BY, CatchUp, Discarded, IndexId, IndexerCommit, PreparedBatch,
-    REFRESH_COST,
+    BuildState, CatchUp, Discarded, IndexId, IndexerCommit, PreparedBatch, REFRESH_COST,
 };
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
@@ -1736,23 +1735,28 @@ fn an_indexer_batch_on_a_dropped_or_recreated_column_publishes_nothing() {
 /// An indexer batch read before a writer committed catches up with the writer's changes in its
 /// column, and is published with the batch's progress and the writer's values. A change below the
 /// batch's new cursor is in the column; one at or above it is not, since the next batch reads it.
-/// Both ways of catching up, refresh and insert, give that.
+/// Both ways of catching up, refresh and insert, give that: the writer changes two entities, so a
+/// batch of 2 inserts and one of more than 2 * [`REFRESH_COST`] refreshes.
 #[test]
 fn an_indexer_batch_after_a_writer_catches_up_on_its_changes() {
-    for how in [CatchUp::Refresh, CatchUp::Insert] {
-        let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+    let refreshes = 2 * REFRESH_COST as usize + 1;
+    for (size, how) in [(refreshes, CatchUp::Refresh), (2, CatchUp::Insert)] {
+        let values: Vec<i64> = (1..=size as i64 + 2).map(|i| 10 * i).collect();
+        let (mut mvcc, label, attr, ids) = mvcc_building(&values);
         let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-        let (prepared, batch) = prepare(&mvcc, &id, 2);
+        let (prepared, batch) = prepare(&mvcc, &id, size);
         commit_write(&mut mvcc, |g| {
             set_attr(g, ids[0], &attr, Value::Int(15));
-            set_attr(g, ids[2], &attr, Value::Int(35));
+            set_attr(g, ids[size], &attr, Value::Int(35));
         });
         let data_version = mvcc.read().borrow().version;
 
-        CATCH_UP_BY.with(|by| by.set(Some(how)));
         let committed = mvcc.commit_indexer_batch(&prepared, &batch);
-        CATCH_UP_BY.with(|by| by.set(None));
-        assert_eq!(committed, Ok(IndexerCommit::CatchUp(how)));
+        assert_eq!(
+            committed,
+            Ok(IndexerCommit::CatchUp(how)),
+            "a batch of {size}"
+        );
         let published = mvcc.read();
         let published = published.borrow();
         assert_eq!(
@@ -1761,12 +1765,12 @@ fn an_indexer_batch_after_a_writer_catches_up_on_its_changes() {
         );
         assert_eq!(
             cursor(&published, EntityType::Node, &label, &attr),
-            Some(BuildCursor::Node(NodeId::from(ids[2]))),
+            Some(BuildCursor::Node(NodeId::from(ids[size]))),
             "{how:?}: the batch's progress"
         );
         assert_eq!(
-            range_scan(&published, &label, &attr, 0, 100),
-            vec![ids[0], ids[1]],
+            range_scan(&published, &label, &attr, 0, i64::MAX),
+            ids[..size].to_vec(),
             "{how:?}: nothing at or above the cursor"
         );
         assert_eq!(
@@ -1882,29 +1886,44 @@ fn a_writer_overtaken_by_an_indexer_batch_keeps_its_progress() {
 /// first, the writer rebases onto it as it escalates; if the writer commits first, the batch
 /// catches up with it, by refresh or by insert. Each written edge is placed by its endpoints in
 /// the version that holds it, so the column holds exactly the edges below the cursor: nothing, or
-/// a->b and a->a. Built to the end, the column equals a one-pass build of the final data.
+/// a->b and a->a. Built to the end, the column equals a one-pass build of the final data. The
+/// writer changes one edge, so a batch of a->b alone inserts; to refresh, the batch also reads
+/// [`REFRESH_COST`] edges from a to nodes between b and c, which the column then holds too.
 #[test]
 fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
     // (which edge is deleted, its id's new endpoints, the column after both commits as
     // (edge, value) pairs)
     for (deleted, (src, dst), after) in [(0, (3, 0), vec![]), (2, (0, 0), vec![(0, 1), (2, 9)])] {
-        // Batch first; or writer first, with the batch forced to refresh, then to insert.
-        for writer_first in [None, Some(CatchUp::Refresh), Some(CatchUp::Insert)] {
+        // Batch first; or writer first, the batch catching up by insert, or by refresh when it
+        // reads `extra` more edges.
+        for (writer_first, extra) in [
+            (None, 0),
+            (Some(CatchUp::Insert), 0),
+            (Some(CatchUp::Refresh), REFRESH_COST as usize),
+        ] {
             ensure_graphblas();
             let mut g = Graph::new(64, 64, 10, 1, "t");
             let ty = Arc::new("R".to_string());
             let attr = Arc::new("w".to_string());
             let aid = g.get_or_create_rel_attr_id(&attr);
-            let nodes = reserve_nodes(&mut g, 4);
+            let nodes = reserve_nodes(&mut g, 4 + extra);
             g.create_nodes(&nodes.iter().copied().collect())
                 .expect("freshly reserved ids are creatable");
-            let (a, b, c, d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
-            // In batch order: a->b, a->c, c->d; w = 1..=3.
+            // The `extra` nodes sit between b and c.
+            let (a, b, c, d) = (nodes[0], nodes[1], nodes[2 + extra], nodes[3 + extra]);
+            let abcd = [a, b, c, d];
+            // In batch order: a->b, a->each extra node, a->c, c->d. In `eids`, a->b, a->c and c->d
+            // come first, with w = 1..=3, then the extra edges, with w = 101 and on.
             let eids: Vec<u64> = g
                 .relationship_id_space()
-                .reserve(3, &RoaringTreemap::new())
+                .reserve(3 + extra, &RoaringTreemap::new())
                 .expect("reserved");
-            g.create_relationships_bulk(&ty, &[a, a, c], &[b, c, d], &eids)
+            let srcs: Vec<u64> = [a, a, c].into_iter().chain(vec![a; extra]).collect();
+            let dsts: Vec<u64> = [b, c, d]
+                .into_iter()
+                .chain(nodes[2..2 + extra].iter().copied())
+                .collect();
+            g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
                 .expect("freshly reserved ids are creatable");
             let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
                 pairs
@@ -1912,7 +1931,7 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
                     .map(|&(eid, w)| (eid, vec![(aid, Value::Int(w))]))
                     .collect()
             };
-            let initial: Vec<(u64, i64)> = eids.iter().copied().zip(1..).collect();
+            let initial: Vec<(u64, i64)> = eids.iter().copied().zip((1..=3).chain(101..)).collect();
             applied!(g, |w| g
                 .import_relationship_attrs(&with_w(&initial), &mut w));
             g.falkordb_index
@@ -1924,13 +1943,16 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
                 let mut del = RoaringTreemap::new();
                 del.insert(eids[deleted]);
                 g.delete_relationships(&del, &mut w).unwrap();
-                g.create_relationships_bulk(&ty, &[nodes[src]], &[nodes[dst]], &[eids[deleted]])
+                g.create_relationships_bulk(&ty, &[abcd[src]], &[abcd[dst]], &[eids[deleted]])
                     .expect("a freed id is creatable");
                 g.import_relationship_attrs(&with_w(&[(eids[deleted], 9)]), &mut w);
                 g.apply_index_writes(&mut w);
             };
             let what = format!("edge {deleted} reused, writer first: {writer_first:?}");
-            let values = [1, 2, 3, 9];
+            let values: Vec<i64> = [1, 2, 3, 9]
+                .into_iter()
+                .chain(101..101 + extra as i64)
+                .collect();
             let column = |mvcc: &MvccGraph| {
                 contents(
                     &mvcc.read().borrow(),
@@ -1954,13 +1976,11 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
                 (per_value, all.into_iter().map(|(_, id)| id).collect())
             };
 
-            let (prepared, batch) = prepare(mvcc, &id, 1);
+            let (prepared, batch) = prepare(mvcc, &id, 1 + extra);
             if let Some(how) = writer_first {
                 commit_write(mvcc, write);
                 assert_eq!(column(mvcc), holding(&[]), "{what}: no batch yet");
-                CATCH_UP_BY.with(|by| by.set(Some(how)));
                 let committed = mvcc.commit_indexer_batch(&prepared, &batch);
-                CATCH_UP_BY.with(|by| by.set(None));
                 assert_eq!(committed, Ok(IndexerCommit::CatchUp(how)), "{what}");
             } else {
                 let fork = mvcc.fork();
@@ -1974,6 +1994,11 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
                 assert_eq!(escalate(&mvcc, &fork), Ok(()), "{what}");
                 mvcc.commit(fork).expect("the write commits");
             }
+            let after: Vec<(usize, i64)> = after
+                .iter()
+                .copied()
+                .chain((0..extra).map(|j| (3 + j, 101 + j as i64)))
+                .collect();
             assert_eq!(column(mvcc), holding(&after), "{what}: both committed");
             assert_eq!(
                 cursor(&mvcc.read().borrow(), EntityType::Relationship, &ty, &attr),
@@ -2009,26 +2034,41 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
 /// A writer deletes an edge a batch indexed and reuses its id for an edge of another type with the
 /// same attribute, also below the batch's cursor, committed before the batch or after it. The
 /// column's refresh reads that id in both versions, and only a version where it is the column's
-/// type gives it a tuple: the column ends without the other type's edge.
+/// type gives it a tuple: the column ends without the other type's edge. The writer changes one
+/// edge, so a batch of a->b alone catches up by inserting; to refresh, the batch also reads
+/// [`REFRESH_COST`] edges from a to nodes between b and c, which the column then holds too.
 #[test]
 fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_order() {
-    for writer_first in [false, true] {
+    // Batch first; or writer first, the batch catching up by insert, or by refresh when it reads
+    // `extra` more edges.
+    for (writer_first, extra) in [
+        (None, 0),
+        (Some(CatchUp::Insert), 0),
+        (Some(CatchUp::Refresh), REFRESH_COST as usize),
+    ] {
         ensure_graphblas();
         let mut g = Graph::new(64, 64, 10, 1, "t");
         let ty = Arc::new("R".to_string());
         let other = Arc::new("S".to_string());
         let attr = Arc::new("w".to_string());
         let aid = g.get_or_create_rel_attr_id(&attr);
-        let nodes = reserve_nodes(&mut g, 4);
+        let nodes = reserve_nodes(&mut g, 4 + extra);
         g.create_nodes(&nodes.iter().copied().collect())
             .expect("freshly reserved ids are creatable");
-        let (a, b, c, d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
-        // In batch order: a->b, a->c, c->d; w = 1..=3.
+        // The `extra` nodes sit between b and c.
+        let (a, b, c, d) = (nodes[0], nodes[1], nodes[2 + extra], nodes[3 + extra]);
+        // In batch order: a->b, a->each extra node, a->c, c->d. In `eids`, a->b, a->c and c->d come
+        // first, with w = 1..=3, then the extra edges, with w = 101 and on.
         let eids: Vec<u64> = g
             .relationship_id_space()
-            .reserve(3, &RoaringTreemap::new())
+            .reserve(3 + extra, &RoaringTreemap::new())
             .expect("reserved");
-        g.create_relationships_bulk(&ty, &[a, a, c], &[b, c, d], &eids)
+        let srcs: Vec<u64> = [a, a, c].into_iter().chain(vec![a; extra]).collect();
+        let dsts: Vec<u64> = [b, c, d]
+            .into_iter()
+            .chain(nodes[2..2 + extra].iter().copied())
+            .collect();
+        g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
             .expect("freshly reserved ids are creatable");
         let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
             pairs
@@ -2036,7 +2076,7 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
                 .map(|&(eid, w)| (eid, vec![(aid, Value::Int(w))]))
                 .collect()
         };
-        let initial: Vec<(u64, i64)> = eids.iter().copied().zip(1..).collect();
+        let initial: Vec<(u64, i64)> = eids.iter().copied().zip((1..=3).chain(101..)).collect();
         applied!(g, |w| g
             .import_relationship_attrs(&with_w(&initial), &mut w));
         g.falkordb_index
@@ -2055,8 +2095,11 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
             g.import_relationship_attrs(&with_w(&[(eids[0], 9)]), &mut w);
             g.apply_index_writes(&mut w);
         };
-        let what = format!("writer first: {writer_first}");
-        let values = [1, 2, 3, 9];
+        let what = format!("writer first: {writer_first:?}");
+        let values: Vec<i64> = [1, 2, 3, 9]
+            .into_iter()
+            .chain(101..101 + extra as i64)
+            .collect();
         let column = |mvcc: &MvccGraph| {
             contents(
                 &mvcc.read().borrow(),
@@ -2067,13 +2110,13 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
             )
         };
 
-        let (prepared, batch) = prepare(mvcc, &id, 1);
-        if writer_first {
+        let (prepared, batch) = prepare(mvcc, &id, 1 + extra);
+        if let Some(how) = writer_first {
             commit_write(mvcc, write);
-            let committed = mvcc.commit_indexer_batch(&prepared, &batch);
-            assert!(
-                matches!(committed, Ok(IndexerCommit::CatchUp(_))),
-                "{what}: {committed:?}"
+            assert_eq!(
+                mvcc.commit_indexer_batch(&prepared, &batch),
+                Ok(IndexerCommit::CatchUp(how)),
+                "{what}"
             );
         } else {
             let fork = mvcc.fork();
@@ -2086,11 +2129,22 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
             assert_eq!(escalate(&mvcc, &fork), Ok(()), "{what}");
             mvcc.commit(fork).expect("the write commits");
         }
-        let nothing = (values.iter().map(|&v| (v, vec![])).collect(), vec![]);
+        // The extra edges, as (value, edge) pairs in value order.
+        let extras: Vec<(i64, u64)> = (0..extra).map(|j| (101 + j as i64, eids[3 + j])).collect();
+        let only_extras = (
+            values
+                .iter()
+                .map(|&v| {
+                    let ids = extras.iter().filter(|&&(w, _)| w == v);
+                    (v, ids.map(|&(_, id)| id).collect())
+                })
+                .collect(),
+            extras.iter().map(|&(_, id)| id).collect(),
+        );
         assert_eq!(
             column(mvcc),
-            nothing,
-            "{what}: no `R` edge below the cursor"
+            only_extras,
+            "{what}: no `R` edge below the cursor but the extra ones"
         );
 
         let mut batches = 0;
@@ -2121,20 +2175,27 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
 /// either order. If the writer commits first, the batch catches up with it, by refresh or by
 /// insert; if the batch commits first, the writer rebases onto the `Ready` column as it
 /// escalates. Either way the column ends `Ready` and holds exactly what the final graph does, new
-/// node included.
+/// node included. The writer changes two entities, so a batch of 4 nodes inserts and one of more
+/// than 2 * [`REFRESH_COST`] refreshes.
 #[test]
 fn a_writer_creating_past_a_final_batch_is_indexed_in_either_commit_order() {
-    // Batch first; or writer first, with the batch forced to refresh, then to insert.
-    for writer_first in [None, Some(CatchUp::Refresh), Some(CatchUp::Insert)] {
+    let refreshes = 2 * REFRESH_COST as usize + 1;
+    // Batch first; or writer first, the batch catching up by insert, or by refresh when bigger.
+    for (writer_first, nodes) in [
+        (None, 4),
+        (Some(CatchUp::Insert), 4),
+        (Some(CatchUp::Refresh), refreshes),
+    ] {
         let what = match writer_first {
             Some(how) => format!("writer, then batch, {how:?}"),
             None => "batch, then writer".to_string(),
         };
-        let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+        let initial: Vec<i64> = (1..=nodes as i64).map(|i| 10 * i).collect();
+        let (mut mvcc, label, attr, ids) = mvcc_building(&initial);
         let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
         let fork = mvcc.fork();
         set_attr(&mut fork.borrow_mut(), ids[1], &attr, Value::Int(25));
-        let created = add_person(&mut fork.borrow_mut(), &attr, 50);
+        let created = add_person(&mut fork.borrow_mut(), &attr, 5);
         assert!(ids.iter().all(|&id| id < created), "{what}: past the batch");
         let (prepared, batch) = prepare(&mvcc, &id, ids.len() + 1);
         assert_eq!(
@@ -2146,9 +2207,7 @@ fn a_writer_creating_past_a_final_batch_is_indexed_in_either_commit_order() {
         if let Some(how) = writer_first {
             assert_eq!(escalate(&mvcc, &fork), Ok(()), "{what}");
             mvcc.commit(fork).expect("the write commits");
-            CATCH_UP_BY.with(|by| by.set(Some(how)));
             let committed = mvcc.commit_indexer_batch(&prepared, &batch);
-            CATCH_UP_BY.with(|by| by.set(None));
             assert_eq!(committed, Ok(IndexerCommit::CatchUp(how)), "{what}");
         } else {
             assert_eq!(
@@ -2168,11 +2227,11 @@ fn a_writer_creating_past_a_final_batch_is_indexed_in_either_commit_order() {
             "{what}: Ready"
         );
         assert_eq!(
-            range_scan(&g, &label, &attr, 50, 50),
+            range_scan(&g, &label, &attr, 5, 5),
             vec![created],
             "{what}: the new node"
         );
-        let values = [10, 20, 25, 30, 40, 50];
+        let values: Vec<i64> = initial.iter().copied().chain([5, 25]).collect();
         assert_eq!(
             contents(&g, EntityType::Node, &label, &attr, &values),
             one_pass(&g, EntityType::Node, &label, &attr, &values),
@@ -2370,17 +2429,32 @@ type OrderedWrite = fn(&mut Graph, &[u64]);
 /// unless its writer created the column again; and a batch that is published moves its own column
 /// on. So do both columns once built to the end. Counts how the commits went, so an outcome no
 /// order reached fails the test.
+///
+/// It runs twice. Batches of `BATCH` insert once a writer changed their column. With
+/// 3 * [`REFRESH_COST`] more nodes in every batch, more than refreshing the at most 3 entities a
+/// pair of writes changes in a column costs, every batch refreshes.
 #[test]
 fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
     const NODES: usize = 12;
     const BATCH: usize = 5;
     let (v, w) = (attr_named("v"), attr_named("w"));
-    let (mut template, label, ids) = people_with(&v, &(0..NODES as i64).collect::<Vec<_>>());
-    for (i, &id) in ids.iter().enumerate() {
-        set_attr(&mut template, id, &w, Value::Int(100 + i as i64));
-    }
-    create_index_on(&mut template, &label, &v);
-    create_index_on(&mut template, &label, &w);
+    // The writes below name `NODES` nodes, `BATCH` of them in a batch. `pad` more nodes before each
+    // `BATCH` of them only make each batch bigger: a batch of `pad + BATCH` reads the padding and
+    // the same named nodes, so those keep their places by the cursor.
+    let padded = |pad: usize| {
+        let all = pad * NODES.div_ceil(BATCH) + NODES;
+        let (mut g, label, ids) = people_with(&v, &(0..all as i64).collect::<Vec<_>>());
+        for (i, &id) in ids.iter().enumerate() {
+            set_attr(&mut g, id, &w, Value::Int(100 + i as i64));
+        }
+        create_index_on(&mut g, &label, &v);
+        create_index_on(&mut g, &label, &w);
+        let named: Vec<u64> = ids
+            .chunks(pad + BATCH)
+            .flat_map(|chunk| chunk[pad..].iter().copied())
+            .collect();
+        (g, label, named)
+    };
 
     let writes: [(&str, OrderedWrite, OrderedWrite); 5] = [
         (
@@ -2427,8 +2501,11 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
 
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     let orders = orders(4);
-    for how in [CatchUp::Refresh, CatchUp::Insert] {
-        CATCH_UP_BY.with(|by| by.set(Some(how)));
+    for (pad, run) in [
+        (0, CatchUp::Insert),
+        (3 * REFRESH_COST as usize, CatchUp::Refresh),
+    ] {
+        let (template, label, ids) = padded(pad);
         for (name, first, second) in writes {
             for batches_on in [[&v, &w], [&v, &v], [&w, &w]] {
                 for order in &orders {
@@ -2440,7 +2517,7 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
                     let mut started = [false; 4];
                     for (event, &actor) in order.iter().enumerate() {
                         let what = format!(
-                            "{name}; {how:?}; batches on {}, {}; order {order:?}, event {event}",
+                            "{name}; {run:?} run; batches on {}, {}; order {order:?}, event {event}",
                             batches_on[0], batches_on[1]
                         );
                         let before = {
@@ -2504,7 +2581,7 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
                                 let prepared = Arc::new(AtomicRefCell::new(
                                     mvcc.read().borrow().new_build_version(),
                                 ));
-                                let batch = prepared.borrow_mut().indexer_prepare(&id, BATCH);
+                                let batch = prepared.borrow_mut().indexer_prepare(&id, pad + BATCH);
                                 batches[actor - 2] = batch.map(|batch| (prepared, batch));
                             }
                             (_, false) => {
@@ -2533,6 +2610,11 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
                                         }
                                     })
                                     .or_default() += 1;
+                                if run == CatchUp::Refresh
+                                    && let IndexerCommit::CatchUp(by) = how
+                                {
+                                    assert_eq!(by, CatchUp::Refresh, "{what}");
+                                }
                                 let published = mvcc.read();
                                 let published = published.borrow();
                                 assert_eq!(model_of(&published), data, "{what}: no data changed");
@@ -2561,7 +2643,8 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
                             let prepared = Arc::new(AtomicRefCell::new(
                                 mvcc.read().borrow().new_build_version(),
                             ));
-                            let Some(batch) = prepared.borrow_mut().indexer_prepare(&id, BATCH)
+                            let Some(batch) =
+                                prepared.borrow_mut().indexer_prepare(&id, pad + BATCH)
                             else {
                                 break;
                             };
@@ -2580,7 +2663,6 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
             }
         }
     }
-    CATCH_UP_BY.with(|by| by.set(None));
     for outcome in [
         "writer committed",
         "writer over batches",
@@ -2741,7 +2823,9 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
 
     const NODES: i64 = 400;
     const VALUES: i64 = 10_000;
-    const BATCH: usize = 7;
+    // Each batch takes a size up to this, at random: against what writers changed since the last
+    // batch, a large one refreshes and a small one inserts, so both run on real writes.
+    const MAX_BATCH: usize = 8 * REFRESH_COST as usize;
     const SEEN: [&str; 9] = [
         "writer committed",
         "writer over batches",
@@ -2811,7 +2895,7 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                 .iter()
                 .copied()
                 .filter(|&id| id >= u64::from(next))
-                .take(2 * BATCH)
+                .take(MAX_BATCH)
                 .collect();
             if !near.is_empty() {
                 people = near;
@@ -2883,7 +2967,8 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                     let prepared = Arc::new(AtomicRefCell::new(
                         mvcc.read().read().borrow().new_build_version(),
                     ));
-                    let Some(batch) = prepared.borrow_mut().indexer_prepare(&id, BATCH) else {
+                    let size = rng.random_range(1..=MAX_BATCH);
+                    let Some(batch) = prepared.borrow_mut().indexer_prepare(&id, size) else {
                         if done {
                             break;
                         }
@@ -2893,15 +2978,6 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                     // A full-size batch takes milliseconds to read; one this small takes
                     // microseconds. The wait lets writers commit between its read and its commit.
                     thread::sleep(Duration::from_micros(rng.random_range(0..200)));
-                    // With only `BATCH` tuples, the cost rule picks refresh only when nothing was
-                    // written, since one written entity already counts as `REFRESH_COST` tuples.
-                    // So force each way now and then, to run both on real writes.
-                    let forced = match rng.random_range(0..3) {
-                        0 => Some(CatchUp::Refresh),
-                        1 => Some(CatchUp::Insert),
-                        _ => None,
-                    };
-                    CATCH_UP_BY.with(|by| by.set(forced));
                     let (how, published) = {
                         let mvcc = &mut mvcc.write();
                         let how = mvcc
@@ -2909,7 +2985,6 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                             .expect("the batch commits");
                         (how, mvcc.read())
                     };
-                    CATCH_UP_BY.with(|by| by.set(None));
                     count(match how {
                         IndexerCommit::Same => "batch same",
                         IndexerCommit::Swap => "batch swapped",

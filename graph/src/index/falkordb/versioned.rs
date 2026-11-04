@@ -176,10 +176,6 @@ fn catch_up_by(
     written: u64,
     batch: usize,
 ) -> CatchUp {
-    #[cfg(test)]
-    if let Some(how) = CATCH_UP_BY.with(std::cell::Cell::get) {
-        return how;
-    }
     if written.saturating_mul(REFRESH_COST) < batch as u64 {
         CatchUp::Refresh
     } else {
@@ -702,12 +698,4 @@ impl Graph {
             .apply_indexer_batch(&mut batch)
             .then_some(batch)
     }
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Test hook, so tests can take each way on purpose: while set, every batch that has to catch
-    /// up takes this way, whatever the sizes ([`catch_up_by`]).
-    pub(crate) static CATCH_UP_BY: std::cell::Cell<Option<CatchUp>> =
-        const { std::cell::Cell::new(None) };
 }
