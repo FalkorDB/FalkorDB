@@ -83,13 +83,13 @@ graph/src/runtime/ops/batched_result_emitter.rs	spread	464	MODELLED	Emitter.RowI
 graph/src/runtime/ops/batched_result_emitter.rs	many	469	MODELLED	Emitter.RowIter.many
 graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Emitter.next_none, next_some
 graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter.initCeiling_pos, initCeiling_cases
-graph/src/runtime/ops/batched_result_emitter.rs	seed	578	PROVEN	Emitter.seed, remaining_seed, drive_flatten
-graph/src/runtime/ops/batched_result_emitter.rs	start_batch	605	MODELLED	should_expand/gather vs Batch::new(0) abstracted to (row,item) pairs
-graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	623	PROVEN	Emitter.drain_spec, drain_nonempty, drain_empty
-graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	652	MODELLED	output = packed (row,item) pairs; gather not modelled
-graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	677	PROVEN	Emitter.refill_none, refill_some
-graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	730	PROVEN	Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten
-graph/src/runtime/ops/batched_result_emitter.rs	reset	751	PROVEN	Emitter.reset_remaining
-graph/src/runtime/ops/batched_result_emitter.rs	batch	760	NOT COVERED	trivial accessor
-graph/src/runtime/ops/batched_result_emitter.rs	new	774	MODELLED	Emitter.initCeiling via with_binding
-graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	784	MODELLED	Emitter.initCeiling via with_binding (no bound column)
+graph/src/runtime/ops/batched_result_emitter.rs	seed	577	PROVEN	Emitter.seed, remaining_seed, drive_flatten
+graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	MODELLED	should_expand/gather vs Batch::new(0) abstracted to (row,item) pairs
+graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter.drain_spec, drain_nonempty, drain_empty
+graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	MODELLED	output = packed (row,item) pairs; gather not modelled
+graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter.refill_none, refill_some
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten
+graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	Emitter.reset_remaining
+graph/src/runtime/ops/batched_result_emitter.rs	batch	759	NOT COVERED	trivial accessor
+graph/src/runtime/ops/batched_result_emitter.rs	new	773	MODELLED	Emitter.initCeiling via with_binding
+graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	MODELLED	Emitter.initCeiling via with_binding (no bound column)

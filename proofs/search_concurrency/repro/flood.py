@@ -17,7 +17,8 @@ async def one(i):
 async def main():
     tasks=[asyncio.create_task(one(i)) for i in range(N)]
     t0=time.time()
-    while time.time()-t0<float(sys.argv[4]) if len(sys.argv)>4 else 60:
+    deadline=float(sys.argv[4]) if len(sys.argv)>4 else 60.0
+    while time.time()-t0<deadline:
         await asyncio.sleep(2)
         try:
             ok=redis.Redis(port=port,socket_timeout=2).ping()

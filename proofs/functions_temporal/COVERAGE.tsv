@@ -47,7 +47,7 @@ graph/src/runtime/value.rs	shift_months	725	PROVEN	Duration.shiftMonthsR (guard 
 graph/src/runtime/value.rs	days_in_month	765	PROVEN	daysInMonth: dim_link, civil_valid
 graph/src/runtime/value.rs	is_leap	777	PROVEN	isLeap: isLeap_tmod, isLeap_add400
 graph/src/runtime/value.rs	days_from_civil	784	PROVEN	daysFromCivil: dfc_civil, civil_dfc, dfc_injective, daysFromCivil_day
-graph/src/runtime/value.rs	civil_from_days	784	PROVEN	civilFromDays: dfc_civil, civil_valid, civil_dfc, civilFromDays_exact, civilFromDays_trunc
+graph/src/runtime/value.rs	civil_from_days	804	PROVEN	civilFromDays: dfc_civil, civil_valid, civil_dfc, civilFromDays_exact, civilFromDays_trunc
 graph/src/runtime/value.rs	civil_from_days_wide	812	PROVEN	civilFromDaysI (the same Hinnant arithmetic with the i64 year, no `as i32`): dfc_civil, civil_valid, civil_dfc; civilFromDays_exact/_trunc relate the two
 graph/src/runtime/value.rs	push_date	828	PROVEN	Components.pushDate: pushDate_eq, format_wide_years, formatDate_wide_distinct
 graph/src/runtime/value.rs	write_two_digits	853	PROVEN	Components.twoDigits: twoDigits_eq_pad, fourDigits_eq_pad
@@ -63,7 +63,7 @@ graph/src/runtime/functions/conversion.rs	to_float_list	246	NOT COVERED	f64 pars
 graph/src/runtime/functions/conversion.rs	to_integer_list	265	NOT COVERED	map of value_to_integer
 graph/src/runtime/functions/conversion.rs	to_string_list	281	NOT COVERED	map of value_to_string
 graph/src/runtime/functions/spatial.rs	point_from_map_entries	38	PROVEN	SpatialFns.pointFromMapEntries: point_key_count, point_missing_lat, point_null_not_numeric, point_nan_refused, point_nan_lon_refused, point_ok_iff (range test on the f64 before `as f32`), point_range_msgs
-graph/src/runtime/functions/spatial.rs	numeric	89	PROVEN	SpatialFns.numeric (Float and Int numeric, all else none): used by point_ok_iff, point_null_not_numeric
+graph/src/runtime/functions/spatial.rs	numeric	74	PROVEN	SpatialFns.numeric (Float and Int numeric, all else none): used by point_ok_iff, point_null_not_numeric
 graph/src/runtime/functions/spatial.rs	register	82	PROVEN	SpatialFns.registered: register_wf
 graph/src/runtime/functions/spatial.rs	vecf32	89	PROVEN	SpatialFns.vecf32: vecf32_ok
 graph/src/runtime/functions/spatial.rs	point	110	PROVEN	SpatialFns.point: point_key_count (map arm = pointFromMapEntries, null arm null)
@@ -97,9 +97,9 @@ graph/src/runtime/vector_expr.rs	compare_f64_pairs	820	NOT COVERED	f64
 graph/src/runtime/vector_expr.rs	mask_out_nulls	842	NOT COVERED	bitmap plumbing
 graph/src/runtime/vector_expr.rs	negate_bools	856	NOT COVERED	trivial 3VL NOT
 graph/src/runtime/vector_expr.rs	arithmetic	880	PROVEN	VExpr.intLane: intLane_eq (int lane); float/generic lanes not modelled
-graph/src/runtime/vector_expr.rs	int_lane	955	PROVEN	VExpr.intLane
-graph/src/runtime/vector_expr.rs	float_lane	967	NOT COVERED	f64
-graph/src/runtime/vector_expr.rs	float_operand	982	NOT COVERED	trivial predicate
+graph/src/runtime/vector_expr.rs	int_lane	962	PROVEN	VExpr.intLane
+graph/src/runtime/vector_expr.rs	float_lane	974	NOT COVERED	f64
+graph/src/runtime/vector_expr.rs	float_operand	989	NOT COVERED	trivial predicate
 graph/src/runtime/value.rs	Point::new	142	PROVEN	SpatialFns.Point.new: Point.new_fields
 graph/src/runtime/value.rs	Value::add_slow (Time/Duration arm)	967	PROVEN	Duration.timeAddDur (arm at value.rs:1063, #2985): timeAddDur_eq_tod, timeAddDur_range, timeAddDur_eq, time_normalised
 graph/src/runtime/value.rs	Sub::sub (Time/Duration arm)	1084	PROVEN	Duration.timeSubDur (arm at value.rs:1105, #2985): timeSubDur_range, timeSubDur_eq, timeSub_timeAdd, time_normalised

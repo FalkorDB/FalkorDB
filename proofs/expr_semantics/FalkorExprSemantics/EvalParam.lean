@@ -21,11 +21,16 @@ inductive PE where
 /-- i64 `checked_neg`: fails only on `i64::MIN`. -/
 def checkedNeg (i : Int) : Option Int := if i = -2^63 then none else some (-i)
 
+/-- `OrderMap::insert`: a repeated key keeps its first position and takes the last value. -/
+def omInsertP : List (String × PV) → String × PV → List (String × PV)
+  | [], kv => [kv]
+  | (k', v') :: r, (k, v) => if k' = k then (k, v) :: r else (k', v') :: omInsertP r (k, v)
+
 mutual
 def evalParam : PE → Except String PV
   | .const v => .ok v
   | .list cs => do let vs ← evalParams cs; .ok (.list vs)
-  | .map kvs => do let m ← evalParamMap kvs; .ok (.map m)
+  | .map kvs => do let ps ← evalParamPairs kvs; .ok (.map (ps.foldl omInsertP []))
   | .neg e => do
     let v ← evalParam e
     match v with
@@ -38,11 +43,18 @@ def evalParam : PE → Except String PV
 def evalParams : List PE → Except String (List PV)
   | [] => .ok []
   | c :: cs => do let v ← evalParam c; let r ← evalParams cs; .ok (v :: r)
-def evalParamMap : List (Option String × PE) → Except String (List (String × PV))
+/-- The entries in source order (a repeated key still twice). -/
+def evalParamPairs : List (Option String × PE) → Except String (List (String × PV))
   | [] => .ok []
-  | (some k, c) :: cs => do let v ← evalParam c; let r ← evalParamMap cs; .ok ((k, v) :: r)
+  | (some k, c) :: cs => do let v ← evalParam c; let r ← evalParamPairs cs; .ok ((k, v) :: r)
   | (none, _) :: _ => .error "Map parameter key must be a string"
 end
+
+/-- `evaluate_param` collects the entries into an `OrderMap`: a repeated key keeps its first position and
+takes the last value (`from_iter` inserts in order). -/
+def evalParamMap (kvs : List (Option String × PE)) : Except String (List (String × PV)) := do
+  let ps ← evalParamPairs kvs
+  .ok (ps.foldl omInsertP [])
 
 /-- Constants and lists of constants evaluate to themselves. -/
 theorem evalParams_consts (vs : List PV) : evalParams (vs.map .const) = .ok vs := by
@@ -60,5 +72,11 @@ theorem evalParam_neg (i : Int) :
 theorem evalParam_neg_null : evalParam (.neg (.const (.str "x"))) = .ok .null := rfl
 
 theorem evalParam_badkey (e : PE) : evalParam (.map [(none, e)]) = .error "Map parameter key must be a string" := rfl
+
+/-- A repeated key keeps its first position and the last value. -/
+theorem evalParam_dup_key :
+    evalParam (.map [(some "a", .const (.int 1)), (some "b", .const (.int 2)), (some "a", .const (.int 3))]) =
+      .ok (.map [("a", .int 3), ("b", .int 2)]) := by
+  simp [evalParam, evalParamPairs, omInsertP, bind, Except.bind]
 
 end FalkorExpr.Eval

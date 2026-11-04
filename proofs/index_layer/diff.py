@@ -5,6 +5,7 @@ range index on :L(v) (and :L(w), :B(w) for multi-label cases).  Report any
 case where Rust(index) != Rust(noindex) or C(index) != C(noindex), plus
 Rust(noindex) vs C(noindex) as context.
 """
+import time
 import redis, sys, json
 
 RUST, C = 18300, 18301
@@ -63,6 +64,9 @@ def main(queries, idx_stmts=("CREATE INDEX FOR (n:L) ON (n.v)",), setup_fn=setup
             out = r.execute_command("GRAPH.QUERY", g, "CALL db.indexes() YIELD status RETURN collect(status)")
             if b"UNDER CONSTRUCTION" not in repr(out).encode() and "UNDER" not in repr(out):
                 break
+            time.sleep(0.1)
+        else:
+            raise SystemExit("index population did not finish within 10s on port %d" % p)
         res[p]["idx"] = [run(r, g, q) for q in queries]
         res[p]["plan"] = [explain(r, g, q) for q in queries]
     for k, q in enumerate(queries):

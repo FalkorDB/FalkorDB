@@ -24,7 +24,7 @@ graph/src/runtime/value.rs	shift_months	725	PROVEN	proofs/functions_temporal Dur
 graph/src/runtime/value.rs	days_in_month	765	PROVEN	proofs/functions_temporal
 graph/src/runtime/value.rs	is_leap	777	PROVEN	proofs/functions_temporal
 graph/src/runtime/value.rs	days_from_civil	784	PROVEN	proofs/functions_temporal
-graph/src/runtime/value.rs	civil_from_days	784	PROVEN	proofs/functions_temporal
+graph/src/runtime/value.rs	civil_from_days	804	PROVEN	proofs/functions_temporal
 graph/src/runtime/value.rs	civil_from_days_wide	812	PROVEN	proofs/functions_temporal civilFromDaysI
 graph/src/runtime/value.rs	push_date	828	PROVEN	proofs/functions_temporal Components.pushDate
 graph/src/runtime/value.rs	write_two_digits	853	PROVEN	proofs/functions_temporal Components.twoDigits

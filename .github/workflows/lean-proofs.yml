@@ -47,8 +47,8 @@ jobs:
   proofs:
     name: Lean proofs
     runs-on: ubuntu-latest
-    # Replaced by the measured cold build time (see the PR description).
-    timeout-minutes: 60
+    # A cold build (no cache) took 19 minutes on ubuntu-latest, a warm one is a few; 45 leaves room for slower runners.
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
