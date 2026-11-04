@@ -69,8 +69,9 @@ jobs:
         run: |
           set -euo pipefail
           run=true
+          # --no-renames: a file moved out of src/ must list its old path too, or the gates would be skipped.
           if [[ "$EVENT_NAME" == pull_request ]] && git rev-parse --verify --quiet 'HEAD^2' >/dev/null; then
-            changed=$(git diff --name-only 'HEAD^1' HEAD)
+            changed=$(git diff --name-only --no-renames 'HEAD^1' HEAD)
             if grep -qE '^(proofs/|graph/src/|src/|\.github/workflows/lean-proofs\.yml$)' <<<"$changed"; then
               echo "This PR touches proofs/**, graph/src/**, src/** or the workflow: running both gates." >> "$GITHUB_STEP_SUMMARY"
             else
