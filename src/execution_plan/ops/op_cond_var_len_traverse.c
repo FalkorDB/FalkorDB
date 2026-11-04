@@ -29,9 +29,9 @@ static void _setupTraversedRelations
 	QGEdge *e = QueryGraph_GetEdgeByAlias(op->op.plan->query_graph,
 			AlgebraicExpression_Edge(op->ae));
 
-	ASSERT(e->minHops <= e->maxHops);
-	op->minHops = e->minHops;
-	op->maxHops = e->maxHops;
+	// note: minHops/maxHops are set in NewCondVarLenTraverseOp so they're
+	// available even when a fold pre-populated op->edgeRelationTypes and this
+	// routine is skipped
 
 	uint reltype_count = QGEdge_RelationCount(e);
 	if(reltype_count == 0) {
@@ -144,6 +144,14 @@ OpBase *NewCondVarLenTraverseOp
 	QGEdge *e = QueryGraph_GetEdgeByAlias(plan->query_graph,
 			AlgebraicExpression_Edge(op->ae));
 
+	// set hop bounds here (rather than lazily in _setupTraversedRelations) so
+	// they're available even when the runtime optimizer folds a relation-type
+	// filter into op->edgeRelationTypes, causing _setupTraversedRelations to be
+	// skipped
+	ASSERT(e->minHops <= e->maxHops);
+	op->minHops = e->minHops;
+	op->maxHops = e->maxHops;
+
 	op->edgesIdx = AST_AliasIsReferenced(ast, e->alias) ?
 		OpBase_Modifies((OpBase *)op, e->alias) :
 		-1;
@@ -237,12 +245,13 @@ static OpResult CondVarLenTraverseInit
 		}
 	}
 
-	if(op->ft          == NULL  && // no filter on path
-	   op->edgesIdx    == -1    && // edge isn't required
-	   op->expandInto  == false && // destination unknown
-	   reltype_count   == 1     && // single relationship
-	   multi_edge      == false && // no multi edge entries
-	   op->traverseDir != GRAPH_EDGE_DIR_BOTH    // directed
+	if(op->ft              == NULL  && // no filter on path
+	   op->edgesIdx        == -1    && // edge isn't required
+	   op->expandInto      == false && // destination unknown
+	   reltype_count       == 1     && // single relationship
+	   op->edgeRelationTypes == NULL && // no folded relation-type set
+	   multi_edge          == false && // no multi edge entries
+	   op->traverseDir     != GRAPH_EDGE_DIR_BOTH    // directed
 	  ) {
 		AlgebraicExpression_Optimize(&op->ae);
 		ASSERT(op->ae->type == AL_OPERAND);
@@ -369,13 +378,14 @@ static Record CondVarLenTraverseConsume
 			// create edge relation type array on first call to consume
 			if (!op->edgeRelationTypes) {
 				_setupTraversedRelations (op) ;
-				// incase we don't have any relations to traverse and
-				// minimal traversal is at least one hop, we can return quickly
-				// consider: MATCH (S)-[:L*]->(M) RETURN M
-				// where label L does not exists
-				if (op->edgeRelationCount == 0 && op->minHops > 0) {
-					return NULL ;
-				}
+			}
+
+			// no relations to traverse and minimal traversal is at least one
+			// hop => no paths, return quickly
+			// consider: MATCH (S)-[:L*]->(M) RETURN M where label L doesn't
+			// exist, or a relation-type filter folded to an empty set
+			if (op->edgeRelationCount == 0 && op->minHops > 0) {
+				return NULL ;
 			}
 
 			Node *destNode = NULL ;
