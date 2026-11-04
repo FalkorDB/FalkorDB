@@ -20,6 +20,7 @@ use crate::runtime::value::Value;
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::CString;
 use std::sync::Arc;
@@ -1017,8 +1018,10 @@ fn a_cursor_inside_a_multi_edge_pair_places_each_edge_by_its_id() {
 }
 
 /// A batch reads exactly its size wherever it stops, inside a source's long row or a long
-/// multi-edge pair, and the next one resumes there without reading what came before. Over a whole
-/// build the tensor yields each edge once to a batch, plus one look-ahead per batch.
+/// multi-edge pair, and the next one resumes there without reading what came before. Its size is
+/// in edges read, indexed or not: every third edge has no `w`, so a batch that counted the tuples
+/// it adds would read more. The tensor yields each batch its edges, plus one look-ahead to learn
+/// where the next batch resumes, which that batch reads again.
 #[test]
 fn an_edge_batch_resumes_inside_a_row_or_a_pair_without_reading_it_again() {
     ensure_graphblas();
@@ -1040,42 +1043,39 @@ fn an_edge_batch_resumes_inside_a_row_or_a_pair_without_reading_it_again() {
         .expect("reserved");
     g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
         .expect("freshly reserved ids are creatable");
+    // Edges are in build order in `eids`, so every third edge of the row and of the pair has no
+    // `w`.
     let attrs: FxHashMap<u64, Vec<(u16, Value)>> = eids
         .iter()
-        .map(|&eid| (eid, vec![(aid, Value::Int(eid as i64))]))
+        .enumerate()
+        .filter(|&(i, _)| i % 3 != 0)
+        .map(|(_, &eid)| (eid, vec![(aid, Value::Int(eid as i64))]))
         .collect();
     applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w));
     g.falkordb_index
         .create_building(EntityType::Relationship, &ty, &attr);
 
+    let scanned = || graph_writes::EDGES_SCANNED.with(Cell::get);
     graph_writes::EDGES_SCANNED.with(|scanned| scanned.set(0));
-    let held = |g: &Graph| {
-        contents(g, EntityType::Relationship, &ty, &attr, &[])
-            .1
-            .len()
-    };
-    let mut sizes = vec![];
-    let mut batches = 0;
+    let mut reads = vec![];
     while g.falkordb_index.has_building_columns() {
-        let before = held(&g);
+        let before = scanned();
         g.index_next_batch(7);
-        sizes.push(held(&g) - before);
-        batches += 1;
+        reads.push(scanned() - before);
         assert!(
-            batches <= eids.len(),
-            "the build makes no progress: {sizes:?}"
+            reads.len() <= eids.len(),
+            "the build makes no progress: {reads:?}"
         );
     }
-    let edges = eids.len();
-    assert_eq!(sizes.iter().sum::<usize>(), edges);
+    let (last, rest) = reads.split_last().expect("at least one batch");
     assert!(
-        sizes[..sizes.len() - 1].iter().all(|&size| size == 7),
-        "every batch but the last reads exactly its size: {sizes:?}"
+        rest.iter().all(|&read| read == 7 + 1),
+        "every batch but the last reads 7 edges and looks at the next: {reads:?}"
     );
     assert_eq!(
-        graph_writes::EDGES_SCANNED.with(std::cell::Cell::get),
-        edges + batches - 1,
-        "each edge once, plus each batch's look-ahead but the last's"
+        *last,
+        eids.len() - 7 * rest.len(),
+        "the last batch reads the rest, and there is nothing to look at after it"
     );
     assert_eq!(
         contents(&g, EntityType::Relationship, &ty, &attr, &[]),
@@ -2220,6 +2220,159 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
                 "{what}: built to the end"
             );
         }
+    }
+}
+
+/// A batch that starts and stops inside one multi-edge pair, with a writer changing the pair's
+/// edges on both sides of each end, committed before the batch or after it. The pair is a->b, its
+/// edges in id order. A first batch reads one edge, so the batch resumes at the second edge and
+/// stops before edge `size + 1`. The writer changes the edge below the batch's start, the batch's
+/// first and last edges, and the edge at its new cursor. If the batch commits first, the writer
+/// rebases onto it as it escalates; if the writer commits first, the batch catches up with it, by
+/// insert, or by refresh when it reads more than 4 * [`REFRESH_COST`] edges. Each way places every
+/// written edge by its id, so the column ends with the writer's values for the three edges below
+/// the cursor and nothing for the edge at it.
+#[test]
+fn an_edge_batch_inside_a_multi_edge_pair_catches_up_on_writes_by_edge_id() {
+    for (writer_first, size) in [
+        (None, 2),
+        (Some(CatchUp::Insert), 2),
+        (Some(CatchUp::Refresh), 4 * REFRESH_COST as usize + 1),
+    ] {
+        ensure_graphblas();
+        let mut g = Graph::new(64, 64, 10, 1, "t");
+        let ty = Arc::new("R".to_string());
+        let attr = Arc::new("w".to_string());
+        let aid = g.get_or_create_rel_attr_id(&attr);
+        let nodes = reserve_nodes(&mut g, 2);
+        g.create_nodes(&nodes.iter().copied().collect())
+            .expect("freshly reserved ids are creatable");
+        let (a, b) = (nodes[0], nodes[1]);
+        // a->b `size + 3` times, w = 1 and on: the first batch's edge, the batch's `size`, the
+        // edge at its new cursor and one after it.
+        let n = size + 3;
+        let eids: Vec<u64> = g
+            .relationship_id_space()
+            .reserve(n, &RoaringTreemap::new())
+            .expect("reserved");
+        g.create_relationships_bulk(&ty, &vec![a; n], &vec![b; n], &eids)
+            .expect("freshly reserved ids are creatable");
+        let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
+            pairs
+                .iter()
+                .map(|&(eid, w)| (eid, vec![(aid, Value::Int(w))]))
+                .collect()
+        };
+        let initial: Vec<(u64, i64)> = eids.iter().copied().zip(1..).collect();
+        applied!(g, |w| g
+            .import_relationship_attrs(&with_w(&initial), &mut w));
+        g.falkordb_index
+            .create_building(EntityType::Relationship, &ty, &attr);
+        let mvcc = &MvccGraph::from_graph(g);
+        let id = IndexId::Column(EntityType::Relationship, (ty.clone(), attr.clone()));
+        let at = |i: usize| {
+            Some(BuildCursor::Edge {
+                src: NodeId::from(a),
+                dst: NodeId::from(b),
+                edge: RelationshipId::from(eids[i]),
+            })
+        };
+        let column_cursor = |g: &Graph| cursor(g, EntityType::Relationship, &ty, &attr);
+        let what = format!("writer first: {writer_first:?}");
+
+        let (first, batch) = prepare(mvcc, &id, 1);
+        assert_eq!(
+            mvcc.commit_indexer_batch(&first, &batch),
+            Ok(IndexerCommit::Same)
+        );
+        assert_eq!(column_cursor(&mvcc.read().borrow()), at(1), "{what}");
+
+        let (prepared, batch) = prepare(mvcc, &id, size);
+        assert_eq!(column_cursor(&prepared.borrow()), at(size + 1), "{what}");
+        // Below the batch's start, its first edge, its last edge, and the edge at its new cursor.
+        let written: Vec<(u64, i64)> = [(0, 1000), (1, 1001), (size, 1002), (size + 1, 1003)]
+            .into_iter()
+            .map(|(i, w)| (eids[i], w))
+            .collect();
+        let write = |g: &mut Graph| {
+            let mut w = IndexDocs::default();
+            g.set_relationships_attributes(&with_w(&written), &mut w)
+                .unwrap();
+            g.apply_index_writes(&mut w);
+        };
+        if let Some(how) = writer_first {
+            commit_write(mvcc, write);
+            assert_eq!(
+                mvcc.commit_indexer_batch(&prepared, &batch),
+                Ok(IndexerCommit::CatchUp(how)),
+                "{what}"
+            );
+        } else {
+            let fork = mvcc.fork();
+            write(&mut fork.borrow_mut());
+            assert_eq!(
+                mvcc.commit_indexer_batch(&prepared, &batch),
+                Ok(IndexerCommit::Same),
+                "{what}"
+            );
+            assert_eq!(escalate(mvcc, &fork), Ok(()), "{what}");
+            mvcc.commit(fork).expect("the write commits");
+        }
+
+        let published = mvcc.read();
+        let g = published.borrow();
+        assert_eq!(
+            column_cursor(&g),
+            at(size + 1),
+            "{what}: the batch's progress"
+        );
+        let (per_value, held) = contents(
+            &g,
+            EntityType::Relationship,
+            &ty,
+            &attr,
+            &[1000, 1001, 1002, 1003],
+        );
+        assert_eq!(
+            per_value,
+            vec![
+                (1000, vec![eids[0]]),
+                (1001, vec![eids[1]]),
+                (1002, vec![eids[size]]),
+                (1003, vec![]),
+            ],
+            "{what}: the writer's values below the cursor, and nothing at it"
+        );
+        // In value order: the batch's unwritten edges, w = 3 to `size`, then the written ones.
+        let below: Vec<u64> = eids[2..size]
+            .iter()
+            .chain([&eids[0], &eids[1], &eids[size]])
+            .copied()
+            .collect();
+        assert_eq!(held, below, "{what}: exactly the edges below the cursor");
+        drop(g);
+        drop(published);
+
+        let mut batches = 0;
+        loop {
+            let version = Arc::new(AtomicRefCell::new(mvcc.read().borrow().new_build_version()));
+            let Some(batch) = version.borrow_mut().indexer_prepare(&id, 1) else {
+                break;
+            };
+            assert_eq!(
+                mvcc.commit_indexer_batch(&version, &batch),
+                Ok(IndexerCommit::Same)
+            );
+            batches += 1;
+            assert!(batches <= n, "the build never finishes");
+        }
+        let published = mvcc.read();
+        let g = published.borrow();
+        assert_eq!(
+            contents(&g, EntityType::Relationship, &ty, &attr, &[]),
+            one_pass(&g, EntityType::Relationship, &ty, &attr, &[]),
+            "{what}: built to the end"
+        );
     }
 }
 

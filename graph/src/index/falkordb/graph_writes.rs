@@ -23,6 +23,8 @@
 //! behind, and it comes back as a wrong row once its id is reused. The edge read's endpoint
 //! lookup hides only edges that are deleted and not yet reused.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -691,5 +693,5 @@ thread_local! {
     /// Edges the tensor has yielded to this thread's edge batches: each one a batch read, plus the
     /// one it peeked at to learn where the next batch resumes. For the test that a batch resuming
     /// inside a row or a pair reads nothing before its cursor.
-    pub(crate) static EDGES_SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static EDGES_SCANNED: Cell<usize> = const { Cell::new(0) };
 }
