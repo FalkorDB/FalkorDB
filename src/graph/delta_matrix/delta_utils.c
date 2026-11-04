@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "delta_matrix.h"
+#include "delta_utils.h"
 
 // check if i and j are within matrix boundries
 // i < nrows
@@ -175,6 +176,100 @@ bool _matrix_leq
 	return result;
 }
 
+static bool _GrB_transpose_eq
+(
+	const GrB_Matrix A,
+	const GrB_Matrix B,
+	DM_validation_level level
+) {
+	GrB_Vector reduced = NULL ;
+	GrB_Vector x = NULL ;
+	GrB_Matrix C = NULL ;
+	GrB_Index nrows_a = 0, ncols_a = 0, nvals_a = 0 ;
+	GrB_Index nrows_b = 0, ncols_b = 0, nvals_b = 0 ;
+	GrB_Index nvals_c = 0 ;
+	GrB_Semiring bxor_second = NULL ;
+	GrB_Type type_a = NULL ;
+	GrB_Type type_b = NULL ;
+	GrB_BinaryOp eq = NULL ;
+	int64_t degree_delta = 0 ;
+	uint64_t hash_delta = 0 ;
+	bool result = false;
+
+	ASSERT (A != NULL);
+	ASSERT (B != NULL);
+	ASSERT (level >= DM_TVAL_BASIC);
+	ASSERT (level <= DM_TVAL_FULL);
+
+	GrB_OK (GrB_Matrix_nrows (&nrows_a, A));
+	GrB_OK (GrB_Matrix_ncols (&ncols_a, A));
+	GrB_OK (GrB_Matrix_nrows (&nrows_b, B));
+	GrB_OK (GrB_Matrix_ncols (&ncols_b, B));
+	GrB_OK (GrB_Matrix_nvals (&nvals_a, A));
+	GrB_OK (GrB_Matrix_nvals (&nvals_b, B));
+
+	if (nrows_a != ncols_b || ncols_a != nrows_b) {
+		return false;
+	}
+
+	if (nvals_a != nvals_b) {
+		return false;
+	}
+
+	// Level 0: do dimensions and nvals match?
+	if (level == DM_TVAL_BASIC) {
+		return true;
+	}
+
+	// Level 1: do degrees match?
+	GrB_OK (GrB_Vector_new (&x, GrB_INT64, ncols_a)) ;
+	GrB_OK (GrB_assign (x, NULL, NULL, (int64_t) 0, GrB_ALL, ncols_a, NULL)) ;
+	GrB_OK (GrB_Vector_new (&reduced, GrB_INT64, nrows_a)) ;
+
+	GrB_OK (GrB_mxv (reduced, NULL, NULL, GxB_PLUS_PAIR_INT64, A, x, NULL)) ;
+	GrB_OK (GrB_apply (reduced, NULL, NULL, GrB_AINV_INT64, reduced, NULL)) ;
+	GrB_OK (GrB_mxv (reduced, NULL, GrB_PLUS_INT64, GxB_PLUS_PAIR_INT64,
+		B, x, GrB_DESC_T0)) ;
+	GrB_OK (GrB_reduce (
+		&degree_delta, NULL, GxB_BOR_UINT64_MONOID, reduced, NULL)) ;
+
+	if (degree_delta != 0) {
+		goto cleanup;
+	}
+
+	GrB_OK (GrB_Vector_clear (reduced)) ;
+	GrB_OK (GrB_mxv (
+		reduced, NULL, NULL, GxB_PLUS_PAIR_INT64, A, x, GrB_DESC_T0)) ;
+	GrB_OK (GrB_apply (reduced, NULL, NULL, GrB_AINV_INT64, reduced, NULL)) ;
+	GrB_OK (GrB_mxv (reduced, NULL, GrB_PLUS_INT64, GxB_PLUS_PAIR_INT64,
+		B, x, NULL)) ;
+	GrB_OK (GrB_reduce (
+		&degree_delta, NULL, GxB_BOR_UINT64_MONOID, reduced, NULL)) ;
+
+	if (degree_delta != 0) {
+		goto cleanup;
+	}
+
+	if (level == DM_TVAL_FAST) {
+		result = true;
+		goto cleanup;
+	}
+
+	// Level 2: check for structural equality
+	GrB_OK (GrB_Matrix_new (&C, GrB_BOOL, nrows_a, ncols_a)) ;
+	GrB_OK (GrB_eWiseMult (C, NULL, NULL, GrB_ONEB_BOOL, A, B, GrB_DESC_T1)) ;
+	GrB_OK (GrB_Matrix_nvals (&nvals_c, C)) ;
+	result = nvals_a == nvals_c ;
+
+cleanup:
+	GrB_free (&reduced);
+	GrB_free (&x);
+	GrB_free (&C);
+	GrB_free (&bxor_second);
+
+	return result;
+}
+
 // Check every assumption for the Delta Matrix
 //         ∅ = m  ∩ dp
 //         ∅ = dp ∩ dm
@@ -185,179 +280,149 @@ bool _matrix_leq
 //    m BOOL / UINT64
 //    dp BOOL / UINT64
 //    dm BOOL
-void Delta_Matrix_validate
+bool Delta_Matrix_validate
 (
 	const Delta_Matrix C,
-	bool check_transpose
+	DM_validation_level transpose_validation
 ) {
-#ifdef RG_DEBUG
-	ASSERT (C != NULL);
+	if (C == NULL) {
+		return false;
+	}
 
-	bool        m_dp_disjoint     = false;
-	bool        dp_dm_disjoint    = false;
-	bool        m_zombies_valid   = true;
-	bool        dm_iso            = true;
-	GrB_Info    info              = GrB_SUCCESS;
-	GrB_Matrix  m                 = DELTA_MATRIX_M(C);
-	GrB_Matrix  dp                = DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix  dm                = DELTA_MATRIX_DELTA_MINUS(C);
-	GrB_Matrix  temp              = NULL;
-	GrB_Index   nrows             = 0;
-	GrB_Index   ncols             = 0;
-	GrB_Index   nvals             = 0;
-	GrB_Index   dp_nvals          = 0;
-	GrB_Index   dm_nvals          = 0;
-	GrB_Type    ty                = NULL;
-	GrB_Type    ty_m              = NULL;
-	GrB_Type    ty_dp             = NULL;
+	bool       valid          = true;
+	bool       dm_iso         = true;
+	GrB_Matrix m              = DELTA_MATRIX_M(C);
+	GrB_Matrix dp             = DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix dm             = DELTA_MATRIX_DELTA_MINUS(C);
+	GrB_Matrix temp           = NULL;
+	GrB_Index  nrows          = 0;
+	GrB_Index  ncols          = 0;
+	GrB_Index  nvals          = 0;
+	GrB_Index  dm_nvals       = 0;
+	GrB_Type   ty             = NULL;
+	GrB_Type   ty_m           = NULL;
+	GrB_Type   ty_dp          = NULL;
+	int32_t    sparticy       = 0;
+	int32_t    hyper_hash     = 0;
+	double     hyper_switch   = 0;
 
-	GrB_OK (Delta_Matrix_nrows (&nrows, C)) ;
-	GrB_OK (Delta_Matrix_ncols (&ncols, C)) ;
-	
-	//--------------------------------------------------------------------------
-	// Check type is allowed
-	//--------------------------------------------------------------------------
+	if (m == NULL || dp == NULL || dm == NULL) {
+		return false;
+	}
 
-	// GrB_OK (Delta_Matrix_type(&ty, C));
-	GrB_OK (GxB_Matrix_type (&ty_m,  m))  ;
-	GrB_OK (GxB_Matrix_type (&ty_dp, dp)) ;
-	ty = ty_m ;
+	GrB_OK (Delta_Matrix_nrows (&nrows, C));
+	GrB_OK (Delta_Matrix_ncols (&ncols, C));
 
-	ASSERT (ty == ty_m);
-	ASSERT (ty == ty_dp);
-	ASSERT (ty == GrB_BOOL || ty == GrB_UINT64);
+	// Check type is allowed.
+	GrB_OK (GxB_Matrix_type (&ty_m, m));
+	GrB_OK (GxB_Matrix_type (&ty_dp, dp));
+	ty = ty_m;
 
-	//--------------------------------------------------------------------------
-	// check sparcity control
-	//--------------------------------------------------------------------------
+	if (ty != ty_m || ty != ty_dp) {
+		valid = false;
+		goto cleanup;
+	}
 
-	int32_t sparticy = 0 ;
-	GrB_OK(GrB_Matrix_get_INT32 (m, &sparticy, GxB_SPARSITY_CONTROL)) ;
-	ASSERT (sparticy == (GxB_SPARSE | GxB_HYPERSPARSE)) ;
+	if (!(ty == GrB_BOOL || ty == GrB_UINT64)) {
+		valid = false;
+		goto cleanup;
+	}
 
-	GrB_OK (GrB_Matrix_get_INT32 (dp, &sparticy, GxB_SPARSITY_CONTROL)) ;
-	ASSERT (sparticy == GxB_HYPERSPARSE) ;
+	// Check sparsity control.
+	GrB_OK (GrB_Matrix_get_INT32 (m, &sparticy, GxB_SPARSITY_CONTROL));
+	if (sparticy != (GxB_SPARSE | GxB_HYPERSPARSE)) {
+		valid = false;
+		goto cleanup;
+	}
 
-	GrB_OK (GrB_Matrix_get_INT32 (dm, &sparticy, GxB_SPARSITY_CONTROL)) ;
-	ASSERT (sparticy == GxB_HYPERSPARSE) ;
+	GrB_OK (GrB_Matrix_get_INT32 (dp, &sparticy, GxB_SPARSITY_CONTROL));
+	if (sparticy != GxB_HYPERSPARSE) {
+		valid = false;
+		goto cleanup;
+	}
 
-	int32_t hyper_hash = 0 ;
+	GrB_OK (GrB_Matrix_get_INT32 (dm, &sparticy, GxB_SPARSITY_CONTROL));
+	if (sparticy != GxB_HYPERSPARSE) {
+		valid = false;
+		goto cleanup;
+	}
 
-	GrB_OK (GrB_get (dp, &hyper_hash, GxB_HYPER_HASH)) ;
-	ASSERT (hyper_hash == false) ;
+	GrB_OK (GrB_get (dp, &hyper_hash, GxB_HYPER_HASH));
+	if (hyper_hash != false) {
+		valid = false;
+		goto cleanup;
+	}
 
-	GrB_OK (GrB_get (dm, &hyper_hash, GxB_HYPER_HASH)) ;
-	ASSERT (hyper_hash == false) ;
+	GrB_OK (GrB_get (dm, &hyper_hash, GxB_HYPER_HASH));
+	if (hyper_hash != false) {
+		valid = false;
+		goto cleanup;
+	}
 
-	double hyper_switch = 0 ;
 	// using historical method because modern one requires me to create a scalar
-	GrB_OK (GxB_get (dp, GxB_HYPER_SWITCH, &hyper_switch)) ;
-	ASSERT (hyper_switch == GxB_ALWAYS_HYPER) ;
-	GrB_OK (GxB_get (dm, GxB_HYPER_SWITCH, &hyper_switch)) ;
-	ASSERT (hyper_switch == GxB_ALWAYS_HYPER) ;
+	GrB_OK (GxB_get (dp, GxB_HYPER_SWITCH, &hyper_switch));
+	if (hyper_switch != GxB_ALWAYS_HYPER) {
+		valid = false;
+		goto cleanup;
+	}
 
-	//--------------------------------------------------------------------------
-	// Check dm is iso
-	//--------------------------------------------------------------------------
+	GrB_OK (GxB_get (dm, GxB_HYPER_SWITCH, &hyper_switch));
+	if (hyper_switch != GxB_ALWAYS_HYPER) {
+		valid = false;
+		goto cleanup;
+	}
 
-	#if 1 // less strict iso test:
-	// if this passes, Graphblas may not recognize the matrix as iso
-	// but it only has true values. 
-	info = GrB_Matrix_reduce_BOOL (
-		&dm_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dm, NULL) ;
-	ASSERT (info == GrB_SUCCESS) ;
-	#else
-	GrB_OK (GxB_Matrix_iso (&dm_iso, dm));
-	#endif
-
+	// Check dm is iso (all true values) or empty.
+	GrB_OK (GrB_Matrix_reduce_BOOL (
+		&dm_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dm, NULL));
 	GrB_OK (GrB_Matrix_nvals (&dm_nvals, dm));
-
-	if(!dm_iso && dm_nvals > 0) {
-		//GxB_fprint (dm, GxB_SHORT, stdout) ;
-		GxB_fprint (dm, GxB_COMPLETE_VERBOSE, stdout) ;
+	if (!dm_iso && dm_nvals > 0) {
+		valid = false;
+		goto cleanup;
 	}
 
-	ASSERT (dm_iso || dm_nvals == 0) ;
+	// Check transpose cache.
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE (C)) {
+		GrB_Matrix tm  = DELTA_MATRIX_TM           (C);
+		GrB_Matrix tdp = DELTA_MATRIX_TDELTA_PLUS  (C);
+		GrB_Matrix tdm = DELTA_MATRIX_TDELTA_MINUS (C);
 
-	//--------------------------------------------------------------------------
-	// Check the transpose
-	//--------------------------------------------------------------------------
-
-	if (check_transpose && DELTA_MATRIX_MAINTAIN_TRANSPOSE (C)) {
-		// this may to too strict
-		// the transpose should be structually the transpose
-		// however doesn't need to have all pending changes be equal.
-		GrB_Matrix tm  = DELTA_MATRIX_TM           (C) ;
-		GrB_Matrix tdp = DELTA_MATRIX_TDELTA_PLUS  (C) ;
-		GrB_Matrix tdm = DELTA_MATRIX_TDELTA_MINUS (C) ;
-
-		// m = tm^t
-		if (!_matrix_leq (GrB_ONEB_BOOL, m, tm, true)) {
-			GxB_fprint (m, GxB_COMPLETE_VERBOSE, stdout) ;
-			GxB_fprint (tm, GxB_COMPLETE_VERBOSE, stdout) ;
-			ASSERT (false) ;
+		if (tm == NULL || tdp == NULL || tdm == NULL) {
+			valid = false;
+			goto cleanup;
 		}
 
-		if (!_matrix_leq (GrB_ONEB_BOOL, tm, m, true)) {
-			GxB_fprint (tm, GxB_COMPLETE_VERBOSE, stdout) ;
-			GxB_fprint (m, GxB_COMPLETE_VERBOSE, stdout) ;
-			ASSERT (false) ;
-		}
-
-		// dp = tdp^t
-		if (!_matrix_leq (GrB_ONEB_BOOL, dp, tdp, true)) {
-			GxB_fprint (dp, GxB_COMPLETE_VERBOSE, stdout) ;
-			GxB_fprint (tdp, GxB_COMPLETE_VERBOSE, stdout) ;
-			ASSERT (false) ;
-		}
-
-		if (!_matrix_leq (GrB_ONEB_BOOL, tdp, dp, true)) {
-			GxB_fprint (tdp, GxB_COMPLETE_VERBOSE, stdout) ;
-			GxB_fprint (dp, GxB_COMPLETE_VERBOSE, stdout) ;
-			ASSERT (false) ;
-		}
-
-		// dm = tdm^t
-		if (!_matrix_leq(GrB_ONEB_BOOL, dm, tdm, true)) {
-			GxB_fprint (dm, GxB_SHORT, stdout) ;
-			GxB_fprint (tdm, GxB_SHORT, stdout) ;
-			ASSERT (false) ;
-		}
-
-		if (!_matrix_leq(GrB_ONEB_BOOL, tdm, dm, true)) {
-			GxB_fprint (tdm, GxB_SHORT, stdout) ;
-			GxB_fprint (dm, GxB_SHORT, stdout) ;
-			ASSERT (false) ;
+		if (!_GrB_transpose_eq (m,  tm,  transpose_validation) ||
+			!_GrB_transpose_eq (dp, tdp, transpose_validation) ||
+			!_GrB_transpose_eq (dm, tdm, transpose_validation)) {
+			valid = false;
+			goto cleanup;
 		}
 	}
-	
-	//--------------------------------------------------------------------------
-	// check assumptions
-	//--------------------------------------------------------------------------
-	GrB_OK (GrB_Matrix_new(&temp, GrB_BOOL, nrows, ncols));
-	GrB_OK (GrB_eWiseMult(temp, NULL, NULL, GrB_ONEB_BOOL, m, dp, NULL));
-	GrB_OK (GrB_Matrix_nvals(&nvals, temp));
-	m_dp_disjoint = nvals == 0;
 
-	// if(!m_dp_disjoint)
-	// 	GxB_Matrix_fprint(temp, "m&dp",GxB_SHORT, stdout);
-	
-	GrB_OK (GrB_eWiseMult(temp, NULL, NULL, GrB_ONEB_BOOL, dp, dm, NULL));
-	GrB_OK (GrB_Matrix_nvals(&nvals, temp));
+	// check assumptions.
+	GrB_OK (GrB_Matrix_new (&temp, GrB_BOOL, nrows, ncols));
+	GrB_OK (GrB_eWiseMult (temp, NULL, NULL, GrB_ONEB_BOOL, m, dp, NULL));
+	GrB_OK (GrB_Matrix_nvals (&nvals, temp));
+	if (nvals != 0) {
+		valid = false;
+		goto cleanup;
+	}
 
-	dp_dm_disjoint = nvals == 0;
+	GrB_OK (GrB_eWiseMult (temp, NULL, NULL, GrB_ONEB_BOOL, dp, dm, NULL));
+	GrB_OK (GrB_Matrix_nvals (&nvals, temp));
+	if (nvals != 0) {
+		valid = false;
+		goto cleanup;
+	}
 
-	// if(!dp_dm_disjoint)
-	// 	GxB_Matrix_fprint(temp, "dp&dm",GxB_SHORT, stdout);
+	if (!_matrix_leq (GrB_ONEB_BOOL, dm, m, false)) {
+		valid = false;
+		goto cleanup;
+	}
 
-	// m \superset dm
-	ASSERT(_matrix_leq(GrB_ONEB_BOOL, dm, m, false));
-
-	ASSERT(m_dp_disjoint);
-	ASSERT(dp_dm_disjoint);
-
-	// Free allocation.
-	GrB_free(&temp);
-#endif
+cleanup:
+	GrB_free (&temp);
+	return valid;
 }
 
