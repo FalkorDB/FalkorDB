@@ -7,6 +7,7 @@
 #include "../../../../index/indexer.h"
 #include "../../../../index/cch_index.h"
 #include "../../../../globals.h"
+#include "../../../../util/thpool/pool.h"
 
 // find the graph a multi-key load of 'graph_name' is building, NULL if none
 //
@@ -452,6 +453,15 @@ GraphContext *RdbLoadGraphContext_latest
 
 		uint n_idx = arr_len(idx_pending);
 		if(n_idx > 0) {
+			// parallel, lock-free population is only safe during a blocking RDB
+			// load on the Redis main thread: the event loop is frozen, so no
+			// query and no fork-GC can touch these (not-yet-registered) specs
+			// while workers add to them without the global write lock. other
+			// decode paths run on the cron thread with the event loop live
+			// (e.g. GRAPH.COPY), where GC can fire -- those keep the serial,
+			// locked path
+			bool use_parallel = parallel_indexing && ThreadPool_AmIMainThread();
+
 			// cap worker threads at the configured OpenMP thread count
 			uint64_t omp_nthread;
 			Config_Option_get(Config_OPENMP_NTHREAD, &omp_nthread);
@@ -461,19 +471,20 @@ GraphContext *RdbLoadGraphContext_latest
 			// Graph_ApplyAllPending above already synchronized every matrix, so
 			// switch to a no-op matrix sync policy: the per-batch matrix fetches
 			// inside Index_Populate become pure reads, making concurrent
-			// population across disjoint indices safe
+			// population across disjoint indices safe. the policy is restored
+			// only after the parallel region's implicit barrier, i.e. once all
+			// workers have joined
 			MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
 
-			// populate each index; when parallel indexing is disabled (or there
-			// is a single index) the 'if' clause runs the loop serially.
-			// the parallel path uses the lock-free add: each index is a disjoint
-			// RediSearch spec, the graph is not yet registered, and no query/GC
-			// can run, so the global write lock is unnecessary and would only
-			// serialize the workers
-			#pragma omp parallel for if(parallel_indexing && n_idx > 1) \
+			// populate each index; when parallel indexing is disabled, we're not
+			// on the main thread, or there is a single index, the 'if' clause
+			// runs the loop serially. the parallel path uses the lock-free add:
+			// each index is a disjoint RediSearch spec not reachable by queries
+			// or GC during a main-thread load
+			#pragma omp parallel for if(use_parallel && n_idx > 1) \
 				num_threads(n_threads) schedule(dynamic)
 			for(uint i = 0; i < n_idx; i++) {
-				if(parallel_indexing) {
+				if(use_parallel) {
 					Index_PopulateUnsafe(idx_pending[i], gc);
 				} else {
 					Index_Populate(idx_pending[i], gc);

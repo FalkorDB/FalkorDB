@@ -88,6 +88,11 @@ int ThreadPool_GetThreadID(void) {
 	return 0; // assuming Redis main thread
 }
 
+// returns true if the calling thread is the Redis main thread
+bool ThreadPool_AmIMainThread(void) {
+	return pthread_equal(pthread_self(), MAIN_THREAD_ID) != 0;
+}
+
 // adds a task
 int ThreadPool_AddWork
 (
