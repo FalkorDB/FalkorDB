@@ -341,8 +341,8 @@ chain (`:1240-1246`) or above the reversed CondTraverse (`:1156-1176`), never in
 (their variable is the old scan endpoint, which the hops now bind). At the top of the chain every
 variable the hops bind is bound, so the result is well-scoped, and by `run_append` the filters
 are applied exactly as before (generate-and-test is a conjunction) — *provided* they read only
-variables the chain binds, which `Salvage.lean` shows is false when the pruned scan carried an
-`Unwind`. -/
+variables the chain binds, which `Salvage.lean` shows false for a pruned scan that carried an
+`Unwind` (one concrete tree). -/
 
 /-- The variables bound after running a chain from bound set `B`. -/
 def boundAfter : List Nat → List Step → List Nat
@@ -352,10 +352,12 @@ def boundAfter : List Nat → List Step → List Nat
 
 /-- **PROVEN**: appending filters above a well-scoped chain keeps it well-scoped when the filters
     read only variables the chain (or what is below it) binds.
-    The statement is unchanged. Whether Rust's salvaged filters meet the premise `hf` is decided in
+    The statement is unchanged. Whether Rust's salvaged filters meet the premise `hf` is taken up in
     `Salvage.lean`, which models `filters_of`'s output with the variables each filter reads:
-    `premise_of_spine` says when it holds, `premise_fails` / `salvage_loses_row` refute it for a
-    planner scan with a non-`Argument` child (e.g. `Unwind`), which `prune` discards. -/
+    `premise_of_spine` gives a sufficient condition under which it holds (it is not decided there), and
+    `premise_fails` / `salvage_loses_row` refute it for one concrete tree, `Filter → NodeByLabelScan → Unwind`
+    (the `Unwind` is pruned with the scan, `prune`); the refutation is that single case, not every planner scan
+    with a non-`Argument` child. -/
 theorem salvage_wellScoped : ∀ (B : List Nat) (steps : List Step), wellScoped B steps →
     ∀ (fs : List (List Nat × ((Nat → Nat) → Bool))), (∀ f ∈ fs, ∀ v ∈ f.1, v ∈ boundAfter B steps) →
     wellScoped B (steps ++ fs.map (fun f => Step.filt f.1 f.2))

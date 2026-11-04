@@ -34,8 +34,8 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 
 **4. Is every filter placed after the variables it reads are bound?**
 
-- **If the starting set of bound variables is honest, yes.** `place_wellScoped` and `runScoped_wellScoped` prove filter re-placement is sound **exactly when** the seed set only contains variables that really are bound. `salvage_wellScoped` covers filters re-attached above a re-ordered chain, assuming those filters read only variables the chain binds. `Salvage.lean` models what `filters_of` returns and the variables each filter reads: the assumption holds when the scan subtree's filters read only the scanned node and the `Argument`'s variables (`premise_of_spine`), and **fails on main** when the pruned scan carried an `Unwind` (`premise_fails`, `salvage_loses_row`).
-- **On main, salvaged filters can read an unbound variable.** `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 0 where C returns 1: the pass prunes the scan's `Unwind`/`WITH` child with the scan but keeps the filter that reads `k`. `UNWIND [1,1] AS k MATCH (b:B) WHERE b.v = 1 MATCH (b)-[:H]->(c:C)` returns 1 where C returns 2 (the `Unwind` is gone from the plan).
+- **If the starting set of bound variables is honest, yes.** `place_wellScoped` and `runScoped_wellScoped` prove filter re-placement is sound **exactly when** the seed set only contains variables that really are bound. `salvage_wellScoped` covers filters re-attached above a re-ordered chain, assuming those filters read only variables the chain binds. `Salvage.lean` models what `filters_of` returns and the variables each filter reads: `premise_of_spine` gives a sufficient condition for the assumption (the scan subtree's filters read only the scanned node and the `Argument`'s variables; the converse is not proved), and the assumption **fails on main** for one concrete tree, a pruned `Filter → NodeByLabelScan → Unwind` (`premise_fails`, `salvage_loses_row`, whose filter is the equality `b.v = k` over a property store).
+- **On main, pruning the scan's `Unwind`/`WITH` child loses rows: a salvaged filter can read an unbound variable, or the child's multiplicity is gone (#2972, fixed by open PR #3099).** `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 0 where C returns 1: the pass prunes the scan's `Unwind`/`WITH` child with the scan but keeps the filter that reads `k`. `UNWIND [1,1] AS k MATCH (b:B) WHERE b.v = 1 MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 1 where C returns 2 (its filter reads no variable, but the `Unwind` is gone from the plan).
 - **On main, the seed is not always honest.** `select_scan_node` adds the start node to the seed even when it keeps an outer child and builds no scan for it. So `MATCH (b:A) WITH b LIMIT 1 MATCH (b)<-[]-(d)-[:R]->(c {v:1})-[:R]->(z) RETURN count(*)` returns 0; C returns 1.
 
 **5. Do `reorder_labels` and the primary-label choice keep the scan?**
@@ -81,6 +81,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_scan`, not
 | W2-scan-3 | `IndexCex` C4 | A computed constant ≥ 2⁵² (`n.v = 4503599627370495 + 4503599627370495 + 3`): the Filter is dropped and the op falls back to a label scan, returning every node (C: 0) | **Open** |
 | W2-scan-4 | `IndexCex` C7, C7' | `abs(n.a) IN [1]` is pushed as `n.a IN [1]` and misses `a = -1`; `toString(n.a) IN ['1']` returns `[]` (C: `[1]`) | **Open** |
 | W2-scan-5 | `IndexCex` C8 | `2 IN [n.a, n.b]` becomes array-contains on `n.a`: `[]` (C: `[3]`) | **Open** |
+| W2-scan-6 (#2972) | `Salvage.premise_fails`, `salvage_loses_row`, `rebuilt_drops_unwind` | The pass prunes a planner scan whole but salvages only its `Filter`s and `Argument` leaf, so an `Unwind`/`WITH` child is lost: `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 0 (C 1); `UNWIND [1,1] AS k MATCH (b:B) WHERE b.v = 1 MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 1 (C 2) | **Open**, fix in PR #3099 |
 | W7-scan-1 | `vl_leaf_fires_over_filter`, `vl_leaf_drops_filter` | The var-length leaf rewrite prunes a Filter wrapper: `MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w:2})` returns an extra row | **Open** |
 | — | `IdSeek.lean` examples on `g5` | `id(n) > -1` returns 0 rows, and non-integer bounds error. Reported as bugs 3–4 of [`../optimizer_rewrites`](../optimizer_rewrites) | **Open** |
 
@@ -122,6 +123,7 @@ The project has no Lake dependencies.
 
 ## What the model does not cover
 
+- Bound sets are keyed on the variable id alone, as the Rust keys them (`HashSet<u32>`, `select_scan_node.rs:979-986`, `:1185`); a variable's `scope_id` never reaches the placement test.
 - Floats, NaN, ±0, Point/geo values, maps and parameters are not modelled. Strings are numeric codes, and RediSearch's lexical order is taken to be Cypher's string order (the TAG encoding is not order-preserving; see [`../index_layer`](../index_layer) bug 7).
 - RediSearch's query semantics are definitions, not proven against RediSearch.
 - Stored integers ≥ 2⁵³ (rounded to f64 on write) are treated as exact.

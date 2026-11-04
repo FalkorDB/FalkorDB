@@ -23,7 +23,12 @@ variable (`k`) that nothing in the rebuilt plan binds (`premise_fails`), and `ru
 row generate-and-test keeps (`salvage_loses_row`). Query:
 `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` (Rust 0, C 1; also
 `UNWIND [1,1] AS k MATCH (b:B) WHERE b.v = 1 MATCH (b)-[:H]->(c:C)` Rust 1, C 2 — the `Unwind`
-operator itself is gone from the plan). `premise_of_spine` states exactly when the premise holds.
+operator itself is gone from the plan). `premise_of_spine` gives sufficient conditions under which the premise holds (the converse is not proved).
+
+The bound sets here are keyed on the variable id alone, as the Rust keys them: `initial_bound` and `placed_bound`
+are `HashSet<u32>`, and a filter is placed when its `HashSet<u32>` of ids is a subset (`:979-986`, `:1185`,
+`:1221-1222`; `:424-428` notes that the id-only sets decide nothing scope-sensitive). So `salvagedSteps` keeps
+`v.1` of each `(id, scope_id)` exactly where the Rust drops the scope; `filtersOf` still carries the pairs.
 -/
 namespace OptimizerScan.Salvage
 open OptimizerScan.ScanTree OptimizerScan.ScanOrder
@@ -68,9 +73,9 @@ theorem salvaged_wellScoped (child : PT) (B : List Nat) (steps : List Step)
       exact hp vs hvs w hw')
   simpa [salvagedSteps, Function.comp_def] using this
 
-/-- **PROVEN** (when the premise holds): if the spine's filters read only the scanned node and the
-`Argument`'s variables, and the scanned node is bound by the new chain, the premise holds. These
-are conditions on the planner's scan subtree, not something `select_scan_node` checks. -/
+/-- **PROVEN** (a sufficient condition for the premise): if the spine's filters read only the scanned node and
+the `Argument`'s variables, and the scanned node is bound by the new chain, the premise holds. These are
+conditions on the planner's scan subtree, not something `select_scan_node` checks; the converse is not proved. -/
 theorem premise_of_spine (child : PT) (a : Var) (B : List Nat) (steps : List Step)
     (hb : a.1 ∈ boundAfter B steps)
     (hv : ∀ vs ∈ filtersOf child, ∀ v ∈ vs, v = a ∨ v.1 ∈ argVars (argumentLeafOf child))
@@ -119,17 +124,31 @@ theorem premise_fails : ¬ SalvagePremise exChild (seedBound b.1 exChild) exStep
   revert this
   decide
 
-/-- The one edge `1 -[10]-> 3`; the row binds b = 1, k = 2 (here just `id`). -/
+/-- The one edge `1 -[10]-> 3`. -/
 def exE : Store := fun r a z e => r == 0 && a == 1 && z == 3 && e == 10
 
-/-- The salvaged filter holds on the row (`b.v = k`, both 1). -/
-def exPred : List Var → (Nat → Nat) → Bool := fun _ _ => true
+/-- The property store: `exV n` is node `n`'s `v`. Node 1 (`b`) has `v = 1`; every other node `v = 0`. -/
+def exV : Nat → Nat := fun n => if n == 1 then 1 else 0
 
-/-- **PROVEN** (the wrong result): generate-and-test (Cypher) accepts the row, but the chain the
-pass builds reads `k` before anything binds it, so the filter fails and the row is lost. -/
+/-- The row of the match: `b` is node 1, `c` node 3, the edge 10, and `k` (the `UNWIND`/`WITH` variable) the
+value 1. A variable's value is `σ id`. -/
+def exσ : Nat → Nat := fun x => if x == k.1 then 1 else x
+
+/-- The salvaged filter `b.v = k`: the property `v` of the node `b` is bound to, compared with the value of `k`.
+It reads a variable list `vs` only to be the filter of `filtersOf`; its truth is the equality. -/
+def exPred : List Var → (Nat → Nat) → Bool := fun _ σ => exV (σ b.1) == σ k.1
+
+/-- `exPred` is a real equality, not a constant: it holds on the row where `k = 1 = b.v`, and fails on the
+row where `k = 2`. -/
+theorem exPred_is_eq :
+    exPred [b, k] exσ = true ∧ exPred [b, k] (fun x => if x == k.1 then 2 else x) = false := by decide
+
+/-- **PROVEN** (the wrong result): generate-and-test (Cypher) accepts the row (the hop holds and `b.v = k`,
+both 1), but the chain the pass builds reads `k` before anything binds it, so the filter fails and the row is
+lost. -/
 theorem salvage_loses_row :
-    (exSteps ++ salvagedSteps exChild exPred).all (fullHolds exE id) = true ∧
-    runScoped exE id (seedBound b.1 exChild) (exSteps ++ salvagedSteps exChild exPred) = false ∧
+    (exSteps ++ salvagedSteps exChild exPred).all (fullHolds exE exσ) = true ∧
+    runScoped exE exσ (seedBound b.1 exChild) (exSteps ++ salvagedSteps exChild exPred) = false ∧
     ¬ wellScoped (seedBound b.1 exChild) (exSteps ++ salvagedSteps exChild exPred) := by
   refine ⟨by decide, by decide, ?_⟩
   intro hw

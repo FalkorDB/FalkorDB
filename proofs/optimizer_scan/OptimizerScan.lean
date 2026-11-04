@@ -117,7 +117,7 @@ Scan selection (`ScanOrder.lean`):
    `-1 IN [n.a]` → Rust `[]`, without index `[2]`. Fix: array-contains only when the right
    side *is* `Property(scanned alias)`.
 
-6. **`select_scan_node` salvages a filter whose variable the pruned child bound (`Unwind`/`WITH`)** —
+6. **`select_scan_node` salvages a filter whose variable the pruned child bound (`Unwind`/`WITH`)** (W2-scan-6, #2972, fixed by open PR #3099) —
    `is_planner_scan_subtree` (`:315`) accepts a scan with *any* child; `argument_leaf_of` (`:276`)
    keeps only an `Argument`, so the rest of the subtree (an `Unwind` that the planner stitched
    below the scan) is pruned (`:1131`, `:1294`) while the `Filter` above the scan is salvaged and
@@ -202,10 +202,11 @@ optimizer's own inline paths are gone. Model changes (every citation re-mapped):
   `select_var_len_scan_node` (`vlNonLeaf_keeps_wrappers`, `vlLeaf_guards`).
 - `ScanOrder`: salvaged filters re-attached above the re-ordered chain are well-scoped, given that they
   read only variables the chain binds (`salvage_wellScoped`, `boundAfter_hop`).
-- `Salvage` (new): models `filters_of`'s output with the variables each filter reads, and decides that
-  premise: `salvaged_wellScoped`, `premise_of_spine` (it holds when the spine's filters read only the
-  scanned node and the `Argument`'s variables); REFUTED for a scan with an `Unwind` child
-  (`exChild_shape`, `rebuilt_drops_unwind`, `premise_fails`, `salvage_loses_row`; bug 6 below).
+- `Salvage` (new): models `filters_of`'s output with the variables each filter reads, and takes up that
+  premise: `salvaged_wellScoped`, `premise_of_spine` (a sufficient condition: the premise holds when the
+  spine's filters read only the scanned node and the `Argument`'s variables); REFUTED for one concrete
+  `Filter → NodeByLabelScan → Unwind` tree (`exChild_shape`, `rebuilt_drops_unwind`, `premise_fails`,
+  `salvage_loses_row`, whose filter is the equality `b.v = k` over a property store, `exPred_is_eq`; bug 6 below).
 - `Cleanup`: `governing_filter` (`governingFilter_spec`), `match_scan_with_filter`, and
   `apply_filter_pushdown`'s `over_pending` (`utilizeP_false`, `utilizeP_true`, `overPending_sound`:
   over `IncludePending` the kept Filter makes the index scan exact for any pending set;
