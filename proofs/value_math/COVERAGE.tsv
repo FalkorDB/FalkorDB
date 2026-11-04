@@ -3,7 +3,7 @@ graph/src/runtime/value.rs	fmt_json	82	NOT COVERED	trait method declaration
 graph/src/runtime/value.rs	new	101	NOT COVERED	trivial constructor
 graph/src/runtime/value.rs	new	119	NOT COVERED	trivial constructor
 graph/src/runtime/value.rs	new	142	NOT COVERED	trivial constructor
-graph/src/runtime/value.rs	distance	153	MODELLED	proofs/functions_temporal Spatial.haversine (f64 abstract)
+graph/src/runtime/value.rs	distance	153	MODELLED	proofs/functions_temporal Spatial2.distance (SpatialFns.lean; f64 abstract)
 graph/src/runtime/value.rs	clone	225	NOT COVERED	Clone: identity/Arc bump, no logic
 graph/src/runtime/value.rs	get_numeric	250	PROVEN	getNumeric_after_validation
 graph/src/runtime/value.rs	format_datetime	261	PROVEN	proofs/functions_temporal Components.formatDatetime (total, no chrono since #2986): formatDatetime_spec, format_extremes

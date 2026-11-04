@@ -49,7 +49,7 @@ on 18411. Compare/eq/hash laws are in `proofs/value_order` (reused, not redone).
 | `wrap`, `wAdd/wSub/wMul/wDiv/wRem` (Int64) | `wrapping_*` in `Add/Sub/Mul/Div/Rem for Value` value.rs:915,1048,1097,1130,1158 |
 | `roundF`, `satTrunc`, `cDivExact` (Int64) | `i as f64`; C `SIValue_Divide` (src/value.c, master) |
 | `V`, `add`, `addSlow`, `sub`, `mul`, `div`, `rem`, `omInsert/omExtend` (Value) | value.rs:180, :910, :925, :1042, :1091, :1120, :1148; `OrderMap::insert/extend` ordermap.rs:76,218 |
-| `cAdd`, `cMul` (CArith) | C `SIValue_Add/_Multiply` + `AR_ADD/AR_MUL` type checks |
+| `cAdd`, `cMul`, `siMultiply`, `cNumeric` (CArith) | C `SIValue_Add/_Multiply` + `AR_ADD/AR_MUL` type checks (`cAddType`/`cMulType`); `siMultiply` is written from `value.c`, independent of `mul` |
 | `Ty`, `valueOfType`, `Accepts`, `validate`, `validateArgsType`, `isCompatibleWith`, `canReturnBoolean`, `unionDisplay`, `regGet`, `regIsAggregate` (TypeCheck) | value.rs:1282; mod.rs:531, :787, :828, :590, :569, :610, :1048, :1080 |
 | `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow` (+ `pre2904_applyPow`), `cAbs` (MathFns) | math.rs:46-352; C `AR_ABS` |
 | `parseI64`, `f64Grammar`, `cStrtoll`, `rustToIntegerStr`, `toInteger/toFloat/toStr/toBooleanV`, list forms, `isEmpty` (Conversion) | conversion.rs:44-285; C `AR_TOINTEGER/AR_TOFLOAT` (numeric_funcs.c) |
@@ -65,7 +65,7 @@ Value: null propagation for all five operators, `mul_ok_iff`/`div_ok_iff`/`rem_o
 (exact error conditions), `lookup_omExtend` (map `+` is a right-biased merge),
 `nodup_omExtend` (no duplicate keys), `keys_omInsert`, list append/prepend laws,
 temporal `+ Duration` symmetric. CArith: `mul_agree_on_numeric`, `add_agree_str_scalar`,
-`add_agree_list`, `add_agree_int_int` (Rust = C on the shared domain).
+`add_agree_list` (for a declared-type operand), `add_agree_int_int`, `add_agree_float` (Rust = C on the shared domain).
 TypeCheck: **`valueOfType_none_iff`** (`value_of_type` returns None iff the clean
 acceptance spec holds), **`validateArgsType_go_none`**, `validate_fixed_iff`,
 `numeric_body_cases`, `canReturnBoolean_of_accepts`, `isCompatibleWith_*`,
