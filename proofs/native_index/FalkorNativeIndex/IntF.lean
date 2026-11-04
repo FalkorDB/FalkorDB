@@ -49,9 +49,10 @@ theorem bitlenAux_spec : ∀ (f n : Nat), n < 2 ^ f → 0 < n →
         rw [this, Nat.pow_succ]; omega
       · rw [Nat.add_comm, Nat.pow_succ]; omega
 
-theorem bitlen_spec (n : Nat) (h : n < 2 ^ 70) (hn : 0 < n) :
+/-- Exact for every `n` (core's `bitlen` has fuel `n + 1`); `_h` is kept for the callers. -/
+theorem bitlen_spec (n : Nat) (_h : n < 2 ^ 70) (hn : 0 < n) :
     0 < bitlen n ∧ 2 ^ (bitlen n - 1) ≤ n ∧ n < 2 ^ bitlen n :=
-  bitlenAux_spec 70 n h hn
+  bitlenAux_spec (n + 1) n (Nat.lt_trans (Nat.lt_two_pow_self) (Nat.pow_lt_pow_right (by decide) (by omega))) hn
 
 theorem bitlen_zero : bitlen 0 = 0 := rfl
 

@@ -524,7 +524,7 @@ theorem bitlenAux_le : ∀ (fuel m k : Nat), m < 2 ^ k → bitlenAux fuel m ≤ 
         omega
 
 theorem roundNat_exact (m : Nat) (h : m < 2 ^ 53) : roundNat m = m := by
-  have : bitlen m ≤ 53 := bitlenAux_le 70 m 53 h
+  have : bitlen m ≤ 53 := bitlenAux_le (m + 1) m 53 h
   simp [roundNat, this]
 
 /-- Every Int with `|i| < 2^53` survives `as f64`. -/

@@ -115,7 +115,7 @@ graph/src/graph/graphblas/tensor.rs	EdgeIds::size_hint	1706	PROVEN	VMTensorOps.s
 graph/src/graph/graphblas/tensor.rs	Iter::new	1734	PROVEN	VMTensorOps.newTIt: seek_eq_new, iterBwd_eff_get_isSome
 graph/src/graph/graphblas/tensor.rs	Iter::seek	1766	PROVEN	VMTensorOps.seekTIt: seek_eq_new (+ VMIterSeek.seek_abs for the base)
 graph/src/graph/graphblas/tensor.rs	Iter::next	1783	PROVEN	graphblas_wrappers Misc.iterExpand_eq_flatMap / iterExpand_length; iterBwd_eff_get_isSome
-graph/src/graph/cow.rs	Cow::new	84	PROVEN	VMCow.cowNew: cowNew_spec
+graph/src/graph/cow.rs	Cow::new	84	CONDITIONAL	VMCow.cowNew: cowNew_spec; the model allocates a fresh handle where the Rust wraps the one it is given (clone aliases it): the caller's freshness (hp: every published handle is below H.fresh) is the undischarged hypothesis
 graph/src/graph/cow.rs	Cow::new_version	97	PROVEN	Cow.newVersion: newVersion_iso
 graph/src/graph/cow.rs	Cow::replace	112	PROVEN	replace: wstep_iso
 graph/src/graph/cow.rs	Cow::deref	128	PROVEN	VMCow.deref: deref_view

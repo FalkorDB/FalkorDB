@@ -4,7 +4,7 @@ import VersionedMatrix.Cow
 
 | here | there |
 | --- | --- |
-| `cowNew`   | `Cow::new` (cow.rs:84): a fresh, owned handle |
+| `cowNew`   | `Cow::new` (cow.rs:84): the model *allocates* the handle. The Rust only stores the handle it is given (a clone aliases it), so that it is fresh and unpublished is the caller's obligation, stated here as `hp` (every published handle is below `H.fresh`); `cowNew_spec` is conditional on it, discharged at no caller |
 | `deref`    | `Cow::deref` (cow.rs:128) |
 | `mvccNew`  | `MvccGraph::new` (mvcc_graph.rs:97) / `from_graph` (:111): the published version |
 | `dropG`    | `impl Drop for MvccGraph` (:302): cancels the committed graph's indexing |

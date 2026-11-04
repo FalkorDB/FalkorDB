@@ -4,9 +4,10 @@
 # For every top-level Lake project proofs/<dir>/ (has lakefile.toml|lakefile.lean):
 #   1. `lake build` must succeed;
 #   2. its own .lean sources (excluding .lake/ and nested Lake projects)
-#      must contain no `sorry`, no `admit`, no
-#      `native_decide`, and no `axiom` unless that same line carries a
-#      `-- AXIOM-OK: <justification>` comment.
+#      must contain no `sorry` (nor `sorryAx`, nor `Foo.sorry`), no `admit`, no
+#      `native_decide` (also inside the `{..}` of an `s!".."` string), and no `axiom`
+#      unless that same line carries a `-- AXIOM-OK: <non-empty justification>` comment.
+#   A named directory that is not a Lake project fails (also with --no-build).
 #      Comments and docstrings are stripped before the scan,
 #      so prose like "zero sorry" is fine.
 #   A project may import another through a Lake path dependency
@@ -49,6 +50,11 @@ def strip_comments(src):
             if c == '\\' and i + 1 < n:
                 out.append('  '); i += 2; continue
             if c == '"': in_str = False
+            if c == '{':
+                # `s!"..{e}.."` interpolation: the braces hold code, which is scanned
+                j = src.find('}', i)
+                if j > 0 and '"' not in src[i:j]:
+                    out.append(src[i:j + 1]); i = j + 1; continue
             out.append(c if c in '"\n' else ' '); i += 1; continue
         if src.startswith('/-', i):
             depth += 1; out.append('  '); i += 2; continue
@@ -77,10 +83,11 @@ for dp, dns, fns in os.walk(root):
         orig = src.split('\n')
         for k, line in enumerate(strip_comments(src).split('\n'), 1):
             rel = os.path.relpath(p, os.path.dirname(root))
-            if re.search(r'(?<![\w.])(sorry|admit|native_decide)(?![\w.])', line):
+            # `sorryAx` is what `sorry` elaborates to; `Foo.sorry` and `sorry.x` are flagged too
+            if re.search(r'(?<![\w])(sorry|sorryAx|admit|native_decide)(?![\w])', line):
                 print(f"{rel}:{k}: sorry/admit/native_decide: {orig[k-1].strip()[:120]}"); bad += 1
-            if re.search(r'(?<![\w.])axiom(?![\w.])', line) and '-- AXIOM-OK:' not in orig[k-1]:
-                print(f"{rel}:{k}: axiom without '-- AXIOM-OK:': {orig[k-1].strip()[:120]}"); bad += 1
+            if re.search(r'(?<![\w.])axiom(?![\w.])', line) and not re.search(r'-- AXIOM-OK:\s*\S', orig[k-1]):
+                print(f"{rel}:{k}: axiom without a non-empty '-- AXIOM-OK: <justification>': {orig[k-1].strip()[:120]}"); bad += 1
 sys.exit(1 if bad else 0)
 PY
 }
@@ -89,6 +96,10 @@ FAILED=()
 for d in "${DIRS[@]}"; do
   dir="$PROOFS/$d"
   status=ok; msgs=""
+  if [[ ! -f "$dir/lakefile.toml" && ! -f "$dir/lakefile.lean" ]]; then
+    printf '%-22s %s\n' "$d" "NOT A LAKE PROJECT"
+    FAILED+=("$d"); continue
+  fi
   if [[ $BUILD == 1 ]]; then
     log="$(mktemp)"
     if ! (cd "$dir" && lake build >"$log" 2>&1); then

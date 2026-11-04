@@ -75,9 +75,10 @@ def needDead (live : Nat → Bool) (k : Kind) (ids : List Nat) : Except AErr Uni
   | some i => .error (.alreadyLive k i 0)
   | none => .ok ()
 
-/-- `first_node_with_relationships` (spec): the first of `ids` with a live
-relationship in either direction. -/
-def firstWithRels (g : G) (ids : List Nat) : Option Nat := ids.find? g.hasRel
+/-- `first_node_with_relationships` (spec): the *lowest* id of `ids` with a live
+relationship in either direction (the Rust walks a `RoaringTreemap`, ascending: "find the lowest"), not
+the first in input order. -/
+def firstWithRels (g : G) (ids : List Nat) : Option Nat := (ids.filter g.hasRel).min?
 
 def upd {α} (ids : List Nat) (f : Nat → α) (v : Nat → α) : Nat → α :=
   fun i => if ids.contains i then v i else f i
@@ -172,12 +173,22 @@ theorem needDead_ok {live : Nat → Bool} {k ids} :
 
 theorem firstWithRels_none {g : G} {ids} :
     firstWithRels g ids = none ↔ ∀ i ∈ ids, g.hasRel i = false := by
-  unfold firstWithRels; rw [List.find?_eq_none]; simp
+  unfold firstWithRels
+  rw [List.min?_eq_none_iff, List.filter_eq_nil_iff]; simp
 
 theorem firstWithRels_some {g : G} {ids id} (h : firstWithRels g ids = some id) :
     id ∈ ids ∧ g.hasRel id = true := by
   unfold firstWithRels at h
-  exact ⟨List.mem_of_find?_eq_some h, List.find?_some h⟩
+  have hm := List.min?_mem h
+  rw [List.mem_filter] at hm
+  exact ⟨hm.1, by simpa using hm.2⟩
+
+/-- It is the lowest such id. -/
+theorem firstWithRels_min {g : G} {ids id} (h : firstWithRels g ids = some id) :
+    ∀ j ∈ ids, g.hasRel j = true → id ≤ j := by
+  unfold firstWithRels at h
+  intro j hj hr
+  exact (List.min?_eq_some_iff.1 h).2 j (List.mem_filter.2 ⟨hj, by simpa using hr⟩)
 
 theorem hasRel_false {g : G} {n} (h : g.hasRel n = false) : ∀ e ∈ g.rels, e.src ≠ n ∧ e.dst ≠ n := by
   intro e he

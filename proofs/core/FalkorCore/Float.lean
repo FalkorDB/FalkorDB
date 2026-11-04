@@ -81,8 +81,24 @@ def bitlenAux : Nat → Nat → Nat
   | 0, _ => 0
   | fuel + 1, n => if n = 0 then 0 else 1 + bitlenAux fuel (n / 2)
 
-/-- Number of significant bits (`0` for `0`); fuel 70 covers every `i64`. -/
-def bitlen (n : Nat) : Nat := bitlenAux 70 n
+/-- Number of significant bits (`0` for `0`). The fuel is `n + 1`, always enough (each step halves `n`), so
+    the value is right for every `n`; a fixed fuel (it was 70) saturates at `2^70` and gave wrong
+    `roundNat`/`ieeeBits` results above it. -/
+def bitlen (n : Nat) : Nat := bitlenAux (n + 1) n
+
+/-- With enough fuel the count is exact: `n < 2^bitlen n`. -/
+theorem bitlenAux_lt : ∀ (fuel n : Nat), n < fuel → n < 2 ^ bitlenAux fuel n
+  | 0, n, h => by omega
+  | fuel + 1, n, h => by
+    unfold bitlenAux
+    by_cases hn : n = 0
+    · simp [hn]
+    · simp only [hn, if_false]
+      have ih := bitlenAux_lt fuel (n / 2) (by omega)
+      rw [Nat.pow_add, Nat.pow_one]
+      omega
+
+theorem bitlen_lt (n : Nat) : n < 2 ^ bitlen n := bitlenAux_lt (n + 1) n (by omega)
 
 /-- Round a natural to 53 significant bits, ties to even. -/
 def roundNat (m : Nat) : Nat :=

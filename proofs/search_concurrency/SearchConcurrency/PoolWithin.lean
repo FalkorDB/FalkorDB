@@ -311,8 +311,11 @@ theorem run_none_prefix : ∀ (m k : Nat) (e : List Nat) (sz : Nat),
 returned (the ones `shutdown_within` detaches). The `m + k` sentinels still let the free
 ones run every queued job and exit, and leave exactly `k` sentinels in the queue: one for
 each straggler, which takes it and exits as soon as its job returns (`run k`). So a
-detached worker is never stranded, and no queued job is lost. -/
-theorem detached_workers_exit (q : List Nat) (m k a : Nat) (e : List Nat) (hn : m + k = a + 1) :
+detached worker is never stranded, and no queued job is lost. `run` steps any live worker, stuck ones
+included, so the model needs a free worker (`0 < m`) whenever jobs are queued: with `m = 0` the `k` stuck
+workers would be counted as available (`_hfree`). -/
+theorem detached_workers_exit (q : List Nat) (m k a : Nat) (e : List Nat) (hn : m + k = a + 1)
+    (_hfree : 0 < m ∨ q = []) :
     run (q.length + m) ⟨q.map some ++ List.replicate (m + k) none, m + k, e, m + k⟩ =
       ⟨List.replicate k none, k, e ++ q, m + k⟩ ∧
     run k ⟨List.replicate k none, k, e ++ q, m + k⟩ = ⟨[], 0, e ++ q, m + k⟩ := by

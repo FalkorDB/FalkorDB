@@ -447,8 +447,10 @@ theorem fork_excludes_commit (valid : List W → Bool) (s : S) (t : Tid) (ht : t
     step valid s .fork = none ∧ step valid s .delete = none := by
   simp [step, hg, ht]
 
-/-- A reader-mode fork (`forkW`) holds no `Current` version, so it cannot commit or mutate
-before `checkFork`. -/
+/-- A reader-mode fork (`forkW`) taken from the initial state holds no `Current` version, so `commit` is
+refused. This is one trace, not a reachability result: the model's `forkCur` is not guarded on the thread
+having no unchecked fork (a real session holds one version at a time), so a general "an unchecked fork
+cannot mutate or commit" needs that guard and an invariant first (not done). -/
 theorem reader_cannot_commit : ∀ t, ((step (fun _ => true) init (.forkW 1)).bind (step (fun _ => true) · (.commit t))).isNone := by
   intro t; simp [step, init, dropT, Option.bind]
 

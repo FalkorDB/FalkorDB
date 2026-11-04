@@ -11,10 +11,11 @@ import VersionedMatrix.TensorResize
 
 `count_in_rows` counts per layer and combines `|m| + |dp| − |dm|`; the doc says
 this is exact on a bool matrix because `dm ⊆ m` and `dp ∩ m = ∅`.
-`vmCountInRows_spec` proves it: the result is the number of *effective* entries
-`(m ∖ dm) ∪ dp` in the selected rows, and the `u64` subtraction cannot underflow.
-It needs only `dm ⊆ m` and duplicate-free layers (`dp ∩ m = ∅` is what makes the
-effective list a set, not what makes the count right).
+`vmCountInRows_spec` proves it: the result is the *list count* (`countP`) of the effective keys
+`effKeys` (`(m ∖ dm)` then `dp`) in the selected rows, and the `u64` subtraction cannot underflow.
+It needs `dm ⊆ m` and duplicate-free `m` and `dm`. It does not assume `dp` is duplicate-free or disjoint
+from `m`, so the count equals the number of distinct effective entries only when they are (`dp ∩ m = ∅`,
+a layer invariant of the Rust, not hypothesised here); `effKeys.Nodup` is not proven.
 -/
 namespace VMCount
 open VMMat VMOps

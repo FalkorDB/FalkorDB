@@ -19,10 +19,38 @@ def internF (d : List String) (n : String) : Nat × List String :=
   | some i => (i, d)
   | none => (d.length, d ++ [n])
 
+/-- The attribute dictionary's capacity (`AttrNameMap::insert` refuses a new name past it: 65,535). -/
+def attrCap : Nat := 65535
+
+/-- `add_node_attribute_name` with its capacity: a name already there keeps its id; a new one is refused
+(`none`, `AttributeLimitReached`) once the dictionary is full. `internF` is this without the cap, which is
+what labels and types do and what the abstract `applyRec` assumes for attributes. -/
+def internCapF (cap : Nat) (d : List String) (n : String) : Option (Nat × List String) :=
+  match idxOfF d n with
+  | some i => some (i, d)
+  | none => if d.length < cap then some (d.length, d ++ [n]) else none
+
+/-- Below capacity (or for a known name) the capped intern is the uncapped one: the abstract model's
+`applyRec_addAttribute_refines` holds under this precondition and not otherwise. -/
+theorem internCapF_of_room (cap : Nat) (d : List String) (n : String) (h : d.length < cap ∨ idxOfF d n ≠ none) :
+    internCapF cap d n = some (internF d n) := by
+  unfold internCapF internF
+  cases hi : idxOfF d n with
+  | some i => simp
+  | none =>
+    rcases h with h | h
+    · simp [h]
+    · exact absurd hi h
+
+/-- A full dictionary refuses a new name. -/
+theorem internCapF_full (cap : Nat) (d : List String) (n : String) (hf : ¬ d.length < cap) (hn : idxOfF d n = none) :
+    internCapF cap d n = none := by
+  simp [internCapF, hn, hf]
+
 /-- `verify_id` (`apply.rs:566`), success only. -/
 def verifyIdF (expected assigned : Nat) : Bool := assigned == expected
 
-/-- `apply_add_schema` (`apply.rs:546`): intern, then `verify_id`. -/
+/-- `apply_add_schema` (`apply.rs:532`): intern, then `verify_id`. -/
 def applyAddSchemaF (d : List String) (id : Nat) (n : String) : Option (List String) :=
   let (assigned, d') := internF d n
   if verifyIdF id assigned then some d' else none

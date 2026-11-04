@@ -209,8 +209,17 @@ theorem heapWalk_eq (m : Mem) : ∀ (h : Nat) (n : Node) (acc : Nat), heapWalk m
     simp only [heapWalk, heapSum]
     rw [foldl_heapWalk m h (heapWalk_eq m h) cs]; omega
 
-/-- **`heap_bytes` counts every page of the tree exactly once.** -/
-theorem heapBytes_eq (m : Mem) (h : Nat) (root : Node) : heapBytes m h root = heapSum m h root := by
+/-- A well-formed tree has no branch at ghost height 0 (`WFb`'s last arm), so the `0, .branch` arm of `heapWalk`
+    (which the Rust, walking structurally with no height, does not have) is never taken. The heap theorems
+    below take `TreeWF` for this reason: without it the model drops a branch the Rust counts. -/
+theorem wfb_no_branch_at_zero (c : Cfg) (r : Bool) (seps : List E) (cs : List Node) (lo hi : Nat) :
+    ¬ WFb c r 0 (.branch seps cs) lo hi := by
+  simp [WFb]
+
+/-- **`heap_bytes` counts every page of the tree exactly once** (for a well-formed tree: `heapWalk` has no
+    height in the Rust, see `wfb_no_branch_at_zero`). -/
+theorem heapBytes_eq (c : Cfg) (m : Mem) (h : Nat) (root : Node) (_hwf : TreeWF c h root) :
+    heapBytes m h root = heapSum m h root := by
   simp [heapBytes, heapWalk_eq]
 
 theorem sum_map_add' {α} (f g : α → Nat) : ∀ (l : List α), (l.map (fun x => f x + g x)).sum = (l.map f).sum + (l.map g).sum
@@ -247,8 +256,9 @@ theorem leafBytes_stride (m : Mem) (stride : Nat) (hraw : ∀ es, m.raw es = es.
 
 /-- **Headline (`heap_bytes`, AoS)**: with AoS leaves `heap_bytes = entries * (8 + DOC_BYTES) + the
     branch vectors' bytes` — so narrowing `DOC_BYTES` from 8 to 4 saves exactly 4 bytes per entry. -/
-theorem heapBytes_aos (m : Mem) (D : Nat) (hraw : ∀ es, m.raw es = es.length * (8 + D)) (h : Nat) (root : Node) :
+theorem heapBytes_aos (c : Cfg) (m : Mem) (D : Nat) (hraw : ∀ es, m.raw es = es.length * (8 + D)) (h : Nat) (root : Node)
+    (hwf : TreeWF c h root) :
     heapBytes m h root = (toList h root).length * (8 + D) + branchBytes m h root := by
-  rw [heapBytes_eq, heapSum_split, leafBytes_stride m (8 + D) hraw]
+  rw [heapBytes_eq c m h root hwf, heapSum_split, leafBytes_stride m (8 + D) hraw]
 
 end CowBTree

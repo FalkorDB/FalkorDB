@@ -121,10 +121,11 @@ whatever attributes the node has. -/
 theorem jsNode_markers (id : Nat) (labels : List String) (attrs : List (String × JV)) :
     get (jsNode id labels attrs) "__falkor_type" = some (.str "node") ∧
     get (jsNode id labels attrs) "__falkor_node_id" = some (.num id) ∧
-    get (jsNode id labels attrs) "id" = some (.num id) := by
+    get (jsNode id labels attrs) "id" = some (.num id) ∧
+    get (jsNode id labels attrs) "labels" = some (.arr (labels.map .str)) := by
   unfold jsNode
   simp only
-  refine ⟨?_, ?_, ?_⟩ <;>
+  refine ⟨?_, ?_, ?_, ?_⟩ <;>
   · rw [get_set_ne _ _ _ _ (by decide), get_set_ne _ _ _ _ (by decide), attrLoop_keeps _ (by decide)]
     repeat (first | rw [get_set_same _ _ _ (by decide)] | rw [get_set_ne _ _ _ _ (by decide)])
 
