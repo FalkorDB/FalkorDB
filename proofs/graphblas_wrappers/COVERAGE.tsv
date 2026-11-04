@@ -80,7 +80,7 @@ graph/src/graph/graphblas/vector.rs	set	125	AXIOMATISED	thin wrapper over one Gr
 graph/src/graph/graphblas/vector.rs	wait	136	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	from_sorted_indices	149	PROVEN	GBWBulk.fromSortedIndices: fromSortedIndices_spec (indicator of the indices on both branches; GxB_Vector_build_Scalar as hypothesis) (#3022)
 graph/src/graph/graphblas/vector.rs	ptr	174	PROVEN	GBWGlue.VecH.ptr: ptr_vecFrom
-graph/src/graph/graphblas/vector.rs	iter	180	PROVEN	Misc.vecDrain_eq; Iter carries no borrow (report: UAF)
+graph/src/graph/graphblas/vector.rs	iter	180	PROVEN	Misc.VIter.new_inv, VIter.drain_new (= Iter::new); Iter carries no borrow (report: UAF)
 graph/src/graph/graphblas/vector.rs	encode_blob	191	PROVEN	Index.blob_copy_in_bounds (u64->usize lossless on 64-bit)
 graph/src/graph/graphblas/vector.rs	decode_blob	211	PROVEN	Codes.decodeBlob_never_dies / decodeBlob_safe_on_reachable / decodeBlob_rejects_invalid_object (#2996 fix)
 graph/src/graph/graphblas/vector.rs	encode	235	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
@@ -89,7 +89,7 @@ graph/src/graph/graphblas/vector.rs	encode	280	AXIOMATISED	thin wrapper over one
 graph/src/graph/graphblas/vector.rs	decode	350	PROVEN	Codes.decodeBool_safe / decodeBool_never_dies; Index.blob_copy_in_bounds
 graph/src/graph/graphblas/vector.rs	new	458	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	set	474	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/vector.rs	iter	487	PROVEN	Misc.vecDrain_eq; Iter carries no borrow (report: UAF)
+graph/src/graph/graphblas/vector.rs	iter	487	PROVEN	Misc.VIter.new_inv, VIter.drain_new (= Iter::new); Iter carries no borrow (report: UAF)
 graph/src/graph/graphblas/vector.rs	ptr	492	PROVEN	GBWBulk.VecU.ptr: VecU.ptr_eq (#3022)
 graph/src/graph/graphblas/vector.rs	sum	498	PROVEN	GBWBulk.VecU.sum: VecU.sum_spec (PLUS-monoid reduce on u64 = sum of stored values modulo 2^64, the wrap modelled; GrB_Vector_reduce_UINT64 as hypothesis) (#3022)
 graph/src/graph/graphblas/vector.rs	size	515	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
@@ -102,8 +102,8 @@ graph/src/graph/graphblas/vector.rs	set	561	AXIOMATISED	thin wrapper over one Gr
 graph/src/graph/graphblas/vector.rs	remove	574	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/vector.rs	drop	592	AXIOMATISED	GrB_Vector_free / GxB_Iterator_free, single owner
 graph/src/graph/graphblas/vector.rs	new	603	PROVEN	GBWGlue.vIterNew: vIterNew_depleted; UAF bug_vector_iter_outlives_vector
-graph/src/graph/graphblas/vector.rs	next	632	PROVEN	Misc.vecDrain_eq / vecDrain_count
-graph/src/graph/graphblas/vector.rs	next	647	PROVEN	Misc.vecDrain_eq / vecDrain_count
+graph/src/graph/graphblas/vector.rs	next	632	PROVEN	Misc.VIter.next_inv, VIter.next_depleted, VIter.drain_new (cursor state machine over the C iterator contract; Iter<bool> yields the index)
+graph/src/graph/graphblas/vector.rs	next	647	PROVEN	Misc.VIter.next_inv, VIter.next_depleted, VIter.drain_new (as :632; Iter<u64> yields the (index, value) pair)
 graph/src/graph/graphblas/mod.rs	GrB_init	8016	AXIOMATISED	bindgen extern decl (GraphBLAS C API); spec = GraphBLAS.h, used via GrbInfo/Index/RowIter axioms
 graph/src/graph/graphblas/mod.rs	GrB_finalize	8019	AXIOMATISED	bindgen extern decl (GraphBLAS C API); spec = GraphBLAS.h, used via GrbInfo/Index/RowIter axioms
 graph/src/graph/graphblas/mod.rs	GxB_init	8022	AXIOMATISED	bindgen extern decl (GraphBLAS C API); spec = GraphBLAS.h, used via GrbInfo/Index/RowIter axioms
@@ -1201,7 +1201,7 @@ graph/src/graph/graphblas/lagraphx_bindings.rs	LAGraph_coloring_MIS	603	AXIOMATI
 graph/src/graph/graphblas/lagraphx_bindings.rs	LAGr_MaxFlow	610	AXIOMATISED	bindgen extern decl (LAGraphX C API); called from algo procedures, outside this project
 graph/src/graph/graphblas/tensor.rs	resize	823	PROVEN	Misc.resize_clamp_grownOk / resize_clamp_not_shrink (#3250 clamp: grown precondition always holds)
 graph/src/graph/graphblas/tensor.rs	edge_count	1231	PROVEN	Decode.edgeCount_no_panic / edgeCount_value (checked u64 adds and subs, under Wf incl. the two u64 bounds; also VM count_correct)
-graph/src/graph/graphblas/tensor.rs	iter_edges	1293	PROVEN	Misc.iterExpand_eq_flatMap / iterExpand_all_single
+graph/src/graph/graphblas/tensor.rs	iter_edges	1293	PROVEN	Misc.iterEdges (filter-then-chain, singles then every me id): iterEdges_count/iterEdges_length (same ids as iterExpand), iterEdges_all_single; order differs from the per-pair Iter::next once a MULTI_EDGE pair precedes a single
 graph/src/graph/graphblas/tensor.rs	iter	1310	PROVEN	Misc.iterExpand_eq_flatMap
 graph/src/graph/graphblas/tensor.rs	decode	1553	PROVEN	Decode.checkLayers_ok_iff / checkLayers_merge_in_bounds (#2996 layer sizes); Codes.decodeBlob_never_dies; #3033 promotion completeness: Decode.decodeCheck_ok_iff / decodeCheck_refuses_incomplete / decodeCheck_ok_complete / decodeCheck_ok_edgeCount_no_panic / decodeCheck_accepts_encoded
 graph/src/graph/graphblas/tensor.rs	next	1699	PROVEN	Misc.expand (EdgeIds = inline or me row)

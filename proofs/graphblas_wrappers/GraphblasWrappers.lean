@@ -35,7 +35,7 @@ promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here)
 | `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; `Tensor::decode` :1553; layer-size check :1564-1573 (#2996) |
 | `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1266 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
 | `Decode.tensorLoop`/`decodeCheck`, `PromotionComplete`, `encFwd`/`encTs` | `Tensor::decode` marker count :1617, per-entry check :1632-1636, final count check :1665-1670 (#3033) |
-| `Misc.grownOk`, `iterExpand`, `vecDrain` | `Matrix::grown` matrix.rs:738, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1783, `vector::Iter::next` |
+| `Misc.grownOk`, `iterExpand`, `iterEdges`, `VIter` | `Matrix::grown` matrix.rs:739, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1783, `Tensor::iter_edges` :1293, `vector::Iter::new`/`next` vector.rs:603-655 (cursor state machine; the C iterator contract is the model `cExhausted`) |
 | `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:526, header pointers nulled :550-558 (#3097) |
 | `DeltaLmxm.deltaLmxm`, `cnt`, `mxmCount`, `deltaLmxm_spec`/`_correct`/`_eff` | `Matrix::delta_lmxm` matrix.rs:1631-1768 (#3492: `F*dm` counted, `F*m` counted at the masked positions, `GT` then select, `restored` added back; the dp accumulation unmasked) |
 | `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :498 / `ptr` :492, `Matrix::count_in_rows` matrix.rs:811 (#3022) |
@@ -64,8 +64,9 @@ marker pair and the `me` rows are promotion complete),
 `decodeCheck_ok_edgeCount_no_panic`, **`decodeCheck_accepts_encoded`**, main's
 tests `orphan_row_refused`, `single_pair_ids_refused`,
 `marker_without_ids_refused`;
-`grown_rejects_shrink`, `resize_clamp_grownOk`, `resize_clamp_not_shrink` (#3250), `vecDrain_eq`, `iterExpand_eq_flatMap`,
-`iterExpand_length`, `iterExpand_all_single`; plus GrbInfo helper lemmas.
+`grown_rejects_shrink`, `resize_clamp_grownOk`, `resize_clamp_not_shrink` (#3250), `VIter.new_inv`, `VIter.next_inv`, `VIter.next_depleted`, **`VIter.drain_new`**
+(a fresh vector iterator drains to exactly the stored entries, once each, ascending), `iterExpand_eq_flatMap`,
+`iterExpand_length`, `iterExpand_all_single`, `iterEdges_count`, `iterEdges_length`, `iterEdges_all_single`; plus GrbInfo helper lemmas.
 #3022 (`Bulk.lean`): `fromSortedIndices_spec`, `VecU.sum_spec`, **`countInRows_spec`**
 (`GrB_mxv` over `PLUS_PAIR` with `DESC_T0`, then a `PLUS` reduce, counts exactly the stored
 entries in the selected rows — the double-counting argument over columns), `countInRows_pos`,

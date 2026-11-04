@@ -8,9 +8,9 @@ import GraphblasWrappers.RowIter
 
 namespace GBW
 
-/-! ## `Matrix::grown` (matrix.rs:715) and `resize` (tensor.rs:823)
+/-! ## `Matrix::grown` (matrix.rs:739) and `resize` (tensor.rs:823)
 
-`grown` asserts `nrows ≥ r0 && ncols ≥ c0` (matrix.rs:721) — it cannot shrink,
+`grown` asserts `nrows ≥ r0 && ncols ≥ c0` (matrix.rs:745-748) — it cannot shrink,
 because `GrB_Matrix_resize` on smaller dims drops entries. Since #3250
 `Tensor::resize` (tensor.rs:823) never shrinks: it clamps each target to
 `max(target, current)` (:834-835) and re-emits each layer with `grown`, whose
@@ -18,7 +18,7 @@ precondition therefore always holds (`resize_clamp_grownOk`). Before #3250 it
 branched: shrink took a flush + straight `resize` path, grow re-emitted each
 layer. -/
 
-/-- The `grown` precondition (matrix.rs:721-724). -/
+/-- The `grown` precondition (matrix.rs:745-748). -/
 def grownOk (r0 c0 nrows ncols : Nat) : Bool := decide (nrows ≥ r0 ∧ ncols ≥ c0)
 
 /-- The assert fires (returns `false`) exactly on a shrink of either dimension —
@@ -40,26 +40,121 @@ theorem resize_clamp_grownOk (r0 c0 nrows ncols : Nat) :
 theorem resize_clamp_not_shrink (r0 c0 nrows ncols : Nat) :
     ¬ (max nrows r0 < r0 ∨ max ncols c0 < c0) := by omega
 
-/-! ## `Vector::Iter` (vector.rs): yields every stored index once, ascending
+/-! ## `Vector::Iter` (vector.rs:597-650): the cursor state machine
 
-`GxB_Vector_Iterator_seek(0)` then `next` until `GxB_EXHAUSTED` (vector.rs). The
-stored indices come out ascending; the driver yields each once. Modelled as the
-stored-index list; `depleted` is set at `EXHAUSTED`. -/
+`Iter::new` attaches and calls `GxB_Vector_Iterator_seek(0)` (`depleted` iff that returns
+`GxB_EXHAUSTED`, :619-625); `next` returns `None` once `depleted`, otherwise reads
+`GxB_Vector_Iterator_getIndex` (and the value, for `Iter<u64>`), calls
+`GxB_Vector_Iterator_next` and sets `depleted` from `GxB_EXHAUSTED` (:632-655).
 
-/-- Drive the vector iterator: yield each stored index once (vector.rs
-`Iterator for Iter`). -/
-def vecDrain : List Nat → List Nat
-  | [] => []
-  | i :: rest => i :: vecDrain rest
+**C iterator contract** (GraphBLAS user guide, `GxB_Vector_Iterator_*`; stated here by
+the model `cInfo`/`cIndex`, not proved): the iterator visits the stored entries in
+ascending index order; `seek(0)` positions on the first entry and reports `EXHAUSTED`
+iff there is none; `getIndex` reads the entry under the cursor; `next` advances one
+entry and reports `EXHAUSTED` exactly when it moved past the last. The entry list `es`
+is the vector's stored `(index, value)` pairs in that order. -/
+section VecIter
+variable {α : Type}
 
-theorem vecDrain_eq (idxs : List Nat) : vecDrain idxs = idxs := by
-  induction idxs with
-  | nil => rfl
-  | cons i r ih => simp [vecDrain, ih]
+/-- Rust `Iter` state: the C cursor position and the `depleted` flag. -/
+structure VIter where
+  pos : Nat
+  depleted : Bool
 
-/-- So the vector iterator enumerates the stored indices exactly, once each. -/
-theorem vecDrain_count (idxs : List Nat) (x : Nat) :
-    (vecDrain idxs).count x = idxs.count x := by rw [vecDrain_eq]
+/-- `GxB_*_Iterator_next` / `seek` report `EXHAUSTED` iff no entry is left at `pos`. -/
+def cExhausted (es : List α) (pos : Nat) : Bool := decide (es.length ≤ pos)
+
+/-- `Iter::new`: `seek(0)`, `depleted := (info == GxB_EXHAUSTED)` (vector.rs:619-625). -/
+def VIter.new (es : List α) : VIter := ⟨0, cExhausted es 0⟩
+
+/-- `Iterator::next` (vector.rs:632 for `bool`, :647 for `u64`): `getIndex`/`get` at the
+cursor, then `GxB_Vector_Iterator_next` and `depleted := EXHAUSTED`. -/
+def VIter.next (es : List α) (s : VIter) : Option α × VIter :=
+  if s.depleted then (none, s)
+  else (es[s.pos]?, ⟨s.pos + 1, cExhausted es (s.pos + 1)⟩)
+
+/-- Call `next` until `None`, at most `fuel` times. -/
+def VIter.drain (es : List α) : Nat → VIter → List α
+  | 0, _ => []
+  | f + 1, s =>
+    match s.next es with
+    | (none, _) => []
+    | (some x, s') => x :: VIter.drain es f s'
+
+/-- The state invariant: `depleted` iff the cursor is past the last entry (and it never
+runs further than one past it). -/
+def VIter.Inv (es : List α) (s : VIter) : Prop :=
+  s.depleted = cExhausted es s.pos ∧ s.pos ≤ es.length
+
+theorem VIter.new_inv (es : List α) : (VIter.new es).Inv es := by
+  simp [VIter.new, VIter.Inv, cExhausted]
+
+theorem VIter.new_depleted_iff (es : List α) : (VIter.new es).depleted = true ↔ es = [] := by
+  simp [VIter.new, cExhausted]
+
+theorem VIter.next_inv (es : List α) (s : VIter) (h : s.Inv es) : (s.next es).2.Inv es := by
+  unfold VIter.next
+  split
+  · exact h
+  · rename_i hd
+    have hd' : s.depleted = false := by simpa using hd
+    have h1 := h.1
+    rw [hd'] at h1
+    simp [cExhausted] at h1
+    exact ⟨rfl, by show s.pos + 1 ≤ es.length; omega⟩
+
+/-- Once depleted, `next` is `None` forever (the iterator is fused). -/
+theorem VIter.next_depleted (es : List α) (s : VIter) (h : s.depleted = true) :
+    s.next es = (none, s) := by simp [VIter.next, h]
+
+/-- While not depleted, `next` yields the entry under the cursor. -/
+theorem VIter.next_some (es : List α) (s : VIter) (h : s.Inv es) (hd : s.depleted = false) :
+    ∃ x, es[s.pos]? = some x ∧ (s.next es).1 = some x := by
+  have h1 := h.1
+  simp [cExhausted, hd] at h1
+  have : s.pos < es.length := by omega
+  refine ⟨es[s.pos], by simp [this], ?_⟩
+  simp [VIter.next, hd, this]
+
+/-- Draining from any invariant state yields exactly the entries from the cursor on, once
+each, in order. -/
+theorem VIter.drain_eq (es : List α) :
+    ∀ (f : Nat) (s : VIter), s.Inv es → es.length - s.pos < f → VIter.drain es f s = es.drop s.pos
+  | 0, _, _, h => by omega
+  | f + 1, s, hi, hf => by
+    by_cases hd : s.depleted = true
+    · have h1 := hi.1
+      rw [hd] at h1
+      simp [cExhausted] at h1
+      rw [VIter.drain, VIter.next_depleted es s hd]
+      simp [List.drop_eq_nil_of_le h1]
+    · have hd' : s.depleted = false := by simpa using hd
+      have h1 := hi.1
+      rw [hd'] at h1
+      simp [cExhausted] at h1
+      have hlt : s.pos < es.length := by omega
+      have ih := VIter.drain_eq es f ⟨s.pos + 1, cExhausted es (s.pos + 1)⟩
+        ⟨rfl, by show s.pos + 1 ≤ es.length; omega⟩ (by show es.length - (s.pos + 1) < f; omega)
+      have hn : s.next es = (some es[s.pos], ⟨s.pos + 1, cExhausted es (s.pos + 1)⟩) := by
+        unfold VIter.next
+        rw [if_neg (by simpa using hd'), List.getElem?_eq_getElem hlt]
+      rw [VIter.drain, hn]
+      show es[s.pos] :: VIter.drain es f ⟨s.pos + 1, cExhausted es (s.pos + 1)⟩ = _
+      rw [ih]
+      exact (List.drop_eq_getElem_cons hlt).symm
+
+/-- **`Iter<bool>::next` and `Iter<u64>::next`**: a fresh iterator drains to exactly the
+vector's stored entries, each once, in the C iterator's (ascending) order; for `Iter<bool>`
+the entries are the indices, for `Iter<u64>` the `(index, value)` pairs. -/
+theorem VIter.drain_new (es : List α) : VIter.drain es (es.length + 1) (VIter.new es) = es := by
+  have := VIter.drain_eq es (es.length + 1) (VIter.new es) (VIter.new_inv es)
+    (by simp [VIter.new])
+  simpa [VIter.new] using this
+
+theorem VIter.drain_new_count [DecidableEq α] (es : List α) (x : α) :
+    (VIter.drain es (es.length + 1) (VIter.new es)).count x = es.count x := by
+  rw [VIter.drain_new]
+end VecIter
 
 /-! ## `Tensor::iter` multi-edge expansion (tensor.rs:1763) / `EdgeIds`
 
@@ -109,5 +204,68 @@ theorem iterExpand_all_single (ids : List Nat) :
   induction ids with
   | nil => rfl
   | cons i r ih => simp [iterExpand, expand, ih]
+
+/-! ### `Tensor::iter_edges` (tensor.rs:1293): singles first, then every `me` id
+
+Unlike `Iter::next` above, `iter_edges` does **not** stream pair by pair: it filters the
+`MULTI_EDGE` sentinels out of the forward adjacency (`fwd_iter(..).filter(id != MULTI_EDGE)`,
+:1304-1305) and chains every `me` id after them (`edge_versioned_all().flat_map(..)`,
+:1295-1300; empty when `!has_multi_edge()`, :1301-1303). -/
+
+/-- The inline edge ids of the single-edge pairs, in base order. -/
+def singles : List PairEdges → List Nat
+  | [] => []
+  | .single id :: r => id :: singles r
+  | .multi _ :: r => singles r
+
+/-- Every `me` id of the multi-edge pairs, in base order. -/
+def multis : List PairEdges → List Nat
+  | [] => []
+  | .single _ :: r => multis r
+  | .multi ids :: r => ids ++ multis r
+
+/-- `Tensor::iter_edges`: filter-then-chain. -/
+def iterEdges (ps : List PairEdges) : List Nat := singles ps ++ multis ps
+
+/-- The order differs from `iterExpand` only when a multi-edge pair exists: the same ids
+with the same multiplicities, so the two enumerations agree as multisets. -/
+theorem iterEdges_count (ps : List PairEdges) (x : Nat) :
+    (iterEdges ps).count x = (iterExpand ps).count x := by
+  induction ps with
+  | nil => rfl
+  | cons p r ih =>
+    cases p with
+    | single id =>
+      simp only [iterEdges, singles, multis, iterExpand, expand, List.cons_append] at ih ⊢
+      simp [List.count_cons, ih]
+    | multi ids =>
+      simp only [iterEdges, singles, multis, iterExpand, expand] at ih ⊢
+      simp only [List.count_append] at ih ⊢
+      omega
+
+theorem iterEdges_length (ps : List PairEdges) :
+    (iterEdges ps).length = (iterExpand ps).length := by
+  have : ∀ ps : List PairEdges, (iterEdges ps).length = (iterExpand ps).length := by
+    intro ps
+    induction ps with
+    | nil => rfl
+    | cons p r ih =>
+      cases p <;> simp [iterEdges, singles, multis, iterExpand, expand] at ih ⊢ <;> omega
+  exact this ps
+
+/-- With no promoted pair (`has_multi_edge()` false, `me` empty) the order is the base
+order, the allocation-free common case. -/
+theorem iterEdges_all_single (ids : List Nat) : iterEdges (ids.map .single) = ids := by
+  have h : ∀ ids : List Nat, singles (ids.map .single) = ids ∧ multis (ids.map .single) = [] := by
+    intro ids
+    induction ids with
+    | nil => simp [singles, multis]
+    | cons i r ih => simp [singles, multis, ih.1, ih.2]
+  simp [iterEdges, (h ids).1, (h ids).2]
+
+/-- A promoted pair's ids come after every single edge, so `iter_edges` is *not* the
+base-order stream `iterExpand` once a `MULTI_EDGE` pair precedes a single one. -/
+example : iterEdges [.multi [1, 2], .single 3] = [3, 1, 2] := by decide
+example : iterExpand [.multi [1, 2], .single 3] = [1, 2, 3] := by decide
 
 end GBW

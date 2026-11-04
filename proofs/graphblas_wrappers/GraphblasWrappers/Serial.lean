@@ -59,8 +59,11 @@ theorem Codec.roundtrip2 {α τ : Type} (c : Codec α τ) (a b : α) (rest : Lis
     (c.decode (c.encode a ++ (c.encode b ++ rest))) = .ok (a, c.encode b ++ rest) ∧
     c.decode (c.encode b ++ rest) = .ok (b, rest) := ⟨c.roundtrip _ _, c.roundtrip _ _⟩
 
-/-- The `unimplemented!()` defaults (:40, :76): a call panics (`none`), it never
-silently writes or reads a partial stream. -/
+/-- The `unimplemented!()` defaults (:40, :76). Their whole body is the panic, so the model
+is the constant `none` (= panics): a stub that states exactly what the body does, which is
+all there is to say about it. `defaults_panic` therefore holds by construction and is no
+evidence about an impl that overrides the default; a call to the default never silently
+writes or reads a partial stream. -/
 def encodeWithRangeDefault {τ : Type} (_count _offset : Nat) : Option (List τ) := none
 def decodeWithCountDefault (_count _attrLimit : Nat) : Option Unit := none
 theorem defaults_panic {τ : Type} (c o l : Nat) :

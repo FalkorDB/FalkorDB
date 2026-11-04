@@ -62,10 +62,11 @@ inductive Disposition where
   | propagate
 deriving DecidableEq, Repr
 
-/-- What a disposition does with a code: `some panic` = process death,
-`some ok?` = graceful (`ok? = true` on success), `none` = nothing observable
-(release `debug_assert`). Models the runtime, so `debugAssert` is the *release*
-build (CLAUDE.md: release wraps, debug panics). -/
+/-- What a disposition does with a code: `none` = the wrapper panics (only `assertPanic` on
+a non-success code yields it), `some b` = execution continues, with `b = true` iff the code
+was success. `debugAssert` never yields `none`: it models the *release* build, where the
+`debug_assert_eq!` is swallowed and execution goes on with `some i.ok` (a debug build would
+panic; CLAUDE.md: release wraps, debug panics). `propagate` returns the code as a value. -/
 def Disposition.run (d : Disposition) (i : Info) : Option Bool :=
   match d with
   | .assertPanic => if i.ok then some true else none  -- none here = "would panic"
