@@ -362,38 +362,56 @@ fn rebuild_indexes(
         // label already has a fulltext field ("Can not override ...").
         let mut text_meta_pending = info.language.is_some() || info.stopwords.is_some();
 
-        for attr_name in &info.field_order {
-            let Some(fields) = info.fields.get(attr_name) else {
-                continue;
-            };
-            for field in fields {
-                // The Field.name includes the type prefix (e.g. "range:val").
-                // The attr_name key in the HashMap is the raw attribute name.
+        // Every field of the label, in order. `create_index_sync` builds the label's spec anew
+        // for each call, so consecutive fields that need no options (a range field, a plain
+        // fulltext field) go in one call: a label with N such fields costs one spec, not N.
+        let mut pending: Vec<(Arc<String>, &Arc<graph::index::Field>)> = info
+            .field_order
+            .iter()
+            .filter_map(|attr_name| {
                 let attr = Arc::new(attr_name.to_string());
+                info.fields
+                    .get(attr_name)
+                    .map(|fields| fields.iter().map(move |f| (attr.clone(), f)))
+            })
+            .flatten()
+            .collect();
+        pending.reverse();
 
-                let options = field.vector_options().map_or_else(
-                    || {
-                        let mut topts = field.options().cloned();
-                        if text_meta_pending && field.ty == graph::index::IndexType::Fulltext {
-                            let topts = topts.get_or_insert_with(Default::default);
-                            topts.language = info.language.clone();
-                            topts.stopwords = info.stopwords.clone();
-                            text_meta_pending = false;
-                        }
-                        topts.map(graph::index::indexer::IndexOptions::Text)
-                    },
-                    |vopts| Some(graph::index::indexer::IndexOptions::Vector(vopts.clone())),
-                );
+        while let Some((attr, field)) = pending.pop() {
+            // The Field.name includes the type prefix (e.g. "range:val").
+            // The attr_name key in the HashMap is the raw attribute name.
+            let options = field.vector_options().map_or_else(
+                || {
+                    let mut topts = field.options().cloned();
+                    if text_meta_pending && field.ty == graph::index::IndexType::Fulltext {
+                        let topts = topts.get_or_insert_with(Default::default);
+                        topts.language = info.language.clone();
+                        topts.stopwords = info.stopwords.clone();
+                        text_meta_pending = false;
+                    }
+                    topts.map(graph::index::indexer::IndexOptions::Text)
+                },
+                |vopts| Some(graph::index::indexer::IndexOptions::Vector(vopts.clone())),
+            );
 
-                if let Err(e) = graph.create_index_sync(
-                    &field.ty,
-                    &entity_type,
-                    &info.label,
-                    &vec![attr],
-                    options,
-                ) {
-                    eprintln!("FalkorDB: failed to rebuild index on {:?}: {e}", info.label);
+            let mut attrs = vec![attr];
+            if options.is_none() {
+                while let Some((next, next_field)) = pending.last()
+                    && next_field.ty == field.ty
+                    && next_field.options().is_none()
+                    && next_field.vector_options().is_none()
+                    && !attrs.contains(next)
+                {
+                    attrs.push(next.clone());
+                    pending.pop();
                 }
+            }
+
+            if let Err(e) =
+                graph.create_index_sync(&field.ty, &entity_type, &info.label, &attrs, options)
+            {
+                eprintln!("FalkorDB: failed to rebuild index on {:?}: {e}", info.label);
             }
         }
     }

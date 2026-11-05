@@ -13,7 +13,8 @@ GRAPH_ID = "index_create"
 
 class testIndexCreationFlow():
     def __init__(self):
-        self.env, self.db = Env()
+        # enableDebugCommand: test23 reloads via DEBUG RELOAD, which redis refuses by default.
+        self.env, self.db = Env(enableDebugCommand=True)
         self.graph = self.db.select_graph(GRAPH_ID)
 
     # full-text index creation
@@ -1030,3 +1031,41 @@ class testIndexCreationFlow():
         self.env.assertEqual(
             graph.ro_query("CALL db.idx.fulltext.queryNodes('L', 'beta') "
                            "YIELD node RETURN count(node)").result_set, [[n]])
+
+    def test23_a_label_with_many_fields_survives_a_reload(self):
+        # The RDB decoder rebuilds a label's indexes field by field, batching the
+        # consecutive ones that need no options into one call. Range and fulltext
+        # fields interleaved with a field that carries options (a language) and a
+        # vector field must all come back, answer queries and report the settings.
+        graph = self.db.select_graph("many_fields_reload")
+        n = 200
+        props = ", ".join(f"r{i}: x + {i}" for i in range(12))
+        graph.query(f"UNWIND range(1, $n) AS x CREATE (:L {{{props}, a: 'alpha', b: 'beta', "
+                    f"v: vecf32([x, 1.0])}})", {'n': n})
+        create_node_range_index(graph, 'L', *[f"r{i}" for i in range(6)])
+        create_node_fulltext_index(graph, 'L', 'a', options={'language': 'german'})
+        create_node_range_index(graph, 'L', *[f"r{i}" for i in range(6, 12)])
+        create_node_fulltext_index(graph, 'L', 'b')
+        create_node_vector_index(graph, 'L', 'v', dim=2)
+        wait_for_indices_to_sync(graph)
+
+        def state():
+            rows = graph.ro_query(
+                "CALL db.indexes() YIELD label, properties, types, language, status "
+                "RETURN label, properties, types, language, status").result_set
+            return [[r[0], sorted(r[1]), {k: sorted(v) for k, v in r[2].items()}, r[3], r[4]]
+                    for r in rows]
+
+        before = state()
+        self.env.assertEqual(before[0][4], 'OPERATIONAL')
+        self.env.dumpAndReload()
+        self.env.assertEqual(state(), before)
+
+        for i in (0, 5, 6, 11):
+            q = f"MATCH (n:L) WHERE n.r{i} = {n} + {i} RETURN count(n)"
+            self.env.assertIn("Node By Index Scan", str(graph.explain(q)))
+            self.env.assertEqual(graph.ro_query(q).result_set, [[1]])
+        for term in ('alpha', 'beta'):
+            self.env.assertEqual(
+                graph.ro_query(f"CALL db.idx.fulltext.queryNodes('L', '{term}') "
+                               "YIELD node RETURN count(node)").result_set, [[n]])

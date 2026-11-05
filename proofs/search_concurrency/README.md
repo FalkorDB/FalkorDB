@@ -118,20 +118,20 @@ No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 120 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
+`COVERAGE.tsv` has 121 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 69 |
+| PROVEN | 67 |
 | CONDITIONAL | 1 |
 | AXIOMATISED | 20 |
 | MODELLED | 17 |
-| NOT COVERED | 13 |
+| NOT COVERED | 16 |
 
 - **CONDITIONAL:** `QuerySession::check_fork`: `Mvcc.checkFork` is exact, but the Rust also rebases the fork onto indexer batches (`MvccGraph::rebase_onto_indexer_batches`), which refuses a fork that is still borrowed. That the escalating writer's fork is never borrowed is a runtime lifecycle invariant this project does not prove.
 - **AXIOMATISED:** thin wrappers over the Redis module API (blocking and unblocking clients, thread-safe contexts, the GIL lock and unlock, replication, string helpers), and `Index::add_document`, whose RediSearch behaviour is the `RediSearch` hypothesis structure in `Search.lean` (a whole document is rejected or accepted).
 - **MODELLED:** functions that appear as a step of the transition system without a theorem of their own: `MvccGraph::new`/`from_graph` (`init`), `register_graph`, `execute_query`/`execute_profile`/`profile_sync` (a read on a snapshot), the `QuerySession` constructors, lock release and drop order, `must_run_inline`, and the `Field` constructors, and `CommitOp::next` (its lock path only, #3226).
-- **NOT COVERED:** string and reply-formatting helpers, config arithmetic (`compute_effective_timeout`), `rename_graph` (RENAME is not modelled), `reauthorize_write` (Redis pause and role flags), borrow helpers, and `MvccGraph::drop`. `reply_profile` is proven in `redis_layer`.
+- **NOT COVERED:** string and reply-formatting helpers, config arithmetic (`compute_effective_timeout`), `rename_graph` (RENAME is not modelled), `reauthorize_write` (Redis pause and role flags), borrow helpers, and `MvccGraph::drop`. `reply_profile` is proven in `redis_layer`. Also the #3680 rows (index DDL versioned with the graph): `Indexer::create_index` and `populate_index_batch`, whose `Tickets` model has one shared counter, and `try_spawn`, the pool spawn that a retired RediSearch spec's deferred free uses.
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across projects.
 

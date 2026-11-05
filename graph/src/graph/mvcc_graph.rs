@@ -69,7 +69,7 @@
 
 use std::sync::Arc;
 
-use arc_swap::{ArcSwap, Guard};
+use arc_swap::ArcSwap;
 use atomic_refcell::AtomicRefCell;
 use thiserror::Error;
 
@@ -117,9 +117,6 @@ impl MvccGraph {
     /// Used by the RDB load path.
     #[must_use]
     pub fn from_graph(graph: Graph) -> Self {
-        // The graph's indexes are the committed ones from the start, so a population
-        // reads them even before the first commit.
-        graph.seed_published_indexes();
         Self {
             graph: ArcSwap::from_pointee(AtomicRefCell::new(graph)),
         }
@@ -378,7 +375,6 @@ impl MvccGraph {
         if !Arc::ptr_eq(&previous, &published) {
             return Err(CommitError::Stale);
         }
-        let previous = Guard::into_inner(previous);
 
         // After the swap, so a refused version is never handed to the indexers. Use an immutable
         // borrow here: `set_indexer_graph` only publishes `new_graph` into the indexers' own
@@ -389,10 +385,8 @@ impl MvccGraph {
         // mutably borrowed".
         new_graph.borrow().set_indexer_graph(new_graph.clone());
         // The version is published, so what its index DDL held back may happen now: the
-        // indexes it built start populating (from `new_graph`, which the indexers now
-        // hold), and the ones it replaced are freed, on a background thread that is also
-        // handed this thread's references to the replaced version.
-        new_graph.borrow().publish_indexes([published, previous]);
+        // indexes it built start populating, from `new_graph`, which the indexers now hold.
+        new_graph.borrow().publish_indexes(&previous.borrow());
         Ok(())
     }
 }

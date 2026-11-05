@@ -67,7 +67,7 @@ use std::{
 
 use parking_lot::Mutex;
 
-use crate::runtime::value::Value;
+use crate::{runtime::value::Value, threadpool::try_spawn};
 
 use redisearch::{
     DEFAULT_BLOCK_SIZE, GC_POLICY_FORK, HNSW_DEFAULT_EPSILON, HNSWParams, REDISEARCH_ADD_REPLACE,
@@ -1015,18 +1015,36 @@ impl SpecHandle {
 
 impl Drop for SpecHandle {
     fn drop(&mut self) {
-        // No global lock, for the same reason as `OwnedIndex::drop`: nothing here
-        // stops a timer. Load-bearing too — a reader holding the per-graph read lock
-        // can be the last holder of the spec (a commit that replaced the index
-        // retires it under the reader), and taking the global lock there is the #726
-        // inversion.
+        // The last holder may be a thread that must not pay for freeing a large spec: the
+        // commit that replaced the index, or a query reader. Hand the free to the thread
+        // pool. Anything still using the spec holds its own `Arc<SpecHandle>` or
+        // `OwnedIndex` ref, so by now only the creation ref is left to release.
         //
-        // `DropIndex` invalidates the spec *and* releases the creation ref, so pass
-        // the raw pointer via `into_raw` to avoid a second release from `OwnedIndex`.
-        unsafe {
-            let owned = std::mem::ManuallyDrop::take(&mut self.0);
-            RediSearch_DropIndex(owned.into_raw());
+        // The job owns the raw pointer through `DoomedSpec`, whose `Drop` frees, so a job
+        // the pool never runs (no pool, or one shut down) frees on whichever thread drops
+        // it: the old synchronous behaviour, never a leak and never a spawn during unload.
+        let owned = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
+        let doomed = DoomedSpec(owned.into_raw());
+        if let Err(job) = try_spawn(move || drop(doomed), Some(0)) {
+            drop(job);
         }
+    }
+}
+
+/// A spec whose creation ref is to be released by `RediSearch_DropIndex`.
+struct DoomedSpec(*mut RSIndex);
+
+// SAFETY: the pointer is a `RefManager`, which RediSearch lets any thread drop.
+unsafe impl Send for DoomedSpec {}
+
+impl Drop for DoomedSpec {
+    fn drop(&mut self) {
+        // No global lock, for the same reason as `OwnedIndex::drop`: nothing here stops a
+        // timer, and taking it where a reader holding the per-graph read lock can be the
+        // last holder is the #726 inversion.
+        //
+        // `DropIndex` invalidates the spec *and* releases the creation ref.
+        unsafe { RediSearch_DropIndex(self.0) };
     }
 }
 

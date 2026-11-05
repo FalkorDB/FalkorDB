@@ -129,12 +129,12 @@ No path dependencies.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 193 |
+| PROVEN | 192 |
 | AXIOMATISED | 83 |
 | MODELLED | 2 |
-| NOT COVERED | 17 |
+| NOT COVERED | 18 |
 
-- **NOT COVERED:** 17 rows added or rewritten by #3680 (index DDL versioned with the graph): `Indexer::create_index` / `drop_index`, `Index::fork_for_ddl`, and the new per-version `Indexer` plumbing. The theorems `Meta.Ixr.createIndex_*` / `dropIndex_spec` / `Meta.Idx.cloneForUpdate_eq` describe the pre-#3680 map update, which shared one map and one spec across versions, so they no longer cover these rows. The rows say why; re-modelling them is open.
+- **NOT COVERED:** 18 rows added or rewritten by #3680 (index DDL versioned with the graph): `Indexer::create_index` / `drop_index`, `Index::fork_for_ddl`, and the new per-version `Indexer` plumbing. The theorems `Meta.Ixr.createIndex_*` / `dropIndex_spec` / `Meta.Idx.cloneForUpdate_eq` describe the pre-#3680 map update, which shared one map and one spec across versions, so they no longer cover these rows. The rows say why; re-modelling them is open.
 - **MODELLED:** the two #2781 rows: the edge arm of the rollback is modelled and refuted (`bug2781_rollback_not_restored`); the only positive edge-arm result is the fix shape `resyncEdgesFixed_restores` in this project (`proofs/pending_commit`'s `PD.resync_spec` is keyed by id and cannot express the mismatch; it covers the node arm).
 - **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`. The 83rd row is the commented-out `redis.rs` line for the Redis module ABI types.
 

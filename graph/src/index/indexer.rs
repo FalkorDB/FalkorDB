@@ -36,7 +36,6 @@
 //!                        write-path commit_index calls
 //!           cancelled    stops background population
 //!           graph        latest committed graph, for population
-//!           published    the committed version's map, for population
 //! ```
 //!
 //! # Concurrency
@@ -46,12 +45,13 @@
 //! (`create_index`, `drop_index`) never touch anything another version can
 //! see: a changed label gets a new [`Index`] with its own RediSearch spec,
 //! generation id and pending-ticket counters. What must happen only if the
-//! version is published (starting population, freeing a retired spec) is
-//! found by [`Indexer::changes_since`] and done by the publisher.
+//! version is published (starting population) is
+//! found by [`Indexer::changes_since`] and done by the publisher. A retired spec
+//! is freed by whoever drops the last reference to it (see `SpecHandle`).
 //! Per-document mutations (`commit`, ...) call `&self` methods on the
 //! internally-synchronized RediSearch spec. Background population works on
-//! the *published* map ([`IndexerHandle::committed`]) and uses `write_lock`
-//! to avoid racing with per-transaction commit calls.
+//! the map of the committed graph ([`IndexerHandle::get_graph`]) and uses
+//! `write_lock` to avoid racing with per-transaction commit calls.
 
 use std::{
     collections::HashMap,
@@ -62,7 +62,7 @@ use std::{
     },
 };
 
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwapOption;
 use atomic_refcell::AtomicRefCell;
 use parking_lot::Mutex;
 use roaring::RoaringTreemap;
@@ -163,9 +163,6 @@ struct Shared {
     /// Latest committed graph, shared with background index population.
     /// Updated by `MvccGraph::commit()` so background batches see fresh data.
     graph: ArcSwapOption<AtomicRefCell<Graph>>,
-    /// The committed version's map, which background population reads and
-    /// updates the progress of. Stored with `graph` ([`Indexer::set_graph`]).
-    published: ArcSwap<IndexMap>,
 }
 
 /// The indexes of one graph version. See the module docs.
@@ -190,7 +187,6 @@ impl Default for Indexer {
                 write_lock: Arc::new(Mutex::new(())),
                 cancelled: AtomicBool::new(false),
                 graph: ArcSwapOption::empty(),
-                published: ArcSwap::from_pointee(HashMap::new()),
             }),
         }
     }
@@ -206,20 +202,17 @@ impl Clone for Indexer {
 }
 
 /// A reference to what all versions of one `Indexer` share, which holds no
-/// version's map: background work keeps it, and reads the published map per
-/// batch ([`Self::committed`]) instead of pinning an old one (and with it an
+/// version's map: background work keeps it, and reads the committed graph's map per
+/// batch (from [`Self::get_graph`]) instead of pinning an old one (and with it an
 /// old, possibly retired, RediSearch spec).
 #[derive(Clone)]
 pub struct IndexerHandle(Arc<Shared>);
 
 impl IndexerHandle {
-    /// A view of the published version's indexes, as of now.
+    /// The latest committed graph, `None` until the first commit.
     #[must_use]
-    pub fn committed(&self) -> Indexer {
-        Indexer {
-            index: self.0.published.load_full(),
-            shared: self.0.clone(),
-        }
+    pub fn get_graph(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
+        self.0.graph.load_full()
     }
 
     /// The serialization lock, see [`Indexer::write_lock`].
@@ -236,17 +229,12 @@ pub struct IndexChanges {
     /// Labels whose index the version created or rebuilt and that still owe
     /// their first population: the publisher starts it.
     pub owed: Vec<Arc<String>>,
-    /// Indexes the previous version had and this one replaced or dropped. They
-    /// are freed once the last reader of the previous version lets go; the
-    /// publisher hands them to a background thread so it is not the one to do
-    /// it.
-    pub retired: Vec<Arc<Index>>,
 }
 
 impl IndexChanges {
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.owed.is_empty() && self.retired.is_empty()
+        self.owed.is_empty()
     }
 }
 
@@ -275,7 +263,7 @@ impl Indexer {
     ) -> Result<(), String> {
         // No `write_lock`: this changes only this version's map, with an `Index`
         // and RediSearch spec nothing else can reach, so it cannot race with a
-        // population batch (which works on the published map and its specs).
+        // population batch (which works on the committed graph's map and its specs).
         // `owes_population`: the index is left UNDER CONSTRUCTION and whoever
         // publishes this version starts its population
         // ([`Self::changes_since`]); `false` for a caller that populates it
@@ -454,8 +442,7 @@ impl Indexer {
     /// Changes only this version's map. With fields left, the label gets a new
     /// `Index` with a fresh RediSearch spec holding them, which owes its
     /// population; with none left the label leaves the map. The published
-    /// version's index is untouched either way, and freed by whoever publishes
-    /// this version ([`Self::changes_since`]).
+    /// version's index is untouched either way.
     ///
     /// # Errors
     ///
@@ -521,8 +508,7 @@ impl Indexer {
     }
 
     /// What publishing this version, whose predecessor is `previous`, changed:
-    /// the labels whose index it built and that await population, and the
-    /// indexes it replaced or dropped. Empty (one pointer comparison) when this
+    /// the labels whose index it built and that await population. Empty (one pointer comparison) when this
     /// version's map is the predecessor's, as it is for any version that ran no
     /// index DDL.
     ///
@@ -546,12 +532,6 @@ impl Indexer {
             if index.take_population_owed() {
                 changes.owed.push(label.clone());
             }
-        }
-        for (label, index) in old.iter() {
-            if !index.has_rs_index() || new.get(label).is_some_and(|n| Arc::ptr_eq(n, index)) {
-                continue;
-            }
-            changes.retired.push(index.clone());
         }
         changes
     }
@@ -1037,20 +1017,8 @@ impl Indexer {
         self.shared.cancelled.load(Ordering::Relaxed)
     }
 
-    /// Make this version's map the published one, as [`Self::set_graph`] does, for a graph that
-    /// has no committed graph pointer yet.
-    pub fn seed_published(&self) {
-        // The map of the version being published, for population to work on. A store
-        // is a swap that waits out readers of the old pointer, so skip it for the
-        // common commit that ran no index DDL: its map is the published one already.
-        let map = &self.index;
-        if !Arc::ptr_eq(map, &self.shared.published.load()) {
-            self.shared.published.store(Arc::clone(map));
-        }
-    }
-
     /// Publishes the version this indexer belongs to: it is now the committed
-    /// graph, and its map the committed one. Only touches the `Indexer`'s own lock-free slots, so this takes
+    /// graph. Only touches the `Indexer`'s own lock-free slots, so this takes
     /// `&self` deliberately: it must be callable while the caller holds only
     /// an immutable borrow of the enclosing `Graph` (see
     /// `Graph::set_indexer_graph`), so that background index population
@@ -1062,7 +1030,6 @@ impl Indexer {
         graph: Arc<AtomicRefCell<Graph>>,
     ) {
         self.shared.graph.store(Some(graph));
-        self.seed_published();
     }
 
     #[must_use]
@@ -1140,16 +1107,6 @@ mod tests {
     }
 
     #[test]
-    fn a_replaced_or_dropped_index_is_retired_only_with_a_spec() {
-        // `Index::default()` has no RediSearch spec, so there is nothing to free.
-        let mut committed = Indexer::default();
-        put(&mut committed, "A", Index::default());
-        let mut fork = committed.clone();
-        put(&mut fork, "A", Index::default());
-        assert!(fork.changes_since(&committed).retired.is_empty());
-    }
-
-    #[test]
     fn a_ddl_copy_has_counters_of_its_own() {
         let published = Index::default();
         published.owe_population();
@@ -1167,25 +1124,5 @@ mod tests {
             "what the copy does to its counters never reaches the published index"
         );
         assert!(!copy.has_rs_index(), "it builds a spec of its own");
-    }
-
-    #[test]
-    fn background_work_reads_the_published_map_not_a_forks() {
-        let mut committed = Indexer::default();
-        put(&mut committed, "A", Index::default());
-        committed.seed_published();
-        let handle = committed.handle();
-
-        let mut fork = committed.clone();
-        put(&mut fork, "B", Index::default());
-
-        let view = handle.committed();
-        assert!(view.has_index(&Arc::new("A".to_string())));
-        assert!(
-            !view.has_index(&Arc::new("B".to_string())),
-            "the fork is not published"
-        );
-        fork.seed_published();
-        assert!(handle.committed().has_index(&Arc::new("B".to_string())));
     }
 }
