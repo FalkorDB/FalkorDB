@@ -864,7 +864,9 @@ class testIndexCreationFlow():
 
         result = create_node_range_index(graph, "N", "a")
         self.env.assertEqual(result.indices_created, 1)
-        self.env.assertEqual(result.labels_added, 1)
+        # `Labels added` counts labels assigned to nodes, as C does. Creating an
+        # index registers the label in the schema but assigns it to no node.
+        self.env.assertEqual(result.labels_added, 0)
 
     def test19_index_options_validation(self):
         # index OPTIONS are validated like C: a vector index needs a dimension

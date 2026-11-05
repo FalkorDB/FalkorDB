@@ -28,7 +28,7 @@ class testGraphCreationFlow(FlowTestsBase):
         result = self.graph.query(query)
         expected_result = [['Aa', 'knows'], ['Bb', 'knows']]
 
-        self.env.assertEqual(result.labels_added, 1)
+        self.env.assertEqual(result.labels_added, 2)
         self.env.assertEqual(result.nodes_created, 2)
         self.env.assertEqual(result.properties_set, 4)
         self.env.assertEqual(result.result_set, expected_result)

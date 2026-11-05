@@ -133,7 +133,9 @@ def assert_statistics(resultset, stat, value):
     elif stat == "-relationships":
         assert int(resultset.relationships_deleted) == value
     elif stat == "+labels":
-        assert int(resultset.labels_added) == value
+        # label names introduced (see graphs.query), not `labels_added`, which
+        # counts label assignments to nodes like C's statistic
+        assert int(resultset.tck_labels_introduced) == value
     elif stat == "-labels":
         # assert int(resultset.labels_removed) == value
         pass
