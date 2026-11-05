@@ -165,3 +165,63 @@ void EffectsWriteV2_DropConstraint
 
 	EffectsBuffer_IncEffectCount (buff) ;
 }
+
+// the CCH path index, create and drop
+//
+// Identical encodings behind two opcodes, which is why they share a writer.
+//
+// effect format:
+//    effect type
+//    weight attribute id
+//    weight attribute name
+//    relationship-type count
+//    per relationship type: id, name
+static void _v2_WriteCCH
+(
+	EffectsBuffer *buff,         // effect buffer
+	EffectType eff_t,            // EFFECT_CREATE_CCH or EFFECT_DROP_CCH
+	const RelationID *rel_ids,   // relationship-type ids the index spans
+	const char **rel_names,      // their names, parallel to 'rel_ids'
+	uint rel_count,              // number of relationship types
+	AttributeID weight_attr,     // edge weight attribute
+	const char *weight_name      // its name
+) {
+	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
+
+	EffectsBuffer_WriteBytes (&weight_attr, sizeof (weight_attr), buff) ;
+	EffectsBuffer_WriteString (weight_name, buff) ;
+
+	EffectsBuffer_WriteBytes (&rel_count, sizeof (rel_count), buff) ;
+	for (uint i = 0 ; i < rel_count ; i++) {
+		EffectsBuffer_WriteBytes (&rel_ids [i], sizeof (rel_ids [i]), buff) ;
+		EffectsBuffer_WriteString (rel_names [i], buff) ;
+	}
+
+	EffectsBuffer_IncEffectCount (buff) ;
+}
+
+void EffectsWriteV2_CreateCCH
+(
+	EffectsBuffer *buff,
+	const RelationID *rel_ids,
+	const char **rel_names,
+	uint rel_count,
+	AttributeID weight_attr,
+	const char *weight_name
+) {
+	_v2_WriteCCH (buff, EFFECT_CREATE_CCH, rel_ids, rel_names, rel_count,
+			weight_attr, weight_name) ;
+}
+
+void EffectsWriteV2_DropCCH
+(
+	EffectsBuffer *buff,
+	const RelationID *rel_ids,
+	const char **rel_names,
+	uint rel_count,
+	AttributeID weight_attr,
+	const char *weight_name
+) {
+	_v2_WriteCCH (buff, EFFECT_DROP_CCH, rel_ids, rel_names, rel_count,
+			weight_attr, weight_name) ;
+}

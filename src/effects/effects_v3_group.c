@@ -1357,16 +1357,22 @@ static bool _options_eq
 	       (!a->has_sim_func        || a->sim_func        == b->sim_func);
 }
 
-// the one schema an index statement names
-static EffectsV3SchemaRef *_schema_refs_one
+// the schemas an index statement names
+//
+// A LIST, because one CCH statement indexes several relationship types at once
+// while every other index statement names exactly one
+static EffectsV3SchemaRef *_schema_refs_new
 (
-	int id,            // schema id
-	const char *name   // its name, the cross-check
+	const uint32_t *ids,   // schema ids
+	const char **names,    // their names, the cross-check
+	uint16_t n             // how many
 ) {
-	EffectsV3SchemaRef *refs = rm_calloc(1, sizeof(EffectsV3SchemaRef));
+	EffectsV3SchemaRef *refs = rm_calloc(n, sizeof(EffectsV3SchemaRef));
 
-	refs[0].id   = (uint32_t)id;
-	refs[0].name = rm_strdup(name);
+	for(uint16_t i = 0; i < n; i++) {
+		refs[i].id   = ids[i];
+		refs[i].name = rm_strdup(names[i]);
+	}
 
 	return refs;
 }
@@ -1420,23 +1426,24 @@ static void _append_attr_ref
 // and still compile. Returns false for a record that is not an index record
 static bool _index_record_key
 (
-	const EffectsV3Record *r,  // record
-	SchemaType *schema_type,   // out: node or edge
-	uint32_t *schema_id,       // out: the schema it names
-	uint32_t *field_type       // out: IndexFieldType, a bit set
+	const EffectsV3Record *r,            // record
+	SchemaType *schema_type,             // out: node or edge
+	const EffectsV3SchemaRef **schemas,  // out: the schemas it names
+	uint16_t *n_schemas,                 // out: how many
+	uint32_t *field_type                 // out: IndexFieldType, a bit set
 ) {
 	switch(r->opcode) {
 		case EFFECT_CREATE_INDEX:
-			if(r->create_index.n_schemas == 0) return false;
 			*schema_type = r->create_index.schema_type;
-			*schema_id   = r->create_index.schemas[0].id;
+			*schemas     = r->create_index.schemas;
+			*n_schemas   = r->create_index.n_schemas;
 			*field_type  = r->create_index.field_type;
 			return true;
 
 		case EFFECT_DROP_INDEX:
-			if(r->drop_index.n_schemas == 0) return false;
 			*schema_type = r->drop_index.schema_type;
-			*schema_id   = r->drop_index.schemas[0].id;
+			*schemas     = r->drop_index.schemas;
+			*n_schemas   = r->drop_index.n_schemas;
 			*field_type  = r->drop_index.field_type;
 			return true;
 
@@ -1467,6 +1474,20 @@ static void _record_append_attr_ref
 			ASSERT(false && "not an index record");
 			break;
 	}
+}
+
+// does this record name exactly the one schema 'id'?
+//
+// The key a field folds into. An ordinary index statement names one schema, so
+// this is the single-id comparison it always was; a CCH statement names several
+// and nothing ever folds into it, because its writer builds its record whole.
+static bool _names_one_schema
+(
+	const EffectsV3SchemaRef *schemas,  // the record's schemas
+	uint16_t n,                         // how many
+	int id                              // schema id
+) {
+	return n == 1 && schemas[0].id == (uint32_t)id;
 }
 
 void EffectsV3Grouping_AddIndexField
@@ -1502,15 +1523,24 @@ void EffectsV3Grouping_AddIndexField
 	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
 		EffectsV3Record *a = g->announcements + i;
 
-		SchemaType a_schema_type;
-		uint32_t   a_schema_id;
-		uint32_t   a_field_type;
+		SchemaType                a_schema_type;
+		const EffectsV3SchemaRef *a_schemas;
+		uint16_t                  a_n_schemas;
+		uint32_t                  a_field_type;
 		if(a->opcode != opcode ||
-		   !_index_record_key(a, &a_schema_type, &a_schema_id, &a_field_type)) {
+		   !_index_record_key(a, &a_schema_type, &a_schemas, &a_n_schemas,
+			   &a_field_type)) {
 			continue;
 		}
 
-		if(a_schema_type != schema_type || a_schema_id != (uint32_t)schema_id) {
+		// A CCH RECORD IS NEVER THE SAME INDEX, even when it names exactly
+		// one relationship type and so matches on opcode, schema type and
+		// schema id. A path index is its own object: counting it here would
+		// set 'index_seen' and strip the language and stopwords off the first
+		// ordinary record that follows it in the same payload.
+		if(a_schema_type != schema_type
+				|| (a_field_type & INDEX_FLD_CCH) != 0
+				|| !_names_one_schema(a_schemas, a_n_schemas, schema_id)) {
 			continue;
 		}
 
@@ -1566,7 +1596,8 @@ void EffectsV3Grouping_AddIndexField
 	// FILLED BEFORE IT IS APPENDED, so the list never holds a record whose arm
 	// was not written - the free path reads the arm the opcode names
 	EffectsV3Record r = { .opcode = opcode };
-	EffectsV3SchemaRef *schemas = _schema_refs_one(schema_id, label);
+	const uint32_t id = (uint32_t)schema_id;
+	EffectsV3SchemaRef *schemas = _schema_refs_new(&id, &label, 1);
 
 	switch(opcode) {
 		case EFFECT_CREATE_INDEX:
@@ -1594,6 +1625,60 @@ void EffectsV3Grouping_AddIndexField
 	}
 
 	_record_append_attr_ref(&r, attr_id, attr_name);
+
+	arr_append(g->announcements, r);
+}
+
+void EffectsV3Grouping_AddCCHIndex
+(
+	EffectsV3Grouping *g,
+	EffectType opcode,
+	const uint32_t *rel_ids,
+	const char **rel_names,
+	uint16_t n_rels,
+	AttributeID weight_attr,
+	const char *weight_name
+) {
+	ASSERT(g != NULL);
+	ASSERT(opcode == EFFECT_CREATE_INDEX || opcode == EFFECT_DROP_INDEX);
+	ASSERT(n_rels > 0);
+
+	EffectsV3SchemaRef *schemas = _schema_refs_new(rel_ids, rel_names, n_rels);
+
+	// FILLED BEFORE IT IS APPENDED, so the list never holds a record whose arm
+	// was not written - the free path reads the arm the opcode names
+	EffectsV3Record r = { .opcode = opcode };
+
+	switch(opcode) {
+		case EFFECT_CREATE_INDEX:
+			r.create_index.schema_type = SCHEMA_EDGE;  // a path index spans
+			r.create_index.schemas     = schemas;      // relationship types
+			r.create_index.n_schemas   = n_rels;
+			r.create_index.field_type  = INDEX_FLD_CCH;
+
+			// an options block that states nothing: a path index has none to
+			// state, and what a create writes is five clear presence bytes.
+			// The record was zeroed above, so the block is already that
+			r.create_index.has_options = true;
+			break;
+
+		case EFFECT_DROP_INDEX:
+			// no options arm at all on a drop
+			r.drop_index.schema_type = SCHEMA_EDGE;
+			r.drop_index.schemas     = schemas;
+			r.drop_index.n_schemas   = n_rels;
+			r.drop_index.field_type  = INDEX_FLD_CCH;
+			break;
+
+		default:
+			// nothing owns the list once this returns
+			ASSERT(false && "not an index opcode");
+			_schema_refs_free(schemas, n_rels);
+			return;
+	}
+
+	// the weight attribute is the statement's one field
+	_record_append_attr_ref(&r, weight_attr, weight_name);
 
 	arr_append(g->announcements, r);
 }

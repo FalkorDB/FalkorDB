@@ -113,3 +113,23 @@ void EffectsWriteV3_NewAttribute
 	EffectsBuffer *buff,  // effect buffer
 	const char *attr      // attribute name
 );
+
+void EffectsWriteV3_CreateCCH
+(
+	EffectsBuffer *buff,         // effect buffer
+	const RelationID *rel_ids,   // relationship-type ids the index spans
+	const char **rel_names,      // their names, parallel to 'rel_ids'
+	uint rel_count,              // number of relationship types
+	AttributeID weight_attr,     // edge weight attribute
+	const char *weight_name      // its name
+);
+
+void EffectsWriteV3_DropCCH
+(
+	EffectsBuffer *buff,         // effect buffer
+	const RelationID *rel_ids,   // relationship-type ids the index spans
+	const char **rel_names,      // their names, parallel to 'rel_ids'
+	uint rel_count,              // number of relationship types
+	AttributeID weight_attr,     // edge weight attribute
+	const char *weight_name      // its name
+);
