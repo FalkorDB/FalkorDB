@@ -811,7 +811,7 @@ mod tests {
         g: &mut Graph,
         nodes: &RoaringTreemap,
     ) -> Result<(), NodeOpError> {
-        g.create_nodes(nodes)
+        g.create_nodes(nodes, &mut crate::index::index_docs::IndexDocs::default())
     }
 
     fn delete(

@@ -10,6 +10,7 @@
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
 //! - `ddl.rs`       the runtime side of `CREATE`/`DROP CCH INDEX` (#3213)
+//! - `maint.rs`     keeping the indexes correct after writes (#3214)
 //! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
@@ -18,11 +19,14 @@
 mod customize;
 pub(crate) mod ddl;
 mod input;
+pub(crate) mod maint;
 mod nd;
 mod order;
 mod query;
 #[cfg(test)]
 pub(crate) mod testkit;
+
+pub(crate) use maint::CchDirty;
 
 use std::sync::Arc;
 
@@ -307,8 +311,6 @@ pub enum Recustomized {
 #[derive(Clone)]
 pub struct CchIndex {
     pub def: CchIndexDef,
-    // Read by the tests only until write maintenance reads it.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) cch: Arc<Cch>,
 }
 
@@ -426,19 +428,6 @@ impl VersionedIndex for CchIndex {
     fn memory_usage(&self) -> usize {
         unreachable!("GRAPH.MEMORY USAGE counts no CCH index until the hierarchy holds arrays")
     }
-}
-
-/// What a unit of work's writes touched that the graph's CCH indexes might care about. The
-/// graph's write methods stage it in the unit's
-/// [`IndexDocs::cch`](crate::index::index_docs::IndexDocs::cch), next to the native index's
-/// staged tuples, and the owner of the unit flushes it into rebuilt indexes once the unit's
-/// writes are in (#3214).
-///
-/// Empty for every graph with no CCH index, so the maintenance hook costs one
-/// `is_empty()` check on the existing write path.
-#[derive(Clone, Default)]
-pub struct CchDirty {
-    // filled in by the maintenance change (#3214): touched rel types and weight attributes, created/deleted nodes
 }
 
 #[cfg(test)]
