@@ -571,3 +571,96 @@ class testTraversalConstruction():
             self.env.assertContains("Node By Label Scan | (p:P)", plan)
             self.env.assertEqual(g.query(q).result_set, [[3]])
         g.delete()
+
+    # A traversal planned after an UNWIND (or any clause that only supplies
+    # rows) must scan its start node once per row. Without the scan the
+    # traverse enumerated every edge of its type for each row, which made
+    # `UNWIND $ids AS i MATCH (d:L {id: i})-[r:R]->() DELETE r` quadratic (#2134).
+    def test_traverse_after_unwind_scans_start_node(self):
+        g = self.db.select_graph("TraverseAfterUnwind")
+        create_node_range_index(g, "Doc", "id", sync=True)
+        g.query("UNWIND range(0, 49) AS i CREATE (:Doc {id: i})")
+        g.query("UNWIND range(0, 199) AS i CREATE (:Other {id: i})")
+        g.query("""UNWIND range(0, 49) AS i UNWIND range(0, 3) AS k
+                   MATCH (d:Doc {id: i}), (o:Other {id: (i * 4 + k) % 200})
+                   CREATE (d)-[:LINK {k: k}]->(o)""")
+
+        for q in ["UNWIND [3, 5] AS pid MATCH (d:Doc {id: pid})-[r:LINK]->() RETURN count(r)",
+                  "UNWIND [3, 5] AS pid MATCH (d:Doc)-[r:LINK]->() WHERE d.id = pid RETURN count(r)",
+                  "UNWIND [3, 5] AS pid MATCH (d:Doc {id: pid})-[:LINK]->(o) RETURN count(o)"]:
+            plan = str(g.explain(q))
+            self.env.assertContains("Node By Index Scan | (d:Doc)", plan)
+            self.env.assertEqual(g.query(q).result_set, [[8]], message=q)
+        # A variable an earlier WITH dropped does not block the scan.
+        q = "UNWIND [3, 5] AS pid UNWIND [0] AS unused WITH pid MATCH (d:Doc {id: pid})-[r:LINK]->() RETURN count(r)"
+        self.env.assertContains("Node By Index Scan | (d:Doc)", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[8]], message=q)
+        q = "WITH 3 AS pid MATCH (d:Doc {id: pid})-[r:LINK]->() RETURN count(r)"
+        plan = str(g.explain(q))
+        self.env.assertContains("Node By Index Scan | (d:Doc)", plan)
+        # one scan of d, and none under the traverse for the bound pid
+        self.env.assertEqual(plan.count("Scan"), 1, message=plan)
+        self.env.assertEqual(g.query(q).result_set, [[4]])
+
+        # No predicate: still one scan of the labelled start per row, so the
+        # cross product keeps its multiplicity.
+        q = "UNWIND [1, 2, 3] AS x MATCH (d:Doc)-[r:LINK]->() RETURN count(r)"
+        self.env.assertContains("Node By Label Scan | (d:Doc)", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[600]])
+
+        # Variables a projection carries or drops are not rescanned or mistaken
+        # for bindings of the chain.
+        for q, expected in [
+                ("MATCH (a:Doc) WITH 1 AS x ORDER BY a.id MATCH (b:Doc)-[r:LINK]->() RETURN count(r)", 10000),
+                ("MATCH (a:Doc) WITH a.id AS aid, count(a) AS n MATCH (b:Doc)-[r:LINK]->() RETURN count(r)", 10000)]:
+            # the count alone is the same for the scan plan and the edge-driven one
+            self.env.assertContains("Node By Label Scan | (b:Doc)", str(g.explain(q)), message=q)
+            self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
+
+        # A variable carried through an aggregating WITH * is bound there, so
+        # the traverse starts from it instead of scanning again.
+        q = "MATCH (a:Doc) WITH *, count(*) AS c MATCH (a)-[r:LINK]->() RETURN count(r)"
+        plan = str(g.explain(q))
+        self.env.assertEqual(plan.count("Node By Label Scan"), 1, message=plan)
+        expected = g.query("MATCH (:Doc)-[r:LINK]->() RETURN count(r)").result_set
+        self.env.assertEqual(g.query(q).result_set, expected)
+
+        # The delete from the report.
+        res = g.query("UNWIND range(0, 9) AS pid MATCH (d:Doc {id: pid})-[r:LINK]->() DELETE r")
+        self.env.assertEqual(res.relationships_deleted, 40)
+        self.env.assertEqual(g.query("MATCH ()-[r:LINK]->() RETURN count(r)").result_set, [[160]])
+
+        # A variable the earlier clause binds is not rescanned.
+        q = "MATCH (d:Doc {id: 20}) WITH d MATCH (d)-[r:LINK]->() RETURN count(r)"
+        self.env.assertEqual(str(g.explain(q)).count("Node By"), 1)
+        self.env.assertEqual(g.query(q).result_set, [[4]])
+
+        # An unconstrained chain keeps the edge-driven plan: a scan per row
+        # would cost every node, the bare traverse only the edges of its type.
+        q = "UNWIND [1, 2, 3] AS x MATCH (a)-[r:LINK]->(b) RETURN count(r)"
+        plan = str(g.explain(q))
+        self.env.assertNotContains("Scan", plan)
+        self.env.assertEqual(g.query(q).result_set, [[480]])
+
+        # Variables the outer clause carries into the chain (an endpoint held
+        # by a WITH or a CALL {} argument, or the UNWIND variable feeding a
+        # later hop's predicate) are not rebound by the inserted scan.
+        for q, expected in [
+                ("MATCH (d:Doc {id: 20}) WITH d UNWIND [1, 2] AS x MATCH (d)-[r:LINK]->() RETURN count(r)", 8),
+                ("MATCH (d:Doc {id: 20}) CALL { WITH d UNWIND [1, 2] AS x MATCH (d)-[r:LINK]->() RETURN r } RETURN count(r)", 8),
+                ("UNWIND [20, 21] AS x MATCH (d:Doc)-[:LINK]->(o:Other) WHERE d.id = x AND o.id = x * 4 RETURN count(d)", 2)]:
+            self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
+        g.delete()
+
+    # Variables an earlier clause dropped can share an id with a chain
+    # variable; they must not count as bound when the hops are ordered.
+    def test_traverse_after_unwind_ignores_dropped_variables(self):
+        g = self.db.select_graph("TraverseDroppedVars")
+        g.query("UNWIND range(0, 5) AS i CREATE (:C {id: i})")
+        g.query("UNWIND range(0, 4) AS i MATCH (a:C {id: i}), (b:C {id: i + 1}) CREATE (a)-[:R]->(b)")
+        g.query("MATCH (n:C) WHERE n.id IN [3, 4] SET n:D")
+        chain = "WITH x MATCH (a)-[:R]->(b)-[:R]->(c {id: x})-[:R]->(d:D {id: x + 1}) RETURN count(*)"
+        for dropped in ["", "UNWIND [0] AS u1 ", "UNWIND [0] AS u1 UNWIND [0] AS u2 UNWIND [0] AS u3 UNWIND [0] AS u4 "]:
+            q = f"UNWIND [2, 3] AS x {dropped}{chain}"
+            self.env.assertEqual(g.query(q).result_set, [[2]], message=q)
+        g.delete()
