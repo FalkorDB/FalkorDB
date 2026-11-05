@@ -1918,6 +1918,32 @@ class test_udf_javascript():
         except ResponseError as e:
             self.env.assertContains("Unknown function", str(e))
 
+    def test_get_neighbors_self_loop_once(self):
+        """
+        getNeighbors({returnType: 'edges'}) and graph.traverse report a
+        self-loop once, in every direction.
+        """
+
+        script = """
+        falkor.register('e', function(x, d) {
+            return x.getNeighbors({direction: d, returnType: 'edges'}).map(function(y) { return y.id; });
+        });
+        falkor.register('t', function(x, d) {
+            return graph.traverse([x], {direction: d, returnType: 'edges'})[0].map(function(y) { return y.id; });
+        });
+        """
+        self.db.udf_load("loop", script)
+        self.graph.query("""CREATE (a:A {id:0})-[:R {k:'ab'}]->(b:A {id:1})-[:R {k:'bc'}]->(c:A {id:2}),
+                                   (a)-[:R {k:'aa'}]->(a), (c)-[:S {k:'ca'}]->(a), (a)-[:R {k:'ab2'}]->(b)""")
+        rid = dict(self.graph.query("MATCH ()-[r]->() RETURN r.k, ID(r)").result_set)
+
+        expected = {'outgoing': ['ab', 'aa', 'ab2'], 'incoming': ['aa', 'ca'], 'both': ['ab', 'aa', 'ca', 'ab2']}
+        for d, keys in expected.items():
+            ids = sorted(rid[k] for k in keys)
+            res = self.graph.query(f"MATCH (n {{id: 0}}) RETURN loop.e(n, '{d}'), loop.t(n, '{d}')").result_set
+            self.env.assertEqual(sorted(res[0][0]), ids)
+            self.env.assertEqual(sorted(res[0][1]), ids)
+
     def test_deeply_nested_result_is_an_error(self):
         """
         A UDF result nested past the conversion's depth limit is a query
