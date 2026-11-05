@@ -401,18 +401,18 @@ impl Indexer {
         )?;
         label_indexes.register_all_fields()?;
 
-        // Update the label indexes with global settings
-        // Default to "english" for fulltext indexes when no language is specified,
-        // matching RediSearch's default behavior.
-        if label_indexes.language().is_none() && *index_type == IndexType::Fulltext {
-            match language {
-                Some(lang) => label_indexes.set_language(Some(lang)),
-                None => label_indexes.set_language(Some(Arc::new(String::from("english")))),
-            }
-        } else if language.is_some() && label_indexes.language().is_none() {
-            label_indexes.set_language(language);
+        // Record the settings the spec above was built with. An explicit language or
+        // stopword list reaches here only when the label has no fulltext field left
+        // (the check at the top refuses an override otherwise), and the spec uses it, so
+        // the metadata `db.indexes()` reports and every later rebuild starts from must
+        // follow. Default to "english" for fulltext indexes when no language is
+        // specified, matching RediSearch's default behavior.
+        if let Some(lang) = language {
+            label_indexes.set_language(Some(lang));
+        } else if label_indexes.language().is_none() && *index_type == IndexType::Fulltext {
+            label_indexes.set_language(Some(Arc::new(String::from("english"))));
         }
-        if stopwords.is_some() && label_indexes.stopwords().is_none() {
+        if stopwords.is_some() {
             label_indexes.set_stopwords(stopwords);
         }
 

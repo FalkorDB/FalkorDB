@@ -973,6 +973,8 @@ class testIndexCreationFlow():
         graph.query("CREATE (:L {id: 10}), (:L {id: 0, name: 'abcd'}), (:L {id: 5})")
 
         def zero_found():
+            plan = str(graph.explain("MATCH (n:L) WHERE n.id >= 0 RETURN count(n)"))
+            self.env.assertIn("Node By Index Scan", plan)
             eq = graph.ro_query("MATCH (n:L) WHERE n.id = 0 RETURN count(n)")
             ge = graph.ro_query("MATCH (n:L) WHERE n.id >= 0 RETURN count(n)")
             return eq.result_set[0][0], ge.result_set[0][0]
@@ -985,3 +987,25 @@ class testIndexCreationFlow():
         drop_node_fulltext_index(graph, 'L', 'title')               # rebuild: drop
         wait_for_indices_to_sync(graph)
         self.env.assertEqual(zero_found(), (1, 3))
+
+    def test21_a_rebuilt_label_reports_the_language_its_spec_uses(self):
+        # The last fulltext field goes, the range field stays, and a new fulltext
+        # field names another language. The spec is built with it, so the
+        # metadata must say so, and a later rebuild must keep it.
+        graph = self.db.select_graph("language_after_rebuild")
+        graph.query("CREATE (:L {id: 1, a: 'x', b: 'y', c: 'z'})")
+        create_node_range_index(graph, 'L', 'id', sync=True)
+        create_node_fulltext_index(graph, 'L', 'a', sync=True)
+        drop_node_fulltext_index(graph, 'L', 'a')
+        wait_for_indices_to_sync(graph)
+        graph.query("CREATE FULLTEXT INDEX FOR (n:L) ON (n.b) OPTIONS {language: 'german'}")
+        wait_for_indices_to_sync(graph)
+
+        def language():
+            rows = graph.query(
+                "CALL db.indexes() YIELD label, language RETURN label, language").result_set
+            return [r[1] for r in rows if r[0] == 'L']
+
+        self.env.assertEqual(language(), ['german'])
+        create_node_range_index(graph, 'L', 'c', sync=True)  # rebuild
+        self.env.assertEqual(language(), ['german'])

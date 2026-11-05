@@ -880,10 +880,12 @@ pub struct Index {
     /// CREATE round-trip, so they don't decrement the wrong counter.
     id: u64,
     /// The RediSearch index spec. `None` until `create_rs_index` runs (the
-    /// former `null` sentinel). Shared across `Index` generations produced by
-    /// [`Index::fork_for_ddl`]; the creation reference is dropped (via
-    /// `RediSearch_DropIndex` in [`SpecHandle::drop`]) when the last
-    /// generation holding it goes away.
+    /// former `null` sentinel). Owned by this `Index` alone: a DDL statement
+    /// builds a new `Index` with a new spec ([`Index::fork_for_ddl`]) rather
+    /// than share one. The creation reference is dropped (via
+    /// `RediSearch_DropIndex` in [`SpecHandle::drop`]) when the last holder of
+    /// this `Index` goes away, which for an `Index` that no version published
+    /// is the version that built it.
     spec: Option<Arc<SpecHandle>>,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     /// Attribute keys in insertion order. Tracked alongside `fields` so

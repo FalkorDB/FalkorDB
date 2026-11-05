@@ -125,7 +125,7 @@ use crate::{
 ///
 /// Every path that fills RediSearch goes through it: the per-write commits
 /// (`commit_index_kind`, `commit_edge_index_locked`), the build after `CREATE INDEX`
-/// (`populate_index`) and the build after an RDB load (`Graph::populate_indexes_sync`).
+/// (`populate_owed_index`, started when the version that created the index is published) and the build after an RDB load (`Graph::populate_indexes_sync`).
 ///
 /// Without `index-falkordb` this is the identity function: RediSearch owns every kind.
 ///
@@ -830,24 +830,24 @@ fn populate_index_batch(
 }
 
 /// Free the RediSearch indexes a published version replaced or dropped, off the thread that
-/// published it. The previous version may still be read (its readers hold these `Arc`s, and
-/// the last one to let go frees the spec); this holds one so that the publisher, which is
-/// about to drop its own reference to the previous version, is not the last in the common
-/// case of no reader.
+/// published it.
+///
+/// `versions` are the publisher's own references to the version that was replaced, moved here
+/// so that this thread, not the publisher, lets go of them: the publisher holds no reference
+/// to the replaced indexes once this is spawned, so whichever of this thread and the replaced
+/// version's last reader lets go last frees the spec, never the publisher.
+///
+/// No indexer lock: a population batch works on its own `Arc` of the index (it read the
+/// published map under the lock), so freeing cannot pull a spec from under it, and dropping
+/// an `Index` takes no lock. Reaching for the global lock *under* an indexer lock is the AB-BA
+/// that hung `test_index_create` for six hours (issue #726).
 fn retire_indexes_bg(
-    handle: IndexerHandle,
     retired: Vec<Arc<Index>>,
+    versions: [Arc<AtomicRefCell<Graph>>; 2],
 ) {
     spawn(
         move || {
-            // Indexer lock only, never the global lock: dropping an `Index` takes no lock
-            // either. Reaching for the global lock *under* the indexer lock is the AB-BA
-            // that hung `test_index_create` for six hours (issue #726).
-            //
-            // The lock serializes against `populate_index_batch`, which holds it for
-            // a whole batch, so the populate worker can't be mid-batch here.
-            let lock = handle.write_lock();
-            let _guard = lock.lock();
+            drop(versions);
             drop(retired);
         },
         Some(0),
@@ -4893,24 +4893,32 @@ impl Graph {
     /// held back until now:
     /// - an index the DDL built or rebuilt starts populating, from the committed graph, which is
     ///   this version or a later one;
-    /// - an index the DDL replaced or dropped is handed to a background thread to free.
+    /// - an index the DDL replaced or dropped is handed to a background thread to free, together
+    ///   with the caller's references to the replaced version (`replaced`, both the same
+    ///   version: the one the caller loaded and the one the swap returned), so that the thread
+    ///   publishing does not end up the last holder and free a large spec itself.
     ///
     /// For a version that ran no index DDL this is two pointer comparisons.
     pub fn publish_indexes(
         &self,
-        previous: &Self,
+        replaced: [Arc<AtomicRefCell<Self>>; 2],
     ) {
-        for (kind, new, old) in [
-            (IndexKind::Node, &self.node_indexer, &previous.node_indexer),
-            (IndexKind::Edge, &self.edge_indexer, &previous.edge_indexer),
-        ] {
-            let changes = new.changes_since(old);
-            for label in changes.owed {
-                populate_owed_index(kind, label, new);
+        let mut retired = Vec::new();
+        {
+            let previous = replaced[0].borrow();
+            for (kind, new, old) in [
+                (IndexKind::Node, &self.node_indexer, &previous.node_indexer),
+                (IndexKind::Edge, &self.edge_indexer, &previous.edge_indexer),
+            ] {
+                let changes = new.changes_since(old);
+                for label in changes.owed {
+                    populate_owed_index(kind, label, new);
+                }
+                retired.extend(changes.retired);
             }
-            if !changes.retired.is_empty() {
-                retire_indexes_bg(new.handle(), changes.retired);
-            }
+        }
+        if !retired.is_empty() {
+            retire_indexes_bg(retired, replaced);
         }
     }
 
