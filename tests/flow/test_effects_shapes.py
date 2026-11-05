@@ -201,17 +201,15 @@ class testEffects_01_Shapes(_EffectsBase):
         self.assert_agree("MATCH (n:Recycled2) RETURN count(n), sum(n.i)",
                           [[100, 5050]])
 
-    def test07_create_delete_and_recreate_one_id_in_one_buffer(self):
+    def test07_create_delete_and_create_again_in_one_buffer(self):
         # The case test06 does *not* reach. A query that commits three times
-        # puts all three commits in ONE effects buffer, and the allocator
-        # recycles a freed id across commits — so the buffer creates an id,
-        # deletes it, and creates it again. The replica has to accept the third
-        # record: the delete released the id.
+        # puts all three commits in ONE effects buffer: it creates an id,
+        # deletes it, and creates again. The allocator used to recycle the freed
+        # id across those commits; it no longer reuses an id within the query
+        # that freed it (#2876), so the third create gets a fresh id. The
+        # replica must still end up with exactly the master's graph.
         #
-        # It needs a graph whose recycle bin is empty, because `reserve_node`
-        # hands out the *smallest* freed id. On a graph with older free ids the
-        # third commit gets one of those instead and the collision never
-        # happens — which is exactly why the shared-graph tests miss this.
+        # It needs a graph whose recycle bin is empty, so the ids are known.
         fresh = "effects_recycle_one_buffer"
         m = Graph(self.master, fresh)
         r = Graph(self.replica, fresh)
@@ -222,10 +220,11 @@ class testEffects_01_Shapes(_EffectsBase):
         self.env.assertEqual(res.nodes_deleted, 1)
         self.wait_for_replica_offset()
 
-        # The primary kept exactly one node, on the recycled id 0.
+        # The primary kept exactly one node, on a fresh id: 0 was freed by
+        # this query.
         self.env.assertEqual(
             m.ro_query("MATCH (n) RETURN count(n), labels(n)[0], ID(n)").result_set,
-            [[1, "Reborn", 0]])
+            [[1, "Reborn", 1]])
         # And the replica must hold the same. Refusing the recreate discards the
         # whole payload, so the failure here is an empty graph, not a wrong one.
         self.env.assertEqual(
