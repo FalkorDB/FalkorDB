@@ -21,10 +21,16 @@
 #            the proofs find a probable bug, it also posts a review comment on
 #            the function's code with the counterexample and a Cypher repro.
 #
-# The bot only suggests: nothing is pushed anywhere. The PR's author applies the
-# patch (or writes their own) in the PR itself, where the Lean proofs workflow
+# This workflow only suggests: nothing is pushed from here. When the gate says
+# `pass`, someone with write access comments `/proofs apply` (or adds the label
+# `proofs:apply`) and proof-apply.yml commits that very patch to the PR branch,
+# when the PR head is still the one this run checked; or the author applies the
+# patch (or writes their own) in the PR itself. Either way the Lean proofs workflow
 # and review check it like any other proof change. The gate's checks make the
 # suggestion trustworthy enough to read, not a sandbox.
+#
+# The bot's own commit (author falkordb-proof-bot, trailer `Proof-Bot-Run:`) is not
+# re-proved: its proofs are what the gate just verified.
 #
 # Advisory: not part of ci-gate.
 #
@@ -66,6 +72,8 @@ env:
   ELAN_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
   # Only comments this workflow wrote are reused.
   BOT_LOGIN: github-actions[bot]
+  # Author email of the commits proof-apply.yml pushes (keep in sync with proofs/proof_apply.py).
+  BOT_COMMIT_EMAIL: falkordb-proof-bot@users.noreply.github.com
   # The only paths a re-prove patch may touch: Lean sources (no dot directories,
   # so never .lake/), each project's COVERAGE.tsv and README.md, and FINDINGS.md.
   # Not any Lake configuration (lakefile.toml / lakefile.lean, lake-manifest.json,
@@ -88,6 +96,7 @@ jobs:
     outputs:
       changed: ${{ steps.impact.outputs.changed }}
       proofs_sha: ${{ steps.impact.outputs.proofs_sha }}
+      applied: ${{ steps.applied.outputs.applied }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -101,6 +110,21 @@ jobs:
           path: proofs-base
           sparse-checkout: proofs
           persist-credentials: false
+      - name: Recognise the bot's own commit
+        id: applied
+        env:
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # proof-apply.yml's commit: the proofs in it are what the gate just verified,
+          # so there is nothing to re-prove (and no loop when its push starts this run).
+          # A commit can claim this identity, but the re-prove is advisory anyway.
+          email=$(git -C code log -1 --format=%ae "$HEAD")
+          if [[ "$email" == "$BOT_COMMIT_EMAIL" ]] && git -C code log -1 --format=%B "$HEAD" | grep -q '^Proof-Bot-Run: '; then
+            echo "applied=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "applied=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Map the diff to verified functions
         id: impact
         env:
@@ -134,6 +158,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           HEAD: ${{ github.event.pull_request.head.sha }}
           CHANGED: ${{ steps.impact.outputs.changed }}
+          APPLIED: ${{ steps.applied.outputs.applied }}
         run: |
           # upsert <marker> <file>: edit this workflow's comment with that marker, or post one.
           upsert() {
@@ -147,8 +172,14 @@ jobs:
             fi
           }
           upsert "<!-- proof-impact -->" impact.md
+          if [[ "$APPLIED" == "true" ]]; then
+            # The bot's own commit: say so on the earlier re-prove comment, which was
+            # about the head before it.
+            printf '<!-- proof-reprove -->\n### Lean re-prove\n\nThe proof-impact bot committed its verified proof update as %s; nothing further to re-prove.\n' \
+              "${HEAD:0:9}" > reprove.md
+            upsert "<!-- proof-reprove -->" reprove.md existing-only
           # No verified function left: retire an earlier re-prove verdict, if any.
-          if [[ "$CHANGED" == "0" ]]; then
+          elif [[ "$CHANGED" == "0" ]]; then
             printf '<!-- proof-reprove -->\n### Lean re-prove\n\nNothing to re-prove at %s: no verified function is changed.\n' \
               "${HEAD:0:9}" > reprove.md
             upsert "<!-- proof-reprove -->" reprove.md existing-only
@@ -158,6 +189,7 @@ jobs:
     needs: impact
     if: >-
       needs.impact.outputs.changed != '0' &&
+      needs.impact.outputs.applied != 'true' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 150
@@ -336,12 +368,17 @@ jobs:
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Validate the patch and run the gates
         id: gates
+        env:
+          PROOFS_SHA: ${{ needs.impact.outputs.proofs_sha }}
         run: |
           set -uo pipefail
           mkdir -p out
           cp in/proofs.patch out/proofs.patch
           cp in/reprove.md out/reprove.md
-          verdict() { echo "gates=$1" >> "$GITHUB_OUTPUT"; }
+          # The status and the head it is for go into the artifact too: proof-apply.yml
+          # commits the patch only for a `pass` on the PR's current head.
+          verdict() { echo "gates=$1" >> "$GITHUB_OUTPUT"; echo "$1" > "$GITHUB_WORKSPACE/out/gate_status"; }
+          echo "$PROOFS_SHA" > "$GITHUB_WORKSPACE/out/head_sha"
           cd proofs-src
           if [[ -s ../out/proofs.patch ]] && ! git apply --index ../out/proofs.patch 2> ../out/apply.log; then
             { echo "Patch does not apply to the proofs base:"; echo '```'; cat ../out/apply.log; echo '```'; } > ../out/gates.md
@@ -700,7 +737,7 @@ jobs:
           if [[ "$DOWNLOAD" != success || ! -f out/gates.md ]]; then
             note="No result: the gate did not finish (gate job: $GATE_RESULT). See the [run]($RUN_URL)."
           elif [[ "$GATES" == pass && -s out/proofs.patch ]]; then
-            note="Suggested proof update: download \`proofs.patch\` from the [run's \`proof-gate\` artifact]($RUN_URL) and apply it in this PR (\`git apply proofs.patch\`), or update the proofs yourself."
+            note="Suggested proof update: comment \`/proofs apply\` to commit this patch (people with write access; it is committed only while the PR head is still \`${HEAD:0:9}\`), or download \`proofs.patch\` from the [run's \`proof-gate\` artifact]($RUN_URL) and apply it yourself (\`git apply proofs.patch\`)."
           elif [[ "$GATES" == pass ]]; then
             note="No proof change was needed."
           else
@@ -723,7 +760,7 @@ jobs:
             echo
             echo "$note"
             echo
-            echo "<sub>At ${HEAD:0:9}. Advisory, not part of ci-gate; nothing is pushed.</sub>"
+            echo "<sub>At ${HEAD:0:9}. Advisory, not part of ci-gate; nothing is pushed unless someone asks with \`/proofs apply\`.</sub>"
           } > comment.md
           id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
             -q ".[] | select(.user.login == \"$BOT_LOGIN\" and (.body | startswith(\"<!-- proof-reprove -->\"))) | .id" | head -1)
