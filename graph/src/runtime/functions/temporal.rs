@@ -93,15 +93,12 @@ fn date_from_components(
 
     if let Some(week) = week {
         check_range("week", Some(week), 1, 53)?;
-        let dow_raw = day_of_week.unwrap_or(1);
-        if !(0..=6).contains(&dow_raw) {
-            return Err(format!("Invalid dayOfWeek: {dow_raw}, expected 0..6"));
-        }
-        let dow = dow_raw as u32;
+        // ISO day of week, as in the string form and C: 1 = Monday .. 7 = Sunday
+        check_range("dayOfWeek", day_of_week, 1, 7)?;
+        let day_offset = day_of_week.unwrap_or(1) - 1;
         let jan4 =
             NaiveDate::from_ymd_opt(year, 1, 4).ok_or_else(|| format!("Invalid year: {year}"))?;
         let weekday_of_jan4 = jan4.weekday().num_days_from_monday();
-        let day_offset = if dow == 0 { 6 } else { i64::from(dow) - 1 };
         // week is in 1..=53, so the offset is at most 370 days
         let days = (week - 1) * 7 + day_offset - i64::from(weekday_of_jan4);
         return jan4
@@ -517,6 +514,25 @@ pub fn construct_duration_secs(
     anchor_ts
         .checked_add(extra)
         .ok_or_else(|| "Duration overflow when combining components".to_string())
+        .and_then(check_date_range)
+}
+
+/// Largest civil year a date or duration may reach. `civil_from_days` returns
+/// an `i32` year, so past this the year would silently wrap; the margin keeps
+/// the `year - 1970` and month-carry arithmetic around it inside `i32` too.
+pub const MAX_DATE_YEAR: i32 = i32::MAX - 2000;
+
+/// The day counts of the first and last supported days, taken from the
+/// Gregorian calendar itself so leap days are counted and the (asymmetric)
+/// epoch-relative range is exact.
+const MIN_DATE_DAYS: i64 = crate::runtime::value::days_from_civil(-MAX_DATE_YEAR, 1, 1);
+const MAX_DATE_DAYS: i64 = crate::runtime::value::days_from_civil(MAX_DATE_YEAR, 12, 31);
+
+pub fn check_date_range(ts: i64) -> Result<i64, String> {
+    if !(MIN_DATE_DAYS..=MAX_DATE_DAYS).contains(&ts.div_euclid(86400)) {
+        return Err("Date out of range".to_string());
+    }
+    Ok(ts)
 }
 
 /// Decompose a duration (seconds from epoch) into (years, months, `remaining_seconds`).
@@ -952,6 +968,24 @@ mod tests {
     fn date_week_string_with_multibyte_char_errors_instead_of_panicking() {
         for s in ["2020W1é", "2020-W1é", "2020Wé1", "2020W€", "2020W12é"] {
             assert!(date_pure(&[Value::String(Arc::new(s.to_string()))]).is_err());
+        }
+    }
+
+    // dayOfWeek is ISO 1..=7 (7 = Sunday), like the string form and C.
+    #[test]
+    fn date_day_of_week_is_iso() {
+        let sunday = date_pure(&[map(&[("year", 2021), ("week", 1), ("dayOfWeek", 7)])]).unwrap();
+        assert_eq!(
+            sunday,
+            date_pure(&[Value::String(Arc::new("2021-W01-7".to_string()))]).unwrap()
+        );
+        let monday = date_pure(&[map(&[("year", 2021), ("week", 1), ("dayOfWeek", 1)])]).unwrap();
+        assert_eq!(
+            monday,
+            date_pure(&[Value::String(Arc::new("2021-W01-1".to_string()))]).unwrap()
+        );
+        for dow in [0, 8, -1] {
+            assert!(date_pure(&[map(&[("year", 2021), ("week", 1), ("dayOfWeek", dow)])]).is_err());
         }
     }
 

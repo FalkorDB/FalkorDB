@@ -1,0 +1,138 @@
+name: Lean proofs
+
+# The Lean 4 proofs in proofs/ are models of the Rust engine. Two gates keep them
+# true: `proofs/lean_ci.sh` builds every project and rejects sorry, admit,
+# native_decide and unjustified axioms; `proofs/coverage.sh --unmatched` checks
+# every Rust fn is listed in a COVERAGE.tsv and every row still points at a fn.
+#
+# Built to be a REQUIRED check, which drives two deliberate choices:
+#
+#   1. No `paths:` filter on the triggers. A required status check that never
+#      reports leaves a PR blocked forever (see the top of pr-linked-issue.yml),
+#      so the job runs on every PR to a covered branch and the job name
+#      ("Lean proofs") stays stable.
+#   2. The job decides relevance itself. Lean builds read only proofs/, but the
+#      coverage gate reads graph/src and src (a Rust change that adds, removes or
+#      renames a fn can break it), so a PR that touches none of proofs/**,
+#      graph/src/**, src/** or this file reports success at once, with a summary
+#      line saying it was skipped. Every other PR, and every push to main, runs
+#      both gates in full.
+#
+# It is not part of ci-gate; whether to require it is a branch-protection setting.
+on:
+  pull_request:
+    branches:
+      - main
+      - "[0-9]*.[0-9]*"
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # elan is installed from a pinned release asset, never from the moving
+  # elan-init.sh on master. v4.2.4 was published 2026-08-25. The sha256 is the
+  # asset's own digest (also what GitHub shows for the release); bumping elan means
+  # bumping both lines together. The Lean toolchain itself is the one each project
+  # pins in its lean-toolchain file.
+  ELAN_VERSION: v4.2.4
+  ELAN_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
+
+jobs:
+  proofs:
+    name: Lean proofs
+    runs-on: ubuntu-latest
+    # A cold build (no cache) took 19 minutes on ubuntu-latest, a warm one is a few; 45 leaves room for slower runners.
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # A PR is checked out as its merge commit; two levels give its first
+          # parent (the base tip), which the scope step diffs against.
+          fetch-depth: 2
+
+      # A PR that touches nothing the proofs read reports success here, without
+      # installing or building anything. A push always runs the gates, and so does
+      # anything this step cannot decide (no merge parent).
+      - name: Decide whether the proofs are in scope
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          run=true
+          # --no-renames: a file moved out of src/ must list its old path too, or the gates would be skipped.
+          if [[ "$EVENT_NAME" == pull_request ]] && git rev-parse --verify --quiet 'HEAD^2' >/dev/null; then
+            changed=$(git diff --name-only --no-renames 'HEAD^1' HEAD)
+            if grep -qE '^(proofs/|graph/src/|src/|\.github/workflows/lean-proofs\.yml$)' <<<"$changed"; then
+              echo "This PR touches proofs/**, graph/src/**, src/** or the workflow: running both gates." >> "$GITHUB_STEP_SUMMARY"
+            else
+              run=false
+              echo "Skipped: this PR touches none of proofs/**, graph/src/**, src/** or .github/workflows/lean-proofs.yml, so the proofs and the coverage gate are unaffected." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "run=${run}" >> "$GITHUB_OUTPUT"
+
+      # The Lean build is incremental on its own trace files, so a restored
+      # proofs/*/.lake makes an unchanged project a no-op. The exact key hits when
+      # no .lean file changed; otherwise the newest cache for the same toolchains is
+      # restored and only the changed modules (and their dependents) are rebuilt.
+      - name: Cache elan and the Lake build directories
+        if: steps.scope.outputs.run == 'true'
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: |
+            ~/.elan
+            proofs/*/.lake
+          key: lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs/*/lean-toolchain') }}-${{ hashFiles('proofs/**/*.lean', 'proofs/*/lakefile.toml', 'proofs/*/lake-manifest.json') }}
+          restore-keys: |
+            lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs/*/lean-toolchain') }}-
+
+      - name: Install elan
+        if: steps.scope.outputs.run == 'true'
+        env:
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          asset=elan-x86_64-unknown-linux-gnu.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP_DIR/$asset" \
+            "https://github.com/leanprover/elan/releases/download/${ELAN_VERSION}/${asset}"
+          echo "${ELAN_SHA256}  $RUNNER_TEMP_DIR/$asset" | sha256sum -c -
+          mkdir "$RUNNER_TEMP_DIR/elan"
+          tar -xzf "$RUNNER_TEMP_DIR/$asset" -C "$RUNNER_TEMP_DIR/elan"
+          "$RUNNER_TEMP_DIR/elan/elan-init" -y --default-toolchain none --no-modify-path
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Build and check every project (lean_ci.sh)
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          bash proofs/lean_ci.sh
+
+      # coverage.sh prints a report and exits 0 whatever it finds, so read the
+      # report: every Rust fn listed (0 unlisted), every row matching a fn
+      # (0 unmatched), no row in an unknown bucket, no project without a
+      # COVERAGE.tsv, no TEST-ONLY row on a fn the scanner sees as production code.
+      - name: Coverage gate (coverage.sh --unmatched)
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          bash proofs/coverage.sh --unmatched | tee "$RUNNER_TEMP/coverage.txt"
+          unlisted=$(awk '/^TOTAL over all/ { print $(NF-3) }' "$RUNNER_TEMP/coverage.txt")
+          unmatched=$(sed -nE 's/.* ([0-9]+) rows unmatched.*/\1/p' "$RUNNER_TEMP/coverage.txt")
+          bad=$(sed -nE 's/.* ([0-9]+) bad buckets.*/\1/p' "$RUNNER_TEMP/coverage.txt")
+          untracked=$(grep -cE '^(projects without COVERAGE\.tsv|TEST-ONLY rows on fns the scanner sees as production code)' "$RUNNER_TEMP/coverage.txt" || true)
+          echo "unlisted=${unlisted:-?} unmatched=${unmatched:-?} bad_buckets=${bad:-?} untracked_report_lines=${untracked}"
+          if [[ "${unlisted:-}" != 0 || "${unmatched:-}" != 0 || "${bad:-}" != 0 || "$untracked" != 0 ]]; then
+            echo "::error::coverage gate failed: unlisted=${unlisted:-?} unmatched=${unmatched:-?} bad_buckets=${bad:-?} untracked_report_lines=${untracked}. List new Rust fns in a proofs/*/COVERAGE.tsv and fix stale rows (see .claude/skills/proofs/SKILL.md)."
+            exit 1
+          fi

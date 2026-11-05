@@ -1,0 +1,14 @@
+{"version": "1.3.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "«falkor-id-list»",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../id_list",
+   "copy": false,
+   "configFile": "lakefile.toml"}],
+ "name": "«falkor-runtime-ds»",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}

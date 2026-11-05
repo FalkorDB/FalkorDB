@@ -102,6 +102,13 @@ use super::{
     GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
     GxB_unload_Matrix_into_Container,
 };
+use super::{
+    GrB_FP64, GrB_Matrix_build_FP64, GrB_Matrix_extractTuples_FP64, GrB_Matrix_select_INT64,
+    GrB_Matrix_setElement_FP64, GrB_OFFDIAG,
+};
+use super::{
+    GrB_GT_UINT64, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_select_BOOL, GrB_VALUEEQ_BOOL,
+};
 
 /// Initializes the GraphBLAS library in non-blocking mode.
 ///
@@ -966,6 +973,30 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    /// Remove every entry on the main diagonal (`GrB_select` with
+    /// `GrB_OFFDIAG`, whose thunk 0 names the main diagonal), in place.
+    /// So far only the CCH test kit uses it, to drop a weight matrix's self-loops.
+    #[cfg(test)]
+    pub(crate) fn drop_diagonal(&mut self) {
+        let info = unsafe {
+            GrB_Matrix_select_INT64(
+                self.inner(),
+                null_mut(),
+                null_mut(),
+                GrB_OFFDIAG,
+                self.inner(),
+                0,
+                null_mut(),
+            )
+        };
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GrB_Matrix_select_INT64: {info:?}"
+        );
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
     pub fn select(
         &mut self,
         mask: &Matrix<bool>,
@@ -1373,6 +1404,114 @@ impl Matrix<u64> {
     }
 }
 
+/// `FP64` matrices, e.g. a weight per node pair. So far only the test kit's oracle uses them:
+/// a test graph is a weight matrix.
+#[cfg(test)]
+impl Matrix<f64> {
+    /// Create a new `FP64` matrix.
+    #[must_use]
+    pub fn new(
+        nrows: u64,
+        ncols: u64,
+    ) -> Self {
+        unsafe {
+            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_FP64, nrows, ncols);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_new failed: {info:?}"
+            );
+            let m = m.assume_init();
+            pin_sparse(m);
+            Self {
+                m: Arc::new(Handle(m)),
+                lock: Arc::new(Mutex::new(())),
+                has_pending: Arc::new(AtomicBool::new(false)),
+                phantom: PhantomData,
+            }
+        }
+    }
+
+    /// Set an `FP64` value at `(i, j)`.
+    ///
+    /// An invalid index (outside the dimensions) or out of memory panics, in
+    /// release too: any error `GrB_Info`, one below 0.
+    pub fn set(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: f64,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_setElement_FP64(self.inner(), value, i, j);
+            assert!((info as i32) >= 0, "GrB_Matrix_setElement_FP64: {info:?}");
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Build from coordinate arrays into this (empty) matrix. A repeated `(row, col)` is a bug
+    /// in the caller, not something to fold: there is no `dup` operator, so GraphBLAS refuses
+    /// it, and this panics, as it does on an index outside the dimensions.
+    ///
+    /// Both checks hold in release: mismatched lengths would read past an array, and a
+    /// refused build would leave the matrix silently empty.
+    pub(crate) fn build(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+        vals: &[f64],
+    ) {
+        assert!(rows.len() == cols.len() && rows.len() == vals.len());
+        let info = unsafe {
+            GrB_Matrix_build_FP64(
+                self.inner(),
+                rows.as_ptr(),
+                cols.as_ptr(),
+                vals.as_ptr(),
+                rows.len() as u64,
+                null_mut(),
+            )
+        };
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GrB_Matrix_build_FP64: {info:?}"
+        );
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Every stored entry as parallel row, column and value arrays (`extractTuples`), in the
+    /// order GraphBLAS stores them: row by row, columns ascending.
+    #[must_use]
+    pub(crate) fn extract_tuples(&self) -> (Vec<u64>, Vec<u64>, Vec<f64>) {
+        self.wait();
+        let mut count = self.nvals();
+        let mut rows = vec![0; count as usize];
+        let mut cols = vec![0; count as usize];
+        let mut vals = vec![0.0; count as usize];
+        let info = unsafe {
+            GrB_Matrix_extractTuples_FP64(
+                rows.as_mut_ptr(),
+                cols.as_mut_ptr(),
+                vals.as_mut_ptr(),
+                &raw mut count,
+                self.inner(),
+            )
+        };
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GrB_Matrix_extractTuples_FP64: {info:?}"
+        );
+        rows.truncate(count as usize);
+        cols.truncate(count as usize);
+        vals.truncate(count as usize);
+        (rows, cols, vals)
+    }
+}
+
 impl Matrix<bool> {
     pub fn new(
         nrows: u64,
@@ -1539,23 +1678,72 @@ impl Matrix<bool> {
         let nrows = self.nrows();
         let ncols = m.ncols();
 
-        let mut mask: Option<Matrix<bool>> = None;
+        // `self * dm`, counted: how many deleted base edges reach each output.
+        // Its pattern is the mask; the counts are what make the mask exact.
+        //
+        // The mask alone is exact only for a row of `self` with one entry. A
+        // row with several (a fused chain's frontier) reaches an output through
+        // several base edges, and one of them being deleted masked the output
+        // even when another was live: `x→z` deleted and `y→z` live, with `x`
+        // and `y` in one row, lost `z`. Since `dm ⊆ m`, an output under the
+        // mask is live exactly when `self * m` reaches it by more paths than
+        // `self * dm` does, so those are counted at the masked positions only
+        // and added back.
+        let mut mask: Option<Matrix<u64>> = None;
+        let mut restored: Option<Matrix<bool>> = None;
         if dm_nvals > 0 {
-            let mut mk = Matrix::<bool>::new(nrows, ncols);
+            let dm_paths = Matrix::<u64>::new(nrows, ncols);
             unsafe {
                 let info = GrB_mxm(
-                    mk.inner(),
+                    dm_paths.inner(),
                     null_mut(),
                     null_mut(),
-                    GxB_ANY_PAIR_BOOL,
+                    GxB_PLUS_PAIR_UINT64,
                     self.inner(),
                     dm.inner(),
                     null_mut(),
                 );
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
-            if mk.nvals() > 0 {
-                mask = Some(mk);
+            if dm_paths.nvals() > 0 {
+                let m_paths = Matrix::<u64>::new(nrows, ncols);
+                let live = Matrix::<bool>::new(nrows, ncols);
+                unsafe {
+                    let info = GrB_mxm(
+                        m_paths.inner(),
+                        dm_paths.inner(),
+                        null_mut(),
+                        GxB_PLUS_PAIR_UINT64,
+                        self.inner(),
+                        m.inner(),
+                        GrB_DESC_S,
+                    );
+                    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                    let info = GrB_Matrix_eWiseMult_BinaryOp(
+                        live.inner(),
+                        null_mut(),
+                        null_mut(),
+                        GrB_GT_UINT64,
+                        m_paths.inner(),
+                        dm_paths.inner(),
+                        null_mut(),
+                    );
+                    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                    let info = GrB_Matrix_select_BOOL(
+                        live.inner(),
+                        null_mut(),
+                        null_mut(),
+                        GrB_VALUEEQ_BOOL,
+                        live.inner(),
+                        true,
+                        null_mut(),
+                    );
+                    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                }
+                if live.nvals() > 0 {
+                    restored = Some(live);
+                }
+                mask = Some(dm_paths);
             }
         }
 
@@ -1595,6 +1783,9 @@ impl Matrix<bool> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
 
+        if let Some(live) = restored {
+            self.element_wise_add(None, None, Some(&live), None);
+        }
         if let Some(ac) = accum {
             self.element_wise_add(None, None, Some(&ac), None);
         }
@@ -1889,6 +2080,33 @@ mod tests {
         for (i, j) in [(0u64, 0u64), (5, 7), (31, 31)] {
             assert_eq!(g.get(i, j), Some(true), "({i}, {j}) lost or turned false");
         }
+    }
+
+    /// A frontier row holding two nodes that both reach `z` keeps `z` when
+    /// only one of the two edges is deleted: the deletion layer masks an
+    /// output only if every base path to it is deleted. With node 1 = x,
+    /// 2 = y, 3 = z, frontier row 0 = {x, y}, base edges x→z and y→z.
+    #[test]
+    fn delta_lmxm_keeps_an_output_one_live_edge_still_reaches() {
+        ensure_init();
+        let n = 8;
+        let mut m = Matrix::<bool>::new(n, n);
+        m.build(&[1, 2], &[3, 3]);
+        m.wait();
+        let dp = Matrix::<bool>::new(n, n);
+        let reach = |deleted: &[u64]| {
+            let mut dm = Matrix::<bool>::new(n, n);
+            dm.build(deleted, &vec![3; deleted.len()]);
+            dm.wait();
+            let mut f = Matrix::<bool>::new(n, n);
+            f.build(&[0, 0], &[1, 2]);
+            f.wait();
+            f.delta_lmxm(&m, &dp, &dm);
+            f.wait();
+            f.get(0, 3)
+        };
+        assert_eq!(reach(&[1]), Some(true), "y→z is live");
+        assert_eq!(reach(&[1, 2]), None, "both paths deleted");
     }
 
     #[test]

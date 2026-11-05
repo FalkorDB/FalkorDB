@@ -26,6 +26,12 @@
 //! Escalation is **idempotent** and **sticky**: once a writer, a query stays one
 //! until it ends, so everything after the first mutation — including reads of the
 //! shared, non-MVCC index — sees an exclusively locked graph.
+//!
+//! ## Publishing
+//!
+//! **global lock → publish.** [`MvccGraph`](crate::graph::mvcc_graph::MvccGraph)'s commits take
+//! `&self` and are only made while the global lock is held, so the global lock serializes every
+//! publish; a commit also publishes by compare-and-swap, so one that slipped past it is refused.
 
 /// The one thing a query plan can ask its host to do: become a writer.
 ///

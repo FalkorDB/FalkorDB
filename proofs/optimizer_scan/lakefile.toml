@@ -1,0 +1,5 @@
+name = "falkor-optimizer-scan"
+defaultTargets = ["OptimizerScan"]
+
+[[lean_lib]]
+name = "OptimizerScan"
