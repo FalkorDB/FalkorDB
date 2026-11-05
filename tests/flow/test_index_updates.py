@@ -1,6 +1,7 @@
 import string
 import random
 from common import *
+from common import _db_handle
 from index_utils import *
 
 GRAPH_ID = "G"
@@ -301,6 +302,103 @@ class testIndexUpdatesFlow(FlowTestsBase):
         self.env.assertEqual(result.result_set[0][0], 20000)
         g.delete()
 
+    def test12_concurrent_writes_during_index_population(self):
+        # Writes that race background index population must not leave stale
+        # documents: population reads the committed graph, while a writer
+        # publishes its documents before its commit, so a batch in between used
+        # to overwrite the writer's newer document with the old value.
+        import threading
+        g = self.db.select_graph('idx_pop_writes')
+        n = 200000
+        g.query("UNWIND range(0, $n - 1) AS k CREATE (:PW {k: k, v: 0})", {'n': n})
+
+        for _ in range(3):
+            stop = threading.Event()
+            errors = []
+
+            def writer():
+                try:
+                    # own client: redis connections are not shared across threads
+                    wg = _db_handle(self.env.host, self.env.port).select_graph('idx_pop_writes')
+                    i = 0
+                    while not stop.is_set():
+                        # a fixed key space and a few distinct values keep the
+                        # dataset and the index the same size in every round
+                        wg.query("MATCH (n:PW) WHERE n.k % 50 = $m SET n.v = (n.v + 1) % 8", {'m': i % 50})
+                        k = i % 1000
+                        wg.query("MATCH (n:PW {k: $k}) DELETE n", {'k': k})
+                        wg.query("CREATE (:PW {k: $k, v: 0})", {'k': k})
+                        i += 1
+                except Exception as e:
+                    errors.append(e)
+
+            t = threading.Thread(target=writer)
+            t.start()
+            try:
+                create_node_range_index(g, 'PW', 'v', sync=True)
+            finally:
+                stop.set()
+                t.join(timeout=60)
+            self.env.assertFalse(t.is_alive(), message="writer thread did not stop")
+            self.env.assertEqual(errors, [])
+
+            # every value's index count agrees with a label scan
+            for v, expected in g.ro_query(
+                    "MATCH (n:PW) RETURN n.v, count(n) ORDER BY n.v").result_set:
+                q = "MATCH (n:PW) WHERE n.v = $v RETURN count(n)"
+                self.env.assertIn("Node By Index Scan", str(g.explain(q, {'v': v})))
+                actual = g.ro_query(q, {'v': v}).result_set[0][0]
+                self.env.assertEqual(actual, expected, message=f"v = {v}")
+
+            g.query("DROP INDEX FOR (n:PW) ON (n.v)")
+        g.delete()
+
+    def test13_concurrent_edge_writes_during_index_population(self):
+        # The edge counterpart of test12: edge population resumes from
+        # (src, dst, edge id) cursors, and a deleted edge's id is reused by a
+        # later CREATE, so a stale or resurrected document is easy to leave.
+        import threading
+        g = self.db.select_graph('idx_pop_edge_writes')
+        n = 100000
+        g.query("UNWIND range(0, $n - 1) AS k CREATE (:PE)-[:PR {k: k, v: 0}]->(:PE)", {'n': n})
+
+        for _ in range(3):
+            stop = threading.Event()
+            errors = []
+
+            def writer():
+                try:
+                    wg = _db_handle(self.env.host, self.env.port).select_graph('idx_pop_edge_writes')
+                    i = 0
+                    while not stop.is_set():
+                        wg.query("MATCH ()-[r:PR]->() WHERE r.k % 50 = $m SET r.v = (r.v + 1) % 8", {'m': i % 50})
+                        k = i % 1000
+                        wg.query("MATCH ()-[r:PR {k: $k}]->() DELETE r", {'k': k})
+                        wg.query("CREATE (:PE)-[:PR {k: $k, v: 0}]->(:PE)", {'k': k})
+                        i += 1
+                except Exception as e:
+                    errors.append(e)
+
+            t = threading.Thread(target=writer)
+            t.start()
+            try:
+                create_edge_range_index(g, 'PR', 'v', sync=True)
+            finally:
+                stop.set()
+                t.join(timeout=60)
+            self.env.assertFalse(t.is_alive(), message="writer thread did not stop")
+            self.env.assertEqual(errors, [])
+
+            # every value's index count agrees with an edge scan
+            for v, expected in g.ro_query(
+                    "MATCH ()-[r:PR]->() RETURN r.v, count(r) ORDER BY r.v").result_set:
+                q = "MATCH ()-[r:PR]->() WHERE r.v = $v RETURN count(r)"
+                self.env.assertIn("Edge By Index Scan", str(g.explain(q, {'v': v})))
+                actual = g.ro_query(q, {'v': v}).result_set[0][0]
+                self.env.assertEqual(actual, expected, message=f"v = {v}")
+
+            drop_edge_range_index(g, 'PR', 'v')
+        g.delete()
 
 class testNativeOnlyFeedFlow(FlowTestsBase):
     # Under `index-falkordb` the native index is the only Range index, so nothing may also feed

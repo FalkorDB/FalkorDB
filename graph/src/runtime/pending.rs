@@ -37,6 +37,7 @@ use crate::index::falkordb::{
     falkordb_index::EqualCandidates,
     unique::{ReadOnce, native_unique_query},
 };
+use crate::index::population_hooks;
 #[cfg(not(feature = "index-falkordb"))]
 use crate::index::{
     Index,
@@ -500,8 +501,15 @@ impl IndexDocs {
     ) {
         // Each call takes its own indexer lock. `Pending::resync_published_indexes`
         // holds both across its writes instead.
+        // Known before the commit drains the maps; folded away without the hooks.
+        let published = cfg!(feature = "index-population-hooks")
+            && !(self.node_adds.is_empty()
+                && self.node_removes.is_empty()
+                && self.edge_adds.is_empty()
+                && self.edge_removes.is_empty());
         g.commit_index(&mut self.node_adds, &mut self.node_removes);
         g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
+        population_hooks::after_publish(published);
     }
 }
 

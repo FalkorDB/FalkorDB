@@ -92,6 +92,7 @@ use crate::index::falkordb::{
     graph_writes,
 };
 use crate::index::index_docs::IndexDocs;
+use crate::index::population_hooks;
 use crate::{
     entity_type::EntityType,
     graph::{
@@ -604,7 +605,8 @@ fn populate_index_batch(
 ) {
     spawn(
         move || {
-            const BATCH_SIZE: usize = 10_000;
+            let batch_size = population_hooks::batch_size(10_000);
+            population_hooks::before_batch();
 
             let exhausted;
             let mut next_cursor = cursor;
@@ -662,7 +664,7 @@ fn populate_index_batch(
                 // `(src, dst)` where `src == cursor.row` and
                 // `dst <= within_row_dst` — those were already
                 // processed in a prior batch that ran out of
-                // BATCH_SIZE mid-row. Matches C's `(prev_src, prev_dst)`
+                // the batch size mid-row. Matches C's `(prev_src, prev_dst)`
                 // skip in `_Index_PopulateEdgeIndex`.
                 let ids: Vec<u64>;
                 let edge_triples: Vec<(u64, u64, u64)>;
@@ -675,7 +677,7 @@ fn populate_index_batch(
                                 .get_label_matrix(&label)
                                 .map(|lm| {
                                     lm.iter(cursor.row, u64::MAX)
-                                        .take(BATCH_SIZE)
+                                        .take(batch_size)
                                         .map(|(n, _)| n)
                                         .collect()
                                 })
@@ -708,7 +710,7 @@ fn populate_index_batch(
                                                 _ => true,
                                             }
                                         })
-                                        .take(BATCH_SIZE)
+                                        .take(batch_size)
                                         .collect()
                                 })
                                 .unwrap_or_default();
@@ -720,6 +722,13 @@ fn populate_index_batch(
                 }
 
                 let mut batch: Vec<Document> = Vec::with_capacity(scanned_count);
+
+                // Entities a writer re-indexed (or removed) since population began:
+                // its documents come from state newer than the committed graph this
+                // batch reads, so building them here would overwrite them with stale
+                // values (or resurrect a deleted entity) until the next write.
+                let written = indexer.written_during_population(&ticket);
+                let skip = |id: u64| written.as_ref().is_some_and(|w| w.contains(id));
 
                 // Build a document for `id`, allocating the RSDoc only once we
                 // know the entity has at least one indexed field. Populating an
@@ -755,6 +764,9 @@ fn populate_index_batch(
                     IndexKind::Node => {
                         let last_id = ids.last().copied();
                         for id in ids {
+                            if skip(id) {
+                                continue;
+                            }
                             let g = graph.borrow();
                             if let Some(doc) = build_doc(id, false, &g, &|| Document::new(id)) {
                                 batch.push(doc);
@@ -771,6 +783,9 @@ fn populate_index_batch(
                     IndexKind::Edge => {
                         let last_pos = edge_triples.last().map(|(s, d, e)| (*s, *d, *e));
                         for (src, dst, eid) in edge_triples {
+                            if skip(eid) {
+                                continue;
+                            }
                             let g = graph.borrow();
                             if let Some(doc) =
                                 build_doc(eid, true, &g, &|| Document::new_edge(src, dst, eid))
@@ -788,7 +803,12 @@ fn populate_index_batch(
                     }
                 }
 
-                exhausted = scanned_count < BATCH_SIZE;
+                // Release the snapshot before the lock is handed over: while this
+                // batch holds it, the first writer to run would have to copy the
+                // whole bitmap (`Arc::make_mut`) under the write lock.
+                drop(written);
+
+                exhausted = scanned_count < batch_size;
 
                 if !batch.is_empty() {
                     progress += batch.len() as u64;
@@ -797,12 +817,14 @@ fn populate_index_batch(
                     indexer.commit(&mut add_docs, &mut HashMap::new());
                     indexer.update_progress(&label, progress);
                 }
-
                 if exhausted {
                     indexer.release_population_ticket(&ticket);
                 } else {
                     do_recurse = true;
                 }
+                // After the ticket is released, so a test that sees the count
+                // advance sees the index operational when that was the last batch.
+                population_hooks::after_batch();
                 // Hand the lock to a waiter, if any. The next batch re-takes it at once,
                 // and parking_lot (0.13+) lets a plain unlock's next locker barge ahead of
                 // a parked CREATE/DROP INDEX or index commit, which then waits out the
@@ -3976,6 +3998,7 @@ impl Graph {
         let mut add_docs: HashMap<Arc<String>, Vec<Document>> = HashMap::new();
         for (type_id, ids) in index_add_edge_docs.drain() {
             let name = &self.relationship_types[type_id as usize];
+            indexer.note_written(name, ids.iter());
             let fields = redisearch_fields(indexer.get_fields(name));
             if fields.is_empty() {
                 // Every field is served natively. Skipping here also skips the endpoint
@@ -4032,6 +4055,7 @@ impl Graph {
         let mut remove: HashMap<Arc<String>, HashMap<u64, (u64, u64)>> = HashMap::new();
         for (type_id, edges) in remove_edge_docs.drain() {
             let name = &self.relationship_types[type_id as usize];
+            indexer.note_written(name, edges.keys().copied());
             remove.insert(name.clone(), edges.into_iter().collect());
         }
 
@@ -4061,6 +4085,7 @@ impl Graph {
         let mut add_docs = HashMap::new();
         for (slot, ids) in index_add_docs.drain() {
             let name = &names[slot as usize];
+            indexer.note_written(name, ids.iter());
             let fields = redisearch_fields(indexer.get_fields(name));
             if fields.is_empty() {
                 continue; // every field of this label is served natively
@@ -4083,6 +4108,7 @@ impl Graph {
         let mut remove = HashMap::new();
         for (slot, ids) in remove_docs.drain() {
             let name = &names[slot as usize];
+            indexer.note_written(name, ids.iter());
             remove.insert(name.clone(), ids);
         }
 
