@@ -1156,28 +1156,38 @@ impl<'a> Iterator for AggregateOp<'a> {
         // Emit finalized groups in batches.
         let mut builder = BatchBuilder::new();
         for _ in 0..BATCH_SIZE {
-            let Some((_group_key, (key, mut acc, _))) = self.groups.next() else {
+            let Some((_group_key, (key, acc, _))) = self.groups.next() else {
                 break;
             };
             match (|| {
-                // Build a combined env with key values at both post-projection
-                // (name) and pre-projection (original_var) IDs, plus all
-                // accumulator values.  Acc values take precedence on collision.
-                let mut combined = key.clone();
+                // The aggregation trees were bound against the scope *before*
+                // the projection (accumulators included), whereas `key` is
+                // keyed by the *new* scope's ids. The binder numbers each scope
+                // from zero and `Row` is keyed by id alone, so the two must
+                // never share a row: a new-scope key at id N would be read as
+                // the old-scope variable N (`p.name + count(p)`, #3571).
+                // `eval_env` therefore holds only old-scope bindings: the
+                // accumulators, plus each grouping key that is a bare variable
+                // at its original id.
+                let mut eval_env = acc;
                 for (name, tree) in self.keys {
                     if let ExprIR::Variable(original_var) = tree.root().data()
                         && let Some(value) = key.get(name)
                     {
-                        combined.insert(original_var, value.clone());
+                        eval_env.insert(original_var, value.clone());
                     }
                 }
-                combined.merge(&acc);
+                // Every aggregation is evaluated against this same
+                // `eval_env`; none reads another's output (a projection cannot
+                // reference its own aliases), and writing an output back could
+                // overwrite a later aggregation's accumulator that shares its
+                // slot id (#3375).
                 let mut agg_outputs: Vec<(&Variable, Value)> = Vec::with_capacity(self.agg.len());
                 for (name, tree) in self.agg {
                     let val = {
                         let this = &self.runtime;
                         let idx = tree.root().idx();
-                        let env: &Row = &combined;
+                        let env: &Row = &eval_env;
                         crate::runtime::eval::ExprEval::from_runtime(this).eval(
                             tree,
                             idx,
@@ -1185,46 +1195,21 @@ impl<'a> Iterator for AggregateOp<'a> {
                             None,
                         )
                     }?;
-                    acc.insert(name, val.clone());
-                    combined.insert(name, val.clone());
                     agg_outputs.push((name, val));
                 }
-                // Unbind internal accumulator variables so they don't leak
-                // to downstream operators and collide with variables in
-                // subsequent scopes that reuse the same slot IDs. This comes
-                // before any key is written: the binder may give an
-                // accumulator the slot id of a grouping key, and unbinding
-                // after the key is written would drop that key (a null key
-                // then vanishes from the batch, #3150).
-                for (_, tree) in self.agg {
-                    unbind_agg_accumulators(&tree.root(), &mut acc);
-                }
-                // Insert pre-projection key variable values into acc so
-                // downstream operators can find them, but skip any slot that
-                // is already occupied by an aggregation output to avoid
-                // overwriting computed results (e.g., a MapProjection result).
-                for (name, tree) in self.keys {
-                    if let ExprIR::Variable(original_var) = tree.root().data()
-                        && let Some(value) = key.get(name)
-                        && !self
-                            .agg
-                            .iter()
-                            .any(|(agg_name, _)| agg_name.id == original_var.id)
-                    {
-                        acc.insert(original_var, value.clone());
-                    }
-                }
-                acc.merge(&key);
-                // Re-bind aggregate output names last: an accumulator slot id
-                // can coincide with another aggregate's output name (the binder
-                // may reuse slot IDs), and the unbind above would otherwise
-                // clear that output. Output bindings must win. This also matters
-                // for keyless empty-input groups where the output value is Null,
-                // since an unbound Null slot is dropped during columnar finish.
+                // The emitted row binds only the new scope's ids: the keys
+                // (and carried-over parent variables) and the aggregation
+                // outputs. Nothing from the old scope -- accumulators or
+                // pre-projection key ids -- may leak, or downstream operators
+                // read it as an unrelated variable that reuses the slot id
+                // (#3333, #3372). Outputs are inserted last so they win over a
+                // key sharing an id; a Null output is still bound, so keyless
+                // empty-input groups emit it.
+                let mut out = key;
                 for (name, val) in agg_outputs {
-                    acc.insert(name, val);
+                    out.insert(name, val);
                 }
-                Ok::<Row, String>(acc)
+                Ok::<Row, String>(out)
             })() {
                 Ok(env) => builder.push_row(&env),
                 Err(e) => return Some(Err(e)),
@@ -1235,36 +1220,6 @@ impl<'a> Iterator for AggregateOp<'a> {
             None
         } else {
             Some(Ok(builder.finish()))
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Recursively walks an expression tree and unbinds each aggregate function's
-/// accumulator variable from the environment. This mirrors the recursion in
-/// `set_agg_expr_zero` / `run_agg_expr`: when an aggregate `FuncInvocation` is
-/// found, its last child (the accumulator `Variable`) is unbound; otherwise we
-/// recurse into children.
-fn unbind_agg_accumulators(
-    ir: &DynNode<ExprIR<Variable>>,
-    acc: &mut Row,
-) {
-    match ir.data() {
-        ExprIR::FuncInvocation(func) if func.is_aggregate() => {
-            let num_children = ir.num_children();
-            if num_children >= 2
-                && let ExprIR::Variable(acc_var) = ir.child(num_children - 1).data()
-            {
-                acc.unbind(acc_var);
-            }
-        }
-        _ => {
-            for child in ir.children() {
-                unbind_agg_accumulators(&child, acc);
-            }
         }
     }
 }
