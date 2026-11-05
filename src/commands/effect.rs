@@ -60,17 +60,14 @@ pub fn graph_effect(
     };
 
     let tg = graph.write();
-    let g_arc = tg.graph.fork();
+    let mut fork = tg.graph.fork();
 
-    let result = {
-        let mut g = g_arc.borrow_mut();
-        // Dispatched on the version the buffer declares, not on the one this
-        // build writes — during a rolling upgrade the primary is routinely on a
-        // different build. A version with no impl at all is divergence rather
-        // than a compatibility case; `apply` rejects it and the guard below
-        // forces a resync.
-        EffectsPayload::apply(&mut g, buf).map_err(|e| e.to_string())
-    };
+    // Dispatched on the version the buffer declares, not on the one this
+    // build writes — during a rolling upgrade the primary is routinely on a
+    // different build. A version with no impl at all is divergence rather
+    // than a compatibility case; `apply` rejects it and the guard below
+    // forces a resync.
+    let result = EffectsPayload::apply(&mut fork, buf).map_err(|e| e.to_string());
 
     // Folded into the same result rather than handled in the `Ok` arm. `commit`
     // validates before publishing, and a version it refuses is dropped — so
@@ -78,7 +75,7 @@ pub fn graph_effect(
     // rejected the buffer, and it needs the same forced resync. Answered
     // separately, it replied with an error the master will not act on and left
     // this replica serving a graph that had silently stopped following.
-    let result = result.and_then(|()| tg.graph.commit(g_arc).map_err(|e| e.to_string()));
+    let result = result.and_then(|()| tg.graph.commit(fork).map(drop).map_err(|e| e.to_string()));
 
     match result {
         Ok(()) => {

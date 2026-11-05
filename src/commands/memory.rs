@@ -79,7 +79,7 @@ fn memory_report(
     // lock mode that the GIL lock-order assertion reads (#726).
     let report = {
         let session = QuerySession::begin(graph);
-        session.with_graph(|tg| tg.graph.read().borrow().memory_usage_report(samples))
+        session.with_graph(|tg| tg.graph.read().memory_usage_report(samples))
     };
 
     // Convert each component to MB using integer division, then compute total

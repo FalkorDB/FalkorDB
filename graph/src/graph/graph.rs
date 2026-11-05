@@ -74,7 +74,6 @@ use std::{
 
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
-use atomic_refcell::AtomicRefCell;
 use lru::LruCache;
 use orx_tree::DynTree;
 use parking_lot::{Mutex, MutexGuard};
@@ -668,7 +667,7 @@ fn populate_index_batch(
                 let edge_triples: Vec<(u64, u64, u64)>;
                 let scanned_count: usize;
                 {
-                    let g = graph.borrow();
+                    let g = &*graph;
                     match kind {
                         IndexKind::Node => {
                             ids = g
@@ -755,8 +754,7 @@ fn populate_index_batch(
                     IndexKind::Node => {
                         let last_id = ids.last().copied();
                         for id in ids {
-                            let g = graph.borrow();
-                            if let Some(doc) = build_doc(id, false, &g, &|| Document::new(id)) {
+                            if let Some(doc) = build_doc(id, false, &graph, &|| Document::new(id)) {
                                 batch.push(doc);
                             }
                         }
@@ -771,9 +769,8 @@ fn populate_index_batch(
                     IndexKind::Edge => {
                         let last_pos = edge_triples.last().map(|(s, d, e)| (*s, *d, *e));
                         for (src, dst, eid) in edge_triples {
-                            let g = graph.borrow();
                             if let Some(doc) =
-                                build_doc(eid, true, &g, &|| Document::new_edge(src, dst, eid))
+                                build_doc(eid, true, &graph, &|| Document::new_edge(src, dst, eid))
                             {
                                 batch.push(doc);
                             }
@@ -4855,16 +4852,12 @@ impl Graph {
         self.edge_indexer.cancel();
     }
 
-    /// Takes `&self` (not `&mut self`): it only publishes the graph
-    /// reference into the node/edge indexers' own `Mutex`-guarded fields,
-    /// via `Indexer::set_graph`. This lets `MvccGraph::commit()` call it
-    /// through an immutable borrow of the graph, so the background index
-    /// population thread's own immutable borrows of the same
-    /// `AtomicRefCell<Graph>` are never blocked by (or racing against) a
-    /// concurrent mutable borrow here -- see `MvccGraph::commit()`.
+    /// Hand the published version `graph` (which is `self`) to the node and
+    /// edge indexers, for background population to read. Called by
+    /// `MvccGraph::commit` once it published `graph`.
     pub fn set_indexer_graph(
         &self,
-        graph: Arc<AtomicRefCell<Self>>,
+        graph: Arc<Self>,
     ) {
         self.node_indexer.set_graph(graph.clone());
         self.edge_indexer.set_graph(graph);

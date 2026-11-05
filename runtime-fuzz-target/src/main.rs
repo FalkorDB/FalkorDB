@@ -3,7 +3,7 @@
 
 use graph::{
     graph::{
-        graph::Plan,
+        graph::{Graph, Plan},
         graphblas::{GrB_Mode, GrB_init},
         mvcc_graph::MvccGraph,
     },
@@ -19,7 +19,10 @@ extern crate afl;
 struct AlwaysWritable;
 
 impl graph::locks::WriteEscalation for AlwaysWritable {
-    fn upgrade_to_write(&self) -> Result<(), String> {
+    fn upgrade_to_write(
+        &self,
+        _fork: &mut Graph,
+    ) -> Result<(), String> {
         Ok(())
     }
 }
@@ -34,12 +37,12 @@ fn main() {
             let g = MvccGraph::new(1024, 1024, 25, "fuzz_test");
             let Ok(Plan {
                 plan, parameters, ..
-            }) = g.read().borrow().get_plan(query)
+            }) = g.read().get_plan(query)
             else {
                 return;
             };
             let runtime = Runtime::new(
-                g.read(),
+                g.fork(),
                 parameters,
                 true,
                 plan,

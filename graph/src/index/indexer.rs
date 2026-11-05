@@ -56,7 +56,6 @@ use std::{
 };
 
 use arc_swap::{ArcSwap, ArcSwapOption};
-use atomic_refcell::AtomicRefCell;
 use parking_lot::Mutex;
 use roaring::RoaringTreemap;
 
@@ -157,7 +156,7 @@ pub struct Indexer {
     cancelled: Arc<AtomicBool>,
     /// Latest committed graph, shared with background index population.
     /// Updated by `MvccGraph::commit()` so background batches see fresh data.
-    graph: Arc<ArcSwapOption<AtomicRefCell<Graph>>>,
+    graph: Arc<ArcSwapOption<Graph>>,
 }
 
 unsafe impl Send for Indexer {}
@@ -907,22 +906,16 @@ impl Indexer {
         Ok(())
     }
 
-    /// Only touches the `Indexer`'s own lock-free `graph` slot, so this takes
-    /// `&self` deliberately: it must be callable while the caller holds only
-    /// an immutable borrow of the enclosing `Graph` (see
-    /// `Graph::set_indexer_graph`), so that background index population
-    /// (which also just needs an immutable borrow of the committed graph)
-    /// never races with this call and panics with "already mutably
-    /// borrowed".
+    /// Point background population at the published version `graph`.
     pub fn set_graph(
         &self,
-        graph: Arc<AtomicRefCell<Graph>>,
+        graph: Arc<Graph>,
     ) {
         self.graph.store(Some(graph));
     }
 
     #[must_use]
-    pub fn get_graph(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
+    pub fn get_graph(&self) -> Option<Arc<Graph>> {
         self.graph.load_full()
     }
 }

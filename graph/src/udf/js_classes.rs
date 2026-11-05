@@ -38,10 +38,11 @@
 //!
 //! ## Graph Context
 //!
-//! JS closures cannot directly capture Rust references with non-static
-//! lifetimes. To work around this, the current [`Graph`](crate::graph::graph::Graph)
-//! is stored in a thread-local (`CURRENT_GRAPH`) and set/cleared around each
-//! UDF invocation by [`set_current_graph`] / [`clear_current_graph`].
+//! JS closures cannot capture Rust references with non-static lifetimes, and
+//! the native helpers are created once per JS context and reused by every
+//! later call. So the query's [`Graph`](crate::graph::graph::Graph) is lent to
+//! them through a thread-local (`CURRENT_GRAPH`) for exactly the duration of
+//! one UDF invocation, by [`with_graph`].
 //!
 //! ## Traversal
 //!
@@ -51,12 +52,11 @@
 //!   configurable `maxDepth`, direction, type/label filters, and timeout
 //!   enforcement via the UDF deadline.
 
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use atomic_refcell::AtomicRefCell;
 use rquickjs::object::Property;
 use rquickjs::{Array, Ctx, Function, Object, Value as JsValue};
 
@@ -66,30 +66,36 @@ use crate::runtime::value::Value;
 use crate::udf::type_convert;
 
 thread_local! {
-    static CURRENT_GRAPH: RefCell<Option<Arc<AtomicRefCell<Graph>>>> = const { RefCell::new(None) };
+    /// The graph lent by the innermost [`with_graph`] on this thread, or null.
+    static CURRENT_GRAPH: Cell<*const Graph> = const { Cell::new(std::ptr::null()) };
 }
 
-pub fn set_current_graph(g: Arc<AtomicRefCell<Graph>>) {
-    CURRENT_GRAPH.with(|cell| {
-        *cell.borrow_mut() = Some(g);
-    });
+/// Run `f` with `graph` lent to the JS helpers on this thread
+/// ([`with_current_graph`]), and take it back when `f` returns or unwinds.
+pub fn with_graph<R>(
+    graph: &Graph,
+    f: impl FnOnce() -> R,
+) -> R {
+    /// Puts back the graph lent before, if any, when the call ends.
+    struct Restore(*const Graph);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CURRENT_GRAPH.with(|g| g.set(self.0));
+        }
+    }
+    let _restore = Restore(CURRENT_GRAPH.with(|g| g.replace(graph)));
+    f()
 }
 
-pub fn clear_current_graph() {
-    CURRENT_GRAPH.with(|cell| {
-        *cell.borrow_mut() = None;
-    });
-}
-
-fn with_current_graph<F, R>(f: F) -> Result<R, String>
-where
-    F: FnOnce(&Arc<AtomicRefCell<Graph>>) -> Result<R, String>,
-{
-    CURRENT_GRAPH.with(|cell| {
-        let guard = cell.borrow();
-        let g = guard.as_ref().ok_or("No graph context available")?;
-        f(g)
-    })
+fn with_current_graph<R>(f: impl FnOnce(&Graph) -> Result<R, String>) -> Result<R, String> {
+    let graph = CURRENT_GRAPH.with(Cell::get);
+    if graph.is_null() {
+        return Err("No graph context available".to_string());
+    }
+    // SAFETY: only `with_graph` sets a non-null pointer, from a `&Graph` that
+    // outlives the call it wraps, and it puts the previous value back when that
+    // call ends. A non-null pointer is therefore a live shared borrow.
+    f(unsafe { &*graph })
 }
 
 /// Collect edges from a node in a given direction.
@@ -134,7 +140,7 @@ fn collect_edges(
 pub fn create_js_node<'js>(
     ctx: &Ctx<'js>,
     node_id: u64,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &Graph,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
@@ -163,9 +169,8 @@ pub fn create_js_node<'js>(
             runtime,
         )?;
     } else {
-        let g = graph.borrow();
-        set_node_labels(ctx, &obj, g.get_node_labels(nid))?;
-        set_node_attrs(ctx, &obj, g.get_node_all_attrs(nid), graph, None)?;
+        set_node_labels(ctx, &obj, graph.get_node_labels(nid))?;
+        set_node_attrs(ctx, &obj, graph.get_node_all_attrs(nid), graph, None)?;
     }
 
     // .getNeighbors(config?) method. A single shared JS function reads the
@@ -221,7 +226,7 @@ fn set_node_attrs<'js>(
     ctx: &Ctx<'js>,
     obj: &Object<'js>,
     attrs: impl Iterator<Item = (Arc<String>, Value)>,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &Graph,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<(), String> {
     let attrs_obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
@@ -248,7 +253,7 @@ pub fn create_js_edge<'js>(
     rel_id: u64,
     src_id: u64,
     dst_id: u64,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &Graph,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
@@ -274,8 +279,8 @@ pub fn create_js_edge<'js>(
     // handled; otherwise fall back to the committed graph.
     let type_name = runtime.map_or_else(
         || {
-            let g = graph.borrow();
-            g.get_type(g.get_relationship_type_id(rid))
+            graph
+                .get_type(graph.get_relationship_type_id(rid))
                 .unwrap_or_else(|| Arc::new(String::new()))
         },
         |rt| {
@@ -304,8 +309,7 @@ pub fn create_js_edge<'js>(
                 .map_err(|e| format!("JS set error: {e}"))?;
         }
     } else {
-        let g = graph.borrow();
-        for (attr_name, value) in g.get_relationship_all_attrs(rid) {
+        for (attr_name, value) in graph.get_relationship_all_attrs(rid) {
             let js_val = type_convert::value_to_js(ctx, &value, graph, runtime)?;
             attrs_obj
                 .set(attr_name.as_str(), js_val)
@@ -322,7 +326,7 @@ pub fn create_js_edge<'js>(
 pub fn create_js_path<'js>(
     ctx: &Ctx<'js>,
     path_values: &[Value],
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &Graph,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
@@ -346,7 +350,7 @@ pub fn create_js_path<'js>(
             }
             Value::Relationship(rel_id) => {
                 let (src, dst) = runtime.map_or_else(
-                    || graph.borrow().get_relationship_endpoints(*rel_id),
+                    || graph.get_relationship_endpoints(*rel_id),
                     |rt| rt.get_relationship_endpoints(*rel_id),
                 );
                 let js_edge = create_js_edge(
@@ -476,18 +480,18 @@ fn js_get_neighbors<'js>(
     }
 
     with_current_graph(|graph| {
-        let g = graph.borrow();
         let results = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
         let mut result_idx = 0;
 
-        let mut neighbor_edges = collect_edges(&g, node_id, &direction);
+        let mut neighbor_edges = collect_edges(graph, node_id, &direction);
 
         // Filter by relationship types
         if !type_filters.is_empty() {
             neighbor_edges.retain(|(rel_id, _, _)| {
                 let rid = RelationshipId::from(*rel_id);
-                let type_id = g.get_relationship_type_id(rid);
-                g.get_type(type_id)
+                let type_id = graph.get_relationship_type_id(rid);
+                graph
+                    .get_type(type_id)
                     .is_some_and(|tn| type_filters.iter().any(|f| f == tn.as_str()))
             });
         }
@@ -497,12 +501,11 @@ fn js_get_neighbors<'js>(
             neighbor_edges.retain(|(_rel_id, src_id, dst_id)| {
                 let neighbor_id = if *src_id == node_id { *dst_id } else { *src_id };
                 let nid = NodeId::from(neighbor_id);
-                g.get_node_labels(nid)
+                graph
+                    .get_node_labels(nid)
                     .any(|label_name| label_filters.iter().any(|f| f == label_name.as_str()))
             });
         }
-
-        drop(g);
 
         let mut seen_neighbors: HashSet<u64> = HashSet::new();
         for (rel_id, src_id, dst_id) in &neighbor_edges {
@@ -569,8 +572,9 @@ fn js_get_node_by_id_impl<'js>(
 
     with_current_graph(|graph| {
         let exists = {
-            let g = graph.borrow();
-            g.node_count() > 0 && id <= g.max_node_id() && !g.is_node_deleted(NodeId::from(id))
+            graph.node_count() > 0
+                && id <= graph.max_node_id()
+                && !graph.is_node_deleted(NodeId::from(id))
         };
         if exists {
             create_js_node(ctx, id, graph, None)
@@ -607,18 +611,17 @@ fn js_iterate_nodes_impl<'js>(
 
     with_current_graph(|graph| {
         let ids: Vec<u64> = {
-            let g = graph.borrow();
             match &label {
-                Some(l) => g
+                Some(l) => graph
                     .get_label_matrix(l)
                     .map(|m| m.iter(0, u64::MAX).map(|(id, _)| id).collect())
                     .unwrap_or_default(),
                 None => {
-                    if g.node_count() == 0 {
+                    if graph.node_count() == 0 {
                         Vec::new()
                     } else {
-                        (0..=g.max_node_id())
-                            .filter(|id| !g.is_node_deleted(NodeId::from(*id)))
+                        (0..=graph.max_node_id())
+                            .filter(|id| !graph.is_node_deleted(NodeId::from(*id)))
                             .collect()
                     }
                 }
@@ -663,13 +666,12 @@ fn js_iterate_edges_impl<'js>(
     with_current_graph(|graph| {
         // (src, dst, edge_id) triples
         let edges: Vec<(u64, u64, u64)> = {
-            let g = graph.borrow();
             match &rel_type {
-                Some(t) => g
+                Some(t) => graph
                     .get_relationship_matrix(&Arc::new(t.clone()))
                     .map(|tensor| tensor.iter(0, u64::MAX, false).collect())
                     .unwrap_or_default(),
-                None => g
+                None => graph
                     .relationship_matrices_iter()
                     .flat_map(|tensor| tensor.iter(0, u64::MAX, false).collect::<Vec<_>>())
                     .collect(),
@@ -797,16 +799,15 @@ fn js_traverse_impl<'js>(
                 let mut edges_to_create: Vec<(u64, u64, u64)> = Vec::new();
 
                 {
-                    let g = graph.borrow();
-
                     for &nid in &frontier {
-                        let mut neighbor_edges = collect_edges(&g, nid, &direction);
+                        let mut neighbor_edges = collect_edges(graph, nid, &direction);
 
                         if !type_filters.is_empty() {
                             neighbor_edges.retain(|(rel_id, _, _)| {
                                 let rid = RelationshipId::from(*rel_id);
-                                let type_id = g.get_relationship_type_id(rid);
-                                g.get_type(type_id)
+                                let type_id = graph.get_relationship_type_id(rid);
+                                graph
+                                    .get_type(type_id)
                                     .is_some_and(|tn| type_filters.iter().any(|f| f == tn.as_str()))
                             });
                         }
@@ -816,7 +817,7 @@ fn js_traverse_impl<'js>(
 
                             if !label_filters.is_empty() {
                                 let nb_node_id = NodeId::from(neighbor_id);
-                                let matches = g.get_node_labels(nb_node_id).any(|label_name| {
+                                let matches = graph.get_node_labels(nb_node_id).any(|label_name| {
                                     label_filters.iter().any(|f| f == label_name.as_str())
                                 });
                                 if !matches {
@@ -889,4 +890,44 @@ fn js_traverse_impl<'js>(
 
         Ok(outer_results.into_value())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{with_current_graph, with_graph};
+    use crate::graph::{graph::Graph, graphblas::test_init::ensure_init};
+
+    fn lent() -> Result<*const Graph, String> {
+        with_current_graph(|g| Ok(std::ptr::from_ref(g)))
+    }
+
+    /// The graph is lent for the call only: a nested call lends its own and
+    /// puts the outer one back, and nothing is left lent afterwards, even when
+    /// the call panics.
+    #[test]
+    fn a_graph_is_lent_for_the_call_only() {
+        ensure_init();
+        let outer = Graph::new(16, 16, 1, 0, "outer");
+        let inner = Graph::new(16, 16, 1, 0, "inner");
+        assert!(lent().is_err(), "nothing lent outside a call");
+
+        with_graph(&outer, || {
+            assert_eq!(lent(), Ok(std::ptr::from_ref(&outer)));
+            with_graph(&inner, || {
+                assert_eq!(lent(), Ok(std::ptr::from_ref(&inner)));
+            });
+            assert_eq!(
+                lent(),
+                Ok(std::ptr::from_ref(&outer)),
+                "the outer one is back"
+            );
+        });
+        assert!(lent().is_err(), "nothing lent after the call");
+
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_graph(&outer, || panic!("in the UDF"));
+        }));
+        assert!(unwound.is_err());
+        assert!(lent().is_err(), "nothing lent after a call that panicked");
+    }
 }
