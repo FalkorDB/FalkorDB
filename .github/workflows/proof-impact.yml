@@ -290,6 +290,8 @@ jobs:
       contents: read
     outputs:
       gates: ${{ steps.gates.outputs.gates }}
+      # Whether lean_ci.sh built the patch (pass), apart from the other gates.
+      lean: ${{ steps.gates.outputs.lean }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -373,9 +375,10 @@ jobs:
           #   - existing theorem statements unchanged (a weaker one would still build);
           #   - an explicit verdict for every changed function.
           cp ../in/verdicts.json ../out/verdicts.json
-          python3 - "$(git rev-parse HEAD)" ../in/impact.json ../in/verdicts.json > ../out/checks.md 2> ../out/checks.err <<'EOF'
+          cp ../in/impact.json ../out/impact.json
+          python3 - "$(git rev-parse HEAD)" ../in/impact.json ../in/verdicts.json ../out/added_theorems.json > ../out/checks.md 2> ../out/checks.err <<'EOF'
           import json, re, subprocess, sys
-          base, impact_path, verdicts_path = sys.argv[1:]
+          base, impact_path, verdicts_path, added_path = sys.argv[1:]
 
           def git(*a):
               return subprocess.run(['git', *a], capture_output=True, text=True).stdout
@@ -434,8 +437,9 @@ jobs:
 
           # Commands that change what an unchanged statement means: section variables
           # (`variable (h : False)` + `include h` gives a theorem an impossible
-          # premise), name resolution (`open`) and notation.
-          CONTEXT_RE = re.compile(r'^[ \t]*(?:local[ \t]+|scoped[ \t]+)?(variable|include|omit|open|export|notation|'
+          # premise), name resolution (`open`), typeclass resolution (`instance`,
+          # `attribute [instance]`) and notation.
+          CONTEXT_RE = re.compile(r'^[ \t]*(?:local[ \t]+|scoped[ \t]+)?(variable|include|omit|open|export|attribute|instance|notation|'
                                   r'infix|infixl|infixr|prefix|postfix|macro|syntax|universe|set_option)\b', re.M)
 
           def command_text(src, k):
@@ -530,6 +534,16 @@ jobs:
                       what = '; '.join([f'adds `{c[:80]}`' for c in came] + [f'removes `{c[:80]}`' for c in gone]) or 'reordered'
                       held.append(f'- `{f}` `{name}`: context above it changed ({what})')
 
+          # The theorems the patch adds: fully qualified names of declarations in the
+          # patched .lean files (comments stripped, so neither a comment nor a Markdown
+          # file counts). lean_ci.sh builds them below; the report job posts a
+          # counterexample review only for a theorem named here.
+          added_thms = []
+          for f in git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=AM', '--', '*.lean').split():
+              old, new = decls(git('show', f'{base}:{f}')), decls(git('show', f':{f}'))
+              added_thms += [n for n, st in new.items() if st is not None and n not in old]
+          json.dump(sorted(set(added_thms)), open(added_path, 'w'))
+
           # COVERAGE.tsv: no existing function may lose its row or move to a worse bucket
           # (a function counts no better than its worst row).
           RANK = {b: i for i, b in enumerate(['PROVEN', 'CONDITIONAL', 'AXIOMATISED', 'MODELLED', 'NOT COVERED', 'TEST-ONLY'])}
@@ -546,11 +560,17 @@ jobs:
 
           impact = json.load(open(impact_path))
           gone_ok = {(r.get('file'), r.get('fn')) for r in impact.get('removed', []) if isinstance(r, dict)}
+
+          def bare(key):
+              # pr_impact.load_rows()'s name: `Lexer::set_pos` -> `set_pos`, `f/Arm` -> `f`.
+              name = key[1].strip().split('/')[0].split('::')[-1].split('.')[-1].split('(')[0].strip()
+              return (key[0].strip().lstrip('./'), name)
+
           for f in git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=MD', '--', 'proofs/*/COVERAGE.tsv').split():
               old, new = worst(git('show', f'{base}:{f}')), worst(git('show', f':{f}'))
               names = {v: k for k, v in RANK.items()}
               for key, rank in old.items():
-                  if key not in new and key not in gone_ok:
+                  if key not in new and bare(key) not in gone_ok:
                       held.append(f'- `{f}` `{key[0]}` `{key[1]}`: coverage row removed')
                   elif key in new and new[key] > rank:
                       held.append(f'- `{f}` `{key[0]}` `{key[1]}`: coverage {names.get(rank, "?")} → {names.get(new[key], "unknown bucket")}')
@@ -559,6 +579,8 @@ jobs:
               print('\n'.join(held))
 
           VERDICTS = {'unchanged', 'model updated', 'counterexample'}
+          # A counterexample is posted as a review only with all of these (as in the report job).
+          CEX_FIELDS = ('theorem', 'why', 'repro', 'before', 'after')
           try:
               records = [v for v in json.load(open(verdicts_path)) if isinstance(v, dict)]
               keys = [(str(v['file']), str(v['fn']), int(v['line'])) for v in records]
@@ -573,9 +595,9 @@ jobs:
           noname = [k for k, v in given.items() if v in VERDICTS and not given_full[k].get('theorems')]
           nocex = [k for k, v in given.items() if v == 'counterexample'
                    and not all(isinstance(given_full[k].get(f), str) and given_full[k].get(f).strip()
-                               for f in ('theorem', 'repro', 'before', 'after'))]
+                               for f in CEX_FIELDS)]
           if nocex:
-              print('Counterexamples missing theorem, repro, before or after, so not posted as a review (reported, not gated):')
+              print('Counterexamples missing theorem, why, repro, before or after, so not posted as a review (reported, not gated):')
               print('\n'.join(f'- `{f}` `{fn}` (line {ln})' for f, fn, ln in nocex))
           if noname:
               print('Verdicts that name no Lean theorem (reported, not gated):')
@@ -632,6 +654,7 @@ jobs:
           } > ../out/gates.md
           if [[ "$ok" == pass && "$tags" == *INCOMPLETE* ]]; then ok=incomplete; fi
           if [[ "$ok" == pass && "$tags" == *HELD* ]]; then ok=held; fi
+          echo "lean=$lean" >> "$GITHUB_OUTPUT"
           verdict "$ok"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: ${{ always() }}
@@ -710,8 +733,9 @@ jobs:
             gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@comment.md >/dev/null
           fi
       - name: Review the code where the proofs found a probable bug
-        # Only when Lean built the patch, so each counterexample is a checked theorem.
-        if: ${{ steps.download.outcome == 'success' && (needs.gate.outputs.gates == 'pass' || needs.gate.outputs.gates == 'held' || needs.gate.outputs.gates == 'incomplete') }}
+        # Only when Lean built the patch, so each counterexample is a checked theorem
+        # (whatever the other gates said).
+        if: ${{ steps.download.outcome == 'success' && needs.gate.outputs.lean == 'pass' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -726,10 +750,10 @@ jobs:
           # Earlier counterexamples, inline or in a review's own text, are not posted again.
           { gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/comments"
             gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews"; } > posted.json
-          python3 - out/verdicts.json out/proofs.patch files.json posted.json > review.json <<'EOF'
-          import hashlib, json, re, sys
-          verdicts_path, patch_path, files_path, posted_path = sys.argv[1:]
-          head, run_url = __import__('os').environ['HEAD'], __import__('os').environ['RUN_URL']
+          python3 - out/verdicts.json out/impact.json out/added_theorems.json files.json posted.json > review.json <<'EOF'
+          import hashlib, json, os, re, sys
+          verdicts_path, impact_path, added_path, files_path, posted_path = sys.argv[1:]
+          head, run_url, bot = os.environ['HEAD'], os.environ['RUN_URL'], os.environ['BOT_LOGIN']
 
           def pages(path):
               # gh --paginate prints one JSON array per page.
@@ -760,41 +784,52 @@ jobs:
                   lines.add(new); new += 1
               return lines
 
-          try:
-              verdicts = [v for v in json.load(open(verdicts_path)) if isinstance(v, dict)]
-          except Exception:
-              verdicts = []
-          added = '\n'.join(l[1:] for l in open(patch_path).read().split('\n')
-                            if l.startswith('+') and not l.startswith('+++'))
+          def load(path, default):
+              try:
+                  return json.load(open(path))
+              except Exception:
+                  return default
+
+          verdicts = [v for v in load(verdicts_path, []) if isinstance(v, dict)]
+          # Only functions the diff touches (the gate's keys), and only theorems the gate
+          # saw the patch add as compiled, fully qualified declarations (not a comment
+          # or a Markdown line).
+          changed = {(c['file'], c['fn'], int(c['line'])) for c in load(impact_path, {}).get('changed', [])}
+          added = set(load(added_path, []))
           by_path = {f['filename']: commentable(f.get('patch')) for f in pages(files_path)}
-          posted = '\n'.join(c.get('body', '') for c in pages(posted_path))
+          # Only this workflow's own earlier comments and reviews count as posted.
+          posted = '\n'.join(c.get('body') or '' for c in pages(posted_path)
+                             if (c.get('user') or {}).get('login') == bot)
           comments, loose = [], []
           for v in verdicts:
               if v.get('verdict') != 'counterexample':
                   continue
               path, fn, thm = text(v.get('file'), 300), text(v.get('fn'), 200), text(v.get('theorem'), 300)
               repro = text(v.get('repro'), 3000)
+              why, before, after = text(v.get('why'), 600), text(v.get('before'), 1000), text(v.get('after'), 1000)
               try:
                   line = int(v.get('line'))
               except (TypeError, ValueError):
                   continue
-              # Only a theorem the patch adds, which the gate just built.
-              short = thm.split('.')[-1]
-              if not (path and fn and repro and short) or not re.search(r'\b(theorem|lemma)\s+(\S+\.)?' + re.escape(short) + r'\b', added):
+              # All five fields (as the gate requires), so no review says "(not given)".
+              if not (path and fn and thm and why and repro and before and after):
+                  continue
+              if (path, fn, line) not in changed or thm not in added:
                   continue
               marker = f'<!-- proof-cex {path}:{fn}:{hashlib.sha1(repro.encode()).hexdigest()[:12]} -->'
               if marker in posted:
                   continue
+              posted += '\n' + marker  # a duplicate verdict in this run is not posted twice
               body = '\n'.join([
                   marker,
                   f'**The Lean proofs found a probable bug in `{fn}`.**',
                   '',
-                  text(v.get('why'), 600),
+                  why,
                   '',
                   'Reproduce:',
                   fence(repro, 'cypher'),
-                  'Before this PR:', fence(text(v.get('before'), 1000) or '(not given)'),
-                  'With this PR:', fence(text(v.get('after'), 1000) or '(not given)'),
+                  'Before this PR:', fence(before),
+                  'With this PR:', fence(after),
                   '',
                   f'<sub>Lean proves the counterexample on the model (`{thm}`, in the [run]({run_url})\'s `proof-gate` patch). '
                   f'Confirm it on a server before acting on it. At {head[:9]}.</sub>',
