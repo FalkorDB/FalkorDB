@@ -349,6 +349,11 @@ static void _encode_record
 			_encode_ddl_record(r, out);
 			break;
 
+		// NOT V3 OPCODES. A CCH statement is staged as CREATE_INDEX or
+		// DROP_INDEX carrying INDEX_FLD_CCH, so these two values reach a v3
+		// record only through a caller that built one by hand.
+		case EFFECT_CREATE_CCH:
+		case EFFECT_DROP_CCH:
 		case EFFECT_UNKNOWN:
 			ASSERT(false && "unknown v3 record opcode");
 			break;
@@ -395,6 +400,60 @@ static void _write_attr_refs
 		EffectsV3_WriteUint(out, attrs[i].id, sizeof(AttributeID));
 		_write_name(attrs[i].name, out);
 	}
+}
+
+// the counted (schema id, name) list the index DDL records carry
+//
+// SORTED ASCENDING BY ID, and that is this function's job rather than the
+// caller's: ON ()-[r:ROAD|:R]-() and ON ()-[r:R|:ROAD]-() are one statement, so
+// two engines agree on the bytes only if whoever writes them canonicalises the
+// order. A reader takes any order - nothing below it is positional - so this is
+// a byte-parity duty, not an acceptance rule.
+//
+// The count is a u16, like the field list in the same record and unlike the
+// constraint property list, which is a u8.
+static void _write_schema_refs
+(
+	const EffectsV3SchemaRef *schemas,  // the (id, name) pairs
+	uint16_t n,                         // how many
+	EffectsBytes *out                   // sink
+) {
+	EffectsV3_WriteUint(out, n, 2);
+
+	// an index over nothing is not a statement any writer here can produce,
+	// and a reader refuses it; nothing is written rather than asserted,
+	// because this assert would be live in release and would take the MASTER
+	// down over a record the peer would have refused on its own
+	if(n == 0) {
+		return;
+	}
+
+	// THE ORDER IS TAKEN OVER INDICES so the caller's array is not touched -
+	// it owns the names, and sorting the entries would move them about. n is
+	// the number of schemas one statement names, a handful, so an insertion
+	// sort is the whole algorithm.
+	uint16_t *order = rm_malloc(n * sizeof(uint16_t));
+	for(uint16_t i = 0; i < n; i++) {
+		order[i] = i;
+	}
+
+	for(uint16_t i = 1; i < n; i++) {
+		uint16_t v = order[i];
+		uint16_t j = i;
+		while(j > 0 && schemas[order[j - 1]].id > schemas[v].id) {
+			order[j] = order[j - 1];
+			j--;
+		}
+		order[j] = v;
+	}
+
+	for(uint16_t i = 0; i < n; i++) {
+		const EffectsV3SchemaRef *ref = schemas + order[i];
+		EffectsV3_WriteUint(out, ref->id, 4);
+		_write_name(ref->name, out);
+	}
+
+	rm_free(order);
 }
 
 // one option: its presence byte, then its value only when present
@@ -501,9 +560,8 @@ static void _encode_ddl_record
 		case EFFECT_CREATE_INDEX:
 			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->create_index.schema_type,
 					sizeof(SchemaType));
-			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->create_index.schema_id,
-					sizeof(int));
-			_write_name(r->create_index.name, out);
+			_write_schema_refs(r->create_index.schemas,
+					r->create_index.n_schemas, out);
 			EffectsV3_WriteUint(out, r->create_index.field_type, 4);
 			_write_attr_refs(r->create_index.attrs, r->create_index.n_attrs, 2, out);
 			_write_index_options(&r->create_index.options, out);
@@ -514,9 +572,8 @@ static void _encode_ddl_record
 			// field for it, which is what the opcode check here used to assert
 			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->drop_index.schema_type,
 					sizeof(SchemaType));
-			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->drop_index.schema_id,
-					sizeof(int));
-			_write_name(r->drop_index.name, out);
+			_write_schema_refs(r->drop_index.schemas,
+					r->drop_index.n_schemas, out);
 			EffectsV3_WriteUint(out, r->drop_index.field_type, 4);
 			_write_attr_refs(r->drop_index.attrs, r->drop_index.n_attrs, 2, out);
 			break;
