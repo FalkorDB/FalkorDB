@@ -8,6 +8,7 @@
 //!
 //! Layout (one file per area, so changes to different areas do not touch each other's files):
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
+//! - `nd.rs`        the nested-dissection call behind Phase 1's ordering
 //! - `customize.rs` Phase 2: customization, `WeightArr` (#3209)
 //! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
@@ -18,6 +19,7 @@
 
 mod customize;
 mod input;
+mod nd;
 mod order;
 mod query;
 #[cfg(test)]
@@ -43,7 +45,7 @@ use thiserror::Error;
 /// A limit, not a promise: the hierarchy holds several dense arrays of `n + 1` entries, so in
 /// practice memory stops a graph well before this.
 #[allow(clippy::cast_possible_truncation)]
-pub const MAX_NODES: usize = GrB_INDEX_MAX as usize;
+const MAX_NODES: usize = GrB_INDEX_MAX as usize;
 
 /// Compressed sparse row over `n` nodes, ids `u64`. Its arrays are sized once, when it is
 /// built, and never grow; they are `Vec`s as the GraphBLAS export hands them over.
@@ -70,7 +72,7 @@ impl Csr {
     /// # Panics
     /// If `u >= n`, or an offset is out of range of `i`.
     #[must_use]
-    pub fn row(
+    fn row(
         &self,
         u: usize,
     ) -> &[u64] {
@@ -81,7 +83,7 @@ impl Csr {
     /// never decreasing) and every id is below `n`. `O(n + nnz)`, no allocation: the check
     /// that keeps a C library reading this `Csr` within its arrays.
     #[must_use]
-    pub fn is_well_formed(&self) -> bool {
+    fn is_well_formed(&self) -> bool {
         let n = self.n;
         // `len - 1`, not `n + 1`: `n` may be anything, `usize::MAX` included.
         self.p.len().checked_sub(1) == Some(n)
@@ -93,10 +95,10 @@ impl Csr {
 
     /// Whether this is the adjacency of a simple undirected graph: well formed, rows
     /// sorted and duplicate-free, no self-loop, and every entry mirrored (`v` in row `u`
-    /// iff `u` in row `v`). What [`CchInput::skeleton`] holds by construction; checked in
-    /// debug builds and by the tests, not on the release path.
+    /// iff `u` in row `v`). What [`CchInput::skeleton`] holds by construction; checked
+    /// again before the ordering backend reads it.
     #[must_use]
-    pub fn is_symmetric_simple(&self) -> bool {
+    fn is_symmetric_simple(&self) -> bool {
         self.is_well_formed()
             && (0..self.n).all(|u| {
                 let r = self.row(u);
@@ -132,7 +134,7 @@ pub struct CchInput {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CchIndexDef {
     rel_types: Vec<TypeId>,
-    pub weight_attr: u16,
+    weight_attr: u16,
 }
 
 impl CchIndexDef {
@@ -153,7 +155,7 @@ impl CchIndexDef {
     /// Sorted, duplicate-free — normalised by [`Self::new`], which is the only constructor.
     #[cfg(test)] // only the tests read it until the input build (#3211) does
     #[must_use]
-    pub fn rel_types(&self) -> &[TypeId] {
+    pub(crate) fn rel_types(&self) -> &[TypeId] {
         &self.rel_types
     }
 }
