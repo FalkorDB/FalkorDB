@@ -198,7 +198,7 @@ fn extract_count_variable(expr: &DynTree<ExprIR<Variable>>) -> Option<u32> {
         return None;
     }
     // count(var) has the counted variable as the first child.
-    // There may be an additional __agg_order_by_placeholder__ child.
+    // There may be an additional aggregate order-by slot child.
     let root = expr.root();
     if root.num_children() == 0 {
         return None;
