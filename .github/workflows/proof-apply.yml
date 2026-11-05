@@ -12,21 +12,24 @@
 # only so `git apply` and `git commit` can write the patch onto it. The text of a
 # comment, a branch name or a login only ever reaches a script through `env:`.
 #
-#   resolve  read-only token: who asked, is it a same-repo PR, and which proof-impact
-#            run belongs to the PR's *current* head (a moved head means "wait for the
-#            bot's run on the new head"). Replies when it refuses.
+#   resolve  read-only token: who asked, is it a same-repo PR that leaves the gate's own
+#            code alone (a PR that edits proof-impact.yml / the proofs scripts cannot
+#            vouch for its own patch), and which proof-impact run (with a gate
+#            artifact) belongs to this PR's *current* head; a moved head means "wait
+#            for the bot's run on the new head". Replies when it refuses.
 #   apply    the only job with `contents: write`. Takes the gate artifact of that run,
 #            applies it only when its status is `pass` (a `held` or failed patch is
 #            never committed), re-checks every path against the gate's allowlist
 #            (read from proof-impact.yml on the default branch), commits as
-#            falkordb-proof-bot, and pushes as a plain fast-forward to the head
-#            ref. A head the author moved in the meantime is rejected; nothing is
+#            falkordb-proof-bot, and pushes as a fast-forward to the head ref, with a
+#            lease on the head it built on. A head the author moved in the meantime
+#            (even back to an ancestor) is rejected; nothing is
 #            forced, nothing changes. It comments the commit SHA.
 #
 # The push token is a GitHub App installation token when the repository has the
 # secrets PROOF_BOT_APP_ID and PROOF_BOT_APP_KEY, so the push starts CI. Without
 # them it is GITHUB_TOKEN, whose pushes never start workflows; the PR comment then
-# says to push an empty commit or re-run the checks.
+# says to push an empty commit (or close and reopen the PR) to run CI on it.
 #
 # No loop: proof-impact.yml recognises the bot's commit (author email and the
 # `Proof-Bot-Run:` trailer) and does not re-prove it, and nothing here triggers on

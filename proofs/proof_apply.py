@@ -24,6 +24,10 @@ import sys
 MARKER = "<!-- proof-apply -->"
 # Who may ask: the role names the collaborators API reports.
 ROLES = {"admin", "maintain", "write"}
+# What a PR must not change for its proof-impact run to be trusted: the gate is that
+# workflow's own code, and a `pull_request` run uses the PR's copy of it.
+GATE_CODE = re.compile(r"^(\.github/workflows/proof-(impact|apply)\.yml|proofs/(proof_apply|pr_impact)\.py|"
+                       r"proofs/(lean_ci|coverage)\.sh)$")
 # Identity of the bot's commits. proof-impact.yml recognises them by this email and
 # the `Proof-Bot-Run:` trailer (keep both in sync), so it does not re-prove them.
 BOT_NAME = "falkordb-proof-bot"
@@ -32,8 +36,9 @@ TRAILER = "Proof-Bot-Run"
 LABEL = "proofs:apply"
 COMMAND = re.compile(r"\A[ \t]*/proofs[ \t]+apply[ \t]*\Z")
 APP_NOTE = (
-    "CI does not re-run on this commit: it was pushed with `GITHUB_TOKEN`, which GitHub never "
-    "lets start workflows. Push an empty commit (`git commit --allow-empty`) or re-run the checks. "
+    "CI does not run on this commit: it was pushed with `GITHUB_TOKEN`, which GitHub never "
+    "lets start workflows. Push an empty commit (`git commit --allow-empty`) or close and reopen the "
+    "PR to run it on the new head (re-running an old run would check the old head). "
     "Configure the repository secrets `PROOF_BOT_APP_ID` and `PROOF_BOT_APP_KEY` (a GitHub App "
     "with contents and pull-requests write) so the bot's pushes start CI."
 )
@@ -85,7 +90,8 @@ def git(cwd, *args, check=True):
 def allowlist(workflow):
     """PROOF_PATHS and PROOF_DENY, read from the default branch's proof-impact.yml, so
     the gate and this job cannot drift apart. Fails closed."""
-    text = open(workflow).read()
+    with open(workflow) as f:
+        text = f.read()
     found = {}
     for name in ("PROOF_PATHS", "PROOF_DENY"):
         m = re.search(rf"^[ \t]*{name}:[ \t]*'((?:[^']|'')*)'[ \t]*$", text, re.M)
@@ -138,10 +144,27 @@ def resolve():
         return
     sha = head["sha"]
 
+    # The gate is proof-impact.yml's own code, and a `pull_request` run uses the PR's
+    # copy of it: a PR that edits the gate (or this bot) cannot vouch for its own patch.
+    touched = []
+    for page in range(1, 31):
+        files = api(f"repos/{repo}/pulls/{pr}/files?per_page=100&page={page}") or []
+        touched += [f["filename"] for f in files if GATE_CODE.match(f.get("filename", ""))]
+        if len(files) < 100:
+            break
+    if touched:
+        listing = ", ".join(f"`{t}`" for t in touched)
+        reply(repo, pr, f"Not applied: this PR changes the code that checks the bot's patches ({listing}), "
+                        f"so the bot's run cannot vouch for itself. Apply `proofs.patch` from the run's "
+                        f"`proof-gate` artifact yourself.")
+        return
+
     runs = api(f"repos/{repo}/actions/workflows/proof-impact.yml/runs"
                f"?head_sha={sha}&event=pull_request&per_page=100").get("workflow_runs", [])
+    # Only this PR's runs: two PRs can share a head commit and differ in base.
     runs = [r for r in runs if r.get("head_sha") == sha
-            and (r.get("head_repository") or {}).get("full_name") == repo]
+            and (r.get("head_repository") or {}).get("full_name") == repo
+            and any(str(p.get("number")) == str(pr) for p in r.get("pull_requests") or [])]
     ok = sorted((r for r in runs if r.get("conclusion") == "success"),
                 key=lambda r: (r.get("created_at") or "", r["id"]))
     if not ok:
@@ -151,7 +174,18 @@ def resolve():
         reply(repo, pr, f"Not applied: {why} (`{sha[:9]}`). Wait for the bot's run on the "
                         f"current head, then comment `/proofs apply` again.")
         return
-    run = ok[-1]
+    # A title/body edit makes a newer run whose jobs are all skipped: take the newest
+    # one that has a live gate artifact.
+    run = None
+    for r in reversed(ok):
+        arts = api(f"repos/{repo}/actions/runs/{r['id']}/artifacts?per_page=100").get("artifacts", [])
+        if any(a.get("name") == "proof-gate" and not a.get("expired") for a in arts):
+            run = r
+            break
+    if run is None:
+        reply(repo, pr, f"Nothing to apply for `{sha[:9]}`: no successful proof-impact run on it has a "
+                        f"`proof-gate` artifact (no verified function changed, or the artifact expired).")
+        return
     print(f"actor {actor} ({role}); head {sha}; run {run['id']}")
     output(go="true", head_sha=sha, head_ref=head["ref"], run_id=run["id"])
 
@@ -172,7 +206,8 @@ def apply():
 
     def read(name):
         try:
-            return open(os.path.join(gate, name)).read()
+            with open(os.path.join(gate, name)) as f:
+                return f.read()
         except OSError:
             return None
 
@@ -238,7 +273,11 @@ def apply():
         cfg = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
                "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {b64}"}
     # A plain push: a head the author moved meanwhile is rejected, never overwritten.
-    push = subprocess.run(["git", "push", "-q", remote, f"HEAD:refs/heads/{ref}"], cwd=work,
+    # The lease pins the remote tip to the head we built on: a branch the author reset
+    # to an ancestor or deleted meanwhile is not restored. The update is still a
+    # fast-forward, so the lease never overwrites anything.
+    push = subprocess.run(["git", "push", "-q", f"--force-with-lease=refs/heads/{ref}:{sha}", remote,
+                           f"HEAD:refs/heads/{ref}"], cwd=work,
                           capture_output=True, text=True, env={**os.environ, **cfg})
     if push.returncode != 0:
         now = subprocess.run(["git", "ls-remote", remote, f"refs/heads/{ref}"], cwd=work,
@@ -266,8 +305,8 @@ if __name__ == "__main__":
         cmds[sys.argv[1]]()
     except Exception as e:  # never leave the requester without an answer
         print(f"error: {e}", file=sys.stderr)
-        if env("REPO") and env("PR") and sys.argv[1] == "apply":
+        if env("REPO") and env("PR"):
             reply(env("REPO"), env("PR"), "Not applied: the bot hit an unexpected error and changed "
-                  f"nothing. See the [workflow run]({env('GITHUB_SERVER_URL', 'https://github.com')}/"
+                  f"nothing; comment `/proofs apply` again to retry. See the [workflow run]({env('GITHUB_SERVER_URL', 'https://github.com')}/"
                   f"{env('REPO')}/actions/runs/{env('GITHUB_RUN_ID')}).")
         sys.exit(1)
