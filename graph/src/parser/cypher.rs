@@ -3338,18 +3338,8 @@ impl<'a> Parser<'a> {
         set_items: &mut Vec<SetItem<Arc<String>, Arc<String>>>,
     ) -> Result<(), String> {
         loop {
-            let (mut expr, recurse) = self.parse_primary_expr(false)?;
-            if recurse {
-                self.reject_unparenthesized_target(&expr)?;
-                expr = self.parse_expr(false)?;
-                match_token!(self.lexer, RParen);
-                self.expect_property_after_paren()?;
-            }
-            if self.lexer.current()? == Token::Dot {
-                while self.lexer.current()? == Token::Dot {
-                    self.lexer.next();
-                    expr = self.parse_property_lookup(expr)?;
-                }
+            let (expr, has_properties) = self.parse_update_target()?;
+            if has_properties {
                 match_token!(self.lexer, Equal);
                 let value = Arc::new(self.parse_expr(false)?);
                 set_items.push(SetItem::Attribute {
@@ -3387,6 +3377,37 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
+    }
+
+    /// Parses what a `SET` or `REMOVE` item updates: an expression followed
+    /// by an optional `.prop.prop...` chain, reporting whether a chain was
+    /// present.
+    ///
+    /// Each lookup wraps the tree before it, so the chain is charged against
+    /// [`Self::MAX_TREE_DEPTH`] step by step, as the postfix chain in
+    /// [`Self::parse_expr_inner`] is: otherwise `n.a.a.a...` builds a tree
+    /// the binder overflows its stack walking, quadratically slowly.
+    fn parse_update_target(&mut self) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
+        let ((mut expr, recurse), child_height) =
+            self.with_child_height(|s| s.parse_primary_expr(false))?;
+        let mut height = child_height + Self::PRIMARY_LEVELS;
+        if recurse {
+            self.reject_unparenthesized_target(&expr)?;
+            expr = self.parse_expr(false)?;
+            height = self.expr_height;
+            match_token!(self.lexer, RParen);
+            self.expect_property_after_paren()?;
+        }
+        // The target itself may already be too tall, with no lookup to charge.
+        self.check_depth(height)?;
+        let has_properties = self.lexer.current()? == Token::Dot;
+        while self.lexer.current()? == Token::Dot {
+            self.lexer.next();
+            expr = self.parse_property_lookup(expr)?;
+            height += 1;
+            self.check_depth(height)?;
+        }
+        Ok((expr, has_properties))
     }
 
     /// A `SET`/`REMOVE` target that opens a nested expression may only open
@@ -3434,18 +3455,8 @@ impl<'a> Parser<'a> {
         remove_items: &mut Vec<QueryExpr<Arc<String>>>,
     ) -> Result<(), String> {
         loop {
-            let (mut expr, recurse) = self.parse_primary_expr(false)?;
-            if recurse {
-                self.reject_unparenthesized_target(&expr)?;
-                expr = self.parse_expr(false)?;
-                match_token!(self.lexer, RParen);
-                self.expect_property_after_paren()?;
-            }
-            if self.lexer.current()? == Token::Dot {
-                while self.lexer.current()? == Token::Dot {
-                    self.lexer.next();
-                    expr = self.parse_property_lookup(expr)?;
-                }
+            let (mut expr, has_properties) = self.parse_update_target()?;
+            if has_properties {
                 remove_items.push(Arc::new(expr));
             } else if self.lexer.current()? == Token::Colon {
                 expr = tree!(
@@ -3524,7 +3535,9 @@ impl<'a> Parser<'a> {
                     ..
                 } => {
                     self.lexer.next();
-                    body.push(self.parse_foreach_clause()?);
+                    // A nested FOREACH recurses like `CALL {}` does, so it is
+                    // bounded the same way.
+                    body.push(self.nested(Self::parse_foreach_clause)?);
                 }
                 _ => break,
             }
@@ -3701,6 +3714,23 @@ mod tests {
                 "map projection",
                 format!("MATCH (a) RETURN {}a{{.k}}{}", "[".repeat(n), "]".repeat(n)),
             ),
+            // Clauses that build expressions or recurse outside parse_expr.
+            (
+                "set property chain",
+                format!("MATCH (n) SET n{} = 1", ".a".repeat(n)),
+            ),
+            (
+                "remove property chain",
+                format!("MATCH (n) REMOVE n{}", ".a".repeat(n)),
+            ),
+            (
+                "foreach",
+                format!(
+                    "{}CREATE (){}",
+                    "FOREACH (x IN [1] | ".repeat(n),
+                    ")".repeat(n)
+                ),
+            ),
         ];
         // The same nesting an expression can hide, wrapped in a clause.
         shapes.extend(
@@ -3786,6 +3816,22 @@ mod tests {
                     "{name}: {n} levels were accepted as a tree {height} deep",
                 );
             }
+        }
+    }
+
+    // A SET/REMOVE target is charged for the primary expression wrapped
+    // around what it nests even when no `.prop` follows it, so one a level or
+    // two over the cap is refused as too deep rather than as a bad target.
+    #[test]
+    fn update_target_without_property_is_bounded() {
+        with_functions();
+        let target = |n: usize| format!("abs({}1{})", "(".repeat(n), "+1)".repeat(n));
+        // 126 levels still fit under the cap and are rejected as a target.
+        for clause in ["REMOVE", "SET"] {
+            let err = parse_fully(&format!("MATCH (x) {clause} {}", target(126))).unwrap_err();
+            assert!(!is_too_deep(&err), "{clause}: {err}");
+            let err = parse_fully(&format!("MATCH (x) {clause} {}", target(127))).unwrap_err();
+            assert!(is_too_deep(&err), "{clause}: 127 levels: {err}");
         }
     }
 
