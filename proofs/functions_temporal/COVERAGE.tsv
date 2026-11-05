@@ -1,0 +1,105 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/functions/temporal.rs	get_int_field	50	PROVEN	Fns.getIntField (f64 as i64 via Num structure): getIntField_eq_slot
+graph/src/runtime/functions/temporal.rs	check_range	63	PROVEN	checkRange/inRange (None passes): used by quarterPath/weekPath; quarter_doq_errors, quarter_errors, week_huge_errors, dateFromComponents_total
+graph/src/runtime/functions/temporal.rs	date_from_components	82	PROVEN	dateFromComponents/weekPath/quarterPath/ymdPath: dateFromComponents_total (never panics, every input; #2950 737dfb5da), weekPath_ok, quarterPath_ok, week_huge_errors, quarter_doq_errors, ymd_no_truncation, week_edge_errors, dayOfWeek_seven_is_sunday, dayOfWeek_zero_rejected (ISO dayOfWeek, #2988); W2-temporal-1,-2 fixed (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/runtime/functions/temporal.rs	date_from_map	130	PROVEN	Fns.dateFromMap: dateFromMap_eq_slots, dateStruct_eq_map
+graph/src/runtime/functions/temporal.rs	time_from_components	142	PROVEN	Fns.timeFromComponents (as-u32 truncation, from_hms_opt): timeFromComponents_ok, u32-wrap example
+graph/src/runtime/functions/temporal.rs	time_from_map	154	PROVEN	Fns.timeFromMap: timeFromMap_eq_slots, localtimeStruct_eq_map
+graph/src/runtime/functions/temporal.rs	slot_to_int	164	PROVEN	Fns.slotToInt: slotToInt_range, slotToInt_nan, getIntField_eq_slot
+graph/src/runtime/functions/temporal.rs	parse_date_string	173	PROVEN	Parse.parseDate (chrono/parse in Chrono structure): parseDate_ok (soundness), parseDate_negative, parseDate_compact_rejects, parseDate_compact_ok_allDigits, compact_junk_examples, parseDate_week_first (#3125 1ea868116)
+graph/src/runtime/functions/temporal.rs	parse_week_date	268	PROVEN	weekSlice (rest.len() <= 2 branch and split_at_checked, #2950): weekSlice_err_iff, weekSlice_short_ok, week_slice_errors, sliceOk_ascii; W2-temporal-3 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/runtime/functions/temporal.rs	parse_time_string	308	PROVEN	Parse.parseTime: parseTime_ok (result < 86400), parseTime_compact_rejects (#3125 1ea868116)
+graph/src/runtime/functions/temporal.rs	parse_datetime_string	370	PROVEN	Parse.parseDatetime: parseDatetime_ok, parseDatetime_noT
+graph/src/runtime/functions/temporal.rs	parse_duration_string	388	PROVEN	Parse.parseDuration/dateLoop/timeLoop: parseDuration_weeks, parseDuration_noP; #2987 checked W/D: dateLoop_week_overflow, dateLoop_day_overflow, dateLoop_days_i64, week_string_overflow_errors; W2-temporal-8 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/runtime/functions/temporal.rs	days_from_civil	463	PROVEN	daysFromCivilT_eq
+graph/src/runtime/functions/temporal.rs	construct_duration_secs	479	PROVEN	constructDuration (ends in checkDateRange since #2746): construct_decompose, construct_ym_s
+graph/src/runtime/functions/temporal.rs	check_date_range	531	PROVEN	Duration.checkDateRange: checkDateRange_iff (accepts exactly years within +-MAX_DATE_YEAR), checkDateRange_boundary, minDateDays_val, maxDateDays_val
+graph/src/runtime/functions/temporal.rs	decompose_duration	539	PROVEN	decomposeDuration: construct_decompose, decompose_monthsDur, neg_days_encoding
+graph/src/runtime/functions/temporal.rs	date_pure	557	PROVEN	Pure.datePure: pure_not_unreachable, pure_null, datePure_midnight, dateStruct_eq_map
+graph/src/runtime/functions/temporal.rs	localtime_pure	574	PROVEN	Pure.localtimePure: pure_not_unreachable, localtimePure_range, localtimeStruct_eq_map
+graph/src/runtime/functions/temporal.rs	localdatetime_pure	593	PROVEN	Pure.localdatetimePure: pure_not_unreachable, pure_null
+graph/src/runtime/functions/temporal.rs	duration_pure	610	PROVEN	Pure.durationPure/durLoop: durLoop_get, durationStruct_eq_map, pure_not_unreachable
+graph/src/runtime/functions/temporal.rs	duration_struct_pure	690	PROVEN	Pure.durationStructPure: durationStruct_eq_map
+graph/src/runtime/functions/temporal.rs	date_struct_pure	703	PROVEN	Pure.dateStructPure: dateStruct_eq_map
+graph/src/runtime/functions/temporal.rs	localtime_struct_pure	718	PROVEN	Pure.localtimeStructPure: localtimeStruct_eq_map
+graph/src/runtime/functions/temporal.rs	localdatetime_struct_pure	730	PROVEN	Pure.localdatetimeStructPure (date slots 0-6, time slots 7-9): register_wf (slot count 10)
+graph/src/runtime/functions/temporal.rs	register	750	PROVEN	Pure.registered/pureFns/structSlots: register_wf, register_nondet
+graph/src/runtime/functions/temporal.rs	timestamp_fn	756	PROVEN	Pure.timestampFn (clock as argument): definitional (returns Int(nowMs))
+graph/src/runtime/functions/temporal.rs	date_fn	772	PROVEN	Pure.dateFn: clock_fns_shape, fns_with_args
+graph/src/runtime/functions/temporal.rs	localtime_fn	793	PROVEN	Pure.localtimeFn: clock_fns_shape, fns_with_args
+graph/src/runtime/functions/temporal.rs	localdatetime_fn	816	PROVEN	Pure.localdatetimeFn: clock_fns_shape, fns_with_args
+graph/src/runtime/functions/temporal.rs	duration_fn	832	PROVEN	Pure.durationFn = durationPure (rfl) + durationPure theorems
+graph/src/runtime/functions/temporal.rs	date_transaction_fn	842	PROVEN	Pure.dateTransactionFn: transaction_consistent
+graph/src/runtime/functions/temporal.rs	localtime_transaction_fn	854	PROVEN	Pure.localtimeTransactionFn: transaction_consistent
+graph/src/runtime/functions/temporal.rs	localdatetime_transaction_fn	868	PROVEN	Pure.localdatetimeTransactionFn: transaction_consistent
+graph/src/runtime/value.rs	Point::distance	153	PROVEN	SpatialFns.distance (Flt structure, clamp01 since #2983): distance_self, distance_finite_coords (finite for finite coordinates), distance_finite, distance_not_nan (hypothesis-free apart from the binary64 laws of the Flt/NanLaws structures, as for chrono and simsimd); W2-temporal-4 fixed (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/runtime/value.rs	Value::format_datetime	261	PROVEN	Components.formatDatetime: formatDatetime_spec, format_extremes (total, no chrono since #2986)
+graph/src/runtime/value.rs	Value::format_date	281	PROVEN	Components.formatDate: formatDate_spec, pushDate_eq, format_extremes, format_wide_years, formatDate_wide_distinct (#2986/#2746 fixed)
+graph/src/runtime/value.rs	Value::format_time	291	PROVEN	Components.formatTime: formatTime_length, format_invalid, pad2_length
+graph/src/runtime/value.rs	Value::format_duration	302	NOT COVERED	string assembly over decomposeDuration; live-tested
+graph/src/runtime/value.rs	Value::get_datetime_component	478	PROVEN	Components.getDatetimeComponent (ChronoDT structure): components_invalid, clock_ranges, calendar_ranges, fields_roundtrip, datetime_unknown
+graph/src/runtime/value.rs	Value::get_date_component	537	PROVEN	Components.getDateComponent: components_invalid, calendar_ranges
+graph/src/runtime/value.rs	Value::get_time_component	585	PROVEN	Components.getTimeComponent: components_invalid, clock_ranges, time_component_cases
+graph/src/runtime/value.rs	Value::get_duration_component	613	NOT COVERED	chrono; live-tested vs C
+graph/src/runtime/value.rs	add_duration_to_timestamp	701	PROVEN	addDur (shiftMonthsR then checkDateRange): addDur_eq_raw, addDur_in_range; unchecked arithmetic addDurRaw: add_sub_months, sub_eq_add_neg_months, sub_vs_add_neg, neg_days_encoding, timeAddDur_eq_tod
+graph/src/runtime/value.rs	sub_duration_from_timestamp	711	PROVEN	subDur (shiftMonthsR with -years/-months, checkDateRange): subDur_in_range; arithmetic subDurRaw: subDur_eq_shift, add_sub_months, sub_eq_add_neg_months, sub_vs_add_neg
+graph/src/runtime/value.rs	shift_months	725	PROVEN	Duration.shiftMonthsR (guard |adj_year| <= MAX_DATE_YEAR+1): shiftMonthsR_eq, shiftMonthsR_out_of_range, shiftMonthsR_no_wrap, shift_past_limit_errors; arithmetic shiftMonths: shiftMonths_total
+graph/src/runtime/value.rs	days_in_month	765	PROVEN	daysInMonth: dim_link, civil_valid
+graph/src/runtime/value.rs	is_leap	777	PROVEN	isLeap: isLeap_tmod, isLeap_add400
+graph/src/runtime/value.rs	days_from_civil	784	PROVEN	daysFromCivil: dfc_civil, civil_dfc, dfc_injective, daysFromCivil_day
+graph/src/runtime/value.rs	civil_from_days	804	PROVEN	civilFromDays: dfc_civil, civil_valid, civil_dfc, civilFromDays_exact, civilFromDays_trunc
+graph/src/runtime/value.rs	civil_from_days_wide	812	PROVEN	civilFromDaysI (the same Hinnant arithmetic with the i64 year, no `as i32`): dfc_civil, civil_valid, civil_dfc; civilFromDays_exact/_trunc relate the two
+graph/src/runtime/value.rs	push_date	828	PROVEN	Components.pushDate: pushDate_eq, format_wide_years, formatDate_wide_distinct
+graph/src/runtime/value.rs	write_two_digits	853	PROVEN	Components.twoDigits: twoDigits_eq_pad, fourDigits_eq_pad
+graph/src/runtime/functions/conversion.rs	register	40	NOT COVERED	registration
+graph/src/runtime/functions/conversion.rs	value_to_integer	44	NOT COVERED	f64 parsing; live differential (toInteger('1e3'), ' 12')
+graph/src/runtime/functions/conversion.rs	value_to_float	103	NOT COVERED	f64 parsing; live differential (' 1', '0x10')
+graph/src/runtime/functions/conversion.rs	value_to_string	125	NOT COVERED	f64 formatting `{f}` vs C %f; live differential
+graph/src/runtime/functions/conversion.rs	to_json	161	NOT COVERED	delegates to Value::to_json_string
+graph/src/runtime/functions/conversion.rs	is_empty	175	NOT COVERED	trivial
+graph/src/runtime/functions/conversion.rs	to_boolean	189	NOT COVERED	trivial; agrees with C live
+graph/src/runtime/functions/conversion.rs	to_boolean_list	219	NOT COVERED	map of to_boolean
+graph/src/runtime/functions/conversion.rs	to_float_list	246	NOT COVERED	f64 parsing
+graph/src/runtime/functions/conversion.rs	to_integer_list	265	NOT COVERED	map of value_to_integer
+graph/src/runtime/functions/conversion.rs	to_string_list	281	NOT COVERED	map of value_to_string
+graph/src/runtime/functions/spatial.rs	point_from_map_entries	38	PROVEN	SpatialFns.pointFromMapEntries: point_key_count, point_missing_lat, point_null_not_numeric, point_nan_refused, point_nan_lon_refused, point_ok_iff (range test on the f64 before `as f32`), point_range_msgs
+graph/src/runtime/functions/spatial.rs	numeric	74	PROVEN	SpatialFns.numeric (Float and Int numeric, all else none): used by point_ok_iff, point_null_not_numeric
+graph/src/runtime/functions/spatial.rs	register	82	PROVEN	SpatialFns.registered: register_wf
+graph/src/runtime/functions/spatial.rs	vecf32	89	PROVEN	SpatialFns.vecf32: vecf32_ok
+graph/src/runtime/functions/spatial.rs	point	110	PROVEN	SpatialFns.point: point_key_count (map arm = pointFromMapEntries, null arm null)
+graph/src/runtime/functions/spatial.rs	distance	130	PROVEN	SpatialFns.distanceV: distanceV_spec
+graph/src/runtime/functions/spatial.rs	vec_euclidean_distance	146	PROVEN	SpatialFns.vecDist (simsimd = Simd structure, FFI): vecDist_kernel, vecDist_mismatch
+graph/src/runtime/functions/spatial.rs	vec_cosine_distance	176	PROVEN	SpatialFns.vecDist: vecDist_kernel, vecDist_mismatch
+graph/src/runtime/vec_distance.rs	euclidean	30	PROVEN	VecDistance euclidean: euclidean_spec (sqrt . l2sq), mismatch (simsimd len check modelled; C kernel = Kernels parameter)
+graph/src/runtime/vec_distance.rs	cosine	40	PROVEN	VecDistance cosine: cosine_spec, mismatch
+graph/src/runtime/vec_distance.rs	inner_product	49	PROVEN	VecDistance innerProduct: innerProduct_spec (-dot), mismatch
+graph/src/runtime/vec_distance.rs	distance	59	PROVEN	VecDistance distance: distance_default, distance_table, distance_none_iff
+graph/src/runtime/vector_expr.rs	ExprColumn::get	80	MODELLED	VExpr.finish (Bools read-back)
+graph/src/runtime/vector_expr.rs	ExprColumn::into_values	114	NOT COVERED	materialisation
+graph/src/runtime/vector_expr.rs	ExprColumn::nulls_or_none	127	NOT COVERED	bitmap plumbing
+graph/src/runtime/vector_expr.rs	ExprColumn::constant_nullness	139	NOT COVERED	bitmap plumbing
+graph/src/runtime/vector_expr.rs	ExprColumn::is_null	150	NOT COVERED	bitmap plumbing
+graph/src/runtime/vector_expr.rs	union_nulls	168	MODELLED	laneRow isNull flag = union
+graph/src/runtime/vector_expr.rs	VectorEval::new	202	NOT COVERED	constructor
+graph/src/runtime/vector_expr.rs	VectorEval::eval	211	NOT COVERED	dispatch over ExprIR
+graph/src/runtime/vector_expr.rs	VectorEval::eval_values	285	NOT COVERED	property/variable fast paths
+graph/src/runtime/vector_expr.rs	VectorEval::eval_variable	309	NOT COVERED	column gather
+graph/src/runtime/vector_expr.rs	VectorEval::eval_property	333	NOT COVERED	bulk attribute fetch
+graph/src/runtime/vector_expr.rs	VectorEval::property_values	356	NOT COVERED	bulk attribute fetch
+graph/src/runtime/vector_expr.rs	VectorEval::eval_and_or	391	PROVEN	VExpr.colEval: colEval_eq, colEval_rows, rowEval_short
+graph/src/runtime/vector_expr.rs	VectorEval::eval_case	477	NOT COVERED	narrowing like AND/OR; not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_function	557	NOT COVERED	scalar folding; not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	644	NOT COVERED	label matrix (GraphBLAS)
+graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	708	MODELLED	VExpr.rowEval is the per-row reference
+graph/src/runtime/vector_expr.rs	compare_columns	733	NOT COVERED	f64/compare_value lanes (prior wave: value_order)
+graph/src/runtime/vector_expr.rs	compare_i64_pairs	797	NOT COVERED	elementwise i64 compare
+graph/src/runtime/vector_expr.rs	compare_f64_pairs	820	NOT COVERED	f64
+graph/src/runtime/vector_expr.rs	mask_out_nulls	842	NOT COVERED	bitmap plumbing
+graph/src/runtime/vector_expr.rs	negate_bools	856	NOT COVERED	trivial 3VL NOT
+graph/src/runtime/vector_expr.rs	arithmetic	880	PROVEN	VExpr.intLane: intLane_eq (int lane); float/generic lanes not modelled
+graph/src/runtime/vector_expr.rs	int_lane	962	PROVEN	VExpr.intLane
+graph/src/runtime/vector_expr.rs	float_lane	974	NOT COVERED	f64
+graph/src/runtime/vector_expr.rs	float_operand	989	NOT COVERED	trivial predicate
+graph/src/runtime/value.rs	Point::new	142	PROVEN	SpatialFns.Point.new: Point.new_fields
+graph/src/runtime/value.rs	Value::add_slow (Time/Duration arm)	967	PROVEN	Duration.timeAddDur (arm at value.rs:1069, #2985): timeAddDur_eq_tod, timeAddDur_range, timeAddDur_eq, time_normalised
+graph/src/runtime/value.rs	Sub::sub (Time/Duration arm)	1084	PROVEN	Duration.timeSubDur (arm at value.rs:1111, #2985): timeSubDur_range, timeSubDur_eq, timeSub_timeAdd, time_normalised

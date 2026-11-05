@@ -1,0 +1,5 @@
+name = "falkor-id-space"
+defaultTargets = ["FalkorIdSpace"]
+
+[[lean_lib]]
+name = "FalkorIdSpace"
