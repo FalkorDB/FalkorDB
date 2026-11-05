@@ -22,6 +22,8 @@
 //! time their parent is processed.
 
 use std::ffi::CString;
+use std::ops::Range;
+use std::ptr::null_mut;
 
 use super::{CchError, Csr, nd};
 use crate::index::redisearch::redis::RedisModule_Log;
@@ -245,7 +247,6 @@ impl Topology {
     }
 
     /// `perm[rank]`.
-    #[allow(dead_code)] // the query change (#3210) maps ranks back to node ids with it
     pub(crate) fn node_of(
         &self,
         rank: u64,
@@ -273,7 +274,7 @@ impl Topology {
     pub(crate) fn up_range(
         &self,
         rank: u64,
-    ) -> std::ops::Range<usize> {
+    ) -> Range<usize> {
         self.up.p[rank as usize] as usize..self.up.p[rank as usize + 1] as usize
     }
 
@@ -321,7 +322,7 @@ impl Topology {
 ///
 /// A backend failure in [`Topology::build_with`] must not be silent in a release build: it
 /// cannot be reached by user input, so seeing it at all means a bug.
-fn log_warning(msg: &str) {
+pub(super) fn log_warning(msg: &str) {
     // SAFETY: reading a `static mut` function pointer the module loader filled in, and
     // calling it with a NULL context -- exactly what the panic hook does. `Option<fn>` is
     // `Copy`, so no reference to the static is created.
@@ -330,7 +331,7 @@ fn log_warning(msg: &str) {
             && let Ok(c_msg) = CString::new(msg.replace('\0', " "))
         {
             log(
-                std::ptr::null_mut(),
+                null_mut(),
                 c"warning".as_ptr(),
                 c"%s".as_ptr(),
                 c_msg.as_ptr(),

@@ -376,13 +376,11 @@ impl Cch {
         Ok(())
     }
 
-    #[allow(dead_code)] // the query change (#3210) is the first reader
     pub(crate) fn topology(&self) -> &Topology {
         &self.topo
     }
 
     /// Cheapest `lo -> hi` weight of arc `slot`, through strictly lower-ranked nodes only.
-    #[allow(dead_code)] // the query change (#3210) is the first reader
     pub(crate) fn up_weight(
         &self,
         slot: usize,
@@ -391,7 +389,6 @@ impl Cch {
     }
 
     /// Cheapest `hi -> lo` weight of arc `slot`.
-    #[allow(dead_code)] // the query change (#3210) is the first reader
     pub(crate) fn dn_weight(
         &self,
         slot: usize,
@@ -401,7 +398,6 @@ impl Cch {
 
     /// The apex rank `up_weight(slot)` routes through, or `None` if the arc is just its
     /// original edge.
-    #[allow(dead_code)] // the query change (#3210) is the first reader
     pub(crate) fn up_mid(
         &self,
         slot: usize,
@@ -413,7 +409,6 @@ impl Cch {
     }
 
     /// The apex rank `dn_weight(slot)` routes through, or `None`.
-    #[allow(dead_code)] // the query change (#3210) is the first reader
     pub(crate) fn dn_mid(
         &self,
         slot: usize,
