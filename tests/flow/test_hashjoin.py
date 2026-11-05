@@ -135,3 +135,51 @@ class testHashJoin(FlowTestsBase):
         g.query(f"UNWIND range(1, {n}) AS i CREATE (:S {{k: toString(i)}})")
         res = g.query("MATCH (s:S) MATCH (t:S) WHERE s.k = t.k RETURN count(s)")
         self.env.assertEqual(res.result_set, [[n]])
+
+    def test_join_inside_batched_subplan_keeps_outer_rows_apart(self):
+        # Under a batched Apply / Optional the join's argument batch holds
+        # every outer row; a left row must only join right rows of its own
+        # outer row. It joined across all of them (#3012).
+        g = self.graph
+        g.query("UNWIND [1, 2] AS i CREATE (:A {v: 1, w: i}), (:B {v: 1, w: i})")
+
+        res = g.query("UNWIND [1, 2] AS x MATCH (a:A), (b:B) WHERE a.v = b.v RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[8]])
+
+        res = g.query("""UNWIND [1, 2] AS x
+                         OPTIONAL MATCH (a:A), (b:B) WHERE a.v = b.v AND a.w = x AND b.w = x
+                         RETURN x, a.w, b.w ORDER BY x""")
+        self.env.assertEqual(res.result_set, [[1, 1, 1], [2, 2, 2]])
+
+        # more outer rows than one batch, correlated on both sides
+        g.query("UNWIND range(1, 3000) AS i CREATE (:C {v: i % 10, w: i})")
+        res = g.query("""UNWIND range(1, 3000) AS x
+                         MATCH (a:C {w: x}), (b:C) WHERE b.v = a.v AND b.w <= 20
+                         RETURN count(*)""")
+        self.env.assertEqual(res.result_set, [[6000]])
+
+    def test_join_inside_batched_subplan_with_mixed_key_types(self):
+        # The integer fast path and the general (Value) table are chosen per
+        # outer row: one outer row may build integer keys only while another
+        # builds a string key and promotes its own table.
+        g = self.graph
+        g.query("UNWIND [1, 2] AS i CREATE (:M {k: i}), (:M {k: toString(i)}), (:N {k: i}), (:N {k: toString(i)})")
+        q = """UNWIND [1, 2] AS x
+               OPTIONAL MATCH (a:M), (b:N)
+               WHERE a.k = b.k AND (a.k = x OR a.k = toString(x))
+               RETURN x, count(b) ORDER BY x"""
+        self.env.assertContains("Value Hash Join", str(g.explain(q)))
+        res = g.query(q)
+        self.env.assertEqual(res.result_set, [[1, 2], [2, 2]])
+
+        # the build side depends on the outer row: x = 1 builds an integer key
+        # only (its table stays on the integer path) while x = 2 also builds a
+        # string key and promotes its own table to the general one
+        q = """UNWIND [1, 2] AS x
+               OPTIONAL MATCH (a:M), (b:N)
+               WHERE a.k = b.k AND (a.k = x OR a.k = toString(x))
+                 AND (b.k = x OR (x = 2 AND b.k = toString(x)))
+               RETURN x, count(b) ORDER BY x"""
+        self.env.assertContains("Value Hash Join", str(g.explain(q)))
+        res = g.query(q)
+        self.env.assertEqual(res.result_set, [[1, 1], [2, 2]])
