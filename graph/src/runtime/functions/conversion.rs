@@ -126,10 +126,8 @@ pub fn register(funcs: &mut Functions) {
             match args.first() {
                 Some(Value::String(s)) => Ok(Value::String(Arc::clone(s))),
                 Some(Value::Int(i)) => Ok(Value::String(Arc::new(i.to_string()))),
-                Some(Value::Float(f)) => {
-                    // Format without trailing zeros; ensure at least one decimal
-                    let s = format!("{f}");
-                    Ok(Value::String(Arc::new(s)))
+                Some(&Value::Float(f)) => {
+                    Ok(Value::String(Arc::new(float_to_string(f))))
                 }
                 Some(Value::Bool(b)) => Ok(Value::String(Arc::new(b.to_string()))),
                 Some(Value::Point(p)) => Ok(Value::String(Arc::new(format!(
@@ -290,4 +288,83 @@ pub fn register(funcs: &mut Functions) {
             }
         }
     );
+}
+
+/// Cypher `toString(Float)`: the shortest representation that round-trips,
+/// always showing a fractional part, in the form of Java's `Double.toString`
+/// (what Neo4j prints): plain decimal for `1e-3 <= |f| < 1e7`, otherwise
+/// scientific with an upper-case `E` (`1.0E20`, `1.5E-7`). `NaN` and the
+/// infinities keep Rust's spelling.
+fn float_to_string(f: f64) -> String {
+    let abs = f.abs();
+    if abs == 0.0 || (1e-3..1e7).contains(&abs) {
+        // `{:?}` is shortest round-trip and appends `.0` to integral values.
+        return format!("{f:?}");
+    }
+    if !f.is_finite() {
+        return format!("{f}");
+    }
+    let mut sci = format!("{f:e}");
+    // Rust's shortest formatter breaks an exact decimal tie toward the larger
+    // digit; Java picks the even one. The correctly rounded value at the same
+    // digit count (round-half-even on the exact binary value) is the closest
+    // candidate, so use it whenever it still round-trips.
+    let digits = sci
+        .split_once('e')
+        .map_or(0, |(m, _)| m.bytes().filter(u8::is_ascii_digit).count());
+    if digits > 1 {
+        let exact = format!("{f:.prec$e}", prec = digits - 1);
+        if exact.parse::<f64>() == Ok(f) {
+            sci = exact;
+        }
+    }
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
+    if mantissa.contains('.') {
+        return format!("{mantissa}E{exp}");
+    }
+    // A one-digit shortest mantissa needs a second digit. Padding with `.0`
+    // is wrong for the smallest subnormals (`5e-324` is `4.9E-324` in Java),
+    // so format the original value with one fractional digit and keep it
+    // when it still round-trips.
+    let two = format!("{f:.1e}");
+    if two.parse::<f64>() == Ok(f) {
+        let (m, e) = two.split_once('e').unwrap_or((&two, "0"));
+        return format!("{m}E{e}");
+    }
+    format!("{mantissa}.0E{exp}")
+}
+
+#[cfg(test)]
+mod float_to_string_tests {
+    use super::float_to_string;
+
+    #[test]
+    fn matches_java_double_to_string() {
+        for (f, want) in [
+            (1.0, "1.0"),
+            (-2.0, "-2.0"),
+            (2.3, "2.3"),
+            (0.0, "0.0"),
+            (-0.0, "-0.0"),
+            (0.1 + 0.2, "0.30000000000000004"),
+            (1234567.0, "1234567.0"),
+            (1e7, "1.0E7"),
+            (1e20, "1.0E20"),
+            (-1.5e300, "-1.5E300"),
+            (0.001, "0.001"),
+            (1e-4, "1.0E-4"),
+            (1e-7, "1.0E-7"),
+            // An exact decimal tie: Java picks the even last digit.
+            (562949953421312.25, "5.629499534213122E14"),
+            (1.25e-5, "1.25E-5"),
+            (5e-324, "4.9E-324"),
+            (1e-323, "9.9E-324"),
+            (1.5e-323, "1.5E-323"),
+            (f64::NAN, "NaN"),
+            (f64::INFINITY, "inf"),
+            (f64::NEG_INFINITY, "-inf"),
+        ] {
+            assert_eq!(float_to_string(f), want, "{f:?}");
+        }
+    }
 }
