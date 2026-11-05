@@ -181,6 +181,12 @@ pub struct Runtime<'a> {
     /// expression trees it points into are immutable for the query lifetime.
     pub value_dedupers:
         RefCell<rustc_hash::FxHashMap<(NodeIdx<Dyn<ExprIR<Variable>>>, u64), ValuesDeduper>>,
+    /// For each `Aggregate` plan node, the most groups one of its instances
+    /// has built. Group ids are a group's insertion index, so a per-row
+    /// `CALL {}` can drop its sub-plan's DISTINCT state by key
+    /// (`0..groups`) instead of scanning [`Self::value_dedupers`], which also
+    /// holds enclosing aggregates' state.
+    pub aggregate_group_counts: RefCell<rustc_hash::FxHashMap<NodeIdx<Dyn<IR>>, u64>>,
     /// Variables to return in query results
     pub return_names: Vec<Variable>,
     /// Debug mode: record operator execution
@@ -499,6 +505,7 @@ impl<'a> Runtime<'a> {
             write_escalation,
             return_names,
             value_dedupers: RefCell::new(rustc_hash::FxHashMap::default()),
+            aggregate_group_counts: RefCell::new(rustc_hash::FxHashMap::default()),
             inspect,
             record: RefCell::new(vec![]),
             import_folder,
@@ -1024,7 +1031,7 @@ impl<'a> Runtime<'a> {
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
                 let record_cap = self.record_cap(idx);
                 let child = pop_or_once(&mut children);
-                Ok(BatchOp::CondTraverse(CondTraverseOp::new(
+                Ok(BatchOp::CondTraverse(Box::new(CondTraverseOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
@@ -1036,7 +1043,7 @@ impl<'a> Runtime<'a> {
                     *bind_relationship,
                     idx,
                     record_cap,
-                )))
+                ))))
             }
             IR::ExpandInto {
                 relationship: relationship_pattern,
