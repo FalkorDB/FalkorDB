@@ -1010,3 +1010,95 @@ class testGraphMergeFlow():
         res = g.query("MATCH (a:A), (b:B) MERGE p = (a)-[r:R]->(b) RETURN r.k ORDER BY r.k")
         self.env.assertEqual(res.result_set, [[1], [2]])
         g.delete()
+
+    def test43_merge_traverse_from_detach_deleted_node(self):
+        """
+        Same as test42 but the other endpoint is unbound, so the MERGE pattern
+        is a traversal (CondTraverse) rather than an ExpandInto: it must not
+        expand out of a node deleted earlier in the query
+        https://github.com/FalkorDB/FalkorDB/issues/3463
+        """
+
+        queries = ["""MATCH (a:A) DETACH DELETE a
+                      MERGE (a)-[r:R]->(x:B) RETURN count(r)""",
+                   """MATCH (a:A) DETACH DELETE a
+                      MERGE (a)-[:R]->(x:B)""",
+                   """MATCH (a:A) DETACH DELETE a
+                      MERGE (a)-[r:R]->(x) RETURN count(r)""",
+                   """MATCH (b:B) DETACH DELETE b
+                      MERGE (a:A)-[r:R]->(b) RETURN count(r)"""]
+
+        con = self.env.getConnection()
+        for q in queries:
+            self.graph.query("MATCH (n) DETACH DELETE n")
+            self.graph.query("CREATE (:A)-[:R]->(:B)")
+
+            msg = assert_error_reply(self.env, con, "GRAPH.QUERY", GRAPH_ID, q)
+            self.env.assertContains("endpoint was not found", msg or "")
+
+            # the failed query left the graph as it was
+            actual = self.graph.query("""MATCH (a:A)-[r:R]->(b:B)
+                                         RETURN count(r)""")
+            self.env.assertEqual(actual.result_set, [[1]])
+
+    def test44_merge_fused_chain_with_pending_deletes(self):
+        """
+        An anonymous multi-hop MERGE pattern is fused into one traversal; an
+        earlier DELETE in the query must neither drop its remaining hops (a
+        deleted unrelated edge) nor let it match through a deleted
+        intermediate node
+        """
+
+        setup = """CREATE (:A)-[:R]->(:M)-[:S]->(:B), (:X)-[:Z]->(:Y)"""
+        pattern = "MERGE (a:A)-[:R]->()-[:S]->(c:B)"
+
+        # an unrelated deleted edge: the path still exists, nothing is created
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query(setup)
+        res = self.graph.query(f"MATCH ()-[z:Z]->() DELETE z {pattern} RETURN count(c)")
+        self.env.assertEqual(res.result_set, [[1]])
+        res = self.graph.query("MATCH (n:A) RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[1]])
+        res = self.graph.query("MATCH (n:B) RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[1]])
+
+        # the intermediate node is deleted: the old path is gone, so MERGE
+        # creates a fresh one
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query(setup)
+        self.graph.query(f"MATCH (m:M) DETACH DELETE m {pattern}")
+        for label, expected in (("A", 2), ("M", 0), ("B", 2)):
+            res = self.graph.query(f"MATCH (n:{label}) RETURN count(n)")
+            self.env.assertEqual(res.result_set, [[expected]])
+        self.graph.query("MATCH (n) DETACH DELETE n")
+
+    def test45_merge_traverse_skips_explicitly_deleted_edge(self):
+        """
+        A MERGE traversal must not match an edge deleted earlier in the query:
+        with only the deleted edge it creates a replacement, and with a
+        parallel live edge it matches that one (named and anonymous edge)
+        """
+
+        for edge in ("r", ""):
+            pattern = f"MERGE (a)-[{edge}:R]->(x:B)"
+
+            # only the deleted edge: MERGE creates a replacement
+            self.graph.query("MATCH (n) DETACH DELETE n")
+            self.graph.query("CREATE (:A)-[:R {k:1}]->(:B)")
+            self.graph.query(f"MATCH (a:A)-[e:R]->() DELETE e {pattern}")
+            res = self.graph.query("MATCH (:A)-[r:R]->(:B) RETURN count(r)")
+            self.env.assertEqual(res.result_set, [[1]])
+            res = self.graph.query("MATCH (n:B) RETURN count(n)")
+            self.env.assertEqual(res.result_set, [[2]])
+            res = self.graph.query("MATCH ()-[r:R]->() RETURN r.k")
+            self.env.assertEqual(res.result_set, [[None]])
+
+            # a parallel live edge: MERGE matches it, nothing is created
+            self.graph.query("MATCH (n) DETACH DELETE n")
+            self.graph.query("CREATE (a:A), (b:B), (a)-[:R {k:1}]->(b), (a)-[:R {k:2}]->(b)")
+            self.graph.query(f"MATCH (a:A)-[e:R {{k:1}}]->() DELETE e {pattern}")
+            res = self.graph.query("MATCH (:A)-[r:R]->(:B) RETURN r.k")
+            self.env.assertEqual(res.result_set, [[2]])
+            res = self.graph.query("MATCH (n:B) RETURN count(n)")
+            self.env.assertEqual(res.result_set, [[1]])
+        self.graph.query("MATCH (n) DETACH DELETE n")
