@@ -1,4 +1,5 @@
 from common import *
+import itertools
 import re
 
 values = ["str1", "str2", False, True, 5, 10.5]
@@ -384,5 +385,184 @@ class testWithClause(FlowTestsBase):
                 assert(False)
             except redis.ResponseError as e:
                 self.env.assertContains("Type mismatch", str(e))
+        finally:
+            g.delete()
+
+    def test15_hidden_projection_variables_keep_their_slots(self):
+        # Variables a WITH/RETURN copies in only for its WHERE/ORDER BY/SKIP/
+        # LIMIT, and the locals of a pattern comprehension, go out of scope
+        # after it, but the next variable of that scope must not get their
+        # record slot: it would read their value.
+        g = self.db.select_graph("with_hidden_slots")
+        g.query("CREATE (:A {v:1})-[:R {w:2}]->(:B {v:0}), (:B {v:5})")
+        try:
+            cases = [
+                ("MATCH (n) WITH n.v AS k WHERE n.v = 0 MATCH (x)-->(y) RETURN k, x.v, y.v",
+                 [[0, 1, 0]]),
+                ("MATCH (n) WITH n.v AS k WHERE n.v >= 0 RETURN k, [(x)-->(y) | y.v] AS l ORDER BY k",
+                 [[0, [0]], [1, [0]], [5, [0]]]),
+                ("MATCH (n) WITH n, 1 AS o ORDER BY size([(n)-[r]->(m) | m]) MATCH (x)-->(y) "
+                 "RETURN n.v, x.v, y.v ORDER BY n.v",
+                 [[0, 1, 0], [1, 1, 0], [5, 1, 0]]),
+                ("MATCH (n:A) WHERE size([(n)-[r]->(m) | m]) > 0 MATCH (x)-[s]->(y) "
+                 "WHERE size([(x)-[r2]->(m2) | m2]) > 0 RETURN n.v, x.v, s.w, y.v",
+                 [[1, 1, 2, 0]]),
+            ]
+            for q, expected in cases:
+                self.env.assertEqual(g.query(q).result_set, expected, message=q)
+        finally:
+            g.delete()
+
+    def test16_order_by_variables_do_not_cross_the_projection(self):
+        # A variable ORDER BY reads from before the projection is not
+        # projected: it is not visible after WITH/RETURN, and not returned
+        # from a CALL {} body.
+        g = self.db.select_graph("with_order_by_scope")
+        g.query("CREATE (:A {v:1}), (:B {v:0}), (:B {v:5})")
+        try:
+            try:
+                g.query("MATCH (n) WITH n.v AS k ORDER BY n.v RETURN n")
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("'n' not defined", str(e))
+
+            res = g.query("MATCH (n) WITH n.v AS k ORDER BY n.v RETURN *")
+            self.env.assertEqual(res.header[0][1], 'k')
+            self.env.assertEqual(len(res.header), 1)
+            self.env.assertEqual(res.result_set, [[0], [1], [5]])
+
+            res = g.query("MATCH (n) CALL { WITH n RETURN n.v AS k ORDER BY n.v } RETURN k ORDER BY k")
+            self.env.assertEqual(res.result_set, [[0], [1], [5]])
+        finally:
+            g.delete()
+
+    def test17_hidden_slot_key_does_not_clobber_an_alias(self):
+        # Hidden variables used to be kept under a made-up string key such as
+        # `_slot_1_2` (the copy of `n`, scope 1, id 2), which is also a legal
+        # alias. It overwrote the alias, so the later MATCH lost its rows.
+        # They are now kept in a nameless list, so no alias can reach them.
+        g = self.db.select_graph("with_slot_alias")
+        g.query("CREATE (:A {v:1})-[:R {w:2}]->(:B {v:0}), (:B {v:5})")
+        try:
+            res = g.query("""MATCH (n) WITH n.v AS k, n.v + 0 AS _slot_1_2 WHERE n.v = 0
+                             MATCH (x)-->(y) RETURN k, _slot_1_2, x.v, y.v""")
+            self.env.assertEqual(res.result_set, [[0, 0, 1, 0]])
+        finally:
+            g.delete()
+
+    def test18_hidden_slot_is_not_nameable_and_underscore_locals_leave_scope(self):
+        g = self.db.select_graph("with_slot_nameable")
+        g.query("CREATE (:A {v:1})-[:R {w:2}]->(:B {v:0}), (:B {v:5})")
+        try:
+            # A later alias spelling an old hidden key gets a fresh variable,
+            # not the filter-only copy of `n`: the MATCH sees (_slot_1_2) unbound.
+            res = g.query("""MATCH (n) WITH n.v AS k, n.v + 0 AS o WHERE n.v = 0
+                             MATCH (_slot_1_2)-->(y) RETURN k, y.v""")
+            self.env.assertEqual(res.result_set, [[0, 0]])
+            for alias in ("_slot_#1_2", "_slot_1_2_"):
+                res = g.query(f"""MATCH (n) WITH n.v AS k, n.v + 0 AS o WHERE n.v = 0
+                                  MATCH (`{alias}`)-->(y) RETURN k, y.v""")
+                self.env.assertEqual(res.result_set, [[0, 0]], depth=1)
+
+            # A `_`-prefixed local of a pattern predicate is not visible after it,
+            # like any other local.
+            try:
+                g.query("MATCH (n:A) WHERE (n)-->(_l) RETURN _l")
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("'_l' not defined", str(e))
+        finally:
+            g.delete()
+
+    def test19_names_spelling_internal_reservations_behave_like_any_other(self):
+        # Every scope-table reservation (hidden WITH/ORDER BY copies, pattern
+        # locals, list/quantifier/reduce variables, FOREACH locals, aggregate
+        # order placeholders) used to live under a string key a query could
+        # spell. Each query below runs twice: with the colliding names, and
+        # with those names replaced by `w0`, `w1`, ...: the results must match.
+        g = self.db.select_graph("with_internal_names")
+        g.query("CREATE (:A {id:0, v:1})-[:R {k:2}]->(:B {id:1, v:0}), (:B {id:2, v:5})-[:S {k:3}]->(:A {id:3, v:1})")
+        names = ["_slot_0_1", "_slot_1_2", "_slot_", "_foreach_0_1", "_quant_0_1", "_lc_0_1",
+                 "_reduce_acc_0_1", "_reduce_iter_0_2", "__agg_placeholder_0", "__agg_placeholder_1",
+                 "__agg_order_by_placeholder__"]
+        queries = [
+            # hidden WHERE / ORDER BY copies of a WITH
+            "MATCH (n) WITH n.v AS @0 WHERE n.v = 0 MATCH (x)-->(y) RETURN @0, x.v, y.v",
+            "MATCH (n) WITH n.v AS @0, n.v + 0 AS @1 WHERE n.v = 0 MATCH (@2)-->(y) RETURN @0, @1, y.v",
+            "MATCH (n) WITH n.v AS @0 ORDER BY n.v MATCH (x)-->(y) RETURN @0, x.v, y.v ORDER BY @0",
+            "MATCH (n) WITH n.v AS @0 ORDER BY n.v LIMIT 2 WITH @0 MATCH (x)-->(y) RETURN @0, x.v, y.v",
+            # aggregation
+            "MATCH (n) WITH n.v AS @0, count(*) AS @1 WHERE @1 >= 0 MATCH (x)-->(y) RETURN @0, @1, x.v, y.v",
+            "MATCH (n) WITH n.v AS @0, count(*) AS @1 ORDER BY @1 RETURN @0, @1",
+            "MATCH (n) WITH n, count(*) AS @0 RETURN n.id, @0, collect(n.id) AS c ORDER BY n.id",
+            "MATCH (n) WITH n.v AS @0 RETURN @0, count(*) AS @1 ORDER BY @0",
+            # pattern predicates / comprehensions
+            "MATCH (n) WITH n.v AS k WHERE n.v >= 0 RETURN k, [(n)-->(@0) | @0.v] AS l ORDER BY k",
+            "MATCH (n:A) WHERE (n)-->(@0) MATCH (x)-[s]->(y) RETURN n.id, x.id, s.k, y.id ORDER BY n.id, x.id",
+            "MATCH (n:A) WHERE size([(@0)-->(m) | m]) >= 0 MATCH (x)-[s]->(y) RETURN n.id, x.id, y.id ORDER BY n.id, x.id",
+            # list comprehension, quantifier, reduce
+            "MATCH (n) WITH n, [@0 IN [1, 2] WHERE @0 > 0 | @0 + n.v] AS l UNWIND [0, 1] AS @1 RETURN n.id, l, @1 ORDER BY n.id, @1",
+            "MATCH (n) WHERE any(@0 IN [0, 1] WHERE @0 = n.v) MATCH (m) RETURN n.id, m.id ORDER BY n.id, m.id",
+            "MATCH (n) WHERE all(@0 IN [0, 1, 2, 5] WHERE @0 >= 0) WITH n.v AS @1 ORDER BY n.v RETURN @1 ORDER BY @1",
+            "MATCH (n) RETURN n.id, reduce(@0 = 0, @1 IN [1, 2] | @0 + @1 + n.v) AS r ORDER BY n.id",
+            "MATCH (n) WITH n.v AS @2 ORDER BY n.v RETURN @2, reduce(@0 = 0, @1 IN [1, 2] | @0 + @1) AS r ORDER BY @2",
+            # CALL {}
+            "MATCH (n) CALL { WITH n RETURN n.v AS @0 ORDER BY n.v } RETURN n.id, @0 ORDER BY n.id",
+            "MATCH (n:A) CALL { WITH n MATCH (n)-[:R]->(@0) RETURN @0 } MATCH (@1:B) RETURN n.id, @0.id, @1.id ORDER BY @1.id",
+            "MATCH (n) CALL { WITH n MATCH (n)-->(z) RETURN count(z) AS @0 } WITH n.id AS i, @0 ORDER BY n.v RETURN i, @0 ORDER BY i",
+            "MATCH (n) WITH n.v AS @0 WHERE n.v >= 0 CALL { WITH @0 RETURN @0 + 1 AS @1 } RETURN @0, @1 ORDER BY @0",
+            # UNION
+            "MATCH (n:A) WITH n.v AS @0 ORDER BY n.v RETURN @0 AS o UNION MATCH (m:B) WITH m.v AS @0 ORDER BY m.v RETURN @0 AS o",
+            "MATCH (n:A) CALL { WITH n RETURN n.v AS @0 UNION WITH n RETURN 7 AS @0 } RETURN n.id, @0 ORDER BY n.id, @0",
+            # OPTIONAL MATCH, UNWIND, RETURN *
+            "MATCH (n:A) OPTIONAL MATCH (n)-[@0:R]->(@1) WITH n, @0, @1 WHERE n.v >= 0 UNWIND [0, 1] AS @2 RETURN n.id, @0.k, @1.id, @2 ORDER BY @2",
+            "MATCH (n) WITH n.v AS k ORDER BY n.v MATCH (@0) RETURN k, @0.id ORDER BY k, @0.id",
+        ]
+        # FOREACH (writes), checked by read-back
+        foreach = [
+            ("MATCH (n:A) FOREACH (@0 IN [1, 2] | SET n.f = @0) WITH n MATCH (x)-->(y) RETURN n.id, n.f, x.id, y.id ORDER BY n.id, x.id", None),
+            ("MATCH (n:A) FOREACH (@0 IN [1, 2] | CREATE (:T {x: @0})) WITH n MATCH (@1:T) RETURN n.id, @1.x ORDER BY n.id, @1.x", None),
+        ]
+        try:
+            def rows(q):
+                try:
+                    # compared as multisets: most queries have no total order
+                    return sorted(g.query(q).result_set, key=repr)
+                except redis.ResponseError as e:
+                    return "ERR " + str(e)
+            def fill(tmpl, vals):
+                for i, v in enumerate(vals):
+                    tmpl = tmpl.replace(f"@{i}", v)
+                return tmpl
+
+            for i, tmpl in enumerate(queries + [f for f, _ in foreach]):
+                for combo in itertools.islice(itertools.permutations(names, 3), i % 7, None, 41):
+                    q = fill(tmpl, combo)
+                    plain = fill(tmpl, ("w0", "w1", "w2"))
+                    if tmpl in [f for f, _ in foreach]:
+                        g.query("MATCH (n:A) REMOVE n.f WITH n MATCH (t:T) DELETE t")
+                    got = rows(q)
+                    if tmpl in [f for f, _ in foreach]:
+                        g.query("MATCH (n:A) REMOVE n.f WITH n MATCH (t:T) DELETE t")
+                    want = rows(plain)
+                    self.env.assertEqual(got, want, message=q)
+                    self.env.assertFalse(isinstance(want, str) and want.startswith("ERR 'w"), message=plain)
+        finally:
+            g.delete()
+
+    def test20_foreach_after_hidden_variables_does_not_multiply_reservations(self):
+        # FOREACH keeps the ids of its body's variables reserved. It must not
+        # re-reserve the ones the scope already holds (a hidden WITH copy, an
+        # earlier FOREACH's locals), or every FOREACH doubles the scope table:
+        # 24 of them took 5 s and 2 GB. The scope-table size itself is asserted
+        # by the unit test `scope_tables_list_each_variable_once`; this query is
+        # kept small enough to fail fast rather than stall.
+        g = self.db.select_graph("with_foreach_reservations")
+        g.query("CREATE (:A {v: 1})")
+        try:
+            body = " ".join(f"FOREACH (i{j} IN [1] | CREATE (:T {{x: i{j}}}))" for j in range(12))
+            res = g.query(f"MATCH (n:A) WITH n.v AS k WHERE n.v >= 0 {body} RETURN k")
+            self.env.assertEqual(res.result_set, [[1]])
+            self.env.assertEqual(res.nodes_created, 12)
         finally:
             g.delete()

@@ -2041,9 +2041,7 @@ impl<'a> Parser<'a> {
                                 args = vec![tree!(ExprIR::Distinct; args)];
                             }
 
-                            args.push(tree!(ExprIR::Variable(Arc::new(String::from(
-                                "__agg_order_by_placeholder__"
-                            )))));
+                            args.push(tree!(ExprIR::AggOrderPlaceholder));
 
                             match_token!(self.lexer, RParen);
                             return Ok((tree!(ExprIR::FuncInvocation(func); args), false));
@@ -2067,9 +2065,7 @@ impl<'a> Parser<'a> {
                         if distinct {
                             args = vec![tree!(ExprIR::Distinct; args)];
                         }
-                        args.push(tree!(ExprIR::Variable(Arc::new(String::from(
-                            "__agg_order_by_placeholder__"
-                        )))));
+                        args.push(tree!(ExprIR::AggOrderPlaceholder));
                         return Ok((tree!(ExprIR::FuncInvocation(func); args), false));
                     }
 
