@@ -74,10 +74,80 @@ jobs:
           network: gh-runner
           runner_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
 
+  # Warm the x64 release dep caches (GraphBLAS, parser, search, libcurl, libcsv)
+  # on a roomy ubuntu-latest runner, in the same toolchain container and under
+  # the SAME cache keys run-benchmarks uses. The ephemeral GCE benchmark runners
+  # (n4-highcpu-8) are low on RAM and were being OOM-killed mid GraphBLAS compile;
+  # because the job never finished, the graphblas-x64 cache was never saved, so
+  # every run rebuilt from scratch and died again (a self-perpetuating deadlock -
+  # the benchmark has been red on every master push for weeks). Building here lets
+  # run-benchmarks RESTORE GraphBLAS instead of recompiling it, turning its build
+  # into a cheap low-memory relink that fits the GCE runner. (The Sanitizer job
+  # already builds this GraphBLAS on ubuntu-latest, so we know it fits there.)
+  prebuild:
+    needs:
+      - haslabel
+      - detect-toolchain
+    if: ${{ needs.haslabel.outputs.has-benchmark-label == 'true' || github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    container: ${{ needs.detect-toolchain.outputs.image }}
+    steps:
+      - name: Safe dir
+        run: git config --global --add safe.directory '*'
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          set-safe-directory: '*'
+          submodules: recursive
+
+      - name: Cache GraphBLAS
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ./bin/linux-x64-release/GraphBLAS
+          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c', './build.sh') }}
+
+      - name: Cache parser
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ./bin/linux-x64-release/libcypher-parser
+          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c', './build.sh') }}
+
+      - name: Compute RediSearch SHA
+        id: rs_sha
+        run: echo "sha=$(git rev-parse HEAD:deps/RediSearch)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache search
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ./bin/linux-x64-release/search-static
+          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}-${{ steps.rs_sha.outputs.sha }}
+
+      - name: Cache libcurl
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ./bin/linux-x64-release/libcurl
+          key: libcurl-x64-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
+
+      - name: Cache libcsv
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ./bin/linux-x64-release/libcsv
+          key: libcsv-x64-${{ hashFiles('./deps/libcsv/ChangeLog', './build.sh') }}
+
+      - name: Build (warm dep caches)
+        run: |
+          apt update && apt install -y lsb-release
+          curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+          echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
+          apt update && apt install -y redis python3-venv python3-pip
+          rustup default stable
+          make -j$(nproc)
+
   run-benchmarks:
     needs:
       - create-runners
       - detect-toolchain
+      - prebuild
     strategy:
       matrix:
         benchmark_group: [ a, b ]
