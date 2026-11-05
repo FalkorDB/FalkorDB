@@ -101,7 +101,7 @@ src/graph_core.rs	c_graph_key	119	PROVEN	GraphCore.cGraphKey: upToNulB_nonul, cG
 src/graph_core.rs	register_graph	140	PROVEN	GraphCore.register: register_registered, register_get; MultiDb.query (registry keyed by name only, keyspace by (db,key)) — #2782 open: bug2782_same_name_other_db_aborts refutes KeyspaceRegistered/WritesSucceed
 src/graph_core.rs	graph_is_registered	188	PROVEN	GraphCore.isRegistered: free_unregisters, free_keeps_others; MultiDb.existing_ok (under KeyspaceRegistered), bug2782_invariant_broken: OPEN BUG #2782 refutes KeyspaceRegistered on main (kept PROVEN, bug named)
 src/graph_core.rs	rename_graph	202	PROVEN	GraphCore.rename: rename_moves, rename_absent
-src/graph_core.rs	WriteQueryOk::new	256	PROVEN	GraphCore.modified: modified_zero, modified_replicates_or_warns
+src/graph_core.rs	WriteQueryOk::new	272	PROVEN	GraphCore.modified: modified_zero, modified_replicates_or_warns
 src/graph_core.rs	ffi::sanitise_error	318	PROVEN	GraphCore.sanitise: sanitise_nonul, sanitise_len, sanitise_id
 src/graph_core.rs	ffi::block_client	333	AXIOMATISED	one RedisModule_* call (Redis module API contract)
 src/graph_core.rs	ffi::unblock_client	344	AXIOMATISED	one RedisModule_* call (Redis module API contract)
@@ -116,7 +116,7 @@ src/graph_core.rs	ffi::hold_string	456	AXIOMATISED	one RedisModule_* call (Redis
 src/graph_core.rs	ffi::free_string	467	AXIOMATISED	one RedisModule_* call (Redis module API contract)
 src/graph_core.rs	ffi::trim_string_allocation	482	AXIOMATISED	one RedisModule_* call (Redis module API contract)
 src/graph_core.rs	ffi::replicate_argv	497	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ThreadedGraph::new	553	PROVEN	GraphCore.TG.new: TG.new_idle (unbounded write channel, #3014)
+src/graph_core.rs	ThreadedGraph::new	569	PROVEN	GraphCore.TG.new: TG.new_idle (unbounded write channel, #3014)
 src/graph_core.rs	ThreadedGraph::from_mvcc	569	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle (unbounded write channel, #3014)
 src/graph_core.rs	execute_query	587	PROVEN	RoQuery.ro_never_writes, GraphCore.executeQuery/admissionKept: ro_write_rejected, read_releases_admission (#3014)
 src/graph_core.rs	execute_profile	674	PROVEN	GraphCore.profileDetect/admissionKept: profileDetect_write, read_releases_admission (#3014)
@@ -124,7 +124,7 @@ src/graph_core.rs	execute_query_write	737	PROVEN	GraphCore.executeWrite (#3290 r
 src/graph_core.rs	try_query_write	783	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon): reply_after_commit, failed_no_commit, stale_run_silent
 src/graph_core.rs	WriteAttempt::from	776	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
 src/graph_core.rs	reply_profile	884	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
-src/graph_core.rs	BlockedClient::new	921	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	BlockedClient::new	949	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
 src/graph_core.rs	BlockedClient::drop	929	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
 src/graph_core.rs	compute_effective_timeout	947	PROVEN	Args.rustTimeout: rustTimeout_write_pq, rustTimeout_rw_uniform (#2998 fixed by #3000 2e8172d76), rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
 src/graph_core.rs	reply_invalid_graph_version	986	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
@@ -292,3 +292,8 @@ src/commands/udf.rs	udf_load	68	PROVEN	Commands.udfLoadArgs: udf_load_plain, udf
 src/commands/udf.rs	udf_delete	141	PROVEN	Commands.udfCmd DELETE: udf_delete_one, udf_delete_extra
 src/commands/udf.rs	udf_flush	170	PROVEN	Commands.udfCmd FLUSH: udf_flush_noargs
 src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filters, udf_list_withcode_anywhere
+# Online index build (#2355): fns the background builder added, not modelled yet.
+src/graph_core.rs	ThreadedGraph::replace_graph	586	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::read	1642	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::publish	1651	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::warn	1676	NOT COVERED	online index build (#2355): not modelled yet
