@@ -61,6 +61,10 @@ pub struct Binder {
     /// property access like `r.prop` is allowed (per-edge predicate)
     /// whereas it is rejected on named-path Path variables.
     varlen_rel_var_ids: std::collections::HashSet<(u32, u32)>,
+    /// Named relationships that a MATCH pattern bound, as (scope_id, id). A
+    /// later MATCH must not name one again (as C rejects): the repeat would
+    /// not join on the bound edge but bind a second, unrelated one.
+    match_rel_vars: std::collections::HashSet<(u32, u32)>,
     /// Scope tables no longer on `env_stack`: the scopes of a CALL body,
     /// popped when the body closes, and those of UNION branches, each bound
     /// by its own binder. The planner mints fresh variables at
@@ -79,6 +83,7 @@ impl Default for Binder {
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
+            match_rel_vars: std::collections::HashSet::new(),
             retired_scope_vars: vec![],
         }
     }
@@ -340,11 +345,32 @@ impl Binder {
                 } else {
                     None
                 };
+                for rel in pattern.relationships() {
+                    if let Some(var) = self.current_env().get(&rel.alias)
+                        && self.match_rel_vars.contains(&(var.scope_id, var.id))
+                    {
+                        return Err(format!(
+                            "Cannot use the same relationship variable '{}' for multiple patterns.",
+                            rel.alias
+                        ));
+                    }
+                }
                 let pattern_result = self.bind_graph(&pattern, false);
                 if let Some(saved) = saved_labels {
                     self.node_labels = saved;
                 }
                 let pattern = pattern_result?;
+                for rel in pattern.relationships() {
+                    if !rel
+                        .alias
+                        .name
+                        .as_ref()
+                        .is_some_and(|n| n.starts_with("_anon"))
+                    {
+                        self.match_rel_vars
+                            .insert((rel.alias.scope_id, rel.alias.id));
+                    }
+                }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
                 if let Some(ref f) = filter
                     && !Self::expr_may_return_boolean(f.root())
@@ -906,6 +932,7 @@ impl Binder {
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
+                        match_rel_vars: std::collections::HashSet::new(),
                         retired_scope_vars: vec![],
                     };
 
@@ -1309,8 +1336,8 @@ impl Binder {
     /// numeric `Variable` IDs and checking that every referenced name is in
     /// scope.
     ///
-    /// The function walks the pattern in two groups (nodes, then
-    /// relationships).  For each entity it:
+    /// The function first defines every named relationship alias, then walks
+    /// the nodes and the relationships.  For each entity it:
     ///   1. Defines the alias in the current scope via `define_name_in_scope`.
     ///   2. Binds the inline property expression (`attrs`).
     ///
@@ -1344,6 +1371,24 @@ impl Binder {
         for raw_path in graph.paths() {
             self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
             named_path_names.insert(raw_path.var.clone());
+        }
+
+        // Define the named relationship aliases before binding any node attrs.
+        // The parts of one MATCH clause are one pattern, so in
+        // `MATCH (a)-[r]->(b), (c {v: id(r)})` the node `c` is bound here
+        // together with `r`, and must see it as it sees `a`. The planner
+        // checks such attrs once every variable they read is bound. Nodes
+        // are still defined one by one, so a node's attrs cannot read a node
+        // that only appears later in the pattern.
+        for relationship in graph.relationships() {
+            if !relationship.alias.starts_with("_anon") {
+                let ty = if relationship.min_hops.is_some() {
+                    Type::Path
+                } else {
+                    Type::Relationship
+                };
+                self.define_name_in_scope(relationship.alias.clone(), ty, !is_create)?;
+            }
         }
 
         // Bind all nodes in the graph, merging duplicates by alias.

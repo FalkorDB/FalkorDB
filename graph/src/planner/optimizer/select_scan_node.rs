@@ -334,11 +334,13 @@ fn is_planner_scan_subtree(
 fn planner_scan_alias(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
-) -> Option<u32> {
+) -> Option<(u32, u32)> {
     let mut node = plan.node(idx);
     loop {
         match node.data() {
-            IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => return Some(n.alias.id),
+            IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => {
+                return Some((n.alias.id, n.alias.scope_id));
+            }
             IR::Filter(_) | IR::IncludePending { .. } if node.num_children() == 1 => {
                 node = node.child(0);
             }
@@ -552,7 +554,9 @@ fn select_var_len_scan_node(
             continue;
         }
         let child_idx = node.child(0).idx();
-        if planner_scan_alias(optimized_plan, child_idx) != Some(relationship.from.alias.id) {
+        if planner_scan_alias(optimized_plan, child_idx)
+            != Some((relationship.from.alias.id, relationship.from.alias.scope_id))
+        {
             continue;
         }
         let from = relationship.from.clone();
@@ -1307,14 +1311,30 @@ pub(super) fn select_scan_node(
                     } else {
                         None
                     };
-                    // Not a swap: the rebuilt scan is for the same node the
-                    // pruned one scanned, so its Filters can go straight back
-                    // inside the new subtree — their variable is bound there.
-                    let salvaged_filters = if has_planner_scan || arg_transparent {
+                    // Not a swap, but the pruned scan is not always for the
+                    // node the new one scans: an earlier clause stitched in
+                    // as this traverse's child scans *its* node (`MATCH (a
+                    // {v: 1}) MATCH (a)<-[]-(b {v: 0})` hangs `Filter(a.v) ->
+                    // Scan(a)` under a traverse that starts from `b`). When
+                    // the node is the same, the Filters go straight back
+                    // inside the new subtree, their variable is bound there.
+                    // When it is not, that variable is bound only by the
+                    // traverse, so they go above it and `push_filters_down`
+                    // lowers them as far as is legal.
+                    let (salvaged_filters, filters_above) = if has_planner_scan || arg_transparent {
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
-                        filters_of(optimized_plan, child_idx)
+                        let filters = filters_of(optimized_plan, child_idx);
+                        if has_planner_scan
+                            && planner_scan_alias(optimized_plan, child_idx).is_some_and(|alias| {
+                                alias != (scan_node.alias.id, scan_node.alias.scope_id)
+                            })
+                        {
+                            (vec![], filters)
+                        } else {
+                            (filters, vec![])
+                        }
                     } else {
-                        vec![]
+                        (vec![], vec![])
                     };
 
                     let ct_idx = if has_planner_scan || arg_transparent {
@@ -1333,8 +1353,7 @@ pub(super) fn select_scan_node(
                         salvaged_filters,
                     );
 
-                    let mut op = optimized_plan.node_mut(ct_idx);
-                    *op.data_mut() = IR::CondTraverse {
+                    let new_ct = IR::CondTraverse {
                         relationship: new_rel,
                         emit_relationship: emit,
                         sibling_edges: edges,
@@ -1344,7 +1363,25 @@ pub(super) fn select_scan_node(
                         bind_relationship: true,
                     };
 
-                    op.push_child_tree(scan_subtree);
+                    if filters_above.is_empty() {
+                        let mut op = optimized_plan.node_mut(ct_idx);
+                        *op.data_mut() = new_ct;
+                        op.push_child_tree(scan_subtree);
+                    } else {
+                        // The old child was pruned above, so this node has no
+                        // children left to preserve. Innermost first, so the
+                        // original nesting order survives.
+                        let mut wrapped = tree!(new_ct, scan_subtree);
+                        for filter in filters_above.into_iter().rev() {
+                            wrapped = tree!(filter, wrapped);
+                        }
+                        let root = wrapped.root();
+                        *optimized_plan.node_mut(ct_idx).data_mut() = root.data().clone();
+                        for child in root.children() {
+                            let child_tree: DynTree<IR> = child.clone_as_tree();
+                            optimized_plan.node_mut(ct_idx).push_child_tree(child_tree);
+                        }
+                    }
                 }
             }
         }

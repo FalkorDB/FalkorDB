@@ -108,6 +108,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
     # allocated ~20 GB.
     def test07_multi_branch_cartesian_product_is_streamed(self):
         g = self.db.select_graph("multi_pattern_stream")
+        self.env.cmd("DEL", g.name)
         g.query("UNWIND range(0, 1000) AS x CREATE ({v: x})")
 
         q = "MATCH (a), (b), (c), (d) RETURN *"
@@ -134,3 +135,188 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
 
         g.delete()
 
+
+    def test08_inline_attrs_reading_another_pattern_variable(self):
+        # An inline property map may read any variable of the pattern, also
+        # one of another pattern part or of an earlier MATCH clause,
+        # and must be checked where that variable is bound (#2923).
+        g = self.db.select_graph("multi_pattern_inline_attrs")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (:A {v:1})-[:R {w:2}]->(:B {v:0}), (:B {v:5})")
+        cases = [
+            ("MATCH (a)-[r]->(b) MATCH (c:B {v: id(r)*0}) RETURN c.v", [[0]]),
+            ("MATCH (a)-[r]->(b), (c:B {v: id(r)*0}) RETURN c.v", [[0]]),
+            ("MATCH (b:B), (c:B {v: b.v}) RETURN b.v, c.v ORDER BY b.v", [[0, 0], [5, 5]]),
+            ("MATCH (b:B) MATCH (c:B {v: b.v}) RETURN b.v, c.v ORDER BY b.v", [[0, 0], [5, 5]]),
+            ("MATCH (a:A) MATCH (c:B {v: id(a)*0}) RETURN c.v", [[0]]),
+            ("MATCH (a:A)-[r]->(b {v: a.v-1}) RETURN count(*)", [[1]]),
+            ("MATCH (a)-[r]->(b {v: r.w-2}) RETURN count(*)", [[1]]),
+            ("MATCH ()-[r]->() MATCH (x:A)-[q {w: r.w}]->() RETURN count(*)", [[1]]),
+            ("MATCH (a:A) MATCH (x)-[q {w: a.v+1}]->() RETURN count(*)", [[1]]),
+            ("MATCH (a:A)-[r]->(b) MATCH (c:B)-[q {w: id(r)}]->() RETURN count(*)", [[0]]),
+            # only an inline attr reads the earlier clause's variable
+            ("MATCH (a:A) MATCH (x:B {v: a.v-1}), (z:B) RETURN count(*)", [[2]]),
+            ("MATCH (a:A) MATCH (z:B), (x:B {v: a.v-1}) RETURN count(*)", [[2]]),
+            ("MATCH (a:A) MATCH (x:B {v: a.v-1}), (z:B) WHERE size([(a)-->(c) | c]) > 0 RETURN count(*)", [[2]]),
+            ("MATCH (a:A) MATCH (z:B), (x:B {v: a.v-1}) WHERE size([(x)<--(c) | c]) > 0 RETURN count(*)", [[2]]),
+            ("MATCH (a:A) MATCH (b:B), (c:B) WHERE size([(a)-->(d) | d]) > 0 RETURN count(*)", [[4]]),
+        ]
+        for q, expected in cases:
+            self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+        # Across components the check becomes a hash join, as it does in C.
+        plan = str(g.explain("MATCH (b:B), (c:B {v: b.v}) RETURN b.v, c.v"))
+        self.env.assertContains("Value Hash Join", plan)
+        g.delete()
+
+    def test09_match_clauses_have_their_own_relationship_uniqueness_scope(self):
+        # Relationship uniqueness holds within one MATCH clause, not across
+        # consecutive ones (#2534, #3347, #2217).
+        g = self.db.select_graph("multi_pattern_uniqueness")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (:A {id:1})-[:R]->(:B {id:2})")
+        cases = [
+            ("MATCH (a)-[r1:R]->(b) MATCH (a)-[r2:R]->(b) RETURN id(r1), id(r2)", [[0, 0]]),
+            ("MATCH (a)-[r1:R]->(b) MATCH (a)-[r2:R]->(c) RETURN id(r1), id(r2)", [[0, 0]]),
+            ("MATCH (a)-[r1:R]->(b) MATCH (c)-[r2:R]->(b) RETURN id(r1), id(r2)", [[0, 0]]),
+            ("MATCH (a)-[r1:R]->(b) MATCH (a)-[r2:R]-(b) RETURN id(r1), id(r2)", [[0, 0]]),
+            ("MATCH (a)-[r1:R]->(b) MATCH (a)-[:R]->(b) RETURN id(r1)", [[0]]),
+            ("MATCH (a)-[:R]->(b) MATCH (a)-[r2:R]->(b) RETURN id(r2)", [[0]]),
+            ("MATCH (a)-[r1:R]->(b) WITH a, b MATCH (a)-[r2:R]->(b) RETURN id(r2)", [[0]]),
+            ("MATCH (a:A)-[r1:R]->(b:B) MATCH (a)-[r2:R]->(b) RETURN count(r1)", [[1]]),
+            # within one clause the edge may still be used once only
+            ("MATCH ()-[r1:R]->()-[r2:R]->() RETURN count(*)", [[0]]),
+        ]
+        for q, expected in cases:
+            self.env.assertEqual(g.query(q).result_set, expected, message=q)
+        g.delete()
+
+    def test10_later_match_with_several_components_reads_earlier_variables(self):
+        # The components of a later MATCH read the variables an earlier clause
+        # bound, and are joined to it per row (#3393).
+        g = self.db.select_graph("multi_pattern_later_match")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (v1:V {id:1}), (v2:V {id:2}), (v3:V {id:3}), (v1)-[:E]->(v2), (v2)-[:E]->(v3)")
+        cases = [
+            ("MATCH (u:V)-[r:E]->(v:V) MATCH (u)-[:E]-(x:V) RETURN count(*)", [[3]]),
+            ("MATCH (u:V)-[r:E]->(v:V) MATCH (u)-[:E]-(x:V), (v)-[:E]-(y:V) RETURN count(*)", [[4]]),
+            ("MATCH (u:V)-[r:E]->(v:V) MATCH (u)-[:E]->(x:V), (v)-[:E]->(y:V) RETURN count(*)", [[1]]),
+            ("MATCH (u:V)-[r:E]->(v:V) WITH u, v, r MATCH (u)-[:E]-(x:V), (v)-[:E]-(y:V) RETURN count(*)", [[4]]),
+        ]
+        for q, expected in cases:
+            self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+        # a MATCH that shares no variable with the one before it is a Cartesian
+        # Product with it, also when it holds a traversal or has a WHERE
+        for q in [
+            "MATCH (x) MATCH (r:V)-[]->(f) RETURN count(*)",
+            "MATCH (x) WHERE true MATCH (r:V)-[]->(f) RETURN count(*)",
+            "MATCH (r:V)-[]->(f) WHERE true MATCH (x) RETURN count(*)",
+        ]:
+            self.env.assertEqual(g.query(q).result_set, [[6]], message=q)
+        g.delete()
+
+    def test11_create_clause_sees_variables_of_the_previous_create(self):
+        # (#2654)
+        g = self.db.select_graph("multi_pattern_create")
+        self.env.cmd("DEL", g.name)
+        res = g.query("CREATE (a) CREATE (b {x: id(a)}) RETURN b.x, id(a)")
+        self.env.assertEqual(res.result_set[0][0], res.result_set[0][1])
+        self.env.assertEqual(res.nodes_created, 2)
+        res = g.query("CREATE (a {v:1}) CREATE (b {x: a.v}) RETURN b.x")
+        self.env.assertEqual(res.result_set, [[1]])
+        res = g.query("CREATE (a)-[:R]->(b) CREATE (a)-[:S]->(c) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[1]])
+        self.env.assertEqual(res.nodes_created, 3)
+        g.delete()
+
+    def test12_match_after_a_where_pattern_predicate_is_its_own_clause(self):
+        # The next MATCH must not be swallowed into the WHERE pattern
+        # predicate of the one before it (#2502).
+        g = self.db.select_graph("multi_pattern_where_predicate")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (a:A)-[:Q]->(:Z), (a)-[:R]->(m:M)-[:R]->(c:C), (m)-[:R]->(:C)")
+        q = "MATCH (a:A) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m)-[:R]->(c) RETURN "
+        self.env.assertEqual(g.query(q + "count(*)").result_set, [[2]])
+        res = g.query(q + "id(c) ORDER BY id(c)")
+        self.env.assertEqual(len(res.result_set), 2)
+        g.delete()
+
+    def test13_lifted_relationship_attrs_see_every_parallel_edge(self):
+        # An anonymous relationship whose attrs read a variable of another
+        # component is checked above the traversal, which must then emit each
+        # parallel edge instead of one representative per (src, dst).
+        g = self.db.select_graph("multi_pattern_parallel_edges")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (a:A)-[:R {w:0}]->(b:B), (a)-[:R {w:2}]->(b), (:C)-[:S {w:2}]->(:D)")
+        q = "MATCH (c)-[s:S]->(d), (x)-[:R {w: s.w}]->(y) RETURN count(*)"
+        self.env.assertEqual(g.query(q).result_set, [[1]])
+
+        # Lifting an endpoint's predicate must not evaluate it once more than
+        # the plan did before: main averages 0.5 here, and lifting it from both
+        # copies of the endpoint dropped that to 0.25.
+        g.delete()
+        g.query("CREATE (a:A {v:1})-[:E]->(b:B {v:1}), (a)-[:E]->(b)")
+        total = 0
+        runs = 600
+        q = "MATCH (a)-[r:E]->(b {v: a.v + toInteger(rand() * 2)}) RETURN count(*)"
+        for _ in range(runs):
+            total += g.query(q).result_set[0][0]
+        self.env.assertGreater(total / runs, 0.35)
+        g.delete()
+
+    def test14_earlier_clause_predicate_stays_with_its_node(self):
+        # `MATCH (n0 {v: 1})` is its own clause, so its predicate must not move
+        # onto the scan of a node that a later clause chooses to start from.
+        # The WHERE form lost its row on main as well.
+        g = self.db.select_graph("multi_pattern_stitched_filter")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (:A {v:0}), (b:B {v:0})-[:R {w:0}]->(:A {v:1})")
+        for q in [
+            "MATCH (n0 {v: 1}) MATCH (n0)<-[:R]-(n1 {v: 0}) RETURN n0.v, n1.v",
+            "MATCH (n0) WHERE n0.v = 1 MATCH (n0)<-[:R]-(n1) WHERE n1.v = 0 RETURN n0.v, n1.v",
+            "MATCH (n0 {v: 1}) MATCH (n1:B {v: 0})-[:R]->(n0) RETURN n0.v, n1.v",
+        ]:
+            self.env.assertEqual(g.query(q).result_set, [[1, 0]], message=q)
+        g.delete()
+
+    def test15_hash_join_does_not_pair_rows_of_different_outer_rows(self):
+        # A hash join keyed only on `y.v = x.v` would pair branch rows of
+        # different outer rows (x2 here: two `n0`). C and the Cartesian
+        # Product plan give 18 on every form.
+        g = self.db.select_graph("multi_pattern_apply_join")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (:B {v:1}), (:B {v:1}), (:A {v:1})")
+        for q in [
+            "MATCH (n0:B) MATCH (x {v: n0.v}), (y) WHERE y.v = x.v RETURN count(*)",
+            "MATCH (n0:B) OPTIONAL MATCH (x {v: n0.v}), (y) WHERE y.v = x.v RETURN count(*)",
+            "MATCH (n0:B) WITH n0 MATCH (x), (y) WHERE y.v = x.v AND x.v = n0.v RETURN count(*)",
+            "MATCH (n0:B) CALL { WITH n0 MATCH (x {v: n0.v}), (y) WHERE y.v = x.v RETURN x, y } RETURN count(*)",
+        ]:
+            self.env.assertEqual(g.query(q).result_set, [[18]], message=q)
+        # an uncorrelated join is still a hash join
+        plan = g.explain("MATCH (x), (y) WHERE y.v = x.v RETURN count(*)")
+        self.env.assertContains("Value Hash Join", str(plan))
+        g.delete()
+
+    def test16_relationship_variable_cannot_be_named_by_a_later_match(self):
+        # C rejects it; accepting it bound a second, unrelated edge to the
+        # name (and, with an inline attr on the first, dropped its predicate).
+        g = self.db.select_graph("multi_pattern_rel_reuse")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (a:A {v:1})-[:R {w:0}]->(b:A {v:5}), (b)-[:R {w:1}]->(a)")
+        for q in [
+            "MATCH ()-[r]->() MATCH (a)-[r]->(b) RETURN count(*)",
+            "MATCH (a)-[r]->(b) WHERE true MATCH (c)-[r]->(d) RETURN count(*)",
+            "MATCH (a)-[r]->(b) OPTIONAL MATCH (c)-[r]->(d) RETURN count(*)",
+            "MATCH (a)-[r:R {w: a.v}]->(b) MATCH (c)-[r:R]-(d) RETURN count(*)",
+        ]:
+            try:
+                g.query(q)
+                self.env.assertTrue(False, message=q)
+            except ResponseError as e:
+                self.env.assertContains("Cannot use the same relationship variable", str(e), message=q)
+        # a projected relationship is a new binding and stays usable
+        res = g.query("MATCH ()-[r]->() WITH r MATCH (a)-[r]->(b) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[4]])
+        g.delete()
