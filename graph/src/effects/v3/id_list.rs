@@ -2203,18 +2203,24 @@ mod tests {
         let list = IdList::from(ids.as_slice());
         let mut buf = Vec::new();
         list.encode(&mut buf).unwrap();
-        assert!(
-            list.segments
-                .iter()
-                .any(|s| matches!(s, Segment::Ascending { .. })),
-            "this shape should have collapsed"
-        );
+        let written = list
+            .segments
+            .iter()
+            .find_map(|s| match s {
+                Segment::Ascending { bitmap, .. } => Some(bitmap.serialized_size()),
+                _ => None,
+            })
+            .expect("this shape should have collapsed");
 
         let mut cost = Run::default();
-        cost.add_range(0, 1);
-        for i in 1..10_000_u64 {
-            cost.add_range(i * 2, 1);
+        for &id in &ids {
+            cost.add_range(id, 1);
         }
+        assert_eq!(
+            cost.bitmap_bytes(),
+            written,
+            "the rule chose a bitmap the arithmetic does not account for"
+        );
         let mut r = Reader::new(&buf);
         assert_eq!(decoded(&mut r, 10_000), ids);
     }
