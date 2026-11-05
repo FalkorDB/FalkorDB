@@ -229,7 +229,7 @@ impl CchInput {
     /// built by this function, so that is a bug or out of memory, never
     /// something in the graph's data: bad weights and unknown names are the
     /// errors above.
-    pub fn build(
+    pub(crate) fn build(
         graph: &Graph,
         def: &CchIndexDef,
     ) -> Result<Self, CchError> {

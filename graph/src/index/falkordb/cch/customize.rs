@@ -142,7 +142,6 @@ impl<T: Copy> WeightArr<T> {
     }
 
     /// A copy that can be written without disturbing this one. The seam a copy-on-write array would make cheap.
-    #[allow(dead_code)]
     pub(crate) fn new_version(&self) -> Self {
         self.clone()
     }
@@ -168,6 +167,16 @@ pub(crate) struct Metric {
 }
 
 impl Metric {
+    /// A copy whose four arrays can be rewritten without touching this one.
+    fn new_version(&self) -> Self {
+        Self {
+            up_w: self.up_w.new_version(),
+            dn_w: self.dn_w.new_version(),
+            up_mid: self.up_mid.new_version(),
+            dn_mid: self.dn_mid.new_version(),
+        }
+    }
+
     /// Heap bytes of the four arrays; the inline headers are counted by the owning `Cch`.
     #[cfg(test)]
     pub(crate) fn memory_usage(&self) -> usize {
@@ -182,6 +191,43 @@ impl Metric {
 /// for — almost always a `customize` call that should have been a rebuild.
 const SHAPE_MISMATCH: &str = "weights do not match the hierarchy (rebuild, do not recustomize)";
 
+/// Whether `weights` is shaped for `topo`: the same node count, consistent `p`/`i`/`w`
+/// lengths with non-decreasing offsets, every column in range, and an arc in the chordal
+/// supergraph for every entry other than a self-loop. Looks at no weight value.
+///
+/// A pure check that never panics, whatever `weights` holds: the gate both [`customize`]
+/// and [`Cch::fits`] go through, so "this metric can be recustomized in place" and "this
+/// metric is accepted by `customize`" cannot drift apart. `false` means only a rebuild can
+/// take these weights — typically because the graph gained a node or a new adjacency.
+pub(crate) fn fits(
+    topo: &Topology,
+    weights: &WeightCsr,
+) -> bool {
+    let csr = &weights.csr;
+    let n = topo.node_count();
+    if csr.n != n
+        || csr.p.len() != n + 1
+        || csr.p.first().copied() != Some(0)
+        || csr.p.windows(2).any(|w| w[0] > w[1])
+        || csr.p.last().map(|&p| p as usize) != Some(csr.i.len())
+        || weights.w.len() != csr.i.len()
+        || csr.i.iter().any(|&v| v as usize >= n)
+    {
+        return false;
+    }
+    (0..n).all(|u| {
+        let rank_u = topo.rank_of(u as u64);
+        csr.row(u).iter().all(|&v| {
+            if v as usize == u {
+                return true; // a self-loop is never seeded, so it needs no arc
+            }
+            let rank_v = topo.rank_of(v);
+            topo.arc_slot(rank_u.min(rank_v), rank_u.max(rank_v))
+                .is_some()
+        })
+    })
+}
+
 /// Reject a metric this index cannot be correct for, before any of it is written.
 ///
 /// Dijkstra-style relaxation needs non-negative weights, and a NaN compares false with
@@ -189,23 +235,15 @@ const SHAPE_MISMATCH: &str = "weights do not match the hierarchy (rebuild, do no
 /// edge, seeded exactly like an absent one ("no path"). The C implementation does not
 /// check; refusing at build time is the contract decision recorded for this port.
 ///
-/// The shape is checked too, because `customize` is public: weights built for a graph that
-/// has since gained a node would otherwise index past the end of `iperm`, and short arrays
-/// would index past the end of `w`. Both are caller errors, refused rather than panicked.
+/// The shape is checked first, through [`fits`], because `customize` is public: weights
+/// built for a graph that has since gained a node would otherwise index past the end of
+/// `iperm`, short arrays past the end of `w`, and a new adjacency would have no arc to
+/// seed. All are caller errors, refused rather than panicked.
 fn validate(
     topo: &Topology,
     weights: &WeightCsr,
 ) -> Result<(), CchError> {
-    let csr = &weights.csr;
-    let n = topo.node_count();
-    if csr.n != n
-        || csr.p.len() != n + 1
-        || csr.p.first().copied() != Some(0)
-        || csr.p.windows(2).any(|pair| pair[0] > pair[1])
-        || csr.p.last().copied() != Some(csr.i.len() as u64)
-        || weights.w.len() != csr.i.len()
-        || csr.i.iter().any(|&v| v as usize >= n)
-    {
+    if !fits(topo, weights) {
         return Err(CchError::Internal(SHAPE_MISMATCH));
     }
     // A negative weight, `-inf` and NaN are refused; `+inf` and `-0.0` are not.
@@ -282,10 +320,9 @@ fn seed(
         } else {
             (rank_v, rank_u)
         };
-        // Every directed weight entry (u, v) has u-v in the skeleton, so for weights
-        // built from the same graph the arc is there. A miss means the graph has
-        // gained an adjacency since the hierarchy was built; dropping the weight would
-        // make queries silently too long.
+        // `validate` already refused any entry without an arc (see `fits`), so this
+        // cannot miss; it stays an error rather than a panic or a dropped weight,
+        // which would make queries silently too long.
         let Some(slot) = topo.arc_slot(lo, hi) else {
             return Err(CchError::Internal(SHAPE_MISMATCH));
         };
@@ -374,6 +411,41 @@ impl Cch {
     ) -> Result<(), CchError> {
         self.metric = customize(&self.topo, weights)?;
         Ok(())
+    }
+
+    /// A copy for a new graph version: the [`Topology`] is shared by `Arc`, the metric is
+    /// copied through [`WeightArr::new_version`], so customizing the copy leaves this one
+    /// untouched. What a writer recustomizes when the metric changed but the topology did
+    /// not.
+    #[must_use]
+    pub fn new_version(&self) -> Self {
+        Self {
+            topo: Arc::clone(&self.topo),
+            metric: self.metric.new_version(),
+        }
+    }
+
+    /// Whether [`Self::customize`] would accept the shape of `input`'s weights: same node
+    /// count, sane arrays, and no adjacency the hierarchy has no arc for. Looks at no weight
+    /// value, so `true` does not rule out [`CchError::InvalidWeight`]. `false` means only a
+    /// rebuild can take these weights. The same check `customize` runs (see [`fits`]). Only
+    /// the tests call it.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn fits(
+        &self,
+        input: &CchInput,
+    ) -> bool {
+        fits(&self.topo, &input.weights)
+    }
+
+    /// Whether `self` and `other` share one [`Topology`] allocation.
+    #[cfg(test)]
+    pub(crate) fn shares_topology_with(
+        &self,
+        other: &Self,
+    ) -> bool {
+        Arc::ptr_eq(&self.topo, &other.topo)
     }
 
     pub(crate) fn topology(&self) -> &Topology {
@@ -791,27 +863,120 @@ mod tests {
         assert_eq!(plain.dn_w, looped.dn_w);
     }
 
+    /// `base` with every weight changed but the edge set kept, so the two share a skeleton,
+    /// hence a topology and an arc-slot layout.
+    fn rescaled(base: &Matrix<f64>) -> Matrix<f64> {
+        reweight(base, |i, w| w * 2.0 + (i % 3) as f64)
+    }
+
+    /// The four arrays, copied out, so a later write to the hierarchy cannot change them.
+    fn snapshot(cch: &Cch) -> (Vec<f64>, Vec<f64>, Vec<u64>, Vec<u64>) {
+        (
+            cch.metric.up_w.iter().collect(),
+            cch.metric.dn_w.iter().collect(),
+            cch.metric.up_mid.iter().collect(),
+            cch.metric.dn_mid.iter().collect(),
+        )
+    }
+
     /// Recustomizing must land exactly where a fresh build on the new metric would. The
     /// two metrics share an edge *set*, so they share a skeleton, hence a topology, hence
-    /// an arc-slot layout — which is what makes the arrays directly comparable.
+    /// an arc-slot layout — which is what makes the arrays directly comparable. Done on a
+    /// `new_version` copy, it lands on the copy and leaves the original's four arrays
+    /// exactly as they were, while both keep one topology.
     #[test]
     fn recustomizing_equals_a_fresh_build_with_the_new_metric() {
         let base = random_sparse(30, 90, 9, 17);
-        let rescaled = reweight(&base, |i, w| w * 2.0 + (i % 3) as f64);
-
+        let next = rescaled(&base);
         let first = to_input(&base);
-        let second = to_input(&rescaled);
-        let mut cch = Cch::build(&first).expect("build");
-        cch.customize(&second.weights).expect("recustomize");
-        check_metric(&cch, &rescaled, &second);
+        let second = to_input(&next);
 
+        let cch = Cch::build(&first).expect("build");
+        let before = snapshot(&cch);
+
+        let mut copy = cch.new_version();
+        assert!(copy.shares_topology_with(&cch));
+        assert_eq!(
+            snapshot(&copy),
+            before,
+            "a fresh copy holds the same metric"
+        );
+
+        copy.customize(&second.weights)
+            .expect("recustomize the copy");
+        check_metric(&copy, &next, &second);
         let fresh = Cch::build(&second).expect("fresh build");
-        assert_eq!(cch.metric.up_w, fresh.metric.up_w);
-        assert_eq!(cch.metric.dn_w, fresh.metric.dn_w);
-        assert_eq!(cch.metric.up_mid, fresh.metric.up_mid);
-        assert_eq!(cch.metric.dn_mid, fresh.metric.dn_mid);
+        assert_eq!(copy.metric.up_w, fresh.metric.up_w);
+        assert_eq!(copy.metric.dn_w, fresh.metric.dn_w);
+        assert_eq!(copy.metric.up_mid, fresh.metric.up_mid);
+        assert_eq!(copy.metric.dn_mid, fresh.metric.dn_mid);
         // ... and the arrays did change: equality on `WeightArr` compares the values
-        let original = Cch::build(&first).expect("build");
-        assert_ne!(cch.metric.up_w, original.metric.up_w);
+        assert_ne!(copy.metric.up_w, cch.metric.up_w);
+
+        assert_eq!(snapshot(&cch), before, "the original was not written");
+        check_metric(&cch, &base, &first);
+        assert!(
+            copy.shares_topology_with(&cch),
+            "customize keeps the topology"
+        );
+    }
+
+    /// `fits` is the gate `customize` uses: `false` exactly when `customize` refuses the
+    /// shape, and `true` for any weights over the same adjacency, whatever their values.
+    #[test]
+    fn fits_agrees_with_what_customize_accepts() {
+        let cch = Cch::build(&to_input(&path(4))).expect("build");
+        let shape = Some(CchError::Internal(super::SHAPE_MISMATCH));
+
+        let own = to_input(&path(4));
+        let reweighted = to_input(&reweight(&path(4), |_, w| w + 3.0));
+        let mut negative = path(4);
+        let (u, v, _) = entries(&negative)[0];
+        negative.set(u, v, -1.0);
+        let negative = to_input(&negative);
+        // spliced in by hand: `to_input` drops self-loops
+        let mut looped = to_input(&path(4));
+        let csr = &mut looped.weights.csr;
+        let at = csr.p[2] as usize;
+        csr.i = [&csr.i[..at], &[2], &csr.i[at..]].concat().into();
+        looped.weights.w = [&looped.weights.w[..at], &[1.0], &looped.weights.w[at..]]
+            .concat()
+            .into();
+        for p in &mut csr.p[3..] {
+            *p += 1;
+        }
+        let csr = &looped.weights.csr;
+        assert!(
+            csr.i[csr.p[2] as usize..csr.p[3] as usize].contains(&2),
+            "row 2 has 2 -> 2"
+        );
+
+        let more_nodes = to_input(&path(5));
+        let mut short = to_input(&path(4));
+        short.weights.w = short.weights.w[1..].into();
+        let mut new_adjacency = path(4);
+        new_adjacency.set(0, 3, 1.0);
+        let new_adjacency = to_input(&new_adjacency);
+        let mut bad_offsets = to_input(&path(4));
+        bad_offsets.weights.csr.p.swap(1, 2);
+
+        for (what, input, fits) in [
+            ("its own weights", &own, true),
+            ("new values, same edges", &reweighted, true),
+            ("a negative value: shape is fine", &negative, true),
+            ("a self-loop needs no arc", &looped, true),
+            ("one node more", &more_nodes, false),
+            ("a short weight array", &short, false),
+            ("an adjacency with no arc", &new_adjacency, false),
+            ("decreasing offsets", &bad_offsets, false),
+        ] {
+            assert_eq!(cch.fits(input), fits, "{what}");
+            let refused = cch.new_version().customize(&input.weights).err();
+            assert_eq!(
+                refused == shape,
+                !fits,
+                "{what}: customize disagrees with fits"
+            );
+        }
     }
 }
