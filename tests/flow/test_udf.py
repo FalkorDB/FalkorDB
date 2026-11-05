@@ -1789,6 +1789,26 @@ class test_udf_javascript():
         self.env.assertEqual(v1, 1)
         self.env.assertGreaterEqual(v2, 1) # depending on the executing thread and it's js context
 
+    def test_comprehension_calls_udf_in_element_order(self):
+        """
+        A stateful UDF in a list comprehension is called element by element:
+        each element's predicate call precedes its projection call, so the
+        projected values step by two. Evaluating every predicate first, then
+        every projection, would give consecutive values.
+        """
+
+        script = """
+        var counter = 0;
+        falkor.register('inc', function(x) { counter += 1; return counter; });
+        """
+        self.db.udf_load("lib_comprehension_state", script)
+
+        res = self.graph.query(
+            "RETURN [x IN range(1, 16) WHERE lib_comprehension_state.inc(x) % 2 = 1"
+            " | lib_comprehension_state.inc(x)]").result_set[0][0]
+        self.env.assertGreater(len(res), 1)
+        self.env.assertEqual({b - a for a, b in zip(res, res[1:])}, {2})
+
     def test_register_anonymous_function(self):
         """
         Registering an anonymous function should work normally.

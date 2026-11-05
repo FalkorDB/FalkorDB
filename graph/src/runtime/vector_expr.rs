@@ -44,7 +44,7 @@ use std::sync::Arc;
 
 use crate::parser::ast::{ExprIR, Variable};
 use crate::runtime::batch::{Batch, BatchRow, Column, NullBitmap, classify_exact_column};
-use crate::runtime::eval::{ExprEval, ExprNode};
+use crate::runtime::eval::{ExprEval, ExprNode, counts_comprehension};
 use crate::runtime::functions::FnType;
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
@@ -252,6 +252,9 @@ impl<'a> VectorEval<'a> {
             }
             ExprIR::FuncInvocation(func)
                 if !matches!(func.fn_type, FnType::Aggregation { .. })
+                    // Counted per row without building the list; evaluating
+                    // the argument column first would build it.
+                    && !counts_comprehension(node)
                     && func.struct_fn.is_none()
                     && !func.write
                     && !node
@@ -337,8 +340,17 @@ impl<'a> VectorEval<'a> {
         batch: &Batch<'_>,
         rows: &[usize],
     ) -> Option<ExprColumn> {
-        let values = self.property_values(attr, child, batch, rows)?;
-        let (col, nulls) = classify_exact_column(values);
+        let (col, nulls) = if let ExprIR::Variable(var) = child.data()
+            && let Column::NodeIds(ids) = batch.column(var.id)
+        {
+            // Nodes: classified as they are fetched, with no `Value` per row
+            // when the property is an integer one.
+            let gathered: Vec<_> = rows.iter().map(|&r| ids[r]).collect();
+            self.runtime
+                .materialize_node_property_exact(&gathered, attr)
+        } else {
+            classify_exact_column(self.property_values(attr, child, batch, rows)?)
+        };
         Some(match col {
             Column::Ints(data) => ExprColumn::Ints(data, nulls),
             Column::Floats(data) => ExprColumn::Floats(data, nulls),
