@@ -17,7 +17,9 @@
 #            build-time code, no new axiom/sorry, existing theorem statements
 #            unchanged, a verdict per function) and runs the proof gates on it.
 #   report   keeps one re-prove comment: the verdicts, the gate result, and a
-#            link to the run, whose `proof-gate` artifact holds the patch.
+#            link to the run, whose `proof-gate` artifact holds the patch. When
+#            the proofs find a probable bug, it also posts a review comment on
+#            the function's code with the counterexample and a Cypher repro.
 #
 # The bot only suggests: nothing is pushed anywhere. The PR's author applies the
 # patch (or writes their own) in the PR itself, where the Lean proofs workflow
@@ -250,6 +252,12 @@ jobs:
             Finally write ./verdicts.json, a JSON list with one object per entry of
             impact.json `changed`: {"file", "fn", "line"} copied from that entry, "verdict" one
             of "unchanged", "model updated", "counterexample", and "theorems" (Lean names).
+            For a "counterexample" also give: "theorem" (the full Lean name of the theorem that
+            proves the counterexample, which you added), "why" (one sentence: what the new code
+            gets wrong), "repro" (the smallest Cypher query or redis command sequence that shows
+            it, runnable as is on an empty graph), "before" (what the code before this PR
+            returns for it) and "after" (what this PR's code returns). These are posted as a
+            review comment on the function, so keep them short and exact.
             And write ./reprove.md: a heading "### Lean re-prove", one line per fn with its
             verdict and the Lean theorem names. Put counterexamples first, each with its Cypher
             repro. Keep it short; no preamble.
@@ -563,6 +571,12 @@ jobs:
                      if given.get((c['file'], c['fn'], int(c['line']))) not in VERDICTS
                      or (c['file'], c['fn'], int(c['line'])) in dups]
           noname = [k for k, v in given.items() if v in VERDICTS and not given_full[k].get('theorems')]
+          nocex = [k for k, v in given.items() if v == 'counterexample'
+                   and not all(isinstance(given_full[k].get(f), str) and given_full[k].get(f).strip()
+                               for f in ('theorem', 'repro', 'before', 'after'))]
+          if nocex:
+              print('Counterexamples missing theorem, repro, before or after, so not posted as a review (reported, not gated):')
+              print('\n'.join(f'- `{f}` `{fn}` (line {ln})' for f, fn, ln in nocex))
           if noname:
               print('Verdicts that name no Lean theorem (reported, not gated):')
               print('\n'.join(f'- `{f}` `{fn}` (line {ln})' for f, fn, ln in noname))
@@ -695,3 +709,108 @@ jobs:
           else
             gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@comment.md >/dev/null
           fi
+      - name: Review the code where the proofs found a probable bug
+        # Only when Lean built the patch, so each counterexample is a checked theorem.
+        if: ${{ steps.download.outcome == 'success' && (needs.gate.outputs.gates == 'pass' || needs.gate.outputs.gates == 'held' || needs.gate.outputs.gates == 'incomplete') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" -q .head.sha)" != "$HEAD" ]]; then
+            echo "PR head moved; this run (${HEAD:0:9}) is superseded."; exit 0
+          fi
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" > files.json
+          # Earlier counterexamples, inline or in a review's own text, are not posted again.
+          { gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/comments"
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews"; } > posted.json
+          python3 - out/verdicts.json out/proofs.patch files.json posted.json > review.json <<'EOF'
+          import hashlib, json, re, sys
+          verdicts_path, patch_path, files_path, posted_path = sys.argv[1:]
+          head, run_url = __import__('os').environ['HEAD'], __import__('os').environ['RUN_URL']
+
+          def pages(path):
+              # gh --paginate prints one JSON array per page.
+              text, out, i, dec = open(path).read(), [], 0, json.JSONDecoder()
+              while i < len(text):
+                  if text[i].isspace():
+                      i += 1; continue
+                  page, i = dec.raw_decode(text, i)
+                  out += page
+              return out
+
+          def text(v, limit):
+              return v.strip()[:limit] if isinstance(v, str) else ''
+
+          def fence(body, lang=''):
+              ticks = '`' * max(3, max((len(m) for m in re.findall(r'`+', body)), default=0) + 1)
+              return f'{ticks}{lang}\n{body}\n{ticks}'
+
+          def commentable(patch):
+              # Lines of the PR head a review comment may sit on: added and context lines.
+              lines, new = set(), 0
+              for l in (patch or '').split('\n'):
+                  m = re.match(r'@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@', l)
+                  if m:
+                      new = int(m.group(1)); continue
+                  if l.startswith('-') or l.startswith('\\'):
+                      continue
+                  lines.add(new); new += 1
+              return lines
+
+          try:
+              verdicts = [v for v in json.load(open(verdicts_path)) if isinstance(v, dict)]
+          except Exception:
+              verdicts = []
+          added = '\n'.join(l[1:] for l in open(patch_path).read().split('\n')
+                            if l.startswith('+') and not l.startswith('+++'))
+          by_path = {f['filename']: commentable(f.get('patch')) for f in pages(files_path)}
+          posted = '\n'.join(c.get('body', '') for c in pages(posted_path))
+          comments, loose = [], []
+          for v in verdicts:
+              if v.get('verdict') != 'counterexample':
+                  continue
+              path, fn, thm = text(v.get('file'), 300), text(v.get('fn'), 200), text(v.get('theorem'), 300)
+              repro = text(v.get('repro'), 3000)
+              try:
+                  line = int(v.get('line'))
+              except (TypeError, ValueError):
+                  continue
+              # Only a theorem the patch adds, which the gate just built.
+              short = thm.split('.')[-1]
+              if not (path and fn and repro and short) or not re.search(r'\b(theorem|lemma)\s+(\S+\.)?' + re.escape(short) + r'\b', added):
+                  continue
+              marker = f'<!-- proof-cex {path}:{fn}:{hashlib.sha1(repro.encode()).hexdigest()[:12]} -->'
+              if marker in posted:
+                  continue
+              body = '\n'.join([
+                  marker,
+                  f'**The Lean proofs found a probable bug in `{fn}`.**',
+                  '',
+                  text(v.get('why'), 600),
+                  '',
+                  'Reproduce:',
+                  fence(repro, 'cypher'),
+                  'Before this PR:', fence(text(v.get('before'), 1000) or '(not given)'),
+                  'With this PR:', fence(text(v.get('after'), 1000) or '(not given)'),
+                  '',
+                  f'<sub>Lean proves the counterexample on the model (`{thm}`, in the [run]({run_url})\'s `proof-gate` patch). '
+                  f'Confirm it on a server before acting on it. At {head[:9]}.</sub>',
+              ])
+              anchor = next((n for n in sorted(by_path.get(path, ())) if n >= line), None)
+              if anchor is None:
+                  loose.append(f'`{path}` `{fn}`\n\n{body}')
+              else:
+                  comments.append({'path': path, 'line': anchor, 'side': 'RIGHT', 'body': body})
+          if not comments and not loose:
+              print('{}'); sys.exit(0)
+          summary = f'The Lean proofs found {len(comments) + len(loose)} probable bug(s) in this PR; details below.'
+          print(json.dumps({'commit_id': head, 'event': 'COMMENT',
+                            'body': '\n\n---\n\n'.join([summary] + loose), 'comments': comments}))
+          EOF
+          if [[ "$(cat review.json)" == "{}" ]]; then
+            echo "No new counterexample to review."; exit 0
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --input review.json >/dev/null
