@@ -10,6 +10,7 @@
 #include "../graph/graph_hub.h"
 #include "../datatypes/map.h"
 #include "../index/indexer.h"
+#include "../index/cch_index.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
 #include "../util/roaring_include.h"
@@ -1429,6 +1430,148 @@ static Schema *_VerifyDDLRefs
 	return s ;
 }
 
+// the index kind a wire 'field_type' names, canonicalised
+//
+// IndexFieldType is a BIT FLAG SET rather than a discriminant, so this is a
+// classification and not a lookup: a range index is any non-empty subset of
+// NUMERIC|GEO|STR, and the index API takes the canonical INDEX_FLD_RANGE
+// rather than whichever subset arrived.
+//
+// PASSING THE SUBSET STRAIGHT THROUGH IS A CRASH, not a wrong answer.
+// GraphHub_AddIndex asserts its type is exactly FULLTEXT, RANGE or VECTOR, and
+// the build undefines NDEBUG, so that assert is live in release: a peer
+// emitting 0x08 - string only, which is a perfectly ordinary range index -
+// aborts the replica.
+//
+// A bit this build does not know, and two different kinds named by one
+// statement, are refused rather than guessed. An empty field type is a range
+// index, as it always was. All three answers match the other engine's.
+static bool _CanonicalIndexType
+(
+	uint32_t field_type,  // field type as it arrived on the wire
+	IndexFieldType *out   // [output] the kind it names
+) {
+	IndexFieldType kind = INDEX_FLD_UNKNOWN ;
+
+	for (uint32_t bit = 1 ; bit != 0 ; bit <<= 1) {
+		if ((field_type & bit) == 0) {
+			continue ;
+		}
+
+		IndexFieldType named ;
+		switch (bit) {
+			case INDEX_FLD_NUMERIC  :
+			case INDEX_FLD_GEO      :
+			case INDEX_FLD_STR      : named = INDEX_FLD_RANGE    ; break ;
+			case INDEX_FLD_FULLTEXT : named = INDEX_FLD_FULLTEXT ; break ;
+			case INDEX_FLD_VECTOR   : named = INDEX_FLD_VECTOR   ; break ;
+			case INDEX_FLD_CCH      : named = INDEX_FLD_CCH      ; break ;
+			default                 : return false ;
+		}
+
+		if (kind != INDEX_FLD_UNKNOWN && kind != named) {
+			return false ;
+		}
+		kind = named ;
+	}
+
+	*out = (kind == INDEX_FLD_UNKNOWN) ? INDEX_FLD_RANGE : kind ;
+	return true ;
+}
+
+// the relationship types a CCH record spans, as ids
+//
+// Returns NULL when the record does not describe a path index this build can
+// act on; the caller has already verified that every id resolves to the name
+// beside it.
+static RelationID *_CCHRelationIDs
+(
+	SchemaType schema_type,              // schema type the record names
+	const EffectsV3SchemaRef *schemas,   // schemas the record names
+	uint16_t n_schemas,                  // number of schemas
+	uint16_t n_attrs,                    // number of fields
+	const char *op                       // for the log line
+) {
+	// a path index is defined over RELATIONSHIP types
+	if (schema_type != SCHEMA_EDGE) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT %s names a CCH path index over node labels",
+				op) ;
+		return NULL ;
+	}
+
+	// and weighted by exactly one attribute
+	if (n_attrs != 1) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT %s names %u fields for a CCH path index, which "
+				"has one weight attribute", op, (unsigned)n_attrs) ;
+		return NULL ;
+	}
+
+	RelationID *rel_ids = arr_new (RelationID, n_schemas) ;
+	for (uint16_t i = 0 ; i < n_schemas ; i++) {
+		arr_append (rel_ids, (RelationID)schemas[i].id) ;
+	}
+
+	return rel_ids ;
+}
+
+// CREATE_INDEX with field type CCH - ONE index over every schema the record
+// names, not one index per schema
+//
+// This is why the record carries a list at all. A CCH path index is defined
+// over a SET of relationship types together, so applying the statement once per
+// type would build several different indexes and none of them the one asked
+// for.
+static bool _ApplyCreateCCHIndex
+(
+	GraphContext *gc,
+	const EffectsV3CreateIndex *ci
+) {
+	RelationID *rel_ids = _CCHRelationIDs (ci->schema_type, ci->schemas,
+			ci->n_schemas, ci->n_attrs, "CREATE_INDEX") ;
+	if (rel_ids == NULL) {
+		return false ;
+	}
+
+	const AttributeID weight_attr = ci->attrs[0].id ;
+
+	// THE HIERARCHY IS BUILT LOCALLY, never shipped: the record carries the
+	// index's definition, and this instance derives the contraction order from
+	// its own graph. Idempotent, the same way the v2 path is - an identical
+	// index already here is left alone rather than rebuilt.
+	if (GraphContext_GetCCHIndex (gc, rel_ids, arr_len (rel_ids),
+				weight_attr) == NULL) {
+		CCHIndex *idx = CCHIndex_New (rel_ids, arr_len (rel_ids), weight_attr) ;
+		CCHIndex_Build (idx, GraphContext_GetGraph (gc)) ;
+		GraphContext_AddCCHIndex (gc, idx) ;
+	}
+
+	arr_free (rel_ids) ;
+	return true ;
+}
+
+// DROP_INDEX with field type CCH
+static bool _ApplyDropCCHIndex
+(
+	GraphContext *gc,
+	const EffectsV3DropIndex *di
+) {
+	RelationID *rel_ids = _CCHRelationIDs (di->schema_type, di->schemas,
+			di->n_schemas, di->n_attrs, "DROP_INDEX") ;
+	if (rel_ids == NULL) {
+		return false ;
+	}
+
+	// a missing index is tolerated, as in v2: a drop says what must not be
+	// here afterwards, and it already is not
+	GraphContext_RemoveCCHIndex (gc, rel_ids, arr_len (rel_ids),
+			di->attrs[0].id) ;
+
+	arr_free (rel_ids) ;
+	return true ;
+}
+
 // verify every schema an index statement names, before any of them is touched
 //
 // A statement naming several relationship types must not index the first and
@@ -1483,6 +1626,7 @@ static bool _CreateIndexForSchema
 	GraphContext *gc,
 	const EffectsV3CreateIndex *ci,
 	const EffectsV3SchemaRef *schema,
+	IndexFieldType t,
 	SIValue options
 ) {
 	Schema *s = VerifySchema (gc, ci->schema_type, (int)schema->id, schema->name) ;
@@ -1496,8 +1640,8 @@ static bool _CreateIndexForSchema
 	Index idx = NULL ;
 
 	for (uint16_t i = 0 ; i < ci->n_attrs ; i++) {
-		idx = GraphHub_AddIndex (gc, schema->name, ci->attrs[i].name, et,
-				(IndexFieldType)ci->field_type, options, false) ;
+		idx = GraphHub_AddIndex (gc, schema->name, ci->attrs[i].name, et, t,
+				options, false) ;
 
 		if (idx == NULL) {
 			RedisModule_Log (NULL, "warning",
@@ -1555,11 +1699,24 @@ static bool _ApplyCreateIndex
 		return false ;
 	}
 
+	IndexFieldType t ;
+	if (!_CanonicalIndexType (ci->field_type, &t)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_INDEX on '%s' names field type 0x%" PRIx32
+				", which this build cannot create", _IndexSchemaName (ci),
+				ci->field_type) ;
+		return false ;
+	}
+
 	if (ci->n_attrs == 0) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT CREATE_INDEX on '%s' names no fields",
 				_IndexSchemaName (ci)) ;
 		return false ;
+	}
+
+	if (t == INDEX_FLD_CCH) {
+		return _ApplyCreateCCHIndex (gc, ci) ;
 	}
 
 	SIValue options ;
@@ -1569,7 +1726,7 @@ static bool _ApplyCreateIndex
 
 	bool ok = true ;
 	for (uint16_t j = 0 ; j < ci->n_schemas && ok ; j++) {
-		ok = _CreateIndexForSchema (gc, ci, ci->schemas + j, options) ;
+		ok = _CreateIndexForSchema (gc, ci, ci->schemas + j, t, options) ;
 	}
 
 	SIValue_Free (options) ;
@@ -1589,13 +1746,24 @@ static bool _ApplyDropIndex
 		return false ;
 	}
 
+	IndexFieldType t ;
+	if (!_CanonicalIndexType (di->field_type, &t)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT DROP_INDEX names field type 0x%" PRIx32
+				", which this build cannot drop", di->field_type) ;
+		return false ;
+	}
+
+	if (t == INDEX_FLD_CCH) {
+		return _ApplyDropCCHIndex (gc, di) ;
+	}
+
 	for (uint16_t j = 0 ; j < di->n_schemas ; j++) {
 		const char *schema_name = di->schemas[j].name ;
 
 		for (uint16_t i = 0 ; i < di->n_attrs ; i++) {
 			if (GraphHub_DropIndex (gc, di->schema_type, schema_name,
-						di->attrs[i].name, (IndexFieldType)di->field_type,
-						false) != INDEX_OK) {
+						di->attrs[i].name, t, false) != INDEX_OK) {
 				RedisModule_Log (NULL, "warning",
 						"GRAPH.EFFECT DROP_INDEX failed to drop field '%s' on "
 						"'%s'", di->attrs[i].name, schema_name) ;
