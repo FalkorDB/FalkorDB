@@ -768,6 +768,31 @@ impl FalkorDbIndex {
             .contains_key(&(label.clone(), attr.clone()))
     }
 
+    /// Whether column `(entity, label, attr)` exists and is `Ready`: whether this version's index
+    /// serves reads on it. A `Building` column answers with a [`ScanFilter`] instead.
+    #[must_use]
+    pub fn is_ready(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> bool {
+        self.entry(entity, label, attr)
+            .is_some_and(|entry| !entry.is_building())
+    }
+
+    /// How many entities column `(entity, label, attr)`'s batches have read ([`IndexEntry::read`]),
+    /// or `None` if the column is `Ready` or does not exist.
+    pub(crate) fn building_read(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<u64> {
+        let entry = self.entry(entity, label, attr)?;
+        entry.is_building().then_some(entry.read)
+    }
+
     /// Ready this version to be published: each index's sets of written entities are settled
     /// ([`IndexEntry::publish`]).
     pub(crate) fn publish(&mut self) {
@@ -988,8 +1013,8 @@ impl FalkorDbIndex {
         })
     }
 
-    /// Whether any column is still `Building`.
-    #[cfg(test)]
+    /// Whether any column is still `Building`. Walks the columns' states without hashing a name,
+    /// so a per-write check that only matters during a build costs next to nothing outside one.
     #[must_use]
     pub(crate) fn has_building_columns(&self) -> bool {
         self.node_columns
@@ -1185,6 +1210,8 @@ mod tests {
                 name: (Node, column.clone()),
                 work: tuples,
                 next,
+                read: 3,
+                catch_up_limit: None,
             }
         };
         let next = BuildCursor::Node(NodeId::from(3));
@@ -1704,6 +1731,8 @@ mod tests {
             name: (Node, (label.clone(), attr.clone())),
             work,
             next: Some(BuildCursor::Node(NodeId::from(11))),
+            read: 11,
+            catch_up_limit: None,
         }));
         assert_eq!(
             idx.numeric(Node, &label, &attr)

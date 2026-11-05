@@ -35,7 +35,7 @@ src/graph_core.rs	c_graph_key	119	NOT COVERED	string helper
 src/graph_core.rs	register_graph	140	MODELLED	Mvcc.S.registered := true
 src/graph_core.rs	graph_is_registered	188	PROVEN	Mvcc.delete_blocks_writes (registered guard on mutate/commit)
 src/graph_core.rs	rename_graph	202	NOT COVERED	registry re-key; RENAME not modelled
-src/graph_core.rs	new	256	NOT COVERED	WriteQueryOk::new modified predicate
+src/graph_core.rs	new	272	NOT COVERED	WriteQueryOk::new modified predicate
 src/graph_core.rs	sanitise_error	318	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
 src/graph_core.rs	block_client	333	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
 src/graph_core.rs	unblock_client	344	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
@@ -50,13 +50,13 @@ src/graph_core.rs	hold_string	456	AXIOMATISED	Redis module API FFI wrapper (redi
 src/graph_core.rs	free_string	467	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
 src/graph_core.rs	trim_string_allocation	482	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
 src/graph_core.rs	replicate_argv	497	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	new	553	PROVEN	unbounded write channel (#3014); Locks.never_stuck_3014 (send never waits)
+src/graph_core.rs	new	569	PROVEN	unbounded write channel (#3014); Locks.never_stuck_3014 (send never waits)
 src/graph_core.rs	from_mvcc	569	MODELLED	as new
 src/graph_core.rs	execute_query	587	MODELLED	Mvcc Ev.read on snapshot; write detection not modelled
 src/graph_core.rs	execute_profile	674	MODELLED	as execute_query
 src/graph_core.rs	execute_query_write	737	PROVEN	Mvcc fork/checkFork (#3290/#3657): inline_write_ok, stale_then_rerun, checkFork_on_committed (retry sees the inline write) (BUG 5; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 src/graph_core.rs	reply_profile	884	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
-src/graph_core.rs	new	921	AXIOMATISED	RM_BlockClient FFI
+src/graph_core.rs	new	949	AXIOMATISED	RM_BlockClient FFI
 src/graph_core.rs	drop	929	AXIOMATISED	RM_UnblockClient FFI
 src/graph_core.rs	compute_effective_timeout	947	NOT COVERED	config arithmetic, not concurrency
 src/graph_core.rs	reply_invalid_graph_version	986	NOT COVERED	reply formatting
@@ -119,3 +119,6 @@ graph/src/graph/graph.rs	vector_query_edges	4415	PROVEN	Knn.alloc_bounded, no_ab
 graph/src/runtime/runtime.rs	map_to_index_options	2008	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)
 graph/src/runtime/ops/commit.rs	next	69	MODELLED	lock path only (#3226): Locks.writerOpenScanProg (escalate at :93, commit_deferred_indexes → Indexer::commit → RediSearch_IndexAddDocument with the scan's spec read lock still held); properties noReacquire / LockOrdered refuted by bug3226_open_scan_upgrade, bug3226_open_scan_unordered (OPEN); scan-closed paths: spec_programs_ordered
+# Online index build (#2355): fns the background builder added, not modelled yet.
+graph/src/graph/mvcc_graph.rs	MvccGraph::set_build_host	140	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/graph/mvcc_graph.rs	MvccGraph::inherit_build	155	NOT COVERED	online index build (#2355): not modelled yet
