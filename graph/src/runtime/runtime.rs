@@ -46,7 +46,6 @@ use crate::{
     planner::IR,
     runtime::{
         batch::{Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap, classify_column},
-        graph_version::{GraphRef, GraphVersion},
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
             CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByFulltextScanOp,
@@ -68,7 +67,7 @@ use once_cell::unsync::Lazy;
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
 use std::{
-    cell::{Cell, RefCell, RefMut},
+    cell::{Cell, OnceCell, Ref, RefCell, RefMut},
     collections::HashMap,
     marker::PhantomData,
     sync::Arc,
@@ -107,6 +106,46 @@ pub struct QueryStatistics {
 /// name-map lookup for the excess.
 const ATTR_ID_MEMO_CAP: usize = 32;
 
+/// The graph a [`Runtime`] is created on: a read query's published version,
+/// or a write query's fork.
+// Moved once, into `Runtime::new`: boxing the fork would only add an allocation.
+#[allow(clippy::large_enum_variant)]
+pub enum QueryGraph {
+    Published(Arc<Graph>),
+    Fork(Graph),
+}
+
+impl From<Arc<Graph>> for QueryGraph {
+    fn from(g: Arc<Graph>) -> Self {
+        Self::Published(g)
+    }
+}
+
+impl From<Graph> for QueryGraph {
+    fn from(fork: Graph) -> Self {
+        Self::Fork(fork)
+    }
+}
+
+/// Shared access to the graph a [`Runtime`] reads; see [`Runtime::graph`].
+pub enum GraphRef<'r> {
+    /// A published version needs no borrow: nothing can change it.
+    Published(&'r Graph),
+    /// A write query's fork, borrowed so it is not changed meanwhile.
+    Fork(Ref<'r, Graph>),
+}
+
+impl std::ops::Deref for GraphRef<'_> {
+    type Target = Graph;
+
+    fn deref(&self) -> &Graph {
+        match self {
+            Self::Published(g) => g,
+            Self::Fork(g) => g,
+        }
+    }
+}
+
 /// The query execution context.
 ///
 /// Runtime holds all state needed to execute a query plan:
@@ -123,11 +162,13 @@ const ATTR_ID_MEMO_CAP: usize = 32;
 pub struct Runtime<'a> {
     /// Query parameters ($param syntax)
     pub parameters: HashMap<String, Value>,
-    /// Graph being queried: a read query's published version, or a write
-    /// query's fork. Private, so it cannot be replaced or detached: read it
-    /// through [`Self::graph`] / [`Self::graph_mut`], or keep it with
-    /// [`Self::graph_version`].
-    g: GraphVersion,
+    /// The published version this query reads: a read query's from the
+    /// start, a write query's once [`Self::publish`] published its fork.
+    published: OnceCell<Arc<Graph>>,
+    /// A write query's fork, until [`Self::publish`] takes it. Operators reach
+    /// the runtime through shared references, hence the cell. Read both
+    /// through [`Self::graph`] / [`Self::graph_mut`].
+    fork: RefCell<Option<Graph>>,
     /// Whether this is a write query
     pub write: bool,
     /// Batched mutations (lazy-initialized)
@@ -411,7 +452,7 @@ impl<'a> Runtime<'a> {
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        g: impl Into<GraphVersion>,
+        g: impl Into<QueryGraph>,
         parameters: HashMap<String, Value>,
         write: bool,
         plan: Arc<DynTree<IR>>,
@@ -431,13 +472,18 @@ impl<'a> Runtime<'a> {
             vec![]
         };
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
-        let g = g.into();
+        let (published, fork) = match g.into() {
+            QueryGraph::Published(g) => (OnceCell::from(g), None),
+            QueryGraph::Fork(fork) => (OnceCell::new(), Some(fork)),
+        };
         if write {
-            pending.borrow_mut().set_schema_baseline(&g.borrow());
+            let fork = fork.as_ref().expect("a write query runs on a fork");
+            pending.borrow_mut().set_schema_baseline(fork);
         }
         Self {
             parameters,
-            g,
+            published,
+            fork: RefCell::new(fork),
             write,
             pending,
             stats: RefCell::new(QueryStatistics::default()),
@@ -494,35 +540,31 @@ impl<'a> Runtime<'a> {
 
     /// The graph this query reads.
     ///
-    /// A read query's is a published version, which needs no borrow: nothing
-    /// can change it. A write query's is its fork, borrowed per access, since
-    /// it also borrows it mutably.
+    /// A published version needs no borrow: nothing can change it. A write
+    /// query's fork is borrowed per access, since it is also borrowed mutably.
     #[must_use]
     pub fn graph(&self) -> GraphRef<'_> {
-        self.g.borrow()
+        match self.published.get() {
+            Some(g) => GraphRef::Published(g),
+            None => GraphRef::Fork(Ref::map(self.fork.borrow(), |fork| {
+                fork.as_ref()
+                    .expect("a write query's fork was refused at commit")
+            })),
+        }
     }
 
     /// The graph this write query mutates, borrowed exclusively.
     ///
     /// # Panics
     ///
-    /// On a read query: its graph is a published version, which nothing
-    /// changes. Plans that write are run as write queries, so this is a
-    /// planner bug.
+    /// On a read query, or a write query whose fork was published: a
+    /// published version is never changed. Plans that write are run as write
+    /// queries, so this is a planner bug.
     #[must_use]
     pub fn graph_mut(&self) -> RefMut<'_, Graph> {
-        assert!(self.write, "graph_mut on a read query");
-        self.g.borrow_mut()
-    }
-
-    /// An owner of this query's graph, for code that keeps the graph past
-    /// the call that needs it: the version a write query publishes, and the
-    /// JS UDF context's callbacks. Everything else reads through
-    /// [`Self::graph`] / [`Self::graph_mut`]. The handle is a clone, so the
-    /// graph this runtime runs on cannot be replaced through it.
-    #[must_use]
-    pub fn graph_version(&self) -> GraphVersion {
-        self.g.clone()
+        RefMut::map(self.fork.borrow_mut(), |fork| {
+            fork.as_mut().expect("graph_mut on a published version")
+        })
     }
 
     /// Publish this write query's fork with `commit`, which takes it by value
@@ -531,12 +573,23 @@ impl<'a> Runtime<'a> {
     ///
     /// # Errors
     ///
-    /// Whatever `commit` returns.
+    /// Whatever `commit` returns. The fork is gone then: `commit` consumed it.
+    ///
+    /// # Panics
+    ///
+    /// On a read query, or if the fork was published already.
     pub fn publish<E>(
         &self,
         commit: impl FnOnce(Graph) -> Result<Arc<Graph>, E>,
     ) -> Result<(), E> {
-        self.g.publish(commit)
+        let fork = self
+            .fork
+            .borrow_mut()
+            .take()
+            .expect("a write query's fork is published once");
+        let published = commit(fork)?;
+        assert!(self.published.set(published).is_ok(), "published once");
+        Ok(())
     }
 
     /// Become a writer before mutating shared state (the index), handing the

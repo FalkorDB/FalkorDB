@@ -32,10 +32,7 @@ use crate::{
 use graph::{
     graph::graph::Plan,
     planner::IR,
-    runtime::{
-        graph_version::GraphVersion,
-        runtime::{GetVariables, Runtime},
-    },
+    runtime::runtime::{GetVariables, QueryGraph, Runtime},
     threadpool::spawn,
 };
 use orx_tree::{Bfs, Collection, NodeRef};
@@ -76,7 +73,7 @@ fn record_mut(
     // Writes build a private version instead of mutating the published one in
     // place (checked against the published graph when the query escalates);
     // reads run on the committed snapshot.
-    let g: GraphVersion = if is_write {
+    let g: QueryGraph = if is_write {
         session.write_version().into()
     } else {
         session.with_graph(|tg| tg.graph.read()).into()

@@ -62,26 +62,26 @@ graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2749
 graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2754	PROVEN	Compact.harmonic_complete, unfiltered_keeps_high_ids (#3044 fixed by #3045: source vector sized node_id_bound); Compact.checkKnown_ok_iff, known_messages (unknown label/type errors, #3058)
 graph/src/runtime/functions/algo_procedures.rs	register_maxflow	2918	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
 graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	2923	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
-graph/src/udf/js_classes.rs	set_current_graph	72	PROVEN	UdfClasses.withGraph_set
-graph/src/udf/js_classes.rs	clear_current_graph	78	PROVEN	UdfClasses.withGraph_clear
-graph/src/udf/js_classes.rs	with_current_graph	84	PROVEN	UdfClasses.withGraph_set, withGraph_clear
-graph/src/udf/js_classes.rs	collect_edges	97	PROVEN	Neighbors.outgoing_ok, self_loop_twice
-graph/src/udf/js_classes.rs	create_js_node	134	PROVEN	UdfClasses.jsNode_markers, attrLoop_keeps (QuickJS object set AXIOMATISED); UdfNodeView.rsJsNode, rs_runtime_first, RT.not_differs, jsNode_eq_helpers (fixed by #3464: runtime-first through node_differs_from_committed)
-graph/src/udf/js_classes.rs	set_node_labels	203	PROVEN	UdfNodeView.setNodeLabels, jsNode_eq_helpers, jsNode_labels (QuickJS array/object set AXIOMATISED)
-graph/src/udf/js_classes.rs	set_node_attrs	220	PROVEN	UdfNodeView.setNodeAttrs, jsNode_eq_helpers (UdfClasses.attrLoop: reserved keys not copied; QuickJS object set AXIOMATISED)
-graph/src/udf/js_classes.rs	create_js_edge	246	PROVEN	UdfClasses.jsEdge_markers, edgeType_runtime_first; endpoints via create_js_node with runtime: UdfNodeView.rs_edge_ok, fixed3454_edge_source (fixed by #3464)
-graph/src/udf/js_classes.rs	create_js_path	322	PROVEN	UdfClasses.jsPath_length
-graph/src/udf/js_classes.rs	js_get_neighbors_entry	382	PROVEN	UdfClasses.getNeighbors_no_arg_errors (BUG), getNeighbors_with_config, entryErr_spec
-graph/src/udf/js_classes.rs	js_get_neighbors	401	PROVEN	Neighbors.non_string_types_disable_filter, string_types_filter, neighborNodes
-graph/src/udf/js_classes.rs	throw_js_error	531	PROVEN	UdfClasses.entryErr_spec (throwJs)
-graph/src/udf/js_classes.rs	js_get_node_by_id	543	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects, entryErr_spec
-graph/src/udf/js_classes.rs	js_get_node_by_id_impl	550	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects
-graph/src/udf/js_classes.rs	js_iterate_nodes	586	PROVEN	UdfClasses.iterNodes_all, iter_errors
-graph/src/udf/js_classes.rs	js_iterate_nodes_impl	593	PROVEN	UdfClasses.iterNodes_all, iter_errors (label-matrix scan AXIOMATISED)
-graph/src/udf/js_classes.rs	js_iterate_edges	641	PROVEN	UdfClasses.iter_errors
-graph/src/udf/js_classes.rs	js_iterate_edges_impl	648	PROVEN	UdfClasses.iter_errors (tensor scans AXIOMATISED)
-graph/src/udf/js_classes.rs	js_traverse	691	PROVEN	UdfClasses.traverseEntry_spec, traverse_no_config_ok
-graph/src/udf/js_classes.rs	js_traverse_impl	709	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_both_edges_nodup, traverse_self_loop_twice (BUG), traverse_drops_self_neighbour (BUG)
+graph/src/udf/js_classes.rs	with_graph	75	NOT COVERED	lends the graph for one UDF call and puts back the one lent before (set, then restore on drop), where set_current_graph/clear_current_graph set and cleared it; not modelled yet. Those were PROVEN: UdfClasses.withGraph_set, withGraph_clear
+graph/src/udf/js_classes.rs	drop	82	NOT COVERED	with_graph's restore guard: puts back the graph lent before; not modelled yet
+graph/src/udf/js_classes.rs	with_current_graph	90	PROVEN	UdfClasses.withGraph_set, withGraph_clear
+graph/src/udf/js_classes.rs	collect_edges	103	PROVEN	Neighbors.outgoing_ok, self_loop_twice
+graph/src/udf/js_classes.rs	create_js_node	140	PROVEN	UdfClasses.jsNode_markers, attrLoop_keeps (QuickJS object set AXIOMATISED); UdfNodeView.rsJsNode, rs_runtime_first, RT.not_differs, jsNode_eq_helpers (fixed by #3464: runtime-first through node_differs_from_committed)
+graph/src/udf/js_classes.rs	set_node_labels	208	PROVEN	UdfNodeView.setNodeLabels, jsNode_eq_helpers, jsNode_labels (QuickJS array/object set AXIOMATISED)
+graph/src/udf/js_classes.rs	set_node_attrs	225	PROVEN	UdfNodeView.setNodeAttrs, jsNode_eq_helpers (UdfClasses.attrLoop: reserved keys not copied; QuickJS object set AXIOMATISED)
+graph/src/udf/js_classes.rs	create_js_edge	251	PROVEN	UdfClasses.jsEdge_markers, edgeType_runtime_first; endpoints via create_js_node with runtime: UdfNodeView.rs_edge_ok, fixed3454_edge_source (fixed by #3464)
+graph/src/udf/js_classes.rs	create_js_path	326	PROVEN	UdfClasses.jsPath_length
+graph/src/udf/js_classes.rs	js_get_neighbors_entry	386	PROVEN	UdfClasses.getNeighbors_no_arg_errors (BUG), getNeighbors_with_config, entryErr_spec
+graph/src/udf/js_classes.rs	js_get_neighbors	405	PROVEN	Neighbors.non_string_types_disable_filter, string_types_filter, neighborNodes
+graph/src/udf/js_classes.rs	throw_js_error	534	PROVEN	UdfClasses.entryErr_spec (throwJs)
+graph/src/udf/js_classes.rs	js_get_node_by_id	546	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects, entryErr_spec
+graph/src/udf/js_classes.rs	js_get_node_by_id_impl	553	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects
+graph/src/udf/js_classes.rs	js_iterate_nodes	590	PROVEN	UdfClasses.iterNodes_all, iter_errors
+graph/src/udf/js_classes.rs	js_iterate_nodes_impl	597	PROVEN	UdfClasses.iterNodes_all, iter_errors (label-matrix scan AXIOMATISED)
+graph/src/udf/js_classes.rs	js_iterate_edges	644	PROVEN	UdfClasses.iter_errors
+graph/src/udf/js_classes.rs	js_iterate_edges_impl	651	PROVEN	UdfClasses.iter_errors (tensor scans AXIOMATISED)
+graph/src/udf/js_classes.rs	js_traverse	693	PROVEN	UdfClasses.traverseEntry_spec, traverse_no_config_ok
+graph/src/udf/js_classes.rs	js_traverse_impl	711	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_both_edges_nodup, traverse_self_loop_twice (BUG), traverse_drops_self_neighbour (BUG)
 graph/src/udf/js_context.rs	caught_error_message	70	PROVEN	UdfContext.norm_example, norm_quoted, norm_other, norm_idem_example, errMsg_name, errMsg_plain_error
 graph/src/udf/js_context.rs	compute_effective_js_timeout_ms	130	PROVEN	UdfContext.effTimeout_bounds, effTimeout_spec
 graph/src/udf/js_context.rs	validate_script	154	PROVEN	UdfContext.validateScript_spec, validateTimeout_bounds (QuickJS eval AXIOMATISED oracle)
