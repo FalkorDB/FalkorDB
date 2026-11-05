@@ -86,7 +86,9 @@ class testEntityUpdate():
         # similarly updateing an "empty" node with a map containing only nulls
         result = self.graph.query("CREATE (n) SET n = {v:null} DELETE n RETURN n")
         n = result.result_set[0][0]
-        self.env.assertEqual(result.nodes_created, 0)
+        # created and deleted in one segment: counted both ways, as in C (#2966)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.nodes_deleted, 1)
         self.env.assertEqual(result.properties_set, 0)
         self.env.assertEqual(result.properties_removed, 0)
         self.env.assertEqual(len(n.properties), 1)
