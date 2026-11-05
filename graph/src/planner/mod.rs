@@ -34,6 +34,7 @@ mod hop_order;
 pub mod optimizer;
 pub mod tree;
 
+use crate::parser::ast::is_generated_anon_alias;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
@@ -403,7 +404,7 @@ fn fmt_rel_with_labels_dir(
     let to_str = fmt_node(&rel.to);
 
     let alias_str = rel.alias.to_string();
-    let is_anon = alias_str.starts_with("_anon");
+    let is_anon = is_generated_anon_alias(&alias_str);
 
     if is_anon {
         format!("({from_str}){left_arrow}-{right_arrow}({to_str})")
@@ -2002,7 +2003,7 @@ impl Planner {
                 !rel.alias
                     .name
                     .as_ref()
-                    .is_some_and(|n| n.starts_with("_anon"))
+                    .is_some_and(|n| is_generated_anon_alias(n))
                     || component
                         .paths()
                         .iter()
@@ -2018,7 +2019,7 @@ impl Planner {
                     !r.alias
                         .name
                         .as_ref()
-                        .is_some_and(|n| n.starts_with("_anon"))
+                        .is_some_and(|n| is_generated_anon_alias(n))
                 })
                 .map(|r| r.alias.id)
                 .collect();

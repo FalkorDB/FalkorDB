@@ -35,7 +35,7 @@ use crate::graph::graph::{LabelId, NodeId, RelationshipId};
 use crate::graph::graphblas::matrix::{Dup, Matrix};
 use crate::graph::graphblas::tensor::Tensor;
 use crate::graph::graphblas::versioned_matrix::{Iter, VersionedMatrix};
-use crate::parser::ast::{QueryRelationship, Variable};
+use crate::parser::ast::{QueryRelationship, Variable, is_generated_anon_alias};
 use crate::planner::IR;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp, BatchRow, Column},
@@ -393,7 +393,7 @@ impl<'a> CondTraverseOp<'a> {
             .alias
             .name
             .as_ref()
-            .is_some_and(|n| n.starts_with("_anon"));
+            .is_some_and(|n| is_generated_anon_alias(n));
         let (bidir_dedup, dedup_source_alias) =
             if !emit_relationship && rp.bidirectional && intermediate_is_anon {
                 if let BatchOp::CondTraverse(ref child_ct) = *child {
