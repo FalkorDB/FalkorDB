@@ -13,8 +13,7 @@ GRAPH_ID = "index_create"
 
 class testIndexCreationFlow():
     def __init__(self):
-        # enableDebugCommand: test23 reloads via DEBUG RELOAD, which redis refuses by default.
-        self.env, self.db = Env(enableDebugCommand=True)
+        self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
 
     # full-text index creation
@@ -1032,12 +1031,14 @@ class testIndexCreationFlow():
             graph.ro_query("CALL db.idx.fulltext.queryNodes('L', 'beta') "
                            "YIELD node RETURN count(node)").result_set, [[n]])
 
-    def test23_a_label_with_many_fields_survives_a_reload(self):
-        # The RDB decoder rebuilds a label's indexes field by field, batching the
-        # consecutive ones that need no options into one call. Range and fulltext
-        # fields interleaved with a field that carries options (a language) and a
-        # vector field must all come back, answer queries and report the settings.
-        graph = self.db.select_graph("many_fields_reload")
+    def test23_a_label_with_many_fields_survives_a_copy(self):
+        # GRAPH.COPY serializes the graph and loads the stream through the RDB decoder,
+        # which rebuilds a label's indexes field by field, batching the consecutive ones
+        # that need no options into one call. Range and fulltext fields interleaved with a
+        # field that carries options (a language) and a vector field must all come back,
+        # answer queries and report the settings. (A DEBUG RELOAD would reload every graph
+        # on the shared server, which is slow under a sanitizer.)
+        graph = self.db.select_graph("many_fields_source")
         n = 200
         props = ", ".join(f"r{i}: x + {i}" for i in range(12))
         graph.query(f"UNWIND range(1, $n) AS x CREATE (:L {{{props}, a: 'alpha', b: 'beta', "
@@ -1049,23 +1050,25 @@ class testIndexCreationFlow():
         create_node_vector_index(graph, 'L', 'v', dim=2)
         wait_for_indices_to_sync(graph)
 
-        def state():
-            rows = graph.ro_query(
+        def state(g):
+            rows = g.ro_query(
                 "CALL db.indexes() YIELD label, properties, types, language, status "
                 "RETURN label, properties, types, language, status").result_set
             return [[r[0], sorted(r[1]), {k: sorted(v) for k, v in r[2].items()}, r[3], r[4]]
                     for r in rows]
 
-        before = state()
+        before = state(graph)
         self.env.assertEqual(before[0][4], 'OPERATIONAL')
-        self.env.dumpAndReload()
-        self.env.assertEqual(state(), before)
+        copy = graph.copy("many_fields_copy")
+        self.env.assertEqual(state(copy), before)
 
         for i in (0, 5, 6, 11):
             q = f"MATCH (n:L) WHERE n.r{i} = {n} + {i} RETURN count(n)"
-            self.env.assertIn("Node By Index Scan", str(graph.explain(q)))
-            self.env.assertEqual(graph.ro_query(q).result_set, [[1]])
+            self.env.assertIn("Node By Index Scan", str(copy.explain(q)))
+            self.env.assertEqual(copy.ro_query(q).result_set, [[1]])
         for term in ('alpha', 'beta'):
             self.env.assertEqual(
-                graph.ro_query(f"CALL db.idx.fulltext.queryNodes('L', '{term}') "
-                               "YIELD node RETURN count(node)").result_set, [[n]])
+                copy.ro_query(f"CALL db.idx.fulltext.queryNodes('L', '{term}') "
+                              "YIELD node RETURN count(node)").result_set, [[n]])
+        copy.delete()
+        graph.delete()
