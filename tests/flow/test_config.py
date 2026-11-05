@@ -121,6 +121,26 @@ class testConfig(FlowTestsBase):
         self.db.config_set("DELAY_INDEXING", "no")
         self.db.config_set("PARALLEL_INDEXING", "no")
 
+    def test_config_set_rejects_oversized_batch(self):
+        # the number of (field, value) pairs in a single GRAPH.CONFIG SET is
+        # bounded; an oversized batch is rejected rather than sizing stack
+        # buffers from client input
+        prev = self.redis_con.execute_command("GRAPH.CONFIG GET *")
+
+        # build a command with more pairs than there are configurations
+        pairs = []
+        for _ in range(64):
+            pairs += ["RESULTSET_SIZE", "10"]
+        try:
+            self.redis_con.execute_command("GRAPH.CONFIG", "SET", *pairs)
+            self.env.assertTrue(False) # should have raised
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("too many configuration parameters", str(e))
+
+        # configuration must be unchanged
+        self.env.assertEqual(self.redis_con.execute_command("GRAPH.CONFIG GET *"),
+                prev)
+
     def test03_config_set(self):
         config_name = "RESULTSET_SIZE"
         config_value = 3

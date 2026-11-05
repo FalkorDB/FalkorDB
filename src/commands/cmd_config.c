@@ -105,9 +105,19 @@ void _Config_set
 	// validate configuration
 	//--------------------------------------------------------------------------
 
+	// argc is client-controlled; reject oversized batches rather than sizing
+	// stack arrays from client input - a single command can't meaningfully set
+	// more parameters than exist (repeated keys included), and this keeps the
+	// fixed-size arrays below bounded, avoiding stack exhaustion
 	int n_fields = argc / 2;
-	Config_Option_Field fields[n_fields];  // collected fields to set
-	const char *vals[n_fields];            // collected values to set
+	if(n_fields > Config_END_MARKER) {
+		RedisModule_ReplyWithError(ctx,
+				"too many configuration parameters in a single command");
+		return;
+	}
+
+	Config_Option_Field fields[Config_END_MARKER];  // collected fields to set
+	const char *vals[Config_END_MARKER];            // collected values to set
 
 	// validate field names and that each field is runtime-configurable
 	for(int i = 0; i < argc; i += 2) {
