@@ -118,8 +118,10 @@ use std::sync::Arc;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
-use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
+use super::graphblas::serialization::{Decode, Encode, Reader, Writer, decode_capacity};
 use crate::runtime::value::Value;
+
+use super::graphblas::serialization::check_count_fits;
 
 /// Highest `u16`, reserved as "no attribute" — C's `ATTRIBUTE_ID_NONE`
 /// (`USHRT_MAX`, `src/graph/entities/attribute_set.h`). Never a valid id, so an id
@@ -1145,12 +1147,27 @@ impl DataBlock {
 pub struct AttributeStore {
     /// Block-allocated per-entity attribute spans (COW across MVCC versions).
     data: DataBlock,
+    /// One past the highest entity id a decode may store, when set. A restore
+    /// payload names the entity of every span it carries, and the directory
+    /// grows to reach it, so an id the header's counts cannot account for is
+    /// refused before it sizes anything.
+    id_bound: Option<u64>,
 }
 
 impl AttributeStore {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An empty store for decoding a payload whose entity ids are all below
+    /// `id_bound` (see [`AttributeStore::id_bound`]).
+    #[must_use]
+    pub fn with_id_bound(id_bound: u64) -> Self {
+        Self {
+            id_bound: Some(id_bound),
+            ..Self::default()
+        }
     }
 
     /// Cheap snapshot clone for a new MVCC version: one root `Arc` bump, which
@@ -1479,11 +1496,29 @@ impl Decode<19> for AttributeStore {
         count: u64,
         attr_limit: usize,
     ) -> Result<(), String> {
+        // An entity is an id and an attribute count, nine bytes each.
+        check_count_fits(r, "entity", count, 18)?;
         for _ in 0..count {
             let entity_id = r.read_unsigned()?;
+            if let Some(bound) = self.id_bound
+                && entity_id >= bound
+            {
+                return Err(format!(
+                    "entity id {entity_id} is out of range: the graph has {bound} ids"
+                ));
+            }
             let attr_count = r.read_unsigned()?;
+            // A span's length is a u16 (`set_span`): past MAX_ATTRIBUTES entries it
+            // would be truncated to zero and the restore would silently lose the
+            // entity's attributes. The decoder does not dedupe attribute ids, so
+            // the dictionary size alone does not imply this bound.
+            if attr_count > MAX_ATTRIBUTES as u64 {
+                return Err(format!(
+                    "entity {entity_id} declares {attr_count} attributes, more than the {MAX_ATTRIBUTES} allowed"
+                ));
+            }
 
-            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_count as usize);
+            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(decode_capacity(attr_count));
             for _ in 0..attr_count {
                 // Narrow with `try_from`, not `as`: the id is a u64 on the wire, and
                 // truncating first would turn an encoded 65_536 into 0, which then
@@ -2081,6 +2116,21 @@ mod tests {
     }
 
     #[test]
+    fn decode_with_count_rejects_more_attributes_than_ids_exist() {
+        let mut store = AttributeStore::default();
+        // 65_536 entries for one valid id: the span length is a u16, so storing
+        // them would wrap it to zero and silently drop the entity's attributes.
+        let attrs: Vec<(u64, Value)> = (0..=MAX_ATTRIBUTES as u64)
+            .map(|_| (0, Value::Int(1)))
+            .collect();
+        let mut r = raw_span_stream(3, &attrs);
+        let err = store
+            .decode_with_count(&mut r, 1, MAX_ATTRIBUTES)
+            .expect_err("an entity with more attributes than ids was accepted");
+        assert!(err.contains("attributes"), "{err}");
+    }
+
+    #[test]
     fn decode_with_count_rejects_ids_too_large_for_u16() {
         let mut store = AttributeStore::default();
         // 65_536 is 0 once truncated to u16, so a decoder that narrows before
@@ -2186,6 +2236,25 @@ mod tests {
             MAX_ATTRIBUTES,
             "insert must also refuse rather than grow past the id space"
         );
+    }
+
+    /// The entity id names a directory slot, and the directory grows to reach
+    /// it: 2^64 - 1 asked for an allocation of 2^55 bytes and aborted the
+    /// server. A store told how many ids the graph has refuses one outside.
+    #[test]
+    fn decode_with_count_refuses_an_entity_id_past_the_bound() {
+        let attrs = [(0, Value::Int(1))];
+        for id in [8, 1 << 40, u64::MAX] {
+            let mut store = AttributeStore::with_id_bound(8);
+            let err = store
+                .decode_with_count(&mut span_stream(id, &attrs), 1, 1)
+                .expect_err("an id past the bound was stored");
+            assert!(err.contains("out of range"), "unexpected error: {err}");
+        }
+        let mut store = AttributeStore::with_id_bound(8);
+        store
+            .decode_with_count(&mut span_stream(7, &attrs), 1, 1)
+            .unwrap();
     }
 
     #[test]

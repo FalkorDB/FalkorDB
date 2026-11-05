@@ -10,7 +10,9 @@ use graph::entity_type::EntityType;
 use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::constraint::{Constraint, ConstraintStatus, ConstraintType};
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, index_field_type};
+use graph::graph::graphblas::serialization::{
+    Decode, Encode, Reader, Writer, decode_capacity, index_field_type,
+};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::text_index_options::PHONETIC_OFF;
@@ -19,6 +21,10 @@ use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
+use crate::serializers::decoder::validate::MAX_SCHEMAS;
+use graph::index::vector_index_options::{MAX_VECTOR_DIMENSION, MAX_VECTOR_GRAPH_PARAM};
+
+use graph::graph::graphblas::serialization::check_count_fits;
 
 /// RDB encoding version. Matches C FalkorDB v19 format (buffered IO with type tags).
 #[allow(dead_code)]
@@ -176,8 +182,17 @@ impl Decode<19> for Header {
         let deleted_edge_count = r.read_unsigned()?;
         let label_count = r.read_unsigned()?;
         let relationship_count = r.read_unsigned()?;
+        // One flag per relationship type: refuse a count no graph reaches, and
+        // one the remaining bytes cannot hold, before reading and pushing flags
+        // (check_header holds the same limit for the rest of the header).
+        if relationship_count > MAX_SCHEMAS {
+            return Err(format!(
+                "relationship type count {relationship_count} is out of range"
+            ));
+        }
+        check_count_fits(r, "relationship type", relationship_count, 9)?;
 
-        let mut multi_edge = Vec::with_capacity(relationship_count as usize);
+        let mut multi_edge = Vec::with_capacity(decode_capacity(relationship_count));
         for _ in 0..relationship_count {
             let flag = r.read_unsigned()?;
             multi_edge.push(flag != 0);
@@ -473,7 +488,7 @@ impl Decode<19> for Schema {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         // --- Attribute keys ---
         let attr_count = r.read_unsigned()?;
-        let mut attribute_names = Vec::with_capacity(attr_count as usize);
+        let mut attribute_names = Vec::with_capacity(decode_capacity(attr_count));
         for _ in 0..attr_count {
             let buf = r.read_buffer()?;
             attribute_names.push(Arc::new(strip_null_terminator(&buf)));
@@ -481,7 +496,7 @@ impl Decode<19> for Schema {
 
         // --- Node schemas ---
         let node_schema_count = r.read_unsigned()?;
-        let mut node_labels = Vec::with_capacity(node_schema_count as usize);
+        let mut node_labels = Vec::with_capacity(decode_capacity(node_schema_count));
         let mut indexes = Vec::new();
         let mut constraints = Vec::new();
         for _ in 0..node_schema_count {
@@ -505,7 +520,7 @@ impl Decode<19> for Schema {
         // `rebuild_indexes` calls `create_index_sync` with the right
         // entity type.
         let rel_schema_count = r.read_unsigned()?;
-        let mut relationship_types = Vec::with_capacity(rel_schema_count as usize);
+        let mut relationship_types = Vec::with_capacity(decode_capacity(rel_schema_count));
         for _ in 0..rel_schema_count {
             let (type_name, info, mut schema_constraints) =
                 decode_schema_entry(r, &attribute_names)?;
@@ -547,7 +562,7 @@ fn decode_schema_entry(
         let language = strip_null_terminator(&lang_buf);
 
         let sw_count = r.read_unsigned()?;
-        let mut stopwords = Vec::with_capacity(sw_count as usize);
+        let mut stopwords = Vec::with_capacity(decode_capacity(sw_count));
         for _ in 0..sw_count {
             let sw_buf = r.read_buffer()?;
             stopwords.push(Arc::new(strip_null_terminator(&sw_buf)));
@@ -591,7 +606,7 @@ fn decode_schema_entry(
     };
 
     let constraint_count = r.read_unsigned()?;
-    let mut constraints = Vec::with_capacity(constraint_count as usize);
+    let mut constraints = Vec::with_capacity(decode_capacity(constraint_count));
     for _ in 0..constraint_count {
         let constraint_type_id = r.read_unsigned()?;
         let ct = match constraint_type_id {
@@ -601,7 +616,7 @@ fn decode_schema_entry(
         // No status field: see `encode_constraint_block`. Both engines write only active
         // constraints, so anything present here is operational by construction.
         let fields_count = r.read_unsigned()?;
-        let mut properties = Vec::with_capacity(fields_count as usize);
+        let mut properties = Vec::with_capacity(decode_capacity(fields_count));
         for _ in 0..fields_count {
             let attr_id = r.read_unsigned()? as usize;
             let prop_name = if attr_id < attribute_names.len() {
@@ -673,12 +688,35 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Vec<Field>), S
         let ef_construction = r.read_unsigned()? as usize;
         let ef_runtime = r.read_unsigned()? as usize;
         let sim_func = r.read_unsigned()?;
+        // The index is rebuilt from these, and they size its graph and its
+        // vectors. A real index never nears these; a corrupted one must not
+        // reach the vector library with them.
+        // Zero is kept: `OPTIONS {dimension:0}` is accepted at creation and the
+        // index retains it, so it has to round-trip.
+        // A zero-dimension index is never configured in the vector library, so
+        // its graph parameters reach nothing and are kept as they were saved.
+        if dimension > MAX_VECTOR_DIMENSION
+            || (dimension > 0
+                && (m > MAX_VECTOR_GRAPH_PARAM
+                    || ef_construction > MAX_VECTOR_GRAPH_PARAM
+                    || ef_runtime > MAX_VECTOR_GRAPH_PARAM))
+        {
+            return Err(format!(
+                "invalid vector index options for attribute {name}: dimension {dimension}, \
+                 M {m}, EF_CONSTRUCTION {ef_construction}, EF_RUNTIME {ef_runtime}"
+            ));
+        }
         // Inverse of the VecSimMetric encoding above; spellings match what
         // `map_to_index_options` accepts so a rebuilt index round-trips.
         let similarity_function = match sim_func {
+            0 => Some("euclidean".to_string()), // VecSimMetric_L2
             1 => Some("ip".to_string()),
             2 => Some("cosine".to_string()),
-            _ => Some("euclidean".to_string()), // VecSimMetric_L2 = 0
+            other => {
+                return Err(format!(
+                    "invalid vector index options for attribute {name}: unknown similarity function {other}"
+                ));
+            }
         };
         Some(VectorIndexOptions {
             dimension,
@@ -831,6 +869,113 @@ mod tests {
         let text = fields[0].options().expect("fulltext options");
         assert!(!text.phonetic_enabled());
         assert_eq!(text.phonetic.as_deref(), Some(""));
+    }
+
+    /// An unknown `sim_func` used to fall through to euclidean, so a corrupted
+    /// word silently changed the index's metric.
+    #[test]
+    fn unknown_vector_similarity_function_is_refused() {
+        for (sim, expected) in [(0, "euclidean"), (1, "ip"), (2, "cosine")] {
+            let mut w = VecWriter::new();
+            w.write_buffer(&null_terminated("v"));
+            w.write_unsigned(INDEX_FLD_VECTOR);
+            w.write_double(2.0);
+            w.write_unsigned(1);
+            w.write_buffer(&null_terminated("dm:en"));
+            for v in [4, 16, 200, 10, sim] {
+                w.write_unsigned(v);
+            }
+            let bytes = w.into_vec();
+            let (_, fields) = decode_index_field(&mut BufferedReader::from_slice(&bytes)).unwrap();
+            let options = fields[0].vector_options().expect("vector options");
+            assert_eq!(options.similarity_function.as_deref(), Some(expected));
+        }
+        for sim in [3, 255, u64::MAX] {
+            let mut w = VecWriter::new();
+            write_c_field(&mut w, "v", INDEX_FLD_VECTOR);
+            let mut bytes = w.into_vec();
+            // the last unsigned on the wire is the similarity function
+            let n = bytes.len();
+            bytes[n - 8..].copy_from_slice(&sim.to_le_bytes());
+            let err = decode_index_field(&mut BufferedReader::from_slice(&bytes))
+                .map(|_| ())
+                .expect_err("an unknown similarity function was accepted");
+            assert!(err.contains("similarity function"), "{err}");
+        }
+    }
+
+    /// The header's relationship count sizes the flag list: refuse one beyond
+    /// the limit, or beyond the bytes that are left, before reading any flag.
+    #[test]
+    fn header_refuses_a_relationship_count_the_payload_cannot_hold() {
+        for count in [MAX_SCHEMAS + 1, u64::MAX, 1000] {
+            let mut w = VecWriter::new();
+            w.write_buffer(&null_terminated("g"));
+            for v in [1, 1, 0, 0, 0, count] {
+                w.write_unsigned(v);
+            }
+            w.write_unsigned(0); // a single flag, far fewer than `count`
+            let bytes = w.into_vec();
+            let err = Header::decode(&mut BufferedReader::from_slice(&bytes))
+                .map(|_| ())
+                .expect_err("an impossible relationship count was accepted");
+            assert!(err.contains("relationship type"), "{err}");
+        }
+    }
+
+    fn vecf32_payload(
+        dim: u32,
+        floats: usize,
+    ) -> Vec<u8> {
+        let mut w = VecWriter::new();
+        w.write_unsigned(graph::graph::graphblas::serialization::si_type::T_VECTOR_F32);
+        let mut buf = dim.to_le_bytes().to_vec();
+        for i in 0..floats {
+            buf.extend_from_slice(&(i as f32).to_le_bytes());
+        }
+        w.write_buffer(&buf);
+        w.into_vec()
+    }
+
+    /// The buffer is `4 + 4 * dim` bytes exactly: more floats than `dim` says
+    /// used to restore silently as a truncated vector.
+    #[test]
+    fn vector_value_buffer_must_match_its_dimension() {
+        use graph::runtime::value::Value;
+        let decode = |bytes: &[u8]| Value::decode(&mut BufferedReader::from_slice(bytes));
+        assert!(matches!(decode(&vecf32_payload(3, 3)), Ok(Value::VecF32(v)) if v.len() == 3));
+        assert!(decode(&vecf32_payload(0, 0)).is_ok());
+        for (dim, floats) in [(2, 3), (3, 2), (0, 1), (u32::MAX, 3)] {
+            assert!(
+                decode(&vecf32_payload(dim, floats)).is_err(),
+                "dim {dim} with {floats} floats was accepted"
+            );
+        }
+    }
+
+    /// Graph parameters of a vector index that reach the vector library are
+    /// bounded, and creation holds to the same bounds, so a saved graph reloads;
+    /// a zero-dimension index never reaches the library and keeps what it was saved with.
+    #[test]
+    fn vector_index_parameter_limits_match_creation_and_spare_zero_dimension() {
+        let encode = |dimension: u64, ef_runtime: u64| {
+            let mut w = VecWriter::new();
+            w.write_buffer(&null_terminated("v"));
+            w.write_unsigned(INDEX_FLD_VECTOR);
+            w.write_double(2.0);
+            w.write_unsigned(1);
+            w.write_buffer(&null_terminated("dm:en"));
+            for v in [dimension, 16, 200, ef_runtime, 1] {
+                w.write_unsigned(v);
+            }
+            w.into_vec()
+        };
+        let load = |bytes: &[u8]| decode_index_field(&mut BufferedReader::from_slice(bytes));
+        let over = MAX_VECTOR_GRAPH_PARAM as u64 + 1;
+        assert!(load(&encode(4, MAX_VECTOR_GRAPH_PARAM as u64)).is_ok());
+        assert!(load(&encode(4, over)).is_err());
+        assert!(load(&encode(0, over)).is_ok());
+        assert!(load(&encode(MAX_VECTOR_DIMENSION + 1, 10)).is_err());
     }
 
     #[test]
