@@ -574,6 +574,21 @@ static void _FreeAttrRefs
 	*n = 0 ;
 }
 
+static void _FreeSchemaRefs
+(
+	EffectsV3SchemaRef **schemas,
+	uint16_t *n
+) {
+	if (*schemas != NULL) {
+		for (uint16_t i = 0 ; i < *n ; i++) {
+			rm_free ((*schemas)[i].name) ;
+		}
+		rm_free (*schemas) ;
+		*schemas = NULL ;
+	}
+	*n = 0 ;
+}
+
 // free whatever the record's arm owns
 //
 // FREED BY ARM, and a record that failed part-way through decode is freed by
@@ -643,7 +658,8 @@ static void _RecordFree
 			break ;
 
 		case EFFECT_CREATE_INDEX:
-			_FreeName     (&rec->create_index.name) ;
+			_FreeSchemaRefs (&rec->create_index.schemas,
+					&rec->create_index.n_schemas) ;
 			_FreeAttrRefs (&rec->create_index.attrs, &rec->create_index.n_attrs) ;
 
 			// only CREATE_INDEX has options at all
@@ -654,7 +670,8 @@ static void _RecordFree
 			break ;
 
 		case EFFECT_DROP_INDEX:
-			_FreeName     (&rec->drop_index.name) ;
+			_FreeSchemaRefs (&rec->drop_index.schemas,
+					&rec->drop_index.n_schemas) ;
 			_FreeAttrRefs (&rec->drop_index.attrs, &rec->drop_index.n_attrs) ;
 			break ;
 
@@ -1053,6 +1070,56 @@ static EffectsV3Status _ReadAttrRefs
 	return EFFECTS_V3_OK ;
 }
 
+// read 'n' schema references: u32 id then the schema's name
+//
+// The same shape as _ReadAttrRefs and bounded the same way; the id is a u32
+// here because that is the width a schema id travels at.
+static EffectsV3Status _ReadSchemaRefs
+(
+	FILE *stream,
+	uint16_t n,
+	EffectsV3SchemaRef **out,
+	uint16_t *out_n
+) {
+	*out   = NULL ;
+	*out_n = 0 ;
+
+	// an index over nothing is malformed rather than a degenerate list -
+	// refused here so apply never has to invent a schema it was not given
+	if (n == 0) {
+		return EFFECTS_V3_MALFORMED ;
+	}
+
+	// each entry is at least a u32 id and a one-byte string plus its length
+	// prefix, so bound the count before it sizes an allocation
+	const long remaining = fstream_remaining (stream) ;
+	const uint64_t min_ref = sizeof (uint32_t) + sizeof (uint64_t) + 1 ;
+	if (remaining < 0 || (uint64_t)n * min_ref > (uint64_t)remaining) {
+		return EFFECTS_V3_MALFORMED ;
+	}
+
+	EffectsV3SchemaRef *refs = rm_calloc (n, sizeof (EffectsV3SchemaRef)) ;
+
+	for (uint16_t i = 0 ; i < n ; i++) {
+		if (!_ReadU32 (stream, &refs[i].id)) {
+			for (uint16_t j = 0 ; j < i ; j++) rm_free (refs[j].name) ;
+			rm_free (refs) ;
+			return EFFECTS_V3_TRUNCATED ;
+		}
+
+		refs[i].name = ReadWireString (stream) ;
+		if (refs[i].name == NULL) {
+			for (uint16_t j = 0 ; j < i ; j++) rm_free (refs[j].name) ;
+			rm_free (refs) ;
+			return EFFECTS_V3_MALFORMED ;
+		}
+	}
+
+	*out   = refs ;
+	*out_n = n ;
+	return EFFECTS_V3_OK ;
+}
+
 // read CREATE_INDEX (11) and DROP_INDEX (12)
 //
 // ONE RECORD PER STATEMENT, which v2 was not - v2 sent one record per field.
@@ -1073,23 +1140,23 @@ static EffectsV3Status _ReadIndexRecord
 	// the arms diverge only at 'options', which a drop does not have AT ALL
 	// rather than having-and-leaving-unset.
 	SchemaType  *schema_type ;
-	int         *schema_id ;
-	char       **name ;
+	EffectsV3SchemaRef **schemas ;
+	uint16_t    *n_schemas ;
 	uint32_t    *field_type ;
 	EffectsV3AttrRef **attrs ;
 	uint16_t    *n_attrs ;
 
 	if (create) {
 		schema_type = &rec->create_index.schema_type ;
-		schema_id   = &rec->create_index.schema_id ;
-		name        = &rec->create_index.name ;
+		schemas     = &rec->create_index.schemas ;
+		n_schemas   = &rec->create_index.n_schemas ;
 		field_type  = &rec->create_index.field_type ;
 		attrs       = &rec->create_index.attrs ;
 		n_attrs     = &rec->create_index.n_attrs ;
 	} else {
 		schema_type = &rec->drop_index.schema_type ;
-		schema_id   = &rec->drop_index.schema_id ;
-		name        = &rec->drop_index.name ;
+		schemas     = &rec->drop_index.schemas ;
+		n_schemas   = &rec->drop_index.n_schemas ;
 		field_type  = &rec->drop_index.field_type ;
 		attrs       = &rec->drop_index.attrs ;
 		n_attrs     = &rec->drop_index.n_attrs ;
@@ -1104,15 +1171,22 @@ static EffectsV3Status _ReadIndexRecord
 	}
 	*schema_type = (SchemaType)t ;
 
-	int32_t label_id ;
-	if (!_ReadI32 (stream, &label_id)) {
+	// A COUNTED LIST, not one label: the CCH path index names several
+	// relationship types in one statement. Every entry shares 'schema_type'.
+	//
+	// Taken in whatever order it arrives and kept that way. An encoder must
+	// sort ascending by id so two engines agree on bytes, but nothing below
+	// here is positional - each entry carries its own id and its own name - so
+	// order is presentation, and re-encoding is what canonicalises it.
+	uint16_t n_schema_refs ;
+	if (!_ReadU16 (stream, &n_schema_refs)) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
-	*schema_id = label_id ;
 
-	*name = ReadWireString (stream) ;
-	if (*name == NULL) {
-		return EFFECTS_V3_MALFORMED ;
+	EffectsV3Status schema_status =
+		_ReadSchemaRefs (stream, n_schema_refs, schemas, n_schemas) ;
+	if (schema_status != EFFECTS_V3_OK) {
+		return schema_status ;
 	}
 
 	// IndexFieldType is a BIT FLAG SET, not a discriminant - a range index is

@@ -1267,6 +1267,18 @@ static bool _ApplyLabels
 
 //------------------------------------------------------------------------------
 // records 11-14 - index and constraint DDL
+
+// the name to put in a diagnostic about an index statement
+//
+// The first schema it names, which is the only one for every statement except
+// a CCH path index.
+static const char *_IndexSchemaName
+(
+	const EffectsV3CreateIndex *ci
+) {
+	return (ci->schemas != NULL && ci->n_schemas > 0) ? ci->schemas[0].name : "?" ;
+}
+
 //------------------------------------------------------------------------------
 
 // rebuild the options map the index constructors take
@@ -1294,7 +1306,8 @@ static bool _OptionsToMap
 	const EffectsV3Record *rec,
 	SIValue *out
 ) {
-	const EffectsV3IndexOptions *o = &rec->create_index.options ;
+	const EffectsV3CreateIndex  *o_rec = &rec->create_index ;
+	const EffectsV3IndexOptions *o = &o_rec->options ;
 
 	*out = Map_New (8) ;
 
@@ -1325,7 +1338,8 @@ static bool _OptionsToMap
 	if (o->dimension == 0) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT CREATE_INDEX vector field on '%s' declares "
-				"dimension 0, which this build cannot create", rec->create_index.name) ;
+				"dimension 0, which this build cannot create",
+				_IndexSchemaName (o_rec)) ;
 		Map_Free (*out) ;
 		*out = SI_NullVal () ;
 		return false ;
@@ -1350,7 +1364,8 @@ static bool _OptionsToMap
 				RedisModule_Log (NULL, "warning",
 						"GRAPH.EFFECT CREATE_INDEX vector field on '%s' asks "
 						"for similarity function %" PRIu64
-						", which this build cannot create", rec->create_index.name,
+						", which this build cannot create",
+						_IndexSchemaName (o_rec),
 						o->sim_func) ;
 				Map_Free (*out) ;
 				*out = SI_NullVal () ;
@@ -1414,73 +1429,98 @@ static Schema *_VerifyDDLRefs
 	return s ;
 }
 
+// verify every schema an index statement names, before any of them is touched
+//
+// A statement naming several relationship types must not index the first and
+// then refuse the second: partial application of one record is divergence the
+// replica cannot see, where a clean refusal is divergence it reports.
+static bool _VerifyIndexDDLRefs
+(
+	GraphContext *gc,
+	SchemaType schema_type,
+	const EffectsV3SchemaRef *schemas,
+	uint16_t n_schemas,
+	const EffectsV3AttrRef *attrs,
+	uint16_t n_attrs,
+	const char *op
+) {
+	if (schemas == NULL || n_schemas == 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT %s names no schema", op) ;
+		return false ;
+	}
+
+	for (uint16_t i = 0 ; i < n_schemas ; i++) {
+		if (_VerifyDDLRefs (gc, schema_type, (int)schemas[i].id, schemas[i].name,
+					attrs, n_attrs, op) == NULL) {
+			return false ;
+		}
+	}
+
+	return true ;
+}
+
 // CREATE_INDEX - ONE RECORD PER STATEMENT
 //
 // v2 sent one record per field and reconstructed the statement by accident;
 // v3 states it once. So the fields are added in a loop against one set of
-// statement-level options, and the index-level configuration is applied ONCE.
+// statement-level options, and the index-level configuration is applied ONCE
+// per index.
 //
 // The asymmetry between the two index-level setters is why that matters:
 // Index_SetLanguage fails only if the language DIFFERS, but Index_SetStopwords
 // fails if stopwords are set AT ALL. Passing the same options to every field
 // would therefore work for language and fail on the second field of any
 // statement carrying stopwords - and pass every test that does not use them.
-static bool _ApplyCreateIndex
+
+// add every field of one statement to ONE schema's index
+//
+// Split out because the statement is applied once per schema it names, and the
+// index-level configuration below belongs to the index - so it is applied once
+// per index rather than once per record.
+static bool _CreateIndexForSchema
 (
 	GraphContext *gc,
-	const EffectsV3Record *rec
+	const EffectsV3CreateIndex *ci,
+	const EffectsV3SchemaRef *schema,
+	SIValue options
 ) {
-	Schema *s = _VerifyDDLRefs (gc, rec->create_index.schema_type, rec->create_index.schema_id,
-			rec->create_index.name, rec->create_index.attrs,
-			rec->create_index.n_attrs, "CREATE_INDEX") ;
+	Schema *s = VerifySchema (gc, ci->schema_type, (int)schema->id, schema->name) ;
 	if (s == NULL) {
 		return false ;
 	}
 
-	if (rec->create_index.n_attrs == 0) {
-		RedisModule_Log (NULL, "warning",
-				"GRAPH.EFFECT CREATE_INDEX on '%s' names no fields",
-				rec->create_index.name) ;
-		return false ;
-	}
-
-	SIValue options ;
-	if (!_OptionsToMap (rec, &options)) {
-		return false ;
-	}
-
 	const GraphEntityType et =
-		(rec->create_index.schema_type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
+		(ci->schema_type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
 
-	bool ok = true ;
 	Index idx = NULL ;
 
-	for (uint16_t i = 0 ; i < rec->create_index.n_attrs && ok ; i++) {
-		idx = GraphHub_AddIndex (gc, rec->create_index.name, rec->create_index.attrs[i].name, et,
-				(IndexFieldType)rec->create_index.field_type, options, false) ;
+	for (uint16_t i = 0 ; i < ci->n_attrs ; i++) {
+		idx = GraphHub_AddIndex (gc, schema->name, ci->attrs[i].name, et,
+				(IndexFieldType)ci->field_type, options, false) ;
 
 		if (idx == NULL) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT CREATE_INDEX failed to create field '%s' "
-					"on '%s'", rec->create_index.attrs[i].name, rec->create_index.name) ;
-			ok = false ;
+					"on '%s'", ci->attrs[i].name, schema->name) ;
+			return false ;
 		}
 	}
 
 	//--------------------------------------------------------------------------
-	// index-level configuration, once per statement
+	// index-level configuration, once per index
 	//--------------------------------------------------------------------------
 
-	if (ok && rec->create_index.options.has_language) {
-		Index_SetLanguage (idx, rec->create_index.options.language) ;
+	if (ci->options.has_language) {
+		Index_SetLanguage (idx, ci->options.language) ;
 	}
 
-	if (ok && rec->create_index.options.has_stopwords) {
+	if (ci->options.has_stopwords) {
 		// Index_SetStopwords takes ownership of the array, so it is built here
 		// rather than borrowed from the record
-		char **sw = arr_new (char*, rec->create_index.options.n_stopwords) ;
-		for (uint64_t i = 0 ; i < rec->create_index.options.n_stopwords ; i++) {
-			arr_append (sw, rm_strdup (rec->create_index.options.stopwords[i])) ;
+		char **sw = arr_new (char*, ci->options.n_stopwords) ;
+		for (uint64_t i = 0 ; i < ci->options.n_stopwords ; i++) {
+			arr_append (sw, rm_strdup (ci->options.stopwords[i])) ;
 		}
 
 		if (!Index_ContainsStopwords (idx)) {
@@ -1497,9 +1537,39 @@ static bool _ApplyCreateIndex
 	// a replica must not spawn population threads and must not reorder its work
 	// against the effect stream, so this is the same in-line population v2's
 	// apply uses rather than the async variant a query would take.
-	if (ok) {
-		Index_Disable (idx) ;
-		Indexer_PopulateIndex (gc, s, idx) ;
+	Index_Disable (idx) ;
+	Indexer_PopulateIndex (gc, s, idx) ;
+
+	return true ;
+}
+
+static bool _ApplyCreateIndex
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	const EffectsV3CreateIndex *ci = &rec->create_index ;
+
+	if (!_VerifyIndexDDLRefs (gc, ci->schema_type, ci->schemas, ci->n_schemas,
+				ci->attrs, ci->n_attrs, "CREATE_INDEX")) {
+		return false ;
+	}
+
+	if (ci->n_attrs == 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_INDEX on '%s' names no fields",
+				_IndexSchemaName (ci)) ;
+		return false ;
+	}
+
+	SIValue options ;
+	if (!_OptionsToMap (rec, &options)) {
+		return false ;
+	}
+
+	bool ok = true ;
+	for (uint16_t j = 0 ; j < ci->n_schemas && ok ; j++) {
+		ok = _CreateIndexForSchema (gc, ci, ci->schemas + j, options) ;
 	}
 
 	SIValue_Free (options) ;
@@ -1512,24 +1582,25 @@ static bool _ApplyDropIndex
 	GraphContext *gc,
 	const EffectsV3Record *rec
 ) {
-	Schema *s = _VerifyDDLRefs (gc, rec->drop_index.schema_type, rec->drop_index.schema_id,
-			rec->drop_index.name, rec->drop_index.attrs,
-			rec->drop_index.n_attrs, "DROP_INDEX") ;
-	if (s == NULL) {
+	const EffectsV3DropIndex *di = &rec->drop_index ;
+
+	if (!_VerifyIndexDDLRefs (gc, di->schema_type, di->schemas, di->n_schemas,
+				di->attrs, di->n_attrs, "DROP_INDEX")) {
 		return false ;
 	}
 
-	const GraphEntityType et =
-		(rec->drop_index.schema_type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
+	for (uint16_t j = 0 ; j < di->n_schemas ; j++) {
+		const char *schema_name = di->schemas[j].name ;
 
-	for (uint16_t i = 0 ; i < rec->drop_index.n_attrs ; i++) {
-		if (GraphHub_DropIndex (gc, rec->drop_index.schema_type, rec->drop_index.name,
-					rec->drop_index.attrs[i].name, (IndexFieldType)rec->drop_index.field_type,
-					false) != INDEX_OK) {
-			RedisModule_Log (NULL, "warning",
-					"GRAPH.EFFECT DROP_INDEX failed to drop field '%s' on "
-					"'%s'", rec->drop_index.attrs[i].name, rec->drop_index.name) ;
-			return false ;
+		for (uint16_t i = 0 ; i < di->n_attrs ; i++) {
+			if (GraphHub_DropIndex (gc, di->schema_type, schema_name,
+						di->attrs[i].name, (IndexFieldType)di->field_type,
+						false) != INDEX_OK) {
+				RedisModule_Log (NULL, "warning",
+						"GRAPH.EFFECT DROP_INDEX failed to drop field '%s' on "
+						"'%s'", di->attrs[i].name, schema_name) ;
+				return false ;
+			}
 		}
 	}
 

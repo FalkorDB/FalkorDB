@@ -263,6 +263,18 @@ typedef struct {
 	char        *name;  // owned, NUL terminated
 } EffectsV3AttrRef;
 
+// a schema named by id and by name together, for the index DDL records
+//
+// Id AND name, like EffectsV3AttrRef: apply checks one against the other, so a
+// diverged dictionary is a refusal rather than an index over whatever that id
+// happens to mean locally.
+//
+// u32 where EffectsV3AttrRef is u16 - the width each already travels at.
+typedef struct {
+	uint32_t  id;
+	char     *name;     // owned, NUL terminated
+} EffectsV3SchemaRef;
+
 // index options, as a typed block
 //
 // Each option carries a presence byte, so an option that was not stated is
@@ -292,11 +304,14 @@ typedef struct {
 //
 // 'field_type' is an IndexFieldType and is a BIT FLAG SET rather than a
 // discriminant: one field can be several index kinds at once.
+//
+// 'schemas' is a LIST, not one label, so a single record can name n entities:
+// the CCH path index is stated over several relationship types at once,
+// ON ()-[r:ROAD|:R]-(). A list of one is the ordinary case.
 typedef struct {
 	SchemaType schema_type;
-	int        schema_id;
-	char      *name;              // owned - the schema's name, stated as well
-	                              // as its id so a diverged id is caught
+	EffectsV3SchemaRef *schemas;  // owned - every entry shares 'schema_type'
+	uint16_t            n_schemas;
 	uint32_t   field_type;
 	EffectsV3AttrRef *attrs;      // owned
 	uint16_t          n_attrs;
@@ -307,8 +322,8 @@ typedef struct {
 // 12 - DROP_INDEX: names the field to drop; carries no options
 typedef struct {
 	SchemaType schema_type;
-	int        schema_id;
-	char      *name;              // owned
+	EffectsV3SchemaRef *schemas;  // owned - every entry shares 'schema_type'
+	uint16_t            n_schemas;
 	uint32_t   field_type;
 	EffectsV3AttrRef *attrs;      // owned
 	uint16_t          n_attrs;
