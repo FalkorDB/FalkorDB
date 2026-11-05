@@ -71,6 +71,10 @@ jobs:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           machine_zones: ${{ vars.GCP_ZONES }}
           machine_type: n4-highcpu-8
+          # the default image boot disk (~10GB) fills up with the toolchain
+          # image + restored dep caches + rust toolchain + build, failing the
+          # build with "No space left on device"; give it headroom
+          disk_size: 100
           network: gh-runner
           runner_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
 
