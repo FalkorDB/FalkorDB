@@ -486,8 +486,8 @@ impl<'a> Parser<'a> {
             Token::Float(f) => Value::Float(f),
             Token::String(s) => Value::String(s),
             // Nesting recurses, so it is bounded like every other descent.
-            Token::LBrace => return self.nested(Self::parse_literal_list),
-            Token::LBracket => return self.nested(Self::parse_literal_map),
+            Token::LBracket => return self.nested(Self::parse_literal_list),
+            Token::LBrace => return self.nested(Self::parse_literal_map),
             token => {
                 return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
             }
@@ -499,12 +499,12 @@ impl<'a> Parser<'a> {
     fn parse_literal_list(&mut self) -> Result<Value, String> {
         self.lexer.next(); // '['
         let mut items = ThinVec::new();
-        if optional_match_token!(self.lexer, RBrace) {
+        if optional_match_token!(self.lexer, RBracket) {
             return Ok(Value::List(Arc::new(items)));
         }
         loop {
             items.push(self.parse_literal()?);
-            if optional_match_token!(self.lexer, RBrace) {
+            if optional_match_token!(self.lexer, RBracket) {
                 return Ok(Value::List(Arc::new(items)));
             }
             match_token!(self.lexer, Comma);
@@ -514,14 +514,14 @@ impl<'a> Parser<'a> {
     fn parse_literal_map(&mut self) -> Result<Value, String> {
         self.lexer.next(); // '{'
         let mut entries = OrderMap::default();
-        if optional_match_token!(self.lexer, RBracket) {
+        if optional_match_token!(self.lexer, RBrace) {
             return Ok(Value::Map(Arc::new(entries)));
         }
         loop {
             let key = self.parse_ident()?;
             match_token!(self.lexer, Colon);
             entries.insert(key, self.parse_literal()?);
-            if optional_match_token!(self.lexer, RBracket) {
+            if optional_match_token!(self.lexer, RBrace) {
                 return Ok(Value::Map(Arc::new(entries)));
             }
             match_token!(self.lexer, Comma);
@@ -600,11 +600,11 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer, LParen);
             let (nkey, label, entity_type) = if optional_match_token!(self.lexer, RParen) {
                 match_token!(self.lexer, Dash);
-                match_token!(self.lexer, LBrace);
+                match_token!(self.lexer, LBracket);
                 let nkey = self.parse_ident()?;
                 match_token!(self.lexer, Colon);
                 let label = self.parse_ident()?;
-                match_token!(self.lexer, RBrace);
+                match_token!(self.lexer, RBracket);
                 match_token!(self.lexer, Dash);
                 optional_match_token!(self.lexer, GreaterThan);
                 match_token!(self.lexer, LParen);
@@ -698,11 +698,11 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer, LParen);
             let (nkey, label, entity_type) = if optional_match_token!(self.lexer, RParen) {
                 match_token!(self.lexer, Dash);
-                match_token!(self.lexer, LBrace);
+                match_token!(self.lexer, LBracket);
                 let nkey = self.parse_ident()?;
                 match_token!(self.lexer, Colon);
                 let label = self.parse_ident()?;
-                match_token!(self.lexer, RBrace);
+                match_token!(self.lexer, RBracket);
                 match_token!(self.lexer, Dash);
                 optional_match_token!(self.lexer, GreaterThan);
                 match_token!(self.lexer, LParen);
@@ -870,7 +870,7 @@ impl<'a> Parser<'a> {
                             // Peek ahead to distinguish CALL { subquery } from CALL procedure()
                             let state = self.save_state();
                             self.lexer.next(); // consume CALL
-                            let is_subquery = matches!(self.lexer.current(), Ok(Token::LBracket));
+                            let is_subquery = matches!(self.lexer.current(), Ok(Token::LBrace));
                             self.restore_state(state);
                             let msg = if is_subquery {
                                 "A WITH clause is required to introduce CALL SUBQUERY after an updating clause."
@@ -905,7 +905,7 @@ impl<'a> Parser<'a> {
                     ..
                 }
                 | Token::Semicolon
-                | Token::RBracket => {}
+                | Token::RBrace => {}
                 _ => {
                     return Err(self
                         .lexer
@@ -919,7 +919,7 @@ impl<'a> Parser<'a> {
                 keyword: Some(Keyword::Union),
                 ..
             } | Token::Semicolon
-                | Token::RBracket
+                | Token::RBrace
         ) {
             match_token!(self.lexer, EndOfFile);
         }
@@ -1030,10 +1030,10 @@ impl<'a> Parser<'a> {
 
     fn parse_call_clause(&mut self) -> Result<Vec<RawQueryIR>, String> {
         // CALL { subquery } — parse body as a self-contained query
-        if self.lexer.current()? == Token::LBracket {
+        if self.lexer.current()? == Token::LBrace {
             self.lexer.next();
             let body = self.nested(Self::parse_query)?;
-            match_token!(self.lexer, RBracket);
+            match_token!(self.lexer, RBrace);
             let is_returning = Self::body_has_return(&body);
             return Ok(vec![QueryIR::CallSubquery {
                 body: Box::new(body),
@@ -1773,7 +1773,7 @@ impl<'a> Parser<'a> {
                 .format_error(&format!("A {fn_name} requires bound nodes")));
         };
         // Check for inline node properties (not allowed)
-        if self.lexer.current()? == Token::LBracket {
+        if self.lexer.current()? == Token::LBrace {
             return Err(self
                 .lexer
                 .format_error(&format!("A {fn_name} requires bound nodes")));
@@ -1785,7 +1785,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, Dash);
 
         // Parse relationship details in [...]
-        let has_details = optional_match_token!(self.lexer, LBrace);
+        let has_details = optional_match_token!(self.lexer, LBracket);
         let (rel_types, min_hops, max_hops, has_edge_filter) = if has_details {
             // Optional alias (ignored)
             let _alias = self.try_parse_ident();
@@ -1826,7 +1826,7 @@ impl<'a> Parser<'a> {
             let has_filter = if let Token::Parameter(_) = self.lexer.current()? {
                 true
             } else {
-                self.lexer.current()? == Token::LBracket
+                self.lexer.current()? == Token::LBrace
             };
 
             // Skip filter content if present (consume until we reach `]`)
@@ -1835,12 +1835,12 @@ impl<'a> Parser<'a> {
                 loop {
                     let tok = self.lexer.current()?;
                     match tok {
-                        Token::LBracket => {
+                        Token::LBrace => {
                             // Nested `{`
                             depth += 1;
                             self.lexer.next();
                         }
-                        Token::RBracket => {
+                        Token::RBrace => {
                             // Closing `}`
                             depth -= 1;
                             self.lexer.next();
@@ -1848,7 +1848,7 @@ impl<'a> Parser<'a> {
                                 break;
                             }
                         }
-                        Token::RBrace => {
+                        Token::RBracket => {
                             // `]` - stop before consuming it
                             break;
                         }
@@ -1859,7 +1859,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            match_token!(self.lexer, RBrace);
+            match_token!(self.lexer, RBracket);
             (types, min, max, has_filter)
         } else {
             // -[]-  bare relationship
@@ -1894,7 +1894,7 @@ impl<'a> Parser<'a> {
                 .lexer
                 .format_error(&format!("A {fn_name} requires bound nodes")));
         };
-        if self.lexer.current()? == Token::LBracket {
+        if self.lexer.current()? == Token::LBrace {
             return Err(self
                 .lexer
                 .format_error(&format!("A {fn_name} requires bound nodes")));
@@ -2105,11 +2105,11 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 Ok((tree!(ExprIR::Constant(Value::String(s))), false))
             }
-            Token::LBrace => {
+            Token::LBracket => {
                 self.lexer.next();
                 self.parse_list_literal_or_comprehension(allow_pattern_predicate)
             }
-            Token::LBracket => Ok((self.parse_map()?, false)),
+            Token::LBrace => Ok((self.parse_map()?, false)),
             Token::LParen => {
                 let checkpoint = self.save_state();
                 // Try to detect pattern predicate: (ident)--(...) or (ident)<--(...)
@@ -2142,18 +2142,18 @@ impl<'a> Parser<'a> {
         } else {
             let from = self.parse_expr(false)?;
             if self.lexer.current()? != Token::DotDot {
-                match_token!(self.lexer, RBrace);
+                match_token!(self.lexer, RBracket);
                 return Ok(tree!(ExprIR::GetElement, lhs, from));
             }
             Some(from)
         };
         match_token!(self.lexer, DotDot);
-        let to = if self.lexer.current()? == Token::RBrace {
+        let to = if self.lexer.current()? == Token::RBracket {
             None
         } else {
             Some(self.parse_expr(false)?)
         };
-        match_token!(self.lexer, RBrace);
+        match_token!(self.lexer, RBracket);
         Ok(tree!(
             ExprIR::GetElements,
             lhs,
@@ -2590,7 +2590,7 @@ impl<'a> Parser<'a> {
                     // quadratic as well as deep.
                     loop {
                         match self.lexer.current()? {
-                            Token::LBrace => {
+                            Token::LBracket => {
                                 self.lexer.next();
                                 let (next, index_height) = self
                                     .with_child_height(|s| s.parse_list_operator_expression(res))?;
@@ -2602,7 +2602,7 @@ impl<'a> Parser<'a> {
                                 res = self.parse_property_lookup(res)?;
                                 height += 1;
                             }
-                            Token::LBracket => {
+                            Token::LBrace => {
                                 self.lexer.next();
                                 let (next, value_height) =
                                     self.with_child_height(|s| s.parse_map_projection(res))?;
@@ -2645,7 +2645,7 @@ impl<'a> Parser<'a> {
                             stack.push((0, None, 0));
                             continue;
                         }
-                        match_token!(self.lexer, RBrace);
+                        match_token!(self.lexer, RBracket);
                     }
                     parse_expr_return!(self, stack, res, height);
                 }
@@ -2881,7 +2881,7 @@ impl<'a> Parser<'a> {
         // 4) Default: list literal
         Ok((
             tree!(ExprIR::List),
-            !optional_match_token!(self.lexer, RBrace),
+            !optional_match_token!(self.lexer, RBracket),
         ))
     }
 
@@ -2940,7 +2940,7 @@ impl<'a> Parser<'a> {
             None
         };
 
-        match_token!(self.lexer, RBrace);
+        match_token!(self.lexer, RBracket);
 
         Ok(tree!(
             ExprIR::ListComprehension(var.clone()),
@@ -2999,7 +2999,7 @@ impl<'a> Parser<'a> {
         // Pipe + result expression
         match_token!(self.lexer, Pipe);
         let result_expr = self.parse_expr(allow_pattern_predicate)?;
-        match_token!(self.lexer, RBrace);
+        match_token!(self.lexer, RBracket);
 
         Ok((
             tree!(
@@ -3042,7 +3042,7 @@ impl<'a> Parser<'a> {
         let attrs = if let Token::Parameter(param) = self.lexer.current()? {
             self.lexer.next();
             tree!(ExprIR::Parameter(param))
-        } else if self.lexer.current()? == Token::LBracket {
+        } else if self.lexer.current()? == Token::LBrace {
             self.parse_inline_properties()?
         } else {
             tree!(ExprIR::Map)
@@ -3077,7 +3077,7 @@ impl<'a> Parser<'a> {
     > {
         let is_incoming = optional_match_token!(self.lexer, LessThan);
         match_token!(self.lexer, Dash);
-        let has_details = optional_match_token!(self.lexer, LBrace);
+        let has_details = optional_match_token!(self.lexer, LBracket);
         let (alias, types, attrs, var_len) = if has_details {
             let alias = if let Some(id) = self.try_parse_ident() {
                 id
@@ -3143,12 +3143,12 @@ impl<'a> Parser<'a> {
             let attrs = if let Token::Parameter(param) = self.lexer.current()? {
                 self.lexer.next();
                 tree!(ExprIR::Parameter(param))
-            } else if self.lexer.current()? == Token::LBracket {
+            } else if self.lexer.current()? == Token::LBrace {
                 self.parse_inline_properties()?
             } else {
                 tree!(ExprIR::Map)
             };
-            match_token!(self.lexer, RBrace);
+            match_token!(self.lexer, RBracket);
             (alias, types.into_iter().collect(), attrs, var_len)
         } else {
             let name = Arc::new(format!("_anon_{}", self.anon_counter));
@@ -3215,13 +3215,13 @@ impl<'a> Parser<'a> {
 
     fn parse_map(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         let mut attrs = Vec::new();
-        if self.lexer.current()? == Token::LBracket {
+        if self.lexer.current()? == Token::LBrace {
             self.lexer.next();
         } else {
             return Ok(tree!(ExprIR::Map));
         }
 
-        if self.lexer.current() == Ok(Token::RBracket) {
+        if self.lexer.current() == Ok(Token::RBrace) {
             self.lexer.next();
             return Ok(tree!(ExprIR::Map));
         }
@@ -3234,7 +3234,7 @@ impl<'a> Parser<'a> {
 
             match self.lexer.current()? {
                 Token::Comma => self.lexer.next(),
-                Token::RBracket => {
+                Token::RBrace => {
                     self.lexer.next();
                     return Ok(tree!(ExprIR::Map ; attrs));
                 }
@@ -3252,7 +3252,7 @@ impl<'a> Parser<'a> {
         let mut items = vec![base];
 
         // Empty projection: expr {}
-        if self.lexer.current()? == Token::RBracket {
+        if self.lexer.current()? == Token::RBrace {
             self.lexer.next();
             return Ok(tree!(ExprIR::MapProjection ; items));
         }
@@ -3287,7 +3287,7 @@ impl<'a> Parser<'a> {
                 Token::Comma => {
                     self.lexer.next();
                 }
-                Token::RBracket => {
+                Token::RBrace => {
                     self.lexer.next();
                     break;
                 }
@@ -4240,5 +4240,42 @@ mod tests {
         ] {
             assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
         }
+    }
+
+    // Regression for issue #3555: parse errors expecting a closing square bracket
+    // or curly brace must report the correct delimiter character.
+    #[test]
+    fn parse_error_expected_bracket_displays_correctly() {
+        with_functions();
+        // Missing closing bracket in list literals, list indexing, and relationship patterns
+        // must report expecting ']', not '}'.
+        let list_literal_err = Parser::new("RETURN [1, 2").parse().unwrap_err();
+        assert!(
+            list_literal_err.contains("expected ']'"),
+            "expected ']' in error, got: {list_literal_err}"
+        );
+
+        let rel_pattern_err = Parser::new("MATCH (n)-[r:KNOWS->(m) RETURN n")
+            .parse()
+            .unwrap_err();
+        assert!(
+            rel_pattern_err.contains("expected ']'"),
+            "expected ']' in error, got: {rel_pattern_err}"
+        );
+
+        let subscript_err = Parser::new("MATCH (n:Person) RETURN n[0")
+            .parse()
+            .unwrap_err();
+        assert!(
+            subscript_err.contains("expected ']'"),
+            "expected ']' in error, got: {subscript_err}"
+        );
+
+        // Missing closing brace in subqueries must report expecting '}', not ']'.
+        let subquery_err = Parser::new("CALL { RETURN 1").parse().unwrap_err();
+        assert!(
+            subquery_err.contains("expected '}'"),
+            "expected '}}' in error, got: {subquery_err}"
+        );
     }
 }

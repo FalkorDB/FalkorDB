@@ -355,10 +355,10 @@ impl<'a> Lexer<'a> {
         let mut chars = str[pos..].chars();
         if let Some(char) = chars.next() {
             return match char {
-                '[' => Ok((Token::LBrace, 1)),
-                ']' => Ok((Token::RBrace, 1)),
-                '{' => Ok((Token::LBracket, 1)),
-                '}' => Ok((Token::RBracket, 1)),
+                '[' => Ok((Token::LBracket, 1)),
+                ']' => Ok((Token::RBracket, 1)),
+                '{' => Ok((Token::LBrace, 1)),
+                '}' => Ok((Token::RBrace, 1)),
                 '(' => Ok((Token::LParen, 1)),
                 ')' => Ok((Token::RParen, 1)),
                 '%' => Ok((Token::Modulo, 1)),
