@@ -149,6 +149,11 @@ def test_unwind_range_near_i64_bounds(args, expected):
     "RETURN duration({minutes: 9223372036854775807})",
     "RETURN date('2024-01-01') + duration({days: 9223372036854775807})",
     "RETURN duration({days: 1}) + duration({days: 9223372036854775807})",
+    # fractional components: too big for f32 even where f64 holds them
+    "RETURN duration({days: 1e30})",
+    "RETURN duration({days: 1e40})",
+    "WITH {days: 1e40} AS m RETURN duration(m)",
+    "WITH {years: -1e40} AS m RETURN duration(m)",
 ])
 def test_duration_overflow_does_not_crash(query):
     with pytest.raises(ResponseError, match=r"(?i)overflow|out of range"):

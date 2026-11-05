@@ -914,7 +914,9 @@ impl<'a> ExprEval<'a> {
                     // The guard must be an *equality* against the slot count.
                     // `rewrite_struct_constructor` only rewrites a call with a
                     // single Map argument, and always emits exactly one child
-                    // per slot (absent keys become `Constant(Null)`), so any
+                    // per slot (absent keys become `Constant(Null)`), plus one
+                    // trailing presence-mask child when `struct_masked` is set,
+                    // so any
                     // other arity did not come from the rewrite. A `> 1` test
                     // let a genuine multi-argument call — these constructors are
                     // declared `var_arg`, so arity validation accepts one — reach
@@ -924,14 +926,18 @@ impl<'a> ExprEval<'a> {
                     // that killed the server in release.
                     if let Some(struct_fn) = func.struct_fn
                         && !func.struct_slots.is_empty()
-                        && node.num_children() == func.struct_slots.len()
+                        && node.num_children()
+                            == func.struct_slots.len() + usize::from(func.struct_masked)
                     {
                         let n = node.num_children();
-                        debug_assert!(n <= 10, "struct slots exceed the stack array");
-                        let mut slots: [Value; 10] = std::array::from_fn(|_| Value::Null);
+                        debug_assert!(n <= 11, "struct slots exceed the stack array");
+                        let mut slots: [Value; 11] = std::array::from_fn(|_| Value::Null);
                         for (i, child) in node.children().enumerate() {
-                            if !matches!(child.data(), ExprIR::Constant(Value::Null)) {
-                                slots[i] = self.eval_node(&child, env, agg_group_key)?;
+                            match child.data() {
+                                ExprIR::Constant(Value::Null) => {}
+                                // Constants (incl. the presence mask) need no dispatch.
+                                ExprIR::Constant(v) => slots[i] = v.clone(),
+                                _ => slots[i] = self.eval_node(&child, env, agg_group_key)?,
                             }
                         }
                         res.push(struct_fn(&slots[..n])?);
