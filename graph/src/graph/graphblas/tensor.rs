@@ -2423,75 +2423,7 @@ mod tests {
         assert_eq!(t.multi_pairs(), 4);
     }
 
-    /// The smallest thing that is both a [`Writer`] and a [`Reader`]: the
-    /// encoder's calls, replayed to the decoder in order. The crate's real
-    /// byte-level writers live in the host crate and are not reachable here,
-    /// and the round trip under test is the *re-keying*, not the framing.
-    #[derive(Default)]
-    struct Tape {
-        ops: std::collections::VecDeque<TapeOp>,
-    }
-
-    enum TapeOp {
-        Unsigned(u64),
-        Signed(i64),
-        Double(f64),
-        Buffer(Vec<u8>),
-    }
-
-    impl super::super::serialization::Writer for Tape {
-        fn write_unsigned(
-            &mut self,
-            val: u64,
-        ) {
-            self.ops.push_back(TapeOp::Unsigned(val));
-        }
-        fn write_signed(
-            &mut self,
-            val: i64,
-        ) {
-            self.ops.push_back(TapeOp::Signed(val));
-        }
-        fn write_double(
-            &mut self,
-            val: f64,
-        ) {
-            self.ops.push_back(TapeOp::Double(val));
-        }
-        fn write_buffer(
-            &mut self,
-            data: &[u8],
-        ) {
-            self.ops.push_back(TapeOp::Buffer(data.to_vec()));
-        }
-    }
-
-    impl super::super::serialization::Reader for Tape {
-        fn read_unsigned(&mut self) -> Result<u64, String> {
-            match self.ops.pop_front() {
-                Some(TapeOp::Unsigned(v)) => Ok(v),
-                _ => Err("tape: expected unsigned".to_string()),
-            }
-        }
-        fn read_signed(&mut self) -> Result<i64, String> {
-            match self.ops.pop_front() {
-                Some(TapeOp::Signed(v)) => Ok(v),
-                _ => Err("tape: expected signed".to_string()),
-            }
-        }
-        fn read_double(&mut self) -> Result<f64, String> {
-            match self.ops.pop_front() {
-                Some(TapeOp::Double(v)) => Ok(v),
-                _ => Err("tape: expected double".to_string()),
-            }
-        }
-        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
-            match self.ops.pop_front() {
-                Some(TapeOp::Buffer(v)) => Ok(v),
-                _ => Err("tape: expected buffer".to_string()),
-            }
-        }
-    }
+    use super::super::serialization::{Tape, TapeOp};
 
     /// The round trip has to survive blocks. The blob stores endpoints rather
     /// than row keys, so no format change was needed — this is the test that
