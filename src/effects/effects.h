@@ -13,7 +13,9 @@
 // the highest payload version this build can READ
 //
 // a reader accepts any version <= this and dispatches per version, so raising
-// it is how C learns to read a new format
+// it is how C learns to read a new format - and it moves only in the same
+// change that adds the matching arm to Effects_Apply. On its own it would
+// admit the new payload to the old parser, which reads its records as v2
 #define EFFECTS_VERSION 2
 
 // the version a newly created buffer STAMPS
@@ -33,24 +35,28 @@
 typedef struct _EffectsBuffer EffectsBuffer;
 
 // types of effects
+//
+// THE VALUES ARE THE WIRE OPCODES. Both encoders put this enum's value on the
+// wire, so an enumerator inserted rather than appended changes what every
+// opcode after it means in payloads that already exist. Pinned for that reason
 typedef enum {
-	EFFECT_UNKNOWN = 0,    // unknown effect
-	EFFECT_UPDATE_NODE,    // node update
-	EFFECT_UPDATE_EDGE,    // edge update
-	EFFECT_CREATE_NODE,    // node creation
-	EFFECT_CREATE_EDGE,    // edge creation
-	EFFECT_DELETE_NODE,    // node deletion
-	EFFECT_DELETE_EDGE,    // edge deletion
-	EFFECT_SET_LABELS,     // set labels
-	EFFECT_REMOVE_LABELS,  // remove labels
-	EFFECT_ADD_SCHEMA,         // schema addition
-	EFFECT_ADD_ATTRIBUTE,      // add attribute
-	EFFECT_CREATE_INDEX,       // index field creation
-	EFFECT_DROP_INDEX,         // index field deletion
-	EFFECT_CREATE_CONSTRAINT,  // constraint creation
-	EFFECT_DROP_CONSTRAINT,    // constraint deletion
-	EFFECT_CREATE_CCH,         // CCH path-index creation
-	EFFECT_DROP_CCH,           // CCH path-index deletion
+	EFFECT_UNKNOWN           = 0,   // unknown effect
+	EFFECT_UPDATE_NODE       = 1,   // node update
+	EFFECT_UPDATE_EDGE       = 2,   // edge update
+	EFFECT_CREATE_NODE       = 3,   // node creation
+	EFFECT_CREATE_EDGE       = 4,   // edge creation
+	EFFECT_DELETE_NODE       = 5,   // node deletion
+	EFFECT_DELETE_EDGE       = 6,   // edge deletion
+	EFFECT_SET_LABELS        = 7,   // set labels
+	EFFECT_REMOVE_LABELS     = 8,   // remove labels
+	EFFECT_ADD_SCHEMA        = 9,   // schema addition
+	EFFECT_ADD_ATTRIBUTE     = 10,  // add attribute
+	EFFECT_CREATE_INDEX      = 11,  // index field creation
+	EFFECT_DROP_INDEX        = 12,  // index field deletion
+	EFFECT_CREATE_CONSTRAINT = 13,  // constraint creation
+	EFFECT_DROP_CONSTRAINT   = 14,  // constraint deletion
+	EFFECT_CREATE_CCH        = 15,  // CCH path-index creation
+	EFFECT_DROP_CCH          = 16,  // CCH path-index deletion
 } EffectType;
 
 //------------------------------------------------------------------------------

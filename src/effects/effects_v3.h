@@ -421,6 +421,11 @@ EffectsV3Status EffectsV3_Decode
 //
 // re-encoding what EffectsV3_Decode produced reproduces the input bytes exactly
 //
+// WRITES THE WHOLE PAYLOAD, HEADER INCLUDED, and takes that header from
+// 'records' rather than from this build's configuration - stamping the local
+// emit version over it is what would stop it being a round trip. So 'eb' is
+// required to hold no effects of its own; it is taken over, not appended to
+//
 // returns false only on an internal failure; records that decoded cleanly
 // always re-encode
 bool EffectsV3_Encode
