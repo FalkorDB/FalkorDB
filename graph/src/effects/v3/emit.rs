@@ -445,13 +445,10 @@ fn digest_cancelled(
     }
     let mut pairs: Vec<(u32, IdList, IdList, IdList)> = Vec::with_capacity(by_type.len());
     for (type_name, mut rels) in by_type {
-        // A type whose every edge was cancelled was never registered on this
-        // graph — nothing of it reached `create_relationships_bulk` — so there
-        // is no id to state and no `ADD_SCHEMA` announcing one. Skipped rather
-        // than invented: a made-up id would index the pair under some other
-        // type. The reservation those ids came from is still the master's, so
-        // this case leaves the two relationship bounds apart. It cannot be
-        // closed with the records this format has.
+        // `Pending::commit` registers the type of every cancelled edge, so the
+        // id is there and `emit_schema_additions` has announced it. Skipped
+        // rather than invented if it ever is not: a made-up id would index the
+        // pair under some other type.
         let Some(relation_id) = graph.get_type_id(&type_name).map(|t| schema_id(t.0)) else {
             continue;
         };
