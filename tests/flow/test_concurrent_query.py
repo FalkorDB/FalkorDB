@@ -677,16 +677,32 @@ class testConcurrentQueryFlow(FlowTestsBase):
             loop = asyncio.get_running_loop()
             DURATION = 4.0
             deadline = loop.time() + DURATION
-            inflight = []
+
+            # track in-flight work with a counter + done-callback (O(1) per task)
+            # instead of rescanning a growing list each iteration - that would be
+            # quadratic and stall the very event loop we use to measure PING. the
+            # callback also records any query failure, so a broken workload (which
+            # wouldn't actually contend the locks) fails the test instead of
+            # leaving PING trivially "responsive".
+            inflight = 0
+            errors = []
+
+            def _on_done(t):
+                nonlocal inflight
+                inflight -= 1
+                if not t.cancelled() and t.exception() is not None:
+                    errors.append(t.exception())
 
             async def flood():
+                nonlocal inflight
                 i = 0
                 while loop.time() < deadline:
-                    while (sum(1 for t in inflight if not t.done()) < 48
-                           and loop.time() < deadline):
+                    while inflight < 48 and loop.time() < deadline:
                         i += 1
                         q = g.query(write_q) if (i % 4 == 0) else g.ro_query(read_q)
-                        inflight.append(asyncio.create_task(q))
+                        t = asyncio.create_task(q)
+                        inflight += 1
+                        t.add_done_callback(_on_done)
                     await asyncio.sleep(0.002)
 
             flood_task = asyncio.create_task(flood())
@@ -701,7 +717,10 @@ class testConcurrentQueryFlow(FlowTestsBase):
                 await asyncio.sleep(0.01)
 
             await flood_task
-            await asyncio.gather(*inflight, return_exceptions=True)
+            # drain the last wave, then fail if any flood query actually errored
+            while inflight > 0:
+                await asyncio.sleep(0.01)
+            self.env.assertEqual(errors, [], message="flood query failures: %r" % errors[:3])
 
             latencies.sort()
             median = latencies[len(latencies) // 2]
@@ -714,6 +733,85 @@ class testConcurrentQueryFlow(FlowTestsBase):
             self.env.assertLess(p99, 1.0)
 
             await probe.aclose()
+            await pool.aclose()
+            self.conn.delete(GRAPH_ID)
+
+        asyncio.run(run(self))
+
+    def test_16_concurrent_readers_timeout_at_gate(self):
+        # many reader-queries can be parked at the writer gate at once, each with
+        # its own timeout. when their budgets elapse they must ALL abort cleanly
+        # with a timeout error - no hang, no crash, no slipping through - and the
+        # server must stay healthy and the write must still land. this stresses
+        # the reader timeout/abort cleanup path (cancel the query-timeout cron,
+        # free the plan) under concurrency - the path gated readers funnel into,
+        # and historically a use-after-free risk.
+
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        self.graph.query("CREATE (:N {v:1})")
+
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=64, timeout=None, socket_timeout=30, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            # a reliably-long read (~3s) holds the read lock; a writer behind it
+            # blocks acquiring the write lock, raising the gate for the duration
+            long_read = "UNWIND range(0, 60000000) AS x WITH x WHERE x % 60000001 = 0 RETURN count(x)"
+
+            loop = asyncio.get_running_loop()
+
+            async def inflight():
+                res = await loop.run_in_executor(None, lambda:
+                    self.conn.execute_command(
+                        "GRAPH.INFO", "RunningQueries", "WaitingQueries"))
+                return len(res[1]), len(res[3])  # (running, waiting)
+
+            async def wait_until(pred, timeout=20.0):
+                deadline = loop.time() + timeout
+                while loop.time() < deadline:
+                    if pred(*(await inflight())):
+                        return True
+                    await asyncio.sleep(0.02)
+                return False
+
+            read_task = asyncio.create_task(g.ro_query(long_read))
+            self.env.assertTrue(await wait_until(lambda r, w: r >= 1))
+            write_task = asyncio.create_task(g.query("CREATE (:N {v:2}) RETURN 1"))
+            # writer in-flight behind the read (gate up) before we probe
+            self.env.assertTrue(await wait_until(lambda r, w: r + w >= 2))
+
+            # 20 readers, each with a 200ms timeout, all park at the gate at once
+            async def probe():
+                try:
+                    await g.ro_query("MATCH (n) RETURN count(n)", timeout=200)
+                    return "ok"   # legitimately slipped in before the gate (rare)
+                except redis.exceptions.ResponseError as e:
+                    return "timeout" if "timed out" in str(e).lower() else ("ERR:" + str(e))
+
+            t0 = loop.time()
+            outcomes = await asyncio.gather(*[probe() for _ in range(20)])
+            probe_wait = loop.time() - t0
+
+            await read_task
+            await write_task
+
+            # every probe returned promptly (none hung for the whole read) with a
+            # clean result: a timeout, or a legitimate early success - never an
+            # unexpected error / crash
+            self.env.assertLess(probe_wait, 2.0)
+            unexpected = [o for o in outcomes if o not in ("timeout", "ok")]
+            self.env.assertEqual(unexpected, [], message=str(outcomes))
+            # the gate-timeout path was actually exercised by the bulk of them
+            self.env.assertGreaterEqual(sum(1 for o in outcomes if o == "timeout"), 15)
+
+            # server stayed healthy and the write landed
+            self.env.assertTrue(self.conn.ping())
+            res = await g.ro_query("MATCH (n:N {v:2}) RETURN count(n)")
+            self.env.assertEqual(res.result_set[0][0], 1)
+
             await pool.aclose()
             self.conn.delete(GRAPH_ID)
 

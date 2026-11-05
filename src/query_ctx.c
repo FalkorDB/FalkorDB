@@ -626,7 +626,15 @@ bool QueryCtx_AcquireWriteLock (void) {
 	// pushed back GATE_THRESHOLD slices - the signature of a sustained read
 	// flood starving it - do we close the gate so new readers stop slipping in
 	// during the GIL hand-offs. this bounds starvation just like the always-on
-	// gate, but pays its cost only during the rare real starvation episode
+	// gate, but pays its cost only during the rare real starvation episode.
+	//
+	// platform note: on Linux the rwlock is PREFER_WRITER, so during those first
+	// GATE_THRESHOLD slices a reader that fast-paths to the rwlock still queues
+	// behind the waiting writer (it can only slip during the 1ms hand-off). on
+	// platforms without writer-preference the reader may pass the waiting writer
+	// freely until the gate engages - a slightly larger but still bounded (<=
+	// GATE_THRESHOLD slices) window. the reentrant write lock is Linux-focused
+	// (elsewhere the acquire degrades to a trylock spin), so this is accepted.
 	WriteLockAttempt attempt ;
 	bool gate_engaged = false ;
 
