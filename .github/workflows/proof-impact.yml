@@ -1,6 +1,6 @@
 # Lean proof impact of a PR, and an AI re-prove of what it touches.
 #
-# The Lean proofs (branch proofs/lean4-verification, PR #3172) are hand-written
+# The Lean proofs under proofs/ are hand-written
 # models of the Rust code: rebuilding them on a PR proves nothing new. What a PR
 # can do is change a function whose model and theorems then describe old code.
 #
@@ -24,8 +24,14 @@
 # and review check it like any other proof change. The gate's checks make the
 # suggestion trustworthy enough to read, not a sandbox.
 #
-# Advisory: not part of ci-gate. The proofs come from proofs/lean4-verification
-# until #3172 merges; after that, point PROOFS_REF at the PR's own proofs/.
+# Advisory: not part of ci-gate.
+#
+# Which proofs/ each job reads:
+#   - the scripts (pr_impact.py, lean_ci.sh, coverage.sh) and the COVERAGE rows
+#     that say which functions are verified come from the PR's base commit, so a
+#     PR cannot change the checks that judge it;
+#   - the Lean sources the re-prove edits, and the patch it suggests, are the
+#     PR head's, so a PR that already updated its proofs is re-proved from there.
 
 name: Proof impact
 
@@ -51,7 +57,6 @@ permissions:
   contents: read
 
 env:
-  PROOFS_REF: proofs/lean4-verification
   # Copilot CLI model id for the re-prove; needs the org's Copilot to offer it.
   COPILOT_MODEL: claude-opus-5.5
   # elan from a pinned release asset (same pin as lean-proofs.yml); bump both together.
@@ -90,8 +95,8 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ env.PROOFS_REF }}
-          path: proofs-src
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: proofs-base
           sparse-checkout: proofs
           persist-credentials: false
       - name: Map the diff to verified functions
@@ -100,13 +105,21 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          proofs_sha=$(git -C proofs-src rev-parse HEAD)
-          python3 proofs-src/proofs/pr_impact.py --repo code --base "$BASE" --head "$HEAD" \
-            --proofs proofs-src/proofs --proofs-ref "$PROOFS_REF@${proofs_sha:0:9}" \
-            --json impact.json --md impact.md
+          set -euo pipefail
+          # The re-prove and gate jobs edit and check the PR head's proofs.
+          echo "proofs_sha=$HEAD" >> "$GITHUB_OUTPUT"
+          if [[ ! -f proofs-base/proofs/pr_impact.py ]]; then
+            # A base branch without the proofs (e.g. an older release branch).
+            printf '<!-- proof-impact -->\n### Lean proof impact\n\nNo Lean proofs on the base branch at %s; nothing to check.\n' \
+              "${BASE:0:9}" > impact.md
+            echo '{"changed": [], "added": [], "removed": []}' > impact.json
+          else
+            python3 proofs-base/proofs/pr_impact.py --repo code --base "$BASE" --head "$HEAD" \
+              --proofs proofs-base/proofs --proofs-ref "base ${BASE:0:9}" \
+              --json impact.json --md impact.md
+          fi
           cat impact.md >> "$GITHUB_STEP_SUMMARY"
           echo "changed=$(jq '.changed | length' impact.json)" >> "$GITHUB_OUTPUT"
-          echo "proofs_sha=$proofs_sha" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: proof-impact
@@ -197,7 +210,7 @@ jobs:
             Repository ${{ github.repository }}, PR #${{ github.event.pull_request.number }}.
             - ./code: the PR head (${{ github.event.pull_request.head.sha }}), full history.
               Its diff is `git -C code diff ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}`.
-            - ./proofs-src: branch ${{ env.PROOFS_REF }} at ${{ needs.impact.outputs.proofs_sha }}.
+            - ./proofs-src: a separate, clean checkout of the same PR head; edit the proofs here.
               proofs/<project>/ are Lake projects; proofs/<project>/COVERAGE.tsv maps each Rust
               fn (file, name, line, bucket, Lean names) to its model and theorems. Read
               proofs/FINDINGS.md and the .claude/skills/proofs skill there first if present.
@@ -225,7 +238,7 @@ jobs:
             project you touched and every project that requires it (lakefile path
             dependencies), and `COVERAGE_RUST_ROOT=$PWD/../code proofs/coverage.sh --unmatched`.
             Do not edit proofs/lean_ci.sh or proofs/coverage.sh: the workflow re-runs both from
-            the original commit and drops any patch that touches them.
+            the PR's base commit and drops any patch that touches them.
 
             Leave your edits as uncommitted changes in ./proofs-src; do not commit, push or
             comment (the workflow publishes them). Never edit ./code.
@@ -259,8 +272,8 @@ jobs:
             verdicts.json
 
   # Fresh runner: none of the agent's processes or files reach it, only the two
-  # uploaded files. It validates the patch and runs the gates on base + patch with
-  # the base's own gate scripts.
+  # uploaded files. It validates the patch and runs the gates on the PR head's
+  # proofs + patch, with the gate scripts from the PR's base commit.
   gate:
     needs: [impact, reprove]
     runs-on: ubuntu-latest
@@ -279,6 +292,15 @@ jobs:
         with:
           ref: ${{ needs.impact.outputs.proofs_sha }}
           path: proofs-src
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: proofs-base
+          sparse-checkout: |
+            proofs/lean_ci.sh
+            proofs/coverage.sh
+          sparse-checkout-cone-mode: false
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
@@ -504,6 +526,9 @@ jobs:
             sed '$d' ../out/checks.md > ../out/gates.md
             verdict rejected; exit 0
           fi
+          # The gate scripts come from the PR's base, not the PR: copy them over the
+          # PR's own (left unstaged, so the checks above only saw the patch).
+          cp ../proofs-base/proofs/lean_ci.sh ../proofs-base/proofs/coverage.sh proofs/
           lean=skipped; cov=pass; ok=pass
           if [[ -s ../out/proofs.patch ]]; then
             lean=pass; proofs/lean_ci.sh > ../out/lean_ci.log 2>&1 || { lean=fail; ok=fail; }
