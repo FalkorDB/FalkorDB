@@ -89,7 +89,8 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                     None,
                 )?
                 else {
-                    return Err("fulltext query expects a string relationship type".into());
+                    // A non-string label or query matches nothing: no rows, as C.
+                    return Ok(None);
                 };
                 let Value::String(query_str) = ExprEval::from_runtime(self.runtime).eval(
                     self.query,
@@ -98,7 +99,7 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                     None,
                 )?
                 else {
-                    return Err("fulltext query expects a string query".into());
+                    return Ok(None);
                 };
                 let g = self.runtime.graph();
                 let iter = Box::new(
