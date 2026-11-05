@@ -4361,6 +4361,12 @@ impl Graph {
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
     ) -> Result<impl Iterator<Item = (NodeId, f64)> + use<>, String> {
+        // Like C, refuse to answer from a half-built index (#3382).
+        if !self.node_indexer.is_operational(label) {
+            return Err(String::from(
+                "Invalid arguments for procedure 'db.idx.vector.queryNodes'",
+            ));
+        }
         let attr = Arc::new(field.to_string());
         if let Some(expected) = self.node_indexer.get_vector_dimension(label, &attr)
             && expected as usize != vector.len()
@@ -4421,6 +4427,12 @@ impl Graph {
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
     ) -> Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId, f64)> + use<>, String> {
+        // Like C, refuse to answer from a half-built index (#3382).
+        if !self.edge_indexer.is_operational(label) {
+            return Err(String::from(
+                "Invalid arguments for procedure 'db.idx.vector.queryRelationships'",
+            ));
+        }
         let attr = Arc::new(field.to_string());
         if let Some(expected) = self.edge_indexer.get_vector_dimension(label, &attr)
             && expected as usize != vector.len()
