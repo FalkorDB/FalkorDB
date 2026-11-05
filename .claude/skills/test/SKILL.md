@@ -56,6 +56,12 @@ cargo build        # debug build required first (flow.sh defaults to target/debu
 - `RELEASE=1` — run against `target/release` instead of `target/debug`
 - Progress is tracked in `flow_tests_done.txt` / `flow_tests_todo.txt`; logs
   land in `tests/flow/logs`.
+- A module built with `--features index-falkordb` (the native index and the CCH
+  path index) must be declared: `FALKORDB_FEATURES=index-falkordb`. Its own flow
+  files are listed in `flow_tests_index_falkordb.txt`
+  (`TESTS_FILE=flow_tests_index_falkordb.txt`); without the declaration the CCH
+  classes skip, and the listed files whose expectations follow the feature fail
+  if the module disagrees with it.
 
 ## Notes
 
