@@ -82,17 +82,25 @@ static EffectsV3IdList _ids(const uint64_t *ids, size_t n,
 // the version and flags bytes are written here rather than by the encoder,
 // because a record does not own the payload header - the buffer does, and at
 // emit version 2 it would write the wrong one until the version flag lands
-static void _check(const EffectsV3Record *r, const char *hex,
-		const char *name) {
+static unsigned char *_encode(const EffectsV3Record *r, size_t *n) {
 	EffectsBytes *out = EffectsBytes_New(1024);
 
 	unsigned char header[2] = { 3, 0 };
 	EffectsBytes_Write(out, header, 2);
 	EffectsV3_EncodeRecord(r, out);
 
-	size_t got_n = EffectsBytes_Len(out);
-	unsigned char *got = malloc(got_n);
+	*n = EffectsBytes_Len(out);
+	unsigned char *got = malloc(*n);
 	EffectsBytes_CopyInto(out, got);
+	EffectsBytes_Free(out);
+
+	return got;
+}
+
+static void _check(const EffectsV3Record *r, const char *hex,
+		const char *name) {
+	size_t got_n = 0;
+	unsigned char *got = _encode(r, &got_n);
 
 	size_t want_n = 0;
 	unsigned char *want = _unhex(hex, &want_n);
@@ -103,7 +111,6 @@ static void _check(const EffectsV3Record *r, const char *hex,
 			"      got %s\n  expected %s", name, got_s, want_s);
 
 	free(got_s); free(want_s); free(want); free(got);
-	EffectsBytes_Free(out);
 }
 
 // the six values every value-carrying fixture uses, row-major:
@@ -346,34 +353,82 @@ void test_effectsV3Record_indexDDL(void) {
 		// two fields, options {} - the text half is still written, five clear
 		// presence bytes, because it is written whatever the field type
 		EffectsV3AttrRef refs[] = { { 12, "name" }, { 13, "age" } };
+		EffectsV3SchemaRef schemas[] = { { 3, "Person" } };
 		EffectsV3Record r = {
 			.opcode      = EFFECT_CREATE_INDEX,
 			.create_index.schema_type = SCHEMA_NODE,
-			.create_index.schema_id = 3,
-			.create_index.name = "Person",
+			.create_index.schemas   = schemas,
+			.create_index.n_schemas = 1,
 			.create_index.field_type = 0x000a,
 			.create_index.attrs = refs,
 			.create_index.n_attrs = 2,
 		};
-		_check(&r, "03000b00000000000000030000000700000000000000506572736f6e00"
-		           "0a00000002000c0005000000000000006e616d65000d00040000000000"
-		           "0000616765000000000000", "rec_create_index");
+		_check(&r, "03000b000000000000000100030000000700000000000000506572736f6e000a"
+		           "00000002000c0005000000000000006e616d65000d0004000000000000006167"
+		           "65000000000000", "rec_create_index");
 	}
 	{
 		// a drop: same shape, and the options block absent entirely
 		EffectsV3AttrRef refs[] = { { 14, "vec" } };
+		EffectsV3SchemaRef schemas[] = { { 1, "KNOWS" } };
 		EffectsV3Record r = {
 			.opcode      = EFFECT_DROP_INDEX,
 			.drop_index.schema_type = SCHEMA_EDGE,
-			.drop_index.schema_id = 1,
-			.drop_index.name = "KNOWS",
+			.drop_index.schemas   = schemas,
+			.drop_index.n_schemas = 1,
 			.drop_index.field_type = 0x0010,
 			.drop_index.attrs = refs,
 			.drop_index.n_attrs = 1,
 		};
-		_check(&r, "03000c000000010000000100000006000000000000004b4e4f57530010"
-		           "00000001000e00040000000000000076656300", "rec_drop_index");
+		_check(&r, "03000c0000000100000001000100000006000000000000004b4e4f5753001000"
+		           "000001000e00040000000000000076656300", "rec_drop_index");
 	}
+}
+
+// THE ENCODER SORTS THE SCHEMA LIST, and only a hand-built test can say so
+//
+// ON ()-[r:ROAD|:R]-() and ON ()-[r:R|:ROAD]-() are one statement, so the bytes
+// have to be the same. A generated fixture cannot arbitrate that: it is already
+// in its generator's order, so a conformance run is green whichever rule holds.
+// The two orders are therefore encoded here and compared against each other
+// rather than against a corpus file.
+void test_effectsV3Record_indexSchemasAreSorted(void) {
+	EffectsV3AttrRef refs[] = { { 7, "w" } };
+
+	EffectsV3SchemaRef ascending[]  = { { 2, "R" }, { 9, "ROAD" } };
+	EffectsV3SchemaRef descending[] = { { 9, "ROAD" }, { 2, "R" } };
+
+	EffectsV3Record r = {
+		.opcode                   = EFFECT_CREATE_INDEX,
+		.create_index.schema_type = SCHEMA_EDGE,
+		.create_index.schemas     = ascending,
+		.create_index.n_schemas   = 2,
+		.create_index.field_type  = INDEX_FLD_CCH,
+		.create_index.attrs       = refs,
+		.create_index.n_attrs     = 1,
+	};
+
+	size_t a_n = 0;
+	unsigned char *a = _encode(&r, &a_n);
+
+	r.create_index.schemas = descending;
+
+	size_t d_n = 0;
+	unsigned char *d = _encode(&r, &d_n);
+
+	TEST_ASSERT_(a_n == d_n && memcmp(a, d, a_n) == 0,
+			"the same two schemas in two orders encoded differently");
+
+	// AND THE ORDER IS ASCENDING, not merely stable. Comparing the two
+	// encodings against each other would pass an encoder that reversed both.
+	//
+	// The list opens after 0300 . opcode u32 . schema_type u32 = 10 bytes,
+	// with its u16 count.
+	TEST_ASSERT(a[10] == 2 && a[11] == 0);
+	TEST_ASSERT(a[12] == 2);
+
+	free(a);
+	free(d);
 }
 
 // THE VECTOR OPTIONS BLOCK, the only fixture exercising options non-empty
@@ -387,11 +442,12 @@ void test_effectsV3Record_indexDDL(void) {
 // with five clear bytes before the vector half begins.
 void test_effectsV3Record_indexVectorOptions(void) {
 	EffectsV3AttrRef refs[] = { { 0, "embedding" } };
+	EffectsV3SchemaRef schemas[] = { { 0, "P" } };
 	EffectsV3Record r = {
 		.opcode      = EFFECT_CREATE_INDEX,
 		.create_index.schema_type = SCHEMA_NODE,
-		.create_index.schema_id = 0,
-		.create_index.name = "P",
+		.create_index.schemas   = schemas,
+		.create_index.n_schemas = 1,
 		.create_index.field_type = 0x0010,
 		.create_index.attrs = refs,
 		.create_index.n_attrs = 1,
@@ -405,10 +461,10 @@ void test_effectsV3Record_indexVectorOptions(void) {
 		},
 	};
 
-	_check(&r, "03000b0000000000000000000000020000000000000050001000000001000000"
-	           "0a00000000000000656d62656464696e67000000000000800000000000000001"
-	           "2000000000000000019001000000000000011400000000000000010200000000"
-	           "000000", "rec_create_index_vector");
+	_check(&r, "03000b0000000000000001000000000002000000000000005000100000000100"
+	           "00000a00000000000000656d62656464696e6700000000000080000000000000"
+	           "0001200000000000000001900100000000000001140000000000000001020000"
+	           "0000000000", "rec_create_index_vector");
 }
 
 // CREATE_CONSTRAINT and DROP_CONSTRAINT
@@ -462,6 +518,8 @@ TEST_LIST = {
 	{ "EffectsV3Record:updateEdge",       test_effectsV3Record_updateEdge },
 	{ "EffectsV3Record:indexDDL",
 		test_effectsV3Record_indexDDL },
+	{ "EffectsV3Record:indexSchemasAreSorted",
+		test_effectsV3Record_indexSchemasAreSorted },
 	{ "EffectsV3Record:indexVectorOptions",
 		test_effectsV3Record_indexVectorOptions },
 	{ "EffectsV3Record:constraintDDL",

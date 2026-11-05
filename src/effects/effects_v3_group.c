@@ -94,6 +94,13 @@ static GroupShape _shape_of(EffectType opcode) {
 		case EFFECT_CREATE_CONSTRAINT:
 		case EFFECT_DROP_CONSTRAINT:
 			break;
+
+		// NOT V3 OPCODES. A CCH statement is staged as CREATE_INDEX or
+		// DROP_INDEX carrying INDEX_FLD_CCH - the v3 wire has fourteen
+		// opcodes and none of them is CCH - so these two never reach here.
+		case EFFECT_CREATE_CCH:
+		case EFFECT_DROP_CCH:
+			break;
 	}
 
 	// SHAPE_NONE is the fail-SAFE answer, not a fail-fast one: it frees
