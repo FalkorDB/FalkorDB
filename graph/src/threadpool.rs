@@ -194,6 +194,28 @@ pub fn spawn<F>(
         .spawn(job, idx);
 }
 
+/// [`spawn`] for a caller that may run with no pool (before init, e.g. in unit tests): the
+/// job comes back as `Err` instead of panicking, for the caller to run itself. Once every
+/// worker has exited ([`shutdown`] has returned) the pool drops the job, which runs its
+/// destructors on this thread. A job sent while [`shutdown`] is still draining is accepted
+/// and may never run or drop: the process is exiting, so a caller that needs the job's
+/// effect (a RediSearch spec's free) must not depend on it then.
+pub fn try_spawn<F>(
+    job: F,
+    idx: Option<usize>,
+) -> Result<(), F>
+where
+    F: FnOnce() + Send + 'static,
+{
+    match GLOBAL_THREAD_POOL.get() {
+        Some(pool) => {
+            pool.spawn(job, idx);
+            Ok(())
+        }
+        None => Err(job),
+    }
+}
+
 /// Initialize the global thread pool with a specific size.
 /// Must be called before any `spawn` calls. Returns `Ok(())` if the pool
 /// was successfully initialized, or `Err(())` if it was already initialized.

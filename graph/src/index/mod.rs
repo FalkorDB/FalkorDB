@@ -61,13 +61,13 @@ use std::{
     ptr::null_mut,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
 use parking_lot::Mutex;
 
-use crate::runtime::value::Value;
+use crate::{runtime::value::Value, threadpool::try_spawn};
 
 use redisearch::{
     DEFAULT_BLOCK_SIZE, GC_POLICY_FORK, HNSW_DEFAULT_EPSILON, HNSWParams, REDISEARCH_ADD_REPLACE,
@@ -880,24 +880,44 @@ pub struct Index {
     /// CREATE round-trip, so they don't decrement the wrong counter.
     id: u64,
     /// The RediSearch index spec. `None` until `create_rs_index` runs (the
-    /// former `null` sentinel). Shared across `Index` generations produced by
-    /// [`Index::clone_for_update`]; the creation reference is dropped (via
-    /// `RediSearch_DropIndex` in [`SpecHandle::drop`]) when the last
-    /// generation holding it goes away.
+    /// former `null` sentinel). A DDL statement builds a new `Index` with a new
+    /// spec ([`Index::fork_for_ddl`]), except one that only adds fields, whose `Index`
+    /// shares the previous one's spec (the fields are registered in it at publish).
+    /// The creation reference is dropped (via `RediSearch_DropIndex` in
+    /// [`SpecHandle::drop`]) when the last `Index` holding it goes away; for an
+    /// `Index` no version published, that is the version that built it.
     spec: Option<Arc<SpecHandle>>,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     /// Attribute keys in insertion order. Tracked alongside `fields` so
     /// `CALL db.indexes()` can return `properties` in declaration order.
     field_order: Vec<Arc<String>>,
-    /// Shared across `clone_for_update` generations so population tickets
-    /// acquired against an older published generation are released against
-    /// the same counters.
+    /// One per DDL-built generation ([`Index::fork_for_ddl`]): tickets of an
+    /// older generation release into `stale_pending`, never into this one's
+    /// current count.
     pending_slots: Arc<Mutex<PendingSlots>>,
     progress: AtomicU64,
     total: AtomicU64,
     language: Option<Arc<String>>,
     stopwords: Option<Vec<Arc<String>>>,
+    /// Set on an `Index` that a DDL statement built and that still owes its
+    /// first population: the statement acquired the ticket (so the index reports
+    /// UNDER CONSTRUCTION from the start) but cannot start the job, because the
+    /// version carrying it may yet be discarded. Whoever publishes the version
+    /// takes the flag ([`Self::take_population_owed`]) and starts the job.
+    population_owed: AtomicBool,
+    /// Fields added to a spec this `Index` shares with the published one
+    /// ([`Self::fork_for_ddl`] with `share_spec`), not yet registered in it.
+    /// Registering is a change to the spec the published version reads, so it waits
+    /// for the publish ([`Self::register_deferred_fields`]): a version that is rolled
+    /// back must leave the spec as it was. Until then the fields exist here only.
+    deferred_fields: Mutex<Vec<DeferredFields>>,
 }
+
+/// Fields to register in a live spec once the version that added them is published.
+type DeferredFields = (
+    HashMap<Arc<String>, Vec<Arc<Field>>>,
+    Option<TextIndexOptions>,
+);
 
 #[derive(Debug, Default)]
 struct PendingSlots {
@@ -966,10 +986,10 @@ impl Drop for OwnedIndex {
 
 /// Shared owner of the *creation* reference to a RediSearch index spec.
 ///
-/// Wrapped in an `Arc` and shared across `Index` generations produced by
-/// [`Index::clone_for_update`], so replacing the published `Index` (add
-/// field, progress bump, ...) does not drop the live spec. When the last
-/// generation releases its `Arc`, `Drop` runs `RediSearch_DropIndex`, which
+/// Wrapped in an `Arc`, held by the `Index` that built it and by the copies of it that
+/// add-field statements make ([`Index::fork_for_ddl`]). When the last holder releases its
+/// `Arc` (an `Index` of a version that is gone, or one a rolled-back version never
+/// published), `Drop` runs `RediSearch_DropIndex`, which
 /// both invalidates the spec and releases the creation ref (outstanding
 /// `OwnedIndex` clones held by in-flight read iterators keep the memory
 /// alive until they are released).
@@ -995,18 +1015,36 @@ impl SpecHandle {
 
 impl Drop for SpecHandle {
     fn drop(&mut self) {
-        // No global lock, for the same reason as `OwnedIndex::drop`: nothing here
-        // stops a timer. Load-bearing too — a reader holding the per-graph read lock
-        // can be the last holder of the spec (a concurrent `drop_index_bg` swaps the
-        // index map under it), and taking the global lock there is the #726
-        // inversion.
+        // The last holder may be a thread that must not pay for freeing a large spec: the
+        // commit that replaced the index, or a query reader. Hand the free to the thread
+        // pool. Anything still using the spec holds its own `Arc<SpecHandle>` or
+        // `OwnedIndex` ref, so by now only the creation ref is left to release.
         //
-        // `DropIndex` invalidates the spec *and* releases the creation ref, so pass
-        // the raw pointer via `into_raw` to avoid a second release from `OwnedIndex`.
-        unsafe {
-            let owned = std::mem::ManuallyDrop::take(&mut self.0);
-            RediSearch_DropIndex(owned.into_raw());
+        // The job owns the raw pointer through `DoomedSpec`, whose `Drop` frees, so a job
+        // the pool never runs (no pool, or one shut down) frees on whichever thread drops
+        // it: the old synchronous behaviour, never a leak and never a spawn during unload.
+        let owned = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
+        let doomed = DoomedSpec(owned.into_raw());
+        if let Err(job) = try_spawn(move || drop(doomed), Some(0)) {
+            drop(job);
         }
+    }
+}
+
+/// A spec whose creation ref is to be released by `RediSearch_DropIndex`.
+struct DoomedSpec(*mut RSIndex);
+
+// SAFETY: the pointer is a `RefManager`, which RediSearch lets any thread drop.
+unsafe impl Send for DoomedSpec {}
+
+impl Drop for DoomedSpec {
+    fn drop(&mut self) {
+        // No global lock, for the same reason as `OwnedIndex::drop`: nothing here stops a
+        // timer, and taking it where a reader holding the per-graph read lock can be the
+        // last holder is the #726 inversion.
+        //
+        // `DropIndex` invalidates the spec *and* releases the creation ref.
+        unsafe { RediSearch_DropIndex(self.0) };
     }
 }
 
@@ -1028,6 +1066,8 @@ impl Default for Index {
             total: AtomicU64::new(0),
             language: None,
             stopwords: None,
+            population_owed: AtomicBool::new(false),
+            deferred_fields: Mutex::new(Vec::new()),
         }
     }
 }
@@ -1057,26 +1097,84 @@ impl Index {
         slots.current_pending = 0;
     }
 
-    /// Copy this `Index` for a clone-and-swap schema update.
+    /// Copy this `Index` for a DDL statement run in an unpublished version.
     ///
-    /// The copy shares the RediSearch spec handle and the pending-ticket
-    /// counters with `self` (so tickets acquired against the currently
-    /// published generation stay balanced), while the Rust-side metadata
-    /// (fields, language, ...) is deep-cloned so the copy can be mutated
-    /// freely before being published.
+    /// The copy has its own counters (a new generation id, fresh pending tickets), and
+    /// deep-cloned Rust-side metadata (fields, language, ...); `self` belongs to the
+    /// published version and stays exactly as it was, so a version that is rolled back
+    /// leaves no trace on it.
+    ///
+    /// The RediSearch spec is either not carried (`share_spec == false`: the statement
+    /// builds a fresh spec, see [`Self::recreate_index`] and `Indexer::create_index`) or
+    /// shared, for a statement that only adds fields: the copy points at the same spec,
+    /// which keeps answering queries on the fields it has while the new ones are
+    /// populated, and the new fields are registered in it when the version is published
+    /// ([`Self::defer_fields`]).
     #[must_use]
-    pub fn clone_for_update(&self) -> Self {
-        Self {
+    pub fn fork_for_ddl(
+        &self,
+        share_spec: bool,
+    ) -> Self {
+        let mut copy = Self {
             id: self.id,
-            spec: self.spec.clone(),
+            spec: if share_spec { self.spec.clone() } else { None },
             fields: self.fields.clone(),
             field_order: self.field_order.clone(),
-            pending_slots: self.pending_slots.clone(),
+            pending_slots: Arc::new(Mutex::new(PendingSlots {
+                current_generation: self.id,
+                current_pending: 0,
+                stale_pending: 0,
+            })),
             progress: AtomicU64::new(self.progress.load(Ordering::Relaxed)),
             total: AtomicU64::new(self.total.load(Ordering::Relaxed)),
             language: self.language.clone(),
             stopwords: self.stopwords.clone(),
+            population_owed: AtomicBool::new(false),
+            deferred_fields: Mutex::new(if share_spec {
+                self.deferred_fields.lock().clone()
+            } else {
+                Vec::new()
+            }),
+        };
+        copy.bump_id();
+        copy
+    }
+
+    /// Record fields this `Index` adds to the spec it shares: they are registered in it
+    /// by [`Self::register_deferred_fields`] once the version is published.
+    pub fn defer_fields(
+        &self,
+        fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
+        options: Option<TextIndexOptions>,
+    ) {
+        self.deferred_fields.lock().push((fields, options));
+    }
+
+    /// Register in the spec the fields [`Self::defer_fields`] recorded, in order. For the
+    /// publisher, before it starts the population that fills them.
+    pub fn register_deferred_fields(&self) {
+        let deferred = std::mem::take(&mut *self.deferred_fields.lock());
+        for (fields, options) in deferred {
+            // Fails only for a vector field with an unknown similarity function; a vector
+            // field is never added to a shared spec (it rebuilds one), and the options of
+            // every other kind are validated when the statement runs.
+            let _ = self.register_fields(&fields, options.as_ref());
         }
+    }
+
+    /// Mark this `Index`, built by a DDL statement, as owing its first population:
+    /// it reports UNDER CONSTRUCTION (one pending ticket) until the job the
+    /// publisher starts finishes.
+    pub fn owe_population(&self) {
+        self.increment_pending_for_generation(self.id);
+        self.population_owed.store(true, Ordering::Release);
+    }
+
+    /// Whether this `Index` still owes the population [`Self::owe_population`]
+    /// recorded, clearing it: the caller that gets `true` starts the job, which
+    /// takes over the ticket the statement acquired.
+    pub fn take_population_owed(&self) -> bool {
+        self.population_owed.swap(false, Ordering::AcqRel)
     }
 }
 
@@ -1138,6 +1236,14 @@ impl Index {
             // backing `CString` must outlive that call.
             // (Bug uncovered by ASAN: heap-use-after-free in `RSLanguage_Find`
             // when the inner `c_lang` was dropped at end of its if-let block.)
+            //
+            // English is RediSearch's own default, so it is not passed: a spec created
+            // with *any* language option carries a schema rule, and documents of a spec
+            // with a rule lose the numeric value 0 from their range field (a `n.x = 0`
+            // lookup finds nothing, and `n.x >= 0` skips it). `index.language()` reports
+            // "english" for every fulltext index with no language of its own, and a
+            // rebuilt spec (`recreate_index`, and now every DDL) is created with it.
+            let language = language.filter(|l| !l.eq_ignore_ascii_case("english"));
             let _language_owner: Option<CString> = if let Some(lang) = language {
                 let c_lang = CString::new(lang.as_str()).map_err(|e| e.to_string())?;
                 if RediSearch_IndexOptionsSetLanguage(options, c_lang.as_ptr()) != 0 {
@@ -1173,6 +1279,19 @@ impl Index {
             );
             RediSearch_TagFieldSetSeparator(self.rs_ptr(), field_id, 1 as c_char);
             RediSearch_TagFieldSetCaseSensitive(self.rs_ptr(), field_id, 1);
+        }
+        Ok(())
+    }
+
+    /// Register every field, attribute by attribute in declaration order
+    /// ([`Self::field_order`]), each with the options it carries. Must be called after
+    /// `create_rs_index`.
+    pub fn register_all_fields(&self) -> Result<(), String> {
+        for attr in &self.field_order {
+            if let Some(fields) = self.fields.get(attr) {
+                let one = HashMap::from([(attr.clone(), fields.clone())]);
+                self.register_fields(&one, None)?;
+            }
         }
         Ok(())
     }
@@ -2230,7 +2349,7 @@ impl Index {
         let stopwords = self.stopwords.clone();
         let language = self.language.clone();
         self.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;
-        self.register_fields(self.fields(), None)?;
+        self.register_all_fields()?;
         // Bump id so any background populate still running against the
         // previous rs_idx detects the recreation and bails out. Pending is
         // tracked per generation, so stale workers release against their own

@@ -963,3 +963,112 @@ class testIndexCreationFlow():
                 self.env.assertIn("Node By Index Scan", plan)
                 count = graph.ro_query(q).result_set[0][0]
                 self.env.assertEqual(count, n, message=f"index on L.{attr}")
+
+    def test20_range_zero_survives_a_rebuilt_fulltext_label(self):
+        # A label with a fulltext index reports language "english". Handing that
+        # to RediSearch on every rebuild made the spec carry a schema rule, and
+        # a spec with a rule lost the value 0 from its range field. Adding a
+        # field and dropping one both rebuild the spec.
+        graph = self.db.select_graph("zero_after_rebuild")
+        graph.query("CREATE (:L {id: 10}), (:L {id: 0, name: 'abcd'}), (:L {id: 5})")
+
+        def zero_found():
+            plan = str(graph.explain("MATCH (n:L) WHERE n.id >= 0 RETURN count(n)"))
+            self.env.assertIn("Node By Index Scan", plan)
+            eq = graph.ro_query("MATCH (n:L) WHERE n.id = 0 RETURN count(n)")
+            ge = graph.ro_query("MATCH (n:L) WHERE n.id >= 0 RETURN count(n)")
+            return eq.result_set[0][0], ge.result_set[0][0]
+
+        create_node_range_index(graph, 'L', 'id', sync=True)
+        create_node_fulltext_index(graph, 'L', 'name', sync=True)
+        self.env.assertEqual(zero_found(), (1, 3))
+        create_node_fulltext_index(graph, 'L', 'title', sync=True)  # rebuild: add
+        self.env.assertEqual(zero_found(), (1, 3))
+        drop_node_fulltext_index(graph, 'L', 'title')               # rebuild: drop
+        wait_for_indices_to_sync(graph)
+        self.env.assertEqual(zero_found(), (1, 3))
+
+    def test21_a_rebuilt_label_reports_the_language_its_spec_uses(self):
+        # The last fulltext field goes, the range field stays, and a new fulltext
+        # field names another language. The spec is built with it, so the
+        # metadata must say so, and a later rebuild must keep it.
+        graph = self.db.select_graph("language_after_rebuild")
+        graph.query("CREATE (:L {id: 1, a: 'x', b: 'y', c: 'z'})")
+        create_node_range_index(graph, 'L', 'id', sync=True)
+        create_node_fulltext_index(graph, 'L', 'a', sync=True)
+        drop_node_fulltext_index(graph, 'L', 'a')
+        wait_for_indices_to_sync(graph)
+        graph.query("CREATE FULLTEXT INDEX FOR (n:L) ON (n.b) OPTIONS {language: 'german'}")
+        wait_for_indices_to_sync(graph)
+
+        def language():
+            rows = graph.query(
+                "CALL db.indexes() YIELD label, language RETURN label, language").result_set
+            return [r[1] for r in rows if r[0] == 'L']
+
+        self.env.assertEqual(language(), ['german'])
+        create_node_range_index(graph, 'L', 'c', sync=True)  # rebuild
+        self.env.assertEqual(language(), ['german'])
+
+    def test22_adding_a_field_keeps_the_existing_field_queryable(self):
+        # Adding a field to an indexed label populates it in the background.
+        # Fulltext queries are not gated on the index being operational, so they
+        # answer from whatever the spec holds: the documents the first field
+        # already has must stay in it while the second one populates, not be
+        # rebuilt from empty.
+        graph = self.db.select_graph("add_field_keeps_old")
+        n = 50000
+        graph.query("UNWIND range(1, $n) AS x CREATE (:L {a: 'alpha', b: 'beta'})", {'n': n})
+        create_node_fulltext_index(graph, 'L', 'a', sync=True)
+        probe = "CALL db.idx.fulltext.queryNodes('L', 'alpha') YIELD node RETURN count(node)"
+        self.env.assertEqual(graph.ro_query(probe).result_set, [[n]])
+
+        create_node_fulltext_index(graph, 'L', 'b')  # not waited for
+        self.env.assertEqual(graph.ro_query(probe).result_set, [[n]])
+        wait_for_indices_to_sync(graph)
+        self.env.assertEqual(graph.ro_query(probe).result_set, [[n]])
+        self.env.assertEqual(
+            graph.ro_query("CALL db.idx.fulltext.queryNodes('L', 'beta') "
+                           "YIELD node RETURN count(node)").result_set, [[n]])
+
+    def test23_a_label_with_many_fields_survives_a_copy(self):
+        # GRAPH.COPY serializes the graph and loads the stream through the RDB decoder,
+        # which rebuilds a label's indexes field by field, batching the consecutive ones
+        # that need no options into one call. Range and fulltext fields interleaved with a
+        # field that carries options (a language) and a vector field must all come back,
+        # answer queries and report the settings. (A DEBUG RELOAD would reload every graph
+        # on the shared server, which is slow under a sanitizer.)
+        graph = self.db.select_graph("many_fields_source")
+        n = 200
+        props = ", ".join(f"r{i}: x + {i}" for i in range(12))
+        graph.query(f"UNWIND range(1, $n) AS x CREATE (:L {{{props}, a: 'alpha', b: 'beta', c: 'gamma', "
+                    f"v: vecf32([x, 1.0])}})", {'n': n})
+        create_node_range_index(graph, 'L', *[f"r{i}" for i in range(6)])
+        create_node_fulltext_index(graph, 'L', 'a', options={'language': 'german'})
+        create_node_range_index(graph, 'L', *[f"r{i}" for i in range(6, 12)])
+        create_node_fulltext_index(graph, 'L', 'b', 'c')
+        create_node_vector_index(graph, 'L', 'v', dim=2)
+        wait_for_indices_to_sync(graph)
+
+        def state(g):
+            rows = g.ro_query(
+                "CALL db.indexes() YIELD label, properties, types, language, status "
+                "RETURN label, properties, types, language, status").result_set
+            return [[r[0], sorted(r[1]), {k: sorted(v) for k, v in r[2].items()}, r[3], r[4]]
+                    for r in rows]
+
+        before = state(graph)
+        self.env.assertEqual(before[0][4], 'OPERATIONAL')
+        copy = graph.copy("many_fields_copy")
+        self.env.assertEqual(state(copy), before)
+
+        for i in (0, 5, 6, 11):
+            q = f"MATCH (n:L) WHERE n.r{i} = {n} + {i} RETURN count(n)"
+            self.env.assertIn("Node By Index Scan", str(copy.explain(q)))
+            self.env.assertEqual(copy.ro_query(q).result_set, [[1]])
+        for term in ('alpha', 'beta', 'gamma'):
+            self.env.assertEqual(
+                copy.ro_query(f"CALL db.idx.fulltext.queryNodes('L', '{term}') "
+                              "YIELD node RETURN count(node)").result_set, [[n]])
+        copy.delete()
+        graph.delete()

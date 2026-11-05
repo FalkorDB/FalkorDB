@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use graph::entity_type::EntityType;
 use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
@@ -362,36 +362,77 @@ fn rebuild_indexes(
         // label already has a fulltext field ("Can not override ...").
         let mut text_meta_pending = info.language.is_some() || info.stopwords.is_some();
 
-        for attr_name in &info.field_order {
-            let Some(fields) = info.fields.get(attr_name) else {
-                continue;
-            };
-            for field in fields {
-                // The Field.name includes the type prefix (e.g. "range:val").
-                // The attr_name key in the HashMap is the raw attribute name.
+        // Every field of the label, in order. `create_index_sync` builds the label's spec anew
+        // for each call, so consecutive fields of one type with the same options (every range
+        // field has none) go in one call: a label with N such fields costs one spec, not N.
+        let mut pending: Vec<(Arc<String>, &Arc<graph::index::Field>)> = info
+            .field_order
+            .iter()
+            .filter_map(|attr_name| {
                 let attr = Arc::new(attr_name.to_string());
+                info.fields
+                    .get(attr_name)
+                    .map(|fields| fields.iter().map(move |f| (attr.clone(), f)))
+            })
+            .flatten()
+            .collect();
+        pending.reverse();
 
-                let options = field.vector_options().map_or_else(
-                    || {
-                        let mut topts = field.options().cloned();
-                        if text_meta_pending && field.ty == graph::index::IndexType::Fulltext {
-                            let topts = topts.get_or_insert_with(Default::default);
-                            topts.language = info.language.clone();
-                            topts.stopwords = info.stopwords.clone();
-                            text_meta_pending = false;
+        let create = |graph: &mut Graph,
+                      field: &graph::index::Field,
+                      attrs: &Vec<Arc<String>>,
+                      options: Option<graph::index::indexer::IndexOptions>| {
+            graph.create_index_sync(&field.ty, &entity_type, &info.label, attrs, options)
+        };
+
+        while let Some((attr, field)) = pending.pop() {
+            // The Field.name includes the type prefix (e.g. "range:val").
+            // The attr_name key in the HashMap is the raw attribute name.
+            let mut carries_meta = false;
+            let options = field.vector_options().map_or_else(
+                || {
+                    let mut topts = field.options().cloned();
+                    if text_meta_pending && field.ty == graph::index::IndexType::Fulltext {
+                        let topts = topts.get_or_insert_with(Default::default);
+                        topts.language = info.language.clone();
+                        topts.stopwords = info.stopwords.clone();
+                        text_meta_pending = false;
+                        carries_meta = true;
+                    }
+                    topts.map(graph::index::indexer::IndexOptions::Text)
+                },
+                |vopts| Some(graph::index::indexer::IndexOptions::Vector(vopts.clone())),
+            );
+
+            // The fields that follow and are created exactly like this one. Not a vector
+            // field (each has its own options) and not the one that carries the label's
+            // language and stopwords (the options it is created with are not its own).
+            let mut attrs = vec![attr];
+            if field.vector_options().is_none() && !carries_meta {
+                let mut seen: HashSet<Arc<String>> = attrs.iter().cloned().collect();
+                while let Some((next, next_field)) = pending.last()
+                    && next_field.ty == field.ty
+                    && next_field.vector_options().is_none()
+                    && next_field.options() == field.options()
+                    && seen.insert(next.clone())
+                {
+                    attrs.push(next.clone());
+                    pending.pop();
+                }
+            }
+
+            if let Err(e) = create(graph, field, &attrs, options.clone()) {
+                // One field that cannot be created must not take the others with it.
+                let mut failed = vec![e];
+                if attrs.len() > 1 {
+                    failed.clear();
+                    for attr in &attrs {
+                        if let Err(e) = create(graph, field, &vec![attr.clone()], options.clone()) {
+                            failed.push(e);
                         }
-                        topts.map(graph::index::indexer::IndexOptions::Text)
-                    },
-                    |vopts| Some(graph::index::indexer::IndexOptions::Vector(vopts.clone())),
-                );
-
-                if let Err(e) = graph.create_index_sync(
-                    &field.ty,
-                    &entity_type,
-                    &info.label,
-                    &vec![attr],
-                    options,
-                ) {
+                    }
+                }
+                for e in failed {
                     eprintln!("FalkorDB: failed to rebuild index on {:?}: {e}", info.label);
                 }
             }

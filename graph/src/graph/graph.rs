@@ -37,6 +37,8 @@
 //! │ relationship_attrs       │ AttributeStore: edge properties          │
 //! ├──────────────────────────┼───────────────────────────────────────────┤
 //! │ node_indexer             │ Secondary indexes on node properties     │
+//! │ edge_indexer             │ (versioned: DDL commits or rolls back    │
+//! │                          │  with the version that ran it)           │
 //! │ cache                    │ LRU cache for parsed query plans         │
 //! └──────────────────────────┴───────────────────────────────────────────┘
 //! ```
@@ -109,7 +111,9 @@ use crate::{
     },
     index::{
         Field,
-        indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
+        indexer::{
+            Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer, IndexerHandle,
+        },
     },
     parser::cypher::Parser,
     planner::{IR, Planner, binder::Binder, optimizer::optimize},
@@ -121,7 +125,7 @@ use crate::{
 ///
 /// Every path that fills RediSearch goes through it: the per-write commits
 /// (`commit_index_kind`, `commit_edge_index_locked`), the build after `CREATE INDEX`
-/// (`populate_index`) and the build after an RDB load (`Graph::populate_indexes_sync`).
+/// (`populate_owed_index`, started when the version that created the index is published) and the build after an RDB load (`Graph::populate_indexes_sync`).
 ///
 /// Without `index-falkordb` this is the identity function: RediSearch owns every kind.
 ///
@@ -471,7 +475,8 @@ pub struct Graph {
     node_attrs: AttributeStore,
     /// Relationship property storage
     relationship_attrs: AttributeStore,
-    /// Index manager for node property indexes
+    /// Index manager for node property indexes. Each version owns its map; see
+    /// [`Indexer`].
     node_indexer: Indexer,
     /// Index manager for edge property indexes
     edge_indexer: Indexer,
@@ -559,14 +564,25 @@ struct BatchCursor {
     within_pair_edge_id: Option<u64>,
 }
 
-fn populate_index(
+/// Start the population `label`'s index owes: its DDL statement took the ticket, so the
+/// index has been UNDER CONSTRUCTION since, and the version that carries it was just
+/// published ([`Graph::publish_indexes`]), which is what makes the committed graph hold
+/// everything the population has to index.
+fn populate_owed_index(
     kind: IndexKind,
     label: Arc<String>,
-    indexer: Indexer,
+    indexer: &Indexer,
 ) {
-    // Capture the field snapshot and ticket in one read-side critical
-    // section so the documents we build match the generation we own.
-    let Some(snapshot) = indexer.acquire_population_snapshot(&label) else {
+    // Fields added to the spec the previous version's index shared are registered now that
+    // this version is published, before the population that fills them. Under the indexer
+    // lock, like every other change to a live spec: a batch of an earlier population, or a
+    // write's index commit, may be adding documents to it.
+    {
+        let lock = indexer.write_lock();
+        let _guard = lock.lock();
+        indexer.register_deferred_fields(&label);
+    }
+    let Some(snapshot) = indexer.owed_population_snapshot(&label) else {
         return;
     };
     let fields = redisearch_fields(snapshot.fields);
@@ -580,7 +596,7 @@ fn populate_index(
     populate_index_batch(
         kind,
         label,
-        indexer,
+        indexer.handle(),
         fields,
         0,
         BatchCursor::default(),
@@ -596,7 +612,7 @@ fn populate_index(
 fn populate_index_batch(
     kind: IndexKind,
     label: Arc<String>,
-    indexer: Indexer,
+    handle: IndexerHandle,
     attrs: HashMap<Arc<String>, Vec<Arc<Field>>>,
     mut progress: u64,
     cursor: BatchCursor,
@@ -611,9 +627,9 @@ fn populate_index_batch(
             let mut do_recurse = false;
 
             // Hold the Indexer's serialization lock for the entire batch
-            // AND through the final ticket-release / recurse decision. Without
-            // this, `drop_index_bg` can remove the index entry between
-            // batch completion and ticket release. If a subsequent CREATE
+            // AND through the final ticket-release / recurse decision, so no
+            // index commit interleaves between batch completion and ticket
+            // release. If a subsequent CREATE
             // recreates an entry under the same label, release still targets
             // the original generation via `ticket.generation_id`.
             {
@@ -621,8 +637,34 @@ fn populate_index_batch(
                 // bookkeeping and document add/delete, never the RediSearch spec
                 // lifecycle, and taking it per batch would serialize background
                 // population against the main thread.
-                let lock = indexer.write_lock();
+                let lock = handle.write_lock();
                 let guard = lock.lock();
+                // The committed graph, and its indexes: a version that replaced this
+                // index since the ticket was taken is seen here, and the check below makes
+                // this batch bail. Graph not yet committed: reschedule this batch;
+                // `MvccGraph::commit()` sets the indexer's graph reference, so a later
+                // attempt finds it.
+                let Some(graph) = handle.get_graph() else {
+                    // `cancel` clears the graph pointer too: a deleted graph has nothing
+                    // left to populate, so do not wait for a commit that never comes.
+                    if handle.is_cancelled() {
+                        return;
+                    }
+                    drop(guard);
+                    drop(lock);
+                    std::thread::sleep(Duration::from_millis(1));
+                    populate_index_batch(kind, label, handle, attrs, progress, cursor, ticket);
+                    return;
+                };
+                // A clone of the map, not the borrow: the borrow is not held across the
+                // RediSearch commit below.
+                let indexer = {
+                    let g = graph.borrow();
+                    match kind {
+                        IndexKind::Node => g.node_indexer.clone(),
+                        IndexKind::Edge => g.edge_indexer.clone(),
+                    }
+                };
 
                 if !indexer.is_ticket_current(&ticket) {
                     // Index entry was recreated under us — our captured
@@ -640,17 +682,6 @@ fn populate_index_batch(
                     indexer.release_population_ticket(&ticket);
                     return;
                 }
-
-                let Some(graph) = indexer.get_graph() else {
-                    // Graph not yet committed — reschedule this batch.
-                    // MvccGraph::commit() will set the indexer's graph
-                    // reference, so the next attempt will find it.
-                    drop(guard);
-                    drop(lock);
-                    std::thread::sleep(Duration::from_millis(1));
-                    populate_index_batch(kind, label, indexer, attrs, progress, cursor, ticket);
-                    return;
-                };
 
                 // Collect this batch's entities.
                 //
@@ -811,29 +842,8 @@ fn populate_index_batch(
             }
 
             if do_recurse {
-                populate_index_batch(kind, label, indexer, attrs, progress, next_cursor, ticket);
+                populate_index_batch(kind, label, handle, attrs, progress, next_cursor, ticket);
             }
-        },
-        Some(0),
-    );
-}
-
-fn drop_index_bg(
-    label: Arc<String>,
-    node_indexer: Indexer,
-) {
-    spawn(
-        move || {
-            // Indexer lock only, never the global lock: `Indexer::remove` swaps the
-            // index map, and the `Index` it drops takes no lock either. Reaching for
-            // the global lock *under* the indexer lock is the AB-BA that hung
-            // `test_index_create` for six hours (issue #726).
-            //
-            // The lock serializes against `populate_index_batch`, which holds it for
-            // a whole batch, so the populate worker can't be mid-batch here.
-            let lock = node_indexer.write_lock();
-            let _guard = lock.lock();
-            node_indexer.remove(&label);
         },
         Some(0),
     );
@@ -3681,13 +3691,14 @@ impl Graph {
             EntityType::Node => {
                 let len = self.get_label_matrix_mut(label).nvals();
                 self.node_indexer
-                    .create_index(index_type, label, attrs, len, options)?;
+                    .create_index(index_type, label, attrs, len, options, true)?;
                 // Register attribute names so they appear in
                 // db.propertyKeys() even if no entity yet uses them.
                 for attr in attrs {
                     self.add_node_attribute_name(attr);
                 }
-                populate_index(IndexKind::Node, label.clone(), self.node_indexer.clone());
+                // Population starts when this version is published
+                // ([`Self::publish_indexes`]); until then the index only exists here.
             }
             EntityType::Relationship => {
                 // get-or-create the relationship type so that
@@ -3695,11 +3706,10 @@ impl Graph {
                 // empty) types.
                 let len = self.get_relationship_matrix_mut(label).edge_count();
                 self.edge_indexer
-                    .create_index(index_type, label, attrs, len, options)?;
+                    .create_index(index_type, label, attrs, len, options, true)?;
                 for attr in attrs {
                     self.add_rel_attribute_name(attr);
                 }
-                populate_index(IndexKind::Edge, label.clone(), self.edge_indexer.clone());
             }
         }
         #[cfg(feature = "index-falkordb")]
@@ -3728,7 +3738,7 @@ impl Graph {
             EntityType::Node => {
                 let len = self.get_label_matrix_mut(label).nvals();
                 self.node_indexer
-                    .create_index(index_type, label, attrs, len, options)?;
+                    .create_index(index_type, label, attrs, len, options, false)?;
                 // Same bookkeeping as `create_index`: surface the
                 // indexed attr names in `db.propertyKeys()` even if no
                 // entity has yet written to them. Critical for
@@ -3745,7 +3755,7 @@ impl Graph {
                 // empty) types even on replicas / after RDB load.
                 let len = self.get_relationship_matrix_mut(label).edge_count();
                 self.edge_indexer
-                    .create_index(index_type, label, attrs, len, options)?;
+                    .create_index(index_type, label, attrs, len, options, false)?;
                 for attr in attrs {
                     self.add_rel_attribute_name(attr);
                 }
@@ -4121,42 +4131,36 @@ impl Graph {
             }
         }
 
-        let (indexer, total, kind) = match entity_type {
+        let (indexer, total) = match entity_type {
             EntityType::Node => {
                 let total = self.get_label_matrix(label).map_or(
                     0,
                     super::graphblas::versioned_matrix::VersionedMatrix::nvals,
                 );
-                (&mut self.node_indexer, total, IndexKind::Node)
+                (&mut self.node_indexer, total)
             }
             EntityType::Relationship => {
                 let total = self
                     .get_relationship_matrix(label)
                     .map_or(0, Tensor::edge_count);
-                (&mut self.edge_indexer, total, IndexKind::Edge)
+                (&mut self.edge_indexer, total)
             }
         };
 
-        let lock = indexer.write_lock();
-        let _guard = lock.lock();
-
-        let reindex = indexer.drop_index(label, attrs, index_type, total);
+        // Only this version's indexes change; the RediSearch index the published version
+        // has is left alone, and freed when this version is published
+        // ([`Self::publish_indexes`]) — or never touched, if it is not.
+        let reindex = indexer.drop_index(label, attrs, index_type, total)?;
 
         match reindex {
-            Some((dropped, remaining)) if dropped > 0 => {
-                // Drop the native columns only now, after the indexer confirmed the drop.
-                // Doing it earlier meant the `no such index` arm below could leave RediSearch
-                // holding the index while the native columns were already gone — DROP INDEX
-                // reports failure but half the state is destroyed.
+            Some((dropped, _remaining)) if dropped > 0 => {
+                // The native columns are this version's too, copy-on-write. They go only now,
+                // after the indexer confirmed the drop: doing it earlier left the
+                // `no such index` arm below with the native columns gone while the index stayed
+                // — DROP INDEX reports failure but half the state is destroyed.
                 #[cfg(feature = "index-falkordb")]
                 self.falkordb_index
                     .drop_index(index_type, *entity_type, label, &effective_attrs);
-                if remaining > 0 {
-                    indexer.recreate_index(label)?;
-                    populate_index(kind, label.clone(), indexer.clone());
-                } else {
-                    drop_index_bg(label.clone(), indexer.clone());
-                }
                 Ok(dropped)
             }
             _ => {
@@ -4868,6 +4872,30 @@ impl Graph {
     ) {
         self.node_indexer.set_graph(graph.clone());
         self.edge_indexer.set_graph(graph);
+    }
+
+    /// What publishing this version owes its indexes, run by `MvccGraph::commit`
+    /// after the swap and [`Self::set_indexer_graph`], with `previous` the version it replaced.
+    ///
+    /// Index DDL changed only this version's indexes, so anything with an effect outside it was
+    /// held back until now: an index the DDL built or rebuilt starts populating, from the
+    /// committed graph, which is this version or a later one. An index the DDL replaced or
+    /// dropped needs nothing here: its spec is freed on a background thread when the last
+    /// version holding it is gone (`SpecHandle`).
+    ///
+    /// For a version that ran no index DDL this is two pointer comparisons.
+    pub fn publish_indexes(
+        &self,
+        previous: &Self,
+    ) {
+        for (kind, new, old) in [
+            (IndexKind::Node, &self.node_indexer, &previous.node_indexer),
+            (IndexKind::Edge, &self.edge_indexer, &previous.edge_indexer),
+        ] {
+            for label in new.changes_since(old).owed {
+                populate_owed_index(kind, label, new);
+            }
+        }
     }
 
     /// Build a materialized boolean adjacency matrix filtered by relationship types.
