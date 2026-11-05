@@ -796,9 +796,9 @@ fn hold_batch_graphs(deferred: &[PendingEntry]) -> Vec<BatchGraph> {
 /// last holder.
 ///
 /// `register_graph`, `rename_graph` and `graph_free` all hand teardown to a background
-/// thread rather than run it inline, because `Index::drop` reaches RediSearch and takes
-/// the GIL. The flusher is a latency-critical thread for the same reason they are: the
-/// next batch waits behind whatever runs here.
+/// thread rather than run it inline, because freeing a large graph and its RediSearch
+/// indexes is slow (it takes no GIL). The flusher is a latency-critical thread for the
+/// same reason they are: the next batch waits behind whatever runs here.
 fn release_batch_graphs(graphs: Vec<BatchGraph>) {
     for b in graphs {
         let arc = b.graph;

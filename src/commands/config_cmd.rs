@@ -23,8 +23,8 @@
 //!
 //! ASYNC_DELETE and DELAY_INDEXING are settable, as they are in C, but nothing in
 //! this engine reads either one yet: graph teardown is always off-thread (see
-//! `graph_core::graph_free`, which cannot free inline — `Index::drop` takes the GIL,
-//! which the main thread already holds while the free callback runs), and the
+//! `graph_core::graph_free`, which hands the free to a spawned thread so a large
+//! graph does not stall the main thread), and the
 //! decoders always build indexes eagerly. So `SET` on them records a value and
 //! changes no behaviour; C reads both.
 //!

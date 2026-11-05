@@ -17,9 +17,7 @@ pub fn set_main_thread() {
 /// Returns true if the calling thread is the recorded main thread.
 ///
 /// If `set_main_thread` has not been called yet (e.g. unit tests that build
-/// `graph` without the module shell), this returns `false` so `Drop` impls
-/// take the GIL-acquiring branch — which itself no-ops when the FFI symbols
-/// are unresolved.
+/// `graph` without the module shell), this returns `false`.
 pub fn is_main_thread() -> bool {
     MAIN_THREAD_ID
         .get()

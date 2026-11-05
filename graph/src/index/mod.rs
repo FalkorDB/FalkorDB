@@ -952,7 +952,9 @@ impl Drop for OwnedIndex {
     fn drop(&mut self) {
         // No global lock, even for the last release: `IndexSpec_Free` touches no
         // Redis timer (it asserts the temporary-index timer is already stopped, and
-        // the ForkGC timer self-terminates by not rescheduling — RediSearch `gc.c`).
+        // the ForkGC timer self-terminates by not rescheduling — RediSearch `gc.c`)
+        // and no Redis object another thread can reach (its index errors borrow the
+        // shared "N/A" key rather than refcount it: a refcount is not atomic, #3483).
         // Only index *creation* needs it, via `RM_CreateTimer`.
         //
         // That is load-bearing for #726: an index-scan iterator drops its cloned
@@ -996,7 +998,8 @@ impl SpecHandle {
 impl Drop for SpecHandle {
     fn drop(&mut self) {
         // No global lock, for the same reason as `OwnedIndex::drop`: nothing here
-        // stops a timer. Load-bearing too — a reader holding the per-graph read lock
+        // stops a timer on this thread (`RediSearch_DropIndex` hands the GC stop to
+        // the main thread) or touches a shared Redis object. Load-bearing too — a reader holding the per-graph read lock
         // can be the last holder of the spec (a concurrent `drop_index_bg` swaps the
         // index map under it), and taking the global lock there is the #726
         // inversion.
