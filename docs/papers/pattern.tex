@@ -1,0 +1,517 @@
+% =====================================================================
+%  Inline-First with Sentinel Promotion
+%  A pattern for sparse stores whose cells usually hold one value.
+%  arXiv-style preprint. Self-contained: no external .bib required.
+%  Build:  pdflatex pattern && pdflatex pattern
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{invariant}{Obligation}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\M}{\mathsf{M}}
+\newcommand{\dom}{\operatorname{dom}}
+
+\renewcommand{\topfraction}{0.85}
+\renewcommand{\textfraction}{0.12}
+
+\title{\textbf{Inline-First with Sentinel Promotion:\\
+A Pattern for Sparse Stores Whose Cells Usually Hold One Value}}
+
+\author{%
+Guy Korland\thanks{\texttt{guy.korland@falkordb.com}} \and
+Roi Lipman\thanks{\texttt{roi.lipman@falkordb.com}} \and
+Dvir Dukhan\thanks{\texttt{dvir.dukhan@falkordb.com}} \and
+Avi Avni\thanks{\texttt{avi.avni@falkordb.com}}
+\\[0.6em]
+FalkorDB\\
+\small\texttt{https://github.com/FalkorDB/FalkorDB}}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A sparse matrix cell holds one value. Stores built on sparse matrices that need
+a cell to hold \emph{several} values --- a multigraph's parallel edges, a
+node's labels, a coordinate's posting list --- usually answer with a container
+per cell, which pays for the general case in every cell including the
+overwhelming majority that hold exactly one thing.
+
+This note extracts, names and generalises the alternative used by FalkorDB's
+relationship tensor. \emph{Inline-first with sentinel promotion} keeps the
+single value directly in the cell, reserves one bit pattern outside the value
+domain as a sentinel, and on the transition to a second value moves
+\emph{every} value of that cell --- the formerly inline one included --- into a
+single shared overflow structure keyed by a packed coordinate. A cell is then
+self-describing: reading it tells you whether you are done or where the rest
+lives, with no side table and no speculative second probe.
+
+The mechanism is a paragraph. What is worth writing down is everything else:
+the two preconditions that decide whether the pattern applies at all; the six
+obligations an adopter inherits, of which one is subtle enough to have been the
+source of the design's hardest bug and another turned out to be an obligation
+one should \emph{decline}; the concrete complexity cost, which is a
+transaction-local state space of ten states per cell where a Boolean store has
+four, three of them existing only because cells carry values; and the
+measurement traps, since two of our own published attributions of cost were
+wrong in ways that a plausible story had concealed. We give the pattern's
+machine-checked invariant set, a second worked instantiation as a design
+sketch, and an explicit account of when not to use it.
+\end{abstract}
+
+\noindent\textbf{Keywords:} sparse matrices, hypersparse, sentinel encoding,
+data-structure patterns, multi-version concurrency control, delta encoding,
+mechanised verification
+
+% =====================================================================
+\section{The problem the pattern solves}
+
+A sparse matrix associates a value with each stored coordinate. That is one
+value. A great many stores want a coordinate to carry a small \emph{multiset}:
+a property multigraph connects an ordered node pair by arbitrarily many edges,
+each with its own identity; a node carries labels; an inverted index maps a
+term--document pair to positions.
+
+The canonical answer is a container per cell --- the cell holds a pointer,
+usually tagged, to a vector of values. It is correct, it is uniform, and it
+prices the rare case into the common one. If the multiplicity distribution is
+dominated by $1$, almost every cell pays for an allocation, an indirection and
+an object header in order to hold a single value that would have fitted in the
+cell.
+
+The pattern here is the obvious alternative made safe. Keep the one value in
+the cell. Reserve a bit pattern the value domain cannot produce. When a cell
+needs a second value, write the sentinel and move the whole multiset --- not
+just the new arrival --- to one shared overflow structure. Cells that never
+overflow never learn that the overflow exists.
+
+What makes this worth a note rather than a footnote is that the obvious
+alternative is only obvious until it has to be transactional, iterable and
+countable at the same time. The obligations in \S\ref{sec:obligations} are the
+content.
+
+\paragraph{Provenance.} Everything here is extracted from a shipped
+implementation --- the per-relationship-type edge store of FalkorDB's Rust
+engine --- and its machine-checked model. That instantiation is described and
+measured in a companion paper; this note deliberately says as little about
+edges as it can, and states which claims are measured, which are modelled, and
+which are conjecture.
+
+% =====================================================================
+\section{Preconditions}
+\label{sec:pre}
+
+The pattern needs exactly two things. Both are cheap to check before
+committing to it, and neither is negotiable.
+
+\begin{definition}[Sentinel headroom]
+The value domain is strictly smaller than the cell's representation, so at
+least one bit pattern is not a legitimate value.
+\end{definition}
+
+This is a statement about the \emph{domain}, not about current data. ``No
+identifier is ever $2^{64}-1$ in practice'' is not headroom; ``identifiers are
+allocated from a counter bounded by the index limit $2^{60}-1$'' is. The
+distinction matters because the sentinel's safety is the one property with no
+graceful degradation: a value colliding with the sentinel does not perform
+badly, it silently reads as a multi-value cell and returns the wrong answer.
+An adopter should be able to name the bound and where it is enforced.
+
+\begin{definition}[Multiplicity dominated by one]
+The distribution of values per cell has its mass at $1$.
+\end{definition}
+
+The pattern's entire advantage is that the common case is free; the pattern's
+entire cost is a promotion transition and a second lookup for cells past the
+boundary. If a large fraction of cells hold two or more values, a container per
+cell or an always-materialised auxiliary structure is the better design and the
+extra invariants buy nothing. We know of no shortcut here: this is an empirical
+question about the workload, and it is the assumption the whole construction
+rests on.
+
+\begin{remark}[The precondition nobody checks]
+Multiplicity is usually assumed rather than measured, because the data to
+measure it lives in production and the design decision is taken before
+production exists. It is worth saying plainly that this is the pattern's
+largest risk and that it is a risk about \emph{deployments}, not about data
+structures.
+\end{remark}
+
+% =====================================================================
+\section{The construction}
+\label{sec:construction}
+
+Three components, of which the third is empty in the case the pattern is for.
+
+\begin{description}
+  \item[The primary store.] A sparse matrix whose cells are wide enough for a
+    value. A cell holding a non-sentinel value \emph{is} the answer.
+  \item[The sentinel.] One reserved value $\M$ outside the domain. A cell
+    holding $\M$ announces that this coordinate has more than one value and
+    that none of them is here.
+  \item[The overflow.] One shared structure holding the values of every
+    promoted coordinate, keyed by a packed encoding $\kappa$ of the
+    coordinate. In the instantiation it is a second hypersparse matrix whose
+    row index is $\kappa(\text{src},\text{dst})$ and whose columns are the
+    values, so a coordinate's multiset is one row and arrives in sorted order
+    for free.
+\end{description}
+
+\paragraph{Promotion.} A coordinate at one value that gains a second writes
+$\M$ into the cell and moves \emph{both} values to the overflow. Moving the
+incumbent is the step that is easy to skip and must not be: it is what makes
+the cell self-describing, and \S\ref{sec:obligations} states it as an
+obligation rather than an implementation detail.
+
+\paragraph{Demotion.} A coordinate falling back to one value restores that
+value inline and empties its overflow row. Whether demotion should be eager or
+hysteretic is a policy question; we measured it for the instantiation and found
+the upside of hysteresis bounded at about a quarter of an oscillation's cost
+against a permanent space charge, and did not build it.
+
+\paragraph{The packed key is a design decision with teeth.} $\kappa$ must be
+injective over the coordinates the store admits. Packing two $32$-bit halves
+into a $64$-bit row index is the obvious choice and it silently imposes a
+$2^{32}$ ceiling on each coordinate axis. That is a real limit, not a
+theoretical one, for any store that churns identifiers. Adopters should choose
+$\kappa$ with the ceiling in mind and treat widening it as a serialisation
+change, because it is one.
+
+% =====================================================================
+\section{The obligations you inherit}
+\label{sec:obligations}
+
+This is the part that does not transfer by reading the mechanism. Write
+$\varepsilon(p)$ for the effective value at coordinate $p$, $\mathrm{Vals}(p)$
+for its multiset, and let the store be transactional with a committed base $m$,
+a pending-addition layer $dp$ and a pending-deletion mask $dm$.
+
+\begin{invariant}[Mask domain]\label{ob:mask}
+$dm \subseteq \dom(m)$. The deletion mask only ever marks committed cells.
+\end{invariant}
+
+\begin{invariant}[Purity]\label{ob:pure}
+$\dom(dp) \cap dm = \emptyset$. A cell is never simultaneously pending and
+deleted.
+\end{invariant}
+
+\begin{invariant}[Cancel-to-clean]\label{ob:cancel}
+$\forall p \in \dom(dp) \cap \dom(m): dp(p) \neq m(p)$. An operation that would
+restore a coordinate's committed value drops its deltas instead of recording a
+delta that happens to agree.
+\end{invariant}
+
+\begin{invariant}[Promotion completeness]\label{ob:promo}
+$\varepsilon(p) = \M \iff |\mathrm{Vals}(p)| \ge 2$, and then \emph{every}
+value of $p$ is in the overflow at $\kappa(p)$. Conversely, if
+$|\mathrm{Vals}(p)| \le 1$, the overflow at $\kappa(p)$ is empty.
+\end{invariant}
+
+\begin{invariant}[Count agreement]\label{ob:count}
+Any cached count of promoted coordinates equals
+$|\{p : \varepsilon(p) = \M\}|$.
+\end{invariant}
+
+\begin{invariant}[Mirror agreement]\label{ob:mirror}
+Any secondary index over the same coordinates has exactly the effective
+pattern as its domain.
+\end{invariant}
+
+\subsection{Which of these actually bite}
+
+Obligations~\ref{ob:mask} and~\ref{ob:pure} are the standard delta hygiene any
+transactional layer needs and the pattern does not make them harder. The other
+four are where the pattern's character shows.
+
+\paragraph{Promotion completeness is the whole value proposition.}
+It is what makes a cell self-describing. A non-sentinel value is \emph{the}
+value, never one of several, so no reader ever consults the overflow
+speculatively --- and that is precisely the cost that an always-materialised
+auxiliary structure pays on every read forever. If an implementation leaves the
+incumbent inline on promotion, ``read the cell'' stops being a complete answer
+and the pattern degenerates into a container-per-cell design with worse
+ergonomics.
+
+It also has a dual worth stating: the \emph{converse} clause, that a
+non-promoted coordinate's overflow row is empty, is what lets the number of
+promoted coordinates be read off the overflow's structure rather than tracked.
+That is the observation that retires Obligation~\ref{ob:count} below.
+
+\paragraph{Cancel-to-clean is the one that is easy to get wrong.}
+It is the least obvious obligation and the most load-bearing, and it is
+invisible until something counts. Without it, a transaction that promotes a
+coordinate, demotes it, and promotes it again can leave $dp(p) = \M$ shadowing
+$m(p) = \M$. Reads are unaffected --- both layers say the same thing --- so
+tests that read pass. What breaks is cardinality: the number of
+\emph{syntactically} shadowed coordinates diverges from the number of
+\emph{semantically} shadowed ones, and any closed-form count over the layers
+goes wrong. The rule is that the representation must be canonical: a delta
+exists only where the state genuinely differs from the committed state.
+
+Two consequences follow. Counting stays exact and closed-form, and the
+per-coordinate state space stays bounded --- without canonicalisation there is
+no finite automaton to reason about, because ``pending, and equal to
+committed'' multiplies every state.
+
+\paragraph{Count agreement is an obligation to decline.}
+This one changed status during the work, and the change is the most
+transferable lesson in the note. It began as a genuine invariant over a
+maintained counter: every mutation path had to remember to move it. It was the
+only piece of state resting on a discipline rather than a structural argument,
+and it was consequently the only piece with a class of bug --- a path that
+forgets --- that no local reasoning rules out.
+
+Promotion completeness makes the counter unnecessary. A promoted coordinate is
+exactly one whose overflow row is non-empty, and a structure that stores only
+non-empty rows can report how many it has as metadata. Deriving the quantity
+instead of maintaining it deleted the invariant, deleted the discipline, and
+deleted the per-mutation obligations attached to it; in the mechanisation the
+clause became a definitional identity holding by \texttt{rfl}.
+
+The general form of the lesson: \emph{in a design whose invariants make a
+quantity structurally determined, caching that quantity converts a theorem into
+an obligation.} Look for the derived form before accepting a counter. We state
+the obligation here anyway, because it is what an adopter would need if they
+ever cache the count again --- and because an adopter who does not know it
+exists will cache it.
+
+\paragraph{Mirror agreement is a reminder that the sentinel is not a value.}
+Any secondary structure --- a transpose, a reverse index --- must mirror the
+\emph{effective pattern}, and a promoted cell is one coordinate, not several.
+Mirrors that carry structure only (rather than duplicating values) pay one
+primary lookup per hit to recover whether the coordinate is inline or promoted.
+That is a real cost and a deliberate trade: it buys not storing every value
+twice.
+
+% =====================================================================
+\section{The cost you take on}
+\label{sec:cost}
+
+Patterns that only list benefits are advertisements. The concrete cost here is
+a strictly larger transaction-local state space, and it is not small.
+
+A Boolean transactional cell has four states: absent, present, pending-add,
+pending-delete. A value-carrying cell under this pattern has ten, and
+\emph{three of them exist only because cells carry values} --- they are the
+states in which a pending layer \emph{shadows} a live committed value rather
+than adding to or subtracting from a pattern. In-place update is the operation
+that forces them: a Boolean layer never needs to say ``this coordinate is still
+present, but its value is now different''.
+
+The whole cancel-to-clean normalisation exists for the same reason. So the
+honest accounting is: three of ten states, plus a canonicalisation rule that
+every mutation path must respect, is the price of carrying values in cells. A
+design that keeps the primary store Boolean and puts all values in an
+always-materialised auxiliary structure needs none of it --- and pays a second
+lookup on every read, forever, including the single-value reads that are the
+overwhelming majority.
+
+That is the trade in one sentence, and it is the trade an adopter should make
+consciously.
+
+% =====================================================================
+\section{What it buys, and how to find out}
+\label{sec:measured}
+
+We report the instantiation's numbers as evidence that the trade can come out
+favourably, not as numbers that transfer. Against a pointer-tagged
+container-per-cell design in the same system, measured at the data-structure
+boundary:
+
+\begin{itemize}
+  \item At multiplicity $1$ there is \emph{nothing to choose} between the two
+    on space: both cost $23.1$ bytes per coordinate. The pattern's advantage is
+    not that the common case is cheaper than a container design's common case
+    in bytes --- it is that the common case involves no allocation, no
+    indirection, and no second structure.
+  \item Promoting a coordinate costs $46.1$ bytes against the container
+    design's $272.6$, a factor of $5.9$. The entire space difference is a fixed
+    per-coordinate charge, not a per-value one: past the second value, the
+    container design is marginally \emph{cheaper} per value ($8.04$ bytes
+    against $9.09$).
+  \item Reads of promoted coordinates are dearer, not cheaper. Scanning a
+    hypersparse overflow row costs more per value than walking a container.
+\end{itemize}
+
+The shape to take away is that the pattern wins on the $\mu \approx 1$ mass and
+the promotion transition, and loses on high-multiplicity access. That is
+exactly what the preconditions predict, and it is why \S\ref{sec:pre} is not
+boilerplate.
+
+\subsection{How the measurement goes wrong}
+\label{sec:measurement}
+
+Three traps, each of which caught us, and each of which we would expect to
+catch an adopter evaluating this pattern against a container design.
+
+\paragraph{Differencing whole-system measurements can invert an ordering.}
+We estimated the per-value cost of both designs by differencing engine-level
+measurements at different multiplicities, and concluded the pattern's overflow
+row was cheaper per value than a container walk --- with a crossover above
+which it wins outright. Measured at the data-structure boundary the two slopes
+are $124$ and $33$, the other way round. Both engine-level figures were high,
+as one would expect from differencing, but they were high by $3.6\times$ and
+$26\times$ --- and errors that do not share a common factor do not cancel in a
+ratio. There is no crossover. \emph{A ratio of two differences of whole-system
+measurements can come out backwards}, and no amount of repetition detects it.
+
+\paragraph{A plausible mechanism will survive if nothing asks it to account for
+the total.} We attributed a $2\times$ deficit on one operation to the pattern
+lacking a specialised entry point that the container design has, and published
+it. The story fit: it explained the direction, and the deficit grew with
+multiplicity exactly as the story predicted. Decomposing it before implementing
+the fix showed the attributed mechanism accounted for $81$ instructions out of
+$1{,}990$. Four fifths was per-call iterator construction --- an implementation
+artifact shared with every other read path, and the fix for it was worth far
+more than the fix we had proposed. The check that would have caught this
+immediately is arithmetic: \emph{do the named costs sum to the measured total?}
+
+\paragraph{Instruction counts and time disagree, in both directions.}
+Instruction counts are reproducible and immune to a noisy host, which is why we
+used them. They are also blind to residency, and the blindness is not a
+conservative bias. Sweeping the working set from far inside cache to far
+outside it, the pattern's multi-value read costs a flat $3.8$--$4.0\times$ the
+container design's in instructions at every size --- while in time it costs
+$4.67\times$ in cache and $1.88\times$ out of it, because the container
+design's larger footprint leaves cache first. At multiplicity $1$ the error
+runs the other way. An evaluation on instruction counts alone will misjudge
+this pattern against a container design at realistic sizes, and it will do so
+in a direction that depends on the multiplicity.
+
+That last one has a constructive corollary worth stating: \emph{the pattern's
+space advantage is also a latency advantage}, and the space constants predict
+where. Ours put the container design past a $100$\,MB working set at about
+$3.4\times10^5$ coordinates and the pattern's at about $1.5\times10^6$; the
+measured points where each fell out of cache bracketed both predictions.
+
+% =====================================================================
+\section{A second instantiation, as a sketch}
+\label{sec:labels}
+
+To show the pattern is not edge-shaped, here is a candidate we have
+\emph{not} built, stated at the level of detail its status deserves.
+
+A property-graph engine stores which labels a node carries. A natural
+representation is a Boolean matrix $\text{node} \times \text{label}$: a node
+with one label has one entry. Multiplicity is dominated by $1$ --- most nodes
+carry one label --- so precondition~2 holds, and label identifiers are drawn
+from a small counter, so precondition~1 holds with enormous headroom.
+
+The inline-first form replaces the matrix with a vector
+$\text{node} \to \text{label}$, sentinel-promoted into a shared overflow for
+multi-labelled nodes. ``Which labels does this node carry'' becomes a point
+read rather than a row scan, and ``is this node labelled $L$'' becomes a
+comparison.
+
+Three things would have to be established before believing it, and they are the
+same three for any candidate:
+
+\begin{enumerate}
+  \item \textbf{Does it actually save space?} Probably not, and this is the
+    interesting part. A Boolean matrix entry stores an index and no value at
+    all; the inline form stores an index and a $64$-bit value. The pattern's
+    space case rests on displacing a \emph{container}, and there is no
+    container here to displace. A candidate whose baseline is already
+    allocation-free may be a lookup win and a space loss.
+  \item \textbf{Which direction dominates the workload?} Label queries are
+    largely the reverse direction --- all nodes with label $L$ --- which the
+    inline form answers badly and which is typically served by a separate
+    per-label structure anyway. The pattern should be applied to the direction
+    whose multiplicity is dominated by $1$, and only there.
+  \item \textbf{Is the promotion transition on a hot path?} The pattern moves
+    cost to the boundary crossing. A workload that adds and removes labels
+    frequently pays it repeatedly.
+\end{enumerate}
+
+We record this as a sketch precisely because the honest answer to (1) is
+unfavourable-looking, and a pattern note that only exhibits instantiations that
+work is not much of a guide.
+
+% =====================================================================
+\section{Mechanisation transfers better than code}
+\label{sec:mech}
+
+The instantiation's obligations, its per-coordinate automaton and its two main
+theorems are machine-checked in Lean 4 against a model transcribed from the
+implementation --- $7{,}071$ lines and $460$ theorems, no \texttt{sorry} and no
+bespoke axiom. Two things about that are relevant to an adopter rather than to
+us.
+
+First, \emph{what the proofs found}. Two branches of the shipped code were
+unreachable, one of which would have fabricated a valid identifier had the
+invariant beneath it ever broken --- a fallback worse than a crash, because the
+value it produced was indistinguishable from a real one. Two fast paths were
+proved to agree with their slow paths. None of this came from proving the
+headline theorems; it came from being forced to state the obligations precisely
+enough to discharge them.
+
+Second, \emph{what it does not establish}. The proofs bind a model, not the
+binary. The correspondence is a transcription that a human checked. An adopter
+inheriting the obligation set inherits a set of statements that are known to be
+consistent and sufficient --- which is the useful thing, and is not the same as
+their implementation being correct.
+
+The transferable artifact is therefore the obligation set of
+\S\ref{sec:obligations}, stated in a form that can be re-mechanised against a
+different model, rather than the proof scripts.
+
+% =====================================================================
+\section{When not to use it}
+\label{sec:dont}
+
+\begin{itemize}
+  \item \textbf{Multiplicity is not dominated by one.} Use a container per cell
+    or an always-materialised auxiliary. The obligations buy nothing and the
+    ten-state algebra is pure cost.
+  \item \textbf{The value domain fills the cell.} No headroom, no sentinel. Do
+    not manufacture headroom by declaring a value ``impossible'' unless it is
+    impossible by construction and you can name where.
+  \item \textbf{The baseline has no container to displace.} If cells already
+    store a bare index with no value array, as in a Boolean pattern matrix, the
+    pattern is a lookup optimisation and probably a space regression
+    (\S\ref{sec:labels}).
+  \item \textbf{High-multiplicity access dominates.} Reads of promoted
+    coordinates are the pattern's weak side, and measurably so.
+  \item \textbf{The store is not transactional and never will be.} Then most of
+    \S\ref{sec:obligations} is vacuous, the pattern reduces to the mechanism,
+    and it needs no note --- which is a good outcome, just not one requiring
+    this one.
+\end{itemize}
+
+% =====================================================================
+\section{Conclusion}
+
+Inline-first with sentinel promotion is a small idea with a large obligation
+set. The mechanism --- keep one value in the cell, reserve a sentinel, move the
+whole multiset on promotion --- takes a paragraph and is arguably folklore. What
+does not take a paragraph is: the two preconditions that decide whether it
+applies; promotion completeness, which is what makes a cell self-describing and
+is the entire reason readers never probe speculatively; cancel-to-clean, which
+is invisible until something counts and is where the design's hardest bug came
+from; the discovery that one of the six obligations should be declined rather
+than discharged, because the invariants already determine the quantity; the
+ten-state cost, three states of which are the price of values in cells; and a
+set of measurement traps that caught the authors twice in print.
+
+We offer the pattern on those terms. An adopter who takes the mechanism without
+the obligations will get a store that reads correctly and counts wrongly, and
+will find out late.
+
+\end{document}
