@@ -880,12 +880,12 @@ pub struct Index {
     /// CREATE round-trip, so they don't decrement the wrong counter.
     id: u64,
     /// The RediSearch index spec. `None` until `create_rs_index` runs (the
-    /// former `null` sentinel). Owned by this `Index` alone: a DDL statement
-    /// builds a new `Index` with a new spec ([`Index::fork_for_ddl`]) rather
-    /// than share one. The creation reference is dropped (via
-    /// `RediSearch_DropIndex` in [`SpecHandle::drop`]) when the last holder of
-    /// this `Index` goes away, which for an `Index` that no version published
-    /// is the version that built it.
+    /// former `null` sentinel). A DDL statement builds a new `Index` with a new
+    /// spec ([`Index::fork_for_ddl`]), except one that only adds fields, whose `Index`
+    /// shares the previous one's spec (the fields are registered in it at publish).
+    /// The creation reference is dropped (via `RediSearch_DropIndex` in
+    /// [`SpecHandle::drop`]) when the last `Index` holding it goes away; for an
+    /// `Index` no version published, that is the version that built it.
     spec: Option<Arc<SpecHandle>>,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     /// Attribute keys in insertion order. Tracked alongside `fields` so
@@ -986,9 +986,10 @@ impl Drop for OwnedIndex {
 
 /// Shared owner of the *creation* reference to a RediSearch index spec.
 ///
-/// Wrapped in an `Arc`, owned by the one `Index` that built it. When the last
-/// holder releases its `Arc` (an `Index` of a version that is gone, or one a
-/// rolled-back version never published), `Drop` runs `RediSearch_DropIndex`, which
+/// Wrapped in an `Arc`, held by the `Index` that built it and by the copies of it that
+/// add-field statements make ([`Index::fork_for_ddl`]). When the last holder releases its
+/// `Arc` (an `Index` of a version that is gone, or one a rolled-back version never
+/// published), `Drop` runs `RediSearch_DropIndex`, which
 /// both invalidates the spec and releases the creation ref (outstanding
 /// `OwnedIndex` clones held by in-flight read iterators keep the memory
 /// alive until they are released).

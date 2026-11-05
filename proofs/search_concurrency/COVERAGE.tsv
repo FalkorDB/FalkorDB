@@ -97,14 +97,14 @@ graph/src/index/mod.rs	make_arr_names	122	PROVEN	Search.arrNames used by range_n
 graph/src/index/mod.rs	new	138	MODELLED	Search.Field
 graph/src/index/mod.rs	new_with_vector_options	155	MODELLED	Search.Field.vdim (vector_options.map dimension)
 graph/src/index/mod.rs	set	717	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; counterexample removed in bbee75955; the last revision that has them is 17ccc5412), docSet_temporal_not_indexed, fulltext_only_strings, range_never_vector_or_text
-graph/src/index/mod.rs	add_document	2007	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
-graph/src/index/mod.rs	register_fields	1281	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
-graph/src/index/mod.rs	bump_id	1070	PROVEN	Tickets.bump_inv, stale_release_isolated
-graph/src/index/mod.rs	increment_pending_for_generation	2211	PROVEN	Tickets.inc_inv
-graph/src/index/mod.rs	try_decrement_pending_for_generation	2229	PROVEN	Tickets.dec_inv, release_exact
-graph/src/index/mod.rs	pending_count_for_generation	2251	PROVEN	Tickets.pendingFor
-graph/src/index/mod.rs	pending_count	2265	PROVEN	Tickets.operational_iff
-graph/src/index/mod.rs	is_operational	2184	PROVEN	Tickets.operational_iff
+graph/src/index/mod.rs	add_document	2008	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
+graph/src/index/mod.rs	register_fields	1282	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
+graph/src/index/mod.rs	bump_id	1071	PROVEN	Tickets.bump_inv, stale_release_isolated
+graph/src/index/mod.rs	increment_pending_for_generation	2212	PROVEN	Tickets.inc_inv
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2230	PROVEN	Tickets.dec_inv, release_exact
+graph/src/index/mod.rs	pending_count_for_generation	2252	PROVEN	Tickets.pendingFor
+graph/src/index/mod.rs	pending_count	2266	PROVEN	Tickets.operational_iff
+graph/src/index/mod.rs	is_operational	2185	PROVEN	Tickets.operational_iff
 graph/src/index/indexer.rs	create_index	181	NOT COVERED	#3680 (index DDL versioned with the graph): the entry is a private copy with its own counters and population is owed until publish; Tickets.store models the old shared-counter bump
 graph/src/index/indexer.rs	acquire_population_ticket	780	PROVEN	Tickets.inc_inv
 graph/src/index/indexer.rs	acquire_population_snapshot	798	PROVEN	Tickets.acquire / inc_inv; Worker.attrs snapshot (main_operational_complete)
