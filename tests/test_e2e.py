@@ -2028,6 +2028,42 @@ def test_optional_match_null_merge():
 
 
 
+def test_variable_named_like_an_anonymous_entity():
+    # An unnamed pattern entity has no name at all, so no variable a query
+    # writes can be it - not `_anon_<n>`, not `_anonymous`, and not even the
+    # backquoted `@anon_<n>` that plans print for it.
+    query("CREATE (:A), (:B)-[:R]->(:B)", write=True)
+    res = query("MATCH (_anon_0:A), (:B) RETURN count(*)")
+    assert res.result_set == [[2]]
+    res = query("MATCH (`@anon_0`:A), (:B) RETURN count(*)")
+    assert res.result_set == [[2]]
+    res = query("MATCH (`@anon_1`:A), (:B), (`@anon_0`:B) RETURN count(*)")
+    assert res.result_set == [[4]]
+    res = query("MATCH (_anon_0:B)-[_anon_1]->(_anon_2) RETURN count(*)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (`@anon_0`:B)-[`@anon_1`]->(`@anon_2`) RETURN count(*)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (_anon_0:B)-[_anon_1]->() RETURN labels(_anon_0), type(_anon_1)")
+    assert res.result_set == [[["B"], "R"]]
+    res = query("MATCH (_anonymous:A) RETURN count(_anonymous)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (_anon_x:A) RETURN _anon_x.v, labels(_anon_x)")
+    assert res.result_set == [[None, ["A"]]]
+
+
+def test_return_star_leaves_out_unnamed_entities():
+    query("CREATE (:A), (:B)-[:R]->(:B)", write=True)
+    # Only `a` is named: the relationship and the other node are not columns.
+    res = query("MATCH (a:B)-[]->() RETURN *")
+    assert res.header[0][1] == "a" and len(res.header) == 1
+    assert len(res.result_set) == 1
+    res = query("MATCH (a:B)-[r]->(c) RETURN *")
+    assert sorted(h[1] for h in res.header) == ["a", "c", "r"]
+    # No named variable in scope: nothing for `*` to return.
+    query_exception("MATCH (:A) RETURN *", "RETURN * is not allowed when there are no variables in scope")
+    query_exception("MATCH ()-[]->() RETURN *", "RETURN * is not allowed when there are no variables in scope")
+
+
 def test_self_loop_hop_after_other_hops_keeps_them():
     """A fixed-length self-loop whose node is reached only through a later
     (var-length) hop must not drop the hops planned before it (#2999)."""

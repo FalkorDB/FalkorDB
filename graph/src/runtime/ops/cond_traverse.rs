@@ -388,12 +388,7 @@ impl<'a> CondTraverseOp<'a> {
         // intermediate is a user-named variable it may be referenced by
         // downstream operators (e.g. ExpandInto), so collapsing rows
         // with different intermediate values would lose valid results.
-        let intermediate_is_anon = rp
-            .from
-            .alias
-            .name
-            .as_ref()
-            .is_some_and(|n| n.starts_with("_anon"));
+        let intermediate_is_anon = rp.from.alias.is_unnamed();
         let (bidir_dedup, dedup_source_alias) =
             if !emit_relationship && rp.bidirectional && intermediate_is_anon {
                 if let BatchOp::CondTraverse(ref child_ct) = *child {
