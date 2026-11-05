@@ -262,3 +262,79 @@ class testFilters():
             "MATCH (n:K) RETURN head([CASE n.missing WHEN null THEN 'matched' ELSE 'else' END]) AS v")
         self.env.assertEqual(columnar.result_set, per_row.result_set)
         self.env.assertEqual(columnar.result_set, [['else']] * 5)
+
+    def test10_filter_after_aggregating_with_is_not_pushed_into_one_branch(self):
+        # A variable ID is an index into its own scope's env, so variables
+        # bound before a WITH that aggregates share IDs with unrelated ones
+        # bound after it. Filter push-down used to take the pre-WITH
+        # variables as available inside the next MATCH, mistook `b` for
+        # one of them, and pushed `c.v = b.v` into the `c` branch alone,
+        # where `b` is unbound: every row was filtered out.
+        g = self.db.select_graph("filter_after_aggregate")
+
+        q = """CREATE (:B {v: 0}), (:B {v: 5})
+               WITH count(*) AS s
+               MATCH (b:B), (c:B) WHERE c.v = b.v
+               RETURN count(*)"""
+        self.env.assertEqual(g.query(q).result_set, [[2]])
+
+        # The same shape without a write: two pre-WITH variables.
+        for q, expected in [
+            ("MATCH (x:B), (y:B) WITH count(*) AS s MATCH (b:B), (c:B) WHERE c.v = b.v RETURN count(*)", 2),
+            ("MATCH (x:B), (y:B) WITH count(*) AS s MATCH (b:B), (c:B) WHERE c.v = b.v AND s > 0 RETURN count(*)", 2),
+            ("MATCH (x:B), (y:B) WITH collect(x) AS s MATCH (b:B), (c:B) WHERE c.v >= b.v RETURN count(*)", 3),
+            ("MATCH (x:B), (y:B) WITH count(*) AS s MATCH (b:B) MATCH (c:B) WHERE c.v = b.v RETURN count(*)", 2),
+        ]:
+            self.env.assertEqual(g.query(q).result_set, [[expected]], depth=1)
+
+        # The equality is planned as a join between the branches again.
+        plan = str(g.explain(
+            "MATCH (x:B), (y:B) WITH count(*) AS s MATCH (b:B), (c:B) WHERE c.v = b.v RETURN count(*)"))
+        self.env.assertContains("Value Hash Join", plan)
+
+    def test11_filter_over_carried_variable_across_aggregating_with(self):
+        # Variables a WITH carries over (an aggregating one included) are the
+        # only ones visible above it; a filter must see those, not the
+        # pre-WITH variable that happens to share the ID.
+        g = self.db.select_graph("filter_carried_across_with")
+        g.query("CREATE (:B {v: 0}), (:B {v: 5}), (:B {v: 5})")
+        for q, expected in [
+            ("MATCH (x:B) WITH x.v AS v, count(*) AS c MATCH (b:B) WHERE b.v = v RETURN v, c, count(b) ORDER BY v", [[0, 1, 1], [5, 2, 2]]),
+            ("MATCH (x:B) WITH x.v AS v, count(*) AS c WHERE c > 1 MATCH (b:B), (d:B) WHERE d.v = v AND b.v = v RETURN v, count(*)", [[5, 4]]),
+            ("MATCH (x:B) WITH x.v AS v, count(*) AS c ORDER BY c DESC LIMIT 1 MATCH (b:B), (d:B) WHERE d.v = b.v AND d.v = v RETURN v, c, count(*)", [[5, 2, 4]]),
+        ]:
+            self.env.assertEqual(g.query(q).result_set, expected, depth=1)
+
+    def test12_nested_scopes_reusing_variable_ids(self):
+        # CALL {} bodies, UNION branches and pattern predicates are scopes of
+        # their own: their variables reuse the IDs of the outer ones, and the
+        # outer WITH's hidden variables share them too. None of that may make a
+        # predicate on `b` / `c` look satisfied by the wrong branch.
+        g = self.db.select_graph("filter_nested_scopes")
+        g.query("CREATE (:B {v: 0}), (:B {v: 5})")
+        for q, expected in [
+            # a subquery that joins on its own variables
+            ("""MATCH (x:B), (y:B) WITH count(*) AS s
+                CALL { MATCH (b:B), (c:B) WHERE c.v = b.v RETURN count(*) AS k }
+                RETURN s, k""", [[4, 2]]),
+            # a subquery with an aggregating WITH of its own, then a join
+            ("""MATCH (x:B), (y:B) WITH count(*) AS s
+                CALL { MATCH (x:B), (y:B) WITH count(*) AS t
+                       MATCH (b:B), (c:B) WHERE c.v = b.v RETURN t, count(*) AS k }
+                RETURN s, t, k""", [[4, 4, 2]]),
+            # a subquery, then the same names joined again outside
+            ("""MATCH (x:B), (y:B) WITH count(*) AS s
+                CALL { MATCH (b:B), (c:B) WHERE c.v = b.v RETURN count(*) AS k }
+                MATCH (b:B), (c:B) WHERE c.v = b.v RETURN s, k, count(*)""", [[4, 2, 2]]),
+            # UNION branches repeating the names, one of them aggregating
+            ("""MATCH (x:B), (y:B) WITH count(*) AS s
+                MATCH (b:B), (c:B) WHERE c.v = b.v RETURN count(*)
+                UNION ALL
+                MATCH (b:B), (c:B) WITH count(*) AS s
+                MATCH (x:B), (y:B) WHERE y.v = x.v RETURN count(*)""", [[2], [2]]),
+            # a pattern predicate inside the filtered MATCH
+            ("""MATCH (x:B), (y:B) WITH count(*) AS s
+                MATCH (b:B), (c:B) WHERE c.v = b.v AND size([(b)-[:R]->(z) | 1]) = 0
+                RETURN count(*)""", [[2]]),
+        ]:
+            self.env.assertEqual(sorted(g.query(q).result_set), sorted(expected), depth=1)
