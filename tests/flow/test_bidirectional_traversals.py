@@ -322,3 +322,46 @@ class testBidirectionalTraversals(FlowTestsBase):
                            ['v3', 'v3']]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
+
+    def test15_chained_anonymous_undirected_hops_per_record(self):
+        # chained anonymous undirected hops yield one row per (input record,
+        # destination), as C's F·(A+Aᵀ)·(A+Aᵀ) does, whatever the other columns,
+        # the chain length or the batch size
+        g = self.db.select_graph("bidir_chain")
+        g.query("CREATE (a:N {id:1})-[:R]->(b:N {id:2})-[:R]->(c:N {id:3})")
+        per_x = [[1, 1], [1, 3], [2, 2], [3, 1], [3, 3]]
+
+        # rows differing only in an outer column are kept
+        result = g.query("UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b) RETURN x, a.id, b.id ORDER BY x, a.id, b.id")
+        self.env.assertEqual(result.result_set, [[x] + p for x in (1, 2) for p in per_x])
+
+        # equal input records each get their own result set
+        result = g.query("UNWIND [1,1] AS x MATCH (a)-[]-()-[]-(b) RETURN count(*)")
+        self.env.assertEqual(result.result_set, [[10]])
+
+        # 3 hops: the key is the chain's start record, not an intermediate node
+        g = self.db.select_graph("bidir_chain3")
+        g.query("CREATE (a:N {id:1})-[:R]->(b:N {id:2})-[:R]->(c:N {id:3})-[:R]->(d:N {id:4}), (b)-[:R]->(e:N {id:5})")
+        result = g.query("MATCH (a)-[]-()-[]-()-[]-(b) RETURN a.id, b.id ORDER BY a.id, b.id")
+        self.env.assertEqual(result.result_set,
+                             [[1, 2], [1, 4], [2, 1], [2, 3], [2, 5], [3, 2],
+                              [3, 4], [4, 1], [4, 3], [4, 5], [5, 2], [5, 4]])
+
+        # a start node whose first hop spans several batches (more than the
+        # runtime's 1024-row batch)
+        g = self.db.select_graph("bidir_chain_wide")
+        g.query("""CREATE (u:U {id:1}), (v:U {id:2}) WITH u, v UNWIND range(1,3000) AS i
+                   CREATE (u)-[:R]->(:L {id:i})<-[:R]-(v)""")
+        result = g.query("MATCH (a:U)-[]-()-[]-(b:U) RETURN a.id, b.id, count(*) ORDER BY a.id, b.id")
+        self.env.assertEqual(result.result_set, [[1, 1, 1], [1, 2, 1], [2, 1, 1], [2, 2, 1]])
+
+    def test16_chained_anonymous_undirected_hops_from_far_end(self):
+        # the planner starts at the selective label at the far end and
+        # transposes the hops; two distinct 2-paths from it to the same node
+        # still yield one row, like the untransposed chain
+        g = self.db.select_graph("bidir_chain_transposed")
+        g.query("""CREATE (a:N {id:1}), (b1:N {id:2}), (b2:N {id:5}), (c:Z {id:3}),
+                   (a)-[:R]->(b1), (a)-[:R]->(b2), (b1)-[:R]->(c), (b2)-[:R]->(c)""")
+        for q in ("MATCH (a:N)-[]-()-[]-(c:Z) RETURN a.id, c.id",
+                  "MATCH (c:Z)-[]-()-[]-(a:N) RETURN a.id, c.id"):
+            self.env.assertEqual(g.query(q).result_set, [[1, 3]])
