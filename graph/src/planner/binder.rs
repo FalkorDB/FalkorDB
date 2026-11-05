@@ -429,8 +429,16 @@ impl Binder {
                 })
             }
             QueryIR::Create(pattern) => {
-                let bound = self.bind_graph_create(&pattern)?;
-                Ok(QueryIR::Create(bound))
+                // Labels written in CREATE are labels to create, not
+                // constraints: on a bound node they must not tighten the
+                // MATCH that bound it (a new node cannot be referenced by a
+                // later MATCH without a WITH in between).  Nodes the CREATE
+                // itself introduces keep their labels, so a following MERGE
+                // can still reject new labels on them (VariableAlreadyBound).
+                let bound = self.with_node_labels_rolled_back(true, |binder| {
+                    binder.bind_graph_create(&pattern)
+                });
+                Ok(QueryIR::Create(bound?))
             }
             QueryIR::CreateIndex {
                 label,
@@ -1559,6 +1567,35 @@ impl Binder {
         Ok(bound)
     }
 
+    /// Runs `bind`, then puts `node_labels` back as it was before the call, so
+    /// the labels it wrote constrain only what it bound and not the MATCH that
+    /// bound a shared node. With `keep_new`, entries `bind` introduced for
+    /// nodes it declared itself are kept; entries for a node already in scope
+    /// (bound by a MATCH or OPTIONAL MATCH, even one with no entry) and
+    /// entries that already existed are always restored.
+    fn with_node_labels_rolled_back<T>(
+        &mut self,
+        keep_new: bool,
+        bind: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let mut saved = self.node_labels.clone();
+        let in_scope: HashSet<(u32, u32)> = self
+            .current_env()
+            .values()
+            .map(|v| (v.scope_id, v.id))
+            .collect();
+        let result = bind(self);
+        if keep_new {
+            for (key, labels) in self.node_labels.drain() {
+                if !in_scope.contains(&key) {
+                    saved.entry(key).or_insert(labels);
+                }
+            }
+        }
+        self.node_labels = saved;
+        result
+    }
+
     fn bind_graph_create(
         &mut self,
         pattern: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
@@ -1913,7 +1950,11 @@ impl Binder {
                 // bind_graph uses define_name_in_scope which reuses
                 // outer-scope variables (e.g. 'n' from MATCH) and creates
                 // fresh variables only for new aliases (anonymous nodes/rels).
-                let bound_graph = self.bind_graph(graph, false)?;
+                // Labels inside a pattern comprehension constrain it only,
+                // not the outer MATCH that bound a shared node.
+                let bound_graph = self.with_node_labels_rolled_back(false, |binder| {
+                    binder.bind_graph(graph, false)
+                })?;
 
                 let children = node_ref
                     .children()
