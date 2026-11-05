@@ -38,7 +38,6 @@ use crate::{
     slow_log::SlowLog,
     telemetry,
 };
-use atomic_refcell::AtomicRefCell;
 use crossfire::{
     MTx, Rx,
     mpsc::{List, unbounded_blocking},
@@ -47,8 +46,8 @@ use graph::{
     effects::payload::take_effects_buffer,
     effects::{EffectsBuffer, ReplicationSink},
     graph::{
-        graph::{Graph, Plan},
-        mvcc_graph::MvccGraph,
+        graph::Plan,
+        mvcc_graph::{Fork, MvccGraph},
     },
     planner::IR,
     runtime::runtime::{QueryStatistics, Runtime},
@@ -241,7 +240,7 @@ pub struct WriteMessage {
 
 /// What `commit_and_replicate` needs to publish a finished write.
 struct WriteQueryOk {
-    graph: Arc<AtomicRefCell<Graph>>,
+    graph: Arc<Fork>,
     effects_buffer: Option<EffectsBuffer>,
     modified: bool,
 }
@@ -260,7 +259,7 @@ impl WriteQueryOk {
         Self {
             // The MVCC version this query built, taken from the runtime that
             // built it rather than passed alongside, so the two cannot differ.
-            graph: runtime.graph_arc(),
+            graph: runtime.fork(),
             effects_buffer: take_effects_buffer(runtime),
             // `effects_count` as well as the counters: a query can replicate an
             // effect without moving any of them — index DDL does.
@@ -601,7 +600,7 @@ pub fn execute_query(
         parameters,
         params_offset,
         ..
-    } = session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))?;
+    } = session.with_graph(|tg| tg.graph.read().get_plan(query))?;
     // Single pass over the plan: index DDL (CREATE/DROP INDEX) and a Commit
     // node both mean this is a write. Writes escalate to writer mode lazily
     // during execution (see `crate::query_session`), so no further plan
@@ -680,7 +679,7 @@ pub fn execute_profile(
 ) -> Result<ProfileDetect, String> {
     let Plan {
         plan, parameters, ..
-    } = session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))?;
+    } = session.with_graph(|tg| tg.graph.read().get_plan(query))?;
     // Detect writes (mirrors `execute_query`). A write is NOT executed here — it
     // must go through the serialized write queue to get the locking protocol and
     // effects replication.
@@ -796,7 +795,7 @@ fn try_query_write(
         parameters,
         params_offset,
         ..
-    } = session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))?;
+    } = session.with_graph(|tg| tg.graph.read().get_plan(query))?;
     let cached = first_cached;
     debug_assert!(plan.iter().any(|n| matches!(
         n,
@@ -1021,7 +1020,7 @@ pub fn query_mut(
 ) -> RedisResult {
     // Reject a stale client-supplied schema version before doing any work.
     if let Some(provided_version) = version_check {
-        let current_schema_version = graph.read().graph.read().borrow().schema_version;
+        let current_schema_version = graph.read().graph.read().schema_version;
         if provided_version != current_schema_version {
             reply_invalid_graph_version(ctx, current_schema_version as i64);
             return Ok(RedisValue::NoReply);
@@ -1568,7 +1567,7 @@ fn commit_and_replicate(
     // `Commit` operator at all — index DDL — creates no ids and passes for the
     // same reason. There is also nothing this could do about a refusal: the
     // query has already succeeded and its reply is about to be serialized.
-    if let Err(e) = g.graph.commit(Arc::clone(&wq.graph)) {
+    if let Err(e) = g.graph.commit(&wq.graph) {
         unreachable!("a write query's version is current and verified by now: {e}");
     }
     // Signal the key as modified so WATCH gets triggered.

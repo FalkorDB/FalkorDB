@@ -43,7 +43,7 @@ fn explain(
     // GIL lock-order assertion reads (#726).
     let Plan { plan, .. } = {
         let session = QuerySession::begin(graph);
-        session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))
+        session.with_graph(|tg| tg.graph.read().get_plan(query))
     }
     .map_err(RedisError::String)?;
     let ops = plan.root().indices::<Dfs>().collect::<Vec<_>>();

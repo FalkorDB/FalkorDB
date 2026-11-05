@@ -123,7 +123,7 @@ fuzz_target!(init: {
     std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
         let Ok(Plan {
             plan, parameters, ..
-        }) = g.read().borrow().get_plan(query)
+        }) = g.read().get_plan(query)
         else {
             return Corpus::Reject;
         };
@@ -132,7 +132,7 @@ fuzz_target!(init: {
         // blow past libFuzzer's 2048MB rss limit. Timed-out inputs return Err
         // and are rejected from the corpus.
         let runtime = Runtime::new(
-            g.read(),
+            g.fork(),
             parameters,
             true,
             plan,

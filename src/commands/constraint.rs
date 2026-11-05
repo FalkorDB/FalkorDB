@@ -299,12 +299,7 @@ fn attempt_settle(
             originated_here: false,
         },
     );
-    let results = session.with_graph(|tg| {
-        tg.graph
-            .read()
-            .borrow()
-            .compute_pending_constraint_results()
-    });
+    let results = session.with_graph(|tg| tg.graph.read().compute_pending_constraint_results());
     if results.is_empty() {
         return Ok(());
     }
@@ -325,13 +320,12 @@ fn attempt_settle(
             g_arc
                 .borrow_mut()
                 .apply_constraint_validation_results(results);
-            let settled = Arc::clone(&g_arc);
-            tg.graph.commit(g_arc)?;
+            tg.graph.commit(&g_arc)?;
 
             if was_replicated {
                 return Ok(());
             }
-            let g = settled.borrow();
+            let g = g_arc.borrow();
             for c in announce {
                 // The constraint may have been dropped while validation ran:
                 // `drop_constraint` has no UNDER CONSTRUCTION guard and
@@ -554,10 +548,7 @@ pub fn graph_constraint(
 
     match result {
         Ok(needs_background_validation) => {
-            // The effect is built from the graph this write mutated, so keep a
-            // handle before `commit` consumes the one it swaps in.
-            let mutated = Arc::clone(&g_arc);
-            tg.graph.commit(g_arc).map_err(WriteAbort::from)?;
+            tg.graph.commit(&g_arc).map_err(WriteAbort::from)?;
 
             // Spawn background validation for large datasets on a dedicated
             // OS thread (not the query threadpool). Validation can take
@@ -623,7 +614,7 @@ pub fn graph_constraint(
                 } else if needs_background_validation {
                     Some(Some(ConstraintStatus::UnderConstruction))
                 } else {
-                    find_status(&mutated.borrow(), ct, entity_type, &label, &properties).map(Some)
+                    find_status(&g_arc.borrow(), ct, entity_type, &label, &properties).map(Some)
                 };
                 let Some(status) = status else {
                     redis_module::logging::log_warning(format!(
@@ -641,7 +632,7 @@ pub fn graph_constraint(
                 };
                 let mut buf = EffectsBuffer::new();
                 match buf.build_constraint(
-                    &mutated.borrow(),
+                    &g_arc.borrow(),
                     is_create,
                     &AnnouncedConstraint {
                         ct,

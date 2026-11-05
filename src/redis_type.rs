@@ -106,7 +106,7 @@ unsafe extern "C" fn graph_rdb_load(
             // Single-key load (key_count == 1) -- graph is fully loaded.
             let mvcc = MvccGraph::from_graph(*graph);
             let graph_arc = mvcc.read();
-            graph_arc.borrow().set_indexer_graph(graph_arc.clone());
+            graph_arc.set_indexer_graph(graph_arc.clone());
             let tg = ThreadedGraph::from_mvcc(mvcc);
             let arc = Arc::new(RwLock::new(tg));
             register_graph(key_name, arc.clone());
@@ -122,7 +122,7 @@ unsafe extern "C" fn graph_rdb_load(
                 if let Some(graph) = decode_state.finalized.remove(&key_name) {
                     let mvcc = MvccGraph::from_graph(graph);
                     let graph_arc = mvcc.read();
-                    graph_arc.borrow().set_indexer_graph(graph_arc.clone());
+                    graph_arc.set_indexer_graph(graph_arc.clone());
                     drop(graph_arc);
                     // If a placeholder Arc was already registered for this
                     // key (main key loaded in middle of stream), mutate it
@@ -198,8 +198,7 @@ unsafe extern "C" fn graph_rdb_save(
         // deadlocks in the BGSAVE fork child when the write loop holds the write lock.
         let graph_arc = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
         let tg: &ThreadedGraph = &*graph_arc.data_ptr();
-        let g = tg.graph.read();
-        let graph = g.borrow();
+        let graph = tg.graph.read();
         serializers::encoder::rdb_save_graph(rdb, &graph, &key_name);
     }
 }
@@ -226,8 +225,7 @@ unsafe fn save_key_slice(
             return false;
         };
         let tg: &ThreadedGraph = &*real_graph_arc.data_ptr();
-        let g = tg.graph.read();
-        let graph = g.borrow();
+        let graph = tg.graph.read();
         serializers::encoder::rdb_save_graph_key(rdb, &graph, graph_name, payloads, key_count);
         true
     }
@@ -361,8 +359,7 @@ pub unsafe extern "C" fn pre_fork_prepare() {
     let registry = GRAPH_REGISTRY.lock();
     for graph_arc in registry.values() {
         let tg: &ThreadedGraph = unsafe { &*graph_arc.data_ptr() };
-        let g = tg.graph.read();
-        let graph = g.borrow();
+        let graph = tg.graph.read();
         graph.wait_all();
     }
 }
@@ -453,8 +450,7 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
             // the graph through MvccGraph's committed version (Arc clone),
             // so reading ThreadedGraph fields here is also safe.
             let tg: &ThreadedGraph = &*graph_ref.data_ptr();
-            let g = tg.graph.read();
-            let graph = g.borrow();
+            let graph = tg.graph.read();
 
             let multi_payloads = build_multi_key_payloads(&graph, vkey_max as u64);
             let key_count = multi_payloads.len();
@@ -768,7 +764,7 @@ fn install_graph(
 ) {
     let mvcc = MvccGraph::from_graph(graph);
     let graph_arc = mvcc.read();
-    graph_arc.borrow().set_indexer_graph(graph_arc.clone());
+    graph_arc.set_indexer_graph(graph_arc.clone());
     drop(graph_arc);
 
     if let Some(ph) = placeholder {

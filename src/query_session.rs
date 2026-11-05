@@ -21,8 +21,7 @@
 //! all.
 
 use crate::graph_core::{ThreadedGraph, ffi};
-use atomic_refcell::AtomicRefCell;
-use graph::graph::{graph::Graph, mvcc_graph::CommitError};
+use graph::graph::mvcc_graph::{CommitError, Fork};
 use graph::locks::WriteEscalation;
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use redis_module::{Context, ContextFlags, raw};
@@ -109,7 +108,7 @@ enum Version {
     /// No write version.
     None,
     /// Forked as a reader; checked when the session escalates.
-    Unchecked(Arc<AtomicRefCell<Graph>>),
+    Unchecked(Arc<Fork>),
     /// Extends the published graph, and stays so: this session holds the
     /// write lock until it commits.
     Current,
@@ -208,7 +207,7 @@ impl QuerySession {
     ///
     /// Nothing has to be released afterwards: an uncommitted version is
     /// dropped with the runtime that holds it.
-    pub fn write_version(&self) -> Arc<AtomicRefCell<Graph>> {
+    pub fn write_version(&self) -> Arc<Fork> {
         debug_assert!(
             matches!(*self.version.borrow(), Version::None),
             "one write version per session"

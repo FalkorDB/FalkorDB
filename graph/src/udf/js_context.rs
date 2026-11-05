@@ -310,7 +310,7 @@ pub fn call_udf_bridge(
                 .map_err(|e| format!("Failed to restore UDF function: {e}"))?;
 
             // Set graph reference for JS classes that need it
-            let graph = rt.graph_arc();
+            let graph = rt.graph_version();
             crate::udf::js_classes::set_current_graph(graph.clone());
 
             // Convert arguments

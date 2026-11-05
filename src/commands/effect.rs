@@ -78,7 +78,7 @@ pub fn graph_effect(
     // rejected the buffer, and it needs the same forced resync. Answered
     // separately, it replied with an error the master will not act on and left
     // this replica serving a graph that had silently stopped following.
-    let result = result.and_then(|()| tg.graph.commit(g_arc).map_err(|e| e.to_string()));
+    let result = result.and_then(|()| tg.graph.commit(&g_arc).map_err(|e| e.to_string()));
 
     match result {
         Ok(()) => {

@@ -39,7 +39,10 @@
 #![allow(clippy::cast_precision_loss)]
 use crate::effects::EffectsBuffer;
 use crate::{
-    graph::graph::{Graph, LabelId, NodeId, RelationshipId},
+    graph::{
+        graph::{Graph, LabelId, NodeId, RelationshipId},
+        mvcc_graph::{Fork, GraphRef, GraphVersion},
+    },
     identifier_limits::validate_identifier_len,
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
@@ -62,7 +65,7 @@ use crate::{
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
 };
-use atomic_refcell::{AtomicRef, AtomicRefCell, AtomicRefMut};
+use atomic_refcell::AtomicRefMut;
 use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
@@ -107,35 +110,6 @@ pub struct QueryStatistics {
 /// name-map lookup for the excess.
 const ATTR_ID_MEMO_CAP: usize = 32;
 
-/// A read query's borrow of its graph together with an owner of the cell it
-/// borrows. The guard is lifetime-extended to `'static`; it is sound because
-/// `_owner` keeps that cell alive for as long as the guard exists — fields drop
-/// in declaration order, so `guard` is released before `_owner` — whatever
-/// happens to anything else holding the graph.
-struct HeldRead {
-    guard: AtomicRef<'static, Graph>,
-    _owner: Arc<AtomicRefCell<Graph>>,
-}
-
-/// Shared access to the graph a [`Runtime`] reads; see [`Runtime::graph`].
-pub enum GraphRef<'r> {
-    /// The read query's borrow, taken once for the query's whole life.
-    Held(&'r Graph),
-    /// A write query's per-access borrow.
-    Borrowed(AtomicRef<'r, Graph>),
-}
-
-impl std::ops::Deref for GraphRef<'_> {
-    type Target = Graph;
-
-    fn deref(&self) -> &Graph {
-        match self {
-            Self::Held(g) => g,
-            Self::Borrowed(g) => g,
-        }
-    }
-}
-
 /// The query execution context.
 ///
 /// Runtime holds all state needed to execute a query plan:
@@ -152,13 +126,11 @@ impl std::ops::Deref for GraphRef<'_> {
 pub struct Runtime<'a> {
     /// Query parameters ($param syntax)
     pub parameters: HashMap<String, Value>,
-    /// A read query's one borrow of its graph, held for the query's whole
-    /// life; see [`Self::graph`].
-    read_guard: Option<HeldRead>,
-    /// Graph being queried. Private, so it cannot be replaced or detached:
-    /// read it through [`Self::graph`] / [`Self::graph_mut`], or keep it with
-    /// [`Self::graph_arc`].
-    g: Arc<AtomicRefCell<Graph>>,
+    /// Graph being queried: a read query's published version, or a write
+    /// query's fork. Private, so it cannot be replaced or detached: read it
+    /// through [`Self::graph`] / [`Self::graph_mut`], or keep it with
+    /// [`Self::graph_version`].
+    g: GraphVersion,
     /// Whether this is a write query
     pub write: bool,
     /// Batched mutations (lazy-initialized)
@@ -442,7 +414,7 @@ impl<'a> Runtime<'a> {
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        g: Arc<AtomicRefCell<Graph>>,
+        g: impl Into<GraphVersion>,
         parameters: HashMap<String, Value>,
         write: bool,
         plan: Arc<DynTree<IR>>,
@@ -462,34 +434,12 @@ impl<'a> Runtime<'a> {
             vec![]
         };
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
+        let g = g.into();
         if write {
             pending.borrow_mut().set_schema_baseline(&g.borrow());
         }
-        // A read query runs on a published version and can take its borrow once
-        // here instead of on every access. Writers mutate a private fork, and
-        // nothing borrows a published version mutably (`MvccGraph`), so this
-        // borrow can be held for the whole query. Were that to change, the
-        // `borrow_mut` would panic rather than race.
-        //
-        let read_guard = (!write).then(|| {
-            let owner = Arc::clone(&g);
-            // SAFETY: the guard borrows the cell inside `owner`'s allocation,
-            // and `HeldRead` keeps `owner` alive for the guard's whole life
-            // (the guard is declared first, so it drops first). Moving the
-            // `Arc` does not move the cell it points to.
-            let guard = unsafe {
-                std::mem::transmute::<AtomicRef<'_, Graph>, AtomicRef<'static, Graph>>(
-                    owner.borrow(),
-                )
-            };
-            HeldRead {
-                guard,
-                _owner: owner,
-            }
-        });
         Self {
             parameters,
-            read_guard,
             g,
             write,
             pending,
@@ -547,33 +497,27 @@ impl<'a> Runtime<'a> {
 
     /// The graph this query reads.
     ///
-    /// Concurrent read queries share one published version, so a borrow per
-    /// access made every one of them write the same borrow counter — a cache
-    /// line bounced between cores once per property read, which capped read
-    /// throughput at a few cores. A read query hands out the borrow it took
-    /// once in [`Self::new`]; a write query, which also borrows `g` mutably,
-    /// still borrows per access.
+    /// A read query's is a published version, which needs no borrow: nothing
+    /// can change it. A write query's is its fork, borrowed per access, since
+    /// it also borrows it mutably.
     #[must_use]
     pub fn graph(&self) -> GraphRef<'_> {
-        match &self.read_guard {
-            Some(held) => GraphRef::Held(&held.guard),
-            None => GraphRef::Borrowed(self.g.borrow()),
-        }
+        self.g.borrow()
     }
 
     /// The graph this write query mutates, borrowed exclusively.
     ///
     /// # Panics
     ///
-    /// On a read query: its graph is a published version, which a reader
-    /// only ever borrows shared (it holds that borrow for its whole life, see
-    /// [`Self::graph`]). Plans that write are run as write queries, so this
-    /// is a planner bug, reported by name rather than as the cell's
-    /// "already immutably borrowed".
+    /// On a read query: its graph is a published version, which nothing
+    /// changes. Plans that write are run as write queries, so this is a
+    /// planner bug.
     #[must_use]
     pub fn graph_mut(&self) -> AtomicRefMut<'_, Graph> {
-        assert!(self.write, "graph_mut on a read query");
-        self.g.borrow_mut()
+        match &self.g {
+            GraphVersion::Fork(fork) => fork.borrow_mut(),
+            GraphVersion::Published(_) => panic!("graph_mut on a read query"),
+        }
     }
 
     /// An owner of this query's graph, for code that keeps the graph past
@@ -582,8 +526,21 @@ impl<'a> Runtime<'a> {
     /// [`Self::graph`] / [`Self::graph_mut`]. The handle is a clone, so the
     /// graph this runtime runs on cannot be replaced through it.
     #[must_use]
-    pub fn graph_arc(&self) -> Arc<AtomicRefCell<Graph>> {
-        Arc::clone(&self.g)
+    pub fn graph_version(&self) -> GraphVersion {
+        self.g.clone()
+    }
+
+    /// The fork this write query builds into, for the host to publish.
+    ///
+    /// # Panics
+    ///
+    /// On a read query, which has no fork.
+    #[must_use]
+    pub fn fork(&self) -> Arc<Fork> {
+        match &self.g {
+            GraphVersion::Fork(fork) => Arc::clone(fork),
+            GraphVersion::Published(_) => panic!("fork of a read query"),
+        }
     }
 
     /// Call `runtime.write_escalation().upgrade_to_write()?` before mutating
@@ -601,7 +558,7 @@ impl<'a> Runtime<'a> {
     /// failed. See [`Pending::resync_published_indexes`].
     pub fn resync_published_indexes(
         &self,
-        committed: &Arc<AtomicRefCell<Graph>>,
+        committed: &Graph,
     ) {
         self.pending
             .borrow_mut()

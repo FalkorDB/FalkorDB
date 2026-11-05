@@ -41,11 +41,10 @@
 
 use std::sync::Arc;
 
-use atomic_refcell::AtomicRefCell;
 use rquickjs::function::This;
 use rquickjs::{Array, Ctx, IntoJs, Object, Value as JsValue};
 
-use crate::graph::graph::Graph;
+use crate::graph::mvcc_graph::GraphVersion;
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::{Point, Value};
 
@@ -97,7 +96,7 @@ pub fn udf_nesting_error() -> String {
 pub fn value_to_js<'js>(
     ctx: &Ctx<'js>,
     value: &Value,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &GraphVersion,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     value_to_js_at(ctx, value, graph, runtime, 0)
@@ -110,7 +109,7 @@ pub fn value_to_js<'js>(
 fn value_to_js_at<'js>(
     ctx: &Ctx<'js>,
     value: &Value,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &GraphVersion,
     runtime: Option<&Runtime<'_>>,
     depth: usize,
 ) -> Result<JsValue<'js>, String> {
@@ -124,7 +123,7 @@ fn value_to_js_at<'js>(
 fn value_to_js_level<'js>(
     ctx: &Ctx<'js>,
     value: &Value,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &GraphVersion,
     runtime: Option<&Runtime<'_>>,
     depth: usize,
 ) -> Result<JsValue<'js>, String> {
@@ -470,10 +469,9 @@ fn js_to_value_level(
 
 #[cfg(test)]
 mod nesting_tests {
-    use super::{MAX_UDF_VALUE_NESTING, js_to_value, udf_nesting_error, value_to_js};
+    use super::{GraphVersion, MAX_UDF_VALUE_NESTING, js_to_value, udf_nesting_error, value_to_js};
     use crate::graph::{graph::Graph, graphblas::test_init::ensure_init};
     use crate::runtime::value::Value;
-    use atomic_refcell::AtomicRefCell;
     use rquickjs::{Context, Runtime, Value as JsValue};
     use std::sync::Arc;
     use thin_vec::thin_vec;
@@ -582,7 +580,7 @@ mod nesting_tests {
     fn value_to_js_respects_the_cap() {
         ensure_init();
         in_js_on_worker_stack(|ctx| {
-            let g = Arc::new(AtomicRefCell::new(Graph::new(16, 16, 1, 0, "udf_nesting")));
+            let g = GraphVersion::from(Arc::new(Graph::new(16, 16, 1, 0, "udf_nesting")));
             // At the cap: converts, and converts back to the same value.
             let v = nested(MAX_UDF_VALUE_NESTING);
             let js = value_to_js(ctx, &v, &g, None).unwrap();
@@ -601,7 +599,7 @@ mod nesting_tests {
     fn ordinary_nesting_round_trips() {
         ensure_init();
         in_js_on_worker_stack(|ctx| {
-            let g = Arc::new(AtomicRefCell::new(Graph::new(16, 16, 1, 0, "udf_nesting")));
+            let g = GraphVersion::from(Arc::new(Graph::new(16, 16, 1, 0, "udf_nesting")));
             let v = Value::List(Arc::new(thin_vec![
                 Value::Int(1),
                 Value::List(Arc::new(thin_vec![Value::String(Arc::new("a".into()))])),

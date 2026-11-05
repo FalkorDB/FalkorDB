@@ -56,20 +56,22 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use atomic_refcell::AtomicRefCell;
 use rquickjs::object::Property;
 use rquickjs::{Array, Ctx, Function, Object, Value as JsValue};
 
-use crate::graph::graph::{Graph, NodeId, RelationshipId};
+use crate::graph::{
+    graph::{Graph, NodeId, RelationshipId},
+    mvcc_graph::GraphVersion,
+};
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
 use crate::udf::type_convert;
 
 thread_local! {
-    static CURRENT_GRAPH: RefCell<Option<Arc<AtomicRefCell<Graph>>>> = const { RefCell::new(None) };
+    static CURRENT_GRAPH: RefCell<Option<GraphVersion>> = const { RefCell::new(None) };
 }
 
-pub fn set_current_graph(g: Arc<AtomicRefCell<Graph>>) {
+pub fn set_current_graph(g: GraphVersion) {
     CURRENT_GRAPH.with(|cell| {
         *cell.borrow_mut() = Some(g);
     });
@@ -83,7 +85,7 @@ pub fn clear_current_graph() {
 
 fn with_current_graph<F, R>(f: F) -> Result<R, String>
 where
-    F: FnOnce(&Arc<AtomicRefCell<Graph>>) -> Result<R, String>,
+    F: FnOnce(&GraphVersion) -> Result<R, String>,
 {
     CURRENT_GRAPH.with(|cell| {
         let guard = cell.borrow();
@@ -134,7 +136,7 @@ fn collect_edges(
 pub fn create_js_node<'js>(
     ctx: &Ctx<'js>,
     node_id: u64,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &GraphVersion,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
@@ -221,7 +223,7 @@ fn set_node_attrs<'js>(
     ctx: &Ctx<'js>,
     obj: &Object<'js>,
     attrs: impl Iterator<Item = (Arc<String>, Value)>,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &GraphVersion,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<(), String> {
     let attrs_obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
@@ -248,7 +250,7 @@ pub fn create_js_edge<'js>(
     rel_id: u64,
     src_id: u64,
     dst_id: u64,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &GraphVersion,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
@@ -322,7 +324,7 @@ pub fn create_js_edge<'js>(
 pub fn create_js_path<'js>(
     ctx: &Ctx<'js>,
     path_values: &[Value],
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &GraphVersion,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;

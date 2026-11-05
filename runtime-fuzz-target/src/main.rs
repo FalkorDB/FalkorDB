@@ -34,12 +34,12 @@ fn main() {
             let g = MvccGraph::new(1024, 1024, 25, "fuzz_test");
             let Ok(Plan {
                 plan, parameters, ..
-            }) = g.read().borrow().get_plan(query)
+            }) = g.read().get_plan(query)
             else {
                 return;
             };
             let runtime = Runtime::new(
-                g.read(),
+                g.fork(),
                 parameters,
                 true,
                 plan,

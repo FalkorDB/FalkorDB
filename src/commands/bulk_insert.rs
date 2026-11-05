@@ -881,7 +881,7 @@ pub fn graph_bulk_insert(
         let result = result.and_then(|()| {
             g_arc.borrow().validate().map_err(|e| e.to_string())?;
             g_arc.borrow_mut().commit_index_docs(&mut docs);
-            tg.graph.commit(g_arc).map_err(|e| e.to_string())
+            tg.graph.commit(&g_arc).map_err(|e| e.to_string())
         });
         return match result {
             Ok(()) => {
@@ -1001,7 +1001,7 @@ pub fn graph_bulk_insert(
                 }
                 g_arc.borrow_mut().commit_index_docs(&mut docs);
                 if let Err(e) = session
-                    .with_graph_mut(|tg| tg.graph.commit(g_arc))
+                    .with_graph_mut(|tg| tg.graph.commit(&g_arc))
                     .expect("writer mode after upgrade_to_write")
                 {
                     break 'phase Err(e.to_string());
