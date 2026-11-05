@@ -1420,6 +1420,7 @@ impl<'a> Parser<'a> {
                         match_token!(self.lexer, LParen); // consume outer '('
 
                         let mut vars = vec![];
+                        let mut incoming = vec![];
                         let left = self.parse_node_pattern()?;
                         let left_alias = left.alias.clone();
                         vars.push(left.alias.clone());
@@ -1441,11 +1442,9 @@ impl<'a> Parser<'a> {
                             if !matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
                                 break;
                             }
-                            // `<-` is lost once from/to are swapped when both
-                            // ends share one alias (`(a)<-[*]-(a)`); note it here.
-                            let is_incoming = self.lexer.current()? == Token::LessThan;
-                            let (relationship, right) =
+                            let (relationship, right, is_incoming) =
                                 self.parse_relationship_pattern(prev_node, clause)?;
+                            incoming.push(is_incoming);
 
                             let is_var_len =
                                 relationship.min_hops.is_some() || relationship.max_hops.is_some();
@@ -1520,7 +1519,7 @@ impl<'a> Parser<'a> {
                         }
 
                         match_token!(self.lexer, RParen); // consume outer ')'
-                        query_graph.add_path(Arc::new(QueryPath::new(ident, vars)));
+                        query_graph.add_path(Arc::new(QueryPath::new(ident, vars, incoming)));
 
                         // Continue to next pattern or end
                         if self.lexer.current()? != Token::Comma {
@@ -1532,20 +1531,22 @@ impl<'a> Parser<'a> {
                 }
 
                 let mut vars = vec![];
+                let mut incoming = vec![];
                 let mut left = self.parse_node_pattern()?;
                 vars.push(left.alias.clone());
                 Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &left, clause);
                 loop {
                     if let Token::Dash | Token::LessThan = self.lexer.current()? {
-                        let (relationship, right) =
+                        let (relationship, right, is_incoming) =
                             self.parse_relationship_pattern(left, clause)?;
+                        incoming.push(is_incoming);
                         vars.push(relationship.alias.clone());
                         vars.push(right.alias.clone());
                         left = right.clone();
                         Self::add_pattern_relationship(&mut query_graph, relationship, clause)?;
                         Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &right, clause);
                     } else {
-                        query_graph.add_path(Arc::new(QueryPath::new(ident, vars)));
+                        query_graph.add_path(Arc::new(QueryPath::new(ident, vars, incoming)));
                         break;
                     }
                 }
@@ -1554,7 +1555,7 @@ impl<'a> Parser<'a> {
 
                 Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &left, clause);
                 while let Token::Dash | Token::LessThan = self.lexer.current()? {
-                    let (relationship, right) = self.parse_relationship_pattern(left, clause)?;
+                    let (relationship, right, _) = self.parse_relationship_pattern(left, clause)?;
                     left = right.clone();
                     Self::add_pattern_relationship(&mut query_graph, relationship, clause)?;
                     Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &right, clause);
@@ -2976,8 +2977,11 @@ impl<'a> Parser<'a> {
         // would otherwise swallow the error and fall back to a list literal.
         let mut repeated = None;
         let mut left = first_node;
+        let mut incoming = vec![];
         while matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
-            let (rel, right) = self.parse_relationship_pattern(left, &Keyword::Match)?;
+            let (rel, right, is_incoming) =
+                self.parse_relationship_pattern(left, &Keyword::Match)?;
+            incoming.push(is_incoming);
             graph.add_node(right.clone());
             if let Err(e) = Self::add_pattern_relationship(&mut graph, rel, &Keyword::Match) {
                 repeated.get_or_insert(e);
@@ -2985,8 +2989,10 @@ impl<'a> Parser<'a> {
             left = right;
         }
 
+        // The element list is derived by the binder from the relationships;
+        // their directions are recorded here so it can follow the pattern.
         if let Some(pv) = path_var {
-            graph.add_path(Arc::new(QueryPath::new(pv, vec![])));
+            graph.add_path(Arc::new(QueryPath::new(pv, vec![], incoming)));
         }
 
         // Optional WHERE
@@ -3063,6 +3069,8 @@ impl<'a> Parser<'a> {
         Ok(types)
     }
 
+    /// Parses `-[...]->(dst)` / `<-[...]-(dst)` / `-[...]-(dst)` after `src`.
+    /// Also returns whether `from`/`to` were swapped (written `<-`, not `<-[]->`).
     #[allow(clippy::too_many_lines)]
     fn parse_relationship_pattern(
         &mut self,
@@ -3072,6 +3080,7 @@ impl<'a> Parser<'a> {
         (
             Arc<QueryRelationship<Arc<String>, Arc<String>, Arc<String>>>,
             Arc<QueryNode<Arc<String>, Arc<String>>>,
+            bool,
         ),
         String,
     > {
@@ -3162,7 +3171,7 @@ impl<'a> Parser<'a> {
             Some((min, max)) => (Some(min), max),
             None => (None, None),
         };
-        let relationship = match (is_incoming, is_outgoing) {
+        let mut relationship = match (is_incoming, is_outgoing) {
             (true, true) | (false, false) => {
                 if *clause == Keyword::Create {
                     return Err(self
@@ -3201,7 +3210,9 @@ impl<'a> Parser<'a> {
                 max_hops,
             ),
         };
-        Ok((Arc::new(relationship), dst))
+        let written_incoming = is_incoming && !is_outgoing;
+        relationship.written_incoming = written_incoming;
+        Ok((Arc::new(relationship), dst, written_incoming))
     }
 
     fn parse_labels(&mut self) -> Result<OrderSet<Arc<String>>, String> {
