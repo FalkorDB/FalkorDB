@@ -1,0 +1,24 @@
+file	function	line	bucket	lean_name_or_reason
+# PR #3437 (perf/list-comprehension @ a739b990f) review. Lines cite the PR branch.
+# Rows stay commented out until the PR merges; then fold them into the owners
+# (expr_semantics/functions_str_list: eval.rs; columnar: vector_expr.rs; value_order: value.rs;
+# parser_grammar: cypher.rs; runtime_core: runtime.rs; pending_commit/graph_queries: attribute_store.rs, graph.rs).
+# graph/src/runtime/eval.rs	counts_comprehension	315	PROVEN	Bridge countsComprehension: counted_goes_per_row (routes size(<comprehension>) to eval_per_row), eval_sound_pr
+# graph/src/runtime/eval.rs	ListLoop::new	323	PROVEN	Discharge newBody: newBody_drops (over expr_semantics evalNode); Final.bodiesOf/prBody; ListLoop perElem_eq, bulk_eq
+# graph/src/runtime/eval.rs	ListLoop::vector_plan	344	PROVEN	Classifier vectorPlan: vectorPlan_some, vectorPlan_no_bad, vectorPlan_broadcasts, vectorPlan_vals
+# graph/src/runtime/eval.rs	collect_body_vars	380	PROVEN	Classifier collect/collectAll (a739b990f, rejects nested binders): collect_rejects_iff, collect_rejects, collect_extends, collect_reads; history pre_a739b990f_accepts_nested_binder
+# graph/src/runtime/eval.rs	loop_var_column	405	PROVEN	Bridge loopVarColumn (columnar Column): loopVar_get; ChunkBatch.chunkBatch_loop
+# graph/src/runtime/eval.rs	broadcast_column	417	PROVEN	Bridge broadcastColumn (columnar Column): broadcast_get; ChunkBatch.chunkBatch_outer
+# graph/src/runtime/eval.rs	ExprEval::eval_quantifier	1310	PROVEN	Final.pr_quantifier_eq_main (Drive prQuant: quantifier_eq_main with Col.Sound = Concrete.colOf_sound: the PR's VectorEval over the chunk batch = ExprEval per element; columnar CoreBridge.lawful, PRArms.lawfulPR, Concrete.rowAgree; bulk reads RuntimeReads.propReads); hreg: the trees' hasLabels is the registry's
+# graph/src/runtime/eval.rs	ExprEval::eval_list_comprehension	1372	PROVEN	Final.pr_comprehension_eq_main, pr_size_eq_main (Drive prListComp: comprehension_eq_main, size_eq_main, size_projection_error; Col.Sound = Concrete.colOf_sound)
+# graph/src/runtime/eval.rs	ExprEval::list_loop_chunk	1456	PROVEN	Final.pr_chunkStep_eq (Drive chunkStep: chunkStep_eq, prRun_eq; ListLoop perElem_eq; Col.Sound = Concrete.colOf_sound)
+# graph/src/runtime/eval.rs	ExprEval::list_loop_columnar	1550	PROVEN	Final.pr_columnar_sound (Chunked columnar, projection over the passed row indices passedIdx: columnar_sound, tested_spec; ChunkBatch.chunkBatch: chunkBatch_wf, chunkBatch_loop, chunkBatch_outer; Col.Sound = Concrete.colOf_sound)
+# graph/src/runtime/eval.rs	ExprEval::eval_node	503	PROVEN	size(<comprehension>) arm (eval.rs:578-580) routes to eval_list_comprehension(count = true) (Drive prListComp; the callee has its own row); other arms unchanged
+# graph/src/runtime/eval.rs	eval_quantifier	2109	PROVEN	unchanged (was 1664): proofs/functions_str_list evalQuantifier; Drive quantRes
+# graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1315	PROVEN	ValueOfType vtPR (List(Any) early arm, value.rs:1320-1321): vtPR_eq, listFirst_eq, unionAll_eq, size_arg_list
+# graph/src/parser/cypher.rs	Parser::parse_expr_inner	2195	PROVEN	level-9 negated-literal fold (cypher.rs:2558-2572): NegFold level9PR: fold_eq_eval, fold_eq_evalParam, fold_never_min, paren_min_not_folded, neg_zero_literal, bare_min_refused; parser_grammar Model.step level 9 stale (no fold)
+# graph/src/runtime/vector_expr.rs	VectorEval::eval	211	PROVEN	PRArms.armsPR (!counts_comprehension guard, vector_expr.rs:255-257, over columnar VecEval): lawfulPR, counted_goes_per_row; Bridge armsPR (Dispatch model): lawful_pr, eval_sound_pr
+# graph/src/runtime/vector_expr.rs	VectorEval::eval_property	336	PROVEN	PRArms.evalPropertyPR: evalPropertyPR_eq (= main's columnar CoreBridge.evalProperty; ExactProp exact_eq_main, toECx_eq); ExactProp evalPropPR: evalProp_eq
+# graph/src/runtime/runtime.rs	Runtime::materialize_node_property_exact	1566	PROVEN	ExactProp exactPR: exact_eq_main, getIntLoop_spec, getIntLoop_other
+# graph/src/graph/graph.rs	Graph::get_node_int_attributes_by_idx	2602	PROVEN	ExactProp getIntLoop over node_attrs (NodeId repr(transparent) u64 cast): getIntLoop_spec
+# graph/src/graph/attribute_store.rs	AttributeStore::get_int_attrs_by_idx_batch_into	1186	PROVEN	ExactProp getIntLoop: getIntLoop_spec (ints = main's Int/Null values, 0 under null; on_null bits = from_values), getIntLoop_other (false at any other tag)
