@@ -30,7 +30,7 @@ use crate::parser::ast::{
     QueryRelationship, RawQueryIR, ReduceVars, RegexFn, RegexFnKind, SetItem, SupportAggregation,
     Variable,
 };
-use crate::runtime::functions::{FnArguments, FnType, Type};
+use crate::runtime::functions::{FnArguments, FnType, Type, apply_pow};
 use crate::runtime::orderset::OrderSet;
 use crate::runtime::value::{Value, ValueTypeOf};
 use crate::tree;
@@ -1216,7 +1216,11 @@ impl Binder {
 
         let orderby = orderby
             .iter()
-            .map(|(expr, desc)| Ok((self.bind_expr(expr)?, *desc)))
+            .map(|(expr, desc)| {
+                let bound = self.bind_expr(expr)?;
+                Self::validate_order_by_boolean_operands(&bound)?;
+                Ok((bound, *desc))
+            })
             .collect::<Result<Vec<_>, String>>()?;
 
         // Reject aggregation functions inside ORDER BY expressions
@@ -1822,8 +1826,17 @@ impl Binder {
                 let mut children = vec![bound_iterable];
                 children.extend(rest_children);
 
-                // Child 1 is the WHERE condition — validate it returns boolean
-                if children.len() > 1 && !Self::expr_may_return_boolean(children[1].root()) {
+                // Child 1 is the WHERE condition — validate it returns boolean.
+                // A logical condition's operands are left to the runtime,
+                // which short-circuits like C's filter tree: `false AND 1`
+                // is `[]` there, and `true AND 1` is still a type error.
+                if children.len() > 1
+                    && !matches!(
+                        children[1].root().data(),
+                        ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
+                    )
+                    && !Self::expr_may_return_boolean(children[1].root())
+                {
                     return Err(String::from("Expected boolean predicate"));
                 }
 
@@ -2295,24 +2308,180 @@ impl Binder {
     /// has operands that can return boolean.  Produces a "Type mismatch"
     /// error for non-filter contexts (e.g. RETURN expressions).
     fn validate_boolean_operands(expr: &QueryExpr<Variable>) -> Result<(), String> {
-        Self::validate_boolean_operands_impl(&expr.root())
+        Self::validate_boolean_operands_impl(&expr.root(), false, true)
     }
 
-    fn validate_boolean_operands_impl(node: &DynNode<ExprIR<Variable>>) -> Result<(), String> {
-        if matches!(
+    /// The check for an ORDER BY expression: only operands whose static type
+    /// is known not to be Boolean or Null are rejected. The coarser
+    /// `expr_may_return_boolean` shape check is not applied there, so a
+    /// runtime-typed operand such as `xs[0]` keeps working as before.
+    fn validate_order_by_boolean_operands(expr: &QueryExpr<Variable>) -> Result<(), String> {
+        Self::validate_boolean_operands_impl(&expr.root(), false, false)
+    }
+
+    /// `in_filter` is true while walking the predicate of a list
+    /// comprehension or quantifier. C short-circuits in every filter and
+    /// accepts there operands it would reject in a projection, so the static
+    /// operand check is skipped for them (#3293).
+    fn validate_boolean_operands_impl(
+        node: &DynNode<ExprIR<Variable>>,
+        in_filter: bool,
+        check_shape: bool,
+    ) -> Result<(), String> {
+        let logical = matches!(
             node.data(),
             ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
-        ) {
+        );
+        if logical && !in_filter {
             for child in node.children() {
-                if !Self::expr_may_return_boolean(child) {
-                    return Err(String::from("Type mismatch: expected Boolean"));
+                // Runtime short-circuiting never evaluates an operand it does
+                // not need, so an operand whose type is already known to be
+                // neither Boolean nor Null is rejected here, as C does when it
+                // evaluates every operand (#3293).
+                if let Some(name) = Self::non_boolean_operand_type(&child) {
+                    return Err(format!(
+                        "Type mismatch: expected Boolean or Null but was {name}"
+                    ));
+                }
+                // A call whose declared return type cannot be Boolean (and
+                // cannot be Null) is rejected, as the projection shape check
+                // does; ORDER BY skips that check so it needs this one.
+                if !check_shape
+                    && let ExprIR::FuncInvocation(func) = child.data()
+                    && !func.ret_type.can_return_boolean()
+                {
+                    return Err(match Self::type_name(&func.ret_type) {
+                        Some(name) => {
+                            format!("Type mismatch: expected Boolean or Null but was {name}")
+                        }
+                        None => String::from("Type mismatch: expected Boolean or Null"),
+                    });
+                }
+                if check_shape && !Self::expr_may_return_boolean(child) {
+                    return Err(String::from("Type mismatch: expected Boolean or Null"));
                 }
             }
         }
-        for child in node.children() {
-            Self::validate_boolean_operands_impl(&child)?;
+        let predicate_scope = matches!(
+            node.data(),
+            ExprIR::ListComprehension(_) | ExprIR::Quantifier { .. }
+        );
+        for (i, child) in node.children().enumerate() {
+            // Filter status flows through the logical structure of a
+            // predicate and starts at a comprehension/quantifier predicate
+            // (child 1); any other operand is a value context again.
+            let child_in_filter = (logical && in_filter) || (predicate_scope && i == 1);
+            Self::validate_boolean_operands_impl(&child, child_in_filter, check_shape)?;
         }
         Ok(())
+    }
+
+    /// The name of the static type of an operand that is known at bind time
+    /// to be neither Boolean nor Null, or `None` when it may still be one of
+    /// them (or its type is only known at runtime).
+    fn non_boolean_operand_type(node: &DynNode<ExprIR<Variable>>) -> Option<&'static str> {
+        match node.data() {
+            // A literal list or map, and a pattern comprehension, are never Null.
+            // A slice, a list comprehension, a map projection and `size` of a
+            // runtime value are Null when their input is, which is a valid
+            // operand, so they stay runtime-checked (C accepts `null[0..1] AND true`).
+            ExprIR::List | ExprIR::PatternComprehension(_) => Some("List"),
+            ExprIR::Map => Some("Map"),
+            ExprIR::Constant(v) if !matches!(v, Value::Bool(_) | Value::Null) => Some(v.name()),
+            // A negated constant, like a negative literal, is a number.
+            ExprIR::Negate => Self::constant_value(node)
+                .filter(|v| !matches!(v, Value::Bool(_) | Value::Null))
+                .map(|v| v.name()),
+            // Arithmetic over constants has a known result type; with any
+            // runtime operand the result may be Null, so it stays unchecked.
+            ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Pow
+            | ExprIR::Modulo => Self::constant_arithmetic(node)
+                .filter(|v| !matches!(v, Value::Bool(_) | Value::Null))
+                .map(|v| v.name()),
+            _ => None,
+        }
+    }
+
+    /// The C spelling of a declared function return type, when it is a single
+    /// type; `None` for unions and the like.
+    fn type_name(ty: &Type) -> Option<&'static str> {
+        match ty {
+            Type::Int => Some("Integer"),
+            Type::Float => Some("Float"),
+            Type::String => Some("String"),
+            Type::List(_) => Some("List"),
+            Type::Map => Some("Map"),
+            Type::Node => Some("Node"),
+            Type::Relationship => Some("Edge"),
+            Type::Path => Some("Path"),
+            Type::Optional(inner) => Self::type_name(inner),
+            _ => None,
+        }
+    }
+
+    /// The value of a constant operand: a literal, a literal list, a negated
+    /// constant or constant arithmetic. `None` for anything else, and when
+    /// evaluating it would fail (the runtime reports that, as for an overflow).
+    fn constant_value(node: &DynNode<ExprIR<Variable>>) -> Option<Value> {
+        match node.data() {
+            ExprIR::Constant(v) => Some(v.clone()),
+            ExprIR::List => {
+                let mut elements = thin_vec::ThinVec::with_capacity(node.num_children());
+                for element in node.children() {
+                    elements.push(Self::constant_value(&element)?);
+                }
+                Some(Value::List(Arc::new(elements)))
+            }
+            // Entries are key nodes holding their value as the only child.
+            ExprIR::Map => {
+                let mut entries: Vec<(Arc<String>, Value)> =
+                    Vec::with_capacity(node.num_children());
+                for entry in node.children() {
+                    let ExprIR::Constant(Value::String(key)) = entry.data() else {
+                        return None;
+                    };
+                    entries.push((key.clone(), Self::constant_value(&entry.get_child(0)?)?));
+                }
+                Some(Value::Map(Arc::new(entries.into_iter().collect())))
+            }
+            ExprIR::Negate => match Self::constant_value(&node.get_child(0)?)? {
+                Value::Int(i) => i.checked_neg().map(Value::Int),
+                Value::Float(f) => Some(Value::Float(-f)),
+                Value::Null => Some(Value::Null),
+                _ => None,
+            },
+            ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Pow
+            | ExprIR::Modulo => Self::constant_arithmetic(node),
+            _ => None,
+        }
+    }
+
+    /// Evaluates an arithmetic subtree made only of constants. Returns `None`
+    /// for anything else, and when evaluation fails (left to the runtime).
+    fn constant_arithmetic(node: &DynNode<ExprIR<Variable>>) -> Option<Value> {
+        let mut values = Vec::with_capacity(node.num_children());
+        for child in node.children() {
+            values.push(Self::constant_value(&child)?);
+        }
+        let mut it = values.into_iter();
+        let first = it.next()?;
+        match node.data() {
+            ExprIR::Add => it.try_fold(first, |a, b| a + b).ok(),
+            ExprIR::Sub => it.try_fold(first, |a, b| a - b).ok(),
+            ExprIR::Mul => it.try_fold(first, |a, b| a * b).ok(),
+            ExprIR::Div => it.try_fold(first, |a, b| a / b).ok(),
+            ExprIR::Modulo => it.try_fold(first, |a, b| a % b).ok(),
+            ExprIR::Pow => it.try_fold(first, apply_pow).ok(),
+            _ => None,
+        }
     }
 
     /// Recursively determines whether an expression tree node can return a
