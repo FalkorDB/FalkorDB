@@ -728,7 +728,17 @@ impl Binder {
         // 2b. Apply node labels to the inner body NOW, before the inner
         // scopes are popped.  This prevents scope_id reuse in the outer
         // query from overwriting the inner body's label entries.
-        self.update_all_node_labels(&mut bound_body);
+        //
+        // A UNION body is the exception: each branch is bound by its own binder
+        // (scope ids restart at 0) and was labelled from that binder's own
+        // `node_labels` already. Applying this binder's labels on top would
+        // match the branch's inner `(scope, id)` keys against the OUTER
+        // query's entries and relabel a branch node that imports nothing —
+        // `MATCH (a:N) CALL { RETURN 0 AS x UNION CREATE (:New) RETURN 1 AS x }`
+        // created the node as `:N`.
+        if !matches!(bound_body, QueryIR::Union { .. }) {
+            self.update_all_node_labels(&mut bound_body);
+        }
 
         // 2c. Remove inner-scope entries from node_labels so that a
         // subsequent CALL body (which reuses the same scope_id range)

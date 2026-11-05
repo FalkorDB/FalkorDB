@@ -1082,6 +1082,14 @@ impl Graph {
         self.relationship_attrs.trim();
     }
 
+    /// The query that owned this version is done: ids it freed may be handed out
+    /// again by the next one, and the set that held them back is not carried
+    /// into a published version. Called once at MVCC commit.
+    pub fn end_id_quarantine(&mut self) {
+        self.node_ids.end_quarantine();
+        self.relationship_ids.end_quarantine();
+    }
+
     #[must_use]
     pub fn new_version(&self) -> Self {
         // One dictionary clone per version instead of the two the split tables cost.
@@ -5454,6 +5462,9 @@ mod reservation_tests {
         /// Opening a query opens the graph's batch, exactly as `Commit` does.
         fn new(g: &mut Graph) -> Self {
             g.open_id_batches().expect("a consistent space");
+            // A query is a version of its own: what an earlier one freed is
+            // free again, as `MvccGraph` ends the quarantine when it publishes.
+            g.end_id_quarantine();
             Self {
                 created: RoaringTreemap::new(),
                 cancelled: RoaringTreemap::new(),
@@ -5686,6 +5697,7 @@ mod reservation_tests {
         // One in the bin, two live, so three ids handed out.
         // A fresh batch, so nothing is outstanding: the first one committed.
         g.open_id_batches().expect("a consistent space");
+        g.end_id_quarantine();
         let ids = g
             .relationship_id_space()
             .reserve(2, &RoaringTreemap::new())

@@ -205,6 +205,18 @@ pub struct IdSpace {
     /// id an earlier record of the same batch freed. Cleared with `taken`, for
     /// the same reason.
     released: RoaringTreemap,
+    /// Every id *earlier batches of this version* released: freed, but not yet
+    /// to be handed out again.
+    ///
+    /// A write query is many batches (one per commit segment) over one MVCC
+    /// version, and a row it is still carrying may name an entity an earlier
+    /// segment deleted — a `CALL {}` body commits once per input row, so row 2
+    /// still holds the node row 1's body deleted. Reissuing that id to a node
+    /// the next invocation creates makes row 2's `DELETE` remove the new node
+    /// (#3164). So [`Self::reserve`] skips these until the version is dropped:
+    /// [`Self::new_version`] starts empty, and the ids are ordinary free ids
+    /// to the next query. Accumulated by [`Self::open_batch`] from `released`.
+    quarantined: RoaringTreemap,
 }
 
 /// Append up to `count` ids from `pool` that `held` does not already hold, to
@@ -245,10 +257,14 @@ fn reclaim_ids(
     pool: &RoaringTreemap,
     taken: &RoaringTreemap,
     issued: &RoaringTreemap,
+    quarantined: &RoaringTreemap,
     count: u64,
     out: &mut Vec<u64>,
 ) -> u64 {
-    let free = pool - taken - issued;
+    let mut free = pool - taken - issued;
+    if !quarantined.is_empty() {
+        free -= quarantined;
+    }
     let before = out.len();
     out.extend(free.iter().take(count as usize));
     (out.len() - before) as u64
@@ -270,6 +286,7 @@ impl IdSpace {
             entry_bound: 0,
             taken: RoaringTreemap::new(),
             released: RoaringTreemap::new(),
+            quarantined: RoaringTreemap::new(),
         }
     }
 
@@ -288,6 +305,7 @@ impl IdSpace {
             entry_bound,
             taken: RoaringTreemap::new(),
             released: RoaringTreemap::new(),
+            quarantined: RoaringTreemap::new(),
         }
     }
 
@@ -357,6 +375,12 @@ impl IdSpace {
         self.bound() - 1
     }
 
+    /// Forget what earlier batches freed: the version's query is over, so those
+    /// ids are ordinary free ids to whoever reserves next.
+    pub fn end_quarantine(&mut self) {
+        self.quarantined = RoaringTreemap::new();
+    }
+
     /// The same id space in a new MVCC version, with a fresh batch.
     ///
     /// A version is where a batch begins, so neither `taken` nor `released` is
@@ -384,6 +408,7 @@ impl IdSpace {
             entry_bound,
             taken,
             released: RoaringTreemap::new(),
+            quarantined: RoaringTreemap::new(),
         }
     }
 
@@ -447,7 +472,17 @@ impl IdSpace {
     pub fn open_batch(&mut self) -> Result<(), IdSpaceError> {
         self.checked()?;
         self.entry_bound = self.bound();
+        // What this batch freed stays unavailable for the rest of the version.
+        // So does an id it took and handed back ([`Self::cancel`]): a creation
+        // cancelled before it committed is just as stale to a reference the
+        // query still holds, and it sits in `recycled` without being `released`.
+        self.released |= &self.taken & &self.recycled;
         self.taken.clear();
+        if self.quarantined.is_empty() {
+            std::mem::swap(&mut self.quarantined, &mut self.released);
+        } else {
+            self.quarantined |= std::mem::take(&mut self.released);
+        }
         self.released.clear();
         Ok(())
     }
@@ -495,7 +530,14 @@ impl IdSpace {
         // — `GRAPH.BULK`, or anything reserving one id at a time — would
         // otherwise have to hand its own creations back to the thing that
         // recorded them.
-        let reclaimed = reclaim_ids(&self.recycled, &self.taken, issued, count, &mut ids);
+        let reclaimed = reclaim_ids(
+            &self.recycled,
+            &self.taken,
+            issued,
+            &self.quarantined,
+            count,
+            &mut ids,
+        );
 
         // Above every id ever handed out. `entry_bound` accounts for everything
         // issued before this batch; the ids issued *by* it that sit at or above
@@ -1029,6 +1071,56 @@ mod tests {
         assert_eq!(next, vec![1], "not 0 again, even though it is free");
     }
 
+    /// #3164: a later segment of the same version must not be handed an id an
+    /// earlier segment freed, since a row can still carry the old entity.
+    #[test]
+    fn an_id_released_by_an_earlier_batch_is_not_reissued_in_the_version() {
+        let mut space = IdSpace::restored(3, RoaringTreemap::new());
+        space.open_batch().expect("a consistent space");
+        space.release(&ids(&[0]), &ids(&[0])).expect("0 is live");
+
+        // Same batch: delete is committed after the reservations, nothing to see.
+        space.open_batch().expect("a consistent space");
+        let next = space.reserve(1, &RoaringTreemap::new()).expect("reserved");
+        assert_eq!(next, vec![3], "fresh, not the freed 0");
+
+        space.create(&ids(&[3])).expect("create");
+        space.open_batch().expect("a consistent space");
+        let next = space.reserve(2, &RoaringTreemap::new()).expect("reserved");
+        assert_eq!(next, vec![4, 5], "0 stays out for the whole version");
+        space.verify().expect("whole");
+
+        // A new version starts clean: the freed id is an ordinary free one.
+        let mut next_version = space.new_version();
+        next_version.open_batch().expect("a consistent space");
+        let next = next_version
+            .reserve(1, &RoaringTreemap::new())
+            .expect("reserved");
+        assert_eq!(next, vec![0]);
+    }
+
+    /// #3164: a creation cancelled before its batch committed is stale to a
+    /// reference the query still holds, so a later batch must not reissue it.
+    #[test]
+    fn an_id_cancelled_by_an_earlier_batch_is_not_reissued_in_the_version() {
+        let mut space = IdSpace::restored(0, RoaringTreemap::new());
+        space.open_batch().expect("a consistent space");
+        let reserved = space.reserve(1, &RoaringTreemap::new()).expect("reserved");
+        assert_eq!(reserved, vec![0]);
+        space.cancel(0).expect("cancel");
+
+        space.open_batch().expect("a consistent space");
+        let next = space.reserve(1, &RoaringTreemap::new()).expect("reserved");
+        assert_eq!(next, vec![1], "fresh, not the cancelled 0");
+
+        let mut next_version = space.new_version();
+        next_version.open_batch().expect("a consistent space");
+        let next = next_version
+            .reserve(1, &RoaringTreemap::new())
+            .expect("reserved");
+        assert_eq!(next, vec![0], "a new version starts clean");
+    }
+
     #[test]
     fn a_cancelled_reservation_arrives_as_a_pair() {
         // What a create-then-delete in one segment ships: both ids created, then
@@ -1248,7 +1340,14 @@ mod reclaim_ids_tests {
         count: u64,
     ) -> (Vec<u64>, u64) {
         let mut out: Vec<u64> = Vec::new();
-        let taken = reclaim_ids(pool, &RoaringTreemap::new(), held, count, &mut out);
+        let taken = reclaim_ids(
+            pool,
+            &RoaringTreemap::new(),
+            held,
+            &RoaringTreemap::new(),
+            count,
+            &mut out,
+        );
         assert_eq!(
             taken,
             out.len() as u64,
@@ -1319,6 +1418,7 @@ mod reclaim_ids_tests {
         let mut out: Vec<u64> = vec![7, 8];
         reclaim_ids(
             &pool,
+            &RoaringTreemap::new(),
             &RoaringTreemap::new(),
             &RoaringTreemap::new(),
             3,
