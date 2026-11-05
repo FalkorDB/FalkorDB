@@ -599,6 +599,11 @@ impl Value {
             i64::from(dt.minute())
         } else if c.eq_ignore_ascii_case("hour") {
             i64::from(dt.hour())
+        } else if c.eq_ignore_ascii_case("millisecond") {
+            0
+        } else if c.eq_ignore_ascii_case("microsecond") || c.eq_ignore_ascii_case("nanosecond") {
+            // microsecond/nanosecond precision not stored
+            0
         } else {
             return Err(format!("unknown time component {component}"));
         };
@@ -2927,5 +2932,16 @@ mod date_format_tests {
             Value::format_datetime(i64::MIN),
             "-292277022657-01-27T08:29:52"
         );
+    }
+
+    #[test]
+    fn time_get_attr_subsecond_components() {
+        let t = Value::Time(12 * 3600 + 31 * 60 + 14);
+        assert_eq!(t.get_attr("hour").unwrap(), Value::Int(12));
+        assert_eq!(t.get_attr("minute").unwrap(), Value::Int(31));
+        assert_eq!(t.get_attr("second").unwrap(), Value::Int(14));
+        assert_eq!(t.get_attr("millisecond").unwrap(), Value::Int(0));
+        assert_eq!(t.get_attr("microsecond").unwrap(), Value::Int(0));
+        assert_eq!(t.get_attr("nanosecond").unwrap(), Value::Int(0));
     }
 }
