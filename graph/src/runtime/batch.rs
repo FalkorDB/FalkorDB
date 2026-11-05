@@ -1638,6 +1638,7 @@ impl<'a> BatchOp<'a> {
                 // leak stale matches into the next argument batch.
                 op.emitter.reset();
                 op.pending_batches.clear();
+                op.clear_bidir_dedup();
                 op.child.set_argument_batch(batch);
             }
             Self::ExpandInto(op) => op.child.set_argument_batch(batch),

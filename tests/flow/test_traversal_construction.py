@@ -1,6 +1,9 @@
 from common import *
 from index_utils import *
 import re
+import random
+from collections import Counter
+from redis import ResponseError
 
 GRAPH_ID = "TraversalConstruction"
 
@@ -571,3 +574,157 @@ class testTraversalConstruction():
             self.env.assertContains("Node By Label Scan | (p:P)", plan)
             self.env.assertEqual(g.query(q).result_set, [[3]])
         g.delete()
+
+    # A Limit (and every Skip under it) bounds a traverse only when nothing
+    # between them can drop rows: a traverse feeding another traverse or an
+    # ExpandInto must not stop at the Limit, or the rows the upper operator
+    # needed are lost (#2957).
+    def test_limit_budget_through_traversals(self):
+        g = self.db.select_graph("LimitBudgetThroughTraversals")
+        # a1 -> b1 (dead end); a2 <-> b2: only a2 closes the cycle
+        g.query("""CREATE (:A {id:1})-[:R]->(:B {id:10}),
+                          (a2:A {id:2})-[:R]->(b2:B {id:20}), (b2)-[:R]->(a2)""")
+        q = "MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1"
+        self.env.assertEqual(g.query(q).result_set, [[2]])
+        g.delete()
+
+        g = self.db.select_graph("LimitBudgetThroughTraversals")
+        # a1 -> b1 (dead end); a2 -> b2 -> c: only a2 has a second hop
+        g.query("""CREATE (:A {id:1})-[:R]->(:B {id:10}),
+                          (:A {id:2})-[:R]->(:B {id:20})-[:R]->(:C {id:30})""")
+        q = "MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 1"
+        self.env.assertEqual(g.query(q).result_set, [[30]])
+        g.delete()
+
+        g = self.db.select_graph("LimitBudgetSkips")
+        g.query("""UNWIND range(1,3) AS i
+                   CREATE (:A {id:i})-[:R]->(:B {id:10*i})-[:R]->(:C {id:100*i})""")
+        cases = [
+            ("MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id SKIP 1 LIMIT 1", [[200]]),
+            ("MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1", [[20]]),
+            ("MATCH (a:A)-[:R]->(b) WITH b SKIP 1 RETURN b.id SKIP 1 LIMIT 5", [[30]]),
+            ("MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 5", [[100], [200], [300]]),
+        ]
+        for q, expected in cases:
+            self.env.assertEqual(sorted(g.query(q).result_set), expected, message=q)
+        g.delete()
+
+    # Two anonymous bidirectional hops deduplicate (source, destination) pairs
+    # per input batch of the second hop. A LIMIT hint must not shrink those
+    # batches, or a pair reached through several intermediates is emitted once
+    # per batch and the LIMIT counts the duplicates.
+    def test_limit_keeps_bidirectional_dedup(self):
+        g = self.db.select_graph("LimitBidirectionalDedup")
+        try:
+            g.query("""UNWIND range(1, 5) AS i CREATE (:M {i: i})""")
+            g.query("""CREATE (:A {id: 1}), (:B {id: 2})""")
+            g.query("""MATCH (a:A), (m:M), (b:B) CREATE (a)-[:R]->(m), (m)-[:R]->(b)""")
+            for limit in ["", "LIMIT 1", "LIMIT 2", "LIMIT 3", "LIMIT 100"]:
+                q = f"MATCH (a:A)-[]-()-[]-(b:B) RETURN a.id, b.id {limit}"
+                self.env.assertEqual(g.query(q).result_set, [[1, 2]], message=q)
+        finally:
+            g.delete()
+
+    # row_budget evaluates the LIMIT/SKIP expressions once and the Limit/Skip
+    # operators evaluate them again, so they must always agree: anything that
+    # is not a constant or parameter is rejected before planning.
+    def test_limit_skip_must_be_constant(self):
+        g = self.db.select_graph("LimitSkipConstant")
+        try:
+            for clause in ["LIMIT toInteger(rand() * 10)", "SKIP toInteger(rand() * 10)",
+                           "LIMIT timestamp()", "SKIP rand()"]:
+                q = f"UNWIND range(1, 10) AS x RETURN x {clause}"
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False, message=q)
+                except ResponseError as e:
+                    self.env.assertContains("invalid type", str(e), message=q)
+        finally:
+            g.delete()
+
+    # A record cap may pass below an operator only when every row that operator
+    # emits reaches the Limit. Compare LIMIT/SKIP against the same query without
+    # them, over traversal shapes that drop rows (destination label checks,
+    # dedup, edge uniqueness, filters, OPTIONAL, var-length).
+    def test_limit_skip_matches_full_result(self):
+        g = self.db.select_graph("LimitSkipDifferential")
+        try:
+            rng = random.Random(2957)
+            n = 120
+            g.query("UNWIND range(0, $n - 1) AS i CREATE (:N {id: i, v: i % 7, "
+                    "l: CASE i % 3 WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END})", {"n": n})
+            g.query("MATCH (x:N) WHERE x.l = 'A' SET x:A")
+            g.query("MATCH (x:N) WHERE x.l = 'B' SET x:B")
+            g.query("MATCH (x:N) WHERE x.l = 'C' SET x:C")
+            for _ in range(300):
+                a, b = rng.randrange(n), rng.randrange(n)
+                if rng.random() < 0.05:
+                    b = a
+                t = rng.choice(["R", "R", "S"])
+                g.query(f"MATCH (a:N {{id: {a}}}), (b:N {{id: {b}}}) CREATE (a)-[:{t}]->(b)")
+            shapes = [
+                "MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN a.id, b.id, c.id",
+                "MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id, b.id",
+                "MATCH (a)-[:R]->(b:B)-[:S]->(c:C) RETURN a.id, b.id, c.id",
+                "MATCH (a:A)-[:R]-(b)-[:R]-(c) RETURN a.id, c.id",
+                "MATCH (a)-[r1:R]->(b)<-[r2:R]-(c) RETURN a.id, id(r1), b.id, id(r2), c.id",
+                "MATCH (a)-[:R]->(b)-[:R]->(c) WHERE c.v > 3 AND a.id <> c.id RETURN a.id, b.id, c.id",
+                "MATCH (a)-[:R]->(b)-[:R]->(c) RETURN DISTINCT a.id, c.id",
+                "MATCH (a:A) OPTIONAL MATCH (a)-[:R]->(b)-[:S]->(c) RETURN a.id, b.id, c.id",
+                "MATCH (a:A)-[:R*1..3]->(b) RETURN a.id, b.id",
+                "MATCH (a:A) WITH a ORDER BY a.id MATCH (a)-[:R]->(b) RETURN a.id, b.id",
+                "MATCH (a)-[r1:R]->(b) MATCH (a)-[r2:R]->(b) RETURN a.id, id(r1), b.id, id(r2)",
+            ]
+            for body in shapes:
+                cols = body.split("RETURN", 1)[1].replace("DISTINCT", "")
+                order = " ORDER BY " + cols.strip()
+                full = g.query(body + order).result_set
+                full_set = Counter(map(tuple, full))
+                for k, s in [(1, 0), (2, 0), (1, 1), (3, 2), (7, 0), (len(full), 0), (len(full) + 5, 0), (5, 3)]:
+                    got = g.query(f"{body}{order} SKIP {s} LIMIT {k}").result_set
+                    self.env.assertEqual(got, full[s:s + k], message=f"{body} ordered k={k} s={s}")
+                    got = g.query(f"{body} SKIP {s} LIMIT {k}").result_set
+                    self.env.assertEqual(len(got), max(0, min(k, len(full) - s)), message=f"{body} count k={k} s={s}")
+                    got_set = Counter(map(tuple, got))
+                    self.env.assertTrue(all(got_set[x] <= full_set[x] for x in got_set), message=f"{body} subset k={k} s={s}")
+        finally:
+            g.delete()
+
+    # Destination-label check inside an undirected two-hop chain: the traversal
+    # drops rows, so a LIMIT must not stop it at its own row budget (main
+    # returned 0 rows for LIMIT 1 here although 25 rows exist).
+    def test_limit_with_dest_label_check_on_undirected_chain(self):
+        g = self.db.select_graph("LimitDestLabelChain")
+        self.env.cmd("DEL", g.name)
+        try:
+            g.query("""CREATE (:N:X {id:0}), (:N:S {id:1}), (:N:S:D {id:2}), (:N:S:D {id:3}),
+                              (:N:S:D {id:4}), (:N:S:D {id:5}), (:N:D {id:6})""")
+            edges = [(0,3,'R'),(6,3,'R'),(4,6,'R'),(5,3,'R'),(5,6,'R'),(4,0,'R'),(0,0,'R'),(5,4,'R'),
+                     (3,5,'R'),(3,5,'R'),(4,1,'R'),(3,4,'R'),(2,1,'S'),(1,6,'R'),(2,0,'R'),(6,4,'S'),
+                     (0,1,'S'),(5,6,'R'),(0,5,'R'),(5,5,'S'),(3,4,'S'),(1,2,'R'),(4,3,'S'),(3,4,'R')]
+            for a, b, t in edges:
+                g.query(f"MATCH (a:N {{id:{a}}}), (b:N {{id:{b}}}) CREATE (a)-[:{t}]->(b)")
+            body = "MATCH (s:S)-[]-()-[]-(d:D) RETURN d.id"
+            total = g.query(body).result_set
+            self.env.assertEqual(len(total), 25)
+            for limit in (1, 2, 5, 25, 100):
+                got = g.query(f"{body} LIMIT {limit}").result_set
+                self.env.assertEqual(len(got), min(limit, 25), message=f"LIMIT {limit}")
+        finally:
+            g.delete()
+
+    # The bidirectional dedup must outlive an input batch: with more than one
+    # batch of intermediates (here 3000 > 1024) the same (source, destination)
+    # pair was emitted once per batch, with or without a LIMIT.
+    def test_bidirectional_dedup_across_input_batches(self):
+        g = self.db.select_graph("BidirDedupBatches")
+        self.env.cmd("DEL", g.name)
+        try:
+            g.query("CREATE (:A {id:1}), (:B {id:2})")
+            g.query("""UNWIND range(1, 3000) AS i MATCH (a:A), (b:B)
+                       CREATE (m:M {i: i}), (a)-[:R]->(m), (m)-[:R]->(b)""")
+            for limit in ["", "LIMIT 1", "LIMIT 5", "LIMIT 100"]:
+                q = f"MATCH (a:A)-[]-()-[]-(b:B) RETURN a.id, b.id {limit}"
+                self.env.assertEqual(g.query(q).result_set, [[1, 2]], message=q)
+        finally:
+            g.delete()
