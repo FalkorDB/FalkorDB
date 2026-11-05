@@ -66,7 +66,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     graph::graph::Graph,
@@ -75,7 +75,7 @@ use crate::{
 };
 
 use super::super::IR;
-use super::{collect_expr_variables, collect_subtree_variables};
+use super::collect_expr_variables;
 
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
 ///
@@ -465,6 +465,57 @@ fn resolve_path(
         node = node.get_child(pos)?;
     }
     Some(node.idx())
+}
+
+/// The variables the rows leaving `node` carry, as opposed to every variable
+/// mentioned somewhere below it.
+///
+/// `Project` and `Aggregate` reset the environment, so what lies below them is
+/// hidden, and its ids belong to the old scope: they may equal ids of the new
+/// scope's variables. `SemiApply`, `AntiSemiApply` and `OrApplyMultiplexer`
+/// pass their input row through, so only child 0 contributes; their predicate
+/// branches bind nothing visible, and likewise `ForEach`'s body. Every other operator carries its own
+/// variables plus those of its children.
+fn exposed_variables(node: &DynNode<IR>) -> HashSet<u32> {
+    use crate::runtime::runtime::GetVariables;
+    // `get_variables` walks the whole subtree, so ask it about the operator
+    // alone, as a tree of one node. It names what an operator creates, which
+    // is not all it outputs: `Project` and `Aggregate` also carry parent
+    // variables over (the new side of each `(old, new)` copy pair), and an
+    // `Argument` outputs its payload.
+    let own = DynTree::new(node.data().clone());
+    let mut vars: HashSet<u32> = own.root().get_variables().iter().map(|v| v.id).collect();
+    match node.data() {
+        IR::Project { copies, .. } => vars.extend(copies.iter().map(|(_, new)| new.id)),
+        IR::Aggregate { projections, .. } => {
+            vars.extend(projections.iter().map(|(_, new)| new.id));
+        }
+        IR::Argument(Some(bound)) => vars.extend(bound.iter().map(|(id, _)| *id)),
+        _ => {}
+    }
+    match node.data() {
+        IR::Project { .. } | IR::Aggregate { .. } => {}
+        // The body runs for its side effects; the input row passes through
+        // unchanged, so neither the loop variable nor anything the body binds
+        // is visible afterwards. With a single child that child is the body.
+        IR::ForEach { .. } => {
+            vars.clear();
+            if node.num_children() == 2 {
+                vars.extend(exposed_variables(&node.child(0)));
+            }
+        }
+        IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_) => {
+            if node.num_children() > 0 {
+                vars.extend(exposed_variables(&node.child(0)));
+            }
+        }
+        _ => {
+            for child in node.children() {
+                vars.extend(exposed_variables(&child));
+            }
+        }
+    }
+    vars
 }
 
 /// Does the subtree *beneath* `scan_idx` provably bind `alias`?
@@ -976,14 +1027,15 @@ pub(super) fn select_scan_node(
         // Order greedily instead: repeatedly take a hop with an endpoint
         // already bound, orient it to start from that endpoint, and mark its
         // other end bound. The chain is left alone if no such order exists.
-        let initial_bound: HashSet<u32> = {
-            let mut b = HashSet::new();
-            b.insert(best_node.alias.id);
-            if let Some(child) = &existing_child {
-                b.extend(collect_subtree_variables(&child.root()));
-            }
-            b
-        };
+        // Only what the new chain's leaf binds counts: the scan built for
+        // `best_node`, or else the kept outer-context child, which does not
+        // bind `best_node` just because it scored best — no scan is built for
+        // it then, and a hop or inline filter placed as if it were bound would
+        // read an unbound variable.
+        let initial_bound: HashSet<u32> = existing_child.as_ref().map_or_else(
+            || HashSet::from([best_node.alias.id]),
+            |child| exposed_variables(&child.root()),
+        );
         let mut bound = initial_bound.clone();
         // Hops still to be placed, in pattern order. Each round removes the
         // one it picks, so what is left is both the candidate set and the
@@ -1352,4 +1404,98 @@ pub(super) fn select_scan_node(
     }
 
     select_var_len_scan_node(optimized_plan, graph);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashSet, sync::Arc};
+
+    use orx_tree::{DynTree, NodeRef};
+
+    use super::exposed_variables;
+    use crate::parser::ast::{ExprIR, Variable};
+    use crate::planner::IR;
+    use crate::runtime::{functions::Type, value::Value};
+
+    fn var(
+        id: u32,
+        scope_id: u32,
+    ) -> Variable {
+        Variable {
+            name: None,
+            id,
+            scope_id,
+            ty: Type::Any,
+        }
+    }
+
+    /// `WITH b` can reach the plan as a copy of a parent variable with nothing
+    /// projected; the copy's new side is still what the rows carry.
+    #[test]
+    fn project_exposes_copied_variables() {
+        let plan = DynTree::new(IR::Project {
+            exprs: vec![],
+            copies: vec![(var(7, 0), var(3, 1))],
+        });
+        assert_eq!(exposed_variables(&plan.root()), HashSet::from([3]));
+    }
+
+    #[test]
+    fn aggregate_exposes_copied_variables() {
+        let plan = DynTree::new(IR::Aggregate {
+            names: vec![],
+            keys: vec![],
+            aggregations: vec![],
+            projections: vec![(var(7, 0), var(3, 1))],
+        });
+        assert_eq!(exposed_variables(&plan.root()), HashSet::from([3]));
+    }
+
+    #[test]
+    fn argument_exposes_its_payload() {
+        let plan = DynTree::new(IR::Argument(Some(vec![(4, 1), (5, 1)])));
+        assert_eq!(exposed_variables(&plan.root()), HashSet::from([4, 5]));
+        let plan = DynTree::new(IR::Argument(None));
+        assert!(exposed_variables(&plan.root()).is_empty());
+    }
+
+    #[test]
+    fn foreach_exposes_only_its_input() {
+        let mut plan = DynTree::new(IR::ForEach {
+            var: var(5, 0),
+            list: Arc::new(DynTree::new(ExprIR::Constant(Value::Int(1)))),
+        });
+        plan.root_mut().push_child(IR::Argument(Some(vec![(1, 0)])));
+        plan.root_mut().push_child(IR::Argument(Some(vec![(2, 0)])));
+        assert_eq!(exposed_variables(&plan.root()), HashSet::from([1]));
+
+        let mut plan = DynTree::new(IR::ForEach {
+            var: var(5, 0),
+            list: Arc::new(DynTree::new(ExprIR::Constant(Value::Int(1)))),
+        });
+        plan.root_mut().push_child(IR::Argument(Some(vec![(2, 0)])));
+        assert!(exposed_variables(&plan.root()).is_empty());
+    }
+
+    /// What lies below a `Project` is hidden, and a predicate branch of a
+    /// `SemiApply` binds nothing the rows carry.
+    #[test]
+    fn hidden_variables_are_not_exposed() {
+        let mut plan = DynTree::new(IR::Project {
+            exprs: vec![(
+                var(0, 1),
+                Arc::new(DynTree::new(crate::parser::ast::ExprIR::Constant(
+                    crate::runtime::value::Value::Int(1),
+                ))),
+            )],
+            copies: vec![],
+        });
+        plan.root_mut().push_child(IR::Argument(Some(vec![(9, 0)])));
+        assert_eq!(exposed_variables(&plan.root()), HashSet::from([0]));
+
+        let mut plan = DynTree::new(IR::SemiApply);
+        plan.root_mut().push_child(IR::Argument(Some(vec![(1, 0)])));
+        plan.root_mut().push_child(IR::Argument(Some(vec![(2, 0)])));
+        assert_eq!(exposed_variables(&plan.root()), HashSet::from([1]));
+    }
 }
