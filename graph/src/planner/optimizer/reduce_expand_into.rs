@@ -16,8 +16,11 @@ use orx_tree::{Bfs, DynTree, NodeRef};
 use super::super::IR;
 use super::references::ir_references_variable;
 
-pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
-    let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
+pub(super) fn reduce_expand_into(
+    plan: &mut DynTree<IR>,
+    traverser: &mut Bfs,
+) {
+    let indices: Vec<_> = plan.root().indices_with(traverser).collect();
     for idx in indices {
         let (edge_id, edge_scope_id) = match plan.node(idx).data() {
             IR::ExpandInto {
@@ -37,7 +40,7 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
         let mut referenced = false;
         let mut cur = idx;
         while let Some(parent) = plan.node(cur).parent() {
-            if ir_references_variable(parent.data(), edge_id, edge_scope_id) {
+            if ir_references_variable(parent.data(), edge_id, edge_scope_id, traverser) {
                 referenced = true;
                 break;
             }
