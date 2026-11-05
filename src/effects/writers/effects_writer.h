@@ -102,6 +102,31 @@ typedef struct {
 		IndexFieldType t
 	);
 
+	// the CCH path index
+	//
+	// ONE EFFECT PER STATEMENT on both wires, not one per relationship type:
+	// the index is defined over the types TOGETHER, and an effect naming a
+	// subset of them describes a different index.
+	void (*CreateCCH)
+	(
+		EffectsBuffer *buff,
+		const RelationID *rel_ids,
+		const char **rel_names,
+		uint rel_count,
+		AttributeID weight_attr,
+		const char *weight_name
+	);
+
+	void (*DropCCH)
+	(
+		EffectsBuffer *buff,
+		const RelationID *rel_ids,
+		const char **rel_names,
+		uint rel_count,
+		AttributeID weight_attr,
+		const char *weight_name
+	);
+
 	// constraint DDL
 	//
 	// 'status' is a ConstraintStatus that only v3 has a field for

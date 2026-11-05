@@ -898,16 +898,25 @@ void test_effectsV3Group_repeatedAttributeIsCollapsed(void) {
 
 // walk a payload holding ONE CREATE_INDEX record to the start of its options
 //
-// The record is `opcode . schema_type . schema_id . name . field_type .
-// fields . OPTIONS`, and a string is a u64 length that INCLUDES the NUL
-// followed by that many bytes. Sizes come from the real types rather than
-// literals, so a widened enum moves the test with the encoder.
+// The record is `opcode . schema_type . SCHEMAS . field_type . fields .
+// OPTIONS`, where SCHEMAS is `u16 n . (u32 id, name) x n` and a string is a
+// u64 length that INCLUDES the NUL followed by that many bytes. Sizes come
+// from the real types rather than literals, so a widened enum moves the test
+// with the encoder.
 static size_t _options_offset(const unsigned char *b, size_t n) {
-	size_t o = sizeof(EffectType) + sizeof(SchemaType) + sizeof(int);
+	size_t o = sizeof(EffectType) + sizeof(SchemaType);
 
 	uint64_t len;
-	memcpy(&len, b + o, 8);            // label
-	o += 8 + len;
+
+	uint16_t n_schemas;
+	memcpy(&n_schemas, b + o, 2);
+	o += 2;
+
+	for(uint16_t i = 0; i < n_schemas; i++) {
+		o += 4;                        // schema id
+		memcpy(&len, b + o, 8);        // its name
+		o += 8 + len;
+	}
 
 	o += 4;                            // field_type
 
@@ -947,6 +956,132 @@ void test_effectsV3Group_indexFieldsFoldIntoOneRecord(void) {
 	EffectsV3Grouping_Free(g);
 }
 
+// A CCH STATEMENT IS ONE RECORD NAMING EVERY RELATIONSHIP TYPE IT SPANS
+//
+// The path index is defined over the types TOGETHER, so a record naming a
+// subset of them would describe a different index. This is the case the schema
+// list was added for - every other index statement names exactly one.
+void test_effectsV3Group_cchIsOneRecordOverEveryType(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+
+	// named high-id first, so the sort below is doing something
+	const uint32_t ids[]   = { 9, 2 };
+	const char    *names[] = { "ROAD", "R" };
+
+	EffectsV3Grouping_AddCCHIndex(g, EFFECT_CREATE_INDEX, ids, names, 2, 7,
+			"w");
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+			"a CCH statement is one record, got %u",
+			EffectsV3Grouping_RecordCount(g));
+
+	size_t n;
+	unsigned char *b = _encode(g, &n);
+
+	size_t o = sizeof(EffectType) + sizeof(SchemaType);
+
+	uint16_t n_schemas;
+	memcpy(&n_schemas, b + o, 2);
+	TEST_ASSERT_(n_schemas == 2,
+			"both relationship types belong to the one record, got %u",
+			n_schemas);
+
+	uint32_t first;
+	memcpy(&first, b + o + 2, 4);
+	TEST_ASSERT_(first == 2,
+			"the schema list reaches the wire ascending, got %u first", first);
+
+	free(b);
+	EffectsV3Grouping_Free(g);
+}
+
+// AN ORDINARY INDEX FIELD NEVER FOLDS INTO A CCH RECORD
+//
+// The fold key is the schema LIST. A range index on one of the same
+// relationship types is a different statement, and folding it in would both
+// change the CCH index and lose the range one.
+void test_effectsV3Group_cchDoesNotAbsorbAnIndexField(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	SIValue opts = SI_NullVal();
+
+	const uint32_t ids[]   = { 2, 9 };
+	const char    *names[] = { "R", "ROAD" };
+
+	EffectsV3Grouping_AddCCHIndex(g, EFFECT_CREATE_INDEX, ids, names, 2, 7,
+			"w");
+
+	EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_EDGE, 2,
+			"R", INDEX_FLD_RANGE, 12, "a", opts);
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 2,
+			"a CCH index and a range index are two statements, got %u",
+			EffectsV3Grouping_RecordCount(g));
+
+	EffectsV3Grouping_Free(g);
+}
+
+// does the payload contain these bytes anywhere?
+//
+// A blunt search on purpose: the assertion below is about a string SURVIVING,
+// and walking to it would mean teaching the walker to step over a whole record
+// it is not interested in.
+static bool _contains(const unsigned char *b, size_t n, const char *needle) {
+	size_t m = strlen(needle);
+	if(m > n) return false;
+
+	for(size_t i = 0; i + m <= n; i++) {
+		if(memcmp(b + i, needle, m) == 0) return true;
+	}
+	return false;
+}
+
+// A SINGLE-TYPE CCH RECORD IS NOT "AN EARLIER RECORD NAMING THE SAME INDEX"
+//
+// ON ()-[r:ROAD]-() is an ordinary CCH statement and names one relationship
+// type, so it matches an ordinary index statement on opcode, schema type and
+// schema id. It is still a different index - a path index is its own object -
+// and counting it as the same one strips language and stopwords off the first
+// real record that follows, because those are stated once per index per
+// payload.
+//
+// Two types would not show this: _names_one_schema is false for them.
+void test_effectsV3Group_singleTypeCCHDoesNotStripOptions(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+
+	const uint32_t ids[]   = { 2 };
+	const char    *names[] = { "R" };
+
+	EffectsV3Grouping_AddCCHIndex(g, EFFECT_CREATE_INDEX, ids, names, 1, 7,
+			"w");
+
+	SIValue sw = SIArray_New(1);
+	SIArray_Append(&sw, SI_ConstStringVal("the"));
+
+	SIValue opts = SI_Map(2);
+	Map_Add(&opts, SI_ConstStringVal("stopwords"), sw);
+	Map_Add(&opts, SI_ConstStringVal("language"), SI_ConstStringVal("english"));
+
+	// a fulltext index on the SAME relationship type, in the same payload
+	EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_EDGE, 2,
+			"R", INDEX_FLD_FULLTEXT, 12, "a", opts);
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 2,
+			"a path index and a fulltext index are two records, got %u",
+			EffectsV3Grouping_RecordCount(g));
+
+	size_t n;
+	unsigned char *b = _encode(g, &n);
+
+	TEST_ASSERT_(_contains(b, n, "english"),
+			"the fulltext record lost its language to the CCH record");
+	TEST_ASSERT_(_contains(b, n, "the"),
+			"the fulltext record lost its stopwords to the CCH record");
+
+	free(b);
+	SIValue_Free(opts);
+	EffectsV3Grouping_Free(g);
+}
+
 // the same field twice does not inflate the count the record states
 void test_effectsV3Group_indexFieldNotAddedTwice(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
@@ -960,7 +1095,8 @@ void test_effectsV3Group_indexFieldNotAddedTwice(void) {
 	size_t n;
 	unsigned char *b = _encode(g, &n);
 
-	size_t o = sizeof(EffectType) + sizeof(SchemaType) + sizeof(int);
+	// opcode . schema_type . u16 n . (u32 id, name) . field_type
+	size_t o = sizeof(EffectType) + sizeof(SchemaType) + 2 + 4;
 	uint64_t len;
 	memcpy(&len, b + o, 8);
 	o += 8 + len + 4;
@@ -1303,6 +1439,12 @@ TEST_LIST = {
 		test_effectsV3Group_indexFieldsFoldIntoOneRecord },
 	{ "EffectsV3Group:indexFieldNotAddedTwice",
 		test_effectsV3Group_indexFieldNotAddedTwice },
+	{ "EffectsV3Group:cchIsOneRecordOverEveryType",
+		test_effectsV3Group_cchIsOneRecordOverEveryType },
+	{ "EffectsV3Group:cchDoesNotAbsorbAnIndexField",
+		test_effectsV3Group_cchDoesNotAbsorbAnIndexField },
+	{ "EffectsV3Group:singleTypeCCHDoesNotStripOptions",
+		test_effectsV3Group_singleTypeCCHDoesNotStripOptions },
 	{ "EffectsV3Group:unstatedPhoneticIsAClearFlag",
 		test_effectsV3Group_unstatedPhoneticIsAClearFlag },
 	{ "EffectsV3Group:optionStatedAtItsDefaultIsPresent",

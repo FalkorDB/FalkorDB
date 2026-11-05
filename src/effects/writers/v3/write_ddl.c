@@ -14,6 +14,7 @@
 #include "../../effects_internal.h"
 #include "write_v3.h"
 #include "../../effects_v3_group.h"
+#include "../../../util/rmalloc.h"
 
 void EffectsWriteV3_CreateIndex
 (
@@ -94,4 +95,61 @@ void EffectsWriteV3_DropConstraint
 			0, label_id, label, attr_ids, attrs, n) ;
 
 	EffectsBuffer_IncEffectCount (buff) ;
+}
+
+// the CCH path index, create and drop
+//
+// NOT A NEW OPCODE. A path index is staged as CREATE_INDEX or DROP_INDEX
+// carrying INDEX_FLD_CCH, whose schema list is the relationship types and
+// whose single field is the weight attribute - so the v3 wire still has the
+// fourteen opcodes it always had.
+static void _v3_StageCCH
+(
+	EffectsBuffer *buff,         // effect buffer
+	EffectType opcode,           // CREATE_INDEX or DROP_INDEX
+	const RelationID *rel_ids,   // relationship-type ids the index spans
+	const char **rel_names,      // their names, parallel to 'rel_ids'
+	uint rel_count,              // number of relationship types
+	AttributeID weight_attr,     // edge weight attribute
+	const char *weight_name      // its name
+) {
+	// a schema id travels as a u32 where a RelationID is an int; widened here
+	// rather than cast through the list, which would reinterpret the array
+	uint32_t *ids = rm_malloc (rel_count * sizeof (uint32_t)) ;
+	for (uint i = 0 ; i < rel_count ; i++) {
+		ids [i] = (uint32_t) rel_ids [i] ;
+	}
+
+	EffectsV3Grouping_AddCCHIndex (EffectsBuffer_V3 (buff), opcode, ids,
+			rel_names, (uint16_t) rel_count, weight_attr, weight_name) ;
+
+	rm_free (ids) ;
+
+	EffectsBuffer_IncEffectCount (buff) ;
+}
+
+void EffectsWriteV3_CreateCCH
+(
+	EffectsBuffer *buff,
+	const RelationID *rel_ids,
+	const char **rel_names,
+	uint rel_count,
+	AttributeID weight_attr,
+	const char *weight_name
+) {
+	_v3_StageCCH (buff, EFFECT_CREATE_INDEX, rel_ids, rel_names, rel_count,
+			weight_attr, weight_name) ;
+}
+
+void EffectsWriteV3_DropCCH
+(
+	EffectsBuffer *buff,
+	const RelationID *rel_ids,
+	const char **rel_names,
+	uint rel_count,
+	AttributeID weight_attr,
+	const char *weight_name
+) {
+	_v3_StageCCH (buff, EFFECT_DROP_INDEX, rel_ids, rel_names, rel_count,
+			weight_attr, weight_name) ;
 }

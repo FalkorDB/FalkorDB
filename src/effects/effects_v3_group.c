@@ -223,6 +223,15 @@ typedef struct {
 	EffectsV3AttrRef *attrs_ref;    // owned, and each name owned
 	uint16_t          n_attrs_ref;
 	uint16_t          cap_attrs_ref;
+
+	// index DDL only: the schemas the statement names
+	//
+	// A LIST, because one CCH statement indexes several relationship types at
+	// once while every other index statement names exactly one. For an index
+	// record this is the key a field folds into, in place of 'schema_id'
+	// above, which those records leave unset.
+	EffectsV3SchemaRef *schemas;    // owned, and each name owned
+	uint16_t            n_schemas;
 } Announcement;
 
 // one slot of the per-entity index; idx1 == 0 means empty
@@ -1273,6 +1282,36 @@ static void _append_attr_ref
 	a->n_attrs_ref++;
 }
 
+// does this announcement name exactly the one schema 'id'?
+//
+// The key a field folds into. An ordinary index statement names one schema, so
+// this is the single-id comparison it always was; a CCH statement names several
+// and nothing ever folds into it, because its writer builds its record whole.
+static bool _names_one_schema
+(
+	const Announcement *a,  // announcement
+	int id                  // schema id
+) {
+	return a->n_schemas == 1 && a->schemas[0].id == (uint32_t)id;
+}
+
+// give an announcement the schemas its index statement names
+static void _set_schemas
+(
+	Announcement *a,            // announcement
+	const uint32_t *ids,        // schema ids
+	const char **names,         // their names, parallel to 'ids'
+	uint16_t n                  // how many
+) {
+	a->schemas   = rm_calloc(n, sizeof(EffectsV3SchemaRef));
+	a->n_schemas = n;
+
+	for(uint16_t i = 0; i < n; i++) {
+		a->schemas[i].id   = ids[i];
+		a->schemas[i].name = rm_strdup(names[i]);
+	}
+}
+
 void EffectsV3Grouping_AddIndexField
 (
 	EffectsV3Grouping *g,   // accumulator
@@ -1305,8 +1344,14 @@ void EffectsV3Grouping_AddIndexField
 	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
 		Announcement *a = g->announcements + i;
 
+		// A CCH RECORD IS NEVER THE SAME INDEX, even when it names exactly
+		// one relationship type and so matches on opcode, schema type and
+		// schema id. A path index is its own object: counting it here would
+		// set 'index_seen' and strip the language and stopwords off the first
+		// ordinary record that follows it in the same payload.
 		if(a->opcode != opcode || a->schema_type != schema_type
-				|| a->schema_id != schema_id) {
+				|| (a->field_type & INDEX_FLD_CCH) != 0
+				|| !_names_one_schema(a, schema_id)) {
 			continue;
 		}
 
@@ -1351,13 +1396,47 @@ void EffectsV3Grouping_AddIndexField
 
 	a->opcode      = opcode;
 	a->schema_type = schema_type;
-	a->schema_id   = schema_id;
-	a->name        = rm_strdup(label);
 	a->field_type  = field_type;
 	a->options     = o;
 	a->has_options = (opcode == EFFECT_CREATE_INDEX);
 
+	// an index record names its schema in the list rather than in 'name',
+	// which stays NULL for both arms
+	const uint32_t id = (uint32_t)schema_id;
+	_set_schemas(a, &id, &label, 1);
+
 	_append_attr_ref(a, attr_id, attr_name);
+}
+
+void EffectsV3Grouping_AddCCHIndex
+(
+	EffectsV3Grouping *g,
+	EffectType opcode,
+	const uint32_t *rel_ids,
+	const char **rel_names,
+	uint16_t n_rels,
+	AttributeID weight_attr,
+	const char *weight_name
+) {
+	ASSERT(g != NULL);
+	ASSERT(opcode == EFFECT_CREATE_INDEX || opcode == EFFECT_DROP_INDEX);
+	ASSERT(n_rels > 0);
+
+	Announcement *a = _new_announcement(g);
+
+	a->opcode      = opcode;
+	a->schema_type = SCHEMA_EDGE;   // a path index spans relationship types
+	a->field_type  = INDEX_FLD_CCH;
+	a->has_options = (opcode == EFFECT_CREATE_INDEX);
+
+	// no options: a path index has none to state, and the block a create
+	// writes is five clear presence bytes
+	memset(&a->options, 0, sizeof(a->options));
+
+	_set_schemas(a, rel_ids, rel_names, n_rels);
+
+	// the weight attribute is the statement's one field
+	_append_attr_ref(a, weight_attr, weight_name);
 }
 
 uint32_t EffectsV3Grouping_RecordCount
@@ -1432,8 +1511,8 @@ void EffectsV3Grouping_Encode
 
 			case EFFECT_CREATE_INDEX:
 				r.create_index.schema_type = a->schema_type;
-				r.create_index.schema_id   = a->schema_id;
-				r.create_index.name        = a->name;
+				r.create_index.schemas     = a->schemas;
+				r.create_index.n_schemas   = a->n_schemas;
 				r.create_index.field_type  = a->field_type;
 				r.create_index.attrs       = a->attrs_ref;
 				r.create_index.n_attrs     = a->n_attrs_ref;
@@ -1444,8 +1523,8 @@ void EffectsV3Grouping_Encode
 			case EFFECT_DROP_INDEX:
 				// no options field at all on this arm
 				r.drop_index.schema_type = a->schema_type;
-				r.drop_index.schema_id   = a->schema_id;
-				r.drop_index.name        = a->name;
+				r.drop_index.schemas     = a->schemas;
+				r.drop_index.n_schemas   = a->n_schemas;
 				r.drop_index.field_type  = a->field_type;
 				r.drop_index.attrs       = a->attrs_ref;
 				r.drop_index.n_attrs     = a->n_attrs_ref;
@@ -1602,6 +1681,10 @@ void EffectsV3Grouping_Free
 			rm_free(a->attrs_ref[k].name);
 		}
 		rm_free(a->attrs_ref);
+		for(uint16_t k = 0; k < a->n_schemas; k++) {
+			rm_free(a->schemas[k].name);
+		}
+		rm_free(a->schemas);
 		_options_free(&a->options);
 	}
 

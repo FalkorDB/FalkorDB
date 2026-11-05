@@ -19,6 +19,8 @@ const EffectsWriter EFFECTS_WRITER_V2 = {
 
 	.CreateIndex      = EffectsWriteV2_CreateIndex,
 	.DropIndex        = EffectsWriteV2_DropIndex,
+	.CreateCCH        = EffectsWriteV2_CreateCCH,
+	.DropCCH          = EffectsWriteV2_DropCCH,
 	.CreateConstraint = EffectsWriteV2_CreateConstraint,
 	.DropConstraint   = EffectsWriteV2_DropConstraint,
 } ;

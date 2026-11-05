@@ -193,6 +193,27 @@ void EffectsV3Grouping_AddIndexField
 	SIValue options         // C's options map; ignored for a drop
 );
 
+// stage a CCH path index as one index record
+//
+// A CCH statement is NOT a new opcode. It is a CREATE_INDEX or DROP_INDEX
+// carrying INDEX_FLD_CCH, whose schema list is the relationship types it spans
+// and whose single field is the weight attribute - which is what the schema
+// list was added for.
+//
+// ONE RECORD, built whole, rather than a field folded into an existing one: the
+// statement names its relationship types together, and a record naming a subset
+// of them describes a different index.
+void EffectsV3Grouping_AddCCHIndex
+(
+	EffectsV3Grouping *g,        // accumulator
+	EffectType opcode,           // CREATE_INDEX or DROP_INDEX
+	const uint32_t *rel_ids,     // relationship-type ids the index spans
+	const char **rel_names,      // their names, the cross-check
+	uint16_t n_rels,             // how many
+	AttributeID weight_attr,     // the edge weight attribute
+	const char *weight_name      // its name, the cross-check
+);
+
 // how many records the accumulator would emit
 //
 // NOT const: staged updates are folded into their groups here if they have not
