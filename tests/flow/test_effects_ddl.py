@@ -855,3 +855,258 @@ class testEffects_03_ImplicitIndexes(_EffectsBase):
         self.assert_agree(probe, [[1]], params={'t': 'beta'})
         self.assert_agree("MATCH (n:DFB) RETURN count(n)", [[1]])
         self.assert_graph_eq()
+
+
+#-----------------------------------------------------------------------------
+# 4g. a refused buffer takes its index DDL with it
+#-----------------------------------------------------------------------------
+
+
+class testEffects_07_RefusedBufferIndexDDL(_EffectsBase):
+    """A `GRAPH.EFFECT` buffer that is refused must leave no index DDL behind
+    (#3023).
+
+    The index map is shared by every MVCC version, so a `CREATE_INDEX` applied
+    before the refusing record used to survive the rollback that discarded
+    everything else. Index DDL is now run only once the buffer has applied and
+    validated.
+
+    The payloads are captured off the replica's feed rather than encoded by
+    hand: a statement run on a source graph whose schema numbering matches the
+    target's, then spliced with a record that the target refuses — creating
+    node 0, which is already live there.
+    """
+
+    GRAPH_ID = "effects_refused_ddl"
+
+    def __init__(self):
+        self._setup()
+        self.start_monitor('GRAPH.EFFECT')
+
+    def _records_of(self, key, query):
+        """The records of the single effect `query` produces on `key`, without
+        the two header bytes."""
+        self.monitor_mark()
+        self.db.select_graph(key).query(query)
+        self.wait_for_replica_offset()
+        window = self.monitor_mark()
+        payloads = self.effect_payloads(window, key)
+        self.env.assertEqual(len(payloads), 1)
+        raw = self.payload_bytes(payloads[0])
+        self.env.assertEqual(raw[:2], b"\x03\x00")
+        return raw[2:]
+
+    @staticmethod
+    def _create_node_0():
+        """`3 CREATE_NODE` of id 0, no labels and no attributes."""
+        return (b"\x03\x00\x00\x00" + b"\x01\x00\x00\x00"   # opcode, count 1
+                + b"\x00\x00" + b"\x00\x00"                 # no labels, no attrs
+                + b"\x01\x00\x00\x00" + b"\x0c"             # one Range segment
+                + (0).to_bytes(8, "little") + b"\x01")      # base 0, len 1
+
+    def _refused(self, key, body):
+        try:
+            self.master.execute_command("GRAPH.EFFECT", key, b"\x03\x00" + body)
+        except ResponseError as e:
+            self.env.assertContains("already live", str(e))
+            return
+        raise AssertionError("the buffer was accepted; it must be refused")
+
+    @staticmethod
+    def _indexes(key, graph):
+        return list_indicies(graph.select_graph(key)).result_set
+
+    def test01_a_refused_create_index_is_not_kept(self):
+        src, dst = f"{self.GRAPH_ID}_c_src", f"{self.GRAPH_ID}_c_dst"
+        for key in (src, dst):
+            self.db.select_graph(key).query("CREATE (:A {zz: 1})")
+        create = self._records_of(src, "CREATE INDEX FOR (n:A) ON (n.zz)")
+
+        self._refused(dst, create + self._create_node_0())
+
+        self.env.assertEqual(self._indexes(dst, self.db), [])
+        # the graph still takes the same DDL, and indexes its node
+        g = self.db.select_graph(dst)
+        create_node_range_index(g, 'A', 'zz', sync=True)
+        self.env.assertEqual(
+            g.ro_query("MATCH (n:A) WHERE n.zz = 1 RETURN count(n)").result_set,
+            [[1]])
+
+    def test02_a_refused_drop_index_is_not_kept(self):
+        src, dst = f"{self.GRAPH_ID}_d_src", f"{self.GRAPH_ID}_d_dst"
+        for key in (src, dst):
+            g = self.db.select_graph(key)
+            g.query("CREATE (:A {zz: 1})")
+            create_node_range_index(g, 'A', 'zz', sync=True)
+        self.wait_for_replica_offset()
+        before = self._indexes(dst, self.db)
+        self.env.assertEqual(len(before), 1)
+        drop = self._records_of(src, "DROP INDEX FOR (n:A) ON (n.zz)")
+
+        self._refused(dst, drop + self._create_node_0())
+
+        self.env.assertEqual(self._indexes(dst, self.db), before)
+        self.env.assertEqual(
+            self.db.select_graph(dst).ro_query(
+                "MATCH (n:A) WHERE n.zz = 1 RETURN count(n)").result_set,
+            [[1]])
+
+    def test03_an_accepted_buffer_indexes_what_it_created(self):
+        # The DDL now runs after every other record, so an entity the buffer
+        # creates is indexed whichever side of the CREATE_INDEX it sits on.
+        seed = "CREATE (:F {body: 'seed'})"
+        src_idx, src_node = f"{self.GRAPH_ID}_ok_idx", f"{self.GRAPH_ID}_ok_node"
+        for key in (src_idx, src_node):
+            self.db.select_graph(key).query(seed)
+        create = self._records_of(
+            src_idx, "CREATE FULLTEXT INDEX FOR (n:F) ON (n.body)")
+        # Enough nodes that publishing the version takes measurable time: an
+        # index populated from the committed graph *before* it is published
+        # would miss every one of them.
+        n = 50000
+        node = self._records_of(
+            src_node, f"UNWIND range(1, {n}) AS x CREATE (:F {{body: 'alpha'}})")
+
+        probe = ("CALL db.idx.fulltext.queryNodes('F', $t) "
+                 "YIELD node RETURN count(node)")
+        for name, body in (("index_first", create + node),
+                           ("node_first", node + create)):
+            key = f"{self.GRAPH_ID}_ok_{name}"
+            self.db.select_graph(key).query(seed)
+            self.master.execute_command("GRAPH.EFFECT", key, b"\x03\x00" + body)
+            g = self.db.select_graph(key)
+            wait_for_indices_to_sync(g)
+            self.env.assertEqual(len(self._indexes(key, self.db)), 1)
+            for term, count in (('seed', 1), ('alpha', n)):
+                self.env.assertEqual(
+                    g.ro_query(probe, {'t': term}).result_set, [[count]],
+                    message=f"{name}: '{term}' must be indexed")
+
+    def _constraint_records(self, key):
+        """The records of the effect of a UNIQUE constraint on `A(zz)` (the
+        index it needs is created first, outside the window)."""
+        g = self.db.select_graph(key)
+        g.query("CREATE (:A {zz: 1, other: 1})")
+        create_node_range_index(g, 'A', 'zz', sync=True)
+        self.wait_for_replica_offset()
+        self.monitor_mark()
+        self.master.execute_command(
+            "GRAPH.CONSTRAINT", "CREATE", key, "UNIQUE", "NODE", "A",
+            "PROPERTIES", 1, "zz")
+        self.wait_for_replica_offset()
+        payloads = self.effect_payloads(self.monitor_mark(), key)
+        self.env.assertEqual(len(payloads), 1)
+        return self.payload_bytes(payloads[0])[2:]
+
+    def _dst_with_two_range_fields(self, key):
+        g = self.db.select_graph(key)
+        g.query("CREATE (:A {zz: 1, other: 1})")
+        create_node_range_index(g, 'A', 'zz', sync=True)
+        create_node_range_index(g, 'A', 'other', sync=True)
+
+    def test04_a_drop_is_judged_against_the_constraints_before_it(self):
+        # DROP_INDEX A(zz), CREATE_INDEX A(zz), then a UNIQUE constraint on
+        # A(zz). The drop is deferred past the constraint record, but the
+        # constraint did not exist where the drop appeared: the buffer is valid.
+        p = f"{self.GRAPH_ID}_u"
+        dst = f"{p}_dst"
+        self._dst_with_two_range_fields(dst)
+        drop_src, create_src = f"{p}_drop", f"{p}_create"
+        self.db.select_graph(drop_src).query("CREATE (:A {zz: 1, other: 1})")
+        create_node_range_index(self.db.select_graph(drop_src), 'A', 'zz', sync=True)
+        self.db.select_graph(create_src).query("CREATE (:A {zz: 1, other: 1})")
+        self.wait_for_replica_offset()
+        drop = self._records_of(drop_src, "DROP INDEX FOR (n:A) ON (n.zz)")
+        create = self._records_of(create_src, "CREATE INDEX FOR (n:A) ON (n.zz)")
+        uniq = self._constraint_records(f"{p}_uniq")
+
+        self.master.execute_command(
+            "GRAPH.EFFECT", dst, b"\x03\x00" + drop + create + uniq)
+
+        self.env.assertEqual(len(list_constraints(self.db.select_graph(dst))), 1)
+        rows = self._indexes(dst, self.db)
+        self.env.assertEqual(len(rows), 1)
+        self.env.assertContains('zz', str(rows))
+        self.env.assertContains('other', str(rows))
+
+    def test05_a_drop_that_a_constraint_before_it_protects_is_refused_whole(self):
+        # The constraint first, then DROP_INDEX of its field: the drop is
+        # refused at its position, and nothing the buffer carried stays.
+        p = f"{self.GRAPH_ID}_p"
+        dst = f"{p}_dst"
+        self._dst_with_two_range_fields(dst)
+        drop_src = f"{p}_drop"
+        self.db.select_graph(drop_src).query("CREATE (:A {zz: 1, other: 1})")
+        create_node_range_index(self.db.select_graph(drop_src), 'A', 'zz', sync=True)
+        self.wait_for_replica_offset()
+        drop = self._records_of(drop_src, "DROP INDEX FOR (n:A) ON (n.zz)")
+        uniq = self._constraint_records(f"{p}_uniq")
+        before = self._indexes(dst, self.db)
+
+        try:
+            self.master.execute_command(
+                "GRAPH.EFFECT", dst, b"\x03\x00" + uniq + drop)
+        except ResponseError as e:
+            self.env.assertContains("supports constraint", str(e))
+        else:
+            raise AssertionError("the buffer was accepted; it must be refused")
+        self.env.assertEqual(self._indexes(dst, self.db), before)
+        self.env.assertEqual(len(list_constraints(self.db.select_graph(dst))), 0)
+
+    def test06_a_refused_later_statement_leaves_no_population_waiting(self):
+        # CREATE FULLTEXT INDEX, then the same statement again: the second is
+        # refused (already indexed) after the first spawned a population that
+        # waits for this buffer's version, which is never published. The index
+        # the first one left behind must still be populated from the committed
+        # graph, not stay UNDER CONSTRUCTION.
+        p = f"{self.GRAPH_ID}_w"
+        src, dst = f"{p}_src", f"{p}_dst"
+        for key in (src, dst):
+            self.db.select_graph(key).query("CREATE (:F {body: 'seed'})")
+        create = self._records_of(src, "CREATE FULLTEXT INDEX FOR (n:F) ON (n.body)")
+
+        try:
+            self.master.execute_command(
+                "GRAPH.EFFECT", dst, b"\x03\x00" + create + create)
+        except ResponseError as e:
+            self.env.assertContains("already indexed", str(e))
+        else:
+            raise AssertionError("the buffer was accepted; it must be refused")
+
+        g = self.db.select_graph(dst)
+        wait_for_indices_to_sync(g)
+        self.env.assertEqual(
+            g.ro_query("CALL db.idx.fulltext.queryNodes('F', 'seed') "
+                       "YIELD node RETURN count(node)").result_set, [[1]])
+
+    def test07_a_refused_buffer_on_a_new_key_leaves_a_usable_index(self):
+        # As test06, but the target key did not exist: the buffer is its first
+        # write, so no earlier commit ever gave the indexer a committed graph to
+        # populate from, and a later statement's refusal left the index of the
+        # first one UNDER CONSTRUCTION for good. The records carry the schema
+        # too (ADD_SCHEMA F, ADD_ATTRIBUTE body), as the source key is new as
+        # well.
+        p = f"{self.GRAPH_ID}_n"
+        src, dst = f"{p}_src", f"{p}_dst"
+        create = self._records_of(src, "CREATE FULLTEXT INDEX FOR (n:F) ON (n.body)")
+
+        try:
+            self.master.execute_command(
+                "GRAPH.EFFECT", dst, b"\x03\x00" + create + create)
+        except ResponseError as e:
+            self.env.assertContains("already indexed", str(e))
+        else:
+            raise AssertionError("the buffer was accepted; it must be refused")
+
+        g = self.db.select_graph(dst)
+        # returns only once every index is operational; a population stuck
+        # waiting for a commit that never comes times out here
+        wait_for_indices_to_sync(g)
+        indexes = self._indexes(dst, self.db)
+        self.env.assertEqual(len(indexes), 1)
+        self.env.assertEqual(indexes[0][0], 'F')
+        # and the index indexes what is written afterwards
+        g.query("CREATE (:F {body: 'late'})")
+        self.env.assertEqual(
+            g.ro_query("CALL db.idx.fulltext.queryNodes('F', 'late') "
+                       "YIELD node RETURN count(node)").result_set, [[1]])

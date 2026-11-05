@@ -117,8 +117,17 @@ impl MvccGraph {
     /// Used by the RDB load path.
     #[must_use]
     pub fn from_graph(graph: Graph) -> Self {
+        let graph = Arc::new(AtomicRefCell::new(graph));
+        // The indexers always have a committed graph to read, from the moment
+        // the key exists, instead of only after its first commit. Index
+        // population and the recovery of an index whose buffer was refused read
+        // the committed graph and, with none, reschedule every millisecond; on
+        // a key whose first buffer is refused no later commit ever arrives to
+        // end that (#3023). Every `commit` replaces it with the version it
+        // publishes.
+        graph.borrow().set_indexer_graph(graph.clone());
         Self {
-            graph: ArcSwap::from_pointee(AtomicRefCell::new(graph)),
+            graph: ArcSwap::new(graph),
         }
     }
 
