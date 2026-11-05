@@ -231,7 +231,8 @@ static void _encode_record
 	ASSERT(r   != NULL);
 	ASSERT(out != NULL);
 
-	EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->opcode, sizeof(EffectType));
+	// four bytes because the format says so, not because the enum stores four
+	EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->opcode, sizeof(uint32_t));
 
 	// ONE ARM PER OPCODE AND NO `default:`.
 	//
