@@ -40,6 +40,7 @@ test_index_scans:testIndexScanFlow.test_29_array_index
 test_index_scans:testIndexScanFlow.test_30_update_array_index
 test_index_scans:testIndexScanFlow.test_31_remove_array_index
 test_index_scans:testIndexScanFlow.test_32_multiple_array_indexed_entities
+test_index_scans:testIndexScanFlow.test_44_bool_is_not_a_number_in_the_index
 
 # ---------------------------------------------------------------------------
 # String and text predicates on a Range index — tags, stopwords, escaping, mixed-type columns.
@@ -60,6 +61,7 @@ test_index_scans:testIndexScanFlow.test20_index_scan_stopwords
 test_index_scans:testIndexScanFlow.test_24_multitype_index
 test_index_scans:testIndexScanFlow.test_25_unescaped_string
 test_index_scans:testIndexScanFlow.test_38_exclusive_equal_string_bounds
+test_index_scans:testIndexScanFlow.test_45_string_range_follows_byte_order
 test_index_delete:testNodeIndexDeletionFlow.test_07_reset_order
 test_index_updates:testIndexUpdatesFlow.test04_node_deletion
 test_edge_index_updates:testEdgeIndexUpdatesFlow.test04_edge_deletion
@@ -98,6 +100,15 @@ test_index_scans:testIndexScanFlow.test13_point_index_scan
 error: a conjunction of 2 predicates [equality on `*`; range on `*`]
 test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test28_post_filter_keeps_pushed_conjuncts
 test_index_scans:testIndexScanFlow.test_43_merged_filters_use_the_index
+
+# ---------------------------------------------------------------------------
+# A union with a range member — `n.v > 1.5 OR n.v IN [1]`. The native index serves a union of
+# equalities and IN lists on one attribute only. test_46 first checks that a numeric range does
+# not return Point-valued nodes (RediSearch kept a geo field's geohashes in the numeric tree of
+# the same name); it reaches this error on its second check.
+# ---------------------------------------------------------------------------
+error: a union of 2 members on `*` with a member that is not an equality or IN list
+test_index_scans:testIndexScanFlow.test_46_range_does_not_return_points_or_serve_a_bool_valued_operand
 
 # ---------------------------------------------------------------------------
 # No UNDER CONSTRUCTION window — the index is ready when CREATE INDEX returns. test08 and test10
