@@ -30,9 +30,12 @@ use crate::{
     reply::reply_verbose_value,
 };
 use graph::{
-    graph::{graph::Plan, mvcc_graph::GraphVersion},
+    graph::graph::Plan,
     planner::IR,
-    runtime::runtime::{GetVariables, Runtime},
+    runtime::{
+        graph_version::GraphVersion,
+        runtime::{GetVariables, Runtime},
+    },
     threadpool::spawn,
 };
 use orx_tree::{Bfs, Collection, NodeRef};

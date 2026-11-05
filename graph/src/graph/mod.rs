@@ -11,7 +11,7 @@
 //!                    │  (mvcc_graph.rs)          │  Snapshot isolation for readers,
 //!                    │                           │  stale forks refused at commit
 //!                    └────────────┬──────────────┘
-//!                                 │ Arc<Graph> (published), Fork
+//!                                 │ Arc<Graph> (published); a fork is a Graph
 //!                                 ▼
 //!                    ┌──────────────────────────┐
 //!                    │         Graph             │  Core storage (graph.rs)

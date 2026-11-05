@@ -139,30 +139,30 @@ src/graph_core.rs	commit_and_replicate	1553	PROVEN	GraphCore.commitSteps: modifi
 src/graph_core.rs	process_write_queued_query	1599	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit); slot dropped on dequeue: SearchConcurrency Pool.paths_release_once
 src/graph_core.rs	CtxSink::replicate	1748	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
 src/graph_core.rs	graph_free	1761	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
-src/query_session.rs	QuerySession::begin	158	PROVEN	QuerySession.begin: escalate_order
-src/query_session.rs	QuerySession::begin_with	165	PROVEN	QuerySession.begin (facts parameter): upgrade_unregistered, reauth_replay
-src/query_session.rs	QuerySession::begin_writer	180	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order
-src/query_session.rs	QuerySession::facts	198	PROVEN	QuerySession.Facts (returns the facts it was begun with): reauth_replay
+src/query_session.rs	QuerySession::begin	157	PROVEN	QuerySession.begin: escalate_order
+src/query_session.rs	QuerySession::begin_with	164	PROVEN	QuerySession.begin (facts parameter): upgrade_unregistered, reauth_replay
+src/query_session.rs	QuerySession::begin_writer	179	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order
+src/query_session.rs	QuerySession::facts	197	PROVEN	QuerySession.Facts (returns the facts it was begun with): reauth_replay
 src/query_session.rs	QuerySession::write_version	211	PROVEN	QuerySession.writeVersion: writeVersion_takes_nothing (infallible; reader Unchecked(ver+1), writer Current; #3657)
 src/query_session.rs	QuerySession::is_stale	227	PROVEN	QuerySession.isStale: stale_sticky
 src/query_session.rs	QuerySession::is_writer	239	PROVEN	QuerySession.SS.writer: writeVersion_takes_nothing
-src/query_session.rs	QuerySession::check_fork	247	CONDITIONAL	QuerySession.checkFork: checkFork_spec, checkFork_noop, current_kept, stale_sticky, upgrade_stale; SearchConcurrency Mvcc.checkFork_stale/checkFork_on_committed; #3567 rebase_onto_indexer_batches (index progress only; native_index Rebase.V.rebased_keeps_data). CONDITIONAL on one undischarged hypothesis about other code: the rebase's one Err(Stale), a borrowed fork in a release build (graph/src/graph/mvcc_graph.rs rebase_onto_indexer_batches), never happens for an escalating writer's fork; the model has no such error, so checkFork_spec covers the is_stale refusal only
+src/query_session.rs	QuerySession::check_fork	251	CONDITIONAL	QuerySession.checkFork: checkFork_spec, checkFork_noop, current_kept, stale_sticky, upgrade_stale; SearchConcurrency Mvcc.checkFork_stale/checkFork_on_committed; #3567 rebase_onto_indexer_batches (index progress only; native_index Rebase.V.rebased_keeps_data). CONDITIONAL on one undischarged hypothesis about other code: the rebase's one Err(Stale), a borrowed fork in a release build (graph/src/graph/mvcc_graph.rs rebase_onto_indexer_batches), never happens for an escalating writer's fork; the model has no such error, so checkFork_spec covers the is_stale refusal only
 src/query_session.rs	QuerySession::version_is_current	235	PROVEN	QuerySession.versionIsCurrent: writeVersion_takes_nothing, current_kept (abandonSteps resyncs iff current: GraphCore.failed_no_commit)
-src/query_session.rs	WriteAbort::from	75	PROVEN	QuerySession.WriteAbort.ofCommit: ofCommit_stale, ofCommit_invalid, ofCommit_ne (Stale ↦ retry, Invalid ↦ permanent)
-src/query_session.rs	QuerySession::release_locks	281	PROVEN	QuerySession.release: release_none, release_order
-src/query_session.rs	QuerySession::graph_arc	289	PROVEN	QuerySession.graphArc: graphArc_id
-src/query_session.rs	QuerySession::with_graph	298	PROVEN	QuerySession.withGraph: withGraph_released
-src/query_session.rs	QuerySession::with_graph_mut	314	PROVEN	QuerySession.withGraphMut: escalate_writer
-src/query_session.rs	QuerySession::upgrade_to_write	332	PROVEN	QuerySession.upgrade/upgradeS (check_fork last, #3657): upgrade_twice, upgrade_unregistered, upgrade_state, upgrade_stale, upgradeSt_stale_visible (a Stale report leaves Version::Stale, so is_stale is true for the retry)
-src/query_session.rs	QuerySession::escalate	358	PROVEN	QuerySession.escalate: escalate_order, escalate_mode, escalate_writer
-src/query_session.rs	reauthorize_write	392	PROVEN	QuerySession.reauthorize: reauth_paused, reauth_replica, reauth_replay, reauth_main
-src/query_session.rs	QuerySession::upgrade_to_write	433	PROVEN	QuerySession.upgrade: upgrade_twice, upgrade_unregistered, upgrade_state
-src/query_session.rs	QuerySession::drop	443	PROVEN	QuerySession.release: release_none
-src/query_session.rs	hold_gil	463	PROVEN	QuerySession.gilAcquire: gil_nested, gil_stack, gil_main, gil_out_of_order
-src/query_session.rs	Gil::acquire	485	PROVEN	QuerySession.gilAcquire: gil_nested, gil_main, gil_stack
-src/query_session.rs	Gil::drop	508	PROVEN	QuerySession.gilDrop: gil_stack, gil_out_of_order
-src/query_session.rs	lock_gil	529	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
-src/query_session.rs	release_gil	542	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
+src/query_session.rs	WriteAbort::from	74	PROVEN	QuerySession.WriteAbort.ofCommit: ofCommit_stale, ofCommit_invalid, ofCommit_ne (Stale ↦ retry, Invalid ↦ permanent)
+src/query_session.rs	QuerySession::release_locks	289	PROVEN	QuerySession.release: release_none, release_order
+src/query_session.rs	QuerySession::graph_arc	297	PROVEN	QuerySession.graphArc: graphArc_id
+src/query_session.rs	QuerySession::with_graph	306	PROVEN	QuerySession.withGraph: withGraph_released
+src/query_session.rs	QuerySession::with_graph_mut	322	PROVEN	QuerySession.withGraphMut: escalate_writer
+src/query_session.rs	QuerySession::upgrade_to_write	343	PROVEN	QuerySession.upgrade/upgradeS (check_fork last, #3657): upgrade_twice, upgrade_unregistered, upgrade_state, upgrade_stale, upgradeSt_stale_visible (a Stale report leaves Version::Stale, so is_stale is true for the retry)
+src/query_session.rs	QuerySession::escalate	372	PROVEN	QuerySession.escalate: escalate_order, escalate_mode, escalate_writer
+src/query_session.rs	reauthorize_write	406	PROVEN	QuerySession.reauthorize: reauth_paused, reauth_replica, reauth_replay, reauth_main
+src/query_session.rs	QuerySession::upgrade_to_write	447	PROVEN	QuerySession.upgrade: upgrade_twice, upgrade_unregistered, upgrade_state
+src/query_session.rs	QuerySession::drop	460	PROVEN	QuerySession.release: release_none
+src/query_session.rs	hold_gil	480	PROVEN	QuerySession.gilAcquire: gil_nested, gil_stack, gil_main, gil_out_of_order
+src/query_session.rs	Gil::acquire	502	PROVEN	QuerySession.gilAcquire: gil_nested, gil_main, gil_stack
+src/query_session.rs	Gil::drop	525	PROVEN	QuerySession.gilDrop: gil_stack, gil_out_of_order
+src/query_session.rs	lock_gil	546	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
+src/query_session.rs	release_gil	559	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
 src/module_init.rs	pthread_atfork	91	AXIOMATISED	libc pthread_atfork declaration
 src/module_init.rs	on_fork_child	118	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
 src/module_init.rs	graph_init	139	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range; historical pre3328_* (W4-redis-3 / #3268, fixed by #3328)

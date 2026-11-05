@@ -6,8 +6,8 @@
 //!
 //! - Readers never block: [`MvccGraph::read`] loads the `Arc` from an
 //!   `ArcSwap`, which takes no lock.
-//! - A writer builds into a [`Fork`] ([`MvccGraph::fork`]), Copy-on-Write and
-//!   invisible to readers until it is committed.
+//! - A writer builds into a fork ([`MvccGraph::fork`]): a `Graph` it owns,
+//!   Copy-on-Write and invisible to readers until it is committed.
 //! - [`MvccGraph::commit`] publishes a fork only if it still extends the
 //!   published version, so a fork that another commit overtook is refused
 //!   rather than published over it.
@@ -31,7 +31,7 @@
 //!  Reader 1 ──read()──▶ loads Arc ──▶ sees Graph v1
 //!  Reader 2 ──read()──▶ loads Arc ──▶ sees Graph v1
 //!
-//!  Writer ──fork()──▶ Graph::new_version() ──▶ Fork v2 (private)
+//!  Writer ──fork()──▶ Graph::new_version() ──▶ Graph v2 (owned, private)
 //!    │                 (COW matrices, COW AttributeStore)
 //!    │── mutations on v2 ──▶ ...
 //!    │── commit(v2) ──▶ v2 still extends v1? valid? swap graph pointer
@@ -61,134 +61,18 @@
 //! `ArcSwap`, and a commit publishes by swapping it, through `&self`.
 //!
 //! A published version is an `Arc<Graph>`, so nothing can change it in place:
-//! the types allow only shared access to it. Only a [`Fork`] is mutable, and
-//! only until it is published. A fork holds its version in an `Arc` it alone
-//! owns; [`MvccGraph::commit`] publishes a clone of that `Arc`, so whoever
-//! holds the fork goes on reading the version it built, now published, and a
-//! [`Fork::borrow_mut`] after that panics instead of changing it.
+//! the types allow only shared access to it. A fork is a `Graph` its writer
+//! owns and changes through `&mut`; [`MvccGraph::commit`] takes it by value
+//! and hands back the `Arc` it published.
 
-use std::{ops::Deref, sync::Arc};
+use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use atomic_refcell::{AtomicRef, AtomicRefCell, AtomicRefMut, BorrowError, BorrowMutError};
 use thiserror::Error;
 
 use crate::graph::graph::{Graph, NodeOpError};
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
-
-/// A writer's private version of the graph, from [`MvccGraph::fork`].
-///
-/// Mutable through a shared reference until [`MvccGraph::commit`] publishes
-/// it. The version stays readable after that — it is the published one — but
-/// [`Self::borrow_mut`] panics: a published version is never changed.
-pub struct Fork(AtomicRefCell<Arc<Graph>>);
-
-impl Fork {
-    #[must_use]
-    pub fn new(graph: Graph) -> Self {
-        Self(AtomicRefCell::new(Arc::new(graph)))
-    }
-
-    /// Shared access, while the fork is built and after it is published.
-    #[must_use]
-    pub fn borrow(&self) -> AtomicRef<'_, Graph> {
-        AtomicRef::map(self.0.borrow(), |g| &**g)
-    }
-
-    /// Shared access, unless the fork is borrowed mutably.
-    ///
-    /// # Errors
-    ///
-    /// If the fork is borrowed mutably.
-    pub fn try_borrow(&self) -> Result<AtomicRef<'_, Graph>, BorrowError> {
-        self.0.try_borrow().map(|g| AtomicRef::map(g, |g| &**g))
-    }
-
-    /// Exclusive access to a fork that is not published yet.
-    ///
-    /// # Panics
-    ///
-    /// If the fork is borrowed, or was published.
-    #[must_use]
-    pub fn borrow_mut(&self) -> AtomicRefMut<'_, Graph> {
-        AtomicRefMut::map(self.0.borrow_mut(), unpublished)
-    }
-
-    /// Exclusive access, unless the fork is borrowed.
-    ///
-    /// # Errors
-    ///
-    /// If the fork is borrowed.
-    ///
-    /// # Panics
-    ///
-    /// If the fork was published.
-    pub fn try_borrow_mut(&self) -> Result<AtomicRefMut<'_, Graph>, BorrowMutError> {
-        self.0
-            .try_borrow_mut()
-            .map(|g| AtomicRefMut::map(g, unpublished))
-    }
-
-    /// The version this fork holds: the one [`MvccGraph::commit`] publishes.
-    #[must_use]
-    pub fn version(&self) -> Arc<Graph> {
-        Arc::clone(&self.0.borrow())
-    }
-}
-
-fn unpublished(graph: &mut Arc<Graph>) -> &mut Graph {
-    Arc::get_mut(graph).expect("a published version is never changed")
-}
-
-/// A version a query runs on: a published one, or a writer's [`Fork`].
-#[derive(Clone)]
-pub enum GraphVersion {
-    Published(Arc<Graph>),
-    Fork(Arc<Fork>),
-}
-
-impl GraphVersion {
-    /// Shared access to the version.
-    #[must_use]
-    pub fn borrow(&self) -> GraphRef<'_> {
-        match self {
-            Self::Published(g) => GraphRef::Published(g),
-            Self::Fork(f) => GraphRef::Fork(f.borrow()),
-        }
-    }
-}
-
-impl From<Arc<Graph>> for GraphVersion {
-    fn from(g: Arc<Graph>) -> Self {
-        Self::Published(g)
-    }
-}
-
-impl From<Arc<Fork>> for GraphVersion {
-    fn from(f: Arc<Fork>) -> Self {
-        Self::Fork(f)
-    }
-}
-
-/// Shared access to a [`GraphVersion`].
-pub enum GraphRef<'r> {
-    /// A published version needs no borrow: nothing can change it.
-    Published(&'r Graph),
-    /// A fork's borrow, which keeps it from being changed meanwhile.
-    Fork(AtomicRef<'r, Graph>),
-}
-
-impl Deref for GraphRef<'_> {
-    type Target = Graph;
-
-    fn deref(&self) -> &Graph {
-        match self {
-            Self::Published(g) => g,
-            Self::Fork(g) => g,
-        }
-    }
-}
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -252,8 +136,8 @@ impl MvccGraph {
     /// reader, and an inline writer that commits meanwhile is never refused
     /// for it (#3093) — the fork goes stale instead ([`Self::is_stale`]).
     #[must_use]
-    pub fn fork(&self) -> Arc<Fork> {
-        Arc::new(Fork::new(self.graph.load().new_version()))
+    pub fn fork(&self) -> Graph {
+        self.graph.load().new_version()
     }
 
     /// Whether a version was published after `fork` was made, so it no
@@ -268,9 +152,9 @@ impl MvccGraph {
     #[must_use]
     pub fn is_stale(
         &self,
-        fork: &Fork,
+        fork: &Graph,
     ) -> bool {
-        self.graph.load().version + 1 != fork.borrow().version
+        self.graph.load().version + 1 != fork.version
     }
 
     /// Bring a writer's `fork`, which is not stale ([`Self::is_stale`]), onto the indexer batches
@@ -281,76 +165,47 @@ impl MvccGraph {
     /// For a writer that forked before it held the write lock, as it escalates, right after
     /// [`Self::is_stale`]: what it publishes and reads from then on has the batches' progress, and
     /// nothing else publishes before its own commit.
-    ///
-    /// # Errors
-    ///
-    /// [`CommitError::Stale`] if a batch overtook `fork` and it is borrowed, which no escalating
-    /// writer's is: a debug build stops on it, and in a release build the write runs again.
     #[cfg(feature = "index-falkordb")]
     pub fn rebase_onto_indexer_batches(
         &self,
-        fork: &Fork,
-    ) -> Result<(), CommitError> {
+        fork: &mut Graph,
+    ) {
         let published = self.graph.load_full();
-        // Borrowed mutably only when a batch overtook it: until a build runs in the background, no
-        // published column is `Building`, and nothing is rebased.
-        if fork
-            .try_borrow()
-            .is_ok_and(|fork| !fork.overtaken_by_indexer_batches(&published))
-        {
-            return Ok(());
+        // Until a build runs in the background, no published column is `Building`, and nothing
+        // is rebased.
+        if fork.overtaken_by_indexer_batches(&published) {
+            fork.rebase_onto_indexer_batches(&published);
         }
-        // An escalating writer's fork is never borrowed: its writer has stopped reading it to
-        // escalate. One that is is a bug, which a debug build stops on. A release build refuses
-        // it, and the host runs the write again.
-        let Ok(mut fork) = fork.try_borrow_mut() else {
-            if cfg!(debug_assertions) {
-                panic!("a fork is rebased while it is borrowed");
-            }
-            return Err(CommitError::Stale);
-        };
-        fork.rebase_onto_indexer_batches(&published);
-        Ok(())
     }
 
-    /// Publish `fork` as the current version.
+    /// Publish `fork` as the current version, and return it.
     ///
     /// Checks before touching anything, so a refusal leaves the published
-    /// version untouched and `fork` unpublished. This is the only place a
-    /// version becomes visible, so every writer gets these checks; a writer
-    /// that publishes unversioned state before it commits also asks
-    /// [`Self::is_stale`] first.
+    /// version untouched. This is the only place a version becomes visible, so
+    /// every writer gets these checks; a writer that publishes unversioned
+    /// state before it commits also asks [`Self::is_stale`] first.
     ///
     /// A refusal needs no cleanup: nothing was taken, and the refused version
-    /// is just dropped.
+    /// is dropped.
     ///
     /// Takes `&self`: publishing is a compare-and-swap of the published
     /// pointer. The caller holds the host's global lock, which keeps commits
     /// apart and the swap out of the way of the host forking (#452); it needs no
     /// per-graph lock.
     ///
-    /// Once published, `fork` still reads the version, now the published one,
-    /// and can no longer be changed ([`Fork::borrow_mut`]).
-    ///
     /// # Errors
     ///
     /// [`CommitError::Stale`] if `fork` no longer extends the published
-    /// graph, if it was published already, or if another version was
-    /// published while this commit ran (only a host publishing without the
-    /// global lock lets that happen),
+    /// graph, or if another version was published while this commit ran (only
+    /// a host publishing without the global lock lets that happen),
     /// [`CommitError::Invalid`] if [`Graph::validate`] refuses it.
     pub fn commit(
         &self,
-        fork: &Fork,
-    ) -> Result<(), CommitError> {
+        mut fork: Graph,
+    ) -> Result<Arc<Graph>, CommitError> {
         let published = self.graph.load_full();
-        let version = {
-            let mut slot = fork.0.borrow_mut();
-            let graph = Arc::get_mut(&mut slot).ok_or(CommitError::Stale)?;
-            Self::prepare(&published, graph, true)?;
-            Arc::clone(&slot)
-        };
-        self.publish(&published, version)
+        Self::prepare(&published, &mut fork, true)?;
+        self.publish(&published, Arc::new(fork))
     }
 
     /// Commit an indexer batch. `prepared` is a build version of a published one
@@ -382,37 +237,34 @@ impl MvccGraph {
     /// # Errors
     ///
     /// [`CommitError::Invalid`] if [`Graph::validate`] refuses the version, [`CommitError::Stale`]
-    /// if `prepared` was published already, or if another version was published while this commit
-    /// ran (only a host publishing without the global lock lets that happen). Nothing is
-    /// published.
+    /// if another version was published while this commit ran (only a host publishing without the
+    /// global lock lets that happen). Nothing is published.
     #[cfg(feature = "index-falkordb")]
     pub fn commit_indexer_batch(
         &self,
-        prepared: &Fork,
+        mut prepared: Graph,
         batch: &PreparedBatch,
     ) -> Result<IndexerCommit, CommitError> {
         let published = self.graph.load_full();
-        let fit = prepared.borrow().indexer_fit(&published, batch);
+        let fit = prepared.indexer_fit(&published, batch);
         let version = match fit {
             IndexerCommit::Same => {
-                let mut slot = prepared.0.borrow_mut();
-                let graph = Arc::get_mut(&mut slot).ok_or(CommitError::Stale)?;
-                Self::prepare(&published, graph, false)?;
-                Arc::clone(&slot)
+                Self::prepare(&published, &mut prepared, false)?;
+                prepared
             }
             IndexerCommit::Swap => {
-                let mut graph = prepared.borrow().with_batch_index(&published, batch);
+                let mut graph = prepared.with_batch_index(&published, batch);
                 Self::prepare(&published, &mut graph, false)?;
-                Arc::new(graph)
+                graph
             }
             IndexerCommit::CatchUp(how) => {
-                let mut graph = prepared.borrow().caught_up_onto(&published, batch, how);
+                let mut graph = prepared.caught_up_onto(&published, batch, how);
                 Self::prepare(&published, &mut graph, false)?;
-                Arc::new(graph)
+                graph
             }
             IndexerCommit::Discarded(_) => return Ok(fit),
         };
-        self.publish(&published, version)?;
+        self.publish(&published, Arc::new(version))?;
         Ok(fit)
     }
 
@@ -484,14 +336,14 @@ impl MvccGraph {
         &self,
         published: &Arc<Graph>,
         version: Arc<Graph>,
-    ) -> Result<(), CommitError> {
+    ) -> Result<Arc<Graph>, CommitError> {
         let previous = self.graph.compare_and_swap(published, Arc::clone(&version));
         if !Arc::ptr_eq(&previous, published) {
             return Err(CommitError::Stale);
         }
         // After the swap, so a refused version is never handed to the indexers.
         version.set_indexer_graph(Arc::clone(&version));
-        Ok(())
+        Ok(version)
     }
 }
 
@@ -515,16 +367,15 @@ mod tests {
         let mvcc = MvccGraph::new(64, 64, 0, "t");
         let published = mvcc.read();
 
-        let invalid = mvcc.fork();
+        let mut invalid = mvcc.fork();
         // Ids 0 and 5 with nothing between: a batch that cannot have come from
         // an allocator, which is what `Graph::validate` refuses.
         let holed: RoaringTreemap = [0u64, 5].into_iter().collect();
         invalid
-            .borrow_mut()
             .create_nodes(&holed)
             .expect("neither id is live, so the graph takes them");
         assert!(
-            matches!(mvcc.commit(&invalid), Err(CommitError::Invalid(_))),
+            matches!(mvcc.commit(invalid), Err(CommitError::Invalid(_))),
             "a hole in the id space must refuse the version"
         );
         assert!(
@@ -532,8 +383,7 @@ mod tests {
             "a refused version must not be published"
         );
 
-        let next = mvcc.fork();
-        mvcc.commit(&next)
+        mvcc.commit(mvcc.fork())
             .expect("a refusal leaves nothing behind to block the next write");
     }
 
@@ -549,23 +399,23 @@ mod tests {
         let matching = mvcc.fork();
         assert!(!mvcc.is_stale(&matching));
 
-        let inline = mvcc.fork();
-        mvcc.commit(&inline)
+        let inline = mvcc
+            .commit(mvcc.fork())
             .expect("an open fork must not refuse another writer");
 
         assert!(
             mvcc.is_stale(&matching),
             "the fork predates the inline commit"
         );
-        assert_eq!(mvcc.commit(&matching), Err(CommitError::Stale));
+        assert_eq!(mvcc.commit(matching).err(), Some(CommitError::Stale));
         assert!(
-            Arc::ptr_eq(&mvcc.read(), &inline.version()),
+            Arc::ptr_eq(&mvcc.read(), &inline),
             "the refused fork must not replace the version it was overtaken by"
         );
 
         let fresh = mvcc.fork();
         assert!(!mvcc.is_stale(&fresh));
-        mvcc.commit(&fresh)
+        mvcc.commit(fresh)
             .expect("a fork of the current version commits");
     }
 
@@ -580,40 +430,18 @@ mod tests {
         let reader = mvcc.read();
         let version = reader.version;
 
-        let next = mvcc.fork();
-        next.borrow_mut().get_label_id_mut("L");
-        mvcc.commit(&next).expect("a new label commits");
+        let mut next = mvcc.fork();
+        next.get_label_id_mut("L");
+        let published = mvcc.commit(next).expect("a new label commits");
 
         assert_eq!(reader.version, version);
         assert!(
             reader.get_labels().is_empty(),
             "the reader's version is unchanged"
         );
-        assert_eq!(mvcc.read().version, version + 1);
-        assert_eq!(mvcc.read().get_labels().len(), 1);
-    }
-
-    /// A committed fork reads the version it published, and nothing can change
-    /// it through the fork any more: committing it again is refused, and a
-    /// mutable borrow panics.
-    #[test]
-    fn a_committed_fork_is_the_published_version_and_stays_unchanged() {
-        ensure_init();
-        let mvcc = MvccGraph::new(64, 64, 0, "t");
-        let fork = mvcc.fork();
-        fork.borrow_mut().get_label_id_mut("L");
-        mvcc.commit(&fork).expect("a new label commits");
-
-        assert!(Arc::ptr_eq(&mvcc.read(), &fork.version()));
-        assert_eq!(fork.borrow().get_labels().len(), 1);
-        assert_eq!(mvcc.commit(&fork), Err(CommitError::Stale));
-        assert!(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                drop(fork.borrow_mut());
-            }))
-            .is_err(),
-            "a published version must not be borrowed mutably"
-        );
+        assert!(Arc::ptr_eq(&mvcc.read(), &published));
+        assert_eq!(published.version, version + 1);
+        assert_eq!(published.get_labels().len(), 1);
     }
 
     /// A commit publishes only over the version it was checked against. Every
@@ -625,17 +453,16 @@ mod tests {
         ensure_init();
         let mvcc = MvccGraph::new(64, 64, 0, "t");
         let checked = mvcc.read();
-        let first = mvcc.fork();
         let second = mvcc.fork();
-        mvcc.commit(&first).expect("the first version commits");
+        let first = mvcc.commit(mvcc.fork()).expect("the first version commits");
 
         assert_eq!(
-            mvcc.publish(&checked, second.version()),
-            Err(CommitError::Stale),
+            mvcc.publish(&checked, Arc::new(second)).err(),
+            Some(CommitError::Stale),
             "checked against the replaced version, so not published"
         );
         assert!(
-            Arc::ptr_eq(&mvcc.read(), &first.version()),
+            Arc::ptr_eq(&mvcc.read(), &first),
             "the first version stays published"
         );
     }

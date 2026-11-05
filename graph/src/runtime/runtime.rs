@@ -39,16 +39,14 @@
 #![allow(clippy::cast_precision_loss)]
 use crate::effects::EffectsBuffer;
 use crate::{
-    graph::{
-        graph::{Graph, LabelId, NodeId, RelationshipId},
-        mvcc_graph::{Fork, GraphRef, GraphVersion},
-    },
+    graph::graph::{Graph, LabelId, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
     planner::IR,
     runtime::{
         batch::{Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap, classify_column},
+        graph_version::{GraphRef, GraphVersion},
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
             CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByFulltextScanOp,
@@ -65,13 +63,12 @@ use crate::{
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
 };
-use atomic_refcell::AtomicRefMut;
 use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
 use std::{
-    cell::{Cell, RefCell},
+    cell::{Cell, RefCell, RefMut},
     collections::HashMap,
     marker::PhantomData,
     sync::Arc,
@@ -513,11 +510,9 @@ impl<'a> Runtime<'a> {
     /// changes. Plans that write are run as write queries, so this is a
     /// planner bug.
     #[must_use]
-    pub fn graph_mut(&self) -> AtomicRefMut<'_, Graph> {
-        match &self.g {
-            GraphVersion::Fork(fork) => fork.borrow_mut(),
-            GraphVersion::Published(_) => panic!("graph_mut on a read query"),
-        }
+    pub fn graph_mut(&self) -> RefMut<'_, Graph> {
+        assert!(self.write, "graph_mut on a read query");
+        self.g.borrow_mut()
     }
 
     /// An owner of this query's graph, for code that keeps the graph past
@@ -530,28 +525,35 @@ impl<'a> Runtime<'a> {
         self.g.clone()
     }
 
-    /// The fork this write query builds into, for the host to publish.
+    /// Publish this write query's fork with `commit`, which takes it by value
+    /// and returns the version it published. The query reads that version from
+    /// then on, e.g. to serialize its reply.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// On a read query, which has no fork.
-    #[must_use]
-    pub fn fork(&self) -> Arc<Fork> {
-        match &self.g {
-            GraphVersion::Fork(fork) => Arc::clone(fork),
-            GraphVersion::Published(_) => panic!("fork of a read query"),
-        }
+    /// Whatever `commit` returns.
+    pub fn publish<E>(
+        &self,
+        commit: impl FnOnce(Graph) -> Result<Arc<Graph>, E>,
+    ) -> Result<(), E> {
+        self.g.publish(commit)
     }
 
-    /// Call `runtime.write_escalation().upgrade_to_write()?` before mutating
-    /// shared state (the index).
+    /// Become a writer before mutating shared state (the index), handing the
+    /// host this query's fork to check and rebase ([`WriteEscalation`]).
     ///
     /// Not a guard: the host owns the locks for the whole query — they must
     /// outlive `query()` so the host can commit — so this only *changes mode*,
     /// never releases.
-    #[must_use]
-    pub fn write_escalation(&self) -> &'a dyn crate::locks::WriteEscalation {
+    ///
+    /// # Errors
+    ///
+    /// If the host refuses the escalation.
+    ///
+    /// [`WriteEscalation`]: crate::locks::WriteEscalation
+    pub fn upgrade_to_write(&self) -> Result<(), String> {
         self.write_escalation
+            .upgrade_to_write(&mut self.graph_mut())
     }
 
     /// Undo the index documents earlier `Commit`s published, after this query

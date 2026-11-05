@@ -307,7 +307,7 @@ fn attempt_settle(
     // Escalation takes the global lock before the write lock (#726) and keeps the
     // commit Arc-swap under it, so it cannot race a BGSAVE fork (#452) — the same
     // shape as bulk_insert's Phase 2.
-    session.upgrade_to_write()?;
+    session.upgrade_to_write(None)?;
     // A refusal from `commit` comes back as the `WriteAbort` it maps to, not
     // flattened: the retry loop treats a stale version (retry) and an invalid
     // one (permanent) as opposites. Answering one bool for refusals once made
@@ -316,16 +316,13 @@ fn attempt_settle(
     // that was still UNDER CONSTRUCTION, with nothing to re-drive it.
     session
         .with_graph_mut(|tg| -> Result<(), WriteAbort> {
-            let g_arc = tg.graph.fork();
-            g_arc
-                .borrow_mut()
-                .apply_constraint_validation_results(results);
-            tg.graph.commit(&g_arc)?;
+            let mut fork = tg.graph.fork();
+            fork.apply_constraint_validation_results(results);
+            let g = tg.graph.commit(fork)?;
 
             if was_replicated {
                 return Ok(());
             }
-            let g = g_arc.borrow();
             for c in announce {
                 // The constraint may have been dropped while validation ran:
                 // `drop_constraint` has no UNDER CONSTRUCTION guard and
@@ -513,7 +510,7 @@ pub fn graph_constraint(
     };
 
     let tg = graph.write();
-    let g_arc = tg.graph.fork();
+    let mut fork = tg.graph.fork();
 
     // Not for replication: nothing propagates `GRAPH.CONSTRAINT` any more, so
     // this can only be set while replaying an AOF written by a build that did.
@@ -528,14 +525,14 @@ pub fn graph_constraint(
     // as `ADD_SCHEMA`/`ADD_ATTRIBUTE` ahead of the record whose ids depend on
     // it. Taking the baseline *after* registering would hide exactly the
     // entries that need announcing.
-    let baseline = SchemaBaseline::of(&g_arc.borrow());
+    let baseline = SchemaBaseline::of(&fork);
 
     let result: Result<bool, String> = {
-        let mut g = g_arc.borrow_mut();
+        let g = &mut fork;
         if is_create {
             match g.create_constraint(ct, entity_type, &label, &properties) {
                 Ok(needs_background_validation) => {
-                    register_constraint_schema(&mut g, entity_type, &label, &properties);
+                    register_constraint_schema(g, entity_type, &label, &properties);
                     Ok(needs_background_validation)
                 }
                 Err(e) => Err(e),
@@ -548,7 +545,7 @@ pub fn graph_constraint(
 
     match result {
         Ok(needs_background_validation) => {
-            tg.graph.commit(&g_arc).map_err(WriteAbort::from)?;
+            let mutated = tg.graph.commit(fork).map_err(WriteAbort::from)?;
 
             // Spawn background validation for large datasets on a dedicated
             // OS thread (not the query threadpool). Validation can take
@@ -614,7 +611,7 @@ pub fn graph_constraint(
                 } else if needs_background_validation {
                     Some(Some(ConstraintStatus::UnderConstruction))
                 } else {
-                    find_status(&g_arc.borrow(), ct, entity_type, &label, &properties).map(Some)
+                    find_status(&mutated, ct, entity_type, &label, &properties).map(Some)
                 };
                 let Some(status) = status else {
                     redis_module::logging::log_warning(format!(
@@ -632,7 +629,7 @@ pub fn graph_constraint(
                 };
                 let mut buf = EffectsBuffer::new();
                 match buf.build_constraint(
-                    &g_arc.borrow(),
+                    &mutated,
                     is_create,
                     &AnnouncedConstraint {
                         ct,

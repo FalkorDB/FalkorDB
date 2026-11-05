@@ -59,10 +59,8 @@ use std::time::{Duration, Instant};
 use rquickjs::object::Property;
 use rquickjs::{Array, Ctx, Function, Object, Value as JsValue};
 
-use crate::graph::{
-    graph::{Graph, NodeId, RelationshipId},
-    mvcc_graph::GraphVersion,
-};
+use crate::graph::graph::{Graph, NodeId, RelationshipId};
+use crate::runtime::graph_version::GraphVersion;
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
 use crate::udf::type_convert;

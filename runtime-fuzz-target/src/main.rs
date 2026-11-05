@@ -3,7 +3,7 @@
 
 use graph::{
     graph::{
-        graph::Plan,
+        graph::{Graph, Plan},
         graphblas::{GrB_Mode, GrB_init},
         mvcc_graph::MvccGraph,
     },
@@ -19,7 +19,10 @@ extern crate afl;
 struct AlwaysWritable;
 
 impl graph::locks::WriteEscalation for AlwaysWritable {
-    fn upgrade_to_write(&self) -> Result<(), String> {
+    fn upgrade_to_write(
+        &self,
+        _fork: &mut Graph,
+    ) -> Result<(), String> {
         Ok(())
     }
 }

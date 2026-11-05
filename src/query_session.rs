@@ -21,7 +21,7 @@
 //! all.
 
 use crate::graph_core::{ThreadedGraph, ffi};
-use graph::graph::mvcc_graph::{CommitError, Fork};
+use graph::graph::{graph::Graph, mvcc_graph::CommitError};
 use graph::locks::WriteEscalation;
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use redis_module::{Context, ContextFlags, raw};
@@ -107,8 +107,8 @@ pub struct QuerySession {
 enum Version {
     /// No write version.
     None,
-    /// Forked as a reader; checked when the session escalates.
-    Unchecked(Arc<Fork>),
+    /// Forked as a reader; the fork is checked when the session escalates.
+    Unchecked,
     /// Extends the published graph, and stays so: this session holds the
     /// write lock until it commits.
     Current,
@@ -205,9 +205,10 @@ impl QuerySession {
     /// another writer committed in between, escalation fails with
     /// [`WriteAbort::Stale`] and [`Self::is_stale`] reports it.
     ///
-    /// Nothing has to be released afterwards: an uncommitted version is
-    /// dropped with the runtime that holds it.
-    pub fn write_version(&self) -> Arc<Fork> {
+    /// The caller owns the fork, and hands it to [`Self::upgrade_to_write`]
+    /// to be checked. Nothing has to be released afterwards: an uncommitted
+    /// version is just dropped.
+    pub fn write_version(&self) -> Graph {
         debug_assert!(
             matches!(*self.version.borrow(), Version::None),
             "one write version per session"
@@ -216,7 +217,7 @@ impl QuerySession {
         *self.version.borrow_mut() = if self.is_writer() {
             Version::Current
         } else {
-            Version::Unchecked(Arc::clone(&fork))
+            Version::Unchecked
         };
         fork
     }
@@ -243,24 +244,32 @@ impl QuerySession {
     /// rebase it onto the indexer batches published since it was made. Writer
     /// mode only, so nothing can commit between this check and this session's
     /// own commit.
-    fn check_fork(&self) -> Result<(), WriteAbort> {
+    ///
+    /// # Panics
+    ///
+    /// If the session forked as a reader and `fork` is `None`.
+    fn check_fork(
+        &self,
+        fork: Option<&mut Graph>,
+    ) -> Result<(), WriteAbort> {
         let mut state = self.version.borrow_mut();
-        let Version::Unchecked(fork) = &*state else {
+        if !matches!(*state, Version::Unchecked) {
             return Ok(());
-        };
-        let checked = self.with_graph(|tg| {
+        }
+        let fork = fork.expect("a session that forked as a reader escalates with its fork");
+        let current = self.with_graph(|tg| {
             if tg.graph.is_stale(fork) {
-                return Err(CommitError::Stale);
+                return false;
             }
             // An indexer batch changes no data, so it leaves the fork current,
             // but the fork takes its index progress now: the index documents
             // this query publishes, and the indexes it reads from here on,
             // have it. Without the native index there are no batches.
             #[cfg(feature = "index-falkordb")]
-            tg.graph.rebase_onto_indexer_batches(fork)?;
-            Ok(())
+            tg.graph.rebase_onto_indexer_batches(fork);
+            true
         });
-        if checked.is_err() {
+        if !current {
             *state = Version::Stale;
             return Err(WriteAbort::Stale);
         }
@@ -328,7 +337,13 @@ impl QuerySession {
     /// which holds the GIL and the write lock throughout) makes this query's
     /// version stale, which the check below detects before any mutation is
     /// published.
-    pub fn upgrade_to_write(&self) -> Result<(), WriteAbort> {
+    ///
+    /// `fork` is the version from [`Self::write_version`], if the session took
+    /// one: it is checked against the published graph here.
+    pub fn upgrade_to_write(
+        &self,
+        fork: Option<&mut Graph>,
+    ) -> Result<(), WriteAbort> {
         if self.escalate() {
             // The key could have been deleted in the window where we held no
             // per-graph lock, so re-verify the graph is still reachable before
@@ -344,7 +359,7 @@ impl QuerySession {
             // committed in the window, making the version built while matching
             // stale. Here rather than at commit: the caller publishes index
             // documents next, which dropping a stale fork cannot take back.
-            self.check_fork()?;
+            self.check_fork(fork)?;
         }
         Ok(())
     }
@@ -429,11 +444,14 @@ fn reauthorize_write(facts: WriteFacts) -> Result<(), WriteAbort> {
 }
 
 impl WriteEscalation for QuerySession {
-    fn upgrade_to_write(&self) -> Result<(), String> {
+    fn upgrade_to_write(
+        &self,
+        fork: &mut Graph,
+    ) -> Result<(), String> {
         // `graph::locks::WriteEscalation` is defined in the `graph` crate, which knows
         // nothing about Redis roles or pauses, so its contract stays a plain message and
         // the typed reason is flattened here at the boundary.
-        Self::upgrade_to_write(self).map_err(|e| e.to_string())
+        Self::upgrade_to_write(self, Some(fork)).map_err(|e| e.to_string())
     }
 }
 

@@ -159,10 +159,10 @@ graph/src/runtime/ops/batched_result_emitter.rs	batch	759	PROVEN	Gather.emBatch:
 graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Gather.emNew/emWithBinding: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	PROVEN	Emitter finishLen_drops (latent row loss with zero-column parent)
 # runtime.rs attribute reads (RuntimeReads, 2026-10-21): the bulk fetch is the per-row read, with the graph batch / by-name reads modelled as their definitions (proofs/runtime_core models the same fns with hbg/hName as hypotheses).
-graph/src/runtime/runtime.rs	materialize_node_property	1609	PROVEN	RuntimeReads.matNodeCol: matNodeCol_eq (classify_column of the per-row reads)
-graph/src/runtime/runtime.rs	materialize_node_property_values	1623	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
-graph/src/runtime/runtime.rs	materialize_relationship_property	1671	PROVEN	RuntimeReads.matRelCol: matRelCol_eq
-graph/src/runtime/runtime.rs	materialize_relationship_property_values	1683	PROVEN	RuntimeReads.matRel: matRel_eq (= get_relationship_attribute per id; its by-name fallback resolves through the same attribute id)
+graph/src/runtime/runtime.rs	materialize_node_property	1611	PROVEN	RuntimeReads.matNodeCol: matNodeCol_eq (classify_column of the per-row reads)
+graph/src/runtime/runtime.rs	materialize_node_property_values	1625	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
+graph/src/runtime/runtime.rs	materialize_relationship_property	1673	PROVEN	RuntimeReads.matRelCol: matRelCol_eq
+graph/src/runtime/runtime.rs	materialize_relationship_property_values	1685	PROVEN	RuntimeReads.matRel: matRel_eq (= get_relationship_attribute per id; its by-name fallback resolves through the same attribute id)
 # eval.rs eval_batch (EvalBatch): expr_semantics BatchLaws discharged for the real batch and runtime.
 graph/src/runtime/eval.rs	ExprEval::eval_batch	1151	PROVEN	EvalBatch.laws/evalBatch_sound (expr_semantics evalBatch_eq_perRow with BatchLaws proved)
 graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1167	PROVEN	EvalBatch.laws/evalBatch_sound

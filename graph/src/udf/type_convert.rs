@@ -44,7 +44,7 @@ use std::sync::Arc;
 use rquickjs::function::This;
 use rquickjs::{Array, Ctx, IntoJs, Object, Value as JsValue};
 
-use crate::graph::mvcc_graph::GraphVersion;
+use crate::runtime::graph_version::GraphVersion;
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::{Point, Value};
 

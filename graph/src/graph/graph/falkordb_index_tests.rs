@@ -4,7 +4,7 @@
 
 use super::{Graph, NodeId, RelationshipId};
 use crate::entity_type::EntityType;
-use crate::graph::mvcc_graph::{CommitError, Fork, MvccGraph};
+use crate::graph::mvcc_graph::{CommitError, MvccGraph};
 use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::{BuildCursor, IndexColumn, IndexKey};
@@ -1592,10 +1592,9 @@ fn prepare(
     mvcc: &MvccGraph,
     id: &IndexId,
     budget: usize,
-) -> (Arc<Fork>, PreparedBatch) {
-    let version = Arc::new(Fork::new(mvcc.read().new_build_version()));
+) -> (Graph, PreparedBatch) {
+    let mut version = mvcc.read().new_build_version();
     let batch = version
-        .borrow_mut()
         .indexer_prepare(id, budget)
         .expect("the index is Building");
     (version, batch)
@@ -1606,12 +1605,13 @@ fn prepare(
 /// indexer batches published since it was made.
 fn escalate(
     mvcc: &MvccGraph,
-    fork: &Fork,
+    fork: &mut Graph,
 ) -> Result<(), CommitError> {
     if mvcc.is_stale(fork) {
         return Err(CommitError::Stale);
     }
-    mvcc.rebase_onto_indexer_batches(fork)
+    mvcc.rebase_onto_indexer_batches(fork);
+    Ok(())
 }
 
 /// One writer's unit of work on `mvcc`: fork, `write` into the fork, commit it.
@@ -1619,9 +1619,9 @@ fn commit_write(
     mvcc: &MvccGraph,
     write: impl FnOnce(&mut Graph),
 ) {
-    let fork = mvcc.fork();
-    write(&mut fork.borrow_mut());
-    mvcc.commit(&fork).expect("the write commits");
+    let mut fork = mvcc.fork();
+    write(&mut fork);
+    mvcc.commit(fork).expect("the write commits");
 }
 
 /// With nothing committed since its version was made, an indexer batch publishes that version
@@ -1634,14 +1634,10 @@ fn an_indexer_batch_with_nothing_committed_since_publishes_its_version() {
 
     let (prepared, batch) = prepare(&mvcc, &id, 2);
     assert_eq!(
-        mvcc.commit_indexer_batch(&prepared, &batch),
+        mvcc.commit_indexer_batch(prepared, &batch),
         Ok(IndexerCommit::Same)
     );
     let published = mvcc.read();
-    assert!(
-        Arc::ptr_eq(&published, &prepared.version()),
-        "its own version"
-    );
     let published = &*published;
     assert_eq!(published.version, data_version, "the data version stays");
     assert_eq!(
@@ -1665,43 +1661,46 @@ fn an_indexer_batch_after_another_columns_batch_swaps_its_column_in() {
 
     let (node_version, node_batch) = prepare(&mvcc, &nodes, 3);
     let (edge_version, edge_batch) = prepare(&mvcc, &edges, 2);
+    // What each batch's own version holds in its column, which the commits consume.
+    let columns = [
+        (EntityType::Node, &label, &v, &node_version),
+        (EntityType::Relationship, &ty, &w, &edge_version),
+    ]
+    .map(|(entity, l, a, version)| {
+        (
+            entity,
+            l,
+            a,
+            cursor(version, entity, l, a),
+            contents(version, entity, l, a, &[]),
+        )
+    });
     assert_eq!(
-        mvcc.commit_indexer_batch(&edge_version, &edge_batch),
+        mvcc.commit_indexer_batch(edge_version, &edge_batch),
         Ok(IndexerCommit::Same)
     );
     assert_eq!(
-        mvcc.commit_indexer_batch(&node_version, &node_batch),
+        mvcc.commit_indexer_batch(node_version, &node_batch),
         Ok(IndexerCommit::Swap)
     );
 
     let published = mvcc.read();
-    assert!(!Arc::ptr_eq(&published, &node_version.version()));
     let published = &*published;
-    for (entity, l, a, version) in [
-        (EntityType::Node, &label, &v, &node_version),
-        (EntityType::Relationship, &ty, &w, &edge_version),
-    ] {
-        let version = version.borrow();
-        assert_eq!(
-            cursor(published, entity, l, a),
-            cursor(&version, entity, l, a),
-            "{entity:?}"
-        );
+    for (entity, l, a, batch_cursor, batch_contents) in columns {
+        assert_eq!(cursor(published, entity, l, a), batch_cursor, "{entity:?}");
         assert_eq!(
             contents(published, entity, l, a, &[]),
-            contents(&version, entity, l, a, &[]),
+            batch_contents,
             "{entity:?}"
         );
         assert!(cursor(published, entity, l, a).is_some(), "{entity:?}");
     }
 }
 
-/// A reader keeps its borrow of the published version across an indexer batch's commit, however
-/// the batch goes in. The commit only reads the published version and publishes a version of its
-/// own; a `borrow_mut` of the published one would meet the reader's borrow, and `AtomicRefCell`
-/// would panic.
+/// A reader keeps the published version it loaded across an indexer batch's commit, however the
+/// batch goes in. The commit only reads the published version and publishes a version of its own.
 #[test]
-fn an_indexer_batch_commit_leaves_a_borrowed_published_version_alone() {
+fn an_indexer_batch_commit_leaves_a_held_published_version_alone() {
     // Same, and CatchUp after a writer: one column.
     for overtaken in [false, true] {
         let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
@@ -1714,7 +1713,7 @@ fn an_indexer_batch_commit_leaves_a_borrowed_published_version_alone() {
         let reader = &*held;
         let before = cursor(reader, EntityType::Node, &label, &attr);
 
-        let committed = mvcc.commit_indexer_batch(&prepared, &batch);
+        let committed = mvcc.commit_indexer_batch(prepared, &batch);
         assert!(
             matches!(
                 (overtaken, &committed),
@@ -1738,14 +1737,14 @@ fn an_indexer_batch_commit_leaves_a_borrowed_published_version_alone() {
     let (node_version, node_batch) = prepare(&mvcc, &nodes, 3);
     let (edge_version, edge_batch) = prepare(&mvcc, &edges, 2);
     assert_eq!(
-        mvcc.commit_indexer_batch(&edge_version, &edge_batch),
+        mvcc.commit_indexer_batch(edge_version, &edge_batch),
         Ok(IndexerCommit::Same)
     );
     let held = mvcc.read();
     let reader = &*held;
     let before = cursor(reader, EntityType::Node, &label, &v);
     assert_eq!(
-        mvcc.commit_indexer_batch(&node_version, &node_batch),
+        mvcc.commit_indexer_batch(node_version, &node_batch),
         Ok(IndexerCommit::Swap)
     );
     assert_eq!(cursor(reader, EntityType::Node, &label, &v), before);
@@ -1769,7 +1768,7 @@ fn an_indexer_batch_on_a_dropped_or_recreated_column_publishes_nothing() {
 
         let before = mvcc.read();
         assert_eq!(
-            mvcc.commit_indexer_batch(&prepared, &batch),
+            mvcc.commit_indexer_batch(prepared, &batch),
             Ok(IndexerCommit::Discarded(Discarded::Gone)),
             "recreate {recreate}"
         );
@@ -1778,7 +1777,7 @@ fn an_indexer_batch_on_a_dropped_or_recreated_column_publishes_nothing() {
         if recreate {
             let (prepared, batch) = prepare(&mvcc, &id, 2);
             assert_eq!(
-                mvcc.commit_indexer_batch(&prepared, &batch),
+                mvcc.commit_indexer_batch(prepared, &batch),
                 Ok(IndexerCommit::Same)
             );
             assert_eq!(
@@ -1809,7 +1808,7 @@ fn an_indexer_batch_after_a_writer_catches_up_on_its_changes() {
         });
         let data_version = mvcc.read().version;
 
-        let committed = mvcc.commit_indexer_batch(&prepared, &batch);
+        let committed = mvcc.commit_indexer_batch(prepared, &batch);
         assert_eq!(
             committed,
             Ok(IndexerCommit::CatchUp(how)),
@@ -1860,7 +1859,7 @@ fn a_batch_refreshes_writers_changes_only_when_that_costs_less_than_inserting_it
             }
         });
         assert_eq!(
-            mvcc.commit_indexer_batch(&prepared, &batch),
+            mvcc.commit_indexer_batch(prepared, &batch),
             Ok(IndexerCommit::CatchUp(how)),
             "{written} written against a batch of {budget}"
         );
@@ -1871,34 +1870,6 @@ fn a_batch_refreshes_writers_changes_only_when_that_costs_less_than_inserting_it
     }
 }
 
-/// A rebase needs the fork mutably only when it has something to do: with no indexer batch
-/// committed since it was made, a borrowed fork escalates, and is left alone.
-#[test]
-fn a_rebase_with_nothing_to_do_leaves_the_fork_alone() {
-    let (mvcc, _, _, _) = mvcc_building(&[10, 20, 30]);
-    let fork = mvcc.fork();
-    let reading = fork.borrow();
-    assert_eq!(escalate(&mvcc, &fork), Ok(()));
-    drop(reading);
-}
-
-/// An escalating writer's fork is never borrowed. One that is, when indexer batches overtook it,
-/// is a bug a debug build stops on, rather than a write the host runs again for as long as it
-/// lasts.
-#[cfg(debug_assertions)]
-#[test]
-#[should_panic(expected = "a fork is rebased while it is borrowed")]
-fn a_borrowed_fork_to_rebase_stops_a_debug_build() {
-    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
-    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-    let fork = mvcc.fork();
-    let (prepared, batch) = prepare(&mvcc, &id, 2);
-    mvcc.commit_indexer_batch(&prepared, &batch)
-        .expect("the batch commits");
-    let _reading = fork.borrow();
-    let _ = escalate(&mvcc, &fork);
-}
-
 /// A writer whose fork an indexer batch overtook on a `Building` column rebases onto it as it
 /// escalates, and commits over it: the column keeps the batch's progress, and the writer's changes
 /// below its cursor are in it.
@@ -1907,17 +1878,17 @@ fn a_borrowed_fork_to_rebase_stops_a_debug_build() {
 fn a_writer_overtaken_by_an_indexer_batch_keeps_its_progress() {
     let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-    let fork = mvcc.fork();
-    set_attr(&mut fork.borrow_mut(), ids[0], &attr, Value::Int(15));
-    set_attr(&mut fork.borrow_mut(), ids[3], &attr, Value::Int(45));
+    let mut fork = mvcc.fork();
+    set_attr(&mut fork, ids[0], &attr, Value::Int(15));
+    set_attr(&mut fork, ids[3], &attr, Value::Int(45));
     let (prepared, batch) = prepare(&mvcc, &id, 2);
     assert_eq!(
-        mvcc.commit_indexer_batch(&prepared, &batch),
+        mvcc.commit_indexer_batch(prepared, &batch),
         Ok(IndexerCommit::Same)
     );
 
-    assert_eq!(escalate(&mvcc, &fork), Ok(()));
-    mvcc.commit(&fork).expect("the write commits");
+    assert_eq!(escalate(&mvcc, &mut fork), Ok(()));
+    mvcc.commit(fork).expect("the write commits");
     let published = mvcc.read();
     let published = &*published;
     assert_eq!(
@@ -2029,22 +2000,23 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
             };
 
             let (prepared, batch) = prepare(mvcc, &id, 1 + extra);
+            let batch_cursor = cursor(&prepared, EntityType::Relationship, &ty, &attr);
             if let Some(how) = writer_first {
                 commit_write(mvcc, write);
                 assert_eq!(column(mvcc), holding(&[]), "{what}: no batch yet");
-                let committed = mvcc.commit_indexer_batch(&prepared, &batch);
+                let committed = mvcc.commit_indexer_batch(prepared, &batch);
                 assert_eq!(committed, Ok(IndexerCommit::CatchUp(how)), "{what}");
             } else {
-                let fork = mvcc.fork();
-                write(&mut fork.borrow_mut());
+                let mut fork = mvcc.fork();
+                write(&mut fork);
                 assert_eq!(
-                    mvcc.commit_indexer_batch(&prepared, &batch),
+                    mvcc.commit_indexer_batch(prepared, &batch),
                     Ok(IndexerCommit::Same),
                     "{what}"
                 );
                 assert_eq!(column(mvcc), holding(&[(0, 1)]), "{what}: the batch's a->b");
-                assert_eq!(escalate(mvcc, &fork), Ok(()), "{what}");
-                mvcc.commit(&fork).expect("the write commits");
+                assert_eq!(escalate(mvcc, &mut fork), Ok(()), "{what}");
+                mvcc.commit(fork).expect("the write commits");
             }
             let after: Vec<(usize, i64)> = after
                 .iter()
@@ -2054,18 +2026,18 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
             assert_eq!(column(mvcc), holding(&after), "{what}: both committed");
             assert_eq!(
                 cursor(&mvcc.read(), EntityType::Relationship, &ty, &attr),
-                cursor(&prepared.borrow(), EntityType::Relationship, &ty, &attr),
+                batch_cursor,
                 "{what}: the batch's progress"
             );
 
             let mut batches = 0;
             loop {
-                let version = Arc::new(Fork::new(mvcc.read().new_build_version()));
-                let Some(batch) = version.borrow_mut().indexer_prepare(&id, 1) else {
+                let mut version = mvcc.read().new_build_version();
+                let Some(batch) = version.indexer_prepare(&id, 1) else {
                     break;
                 };
                 assert_eq!(
-                    mvcc.commit_indexer_batch(&version, &batch),
+                    mvcc.commit_indexer_batch(version, &batch),
                     Ok(IndexerCommit::Same)
                 );
                 batches += 1;
@@ -2159,20 +2131,20 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
         if let Some(how) = writer_first {
             commit_write(mvcc, write);
             assert_eq!(
-                mvcc.commit_indexer_batch(&prepared, &batch),
+                mvcc.commit_indexer_batch(prepared, &batch),
                 Ok(IndexerCommit::CatchUp(how)),
                 "{what}"
             );
         } else {
-            let fork = mvcc.fork();
-            write(&mut fork.borrow_mut());
+            let mut fork = mvcc.fork();
+            write(&mut fork);
             assert_eq!(
-                mvcc.commit_indexer_batch(&prepared, &batch),
+                mvcc.commit_indexer_batch(prepared, &batch),
                 Ok(IndexerCommit::Same),
                 "{what}"
             );
-            assert_eq!(escalate(mvcc, &fork), Ok(()), "{what}");
-            mvcc.commit(&fork).expect("the write commits");
+            assert_eq!(escalate(mvcc, &mut fork), Ok(()), "{what}");
+            mvcc.commit(fork).expect("the write commits");
         }
         // The extra edges, as (value, edge) pairs in value order.
         let extras: Vec<(i64, u64)> = (0..extra).map(|j| (101 + j as i64, eids[3 + j])).collect();
@@ -2194,12 +2166,12 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
 
         let mut batches = 0;
         loop {
-            let version = Arc::new(Fork::new(mvcc.read().new_build_version()));
-            let Some(batch) = version.borrow_mut().indexer_prepare(&id, 1) else {
+            let mut version = mvcc.read().new_build_version();
+            let Some(batch) = version.indexer_prepare(&id, 1) else {
                 break;
             };
             assert_eq!(
-                mvcc.commit_indexer_batch(&version, &batch),
+                mvcc.commit_indexer_batch(version, &batch),
                 Ok(IndexerCommit::Same)
             );
             batches += 1;
@@ -2238,30 +2210,30 @@ fn a_writer_creating_past_a_final_batch_is_indexed_in_either_commit_order() {
         let initial: Vec<i64> = (1..=nodes as i64).map(|i| 10 * i).collect();
         let (mvcc, label, attr, ids) = mvcc_building(&initial);
         let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-        let fork = mvcc.fork();
-        set_attr(&mut fork.borrow_mut(), ids[1], &attr, Value::Int(25));
-        let created = add_person(&mut fork.borrow_mut(), &attr, 5);
+        let mut fork = mvcc.fork();
+        set_attr(&mut fork, ids[1], &attr, Value::Int(25));
+        let created = add_person(&mut fork, &attr, 5);
         assert!(ids.iter().all(|&id| id < created), "{what}: past the batch");
         let (prepared, batch) = prepare(&mvcc, &id, ids.len() + 1);
         assert_eq!(
-            cursor(&prepared.borrow(), EntityType::Node, &label, &attr),
+            cursor(&prepared, EntityType::Node, &label, &attr),
             None,
             "{what}: the batch is the last"
         );
 
         if let Some(how) = writer_first {
-            assert_eq!(escalate(&mvcc, &fork), Ok(()), "{what}");
-            mvcc.commit(&fork).expect("the write commits");
-            let committed = mvcc.commit_indexer_batch(&prepared, &batch);
+            assert_eq!(escalate(&mvcc, &mut fork), Ok(()), "{what}");
+            mvcc.commit(fork).expect("the write commits");
+            let committed = mvcc.commit_indexer_batch(prepared, &batch);
             assert_eq!(committed, Ok(IndexerCommit::CatchUp(how)), "{what}");
         } else {
             assert_eq!(
-                mvcc.commit_indexer_batch(&prepared, &batch),
+                mvcc.commit_indexer_batch(prepared, &batch),
                 Ok(IndexerCommit::Same),
                 "{what}"
             );
-            assert_eq!(escalate(&mvcc, &fork), Ok(()), "{what}");
-            mvcc.commit(&fork).expect("the write commits");
+            assert_eq!(escalate(&mvcc, &mut fork), Ok(()), "{what}");
+            mvcc.commit(fork).expect("the write commits");
         }
 
         let published = mvcc.read();
@@ -2294,17 +2266,19 @@ fn of_two_indexer_batches_on_one_column_only_the_first_publishes() {
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let (first, first_batch) = prepare(&mvcc, &id, 1);
     let (second, second_batch) = prepare(&mvcc, &id, 2);
+    let first_cursor = cursor(&first, EntityType::Node, &label, &attr);
     assert_eq!(
-        mvcc.commit_indexer_batch(&first, &first_batch),
+        mvcc.commit_indexer_batch(first, &first_batch),
         Ok(IndexerCommit::Same)
     );
     assert_eq!(
-        mvcc.commit_indexer_batch(&second, &second_batch),
+        mvcc.commit_indexer_batch(second, &second_batch),
         Ok(IndexerCommit::Discarded(Discarded::AnotherBatch))
     );
-    assert!(
-        Arc::ptr_eq(&mvcc.read(), &first.version()),
-        "the first batch's version"
+    assert_eq!(
+        cursor(&mvcc.read(), EntityType::Node, &label, &attr),
+        first_cursor,
+        "the first batch's progress"
     );
 }
 
@@ -2317,7 +2291,7 @@ fn a_fork_made_before_an_indexer_batch_commit_is_not_stale() {
     let fork = mvcc.fork();
     let (prepared, batch) = prepare(&mvcc, &id, 2);
     assert_eq!(
-        mvcc.commit_indexer_batch(&prepared, &batch),
+        mvcc.commit_indexer_batch(prepared, &batch),
         Ok(IndexerCommit::Same)
     );
     assert!(!mvcc.is_stale(&fork));
@@ -2555,8 +2529,8 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
             for batches_on in [[&v, &w], [&v, &v], [&w, &w]] {
                 for order in &orders {
                     let mvcc = MvccGraph::from_graph(template.new_version());
-                    let mut forks: [Option<(Arc<Fork>, Arc<Graph>)>; 2] = [None, None];
-                    let mut batches: [Option<(Arc<Fork>, PreparedBatch)>; 2] = [None, None];
+                    let mut forks: [Option<(Graph, Arc<Graph>)>; 2] = [None, None];
+                    let mut batches: [Option<(Graph, PreparedBatch)>; 2] = [None, None];
                     let mut started = [false; 4];
                     for (event, &actor) in order.iter().enumerate() {
                         let what = format!(
@@ -2571,18 +2545,18 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
                         let starting = !std::mem::replace(&mut started[actor], true);
                         match (actor, starting) {
                             (0 | 1, true) => {
-                                let fork = mvcc.fork();
+                                let mut fork = mvcc.fork();
                                 let write = if actor == 0 { first } else { second };
-                                write(&mut fork.borrow_mut(), &ids);
+                                write(&mut fork, &ids);
                                 forks[actor] = Some((fork, mvcc.read()));
                             }
                             (0 | 1, false) => {
-                                let (fork, base) = forks[actor].take().expect("started");
-                                match escalate(&mvcc, &fork) {
+                                let (mut fork, base) = forks[actor].take().expect("started");
+                                match escalate(&mvcc, &mut fork) {
                                     Ok(()) => {
                                         let over_batches = !Arc::ptr_eq(&mvcc.read(), &base);
-                                        let data = model_of(&fork.borrow());
-                                        mvcc.commit(&fork)
+                                        let data = model_of(&fork);
+                                        mvcc.commit(fork)
                                             .unwrap_or_else(|e| panic!("{what}: {e:?}"));
                                         *counts
                                             .entry(if over_batches {
@@ -2618,8 +2592,8 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
                                     EntityType::Node,
                                     (label.clone(), batches_on[actor - 2].clone()),
                                 );
-                                let prepared = Arc::new(Fork::new(mvcc.read().new_build_version()));
-                                let batch = prepared.borrow_mut().indexer_prepare(&id, pad + BATCH);
+                                let mut prepared = mvcc.read().new_build_version();
+                                let batch = prepared.indexer_prepare(&id, pad + BATCH);
                                 batches[actor - 2] = batch.map(|batch| (prepared, batch));
                             }
                             (_, false) => {
@@ -2628,7 +2602,7 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
                                 };
                                 let data = model_of(&mvcc.read());
                                 let how = mvcc
-                                    .commit_indexer_batch(&prepared, &batch)
+                                    .commit_indexer_batch(prepared, &batch)
                                     .unwrap_or_else(|e| panic!("{what}: {e:?}"));
                                 *counts
                                     .entry(match how {
@@ -2678,14 +2652,12 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
                     for attr in [&v, &w] {
                         let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
                         loop {
-                            let prepared = Arc::new(Fork::new(mvcc.read().new_build_version()));
-                            let Some(batch) =
-                                prepared.borrow_mut().indexer_prepare(&id, pad + BATCH)
-                            else {
+                            let mut prepared = mvcc.read().new_build_version();
+                            let Some(batch) = prepared.indexer_prepare(&id, pad + BATCH) else {
                                 break;
                             };
                             assert_eq!(
-                                mvcc.commit_indexer_batch(&prepared, &batch),
+                                mvcc.commit_indexer_batch(prepared, &batch),
                                 Ok(IndexerCommit::Same)
                             );
                         }
@@ -3020,9 +2992,9 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                     // Read before the batch is: once no writer is left, a column that is not
                     // `Building` stays that way, so finding no batch then means it is done.
                     let done = writers_left.load(Ordering::Acquire) == 0;
-                    let prepared = Arc::new(Fork::new(mvcc.read().read().new_build_version()));
+                    let mut prepared = mvcc.read().read().new_build_version();
                     let size = rng.random_range(1..=MAX_BATCH);
-                    let Some(batch) = prepared.borrow_mut().indexer_prepare(&id, size) else {
+                    let Some(batch) = prepared.indexer_prepare(&id, size) else {
                         if done {
                             break;
                         }
@@ -3036,7 +3008,7 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                         let mvcc = &mut mvcc.write();
                         let before = mvcc.read();
                         let how = mvcc
-                            .commit_indexer_batch(&prepared, &batch)
+                            .commit_indexer_batch(prepared, &batch)
                             .expect("the batch commits");
                         (how, before, mvcc.read())
                     };
@@ -3077,9 +3049,9 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                     if rng.random_bool(0.3) {
                         let mvcc = mvcc.write();
                         let before = mvcc.read();
-                        let version = mvcc.fork();
-                        random_write(&mut version.borrow_mut(), op, &mut rng);
-                        mvcc.commit(&version).expect("the writer commits");
+                        let mut version = mvcc.fork();
+                        random_write(&mut version, op, &mut rng);
+                        mvcc.commit(version).expect("the writer commits");
                         let published = mvcc.read();
                         drop(mvcc);
                         count("writer under the lock");
@@ -3087,20 +3059,20 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                         continue;
                     }
                     loop {
-                        let (base, fork) = {
+                        let (base, mut fork) = {
                             let mvcc = mvcc.read();
                             (mvcc.read(), mvcc.fork())
                         };
-                        random_write(&mut fork.borrow_mut(), op, &mut rng);
+                        random_write(&mut fork, op, &mut rng);
                         // A wait like the batches', so batches commit while a fork waits to
                         // escalate.
                         thread::sleep(Duration::from_micros(rng.random_range(0..200)));
                         let mvcc = mvcc.write();
                         let before = mvcc.read();
                         let over_batches = !Arc::ptr_eq(&before, &base);
-                        match escalate(&mvcc, &fork) {
+                        match escalate(&mvcc, &mut fork) {
                             Ok(()) => {
-                                mvcc.commit(&fork).expect("the writer commits");
+                                mvcc.commit(fork).expect("the writer commits");
                                 let published = mvcc.read();
                                 drop(mvcc);
                                 count(if over_batches {

@@ -51,6 +51,7 @@ pub mod batch;
 pub mod bitset;
 pub mod eval;
 pub mod functions;
+pub mod graph_version;
 pub mod index_ddl;
 pub mod ops;
 pub mod ordermap;
