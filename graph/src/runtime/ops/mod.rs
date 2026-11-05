@@ -111,7 +111,7 @@ pub use value_hash_join::ValueHashJoinOp;
 
 use std::collections::VecDeque;
 
-use crate::graph::graph::RelationshipId;
+use crate::graph::graph::{Graph, RelationshipId};
 use crate::runtime::value::Value;
 
 use super::{
@@ -137,6 +137,99 @@ pub fn drain_pending(
     }
 }
 
+/// Marks an entry of a `sibling_edges` list as a *collapsed* edge: one the
+/// planner stopped emitting per edge, so it binds one arbitrary representative
+/// of its parallel edges. The flag is the top bit of the alias id. The
+/// collapsed edge matches a single relationship type, that of its
+/// representative.
+pub const COLLAPSED_SIBLING: u32 = 1 << 31;
+
+/// Like [`COLLAPSED_SIBLING`], for a collapsed edge that matches every
+/// relationship type (an untyped pattern). A collapsed edge matching several
+/// but not all types is not flagged: its types are not known here.
+pub const COLLAPSED_SIBLING_ANY_TYPE: u32 = 1 << 30;
+
+/// Every flag bit of a `sibling_edges` entry.
+const SIBLING_FLAGS: u32 = COLLAPSED_SIBLING | COLLAPSED_SIBLING_ANY_TYPE;
+
+/// What an operator knows about the other edges it could have bound in place of
+/// a collapsed edge's representative; see [`edge_already_used`].
+pub struct Parallel<'a> {
+    pub graph: &'a Graph,
+    /// The tensor indices the expanding relationship matches when it is
+    /// collapsed (`emit_relationship == false`), `None` when it emits.
+    pub own_types: Option<&'a [usize]>,
+    /// Relationships deleted by the running query, which are not alternatives.
+    pub deleted: &'a dyn Fn(RelationshipId) -> bool,
+}
+
+/// The relationship types an alternative edge may have.
+#[derive(Clone, Copy)]
+enum Matching<'a> {
+    /// These tensors.
+    Tensors(&'a [usize]),
+    /// The type of the edge in question.
+    TypeOfEdge,
+    /// Any type.
+    AnyType,
+}
+
+impl Parallel<'_> {
+    /// Does another live edge join the endpoints of `edge_id` with a type in
+    /// `types`?
+    fn has_alternative(
+        &self,
+        edge_id: RelationshipId,
+        types: Matching,
+    ) -> bool {
+        let g = self.graph;
+        let raw = u64::from(edge_id);
+        let Some((src, dst)) = g.endpoints_for_edge(raw) else {
+            return false;
+        };
+        // Live edges of the pair in tensor `tidx`; stops counting at two. Only
+        // the stored direction counts: an undirected pattern reaches an edge
+        // stored the other way round through its own row (the reversed pair),
+        // not as a stand-in for this one.
+        let live = |tidx: usize| -> usize {
+            g.relationship_tensors().get(tidx).map_or(0, |tensor| {
+                tensor
+                    .get(src, dst)
+                    .filter(|&other| !(self.deleted)(RelationshipId::from(other)))
+                    .take(2)
+                    .count()
+            })
+        };
+        // No allocation: this runs on every uniqueness collision of a
+        // collapsed edge.
+        let mut total = 0;
+        match types {
+            Matching::Tensors(tensors) => {
+                for &tidx in tensors {
+                    total += live(tidx);
+                    if total > 1 {
+                        break;
+                    }
+                }
+            }
+            Matching::TypeOfEdge => {
+                if let Some((_, tidx)) = g.relationship_type_matrix_iter(raw, raw).next() {
+                    total = live(tidx as usize);
+                }
+            }
+            Matching::AnyType => {
+                for tidx in 0..g.relationship_tensors().len() {
+                    total += live(tidx);
+                    if total > 1 {
+                        break;
+                    }
+                }
+            }
+        }
+        total > 1
+    }
+}
+
 /// Check whether a given edge ID is already bound to another relationship
 /// variable in the environment.
 ///
@@ -145,26 +238,53 @@ pub fn drain_pending(
 /// distinct physical edge.
 ///
 /// `own_alias_id` is the variable slot of the current relationship being
-/// expanded — it is skipped during the scan.
+/// expanded — it is skipped during the scan. `parallel` describes the
+/// alternatives a collapsed edge has (see below).
 ///
 /// `sibling_edges` contains the alias IDs of other relationship variables
 /// in the same MATCH clause component. Only these are checked — relationship
 /// variables from other MATCH/OPTIONAL MATCH clauses are ignored per the
 /// Cypher spec.
+///
+/// A collapsed edge stands for all the parallel edges of its (src, dst) pair
+/// and binds an arbitrary one of them, so its representative colliding with
+/// another edge says nothing when a parallel edge exists: some other choice
+/// would not collide. Such a collision is ignored, which keeps the result from
+/// depending on which parallel edge was picked. A parallel edge counts when it
+/// is live and its type is one the collapsed pattern matches; when the pair
+/// holds no such edge the representative is the only choice and the check
+/// applies as usual.
 #[must_use]
 pub fn edge_already_used<R: RowView + ?Sized>(
     env: &R,
+    parallel: &Parallel,
     edge_id: RelationshipId,
     own_alias_id: u32,
     sibling_edges: &[u32],
 ) -> bool {
-    for &sibling_id in sibling_edges {
+    for &entry in sibling_edges {
+        let sibling_id = entry & !SIBLING_FLAGS;
         if sibling_id == own_alias_id {
             continue;
         }
         if let Some(Value::Relationship(rel)) = env.value_at(sibling_id)
             && rel == edge_id
         {
+            // The collision can be avoided when either side could have bound
+            // another edge of the types it matches.
+            let own_avoids = parallel
+                .own_types
+                .is_some_and(|types| parallel.has_alternative(edge_id, Matching::Tensors(types)));
+            let sibling_avoids = if entry & COLLAPSED_SIBLING_ANY_TYPE != 0 {
+                parallel.has_alternative(edge_id, Matching::AnyType)
+            } else if entry & COLLAPSED_SIBLING != 0 {
+                parallel.has_alternative(edge_id, Matching::TypeOfEdge)
+            } else {
+                false
+            };
+            if own_avoids || sibling_avoids {
+                continue;
+            }
             return true;
         }
     }
