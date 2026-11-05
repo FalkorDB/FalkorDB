@@ -158,7 +158,7 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 70 rows: `redis_type.rs` (27), `graphblas/serialization.rs` (17), the encoder and decoder (7 each), `mvcc_graph.rs` (7), `graph.rs` (5).
+`COVERAGE.tsv` has 72 rows: `redis_type.rs` (27), `graphblas/serialization.rs` (17), the encoder and decoder (7 each), `mvcc_graph.rs` (9), `graph.rs` (5).
 
 | Bucket | Rows |
 |---|---|
@@ -169,7 +169,7 @@ The project has no Lake dependencies.
 
 - **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `delete_key` and `key_holds_graph` (Redis module API); `rebuild_derived_matrices` (GraphBLAS).
 - **MODELLED:** `from_u64` (the payload-directory state tags, exercised by the live round trips) and `MvccGraph::from_graph` (the RDB load path, checked live).
-- **NOT COVERED:** four trait declarations or `unimplemented!` defaults in `serialization.rs`, and six `MvccGraph` functions (`new`, `read`, `write`, `commit`, `rollback`, `drop`) whose concurrency is not modelled here. Also `rebuild_indexes` since #3680: it batches the fields of a label into one `create_index_sync` call where `Persist.Indexes.rebuild_calls` models one call per field. The validated `commit` is proven in `search_concurrency` and `versioned_matrix`; `bash proofs/coverage.sh` counts each function once, in its best bucket.
+- **NOT COVERED:** four trait declarations or `unimplemented!` defaults in `serialization.rs`; eight `MvccGraph` functions (`new`, `read`, `fork`, `commit`, `is_stale`, `commit_indexer_batch`, `commit_version`, `drop`) whose concurrency is not modelled here (the validated `commit` is proven in `search_concurrency` and `versioned_matrix`; `bash proofs/coverage.sh` counts each function once, in its best bucket); and `rebuild_indexes` since #3680, which batches consecutive non-vector fields of one type with equal options (never the full-text field that carries the label's language or stopwords) into one `create_index_sync` call and retries a failed batch field by field, where `Persist.Indexes.rebuild_calls` models one call per field.
 
 ## What the model does not cover
 
