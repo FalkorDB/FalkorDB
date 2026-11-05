@@ -28,7 +28,9 @@ typedef struct GraphContext {
 	// so writers / readers on other graphs are unaffected
 	pthread_mutex_t writer_gate_mutex;     // guards writer_waiting
 	pthread_cond_t  writer_gate_cond;      // signaled when writer_waiting clears
-	bool            writer_waiting;        // a writer is acquiring the write lock
+	atomic_bool     writer_waiting;        // a writer is acquiring the write lock
+	                                       // atomic so readers can fast-path past
+	                                       // the gate without taking the mutex
 
 	int ref_count;                         // number of active references
 	char **attributes;                     // graph's attributes, attribute id

@@ -646,3 +646,75 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
         asyncio.run(run(self))
 
+
+    def test_15_server_responsive_under_heavy_mixed_load(self):
+        # under a SUSTAINED heavy mix of reads and writes the server (Redis main
+        # thread) must keep answering unrelated commands (PING) promptly: neither
+        # the writer gate nor the write-lock wait may pin the GIL or let the event
+        # loop freeze under a flood. this guards the responsiveness the reentrant
+        # write lock exists to provide - under the realistic mixed workload, not
+        # just the single waiting writer of test_12.
+
+        # timing assertions are unreliable under instrumentation
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        self.graph.query("UNWIND range(1, 100000) AS i CREATE (:N {v:i})")
+
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=64, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            # a moderate read (holds the read lock briefly) + a small write, mixed
+            # ~3:1 and kept continuously in flight to saturate the graph locks
+            read_q  = "MATCH (n:N) WHERE n.v < 2000 RETURN count(n)"
+            write_q = "CREATE (:N {v:1})"
+
+            probe = AsyncRedis(port=self.env.port, decode_responses=True)
+            await probe.ping()
+
+            loop = asyncio.get_running_loop()
+            DURATION = 4.0
+            deadline = loop.time() + DURATION
+            inflight = []
+
+            async def flood():
+                i = 0
+                while loop.time() < deadline:
+                    while (sum(1 for t in inflight if not t.done()) < 48
+                           and loop.time() < deadline):
+                        i += 1
+                        q = g.query(write_q) if (i % 4 == 0) else g.ro_query(read_q)
+                        inflight.append(asyncio.create_task(q))
+                    await asyncio.sleep(0.002)
+
+            flood_task = asyncio.create_task(flood())
+            await asyncio.sleep(0.3)  # let the flood saturate the locks
+
+            # probe PING latency from an unrelated connection during the flood
+            latencies = []
+            while loop.time() < deadline - 0.3:
+                t0 = loop.time()
+                await probe.ping()
+                latencies.append(loop.time() - t0)
+                await asyncio.sleep(0.01)
+
+            await flood_task
+            await asyncio.gather(*inflight, return_exceptions=True)
+
+            latencies.sort()
+            median = latencies[len(latencies) // 2]
+            p99    = latencies[min(len(latencies) - 1, int(len(latencies) * 0.99))]
+
+            # a frozen event loop would show PING latencies of seconds; with the
+            # GIL yielded between slices PINGs are served in a few ms. assert on
+            # the median (robust to a rare outlier) plus a generous p99
+            self.env.assertLess(median, 0.1)
+            self.env.assertLess(p99, 1.0)
+
+            await probe.aclose()
+            await pool.aclose()
+            self.conn.delete(GRAPH_ID)
+
+        asyncio.run(run(self))

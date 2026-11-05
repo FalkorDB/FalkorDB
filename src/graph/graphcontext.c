@@ -164,7 +164,7 @@ static void _CreateRWLocks
 	ASSERT (res == 0) ;
 	res = pthread_cond_init (&gc->writer_gate_cond, NULL) ;
 	ASSERT (res == 0) ;
-	gc->writer_waiting = false ;
+	atomic_init (&gc->writer_waiting, false) ;
 }
 
 // update graph context hash
@@ -506,7 +506,7 @@ void GraphContext_WriterGateEnter
 	ASSERT (gc != NULL) ;
 
 	pthread_mutex_lock (&gc->writer_gate_mutex) ;
-	gc->writer_waiting = true ;
+	atomic_store_explicit (&gc->writer_waiting, true, memory_order_release) ;
 	pthread_mutex_unlock (&gc->writer_gate_mutex) ;
 }
 
@@ -519,7 +519,7 @@ void GraphContext_WriterGateLeave
 	ASSERT (gc != NULL) ;
 
 	pthread_mutex_lock (&gc->writer_gate_mutex) ;
-	gc->writer_waiting = false ;
+	atomic_store_explicit (&gc->writer_waiting, false, memory_order_release) ;
 	pthread_cond_broadcast (&gc->writer_gate_cond) ;
 	pthread_mutex_unlock (&gc->writer_gate_mutex) ;
 }
@@ -539,10 +539,29 @@ int GraphContext_TimeAcquireReadLock
 ) {
 	ASSERT (gc != NULL) ;
 
+	// fast path: if no writer is currently acquiring the write lock, skip the
+	// gate (mutex + condvar) entirely and acquire the read lock directly, exactly
+	// like a legacy reader. writer_waiting is advisory - the rwlock enforces
+	// exclusion - so a reader that races past a writer which sets the flag right
+	// after this load is bounded exactly like the poll-interval hand-off window,
+	// and on Linux the rwlock's own writer-preference still blocks it behind the
+	// queued writer. this removes the per-read gate-mutex acquisition and the
+	// redundant condvar wait that otherwise duplicate the rwlock's writer
+	// preference - the overhead that dominates mixed read/write workloads.
+	if (!atomic_load_explicit (&gc->writer_waiting, memory_order_acquire)) {
+		int rc = (timeout_ms <= 0)
+			? pthread_rwlock_rdlock (&gc->rwlock)
+			: rwlock_timedrdlock  (&gc->rwlock, timeout_ms) ;
+		if (rc == 0) {
+			gc->writelocked = false ;
+		}
+		return rc ;
+	}
+
 	// no timeout: wait out the gate, then block for the read lock
 	if (timeout_ms <= 0) {
 		pthread_mutex_lock (&gc->writer_gate_mutex) ;
-		while (gc->writer_waiting) {
+		while (atomic_load_explicit (&gc->writer_waiting, memory_order_acquire)) {
 			pthread_cond_wait (&gc->writer_gate_cond, &gc->writer_gate_mutex) ;
 		}
 		pthread_mutex_unlock (&gc->writer_gate_mutex) ;
@@ -572,11 +591,14 @@ int GraphContext_TimeAcquireReadLock
 	// report a timeout
 	pthread_mutex_lock (&gc->writer_gate_mutex) ;
 	int wait_rc = 0 ;
-	while (gc->writer_waiting && wait_rc != ETIMEDOUT) {
+	while (atomic_load_explicit (&gc->writer_waiting, memory_order_acquire) &&
+			wait_rc != ETIMEDOUT) {
 		wait_rc = pthread_cond_timedwait (&gc->writer_gate_cond,
 				&gc->writer_gate_mutex, &deadline) ;
 	}
-	bool gate_timed_out = (gc->writer_waiting && wait_rc == ETIMEDOUT) ;
+	bool gate_timed_out =
+		(atomic_load_explicit (&gc->writer_waiting, memory_order_acquire) &&
+		 wait_rc == ETIMEDOUT) ;
 	pthread_mutex_unlock (&gc->writer_gate_mutex) ;
 
 	if (gate_timed_out) {
