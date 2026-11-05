@@ -11,6 +11,7 @@
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
 //! - `ddl.rs`       the runtime side of `CREATE`/`DROP CCH INDEX` (#3213)
 //! - `maint.rs`     keeping the indexes correct after writes (#3214)
+//! - `procedure.rs` `db.idx.cch.query` and the CCH rows of `db.indexes()`
 //! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
@@ -22,6 +23,7 @@ mod input;
 pub(crate) mod maint;
 mod nd;
 mod order;
+pub(crate) mod procedure;
 mod query;
 #[cfg(test)]
 pub(crate) mod testkit;
@@ -268,7 +270,7 @@ impl Cch {
     /// # Panics
     /// On that missing arc when `debug_assertions` are on.
     #[must_use]
-    pub fn query(
+    pub(crate) fn query(
         &self,
         src: u64,
         dst: u64,
@@ -277,14 +279,13 @@ impl Cch {
     }
 
     #[must_use]
-    pub fn node_count(&self) -> usize {
+    pub(crate) fn node_count(&self) -> usize {
         self.node_count_impl()
     }
 
     /// Bytes held by this hierarchy: the struct itself, the shared [`Topology`], and the
-    /// four weight arrays. Two versions sharing one `Topology` each report its bytes. Only
-    /// the tests call it.
-    #[cfg(test)]
+    /// four weight arrays. Two versions sharing one `Topology` each report its bytes, as two
+    /// versions sharing a matrix do.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.memory_usage_impl()
@@ -309,7 +310,7 @@ pub enum Recustomized {
 /// One CCH index as held by `Graph`: the kind of an [`IndexEntry`] in
 /// `FalkorDbIndex::cch_indexes`, which adds its build state. `new_version` clones the `Arc`.
 #[derive(Clone)]
-pub struct CchIndex {
+pub(crate) struct CchIndex {
     pub def: CchIndexDef,
     pub(crate) cch: Arc<Cch>,
 }
@@ -423,10 +424,9 @@ impl VersionedIndex for CchIndex {
         unreachable!("CCH is not dispatched through IndexId until the background build")
     }
 
-    /// Never called: [`FalkorDbIndex::memory_usage`] counts the node and edge columns only, since
-    /// the hierarchy holds no arrays until #3208 and #3209.
+    /// The hierarchy's bytes ([`Cch::memory_usage`]), for `GRAPH.MEMORY USAGE`.
     fn memory_usage(&self) -> usize {
-        unreachable!("GRAPH.MEMORY USAGE counts no CCH index until the hierarchy holds arrays")
+        self.cch.memory_usage()
     }
 }
 

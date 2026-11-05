@@ -112,3 +112,19 @@ pub(crate) fn drop_cch_index<'a>(
     runtime.stats.borrow_mut().indexes_dropped += 1;
     Ok(BatchOp::Once(None))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::cch_error_message;
+    use crate::index::falkordb::cch::CchError;
+
+    #[test]
+    fn error_messages_use_cs_wording() {
+        assert!(cch_error_message(&CchError::AlreadyExists).contains("already exists"));
+        assert!(cch_error_message(&CchError::NotFound).contains("no CCH index"));
+        assert_eq!(
+            cch_error_message(&CchError::Internal("boom")),
+            "CCH index error: boom"
+        );
+    }
+}
