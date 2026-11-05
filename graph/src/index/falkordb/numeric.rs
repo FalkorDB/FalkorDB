@@ -290,6 +290,13 @@ impl NumericIndex {
         self.tree.is_empty()
     }
 
+    /// Heap bytes the tree holds ([`CowBTree::heap_bytes`]): every page this version reaches,
+    /// whether or not another version shares it. Walks every page.
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.tree.heap_bytes()
+    }
+
     /// Entity ids whose value equals `value`. Empty for a non-numeric value.
     #[must_use]
     pub fn point(
@@ -510,6 +517,14 @@ impl NumericIndex {
         Self {
             tree: Tree::from_sorted(&pairs),
         }
+    }
+
+    /// Every `(key, doc)` tuple the index holds, in order. For tests that compare a column with
+    /// what it must hold.
+    #[cfg(test)]
+    #[must_use]
+    pub fn tuples(&self) -> Vec<(u64, u64)> {
+        self.tree.range_tuples(0, u64::MAX).collect()
     }
 }
 

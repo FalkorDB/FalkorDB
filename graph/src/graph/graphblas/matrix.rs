@@ -103,6 +103,10 @@ use super::{
     GxB_unload_Matrix_into_Container,
 };
 use super::{
+    GrB_FP64, GrB_Matrix_build_FP64, GrB_Matrix_extractTuples_FP64, GrB_Matrix_select_INT64,
+    GrB_Matrix_setElement_FP64, GrB_OFFDIAG,
+};
+use super::{
     GrB_GT_UINT64, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_select_BOOL, GrB_VALUEEQ_BOOL,
 };
 
@@ -969,6 +973,30 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    /// Remove every entry on the main diagonal (`GrB_select` with
+    /// `GrB_OFFDIAG`, whose thunk 0 names the main diagonal), in place.
+    /// So far only the CCH test kit uses it, to drop a weight matrix's self-loops.
+    #[cfg(test)]
+    pub(crate) fn drop_diagonal(&mut self) {
+        let info = unsafe {
+            GrB_Matrix_select_INT64(
+                self.inner(),
+                null_mut(),
+                null_mut(),
+                GrB_OFFDIAG,
+                self.inner(),
+                0,
+                null_mut(),
+            )
+        };
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GrB_Matrix_select_INT64: {info:?}"
+        );
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
     pub fn select(
         &mut self,
         mask: &Matrix<bool>,
@@ -1373,6 +1401,114 @@ impl Matrix<u64> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
+    }
+}
+
+/// `FP64` matrices, e.g. a weight per node pair. So far only the test kit's oracle uses them:
+/// a test graph is a weight matrix.
+#[cfg(test)]
+impl Matrix<f64> {
+    /// Create a new `FP64` matrix.
+    #[must_use]
+    pub fn new(
+        nrows: u64,
+        ncols: u64,
+    ) -> Self {
+        unsafe {
+            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_FP64, nrows, ncols);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_new failed: {info:?}"
+            );
+            let m = m.assume_init();
+            pin_sparse(m);
+            Self {
+                m: Arc::new(Handle(m)),
+                lock: Arc::new(Mutex::new(())),
+                has_pending: Arc::new(AtomicBool::new(false)),
+                phantom: PhantomData,
+            }
+        }
+    }
+
+    /// Set an `FP64` value at `(i, j)`.
+    ///
+    /// An invalid index (outside the dimensions) or out of memory panics, in
+    /// release too: any error `GrB_Info`, one below 0.
+    pub fn set(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: f64,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_setElement_FP64(self.inner(), value, i, j);
+            assert!((info as i32) >= 0, "GrB_Matrix_setElement_FP64: {info:?}");
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Build from coordinate arrays into this (empty) matrix. A repeated `(row, col)` is a bug
+    /// in the caller, not something to fold: there is no `dup` operator, so GraphBLAS refuses
+    /// it, and this panics, as it does on an index outside the dimensions.
+    ///
+    /// Both checks hold in release: mismatched lengths would read past an array, and a
+    /// refused build would leave the matrix silently empty.
+    pub(crate) fn build(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+        vals: &[f64],
+    ) {
+        assert!(rows.len() == cols.len() && rows.len() == vals.len());
+        let info = unsafe {
+            GrB_Matrix_build_FP64(
+                self.inner(),
+                rows.as_ptr(),
+                cols.as_ptr(),
+                vals.as_ptr(),
+                rows.len() as u64,
+                null_mut(),
+            )
+        };
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GrB_Matrix_build_FP64: {info:?}"
+        );
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Every stored entry as parallel row, column and value arrays (`extractTuples`), in the
+    /// order GraphBLAS stores them: row by row, columns ascending.
+    #[must_use]
+    pub(crate) fn extract_tuples(&self) -> (Vec<u64>, Vec<u64>, Vec<f64>) {
+        self.wait();
+        let mut count = self.nvals();
+        let mut rows = vec![0; count as usize];
+        let mut cols = vec![0; count as usize];
+        let mut vals = vec![0.0; count as usize];
+        let info = unsafe {
+            GrB_Matrix_extractTuples_FP64(
+                rows.as_mut_ptr(),
+                cols.as_mut_ptr(),
+                vals.as_mut_ptr(),
+                &raw mut count,
+                self.inner(),
+            )
+        };
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GrB_Matrix_extractTuples_FP64: {info:?}"
+        );
+        rows.truncate(count as usize);
+        cols.truncate(count as usize);
+        vals.truncate(count as usize);
+        (rows, cols, vals)
     }
 }
 

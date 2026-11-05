@@ -1,0 +1,5 @@
+name = "falkor-effects-codec"
+defaultTargets = ["FalkorEffectsCodec"]
+
+[[lean_lib]]
+name = "FalkorEffectsCodec"

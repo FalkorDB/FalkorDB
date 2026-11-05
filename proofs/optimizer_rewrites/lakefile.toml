@@ -1,0 +1,5 @@
+name = "falkor-optimizer-rewrites"
+defaultTargets = ["FalkorOptimizer"]
+
+[[lean_lib]]
+name = "FalkorOptimizer"
