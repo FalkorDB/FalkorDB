@@ -1009,3 +1009,24 @@ class testIndexCreationFlow():
         self.env.assertEqual(language(), ['german'])
         create_node_range_index(graph, 'L', 'c', sync=True)  # rebuild
         self.env.assertEqual(language(), ['german'])
+
+    def test22_adding_a_field_keeps_the_existing_field_queryable(self):
+        # Adding a field to an indexed label populates it in the background.
+        # Fulltext queries are not gated on the index being operational, so they
+        # answer from whatever the spec holds: the documents the first field
+        # already has must stay in it while the second one populates, not be
+        # rebuilt from empty.
+        graph = self.db.select_graph("add_field_keeps_old")
+        n = 50000
+        graph.query("UNWIND range(1, $n) AS x CREATE (:L {a: 'alpha', b: 'beta'})", {'n': n})
+        create_node_fulltext_index(graph, 'L', 'a', sync=True)
+        probe = "CALL db.idx.fulltext.queryNodes('L', 'alpha') YIELD node RETURN count(node)"
+        self.env.assertEqual(graph.ro_query(probe).result_set, [[n]])
+
+        create_node_fulltext_index(graph, 'L', 'b')  # not waited for
+        self.env.assertEqual(graph.ro_query(probe).result_set, [[n]])
+        wait_for_indices_to_sync(graph)
+        self.env.assertEqual(graph.ro_query(probe).result_set, [[n]])
+        self.env.assertEqual(
+            graph.ro_query("CALL db.idx.fulltext.queryNodes('L', 'beta') "
+                           "YIELD node RETURN count(node)").result_set, [[n]])

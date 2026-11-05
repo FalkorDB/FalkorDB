@@ -905,7 +905,19 @@ pub struct Index {
     /// version carrying it may yet be discarded. Whoever publishes the version
     /// takes the flag ([`Self::take_population_owed`]) and starts the job.
     population_owed: AtomicBool,
+    /// Fields added to a spec this `Index` shares with the published one
+    /// ([`Self::fork_for_ddl`] with `share_spec`), not yet registered in it.
+    /// Registering is a change to the spec the published version reads, so it waits
+    /// for the publish ([`Self::register_deferred_fields`]): a version that is rolled
+    /// back must leave the spec as it was. Until then the fields exist here only.
+    deferred_fields: Mutex<Vec<DeferredFields>>,
 }
+
+/// Fields to register in a live spec once the version that added them is published.
+type DeferredFields = (
+    HashMap<Arc<String>, Vec<Arc<Field>>>,
+    Option<TextIndexOptions>,
+);
 
 #[derive(Debug, Default)]
 struct PendingSlots {
@@ -1036,6 +1048,7 @@ impl Default for Index {
             language: None,
             stopwords: None,
             population_owed: AtomicBool::new(false),
+            deferred_fields: Mutex::new(Vec::new()),
         }
     }
 }
@@ -1067,17 +1080,25 @@ impl Index {
 
     /// Copy this `Index` for a DDL statement run in an unpublished version.
     ///
-    /// The copy shares **nothing mutable** with `self`: it has no RediSearch spec
-    /// (the statement builds a fresh one, see [`Self::recreate_index`] and
-    /// `Indexer::create_index`), a new generation id and its own pending-ticket
-    /// counters. `self` belongs to the published version and stays exactly as it
-    /// was, so a version that is rolled back leaves no trace on it. Only the
-    /// Rust-side metadata (fields, language, ...) is deep-cloned.
+    /// The copy has its own counters (a new generation id, fresh pending tickets), and
+    /// deep-cloned Rust-side metadata (fields, language, ...); `self` belongs to the
+    /// published version and stays exactly as it was, so a version that is rolled back
+    /// leaves no trace on it.
+    ///
+    /// The RediSearch spec is either not carried (`share_spec == false`: the statement
+    /// builds a fresh spec, see [`Self::recreate_index`] and `Indexer::create_index`) or
+    /// shared, for a statement that only adds fields: the copy points at the same spec,
+    /// which keeps answering queries on the fields it has while the new ones are
+    /// populated, and the new fields are registered in it when the version is published
+    /// ([`Self::defer_fields`]).
     #[must_use]
-    pub fn fork_for_ddl(&self) -> Self {
+    pub fn fork_for_ddl(
+        &self,
+        share_spec: bool,
+    ) -> Self {
         let mut copy = Self {
             id: self.id,
-            spec: None,
+            spec: if share_spec { self.spec.clone() } else { None },
             fields: self.fields.clone(),
             field_order: self.field_order.clone(),
             pending_slots: Arc::new(Mutex::new(PendingSlots {
@@ -1090,9 +1111,36 @@ impl Index {
             language: self.language.clone(),
             stopwords: self.stopwords.clone(),
             population_owed: AtomicBool::new(false),
+            deferred_fields: Mutex::new(if share_spec {
+                self.deferred_fields.lock().clone()
+            } else {
+                Vec::new()
+            }),
         };
         copy.bump_id();
         copy
+    }
+
+    /// Record fields this `Index` adds to the spec it shares: they are registered in it
+    /// by [`Self::register_deferred_fields`] once the version is published.
+    pub fn defer_fields(
+        &self,
+        fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
+        options: Option<TextIndexOptions>,
+    ) {
+        self.deferred_fields.lock().push((fields, options));
+    }
+
+    /// Register in the spec the fields [`Self::defer_fields`] recorded, in order. For the
+    /// publisher, before it starts the population that fills them.
+    pub fn register_deferred_fields(&self) {
+        let deferred = std::mem::take(&mut *self.deferred_fields.lock());
+        for (fields, options) in deferred {
+            // Fails only for a vector field with an unknown similarity function; a vector
+            // field is never added to a shared spec (it rebuilds one), and the options of
+            // every other kind are validated when the statement runs.
+            let _ = self.register_fields(&fields, options.as_ref());
+        }
     }
 
     /// Mark this `Index`, built by a DDL statement, as owing its first population:

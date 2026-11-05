@@ -20,15 +20,15 @@ graph/src/storage/registry.rs	register_index_backend	31	PROVEN	Once.registry_spe
 graph/src/storage/registry.rs	index_backend	43	PROVEN	Once.registry_spec
 graph/src/storage/registry.rs	register_attr_backend	52	PROVEN	Once.registry_spec
 graph/src/storage/registry.rs	attr_backend	62	PROVEN	Once.registry_spec
-graph/src/graph/mvcc_graph.rs	new	97	MODELLED	Mvcc.init
-graph/src/graph/mvcc_graph.rs	from_graph	111	MODELLED	Mvcc.init (arbitrary pub)
-graph/src/graph/mvcc_graph.rs	read	118	PROVEN	Mvcc.snapshots_are_committed (Ev.read)
-graph/src/graph/mvcc_graph.rs	fork	130	PROVEN	Mvcc Ev.forkW/forkCur (takes nothing; version ver+1, base = published): one_commit_per_version, inline_write_ok, current_not_stale, private_on_committed (#3657)
-graph/src/graph/mvcc_graph.rs	is_stale	144	PROVEN	Mvcc Ev.checkFork (published.version + 1 != fork.version ⇒ stale, no Current version made): checkFork_stale, checkFork_on_committed, stale_then_rerun, batch_then_check
-graph/src/graph/mvcc_graph.rs	commit	205	PROVEN	Mvcc.no_lost_writes/history_linear/one_commit_per_version (Ev.commit, ver+1), commit_publishes (commit then swap), refused_commit_publishes_nothing, stale_commit_publishes_nothing, current_not_stale; #3545 compare-and-swap: Ev.commit loads and checks, Ev.swap is the CAS: swap_overtaken_publishes_nothing (Stale: nothing published), swap_unchanged_publishes, in_flight_blocks_mutate, cas_refuses_overtaken_commit, cas_current_commit_publishes; schema_version/trim/fold_oversized_deltas not modelled
+graph/src/graph/mvcc_graph.rs	new	107	MODELLED	Mvcc.init
+graph/src/graph/mvcc_graph.rs	from_graph	119	MODELLED	Mvcc.init (arbitrary pub)
+graph/src/graph/mvcc_graph.rs	read	133	PROVEN	Mvcc.snapshots_are_committed (Ev.read)
+graph/src/graph/mvcc_graph.rs	fork	145	PROVEN	Mvcc Ev.forkW/forkCur (takes nothing; version ver+1, base = published): one_commit_per_version, inline_write_ok, current_not_stale, private_on_committed (#3657)
+graph/src/graph/mvcc_graph.rs	is_stale	159	PROVEN	Mvcc Ev.checkFork (published.version + 1 != fork.version ⇒ stale, no Current version made): checkFork_stale, checkFork_on_committed, stale_then_rerun, batch_then_check
+graph/src/graph/mvcc_graph.rs	commit	228	PROVEN	Mvcc.no_lost_writes/history_linear/one_commit_per_version (Ev.commit, ver+1), commit_publishes (commit then swap), refused_commit_publishes_nothing, stale_commit_publishes_nothing, current_not_stale; #3545 compare-and-swap: Ev.commit loads and checks, Ev.swap is the CAS: swap_overtaken_publishes_nothing (Stale: nothing published), swap_unchanged_publishes, in_flight_blocks_mutate, cas_refuses_overtaken_commit, cas_current_commit_publishes; schema_version/trim/fold_oversized_deltas not modelled
 graph/src/graph/mvcc_graph.rs	commit_indexer_batch	235	PROVEN	Mvcc Ev.batch (writer=false: same data version, no data change): batch_keeps_forks, batch_then_check, batch_does_not_stale (#3566); the fit decision (Same/Swap/Discarded) is native_index IndexerFit
-graph/src/graph/mvcc_graph.rs	commit_version	261	PROVEN	Mvcc Ev.commit (writer=true: is_stale ⇒ Stale, validate ⇒ Invalid, else swap) and Ev.batch (writer=false skips the stale check): commit_publishes, stale_commit_publishes_nothing, refused_commit_publishes_nothing, batch_keeps_forks; #3567 also calls FalkorDbIndex::publish (index bookkeeping, no data: native_index Rebase.publish_proj); #3545: the publish is `compare_and_swap(&published, new)` against the pointer loaded for the checks, modelled by Ev.commit (load, checks) then Ev.swap (CAS: Stale if `pid` moved, e.g. a batch published without the lock): swap_overtaken_publishes_nothing, swap_unchanged_publishes; the batch's own CAS: native_index Batch.commit_cas_stale
-graph/src/graph/mvcc_graph.rs	drop	351	NOT COVERED	cancel_indexing on drop
+graph/src/graph/mvcc_graph.rs	commit_version	296	PROVEN	Mvcc Ev.commit (writer=true: is_stale ⇒ Stale, validate ⇒ Invalid, else swap) and Ev.batch (writer=false skips the stale check): commit_publishes, stale_commit_publishes_nothing, refused_commit_publishes_nothing, batch_keeps_forks; #3567 also calls FalkorDbIndex::publish (index bookkeeping, no data: native_index Rebase.publish_proj); #3545: the publish is `compare_and_swap(&published, new)` against the pointer loaded for the checks, modelled by Ev.commit (load, checks) then Ev.swap (CAS: Stale if `pid` moved, e.g. a batch published without the lock): swap_overtaken_publishes_nothing, swap_unchanged_publishes; the batch's own CAS: native_index Batch.commit_cas_stale
+graph/src/graph/mvcc_graph.rs	drop	401	NOT COVERED	cancel_indexing on drop
 src/graph_core.rs	up_to_nul	87	NOT COVERED	string helper, not concurrency
 src/graph_core.rs	c_graph_name	104	NOT COVERED	string helper
 src/graph_core.rs	c_graph_key	119	NOT COVERED	string helper
@@ -97,25 +97,25 @@ graph/src/index/mod.rs	make_arr_names	122	PROVEN	Search.arrNames used by range_n
 graph/src/index/mod.rs	new	138	MODELLED	Search.Field
 graph/src/index/mod.rs	new_with_vector_options	155	MODELLED	Search.Field.vdim (vector_options.map dimension)
 graph/src/index/mod.rs	set	717	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; counterexample removed in bbee75955; the last revision that has them is 17ccc5412), docSet_temporal_not_indexed, fulltext_only_strings, range_never_vector_or_text
-graph/src/index/mod.rs	add_document	1907	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
-graph/src/index/mod.rs	register_fields	1181	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
-graph/src/index/mod.rs	bump_id	1049	PROVEN	Tickets.bump_inv, stale_release_isolated
-graph/src/index/mod.rs	increment_pending_for_generation	2111	PROVEN	Tickets.inc_inv
-graph/src/index/mod.rs	try_decrement_pending_for_generation	2129	PROVEN	Tickets.dec_inv, release_exact
-graph/src/index/mod.rs	pending_count_for_generation	2151	PROVEN	Tickets.pendingFor
-graph/src/index/mod.rs	pending_count	2165	PROVEN	Tickets.operational_iff
-graph/src/index/mod.rs	is_operational	2084	PROVEN	Tickets.operational_iff
-graph/src/index/indexer.rs	create_index	181	PROVEN	Tickets.store (73077bb4a: bump_id when the label has fields; Rust bumps whenever the entry exists, which also covers the window after drop_index leaves a 0-field entry until drop_index_bg removes it: not modelled, an extra bump only makes older tickets stale); main_operational_complete, main_lost_order_complete (BUG 2, fixed by #3086; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
-graph/src/index/indexer.rs	acquire_population_ticket	624	PROVEN	Tickets.inc_inv
-graph/src/index/indexer.rs	acquire_population_snapshot	642	PROVEN	Tickets.acquire / inc_inv; Worker.attrs snapshot (main_operational_complete)
-graph/src/index/indexer.rs	acquire_population_snapshots	664	PROVEN	Tickets.inc_inv
-graph/src/index/indexer.rs	release_population_ticket	686	PROVEN	Tickets.dec_inv
-graph/src/index/indexer.rs	is_ticket_current	698	PROVEN	Tickets.batch stale branch (inv_batch, main_lost_order_complete, fixed_trace_complete)
-graph/src/index/indexer.rs	ticket_pending_changes	710	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
-graph/src/index/indexer.rs	enabled	720	PROVEN	Tickets.operational_iff
-graph/src/graph/graph.rs	populate_index_batch	594	PROVEN	Tickets.batch; inv_batch, main_operational_complete
-graph/src/graph/graph.rs	vector_query_nodes	4355	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
-graph/src/graph/graph.rs	vector_query_edges	4415	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
+graph/src/index/mod.rs	add_document	2007	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
+graph/src/index/mod.rs	register_fields	1281	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
+graph/src/index/mod.rs	bump_id	1070	PROVEN	Tickets.bump_inv, stale_release_isolated
+graph/src/index/mod.rs	increment_pending_for_generation	2211	PROVEN	Tickets.inc_inv
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2229	PROVEN	Tickets.dec_inv, release_exact
+graph/src/index/mod.rs	pending_count_for_generation	2251	PROVEN	Tickets.pendingFor
+graph/src/index/mod.rs	pending_count	2265	PROVEN	Tickets.operational_iff
+graph/src/index/mod.rs	is_operational	2184	PROVEN	Tickets.operational_iff
+graph/src/index/indexer.rs	create_index	181	NOT COVERED	#3680 (index DDL versioned with the graph): the entry is a private copy with its own counters and population is owed until publish; Tickets.store models the old shared-counter bump
+graph/src/index/indexer.rs	acquire_population_ticket	780	PROVEN	Tickets.inc_inv
+graph/src/index/indexer.rs	acquire_population_snapshot	798	PROVEN	Tickets.acquire / inc_inv; Worker.attrs snapshot (main_operational_complete)
+graph/src/index/indexer.rs	acquire_population_snapshots	820	PROVEN	Tickets.inc_inv
+graph/src/index/indexer.rs	release_population_ticket	841	PROVEN	Tickets.dec_inv
+graph/src/index/indexer.rs	is_ticket_current	853	PROVEN	Tickets.batch stale branch (inv_batch, main_lost_order_complete, fixed_trace_complete)
+graph/src/index/indexer.rs	ticket_pending_changes	864	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
+graph/src/index/indexer.rs	enabled	874	PROVEN	Tickets.operational_iff
+graph/src/graph/graph.rs	populate_index_batch	606	NOT COVERED	#3680 (index DDL versioned with the graph): the batch reads the published map (IndexerHandle::committed) under the lock; Tickets.batch models a single shared map
+graph/src/graph/graph.rs	vector_query_nodes	4369	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/graph/graph.rs	vector_query_edges	4429	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
 graph/src/runtime/runtime.rs	map_to_index_options	2008	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)
 graph/src/runtime/ops/commit.rs	next	69	MODELLED	lock path only (#3226): Locks.writerOpenScanProg (escalate at :93, commit_deferred_indexes → Indexer::commit → RediSearch_IndexAddDocument with the scan's spec read lock still held); properties noReacquire / LockOrdered refuted by bug3226_open_scan_upgrade, bug3226_open_scan_unordered (OPEN); scan-closed paths: spec_programs_ordered

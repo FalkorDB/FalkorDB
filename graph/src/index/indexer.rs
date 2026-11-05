@@ -346,13 +346,25 @@ impl Indexer {
             }
         }
 
-        // Validation passed — materialize a private copy of the entry, with no
-        // RediSearch spec and its own generation and pending counters, to
-        // mutate and publish below. The copy always gets a fresh spec (below),
-        // never a field added to the existing one, because that spec is the
-        // published version's: a version that is rolled back must leave it as
-        // it was.
-        let mut label_indexes = existing.map_or_else(Index::default, Index::fork_for_ddl);
+        // Validation passed — materialize a private copy of the entry, with its own
+        // generation and pending counters, to mutate and publish below. It never changes
+        // the published version's spec while the version is unpublished: a version that is
+        // rolled back must leave it as it was.
+        //
+        // A statement that only adds fields shares that spec (the fields go into it when
+        // the version is published), so the fields it already has stay queryable while the
+        // new ones populate. Otherwise the copy gets a fresh spec. That is needed when a vector
+        // field is added (adding one to a live spec corrupts its HNSW state, see below), or
+        // when the statement sets a language or stopword list (a spec has them from its
+        // creation), and for a caller that populates synchronously, which no publish
+        // follows.
+        let share_spec = owes_population
+            && *index_type != IndexType::Vector
+            && language.is_none()
+            && stopwords.is_none()
+            && existing.is_some_and(Index::has_rs_index);
+        let mut label_indexes =
+            existing.map_or_else(Index::default, |e| e.fork_for_ddl(share_spec));
 
         let mut new_fields: HashMap<Arc<String>, Vec<Arc<Field>>> = HashMap::new();
 
@@ -388,18 +400,22 @@ impl Indexer {
                 label_indexes.insert_field(attr.clone(), field);
             }
         }
-        let effective_stopwords = stopwords
-            .clone()
-            .or_else(|| label_indexes.stopwords().cloned());
-        let effective_language = language
-            .clone()
-            .or_else(|| label_indexes.language().cloned());
-        label_indexes.create_rs_index(
-            label,
-            effective_stopwords.as_ref(),
-            effective_language.as_ref(),
-        )?;
-        label_indexes.register_all_fields()?;
+        if share_spec {
+            label_indexes.defer_fields(new_fields.clone(), field_options.clone());
+        } else {
+            let effective_stopwords = stopwords
+                .clone()
+                .or_else(|| label_indexes.stopwords().cloned());
+            let effective_language = language
+                .clone()
+                .or_else(|| label_indexes.language().cloned());
+            label_indexes.create_rs_index(
+                label,
+                effective_stopwords.as_ref(),
+                effective_language.as_ref(),
+            )?;
+            label_indexes.register_all_fields()?;
+        }
 
         // Record the settings the spec above was built with. An explicit language or
         // stopword list reaches here only when the label has no fulltext field left
@@ -456,7 +472,7 @@ impl Indexer {
         let Some(existing) = map.get(label) else {
             return Ok(None);
         };
-        let mut index = existing.fork_for_ddl();
+        let mut index = existing.fork_for_ddl(false);
         let before = index.index_count();
         let mut removed = false;
         // Empty `attrs` means "drop all fields of this index_type"
@@ -538,6 +554,18 @@ impl Indexer {
             changes.retired.push(index.clone());
         }
         changes
+    }
+
+    /// Register the fields `label`'s index added to a spec it shares with the previous
+    /// version ([`Index::defer_fields`]). For the publisher, before it starts the
+    /// population that fills them.
+    pub fn register_deferred_fields(
+        &self,
+        label: &Arc<String>,
+    ) {
+        if let Some(index) = self.index.get(label) {
+            index.register_deferred_fields();
+        }
     }
 
     /// The field snapshot and ticket of the population `label`'s index owes,
@@ -1127,7 +1155,7 @@ mod tests {
         published.owe_population();
         assert_eq!(published.pending_count(), 1);
 
-        let copy = published.fork_for_ddl();
+        let copy = published.fork_for_ddl(false);
         assert_ne!(copy.id(), published.id(), "a new generation");
         assert_eq!(copy.pending_count(), 0);
         copy.owe_population();

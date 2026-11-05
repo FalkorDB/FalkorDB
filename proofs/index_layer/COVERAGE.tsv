@@ -35,108 +35,108 @@ graph/src/index/mod.rs	new	658	PROVEN	nodeKey; decodeId_nodeKey, nodeKey_injecti
 graph/src/index/mod.rs	new_edge	685	PROVEN	edgeKey; decode_edgeKey
 graph/src/index/mod.rs	id	713	PROVEN	Meta.Idx.idOf_spec (Document.id = id/edge_id; Iter.delKey_spec)
 graph/src/index/mod.rs	set	717	PROVEN	setRange/docOf; equal_exact, numRange_exact, strRange_exact; bug_bool_eq_int; temporals not indexed since #3076 (e20300436): Temporal.temporal_not_indexed, temporal_numRange_exact, temporal_equal_exact, fixed3076_temporal_in_numeric_range; vector arm @49f698d22 (#3087): Meta.setVector_sound, setVector_has_params, setVector_noparams
-graph/src/index/mod.rs	from_owned	926	PROVEN	Iter.RC.create/RC.clone (NULL => None), RC.create_inv
-graph/src/index/mod.rs	as_ptr	931	PROVEN	Iter.RC (transient handle; not_freed while owned)
-graph/src/index/mod.rs	try_clone	937	PROVEN	Iter.RC.clone_inv, RC.clone_after_drop
-graph/src/index/mod.rs	into_raw	944	PROVEN	Iter.RC.into_raw_needed, dropSpec_inv
-graph/src/index/mod.rs	drop	952	PROVEN	Iter.RC.release_inv, RC.not_freed
-graph/src/index/mod.rs	new	980	PROVEN	Iter.RC.create_inv (SpecHandle)
-graph/src/index/mod.rs	as_ptr	985	PROVEN	Iter.RC.not_freed
-graph/src/index/mod.rs	try_clone_ref	991	PROVEN	Iter.RC.clone_inv, clone_after_drop
-graph/src/index/mod.rs	drop	997	PROVEN	Iter.RC.dropSpec_inv, into_raw_needed
-graph/src/index/mod.rs	default	1014	PROVEN	Meta.Idx.default_spec, default_inv
-graph/src/index/mod.rs	id	1040	PROVEN	Meta.Idx.idOf_spec
-graph/src/index/mod.rs	bump_id	1049	PROVEN	Slots.bump; bump_total, bump_fresh, ok_bump; Meta.Idx.bumpId via Ixr.regen (createIndex_regen)
-graph/src/index/mod.rs	fork_for_ddl	1075	NOT COVERED	#3680 (index DDL versioned with the graph): replaces clone_for_update: copy with no spec, fresh id and counters; Lean model (cloneForUpdate_eq) describes the shared-spec copy
-graph/src/index/mod.rs	has_rs_index	1088	PROVEN	Meta.Idx.hasRsIndex_spec
-graph/src/index/mod.rs	rs_ptr	1095	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
-graph/src/index/mod.rs	create_rs_index	1101	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err (FFI create = fresh handle); #3166 gap: records the spec's stopword list as Idx.rsStop (IndexGaps.createRsIndex_stop)
-graph/src/index/mod.rs	register_fields	1181	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok; never changes the spec's stopwords (IndexGaps.registerFields_stop); fulltext phonetic flag = TextOpts.phoneticEnabled since #3514 (a0ba12950): registerOne_text
+graph/src/index/mod.rs	from_owned	946	PROVEN	Iter.RC.create/RC.clone (NULL => None), RC.create_inv
+graph/src/index/mod.rs	as_ptr	951	PROVEN	Iter.RC (transient handle; not_freed while owned)
+graph/src/index/mod.rs	try_clone	957	PROVEN	Iter.RC.clone_inv, RC.clone_after_drop
+graph/src/index/mod.rs	into_raw	964	PROVEN	Iter.RC.into_raw_needed, dropSpec_inv
+graph/src/index/mod.rs	drop	972	PROVEN	Iter.RC.release_inv, RC.not_freed
+graph/src/index/mod.rs	new	999	PROVEN	Iter.RC.create_inv (SpecHandle)
+graph/src/index/mod.rs	as_ptr	1004	PROVEN	Iter.RC.not_freed
+graph/src/index/mod.rs	try_clone_ref	1010	PROVEN	Iter.RC.clone_inv, clone_after_drop
+graph/src/index/mod.rs	drop	1016	PROVEN	Iter.RC.dropSpec_inv, into_raw_needed
+graph/src/index/mod.rs	default	1033	PROVEN	Meta.Idx.default_spec, default_inv
+graph/src/index/mod.rs	id	1061	PROVEN	Meta.Idx.idOf_spec
+graph/src/index/mod.rs	bump_id	1070	PROVEN	Slots.bump; bump_total, bump_fresh, ok_bump; Meta.Idx.bumpId via Ixr.regen (createIndex_regen)
+graph/src/index/mod.rs	fork_for_ddl	1095	NOT COVERED	#3680 (index DDL versioned with the graph): replaces clone_for_update: copy with no spec, fresh id and counters; Lean model (cloneForUpdate_eq) describes the shared-spec copy
+graph/src/index/mod.rs	has_rs_index	1167	PROVEN	Meta.Idx.hasRsIndex_spec
+graph/src/index/mod.rs	rs_ptr	1174	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
+graph/src/index/mod.rs	create_rs_index	1180	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err (FFI create = fresh handle); #3166 gap: records the spec's stopword list as Idx.rsStop (IndexGaps.createRsIndex_stop)
+graph/src/index/mod.rs	register_fields	1281	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok; never changes the spec's stopwords (IndexGaps.registerFields_stop); fulltext phonetic flag = TextOpts.phoneticEnabled since #3514 (a0ba12950): registerOne_text
 graph/src/index/text_index_options.rs	phonetic_enabled	48	PROVEN	Meta.TextOpts.phoneticEnabled: phoneticEnabled_off_spellings, phoneticEnabled_code, phoneticEnabled_iff_ne_no; fixed3514_phonetic_no_is_off (#3514)
-graph/src/index/mod.rs	value_to_numeric	1357	PROVEN	valueToNumeric; equal_exact, numRange_exact
-graph/src/index/mod.rs	int_loses_f64_precision	1371	PROVEN	intLosesPrecision; intLosesPrecision_sound
-graph/src/index/mod.rs	build_numeric_range_node	1376	PROVEN	buildNumRange (absent bound inclusive since #3081 ff3d24ba7); numRange_exact (stored ±inf included), fixed3081_open_bound_includes_inf
-graph/src/index/mod.rs	build_string_range_node	1419	PROVEN	buildStrRange (#3072 empty node for exclusive equal bounds); strRange_exact (no equal-bounds premise since #3072), fixed3072_exclusive_equal_bounds, bug_string_range_order
-graph/src/index/mod.rs	build_query_node	1477	PROVEN	buildQ/buildEq; equal_exact, inList_exact, numRange_exact, strRange_exact, bug_point_equality, bug_multilabel_and/or
-graph/src/index/mod.rs	query	1691	PROVEN	Iter.queryN_mem, query_eq_scan_filter (RunSpec = RS LLAPI contract)
-graph/src/index/mod.rs	query_edges	1714	PROVEN	Iter.queryE_mem, queryE_eq_scan_filter
-graph/src/index/mod.rs	fulltext_query	1732	PROVEN	Iter.fulltextQ_exact, fulltextQ_errors (FtSpec abstract RS full-text match)
-graph/src/index/mod.rs	fulltext_query_edges	1761	PROVEN	Iter.fulltextQ_errors + queryE_mem shape (48-char keys, decTriple_edgeKey)
-graph/src/index/mod.rs	vector_query	1798	PROVEN	Iter.vectorQ_sound (KnnSpec: <= k stored vector docs), vectorField_spec
-graph/src/index/mod.rs	vector_query_edges	1860	PROVEN	Iter.vectorQ_sound (edge keys via decTriple_edgeKey)
-graph/src/index/mod.rs	add_document	1907	PROVEN	Table.add; commit_lookup, commit_preserves_inv
-graph/src/index/mod.rs	delete_document	1929	PROVEN	Iter.delKey_spec (deletes the key Document::new wrote)
-graph/src/index/mod.rs	delete_edge_document	1946	PROVEN	Iter.delEdgeKey_spec
-graph/src/index/mod.rs	has_fulltext_field	1969	PROVEN	Meta.Idx.hasFulltextField_iff
-graph/src/index/mod.rs	contains_field	1977	PROVEN	Meta.Idx.containsField_iff
-graph/src/index/mod.rs	has_field_with_type	1986	PROVEN	Meta.Idx.hasFieldWithType_iff
-graph/src/index/mod.rs	get_fields	1998	PROVEN	Meta.Idx.getFields_spec
-graph/src/index/mod.rs	add_field_to_existing	2006	PROVEN	Meta.Idx.addFieldToExisting_get, addFieldToExisting_inv
-graph/src/index/mod.rs	insert_field	2017	PROVEN	Meta.Idx.insertField_get, insertField_inv (field_order = keys, nodup)
-graph/src/index/mod.rs	remove_field	2029	PROVEN	Meta.Idx.removeField_spec, removeField_inv
-graph/src/index/mod.rs	retain_fields	2041	PROVEN	Meta.Idx.retainFields_get, retainFields_inv, IndexerM.retain_nonempty
-graph/src/index/mod.rs	is_empty	2053	PROVEN	Meta.Idx.isEmpty_iff
-graph/src/index/mod.rs	field_keys	2059	PROVEN	Meta.Idx.containsField_iff (fieldKeys)
-graph/src/index/mod.rs	fields	2065	PROVEN	Meta.Idx.accessors
-graph/src/index/mod.rs	field_order	2071	PROVEN	Meta.Idx.accessors, Inv
-graph/src/index/mod.rs	all_fields	2076	PROVEN	Meta.Idx.allFields_mem
-graph/src/index/mod.rs	is_operational	2084	PROVEN	Slots.countFor s.gen = 0; bump_fresh, dec_stale_keeps_current
-graph/src/index/mod.rs	set_progress	2089	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	progress	2100	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	increment_pending_for_generation	2111	PROVEN	Slots.inc; inc_dec_cur, inc_dec_stale, ok_inc, inc_stale_keeps_current
-graph/src/index/mod.rs	try_decrement_pending_for_generation	2129	PROVEN	Slots.dec; ok_dec, dec_stale_keeps_current
-graph/src/index/mod.rs	pending_count_for_generation	2151	PROVEN	Slots.countFor; bump_fresh
-graph/src/index/mod.rs	pending_count	2165	PROVEN	Slots.countFor s.gen; bump_fresh
-graph/src/index/mod.rs	language	2173	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	set_language	2178	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	stopwords	2189	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	set_stopwords	2194	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	memory_usage	2205	PROVEN	Meta.Idx.memoryUsage_spec (RediSearch_MemUsage passthrough)
-graph/src/index/mod.rs	index_count	2215	PROVEN	Meta.Idx.indexCount_eq
-graph/src/index/mod.rs	recreate_index	2219	PROVEN	Meta.Idx.recreateIndex_ok
-graph/src/index/indexer.rs	generation_id	89	PROVEN	Meta.Ticket.accessors
-graph/src/index/indexer.rs	label	94	PROVEN	Meta.Ticket.accessors
-graph/src/index/indexer.rs	language	102	PROVEN	Meta.IdxOptions.spec
-graph/src/index/indexer.rs	stopwords	111	PROVEN	Meta.IdxOptions.spec
-graph/src/index/indexer.rs	field_options	120	PROVEN	Meta.IdxOptions.spec
-graph/src/index/indexer.rs	vector_options	140	PROVEN	Meta.IdxOptions.spec
-graph/src/index/indexer.rs	has_indices	168	PROVEN	Meta.Ixr.hasIndices_iff
-graph/src/index/indexer.rs	memory_usage	173	PROVEN	Meta.Ixr.memoryUsage_spec
+graph/src/index/mod.rs	value_to_numeric	1457	PROVEN	valueToNumeric; equal_exact, numRange_exact
+graph/src/index/mod.rs	int_loses_f64_precision	1471	PROVEN	intLosesPrecision; intLosesPrecision_sound
+graph/src/index/mod.rs	build_numeric_range_node	1476	PROVEN	buildNumRange (absent bound inclusive since #3081 ff3d24ba7); numRange_exact (stored ±inf included), fixed3081_open_bound_includes_inf
+graph/src/index/mod.rs	build_string_range_node	1519	PROVEN	buildStrRange (#3072 empty node for exclusive equal bounds); strRange_exact (no equal-bounds premise since #3072), fixed3072_exclusive_equal_bounds, bug_string_range_order
+graph/src/index/mod.rs	build_query_node	1577	PROVEN	buildQ/buildEq; equal_exact, inList_exact, numRange_exact, strRange_exact, bug_point_equality, bug_multilabel_and/or
+graph/src/index/mod.rs	query	1791	PROVEN	Iter.queryN_mem, query_eq_scan_filter (RunSpec = RS LLAPI contract)
+graph/src/index/mod.rs	query_edges	1814	PROVEN	Iter.queryE_mem, queryE_eq_scan_filter
+graph/src/index/mod.rs	fulltext_query	1832	PROVEN	Iter.fulltextQ_exact, fulltextQ_errors (FtSpec abstract RS full-text match)
+graph/src/index/mod.rs	fulltext_query_edges	1861	PROVEN	Iter.fulltextQ_errors + queryE_mem shape (48-char keys, decTriple_edgeKey)
+graph/src/index/mod.rs	vector_query	1898	PROVEN	Iter.vectorQ_sound (KnnSpec: <= k stored vector docs), vectorField_spec
+graph/src/index/mod.rs	vector_query_edges	1960	PROVEN	Iter.vectorQ_sound (edge keys via decTriple_edgeKey)
+graph/src/index/mod.rs	add_document	2007	PROVEN	Table.add; commit_lookup, commit_preserves_inv
+graph/src/index/mod.rs	delete_document	2029	PROVEN	Iter.delKey_spec (deletes the key Document::new wrote)
+graph/src/index/mod.rs	delete_edge_document	2046	PROVEN	Iter.delEdgeKey_spec
+graph/src/index/mod.rs	has_fulltext_field	2069	PROVEN	Meta.Idx.hasFulltextField_iff
+graph/src/index/mod.rs	contains_field	2077	PROVEN	Meta.Idx.containsField_iff
+graph/src/index/mod.rs	has_field_with_type	2086	PROVEN	Meta.Idx.hasFieldWithType_iff
+graph/src/index/mod.rs	get_fields	2098	PROVEN	Meta.Idx.getFields_spec
+graph/src/index/mod.rs	add_field_to_existing	2106	PROVEN	Meta.Idx.addFieldToExisting_get, addFieldToExisting_inv
+graph/src/index/mod.rs	insert_field	2117	PROVEN	Meta.Idx.insertField_get, insertField_inv (field_order = keys, nodup)
+graph/src/index/mod.rs	remove_field	2129	PROVEN	Meta.Idx.removeField_spec, removeField_inv
+graph/src/index/mod.rs	retain_fields	2141	PROVEN	Meta.Idx.retainFields_get, retainFields_inv, IndexerM.retain_nonempty
+graph/src/index/mod.rs	is_empty	2153	PROVEN	Meta.Idx.isEmpty_iff
+graph/src/index/mod.rs	field_keys	2159	PROVEN	Meta.Idx.containsField_iff (fieldKeys)
+graph/src/index/mod.rs	fields	2165	PROVEN	Meta.Idx.accessors
+graph/src/index/mod.rs	field_order	2171	PROVEN	Meta.Idx.accessors, Inv
+graph/src/index/mod.rs	all_fields	2176	PROVEN	Meta.Idx.allFields_mem
+graph/src/index/mod.rs	is_operational	2184	PROVEN	Slots.countFor s.gen = 0; bump_fresh, dec_stale_keeps_current
+graph/src/index/mod.rs	set_progress	2189	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	progress	2200	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	increment_pending_for_generation	2211	PROVEN	Slots.inc; inc_dec_cur, inc_dec_stale, ok_inc, inc_stale_keeps_current
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2229	PROVEN	Slots.dec; ok_dec, dec_stale_keeps_current
+graph/src/index/mod.rs	pending_count_for_generation	2251	PROVEN	Slots.countFor; bump_fresh
+graph/src/index/mod.rs	pending_count	2265	PROVEN	Slots.countFor s.gen; bump_fresh
+graph/src/index/mod.rs	language	2273	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	set_language	2278	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	stopwords	2289	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	set_stopwords	2294	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	memory_usage	2305	PROVEN	Meta.Idx.memoryUsage_spec (RediSearch_MemUsage passthrough)
+graph/src/index/mod.rs	index_count	2315	PROVEN	Meta.Idx.indexCount_eq
+graph/src/index/mod.rs	recreate_index	2319	PROVEN	Meta.Idx.recreateIndex_ok
+graph/src/index/indexer.rs	generation_id	96	PROVEN	Meta.Ticket.accessors
+graph/src/index/indexer.rs	label	101	PROVEN	Meta.Ticket.accessors
+graph/src/index/indexer.rs	language	109	PROVEN	Meta.IdxOptions.spec
+graph/src/index/indexer.rs	stopwords	118	PROVEN	Meta.IdxOptions.spec
+graph/src/index/indexer.rs	field_options	127	PROVEN	Meta.IdxOptions.spec
+graph/src/index/indexer.rs	vector_options	147	PROVEN	Meta.IdxOptions.spec
+graph/src/index/indexer.rs	has_indices	258	PROVEN	Meta.Ixr.hasIndices_iff
+graph/src/index/indexer.rs	memory_usage	263	PROVEN	Meta.Ixr.memoryUsage_spec
 graph/src/index/indexer.rs	create_index	267	NOT COVERED	#3680 (index DDL versioned with the graph): fork-private rewrite: always a fresh spec, population owed; Lean model (Meta.Ixr.createIndex_*) describes the old map update
-graph/src/index/indexer.rs	drop_index	448	NOT COVERED	#3680 (index DDL versioned with the graph): fork-private rewrite: label leaves the map or gets a rebuilt spec; Lean model (Meta.Ixr.dropIndex_spec) describes the old update
-graph/src/index/indexer.rs	changes_since	516	NOT COVERED	#3680 (index DDL versioned with the graph): replaces remove: diff of two version maps (owed populations, retired indexes); not modelled
-graph/src/index/indexer.rs	has_field_for_label	441	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	is_label_indexed	454	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	is_attr_indexed	469	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	query	483	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	query_edges	497	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	fulltext_query	508	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
-graph/src/index/indexer.rs	fulltext_query_edges	522	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
-graph/src/index/indexer.rs	vector_query	541	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound; #3382: IndexGaps.vectorQuery, property VectorQueryRequiresOperational refuted by bug3382_vector_query_ignores_operational, VectorQueryComplete by bug3382_partial_answer (OPEN)
-graph/src/index/indexer.rs	vector_query_edges	556	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound; same missing is_operational gate as vector_query (#3382)
-graph/src/index/indexer.rs	get_vector_metric	578	PROVEN	Meta.Ixr.getVectorMetric_spec
-graph/src/index/indexer.rs	get_vector_dimension	601	PROVEN	Meta.Ixr.getVectorDimension_spec
-graph/src/index/indexer.rs	acquire_population_ticket	624	PROVEN	Slots.inc; inc_dec_cur, ok_inc
-graph/src/index/indexer.rs	acquire_population_snapshot	642	PROVEN	Slots.inc; inc_dec_cur
-graph/src/index/indexer.rs	acquire_population_snapshots	664	PROVEN	Slots.inc per label; inc_dec_cur
-graph/src/index/indexer.rs	release_population_ticket	686	PROVEN	Slots.dec; inc_dec_cur, inc_dec_stale, dec_stale_keeps_current
-graph/src/index/indexer.rs	is_ticket_current	698	PROVEN	Meta.Ixr.isTicketCurrent; createIndex_old_ticket_stale (after #3086 only the new generation is current)
-graph/src/index/indexer.rs	ticket_pending_changes	710	PROVEN	Slots.countFor
-graph/src/index/indexer.rs	enabled	720	PROVEN	Slots.countFor s.gen = 0; bump_fresh
-graph/src/index/indexer.rs	commit	730	PROVEN	Maintenance.commit_lookup, commit_preserves_inv
-graph/src/index/indexer.rs	commit_edge	760	PROVEN	Iter.commitEdge_lookup, delEdgeKey_spec; #2781 rollback: EdgeResync.resyncEdges
-graph/src/index/indexer.rs	get_fields	786	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	get_all_fields	799	PROVEN	Meta.Ixr.getAllFields_spec
-graph/src/index/indexer.rs	index_info	809	PROVEN	Meta.Ixr.indexInfo_spec (perm + sorted)
-graph/src/index/indexer.rs	has_index	837	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	has_indexed_attr	845	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	update_progress	856	PROVEN	Meta.Ixr.updateProgress_spec
+graph/src/index/indexer.rs	drop_index	464	NOT COVERED	#3680 (index DDL versioned with the graph): fork-private rewrite: label leaves the map or gets a rebuilt spec; Lean model (Meta.Ixr.dropIndex_spec) describes the old update
+graph/src/index/indexer.rs	changes_since	532	NOT COVERED	#3680 (index DDL versioned with the graph): replaces remove: diff of two version maps (owed populations, retired indexes); not modelled
+graph/src/index/indexer.rs	has_field_for_label	597	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	is_label_indexed	610	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	is_attr_indexed	625	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	query	639	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	query_edges	653	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	fulltext_query	664	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
+graph/src/index/indexer.rs	fulltext_query_edges	678	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
+graph/src/index/indexer.rs	vector_query	697	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound; #3382: IndexGaps.vectorQuery, property VectorQueryRequiresOperational refuted by bug3382_vector_query_ignores_operational, VectorQueryComplete by bug3382_partial_answer (OPEN)
+graph/src/index/indexer.rs	vector_query_edges	712	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound; same missing is_operational gate as vector_query (#3382)
+graph/src/index/indexer.rs	get_vector_metric	734	PROVEN	Meta.Ixr.getVectorMetric_spec
+graph/src/index/indexer.rs	get_vector_dimension	757	PROVEN	Meta.Ixr.getVectorDimension_spec
+graph/src/index/indexer.rs	acquire_population_ticket	780	PROVEN	Slots.inc; inc_dec_cur, ok_inc
+graph/src/index/indexer.rs	acquire_population_snapshot	798	PROVEN	Slots.inc; inc_dec_cur
+graph/src/index/indexer.rs	acquire_population_snapshots	820	PROVEN	Slots.inc per label; inc_dec_cur
+graph/src/index/indexer.rs	release_population_ticket	841	PROVEN	Slots.dec; inc_dec_cur, inc_dec_stale, dec_stale_keeps_current
+graph/src/index/indexer.rs	is_ticket_current	853	PROVEN	Meta.Ixr.isTicketCurrent; createIndex_old_ticket_stale (after #3086 only the new generation is current)
+graph/src/index/indexer.rs	ticket_pending_changes	864	PROVEN	Slots.countFor
+graph/src/index/indexer.rs	enabled	874	PROVEN	Slots.countFor s.gen = 0; bump_fresh
+graph/src/index/indexer.rs	commit	884	PROVEN	Maintenance.commit_lookup, commit_preserves_inv
+graph/src/index/indexer.rs	commit_edge	914	PROVEN	Iter.commitEdge_lookup, delEdgeKey_spec; #2781 rollback: EdgeResync.resyncEdges
+graph/src/index/indexer.rs	get_fields	940	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	get_all_fields	952	PROVEN	Meta.Ixr.getAllFields_spec
+graph/src/index/indexer.rs	index_info	961	PROVEN	Meta.Ixr.indexInfo_spec (perm + sorted)
+graph/src/index/indexer.rs	has_index	988	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	has_indexed_attr	996	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	update_progress	1007	PROVEN	Meta.Ixr.updateProgress_spec
 graph/src/index/indexer.rs	write_lock	227	PROVEN	Meta.Ixr.misc
-graph/src/index/indexer.rs	cancel	877	PROVEN	Meta.Ixr.misc
-graph/src/index/indexer.rs	is_cancelled	885	PROVEN	Meta.Ixr.misc
-graph/src/index/indexer.rs	owed_population_snapshot	547	NOT COVERED	#3680 (index DDL versioned with the graph): replaces Indexer::recreate_index: field snapshot and ticket of an owed population; not modelled
-graph/src/index/indexer.rs	set_graph	917	PROVEN	Meta.Ixr.misc
-graph/src/index/indexer.rs	get_graph	925	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	cancel	1028	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	is_cancelled	1036	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	owed_population_snapshot	575	NOT COVERED	#3680 (index DDL versioned with the graph): replaces Indexer::recreate_index: field snapshot and ticket of an owed population; not modelled
+graph/src/index/indexer.rs	set_graph	1060	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	get_graph	1069	PROVEN	Meta.Ixr.misc
 graph/src/index/redisearch/mod.rs	RediSearch_GetCApiVersion	167	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_CreateIndexOptions	226	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_FreeIndexOptions	231	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
@@ -280,14 +280,17 @@ graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	splic
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	merge	283	PROVEN	Leaf.ciMerge_spec, slotOf_spec
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	block_copy_merge	370	PROVEN	Leaf.ciBcm_spec, bcmL_eq_merge, bcmL_spec
 graph/src/runtime/pending.rs	resync_published_indexes	1789	MODELLED	edge arm keyed by (src, dst, id): EdgeResync.resyncEdgeKeys/resyncEdges; property RollbackRestoresEdgeIndex refuted by bug2781_rollback_not_restored / bug2781_orphan_edge_doc (OPEN); fix shape resyncEdgesFixed_restores (node arm and full spec: proofs/pending_commit PD.resync_spec)
-graph/src/graph/graph.rs	commit_edge_index_locked	3962	MODELLED	re-add key re-resolved from the committed tensor, missing ids skipped: EdgeResync.resyncEdgeKeys (.1); PROVEN in proofs/graph_queries Index.commitEdgeDocs_mem
-graph/src/index/indexer.rs	write_lock	996	PROVEN	Meta.Ixr.misc (IndexerHandle::write_lock, the same clone of the shared lock)
+graph/src/graph/graph.rs	commit_edge_index_locked	3982	MODELLED	re-add key re-resolved from the committed tensor, missing ids skipped: EdgeResync.resyncEdgeKeys (.1); PROVEN in proofs/graph_queries Index.commitEdgeDocs_mem
+graph/src/index/indexer.rs	write_lock	1024	PROVEN	Meta.Ixr.misc (IndexerHandle::write_lock, the same clone of the shared lock)
 graph/src/index/indexer.rs	default	186	NOT COVERED	#3680 (index DDL versioned with the graph): constructor; not modelled
 graph/src/index/indexer.rs	clone	200	NOT COVERED	#3680 (index DDL versioned with the graph): a fork: Arc clone of the map and of the shared part; not modelled
 graph/src/index/indexer.rs	committed	218	NOT COVERED	#3680 (index DDL versioned with the graph): view of the published map for background work; not modelled
 graph/src/index/indexer.rs	is_empty	248	NOT COVERED	#3680 (index DDL versioned with the graph): IndexChanges accessor; not modelled
-graph/src/index/indexer.rs	handle	564	NOT COVERED	#3680 (index DDL versioned with the graph): accessor; not modelled
-graph/src/index/indexer.rs	seed_published	1014	NOT COVERED	#3680 (index DDL versioned with the graph): stores the version's map as the published one; not modelled
-graph/src/index/mod.rs	owe_population	1099	NOT COVERED	#3680 (index DDL versioned with the graph): takes the creation ticket; not modelled
-graph/src/index/mod.rs	take_population_owed	1107	NOT COVERED	#3680 (index DDL versioned with the graph): once-only hand-off of an owed population; not modelled
-graph/src/index/mod.rs	register_all_fields	1220	NOT COVERED	#3680 (index DDL versioned with the graph): registers fields in declaration order; not modelled
+graph/src/index/indexer.rs	handle	592	NOT COVERED	#3680 (index DDL versioned with the graph): accessor; not modelled
+graph/src/index/indexer.rs	seed_published	1042	NOT COVERED	#3680 (index DDL versioned with the graph): stores the version's map as the published one; not modelled
+graph/src/index/mod.rs	owe_population	1149	NOT COVERED	#3680 (index DDL versioned with the graph): takes the creation ticket; not modelled
+graph/src/index/mod.rs	take_population_owed	1157	NOT COVERED	#3680 (index DDL versioned with the graph): once-only hand-off of an owed population; not modelled
+graph/src/index/mod.rs	register_all_fields	1270	NOT COVERED	#3680 (index DDL versioned with the graph): registers fields in declaration order; not modelled
+graph/src/index/indexer.rs	register_deferred_fields	562	NOT COVERED	#3680 (index DDL versioned with the graph): fields an add-field statement shares into the published spec are registered at publish; not modelled
+graph/src/index/mod.rs	defer_fields	1126	NOT COVERED	#3680 (index DDL versioned with the graph): fields an add-field statement shares into the published spec are registered at publish; not modelled
+graph/src/index/mod.rs	register_deferred_fields	1136	NOT COVERED	#3680 (index DDL versioned with the graph): fields an add-field statement shares into the published spec are registered at publish; not modelled

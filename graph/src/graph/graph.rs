@@ -573,6 +573,9 @@ fn populate_owed_index(
     label: Arc<String>,
     indexer: &Indexer,
 ) {
+    // Fields added to the spec the previous version's index shared are registered now that
+    // this version is published, before the population that fills them.
+    indexer.register_deferred_fields(&label);
     let Some(snapshot) = indexer.owed_population_snapshot(&label) else {
         return;
     };
