@@ -796,7 +796,13 @@ impl PatternMode {
         self,
         parent: &ExprIR<Variable>,
     ) -> Self {
-        if self == Self::SemiApply && !matches!(parent, ExprIR::And | ExprIR::Or | ExprIR::Not) {
+        // `size(pattern)` counts the matched paths, in a predicate as much as
+        // in a projection, so its argument is a list wherever it appears.
+        if matches!(parent, ExprIR::FuncInvocation(f) if f.name == "size") {
+            Self::Collect
+        } else if self == Self::SemiApply
+            && !matches!(parent, ExprIR::And | ExprIR::Or | ExprIR::Not)
+        {
             Self::Exists
         } else {
             self
@@ -1123,12 +1129,26 @@ impl Planner {
                 }
                 let query_path = Arc::new(QueryPath::new(path_var.clone(), path_component_vars));
 
+                // A pattern expression whose list is used (`size((a)--())`)
+                // yields one path per matched edge, as C does: register the
+                // path on the pattern itself, like an explicit
+                // `[p = (a)--() | p]`, so the traversal binds each edge
+                // instead of collapsing a node pair to one representative.
+                // As a predicate only emptiness matters, so collapsing stays.
+                let mut graph = graph.as_ref().clone();
+                let paths = if mode == PatternMode::Exists {
+                    vec![query_path]
+                } else {
+                    graph.add_path(query_path);
+                    vec![]
+                };
+
                 let comprehension = ExtractedComprehension {
                     var,
-                    graph: graph.as_ref().clone(),
+                    graph,
                     where_filter: None,
                     result_expr: Arc::new(DynTree::new(ExprIR::Variable(path_var))),
-                    paths: vec![query_path],
+                    paths,
                     nested: vec![],
                 };
                 let list = self.hoist_or_nest(node, comprehension, extracted);
@@ -1367,7 +1387,7 @@ impl Planner {
         ) -> bool {
             match node.data() {
                 ExprIR::PatternComprehension(_) => true,
-                ExprIR::Pattern(_) => mode == PatternMode::Exists,
+                ExprIR::Pattern(_) => mode != PatternMode::SemiApply,
                 other => {
                     let child_mode = mode.descend(other);
                     node.children().any(|c| needs_extraction(&c, child_mode))
