@@ -76,6 +76,51 @@ class testConfig(FlowTestsBase):
             assert("Unknown configuration field" in str(e))
             pass
 
+    def test_delay_parallel_indexing_mutually_exclusive(self):
+        # DELAY_INDEXING (async) and PARALLEL_INDEXING (synchronous, concurrent)
+        # are mutually-exclusive index-construction modes; the server must reject
+        # any attempt to enable both
+
+        # start from a known clean state
+        self.db.config_set("DELAY_INDEXING", "no")
+        self.db.config_set("PARALLEL_INDEXING", "no")
+
+        # enabling one, then the other, must fail and leave state unchanged
+        self.db.config_set("DELAY_INDEXING", "yes")
+        try:
+            self.db.config_set("PARALLEL_INDEXING", "yes")
+            self.env.assertTrue(False) # should have raised
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("mutually exclusive", str(e))
+        self.env.assertEqual(self.db.config_get("DELAY_INDEXING"), 1)
+        self.env.assertEqual(self.db.config_get("PARALLEL_INDEXING"), 0)
+
+        # same in the opposite direction
+        self.db.config_set("DELAY_INDEXING", "no")
+        self.db.config_set("PARALLEL_INDEXING", "yes")
+        try:
+            self.db.config_set("DELAY_INDEXING", "yes")
+            self.env.assertTrue(False) # should have raised
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("mutually exclusive", str(e))
+        self.env.assertEqual(self.db.config_get("DELAY_INDEXING"), 0)
+        self.env.assertEqual(self.db.config_get("PARALLEL_INDEXING"), 1)
+
+        # a single command enabling both must fail atomically - neither applied
+        self.db.config_set("PARALLEL_INDEXING", "no")
+        try:
+            self.redis_con.execute_command("GRAPH.CONFIG", "SET",
+                    "DELAY_INDEXING", "yes", "PARALLEL_INDEXING", "yes")
+            self.env.assertTrue(False) # should have raised
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("mutually exclusive", str(e))
+        self.env.assertEqual(self.db.config_get("DELAY_INDEXING"), 0)
+        self.env.assertEqual(self.db.config_get("PARALLEL_INDEXING"), 0)
+
+        # restore defaults
+        self.db.config_set("DELAY_INDEXING", "no")
+        self.db.config_set("PARALLEL_INDEXING", "no")
+
     def test03_config_set(self):
         config_name = "RESULTSET_SIZE"
         config_value = 3

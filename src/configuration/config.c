@@ -1810,6 +1810,16 @@ bool Config_Option_set
 				return false ;
 			}
 
+			// DELAY_INDEXING (async) and PARALLEL_INDEXING (synchronous,
+			// concurrent) are mutually-exclusive index-construction modes
+			if (delay_indexing && Config_parallel_indexing_get ()) {
+				if (err != NULL) {
+					*err = "DELAY_INDEXING and PARALLEL_INDEXING are mutually "
+						"exclusive" ;
+				}
+				return false ;
+			}
+
 			if (Config_delay_indexing_get () != delay_indexing) {
 				Config_delay_indexing_set (delay_indexing) ;
 				updated = true ;
@@ -1825,6 +1835,16 @@ bool Config_Option_set
 		{
 			bool parallel_indexing ;
 			if (!_Config_ParseYesNo (val, &parallel_indexing)) {
+				return false ;
+			}
+
+			// PARALLEL_INDEXING (synchronous, concurrent) and DELAY_INDEXING
+			// (async) are mutually-exclusive index-construction modes
+			if (parallel_indexing && Config_delay_indexing_get ()) {
+				if (err != NULL) {
+					*err = "PARALLEL_INDEXING and DELAY_INDEXING are mutually "
+						"exclusive" ;
+				}
 				return false ;
 			}
 
@@ -1959,6 +1979,40 @@ bool Config_Option_dryrun(
 	config = config_clone;
 
 	return valid;
+}
+
+// dry run a batch of configuration changes
+// the changes are applied cumulatively on top of one another (not each against
+// the current configuration) so that a single command can't set a combination
+// that is individually valid but jointly invalid, e.g. two mutually-exclusive
+// options; the live configuration is left unchanged
+// returns the index of the first invalid change, or -1 if all are valid;
+// *err is set when the failing change provided a specific error message
+int Config_Option_dryrun_batch(
+	const Config_Option_Field *fields,  // fields to set
+	const char **vals,                  // values to set
+	int n,                              // number of fields/values
+	char **err)                         // [output] error message
+{
+	// clone configuration
+	RG_Config config_clone = config;
+
+	// disable configuration notification during the dry run
+	config.cb = NULL;
+
+	// apply the changes cumulatively on the live configuration
+	int failed = -1;
+	for (int i = 0; i < n; i++) {
+		if (!Config_Option_set(fields[i], vals[i], err)) {
+			failed = i;
+			break;
+		}
+	}
+
+	// restore original configuration
+	config = config_clone;
+
+	return failed;
 }
 
 void Config_Subscribe_Changes(

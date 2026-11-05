@@ -122,6 +122,17 @@ bool Config_Option_dryrun
 	char **err
 );
 
+// dryrun a batch of configuration changes, applied cumulatively so a single
+// command can't set a jointly-invalid combination of individually-valid options
+// returns the index of the first invalid change, or -1 if all are valid
+int Config_Option_dryrun_batch
+(
+	const Config_Option_Field *fields,  // fields to set
+	const char **vals,                  // values to set
+	int n,                              // number of fields/values
+	char **err                          // [output] error message
+);
+
 // sets config update callback function
 void Config_Subscribe_Changes
 (
