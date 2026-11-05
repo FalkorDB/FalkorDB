@@ -54,7 +54,7 @@
 //! `write_lock` to avoid racing with per-transaction commit calls.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::CString,
     sync::{
         Arc,
@@ -74,6 +74,7 @@ pub use super::{
 };
 use crate::{graph::graph::Graph, runtime::value::Value};
 
+#[derive(Clone)]
 pub enum IndexOptions {
     Text(TextIndexOptions),
     Vector(VectorIndexOptions),
@@ -215,6 +216,12 @@ impl IndexerHandle {
         self.0.graph.load_full()
     }
 
+    /// Whether the graph is going away: no more population.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(Ordering::Relaxed)
+    }
+
     /// The serialization lock, see [`Indexer::write_lock`].
     #[must_use]
     pub fn write_lock(&self) -> Arc<Mutex<()>> {
@@ -318,10 +325,10 @@ impl Indexer {
 
         // Pre-validate: check all attrs for conflicts BEFORE inserting any,
         // so that a conflict on a later attribute does not leave earlier
-        // attributes partially registered. `attrs` is always small, so
-        // the O(n²) prefix scan for intra-request duplicates is fine.
-        for (i, attr) in attrs.iter().enumerate() {
-            if attrs[..i].contains(attr) {
+        // attributes partially registered.
+        let mut seen = HashSet::with_capacity(attrs.len());
+        for attr in attrs {
+            if !seen.insert(attr) {
                 // Distinguish from the "already indexed" case below:
                 // the attribute isn't indexed yet — the caller
                 // listed it twice in the same statement.

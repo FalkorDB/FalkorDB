@@ -52,11 +52,11 @@ graph/src/graph/mvcc_graph.rs	is_stale	156	NOT COVERED	version-number comparison
 graph/src/graph/mvcc_graph.rs	commit_indexer_batch	264	NOT COVERED	proofs/search_concurrency Mvcc.batch_keeps_forks; fit decision in native_index
 graph/src/graph/mvcc_graph.rs	commit_version	293	NOT COVERED	proofs/search_concurrency Mvcc.commit_publishes
 graph/src/graph/mvcc_graph.rs	drop	395	NOT COVERED	cancel indexing
-graph/src/graph/graph.rs	rebuild_derived_matrices	1047	AXIOMATISED	GraphBLAS transpose/set; node_cap = max(node_cap, saved dims) (#3250) proven in graph_queries Ids.rebuild_never_shrinks
-graph/src/graph/graph.rs	create_constraint	4502	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
-graph/src/graph/graph.rs	validate_mandatory_constraint	4677	PROVEN	Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4717	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4773	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
+graph/src/graph/graph.rs	rebuild_derived_matrices	1052	AXIOMATISED	GraphBLAS transpose/set; node_cap = max(node_cap, saved dims) (#3250) proven in graph_queries Ids.rebuild_never_shrinks
+graph/src/graph/graph.rs	create_constraint	4507	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
+graph/src/graph/graph.rs	validate_mandatory_constraint	4682	PROVEN	Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4722	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4778	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
 src/serializers/encoder/mod.rs	rdb_save_graph	11	PROVEN	Persist.buildPayloads + encodeGraph (key_count 1): load_encode; byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	rdb_save_graph_key	21	PROVEN	Persist.encodeGraph: load_encode, key_rt (any key_count); byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	pipe_save_graph	44	PROVEN	Persist.encodeGraph (name = graph.name): load_encode; byte layer redis_layer pipe_roundtrip
@@ -67,7 +67,7 @@ src/serializers/encoder/mod.rs	build_payloads	192	PROVEN	Persist.buildPayloads: 
 src/serializers/decoder/mod.rs	rdb_load_graph	44	PROVEN	Persist.rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pending, multi_load (any key order); key_count 1: key_rt K=1 + fold_build
 src/serializers/decoder/mod.rs	decode_payloads_into_pending	260	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
 src/serializers/decoder/mod.rs	finalize_pending_graph	310	PROVEN	Persist.finalizePG: run_keys, multi_load
-src/serializers/decoder/mod.rs	rebuild_indexes	345	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
+src/serializers/decoder/mod.rs	rebuild_indexes	345	NOT COVERED	#3680 (index DDL versioned with the graph): batches consecutive fields of one type with equal options into one create_index_sync call, and retries the fields one by one if a batch fails; Persist.Indexes.rebuild_calls models one call per field
 src/serializers/decoder/mod.rs	pipe_load_graph	406	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
 src/serializers/decoder/mod.rs	vec_load_graph	421	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
 src/serializers/decoder/mod.rs	load_graph_from_reader	431	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof

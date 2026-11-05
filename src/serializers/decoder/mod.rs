@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use graph::entity_type::EntityType;
 use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
@@ -363,8 +363,8 @@ fn rebuild_indexes(
         let mut text_meta_pending = info.language.is_some() || info.stopwords.is_some();
 
         // Every field of the label, in order. `create_index_sync` builds the label's spec anew
-        // for each call, so consecutive fields that need no options (a range field, a plain
-        // fulltext field) go in one call: a label with N such fields costs one spec, not N.
+        // for each call, so consecutive fields of one type with the same options (every range
+        // field has none) go in one call: a label with N such fields costs one spec, not N.
         let mut pending: Vec<(Arc<String>, &Arc<graph::index::Field>)> = info
             .field_order
             .iter()
@@ -378,9 +378,17 @@ fn rebuild_indexes(
             .collect();
         pending.reverse();
 
+        let create = |graph: &mut Graph,
+                      field: &graph::index::Field,
+                      attrs: &Vec<Arc<String>>,
+                      options: Option<graph::index::indexer::IndexOptions>| {
+            graph.create_index_sync(&field.ty, &entity_type, &info.label, attrs, options)
+        };
+
         while let Some((attr, field)) = pending.pop() {
             // The Field.name includes the type prefix (e.g. "range:val").
             // The attr_name key in the HashMap is the raw attribute name.
+            let mut carries_meta = false;
             let options = field.vector_options().map_or_else(
                 || {
                     let mut topts = field.options().cloned();
@@ -389,29 +397,44 @@ fn rebuild_indexes(
                         topts.language = info.language.clone();
                         topts.stopwords = info.stopwords.clone();
                         text_meta_pending = false;
+                        carries_meta = true;
                     }
                     topts.map(graph::index::indexer::IndexOptions::Text)
                 },
                 |vopts| Some(graph::index::indexer::IndexOptions::Vector(vopts.clone())),
             );
 
+            // The fields that follow and are created exactly like this one. Not a vector
+            // field (each has its own options) and not the one that carries the label's
+            // language and stopwords (the options it is created with are not its own).
             let mut attrs = vec![attr];
-            if options.is_none() {
+            if field.vector_options().is_none() && !carries_meta {
+                let mut seen: HashSet<Arc<String>> = attrs.iter().cloned().collect();
                 while let Some((next, next_field)) = pending.last()
                     && next_field.ty == field.ty
-                    && next_field.options().is_none()
                     && next_field.vector_options().is_none()
-                    && !attrs.contains(next)
+                    && next_field.options() == field.options()
+                    && seen.insert(next.clone())
                 {
                     attrs.push(next.clone());
                     pending.pop();
                 }
             }
 
-            if let Err(e) =
-                graph.create_index_sync(&field.ty, &entity_type, &info.label, &attrs, options)
-            {
-                eprintln!("FalkorDB: failed to rebuild index on {:?}: {e}", info.label);
+            if let Err(e) = create(graph, field, &attrs, options.clone()) {
+                // One field that cannot be created must not take the others with it.
+                let mut failed = vec![e];
+                if attrs.len() > 1 {
+                    failed.clear();
+                    for attr in &attrs {
+                        if let Err(e) = create(graph, field, &vec![attr.clone()], options.clone()) {
+                            failed.push(e);
+                        }
+                    }
+                }
+                for e in failed {
+                    eprintln!("FalkorDB: failed to rebuild index on {:?}: {e}", info.label);
+                }
             }
         }
     }

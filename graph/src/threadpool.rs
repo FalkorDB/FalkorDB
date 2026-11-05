@@ -195,8 +195,11 @@ pub fn spawn<F>(
 }
 
 /// [`spawn`] for a caller that may run with no pool (before init, e.g. in unit tests): the
-/// job comes back as `Err` instead of panicking, for the caller to run itself. After
-/// [`shutdown`] the pool drops the job, which runs its destructors on this thread.
+/// job comes back as `Err` instead of panicking, for the caller to run itself. Once every
+/// worker has exited ([`shutdown`] has returned) the pool drops the job, which runs its
+/// destructors on this thread. A job sent while [`shutdown`] is still draining is accepted
+/// and may never run or drop: the process is exiting, so a caller that needs the job's
+/// effect (a RediSearch spec's free) must not depend on it then.
 pub fn try_spawn<F>(
     job: F,
     idx: Option<usize>,

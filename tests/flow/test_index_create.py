@@ -1041,12 +1041,12 @@ class testIndexCreationFlow():
         graph = self.db.select_graph("many_fields_source")
         n = 200
         props = ", ".join(f"r{i}: x + {i}" for i in range(12))
-        graph.query(f"UNWIND range(1, $n) AS x CREATE (:L {{{props}, a: 'alpha', b: 'beta', "
+        graph.query(f"UNWIND range(1, $n) AS x CREATE (:L {{{props}, a: 'alpha', b: 'beta', c: 'gamma', "
                     f"v: vecf32([x, 1.0])}})", {'n': n})
         create_node_range_index(graph, 'L', *[f"r{i}" for i in range(6)])
         create_node_fulltext_index(graph, 'L', 'a', options={'language': 'german'})
         create_node_range_index(graph, 'L', *[f"r{i}" for i in range(6, 12)])
-        create_node_fulltext_index(graph, 'L', 'b')
+        create_node_fulltext_index(graph, 'L', 'b', 'c')
         create_node_vector_index(graph, 'L', 'v', dim=2)
         wait_for_indices_to_sync(graph)
 
@@ -1066,7 +1066,7 @@ class testIndexCreationFlow():
             q = f"MATCH (n:L) WHERE n.r{i} = {n} + {i} RETURN count(n)"
             self.env.assertIn("Node By Index Scan", str(copy.explain(q)))
             self.env.assertEqual(copy.ro_query(q).result_set, [[1]])
-        for term in ('alpha', 'beta'):
+        for term in ('alpha', 'beta', 'gamma'):
             self.env.assertEqual(
                 copy.ro_query(f"CALL db.idx.fulltext.queryNodes('L', '{term}') "
                               "YIELD node RETURN count(node)").result_set, [[n]])

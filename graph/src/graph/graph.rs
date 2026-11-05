@@ -645,6 +645,11 @@ fn populate_index_batch(
                 // `MvccGraph::commit()` sets the indexer's graph reference, so a later
                 // attempt finds it.
                 let Some(graph) = handle.get_graph() else {
+                    // `cancel` clears the graph pointer too: a deleted graph has nothing
+                    // left to populate, so do not wait for a commit that never comes.
+                    if handle.is_cancelled() {
+                        return;
+                    }
                     drop(guard);
                     drop(lock);
                     std::thread::sleep(Duration::from_millis(1));

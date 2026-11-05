@@ -3,15 +3,15 @@ graph/src/threadpool.rs	new	67	PROVEN	Pool.new_spec, shutdown_drains; PoolWithin
 graph/src/threadpool.rs	named	72	PROVEN	PoolWithin.spawnNames_length, spawnNames_get (`with_names(size, Some(name))`: worker i is `{name}-{i}`; #3502)
 graph/src/threadpool.rs	with_names	79	PROVEN	PoolWithin.spawnNames_length/spawnNames_get/spawnNames_none (names), Pool.new_spec (size workers); Builder::spawn failure -> `.expect` panic, sender dropped, started workers exit (header; std primitive)
 graph/src/threadpool.rs	spawn	124	PROVEN	Pool.spawn_never_blocks, spawn_after_exit; PoolWithin.late_job_lost (job sent after the sentinels is accepted and never runs); Locks.main_never_blocks, never_stuck_3014 (W3-conc-1 fixed by #3014)
-graph/src/threadpool.rs	try_spawn	200	NOT COVERED	#3680 (index DDL versioned with the graph): spawn that hands the job back when no pool exists, for a spec's deferred free; not modelled
+graph/src/threadpool.rs	try_spawn	203	NOT COVERED	#3680 (index DDL versioned with the graph): spawn that hands the job back when no pool exists, for a spec's deferred free; not modelled
 graph/src/threadpool.rs	shutdown	146	PROVEN	Pool.shutdown_drains (all queued jobs run once, in order; all workers exit); PoolWithin.within_blocks_behind_shutdown / holdEnd_ge (holds the `workers` lock across every join: BUG, a concurrent shutdown_within is not bounded)
 graph/src/threadpool.rs	shutdown_within	159	PROVEN	PoolWithin.waitLoop_exit, waitLoop_bound, within_in_time (returns before start+timeout+s), within_true_all_finished, within_false_unfinished, blocked_reported, within_partition (no handle lost), detached_workers_exit (no worker leak); sleep/is_finished are hypotheses on std (monotone, sleep in [1,s]); BUGS second_call_true_despite_straggler, within_blocks_behind_shutdown (repro/threadpool_within.rs, not fixed)
 graph/src/threadpool.rs	spawn	185	PROVEN	Pool.global_spec (gSpawn: panics uninitialised, else ThreadPool::spawn)
-graph/src/threadpool.rs	init_thread_pool	220	PROVEN	Pool.global_spec (init: Ok once, then Err)
-graph/src/threadpool.rs	shutdown	229	PROVEN	Pool.global_spec (gShutdown no-op uninitialised), shutdown_drains
-graph/src/threadpool.rs	try_acquire	257	PROVEN	Pool.acquireLoop on QUEUED_QUERIES: acquire_bounded, acquire_full; Locks.inv3014_step (count ≤ MAX_QUEUED_QUERIES)
-graph/src/threadpool.rs	try_acquire_in	261	PROVEN	Pool.acquireLoop (CAS loop vs any interleaving): acquire_bounded (count after admission ≤ max), acquire_full (refusal writes nothing, never waits)
-graph/src/threadpool.rs	drop	277	PROVEN	Pool.tr/follow/Sys: release_exactly_once, paths_release_once (every #3014 path), count_eq_live (count = live slots ⇒ prev > 0)
+graph/src/threadpool.rs	init_thread_pool	223	PROVEN	Pool.global_spec (init: Ok once, then Err)
+graph/src/threadpool.rs	shutdown	232	PROVEN	Pool.global_spec (gShutdown no-op uninitialised), shutdown_drains
+graph/src/threadpool.rs	try_acquire	260	PROVEN	Pool.acquireLoop on QUEUED_QUERIES: acquire_bounded, acquire_full; Locks.inv3014_step (count ≤ MAX_QUEUED_QUERIES)
+graph/src/threadpool.rs	try_acquire_in	264	PROVEN	Pool.acquireLoop (CAS loop vs any interleaving): acquire_bounded (count after admission ≤ max), acquire_full (refusal writes nothing, never waits)
+graph/src/threadpool.rs	drop	280	PROVEN	Pool.tr/follow/Sys: release_exactly_once, paths_release_once (every #3014 path), count_eq_live (count = live slots ⇒ prev > 0)
 graph/src/locks.rs	upgrade_to_write	43	PROVEN	Locks.all_programs_ordered/no_cycle (trait contract: escalation order)
 graph/src/thread_id.rs	set_main_thread	13	PROVEN	Once.thread_id_spec
 graph/src/thread_id.rs	is_main_thread	23	PROVEN	Once.thread_id_spec
@@ -28,7 +28,7 @@ graph/src/graph/mvcc_graph.rs	fork	142	PROVEN	Mvcc Ev.forkW/forkCur (takes nothi
 graph/src/graph/mvcc_graph.rs	is_stale	156	PROVEN	Mvcc Ev.checkFork (published.version + 1 != fork.version ⇒ stale, no Current version made): checkFork_stale, checkFork_on_committed, stale_then_rerun, batch_then_check
 graph/src/graph/mvcc_graph.rs	commit	225	PROVEN	Mvcc.no_lost_writes/history_linear/one_commit_per_version (Ev.commit, ver+1), commit_publishes (commit then swap), refused_commit_publishes_nothing, stale_commit_publishes_nothing, current_not_stale; #3545 compare-and-swap: Ev.commit loads and checks, Ev.swap is the CAS: swap_overtaken_publishes_nothing (Stale: nothing published), swap_unchanged_publishes, in_flight_blocks_mutate, cas_refuses_overtaken_commit, cas_current_commit_publishes; schema_version/trim/fold_oversized_deltas not modelled
 graph/src/graph/mvcc_graph.rs	commit_indexer_batch	264	PROVEN	Mvcc Ev.batch (writer=false: same data version, no data change): batch_keeps_forks, batch_then_check, batch_does_not_stale (#3566); the fit decision (Same/Swap/Discarded) is native_index IndexerFit
-graph/src/graph/mvcc_graph.rs	commit_version	293	PROVEN	Mvcc Ev.commit (writer=true: is_stale ⇒ Stale, validate ⇒ Invalid, else swap) and Ev.batch (writer=false skips the stale check): commit_publishes, stale_commit_publishes_nothing, refused_commit_publishes_nothing, batch_keeps_forks; #3567 also calls FalkorDbIndex::publish (index bookkeeping, no data: native_index Rebase.publish_proj); #3545: the publish is `compare_and_swap(&published, new)` against the pointer loaded for the checks, modelled by Ev.commit (load, checks) then Ev.swap (CAS: Stale if `pid` moved, e.g. a batch published without the lock): swap_overtaken_publishes_nothing, swap_unchanged_publishes; the batch's own CAS: native_index Batch.commit_cas_stale
+graph/src/graph/mvcc_graph.rs	commit_version	293	PROVEN	Mvcc Ev.commit (writer=true: is_stale ⇒ Stale, validate ⇒ Invalid, else swap) and Ev.batch (writer=false skips the stale check): commit_publishes, stale_commit_publishes_nothing, refused_commit_publishes_nothing, batch_keeps_forks; #3567 also calls FalkorDbIndex::publish (index bookkeeping, no data: native_index Rebase.publish_proj); #3545: the publish is `compare_and_swap(&published, new)` against the pointer loaded for the checks, modelled by Ev.commit (load, checks) then Ev.swap (CAS: Stale if `pid` moved, e.g. a batch published without the lock): swap_overtaken_publishes_nothing, swap_unchanged_publishes; the batch's own CAS: native_index Batch.commit_cas_stale; `publish_indexes` (the index side effects after the swap, #3680) is not modelled: it touches only indexer state and the thread pool, never the published graph
 graph/src/graph/mvcc_graph.rs	drop	395	NOT COVERED	cancel_indexing on drop
 src/graph_core.rs	up_to_nul	87	NOT COVERED	string helper, not concurrency
 src/graph_core.rs	c_graph_name	104	NOT COVERED	string helper
@@ -106,17 +106,17 @@ graph/src/index/mod.rs	try_decrement_pending_for_generation	2248	PROVEN	Tickets.
 graph/src/index/mod.rs	pending_count_for_generation	2270	PROVEN	Tickets.pendingFor
 graph/src/index/mod.rs	pending_count	2284	PROVEN	Tickets.operational_iff
 graph/src/index/mod.rs	is_operational	2203	PROVEN	Tickets.operational_iff
-graph/src/index/indexer.rs	create_index	255	NOT COVERED	#3680 (index DDL versioned with the graph): the entry is a private copy with its own counters and population is owed until publish; Tickets.store models the old shared-counter bump
-graph/src/index/indexer.rs	acquire_population_ticket	760	PROVEN	Tickets.inc_inv
-graph/src/index/indexer.rs	acquire_population_snapshot	778	PROVEN	Tickets.acquire / inc_inv; Worker.attrs snapshot (main_operational_complete)
-graph/src/index/indexer.rs	acquire_population_snapshots	800	PROVEN	Tickets.inc_inv
-graph/src/index/indexer.rs	release_population_ticket	821	PROVEN	Tickets.dec_inv
-graph/src/index/indexer.rs	is_ticket_current	833	PROVEN	Tickets.batch stale branch (inv_batch, main_lost_order_complete, fixed_trace_complete)
-graph/src/index/indexer.rs	ticket_pending_changes	844	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
-graph/src/index/indexer.rs	enabled	854	PROVEN	Tickets.operational_iff
+graph/src/index/indexer.rs	create_index	262	NOT COVERED	#3680 (index DDL versioned with the graph): the entry is a private copy with its own counters and population is owed until publish; Tickets.store models the old shared-counter bump
+graph/src/index/indexer.rs	acquire_population_ticket	767	PROVEN	Tickets.inc_inv
+graph/src/index/indexer.rs	acquire_population_snapshot	785	PROVEN	Tickets.acquire / inc_inv; Worker.attrs snapshot (main_operational_complete)
+graph/src/index/indexer.rs	acquire_population_snapshots	807	PROVEN	Tickets.inc_inv
+graph/src/index/indexer.rs	release_population_ticket	828	PROVEN	Tickets.dec_inv
+graph/src/index/indexer.rs	is_ticket_current	840	PROVEN	Tickets.batch stale branch (inv_batch, main_lost_order_complete, fixed_trace_complete)
+graph/src/index/indexer.rs	ticket_pending_changes	851	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
+graph/src/index/indexer.rs	enabled	861	PROVEN	Tickets.operational_iff
 graph/src/graph/graph.rs	populate_index_batch	612	NOT COVERED	#3680 (index DDL versioned with the graph): the batch reads the committed graph's map (IndexerHandle::get_graph) under the lock; Tickets.batch models a single shared map
-graph/src/graph/graph.rs	vector_query_nodes	4356	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
-graph/src/graph/graph.rs	vector_query_edges	4416	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
+graph/src/graph/graph.rs	vector_query_nodes	4361	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/graph/graph.rs	vector_query_edges	4421	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
 graph/src/runtime/runtime.rs	map_to_index_options	2008	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)
 graph/src/runtime/ops/commit.rs	next	69	MODELLED	lock path only (#3226): Locks.writerOpenScanProg (escalate at :93, commit_deferred_indexes → Indexer::commit → RediSearch_IndexAddDocument with the scan's spec read lock still held); properties noReacquire / LockOrdered refuted by bug3226_open_scan_upgrade, bug3226_open_scan_unordered (OPEN); scan-closed paths: spec_programs_ordered
