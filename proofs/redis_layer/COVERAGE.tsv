@@ -292,3 +292,8 @@ src/commands/udf.rs	udf_load	68	PROVEN	Commands.udfLoadArgs: udf_load_plain, udf
 src/commands/udf.rs	udf_delete	141	PROVEN	Commands.udfCmd DELETE: udf_delete_one, udf_delete_extra
 src/commands/udf.rs	udf_flush	170	PROVEN	Commands.udfCmd FLUSH: udf_flush_noargs
 src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filters, udf_list_withcode_anywhere
+# Online index build (#2355): fns the background builder added, not modelled yet.
+src/graph_core.rs	ThreadedGraph::replace_graph	586	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::read	1642	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::publish	1651	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::warn	1676	NOT COVERED	online index build (#2355): not modelled yet

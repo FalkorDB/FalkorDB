@@ -41,7 +41,7 @@ graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::drop_index	650	PROVEN	
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::numeric	668	PROVEN	numeric: hasColumn_spec, numeric_createBuilding, numeric_dropColumn
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::numeric_mut	684	PROVEN	numericMut/setNumeric (keeps the build state): numericMut_spec, setNumeric_numeric, setNumeric_state
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::has_column	704	PROVEN	hasColumn: hasColumn_spec
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::encode_value	815	PROVEN	encodeValue: encodeValue_spec
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::encode_value	840	PROVEN	encodeValue: encodeValue_spec
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::apply	783	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); FalkorDbIndex.apply (with `place`): apply_empties, applyWrites_numeric (= sequential per column, filtered by the column's build state), applyWrites_state
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::apply_writes	802	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); applyWrites/applyStep: applyWrites_numeric, applyWrites_state, writerRecord_eq_sequential
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::query_numeric	835	PROVEN	queryNumeric/queryKey (#3547/#2386 three-way answer Option<Result<rows, ScanFilter>>; Query.lean): queryNumeric_spec, queryNumeric_ready (Ready: rows of the tree), queryNumeric_building (Building: ScanFilter over the keys, never rows), queryNumeric_isSome_iff (what is declined does not depend on the build state), queryNumeric_ok/_error, queryNumeric_range_served (a Range is never declined), queryNumeric_null_equal (= null: no rows), queryNumeric_declined; nodeScan_native_agrees, nodeScan_native_inList_agrees
@@ -99,13 +99,13 @@ graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::indexer_read	350	PROV
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::indexer_add	360	PROVEN	IndexColumn.indexerAdd = addEncoded: indexerAdd_spec
 graph/src/index/falkordb/versioned.rs	VersionedIndex::entry	181	PROVEN	trait signature; the IndexColumn impl is modelled as FalkorDbIndex.entry (entry_spec)
 graph/src/index/falkordb/versioned.rs	VersionedIndex::entry_mut	187	PROVEN	trait signature; the IndexColumn impl is FalkorDbIndex.setEntry (entry_setEntry)
-graph/src/index/falkordb/versioned.rs	VersionedIndex::writer_record	234	PROVEN	trait signature (its contract is stateLog_removes/stateLog_adds/building_reuse_removed); the IndexColumn impl: writerRecord_eq_sequential
+graph/src/index/falkordb/versioned.rs	VersionedIndex::writer_record	267	PROVEN	trait signature (its contract is stateLog_removes/stateLog_adds/building_reuse_removed); the IndexColumn impl: writerRecord_eq_sequential
 graph/src/index/falkordb/versioned.rs	VersionedIndex::indexer_read	239	PROVEN	trait signature; the IndexColumn impl: scan (scanNodes_below_cursor, scanEdges_below_cursor)
 graph/src/index/falkordb/versioned.rs	VersionedIndex::indexer_add	248	PROVEN	trait signature; the IndexColumn impl: addEncoded_spec
 graph/src/index/falkordb/versioned.rs	IndexEntry::new	255	PROVEN	IndexEntry.new: isBuilding_spec, cursor_spec (glue); #3566: also takes the generation, indexer_commits starts at 0: Batch.SE.new, new_commits
 graph/src/index/falkordb/versioned.rs	IndexEntry::is_building	269	PROVEN	IndexEntry.isBuilding: isBuilding_spec
 graph/src/index/falkordb/versioned.rs	IndexEntry::cursor	274	PROVEN	IndexEntry.cursor: cursor_spec
-graph/src/index/falkordb/versioned.rs	IndexEntry::writer_record	336	PROVEN	IndexEntry.writerRecord (column at its own state, state kept): writerRecord_eq_sequential, applyWrites_state; #3567: Rebase.EN.writerRecord: writerRecord_proj, writerRecord_records, writerRecord_ready_state
+graph/src/index/falkordb/versioned.rs	IndexEntry::writer_record	370	PROVEN	IndexEntry.writerRecord (column at its own state, state kept): writerRecord_eq_sequential, applyWrites_state; #3567: Rebase.EN.writerRecord: writerRecord_proj, writerRecord_records, writerRecord_ready_state
 graph/src/index/falkordb/versioned.rs	IndexEntry::indexer_apply	293	PROVEN	IndexEntry.indexerApply: indexerApply_idle (not Building: unchanged, false), indexerApply_building (adds the batch, cursor to next or Ready); #3566: also indexer_commits += 1: Batch.SE.indexerApply, indexerApply_building (commits+1), indexerApply_idle; #3567: also empties `since_last_indexer_step`: Rebase.EN.indexerApply: indexerApply_proj, indexerApply_clears_since
 graph/src/index/falkordb/versioned.rs	FalkorDbIndex::apply_indexer_batch	353	PROVEN	FalkorDbIndex.applyIndexerBatch: applyIndexerBatch_missing, indexerApply_idle/_building, entry_setEntry
 graph/src/index/falkordb/versioned.rs	Graph::indexer_prepare	366	PROVEN	G.indexerPrepare: prepareBatch_building, prepareBatch_idle; #3566: returns Option<PreparedBatch> (Some iff the index was Building = the bool before): Batch.V.applyBatch, fit_fresh
@@ -198,8 +198,8 @@ graph/src/index/falkordb/numeric.rs	NumericIndex::memory_usage	296	PROVEN	Memory
 graph/src/index/falkordb/versioned.rs	catch_up_by	175	PROVEN	Batch.catchUpBy: Rebase.catchUpBy_refresh_iff, catchUpBy_no_writes, catchUpBy_empty_batch, catchUpBy_many_writes, catchUpBy_saturating (u64 saturating_mul) (#3568)
 graph/src/index/falkordb/versioned.rs	VersionedIndex::indexer_insert	274	PROVEN	trait signature; the IndexColumn impl: Rebase.indexerInsert_mem (#3568)
 graph/src/index/falkordb/versioned.rs	VersionedIndex::batch_len	285	PROVEN	trait signature; the IndexColumn impl: Memory.batchLen_spec
-graph/src/index/falkordb/versioned.rs	VersionedIndex::memory_usage	307	PROVEN	trait signature; the IndexColumn impl: Memory.IndexColumn.memoryUsage; IndexEntry::memory_usage: Memory.EN.memoryUsage_*
-graph/src/index/falkordb/versioned.rs	IndexEntry::memory_usage	351	PROVEN	Memory.EN.memoryUsage: memoryUsage_ready, memoryUsage_building, memoryUsage_building_quiet (the pages, plus the since set's serialized size while Building and non-empty; by_this_version not counted) (#3569)
+graph/src/index/falkordb/versioned.rs	VersionedIndex::memory_usage	340	PROVEN	trait signature; the IndexColumn impl: Memory.IndexColumn.memoryUsage; IndexEntry::memory_usage: Memory.EN.memoryUsage_*
+graph/src/index/falkordb/versioned.rs	IndexEntry::memory_usage	385	PROVEN	Memory.EN.memoryUsage: memoryUsage_ready, memoryUsage_building, memoryUsage_building_quiet (the pages, plus the since set's serialized size while Building and non-empty; by_this_version not counted) (#3569)
 graph/src/index/falkordb/versioned.rs	Graph::insert_index	541	PROVEN	Batch.V.insertedOnto: Rebase.insertedOnto_eq_caughtUpOnto, Batch.commit_catchUp_insert (published's copy with the batch inserted, the batch's state and commit count; same entry shape as the refresh catch-up); column: indexerInsert_mem; the path's invariant: Rebase.insert_inv (given Frame) (#3568)
 graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_insert	412	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: no IndexId variant dispatches to CCH yet)
 graph/src/index/falkordb/cch/mod.rs	VersionedIndex::batch_len	426	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!)
@@ -232,3 +232,38 @@ graph/src/index/falkordb/cch/order.rs	transpose	433	NOT COVERED	not modelled yet
 graph/src/index/falkordb/cch/nd.rs	nested_dissection_order	46	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
 graph/src/index/falkordb/cch/nd.rs	order_connected_nodes	91	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
 graph/src/index/falkordb/cch/nd.rs	backend_index	126	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
+# Online index build (#2355): fns the background builder added, not modelled yet.
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::is_ready	774	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::building_read	786	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::has_building_columns	1019	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/versioned.rs	PreparedBatch::limit_catch_up	147	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/versioned.rs	Graph::index_build_read	777	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/versioned.rs	Graph::building_indexes	789	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/versioned.rs	Graph::indexes_to_build_since	804	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/versioned.rs	Graph::building_since	821	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	BuildHost::read	55	NOT COVERED	BuildHost trait declaration (no body); the module host is RedisBuildHost (src/graph_core.rs)
+graph/src/index/falkordb/online_build.rs	BuildHost::publish	60	NOT COVERED	BuildHost trait declaration (no body); the module host is RedisBuildHost (src/graph_core.rs)
+graph/src/index/falkordb/online_build.rs	BuildHost::warn	67	NOT COVERED	BuildHost trait declaration (no body); the module host is RedisBuildHost (src/graph_core.rs)
+graph/src/index/falkordb/online_build.rs	Sizing::batch	111	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Run::new	156	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Run::stopping	164	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Run::stop	169	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Run::wait_for_readers	175	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Reading::enter	189	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Reading::drop	197	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	run_turn	210	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	chain_id	316	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Indexer::new	356	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Indexer::state	367	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Indexer::start	373	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Indexer::stop_within	405	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Indexer::pending	420	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Indexer::enqueue	431	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Indexer::spawn	459	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Indexer::take_turn	470	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Indexer::after_turn	509	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Indexer::next_turn	541	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	start	570	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	stop	579	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	pending	585	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	enqueue	590	NOT COVERED	online index build (#2355): not modelled yet
