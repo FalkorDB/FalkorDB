@@ -429,20 +429,19 @@ fn apply_record(
             // dictionary has diverged on another.
             let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
-            // Population is spawned, not run here. `populate_indexes_sync` ran
+            // Population is not run here, nor started here. `populate_indexes_sync` ran
             // on the Redis main thread, so a replica applying an index over a
             // large label froze for the whole build — the same class of problem
             // as expanding ids while decoding.
             //
-            // Spawning is safe for the reason it is safe on the primary, which
-            // has always done it under concurrent writes: `populate_index_batch`
-            // populates from a snapshot in 10,000-row batches, and entities
-            // written *after* the snapshot are indexed by the write path instead
-            // (`docs` into `commit_index`). A later record that drops
-            // or recreates the index does not race it either — the population
-            // ticket carries a generation, and a worker whose generation is
-            // stale releases its ticket and stops rather than committing
-            // documents into the new spec.
+            // The index is part of the version this buffer builds: a later record that
+            // refuses the buffer discards it, index included. Population starts when the
+            // version is published, from the committed graph, in 10,000-row batches;
+            // entities written *after* that are indexed by the write path instead
+            // (`docs` into `commit_index`). A later record that drops or recreates the
+            // index does not race it either: the index is a new generation, and a worker
+            // whose generation is stale releases its ticket and stops rather than
+            // committing documents into the new spec.
             g.create_index(
                 &index_type,
                 &schema_type,

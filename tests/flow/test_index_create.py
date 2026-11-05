@@ -963,3 +963,25 @@ class testIndexCreationFlow():
                 self.env.assertIn("Node By Index Scan", plan)
                 count = graph.ro_query(q).result_set[0][0]
                 self.env.assertEqual(count, n, message=f"index on L.{attr}")
+
+    def test20_range_zero_survives_a_rebuilt_fulltext_label(self):
+        # A label with a fulltext index reports language "english". Handing that
+        # to RediSearch on every rebuild made the spec carry a schema rule, and
+        # a spec with a rule lost the value 0 from its range field. Adding a
+        # field and dropping one both rebuild the spec.
+        graph = self.db.select_graph("zero_after_rebuild")
+        graph.query("CREATE (:L {id: 10}), (:L {id: 0, name: 'abcd'}), (:L {id: 5})")
+
+        def zero_found():
+            eq = graph.ro_query("MATCH (n:L) WHERE n.id = 0 RETURN count(n)")
+            ge = graph.ro_query("MATCH (n:L) WHERE n.id >= 0 RETURN count(n)")
+            return eq.result_set[0][0], ge.result_set[0][0]
+
+        create_node_range_index(graph, 'L', 'id', sync=True)
+        create_node_fulltext_index(graph, 'L', 'name', sync=True)
+        self.env.assertEqual(zero_found(), (1, 3))
+        create_node_fulltext_index(graph, 'L', 'title', sync=True)  # rebuild: add
+        self.env.assertEqual(zero_found(), (1, 3))
+        drop_node_fulltext_index(graph, 'L', 'title')               # rebuild: drop
+        wait_for_indices_to_sync(graph)
+        self.env.assertEqual(zero_found(), (1, 3))

@@ -17,34 +17,41 @@
 //!
 //! # Internal layout
 //!
+//! Every graph *version* owns an `Indexer`; versions share only the
+//! [`Shared`] part.
+//!
 //! ```text
-//! Indexer
+//! Indexer (one per graph version)
 //!    |
 //!    +-- index: ArcSwap<HashMap<Label, Arc<Index>>>
-//!    |      One Index per label; each Index wraps a single
-//!    |      RSIndex handle and its field definitions.
-//!    |      Readers `load()` a lock-free snapshot; schema changes
-//!    |      clone the map, modify the copy, and `store()` it.
+//!    |      THIS VERSION's indexes, one Index per label; each Index owns a
+//!    |      RSIndex handle and its field definitions. A fork starts with
+//!    |      an Arc clone of the committed map; schema changes clone the
+//!    |      map, modify the copy and `store()` it, touching only the fork.
+//!    |      Committing the fork publishes the map with the graph;
+//!    |      dropping it (rollback) drops the DDL with it.
 //!    |
-//!    +-- write_lock: Mutex<()>
-//!    |      Serializes map mutations (create/drop/remove/recreate)
-//!    |      and background population batches with write-path
-//!    |      commit_index calls so they never run concurrently.
-//!    |
-//!    +-- graph: Mutex<Option<Arc<Graph>>>
-//!           Latest committed graph snapshot shared with
-//!           background index population threads.
+//!    +-- shared: Arc<Shared>   (the same for every version of the graph)
+//!           write_lock   serializes background population batches with
+//!                        write-path commit_index calls
+//!           cancelled    stops background population
+//!           graph        latest committed graph, for population
+//!           published    the committed version's map, for population
 //! ```
 //!
 //! # Concurrency
 //!
 //! Read-side queries (`query`, `fulltext_query`, `is_label_indexed`, ...)
-//! `load()` the current map snapshot without locking. Schema mutations
-//! (`create_index`, `drop_index`, ...) publish a new map via clone-and-swap
-//! while holding `write_lock`; per-document mutations (`commit`, ...) call
-//! `&self` methods on the internally-synchronized RediSearch spec.
-//! Background population uses `write_lock` to avoid racing with
-//! per-transaction commit calls and schema changes.
+//! `load()` the version's map snapshot without locking. Schema mutations
+//! (`create_index`, `drop_index`) never touch anything another version can
+//! see: a changed label gets a new [`Index`] with its own RediSearch spec,
+//! generation id and pending-ticket counters. What must happen only if the
+//! version is published (starting population, freeing a retired spec) is
+//! found by [`Indexer::changes_since`] and done by the publisher.
+//! Per-document mutations (`commit`, ...) call `&self` methods on the
+//! internally-synchronized RediSearch spec. Background population works on
+//! the *published* map ([`IndexerHandle::committed`]) and uses `write_lock`
+//! to avoid racing with per-transaction commit calls.
 
 use std::{
     collections::HashMap,
@@ -145,19 +152,102 @@ impl IndexOptions {
     }
 }
 
-#[derive(Default, Clone)]
-pub struct Indexer {
-    /// Lock-free snapshot of the per-label indexes. Readers `load()` the
-    /// current map; schema mutations clone the map, modify the copy (via
-    /// [`Index::clone_for_update`]), and `store()` it under `write_lock`.
-    index: Arc<ArcSwap<HashMap<Arc<String>, Arc<Index>>>>,
-    /// Serializes map mutations and background index population batches with
-    /// write-path `commit_index` calls so they never run concurrently.
+type IndexMap = HashMap<Arc<String>, Arc<Index>>;
+
+/// What every version of one graph's `Indexer` shares.
+struct Shared {
+    /// Serializes background index population batches with write-path
+    /// `commit_index` calls so they never run concurrently.
     write_lock: Arc<Mutex<()>>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: AtomicBool,
     /// Latest committed graph, shared with background index population.
     /// Updated by `MvccGraph::commit()` so background batches see fresh data.
-    graph: Arc<ArcSwapOption<AtomicRefCell<Graph>>>,
+    graph: ArcSwapOption<AtomicRefCell<Graph>>,
+    /// The committed version's map, which background population reads and
+    /// updates the progress of. Stored with `graph` ([`Indexer::set_graph`]).
+    published: ArcSwap<IndexMap>,
+}
+
+/// The indexes of one graph version. See the module docs.
+///
+/// `Clone` is a *fork*: the clone starts with this version's map (one `Arc`
+/// clone) and changes it without affecting the original.
+pub struct Indexer {
+    /// This version's per-label indexes. Schema mutations (`&mut self`, on a
+    /// version nobody else can see) clone the map, modify the copy and replace
+    /// this pointer. A plain `Arc`, not an `ArcSwap`: forking a version creates
+    /// one of these per indexer, and dropping an `ArcSwap` waits out every
+    /// thread's readers.
+    index: Arc<IndexMap>,
+    shared: Arc<Shared>,
+}
+
+impl Default for Indexer {
+    fn default() -> Self {
+        Self {
+            index: Arc::new(HashMap::new()),
+            shared: Arc::new(Shared {
+                write_lock: Arc::new(Mutex::new(())),
+                cancelled: AtomicBool::new(false),
+                graph: ArcSwapOption::empty(),
+                published: ArcSwap::from_pointee(HashMap::new()),
+            }),
+        }
+    }
+}
+
+impl Clone for Indexer {
+    fn clone(&self) -> Self {
+        Self {
+            index: Arc::clone(&self.index),
+            shared: self.shared.clone(),
+        }
+    }
+}
+
+/// A reference to what all versions of one `Indexer` share, which holds no
+/// version's map: background work keeps it, and reads the published map per
+/// batch ([`Self::committed`]) instead of pinning an old one (and with it an
+/// old, possibly retired, RediSearch spec).
+#[derive(Clone)]
+pub struct IndexerHandle(Arc<Shared>);
+
+impl IndexerHandle {
+    /// A view of the published version's indexes, as of now.
+    #[must_use]
+    pub fn committed(&self) -> Indexer {
+        Indexer {
+            index: self.0.published.load_full(),
+            shared: self.0.clone(),
+        }
+    }
+
+    /// The serialization lock, see [`Indexer::write_lock`].
+    #[must_use]
+    pub fn write_lock(&self) -> Arc<Mutex<()>> {
+        self.0.write_lock.clone()
+    }
+}
+
+/// What publishing a version changed in its indexes, found by comparing its map
+/// with the previous published one ([`Indexer::changes_since`]).
+#[derive(Default)]
+pub struct IndexChanges {
+    /// Labels whose index the version created or rebuilt and that still owe
+    /// their first population: the publisher starts it.
+    pub owed: Vec<Arc<String>>,
+    /// Indexes the previous version had and this one replaced or dropped. They
+    /// are freed once the last reader of the previous version lets go; the
+    /// publisher hands them to a background thread so it is not the one to do
+    /// it.
+    pub retired: Vec<Arc<Index>>,
+}
+
+impl IndexChanges {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.owed.is_empty() && self.retired.is_empty()
+    }
 }
 
 unsafe impl Send for Indexer {}
@@ -166,33 +256,31 @@ unsafe impl Sync for Indexer {}
 impl Indexer {
     #[must_use]
     pub fn has_indices(&self) -> bool {
-        !self.index.load().is_empty()
+        !self.index.is_empty()
     }
 
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        self.index
-            .load()
-            .values()
-            .map(|index| index.memory_usage())
-            .sum()
+        self.index.values().map(|index| index.memory_usage()).sum()
     }
 
     pub fn create_index(
-        &self,
+        &mut self,
         index_type: &IndexType,
         label: &Arc<String>,
         attrs: &Vec<Arc<String>>,
         total: u64,
         options: Option<IndexOptions>,
+        owes_population: bool,
     ) -> Result<(), String> {
-        // Serialize with any in-flight populate batch and other schema
-        // mutations. Without this, a recreate (e.g. adding a second vector
-        // field) can land between a batch's id check and its commit, causing
-        // the batch to flush docs built against a stale field set into
-        // the freshly recreated rs_idx — corrupting HNSW state.
-        let _guard = self.write_lock.lock();
-        let map = self.index.load_full();
+        // No `write_lock`: this changes only this version's map, with an `Index`
+        // and RediSearch spec nothing else can reach, so it cannot race with a
+        // population batch (which works on the published map and its specs).
+        // `owes_population`: the index is left UNDER CONSTRUCTION and whoever
+        // publishes this version starts its population
+        // ([`Self::changes_since`]); `false` for a caller that populates it
+        // itself before the version is published (RDB load).
+        let map = Arc::clone(&self.index);
 
         let (language, stopwords, field_options, vector_options) = match options {
             Some(IndexOptions::Text(text_opts)) => {
@@ -258,10 +346,13 @@ impl Indexer {
             }
         }
 
-        // Validation passed — materialize a private copy of the entry
-        // (sharing the RS spec handle and pending counters with the
-        // published generation) to mutate and publish below.
-        let mut label_indexes = existing.map_or_else(Index::default, Index::clone_for_update);
+        // Validation passed — materialize a private copy of the entry, with no
+        // RediSearch spec and its own generation and pending counters, to
+        // mutate and publish below. The copy always gets a fresh spec (below),
+        // never a field added to the existing one, because that spec is the
+        // published version's: a version that is rolled back must leave it as
+        // it was.
+        let mut label_indexes = existing.map_or_else(Index::default, Index::fork_for_ddl);
 
         let mut new_fields: HashMap<Arc<String>, Vec<Arc<Field>>> = HashMap::new();
 
@@ -297,35 +388,18 @@ impl Indexer {
                 label_indexes.insert_field(attr.clone(), field);
             }
         }
-        if label_indexes.has_rs_index() {
-            // Adding fields to an existing RediSearch index. For most
-            // field types we append to the live spec, but adding a
-            // vector field forces a drop+rebuild: RediSearch's HNSW
-            // state on the existing vector field gets corrupted when
-            // the subsequent populate phase re-adds documents with
-            // ADD_REPLACE, leaving KNN queries returning fewer hits
-            // than the data warrants. Matches the C FalkorDB behavior
-            // (Index_Disable + Index_ConstructStructure).
-            let adds_vector = *index_type == IndexType::Vector;
-            if adds_vector {
-                label_indexes.recreate_index(label)?;
-            } else {
-                label_indexes.register_fields(&new_fields, field_options.as_ref())?;
-            }
-        } else {
-            let effective_stopwords = stopwords
-                .clone()
-                .or_else(|| label_indexes.stopwords().cloned());
-            let effective_language = language
-                .clone()
-                .or_else(|| label_indexes.language().cloned());
-            label_indexes.create_rs_index(
-                label,
-                effective_stopwords.as_ref(),
-                effective_language.as_ref(),
-            )?;
-            label_indexes.register_fields(&new_fields, field_options.as_ref())?;
-        }
+        let effective_stopwords = stopwords
+            .clone()
+            .or_else(|| label_indexes.stopwords().cloned());
+        let effective_language = language
+            .clone()
+            .or_else(|| label_indexes.language().cloned());
+        label_indexes.create_rs_index(
+            label,
+            effective_stopwords.as_ref(),
+            effective_language.as_ref(),
+        )?;
+        label_indexes.register_all_fields()?;
 
         // Update the label indexes with global settings
         // Default to "english" for fulltext indexes when no language is specified,
@@ -344,43 +418,45 @@ impl Indexer {
 
         label_indexes.set_progress(0, total);
 
-        // Every field added to an existing entry starts a new population
-        // generation, not only the vector rebuild above. A populate job still
-        // running for the previous generation holds a field snapshot without
-        // the new field. Bumping makes that job bail at its next batch
-        // (`is_ticket_current`), and the job `populate_index` spawns for this
-        // generation indexes everything from the start. Without the bump both
-        // jobs share one generation: the new job can see two pending tickets
-        // and bail first, and the old job then finishes with its stale
-        // snapshot, so the index goes OPERATIONAL with the new field never
-        // populated. The bump comes after every fallible step because the
-        // pending counters are shared with the published entry, and a bump
-        // on an entry that is never published would desynchronize them.
-        if existing.is_some() {
-            label_indexes.bump_id();
+        // The population is owed from here: the generation `fork_for_ddl` gave
+        // this entry is new, so a job still running for the published one holds
+        // a field snapshot without the new field and bails at its next batch
+        // once this version is published (`is_ticket_current`).
+        if owes_population {
+            label_indexes.owe_population();
         }
 
         let mut new_map = (*map).clone();
         new_map.insert(label.clone(), Arc::new(label_indexes));
-        self.index.store(Arc::new(new_map));
+        self.index = Arc::new(new_map);
         Ok(())
     }
 
     /// Drop index fields and return (dropped_count, remaining_count).
     /// Returns `None` if the label has no index.
     ///
-    /// Caller must hold [`Self::write_lock`] — map mutations are published
-    /// via clone-and-swap and would otherwise race with other schema ops.
-    #[must_use]
+    /// Changes only this version's map. With fields left, the label gets a new
+    /// `Index` with a fresh RediSearch spec holding them, which owes its
+    /// population; with none left the label leaves the map. The published
+    /// version's index is untouched either way, and freed by whoever publishes
+    /// this version ([`Self::changes_since`]).
+    ///
+    /// # Errors
+    ///
+    /// If RediSearch cannot build the spec for the fields left. The map is
+    /// unchanged.
     pub fn drop_index(
-        &self,
+        &mut self,
         label: &Arc<String>,
         attrs: &[Arc<String>],
         index_type: &IndexType,
         total: u64,
-    ) -> Option<(usize, usize)> {
-        let map = self.index.load_full();
-        let mut index = map.get(label)?.clone_for_update();
+    ) -> Result<Option<(usize, usize)>, String> {
+        let map = Arc::clone(&self.index);
+        let Some(existing) = map.get(label) else {
+            return Ok(None);
+        };
+        let mut index = existing.fork_for_ddl();
         let before = index.index_count();
         let mut removed = false;
         // Empty `attrs` means "drop all fields of this index_type"
@@ -411,30 +487,82 @@ impl Indexer {
                 removed = true;
             }
         }
-        if removed {
-            index.set_progress(0, total);
+        if !removed {
+            return Ok(Some((0, before)));
         }
         let after = index.index_count();
         let mut new_map = (*map).clone();
-        new_map.insert(label.clone(), Arc::new(index));
-        self.index.store(Arc::new(new_map));
-        Some((before - after, after))
+        if after == 0 {
+            new_map.remove(label);
+        } else {
+            index.recreate_index(label)?;
+            index.set_progress(0, total);
+            index.owe_population();
+            new_map.insert(label.clone(), Arc::new(index));
+        }
+        self.index = Arc::new(new_map);
+        Ok(Some((before - after, after)))
     }
 
-    /// Remove the whole per-label index entry.
+    /// What publishing this version, whose predecessor is `previous`, changed:
+    /// the labels whose index it built and that await population, and the
+    /// indexes it replaced or dropped. Empty (one pointer comparison) when this
+    /// version's map is the predecessor's, as it is for any version that ran no
+    /// index DDL.
     ///
-    /// Caller must hold [`Self::write_lock`] (see `drop_index_bg`).
-    pub fn remove(
+    /// Takes each owed population ([`Index::take_population_owed`]), so each is
+    /// reported once; the caller starts them.
+    #[must_use]
+    pub fn changes_since(
+        &self,
+        previous: &Self,
+    ) -> IndexChanges {
+        let new = &self.index;
+        let old = &previous.index;
+        if Arc::ptr_eq(new, old) {
+            return IndexChanges::default();
+        }
+        let mut changes = IndexChanges::default();
+        for (label, index) in new.iter() {
+            if old.get(label).is_some_and(|o| Arc::ptr_eq(o, index)) {
+                continue;
+            }
+            if index.take_population_owed() {
+                changes.owed.push(label.clone());
+            }
+        }
+        for (label, index) in old.iter() {
+            if !index.has_rs_index() || new.get(label).is_some_and(|n| Arc::ptr_eq(n, index)) {
+                continue;
+            }
+            changes.retired.push(index.clone());
+        }
+        changes
+    }
+
+    /// The field snapshot and ticket of the population `label`'s index owes,
+    /// which the DDL statement already took the ticket of
+    /// ([`Index::owe_population`]): no new ticket is acquired.
+    #[must_use]
+    pub fn owed_population_snapshot(
         &self,
         label: &Arc<String>,
-    ) {
-        let map = self.index.load_full();
-        if !map.contains_key(label) {
-            return;
-        }
-        let mut new_map = (*map).clone();
-        new_map.remove(label);
-        self.index.store(Arc::new(new_map));
+    ) -> Option<PopulationSnapshot> {
+        let map = &self.index;
+        let index = map.get(label)?;
+        Some(PopulationSnapshot {
+            fields: index.fields().clone(),
+            ticket: PopulationTicket {
+                label: label.clone(),
+                generation_id: index.id(),
+            },
+        })
+    }
+
+    /// What background work keeps of this indexer: no version's map.
+    #[must_use]
+    pub fn handle(&self) -> IndexerHandle {
+        IndexerHandle(self.shared.clone())
     }
 
     #[must_use]
@@ -444,7 +572,7 @@ impl Indexer {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
-        if let Some(index) = self.index.load().get(label) {
+        if let Some(index) = self.index.get(label) {
             return index.has_field_with_type(field, index_type);
         }
         false
@@ -457,7 +585,7 @@ impl Indexer {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
-        if let Some(index) = self.index.load().get(label)
+        if let Some(index) = self.index.get(label)
             && index.is_operational()
         {
             return index.has_field_with_type(field, index_type);
@@ -471,7 +599,7 @@ impl Indexer {
         label: &Arc<String>,
         field: &Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.load().get(label)
+        if let Some(index) = self.index.get(label)
             && index.is_operational()
         {
             return index.contains_field(field);
@@ -485,7 +613,7 @@ impl Indexer {
         label: &Arc<String>,
         query: IndexQuery<Value>,
     ) -> IdIter {
-        if let Some(index) = self.index.load().get(label) {
+        if let Some(index) = self.index.get(label) {
             return index.query(query);
         }
         IndexResultsIter::empty()
@@ -499,7 +627,7 @@ impl Indexer {
         label: &Arc<String>,
         query: IndexQuery<Value>,
     ) -> super::EdgeTripleIter {
-        if let Some(index) = self.index.load().get(label) {
+        if let Some(index) = self.index.get(label) {
             return index.query_edges(query);
         }
         super::EdgeTripleIter::empty()
@@ -510,7 +638,7 @@ impl Indexer {
         label: &Arc<String>,
         query: &str,
     ) -> Result<ScoredIdIter, String> {
-        if let Some(index) = self.index.load().get(label) {
+        if let Some(index) = self.index.get(label) {
             return index.fulltext_query(query);
         }
         Ok(IndexResultsIter::empty_scored())
@@ -524,7 +652,7 @@ impl Indexer {
         label: &Arc<String>,
         query: &str,
     ) -> Result<super::ScoredEdgeTripleIter, String> {
-        if let Some(index) = self.index.load().get(label) {
+        if let Some(index) = self.index.get(label) {
             return index.fulltext_query_edges(query);
         }
         Ok(super::ScoredEdgeTripleIter::empty())
@@ -545,7 +673,7 @@ impl Indexer {
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
     ) -> Result<VectorScoredIdIter, String> {
-        if let Some(index) = self.index.load().get(label) {
+        if let Some(index) = self.index.get(label) {
             return index.vector_query(field, vector, k);
         }
         Ok(VectorScoredIdIter::empty(vector))
@@ -560,7 +688,7 @@ impl Indexer {
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
     ) -> Result<VectorScoredEdgeTripleIter, String> {
-        if let Some(index) = self.index.load().get(label) {
+        if let Some(index) = self.index.get(label) {
             return index.vector_query_edges(field, vector, k);
         }
         Ok(VectorScoredEdgeTripleIter::empty(vector))
@@ -580,7 +708,7 @@ impl Indexer {
         label: &Arc<String>,
         attr: &Arc<String>,
     ) -> Option<String> {
-        let guard = self.index.load();
+        let guard = &self.index;
         let index = guard.get(label)?;
         let fields = index.get_fields(attr)?;
         for field in fields {
@@ -603,7 +731,7 @@ impl Indexer {
         label: &Arc<String>,
         attr: &Arc<String>,
     ) -> Option<u64> {
-        let guard = self.index.load();
+        let guard = &self.index;
         let index = guard.get(label)?;
         let fields = index.get_fields(attr)?;
         for field in fields {
@@ -625,7 +753,7 @@ impl Indexer {
         &self,
         label: &Arc<String>,
     ) -> Option<PopulationTicket> {
-        let index = self.index.load();
+        let index = &self.index;
         let index = index.get(label)?;
         let generation_id = index.id();
         index.increment_pending_for_generation(generation_id);
@@ -643,7 +771,7 @@ impl Indexer {
         &self,
         label: &Arc<String>,
     ) -> Option<PopulationSnapshot> {
-        let index = self.index.load();
+        let index = &self.index;
         let index = index.get(label)?;
         let generation_id = index.id();
         let fields = index.fields().clone();
@@ -663,7 +791,6 @@ impl Indexer {
     #[must_use]
     pub fn acquire_population_snapshots(&self) -> Vec<PopulationSnapshot> {
         self.index
-            .load()
             .iter()
             .map(|(label, index)| {
                 let generation_id = index.id();
@@ -687,7 +814,7 @@ impl Indexer {
         &self,
         ticket: &PopulationTicket,
     ) {
-        let index = self.index.load();
+        let index = &self.index;
         if let Some(index) = index.get(ticket.label()) {
             index.try_decrement_pending_for_generation(ticket.generation_id());
         }
@@ -700,7 +827,6 @@ impl Indexer {
         ticket: &PopulationTicket,
     ) -> bool {
         self.index
-            .load()
             .get(ticket.label())
             .is_some_and(|index| index.id() == ticket.generation_id())
     }
@@ -711,7 +837,7 @@ impl Indexer {
         &self,
         ticket: &PopulationTicket,
     ) -> i32 {
-        self.index.load().get(ticket.label()).map_or(0, |index| {
+        self.index.get(ticket.label()).map_or(0, |index| {
             index.pending_count_for_generation(ticket.generation_id())
         })
     }
@@ -721,7 +847,7 @@ impl Indexer {
         &self,
         label: &Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.load().get(label) {
+        if let Some(index) = self.index.get(label) {
             return index.pending_count() == 0;
         }
         false
@@ -732,7 +858,7 @@ impl Indexer {
         add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
-        let index = self.index.load();
+        let index = &self.index;
         for (label, add_docs) in add_docs {
             let Some(index) = index.get(label) else {
                 continue;
@@ -762,7 +888,7 @@ impl Indexer {
         add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
         remove_docs: &mut HashMap<Arc<String>, std::collections::HashMap<u64, (u64, u64)>>,
     ) {
-        let index = self.index.load();
+        let index = &self.index;
         for (label, add_docs) in add_docs {
             let Some(index) = index.get(label) else {
                 continue;
@@ -788,7 +914,6 @@ impl Indexer {
         label: &Arc<String>,
     ) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
         self.index
-            .load()
             .get(label)
             .map(|index| index.fields().clone())
             .unwrap_or_default()
@@ -798,7 +923,6 @@ impl Indexer {
     #[must_use]
     pub fn get_all_fields(&self) -> Vec<(Arc<String>, HashMap<Arc<String>, Vec<Arc<Field>>>)> {
         self.index
-            .load()
             .iter()
             .filter(|(_, index)| !index.is_empty())
             .map(|(label, index)| (label.clone(), index.fields().clone()))
@@ -811,7 +935,6 @@ impl Indexer {
         // the parent's writer thread was mid-commit at fork time.
         let mut infos: Vec<IndexInfo> = self
             .index
-            .load()
             .iter()
             .filter(|(_, index)| !index.is_empty())
             .map(|(label, index)| {
@@ -838,7 +961,7 @@ impl Indexer {
         &self,
         label: &Arc<String>,
     ) -> bool {
-        self.index.load().contains_key(label)
+        self.index.contains_key(label)
     }
 
     #[must_use]
@@ -847,7 +970,7 @@ impl Indexer {
         label: &Arc<String>,
         field: &Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.load().get(label) {
+        if let Some(index) = self.index.get(label) {
             return index.contains_field(field);
         }
         false
@@ -858,7 +981,7 @@ impl Indexer {
         label: &Arc<String>,
         progress: u64,
     ) {
-        if let Some(index) = self.index.load().get(label) {
+        if let Some(index) = self.index.get(label) {
             let (_, total) = index.progress();
             index.set_progress(progress, total);
         }
@@ -871,43 +994,35 @@ impl Indexer {
     /// cloned `Arc` so the caller can lock it without borrowing `self`.
     #[must_use]
     pub fn write_lock(&self) -> Arc<Mutex<()>> {
-        self.write_lock.clone()
+        self.shared.write_lock.clone()
     }
 
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
+        self.shared.cancelled.store(true, Ordering::Relaxed);
         // Clear the graph reference to break the circular Arc:
         // MvccGraph → Arc<Graph> → Indexer → Arc<Graph>
-        self.graph.store(None);
+        self.shared.graph.store(None);
     }
 
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Relaxed)
+        self.shared.cancelled.load(Ordering::Relaxed)
     }
 
-    /// Rebuild the RediSearch spec for `label` from scratch (drop + create +
-    /// re-register fields), bumping the generation id so stale populate
-    /// workers bail out.
-    ///
-    /// Caller must hold [`Self::write_lock`] — the new generation is
-    /// published via clone-and-swap.
-    pub fn recreate_index(
-        &self,
-        label: &Arc<String>,
-    ) -> Result<(), String> {
-        let map = self.index.load_full();
-        if let Some(index) = map.get(label) {
-            let mut index = index.clone_for_update();
-            index.recreate_index(label)?;
-            let mut new_map = (*map).clone();
-            new_map.insert(label.clone(), Arc::new(index));
-            self.index.store(Arc::new(new_map));
+    /// Make this version's map the published one, as [`Self::set_graph`] does, for a graph that
+    /// has no committed graph pointer yet.
+    pub fn seed_published(&self) {
+        // The map of the version being published, for population to work on. A store
+        // is a swap that waits out readers of the old pointer, so skip it for the
+        // common commit that ran no index DDL: its map is the published one already.
+        let map = &self.index;
+        if !Arc::ptr_eq(map, &self.shared.published.load()) {
+            self.shared.published.store(Arc::clone(map));
         }
-        Ok(())
     }
 
-    /// Only touches the `Indexer`'s own lock-free `graph` slot, so this takes
+    /// Publishes the version this indexer belongs to: it is now the committed
+    /// graph, and its map the committed one. Only touches the `Indexer`'s own lock-free slots, so this takes
     /// `&self` deliberately: it must be callable while the caller holds only
     /// an immutable borrow of the enclosing `Graph` (see
     /// `Graph::set_indexer_graph`), so that background index population
@@ -918,11 +1033,131 @@ impl Indexer {
         &self,
         graph: Arc<AtomicRefCell<Graph>>,
     ) {
-        self.graph.store(Some(graph));
+        self.shared.graph.store(Some(graph));
+        self.seed_published();
     }
 
     #[must_use]
     pub fn get_graph(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
-        self.graph.load_full()
+        self.shared.graph.load_full()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The versioning of the map, without RediSearch (not linked into unit tests):
+    //! entries are `Index::default()`s put straight into a version's map.
+
+    use super::{Index, IndexMap, Indexer};
+    use std::sync::Arc;
+
+    fn put(
+        indexer: &mut Indexer,
+        label: &str,
+        index: Index,
+    ) -> Arc<Index> {
+        let index = Arc::new(index);
+        let mut map: IndexMap = (*indexer.index).clone();
+        map.insert(Arc::new(label.to_string()), index.clone());
+        indexer.index = Arc::new(map);
+        index
+    }
+
+    #[test]
+    fn a_fork_changes_only_its_own_map() {
+        let mut committed = Indexer::default();
+        put(&mut committed, "A", Index::default());
+        let mut fork = committed.clone();
+        put(&mut fork, "B", Index::default());
+        fork.index = Arc::new(IndexMap::new());
+
+        assert!(committed.has_index(&Arc::new("A".to_string())));
+        assert!(!committed.has_index(&Arc::new("B".to_string())));
+        assert!(!fork.has_indices());
+    }
+
+    #[test]
+    fn a_fork_shares_the_committed_map_until_it_changes_it() {
+        let mut committed = Indexer::default();
+        put(&mut committed, "A", Index::default());
+        let fork = committed.clone();
+        let none = fork.changes_since(&committed);
+        assert!(none.is_empty(), "no DDL, so nothing to do on publish");
+    }
+
+    #[test]
+    fn an_owed_population_is_reported_once_and_only_for_a_new_index() {
+        let mut committed = Indexer::default();
+        let kept = put(&mut committed, "A", Index::default());
+        kept.owe_population();
+        let mut fork = committed.clone();
+        let created = put(&mut fork, "B", Index::default());
+        created.owe_population();
+        assert_eq!(
+            created.pending_count(),
+            1,
+            "UNDER CONSTRUCTION from creation"
+        );
+
+        let changes = fork.changes_since(&committed);
+        assert_eq!(changes.owed, vec![Arc::new("B".to_string())]);
+        assert!(
+            fork.changes_since(&committed).owed.is_empty(),
+            "taken: the publisher starts it once"
+        );
+        assert!(
+            kept.take_population_owed(),
+            "an index the fork did not touch keeps what it owes"
+        );
+    }
+
+    #[test]
+    fn a_replaced_or_dropped_index_is_retired_only_with_a_spec() {
+        // `Index::default()` has no RediSearch spec, so there is nothing to free.
+        let mut committed = Indexer::default();
+        put(&mut committed, "A", Index::default());
+        let mut fork = committed.clone();
+        put(&mut fork, "A", Index::default());
+        assert!(fork.changes_since(&committed).retired.is_empty());
+    }
+
+    #[test]
+    fn a_ddl_copy_has_counters_of_its_own() {
+        let published = Index::default();
+        published.owe_population();
+        assert_eq!(published.pending_count(), 1);
+
+        let copy = published.fork_for_ddl();
+        assert_ne!(copy.id(), published.id(), "a new generation");
+        assert_eq!(copy.pending_count(), 0);
+        copy.owe_population();
+        copy.owe_population();
+        assert_eq!(copy.pending_count(), 2);
+        assert_eq!(
+            published.pending_count(),
+            1,
+            "what the copy does to its counters never reaches the published index"
+        );
+        assert!(!copy.has_rs_index(), "it builds a spec of its own");
+    }
+
+    #[test]
+    fn background_work_reads_the_published_map_not_a_forks() {
+        let mut committed = Indexer::default();
+        put(&mut committed, "A", Index::default());
+        committed.seed_published();
+        let handle = committed.handle();
+
+        let mut fork = committed.clone();
+        put(&mut fork, "B", Index::default());
+
+        let view = handle.committed();
+        assert!(view.has_index(&Arc::new("A".to_string())));
+        assert!(
+            !view.has_index(&Arc::new("B".to_string())),
+            "the fork is not published"
+        );
+        fork.seed_published();
+        assert!(handle.committed().has_index(&Arc::new("B".to_string())));
     }
 }

@@ -7,8 +7,9 @@
 //! effects emission belongs beside the mutation that caused it.
 //!
 //! Unlike every other mutation, index DDL does not go through `Pending`: it
-//! writes shared, non-MVCC RediSearch state directly. So it also cannot ride
-//! `CommitOp`'s effects emission, and emits its own.
+//! changes the graph version's own index map directly (versioned with the
+//! graph, so a query that does not commit leaves no index change behind). So it
+//! also cannot ride `CommitOp`'s effects emission, and emits its own.
 
 use std::sync::Arc;
 
@@ -63,8 +64,8 @@ pub(crate) fn create_index<'a>(
     if *index_type == IndexType::Vector && index_options.is_none() {
         return Err("Invalid vector index configuration".into());
     }
-    // Index DDL mutates the shared, non-MVCC index directly (not via `pending`)
-    // and calls host FFI that needs the global lock, so become a writer first —
+    // Index DDL changes the version's index map directly (not via `pending`) and
+    // calls host FFI that needs the global lock, so become a writer first —
     // same contract as `CommitOp`.
     runtime.write_escalation().upgrade_to_write()?;
     runtime

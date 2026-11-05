@@ -117,6 +117,9 @@ impl MvccGraph {
     /// Used by the RDB load path.
     #[must_use]
     pub fn from_graph(graph: Graph) -> Self {
+        // The graph's indexes are the committed ones from the start, so a population
+        // reads them even before the first commit.
+        graph.seed_published_indexes();
         Self {
             graph: ArcSwap::from_pointee(AtomicRefCell::new(graph)),
         }
@@ -384,6 +387,11 @@ impl MvccGraph {
         // before this statement's `borrow_mut()` guard was dropped, it panicked with "already
         // mutably borrowed".
         new_graph.borrow().set_indexer_graph(new_graph.clone());
+        // The version is published, so what its index DDL held back may happen now: the
+        // indexes it built start populating (from `new_graph`, which the indexers now
+        // hold), and the ones it replaced are freed. `published` stays alive to the end
+        // of this call, so this thread is not the one to free them in the common case.
+        new_graph.borrow().publish_indexes(&published.borrow());
         Ok(())
     }
 }
