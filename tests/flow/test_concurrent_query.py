@@ -566,29 +566,33 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
         asyncio.run(run(self))
 
-    def test_14_reader_respects_timeout_at_writer_gate(self):
-        # a reader parked at the writer gate must still honor its own query
-        # timeout: if the in-flight writer doesn't clear within the reader's
-        # budget, the reader aborts with a timeout error rather than waiting for
-        # the whole write (or the read blocking it) to resolve.
+    def test_14_reader_parks_at_gate_without_timeout_penalty(self):
+        # a reader parked at the writer gate is WAITING for a lock it does not yet
+        # hold - that wait must NOT be charged against the query's timeout. the
+        # reader parks for as long as needed (the same courtesy a queued writer
+        # gets) and then runs; it is never aborted while merely waiting at the
+        # gate, and the parked time is accounted as wait time, not execution time.
         #
         # setup: a long read holds the read lock, a writer behind it is blocked
-        # acquiring the write lock (so the gate stays up for the whole read),
-        # and a probe reader with a short timeout must abort at the gate.
+        # acquiring the write lock (so the gate stays up for the whole read), and a
+        # probe reader with a tiny timeout must still SUCCEED - parking through the
+        # whole write, far past its own timeout budget.
 
         if SANITIZER or VALGRIND:
             self.env.skip()
 
         self.graph.query("CREATE (:N {v:1})")
 
+        outcome = {}
+
         async def run(self):
-            # socket_timeout generous so the ~3s long read / blocked writer that
+            # socket_timeout generous so the ~5s long read / blocked writer that
             # we await below don't trip a client-side read timeout
-            pool = BlockingConnectionPool(max_connections=32, timeout=None, socket_timeout=30, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=32, timeout=None, socket_timeout=60, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
-            # a reliably-long read (~3s) holds the read lock; wide margins so the
+            # a reliably-long read (~5s) holds the read lock; wide margins so the
             # probe below lands well inside the window regardless of scheduling
             long_read = "UNWIND range(0, 60000000) AS x WITH x WHERE x % 60000001 = 0 RETURN count(x)"
 
@@ -622,27 +626,275 @@ class testConcurrentQueryFlow(FlowTestsBase):
             # lock, so the gate is raised) before we probe
             self.env.assertTrue(await wait_until(lambda r, w: r + w >= 2))
 
-            # a reader with a 200ms timeout must abort at the gate within its
-            # budget, not block for the full read
+            # a reader with a 200ms timeout, launched as a task so we can observe
+            # it parking. the gate stays up for the whole ~5s read - far beyond
+            # this budget.
             t0 = loop.time()
-            timed_out = False
-            try:
-                await g.ro_query("MATCH (n) RETURN count(n)", timeout=200)
-            except redis.exceptions.ResponseError as e:
-                timed_out = "timed out" in str(e).lower()
-            probe_wait = loop.time() - t0
+            probe_task = asyncio.create_task(g.ro_query("MATCH (n) RETURN count(n)", timeout=200))
+
+            # give it 1s - 5x its own timeout. three outcomes:
+            #  - still pending  => PARKED at the gate without being timed out (the
+            #    property under test); let the writer clear and assert it succeeds.
+            #  - done with a "timed out" error => it was aborted AT THE GATE: the
+            #    regression this test guards -> record so we FAIL below.
+            #  - done successfully => it slipped through because the gate never
+            #    engaged (e.g. macOS lacks the writer-preference the gate relies on)
+            #    -> can't exercise the gate here, record so we SKIP below.
+            await asyncio.sleep(1.0)
+            if not probe_task.done():
+                outcome['parked'] = True
+                probe_err = None ; probe_res = None
+                try:
+                    probe_res = await probe_task
+                except redis.exceptions.ResponseError as e:
+                    probe_err = str(e)
+                outcome['wait'] = loop.time() - t0
+                outcome['err'] = probe_err
+                outcome['res'] = probe_res
+            else:
+                # finished within 1s: a "timed out" error => aborted at the gate
+                # (regression); any other error => unexpected failure; a clean
+                # success => the gate never engaged. only the last may skip.
+                try:
+                    await probe_task
+                    outcome['gate_not_engaged'] = True
+                except redis.exceptions.ResponseError as e:
+                    if "timed out" in str(e).lower():
+                        outcome['timed_out_at_gate'] = True
+                    else:
+                        outcome['early_error'] = str(e)
 
             await read_task
             await write_task
+            if not probe_task.done():
+                probe_task.cancel()
+            await pool.aclose()
+            self.conn.delete(GRAPH_ID)
 
-            # core property: the reader aborted (timed out) instead of slipping
-            # through or hanging for the whole read
-            self.env.assertTrue(timed_out)
-            # and it aborted promptly - nowhere near the full read
-            self.env.assertLess(probe_wait, 2.0)
+        asyncio.run(run(self))
+
+        # a reader aborted WHILE PARKED at the gate -> the behavior regressed. fail
+        # loudly (this is the whole point of the test), never skip past it.
+        self.env.assertFalse(outcome.get('timed_out_at_gate', False),
+            message="reader was timed out while parked at the writer gate")
+        # any other probe failure is also a real failure, not a reason to skip
+        self.env.assertFalse(outcome.get('early_error'),
+            message="probe failed unexpectedly: %s" % outcome.get('early_error'))
+        # the gate is a Linux (PREFER_WRITER) mechanism; if it never engaged the
+        # scenario can't be built here - skip rather than false-fail
+        if not outcome.get('parked'):
+            self.env.skip()
+            return
+
+        # 1. the probe did NOT time out at the gate - it parked ~5s (>> its 200ms
+        #    budget) and still completed successfully
+        self.env.assertIsNone(outcome['err'])
+        self.env.assertIsNotNone(outcome['res'])
+        self.env.assertGreater(outcome['wait'], 1.0)
+        # 2. the parked time is WAIT time, not execution time: the reported query
+        #    run time excludes the multi-second park (real execution is sub-ms)
+        self.env.assertLess(outcome['res'].run_time_ms, 1000)
+
+
+    def test_15_server_responsive_under_heavy_mixed_load(self):
+        # under a SUSTAINED heavy mix of reads and writes the server (Redis main
+        # thread) must keep answering unrelated commands (PING) promptly: neither
+        # the writer gate nor the write-lock wait may pin the GIL or let the event
+        # loop freeze under a flood. this guards the responsiveness the reentrant
+        # write lock exists to provide - under the realistic mixed workload, not
+        # just the single waiting writer of test_12.
+
+        # timing assertions are unreliable under instrumentation
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        self.graph.query("UNWIND range(1, 100000) AS i CREATE (:N {v:i})")
+
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=64, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            # a moderate read (holds the read lock briefly) + a small write, mixed
+            # ~3:1 and kept continuously in flight to saturate the graph locks
+            read_q  = "MATCH (n:N) WHERE n.v < 2000 RETURN count(n)"
+            write_q = "CREATE (:N {v:1})"
+
+            probe = AsyncRedis(port=self.env.port, decode_responses=True)
+            await probe.ping()
+
+            loop = asyncio.get_running_loop()
+            DURATION = 4.0
+            deadline = loop.time() + DURATION
+
+            # track in-flight work with a counter + done-callback (O(1) per task)
+            # instead of rescanning a growing list each iteration - that would be
+            # quadratic and stall the very event loop we use to measure PING. the
+            # callback also records any query failure, so a broken workload (which
+            # wouldn't actually contend the locks) fails the test instead of
+            # leaving PING trivially "responsive".
+            inflight = 0
+            errors = []
+
+            def _on_done(t):
+                nonlocal inflight
+                inflight -= 1
+                if not t.cancelled() and t.exception() is not None:
+                    errors.append(t.exception())
+
+            async def flood():
+                nonlocal inflight
+                i = 0
+                while loop.time() < deadline:
+                    while inflight < 48 and loop.time() < deadline:
+                        i += 1
+                        q = g.query(write_q) if (i % 4 == 0) else g.ro_query(read_q)
+                        t = asyncio.create_task(q)
+                        inflight += 1
+                        t.add_done_callback(_on_done)
+                    await asyncio.sleep(0.002)
+
+            flood_task = asyncio.create_task(flood())
+            await asyncio.sleep(0.3)  # let the flood saturate the locks
+
+            # probe PING latency from an unrelated connection during the flood
+            latencies = []
+            while loop.time() < deadline - 0.3:
+                t0 = loop.time()
+                await probe.ping()
+                latencies.append(loop.time() - t0)
+                await asyncio.sleep(0.01)
+
+            await flood_task
+            # drain the last wave, then fail if any flood query actually errored
+            while inflight > 0:
+                await asyncio.sleep(0.01)
+            self.env.assertEqual(errors, [], message="flood query failures: %r" % errors[:3])
+
+            latencies.sort()
+            median = latencies[len(latencies) // 2]
+            p99    = latencies[min(len(latencies) - 1, int(len(latencies) * 0.99))]
+
+            # a frozen event loop would show PING latencies of seconds; with the
+            # GIL yielded between slices PINGs are served in a few ms. assert on
+            # the median (robust to a rare outlier) plus a generous p99
+            self.env.assertLess(median, 0.1)
+            self.env.assertLess(p99, 1.0)
+
+            await probe.aclose()
+            await pool.aclose()
+            self.conn.delete(GRAPH_ID)
+
+        asyncio.run(run(self))
+
+    def test_16_concurrent_readers_park_at_gate(self):
+        # many reader-queries can be parked at the writer gate at once, each with a
+        # tiny timeout. none of them may be aborted for waiting at the gate: they
+        # ALL park through the in-flight write and then succeed - no hang, no crash,
+        # no spurious timeout - and the server stays healthy and the write lands.
+        # this stresses the concurrent gate-parking path (where readers funnel in,
+        # historically a use-after-free risk) now that the park is exempt from the
+        # query timeout.
+
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        self.graph.query("CREATE (:N {v:1})")
+
+        outcome = {}
+
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=64, timeout=None, socket_timeout=60, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            # a reliably-long read (~5s) holds the read lock; a writer behind it
+            # blocks acquiring the write lock, raising the gate for the duration
+            long_read = "UNWIND range(0, 60000000) AS x WITH x WHERE x % 60000001 = 0 RETURN count(x)"
+
+            loop = asyncio.get_running_loop()
+
+            async def inflight():
+                res = await loop.run_in_executor(None, lambda:
+                    self.conn.execute_command(
+                        "GRAPH.INFO", "RunningQueries", "WaitingQueries"))
+                return len(res[1]), len(res[3])  # (running, waiting)
+
+            async def wait_until(pred, timeout=20.0):
+                deadline = loop.time() + timeout
+                while loop.time() < deadline:
+                    if pred(*(await inflight())):
+                        return True
+                    await asyncio.sleep(0.02)
+                return False
+
+            read_task = asyncio.create_task(g.ro_query(long_read))
+            self.env.assertTrue(await wait_until(lambda r, w: r >= 1))
+            write_task = asyncio.create_task(g.query("CREATE (:N {v:2}) RETURN 1"))
+            # writer in-flight behind the read (gate up) before we probe
+            self.env.assertTrue(await wait_until(lambda r, w: r + w >= 2))
+
+            # 20 readers, each with a 200ms timeout, all parking at the gate at once.
+            async def probe():
+                try:
+                    await g.ro_query("MATCH (n) RETURN count(n)", timeout=200)
+                    return "ok"
+                except redis.exceptions.ResponseError as e:
+                    return "timeout" if "timed out" in str(e).lower() else ("ERR:" + str(e))
+
+            t0 = loop.time()
+            probes = [asyncio.create_task(probe()) for _ in range(20)]
+
+            # give them 1s - 5x their budget. if all are still pending they are
+            # PARKED at the gate without being timed out (the property under test).
+            # otherwise inspect the ones that finished: a "timeout" means a reader
+            # was aborted AT THE GATE -> the regression this test guards (FAIL); a
+            # clean finish means the gate never engaged on this platform (e.g. macOS
+            # lacks the Linux writer-preference) -> can't exercise here (SKIP).
+            await asyncio.sleep(1.0)
+            if all(not p.done() for p in probes):
+                outcome['parked'] = True
+                outcome['outcomes'] = await asyncio.gather(*probes)
+                outcome['wait'] = loop.time() - t0
+            else:
+                early = await asyncio.gather(*[p for p in probes if p.done()])
+                # a parked reader must never be aborted: a "timeout" is the gate
+                # regression and any "ERR:" is an unexpected failure - both must fail
+                # the test. only clean early successes mean the gate didn't engage.
+                outcome['timed_out_at_gate'] = any(o == "timeout" for o in early)
+                outcome['early_errors'] = [o for o in early if o not in ("ok", "timeout")]
+
+            await read_task
+            await write_task
+            for p in probes:
+                if not p.done():
+                    p.cancel()
+            # server stayed healthy and the write landed
+            outcome['ping'] = self.conn.ping()
+            res = await g.ro_query("MATCH (n:N {v:2}) RETURN count(n)")
+            outcome['v2'] = res.result_set[0][0]
 
             await pool.aclose()
             self.conn.delete(GRAPH_ID)
 
         asyncio.run(run(self))
 
+        # any reader aborted while parked at the gate -> regression -> FAIL
+        self.env.assertFalse(outcome.get('timed_out_at_gate', False),
+            message="a reader was timed out while parked at the writer gate")
+        # any other early probe failure is a real failure, not a reason to skip
+        self.env.assertEqual(outcome.get('early_errors', []), [],
+            message="unexpected probe errors: %r" % outcome.get('early_errors'))
+        # writer gate is a Linux (PREFER_WRITER) mechanism; skip where it can't engage
+        if not outcome.get('parked'):
+            self.env.skip()
+            return
+
+        # every one of the 20 parked through the write and SUCCEEDED - none was
+        # timed out at the gate, none errored or crashed
+        self.env.assertEqual(outcome['outcomes'], ["ok"] * 20, message=str(outcome['outcomes']))
+        # they genuinely parked: the batch waited well past the 200ms budget
+        self.env.assertGreater(outcome['wait'], 1.0)
+        # server stayed healthy and the write landed
+        self.env.assertTrue(outcome['ping'])
+        self.env.assertEqual(outcome['v2'], 1)

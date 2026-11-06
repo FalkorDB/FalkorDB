@@ -620,29 +620,53 @@ bool QueryCtx_AcquireWriteLock (void) {
 	// the readers already holding the lock to drain - bounded, and responsive
 	// the whole time. no backoff, no blocking escalation: both only traded that
 	// responsiveness away for a landing guarantee the gate already provides.
-	GraphContext_WriterGateEnter (gc) ;
-
+	// the writer gate is engaged LAZILY. a write that lands in the first slice
+	// or two never closes it, so readers keep flowing through the fast rwlock
+	// path and pay no gate cost in the common case. only once a write has been
+	// pushed back GATE_THRESHOLD slices - the signature of a sustained read
+	// flood starving it - do we close the gate so new readers stop slipping in
+	// during the GIL hand-offs. this bounds starvation just like the always-on
+	// gate, but pays its cost only during the rare real starvation episode.
+	//
+	// platform note: on Linux the rwlock is PREFER_WRITER, so during those first
+	// GATE_THRESHOLD slices a reader that fast-paths to the rwlock still queues
+	// behind the waiting writer (it can only slip during the 1ms hand-off). on
+	// platforms without writer-preference the reader may pass the waiting writer
+	// freely until the gate engages - a slightly larger but still bounded (<=
+	// GATE_THRESHOLD slices) window. the reentrant write lock is Linux-focused
+	// (elsewhere the acquire degrades to a trylock spin), so this is accepted.
 	WriteLockAttempt attempt ;
+	bool gate_engaged = false ;
 
 	if (poll_interval <= 0) {
-		// legacy mode: no slicing / yielding. acquire the lock with a single
-		// blocking call that holds the GIL until granted - the exact behavior
-		// prior to the responsive write-lock change. the server may stall here
-		// until all in-flight readers drain
+		// legacy mode: no slicing / yielding. close the gate and acquire with a
+		// single blocking call that holds the GIL until granted - the exact
+		// behavior prior to the responsive write-lock change. the server may
+		// stall here until all in-flight readers drain
+		GraphContext_WriterGateEnter (gc) ;
+		gate_engaged = true ;
 		attempt = _QueryCtx_TryAcquireWriteLock (ctx, gc, -1) ;
 	} else {
 		const struct timespec yield = { 0, 1000000 } ;  // 1ms GIL hand-off
+		const int GATE_THRESHOLD = 2 ;  // slices to tolerate before gating
+		int slices = 0 ;
 		while ((attempt = _QueryCtx_TryAcquireWriteLock (ctx, gc,
 						poll_interval)) == WRITE_LOCK_RETRY) {
+			// still blocked after a slice: once pushed back far enough, close the
+			// gate so new readers stop extending the wait during the hand-offs
+			if (!gate_engaged && ++slices >= GATE_THRESHOLD) {
+				GraphContext_WriterGateEnter (gc) ;
+				gate_engaged = true ;
+			}
 			// GIL released by the attempt; sleep off-CPU so the main thread runs
 			nanosleep (&yield, NULL) ;
 		}
 	}
 
-	// writer no longer waiting: wake readers parked at the gate. on success
-	// they proceed and block on the now-held rwlock; on failure they proceed
-	// normally
-	GraphContext_WriterGateLeave (gc) ;
+	// wake any readers parked at the gate - only if we actually engaged it
+	if (gate_engaged) {
+		GraphContext_WriterGateLeave (gc) ;
+	}
 
 	if (attempt == WRITE_LOCK_ACQUIRED) {
 		return true ;

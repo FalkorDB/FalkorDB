@@ -22,13 +22,17 @@ typedef struct GraphContext {
 	bool writelocked;                      // true if the read-write lock was
 										   // acquired by a writer
 
-	// writer gate: while a writer on this graph is waiting for the write lock,
-	// new reader-queries park here instead of taking the read lock, so they
-	// can't slip in during the writer's GIL hand-off and starve it. per-graph,
-	// so writers / readers on other graphs are unaffected
-	pthread_mutex_t writer_gate_mutex;     // guards writer_waiting
+	// writer gate (anti-starvation): engaged LAZILY - set only once a writer on
+	// this graph has been pushed back GATE_THRESHOLD write-lock acquire slices
+	// (the signature of a sustained read flood), or immediately in legacy mode.
+	// while engaged, new reader-queries park here instead of taking the read
+	// lock, so they can't slip in during the writer's GIL hand-offs and starve
+	// it. per-graph, so writers / readers on other graphs are unaffected
+	pthread_mutex_t writer_gate_mutex;     // guards the gate condvar wait/signal
 	pthread_cond_t  writer_gate_cond;      // signaled when writer_waiting clears
-	bool            writer_waiting;        // a writer is acquiring the write lock
+	atomic_bool     writer_waiting;        // set while the gate is engaged; atomic
+	                                       // so readers check it (and fast-path
+	                                       // past the gate) without the mutex
 
 	int ref_count;                         // number of active references
 	char **attributes;                     // graph's attributes, attribute id
