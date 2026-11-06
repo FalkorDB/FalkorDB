@@ -7,12 +7,14 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_bytes.h"
+#include "effects_compress.h"
 #include "effects_internal.h"
 #include "writers/effects_writer.h"
 #include "effects_v3_group.h"
 #include "../configuration/config.h"
 #include "../util/identifier_limits.h"
 #include "../query_ctx.h"
+#include "../configuration/config.h"
 #include "../datatypes/map.h"
 #include "../datatypes/vector.h"
 
@@ -137,10 +139,18 @@ static unsigned char *_EffectsBuffer_WriteHeader
 	*dst++ = eb->version;
 
 	if(eb->version >= 3) {
-		// flags; bit 0 = compressed. Nothing here compresses, so every buffer
-		// builds carries 0 here - but a re-encode has to reproduce the header
-		// of the payload it decoded, so the value is read rather than assumed
-		*dst++ = eb->v3.flags;
+		// flags; bit 0 = compressed.
+		//
+		// The buffer's own flags are written so a re-encode reproduces the
+		// header it decoded - EXCEPT the compressed bit, which describes THE
+		// BODY AS WRITTEN and so belongs to EffectsV3_MaybeCompress alone.
+		// Without the mask a payload that arrived compressed re-encodes to a
+		// header claiming compressed over an inflated body.
+		//
+		// The cost: a byte-identical round trip holds for uncompressed
+		// payloads only, which excludes nothing - the conformance corpus is
+		// uncompressed by construction.
+		*dst++ = eb->v3.flags & ~EFFECTS_V3_FLAG_COMPRESSED;
 	}
 
 	return dst;
@@ -677,6 +687,35 @@ unsigned char *EffectsBuffer_Buffer
 	EffectsBytes_Free(v3_body);
 
 	*n = l;
+
+	//--------------------------------------------------------------------------
+	// compression
+	//--------------------------------------------------------------------------
+
+	// LAST, because it rewrites everything after the header, and here because
+	// this is the only point at which a whole payload exists - a record states
+	// its count and shape ahead of its rows.
+	//
+	// This is also the single choke point every replication path goes through
+	// (cmd_query.c, cmd_constraint.c, constraint.c), so attaching once covers
+	// all of them.
+	//
+	// Refusals are silent and safe by design: EffectsV3_MaybeCompress leaves
+	// the payload untouched and returns false when compression is disabled,
+	// when the version predates v3, when zstd fails, or when the frame would
+	// not be smaller. An uncompressed payload is always correct, so there is
+	// no failure to report here.
+	uint64_t min_bytes;
+	Config_Option_get(Config_EFFECTS_COMPRESSION, &min_bytes);
+
+	// char ** rather than a cast of &buffer: unsigned char ** and char ** are
+	// distinct types and punning between them is not something to do for
+	// convenience
+	char *payload = (char *)buffer;
+	if(EffectsV3_MaybeCompress(&payload, n, min_bytes)) {
+		buffer = (unsigned char *)payload;
+	}
+
 	return buffer;
 }
 
