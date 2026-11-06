@@ -154,6 +154,54 @@ _Pragma("GCC diagnostic pop")
 	ASSERT(write == 1);                                  \
 }
 
+// read 'size' bytes off 'stream' into 'output'
+//
+// returns false on a short read, and is CHECKED IN RELEASE BUILDS - unlike
+// fread_assert below, whose ASSERT compiles to nothing when RG_DEBUG is off,
+// leaving 'output' holding whatever was on the stack while execution carries
+// on into it
+//
+// use this for anything read off a replication payload; a false return MUST
+// abort the record rather than continue
+static inline bool fread_checked
+(
+	void *output,  // destination
+	size_t size,   // number of bytes to read
+	FILE *stream   // stream to read from
+) {
+	return fread (output, size, 1, stream) == 1 ;
+}
+
+// number of bytes left unread in a seekable (in-memory) stream
+//
+// used to reject a length read off the wire *before* it reaches an allocator or
+// sizes a stack array: a corrupt uint64 length would otherwise be handed
+// straight to rm_malloc, or to a VLA declaration
+//
+// returns -1 if the stream can't be measured
+static inline long fstream_remaining
+(
+	FILE *stream  // stream to measure
+) {
+	long cur = ftell (stream) ;
+	if (cur < 0) {
+		return -1 ;
+	}
+
+	if (fseek (stream, 0, SEEK_END) != 0) {
+		return -1 ;
+	}
+
+	long end = ftell (stream) ;
+
+	// restore the read position regardless of what 'end' came back as
+	if (fseek (stream, cur, SEEK_SET) != 0) {
+		return -1 ;
+	}
+
+	return (end < cur) ? -1 : (end - cur) ;
+}
+
 #define fread_assert(output, size, stream)               \
 {                                                        \
 	int read = fread((void*)(output), size, 1, stream);  \

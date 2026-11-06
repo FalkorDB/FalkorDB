@@ -263,6 +263,18 @@ typedef struct {
 	char        *name;  // owned, NUL terminated
 } EffectsV3AttrRef;
 
+// a schema named by id and by name together, for the index DDL records
+//
+// Id AND name, like EffectsV3AttrRef: apply checks one against the other, so a
+// diverged dictionary is a refusal rather than an index over whatever that id
+// happens to mean locally.
+//
+// u32 where EffectsV3AttrRef is u16 - the width each already travels at.
+typedef struct {
+	uint32_t  id;
+	char     *name;     // owned, NUL terminated
+} EffectsV3SchemaRef;
+
 // index options, as a typed block
 //
 // Each option carries a presence byte, so an option that was not stated is
@@ -292,11 +304,14 @@ typedef struct {
 //
 // 'field_type' is an IndexFieldType and is a BIT FLAG SET rather than a
 // discriminant: one field can be several index kinds at once.
+//
+// 'schemas' is a LIST, not one label, so a single record can name n entities:
+// the CCH path index is stated over several relationship types at once,
+// ON ()-[r:ROAD|:R]-(). A list of one is the ordinary case.
 typedef struct {
 	SchemaType schema_type;
-	int        schema_id;
-	char      *name;              // owned - the schema's name, stated as well
-	                              // as its id so a diverged id is caught
+	EffectsV3SchemaRef *schemas;  // owned - every entry shares 'schema_type'
+	uint16_t            n_schemas;
 	uint32_t   field_type;
 	EffectsV3AttrRef *attrs;      // owned
 	uint16_t          n_attrs;
@@ -307,8 +322,8 @@ typedef struct {
 // 12 - DROP_INDEX: names the field to drop; carries no options
 typedef struct {
 	SchemaType schema_type;
-	int        schema_id;
-	char      *name;              // owned
+	EffectsV3SchemaRef *schemas;  // owned - every entry shares 'schema_type'
+	uint16_t            n_schemas;
 	uint32_t   field_type;
 	EffectsV3AttrRef *attrs;      // owned
 	uint16_t          n_attrs;
@@ -327,7 +342,6 @@ typedef struct {
 	char    *name;                // owned
 	EffectsV3AttrRef *attrs;      // owned
 	uint16_t          n_attrs;
-	bool     has_status;
 	uint32_t status;
 } EffectsV3CreateConstraint;
 
@@ -404,8 +418,22 @@ typedef enum {
 
 // decode a v3 payload into records
 //
-// takes no GraphContext: a pure byte-to-value transformation, which is what
-// makes it testable against a fixture corpus and cheap to fuzz
+// takes NO GraphContext, which is what makes it testable against a fixture
+// corpus without a graph in scope. That is the whole of what the split buys,
+// and it is worth having.
+//
+// IT IS NOT PURE. Decode is free of any GRAPH; it is not free of module-global
+// state. An interned string on the wire goes SIValue_FromBinary ->
+// SI_InternStringVal -> STRINGPOOL_RENT -> StringPool_rent ->
+// Globals_Get_StringPool -> `_globals.string_pool`, which only Globals_Init
+// creates. `StringPool_rent` guards it with ASSERT, so an uninitialised pool is
+// a null dereference in a release build rather than a diagnostic.
+//
+// So the minimum to decode a byte buffer is ThreadPool_Init,
+// ThreadPool_CreatePool and Globals_Init - a thread pool, to parse bytes.
+// Stated plainly because a harness that skips it does not get an error, it
+// gets a segfault inside the decoder, which reads as a decoder bug. That has
+// already happened once and cost a false alarm.
 //
 // on EFFECTS_V3_OK the caller owns '*records' and frees it with
 // EffectsV3_RecordsFree; on anything else '*records' is NULL and nothing is
@@ -469,6 +497,18 @@ void EffectsV3_RecordsFree
 //
 // A truncation corpus needs decode alone, so it can run a PR earlier than a
 // round trip.
+
+// EffectsV3_Decode and EffectsV3_RecordsFree are defined
+#define EFFECTS_V3_DECODE_READY 1
+
+// EffectsV3_ENCODE_READY is defined by the writer when EffectsV3_Encode lands
+
+// a record declaring count == 0 is refused at the header
+//
+// gates the referee's conformance case for it. Separate from DECODE_READY
+// because it names a format RULING this build implements, not an entry point
+// it defines - a decoder can be complete and still predate the ruling.
+#define EFFECTS_V3_ZERO_COUNT_REJECTED 1
 
 #if defined(EFFECTS_V3_DECODE_READY) && defined(EFFECTS_V3_ENCODE_READY)
 // both directions are linkable, so a round trip can be built

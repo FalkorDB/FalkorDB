@@ -16,7 +16,13 @@
 // it is how C learns to read a new format - and it moves only in the same
 // change that adds the matching arm to Effects_Apply. On its own it would
 // admit the new payload to the old parser, which reads its records as v2
-#define EFFECTS_VERSION 2
+//
+// 3 as of the v3 decoder: C reads records 1-10. Records 11-14 (index and
+// constraint DDL) are refused with EFFECTS_V3_UNIMPLEMENTED until their PR
+// lands, so a v3 payload carrying DDL still breaks a replica. That is why
+// EFFECTS_VERSION_EMIT below must NOT move to 3 yet - teach every reader
+// first, and only flip writers once there is nothing left to refuse.
+#define EFFECTS_VERSION 3
 
 // the version a newly created buffer STAMPS
 //

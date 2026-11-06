@@ -348,6 +348,95 @@ static void _PersistenceEventHandler
 }
 
 // Perform clean-up upon server shutdown.
+// finish validating any constraint this node inherited under construction
+//
+// A replica installs the status the primary put on the wire rather than
+// validating itself (effects_v3_apply.c, _AdoptConstraintStatus): validating
+// independently would scan at a different time against different write
+// interleavings and could legitimately disagree with the primary. That is
+// right while it is a replica and wrong the moment it is promoted - a
+// constraint the old primary was still building is now this node's to finish.
+//
+// Until it does, the constraint is neither enforcing-because-it-holds nor
+// failed: C treats any status other than CT_FAILED as enforcing (schema.c),
+// so a promoted replica rejects writes against a rule it never checked, while
+// the rows that would have failed the check are still there. It also cannot be
+// re-driven - GraphHub_AddConstraint answers CONSTRAINT_ALREADY_EXISTS for
+// anything not already CT_FAILED - so nothing else will ever settle it.
+//
+// This can only arrive over the effects wire. An RDB carries active
+// constraints only, and writes the filtered count
+// (encode_schema.c, _RdbSaveConstraintsData), so no load can produce one.
+//
+// Constraint_Enforce queues to the indexer pool rather than scanning here, so
+// this stays cheap on the main thread, and the indexer re-announces the
+// settled constraint to this node's own replicas (indexer.c). Without that
+// re-announcement a promoted master would settle locally and leave its own
+// replicas under construction, which just moves the problem one hop.
+static void _EnforcePendingConstraints (void) {
+	uint n_graphs = 0 ;
+	GraphContext **graphs = Globals_CollectGraphs (&n_graphs) ;
+
+	for (uint i = 0 ; i < n_graphs ; i++) {
+		GraphContext *gc = graphs [i] ;
+
+		const SchemaType types [2] = { SCHEMA_NODE, SCHEMA_EDGE } ;
+		for (int t = 0 ; t < 2 ; t++) {
+			unsigned short n = GraphContext_SchemaCount (gc, types [t]) ;
+
+			for (unsigned short j = 0 ; j < n ; j++) {
+				Schema *s = GraphContext_GetSchemaByID (gc, j, types [t]) ;
+				if (s == NULL) {
+					continue ;
+				}
+
+				const Constraint *cs = Schema_GetConstraints (s) ;
+				uint n_cs = arr_len ((Constraint *)cs) ;
+
+				for (uint k = 0 ; k < n_cs ; k++) {
+					Constraint c = cs [k] ;
+
+					if (Constraint_GetStatus (c) != CT_PENDING) {
+						continue ;
+					}
+
+					// a constraint already queued for enforcement must not be
+					// queued twice - Constraint_IncPendingChanges caps at 2 and
+					// the second task would scan against a freed context
+					if (Constraint_PendingChanges (c) > 0) {
+						continue ;
+					}
+
+					RedisModule_Log (NULL, "notice",
+							"promoted to master: finishing validation of a "
+							"constraint on '%s' left under construction",
+							GraphContext_GetName (gc)) ;
+
+					Constraint_Enforce (c, (struct GraphContext *)gc) ;
+				}
+			}
+		}
+
+		GraphContext_DecreaseRefCount (gc) ;
+	}
+
+	rm_free (graphs) ;
+}
+
+static void _RoleChangeEventHandler
+(
+	RedisModuleCtx *ctx,
+	RedisModuleEvent eid,
+	uint64_t subevent,
+	void *data
+) {
+	ASSERT (eid.id == REDISMODULE_EVENT_REPLICATION_ROLE_CHANGED) ;
+
+	if (subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER) {
+		_EnforcePendingConstraints () ;
+	}
+}
+
 static void _ShutdownEventHandler
 (
 	RedisModuleCtx *ctx,
@@ -418,6 +507,11 @@ static void _RegisterServerEvents
 	res = RedisModule_SubscribeToServerEvent(ctx,
 			RedisModuleEvent_Persistence,
 			_PersistenceEventHandler);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_SubscribeToServerEvent(ctx,
+			RedisModuleEvent_ReplicationRoleChanged,
+			_RoleChangeEventHandler);
 	ASSERT(res == REDISMODULE_OK);
 
 	// TODO: try to use RedisModuleEvent_ModuleChange to start cron

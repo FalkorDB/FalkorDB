@@ -25,6 +25,26 @@ void GraphHub_CreateNode
 	bool log           // log operation in undo-log
 );
 
+// create nodes at the ids the caller states, and index them
+//
+// used by effects apply: the replica accepts the primary's ids. Never logs -
+// a replica does not re-emit what it applies. A batch because the ids are
+// claimed off the free list in one pass.
+//
+// The ids must already be claimed via Graph_ClaimNodeIds - claiming is once
+// per record, creation runs in chunks.
+void GraphHub_CreateNodesAtIds
+(
+	GraphContext *gc,
+	Node **nodes,        // nodes to create; each carries the id to use
+	void **items,        // storage slots from Graph_ClaimNodeIds
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,
+	LabelID *labels,
+	uint label_count
+);
+
+
 // batch create nodes
 // all nodes share the same set of labels
 // set the nodes labels and attributes
@@ -68,6 +88,20 @@ void GraphHub_CreateEdges
 	AttributeSet *sets,  // edge attributes
 	bool log             // log operation in undo-log
 );
+
+// create edges at the ids the caller states, and index them
+//
+// used by effects apply: the replica accepts the primary's ids. Never logs.
+// The ids must already be claimed via Graph_ClaimEdgeIds.
+void GraphHub_CreateEdgesAtIds
+(
+	GraphContext *gc,
+	Edge **edges,        // each edge's id is the id to create it at
+	void **items,        // storage slots from Graph_ClaimEdgeIds
+	RelationID r,
+	AttributeSet *sets
+);
+
 
 // delete nodes
 // remove nodes from the relevant indexes
