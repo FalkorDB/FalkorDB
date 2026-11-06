@@ -37,6 +37,18 @@
 //! index never sees an invalid weight through a write: what can still fail a flush is the graph's
 //! size, a resource, or a bug.
 //!
+//! A replay ([`IndexDocs::replay`](crate::index::index_docs::IndexDocs::replay): a replica's
+//! effects, the AOF) is not checked, as it is not checked against a constraint: the primary
+//! validated the write before emitting it, and refusing it here would fail the buffer (a full
+//! resync on a replica, `exit(1)` while loading the AOF).
+//!
+//! CCH DDL is not replicated yet, while every RDB carries the definitions (the AOF preamble and
+//! a replica's full sync included), so a replaying server can hold an index its primary has
+//! dropped, and receive a weight that index cannot take. The flush gives up on that index
+//! ([`flush`]). Replicating CCH DDL removes that case. C's effects v3 sends a CCH index as an
+//! ordinary index record whose `field_type` carries bit `0x20`, its relationship types in the
+//! record's schema list; the v3 reader refuses that bit today (#3219).
+//!
 //! A later change replaces "rebuild" with a choice between rebuilding, recustomizing and a
 //! scoped recustomization; the staging and the flush points stay.
 
@@ -49,6 +61,7 @@ use super::input::is_valid_weight;
 use super::order::log_warning;
 use super::{Cch, CchError, CchIndexDef, CchInput};
 use crate::graph::graph::{Graph, RelationshipId, TypeId};
+use crate::index::index_docs::IndexDocs;
 use crate::runtime::value::Value;
 
 /// What a unit of work's writes touched that the graph's CCH indexes might care about, staged in
@@ -181,7 +194,7 @@ pub(crate) fn edge_attrs_set(
 /// non-numeric value (it weighs 1.0).
 ///
 /// Called by every graph method that writes relationship attributes, before the write, so one
-/// check covers Cypher, replicated effects and `GRAPH.BULK`. `type_id` is the edges' shared type
+/// check covers Cypher and `GRAPH.BULK`. `type_id` is the edges' shared type
 /// when the caller knows it. Costs one `is_empty()` on a graph with no CCH index; with one, a
 /// compare per written attribute against the held weight attributes, and the edge's type is
 /// looked up only for an invalid value of a weight attribute, so a valid write never reads it.
@@ -189,15 +202,19 @@ pub(crate) fn edge_attrs_set(
 /// It reads the held index definitions, never their hierarchies, so it holds for every index
 /// the version holds, whatever state its hierarchy is in.
 ///
+/// A replay (`docs.replay`) is not checked, as a constraint is not: the primary already
+/// validated it. See the module doc.
+///
 /// # Errors
 /// The first offending write, naming the edge's type, the attribute, the value and the index.
 pub(crate) fn check_edge_weights<'a>(
     g: &Graph,
+    docs: &IndexDocs,
     attrs: impl IntoIterator<Item = (&'a u64, &'a Vec<(u16, Value)>)>,
     type_id: Option<TypeId>,
 ) -> Result<(), String> {
     let held = &g.falkordb_index.cch_indexes;
-    if held.is_empty() {
+    if held.is_empty() || docs.replay {
         return Ok(());
     }
     for (&id, written) in attrs {
@@ -258,8 +275,8 @@ impl fmt::Display for CchFlushError {
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
         let cause = match &self.cause {
-            // `check_edge_weights` refuses every write of one and an index is never created over
-            // one, so reaching it here is a write path that skipped the check.
+            // `check_edge_weights` refuses every write of one, and an index is never created
+            // or loaded over one, so reaching it here is a write path that skipped the check.
             CchError::InvalidWeight => {
                 "internal error: an invalid weight got past the write-time check"
             }
@@ -285,13 +302,21 @@ impl fmt::Display for CchFlushError {
 /// [`VersionedIndex::writer_record`](crate::index::falkordb::versioned::VersionedIndex::writer_record)
 /// instead.
 ///
+/// A replay (`replay`, [`IndexDocs::replay`]) is never failed by a weight: its writes were
+/// not checked ([`check_edge_weights`]), and an index that cannot take one is dropped from
+/// this version, with a warning, rather than fail the buffer. Its primary accepted the weight,
+/// so it held no such index: dropping it is the nearest this server can come to the
+/// primary's state until CCH DDL is replicated. (There is no failed state for an index to
+/// stay in yet.)
+///
 /// # Errors
 /// The first index that fails to build, with the reason (an ordering backend failure, ...).
-/// An invalid weight is refused at the write ([`check_edge_weights`]), so here it is a bug: it
-/// still fails the unit, and is logged.
+/// An invalid weight outside a replay is refused at the write ([`check_edge_weights`]), so
+/// here it is a bug: it still fails the unit, and is logged.
 pub(crate) fn flush(
     g: &mut Graph,
     dirty: &CchDirty,
+    replay: bool,
 ) -> Result<(), CchFlushError> {
     #[cfg(test)]
     tests::FLUSHES.with(|c| c.set(c.get() + 1));
@@ -299,15 +324,25 @@ pub(crate) fn flush(
         return Ok(());
     }
     let mut rebuilt = Vec::new();
+    let mut dropped = Vec::new();
     for (def, entry) in &g.falkordb_index.cch_indexes {
         debug_assert!(!entry.is_building(), "CCH is built synchronously");
         let idx = &entry.index;
         if !dirty.touches(&idx.def) {
             continue;
         }
-        let cch = CchInput::build(g, &idx.def)
-            .and_then(|input| Cch::build(&input))
-            .map_err(|cause| {
+        match CchInput::build(g, &idx.def).and_then(|input| Cch::build(&input)) {
+            Ok(cch) => rebuilt.push((def.clone(), Arc::new(cch))),
+            Err(CchError::InvalidWeight) if replay => {
+                log_warning(&format!(
+                    "CCH index {} is dropped: a replicated write set a weight it cannot \
+                     take, which its primary accepted, so the primary holds no such index \
+                     (CCH DDL is not replicated)",
+                    index_name(g, &idx.def)
+                ));
+                dropped.push(def.clone());
+            }
+            Err(cause) => {
                 let e = CchFlushError {
                     def: idx.def.clone(),
                     name: index_name(g, &idx.def),
@@ -316,13 +351,18 @@ pub(crate) fn flush(
                 if e.cause == CchError::InvalidWeight {
                     log_warning(&format!("CCH: {e}"));
                 }
-                e
-            })?;
-        rebuilt.push((def.clone(), Arc::new(cch)));
+                return Err(e);
+            }
+        }
     }
     for (def, cch) in rebuilt {
         let entry = g.falkordb_index.cch_indexes.get_mut(&def).expect("held");
         entry.index.cch = cch;
+    }
+    for def in dropped {
+        g.falkordb_index
+            .drop_cch(&def)
+            .expect("the dropped index is held");
     }
     Ok(())
 }
@@ -337,7 +377,7 @@ fn weight_attrs(g: &Graph) -> Vec<u16> {
 }
 
 /// `(:A|B {w})` for `def`; ids that no longer resolve print as `#id`.
-fn index_name(
+pub(crate) fn index_name(
     g: &Graph,
     def: &CchIndexDef,
 ) -> String {

@@ -1,3 +1,5 @@
 tests/flow/test_cch_index.py
 tests/flow/test_config.py
 tests/flow/test_procedures.py
+tests/flow/test_rdb_c_layout.py
+tests/flow/test_rdb_load.py

@@ -19,10 +19,21 @@ use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
+#[cfg(not(feature = "index-falkordb"))]
+use graph::graph::graphblas::serialization::skip_cch_defs;
+#[cfg(feature = "index-falkordb")]
+use graph::index::falkordb::cch::{CchIndexDef, rdb::decode_cch_defs};
+use redis_module::logging::log_warning;
 
-/// RDB encoding version. Matches C FalkorDB v19 format (buffered IO with type tags).
-#[allow(dead_code)]
-pub const ENCODING_VERSION: u64 = 19;
+/// RDB encoding version. With the `index-falkordb` feature it matches C FalkorDB v20: the v19
+/// format (buffered IO with type tags) plus the CCH-definitions payload
+/// (`EncodeState::CchIndices`). Without it the module has no CCH index, never writes that
+/// payload, and stays at v19, so a build without the feature produces exactly the RDB it did
+/// before. Both registered types (`redis_type`) are stamped with it.
+#[cfg(feature = "index-falkordb")]
+pub const ENCODING_VERSION: i32 = 20;
+#[cfg(not(feature = "index-falkordb"))]
+pub const ENCODING_VERSION: i32 = 19;
 
 /// Global state for virtual key management during RDB save.
 pub static VKEY_STATE: std::sync::LazyLock<Mutex<VirtualKeyState>> =
@@ -95,6 +106,63 @@ pub struct PendingGraph {
     pub relationship_tensors: Vec<Tensor>,
     pub adj_matrix: VersionedMatrix<bool>,
     pub lbls_matrix: VersionedMatrix<bool>,
+    pub cch_defs: CchDefs,
+}
+
+/// The CCH index definitions an RDB carries (`EncodeState::CchIndices`), collected while the
+/// payloads decode and built once the graph is whole.
+///
+/// A build without the `index-falkordb` feature has no CCH index, but it still loads a graph
+/// saved by a build that has one: it reads past each payload (`skip_cch_defs`, which leaves the
+/// stream where the full decoder would and refuses what it refuses), counts the definitions,
+/// and drops them with a warning once the graph is built. Only the definitions are lost: the
+/// graph itself never depended on them, and a later save writes version 19 without them.
+#[derive(Default)]
+pub struct CchDefs(
+    #[cfg(feature = "index-falkordb")] Vec<CchIndexDef>,
+    #[cfg(not(feature = "index-falkordb"))] u64,
+);
+
+impl CchDefs {
+    /// Decode one `CchIndices` payload (without the feature, read past it).
+    ///
+    /// # Errors
+    /// A malformed payload.
+    pub fn decode(
+        &mut self,
+        r: &mut dyn Reader,
+    ) -> Result<(), String> {
+        #[cfg(feature = "index-falkordb")]
+        self.0.extend(decode_cch_defs(r)?);
+        #[cfg(not(feature = "index-falkordb"))]
+        {
+            self.0 += skip_cch_defs(r)?;
+        }
+        Ok(())
+    }
+
+    /// Build each decoded definition on the freshly loaded graph, after every other index,
+    /// like C's decode finalization. A definition that cannot be built is dropped with a
+    /// warning and never fails the load (see `Graph::load_cch_indexes`); without the feature
+    /// every definition is. A graph without CCH indexes never reaches either.
+    pub fn build(
+        self,
+        graph: &mut Graph,
+    ) {
+        #[cfg(feature = "index-falkordb")]
+        for dropped in graph.load_cch_indexes(self.0) {
+            log_warning(format!("RDB load of graph '{}': {dropped}", graph.name()));
+        }
+        #[cfg(not(feature = "index-falkordb"))]
+        if self.0 > 0 {
+            log_warning(format!(
+                "RDB load of graph '{}': {} CCH index definition(s) dropped: this module was \
+                 built without the index-falkordb feature",
+                graph.name(),
+                self.0
+            ));
+        }
+    }
 }
 
 impl DecodeState {

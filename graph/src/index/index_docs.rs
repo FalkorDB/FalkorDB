@@ -46,4 +46,13 @@ pub struct IndexDocs {
     /// graph with no CCH index.
     #[cfg(feature = "index-falkordb")]
     pub(crate) cch: CchDirty,
+    /// The unit replays writes a primary already accepted: a `GRAPH.EFFECT` buffer, from a
+    /// replica's stream or the AOF ([`apply_effects`](crate::effects::v3::apply::apply_effects)).
+    /// Such a write is applied, never refused by a rule of this server's own: refusing it
+    /// would fail the buffer (a full resync on a replica, `exit(1)` while loading the AOF)
+    /// over a rule the primary already applied. Constraints are not checked on a replay
+    /// either: they are enforced by the query runtime, which a replay does not run. Of the
+    /// checks the graph's write methods make themselves, only the CCH weight check reads it
+    /// (`cch::maint::check_edge_weights`).
+    pub replay: bool,
 }

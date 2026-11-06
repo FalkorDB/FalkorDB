@@ -7,8 +7,8 @@ use super::{Graph, TypeId};
 use crate::graph::graphblas::matrix::Matrix;
 use crate::graph::graphblas::test_init;
 use crate::index::falkordb::cch::testkit::{
-    Decoys, Materialized, assert_path_valid, dijkstra, grid, materialize, node_count,
-    random_sparse, to_input,
+    Decoys, INDEXED, Materialized, assert_path_valid, dijkstra, grid, index_def, materialize,
+    node_count, random_sparse, real_graph, to_input,
 };
 use crate::index::falkordb::cch::{Cch, CchError, CchIndex, CchIndexDef};
 use crate::index::falkordb::versioned::{BuildState, VersionedIndex};
@@ -189,4 +189,29 @@ fn a_created_index_answers_like_dijkstra_on_the_real_graph() {
         let idx = m.graph.cch_index(&m.def).expect("held after create");
         assert_queries_match(&idx.cch, &oracle);
     }
+}
+
+/// RDB load: a definition that cannot be built is dropped with a message, and the graph
+/// and every other index load as usual.
+#[test]
+fn a_load_drops_only_the_definitions_it_cannot_build() {
+    let edges = [
+        (0, 1, Some(2.0), INDEXED[0]),
+        (1, 2, Some(3.0), INDEXED[0]),
+        (0, 2, Some(-1.0), INDEXED[1]), // C accepts it; this engine does not
+    ];
+    let (mut g, attr, _) = real_graph(3, &edges, "cch_load_drops");
+    let t0 = g.get_type_id(INDEXED[0]).expect("type exists");
+    let good = CchIndexDef::new(vec![t0], attr);
+    let bad = index_def(&g, attr);
+    let unknown = CchIndexDef::new(vec![TypeId(9)], attr);
+
+    let dropped = g.load_cch_indexes(vec![bad.clone(), good.clone(), unknown, good.clone()]);
+    assert_eq!(dropped.len(), 3, "{dropped:?}");
+    assert!(dropped[0].contains("(:T0|T1 {w})") && dropped[0].contains("negative"));
+    assert!(dropped[1].contains("(:#9 {w})"), "{dropped:?}");
+    assert!(dropped[2].contains("already exists"), "{dropped:?}");
+    assert_eq!(g.cch_indexes().collect::<Vec<_>>(), vec![&good]);
+    assert_eq!(g.cch_index(&good).unwrap().cch.query(0, 2).unwrap().0, 5.0);
+    assert_eq!(g.relationship_count(), 3, "the graph itself loaded");
 }
