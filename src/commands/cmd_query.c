@@ -608,12 +608,17 @@ void _query
 						   !index_op                             &&
 						   (readonly || command_ctx->timeout_rw) &&
 						   !command_ctx->replicated_command ;
-	// a pooled reader may park at the writer gate before it starts executing;
-	// arming the timeout here would charge that parked time against the query's
-	// budget. defer the arm for readers to _ExecuteQuery, after the read lock is
-	// acquired, so a reader is never timed out while merely waiting at the gate.
-	// writers and main-thread reads don't park at the gate - arm now.
-	if (enforce_timeout && command_ctx->thread != EXEC_THREAD_READER) {
+	// only a pooled READER parks at the writer gate; for it, defer arming the
+	// timeout to _ExecuteQuery (after the read lock is held) so the gate park isn't
+	// charged against the budget. everyone else arms now.
+	//
+	// gate on `readonly`, NOT on command_ctx->thread: at dispatch a write is also
+	// EXEC_THREAD_READER (cmd_dispatcher) and only becomes EXEC_THREAD_WRITER later
+	// in _DelegateQuery - so keying off the thread here would wrongly defer writes,
+	// which then never hit the reader-only deferred-arm path and would run with NO
+	// execution timeout at all.
+	bool defer_for_gate = readonly && command_ctx->thread == EXEC_THREAD_READER ;
+	if (enforce_timeout && !defer_for_gate) {
 		timeout_task = Query_SetTimeOut (command_ctx->timeout, exec_ctx->plan) ;
 	}
 

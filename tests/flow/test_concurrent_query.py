@@ -632,18 +632,17 @@ class testConcurrentQueryFlow(FlowTestsBase):
             t0 = loop.time()
             probe_task = asyncio.create_task(g.ro_query("MATCH (n) RETURN count(n)", timeout=200))
 
-            # give it 1s - 5x its own timeout. under the OLD behavior it would have
-            # aborted at the gate by now. if it is still pending, it is PARKED at
-            # the gate without being timed out - the property under test. if instead
-            # it already finished, the writer gate never engaged on this platform
-            # (e.g. macOS lacks the Linux writer-preference the gate relies on), so
-            # the gate can't be exercised here -> record and skip.
+            # give it 1s - 5x its own timeout. three outcomes:
+            #  - still pending  => PARKED at the gate without being timed out (the
+            #    property under test); let the writer clear and assert it succeeds.
+            #  - done with a "timed out" error => it was aborted AT THE GATE: the
+            #    regression this test guards -> record so we FAIL below.
+            #  - done successfully => it slipped through because the gate never
+            #    engaged (e.g. macOS lacks the writer-preference the gate relies on)
+            #    -> can't exercise the gate here, record so we SKIP below.
             await asyncio.sleep(1.0)
-            outcome['parked'] = not probe_task.done()
-
-            if outcome['parked']:
-                # parked 1s past its 200ms budget without aborting. let the writer
-                # clear, then the probe must SUCCEED (never timed out at the gate).
+            if not probe_task.done():
+                outcome['parked'] = True
                 probe_err = None ; probe_res = None
                 try:
                     probe_res = await probe_task
@@ -652,6 +651,12 @@ class testConcurrentQueryFlow(FlowTestsBase):
                 outcome['wait'] = loop.time() - t0
                 outcome['err'] = probe_err
                 outcome['res'] = probe_res
+            else:
+                try:
+                    await probe_task
+                    outcome['gate_not_engaged'] = True
+                except redis.exceptions.ResponseError as e:
+                    outcome['timed_out_at_gate'] = ("timed out" in str(e).lower())
 
             await read_task
             await write_task
@@ -662,8 +667,12 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
         asyncio.run(run(self))
 
-        # the writer gate is a Linux (PREFER_WRITER) mechanism; if it didn't engage
-        # on this platform the scenario can't be built - skip rather than false-fail
+        # a reader aborted WHILE PARKED at the gate -> the behavior regressed. fail
+        # loudly (this is the whole point of the test), never skip past it.
+        self.env.assertFalse(outcome.get('timed_out_at_gate', False),
+            message="reader was timed out while parked at the writer gate")
+        # the gate is a Linux (PREFER_WRITER) mechanism; if it never engaged the
+        # scenario can't be built here - skip rather than false-fail
         if not outcome.get('parked'):
             self.env.skip()
             return
@@ -827,16 +836,20 @@ class testConcurrentQueryFlow(FlowTestsBase):
             t0 = loop.time()
             probes = [asyncio.create_task(probe()) for _ in range(20)]
 
-            # give them 1s - 5x their budget. if they are all still pending they are
+            # give them 1s - 5x their budget. if all are still pending they are
             # PARKED at the gate without being timed out (the property under test).
-            # if they already finished, the writer gate never engaged on this
-            # platform (e.g. macOS lacks the Linux writer-preference) -> skip.
+            # otherwise inspect the ones that finished: a "timeout" means a reader
+            # was aborted AT THE GATE -> the regression this test guards (FAIL); a
+            # clean finish means the gate never engaged on this platform (e.g. macOS
+            # lacks the Linux writer-preference) -> can't exercise here (SKIP).
             await asyncio.sleep(1.0)
-            outcome['parked'] = all(not p.done() for p in probes)
-
-            if outcome['parked']:
+            if all(not p.done() for p in probes):
+                outcome['parked'] = True
                 outcome['outcomes'] = await asyncio.gather(*probes)
                 outcome['wait'] = loop.time() - t0
+            else:
+                early = await asyncio.gather(*[p for p in probes if p.done()])
+                outcome['timed_out_at_gate'] = any(o == "timeout" for o in early)
 
             await read_task
             await write_task
@@ -853,6 +866,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
         asyncio.run(run(self))
 
+        # any reader aborted while parked at the gate -> regression -> FAIL
+        self.env.assertFalse(outcome.get('timed_out_at_gate', False),
+            message="a reader was timed out while parked at the writer gate")
         # writer gate is a Linux (PREFER_WRITER) mechanism; skip where it can't engage
         if not outcome.get('parked'):
             self.env.skip()
