@@ -1,0 +1,5 @@
+name = "algo-udf"
+defaultTargets = ["AlgoUdf"]
+
+[[lean_lib]]
+name = "AlgoUdf"

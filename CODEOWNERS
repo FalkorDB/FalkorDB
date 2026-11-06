@@ -1,0 +1,24 @@
+# Paths whose contents EXECUTE with this repository's credentials, rather than
+# merely being tested by CI.
+#
+# Why this is the control and the workflow check is not: for a merge-queue run
+# the workflow is read from the queue branch, which carries the pull request's
+# own changes — so a fork can edit the step that is supposed to refuse it. The
+# CODEOWNERS that applies to a pull request is always the one on the BASE
+# branch ("the pull request will use the CODEOWNERS file from that branch in
+# the upstream repository"), so a fork cannot supply the rules that judge it.
+#
+# This file only REQUESTS review on its own. It blocks merging only if the
+# ruleset also enables "Require review from Code Owners" — which is the point,
+# and has to be turned on separately.
+#
+# /tests/ and /flow.sh are deliberately not listed. Both execute, but a
+# contributor has to be able to add a test and adjust how it runs; that exposure
+# is handled by the queue running with persist-credentials off and no registry
+# credential, not by review.
+
+/build/          @FalkorDB/falkordb-core
+/.github/        @FalkorDB/falkordb-core
+
+# Listed so weakening the rules above needs the same approval they do.
+/CODEOWNERS      @FalkorDB/falkordb-core

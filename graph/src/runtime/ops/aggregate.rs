@@ -42,10 +42,12 @@ use crate::runtime::{
 };
 use ahash::RandomState;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use smallvec::SmallVec;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use thin_vec::{ThinVec, thin_vec};
+use thin_vec::ThinVec;
 
 /// Group-by accumulator map, keyed by the composite [`GroupKey`].
 ///
@@ -55,24 +57,55 @@ use thin_vec::{ThinVec, thin_vec};
 /// to O(n^2) (algorithmic-complexity DoS). This mirrors the seeded hasher the
 /// value-hash-join operator uses for the same reason, while staying far faster
 /// than the std default SipHash.
-type GroupMap = HashMap<GroupKey, (Row, Row), RandomState>;
+///
+/// The value is `(key row, accumulators, group id)`. The id is the group's
+/// insertion index, unique within one map: it keys the group's DISTINCT state
+/// in `Runtime::value_dedupers`, so two groups never share a seen-set (a hash
+/// of the key row would merge colliding groups).
+type GroupMap = HashMap<GroupKey, (Row, Row, u64), RandomState>;
 
 // ---------------------------------------------------------------------------
 // GroupKey — collision-free composite grouping key
 // ---------------------------------------------------------------------------
 
+/// Backing store for a [`GroupKey`]'s values.
+///
+/// The key is rebuilt for *every input row* so it can be looked up in
+/// [`GroupMap`], but it is only retained for the first row of each group. With a
+/// `Vec` that was one malloc/free pair per row whose result was thrown away as
+/// soon as the group turned out to already exist: grouping 10k rows into 100
+/// groups paid 10k allocations to keep 100.
+///
+/// One inline slot, not two. Every extra slot widens the key unconditionally
+/// (`Value` is 16 bytes, so `SmallVec` measures 32 bytes at one slot and 48 at
+/// two, against `Vec`'s 24), and that width is carried by every group of every
+/// shape — including the empty key that *keyless* aggregation holds, which is
+/// the most common shape of all. One slot covers single-key grouping, which is
+/// where the allocations actually were; wider keys stay correct and merely keep
+/// allocating, spilling to the heap past the inline capacity exactly as the
+/// `Vec` always did.
+type GroupKeyVec = SmallVec<[Value; 1]>;
+
 /// A composite grouping key — a vector of evaluated key values.
 ///
-/// Uses `Value::hash` for bucket placement and `Value::eq` for collision
-/// resolution, eliminating the silent-merge bug of raw `u64` hash keys.
-struct GroupKey(Vec<Value>);
+/// Uses `Value::hash` for bucket placement and [`Value::sort_cmp`] equality for
+/// collision resolution, eliminating the silent-merge bug of raw `u64` hash
+/// keys. Grouping needs an equivalence, which `Value::eq` is not: NaN is not
+/// equal to itself there, so every NaN key would open its own group (C puts
+/// them in one).
+struct GroupKey(GroupKeyVec);
 
 impl PartialEq for GroupKey {
     fn eq(
         &self,
         other: &Self,
     ) -> bool {
-        self.0 == other.0
+        self.0.len() == other.0.len()
+            && self
+                .0
+                .iter()
+                .zip(other.0.iter())
+                .all(|(a, b)| a.sort_cmp(b) == Ordering::Equal)
     }
 }
 
@@ -99,6 +132,25 @@ enum KeyExprKind {
     Variable(Variable),
     /// Property access: `GROUP BY n.age`
     Property { var: Variable, attr: Arc<String> },
+    /// Any other key expression, `GROUP BY n.id % 5` included.
+    ///
+    /// The same treatment `AggInputKind::Computed` gives an aggregate's input,
+    /// for the same reason: without it a single arithmetic key sent the *whole*
+    /// operator down `consume_input_per_row`, so the aggregate inputs lost
+    /// their bulk extraction too. Measured on `p.age` vs `p.age + 0` over
+    /// 10,000 rows — same data, same groups — that cost 15.96 M instructions
+    /// against 28.29 M.
+    Computed(ComputedExpr),
+}
+
+/// An expression [`VectorEval`] evaluates as a column, and where to start.
+///
+/// The tree is carried whole because a node index means nothing without it, and
+/// keys and aggregate inputs both need exactly this pair — they are the same
+/// idea reached from two directions.
+struct ComputedExpr {
+    tree: QueryExpr<Variable>,
+    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
 }
 
 /// How an aggregation input expression can be evaluated in bulk.
@@ -119,10 +171,7 @@ enum AggInputKind {
     /// every other value, so `collect(row.t)` over map rows silently
     /// aggregated nothing. The variant is gone rather than fixed — one
     /// evaluator, nothing left to disagree with.
-    Computed {
-        tree: QueryExpr<Variable>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-    },
+    Computed(ComputedExpr),
 }
 
 /// True if `node`'s subtree contains an aggregate call.
@@ -151,6 +200,64 @@ struct VectorizableAgg {
     /// per-group dedup state in [`Runtime::value_dedupers`], matching the
     /// per-row evaluator so the two paths stay consistent within a query.
     distinct_idx: Option<NodeIdx<Dyn<ExprIR<Variable>>>>,
+    /// Constant arguments after the first, for a multi-argument aggregation:
+    /// the `0.5` of `percentileDisc(n.score, 0.5)`.
+    ///
+    /// Only constants qualify. A row-dependent second argument would have to be
+    /// a column of its own, and no aggregation takes one — but more to the
+    /// point, `percentileDisc(x, n.p)` is not a meaningful aggregate, so the
+    /// per-row path stays the answer for it rather than a column nobody wants.
+    extra_args: Vec<Value>,
+}
+
+impl VectorizableAgg {
+    /// The argument list for one input value: `[value]`, or `[value, 0.5]` for
+    /// a multi-argument aggregation, validated as the per-row path validates.
+    ///
+    /// `validate_args_domain` matters as much as the type check and used to be
+    /// missing here: every aggregation on this path was single-argument and
+    /// unconstrained until `percentileDisc` joined it, and its kernel indexes
+    /// by the percentile — so an out-of-range constant crashed the server
+    /// instead of raising.
+    fn args_for(
+        &self,
+        value: Value,
+    ) -> Result<ThinVec<Value>, String> {
+        let mut inputs: ThinVec<Value> = ThinVec::with_capacity(1 + self.extra_args.len());
+        inputs.push(value);
+        inputs.extend(self.extra_args.iter().cloned());
+        self.func.validate_args_type(&inputs)?;
+        self.func.validate_args_domain(&inputs)?;
+        Ok(inputs)
+    }
+
+    /// Fold `inputs` into the accumulator `prev`.
+    ///
+    /// Prefers `batch_agg`, for the reason `run_agg_expr` states: it takes the
+    /// accumulator as an owned `Value`, so `collect` and the percentiles get a
+    /// unique `Arc` and extend their list in place. Pushing `prev` into the
+    /// argument slice instead leaves the accumulator behind a shared
+    /// reference and every row deep-clones the whole list — O(n^2). Measured
+    /// on `percentileDisc(p.score, 0.5)` over 10,000 rows: 1,787 M
+    /// instructions that way against 26 M this way.
+    fn fold(
+        &self,
+        runtime: &Runtime,
+        inputs: ThinVec<Value>,
+        prev: Value,
+    ) -> Result<Value, String> {
+        if let FnType::Aggregation {
+            batch_agg: Some(batch_fn),
+            ..
+        } = &self.func.fn_type
+        {
+            batch_fn(runtime, &inputs, 1, prev)
+        } else {
+            let mut args = inputs;
+            args.push(prev);
+            self.func.func.call(runtime, &args)
+        }
+    }
 }
 
 /// Full analysis of a vectorizable aggregate operator.
@@ -177,7 +284,7 @@ pub struct AggregateOp<'a> {
     copy_from_parent: &'a [(Variable, Variable)],
     default_acc: Option<Row>,
     errors: std::vec::IntoIter<String>,
-    groups: std::collections::hash_map::IntoIter<GroupKey, (Row, Row)>,
+    groups: std::collections::hash_map::IntoIter<GroupKey, (Row, Row, u64)>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Lazily-initialized vectorizable analysis cache.
     vectorized: CachedAggAnalysis,
@@ -235,10 +342,36 @@ impl<'a> AggregateOp<'a> {
                             attr: attr.clone(),
                         });
                     } else {
-                        return None;
+                        key_kinds.push(KeyExprKind::Computed(ComputedExpr {
+                            tree: tree.clone(),
+                            idx: root.idx(),
+                        }));
                     }
                 }
-                _ => return None,
+                // A key holding an aggregate is not a key; that shape belongs
+                // to the per-row path, which recurses to find the aggregates.
+                //
+                // Defence, not a live branch — and this was checked rather than
+                // assumed. Replacing all four `subtree_has_aggregate` guards in
+                // this file with `panic!` leaves the whole corpus green: 1,485
+                // flow tests, 124 e2e, 2,456 TCK scenarios, 187 unit tests.
+                // Nothing reaches them, for two separate reasons: the binder
+                // refuses an aggregate inside an aggregate ("Can't use
+                // aggregate functions inside of aggregate functions"), and an
+                // expression that merely *contains* one, like
+                // `g.v % max(g.v)`, is routed as an aggregation rather than a
+                // key, so it bails at the "root is not an aggregate" arm above.
+                //
+                // They stay because `analyze` is a syntactic check over an IR
+                // tree and the invariant it would be leaning on lives in
+                // another pass. Falling back costs the operator its columnar
+                // path and nothing else; the guard being wrong the other way
+                // would evaluate an aggregate per row inside a column build.
+                _ if subtree_has_aggregate(&root) => return None,
+                _ => key_kinds.push(KeyExprKind::Computed(ComputedExpr {
+                    tree: tree.clone(),
+                    idx: root.idx(),
+                })),
             }
         }
 
@@ -294,26 +427,31 @@ impl<'a> AggregateOp<'a> {
             let inner = distinct.child(0);
             let input = match inner.data() {
                 ExprIR::Variable(var) => AggInputKind::Variable(var.clone()),
-                ExprIR::Property(_) if inner.num_children() == 1 => {
-                    if !matches!(inner.child(0).data(), ExprIR::Variable(_)) {
-                        return None;
-                    }
-                    AggInputKind::Computed {
-                        tree: tree.clone(),
-                        idx: inner.idx(),
-                    }
-                }
-                _ => return None,
+                // Any other inner expression, `DISTINCT n.id % 100` included.
+                // Deduplication is per-value and happens after the column is
+                // built, so it does not care how the value was computed — the
+                // shape restriction here was never load-bearing.
+                //
+                // The aggregate guard is defence, not a live branch — see the
+                // key guard in `analyze` for the evidence and the reasoning.
+                // Same for the two below.
+                _ if subtree_has_aggregate(&inner) => return None,
+                _ => AggInputKind::Computed(ComputedExpr {
+                    tree: tree.clone(),
+                    idx: inner.idx(),
+                }),
             };
             return Some(VectorizableAgg {
                 func: func.clone(),
                 input: Some(input),
                 acc_var: acc_var.clone(),
                 distinct_idx: Some(distinct.idx()),
+                extra_args: Vec::new(),
             });
         }
 
         // Analyze the input argument (child 0).
+        let mut extra_args: Vec<Value> = Vec::new();
         let input = if num_children == 1 {
             // No input args — this is count(*) / count() — only the accumulator var.
             None
@@ -336,16 +474,36 @@ impl<'a> AggregateOp<'a> {
                     if subtree_has_aggregate(&arg) {
                         return None;
                     }
-                    Some(AggInputKind::Computed {
+                    Some(AggInputKind::Computed(ComputedExpr {
                         tree: tree.clone(),
                         idx: arg.idx(),
-                    })
+                    }))
                 }
             }
         } else {
-            // Multi-argument aggregation (e.g., percentileDisc(n.age, 0.5)).
-            // Fall back to per-row for these.
-            return None;
+            // Multi-argument aggregation: `percentileDisc(n.score, 0.5)`. The
+            // first argument is the column; the rest must be constants, which
+            // is what these functions take — a percentile is a property of the
+            // aggregate, not of a row.
+            // One pass: `extra_args` is local, so pushing before a later
+            // argument turns out non-constant costs nothing — it is dropped
+            // with the `None`. Validating in a separate loop first only bought
+            // an `unreachable!`.
+            for i in 1..num_children - 1 {
+                let ExprIR::Constant(v) = root.child(i).data() else {
+                    return None;
+                };
+                extra_args.push(v.clone());
+            }
+            let arg = root.child(0);
+            match arg.data() {
+                ExprIR::Variable(var) => Some(AggInputKind::Variable(var.clone())),
+                _ if subtree_has_aggregate(&arg) => return None,
+                _ => Some(AggInputKind::Computed(ComputedExpr {
+                    tree: tree.clone(),
+                    idx: arg.idx(),
+                })),
+            }
         };
 
         Some(VectorizableAgg {
@@ -353,6 +511,7 @@ impl<'a> AggregateOp<'a> {
             input,
             acc_var: acc_var.clone(),
             distinct_idx: None,
+            extra_args,
         })
     }
 
@@ -368,17 +527,16 @@ impl<'a> AggregateOp<'a> {
         let child = self.child.take().unwrap();
         let default_acc = self.default_acc.take().unwrap();
 
-        // Whether any aggregate uses DISTINCT — gates the per-row group-hash
-        // computation so the common non-distinct path stays free of it.
-        let any_distinct = analysis.agg_kinds.iter().any(|a| a.distinct_idx.is_some());
-
         let mut groups: GroupMap = GroupMap::with_hasher(RandomState::new());
         let mut errors: Vec<String> = Vec::new();
 
         // Pre-insert default group for keyless aggregation.
         if self.keys.is_empty() {
             let key_env = Row::new();
-            groups.insert(GroupKey(vec![]), (key_env, default_acc.clone()));
+            groups.insert(
+                GroupKey(GroupKeyVec::new()),
+                (key_env, default_acc.clone(), 0),
+            );
         }
 
         for batch_result in child {
@@ -452,7 +610,7 @@ impl<'a> AggregateOp<'a> {
                         )
                 })
             {
-                let entry = groups.get_mut(&GroupKey(vec![])).unwrap();
+                let entry = groups.get_mut(&GroupKey(GroupKeyVec::new())).unwrap();
                 let acc = &mut entry.1;
                 let mut batch_err: Option<String> = None;
                 for (agg_idx, agg) in analysis.agg_kinds.iter().enumerate() {
@@ -469,6 +627,41 @@ impl<'a> AggregateOp<'a> {
                     } else {
                         &[]
                     };
+
+                    // A multi-argument aggregation cannot hand its whole column
+                    // to `batch_agg`, which reads the slice *as* the input
+                    // values and would take the trailing `0.5` for another
+                    // datum. It still belongs here rather than disqualifying the
+                    // operator: gating the fast path on every aggregate being
+                    // single-argument cost `agg in CALL` — six ordinary
+                    // aggregates beside one `percentileDisc` — the fast path for
+                    // all seven.
+                    if !agg.extra_args.is_empty() {
+                        let mut cur = prev;
+                        let mut per_value_err: Option<String> = None;
+                        for val in inputs {
+                            if matches!(val, Value::Null) {
+                                continue;
+                            }
+                            match agg
+                                .args_for(val.clone())
+                                .and_then(|args| agg.fold(self.runtime, args, cur))
+                            {
+                                Ok(next) => cur = next,
+                                Err(e) => {
+                                    per_value_err = Some(e);
+                                    cur = Value::Null;
+                                    break;
+                                }
+                            }
+                        }
+                        acc.insert(&agg.acc_var, cur);
+                        if let Some(e) = per_value_err {
+                            batch_err = Some(e);
+                            break;
+                        }
+                        continue;
+                    }
                     // Validate each input — the per-row path runs validate_args_type
                     // before each call; without this, batch kernels relying on
                     // `unreachable!()` for unexpected types would panic on bad data
@@ -509,10 +702,11 @@ impl<'a> AggregateOp<'a> {
             }
 
             for row_idx in 0..num_active {
-                let key_values: Vec<Value> =
+                let key_values: GroupKeyVec =
                     key_columns.iter().map(|col| col[row_idx].clone()).collect();
                 let group_key = GroupKey(key_values);
 
+                let next_group_id = groups.len() as u64;
                 let entry = groups.entry(group_key).or_insert_with(|| {
                     let mut key_env = Row::new();
                     for (ki, (name, _tree)) in self.keys.iter().enumerate() {
@@ -525,14 +719,13 @@ impl<'a> AggregateOp<'a> {
                             .unwrap_or(Value::Null);
                         key_env.insert(new_var, val);
                     }
-                    (key_env, default_acc.clone())
+                    (key_env, default_acc.clone(), next_group_id)
                 });
 
-                // Opaque group identifier for DISTINCT dedup — computed only
-                // when an aggregate is distinct, and identically to the per-row
-                // fallback (`entry.0.hash_u64()`) so the shared dedup state in
+                // Group identifier for DISTINCT dedup, shared with the per-row
+                // fallback through the map so the dedup state in
                 // `Runtime::value_dedupers` stays consistent across both paths.
-                let group_id = if any_distinct { entry.0.hash_u64() } else { 0 };
+                let group_id = entry.2;
 
                 let acc = &mut entry.1;
                 for (agg_idx, agg) in analysis.agg_kinds.iter().enumerate() {
@@ -571,18 +764,18 @@ impl<'a> AggregateOp<'a> {
 
                     let prev = acc.take(&agg.acc_var).unwrap_or(Value::Null);
 
-                    let args = thin_vec![input_val, prev];
-
-                    if let Err(e) = agg.func.validate_args_type(&args[..1]) {
-                        // Restore the accumulator that was taken above.
-                        if let Some(prev_val) = args.into_iter().nth(1) {
-                            acc.insert(&agg.acc_var, prev_val);
+                    // Validate before the fold, so a bad argument puts the
+                    // accumulator back rather than leaving the slot empty.
+                    let inputs = match agg.args_for(input_val) {
+                        Ok(inputs) => inputs,
+                        Err(e) => {
+                            acc.insert(&agg.acc_var, prev);
+                            errors.push(e);
+                            break;
                         }
-                        errors.push(e);
-                        break;
-                    }
+                    };
 
-                    match agg.func.func.call(self.runtime, &args) {
+                    match agg.fold(self.runtime, inputs, prev) {
                         Ok(new_val) => acc.insert(&agg.acc_var, new_val),
                         Err(e) => {
                             errors.push(e);
@@ -623,6 +816,18 @@ impl<'a> AggregateOp<'a> {
                     // 9007199254740992 into one group.
                     key_columns.push(runtime.materialize_node_property_values(&active_ids, attr));
                 }
+                KeyExprKind::Computed(ComputedExpr { tree, idx }) => {
+                    // An evaluation error becomes `Err(())` — "this batch cannot
+                    // take the bulk path" — rather than being reported here. The
+                    // per-row path then re-evaluates and raises it, which keeps
+                    // one authority for the error's text and its ordering
+                    // relative to the other keys.
+                    key_columns.push(
+                        VectorEval::new(runtime)
+                            .eval_values(&tree.node(*idx), batch, active)
+                            .map_err(|_| ())?,
+                    );
+                }
             }
         }
         Ok(key_columns)
@@ -655,7 +860,7 @@ impl<'a> AggregateOp<'a> {
                         .collect();
                     agg_columns.push(col);
                 }
-                Some(AggInputKind::Computed { tree, idx }) => {
+                Some(AggInputKind::Computed(ComputedExpr { tree, idx })) => {
                     // Evaluated columnarly: `sum(n.age * 3)` costs one bulk
                     // attribute fetch and one pass per operator, where the
                     // per-row path re-walked the tree — and re-read the
@@ -686,7 +891,10 @@ impl<'a> AggregateOp<'a> {
         // Pre-insert default group for keyless aggregation.
         if self.keys.is_empty() {
             let key_env = Row::new();
-            groups.insert(GroupKey(vec![]), (key_env, default_acc.clone()));
+            groups.insert(
+                GroupKey(GroupKeyVec::new()),
+                (key_env, default_acc.clone(), 0),
+            );
         }
 
         for batch_result in child {
@@ -730,7 +938,7 @@ impl<'a> AggregateOp<'a> {
         for row in batch.active_indices() {
             let vars = BatchRow::new(batch, row).to_owned_row();
             let (key_values, key_env) = match (|| {
-                let mut key_values = Vec::with_capacity(keys.len());
+                let mut key_values = GroupKeyVec::with_capacity(keys.len());
                 let mut key_env = Row::new();
                 for (name, tree) in keys {
                     let value = ExprEval::from_runtime(runtime).eval(
@@ -748,7 +956,7 @@ impl<'a> AggregateOp<'a> {
                         key_env.insert(new_var, val.clone());
                     }
                 }
-                Ok::<(Vec<Value>, Row), String>((key_values, key_env))
+                Ok::<(GroupKeyVec, Row), String>((key_values, key_env))
             })() {
                 Ok(kv) => kv,
                 Err(e) => {
@@ -759,12 +967,13 @@ impl<'a> AggregateOp<'a> {
 
             let group_key = GroupKey(key_values);
 
+            let next_group_id = groups.len() as u64;
             let entry = groups
                 .entry(group_key)
-                .or_insert_with(|| (key_env, default_acc.clone()));
+                .or_insert_with(|| (key_env, default_acc.clone(), next_group_id));
 
-            // Compute group hash for DISTINCT tracking.
-            let agg_group_key = entry.0.hash_u64();
+            // Group identifier for DISTINCT tracking.
+            let agg_group_key = entry.2;
 
             for (_, tree) in agg {
                 if let Err(e) = Self::run_agg_expr(
@@ -947,7 +1156,7 @@ impl<'a> Iterator for AggregateOp<'a> {
         // Emit finalized groups in batches.
         let mut builder = BatchBuilder::new();
         for _ in 0..BATCH_SIZE {
-            let Some((_group_key, (key, mut acc))) = self.groups.next() else {
+            let Some((_group_key, (key, mut acc, _))) = self.groups.next() else {
                 break;
             };
             match (|| {
@@ -980,6 +1189,16 @@ impl<'a> Iterator for AggregateOp<'a> {
                     combined.insert(name, val.clone());
                     agg_outputs.push((name, val));
                 }
+                // Unbind internal accumulator variables so they don't leak
+                // to downstream operators and collide with variables in
+                // subsequent scopes that reuse the same slot IDs. This comes
+                // before any key is written: the binder may give an
+                // accumulator the slot id of a grouping key, and unbinding
+                // after the key is written would drop that key (a null key
+                // then vanishes from the batch, #3150).
+                for (_, tree) in self.agg {
+                    unbind_agg_accumulators(&tree.root(), &mut acc);
+                }
                 // Insert pre-projection key variable values into acc so
                 // downstream operators can find them, but skip any slot that
                 // is already occupied by an aggregation output to avoid
@@ -996,12 +1215,6 @@ impl<'a> Iterator for AggregateOp<'a> {
                     }
                 }
                 acc.merge(&key);
-                // Unbind internal accumulator variables so they don't leak
-                // to downstream operators and collide with variables in
-                // subsequent scopes that reuse the same slot IDs.
-                for (_, tree) in self.agg {
-                    unbind_agg_accumulators(&tree.root(), &mut acc);
-                }
                 // Re-bind aggregate output names last: an accumulator slot id
                 // can coincide with another aggregate's output name (the binder
                 // may reuse slot IDs), and the unbind above would otherwise
@@ -1053,19 +1266,5 @@ fn unbind_agg_accumulators(
                 unbind_agg_accumulators(&child, acc);
             }
         }
-    }
-}
-
-/// Computes a u64 hash of an `Env`, used as an opaque group identifier
-/// for DISTINCT tracking in the per-row fallback path.
-trait HashU64 {
-    fn hash_u64(&self) -> u64;
-}
-
-impl HashU64 for Row {
-    fn hash_u64(&self) -> u64 {
-        let mut hasher = rustc_hash::FxHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish()
     }
 }

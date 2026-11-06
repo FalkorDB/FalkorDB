@@ -991,3 +991,26 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
         finally:
             g.delete()
 
+
+    def test_undirected_pattern_emits_both_orientations(self):
+        # An undirected pattern matches each edge once per orientation (a
+        # self-loop once), with or without the index. #2100.
+        with_idx = self.db.select_graph("edge_parity_idx")
+        no_idx = self.db.select_graph("edge_parity_scan")
+        setup = ("CREATE (a:P {id:'a'}), (b:P {id:'b'}) WITH a, b "
+                 "CREATE (a)-[:E {u:'d1'}]->(b), (b)-[:E {u:'d1'}]->(a), (a)-[:E {u:'d1'}]->(a)")
+        try:
+            create_edge_range_index(with_idx, 'E', 'u', sync=True)
+            with_idx.query(setup)
+            no_idx.query(setup)
+            for q in ["MATCH ()-[r:E]-() WHERE r.u = 'd1' RETURN count(r)",
+                      "MATCH ()-[r:E {u:'d1'}]-() RETURN count(r)",
+                      "MATCH (x)-[r:E {u:'d1'}]-(y) RETURN x.id, y.id",
+                      "MATCH (x:P {id:'a'})-[r:E {u:'d1'}]-(y:P {id:'b'}) RETURN id(r)",
+                      "MATCH (x:P {id:'b'})-[r:E {u:'d1'}]-(y:P {id:'a'}) RETURN id(r)"]:
+                self.env.assertContains('Edge By Index Scan', str(with_idx.explain(q)))
+                self.env.assertEqual(sorted(with_idx.query(q).result_set),
+                                     sorted(no_idx.query(q).result_set), message=q)
+        finally:
+            with_idx.delete()
+            no_idx.delete()

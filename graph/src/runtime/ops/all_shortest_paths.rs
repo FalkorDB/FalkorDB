@@ -56,7 +56,7 @@ pub struct AllShortestPathsOp<'a> {
 }
 
 impl<'a> AllShortestPathsOp<'a> {
-    pub const fn new(
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
@@ -65,7 +65,10 @@ impl<'a> AllShortestPathsOp<'a> {
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::with_binding(relationship_pattern.alias.id),
+            // No cap: not measured — the shapes reachable here need both
+            // endpoints already resolved, and the operator's output is bounded
+            // by the pattern rather than by how much it packs.
+            emitter: BatchedResultEmitter::with_binding(relationship_pattern.alias.id, None),
             relationship_pattern,
             idx,
         }
@@ -123,7 +126,7 @@ impl<'a> AllShortestPathsOp<'a> {
         let max_hops = rp.max_hops.unwrap_or(u32::MAX);
         let min_hops = rp.min_hops.unwrap_or(1);
         let bidirectional = rp.bidirectional;
-        let g = runtime.g.borrow();
+        let g = runtime.graph();
 
         // BFS phase: find shortest distance and collect predecessors
         // predecessor map: node -> list of (prev_node, edge_id, edge_src, edge_dst)
@@ -277,13 +280,11 @@ impl<'a> AllShortestPathsOp<'a> {
             move || {
                 while let Some((node, edges)) = stack.pop() {
                     if node == src && !edges.is_empty() {
+                        // Built dst→src; flip to src→dst — cycles too, or a
+                        // directed cycle is walked against its arrows. A
+                        // reversed pattern keeps the dst→src order.
                         let mut path = edges;
-                        if !is_cycle {
-                            // Built dst→src; reverse in place to src→dst. (Cycles
-                            // keep the DFS predecessor-chain order.)
-                            path.reverse();
-                        }
-                        if reverse {
+                        if !reverse {
                             path.reverse();
                         }
                         return Some(Value::List(Arc::new(path)));

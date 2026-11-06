@@ -1,0 +1,516 @@
+//! Wire format **v3** — see `docs/effects-v3.md`.
+//!
+//! Every record is `u32 opcode · u32 count · blocks…`, built from five shared
+//! blocks. There is no separate "batch" record type: a record with `count == 1`
+//! and one with `count == 10_000` are the same record, so no record type is left
+//! un-batchable and the decoder has one shape per opcode.
+//!
+//! This module is the codec only. It is deliberately free of `Pending` and
+//! `Graph` so the format can be reviewed, and tested byte-for-byte, on its own.
+//!
+//! ## The blocks
+//!
+//! | block | layout |
+//! | --- | --- |
+//! | `IdList` | `u32 n_segments` · `Segment × n_segments` |
+//! | `RelType` | `i32` |
+//! | `LabelSet` | `u16 n` · `i32 × n` |
+//! | `AttrIds` | `u16 n` · `u16 attr_id × n` |
+//! | `AttrValues` | `SIValue × (count × n)`, row-major |
+//!
+//! An `IdList` is a sequence of self-describing segments, each a consecutive
+//! `Range`, a `Repeat` of one id, or an `Ascending` roaring bitmap — see
+//! [`IdList`]. There is no plain form and no dictionary: a `Range` of one
+//! describes a single id, so duplicates and disorder are the ordinary case
+//! rather than encodings of their own. A supernode's endpoint column, which is
+//! one id repeated, is a `Repeat` and cannot become a bitmap — a bitmap holds a
+//! value once, and the column's whole content is that it does not.
+//!
+//! ## Row order is id order
+//!
+//! Row *k* belongs to the k-th id in the record's `IdList`, **as written** — not
+//! the k-th smallest. No per-row id is sent, so the segment list must total the
+//! record's count and an `Ascending` segment's cardinality must match what the
+//! record still owes: one id short would land every later row on the wrong
+//! entity, silently.
+//!
+//! Nothing may reorder a list to make an encoding eligible. A bitmap sorts and
+//! deduplicates, so it is only ever reached by collapsing ranges that were
+//! already ascending.
+//!
+//! ## Why the widths matter more than usual
+//!
+//! A wrong width does not produce a decode error on the far side. C reads the
+//! misaligned bytes as a type tag and writes through the resulting pointer — the
+//! `AttributeSet_Update` segfault observed when feeding C a Rust buffer. Every
+//! width here came from C source (`src/effects/effects.c`, `effects.h`), not from
+//! inference, and the tests below pin the bytes rather than round-tripping only
+//! against ourselves.
+//!
+//! ## Records
+//!
+//! Batchable records are `u32 opcode · u32 count · blocks…`. `ADD_SCHEMA` and
+//! `ADD_ATTRIBUTE` are inherently singular — one schema, one name — so they
+//! carry an opcode but no count.
+//!
+//! Where a record names the entity's schema membership, node and edge forms
+//! fill the same slot with different blocks: `UPDATE_NODE` a `LabelSet`,
+//! `UPDATE_EDGE` a `RelType`. Both are the group's partition key and the
+//! identity the replica can check the record against — which is why they are
+//! [`Record::UpdateNode`] and [`Record::UpdateEdge`] rather than one variant
+//! with an entity tag: neither can be built holding the other's key.
+
+use crate::{
+    entity_type::EntityType,
+    graph::constraint::{ConstraintStatus, ConstraintType},
+    graph::graphblas::serialization::index_field_type,
+    index::IndexType,
+};
+
+/// Buffer header. C accepts any version `<= EFFECTS_VERSION` and branches per
+/// version, so raising this is its established mechanism rather than a break —
+/// but C must be raised to 3 as well before it can read what we write.
+pub const EFFECTS_VERSION: u8 = 3;
+
+pub mod apply;
+pub mod blocks;
+// Not `pub`: `EffectsBuffer` is the only door in. The emitter is handed a sink
+// — `&mut impl EffectWrite` — never a buffer, so there is nothing for a caller
+// outside to supply even if it could reach these.
+pub(crate) mod emit;
+pub mod format;
+mod id_list;
+pub mod records;
+#[cfg(test)]
+mod staging;
+#[cfg(test)]
+mod test_aux;
+pub mod value;
+
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use std::sync::atomic::{AtomicI64, Ordering};
+
+/// Smallest v3 payload worth compressing, in bytes. **0 disables it.**
+///
+/// Off by default because compression is a bandwidth trade, not a CPU one:
+/// measured at 3.245 cycles/byte to compress against 0.067 to copy into the
+/// replica output buffer, so on a fast link it spends far more than the bytes
+/// are worth. Worth turning on when the replication link, not the write thread,
+/// is the constraint.
+///
+/// v2 ignores this — only v3 reserves a flags byte to say a payload is
+/// compressed.
+pub static EFFECTS_COMPRESSION: AtomicI64 = AtomicI64::new(0);
+
+/// The size threshold, as a `usize`. Negative or absurd values read as off.
+fn compression_min_bytes() -> usize {
+    usize::try_from(EFFECTS_COMPRESSION.load(Ordering::Relaxed)).unwrap_or(0)
+}
+
+/// Finish a payload: compress it if the configuration says it is worth it.
+///
+/// The one entry point the replication layer needs. It used to reach in for
+/// `maybe_compress` and `compression_min_bytes` separately, which put the
+/// decision of *whether* to compress outside the format — and made the
+/// threshold `pub` for no other reason.
+///
+/// Call once, on a complete buffer. `maybe_compress` refuses a payload already
+/// marked compressed, so a second call is a no-op rather than corruption, but
+/// the contract is once.
+pub fn seal(buf: &mut Vec<u8>) {
+    maybe_compress(buf, compression_min_bytes());
+}
+
+pub use blocks::*;
+pub use id_list::*;
+pub use records::*;
+
+// The cursor, the primitive writers and the codec traits are shared across
+// versions, so they live a level up. Re-exported here so a record module can
+// say `use super::*` and get everything the wire needs.
+pub use super::writer::*;
+pub use super::{
+    DecodeError, EffectDecode, EffectDecodeSized, EffectEncode, EffectEncodeSized, EncodeError,
+    Reader,
+};
+
+// ── effect types ──
+
+// What a record is. C's `EffectType`, so 4 bytes on the wire, and
+// `EFFECT_UNKNOWN = 0` shifts every discriminant down by one relative to a
+// naive 1-based list.
+//
+// An enum rather than constants because the set is closed and the decoder
+// matches it exhaustively: adding a record type stops compiling until every
+// match handles it, which is the failure mode worth having. The bit-flag sets
+// below stay constants for the opposite reason — several of those OR together,
+// which no enum can express.
+/// The discriminants, the repr and the parse from one declaration.
+///
+/// `TryFromPrimitive` rather than a hand-rolled macro: `num_enum` is already a
+/// dependency and already derived this way on three enums in
+/// `index::redisearch`, and its `error_type` yields
+/// `TryFrom<u32, Error = DecodeError>` directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
+#[num_enum(error_type(name = DecodeError, constructor = DecodeError::BadOpcode))]
+#[repr(u32)]
+pub enum Opcode {
+    UpdateNode = 1,
+    UpdateEdge = 2,
+    CreateNode = 3,
+    CreateEdge = 4,
+    DeleteNode = 5,
+    DeleteEdge = 6,
+    SetLabels = 7,
+    RemoveLabels = 8,
+    AddSchema = 9,
+    AddAttribute = 10,
+    CreateIndex = 11,
+    DropIndex = 12,
+    CreateConstraint = 13,
+    DropConstraint = 14,
+}
+
+impl Opcode {
+    /// Whether the record carries a `count` and blocks sized by it.
+    ///
+    /// The schema and DDL records are inherently singular — one schema, one
+    /// name, one index field — so they carry an opcode and no count.
+    #[must_use]
+    pub const fn is_batchable(self) -> bool {
+        matches!(
+            self,
+            Self::UpdateNode
+                | Self::UpdateEdge
+                | Self::CreateNode
+                | Self::CreateEdge
+                | Self::DeleteNode
+                | Self::DeleteEdge
+                | Self::SetLabels
+                | Self::RemoveLabels
+        )
+    }
+}
+
+/// Which dictionary a schema record names: C's `EntityType`.
+///
+/// **Zero-based**, unlike [`EntityType`] on the constraint records, which C
+/// numbers from 1. The two are the same distinction with different wire
+/// encodings, and getting them the same way round is not optional.
+/// The schema-dictionary tag: **0-based**, node then edge.
+///
+/// `EntityType` is the crate's one node-or-edge enum; the two numberings C uses
+/// for it belong to the wire, not to the type, so they live here as
+/// conversions. This one is `ADD_SCHEMA`'s.
+#[must_use]
+pub const fn schema_tag(entity: EntityType) -> u32 {
+    match entity {
+        EntityType::Node => 0,
+        EntityType::Relationship => 1,
+    }
+}
+
+/// Inverse of [`schema_tag`].
+pub const fn entity_from_schema_tag(v: u32) -> Result<EntityType, DecodeError> {
+    match v {
+        0 => Ok(EntityType::Node),
+        1 => Ok(EntityType::Relationship),
+        other => Err(DecodeError::BadSchemaType(other)),
+    }
+}
+
+/// C's `GraphEntityType` tag: **1-based**, because `GETYPE_UNKNOWN` takes 0.
+///
+/// Not the same numbering as [`schema_tag`], and the difference is not
+/// cosmetic — a 0-based encoding here would make every node record read as
+/// "unknown" to C.
+#[must_use]
+pub const fn entity_tag(entity: EntityType) -> u32 {
+    match entity {
+        EntityType::Node => 1,
+        EntityType::Relationship => 2,
+    }
+}
+
+/// Inverse of [`entity_tag`].
+pub const fn entity_from_tag(v: u32) -> Result<EntityType, DecodeError> {
+    match v {
+        1 => Ok(EntityType::Node),
+        2 => Ok(EntityType::Relationship),
+        other => Err(DecodeError::BadEntityType(other)),
+    }
+}
+
+/// Which `UPDATE_*` opcode targets this entity kind.
+#[must_use]
+pub const fn update_opcode(entity: EntityType) -> Opcode {
+    match entity {
+        EntityType::Node => Opcode::UpdateNode,
+        EntityType::Relationship => Opcode::UpdateEdge,
+    }
+}
+
+// ── index field types ──
+//
+// From the RDB module's copy of C's `index_field.h`. A `field_type` is a bit
+// set, several OR'd, which is why `INDEX_FLD_RANGE` is the union of the three
+// scalar kinds (`0x0E`) rather than a bit of its own. Those constants are `u64`
+// for the RDB's writer; the wire carries four, so the cast happens once below.
+
+/// One bit of C's index field mask, with the bit as the discriminant.
+///
+/// A `field_type` *value* is a set and cannot be one variant, but the alphabet
+/// of bits is closed — and making the alphabet an enum is what turns "remember
+/// to update the mask" into a compile error. `TryFromPrimitive` removes the mask
+/// rather than relocating it: a bit is known iff it converts, so no list can
+/// drift from the variants.
+///
+/// Discriminants come from `index_field_type`, so C's header copy stays the
+/// source of the numbers and this is only the source of the set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[repr(u32)]
+pub enum IndexFieldBit {
+    Fulltext = index_field_type::INDEX_FLD_FULLTEXT as u32,
+    Numeric = index_field_type::INDEX_FLD_NUMERIC as u32,
+    Geo = index_field_type::INDEX_FLD_GEO as u32,
+    Str = index_field_type::INDEX_FLD_STR as u32,
+    Vector = index_field_type::INDEX_FLD_VECTOR as u32,
+}
+
+impl IndexFieldBit {
+    /// What kind of index this bit means — the one decision a new index type
+    /// has to make, and where adding a variant fails to compile.
+    ///
+    /// Returns an `IndexType` rather than matching with unit arms so there is no
+    /// do-nothing arm to add: `Self::Cch => {}` would compile and leave the
+    /// classification silently wrong.
+    #[must_use]
+    pub const fn index_type(self) -> IndexType {
+        match self {
+            Self::Fulltext => IndexType::Fulltext,
+            Self::Vector => IndexType::Vector,
+            // A range index is the union of the three scalar kinds; none of
+            // them names a kind the others do not.
+            Self::Numeric | Self::Geo | Self::Str => IndexType::Range,
+        }
+    }
+}
+
+/// Why a `field_type` names no index this build can create.
+///
+/// An error itself, not a tag for callers to render: the sentence is the same
+/// wherever it is reported. [`DecodeError`] and [`EncodeError`] wrap it
+/// transparently, so `?` converts and each gate is one line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum BadFieldType {
+    /// A bit no [`IndexFieldBit`] variant claims.
+    #[error(
+        "index field type {field_type:#x} sets bit {bit:#x}, which this build has \
+         no index type for"
+    )]
+    UnknownBit { field_type: u32, bit: u32 },
+
+    /// Bits naming two different kinds of index, which no single index can be.
+    #[error(
+        "index field type {field_type:#x} names both {first:?} and {kind:?} \
+         (bit {bit:#x}); no index is both"
+    )]
+    MixedKinds {
+        field_type: u32,
+        bit: u32,
+        kind: IndexType,
+        first: IndexType,
+    },
+}
+
+/// Every set bit of `field_type`, isolated, lowest first. Iterating rather than
+/// masking is what lets the enum be the whole definition of "known": each bit is
+/// offered to `try_from` alone, so one no variant claims has nowhere to hide.
+fn field_type_bits(field_type: u32) -> impl Iterator<Item = u32> {
+    let mut rest = field_type;
+    std::iter::from_fn(move || {
+        if rest == 0 {
+            return None;
+        }
+        // Lowest set bit, then clear it. `wrapping_neg` because `-rest` on the
+        // sign bit would overflow in debug.
+        let lowest = rest & rest.wrapping_neg();
+        rest &= rest - 1;
+        Some(lowest)
+    })
+}
+
+/// The one kind of index a `field_type` names.
+///
+/// Validator and classifier in one: two walks over the same bits would be two
+/// definitions of "known" that can drift. The encoder and record decoder discard
+/// the `Ok` — the point is that they cannot accept a `field_type` this module
+/// could not also classify.
+///
+/// Several bits of the *same* kind are ordinary — `INDEX_FLD_RANGE` is three,
+/// and `0x0A` is a range index over numbers and strings. Different kinds are
+/// refused, not ranked: nothing can produce the case (C picks by equality and
+/// asserts otherwise in `GraphHub_AddIndex`; `emit::index_field_flags` is total),
+/// and ranking would build one index where the record named two.
+///
+/// An empty `field_type` is a range index, as it always was.
+///
+/// # Errors
+///
+/// [`BadFieldType`], which both wire error types wrap transparently.
+pub fn index_type_of(field_type: u32) -> Result<IndexType, BadFieldType> {
+    let mut first: Option<IndexType> = None;
+    for bit in field_type_bits(field_type) {
+        let kind = IndexFieldBit::try_from(bit)
+            .map_err(|_| BadFieldType::UnknownBit { field_type, bit })?
+            .index_type();
+        match first {
+            None => first = Some(kind),
+            Some(first) if first != kind => {
+                return Err(BadFieldType::MixedKinds {
+                    field_type,
+                    bit,
+                    kind,
+                    first,
+                });
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(first.unwrap_or(IndexType::Range))
+}
+
+pub const INDEX_FLD_FULLTEXT: u32 = IndexFieldBit::Fulltext as u32;
+pub const INDEX_FLD_NUMERIC: u32 = IndexFieldBit::Numeric as u32;
+pub const INDEX_FLD_GEO: u32 = IndexFieldBit::Geo as u32;
+pub const INDEX_FLD_STR: u32 = IndexFieldBit::Str as u32;
+pub const INDEX_FLD_VECTOR: u32 = IndexFieldBit::Vector as u32;
+
+pub const INDEX_FLD_UNKNOWN: u32 = 0x00;
+/// `INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR` = `0x0E`.
+pub const INDEX_FLD_RANGE: u32 = INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR;
+
+// ── constraint types ──
+
+/// C's `ConstraintType` tag. The enum itself is `graph::constraint::
+/// ConstraintType`; only the numbering is the wire's business.
+#[must_use]
+pub const fn constraint_tag(kind: ConstraintType) -> u32 {
+    match kind {
+        ConstraintType::Unique => 0,
+        ConstraintType::Mandatory => 1,
+    }
+}
+
+/// C's `ConstraintStatus` tag.
+///
+/// **Not `as u32`.** C is `CT_ACTIVE = 0, CT_PENDING = 1, CT_FAILED = 2`
+/// (`src/constraint/constraint.h:39` on master) while Rust's enum reads
+/// `UnderConstruction, Operational, Failed` — so the first two are the other
+/// way round, and casting the discriminant would send an active constraint as
+/// pending and a pending one as active. Nothing would fail; the replica would
+/// simply believe the wrong thing about whether the constraint is enforcing.
+#[must_use]
+pub const fn constraint_status_tag(status: ConstraintStatus) -> u32 {
+    match status {
+        ConstraintStatus::Operational => 0,
+        ConstraintStatus::UnderConstruction => 1,
+        ConstraintStatus::Failed => 2,
+    }
+}
+
+/// Inverse of [`constraint_status_tag`].
+pub const fn constraint_status_from_tag(v: u32) -> Result<ConstraintStatus, DecodeError> {
+    match v {
+        0 => Ok(ConstraintStatus::Operational),
+        1 => Ok(ConstraintStatus::UnderConstruction),
+        2 => Ok(ConstraintStatus::Failed),
+        other => Err(DecodeError::BadConstraintStatus(other)),
+    }
+}
+
+/// Inverse of [`constraint_tag`].
+pub const fn constraint_from_tag(v: u32) -> Result<ConstraintType, DecodeError> {
+    match v {
+        0 => Ok(ConstraintType::Unique),
+        1 => Ok(ConstraintType::Mandatory),
+        other => Err(DecodeError::BadConstraintType(other)),
+    }
+}
+
+// ── SIValue type tags ──
+//
+// Derived from `serialization::si_type` rather than restated: the RDB encoder
+// already carries C's tags, and two copies of a bitmask would drift silently —
+// nothing fails when a tag is wrong, the far side just reads the next field as
+// a type — re-exported, not restated, so there is no second copy to drift. They
+// are `u32` at their definition, which is the width C declares and the width
+// this wire carries, so nothing narrows on the way here.
+
+// ── payload header ──
+
+/// The payload is a zstd frame, not records.
+///
+/// When set, a `u32` uncompressed length follows the flags byte and the frame
+/// follows that. The header itself is never compressed, so a reader always
+/// knows what it is holding before it commits to decoding anything.
+pub const FLAG_COMPRESSED: u8 = 1 << 0;
+
+/// Every flag this build understands. A reader that meets a bit outside this
+/// mask **rejects the buffer** rather than guessing: an old node reading a
+/// future payload must fail loudly, not decode the first record it recognises
+/// and corrupt itself with the rest.
+pub const KNOWN_FLAGS: u8 = FLAG_COMPRESSED;
+
+/// Start a fresh buffer: `u8 version · u8 flags`.
+///
+/// The flags byte is reserved from day one even though nothing sets it by
+/// default. Adding it later would have meant another version bump for a single
+/// byte, which is the whole reason it is here now rather than when compression
+/// is first switched on.
+#[must_use]
+pub fn new_buffer() -> Vec<u8> {
+    vec![EFFECTS_VERSION, 0]
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::graph::graphblas::serialization::{index_field_type, si_type};
+
+    /// Every shared constant fits the wire's four bytes.
+    ///
+    /// The codec writes these tags with `as u32`. That is lossless today —
+    /// the widest is `1 << 19` — but the constants are `u64` and live in the
+    /// RDB module for the RDB's writer, so nothing there stops a `1 << 33`
+    /// being added. This is what fails when it is, rather than a type tag
+    /// silently truncating on a wire two engines compare byte for byte.
+    #[test]
+    fn every_shared_constant_fits_the_wire() {
+        for (name, value) in [
+            ("T_MAP", si_type::T_MAP),
+            ("T_ARRAY", si_type::T_ARRAY),
+            ("T_DATETIME", si_type::T_DATETIME),
+            ("T_DATE", si_type::T_DATE),
+            ("T_TIME", si_type::T_TIME),
+            ("T_DURATION", si_type::T_DURATION),
+            ("T_STRING", si_type::T_STRING),
+            ("T_BOOL", si_type::T_BOOL),
+            ("T_INT64", si_type::T_INT64),
+            ("T_DOUBLE", si_type::T_DOUBLE),
+            ("T_NULL", si_type::T_NULL),
+            ("T_POINT", si_type::T_POINT),
+            ("T_VECTOR_F32", si_type::T_VECTOR_F32),
+            ("T_INTERN", si_type::T_INTERN),
+            ("INDEX_FLD_FULLTEXT", index_field_type::INDEX_FLD_FULLTEXT),
+            ("INDEX_FLD_NUMERIC", index_field_type::INDEX_FLD_NUMERIC),
+            ("INDEX_FLD_GEO", index_field_type::INDEX_FLD_GEO),
+            ("INDEX_FLD_STR", index_field_type::INDEX_FLD_STR),
+            ("INDEX_FLD_VECTOR", index_field_type::INDEX_FLD_VECTOR),
+        ] {
+            assert!(
+                value <= u64::from(u32::MAX),
+                "{name} = {value:#x} does not fit the four bytes the wire carries"
+            );
+        }
+    }
+}

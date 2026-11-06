@@ -516,6 +516,15 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.env.assertEqual(row[0], row[1])
             self.env.assertEqual(row[2], row[3])
 
+        # startNode(null) and endNode(null) must return null per Cypher specification
+        query = """OPTIONAL MATCH (n)-[r:NONEXISTENT]->() WHERE false RETURN startNode(r), endNode(r)"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[None, None]])
+
+        query = """RETURN startNode(null) AS s, endNode(null) AS e"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[None, None]])
+
     def test17_to_json(self):
         # Test JSON literal values in an array.
         query = """RETURN toJSON([1, 0.000000000000001, 'str', true, NULL])"""
@@ -626,6 +635,30 @@ class testFunctionCallsFlow(FlowTestsBase):
         except redis.ResponseError as e:
             self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
 
+    def test19a_hasLabels_type_mismatch_names_the_received_type(self):
+        # The three explicit arms in `has_labels` name the received type; the
+        # catch-all covers the other 12 Value variants and used to say nothing
+        # about what it got, which is the only type-mismatch message in the file
+        # without a `but was X` clause.
+        for value, expected in [('null', 'Null'),
+                                ('{a: 1}', 'Map'),
+                                ('[1]', 'List'),
+                                ('1', 'Integer'),
+                                ('1.5', 'Float'),
+                                ('true', 'Boolean')]:
+            query = ("MATCH (n) WHERE hasLabels(n, ['person', %s]) "
+                     "RETURN n.name" % value)
+            error = None
+            try:
+                self.graph.query(query)
+            except redis.ResponseError as e:
+                error = str(e)
+            self.env.assertTrue(
+                error is not None,
+                message="hasLabels(n, ['person', %s]) was accepted" % value)
+            self.env.assertContains(
+                "Type mismatch: expected String but was %s" % expected, error)
+
     def test20_keys(self):
         # Test retrieving keys of a nested map
         query = """RETURN keys({a: 5, b: 10})"""
@@ -698,6 +731,11 @@ class testFunctionCallsFlow(FlowTestsBase):
             """RETURN toInteger('')""",
             """RETURN toInteger('18446744073709551616')""",
             """RETURN toInteger('-18446744073709551616')""",
+            # just below i64::MIN: the f64 fallback used to round these to -2^63
+            """RETURN toInteger('-9223372036854775809')""",
+            """RETURN toInteger('-9223372036854776832')""",
+            """RETURN toInteger('9223372036854775808')""",
+            """RETURN toIntegerList(['-9223372036854775809'])[0]""",
         ]
         for query in queries:
             actual_result = self.graph.query(query)
@@ -1853,7 +1891,12 @@ class testFunctionCallsFlow(FlowTestsBase):
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
 
-        self.expect_error('RETURN toLower(replace("�", "", "   "))', "Invalid UTF8 string")
+        # U+FFFD is an ordinary code point: a Rust string is always valid
+        # UTF-8, so there is no invalid input to reject. (C errors on the
+        # replace() form only because its replace() splits the multi-byte
+        # character and produces invalid UTF-8.)
+        self.get_res_and_assertEquals("RETURN toLower('A�b')", [["a�b"]])
+        self.get_res_and_assertEquals('RETURN toLower(replace("�", "", " "))', [[" � "]])
     
     def test66_ToUpper(self):
         query_to_expected_result = {
@@ -1868,7 +1911,12 @@ class testFunctionCallsFlow(FlowTestsBase):
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
 
-        self.expect_error('RETURN toUpper(replace("�", "", "   "))', "Invalid UTF8 string")
+        # U+FFFD is an ordinary code point: a Rust string is always valid
+        # UTF-8, so there is no invalid input to reject. (C errors on the
+        # replace() form only because its replace() splits the multi-byte
+        # character and produces invalid UTF-8.)
+        self.get_res_and_assertEquals("RETURN toUpper('a�B')", [["A�B"]])
+        self.get_res_and_assertEquals('RETURN toUpper(replace("�", "", " "))', [[" � "]])
     
     def test67_Exists(self):
         query_to_expected_result = {
@@ -1885,8 +1933,10 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN CASE WHEN NULL THEN 1+0 WHEN true THEN 2-0 END": [[2]],
             "RETURN CASE WHEN NULL THEN 1+0 WHEN NULL THEN 2-0 ELSE 3*1 END": [[3]],
             "RETURN CASE WHEN NULL THEN 1+0 WHEN NULL THEN 2-0 END": [[None]],
-            "RETURN CASE NULL WHEN NULL THEN NULL ELSE 'else' END AS result": [[None]],
-            "RETURN CASE NULL WHEN 'value' THEN 'value' WHEN NULL THEN NULL ELSE 'else' END AS result": [[None]],
+            # a simple CASE compares with `=`, and `null = null` is null, so a
+            # null WHEN never selects its branch and ELSE is taken instead
+            "RETURN CASE NULL WHEN NULL THEN NULL ELSE 'else' END AS result": [['else']],
+            "RETURN CASE NULL WHEN 'value' THEN 'value' WHEN NULL THEN NULL ELSE 'else' END AS result": [['else']],
             "RETURN CASE NULL WHEN 'when' THEN 'then' ELSE NULL END AS result": [[None]],
             "RETURN CASE 'value' WHEN NULL THEN NULL ELSE true END AS result": [[True]],
             "RETURN CASE 'value' WHEN NULL THEN NULL WHEN 'value' THEN true ELSE false END AS result": [[True]]
@@ -2068,6 +2118,20 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        # a range whose bounds sit at the i64 limits must be rejected
+        # cleanly, negating i64::MIN used to crash the server
+        queries_with_errors = [
+            "RETURN range(0, -9223372036854775808, -1)",
+            "RETURN range(0, -9223372036854775807, -1)",
+            "RETURN range(-9223372036854775808, 0, 1)",
+        ]
+        for query in queries_with_errors:
+            self.expect_error(query, "Range too large")
+
+        # a zero step is a distinct, equally clean error
+        self.expect_error("RETURN range(0, 10, 0)",
+                          "step argument to range() can't be 0")
     
     def test80_IN(self):
         query_to_expected_result = {
@@ -2097,6 +2161,13 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        # coalesce needs at least one argument, as in C
+        try:
+            self.graph.query("RETURN coalesce()")
+            self.env.assertFalse(True)
+        except ResponseError as e:
+            self.env.assertIn("Received 0 arguments to function 'coalesce', expected at least 1", str(e))
     
     def test83_Replace(self):
         query_to_expected_result = {
@@ -2804,3 +2875,147 @@ class testFunctionCallsFlow(FlowTestsBase):
     #
     #     res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(tostring(x) + tostring(x))")
     #     self.env.assertEqual(res.result_set, [[None], ['11'], ['22'], ['33'], ['44']])
+
+    def test95_constant_argument_functions_evaluate_once_per_batch(self):
+        # A scalar function whose every argument is one value shared by the
+        # whole batch is called once and broadcast, instead of once per row.
+        # The saving composes down a chain — in
+        # `split(replace(trim(...), ...), ...)` each call hands the next a
+        # shared value — so these check the answers are unchanged, per row and
+        # in aggregate, for the shapes that fold.
+        q = "UNWIND range(0, 4) AS i RETURN i, split(replace(trim('  a,b,c  '), ',', ';'), ';') AS v"
+        res = self.graph.query(q)
+        self.env.assertEqual([r[0] for r in res.result_set], [0, 1, 2, 3, 4])
+        for r in res.result_set:
+            self.env.assertEqual(r[1], ['a', 'b', 'c'])
+
+        # Folded into an aggregate, and mixed with a per-row value so the
+        # broadcast has to line up with real columns rather than replace them.
+        res = self.graph.query(
+            "UNWIND range(0, 99) AS i RETURN count(split('a;b;c', ';')), sum(i)")
+        self.env.assertEqual(res.result_set, [[100, 4950]])
+        res = self.graph.query(
+            "UNWIND range(0, 3) AS i RETURN i + size(split('a;b;c', ';')) AS n ORDER BY n")
+        self.env.assertEqual([r[0] for r in res.result_set], [3, 4, 5, 6])
+
+        # Nested one level under a function that does vary per row.
+        res = self.graph.query(
+            "UNWIND ['x', 'y'] AS s RETURN s + toUpper(trim(' q ')) AS v ORDER BY v")
+        self.env.assertEqual([r[0] for r in res.result_set], ['xQ', 'yQ'])
+
+    def test96_non_deterministic_functions_are_not_folded(self):
+        # The behaviour that makes test95 safe: a volatile function still
+        # varies per row. What stops these being folded is that they take no
+        # arguments, so there is nothing constant to fold from — not the
+        # `non_deterministic` flag, which is a second guard for volatile
+        # functions that might later take one. These pin the observable
+        # property; removing either guard alone does not move them, and that
+        # is worth knowing rather than assuming.
+        res = self.graph.query("UNWIND range(1, 200) AS i RETURN count(DISTINCT rand()) AS n")
+        self.env.assertGreater(res.result_set[0][0], 150)
+
+        res = self.graph.query("UNWIND range(1, 200) AS i RETURN count(DISTINCT randomUUID()) AS n")
+        self.env.assertEqual(res.result_set[0][0], 200)
+
+        # Two independent draws in one row must not collapse into each other.
+        res = self.graph.query(
+            "UNWIND range(1, 50) AS i WITH i WHERE rand() = rand() RETURN count(*) AS n")
+        self.env.assertEqual(res.result_set[0][0], 0)
+
+        # `toString` of a random value is a deterministic function over a
+        # non-deterministic argument: the argument column is not scalar, so the
+        # outer call cannot fold either.
+        res = self.graph.query(
+            "UNWIND range(1, 200) AS i RETURN count(DISTINCT toString(randomUUID())) AS n")
+        self.env.assertEqual(res.result_set[0][0], 200)
+
+    def test97_folded_calls_keep_their_errors_and_empty_batches(self):
+        # Evaluating once must not move when an error is raised. A bad constant
+        # argument still fails the query...
+        try:
+            self.graph.query("UNWIND range(0, 9) AS i RETURN split(1, 2)")
+            self.env.assertTrue(False, depth=1)
+        except Exception as e:
+            self.env.assertContains("Type mismatch", str(e))
+
+        # ...and a batch with no rows still raises nothing. Operators drop
+        # empty batches before any expression is evaluated, so this holds with
+        # or without the row-count guard inside the fold; it is pinned because
+        # it is the behaviour callers depend on, whichever layer provides it.
+        res = self.graph.query("UNWIND [] AS i RETURN split(1, 2)")
+        self.env.assertEqual(res.result_set, [])
+        res = self.graph.query("MATCH (n:NoSuchLabel) RETURN split(1, 2)")
+        self.env.assertEqual(res.result_set, [])
+
+    def test98_exists_unbound_variables(self):
+        # exists() over a traversal pattern referencing unbound variables,
+        # reusing the same relationship variable in both patterns, used to
+        # dereference unresolved entities and crash the server
+        q = "RETURN exists( (n0)-[r1]-(n1), (n1)-[r1]-(n0) ) AS has_path"
+        self.expect_error(q, "'n0' not defined")
+
+        # a traversal pattern is not a valid exists() argument at all,
+        # whether or not its variables resolve
+        q = "RETURN exists( (n0)-[r1]-(n1) )"
+        self.expect_error(q,
+            "traversal patterns are not allowed as arguments to exists()")
+
+        q = "MATCH (a) RETURN exists( (a)-[r1]-(n1) )"
+        self.expect_error(q,
+            "traversal patterns are not allowed as arguments to exists()")
+
+        # the server is still responsive
+        self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])
+
+    # Integer / Integer is exact (not routed through double as C does), and
+    # i64::MIN / -1 is an overflow error instead of wrapping. Differences from
+    # C above 2^53 are intentional (#3242); the overflow is #3205.
+    def test99_integer_division_is_exact(self):
+        cases = [
+            ("9007199254740993 / 1", 9007199254740993),
+            ("9007199254740993 / 3", 3002399751580331),
+            ("123456789012345678 / 10", 12345678901234567),
+            ("1000000000000000001 / 7", 142857142857142857),
+            ("9223372036854775807 / 2", 4611686018427387903),
+            ("-9223372036854775807 / 1", -9223372036854775807),
+            ("4611686018427387903 / 4611686018427387904", 0),
+            ("(9007199254740993 / 3) * 3 + 9007199254740993 % 3", 9007199254740993),
+            ("-9007199254740993 / 2", -4503599627370496),
+            ("-7 / 2", -3),
+            ("7 / -2", -3),
+            ("-7 % 2", -1),
+            # not an overflow: the quotient fits
+            ("-9223372036854775807 / -1", 9223372036854775807),
+            ("(-9223372036854775807 - 1) / 1", -9223372036854775808),
+            # the remainder is representable and stays 0
+            ("(-9223372036854775807 - 1) % -1", 0),
+        ]
+        for expr, expected in cases:
+            res = self.graph.query(f"RETURN {expr}")
+            self.env.assertEqual(res.result_set, [[expected]], message=expr)
+
+        # the same values through the vectorised (per-row) path
+        res = self.graph.query(
+            "UNWIND [9007199254740993, 123456789012345678, 9223372036854775807] AS x "
+            "RETURN x / 1, x / 10, x % 10")
+        self.env.assertEqual(res.result_set, [
+            [9007199254740993, 900719925474099, 3],
+            [123456789012345678, 12345678901234567, 8],
+            [9223372036854775807, 922337203685477580, 7]])
+
+        # i64::MIN / -1 does not fit in an Integer
+        queries = [
+            "RETURN -9223372036854775808 / -1",
+            "RETURN (-9223372036854775807 - 1) / -1",
+            "UNWIND [1, -9223372036854775807 - 1] AS x RETURN x / -1",
+            "UNWIND [-9223372036854775807 - 1] AS x UNWIND [-1] AS y RETURN x / y",
+        ]
+        for q in queries:
+            try:
+                self.graph.query(q)
+                self.env.assertTrue(False, message=q)
+            except redis.ResponseError as e:
+                self.env.assertContains("integer overflow in division", str(e))
+
+        # the server is still responsive
+        self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])

@@ -158,6 +158,19 @@ class testTemporalDate(FlowTestsBase):
         self.env.assertEqual(dayOfQuarter, 21)
         self.env.assertEqual(ordinalDay, 295)
 
+    # years outside 0..9999 keep all their digits and their sign
+    def test_date_to_string_extended_years(self):
+        q = """RETURN toString(date({year: 12345})),
+                      toString(date('2020-01-01') + duration({years: 10000})),
+                      toString(date({year: -5})),
+                      toString(date({year: 5})),
+                      toString(localdatetime('2020-01-01T10:20:30') + duration({years: 300000})),
+                      toString(localdatetime({year: -5, month: 3, day: 4, hour: 5}))"""
+        actual = self.graph.query(q).result_set[0]
+        self.env.assertEqual(actual, ['12345-01-01', '12020-01-01', '-0005-01-01',
+                                      '0005-01-01', '302020-01-01T10:20:30',
+                                      '-0005-03-04T05:00:00'])
+
     def test_date_to_from_string(self):
         test_cases = [
             ({'year': 1984},                                   '1984-01-01'),
@@ -181,6 +194,39 @@ class testTemporalDate(FlowTestsBase):
 
             self.env.assertTrue(b)
             self.env.assertEqual(ts, expected)
+
+    # out-of-range components and malformed week strings used to panic inside
+    # chrono and crash the server; they must be rejected with an error
+    def test_date_out_of_range_components(self):
+        queries = [
+            ("RETURN date({year: 2020, week: 10000000000})", "week"),
+            ("RETURN date({year: 2020, week: 0})", "week"),
+            ("RETURN localdatetime({year: 2020, week: -9223372036854775807})", "week"),
+            ("RETURN date({year: 2020, quarter: 2, dayOfQuarter: 9223372036854775807})", "dayOfQuarter"),
+            ("RETURN date({year: 2021, quarter: 1, dayOfQuarter: 200})", "dayOfQuarter"),
+            ("RETURN date({year: 2020, quarter: 4294967297})", "quarter"),
+            ("RETURN date('2020W1é')", "week"),
+            ("RETURN date({year: 2021, week: 1, dayOfWeek: 0})", "dayOfWeek"),
+            ("RETURN date({year: 2021, week: 1, dayOfWeek: 8})", "dayOfWeek"),
+        ]
+        for q, msg in queries:
+            try:
+                self.graph.query(q)
+                self.env.assertFalse(True)
+            except ResponseError as e:
+                self.env.assertIn(msg, str(e))
+
+        # the server is still up and in-range components still work
+        q = """RETURN toString(date({year: 1984, week: 53})),
+                      toString(date({year: 1984, quarter: 4, dayOfQuarter: 92}))"""
+        res = self.graph.query(q)
+        self.env.assertEqual(res.result_set[0], ['1984-12-31', '1984-12-31'])
+
+        # dayOfWeek is ISO 1..7 with 7 = Sunday, like the string form
+        q = """RETURN toString(date({year: 2021, week: 1, dayOfWeek: 7})),
+                      toString(date('2021-W01-7'))"""
+        res = self.graph.query(q)
+        self.env.assertEqual(res.result_set[0], ['2021-01-10', '2021-01-10'])
 
     def test_date_compare(self):
         q = """WITH date({year: 1980, month: 12, day: 24}) AS x,
@@ -386,6 +432,51 @@ class testTemporalLocalDateTime(FlowTestsBase):
         self.env.assertTrue(le)
         self.env.assertTrue(e)
 
+    def test_date_arithmetic_year_above_9999(self):
+        # a year past 9999 keeps every digit, as in C (%Y); it used to lose the
+        # leading digits (1e9 days gave 9933-01-03)
+        cases = [
+            ("date('2026-01-01') + duration({days: 1000000000})", '2739933-01-03'),
+            ("date('9999-12-31') + duration({days: 1})", '10000-01-01'),
+            ("date('9999-12-31') + duration({years: 20})", '10019-12-31'),
+        ]
+        for expr, expected in cases:
+            # toString only: the Python client cannot decode years above 9999
+            res = self.graph.query(f"RETURN toString({expr})")
+            self.env.assertEqual(res.result_set[0][0], expected)
+
+        # a leap-day-aware bound: this one still fits the i32 year
+        res = self.graph.query(
+            "RETURN toString(date('1970-01-01') + duration({days: 783831531156}))")
+        self.env.assertEqual(res.result_set[0][0], '2146059811-06-15')
+
+        # the endpoints: an intermediate year just past the range is fine when
+        # the days that follow bring the date back inside it
+        for expr, expected in [
+            ("date('1970-01-01') + duration({days: 784350846290}) - duration({days: -1})",
+             '2147481647-12-31'),
+            ("date('1970-01-01') + duration({days: -784352284981}) + duration({days: -1})",
+             '-2147481647-01-01'),
+        ]:
+            res = self.graph.query(f"RETURN toString({expr})")
+            self.env.assertEqual(res.result_set[0][0], expected)
+
+        # beyond what the year can hold is an error, not a wrapped date --
+        # also when it is reached by repeated addition or subtraction
+        for expr in [
+            "date('2026-01-01') + duration({days: 3000000000000})",
+            "date('1970-01-01') + duration({days: 438291000000}) + duration({days: 438291000000})",
+            "date('1970-01-01') - duration({days: 438291000000}) - duration({days: 438291000000})",
+            "date('2026-01-01') + duration({days: 783000000000}) + duration({years: 10000000})",
+            "date('1970-01-01') + duration({days: 784350846291}) + duration({days: 1})",
+            "date('1970-01-01') + duration({days: -784352284982}) + duration({days: -1})",
+        ]:
+            try:
+                self.graph.query(f"RETURN toString({expr})")
+                self.env.assertFalse(True)
+            except ResponseError as e:
+                self.env.assertIn("out of range", str(e))
+
 class testTemporalDuration(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
@@ -450,6 +541,15 @@ class testTemporalDuration(FlowTestsBase):
         result = self.graph.query("RETURN toString(duration('P1M')) AS s")
         self.env.assertEqual(result.result_set[0], ["P1M"])
 
+        # huge week/day counts are an overflow error, not a silently wrapped
+        # duration (2635249153387078803 * 7 wraps to 5 in i64)
+        for s in ['P2635249153387078803W', 'P1W9223372036854775807D']:
+            try:
+                self.graph.query(f"RETURN duration('{s}')")
+                self.env.assertFalse(True)
+            except ResponseError as e:
+                self.env.assertIn("overflow", str(e))
+
     def test_month_end_duration_arithmetic(self):
         result = self.graph.query(
             """
@@ -458,6 +558,17 @@ class testTemporalDuration(FlowTestsBase):
             """
         )
         self.env.assertEqual(result.result_set[0], ["2024-03-02", "2024-03-02T00:00:00"])
+
+        # subtraction rolls over the same way (C timegm normalisation), so
+        # d - dur = d + (-dur)
+        result = self.graph.query(
+            """
+            RETURN toString(date('2020-03-31') - duration({months: 1})) AS a,
+                   toString(date('2020-03-31') + duration({months: -1})) AS b,
+                   toString(localdatetime('2020-03-31T10:00:00') - duration({months: 1})) AS c
+            """
+        )
+        self.env.assertEqual(result.result_set[0], ["2020-03-02", "2020-03-02", "2020-03-02T10:00:00"])
 
     def test_duration_components(self):
         q = """WITH duration({years: 2, months:3, weeks:1, days:4, hours:5, minutes:22, seconds:7}) AS d
@@ -602,6 +713,16 @@ class testTemporalDuration(FlowTestsBase):
         actual = self.graph.query(q).result_set[0][0]
         expected = time(hour=7, minute=49, second=40)
         self.env.assertEqual(actual, expected)
+
+        # a time keeps only its time of day: days/months in the duration
+        # vanish and the clock wraps around midnight (openCypher, C)
+        q = """RETURN localtime('01:00') + duration({days: 1}) = localtime('01:00'),
+                      localtime('01:00') + duration({months: 1}) = localtime('01:00'),
+                      localtime('01:00') - duration({days: 3}) = localtime('01:00'),
+                      localtime('23:00') + duration({hours: 2}) = localtime('01:00'),
+                      localtime('01:00') - duration({hours: 2}) = localtime('23:00')"""
+        actual = self.graph.query(q).result_set[0]
+        self.env.assertEqual(actual, [True, True, True, True, True])
 
         try:
             q = """RETURN duration({hours:2, minutes:40, seconds:30})

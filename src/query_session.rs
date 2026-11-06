@@ -21,6 +21,8 @@
 //! all.
 
 use crate::graph_core::{ThreadedGraph, ffi};
+use atomic_refcell::AtomicRefCell;
+use graph::graph::{graph::Graph, mvcc_graph::CommitError};
 use graph::locks::WriteEscalation;
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use redis_module::{Context, ContextFlags, raw};
@@ -57,6 +59,25 @@ pub enum WriteAbort {
     /// The graph key was deleted or replaced while no per-graph lock was held.
     #[error("graph was deleted or replaced while the query was running, aborting")]
     GraphUnregistered,
+    /// Another writer committed while this one was still matching as a reader,
+    /// so the version it built no longer extends the committed graph. Nothing
+    /// was mutated or published yet: the caller discards it and runs the write
+    /// again from the start.
+    #[error("Write query aborted: the graph was written while this query was matching")]
+    Stale,
+    /// The version this write produced failed `Graph::validate`, so it was not
+    /// published. An engine fault rather than a reason to retry.
+    #[error("{0}")]
+    Invalid(String),
+}
+
+impl From<CommitError> for WriteAbort {
+    fn from(e: CommitError) -> Self {
+        match e {
+            CommitError::Stale => Self::Stale,
+            CommitError::Invalid(e) => Self::Invalid(e.to_string()),
+        }
+    }
 }
 
 /// The locks held by one query, on one thread. Not `Send`, because the GIL must be
@@ -72,6 +93,28 @@ pub struct QuerySession {
     /// the session escalates, so it is unread for a reader and for
     /// [`Self::begin_writer`].
     facts: WriteFacts,
+    /// Where this session's write version stands — see [`Self::write_version`].
+    version: RefCell<Version>,
+}
+
+/// Where a session's write version stands against the published graph.
+///
+/// A write that starts as a reader forks while it matches and checks the fork
+/// when it escalates. Forking takes nothing, so an inline writer, which holds
+/// the GIL and the write lock from the start, is never held up by a query that
+/// is still matching (#3093): if it commits meanwhile, that query finds its
+/// fork stale instead, and re-runs. A fork made under the write lock is current
+/// from the start, since nothing else can commit before its own session does.
+enum Version {
+    /// No write version.
+    None,
+    /// Forked as a reader; checked when the session escalates.
+    Unchecked(Arc<AtomicRefCell<Graph>>),
+    /// Extends the published graph, and stays so: this session holds the
+    /// write lock until it commits.
+    Current,
+    /// Another writer committed after the fork was made; the fork is gone.
+    Stale,
 }
 
 /// The two facts about a write that decide which re-checks apply when it escalates.
@@ -127,6 +170,7 @@ impl QuerySession {
             graph: Arc::clone(graph),
             mode: RefCell::new(Some(Mode::Reader(RwLock::read_arc(graph)))),
             facts,
+            version: RefCell::new(Version::None),
         }
     }
 
@@ -145,7 +189,84 @@ impl QuerySession {
             // These are the inline main-thread paths anyway, where Redis's own dispatch
             // gated the command and no pause or role-change window can open mid-command.
             facts: WriteFacts::CLIENT,
+            version: RefCell::new(Version::None),
         }
+    }
+
+    /// The facts this session was begun with, to begin another for the same
+    /// write.
+    pub const fn facts(&self) -> WriteFacts {
+        self.facts
+    }
+
+    /// The private version a write builds into: a fork of the published graph.
+    ///
+    /// In writer mode it is current now, and stays so. In reader mode it is
+    /// checked when the query escalates ([`Self::upgrade_to_write`]); if
+    /// another writer committed in between, escalation fails with
+    /// [`WriteAbort::Stale`] and [`Self::is_stale`] reports it.
+    ///
+    /// Nothing has to be released afterwards: an uncommitted version is
+    /// dropped with the runtime that holds it.
+    pub fn write_version(&self) -> Arc<AtomicRefCell<Graph>> {
+        debug_assert!(
+            matches!(*self.version.borrow(), Version::None),
+            "one write version per session"
+        );
+        let fork = self.with_graph(|tg| tg.graph.fork());
+        *self.version.borrow_mut() = if self.is_writer() {
+            Version::Current
+        } else {
+            Version::Unchecked(Arc::clone(&fork))
+        };
+        fork
+    }
+
+    /// Whether the write lost its version to a writer that committed while it
+    /// was matching, so it must be run again from the start.
+    pub fn is_stale(&self) -> bool {
+        matches!(*self.version.borrow(), Version::Stale)
+    }
+
+    /// Whether this session's version is known to extend the published graph
+    /// under the write lock — the only state in which a `Commit` can have
+    /// published index documents from it. Still matching, stale, or refused at
+    /// escalation, it published none.
+    pub fn version_is_current(&self) -> bool {
+        matches!(*self.version.borrow(), Version::Current)
+    }
+
+    fn is_writer(&self) -> bool {
+        matches!(*self.mode.borrow(), Some(Mode::Writer { .. }))
+    }
+
+    /// Check the fork made in reader mode against the published graph, and
+    /// rebase it onto the indexer batches published since it was made. Writer
+    /// mode only, so nothing can commit between this check and this session's
+    /// own commit.
+    fn check_fork(&self) -> Result<(), WriteAbort> {
+        let mut state = self.version.borrow_mut();
+        let Version::Unchecked(fork) = &*state else {
+            return Ok(());
+        };
+        let checked = self.with_graph(|tg| {
+            if tg.graph.is_stale(fork) {
+                return Err(CommitError::Stale);
+            }
+            // An indexer batch changes no data, so it leaves the fork current,
+            // but the fork takes its index progress now: the index documents
+            // this query publishes, and the indexes it reads from here on,
+            // have it. Without the native index there are no batches.
+            #[cfg(feature = "index-falkordb")]
+            tg.graph.rebase_onto_indexer_batches(fork)?;
+            Ok(())
+        });
+        if checked.is_err() {
+            *state = Version::Stale;
+            return Err(WriteAbort::Stale);
+        }
+        *state = Version::Current;
+        Ok(())
     }
 
     /// Release the locks now, before the session itself goes out of scope.
@@ -202,10 +323,12 @@ impl QuerySession {
 
     /// Become a writer, if not one already.
     ///
-    /// Idempotent. The brief window holding no per-graph lock is safe: this query
-    /// owns the single MVCC write slot for its whole lifetime, so no other writer
-    /// can commit, and it has not yet touched the shared index — a reader entering
-    /// the window sees a consistent older state.
+    /// Idempotent. The brief window holding no per-graph lock is safe: the query
+    /// has not yet touched the shared index, so a reader entering the window sees
+    /// a consistent older state; and a writer that commits in it (an inline one,
+    /// which holds the GIL and the write lock throughout) makes this query's
+    /// version stale, which the check below detects before any mutation is
+    /// published.
     pub fn upgrade_to_write(&self) -> Result<(), WriteAbort> {
         if self.escalate() {
             // The key could have been deleted in the window where we held no
@@ -218,6 +341,11 @@ impl QuerySession {
             // Same window, the other half of what C re-validates here: this instance
             // may no longer be allowed to originate a write at all.
             reauthorize_write(self.facts)?;
+            // Only now, under the write lock, find out whether an inline writer
+            // committed in the window, making the version built while matching
+            // stale. Here rather than at commit: the caller publishes index
+            // documents next, which dropping a stale fork cannot take back.
+            self.check_fork()?;
         }
         Ok(())
     }

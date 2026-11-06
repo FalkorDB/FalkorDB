@@ -89,7 +89,7 @@ pub fn cypher_unescape(input: &str) -> Result<String, String> {
                 Some('u') => {
                     // \uXXXX - 4-digit hex Unicode escape
                     let hex: String = chars.by_ref().take(4).collect();
-                    if hex.len() != 4 {
+                    if hex.len() != 4 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
                         return Err(format!("Invalid unicode escape: \\u{hex}"));
                     }
                     let code = u32::from_str_radix(&hex, 16)
@@ -101,7 +101,7 @@ pub fn cypher_unescape(input: &str) -> Result<String, String> {
                 Some('U') => {
                     // \UXXXXXXXX - 8-digit hex Unicode escape
                     let hex: String = chars.by_ref().take(8).collect();
-                    if hex.len() != 8 {
+                    if hex.len() != 8 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
                         return Err(format!("Invalid unicode escape: \\U{hex}"));
                     }
                     let code = u32::from_str_radix(&hex, 16)
@@ -187,6 +187,17 @@ mod tests {
     // ========================================================================
     // Unescape Tests
     // ========================================================================
+
+    // Regression (#2909): `u32::from_str_radix` accepts a leading `+`, so
+    // `\u+041` decoded as `A` from three hex digits.
+    #[test]
+    fn test_unescape_unicode_requires_hex_digits() {
+        for input in [r"\u+041", r"\U+0000041", r"\u-041", r"\u 041"] {
+            assert!(cypher_unescape(input).is_err(), "{input} accepted");
+        }
+        assert_eq!(cypher_unescape(r"\u0041").unwrap(), "A");
+        assert_eq!(cypher_unescape(r"\U00000041").unwrap(), "A");
+    }
 
     #[test]
     fn test_unescape_standard_escapes() {

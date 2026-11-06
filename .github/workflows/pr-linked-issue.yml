@@ -15,10 +15,8 @@
 #
 # WHY THE DEVELOPMENT SIDEBAR, NOT `Closes #N` KEYWORDS: GitHub only registers a
 # closing link from a body keyword when the PR targets the repository's DEFAULT
-# branch. Verified on this repo — PR #2245 (base `main-rs`, default `master`)
 # reported 0 closing references with `Closes #2243` as the first line of its
 # body, then reported 1 as soon as the issue was attached through the
-# Development sidebar. Development happens on non-default branches (`main-rs`,
 # `main`, version branches), so the sidebar is the mechanism authors must use and
 # the one the failure message points at. Do not "simplify" that guidance back to
 # keywords.
@@ -34,7 +32,6 @@ on:
     # Mirrors rust-pr.yml's branch filter.
     branches:
       - "main"
-      - "main-rs"
       - "[0-9]*.[0-9]*"
 
 permissions:
@@ -119,7 +116,6 @@ jobs:
             echo "re-evaluate on its own — **re-run it** once the issue is linked."
             echo ""
             echo "> A \`Closes #<n>\` keyword in the PR body only registers a closing link when"
-            echo "> the PR targets the repository's **default branch**. On \`main-rs\`, \`main\`"
             echo "> and version branches it has no effect, so the sidebar is the mechanism that"
             echo "> works. Writing the keyword anyway is still useful for humans reading the PR."
             echo ""

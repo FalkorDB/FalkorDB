@@ -1,0 +1,121 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/threadpool.rs	new	67	PROVEN	Pool.new_spec, shutdown_drains; PoolWithin.spawnNames_none (`with_names(size, None)`: unnamed workers); unbounded queue (#3014): Pool.spawn_never_blocks (counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/threadpool.rs	named	72	PROVEN	PoolWithin.spawnNames_length, spawnNames_get (`with_names(size, Some(name))`: worker i is `{name}-{i}`; #3502)
+graph/src/threadpool.rs	with_names	79	PROVEN	PoolWithin.spawnNames_length/spawnNames_get/spawnNames_none (names), Pool.new_spec (size workers); Builder::spawn failure -> `.expect` panic, sender dropped, started workers exit (header; std primitive)
+graph/src/threadpool.rs	spawn	124	PROVEN	Pool.spawn_never_blocks, spawn_after_exit; PoolWithin.late_job_lost (job sent after the sentinels is accepted and never runs); Locks.main_never_blocks, never_stuck_3014 (W3-conc-1 fixed by #3014)
+graph/src/threadpool.rs	shutdown	146	PROVEN	Pool.shutdown_drains (all queued jobs run once, in order; all workers exit); PoolWithin.within_blocks_behind_shutdown / holdEnd_ge (holds the `workers` lock across every join: BUG, a concurrent shutdown_within is not bounded)
+graph/src/threadpool.rs	shutdown_within	159	PROVEN	PoolWithin.waitLoop_exit, waitLoop_bound, within_in_time (returns before start+timeout+s), within_true_all_finished, within_false_unfinished, blocked_reported, within_partition (no handle lost), detached_workers_exit (no worker leak); sleep/is_finished are hypotheses on std (monotone, sleep in [1,s]); BUGS second_call_true_despite_straggler, within_blocks_behind_shutdown (repro/threadpool_within.rs, not fixed)
+graph/src/threadpool.rs	spawn	185	PROVEN	Pool.global_spec (gSpawn: panics uninitialised, else ThreadPool::spawn)
+graph/src/threadpool.rs	init_thread_pool	201	PROVEN	Pool.global_spec (init: Ok once, then Err)
+graph/src/threadpool.rs	shutdown	210	PROVEN	Pool.global_spec (gShutdown no-op uninitialised), shutdown_drains
+graph/src/threadpool.rs	try_acquire	238	PROVEN	Pool.acquireLoop on QUEUED_QUERIES: acquire_bounded, acquire_full; Locks.inv3014_step (count ≤ MAX_QUEUED_QUERIES)
+graph/src/threadpool.rs	try_acquire_in	242	PROVEN	Pool.acquireLoop (CAS loop vs any interleaving): acquire_bounded (count after admission ≤ max), acquire_full (refusal writes nothing, never waits)
+graph/src/threadpool.rs	drop	258	PROVEN	Pool.tr/follow/Sys: release_exactly_once, paths_release_once (every #3014 path), count_eq_live (count = live slots ⇒ prev > 0)
+graph/src/locks.rs	upgrade_to_write	43	PROVEN	Locks.all_programs_ordered/no_cycle (trait contract: escalation order)
+graph/src/thread_id.rs	set_main_thread	13	PROVEN	Once.thread_id_spec
+graph/src/thread_id.rs	is_main_thread	23	PROVEN	Once.thread_id_spec
+graph/src/thread_id.rs	set_process_is_child	32	PROVEN	Once.thread_id_spec
+graph/src/thread_id.rs	process_is_child	39	PROVEN	Once.thread_id_spec
+graph/src/storage/registry.rs	register_index_backend	31	PROVEN	Once.registry_spec
+graph/src/storage/registry.rs	index_backend	43	PROVEN	Once.registry_spec
+graph/src/storage/registry.rs	register_attr_backend	52	PROVEN	Once.registry_spec
+graph/src/storage/registry.rs	attr_backend	62	PROVEN	Once.registry_spec
+graph/src/graph/mvcc_graph.rs	new	97	MODELLED	Mvcc.init
+graph/src/graph/mvcc_graph.rs	from_graph	111	MODELLED	Mvcc.init (arbitrary pub)
+graph/src/graph/mvcc_graph.rs	read	118	PROVEN	Mvcc.snapshots_are_committed (Ev.read)
+graph/src/graph/mvcc_graph.rs	fork	130	PROVEN	Mvcc Ev.forkW/forkCur (takes nothing; version ver+1, base = published): one_commit_per_version, inline_write_ok, current_not_stale, private_on_committed (#3657)
+graph/src/graph/mvcc_graph.rs	is_stale	144	PROVEN	Mvcc Ev.checkFork (published.version + 1 != fork.version ⇒ stale, no Current version made): checkFork_stale, checkFork_on_committed, stale_then_rerun, batch_then_check
+graph/src/graph/mvcc_graph.rs	commit	205	PROVEN	Mvcc.no_lost_writes/history_linear/one_commit_per_version (Ev.commit, ver+1), commit_publishes (commit then swap), refused_commit_publishes_nothing, stale_commit_publishes_nothing, current_not_stale; #3545 compare-and-swap: Ev.commit loads and checks, Ev.swap is the CAS: swap_overtaken_publishes_nothing (Stale: nothing published), swap_unchanged_publishes, in_flight_blocks_mutate, cas_refuses_overtaken_commit, cas_current_commit_publishes; schema_version/trim/fold_oversized_deltas not modelled
+graph/src/graph/mvcc_graph.rs	commit_indexer_batch	235	PROVEN	Mvcc Ev.batch (writer=false: same data version, no data change): batch_keeps_forks, batch_then_check, batch_does_not_stale (#3566); the fit decision (Same/Swap/Discarded) is native_index IndexerFit
+graph/src/graph/mvcc_graph.rs	commit_version	261	PROVEN	Mvcc Ev.commit (writer=true: is_stale ⇒ Stale, validate ⇒ Invalid, else swap) and Ev.batch (writer=false skips the stale check): commit_publishes, stale_commit_publishes_nothing, refused_commit_publishes_nothing, batch_keeps_forks; #3567 also calls FalkorDbIndex::publish (index bookkeeping, no data: native_index Rebase.publish_proj); #3545: the publish is `compare_and_swap(&published, new)` against the pointer loaded for the checks, modelled by Ev.commit (load, checks) then Ev.swap (CAS: Stale if `pid` moved, e.g. a batch published without the lock): swap_overtaken_publishes_nothing, swap_unchanged_publishes; the batch's own CAS: native_index Batch.commit_cas_stale
+graph/src/graph/mvcc_graph.rs	drop	351	NOT COVERED	cancel_indexing on drop
+src/graph_core.rs	up_to_nul	87	NOT COVERED	string helper, not concurrency
+src/graph_core.rs	c_graph_name	104	NOT COVERED	string helper
+src/graph_core.rs	c_graph_key	119	NOT COVERED	string helper
+src/graph_core.rs	register_graph	140	MODELLED	Mvcc.S.registered := true
+src/graph_core.rs	graph_is_registered	188	PROVEN	Mvcc.delete_blocks_writes (registered guard on mutate/commit)
+src/graph_core.rs	rename_graph	202	NOT COVERED	registry re-key; RENAME not modelled
+src/graph_core.rs	new	256	NOT COVERED	WriteQueryOk::new modified predicate
+src/graph_core.rs	sanitise_error	318	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	block_client	333	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	unblock_client	344	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	get_thread_safe_context	353	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	free_thread_safe_context	364	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	reply_error	373	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	signal_modified_key	390	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	yield_ctx	412	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	measure_time_start	429	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	measure_time_end	439	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	hold_string	456	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	free_string	467	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	trim_string_allocation	482	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	replicate_argv	497	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	new	553	PROVEN	unbounded write channel (#3014); Locks.never_stuck_3014 (send never waits)
+src/graph_core.rs	from_mvcc	569	MODELLED	as new
+src/graph_core.rs	execute_query	587	MODELLED	Mvcc Ev.read on snapshot; write detection not modelled
+src/graph_core.rs	execute_profile	674	MODELLED	as execute_query
+src/graph_core.rs	execute_query_write	737	PROVEN	Mvcc fork/checkFork (#3290/#3657): inline_write_ok, stale_then_rerun, checkFork_on_committed (retry sees the inline write) (BUG 5; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+src/graph_core.rs	reply_profile	884	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
+src/graph_core.rs	new	921	AXIOMATISED	RM_BlockClient FFI
+src/graph_core.rs	drop	929	AXIOMATISED	RM_UnblockClient FFI
+src/graph_core.rs	compute_effective_timeout	947	NOT COVERED	config arithmetic, not concurrency
+src/graph_core.rs	reply_invalid_graph_version	986	NOT COVERED	reply formatting
+src/graph_core.rs	admit	1000	PROVEN	Pool.acquireLoop/acquire_bounded; Locks.succ3014 dispatch (reject, never wait): main_never_blocks, inv3014_step
+src/graph_core.rs	query_mut	1011	PROVEN	Locks.main_never_blocks/never_stuck_3014/inv3014_step (admit + unbounded spawn, #3014); drain producer (send then CAS)
+src/graph_core.rs	query_sync	1215	PROVEN	Mvcc.inline_write_ok (inline writer = escalate 0 then forkCur; never refused by a matching queued write, #3290)
+src/graph_core.rs	profile_mut	1344	PROVEN	same admission/producer protocol as query_mut: Locks.main_never_blocks, never_stuck_3014
+src/graph_core.rs	profile_sync	1445	MODELLED	as query_sync
+src/graph_core.rs	finish_write	1512	PROVEN	Mvcc Ev.commit (session in writer mode) / Ev.abandon (never escalated: the version just drops with the runtime)
+src/graph_core.rs	abandon_write	1537	PROVEN	Mvcc Ev.abandon (the fork is dropped, nothing to roll back); index resync not modelled
+src/graph_core.rs	commit_and_replicate	1553	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
+src/graph_core.rs	process_write_queued_query	1599	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
+src/graph_core.rs	replicate	1748	AXIOMATISED	RM_Replicate FFI
+src/graph_core.rs	graph_free	1761	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
+src/query_session.rs	begin	158	MODELLED	reader mode (graphR acquire)
+src/query_session.rs	begin_with	165	MODELLED	reader mode
+src/query_session.rs	begin_writer	180	PROVEN	Locks.inlineWriterProg ordered (all_programs_ordered)
+src/query_session.rs	write_version	211	PROVEN	Mvcc Ev.forkW (reader) / Ev.forkCur (writer): inline_write_ok, reader_cannot_commit
+src/query_session.rs	check_fork	247	CONDITIONAL	Mvcc Ev.checkFork: checkFork_stale, checkFork_on_committed, one_commit_per_version; #3567 also rebases the fork onto indexer batches (no data change: native_index Rebase.V.rebased_keeps_data, rebased_not_stale); rests on a hypothesis about other code: the fork is not borrowed when it escalates (rebase_onto_indexer_batches' try_borrow_mut: a debug build panics, a release build returns Err(Stale)), a runtime lifecycle invariant not proven here
+src/query_session.rs	version_is_current	235	PROVEN	Mvcc cur ≠ none (Current): current_not_stale, private_on_committed; PROVEN in redis_layer QuerySession.versionIsCurrent
+src/query_session.rs	release_locks	281	MODELLED	Op.rel sequence
+src/query_session.rs	graph_arc	289	NOT COVERED	accessor
+src/query_session.rs	with_graph	298	NOT COVERED	borrow helper
+src/query_session.rs	with_graph_mut	314	NOT COVERED	borrow helper
+src/query_session.rs	upgrade_to_write	332	PROVEN	Mvcc.delete_blocks_writes (registry check after escalation); check_fork last: Mvcc Ev.checkFork
+src/query_session.rs	escalate	358	PROVEN	Locks.writerProg ordered; bad_escalate_rejected (#726); #3226: escalating with an index scan still open takes the GIL while holding RediSearch's locks (Locks.writerOpenScanProg; LockOrdered refuted by bug3226_open_scan_unordered, stall bug3226_restore_stall_cycle, OPEN)
+src/query_session.rs	reauthorize_write	392	NOT COVERED	pause/role flags (Redis state) not modelled
+src/query_session.rs	upgrade_to_write	433	PROVEN	delegates to QuerySession::upgrade_to_write
+src/query_session.rs	drop	443	MODELLED	release in reverse order (Mode field order)
+src/query_session.rs	hold_gil	463	PROVEN	Locks.telemetryProg ordered
+src/query_session.rs	acquire	485	MODELLED	Mvcc Ev.escalate; main thread no-op = Tid 0
+src/query_session.rs	drop	508	MODELLED	Mvcc Ev.release
+src/query_session.rs	lock_gil	529	AXIOMATISED	RM_ThreadSafeContextLock FFI
+src/query_session.rs	release_gil	542	AXIOMATISED	RM_ThreadSafeContextUnlock/Free FFI
+src/dispatch.rs	must_run_inline	36	MODELLED	inline path = Tid 0 in Mvcc (query_sync)
+src/commands/delete.rs	graph_delete	37	PROVEN	Mvcc Ev.delete on main thread with GIL; delete_blocks_writes, fork_excludes_commit
+graph/src/index/mod.rs	make_arr_names	122	PROVEN	Search.arrNames used by range_never_vector_or_text
+graph/src/index/mod.rs	new	138	MODELLED	Search.Field
+graph/src/index/mod.rs	new_with_vector_options	155	MODELLED	Search.Field.vdim (vector_options.map dimension)
+graph/src/index/mod.rs	set	717	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; counterexample removed in bbee75955; the last revision that has them is 17ccc5412), docSet_temporal_not_indexed, fulltext_only_strings, range_never_vector_or_text
+graph/src/index/mod.rs	add_document	1907	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
+graph/src/index/mod.rs	register_fields	1181	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
+graph/src/index/mod.rs	bump_id	1049	PROVEN	Tickets.bump_inv, stale_release_isolated
+graph/src/index/mod.rs	increment_pending_for_generation	2111	PROVEN	Tickets.inc_inv
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2129	PROVEN	Tickets.dec_inv, release_exact
+graph/src/index/mod.rs	pending_count_for_generation	2151	PROVEN	Tickets.pendingFor
+graph/src/index/mod.rs	pending_count	2165	PROVEN	Tickets.operational_iff
+graph/src/index/mod.rs	is_operational	2084	PROVEN	Tickets.operational_iff
+graph/src/index/indexer.rs	create_index	181	PROVEN	Tickets.store (73077bb4a: bump_id when the label has fields; Rust bumps whenever the entry exists, which also covers the window after drop_index leaves a 0-field entry until drop_index_bg removes it: not modelled, an extra bump only makes older tickets stale); main_operational_complete, main_lost_order_complete (BUG 2, fixed by #3086; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/index/indexer.rs	acquire_population_ticket	624	PROVEN	Tickets.inc_inv
+graph/src/index/indexer.rs	acquire_population_snapshot	642	PROVEN	Tickets.acquire / inc_inv; Worker.attrs snapshot (main_operational_complete)
+graph/src/index/indexer.rs	acquire_population_snapshots	664	PROVEN	Tickets.inc_inv
+graph/src/index/indexer.rs	release_population_ticket	686	PROVEN	Tickets.dec_inv
+graph/src/index/indexer.rs	is_ticket_current	698	PROVEN	Tickets.batch stale branch (inv_batch, main_lost_order_complete, fixed_trace_complete)
+graph/src/index/indexer.rs	ticket_pending_changes	710	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
+graph/src/index/indexer.rs	enabled	720	PROVEN	Tickets.operational_iff
+graph/src/graph/graph.rs	populate_index_batch	594	PROVEN	Tickets.batch; inv_batch, main_operational_complete
+graph/src/graph/graph.rs	vector_query_nodes	4355	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/graph/graph.rs	vector_query_edges	4415	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
+graph/src/runtime/runtime.rs	map_to_index_options	2008	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
+graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)
+graph/src/runtime/ops/commit.rs	next	69	MODELLED	lock path only (#3226): Locks.writerOpenScanProg (escalate at :93, commit_deferred_indexes → Indexer::commit → RediSearch_IndexAddDocument with the scan's spec read lock still held); properties noReacquire / LockOrdered refuted by bug3226_open_scan_upgrade, bug3226_open_scan_unordered (OPEN); scan-closed paths: spec_programs_ordered

@@ -24,20 +24,37 @@
 //!
 //! On error or ROLLBACK, the Pending is simply dropped without applying.
 
-use std::{cell::RefCell, ops::BitOrAssign, sync::Arc};
+use std::{cell::RefCell, sync::Arc};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
+
+use crate::graph::graph::{DeletedEdge, DeletedNodeLabel};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::{
+    falkordb_index::EqualCandidates,
+    unique::{ReadOnce, native_unique_query},
+};
+#[cfg(not(feature = "index-falkordb"))]
+use crate::index::{
+    Index,
+    indexer::{IndexQuery, IndexType},
+};
 
 use crate::{
     entity_type::EntityType,
     graph::{
         constraint::{ConstraintStatus, ConstraintType},
-        graph::{Graph, LabelId, NodeId, RelationshipId},
+        graph::{Graph, LabelId, NodeId, NodeOpError, RelationshipId},
     },
-    runtime::{ordermap::OrderMap, orderset::OrderSet, runtime::QueryStatistics, value::Value},
+    runtime::{
+        ordermap::OrderMap,
+        orderset::OrderSet,
+        runtime::QueryStatistics,
+        value::{MAX_VALUE_NESTING, Value},
+    },
 };
 
 /// Flatten a node_id → [label_ids] map into parallel (rows, cols) arrays.
@@ -57,6 +74,8 @@ fn flatten_label_map(map: &FxHashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
 const INVALID_PROPERTY_MSG: &str =
     "Property values can only be of primitive types or arrays of primitive types";
 
+/// Whether a non-list value is a valid property: a primitive, or NULL when
+/// `allow_null`. Lists are checked by [`validate_list_property`].
 fn is_valid_property(
     value: &Value,
     allow_null: bool,
@@ -73,25 +92,52 @@ fn is_valid_property(
         | Value::Date(_)
         | Value::Time(_)
         | Value::Duration(_) => true,
-        Value::List(items) => items.iter().all(|v| is_valid_property(v, false)),
         _ => false,
+    }
+}
+
+/// Checks a list property: elements are primitives or lists, nested at most
+/// [`MAX_VALUE_NESTING`] deep. `depth` is the nesting of `items` itself (a
+/// top-level list is depth 1).
+///
+/// Lists can be built arbitrarily deep at runtime (e.g. `reduce(a = 1, i IN
+/// range(1, n) | [a])`), so this cannot be caught when the query is parsed.
+/// The bound is what lets every stored value be saved and loaded back: the
+/// RDB decoder refuses anything deeper. The walk is recursive, but stops at
+/// the bound, so it cannot itself run too deep.
+fn validate_list_property(
+    items: &[Value],
+    depth: usize,
+) -> Result<(), String> {
+    if depth > MAX_VALUE_NESTING {
+        return Err(format!(
+            "Property values can only be nested up to {MAX_VALUE_NESTING} levels deep"
+        ));
+    }
+    items.iter().try_for_each(|v| match v {
+        Value::List(inner) => validate_list_property(inner, depth + 1),
+        v if is_valid_property(v, false) => Ok(()),
+        _ => Err(INVALID_PROPERTY_MSG.into()),
+    })
+}
+
+/// Checks a property value: a primitive, NULL, or a list of primitives.
+fn validate_property(value: &Value) -> Result<(), String> {
+    match value {
+        Value::List(items) => validate_list_property(items, 1),
+        v if is_valid_property(v, true) => Ok(()),
+        _ => Err(INVALID_PROPERTY_MSG.into()),
     }
 }
 
 /// Validate that a value is a valid node property type.
 fn validate_node_property(value: &Value) -> Result<(), String> {
-    if !is_valid_property(value, true) {
-        return Err(INVALID_PROPERTY_MSG.into());
-    }
-    Ok(())
+    validate_property(value)
 }
 
 /// Validate that a value is a valid relationship property type.
 fn validate_relationship_property(value: &Value) -> Result<(), String> {
-    if !is_valid_property(value, true) {
-        return Err(INVALID_PROPERTY_MSG.into());
-    }
-    Ok(())
+    validate_property(value)
 }
 
 /// Binary-search a sorted `(attr_id, Value)` slice.
@@ -105,83 +151,302 @@ fn lookup_sorted(
         .map(|pos| &attrs[pos].1)
 }
 
+/// Whether the supporting index's exact match on `value` returns every entity
+/// whose composite-key component equals it. Other values (large integers the
+/// index stores rounded, NaN, the empty string, and any type it does not index)
+/// are checked by a scan instead. A string containing NUL is fine: the tag
+/// encoding escapes it to `_00` on both the write and the query path.
+#[cfg(not(feature = "index-falkordb"))]
+fn is_value_valid_for_index_lookup(value: &Value) -> bool {
+    match value {
+        Value::Int(i) => !Index::int_loses_f64_precision(*i),
+        Value::Float(f) => !f.is_nan(),
+        Value::Bool(_) => true,
+        Value::String(s) => !s.is_empty(),
+        _ => false,
+    }
+}
+
+/// The RediSearch lookup for one member of a unique constraint: an equality on
+/// every constrained property, when each is Range-indexed (`indexed`) and each
+/// value is one the index matches exactly.
+#[cfg(not(feature = "index-falkordb"))]
+fn redisearch_unique_query(
+    indexed: bool,
+    properties: &[Arc<String>],
+    values: Vec<Value>,
+) -> Option<IndexQuery<Value>> {
+    if !indexed || !values.iter().all(is_value_valid_for_index_lookup) {
+        return None;
+    }
+    let mut eqs = properties
+        .iter()
+        .zip(values)
+        .map(|(key, value)| IndexQuery::Equal {
+            key: key.clone(),
+            value,
+        })
+        .collect::<Vec<_>>();
+    Some(if eqs.len() == 1 {
+        eqs.pop().unwrap()
+    } else {
+        IndexQuery::And(eqs)
+    })
+}
+
+/// Whether a unique constraint is violated by this commit, given `members`: the
+/// affected entities (a subset of `affected`) carrying the constrained label or
+/// type.
+///
+/// Like C's `EnforceUniqueEntity`, each member's values are looked up in an
+/// index, so the cost is per member, not per entity in the label. A lookup only
+/// has to return a superset: the index may lag this commit (RediSearch gets a
+/// `Commit`'s documents after its checks) or key several values alike, so a
+/// candidate it returns is re-verified against the graph, and members are
+/// compared among themselves. When the index cannot answer for some member's
+/// values, the label is scanned once for the whole set instead.
+///
+/// `query_for` gives the lookup for one member's values, or `None` when the index
+/// cannot answer for them; `lookup` runs one. They are separate so that every
+/// member is checked before any lookup runs: one member the index cannot answer
+/// for sends the whole set to the scan, and lookups run before it would be wasted.
+///
+/// `is_candidate` tells whether an entity the index or scan returned is still a
+/// live member of the label or type.
+#[allow(clippy::too_many_arguments)]
+fn unique_violated<Id, Q, L, S>(
+    properties: &[Arc<String>],
+    members: impl Iterator<Item = Id>,
+    affected: &RoaringTreemap,
+    attr: impl Fn(Id, &Arc<String>) -> Option<Value>,
+    is_candidate: impl Fn(Id) -> bool,
+    query_for: impl Fn(Vec<Value>) -> Option<Q>,
+    lookup: impl Fn(Q) -> L,
+    scan: impl FnOnce() -> S,
+) -> bool
+where
+    Id: Copy + Into<u64>,
+    L: Iterator<Item = Id>,
+    S: Iterator<Item = Id>,
+{
+    let mut keys: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut lookups = Vec::new();
+    let mut use_index = true;
+    for id in members {
+        // A NULL or absent constrained property: the entity does not participate.
+        let Some(values) = properties
+            .iter()
+            .map(|prop| attr(id, prop).filter(|v| !matches!(v, Value::Null)))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let mut it = values.iter();
+        let key = Graph::build_composite_key(properties, |_| it.next().cloned());
+        if !keys.insert(key) {
+            // Two entities written in this commit share a key. That is a
+            // violation whatever the index or the rest of the label holds, so
+            // there is nothing left to look up or scan.
+            return true;
+        }
+        if use_index {
+            if let Some(query) = query_for(values) {
+                lookups.push(query);
+            } else {
+                // One member the index cannot answer for sends the whole set
+                // to a single scan, so the lookups gathered so far are unused.
+                use_index = false;
+                lookups = Vec::new();
+            }
+        }
+    }
+    if keys.is_empty() {
+        return false;
+    }
+
+    // Members are already compared among themselves above.
+    let collides = |other: Id| {
+        !affected.contains(other.into())
+            && is_candidate(other)
+            && keys.contains(&Graph::build_composite_key(properties, |prop| {
+                attr(other, prop)
+            }))
+    };
+    if use_index {
+        lookups.into_iter().any(|query| lookup(query).any(collides))
+    } else {
+        scan().any(collides)
+    }
+}
+
+/// A relationship whose id was handed out and then taken back, because the node
+/// it hung off was cancelled in the same commit.
+///
+/// The endpoints and the type are kept even though the edge never survives:
+/// `CreateEdge` has no form without them, and the record pair is what tells the
+/// replica the id was used. See [`Pending::cancelled_relationships`].
+#[derive(Debug, Clone)]
+pub(crate) struct CancelledRelationship {
+    pub(crate) id: u64,
+    pub(crate) type_name: Arc<String>,
+    pub(crate) src: u64,
+    pub(crate) dst: u64,
+}
+
 /// Accumulated write operations for deferred application.
 ///
 /// All mutations during query execution are collected here and applied
 /// atomically at the end. This enables transactional semantics.
+///
+/// The fields are `pub(crate)` rather than hidden behind per-format view
+/// structs. Those views were a projection — every field a reference to the same
+/// type — so they documented the dependency surface and did nothing else, while
+/// costing a struct and a constructor per wire format. What states that surface
+/// now is `effects_v3_emit::digest`, whose return type says precisely what
+/// replication makes of this.
 pub struct Pending {
-    /// Nodes created in this transaction
-    created_nodes: RoaringTreemap,
-    /// Relationships created, grouped by type: type_name → [(rel_id, from, to)]
-    created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
+    /// Nodes created in this transaction, and what the allocator must not
+    /// reissue: reserved, still destined for `create_nodes` at commit, and so
+    /// not yet recorded anywhere the id space can see.
+    ///
+    /// Cancelled ids are deliberately *not* here — `IdSpace::cancel` records
+    /// them and `IdSpace::reserve` excludes what it has recorded, so passing
+    /// them again would count one id twice and leave a gap the batch never
+    /// fills.
+    pub(crate) created_nodes: RoaringTreemap,
+    pub(crate) created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
     /// Reverse index: rel_id → type_name for O(1) existence/type lookups
-    created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
+    pub(crate) created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
+    /// The relationship ids this batch has reserved and not yet cancelled — the
+    /// mirror of `created_nodes`.
+    ///
+    /// A set of its own because the created relationships are kept as a map
+    /// keyed by id and a vector of cancellation records, neither of which can be
+    /// differenced against the free set without being walked.
+    pub(crate) taken_relationship_ids: RoaringTreemap,
     /// Nodes to be deleted
-    deleted_nodes: RoaringTreemap,
+    pub(crate) deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted
-    deleted_relationships: RoaringTreemap,
-    /// Endpoints for deleted relationships — populated by commit(), used by build_effects_buffer().
-    deleted_endpoints: Vec<(RelationshipId, NodeId, NodeId)>,
+    pub(crate) deleted_relationships: RoaringTreemap,
+    /// Endpoints for deleted relationships — populated by commit(), read by the
+    /// effects emitter, which takes a `Pending` and never the other way round.
+    pub(crate) deleted_endpoints: Vec<DeletedEdge>,
+    /// `(node_id, label_id)` for every deleted node that carried a label —
+    /// populated by commit(), used by the effects emitter.
+    ///
+    /// Captured here because `delete_nodes` clears the label matrices, so by
+    /// the time effects are encoded the labels are unrecoverable; and a label
+    /// set is what tells a replica which label-scoped indexes to clear. Stored
+    /// as flat pairs rather than grouped: `delete_nodes` already built this
+    /// exact vector, so keeping it costs a move, while grouping would charge
+    /// every delete for a partitioning only a replicating server reads.
+    pub(crate) deleted_node_labels: Vec<DeletedNodeLabel>,
+    /// Nodes created and deleted inside one segment, which the graph never
+    /// sees.
+    ///
+    /// `delete_pending_node` unwinds such a node out of `created_nodes` and
+    /// `cancel_node_id` hands its id straight back to the recycle bin, so the
+    /// master's id space acquires a hole that no create and no delete
+    /// describes. Replicating nothing for it left the replica's id space one
+    /// short, and its next allocation after a promotion landed on a live node.
+    ///
+    /// Kept here so the effects emitter can say what happened — a create and a
+    /// delete, which is what C's payload carries for the same query — without
+    /// the master having to do the work it deliberately skips.
+    /// Ids of nodes created and then cancelled in this commit.
+    ///
+    /// Ids alone: the record pair they become carries no labels or attributes,
+    /// because the node is deleted a record later and its content would be
+    /// applied and immediately undone. [`Self::cancelled_relationships`] keeps
+    /// more only because `CreateEdge` has no form without a type and endpoints.
+    pub(crate) cancelled_nodes: RoaringTreemap,
+    /// Relationships cascaded away by a cancelled node, in the same commit.
+    ///
+    /// Their ids were reserved and returned exactly as a cancelled node's is —
+    /// `cancel_relationship_id` puts them in the recycle bin — so a buffer that
+    /// says nothing about them leaves the replica's relationship id space with a
+    /// hole, and `IdSpace::verify` refuses the whole payload.
+    pub(crate) cancelled_relationships: Vec<CancelledRelationship>,
     /// Property updates for newly created nodes (fast path: skip fjall).
     /// Values are attribute-id-resolved, sorted by id, unique.
-    new_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
+    pub(crate) new_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Property updates for existing nodes (full merge path)
-    existing_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
+    pub(crate) existing_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Property updates for newly created relationships (fast path)
-    new_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
+    pub(crate) new_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Property updates for existing relationships (full merge path)
-    existing_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
+    pub(crate) existing_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Labels to add: node_id → [label_ids]
-    set_labels: FxHashMap<u64, Vec<u64>>,
+    pub(crate) set_labels: FxHashMap<u64, Vec<u64>>,
     /// Labels to remove: node_id → [label_ids]
-    remove_labels: FxHashMap<u64, Vec<u64>>,
-    /// Documents to add to indexes (keyed by label id)
-    index_add_docs: FxHashMap<u64, RoaringTreemap>,
-    /// Documents to remove from indexes (keyed by label id)
-    index_remove_docs: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to add to indexes (keyed by relationship type id)
-    index_add_edge_docs: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to remove from indexes: `type_id → { edge_id → (src, dst) }`.
-    /// `(src, dst)` is captured at deletion time — the edge is gone
-    /// from the tensor by the time `commit_edge_index` runs so the
-    /// 24-byte RediSearch key must be reconstructable from here.
-    index_remove_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    /// Deferred index operations — accumulated across commit cycles,
-    /// applied only after the full query succeeds so that a failed
-    /// query never leaves stale entries in RediSearch.
-    deferred_index_adds: FxHashMap<u64, RoaringTreemap>,
-    deferred_index_removes: FxHashMap<u64, RoaringTreemap>,
-    deferred_edge_index_adds: FxHashMap<u64, RoaringTreemap>,
-    deferred_edge_index_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    pub(crate) remove_labels: FxHashMap<u64, Vec<u64>>,
+    /// Index documents this `Commit` produced.
+    pub(crate) index_docs: IndexDocs,
+    /// Index documents accumulated across the query's commits, applied only
+    /// once the whole query succeeds so a failed one never leaves stale
+    /// entries in RediSearch.
+    pub(crate) deferred_docs: IndexDocs,
     /// Union of every index document this query has published, accumulated across
     /// all of its `Commit`s, so a later failure can resync them against committed
     /// state (see [`Self::resync_published_indexes`]).
     ///
-    /// Deliberately **not** reset by [`Self::clear`], which runs after every
+    /// Deliberately **not** reset by [`Self::end_segment`], which runs after every
     /// `Commit`: the undo has to cover the whole query, not just the last `Commit`.
     /// Per-query state — `Pending` belongs to one `Runtime`.
-    published: DeferredIndexes,
+    published: IndexDocs,
     /// Schema baseline: number of labels when the current commit window started.
-    schema_label_count: usize,
+    pub(crate) schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
-    schema_rel_type_count: usize,
+    pub(crate) schema_rel_type_count: usize,
     /// Schema baseline: number of node attribute names when the current commit window started.
-    schema_node_attr_count: usize,
+    pub(crate) schema_node_attr_count: usize,
     /// Schema baseline: number of relationship attribute names when the current commit window started.
-    schema_rel_attr_count: usize,
+    pub(crate) schema_rel_attr_count: usize,
 }
 
-/// One `Commit`'s index document changes, collected while applying `pending` and
-/// written to RediSearch as a batch.
-#[derive(Default)]
-pub struct DeferredIndexes {
-    node_adds: FxHashMap<u64, RoaringTreemap>,
-    node_removes: FxHashMap<u64, RoaringTreemap>,
-    edge_adds: FxHashMap<u64, RoaringTreemap>,
-    edge_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-}
+pub use crate::index::index_docs::{EdgeDocRemovals, IndexDocs};
 
-impl DeferredIndexes {
+impl IndexDocs {
+    /// True when nothing was produced, so a caller can skip the work of
+    /// publishing an empty set.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.node_adds.is_empty()
+            && self.node_removes.is_empty()
+            && self.edge_adds.is_empty()
+            && self.edge_removes.is_empty()
+    }
+
+    /// Fold `other` in, leaving it empty.
+    ///
+    /// Replaces four hand-written loops that folded a commit's documents into
+    /// the query's deferred set — one per map, each a chance to fold the wrong
+    /// pair together.
+    pub fn absorb(
+        &mut self,
+        other: &mut Self,
+    ) {
+        // The native index's changes are applied to the private version before a commit's
+        // documents are folded for publishing; anything still here would be dropped.
+        #[cfg(feature = "index-falkordb")]
+        debug_assert!(
+            other.native.is_empty(),
+            "native index writes must be applied before the documents are folded"
+        );
+        for (slot, ids) in other.node_adds.drain() {
+            *self.node_adds.entry(slot).or_default() |= ids;
+        }
+        for (slot, ids) in other.node_removes.drain() {
+            *self.node_removes.entry(slot).or_default() |= ids;
+        }
+        for (slot, ids) in other.edge_adds.drain() {
+            *self.edge_adds.entry(slot).or_default() |= ids;
+        }
+        for (slot, ids) in other.edge_removes.drain() {
+            self.edge_removes.entry(slot).or_default().extend(ids);
+        }
+    }
+
     /// Fold `other` in, for accumulating everything one query published.
     fn merge(
         &mut self,
@@ -231,12 +496,10 @@ impl DeferredIndexes {
     /// excluded (mirrors C, which updates index docs inside the graph write lock).
     pub fn commit(
         &mut self,
-        g: &AtomicRefCell<Graph>,
+        g: &mut Graph,
     ) {
-        // This is the query's own private version, which nothing else can borrow, so
-        // graph-then-indexer is safe here — see `Pending::resync_published_indexes`
-        // for the published version, where the order has to be the other way round.
-        let mut g = g.borrow_mut();
+        // Each call takes its own indexer lock. `Pending::resync_published_indexes`
+        // holds both across its writes instead.
         g.commit_index(&mut self.node_adds, &mut self.node_removes);
         g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
     }
@@ -255,24 +518,22 @@ impl Pending {
             created_nodes: RoaringTreemap::new(),
             created_rels_by_type: FxHashMap::default(),
             created_rel_types: FxHashMap::default(),
+            taken_relationship_ids: RoaringTreemap::new(),
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
             deleted_endpoints: Vec::new(),
+            deleted_node_labels: Vec::new(),
+            cancelled_nodes: RoaringTreemap::new(),
+            cancelled_relationships: Vec::new(),
             new_nodes_attrs: FxHashMap::default(),
             existing_nodes_attrs: FxHashMap::default(),
             new_relationships_attrs: FxHashMap::default(),
             existing_relationships_attrs: FxHashMap::default(),
             set_labels: FxHashMap::default(),
             remove_labels: FxHashMap::default(),
-            index_add_docs: FxHashMap::default(),
-            index_remove_docs: FxHashMap::default(),
-            index_add_edge_docs: FxHashMap::default(),
-            index_remove_edge_docs: FxHashMap::default(),
-            published: DeferredIndexes::default(),
-            deferred_index_adds: FxHashMap::default(),
-            deferred_index_removes: FxHashMap::default(),
-            deferred_edge_index_adds: FxHashMap::default(),
-            deferred_edge_index_removes: FxHashMap::default(),
+            index_docs: IndexDocs::default(),
+            published: IndexDocs::default(),
+            deferred_docs: IndexDocs::default(),
             schema_label_count: 0,
             schema_rel_type_count: 0,
             schema_node_attr_count: 0,
@@ -280,13 +541,12 @@ impl Pending {
         }
     }
 
-    /// Record the current schema sizes so `build_effects_buffer` can emit
-    /// EFFECT_ADD_SCHEMA / EFFECT_ADD_ATTRIBUTE for newly added entries.
+    /// Record the current dictionary sizes, so an effects emitter can tell
+    /// which labels, types and attributes this query added.
     pub fn set_schema_baseline(
         &mut self,
-        g: &AtomicRefCell<Graph>,
+        graph: &Graph,
     ) {
-        let graph = g.borrow();
         self.schema_label_count = graph.get_labels().len();
         self.schema_rel_type_count = graph.get_types().len();
         self.schema_node_attr_count = graph.get_node_attribute_names().len();
@@ -317,7 +577,11 @@ impl Pending {
         if attrs.is_empty() {
             return Ok(());
         }
-        debug_assert!(attrs.is_sorted_by_key(|(k, _)| *k));
+        // Strict: the doc above requires unique ids too, and
+        // `AttributeStore::insert_attrs_rows` asserts strictly ascending at the
+        // other end, so a non-strict check here would pass a duplicate along to
+        // an assert that rejects it.
+        debug_assert!(attrs.windows(2).all(|w| w[0].0 < w[1].0));
         let is_new = self.created_nodes.contains(id.into());
         if is_new {
             self.new_nodes_attrs.insert(id.into(), attrs);
@@ -353,6 +617,14 @@ impl Pending {
     ) {
         self.new_nodes_attrs.remove(&id.into());
         self.existing_nodes_attrs.remove(&id.into());
+    }
+
+    pub fn clear_relationship_attributes(
+        &mut self,
+        id: RelationshipId,
+    ) {
+        self.new_relationships_attrs.remove(&id.into());
+        self.existing_relationships_attrs.remove(&id.into());
     }
 
     #[must_use]
@@ -410,15 +682,34 @@ impl Pending {
         }
     }
 
+    /// Stage label adds for `id`, cancelling any removal of those same labels
+    /// staged earlier in this query. Mirrors [`Self::remove_node_labels`], which
+    /// cancels earlier adds; together they keep `set_labels` and `remove_labels`
+    /// disjoint per node, so the last clause to touch a label wins in either
+    /// direction (`REMOVE n:L SET n:L` keeps `L`, `SET n:L REMOVE n:L` drops it).
+    fn stage_node_labels(
+        &mut self,
+        raw_id: u64,
+        labels: &OrderSet<LabelId>,
+    ) {
+        let entry = self.set_labels.entry(raw_id).or_default();
+        for label in labels.iter() {
+            entry.push(usize::from(*label) as u64);
+        }
+        if let Some(removed) = self.remove_labels.get_mut(&raw_id) {
+            removed.retain(|&l| !labels.contains(&LabelId(l as usize)));
+            if removed.is_empty() {
+                self.remove_labels.remove(&raw_id);
+            }
+        }
+    }
+
     pub fn set_node_labels(
         &mut self,
         id: NodeId,
         labels: &OrderSet<LabelId>,
     ) {
-        let entry = self.set_labels.entry(id.into()).or_default();
-        for label in labels.iter() {
-            entry.push(usize::from(*label) as u64);
-        }
+        self.stage_node_labels(id.into(), labels);
     }
 
     pub fn set_nodes_labels(
@@ -427,13 +718,13 @@ impl Pending {
         labels: &OrderSet<LabelId>,
     ) {
         for id in ids {
-            let entry = self.set_labels.entry((*id).into()).or_default();
-            for label in labels.iter() {
-                entry.push(usize::from(*label) as u64);
-            }
+            self.stage_node_labels((*id).into(), labels);
         }
     }
 
+    /// Stage label removals for `id`, cancelling any add of those same labels
+    /// staged earlier in this query — the mirror image of
+    /// [`Self::stage_node_labels`], keeping the two sets disjoint per node.
     pub fn remove_node_labels(
         &mut self,
         id: NodeId,
@@ -445,6 +736,9 @@ impl Pending {
             // Remove from pending set labels
             if let Some(set) = self.set_labels.get_mut(&raw_id) {
                 set.retain(|&l| l != label_id);
+                if set.is_empty() {
+                    self.set_labels.remove(&raw_id);
+                }
             }
             self.remove_labels.entry(raw_id).or_default().push(label_id);
         }
@@ -454,9 +748,9 @@ impl Pending {
     /// added, `Some(false)` if it was removed, `None` if this query says nothing
     /// about it and the committed label matrix is the answer.
     ///
-    /// The precedence is [`Self::update_node_labels`]'s, which applies the adds
-    /// and then the removals, so a removal wins — the two must agree, since they
-    /// answer the same question for the same node.
+    /// `set_labels` and `remove_labels` are disjoint per node (see
+    /// [`Self::stage_node_labels`]), so at most one of the two branches below can
+    /// match and the order they are consulted in carries no meaning.
     pub fn node_has_label(
         &self,
         id: NodeId,
@@ -481,22 +775,60 @@ impl Pending {
         None
     }
 
+    /// Whether this query has staged a label or attribute change for node
+    /// `id`, i.e. whether [`Self::update_node_labels`] or
+    /// [`Self::update_node_attrs`] would change what the committed graph says.
+    /// O(1): an empty map is skipped before hashing.
+    #[must_use]
+    pub fn node_has_changes(
+        &self,
+        id: NodeId,
+    ) -> bool {
+        fn has<V>(
+            m: &FxHashMap<u64, V>,
+            id: u64,
+        ) -> bool {
+            !m.is_empty() && m.contains_key(&id)
+        }
+        let raw_id: u64 = id.into();
+        has(&self.set_labels, raw_id)
+            || has(&self.remove_labels, raw_id)
+            || has(&self.new_nodes_attrs, raw_id)
+            || has(&self.existing_nodes_attrs, raw_id)
+    }
+
+    /// Overlay this query's staged label changes onto `labels`.
+    ///
+    /// Adds are applied before removals, but the two sets are disjoint per node
+    /// (see [`Self::stage_node_labels`]), so no label is touched by both passes
+    /// and the order is immaterial.
     pub fn update_node_labels(
         &self,
         id: NodeId,
         labels: &mut OrderSet<LabelId>,
     ) {
+        let (added, removed) = self.staged_node_labels(id);
+        for &label_id in added {
+            labels.insert(LabelId(label_id as usize));
+        }
+        for &label_id in removed {
+            labels.remove(&LabelId(label_id as usize));
+        }
+    }
+
+    /// The label ids this query staged on `id`: `(added, removed)`, disjoint
+    /// (see [`Self::stage_node_labels`]). For a caller overlaying them on a set
+    /// other than [`Self::update_node_labels`]'s `OrderSet`.
+    #[must_use]
+    pub fn staged_node_labels(
+        &self,
+        id: NodeId,
+    ) -> (&[u64], &[u64]) {
         let raw_id: u64 = id.into();
-        if let Some(set) = self.set_labels.get(&raw_id) {
-            for &label_id in set {
-                labels.insert(LabelId(label_id as usize));
-            }
-        }
-        if let Some(removed) = self.remove_labels.get(&raw_id) {
-            for &label_id in removed {
-                labels.remove(&LabelId(label_id as usize));
-            }
-        }
+        (
+            self.set_labels.get(&raw_id).map_or(&[], Vec::as_slice),
+            self.remove_labels.get(&raw_id).map_or(&[], Vec::as_slice),
+        )
     }
 
     pub fn deleted_node(
@@ -510,20 +842,29 @@ impl Pending {
     /// and also mark any pending-created relationships connected to it for deletion.
     /// Returns (label_ids, attrs, connected_pending_rels) — the relationships carry
     /// their type and staged attrs so callers can snapshot them for later reads.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError`] if returning an id left the graph's id space
+    /// contradicting itself.
     pub fn delete_pending_node(
         &mut self,
         id: NodeId,
-    ) -> (
-        OrderSet<LabelId>,
-        Vec<(u16, Value)>,
-        Vec<(
-            RelationshipId,
-            NodeId,
-            NodeId,
-            Arc<String>,
-            Option<Vec<(u16, Value)>>,
-        )>,
-    ) {
+        g: &mut Graph,
+    ) -> Result<
+        (
+            OrderSet<LabelId>,
+            Vec<(u16, Value)>,
+            Vec<(
+                RelationshipId,
+                NodeId,
+                NodeId,
+                Arc<String>,
+                Option<Vec<(u16, Value)>>,
+            )>,
+        ),
+        NodeOpError,
+    > {
         self.created_nodes.remove(id.into());
         // Collect pending labels
         let mut label_ids = OrderSet::default();
@@ -537,25 +878,40 @@ impl Pending {
             .or_else(|| self.existing_nodes_attrs.remove(&id.into()))
             .unwrap_or_default();
 
-        let rels = self.remove_pending_relationships_for_node(id);
+        let rels = self.remove_pending_relationships_for_node(id, g)?;
 
-        (label_ids, attrs, rels)
+        // The one durable record that this id was ever handed out. Everything
+        // above has just erased it from the structures the graph commits.
+        self.cancelled_nodes.insert(id.into());
+        // And the graph's half, paired here for the same reason.
+        g.cancel_node_id(id)?;
+
+        Ok((label_ids, attrs, rels))
     }
 
     /// Remove and return all pending-created relationships incident on the
     /// given node, along with their staged attributes. Also cleans up
     /// `new_relationships_attrs` and `deleted_relationships` entries for
     /// each removed relationship so that `commit()` has no stale state.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError`] if returning an id left the graph's id space
+    /// contradicting itself.
     pub fn remove_pending_relationships_for_node(
         &mut self,
         id: NodeId,
-    ) -> Vec<(
-        RelationshipId,
-        NodeId,
-        NodeId,
-        Arc<String>,
-        Option<Vec<(u16, Value)>>,
-    )> {
+        g: &mut Graph,
+    ) -> Result<
+        Vec<(
+            RelationshipId,
+            NodeId,
+            NodeId,
+            Arc<String>,
+            Option<Vec<(u16, Value)>>,
+        )>,
+        NodeOpError,
+    > {
         let mut rels = Vec::new();
         for (type_name, entries) in &self.created_rels_by_type {
             for &(rel_id, from, to) in entries {
@@ -570,13 +926,36 @@ impl Pending {
             self.created_rel_types.remove(&rel_id);
             if let Some(entries) = self.created_rels_by_type.get_mut(&type_name) {
                 entries.retain(|(rid, _, _)| *rid != rel_id);
+                // And drop the group once it is empty. A type whose every edge
+                // was cascaded away was never registered on the graph — nothing
+                // of that type reached `create_relationships_bulk` — so leaving
+                // the key behind hands the effects emitter a type name it
+                // cannot resolve.
+                if entries.is_empty() {
+                    self.created_rels_by_type.remove(&type_name);
+                }
             }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
             self.deleted_relationships.remove(rel_id.into());
+            // Handed over to the id space, which records the cancellation as it
+            // returns the id to the free set. Leaving it here too would have the
+            // allocator count it twice.
+            self.taken_relationship_ids.remove(rel_id.into());
+            // The graph's half of the same event. Paired here so a caller cannot
+            // unwind the pending side and leave the id unreturned.
+            g.cancel_relationship_id(rel_id)?;
+            // The one durable record that this id was ever handed out, the same
+            // role `cancelled_nodes` plays for the node above.
+            self.cancelled_relationships.push(CancelledRelationship {
+                id: rel_id.into(),
+                type_name: type_name.clone(),
+                src: from.into(),
+                dst: to.into(),
+            });
             result.push((rel_id, from, to, type_name, attrs));
         }
 
-        result
+        Ok(result)
     }
 
     pub fn created_relationship(
@@ -591,6 +970,7 @@ impl Pending {
             .or_default()
             .push((id, from, to));
         self.created_rel_types.insert(id, type_name);
+        self.taken_relationship_ids.insert(id.into());
     }
 
     /// Set all attributes for a relationship. `attrs` must be
@@ -608,7 +988,11 @@ impl Pending {
         if attrs.is_empty() {
             return Ok(());
         }
-        debug_assert!(attrs.is_sorted_by_key(|(k, _)| *k));
+        // Strict: the doc above requires unique ids too, and
+        // `AttributeStore::insert_attrs_rows` asserts strictly ascending at the
+        // other end, so a non-strict check here would pass a duplicate along to
+        // an assert that rejects it.
+        debug_assert!(attrs.windows(2).all(|w| w[0].0 < w[1].0));
         if self.created_rel_types.contains_key(&id) {
             self.new_relationships_attrs.insert(id.into(), attrs);
         } else {
@@ -712,20 +1096,47 @@ impl Pending {
         self.created_nodes.contains(id.into())
     }
 
-    /// Returns pending-created node IDs that have ALL of the given labels.
-    /// When `label_ids` is empty, returns all pending-created nodes.
+    /// The nodes that GAIN a pattern label in this query and carry ALL of
+    /// `label_ids` once the pending changes apply: live (not pending-deleted),
+    /// with every label in the node's effective set
+    /// (`(committed \ remove_labels) ∪ set_labels`, `set_labels` alone for a
+    /// created node), and with at least one of them only staged. A node whose
+    /// pattern labels are all committed (and none pending removal) is left to
+    /// the wrapped scan: re-setting a label it already has changes nothing.
+    ///
+    /// A returned node may also be emitted by an indexed scan, which checks
+    /// secondary labels pending-aware. The caller therefore takes every
+    /// returned node from here only, skipping them in the wrapped scan, so
+    /// each is enumerated exactly once. When `label_ids` is empty, returns all
+    /// pending-created nodes.
     #[must_use]
     pub fn get_pending_nodes_with_labels(
         &self,
         label_ids: &[LabelId],
+        g: &Graph,
     ) -> RoaringTreemap {
         if label_ids.is_empty() {
             return self.created_nodes.clone();
         }
-        let label_ids_u64: Vec<u64> = label_ids.iter().map(|l| usize::from(*l) as u64).collect();
         let mut result = RoaringTreemap::new();
-        for (&node_id, node_labels) in &self.set_labels {
-            if label_ids_u64.iter().all(|lid| node_labels.contains(lid)) {
+        // A node that gains a pattern label must have it staged, so
+        // `set_labels` holds every candidate.
+        for (&node_id, staged) in &self.set_labels {
+            if self.deleted_nodes.contains(node_id) {
+                continue;
+            }
+            let created = self.created_nodes.contains(node_id);
+            let removed = self.remove_labels.get(&node_id);
+            let mut all_committed = !created;
+            let matches = label_ids.iter().all(|&label| {
+                let lid = usize::from(label) as u64;
+                let committed = !created
+                    && !removed.is_some_and(|r| r.contains(&lid))
+                    && g.node_has_label_id(NodeId::from(node_id), label);
+                all_committed &= committed;
+                committed || staged.contains(&lid)
+            });
+            if matches && !all_committed {
                 result.insert(node_id);
             }
         }
@@ -813,6 +1224,8 @@ impl Pending {
 
     /// Count pending-created relationships whose destination is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
+    /// An edge created and deleted since the last commit is not counted, here or in
+    /// [`Self::pending_deleted_indegree`].
     #[must_use]
     pub fn pending_indegree(
         &self,
@@ -823,20 +1236,22 @@ impl Pending {
             self.created_rels_by_type
                 .values()
                 .flat_map(|v| v.iter())
-                .filter(|(_, _, to)| *to == node_id)
+                .filter(|(id, _, to)| *to == node_id && !self.is_relationship_deleted(*id))
                 .count()
         } else {
             types
                 .iter()
                 .filter_map(|t| self.created_rels_by_type.get(t))
                 .flat_map(|v| v.iter())
-                .filter(|(_, _, to)| *to == node_id)
+                .filter(|(id, _, to)| *to == node_id && !self.is_relationship_deleted(*id))
                 .count()
         }
     }
 
     /// Count pending-created relationships whose source is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
+    /// An edge created and deleted since the last commit is not counted, here or in
+    /// [`Self::pending_deleted_outdegree`].
     #[must_use]
     pub fn pending_outdegree(
         &self,
@@ -847,21 +1262,23 @@ impl Pending {
             self.created_rels_by_type
                 .values()
                 .flat_map(|v| v.iter())
-                .filter(|(_, from, _)| *from == node_id)
+                .filter(|(id, from, _)| *from == node_id && !self.is_relationship_deleted(*id))
                 .count()
         } else {
             types
                 .iter()
                 .filter_map(|t| self.created_rels_by_type.get(t))
                 .flat_map(|v| v.iter())
-                .filter(|(_, from, _)| *from == node_id)
+                .filter(|(id, from, _)| *from == node_id && !self.is_relationship_deleted(*id))
                 .count()
         }
     }
 
     /// Count pending-deleted relationships whose destination is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Requires access to the graph to resolve relationship type IDs.
+    /// Only committed edges are counted: an edge created since the last commit
+    /// has no endpoints in the graph yet, and is already left out of
+    /// [`Self::pending_indegree`].
     #[must_use]
     pub fn pending_deleted_indegree(
         &self,
@@ -872,6 +1289,12 @@ impl Pending {
         self.deleted_relationships
             .iter()
             .filter(|rel_id| {
+                if self
+                    .created_rel_types
+                    .contains_key(&RelationshipId::from(*rel_id))
+                {
+                    return false;
+                }
                 let (_from, to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
                 to == node_id
                     && (types.is_empty()
@@ -883,7 +1306,9 @@ impl Pending {
 
     /// Count pending-deleted relationships whose source is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Requires access to the graph to resolve relationship type IDs.
+    /// Only committed edges are counted: an edge created since the last commit
+    /// has no endpoints in the graph yet, and is already left out of
+    /// [`Self::pending_outdegree`].
     #[must_use]
     pub fn pending_deleted_outdegree(
         &self,
@@ -894,6 +1319,12 @@ impl Pending {
         self.deleted_relationships
             .iter()
             .filter(|rel_id| {
+                if self
+                    .created_rel_types
+                    .contains_key(&RelationshipId::from(*rel_id))
+                {
+                    return false;
+                }
                 let (from, _to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
                 from == node_id
                     && (types.is_empty()
@@ -905,16 +1336,16 @@ impl Pending {
 
     pub fn commit(
         &mut self,
-        g: &AtomicRefCell<Graph>,
+        g: &mut Graph,
         stats: &RefCell<QueryStatistics>,
     ) -> Result<(), String> {
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
-            g.borrow_mut().create_nodes(&self.created_nodes);
+            g.create_nodes(&self.created_nodes)
+                .map_err(|e| e.to_string())?;
         }
         if !self.created_rel_types.is_empty() {
             stats.borrow_mut().relationships_created += self.created_rel_types.len();
-            let mut g = g.borrow_mut();
             for (type_name, rel_ids) in &self.created_rels_by_type {
                 let mut srcs = Vec::with_capacity(rel_ids.len());
                 let mut dsts = Vec::with_capacity(rel_ids.len());
@@ -924,7 +1355,8 @@ impl Pending {
                     dsts.push(to.into());
                     ids.push(rel_id.into());
                 }
-                g.create_relationships_bulk(type_name, &srcs, &dsts, &ids);
+                g.create_relationships_bulk(type_name, &srcs, &dsts, &ids)
+                    .map_err(|e| e.to_string())?;
             }
         }
         if !self.set_labels.is_empty() {
@@ -936,28 +1368,25 @@ impl Pending {
                 .set_labels
                 .keys()
                 .all(|id| self.created_nodes.contains(*id));
-            g.borrow_mut()
-                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_add_docs, all_new);
+            g.set_nodes_labels_bulk(&rows, &cols, &mut self.index_docs, all_new);
         }
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);
             stats.borrow_mut().labels_removed += rows.len();
-            g.borrow_mut()
-                .remove_nodes_labels(&rows, &cols, &mut self.index_remove_docs);
+            g.remove_nodes_labels(&rows, &cols, &mut self.index_docs);
         }
         if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
-            let mut g = g.borrow_mut();
             if !self.new_nodes_attrs.is_empty() {
                 let nset = g.import_node_attrs(
                     &self.new_nodes_attrs,
                     &self.set_labels,
-                    &mut self.index_add_docs,
+                    &mut self.index_docs,
                 );
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_nodes_attrs.is_empty() {
                 let (nremoved, nset) =
-                    g.set_nodes_attributes(&self.existing_nodes_attrs, &mut self.index_add_docs)?;
+                    g.set_nodes_attributes(&self.existing_nodes_attrs, &mut self.index_docs)?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
                 s.properties_removed += nremoved;
@@ -966,18 +1395,15 @@ impl Pending {
 
         if !self.new_relationships_attrs.is_empty() || !self.existing_relationships_attrs.is_empty()
         {
-            let mut g = g.borrow_mut();
             if !self.new_relationships_attrs.is_empty() {
-                let nset = g.import_relationship_attrs(
-                    &self.new_relationships_attrs,
-                    &mut self.index_add_edge_docs,
-                );
+                let nset = g
+                    .import_relationship_attrs(&self.new_relationships_attrs, &mut self.index_docs);
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_relationships_attrs.is_empty() {
                 let (nremoved, nset) = g.set_relationships_attributes(
                     &self.existing_relationships_attrs,
-                    &mut self.index_add_edge_docs,
+                    &mut self.index_docs,
                 )?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
@@ -986,8 +1412,9 @@ impl Pending {
         }
         if !self.deleted_nodes.is_empty() {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
-            g.borrow_mut()
-                .delete_nodes(&self.deleted_nodes, &mut self.index_remove_docs)?;
+            self.deleted_node_labels = g
+                .delete_nodes(&self.deleted_nodes, &mut self.index_docs)
+                .map_err(|e| e.to_string())?;
         }
         // Take relationship deletions BEFORE implicit edge processing
         // so we can pass them to delete_implicit_edges for dedup.
@@ -998,30 +1425,44 @@ impl Pending {
         // cleaned up, and before delete_relationships so explicit edges are
         // still tracked separately.
         if !self.deleted_nodes.is_empty() {
-            let implicit_edges = g.borrow_mut().delete_implicit_edges(
-                &self.deleted_nodes,
-                &explicit_rels,
-                &mut self.index_remove_edge_docs,
-            )?;
+            let implicit_edges =
+                g.delete_implicit_edges(&self.deleted_nodes, &explicit_rels, &mut self.index_docs)?;
             let count = implicit_edges.len();
             stats.borrow_mut().relationships_deleted += count;
             // Record in deleted_relationships so effects buffer can serialize them
-            for (rel_id, from, to) in implicit_edges {
+            for DeletedEdge {
+                id: rel_id,
+                type_id,
+                src: from,
+                dst: to,
+            } in implicit_edges
+            {
                 self.deleted_relationships.insert(u64::from(rel_id));
-                self.deleted_endpoints.push((rel_id, from, to));
+                self.deleted_endpoints.push(DeletedEdge {
+                    id: rel_id,
+                    type_id,
+                    src: from,
+                    dst: to,
+                });
             }
         }
         if !explicit_rels.is_empty() {
             let endpoints = g
-                .borrow_mut()
-                .delete_relationships(&explicit_rels, &mut self.index_remove_edge_docs)?;
+                .delete_relationships(&explicit_rels, &mut self.index_docs)
+                .map_err(|e| e.to_string())?;
             // Use the actually-removed relationships (delete_relationships skips
             // stale/missing ids) for stats and effects/constraint bookkeeping.
             stats.borrow_mut().relationships_deleted += endpoints.len();
             self.deleted_relationships
-                .extend(endpoints.iter().map(|(id, _, _)| u64::from(*id)));
+                .extend(endpoints.iter().map(|e| u64::from(e.id)));
             self.deleted_endpoints.extend(endpoints);
         }
+        // The native index, once for the whole `Commit`. Before the constraint checks, which is
+        // where each write call used to leave it, so nothing that runs after the writes sees the
+        // index in a different state than before. SETs run before DELETEs above, so one batch can
+        // hold an entry's add and then its remove; `apply` keeps only the last.
+        g.apply_index_writes(&mut self.index_docs);
+
         // Enforce constraints before accumulating index operations.
         // The constraint checks read the attribute store, which already has
         // the mutations from this transaction (writes apply immediately to
@@ -1032,31 +1473,8 @@ impl Pending {
         // the full query succeeds to avoid stale RediSearch entries on
         // rollback.
 
-        // Accumulate index operations into deferred fields.
-        for (k, v) in self.index_add_docs.drain() {
-            self.deferred_index_adds
-                .entry(k)
-                .or_default()
-                .bitor_assign(&v);
-        }
-        for (k, v) in self.index_remove_docs.drain() {
-            self.deferred_index_removes
-                .entry(k)
-                .or_default()
-                .bitor_assign(&v);
-        }
-        for (k, v) in self.index_add_edge_docs.drain() {
-            self.deferred_edge_index_adds
-                .entry(k)
-                .or_default()
-                .bitor_assign(&v);
-        }
-        for (k, v) in self.index_remove_edge_docs.drain() {
-            self.deferred_edge_index_removes
-                .entry(k)
-                .or_default()
-                .extend(v);
-        }
+        // Accumulate this commit's documents into the query's deferred set.
+        self.deferred_docs.absorb(&mut self.index_docs);
 
         Ok(())
     }
@@ -1064,9 +1482,8 @@ impl Pending {
     /// Enforce graph constraints on all entities affected by this transaction.
     fn enforce_constraints(
         &self,
-        g: &AtomicRefCell<Graph>,
+        g: &Graph,
     ) -> Result<(), String> {
-        let g = g.borrow();
         let constraints = g.constraints();
         if constraints.is_empty() {
             return Ok(());
@@ -1116,10 +1533,10 @@ impl Pending {
 
             match constraint.entity_type {
                 EntityType::Node => {
-                    self.check_node_constraint(&g, constraint, &affected_node_ids)?;
+                    self.check_node_constraint(g, constraint, &affected_node_ids)?;
                 }
                 EntityType::Relationship => {
-                    self.check_edge_constraint(&g, constraint, &affected_edge_ids)?;
+                    self.check_edge_constraint(g, constraint, &affected_edge_ids)?;
                 }
             }
         }
@@ -1132,8 +1549,9 @@ impl Pending {
     /// would force a pending-tuple materialization of its delta on every
     /// commit (`O(|delta|)` per write query, quadratic between folds) —
     /// measured as the dominant cost of small repeated creates. Mirrors
-    /// [`Self::update_node_labels`] semantics: a removed label wins over a
-    /// pending set.
+    /// [`Self::update_node_labels`] semantics; `set_labels` and `remove_labels`
+    /// are disjoint per node (see [`Self::stage_node_labels`]), so the two
+    /// branches below cannot both match.
     fn constraint_node_has_label(
         &self,
         g: &Graph,
@@ -1170,15 +1588,13 @@ impl Pending {
             return Ok(());
         };
         let label_id = usize::from(label_id) as u64;
+        let members = affected_node_ids
+            .iter()
+            .filter(|&node_id| self.constraint_node_has_label(g, node_id, label_id));
 
-        for node_id in affected_node_ids {
-            // Check if this node has the constrained label
-            if !self.constraint_node_has_label(g, node_id, label_id) {
-                continue;
-            }
-
-            match constraint.ct {
-                ConstraintType::Mandatory => {
+        match constraint.ct {
+            ConstraintType::Mandatory => {
+                for node_id in members {
                     for prop in &constraint.properties {
                         let has_prop = g
                             .get_node_attribute(node_id.into(), prop)
@@ -1190,35 +1606,62 @@ impl Pending {
                         }
                     }
                 }
-                ConstraintType::Unique => {
-                    let key = Graph::build_composite_key(&constraint.properties, |prop| {
-                        g.get_node_attribute(node_id.into(), prop)
-                    });
-                    if key.is_empty() {
-                        continue; // All NULL → no violation
-                    }
-
-                    // Build a set of all existing keys for this label in one pass
-                    if let Some(lm) = g.get_label_matrix(label) {
-                        let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
-                        for (other_id, _) in lm.iter(0, u64::MAX) {
-                            let other_key =
-                                Graph::build_composite_key(&constraint.properties, |prop| {
-                                    g.get_node_attribute(other_id.into(), prop)
-                                });
-                            if other_key.is_empty() {
-                                continue;
-                            }
-                            if let Some(&existing_id) = seen.get(&other_key)
-                                && existing_id != other_id
-                            {
-                                return Err(format!(
-                                    "unique constraint violation on node of type {label}"
-                                ));
-                            }
-                            seen.insert(other_key, other_id);
-                        }
-                    }
+            }
+            ConstraintType::Unique => {
+                // Under `index-falkordb` the native index answers, and RediSearch is not asked.
+                #[cfg(feature = "index-falkordb")]
+                let read_once = ReadOnce::default();
+                #[cfg(feature = "index-falkordb")]
+                let (query_for, lookup) = (
+                    |values: Vec<Value>| {
+                        native_unique_query(
+                            &g.falkordb_index,
+                            EntityType::Node,
+                            label,
+                            &constraint.properties,
+                            &values,
+                        )
+                    },
+                    |candidates: Vec<EqualCandidates<'_>>| {
+                        read_once.candidates(candidates).map(NodeId::from)
+                    },
+                );
+                #[cfg(not(feature = "index-falkordb"))]
+                let (query_for, lookup) = {
+                    let indexed = constraint
+                        .properties
+                        .iter()
+                        .all(|prop| g.is_indexed(label, prop, &IndexType::Range));
+                    (
+                        move |values| {
+                            redisearch_unique_query(indexed, &constraint.properties, values)
+                        },
+                        |query| g.get_indexed_nodes(label, query),
+                    )
+                };
+                let violated = unique_violated(
+                    &constraint.properties,
+                    members.map(NodeId::from),
+                    affected_node_ids,
+                    |node_id: NodeId, prop| g.get_node_attribute(node_id, prop),
+                    |node_id| {
+                        let node_id = u64::from(node_id);
+                        !self.deleted_nodes.contains(node_id)
+                            && self.constraint_node_has_label(g, node_id, label_id)
+                    },
+                    query_for,
+                    lookup,
+                    || {
+                        g.get_label_matrix(label).into_iter().flat_map(|lm| {
+                            lm.iter(0, u64::MAX)
+                                .map(|(node_id, _)| NodeId::from(node_id))
+                        })
+                    },
+                );
+                if violated {
+                    return Err(format!(
+                        "unique constraint violation on node of type {label}"
+                    ));
                 }
             }
         }
@@ -1232,23 +1675,21 @@ impl Pending {
         affected_edge_ids: &RoaringTreemap,
     ) -> Result<(), String> {
         let type_name = &constraint.label;
-
-        for edge_id in affected_edge_ids {
+        let members = affected_edge_ids.iter().filter(|&edge_id| {
             // Edges created this transaction resolve their type from
             // Pending's reverse index — no relationship-matrix read, which
             // would materialize the delta's pending tuples on every commit.
             // An edge's type never changes, so created under a different
             // type means not a member.
-            let has_type = match self.created_rel_types.get(&edge_id.into()) {
+            match self.created_rel_types.get(&edge_id.into()) {
                 Some(created_type) => created_type.as_str() == type_name.as_str(),
                 None => g.edge_has_type(edge_id.into(), type_name),
-            };
-            if !has_type {
-                continue;
             }
+        });
 
-            match constraint.ct {
-                ConstraintType::Mandatory => {
+        match constraint.ct {
+            ConstraintType::Mandatory => {
+                for edge_id in members {
                     for prop in &constraint.properties {
                         let has_prop = g
                             .get_relationship_attribute(edge_id.into(), prop)
@@ -1260,35 +1701,65 @@ impl Pending {
                         }
                     }
                 }
-                ConstraintType::Unique => {
-                    let key = Graph::build_composite_key(&constraint.properties, |prop| {
-                        g.get_relationship_attribute(edge_id.into(), prop)
-                    });
-                    if key.is_empty() {
-                        continue;
-                    }
-
-                    // Build a set of all existing keys for this type in one pass
-                    if let Some(tensor) = g.get_relationship_matrix(type_name) {
-                        let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
-                        for (_, _, other_eid) in tensor.iter(0, u64::MAX, false) {
-                            let other_key =
-                                Graph::build_composite_key(&constraint.properties, |prop| {
-                                    g.get_relationship_attribute(other_eid.into(), prop)
-                                });
-                            if other_key.is_empty() {
-                                continue;
-                            }
-                            if let Some(&existing_id) = seen.get(&other_key)
-                                && existing_id != other_eid
-                            {
-                                return Err(format!(
-                                    "unique constraint violation, on edge of relationship-type {type_name}"
-                                ));
-                            }
-                            seen.insert(other_key, other_eid);
-                        }
-                    }
+            }
+            ConstraintType::Unique => {
+                // As for nodes. An edge column's ids are `edge_id`s.
+                #[cfg(feature = "index-falkordb")]
+                let read_once = ReadOnce::default();
+                #[cfg(feature = "index-falkordb")]
+                let (query_for, lookup) = (
+                    |values: Vec<Value>| {
+                        native_unique_query(
+                            &g.falkordb_index,
+                            EntityType::Relationship,
+                            type_name,
+                            &constraint.properties,
+                            &values,
+                        )
+                    },
+                    |candidates: Vec<EqualCandidates<'_>>| {
+                        read_once.candidates(candidates).map(RelationshipId::from)
+                    },
+                );
+                #[cfg(not(feature = "index-falkordb"))]
+                let (query_for, lookup) = {
+                    let indexed = constraint
+                        .properties
+                        .iter()
+                        .all(|prop| g.is_edge_indexed(type_name, prop, &IndexType::Range));
+                    (
+                        move |values| {
+                            redisearch_unique_query(indexed, &constraint.properties, values)
+                        },
+                        |query| {
+                            g.get_indexed_edges(type_name, query)
+                                .map(|(_, _, edge_id)| edge_id)
+                        },
+                    )
+                };
+                let violated = unique_violated(
+                    &constraint.properties,
+                    members.map(RelationshipId::from),
+                    affected_edge_ids,
+                    |edge_id: RelationshipId, prop| g.get_relationship_attribute(edge_id, prop),
+                    // Both the index and the tensor hold edges of this type
+                    // only, and a type never changes.
+                    |edge_id| !self.deleted_relationships.contains(edge_id.into()),
+                    query_for,
+                    lookup,
+                    || {
+                        g.get_relationship_matrix(type_name)
+                            .into_iter()
+                            .flat_map(|t| {
+                                t.iter(0, u64::MAX, false)
+                                    .map(|(_, _, edge_id)| RelationshipId::from(edge_id))
+                            })
+                    },
+                );
+                if violated {
+                    return Err(format!(
+                        "unique constraint violation, on edge of relationship-type {type_name}"
+                    ));
                 }
             }
         }
@@ -1296,13 +1767,8 @@ impl Pending {
     }
 
     /// Take the accumulated index document changes, leaving pending empty.
-    pub fn take_deferred_indexes(&mut self) -> DeferredIndexes {
-        DeferredIndexes {
-            node_adds: std::mem::take(&mut self.deferred_index_adds),
-            node_removes: std::mem::take(&mut self.deferred_index_removes),
-            edge_adds: std::mem::take(&mut self.deferred_edge_index_adds),
-            edge_removes: std::mem::take(&mut self.deferred_edge_index_removes),
-        }
+    pub fn take_deferred_indexes(&mut self) -> IndexDocs {
+        std::mem::take(&mut self.deferred_docs)
     }
 
     /// Undo the index documents earlier `Commit`s published, after this query
@@ -1318,11 +1784,15 @@ impl Pending {
     /// edge's document key comes from there, since committed state no longer has the
     /// edge at all.
     ///
+    /// `committed` is only borrowed immutably: RediSearch's documents live behind the
+    /// indexer, which every version shares, so rewriting them changes no version, and
+    /// a reader holding its borrow of `committed` is never disturbed.
+    ///
     /// Writer mode only, and before the write lock is released.
     pub fn resync_published_indexes(
         &mut self,
         committed: &AtomicRefCell<Graph>,
-        private: &AtomicRefCell<Graph>,
+        private: &Graph,
     ) {
         let (nodes, edges) = std::mem::take(&mut self.published).ids_by_slot();
         if nodes.is_empty() && edges.is_empty() {
@@ -1346,7 +1816,7 @@ impl Pending {
                     }
                 }
             }
-            let p = private.borrow();
+            let p = private;
             for (slot, ids) in &edges {
                 for id in ids {
                     if g.endpoints_for_edge(id).is_some() {
@@ -1360,15 +1830,14 @@ impl Pending {
             }
         }
 
-        // Indexer locks *before* the graph borrow — the order `populate_index_batch`
-        // uses, and the only one that keeps this mutable borrow of the published
-        // version from colliding with a populate batch reading it (`AtomicRefCell`
-        // reports that collision by panicking). Concurrent *readers* are excluded
-        // instead by the write lock this query holds.
+        // Indexer locks before the graph borrow, the order `populate_index_batch` uses;
+        // they keep its batches out of RediSearch while both kinds are rewritten.
+        // Concurrent readers are kept out of RediSearch by the write lock this query
+        // holds.
         let (node_lock, edge_lock) = committed.borrow().index_locks();
         let node_guard = node_lock.lock();
         let edge_guard = edge_lock.lock();
-        let mut g = committed.borrow_mut();
+        let g = committed.borrow();
         g.commit_index_locked(&node_guard, &mut node_adds, &mut node_removes);
         g.commit_edge_index_locked(&edge_guard, &mut edge_adds, &mut edge_removes);
     }
@@ -1376,7 +1845,7 @@ impl Pending {
     /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
     pub fn commit_deferred_indexes(
         &mut self,
-        g: &AtomicRefCell<Graph>,
+        g: &mut Graph,
     ) {
         let mut deferred = self.take_deferred_indexes();
         // Fold the batch into the published log *before* writing it, because `commit`
@@ -1387,12 +1856,38 @@ impl Pending {
         deferred.commit(g);
     }
 
-    /// Clear all pending mutation state.
+    /// End the segment: discard its accumulated mutations and roll the graph's
+    /// id batches over to where the commit just left the boundary.
+    ///
+    /// One call because they are one event, and because splitting them was
+    /// silent: a batch left unopened does not fail, it just stops reclaiming ids
+    /// across the boundary, so `CREATE (n) DELETE n WITH 1 AS x CREATE (m)`
+    /// allocates id 1 where it should allocate 0 — measured, with the whole flow
+    /// suite passing. Against a C primary that is a divergence in id-reuse
+    /// order, which costs a full resync per delete-then-create cycle.
+    ///
+    /// Fused, forgetting this also forgets to discard the segment's mutations,
+    /// so the next commit re-creates live ids and the query dies with `node 0 is
+    /// already live below the boundary 0`. That covers every segment that
+    /// created something which survived, and **not** one whose only content was
+    /// a cancellation — nothing to re-create, so nothing collides. Both
+    /// measured. That last case cannot be closed from here: a batch that never
+    /// rolled over is indistinguishable from a longer one, and
+    /// [`IdSpace::verify`] passes on either. Catching it needs a notion of "a
+    /// segment happened" that the id space does not have.
     ///
     /// Runs after every `Commit`, so it must NOT touch `published` — a later failure
     /// has to undo the documents *all* of this query's `Commit`s published, not just
     /// the last one's.
-    pub fn clear(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError::IdSpace`] if an id space already contradicts itself;
+    /// opening a batch over it would re-anchor on the bad value and hide it.
+    pub fn end_segment(
+        &mut self,
+        g: &mut Graph,
+    ) -> Result<(), NodeOpError> {
         // Dropping millions of per-entity Vec allocations is O(n) frees and
         // stalls the serialized write thread; move large maps to a background
         // thread and let it pay the deallocation cost.
@@ -1430,13 +1925,34 @@ impl Pending {
         }
         self.created_nodes.clear();
         self.created_rel_types.clear();
+
         self.deleted_nodes.clear();
         self.deleted_relationships.clear();
         self.deleted_endpoints.clear();
-        self.index_add_docs.clear();
-        self.index_remove_docs.clear();
-        self.index_add_edge_docs.clear();
-        self.index_remove_edge_docs.clear();
+        self.deleted_node_labels.clear();
+        self.cancelled_nodes.clear();
+        self.taken_relationship_ids.clear();
+        self.cancelled_relationships.clear();
+        self.index_docs.node_adds.clear();
+        self.index_docs.node_removes.clear();
+        self.index_docs.edge_adds.clear();
+        self.index_docs.edge_removes.clear();
+        #[cfg(feature = "index-falkordb")]
+        self.index_docs.native.clear();
+
+        // Close this segment's batch and open the next at the boundary the
+        // commit just left. Closing is where the batch's shape is owed —
+        // `taken` must fill the range from the entry boundary upward — and it is
+        // asked here rather than earlier because it is legitimately false
+        // partway through: a segment creates, cancels and deletes in whatever
+        // order the query says.
+        //
+        // This is the one check on this path that can fail a user's query rather
+        // than a replica's buffer. It fires only on an id space this engine has
+        // already corrupted, and failing is the cheaper outcome: the query holds
+        // a private MVCC version, so the damage is discarded rather than
+        // published and then replicated.
+        g.roll_id_batches()
     }
 
     /// Returns the number of effects (operations) tracked in this Pending.
@@ -1461,504 +1977,630 @@ impl Pending {
                 .map(|v| v.len() as u64)
                 .sum::<u64>()
     }
+}
 
-    /// Build a binary effects buffer from the accumulated mutations.
-    /// Must be called before `clear()` resets the pending data.
-    /// Appends to an existing buffer if provided, so multiple commits
-    /// in the same query accumulate into a single effects buffer.
-    /// Returns the number of effect records written.
-    pub fn build_effects_buffer(
-        &self,
+#[cfg(test)]
+mod label_effect_tests {
+    use super::*;
+    use crate::effects::v3::emit::for_each_record;
+    use crate::effects::v3::{IdList, Record};
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    /// The one node every scenario below stages labels on.
+    const NODE: u64 = 0;
+
+    /// A graph whose only labels are `names`, and a `Pending` that has already
+    /// taken its schema baseline — so the emitter announces no schema, and the
+    /// label records are the whole of what it produces.
+    fn fixture(names: &[&str]) -> (AtomicRefCell<Graph>, Vec<LabelId>, Pending) {
+        ensure_init();
+        let g = AtomicRefCell::new(Graph::new(16, 16, 1, 0, "label_effects"));
+        let labels: Vec<LabelId> = {
+            let mut graph = g.borrow_mut();
+            names.iter().map(|n| graph.get_label_id_mut(n)).collect()
+        };
+        let mut pending = Pending::new();
+        pending.set_schema_baseline(&g.borrow());
+        (g, labels, pending)
+    }
+
+    /// Every record the emitter produces, in emission order.
+    ///
+    /// The assertions below compare this whole vec against an expected one
+    /// rather than searching it for a record, because a search can only show
+    /// that something is present. Whole-vec equality pins an absence just as
+    /// tightly, which is the half that matters here.
+    fn records(
+        pending: &Pending,
         g: &AtomicRefCell<Graph>,
-        buf: &mut Vec<u8>,
-    ) -> u64 {
-        let mut n_effects = 0u64;
+    ) -> Vec<Record> {
+        let mut out = Vec::new();
+        for_each_record(pending, &g.borrow(), |r| out.push(r));
+        out
+    }
 
-        // Pre-allocate buffer: entity headers plus ~12 bytes per attribute
-        // (2-byte attribute id + tagged value payload).
-        let attr_bytes: usize = self
-            .new_nodes_attrs
-            .values()
-            .chain(self.existing_nodes_attrs.values())
-            .chain(self.new_relationships_attrs.values())
-            .chain(self.existing_relationships_attrs.values())
-            .map(|m| m.len() * 12)
-            .sum();
-        let estimated_bytes = (self.created_nodes.len() as usize) * 15
-            + self.created_rel_types.len() * 30
-            + (self.deleted_nodes.len() as usize) * 10
-            + (self.deleted_relationships.len() as usize) * 25
-            + attr_bytes;
-        buf.reserve(estimated_bytes);
-
-        // Version header (only write once at the start)
-        if buf.is_empty() {
-            buf.push(EFFECTS_VERSION);
+    /// A label record naming [`NODE`] alone, shaped as `digest_labels` builds
+    /// it: the label ids sorted and deduped.
+    fn labelled(
+        add: bool,
+        labels: &[LabelId],
+    ) -> Record {
+        let ids: IdList = [NODE].into_iter().collect();
+        let mut shape: Vec<u32> = labels.iter().map(|l| usize::from(*l) as u32).collect();
+        shape.sort_unstable();
+        shape.dedup();
+        if add {
+            Record::SetLabels { ids, labels: shape }
+        } else {
+            Record::RemoveLabels { ids, labels: shape }
         }
+    }
 
-        // --- Schema additions (new labels, relationship types) ---
-        {
-            let graph = g.borrow();
-            let labels = graph.get_labels();
-            for label in labels.iter().skip(self.schema_label_count) {
-                buf.push(EFFECT_ADD_SCHEMA);
-                buf.push(SCHEMA_NODE_LABEL);
-                write_string(buf, label);
-                n_effects += 1;
-            }
-            let types = graph.get_types();
-            for rel_type in types.iter().skip(self.schema_rel_type_count) {
-                buf.push(EFFECT_ADD_SCHEMA);
-                buf.push(SCHEMA_REL_TYPE);
-                write_string(buf, rel_type);
-                n_effects += 1;
-            }
+    /// Positive control for [`cancelled_add_emits_no_set_labels`]: an
+    /// uncancelled `SET n:L` does produce a `SetLabels`. Without this, an
+    /// emitter that had stopped producing label records altogether would
+    /// satisfy the cancellation tests vacuously.
+    #[test]
+    fn plain_set_emits_set_labels() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
 
-            // --- Attribute additions (new node/rel attribute names) ---
-            let node_attrs = graph.get_node_attribute_names();
-            for attr in node_attrs.iter().skip(self.schema_node_attr_count) {
-                buf.push(EFFECT_ADD_ATTRIBUTE);
-                buf.push(ATTR_NODE);
-                write_string(buf, attr);
-                n_effects += 1;
-            }
-            let rel_attrs = graph.get_relationship_attribute_names();
-            for attr in rel_attrs.iter().skip(self.schema_rel_attr_count) {
-                buf.push(EFFECT_ADD_ATTRIBUTE);
-                buf.push(ATTR_REL);
-                write_string(buf, attr);
-                n_effects += 1;
-            }
-        }
+        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
 
-        // Attribute keys, label ids, and relationship type ids are encoded
-        // as u16 ids; the id → name mapping is established on the replica by
-        // the EFFECT_ADD_SCHEMA / EFFECT_ADD_ATTRIBUTE records above (and by
-        // in-order replay of earlier queries), which mirror the master's
-        // registration order exactly.
+        assert_eq!(records(&pending, &g), vec![labelled(true, &[l])]);
+    }
 
-        // --- Created nodes ---
-        for node_id in &self.created_nodes {
-            buf.push(EFFECT_CREATE_NODE);
-            buf.extend_from_slice(&node_id.to_le_bytes());
+    /// Positive control for [`cancelled_removal_emits_no_remove_labels`]: an
+    /// uncancelled `REMOVE n:L` does produce a `RemoveLabels`.
+    #[test]
+    fn plain_remove_emits_remove_labels() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
 
-            // Labels
-            if let Some(label_ids) = self.set_labels.get(&node_id) {
-                write_u16(buf, label_ids.len() as u16);
-                for &label_id in label_ids {
-                    write_u16(buf, label_id as u16);
-                }
-            } else {
-                write_u16(buf, 0);
-            }
+        pending.remove_node_labels(NODE.into(), &[l]);
 
-            // Attributes
-            if let Some(attrs) = self.new_nodes_attrs.get(&node_id) {
-                write_u16(buf, attrs.len() as u16);
-                for (attr_id, value) in attrs {
-                    write_u16(buf, *attr_id);
-                    write_value(buf, value);
-                }
-            } else {
-                write_u16(buf, 0);
-            }
-            n_effects += 1;
-        }
+        assert_eq!(records(&pending, &g), vec![labelled(false, &[l])]);
+    }
 
-        // --- Created relationships ---
-        if !self.created_rels_by_type.is_empty() {
-            let graph = g.borrow();
-            for (type_name, entries) in &self.created_rels_by_type {
-                let type_id = graph
-                    .get_type_id(type_name)
-                    .expect("created relationship type must be registered")
-                    .0 as u16;
-                for &(rel_id, from, to) in entries {
-                    buf.push(EFFECT_CREATE_EDGE);
-                    buf.extend_from_slice(&u64::from(rel_id).to_le_bytes());
-                    buf.extend_from_slice(&u64::from(from).to_le_bytes());
-                    buf.extend_from_slice(&u64::from(to).to_le_bytes());
-                    write_u16(buf, type_id);
+    /// `SET n:L REMOVE n:L`: the removal cancels the staged add, and the
+    /// emptied `set_labels` entry goes with it.
+    ///
+    /// Two layers keep the cancelled add off the wire, and this checks both.
+    /// The map assertion is the one this fix owns: dropping the emptied entry
+    /// is what stops a zero-label record existing to be emitted. The record
+    /// assertion is the outcome, which `digest_labels` also defends by
+    /// suppressing an empty label set — so it holds even if the cleanup here
+    /// regresses, and only the map assertion would catch that.
+    #[test]
+    fn cancelled_add_emits_no_set_labels() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
 
-                    if let Some(attrs) = self.new_relationships_attrs.get(&u64::from(rel_id)) {
-                        write_u16(buf, attrs.len() as u16);
-                        for (attr_id, value) in attrs {
-                            write_u16(buf, *attr_id);
-                            write_value(buf, value);
-                        }
-                    } else {
-                        write_u16(buf, 0);
-                    }
-                    n_effects += 1;
-                }
-            }
-        }
+        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.remove_node_labels(NODE.into(), &[l]);
 
-        // --- Updated node attributes (existing nodes only) ---
-        for (node_id, attrs) in &self.existing_nodes_attrs {
-            buf.push(EFFECT_UPDATE_NODE);
-            buf.extend_from_slice(&node_id.to_le_bytes());
-            write_u16(buf, attrs.len() as u16);
-            for (attr_id, value) in attrs {
-                write_u16(buf, *attr_id);
-                write_value(buf, value);
-            }
-            n_effects += 1;
-        }
+        assert!(
+            !pending.set_labels.contains_key(&NODE),
+            "the emptied set_labels entry must be dropped, not left empty"
+        );
+        assert_eq!(
+            records(&pending, &g),
+            vec![labelled(false, &[l])],
+            "the cancelled add must leave no SetLabels behind"
+        );
+        assert_eq!(pending.node_has_label(NODE.into(), l), Some(false));
+    }
 
-        // --- Updated relationship attributes (existing rels only) ---
-        for (rel_id, attrs) in &self.existing_relationships_attrs {
-            buf.push(EFFECT_UPDATE_EDGE);
-            buf.extend_from_slice(&rel_id.to_le_bytes());
-            write_u16(buf, attrs.len() as u16);
-            for (attr_id, value) in attrs {
-                write_u16(buf, *attr_id);
-                write_value(buf, value);
-            }
-            n_effects += 1;
-        }
+    /// `REMOVE n:L SET n:L`, the mirror direction and the #2777 report: the add
+    /// cancels the staged removal, the label survives, and the emptied
+    /// `remove_labels` entry is not left behind either.
+    #[test]
+    fn cancelled_removal_emits_no_remove_labels() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
 
-        // --- Set labels (non-created nodes only) ---
-        for (&node_id, label_ids) in &self.set_labels {
-            if !self.created_nodes.contains(node_id) {
-                buf.push(EFFECT_SET_LABELS);
-                buf.extend_from_slice(&node_id.to_le_bytes());
-                write_u16(buf, label_ids.len() as u16);
-                for &label_id in label_ids {
-                    write_u16(buf, label_id as u16);
-                }
-                n_effects += 1;
-            }
-        }
+        pending.remove_node_labels(NODE.into(), &[l]);
+        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
 
-        // --- Remove labels ---
-        for (&node_id, label_ids) in &self.remove_labels {
-            buf.push(EFFECT_REMOVE_LABELS);
-            buf.extend_from_slice(&node_id.to_le_bytes());
-            write_u16(buf, label_ids.len() as u16);
-            for &label_id in label_ids {
-                write_u16(buf, label_id as u16);
-            }
-            n_effects += 1;
-        }
+        assert!(
+            !pending.remove_labels.contains_key(&NODE),
+            "the emptied remove_labels entry must be dropped, not left empty"
+        );
+        assert_eq!(
+            records(&pending, &g),
+            vec![labelled(true, &[l])],
+            "the cancelled removal must leave no RemoveLabels behind"
+        );
+        assert_eq!(
+            pending.node_has_label(NODE.into(), l),
+            Some(true),
+            "the re-added label must survive the cancelled removal"
+        );
+    }
 
-        // --- Deleted relationships (before nodes, so replica removes edges first) ---
-        for &(rel_id, from, to) in &self.deleted_endpoints {
-            buf.push(EFFECT_DELETE_EDGE);
-            buf.extend_from_slice(&u64::from(rel_id).to_le_bytes());
-            buf.extend_from_slice(&u64::from(from).to_le_bytes());
-            buf.extend_from_slice(&u64::from(to).to_le_bytes());
-            n_effects += 1;
-        }
+    /// Cancellation is per label, not per node: `SET n:L:M REMOVE n:L` drops
+    /// only `L` from the add, and both records still go out.
+    #[test]
+    fn cancelling_one_label_of_several_keeps_the_rest() {
+        let (g, labels, mut pending) = fixture(&["L", "M"]);
+        let (l, m) = (labels[0], labels[1]);
 
-        // --- Deleted nodes ---
-        for node_id in &self.deleted_nodes {
-            buf.push(EFFECT_DELETE_NODE);
-            buf.extend_from_slice(&node_id.to_le_bytes());
-            n_effects += 1;
-        }
+        pending.set_node_labels(NODE.into(), &[l, m].into_iter().collect());
+        pending.remove_node_labels(NODE.into(), &[l]);
 
-        n_effects
+        assert_eq!(pending.node_has_label(NODE.into(), m), Some(true));
+        assert_eq!(
+            records(&pending, &g),
+            vec![labelled(true, &[m]), labelled(false, &[l])]
+        );
     }
 }
 
-// ── Effects buffer constants and helpers ──
+#[cfg(test)]
+mod resync_tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init;
+    use crate::graph::mvcc_graph::MvccGraph;
 
-pub const EFFECTS_VERSION: u8 = 2;
+    /// A failed write's repair runs while a reader holds its borrow of the published
+    /// version, as every read runtime does for its whole query (`HeldRead` in
+    /// `Runtime::new`). The repair must leave that version alone: a `borrow_mut` of
+    /// it meets the reader's borrow and `AtomicRefCell` panics, which the module's
+    /// panic hook turns into a dead server.
+    #[test]
+    fn the_repair_does_not_borrow_the_published_version_mutably() {
+        ensure_init();
+        let mvcc = MvccGraph::new(16, 16, 0, "resync");
+        let first = mvcc.fork();
+        let label = first.borrow_mut().get_label_id_mut("L");
+        mvcc.commit(first).expect("a new label commits");
 
-pub const EFFECT_UPDATE_NODE: u8 = 1;
-pub const EFFECT_UPDATE_EDGE: u8 = 2;
-pub const EFFECT_CREATE_NODE: u8 = 3;
-pub const EFFECT_CREATE_EDGE: u8 = 4;
-pub const EFFECT_DELETE_NODE: u8 = 5;
-pub const EFFECT_DELETE_EDGE: u8 = 6;
-pub const EFFECT_SET_LABELS: u8 = 7;
-pub const EFFECT_REMOVE_LABELS: u8 = 8;
-pub const EFFECT_ADD_SCHEMA: u8 = 9;
-pub const EFFECT_ADD_ATTRIBUTE: u8 = 10;
-pub const EFFECT_CREATE_INDEX: u8 = 11;
-pub const EFFECT_DROP_INDEX: u8 = 12;
+        let published = mvcc.read();
+        let reader = published.borrow();
 
-// Schema type tags (used in EFFECT_ADD_SCHEMA)
-pub const SCHEMA_NODE_LABEL: u8 = 0;
-pub const SCHEMA_REL_TYPE: u8 = 1;
+        // A `Commit` published a document for node 0 under `L`, then the query failed.
+        // A removal, so no RediSearch document is built: the label has no index.
+        let private = mvcc.fork();
+        let mut pending = Pending::new();
+        pending
+            .deferred_docs
+            .node_removes
+            .entry(usize::from(label) as u64)
+            .or_default()
+            .insert(0);
+        pending.commit_deferred_indexes(&mut private.borrow_mut());
+        // Without documents to rewrite, the repair would return before borrowing anything,
+        // and this test would prove nothing.
+        assert!(!pending.published.is_empty());
 
-// Attribute type tags (used in EFFECT_ADD_ATTRIBUTE)
-pub const ATTR_NODE: u8 = 0;
-pub const ATTR_REL: u8 = 1;
+        // The observable is a panic: a `borrow_mut` of `published` here meets
+        // `reader` and `AtomicRefCell` panics.
+        pending.resync_published_indexes(&published, &private.borrow());
 
-// Value type tags for effect serialization
-const VALUE_NULL: u8 = 0;
-const VALUE_BOOL: u8 = 1;
-const VALUE_INT: u8 = 2;
-const VALUE_FLOAT: u8 = 3;
-const VALUE_STRING: u8 = 4;
-const VALUE_LIST: u8 = 5;
-const VALUE_POINT: u8 = 6;
-const VALUE_VECF32: u8 = 7;
-const VALUE_DATETIME: u8 = 8;
-const VALUE_DATE: u8 = 9;
-const VALUE_TIME: u8 = 10;
-const VALUE_DURATION: u8 = 11;
-const VALUE_INTERN_STRING: u8 = 12;
-
-pub fn write_u16(
-    buf: &mut Vec<u8>,
-    v: u16,
-) {
-    buf.extend_from_slice(&v.to_le_bytes());
-}
-
-pub fn write_string(
-    buf: &mut Vec<u8>,
-    s: &str,
-) {
-    buf.extend_from_slice(&(s.len() as u64).to_le_bytes());
-    buf.extend_from_slice(s.as_bytes());
-}
-
-fn write_value(
-    buf: &mut Vec<u8>,
-    value: &Value,
-) {
-    match value {
-        Value::Null => buf.push(VALUE_NULL),
-        Value::Bool(b) => {
-            buf.push(VALUE_BOOL);
-            buf.push(u8::from(*b));
-        }
-        Value::Int(i) => {
-            buf.push(VALUE_INT);
-            buf.extend_from_slice(&i.to_le_bytes());
-        }
-        Value::Float(f) => {
-            buf.push(VALUE_FLOAT);
-            buf.extend_from_slice(&f.to_le_bytes());
-        }
-        Value::String(s) => {
-            if crate::runtime::string_pool::global().is_interned(s) {
-                buf.push(VALUE_INTERN_STRING);
-            } else {
-                buf.push(VALUE_STRING);
-            }
-            write_string(buf, s);
-        }
-        Value::List(items) => {
-            buf.push(VALUE_LIST);
-            buf.extend_from_slice(&(items.len() as u64).to_le_bytes());
-            for item in items.iter() {
-                write_value(buf, item);
-            }
-        }
-        Value::Point(p) => {
-            buf.push(VALUE_POINT);
-            buf.extend_from_slice(&(p.latitude as f64).to_le_bytes());
-            buf.extend_from_slice(&(p.longitude as f64).to_le_bytes());
-        }
-        Value::VecF32(v) => {
-            buf.push(VALUE_VECF32);
-            buf.extend_from_slice(&(v.len() as u64).to_le_bytes());
-            for f in v.iter() {
-                buf.extend_from_slice(&f.to_le_bytes());
-            }
-        }
-        Value::Datetime(ts) => {
-            buf.push(VALUE_DATETIME);
-            buf.extend_from_slice(&ts.to_le_bytes());
-        }
-        Value::Date(ts) => {
-            buf.push(VALUE_DATE);
-            buf.extend_from_slice(&ts.to_le_bytes());
-        }
-        Value::Time(ts) => {
-            buf.push(VALUE_TIME);
-            buf.extend_from_slice(&ts.to_le_bytes());
-        }
-        Value::Duration(dur) => {
-            buf.push(VALUE_DURATION);
-            buf.extend_from_slice(&dur.to_le_bytes());
-        }
-        _ => {
-            debug_assert!(false, "Unsupported value type in effects buffer: {value:?}");
-            buf.push(VALUE_NULL); // Fallback for unsupported types
-        }
+        drop(reader);
     }
 }
 
-pub fn read_string(
-    buf: &[u8],
-    offset: &mut usize,
-) -> Result<Arc<String>, String> {
-    if *offset + 8 > buf.len() {
-        return Err("effects buffer truncated".to_string());
+#[cfg(test)]
+mod property_nesting_tests {
+    use super::{INVALID_PROPERTY_MSG, validate_node_property, validate_relationship_property};
+    use crate::runtime::value::{MAX_VALUE_NESTING, Value};
+    use std::sync::Arc;
+    use thin_vec::thin_vec;
+
+    fn nested(depth: usize) -> Value {
+        let mut v = Value::Int(1);
+        for _ in 0..depth {
+            v = Value::List(Arc::new(thin_vec![v]));
+        }
+        v
     }
-    let len = u64::from_le_bytes(buf[*offset..*offset + 8].try_into().unwrap()) as usize;
-    *offset += 8;
-    if *offset + len > buf.len() {
-        return Err("effects buffer truncated".to_string());
+
+    /// Validation is recursive, so it runs on the query pool's stack size.
+    fn on_worker_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
     }
-    let s = std::str::from_utf8(&buf[*offset..*offset + len])
-        .map_err(|e| format!("invalid utf8 in effects buffer: {e}"))?;
-    *offset += len;
-    Ok(Arc::new(s.to_string()))
+
+    #[test]
+    fn a_property_at_the_cap_is_valid() {
+        on_worker_stack(|| {
+            let v = nested(MAX_VALUE_NESTING);
+            assert_eq!(validate_node_property(&v), Ok(()));
+            assert_eq!(validate_relationship_property(&v), Ok(()));
+        });
+    }
+
+    #[test]
+    fn a_property_past_the_cap_is_refused() {
+        // Every stored value has to load back, and the RDB decoder refuses
+        // anything deeper than the cap.
+        on_worker_stack(|| {
+            let v = nested(MAX_VALUE_NESTING + 1);
+            let expected = Err(format!(
+                "Property values can only be nested up to {MAX_VALUE_NESTING} levels deep"
+            ));
+            assert_eq!(validate_node_property(&v), expected);
+            assert_eq!(validate_relationship_property(&v), expected);
+        });
+    }
+
+    #[test]
+    fn non_primitive_elements_keep_their_error() {
+        let v = Value::List(Arc::new(thin_vec![Value::Map(Arc::default())]));
+        assert_eq!(validate_node_property(&v), Err(INVALID_PROPERTY_MSG.into()));
+        assert_eq!(
+            validate_node_property(&Value::List(Arc::new(thin_vec![Value::Null]))),
+            Err(INVALID_PROPERTY_MSG.into())
+        );
+        assert_eq!(validate_node_property(&Value::Null), Ok(()));
+    }
 }
 
-pub fn read_u16(
-    buf: &[u8],
-    offset: &mut usize,
-) -> Result<u16, String> {
-    if *offset + 2 > buf.len() {
-        return Err("effects buffer truncated".to_string());
-    }
-    let v = u16::from_le_bytes(buf[*offset..*offset + 2].try_into().unwrap());
-    *offset += 2;
-    Ok(v)
-}
+/// Unique constraints under `index-falkordb`: the native index answers a member's lookup when it
+/// can, and the label or type scan answers when it cannot. Each test checks the path a member
+/// takes (`native_unique_query`) as well as the verdict (`check_*_constraint`), because a verdict
+/// alone is the same whichever path reached it.
+#[cfg(all(test, feature = "index-falkordb"))]
+mod native_unique_tests {
+    use super::*;
+    use crate::graph::constraint::Constraint;
+    use crate::graph::graphblas::test_init::ensure_init;
+    use crate::index::falkordb::unique::fewest_candidates;
+    use crate::index::index_docs::IndexDocs;
 
-pub fn read_u64(
-    buf: &[u8],
-    offset: &mut usize,
-) -> Result<u64, String> {
-    if *offset + 8 > buf.len() {
-        return Err("effects buffer truncated".to_string());
+    fn arc(s: &str) -> Arc<String> {
+        Arc::new(s.to_string())
     }
-    let v = u64::from_le_bytes(buf[*offset..*offset + 8].try_into().unwrap());
-    *offset += 8;
-    Ok(v)
-}
 
-pub fn read_value(
-    buf: &[u8],
-    offset: &mut usize,
-) -> Result<Value, String> {
-    if *offset >= buf.len() {
-        return Err("effects buffer truncated".to_string());
+    fn string(s: &str) -> Value {
+        Value::String(arc(s))
     }
-    let tag = buf[*offset];
-    *offset += 1;
-    match tag {
-        VALUE_NULL => Ok(Value::Null),
-        VALUE_BOOL => {
-            if *offset >= buf.len() {
-                return Err("effects buffer truncated".to_string());
-            }
-            let b = buf[*offset] != 0;
-            *offset += 1;
-            Ok(Value::Bool(b))
+
+    fn graph() -> Graph {
+        ensure_init();
+        let mut g = Graph::new(64, 64, 10, 1, "native_unique");
+        g.roll_id_batches().expect("a consistent space");
+        g
+    }
+
+    /// One `:U` node per row, holding that row's properties, written through the graph's write
+    /// path, so a native column on `:U` is maintained as a query would maintain it.
+    fn nodes(
+        g: &mut Graph,
+        rows: &[&[(&str, Value)]],
+    ) -> Vec<u64> {
+        let ids = g
+            .node_id_space()
+            .reserve(rows.len(), &RoaringTreemap::new())
+            .expect("reserved");
+        g.create_nodes(&ids.iter().copied().collect())
+            .expect("freshly reserved ids are creatable");
+        let label = g.get_label_id_mut("U");
+        let mut docs = IndexDocs::default();
+        g.set_nodes_labels_bulk(&ids, &vec![label.0 as u64; ids.len()], &mut docs, false);
+        let mut attrs = FxHashMap::default();
+        for (&id, row) in ids.iter().zip(rows) {
+            let mut row: Vec<(u16, Value)> = row
+                .iter()
+                .map(|(attr, value)| (g.get_or_create_node_attr_id(&arc(attr)), value.clone()))
+                .collect();
+            row.sort_by_key(|(attr, _)| *attr);
+            attrs.insert(id, row);
         }
-        VALUE_INT => {
-            let v = i64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Int(v))
+        g.set_nodes_attributes(&attrs, &mut docs)
+            .expect("attributes set");
+        g.apply_index_writes(&mut docs);
+        ids
+    }
+
+    /// The verdict of a unique constraint on `:U`'s `props` for a commit that wrote `written`.
+    fn check_nodes(
+        g: &Graph,
+        props: &[&str],
+        written: u64,
+    ) -> Result<(), String> {
+        let constraint = Constraint::new(
+            ConstraintType::Unique,
+            EntityType::Node,
+            arc("U"),
+            props.iter().map(|p| arc(p)).collect(),
+        );
+        Pending::new().check_node_constraint(g, &constraint, &std::iter::once(written).collect())
+    }
+
+    /// Whether a member holding `values` at `props` is looked up in the native index, rather than
+    /// sent to the scan.
+    fn looked_up(
+        g: &Graph,
+        entity: EntityType,
+        label: &str,
+        props: &[&str],
+        values: &[Value],
+    ) -> bool {
+        let props: Vec<Arc<String>> = props.iter().map(|p| arc(p)).collect();
+        native_unique_query(&g.falkordb_index, entity, &arc(label), &props, values).is_some()
+    }
+
+    /// A number is looked up in the native column, and the lookup finds the duplicate.
+    #[test]
+    fn a_numeric_duplicate_is_found_by_the_native_lookup() {
+        let mut g = graph();
+        g.falkordb_index
+            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+        let ids = nodes(
+            &mut g,
+            &[
+                &[("id", Value::Int(1))],
+                &[("id", Value::Int(1))],
+                &[("id", Value::Int(2))],
+            ],
+        );
+        assert!(looked_up(
+            &g,
+            EntityType::Node,
+            "U",
+            &["id"],
+            &[Value::Int(1)]
+        ));
+        assert!(check_nodes(&g, &["id"], ids[1]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["id"], ids[2]),
+            Ok(()),
+            "a value no other node holds"
+        );
+    }
+
+    /// A numeric column does not index strings. It must decline one rather than answer "no
+    /// rows", which would accept the duplicate; the scan finds it.
+    #[test]
+    fn a_string_duplicate_on_a_numeric_column_is_found_by_the_scan() {
+        let mut g = graph();
+        g.falkordb_index
+            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+        let ids = nodes(
+            &mut g,
+            &[
+                &[("id", string("a"))],
+                &[("id", string("a"))],
+                &[("id", string("b"))],
+            ],
+        );
+        assert!(!looked_up(
+            &g,
+            EntityType::Node,
+            "U",
+            &["id"],
+            &[string("a")]
+        ));
+        assert!(check_nodes(&g, &["id"], ids[1]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["id"], ids[2]),
+            Ok(()),
+            "a value no other node holds"
+        );
+    }
+
+    /// A column still building has not seen every entity, so it cannot rule a duplicate out and the
+    /// scan decides. The nodes exist before the column and no indexer batch runs, so the column holds
+    /// none of them: had it been trusted, it would have found nothing.
+    #[test]
+    fn a_building_column_sends_the_check_to_the_scan() {
+        let mut g = graph();
+        let ids = nodes(
+            &mut g,
+            &[&[("id", Value::Int(1))], &[("id", Value::Int(1))]],
+        );
+        g.falkordb_index
+            .create_building(EntityType::Node, &arc("U"), &arc("id"));
+        assert!(!looked_up(
+            &g,
+            EntityType::Node,
+            "U",
+            &["id"],
+            &[Value::Int(1)]
+        ));
+        assert!(check_nodes(&g, &["id"], ids[1]).is_err());
+    }
+
+    /// A key of a string and a number: the number is looked up, and each candidate's whole key is
+    /// checked against the graph, so a node sharing only the number is not a duplicate.
+    #[test]
+    fn a_mixed_key_looks_up_its_number_and_checks_the_whole_key() {
+        let mut g = graph();
+        for attr in ["s", "n"] {
+            g.falkordb_index
+                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
         }
-        VALUE_FLOAT => {
-            let v = f64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Float(v))
+        let ids = nodes(
+            &mut g,
+            &[
+                &[("s", string("x")), ("n", Value::Int(1))],
+                &[("s", string("x")), ("n", Value::Int(1))],
+                &[("s", string("y")), ("n", Value::Int(1))],
+            ],
+        );
+        assert!(looked_up(
+            &g,
+            EntityType::Node,
+            "U",
+            &["s", "n"],
+            &[string("x"), Value::Int(1)]
+        ));
+        assert!(check_nodes(&g, &["s", "n"], ids[1]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["s", "n"], ids[2]),
+            Ok(()),
+            "shares only the number"
+        );
+    }
+
+    /// A composite key reads its most selective column, whichever property it is. Every node
+    /// shares `tenant`, so its column returns the whole label for every member, while `id` returns
+    /// the one node holding that id. Reading the first property's column made a bulk insert cost a
+    /// scan of the tenant per inserted node.
+    #[test]
+    fn a_composite_key_reads_its_most_selective_column() {
+        let mut g = graph();
+        for attr in ["tenant", "id"] {
+            g.falkordb_index
+                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
         }
-        VALUE_STRING => {
-            let s = read_string(buf, offset)?;
-            Ok(Value::String(s))
+        // 50 nodes of one tenant, then a duplicate of node 3's key.
+        let rows: Vec<[(&str, Value); 2]> = (0..50)
+            .chain([3])
+            .map(|i| [("tenant", Value::Int(7)), ("id", Value::Int(i))])
+            .collect();
+        let ids = nodes(
+            &mut g,
+            &rows.iter().map(<[_; 2]>::as_slice).collect::<Vec<_>>(),
+        );
+        let read = |props: &[&str], values: &[Value]| -> usize {
+            let props: Vec<Arc<String>> = props.iter().map(|p| arc(p)).collect();
+            let lookups = native_unique_query(
+                &g.falkordb_index,
+                EntityType::Node,
+                &arc("U"),
+                &props,
+                values,
+            )
+            .expect("both columns answer");
+            fewest_candidates(lookups).count()
+        };
+        let (tenant, three, absent) = (Value::Int(7), Value::Int(3), Value::Int(99));
+        assert_eq!(
+            read(&["tenant", "id"], &[tenant.clone(), three.clone()]),
+            2,
+            "node 3 and its duplicate, not the tenant's 51"
+        );
+        assert_eq!(
+            read(&["id", "tenant"], &[three, tenant.clone()]),
+            2,
+            "the order of the properties does not matter"
+        );
+        assert_eq!(
+            read(&["tenant", "id"], &[tenant, absent]),
+            0,
+            "an id no node holds reads nothing"
+        );
+        assert!(check_nodes(&g, &["tenant", "id"], ids[50]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["tenant", "id"], ids[4]),
+            Ok(()),
+            "shares only the tenant"
+        );
+    }
+
+    /// Members whose lookups are the same read them once per check. No column answers for a
+    /// string today, so every member of a `(tenant, id)` key with string ids looks up only the
+    /// tenant, whose column holds the whole label. The check compares each candidate with every
+    /// member's key, so reading the tenant once covers them all.
+    #[test]
+    fn members_with_the_same_lookups_read_them_once() {
+        let mut g = graph();
+        for attr in ["tenant", "id"] {
+            g.falkordb_index
+                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
         }
-        VALUE_INTERN_STRING => {
-            let s = read_string(buf, offset)?;
-            Ok(Value::String(
-                crate::runtime::string_pool::global().intern(s),
-            ))
-        }
-        VALUE_LIST => {
-            let len = read_u64(buf, offset)? as usize;
-            let mut items = thin_vec::ThinVec::with_capacity(len);
-            for _ in 0..len {
-                items.push(read_value(buf, offset)?);
-            }
-            Ok(Value::List(Arc::new(items)))
-        }
-        VALUE_POINT => {
-            let lat = f64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            let lon = f64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Point(crate::runtime::value::Point {
-                latitude: lat as f32,
-                longitude: lon as f32,
-            }))
-        }
-        VALUE_VECF32 => {
-            let len = read_u64(buf, offset)? as usize;
-            let mut v = Vec::with_capacity(len);
-            for _ in 0..len {
-                let f = f32::from_le_bytes(
-                    buf.get(*offset..*offset + 4)
-                        .ok_or("truncated")?
-                        .try_into()
-                        .unwrap(),
-                );
-                *offset += 4;
-                v.push(f);
-            }
-            Ok(Value::VecF32(Arc::new(v.into())))
-        }
-        VALUE_DATETIME => {
-            let ts = i64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Datetime(ts))
-        }
-        VALUE_DATE => {
-            let ts = i64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Date(ts))
-        }
-        VALUE_TIME => {
-            let ts = i64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Time(ts))
-        }
-        VALUE_DURATION => {
-            let dur = i64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Duration(dur))
-        }
-        _ => Err(format!("unknown value tag in effects buffer: {tag}")),
+        // 50 nodes of tenant 7, a duplicate of the key of node 3, and one node of tenant 8.
+        let rows: Vec<[(&str, Value); 2]> = (0..50)
+            .chain([3])
+            .map(|i| [("tenant", Value::Int(7)), ("id", string(&format!("u{i}")))])
+            .chain([[("tenant", Value::Int(8)), ("id", string("u0"))]])
+            .collect();
+        let ids = nodes(
+            &mut g,
+            &rows.iter().map(<[_; 2]>::as_slice).collect::<Vec<_>>(),
+        );
+        let props = [arc("tenant"), arc("id")];
+        let lookups = |tenant: i64, id: &str| {
+            native_unique_query(
+                &g.falkordb_index,
+                EntityType::Node,
+                &arc("U"),
+                &props,
+                &[Value::Int(tenant), string(id)],
+            )
+            .expect("the tenant's column answers")
+        };
+        let once = ReadOnce::default();
+        assert_eq!(
+            once.candidates(lookups(7, "u1")).count(),
+            51,
+            "the first member reads the tenant"
+        );
+        assert_eq!(
+            once.candidates(lookups(7, "u2")).count(),
+            0,
+            "a member with the same lookups reads nothing more"
+        );
+        assert_eq!(
+            once.candidates(lookups(8, "u9")).count(),
+            1,
+            "another tenant is another lookup"
+        );
+        assert!(check_nodes(&g, &["tenant", "id"], ids[50]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["tenant", "id"], ids[4]),
+            Ok(()),
+            "shares only the tenant"
+        );
+    }
+
+    /// The same lookup for an edge constraint, where a column's ids are `edge_id`s.
+    #[test]
+    fn an_edge_duplicate_is_found_by_the_native_lookup() {
+        let mut g = graph();
+        let ty = arc("R");
+        g.falkordb_index
+            .create_numeric(EntityType::Relationship, &ty, &arc("id"));
+        let ends = g
+            .node_id_space()
+            .reserve(2, &RoaringTreemap::new())
+            .expect("reserved");
+        g.create_nodes(&ends.iter().copied().collect())
+            .expect("freshly reserved ids are creatable");
+        let ids = g
+            .relationship_id_space()
+            .reserve(3, &RoaringTreemap::new())
+            .expect("reserved");
+        g.create_relationships_bulk(&ty, &[ends[0]; 3], &[ends[1]; 3], &ids)
+            .expect("freshly reserved ids are creatable");
+        let attr = g.get_or_create_rel_attr_id(&arc("id"));
+        let attrs: FxHashMap<u64, Vec<(u16, Value)>> = ids
+            .iter()
+            .zip([1, 1, 2])
+            .map(|(&id, v)| (id, vec![(attr, Value::Int(v))]))
+            .collect();
+        let mut docs = IndexDocs::default();
+        g.import_relationship_attrs(&attrs, &mut docs);
+        g.apply_index_writes(&mut docs);
+
+        assert!(looked_up(
+            &g,
+            EntityType::Relationship,
+            "R",
+            &["id"],
+            &[Value::Int(1)]
+        ));
+        let constraint = Constraint::new(
+            ConstraintType::Unique,
+            EntityType::Relationship,
+            ty.clone(),
+            vec![arc("id")],
+        );
+        let check = |written: u64| {
+            Pending::new().check_edge_constraint(
+                &g,
+                &constraint,
+                &std::iter::once(written).collect(),
+            )
+        };
+        assert!(check(ids[1]).is_err());
+        assert_eq!(check(ids[2]), Ok(()), "a value no other edge holds");
     }
 }

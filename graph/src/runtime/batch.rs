@@ -31,7 +31,7 @@ use crate::planner::IR;
 use crate::runtime::bitset::BitSet;
 use crate::runtime::row::{Row, RowView};
 use crate::runtime::runtime::Runtime;
-use crate::runtime::value::{CompareValue, Value};
+use crate::runtime::value::{Value, sort_cmp_f64};
 use orx_tree::{Dyn, NodeIdx};
 use std::cmp::Ordering;
 use std::marker::PhantomData;
@@ -391,9 +391,8 @@ impl Column {
     /// Compares rows `a` and `b` of this column in ascending value order (the
     /// caller applies any `DESC` reversal). The primitive `Ints`/`Floats` lanes
     /// compare raw scalars, skipping the `Value` enum dispatch; every other lane
-    /// defers to [`CompareValue::compare_value`](crate::runtime::value::CompareValue)
-    /// through [`get`](Self::get), so the order stays byte-for-byte identical to
-    /// comparing the materialised `Value`s. Used by the sort operator to order
+    /// defers to [`Value::sort_cmp`] through [`get`](Self::get), so the order
+    /// stays byte-for-byte identical to comparing the materialised `Value`s. Used by the sort operator to order
     /// its typed key columns.
     #[inline]
     #[must_use]
@@ -404,10 +403,10 @@ impl Column {
     ) -> Ordering {
         match self {
             Self::Ints(v) => v[a].cmp(&v[b]),
-            Self::Floats(v) => v[a].partial_cmp(&v[b]).unwrap_or(Ordering::Less),
-            Self::Values(v) => v[a].compare_value(&v[b]).0,
+            Self::Floats(v) => sort_cmp_f64(v[a], v[b]),
+            Self::Values(v) => v[a].sort_cmp(&v[b]),
             Self::NodeIds(_) | Self::RelIds(_) | Self::Unbound => {
-                self.get(a).compare_value(&self.get(b)).0
+                self.get(a).sort_cmp(&self.get(b))
             }
         }
     }
@@ -843,6 +842,24 @@ impl<'a> Batch<'a> {
         }
     }
 
+    /// Creates a batch of `len` rows that binds no variable.
+    ///
+    /// The shape a projection naming nothing produces: row count (and, once
+    /// stamped, `origin_row`) with no bindings. `Batch::new` cannot express it
+    /// because `len` there follows the first column installed, and this batch
+    /// has none.
+    #[must_use]
+    pub fn rows_only(len: usize) -> Self {
+        Self {
+            len,
+            selection: None,
+            columns: Vec::new(),
+            origin_rows: None,
+            value_only: BitSet::default(),
+            _marker: PhantomData,
+        }
+    }
+
     /// Creates a batch from fully materialized columns.
     #[must_use]
     pub fn from_columns(columns: impl IntoIterator<Item = Column>) -> Self {
@@ -988,10 +1005,16 @@ impl<'a> Batch<'a> {
             let mut bound_anywhere = false;
             let mut nonnull_anywhere = false;
             for b in batches {
+                // Empty batches contribute no rows, so — as in
+                // `concat_typed_column` and the per-row concat — they cannot
+                // bind the slot either.
+                if b.active_len() == 0 {
+                    continue;
+                }
                 let col = b.column(vid);
                 // Same predicate as `is_bound_at`: present column AND not the
-                // value-only flag. A slot bound in *any* batch makes the whole
-                // concatenated column bound.
+                // value-only flag. A slot bound in *any* contributing batch
+                // makes the whole concatenated column bound.
                 if !matches!(col, Column::Unbound) && !b.value_only.test(i) {
                     bound_anywhere = true;
                 }
@@ -1269,8 +1292,8 @@ impl<'a> Batch<'a> {
     ) -> Ordering {
         match self.column(var_id) {
             Column::Unbound => Ordering::Equal,
-            Column::Values(vals) => vals[a].compare_value(&vals[b]).0,
-            col => col.get(a).compare_value(&col.get(b)).0,
+            Column::Values(vals) => vals[a].sort_cmp(&vals[b]),
+            col => col.get(a).sort_cmp(&col.get(b)),
         }
     }
 
@@ -1282,6 +1305,17 @@ impl<'a> Batch<'a> {
         row: usize,
     ) -> u32 {
         self.origin_rows.as_ref().map_or(0, |o| o[row])
+    }
+
+    /// Whether this batch carries per-row correlation tags.
+    ///
+    /// Distinguishes "every origin is 0" from "origins were never stamped",
+    /// which `origin_row` alone cannot: an operator replicating parent state
+    /// per result has to carry the tags across even when the parent binds no
+    /// variable to replicate.
+    #[must_use]
+    pub const fn has_origins(&self) -> bool {
+        self.origin_rows.is_some()
     }
 
     /// Installs the columnar per-row correlation sidecar. The vector is indexed
@@ -1401,12 +1435,18 @@ impl RowView for BatchRow<'_, '_> {
     }
 
     fn to_owned_row(&self) -> Row {
-        let mut r = Row::new();
+        // One slot per column, so the owned row answers `value_at` like this
+        // view: a column that is `Unbound` (trailing ones included) stays in
+        // scope as an unbound `Null`, and a value-only column keeps its value
+        // with the bound bit cleared.
+        let mut r = Row::with_capacity(self.batch.columns.len());
         for (var_id, col) in self.batch.columns.iter().enumerate() {
-            if !matches!(col, Column::Unbound) {
-                r.insert_by_id(var_id as u32, col.get(self.row));
-                if self.batch.value_only.test(var_id) {
-                    r.unbind_by_id(var_id as u32);
+            match col {
+                Column::Unbound => r.push_slot(Value::Null, false),
+                col => {
+                    // A `value_only` column carries a value without binding it.
+                    let bound = !self.batch.value_only.test(var_id);
+                    r.push_slot(col.get(self.row), bound);
                 }
             }
         }
@@ -1834,5 +1874,64 @@ impl<'a> Iterator for BatchOp<'a> {
             }
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{Batch, BatchBuilder, BatchRow, Column};
+    use crate::runtime::row::RowView;
+    use crate::runtime::value::Value;
+
+    /// `concat` must equal pushing every active row through a `BatchBuilder`:
+    /// a batch with no active rows contributes no rows, so it cannot bind a slot
+    /// that no contributing batch binds.
+    #[test]
+    fn concat_ignores_bindings_of_empty_batch() {
+        let a = Batch::from_columns([Column::Ints(vec![1])]);
+        // A `Values` column keeps column 1 off the typed fast path.
+        let mut b = Batch::from_columns([
+            Column::Ints(vec![2]),
+            Column::Values(vec![Value::String(Arc::new(String::from("s")))]),
+        ]);
+        b.set_selection(vec![]);
+        let concat = Batch::concat(&[a.clone(), b.clone()]);
+
+        let mut builder = BatchBuilder::new();
+        for batch in [&a, &b] {
+            for r in batch.active_indices() {
+                builder.push_row(&BatchRow::new(batch, r).to_owned_row());
+            }
+        }
+        let per_row = builder.finish();
+
+        assert_eq!(concat.len(), 1);
+        assert_eq!(concat.len(), per_row.len());
+        assert!(!per_row.is_bound_at(1, 0));
+        assert!(!concat.is_bound_at(1, 0));
+        assert!(concat.value_at(1, 0).is_none());
+    }
+
+    /// `to_owned_row` must agree with the view it materialises: a trailing
+    /// unbound column inside the batch's column space reads as `Some(Null)`
+    /// (unbound) on both, not `None` ("variable not found") on the owned row.
+    #[test]
+    fn to_owned_row_keeps_trailing_unbound_slots_in_scope() {
+        let b = Batch::from_columns([Column::Ints(vec![1]), Column::Unbound, Column::Unbound]);
+        let view = BatchRow::new(&b, 0);
+        let owned = view.to_owned_row();
+        for id in 0..4 {
+            assert_eq!(
+                format!("{:?}", view.value_at(id)),
+                format!("{:?}", owned.value_at(id)),
+                "slot {id}"
+            );
+        }
+        assert!(owned.is_bound_by_id(0));
+        assert!(!owned.is_bound_by_id(1));
+        assert!(!owned.is_bound_by_id(2));
+        assert!(owned.value_at(3).is_none());
     }
 }

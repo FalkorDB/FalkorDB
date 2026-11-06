@@ -45,10 +45,20 @@ class Query(NamedTuple):
     cypher  the query text
     reps    override the default repeat count. The sized write queries set this
             so a 1M-row batch does not run 1000 times.
+    needs   names of rows that must run before this one for its number to mean
+            anything -- a row measured against a graph an earlier row builds.
+            `--` selection pulls these in; without that a named run measures the
+            same query against the setup graph and reports a plausible, wrong
+            result, the same way a `cg` row running dry measures a no-op.
     cg      runnable under callgrind: needs nothing beyond CG_SETUP's 1,000
             :Person / :KNOWS ring / 5,000 :Tmp, and does not drain a pool
             faster than it is refilled. Running dry does not fail loudly — it
             quietly measures a no-op — hence the explicit opt-in.
+    drains  each run deletes what it reads from a finite pool: its prerequisite's
+            rows or the setup's. `measure` runs a row a counted number of times,
+            which the pools are sized for. `profile` repeats one query for as long
+            as it samples, so it would empty the pool and then profile a query
+            that deletes nothing; it refuses these rows.
     """
 
     name: str
@@ -56,6 +66,8 @@ class Query(NamedTuple):
     cypher: str
     reps: int | None = None
     cg: bool = False
+    needs: tuple[str, ...] = ()
+    drains: bool = False
 
     @property
     def command(self) -> str:

@@ -258,7 +258,7 @@ fn rebuild_context(
         for lib in &libs {
             for qname in &lib.function_names {
                 if let Some(persistent) = raw_funcs.get(qname) {
-                    persistent_funcs.insert(qname.to_lowercase(), persistent.clone());
+                    persistent_funcs.insert(qname.clone(), persistent.clone());
                 }
             }
         }
@@ -289,10 +289,9 @@ pub fn call_udf_bridge(
         let state = state.borrow();
         let state = state.as_ref().ok_or("JS context not initialized")?;
 
-        let lower_name = name.to_lowercase();
         let persistent_fn = state
             .functions
-            .get(&lower_name)
+            .get(name)
             .ok_or_else(|| format!("UDF function '{name}' not found in JS context"))?;
 
         // Set up timeout interrupt handler. We always install one: a configured
@@ -311,12 +310,13 @@ pub fn call_udf_bridge(
                 .map_err(|e| format!("Failed to restore UDF function: {e}"))?;
 
             // Set graph reference for JS classes that need it
-            crate::udf::js_classes::set_current_graph(rt.g.clone());
+            let graph = rt.graph_arc();
+            crate::udf::js_classes::set_current_graph(graph.clone());
 
             // Convert arguments
             let js_args: Vec<rquickjs::Value> = args
                 .iter()
-                .map(|v| type_convert::value_to_js(&ctx, v, &rt.g, Some(rt)))
+                .map(|v| type_convert::value_to_js(&ctx, v, &graph, Some(rt)))
                 .collect::<Result<Vec<_>, _>>()?;
 
             // Call the function

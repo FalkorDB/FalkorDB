@@ -94,3 +94,23 @@ class testGraphMultipleEdgeFlow(FlowTestsBase):
         edge_count = actual_result.result_set[0][0]
         self.env.assertEqual(edge_count, 1)
 
+
+    # Each of these reads `e` only inside an operator's own expression: the list
+    # UNWIND or FOREACH iterates, or MERGE's pattern. When that read was missed,
+    # nothing seemed to need the individual edges, the parallel pair collapsed to
+    # one representative, and each saw one edge instead of two.
+    def test_parallel_edges_read_inside_unwind_foreach_merge(self):
+        g = self.db.select_graph(GRAPH_ID + "_readers")
+        g.query("CREATE (a:A)-[:R {w: 1}]->(b:B), (a)-[:R {w: 2}]->(b)")
+
+        actual = g.query("MATCH (a:A)-[e:R]->(b) UNWIND [e] AS x RETURN x.w ORDER BY x.w")
+        self.env.assertEqual(actual.result_set, [[1], [2]])
+
+        g.query("MATCH (a:A)-[e:R]->(b) FOREACH (x IN [e] | SET x.seen = 1)")
+        actual = g.query("MATCH ()-[e:R]->() WHERE e.seen = 1 RETURN count(e)")
+        self.env.assertEqual(actual.result_set, [[2]])
+
+        g.query("MATCH (a:A)-[e:R]->(b) MERGE (:X {w: e.w})")
+        actual = g.query("MATCH (x:X) RETURN x.w ORDER BY x.w")
+        self.env.assertEqual(actual.result_set, [[1], [2]])
+        g.delete()

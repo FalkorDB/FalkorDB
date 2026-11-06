@@ -174,7 +174,7 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::union([Type::Float, Type::Null]),
         fn pow(_, args) {
-            Ok(apply_pow(args[0].clone(), args[1].clone()))
+            apply_pow(args[0].clone(), args[1].clone())
         }
     );
 
@@ -210,11 +210,8 @@ pub fn register(funcs: &mut Functions) {
         fn sign(_, args) {
             match &args[0] {
                 Value::Int(n) => Ok(Value::Int(n.signum())),
-                Value::Float(f) => Ok(if *f == 0.0 {
-                    Value::Int(0)
-                } else {
-                    Value::Float(f.signum().round())
-                }),
+                // Integer result like C and openCypher; ±0.0 and NaN give 0.
+                Value::Float(f) => Ok(Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))),
                 Value::Null => Ok(Value::Null),
 
                 _ => unreachable!(),
@@ -328,18 +325,28 @@ pub fn register(funcs: &mut Functions) {
 
 // called from fn pow and expr pow (^)
 #[inline]
-#[must_use]
 pub fn apply_pow(
     base: Value,
     exponent: Value,
-) -> Value {
-    match (base, exponent) {
-        // Convert all numeric types to f64 and use powf
-        // This matches C's behavior:  pow(SI_GET_NUMERIC(base), SI_GET_NUMERIC(exp))
-        (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as f64)),
-        (Value::Float(a), Value::Float(b)) => Value::Float(a.powf(b)),
-        (Value::Int(a), Value::Float(b)) => Value::Float((a as f64).powf(b)),
-        (Value::Float(a), Value::Int(b)) => Value::Float(a.powf(b as f64)),
-        _ => Value::Null,
+) -> Result<Value, String> {
+    // `pow()` is guarded by its declared argument types, but the `^`
+    // operator is not, so reject non-numeric operands here (as C does),
+    // even when the other operand is null.
+    if let Some(v) = [&base, &exponent]
+        .into_iter()
+        .find(|v| !matches!(v, Value::Int(_) | Value::Float(_) | Value::Null))
+    {
+        return Err(format!(
+            "Type mismatch: expected Integer, Float, or Null but was {}",
+            v.name()
+        ));
     }
+    if matches!(base, Value::Null) || matches!(exponent, Value::Null) {
+        return Ok(Value::Null);
+    }
+    // Both are numeric: convert to f64 and use powf, as C does:
+    // pow(SI_GET_NUMERIC(base), SI_GET_NUMERIC(exp))
+    Ok(Value::Float(
+        base.get_numeric().powf(exponent.get_numeric()),
+    ))
 }

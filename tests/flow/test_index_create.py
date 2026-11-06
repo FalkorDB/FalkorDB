@@ -866,6 +866,44 @@ class testIndexCreationFlow():
         self.env.assertEqual(result.indices_created, 1)
         self.env.assertEqual(result.labels_added, 1)
 
+    def test19_index_options_validation(self):
+        # index OPTIONS are validated like C: a vector index needs a dimension
+        # and a similarity function (matched case-insensitively), and a
+        # fulltext index refuses option keys it does not know
+        graph = self.db.select_graph("index_options_validation")
+
+        invalid = [
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v)",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {}",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {similarityFunction:'euclidean'}",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {dimension:2}",
+             "Invalid vector index configuration"),
+            ("CREATE FULLTEXT INDEX FOR (n:A) ON (n.t) OPTIONS {foo:1}",
+             "unknown option 'foo'"),
+            ("CREATE FULLTEXT INDEX FOR (n:A) ON (n.t) OPTIONS {weight:1, foo:1}",
+             "unknown option 'foo'"),
+        ]
+        for q, msg in invalid:
+            try:
+                graph.query(q)
+                self.env.assertTrue(False, message=q)
+            except ResponseError as e:
+                self.env.assertContains(msg, str(e))
+
+        res = graph.query("CREATE VECTOR INDEX FOR (n:B) ON (n.v) OPTIONS {dimension:2, similarityFunction:'Euclidean'}")
+        self.env.assertEqual(res.indices_created, 1)
+        res = graph.query("CREATE VECTOR INDEX FOR (n:C) ON (n.v) OPTIONS {dimension:2, similarityFunction:'COSINE'}")
+        self.env.assertEqual(res.indices_created, 1)
+        res = graph.query("CREATE FULLTEXT INDEX FOR (n:D) ON (n.t) OPTIONS {weight:2, nostem:true}")
+        self.env.assertEqual(res.indices_created, 1)
+
+        # the similarity function is stored normalized
+        res = graph.query("CALL db.indexes() YIELD label, options WHERE label = 'B' RETURN options")
+        self.env.assertEqual(res.result_set[0][0]['v']['similarityFunction'], 'euclidean')
+
     def test17_index_catalog_response(self):
         graph_name = "index_catalog_response"
         graph = self.db.select_graph(graph_name)
@@ -900,3 +938,28 @@ class testIndexCreationFlow():
         self.env.assertEqual(row_by_column["entitytype"], "NODE")
         self.env.assertEqual(row_by_column["status"], "OPERATIONAL")
 
+
+    def test18_field_added_during_population_is_populated(self):
+        # A field added to a label's index while that index is still being
+        # populated must itself be populated: the index may only report
+        # OPERATIONAL once every field covers every existing node.
+        graph_name = "index_field_added_during_population"
+        graph = self.db.select_graph(graph_name)
+        n = 30000  # several population batches
+
+        for _ in range(5):
+            if graph_name in self.db.list_graphs():
+                graph.delete()
+            graph.query("UNWIND range(1, $n) AS x CREATE (:L {a:x, b:x})", {'n': n})
+
+            # second field arrives while the first is populating
+            create_node_range_index(graph, 'L', 'a')
+            create_node_range_index(graph, 'L', 'b')
+            wait_for_indices_to_sync(graph)
+
+            for attr in ['a', 'b']:
+                q = f"MATCH (n:L) WHERE n.{attr} > 0 RETURN count(n)"
+                plan = str(graph.explain(q))
+                self.env.assertIn("Node By Index Scan", plan)
+                count = graph.ro_query(q).result_set[0][0]
+                self.env.assertEqual(count, n, message=f"index on L.{attr}")

@@ -23,6 +23,8 @@
 use std::sync::Arc;
 
 use crate::graph::graph::NodeId;
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::unsupported_by_native_index;
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
@@ -60,6 +62,8 @@ impl<'a> NodeByIndexScanOp<'a> {
         index: &'a Arc<String>,
         query: &'a IndexQuery<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
+        // Kept in the signature, unused for now: see the emitter below.
+        _record_cap: Option<usize>,
     ) -> Self {
         let extra_labels = if node_pattern.labels.len() > 1 {
             Some(node_pattern.labels.iter().skip(1).cloned().collect())
@@ -73,7 +77,22 @@ impl<'a> NodeByIndexScanOp<'a> {
             index,
             query,
             extra_labels,
-            emitter: BatchedResultEmitter::new(node_pattern.alias.id),
+            // `None`, and not for want of a win: capping this measured
+            // `LIMIT 10` at 240,138 instructions against 1,079,312, a 4.5x
+            // saving on a full batch packed and discarded.
+            //
+            // It is off because it hangs `tests/flow/test_constraint.py`.
+            // Bisected to this line and to the same line in
+            // `edge_by_index_scan`, each of which hangs the file on its own,
+            // while the caps on `cond_var_len_traverse` and
+            // `node_by_label_and_id_scan` leave all 23 tests passing. Constraint
+            // validation drives index scans and its tests poll for a constraint
+            // to become operational, so a scan that does not finish hangs
+            // rather than fails. The mechanism is not yet understood — the
+            // `next()` loop here looks correct for a partial batch — so this
+            // stays off until it is, rather than shipping a 4.5x win that
+            // deadlocks constraint creation. Tracked in #2790.
+            emitter: BatchedResultEmitter::new(node_pattern.alias.id, None),
             idx,
         }
     }
@@ -201,24 +220,25 @@ impl<'a> NodeByIndexScanOp<'a> {
                     ExprEval::from_runtime(runtime).eval(list, list.root().idx(), Some(vars), None)
                 }?;
                 match list_val {
+                    // Kept as one `InList` rather than expanded to `Or(Equal, ..)`: it names one
+                    // attribute by construction, and RediSearch builds the same union from either
+                    // shape (`build_query_node`). Only the members kept here reach the index.
                     Value::List(items) => {
-                        let equals = items
-                            .iter()
-                            .filter(|v| {
-                                matches!(
-                                    v,
-                                    Value::Int(_)
-                                        | Value::Float(_)
-                                        | Value::String(_)
-                                        | Value::Bool(_)
-                                )
-                            })
-                            .map(|v| IndexQuery::Equal {
-                                key: key.clone(),
-                                value: v.clone(),
-                            })
-                            .collect::<Vec<_>>();
-                        Ok(IndexQuery::Or(equals))
+                        let keep = |v: &Value| {
+                            matches!(
+                                v,
+                                Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
+                            )
+                        };
+                        let items = if items.iter().all(keep) {
+                            items
+                        } else {
+                            Arc::new(items.iter().filter(|v| keep(v)).cloned().collect())
+                        };
+                        Ok(IndexQuery::InList {
+                            key: key.clone(),
+                            list: Value::List(items),
+                        })
                     }
                     _ => Err("IN operator requires a list".into()),
                 }
@@ -259,6 +279,12 @@ impl<'a> NodeByIndexScanOp<'a> {
                 // re-establishes correctness.
                 !children.is_empty() && children.iter().all(Self::can_utilize_index)
             }
+            // The same rule, for an `IN` list: empty once its members were filtered (`IN [NULL]`)
+            // falls back, and so does a list with any member the index cannot hold exactly.
+            IndexQuery::InList { list, .. } => matches!(
+                list,
+                Value::List(items) if !items.is_empty() && items.iter().all(is_indexable)
+            ),
             IndexQuery::ArrayContains { value, .. } => {
                 matches!(
                     value,
@@ -285,18 +311,61 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 let view = BatchRow::new(b, row);
                 let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
-                // Check if the index can satisfy this query. If not
-                // (e.g. non-indexable value types), fall back to a
-                // label scan.
-                let base: Box<dyn Iterator<Item = NodeId>> = if Self::can_utilize_index(&q) {
-                    Box::new(self.runtime.g.borrow().get_indexed_nodes(self.index, q))
-                } else {
-                    Box::new(
-                        self.runtime
-                            .g
-                            .borrow()
-                            .get_nodes(&self.node_pattern.labels, 0),
-                    )
+                // Check if the index can satisfy this query. `None` here means "scan instead":
+                // the predicate is not index-shaped (e.g. non-indexable value types), which the
+                // planner keeps a filter for. That is not a capability gap, so it may not error
+                // even under the no-fallback flag.
+                let indexed: Option<Box<dyn Iterator<Item = NodeId>>> =
+                    if Self::can_utilize_index(&q) {
+                        let g = self.runtime.graph();
+                        // Under `index-falkordb` the native index is the ONLY index: a predicate
+                        // it cannot serve is an error, not a quiet detour to RediSearch. Falling
+                        // back would hide every unimplemented kind behind correct-looking
+                        // results, which is exactly what the xfail ledger exists to prevent — a
+                        // gap has to be visible to be closed. The message names the predicate so
+                        // the failure is diagnosable rather than a bare "no rows".
+                        #[cfg(feature = "index-falkordb")]
+                        let it: Option<Box<dyn Iterator<Item = NodeId>>> = match g
+                            .query_index_numeric_nodes(self.index, &q)
+                        {
+                            Some(Ok(rows)) => Some(Box::new(rows)),
+                            // The column exists and will serve this once its build reaches
+                            // every entity. Until then scan the label for what it will answer:
+                            // the planner dropped the predicate it handed this op, so the scan
+                            // must check it itself.
+                            Some(Err(scan_filter)) => {
+                                let runtime = self.runtime;
+                                // Resolved once per scan. No node holds a name the graph has
+                                // never seen.
+                                let nodes: Box<dyn Iterator<Item = NodeId>> = match g
+                                    .get_node_attribute_id(scan_filter.attribute())
+                                {
+                                    Some(attr) => {
+                                        let attr = attr as u16;
+                                        Box::new(g.get_nodes(&self.node_pattern.labels, 0).filter(
+                                            move |&id| {
+                                                runtime.graph().node_matches(id, attr, &scan_filter)
+                                            },
+                                        ))
+                                    }
+                                    None => Box::new(std::iter::empty()),
+                                };
+                                Some(nodes)
+                            }
+                            None => {
+                                return Err(unsupported_by_native_index("node", self.index, &q));
+                            }
+                        };
+                        #[cfg(not(feature = "index-falkordb"))]
+                        let it: Option<Box<dyn Iterator<Item = NodeId>>> =
+                            Some(Box::new(g.get_indexed_nodes(self.index, q)));
+                        it
+                    } else {
+                        None
+                    };
+                let base: Box<dyn Iterator<Item = NodeId>> = match indexed {
+                    Some(it) => it,
+                    None => Box::new(self.runtime.graph().get_nodes(&self.node_pattern.labels, 0)),
                 };
                 let iter: Box<dyn Iterator<Item = NodeId> + 'a> = match &self.extra_labels {
                     Some(extra) => {
@@ -319,5 +388,71 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 Err(e) => return Some(Err(e)),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key() -> Arc<String> {
+        Arc::new("v".to_string())
+    }
+
+    fn in_list(values: &[Value]) -> IndexQuery<Value> {
+        IndexQuery::InList {
+            key: key(),
+            list: Value::List(Arc::new(values.iter().cloned().collect())),
+        }
+    }
+
+    /// The same members as an `Or` of `Equal`s — the shape an `IN` list used to reach the index in.
+    fn or_of_equals(values: &[Value]) -> IndexQuery<Value> {
+        IndexQuery::Or(
+            values
+                .iter()
+                .map(|v| IndexQuery::Equal {
+                    key: key(),
+                    value: v.clone(),
+                })
+                .collect(),
+        )
+    }
+
+    /// An `IN` list reaches the index only when it is non-empty and every member is one the index
+    /// holds exactly; otherwise the op scans. That is the rule its members got as an `Or` of
+    /// `Equal`s, so which queries fall back is unchanged by handing the list over whole.
+    #[test]
+    fn in_list_reaches_the_index_on_the_same_terms_as_an_or_of_its_members() {
+        let lossy = Value::Int(9_007_199_254_740_993);
+        let cases: [(&[Value], bool); 5] = [
+            (&[Value::Int(1), Value::Float(2.5), Value::Bool(true)], true),
+            (
+                &[Value::Int(1), Value::String(Arc::new("a".to_string()))],
+                true,
+            ),
+            (&[], false),
+            (&[Value::Int(1), lossy.clone()], false),
+            (&[lossy], false),
+        ];
+        for (values, expected) in cases {
+            assert_eq!(
+                NodeByIndexScanOp::can_utilize_index(&in_list(values)),
+                expected,
+                "IN {values:?}"
+            );
+            assert_eq!(
+                NodeByIndexScanOp::can_utilize_index(&in_list(values)),
+                NodeByIndexScanOp::can_utilize_index(&or_of_equals(values)),
+                "IN {values:?} must decide as its members did as an Or"
+            );
+        }
+        assert!(
+            !NodeByIndexScanOp::can_utilize_index(&IndexQuery::InList {
+                key: key(),
+                list: Value::Int(1),
+            }),
+            "an InList that does not hold a list never reaches the index"
+        );
     }
 }

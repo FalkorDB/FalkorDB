@@ -21,6 +21,7 @@
 //!
 //! Only allowed in write queries; returns an error for `GRAPH.RO_QUERY`.
 
+use crate::effects::EffectsBuffer;
 use crate::planner::IR;
 use crate::runtime::{
     batch::{Batch, BatchOp},
@@ -85,7 +86,7 @@ impl<'a> Iterator for CommitOp<'a> {
                 .runtime
                 .pending
                 .borrow_mut()
-                .commit(&self.runtime.g, &self.runtime.stats)
+                .commit(&mut self.runtime.graph_mut(), &self.runtime.stats)
             {
                 return Some(Err(e));
             }
@@ -107,8 +108,15 @@ impl<'a> Iterator for CommitOp<'a> {
                 if estimated > 0 {
                     if self.runtime.build_effects.get() {
                         let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
-                        let buf = buf_ref.get_or_insert_with(Vec::new);
-                        let n_effects = pending.build_effects_buffer(&self.runtime.g, buf);
+                        let buf = buf_ref.get_or_insert_with(EffectsBuffer::new);
+                        // A refusal here means the emitter built a record this
+                        // buffer cannot carry. Failing the write is the point:
+                        // the alternative is a commit that succeeded locally
+                        // and shipped a payload the replica reads differently.
+                        let n_effects = match buf.build(&pending, &self.runtime.graph()) {
+                            Ok(n) => n,
+                            Err(e) => return Some(Err(e)),
+                        };
                         self.runtime
                             .effects_count
                             .set(self.runtime.effects_count.get() + n_effects);
@@ -121,13 +129,23 @@ impl<'a> Iterator for CommitOp<'a> {
                     }
                 }
             }
-            self.runtime.pending.borrow_mut().clear();
+            // Ends the segment in both senses: this `Pending`'s accumulated
+            // mutations and the graph's id batches, which move together or the
+            // next segment allocates against a stale boundary.
+            if let Err(e) = self
+                .runtime
+                .pending
+                .borrow_mut()
+                .end_segment(&mut self.runtime.graph_mut())
+            {
+                return Some(Err(e.to_string()));
+            }
             // Update schema baseline so the next commit in this query only
             // emits newly added schema entries.
             self.runtime
                 .pending
                 .borrow_mut()
-                .set_schema_baseline(&self.runtime.g);
+                .set_schema_baseline(&self.runtime.graph());
             // Reverse once so we can pop from the end in O(1) while preserving order.
             self.results.reverse();
         }

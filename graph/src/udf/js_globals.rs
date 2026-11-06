@@ -91,7 +91,7 @@ pub fn setup_validate_globals(
         .set("falkor", falkor)
         .map_err(|e| format!("Failed to set global falkor: {e}"))?;
 
-    Ok(())
+    setup_graph_global(ctx)
 }
 
 /// After running validation scripts, collect the registered names from JS globals.
@@ -154,7 +154,14 @@ pub fn setup_runtime_globals(ctx: &Ctx<'_>) -> Result<(), String> {
         .set("falkor", falkor)
         .map_err(|e| format!("Failed to set global falkor: {e}"))?;
 
-    // Set up the graph global object (traverse functionality)
+    setup_graph_global(ctx)
+}
+
+/// Define the `graph` global (traverse, getNodeById, iterateNodes,
+/// iterateEdges). Shared by the validation and runtime contexts so a library
+/// that references `graph` at top level validates the same way it runs.
+fn setup_graph_global(ctx: &Ctx<'_>) -> Result<(), String> {
+    let globals = ctx.globals();
     let graph_obj =
         Object::new(ctx.clone()).map_err(|e| format!("Failed to create graph object: {e}"))?;
 

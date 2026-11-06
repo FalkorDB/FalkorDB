@@ -409,7 +409,7 @@ class testEntityUpdate():
                 self.multiple_entity_graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
-                self.env.assertContains("Type mismatch: expected Node but was Relationship", str(e))
+                self.env.assertContains("Type mismatch: expected Node but was Edge", str(e))
     
 
     def test_26_fail_update_label_for_constant(self):
@@ -494,6 +494,48 @@ class testEntityUpdate():
         self.env.assertEqual(result.labels_added, 1)
         self.env.assertEqual(result.labels_removed, 0)
         self.validate_node_labels(self.graph, labels, 1)
+
+    def test_31_mix_add_and_remove_same_label_on_labeled_node(self):
+        # https://github.com/FalkorDB/FalkorDB/issues/2777
+        # a label re-added in the same query that removes it must survive;
+        # the last clause to touch a label wins, in both directions
+        self.graph.delete()
+        self.graph.query("CREATE (:L {v: 1})")
+        self.validate_node_labels(self.graph, ["L"], 1)
+
+        # remove prior to set: the label is kept
+        result = self.graph.query("MATCH (n:L) REMOVE n:L SET n:L RETURN labels(n)")
+        self.env.assertEqual(result.result_set[0][0], ["L"])
+        self.env.assertEqual(result.labels_removed, 0)
+        # still reachable by a label scan, and still a single node
+        self.validate_node_labels(self.graph, ["L"], 1)
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0], 1)
+
+        # set prior to remove: the label is dropped
+        result = self.graph.query("MATCH (n:L) SET n:L REMOVE n:L RETURN labels(n)")
+        self.env.assertEqual(result.result_set[0][0], [])
+        self.env.assertEqual(result.labels_removed, 1)
+        self.validate_node_labels(self.graph, ["L"], 0)
+        # the node itself survives, it only lost the label
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0], 1)
+
+        # a different label added while the original one is removed
+        for query in ["MATCH (n:A) REMOVE n:A SET n:B RETURN labels(n)",
+                      "MATCH (n:A) SET n:B REMOVE n:A RETURN labels(n)"]:
+            self.graph.delete()
+            self.graph.query("CREATE (:A)")
+            result = self.graph.query(query)
+            self.env.assertEqual(result.result_set[0][0], ["B"])
+            self.validate_node_labels(self.graph, ["A"], 0)
+            self.validate_node_labels(self.graph, ["B"], 1)
+
+        # multiple nodes updated by a single query
+        self.graph.delete()
+        self.graph.query("UNWIND range(1, 5) AS i CREATE (:L {v: i})")
+        result = self.graph.query("MATCH (n:L) REMOVE n:L SET n:L RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 5)
+        self.env.assertEqual(result.labels_removed, 0)
+        self.validate_node_labels(self.graph, ["L"], 5)
 
     def test_32_mix_merge_and_remove_node_labels(self):
         self.graph.delete()
@@ -775,6 +817,42 @@ class testEntityUpdate():
         self.env.assertEqual(len(actual_node.properties), 2)
         self.env.assertEqual(actual_node.properties['a'], 4)
         self.env.assertEqual(actual_node.properties['c'], 'str')
+
+    def test42_replace_drops_properties_set_earlier_in_the_query(self):
+        # `SET x = …` replaces every property x has as the query sees it,
+        # including the ones written earlier in the same query and not yet
+        # committed. Only node <- map cleared those; the other forms kept
+        # them, so the replace behaved as a merge.
+        # https://github.com/FalkorDB/FalkorDB/issues/2776
+        self.graph.delete()
+
+        for q, expected in [
+            # rel <- map
+            ("CREATE ()-[r:R {a:1}]->() SET r = {b:2} RETURN properties(r)", {'b': 2}),
+            # node <- node
+            ("CREATE (n:N {a:1}), (m:M {c:3}) SET n = m RETURN properties(n)", {'c': 3}),
+            # node <- rel
+            ("CREATE (n {a:1})-[r:R {c:3}]->() SET n = r RETURN properties(n)", {'c': 3}),
+            # rel <- node
+            ("CREATE (n {a:1})-[r:R {c:3}]->() SET r = n RETURN properties(r)", {'a': 1}),
+            # rel <- rel
+            ("CREATE (a)-[r:R {a:1}]->(b), (a)-[s:S {c:3}]->(b) SET r = s RETURN properties(r)", {'c': 3}),
+            # node <- map, already correct
+            ("CREATE (n:N {a:1}) SET n = {b:2} RETURN properties(n)", {'b': 2}),
+        ]:
+            res = self.graph.query(q).result_set
+            self.env.assertEqual(res, [[expected]], message=q)
+
+        # committed entities with properties staged by an earlier SET
+        self.graph.delete()
+        self.graph.query("CREATE (:A {k:1})-[:R {k:2}]->(:B {k:3})")
+        q = """MATCH (a:A)-[r:R]->(b:B)
+               SET r.w = 5, a.w = 6
+               SET r = {y:2}, a = b
+               RETURN properties(r), properties(a)"""
+        self.env.assertEqual(self.graph.query(q).result_set, [[{'y': 2}, {'k': 3}]])
+        q = "MATCH (a:A)-[r:R]->(b:B) RETURN properties(r), properties(a)"
+        self.env.assertEqual(self.graph.query(q).result_set, [[{'y': 2}, {'k': 3}]])
 
 class testEntityUpdateReplication():
     def __init__(self):

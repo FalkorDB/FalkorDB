@@ -9,7 +9,7 @@
 //!                    ┌──────────────────────────┐
 //!                    │       MvccGraph           │  Concurrent access coordinator
 //!                    │  (mvcc_graph.rs)          │  Snapshot isolation for readers,
-//!                    │                           │  serialized writes via AtomicBool
+//!                    │                           │  stale forks refused at commit
 //!                    └────────────┬──────────────┘
 //!                                 │ Arc<AtomicRefCell<Graph>>
 //!                                 ▼
@@ -52,7 +52,7 @@
 //! - **Writers** create a new version via `Graph::new_version()`, which uses
 //!   Copy-on-Write for matrices (only duplicated on first mutation)
 //! - On commit, the `MvccGraph` atomically swaps the graph pointer
-//! - On rollback, the versioned copy is simply discarded
+//! - An abandoned version is simply dropped; there is nothing to roll back
 //!
 //! ## GraphBLAS Integration
 //!
@@ -66,4 +66,5 @@ pub mod cow;
 pub mod endpoint_index;
 pub mod graph;
 pub mod graphblas;
+pub mod id_space;
 pub mod mvcc_graph;

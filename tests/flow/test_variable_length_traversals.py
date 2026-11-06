@@ -572,3 +572,61 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         result = self.graph.query(q)
         self.env.assertEqual(result.result_set, [])
+
+    def test18_fixed_length_path_multiplicity(self):
+        # a fixed-length variable-length traversal must emit one row per
+        # distinct path, and must not depend on whether a path variable
+        # happens to be bound
+        self.graph.delete()
+
+        # a diamond: two distinct 2-hop paths lead from n0 to n000
+        #   (n0)-[:LIKES]->(n00)-[:LIKES]->(n000)
+        #   (n0)-[:LIKES]->(n01)-[:LIKES]->(n000)
+        q = """CREATE (n0:A {name: 'n0'}),
+                      (n00:B {name: 'n00'}),
+                      (n01:B {name: 'n01'}),
+                      (n000:C {name: 'n000'}),
+                      (n0)-[:LIKES]->(n00),
+                      (n0)-[:LIKES]->(n01),
+                      (n00)-[:LIKES]->(n000),
+                      (n01)-[:LIKES]->(n000)"""
+        self.graph.query(q)
+
+        # the destination is reachable by two distinct paths, so it must be
+        # returned twice, without an implicit DISTINCT being applied
+        q = """MATCH (a:A)-[:LIKES*2]->(c)
+               WHERE a.name = 'n0'
+               RETURN c.name"""
+        res = self.graph.query(q).result_set
+        self.env.assertEqual(res, [['n000'], ['n000']])
+
+        # binding a path variable must not change the result
+        q = """MATCH p = (a:A)-[:LIKES*2]->(c)
+               WHERE a.name = 'n0'
+               RETURN c.name"""
+        self.env.assertEqual(self.graph.query(q).result_set, res)
+
+        # neither must the equivalent explicit two-hop pattern
+        q = """MATCH (a:A)-[:LIKES]->(m)-[:LIKES]->(c)
+               WHERE a.name = 'n0'
+               RETURN c.name"""
+        self.env.assertEqual(self.graph.query(q).result_set, res)
+
+        # the two paths are distinguishable by their intermediate node
+        q = """MATCH p = (a:A)-[:LIKES*2]->(c)
+               WHERE a.name = 'n0'
+               RETURN nodes(p)[1].name AS via
+               ORDER BY via"""
+        res = self.graph.query(q).result_set
+        self.env.assertEqual(res, [['n00'], ['n01']])
+
+        # a bounded range must stay consistent with and without a path
+        # variable as well
+        q = """MATCH (a:A)-[:LIKES*1..2]->(c) RETURN count(*)"""
+        without_path = self.graph.query(q).result_set
+
+        q = """MATCH p = (a:A)-[:LIKES*1..2]->(c) RETURN count(*)"""
+        with_path = self.graph.query(q).result_set
+
+        self.env.assertEqual(without_path, [[4]])
+        self.env.assertEqual(with_path, without_path)

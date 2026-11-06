@@ -115,6 +115,27 @@ class testNulBytesInGraphKeys(FlowTestsBase):
         res = self.conn.execute_command("GRAPH.QUERY", "a", "MATCH (n) RETURN count(n)")
         self.env.assertEqual(res[1], [[1]])
 
+    def test_effect_creates_under_the_truncated_key(self):
+        # GRAPH.EFFECT creates a graph when the key is absent, and so does C:
+        # cmd_effect.c passes shouldCreate=true to GraphContext_RetrieveOrForce,
+        # which creates through GraphContext_New + GraphContext_SetKey like every
+        # other path. So it has to truncate like every other path.
+        #
+        # The key is opened before the payload is parsed, so an invalid payload
+        # still reaches the create branch -- which is what makes this observable
+        # without hand-building a valid effects buffer.
+        #
+        # Using the addressed key here stored the graph at the raw key while
+        # GRAPH.LIST reported the truncated name: unreachable by the name it
+        # advertises, and a later write to `a` would build a second graph beside
+        # it that neither side would reconcile.
+        try:
+            self.conn.execute_command("GRAPH.EFFECT", NUL, b"\x03garbage")
+        except ResponseError:
+            pass  # the payload is refused; the graph is created before that
+        self.env.assertEqual(self.graph_keys(), ["a"])
+        self.env.assertEqual(self.conn.execute_command("GRAPH.LIST"), ["a"])
+
     def test_a_second_write_replaces_the_first(self):
         # C: each write on the NUL key finds the addressed key empty, creates a fresh
         # graph, and stores it over the previous one — so the count stays 1, it does

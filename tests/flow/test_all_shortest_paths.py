@@ -123,7 +123,24 @@ class testAllShortestPaths():
         except redis.ResponseError as e:
             self.env.assertContains("FalkorDB support allShortestPaths only in match clauses", str(e))
 
+        # unresolved endpoints followed by an aggregating WITH * used to
+        # crash the server: the error is raised while an aggregation is
+        # still pending, and unwinding it corrupted the execution plan
+        query = """MATCH p = allShortestPaths((a:Paper)-[*..2]-(b:Paper))
+                   WITH *, count(a) AS count_a
+                   RETURN p"""
+
+        try:
+            self.graph.query(query)
+            self.env.assertTrue(False)
+        except redis.ResponseError as e:
+            self.env.assertContains("Source and destination must already be resolved to call allShortestPaths", str(e))
+
+        # the server is still alive and serving queries
+        self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])
+
     def test02_all_shortest_paths(self):
+
         # running against following graph
         #
         # (v1)-[:E]->(v2)-[:E]->(v3)-[:E]->(v4)
@@ -268,13 +285,26 @@ class testAllShortestPaths():
                    ORDER BY nodes"""
 
         actual_result = self.cyclic_graph.query(query)
-        # 3 paths should be found
-        expected_result = [[[self.cyclic_v1, self.cyclic_v3, self.cyclic_v2, self.cyclic_v1]],
-                           [[self.cyclic_v1, self.cyclic_v4, self.cyclic_v2, self.cyclic_v1]],
-                           [[self.cyclic_v1, self.cyclic_v4, self.cyclic_v5, self.cyclic_v1]]]
+        # 3 paths should be found, each walked along the relationships'
+        # direction (C returns these node lists reversed)
+        expected_result = [[[self.cyclic_v1, self.cyclic_v2, self.cyclic_v3, self.cyclic_v1]],
+                           [[self.cyclic_v1, self.cyclic_v2, self.cyclic_v4, self.cyclic_v1]],
+                           [[self.cyclic_v1, self.cyclic_v5, self.cyclic_v4, self.cyclic_v1]]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-        # Verify that a right-to-left traversal produces the same results
+        # the relationships of a directed cycle chain head to tail
+        query = """MATCH (v1 {v: 1})
+                   WITH v1
+                   MATCH p = allShortestPaths((v1)-[*]->(v1))
+                   RETURN [r IN relationships(p) | [startNode(r).v, endNode(r).v]] AS rels
+                   ORDER BY rels"""
+        actual_result = self.cyclic_graph.query(query)
+        self.env.assertEqual(actual_result.result_set,
+                             [[[[1, 2], [2, 3], [3, 1]]],
+                              [[[1, 2], [2, 4], [4, 1]]],
+                              [[[1, 5], [5, 4], [4, 1]]]])
+
+        # a right-to-left traversal walks the same cycles against the arrows
         query = """MATCH (v1 {v: 1})
                    WITH v1
                    MATCH p = allShortestPaths((v1)<-[*]-(v1))
@@ -282,7 +312,21 @@ class testAllShortestPaths():
                    ORDER BY nodes"""
 
         actual_result = self.cyclic_graph.query(query)
+        expected_result = [[[self.cyclic_v1, self.cyclic_v3, self.cyclic_v2, self.cyclic_v1]],
+                           [[self.cyclic_v1, self.cyclic_v4, self.cyclic_v2, self.cyclic_v1]],
+                           [[self.cyclic_v1, self.cyclic_v4, self.cyclic_v5, self.cyclic_v1]]]
         self.env.assertEqual(actual_result.result_set, expected_result)
+
+        query = """MATCH (v1 {v: 1})
+                   WITH v1
+                   MATCH p = allShortestPaths((v1)<-[*]-(v1))
+                   RETURN [r IN relationships(p) | [startNode(r).v, endNode(r).v]] AS rels
+                   ORDER BY rels"""
+        actual_result = self.cyclic_graph.query(query)
+        self.env.assertEqual(actual_result.result_set,
+                             [[[[3, 1], [2, 3], [1, 2]]],
+                              [[[4, 1], [2, 4], [1, 2]]],
+                              [[[4, 1], [5, 4], [1, 5]]]])
 
     def test07_all_shortest_paths_unreachables(self):
         """

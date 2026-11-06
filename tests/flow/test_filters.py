@@ -236,10 +236,10 @@ class testFilters():
             self.env.assertContains("Division by zero", str(e))
 
     def test09_case_value_form_null_subject(self):
-        # `CASE x WHEN y` matching is `Value` equality, which in this engine
-        # calls two nulls equal, so a null subject selects a `WHEN null` arm
-        # rather than falling through to ELSE (openCypher would fall through;
-        # test_function_calls.py's `test68_Case` pins this engine's answer).
+        # `CASE x WHEN y` matching is `=`, and `null = null` is null, so a
+        # null subject never selects a `WHEN null` arm and falls through to
+        # ELSE (test_null_handling.py's `test09_null_simple_case` pins each
+        # arm against the answer `=` itself gives it).
         #
         # What must never differ is *which path* computed it: the columnar
         # `CASE` and the per-row one have to agree on the null subject, which
@@ -248,7 +248,7 @@ class testFilters():
         g.query("UNWIND range(1, 5) AS i CREATE (:K {i: i})")
 
         for query, expected in [
-            ("RETURN CASE null WHEN null THEN 'matched' ELSE 'else' END", 'matched'),
+            ("RETURN CASE null WHEN null THEN 'matched' ELSE 'else' END", 'else'),
             ("RETURN CASE 1 WHEN null THEN 'matched' ELSE 'else' END", 'else'),
             ("RETURN CASE null WHEN 1 THEN 'matched' ELSE 'else' END", 'else'),
             ("RETURN CASE 1 WHEN 1 THEN 'matched' ELSE 'else' END", 'matched'),
@@ -261,4 +261,4 @@ class testFilters():
         per_row = g.query(
             "MATCH (n:K) RETURN head([CASE n.missing WHEN null THEN 'matched' ELSE 'else' END]) AS v")
         self.env.assertEqual(columnar.result_set, per_row.result_set)
-        self.env.assertEqual(columnar.result_set, [['matched']] * 5)
+        self.env.assertEqual(columnar.result_set, [['else']] * 5)

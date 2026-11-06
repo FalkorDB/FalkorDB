@@ -136,8 +136,12 @@ class testGraphMemoryUsage(FlowTestsBase):
         try:
             res = self.conn.execute_command(cmd)
             self.env.assertTrue(False)
-        except:
-            pass
+        except ResponseError as e:
+            self.env.assertContains("SAMPLES must be a non-negative integer", str(e))
+
+        # zero samples is accepted, as in C (clamped to one sample)
+        res = self.conn.execute_command(f"GRAPH.MEMORY USAGE {GRAPH_ID} SAMPLES 0")
+        self.env.assertTrue(len(res) > 0)
 
         self.conn.set("x", 2)
 
@@ -165,10 +169,19 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertEqual(res.unlabeled_node_attributes_sz_mb, 0)
         self.env.assertEqual(res.relation_matrices_sz_mb, 0)
 
+        # A node with no labels and no properties costs nothing to store. Its
+        # existence is the id range minus the deleted set, which is a counter
+        # and a bitmap, not a per-node structure -- unlike C, where every node
+        # holds a DataBlock slot. 1M such nodes measured 0.1 MB against C's
+        # 110.6 MB. Nothing is charged here because nothing is allocated.
+        self.env.assertEqual(res.node_block_storage_sz_mb, 0)
+
+        # give the nodes a property: now there is per-node storage to report
+        self.graph.query("MATCH (n) SET n.v = 1")
+        res = self._graph_memory_usage()
+
         self.env.assertGreater(res.total_graph_sz_mb, 0)
         self.env.assertGreater(res.node_block_storage_sz_mb, 0)
-
-        self._assert_mb_close(res.total_graph_sz_mb, res.node_block_storage_sz_mb)
 
     def test_label_matrices_memory_usage(self):
         """make sure label matrices memory consumption is reported"""
@@ -185,9 +198,12 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertEqual(res.relation_matrices_sz_mb, 0)
 
         self.env.assertGreater(res.total_graph_sz_mb, 0)
-        self.env.assertGreater(res.node_block_storage_sz_mb, 0)
         self.env.assertGreater(res.label_matrices_sz_mb, 0)
         self.env.assertContains("A", res.node_attributes_by_label_storage_sz_mb)
+
+        # these nodes carry a label but no properties, so all of their cost is
+        # the label matrix; node block storage charges for property slots only
+        self.env.assertEqual(res.node_block_storage_sz_mb, 0)
 
         self._assert_mb_close(
             res.total_graph_sz_mb,
@@ -207,9 +223,12 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertEqual(res.label_matrices_sz_mb, 0)
 
         self.env.assertGreater(res.total_graph_sz_mb, 0)
-        self.env.assertGreater(res.node_block_storage_sz_mb, 0)
         self.env.assertGreater(res.edge_block_storage_sz_mb, 0)
         self.env.assertGreater(res.relation_matrices_sz_mb, 0)
+
+        # the endpoints carry no properties, so they cost nothing to store; the
+        # graph's node-side memory here is entirely in the relation matrices
+        self.env.assertEqual(res.node_block_storage_sz_mb, 0)
 
         expected_total = (
             res.node_block_storage_sz_mb
@@ -233,8 +252,9 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertEqual(res.unlabeled_node_attributes_sz_mb, 0)
         self.env.assertEqual(res.relation_matrices_sz_mb, 0)
 
-        self.env.assertGreater(res.total_graph_sz_mb, 0)
-        self.env.assertGreater(res.node_block_storage_sz_mb, 0)
+        # property-less nodes are free to store, so this starts at zero and the
+        # assertion below is that seeding properties is what grows it
+        self.env.assertEqual(res.node_block_storage_sz_mb, 0)
         prev_node_storage_sz_mb = res.node_block_storage_sz_mb
 
         self._assert_mb_close(res.total_graph_sz_mb, res.node_block_storage_sz_mb)
@@ -249,8 +269,9 @@ class testGraphMemoryUsage(FlowTestsBase):
         # C keeps node_block_storage flat here: its nodes DataBlock reserves an
         # AttributeSet pointer per node up front, so seeding properties only
         # grows the separately-reported attribute sizes. Rust allocates the
-        # attribute store's slot table lazily, so the first property write also
-        # grows block storage - the same memory, paid later.
+        # attribute store's slot table lazily, so the first property write is
+        # what creates per-node storage at all - the same memory, paid later,
+        # and not paid at all for a node that never gets a property.
         self.env.assertGreater(res.node_block_storage_sz_mb, prev_node_storage_sz_mb)
 
     def test_indices_memory_usage(self):
@@ -272,6 +293,101 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         self.env.assertGreater(res.indices_sz_mb, 0)
         self.env.assertGreater(res.total_graph_sz_mb, 0)
+
+    def _native_index_build(self):
+        """whether the module has the native index (`index-falkordb`). Asked of a probe graph,
+           not of GRAPH.MEMORY USAGE, whose reply is what the caller checks"""
+
+        g = self.db.select_graph("native_probe")
+        create_node_range_index(g, 'P', 'v', sync=True)
+        try:
+            # A predicate the native index cannot serve is an error there, as in
+            # test_index_updates' testNativeOnlyFeedFlow; a string equality is one.
+            g.query("MATCH (n:P) WHERE n.v = 'probe' RETURN n")
+            return False
+        except ResponseError as e:
+            self.env.assertContains("native index cannot serve", str(e))
+            return True
+        finally:
+            g.delete()
+
+    def _used_memory(self):
+        """the server's used_memory once it stops moving, so memory still being freed from an
+           earlier step does not land in the next one"""
+
+        prev = self.conn.info('memory')['used_memory']
+        for _ in range(50):
+            time.sleep(0.1)
+            cur = self.conn.info('memory')['used_memory']
+            if abs(cur - prev) < 64 * 1024:
+                break
+            prev = cur
+        return cur
+
+    def test_native_indices_memory_usage(self):
+        """a build with the native index counts its columns in indices_sz_mb, in agreement with
+           what CREATE INDEX costs the server, and the reply is C's nine pairs on every build"""
+
+        c_fields = ['total_graph_sz_mb', 'label_matrices_sz_mb', 'relation_matrices_sz_mb',
+                    'amortized_node_block_sz_mb', 'amortized_node_attributes_by_label_sz_mb',
+                    'amortized_unlabeled_nodes_attributes_sz_mb', 'amortized_edge_block_sz_mb',
+                    'amortized_edge_attributes_by_type_sz_mb', 'indices_sz_mb']
+
+        def fields():
+            res = self.conn.execute_command("GRAPH.MEMORY", "USAGE", GRAPH_ID)
+            return res[0::2], dict(zip(res[0::2], res[1::2]))
+
+        if not self._native_index_build():
+            # Without the native index the reply is C's, field for field.
+            self.graph.query("UNWIND range(0, 999) AS x CREATE (:N {v: x})")
+            create_node_range_index(self.graph, 'N', 'v', sync=True)
+            self.env.assertEqual(fields()[0], c_fields)
+            return
+
+        n = 1000000
+        self.graph.query("UNWIND range(0, $n - 1) AS x CREATE (:N {v: x})", {'n': n})
+        self.graph.query("MATCH (a:N) CREATE (a)-[:E {w: a.v}]->(a)")
+
+        # What the reported size leaves out, so what the server's growth may add to it. Distinct
+        # ints stay 16 bytes a tuple, and a batch into an empty column packs 256 to a page: 4096
+        # bytes, which with its 16-byte Arc header is a 4112-byte request. The allocator rounds
+        # that up to its next size class, 5120 bytes on both jemalloc and macOS's libc malloc
+        # (+25%); glibc rounds less. The rest is fixed, under 1 MiB: a RediSearch spec that holds
+        # no documents, the schema, the column's map entry. And the reply truncates to whole MiB.
+        mib = 1 << 20
+        rounding = 0.25
+        slack = mib
+
+        def check(step, growth, mb):
+            low = mb * mib - slack
+            high = (mb + 1) * mib * (1 + rounding) + slack
+            self.env.assertTrue(low <= growth <= high,
+                                message=f"{step}: CREATE INDEX grew used_memory by {growth} bytes, "
+                                        f"indices_sz_mb says {mb} MiB, "
+                                        f"so the growth should be in [{low}, {int(high)}]")
+
+        before = self._used_memory()
+        create_node_range_index(self.graph, 'N', 'v', sync=True)
+        growth = self._used_memory() - before
+        names, f = fields()
+        self.env.assertEqual(names, c_fields)
+        check("node column", growth, f['indices_sz_mb'])
+
+        # DROP INDEX releases it.
+        drop_node_range_index(self.graph, 'N', 'v')
+        self.env.assertEqual(fields()[1]['indices_sz_mb'], 0)
+
+        before = self._used_memory()
+        create_edge_range_index(self.graph, 'E', 'w', sync=True)
+        growth = self._used_memory() - before
+        names, f = fields()
+        self.env.assertEqual(names, c_fields)
+        check("edge column", growth, f['indices_sz_mb'])
+
+        # The total counts it.
+        parts = sum(v if isinstance(v, int) else sum(v[1::2])
+                    for k, v in f.items() if k != 'total_graph_sz_mb')
+        self.env.assertEqual(f['total_graph_sz_mb'], parts)
 
     def test_different_attributes_memory_consumption(self):
         """make sure we can compute memory consumption of each
@@ -319,8 +435,10 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertEqual(res.unlabeled_node_attributes_sz_mb, 0)
         self.env.assertEqual(res.relation_matrices_sz_mb, 0)
 
-        self.env.assertGreater(res.total_graph_sz_mb, 0)
-        self.env.assertGreater(res.node_block_storage_sz_mb, 0)
+        # these nodes carry neither labels nor properties, so they cost nothing
+        # to store; what this test guards is that the call returns rather than
+        # sampling forever, which it did above
+        self.env.assertEqual(res.node_block_storage_sz_mb, 0)
 
         self._assert_mb_close(res.total_graph_sz_mb, res.node_block_storage_sz_mb)
 
@@ -625,8 +743,10 @@ class testGraphMemoryUsage(FlowTestsBase):
         # compute graph memory consumption
         original_memory_consumption = self._graph_memory_usage()
         self.env.assertGreater(original_memory_consumption.total_graph_sz_mb, 0)
-        self.env.assertGreater(original_memory_consumption.node_block_storage_sz_mb, 0)
         self.env.assertGreater(original_memory_consumption.edge_block_storage_sz_mb, 0)
+        # property-less nodes cost nothing to store, so node block storage is
+        # not part of what this graph consumes
+        self.env.assertEqual(original_memory_consumption.node_block_storage_sz_mb, 0)
 
         #-----------------------------------------------------------------------
         # delete entities

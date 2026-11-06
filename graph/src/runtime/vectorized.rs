@@ -220,9 +220,9 @@ pub fn compare_f64_column(
 ///
 /// Mirrors `eval.rs`:
 /// - `=` is `all_equals`: disjoint types, `NaN` and `null` are all *not* equal.
-/// - `<>` is `all_not_equals`, i.e. `Value::partial_cmp`, which is `None` only
-///   when a `null` is involved. Two values of disjoint types are therefore
-///   **unequal**, not `false` — `point(...) <> 'Dhaka'` is `true`.
+/// - `<>` is `all_not_equals`: `null` when a `null` is involved, otherwise
+///   disjoint types and `NaN` are **unequal** — `point(...) <> 'Dhaka'` is
+///   `true`, and so is `{a: 1} <> {a: 'x'}`.
 /// - `<`, `<=`, `>`, `>=` are `null` (so: drop) for disjoint types and `null`,
 ///   and `false` for `NaN`.
 #[must_use]
@@ -250,11 +250,12 @@ pub fn compare_values(
             DisjointOrNull::NaN | DisjointOrNull::Disjoint => Some(false),
             DisjointOrNull::None => Some(ord == Ordering::Equal),
         },
-        // `<>` is `all_not_equals`, i.e. `partial_cmp`, which is `None` only
-        // for a null operand — disjoint types are ordered, hence unequal.
+        // `<>` is `all_not_equals`: null makes it null, disjoint types and
+        // NaN are unequal.
         CmpOp::Neq => match flag {
             DisjointOrNull::ComparedNull => None,
-            _ => Some(ord != Ordering::Equal),
+            DisjointOrNull::NaN | DisjointOrNull::Disjoint => Some(true),
+            DisjointOrNull::None => Some(ord != Ordering::Equal),
         },
         // Ordering across disjoint types or with a null is null; NaN is false.
         _ => match flag {
@@ -302,6 +303,7 @@ mod tests {
     use orx_tree::{DynTree, NodeRef};
 
     use crate::runtime::eval::{ExprEval, NO_ROW};
+    use crate::runtime::ordermap::OrderMap;
     use crate::runtime::value::Point;
     use orx_tree::NodeMut;
 
@@ -443,6 +445,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_neq_maps_with_disjoint_values() {
+        // Issue #2913: `{a:1} <> {a:'x'}` was false (and so was `=`), because
+        // the map comparison stops at the disjoint pair with an `Equal`
+        // ordering. As in C, a disjoint or NaN comparison is unequal.
+        let map = |v: Value| {
+            Value::Map(Arc::new(OrderMap::from_vec(vec![(
+                Arc::new("a".to_string()),
+                v,
+            )])))
+        };
+        let x = map(Value::String(Arc::new("x".to_string())));
+        let data = vec![
+            map(Value::Int(1)),
+            x.clone(),
+            map(Value::Null),
+            map(Value::Float(f64::NAN)),
+        ];
+        let (mask, nulls) = compare_value_column_3vl(&data, CmpOp::Neq, &x);
+        assert_eq!(mask, vec![true, false, false, true]);
+        assert_eq!(
+            (0..data.len())
+                .map(|i| nulls.is_null(i))
+                .collect::<Vec<_>>(),
+            vec![false, false, true, false]
+        );
+        // the per-row evaluator agrees
+        for (v, want) in data.iter().zip([true, false, false, true]) {
+            assert_eq!(scalar_says(v, CmpOp::Neq, &x), want, "{v:?}");
+        }
+        // `=` is unchanged: a disjoint pair is not equal
+        assert_eq!(
+            compare_value_column(&data, CmpOp::Eq, &x),
+            vec![false, true, false, false]
+        );
     }
 
     #[test]

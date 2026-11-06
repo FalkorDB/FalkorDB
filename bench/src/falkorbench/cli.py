@@ -41,7 +41,21 @@ def _select(names: tuple[str, ...], *, cg_only: bool = False):
     missing = wanted - {q.name for q in chosen}
     if missing:
         raise click.ClickException(f"unknown queries: {sorted(missing)}")
-    return chosen
+    # Pull in whatever the chosen rows depend on, transitively. A row that
+    # measures against a graph an earlier row builds is meaningless without it,
+    # and silently so -- it reports a plausible number for the wrong graph.
+    by_name = {q.name: q for q in pool}
+    while True:
+        need = {n for q in chosen for n in q.needs} - {q.name for q in chosen}
+        if not need:
+            break
+        unknown = need - by_name.keys()
+        if unknown:
+            raise click.ClickException(f"unknown prerequisite queries: {sorted(unknown)}")
+        chosen += [by_name[n] for n in need]
+    # Back into suite order: a prerequisite has to run before its dependent.
+    order = {q.name: i for i, q in enumerate(pool)}
+    return sorted(chosen, key=lambda q: order[q.name])
 
 
 def common_options(fn):
@@ -369,8 +383,16 @@ def coverage(port):
 @click.argument("name")
 def profile(module, port, out, seconds, reuse, open_ui, name):
     """Profile the server while one query runs in a loop."""
+    # `_select` returns the row's prerequisites too, in suite order, so the row asked for is not
+    # necessarily first. They run once, below, before the row is profiled.
     queries = _select((name,))
-    query = queries[0]
+    query = next(q for q in queries if q.name == name)
+    if query.drains:
+        raise click.ClickException(
+            f"{name!r} deletes from a finite pool: profiling repeats it until the pool is empty, "
+            "then samples a query that deletes nothing. Use `measure` for it."
+        )
+    prerequisites = [q for q in queries if q.name != name]
     out_path = Path(out) if out else RESULTS / f"profile_{query.name.replace(' ', '_')}.json.gz"
 
     server = client_mod.Server(port=port)
@@ -393,6 +415,8 @@ def profile(module, port, out, seconds, reuse, open_ui, name):
         if started_here:
             click.echo("building graph...")
             client_mod.build_graph(bench, query_set.SETUP, query_set.SETUP_COMMANDS)
+        for pre in prerequisites:
+            bench.run(pre.cypher, write=pre.write)
         profile_mod.profile_query(
             bench, query, out_path, seconds=seconds, save_only=not open_ui, echo=click.echo
         )

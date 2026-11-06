@@ -355,20 +355,36 @@ fn parse_config(args: &[Value]) -> Result<OrderMap<Arc<String>, Value>, String> 
     }
 }
 
-/// Create an LAGraph_Graph from a raw GrB_Matrix.
-/// The graph takes ownership of the matrix pointer—caller must NOT free it
-/// after this call.
+/// Create an `LAGraph_Graph` over `adj`.
+///
+/// `borrowed` says who owns the matrix handle afterwards, and it decides one
+/// thing only: what happens to `adj` if `LAGraph_New` fails.
+///
+/// * `borrowed = false` — LAGraph takes the handle. The caller must not free
+///   it, and must tear the graph down with
+///   [`delete_lagraph_graph_maybe_borrowed`] passing `false`. On failure
+///   `LAGraph_New` has not taken the handle, so this frees it rather than leak
+///   a matrix nothing else refers to.
+/// * `borrowed = true` — the caller keeps the handle (typically inside a
+///   `Matrix` that will free it) and lends it for the graph's lifetime. Nothing
+///   is freed here on failure, because the caller's owner still holds it, and
+///   the teardown must detach `G->A` first.
 unsafe fn create_lagraph_graph(
     adj: crate::graph::graphblas::GrB_Matrix,
     kind: LAGraph_Kind,
+    borrowed: bool,
 ) -> Result<LAGraph_Graph, String> {
     let mut g: LAGraph_Graph = null_mut();
     let mut msg = new_msg();
     let mut adj_mut = adj;
     let info = lagraph_bindings::LAGraph_New(&raw mut g, &raw mut adj_mut, kind, msg.as_mut_ptr());
     if info != 0 {
-        // LAGraph_New did not take ownership; free the matrix to avoid a leak.
-        crate::graph::graphblas::GrB_Matrix_free(&raw mut adj_mut);
+        // `LAGraph_New` only fails before taking the matrix, so the handle is
+        // still live here. Free it when this call owned it; leave it alone when
+        // it was lent, or the caller's owner would double-free.
+        if !borrowed {
+            crate::graph::graphblas::GrB_Matrix_free(&raw mut adj_mut);
+        }
         return Err(format!("LAGraph_New failed: {info}"));
     }
     if g.is_null() {
@@ -383,27 +399,6 @@ unsafe fn delete_lagraph_graph(g: &mut LAGraph_Graph) {
     lagraph_bindings::LAGraph_Delete(g, msg.as_mut_ptr());
 }
 
-/// Create an LAGraph_Graph that borrows `adj`: the caller keeps ownership of
-/// the matrix and must free the graph with [`delete_lagraph_graph_borrowed`].
-/// `LAGraph_New` only fails before taking the matrix, so the error path never
-/// leaves the handle inside a graph.
-unsafe fn create_lagraph_graph_borrowed(
-    adj: crate::graph::graphblas::GrB_Matrix,
-    kind: LAGraph_Kind,
-) -> Result<LAGraph_Graph, String> {
-    let mut g: LAGraph_Graph = null_mut();
-    let mut msg = new_msg();
-    let mut adj_mut = adj;
-    let info = lagraph_bindings::LAGraph_New(&raw mut g, &raw mut adj_mut, kind, msg.as_mut_ptr());
-    if info != 0 {
-        return Err(format!("LAGraph_New failed: {info}"));
-    }
-    if g.is_null() {
-        return Err(String::from("LAGraph_New returned null graph"));
-    }
-    Ok(g)
-}
-
 /// Free an LAGraph_Graph whose adjacency matrix is borrowed: detach `G->A`
 /// first so `LAGraph_Delete` does not free the caller-owned handle.
 unsafe fn delete_lagraph_graph_borrowed(g: &mut LAGraph_Graph) {
@@ -411,6 +406,23 @@ unsafe fn delete_lagraph_graph_borrowed(g: &mut LAGraph_Graph) {
         graph.A = null_mut();
     }
     delete_lagraph_graph(g);
+}
+
+/// Free an `LAGraph_Graph` whose adjacency matrix may be borrowed.
+///
+/// The procedures below take one of two paths: the unfiltered path lends
+/// LAGraph the matrix it just built and keeps the `Matrix` wrapper that frees
+/// it, while the compact path hands over a raw matrix nothing else owns. This
+/// picks the matching teardown so the handle is freed exactly once.
+unsafe fn delete_lagraph_graph_maybe_borrowed(
+    g: &mut LAGraph_Graph,
+    borrowed: bool,
+) {
+    if borrowed {
+        delete_lagraph_graph_borrowed(g);
+    } else {
+        delete_lagraph_graph(g);
+    }
 }
 
 /// Extract GrB_Vector entries as (index, f64) pairs.
@@ -428,6 +440,17 @@ unsafe fn extract_vector_f64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64
         v,
     );
     indices.into_iter().zip(values).collect()
+}
+
+/// Map a node-valued LAGraph result (a component or community representative)
+/// from the compact index space back to the original node id. LAGraph reports
+/// these as vertex indices of the matrix it ran on, so on the `nodeLabels`
+/// path they are compact indices, like the vector's own indices.
+fn compact_to_original(
+    compact_to_id: Option<&[u64]>,
+    idx: i64,
+) -> i64 {
+    compact_to_id.map_or(idx, |m| m[idx as usize] as i64)
 }
 
 /// Extract GrB_Vector entries as (index, i64) pairs.
@@ -450,6 +473,24 @@ unsafe fn extract_vector_i64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64
 /// Build a node Value with a given NodeId.
 const fn node_value(id: NodeId) -> Value {
     Value::Node(id)
+}
+
+/// Reject a configuration naming a label or relationship type the graph does
+/// not have, with the procedure's C error message for each.
+fn check_known_labels_and_types(
+    g: &Graph,
+    labels: &[Arc<String>],
+    rel_types: &[Arc<String>],
+    unknown_label: impl Fn(&str) -> String,
+    unknown_type: impl Fn(&str) -> String,
+) -> Result<(), String> {
+    if let Some(l) = labels.iter().find(|l| g.get_label_id(l).is_none()) {
+        return Err(unknown_label(l));
+    }
+    if let Some(t) = rel_types.iter().find(|t| g.get_type_id(t).is_none()) {
+        return Err(unknown_type(t));
+    }
+    Ok(())
 }
 
 /// Collect all active node IDs from the graph matching ANY of the given labels.
@@ -696,8 +737,13 @@ fn register_pagerank(funcs: &mut Functions) {
             let label = opt_string(&args[0], "label")?;
             let rel_type = opt_string(&args[1], "relationshipType")?;
 
-            let g = runtime.g.borrow();
-            if g.node_count() == 0 {
+            let g = runtime.graph();
+            // As in C, a label or relationship type the graph does not have
+            // selects nothing, so there is nothing to rank.
+            if g.node_count() == 0
+                || label.as_ref().is_some_and(|l| g.get_label_id(l).is_none())
+                || rel_type.as_ref().is_some_and(|t| g.get_type_id(t).is_none())
+            {
                 return Ok(empty_procedure_batch());
             }
 
@@ -705,7 +751,7 @@ fn register_pagerank(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_dup, GrB_Matrix_resize, GrB_Vector,
+                    lagraph_bindings, GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
                     GrB_Vector_free,
                 };
 
@@ -716,23 +762,35 @@ fn register_pagerank(funcs: &mut Functions) {
                     .as_ref()
                     .is_none_or(|lbl| g.label_node_count(lbl.as_str()) == g.node_count());
 
+                // Holds the adjacency matrix on the paths that lend it to LAGraph;
+                // `None` on the compact path, whose matrix LAGraph owns.
+                let mut owned_adj: Option<crate::graph::graphblas::matrix::Matrix<bool>> = None;
                 let (lag_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if use_unfiltered {
+                    // `adj` is freshly built and uniquely owned, so lend its handle to
+                    // LAGraph rather than duplicating it; the borrowed delete detaches
+                    // `G->A` so only the `Matrix` wrapper frees it.
                     let adj = g.build_adjacency_matrix(&rel_types);
-                    let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                    GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let raw_adj: GrB_Matrix = adj.inner();
+                    owned_adj = Some(adj);
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
-                    let active = collect_node_ids(&g, std::slice::from_ref(label.as_ref().unwrap()))
-                        .into_iter()
-                        .collect();
+                    let active: FxHashSet<u64> =
+                        collect_node_ids(&g, std::slice::from_ref(label.as_ref().unwrap()))
+                            .into_iter()
+                            .collect();
+                    if active.is_empty() {
+                        return Ok(empty_procedure_batch());
+                    }
                     let (lag_adj, _id_to_compact, compact_to_id, _n) =
                         build_compact_adj_from_tensors(&g, &rel_types, &active);
                     (lag_adj, Some(compact_to_id))
                 };
 
-                let mut lag_g = create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
+                let borrowed = owned_adj.is_some();
+                let mut lag_g =
+                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED, borrowed)?;
 
                 // Cache AT and OutDegree (required for PageRank)
                 let mut msg = new_msg();
@@ -753,7 +811,7 @@ fn register_pagerank(funcs: &mut Functions) {
                 );
 
                 if info != 0 {
-                    delete_lagraph_graph(&mut lag_g);
+                    delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
                     return Err(format!("LAGr_PageRank failed: {info}"));
                 }
 
@@ -762,7 +820,7 @@ fn register_pagerank(funcs: &mut Functions) {
 
                 // Free LAGraph resources
                 GrB_Vector_free(&raw mut centrality);
-                delete_lagraph_graph(&mut lag_g);
+                delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
 
                 let has_deleted = g.deleted_nodes_count() != 0;
                 let mut node_ids = Vec::with_capacity(entries.len());
@@ -802,23 +860,29 @@ fn register_wcc(funcs: &mut Functions) {
             let node_labels = extract_node_labels(&config)?;
             let rel_types = extract_rel_types(&config)?;
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
 
             unsafe {
                 use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_dup, GrB_Matrix_resize, GrB_Vector,
+                    lagraph_bindings, GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
                     GrB_Vector_free,
                 };
 
                 // Match C implementation fast path for unfiltered run.
+                // Holds the adjacency matrix on the paths that lend it to LAGraph;
+                // `None` on the compact path, whose matrix LAGraph owns.
+                let mut owned_adj: Option<crate::graph::graphblas::matrix::Matrix<bool>> = None;
                 let (lag_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if node_labels.is_empty() {
+                    // `adj` is freshly built and uniquely owned, so lend its handle to
+                    // LAGraph rather than duplicating it; the borrowed delete detaches
+                    // `G->A` so only the `Matrix` wrapper frees it.
                     let adj = g.build_symmetric_adjacency_matrix(&rel_types);
-                    let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                    GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let raw_adj: GrB_Matrix = adj.inner();
+                    owned_adj = Some(adj);
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -832,7 +896,9 @@ fn register_wcc(funcs: &mut Functions) {
                     (lag_adj, Some(compact_to_id))
                 };
 
-                let mut lag_g = create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?;
+                let borrowed = owned_adj.is_some();
+                let mut lag_g =
+                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED, borrowed)?;
 
                 // Cache symmetric structure
                 let mut msg = new_msg();
@@ -848,7 +914,7 @@ fn register_wcc(funcs: &mut Functions) {
                 );
 
                 if info != 0 {
-                    delete_lagraph_graph(&mut lag_g);
+                    delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
                     return Err(format!("LAGr_ConnectedComponents failed: {info}"));
                 }
 
@@ -865,11 +931,11 @@ fn register_wcc(funcs: &mut Functions) {
                         continue;
                     }
                     node_ids.push(NodeId::from(orig_id));
-                    component_ids.push(comp_id);
+                    component_ids.push(compact_to_original(compact_to_id.as_deref(), comp_id));
                 }
 
                 GrB_Vector_free(&raw mut component);
-                delete_lagraph_graph(&mut lag_g);
+                delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
 
                 Ok(Batch::from_columns([
                     Column::NodeIds(node_ids),
@@ -914,23 +980,36 @@ fn register_betweenness(funcs: &mut Functions) {
                 _ => return Err(String::from("samplingSeed must be an integer")),
             };
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
+            check_known_labels_and_types(
+                &g,
+                &node_labels,
+                &rel_types,
+                |l| format!("betweenness configuration, unknown label {l}"),
+                |t| format!("betweenness configuration, unknown relationship-type {t}"),
+            )?;
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
 
             unsafe {
                 use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_dup, GrB_Matrix_resize, GrB_Vector,
+                    lagraph_bindings, GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
                     GrB_Vector_free,
                 };
 
                 // Match C implementation fast path for unfiltered run.
+                // Holds the adjacency matrix on the paths that lend it to LAGraph;
+                // `None` on the compact path, whose matrix LAGraph owns.
+                let mut owned_adj: Option<crate::graph::graphblas::matrix::Matrix<bool>> = None;
                 let (compact_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if node_labels.is_empty() {
+                    // `adj` is freshly built and uniquely owned, so lend its handle to
+                    // LAGraph rather than duplicating it; the borrowed delete detaches
+                    // `G->A` so only the `Matrix` wrapper frees it.
                     let adj = g.build_adjacency_matrix(&rel_types);
-                    let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                    GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let raw_adj: GrB_Matrix = adj.inner();
+                    owned_adj = Some(adj);
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -941,7 +1020,9 @@ fn register_betweenness(funcs: &mut Functions) {
                     (compact_adj, Some(compact_to_id))
                 };
 
-                let mut lag_g = create_lagraph_graph(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
+                let borrowed = owned_adj.is_some();
+                let mut lag_g =
+                    create_lagraph_graph(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED, borrowed)?;
 
                 let mut msg = new_msg();
                 lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
@@ -949,7 +1030,7 @@ fn register_betweenness(funcs: &mut Functions) {
 
                 // Select source nodes for sampling (all from compact matrix)
                 let n_nodes = compact_to_id.as_ref().map_or_else(
-                    || (g.node_count() + g.deleted_nodes_count()) as usize,
+                    || g.node_id_bound() as usize,
                     Vec::len,
                 );
                 let sources: Vec<u64> = if n_nodes == 0 {
@@ -985,14 +1066,14 @@ fn register_betweenness(funcs: &mut Functions) {
                 );
 
                 if info != 0 {
-                    delete_lagraph_graph(&mut lag_g);
+                    delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
                     return Err(format!("LAGr_Betweenness failed: {info}"));
                 }
 
                 let entries = extract_vector_f64(centrality);
 
                 GrB_Vector_free(&raw mut centrality);
-                delete_lagraph_graph(&mut lag_g);
+                delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
 
                 // All compact indices map to valid nodes (already label-filtered)
                 let mut node_ids = Vec::with_capacity(entries.len());
@@ -1041,7 +1122,7 @@ fn register_bfs(funcs: &mut Functions) {
             // arg 2: relationship type (String or Null)
             let rel_type = opt_string(&args[2], "relationshipType")?;
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
@@ -1065,9 +1146,10 @@ fn register_bfs(funcs: &mut Functions) {
                 // to LAGraph instead of duplicating it; the borrowed delete
                 // detaches `G->A` so only the `Matrix` wrapper frees it.
                 let compact_source = u64::from(source_id);
-                let mut lag_g = create_lagraph_graph_borrowed(
+                let mut lag_g = create_lagraph_graph(
                     adj.inner(),
                     LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                    true,
                 )?;
 
                 let mut msg = new_msg();
@@ -1193,23 +1275,36 @@ fn register_cdlp(funcs: &mut Functions) {
                 _ => return Err(String::from("maxIterations must be a positive integer")),
             };
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
+            check_known_labels_and_types(
+                &g,
+                &node_labels,
+                &rel_types,
+                |l| format!("labelPropagation configuration, unknown label {l}"),
+                |t| format!("labelPropagation configuration, unknown relationship-type {t}"),
+            )?;
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
 
             unsafe {
                 use crate::graph::graphblas::{
-                    GrB_Matrix, GrB_Matrix_dup, GrB_Matrix_resize, GrB_Vector, lagraphx_bindings,
+                    GrB_Matrix, GrB_Matrix_resize, GrB_Vector, lagraphx_bindings,
                     GrB_Vector_free,
                 };
 
                 // Match C implementation fast path for unfiltered run.
+                // Holds the adjacency matrix on the paths that lend it to LAGraph;
+                // `None` on the compact path, whose matrix LAGraph owns.
+                let mut owned_adj: Option<crate::graph::graphblas::matrix::Matrix<bool>> = None;
                 let (lag_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if node_labels.is_empty() {
+                    // `adj` is freshly built and uniquely owned, so lend its handle to
+                    // LAGraph rather than duplicating it; the borrowed delete detaches
+                    // `G->A` so only the `Matrix` wrapper frees it.
                     let adj = g.build_symmetric_adjacency_matrix(&rel_types);
-                    let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                    GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let raw_adj: GrB_Matrix = adj.inner();
+                    owned_adj = Some(adj);
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -1223,7 +1318,9 @@ fn register_cdlp(funcs: &mut Functions) {
                     (lag_adj, Some(compact_to_id))
                 };
 
-                let mut lag_g = create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?;
+                let borrowed = owned_adj.is_some();
+                let mut lag_g =
+                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED, borrowed)?;
 
                 let mut msg = new_msg();
                 let lag_g_ref = lag_g.as_mut().ok_or_else(|| String::from("LAGraph graph pointer is null"))?;
@@ -1238,7 +1335,7 @@ fn register_cdlp(funcs: &mut Functions) {
                 );
 
                 if info != 0 {
-                    delete_lagraph_graph(&mut lag_g);
+                    delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
                     return Err(format!("LAGraph_cdlp failed: {info}"));
                 }
 
@@ -1255,11 +1352,11 @@ fn register_cdlp(funcs: &mut Functions) {
                         continue;
                     }
                     node_ids.push(NodeId::from(orig_id));
-                    community_ids.push(community_id);
+                    community_ids.push(compact_to_original(compact_to_id.as_deref(), community_id));
                 }
 
                 GrB_Vector_free(&raw mut cdlp);
-                delete_lagraph_graph(&mut lag_g);
+                delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
 
                 Ok(Batch::from_columns([
                     Column::NodeIds(node_ids),
@@ -1287,7 +1384,7 @@ fn register_msf(funcs: &mut Functions) {
 
             // Validate that rel_types exist in the graph (if specified)
             {
-                let g = runtime.g.borrow();
+                let g = runtime.graph();
                 for rt in &rel_types {
                     if g.get_type_id(rt).is_none() {
                         return Err(format!("Relationship type '{rt}' does not exist"));
@@ -1313,7 +1410,7 @@ fn register_msf(funcs: &mut Functions) {
                 _ => return Err(String::from("objective must be a string")),
             };
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
 
             // Validate weight attribute exists as a relationship attribute
             if let Some(ref attr) = weight_attr
@@ -1344,13 +1441,28 @@ fn register_msf(funcs: &mut Functions) {
                 sorted_ids.sort_unstable();
                 let n = sorted_ids.len() as u64;
 
-                // Use Vec-based mapping for O(1) compact ID lookup
-                // Map: original_id -> compact_id (for fast lookups)
+                // Original id -> compact id, where the multi-edge pass needs it.
+                // A table indexed by original id is the fast lookup, but it costs
+                // 8 bytes per id *up to the highest active one*, and deleted ids
+                // stay in the id space: one surviving high id made it gigabytes.
+                // So it is built only when the id range is within 4x the active
+                // count (at most 32 bytes per active node); a sparser graph finds
+                // the compact id as the position in `sorted_ids` by binary search,
+                // which holds nothing beyond the `n` ids already there.
                 let max_id = sorted_ids.last().copied().unwrap_or(0);
-                let mut id_to_compact_vec = vec![u64::MAX; (max_id + 1) as usize];
-                for (compact, &orig) in sorted_ids.iter().enumerate() {
-                    id_to_compact_vec[orig as usize] = compact as u64;
-                }
+                let dense_map: Option<Vec<u64>> = (max_id < n.saturating_mul(4)).then(|| {
+                    let mut map = vec![u64::MAX; max_id as usize + 1];
+                    for (compact, &orig) in sorted_ids.iter().enumerate() {
+                        map[orig as usize] = compact as u64;
+                    }
+                    map
+                });
+                let compact_of = |orig: u64| -> Option<u64> {
+                    match &dense_map {
+                        Some(map) => map.get(orig as usize).copied().filter(|&c| c != u64::MAX),
+                        None => sorted_ids.binary_search(&orig).ok().map(|c| c as u64),
+                    }
+                };
 
                 // Iterate relationships and fill weighted compact matrix.
                 // The chosen relationship per node pair is tracked in
@@ -1636,15 +1748,11 @@ fn register_msf(funcs: &mut Functions) {
                             );
                             for (key, se) in keys.iter().zip(&vals) {
                                 let (src, dst) = compound_key_inverse(block, *key);
-                                let src_original = src as usize;
-                                let dst_original = dst as usize;
-                                if src_original < id_to_compact_vec.len()
-                                    && id_to_compact_vec[src_original] != u64::MAX
-                                    && dst_original < id_to_compact_vec.len()
-                                    && id_to_compact_vec[dst_original] != u64::MAX
+                                if let (Some(src_compact), Some(dst_compact)) =
+                                    (compact_of(src), compact_of(dst))
                                 {
-                                    ov_rows.push(id_to_compact_vec[src_original]);
-                                    ov_cols.push(id_to_compact_vec[dst_original]);
+                                    ov_rows.push(src_compact);
+                                    ov_cols.push(dst_compact);
                                     ov_vals.push(*se);
                                 }
                             }
@@ -2258,9 +2366,12 @@ fn dijkstra_single_path(
     edges.reverse();
 
     // `costProp` is not what the search optimises for, just an attribute the
-    // caller asked to have reported: sum it over the winning path only.
+    // caller asked to have reported: sum it over the winning path only. Like
+    // C, an edge that lacks a configured `costProp` costs 1 (#3121), while no
+    // `costProp` at all reports 0.
+    let missing_cost = if config.cost_prop.is_some() { 1.0 } else { 0.0 };
     let cost = edges.iter().fold(0.0, |acc, &(edge_id, _, _)| {
-        acc + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0)
+        acc + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), missing_cost)
     });
 
     Ok(Some((edges, labels[&target].weight, cost)))
@@ -2349,7 +2460,9 @@ fn bfs_find_bound(
     let mut cost = 0.0;
     for edge_id in chain {
         weight += edge_numeric_attr(g, edge_id, config.weight_prop.as_ref(), 1.0);
-        cost += edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0);
+        // C charges 1 per relationship when `costProp` is not given (or the
+        // edge lacks it), so `maxCost` alone bounds the hop count.
+        cost += edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 1.0);
     }
 
     Ok(Some((weight, cost)))
@@ -2470,7 +2583,8 @@ fn enumerate_paths(
             let (weight, cost) = edges.last().map_or((0.0, 0.0), |&(_, _, _, w, c)| (w, c));
             let next_weight =
                 weight + edge_numeric_attr(g, edge_id, config.weight_prop.as_ref(), 1.0);
-            let next_cost = cost + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0);
+            // Same 1-per-relationship default as C (and `bfs_find_bound`).
+            let next_cost = cost + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 1.0);
 
             // C gates on `weight + w <= max_weight` (max_weight defaulting to
             // DBL_MAX), which rejects NaN and infinity. The negated `> bound`
@@ -2559,7 +2673,7 @@ fn run_path_algo(
     runtime: &Runtime,
     config: &PathAlgoConfig,
 ) -> Result<super::ProcedureBatch, String> {
-    let g = runtime.g.borrow();
+    let g = runtime.graph();
 
     // Fast path: one cheapest path, no cost cap, no hop cap — exactly what
     // Dijkstra solves, in O((V+E) log V) time and O(V) memory. The general
@@ -2655,12 +2769,14 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
             let node_labels = extract_node_labels(&config)?;
             let rel_types = extract_rel_types(&config)?;
 
-            let g = runtime.g.borrow();
-            for rt in &rel_types {
-                if g.get_type_id(rt).is_none() {
-                    return Err(format!("Relationship type '{rt}' does not exist"));
-                }
-            }
+            let g = runtime.graph();
+            check_known_labels_and_types(
+                &g,
+                &node_labels,
+                &rel_types,
+                |l| format!("harmonic centrality configuration contains non-existent label:{l}"),
+                |t| format!("harmonic centrality configuration contains non-existent type:{t}"),
+            )?;
 
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
@@ -2707,7 +2823,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                         adj.inner(),
                         std::ptr::null_mut(),
                     );
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let n = g.node_id_bound();
                     crate::graph::graphblas::GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -2719,6 +2835,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                 let mut lag_g = create_lagraph_graph(
                     compact_adj,
                     LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                    false,
                 )?;
 
                 let mut msg = new_msg();
@@ -2728,9 +2845,12 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
 
                 runtime.check_timeout()?;
                 let mut nodes: GrB_Vector = null_mut();
-                let node_vec_len = compact_to_id
-                    .as_ref()
-                    .map_or_else(|| g.node_count(), |m| m.len() as u64);
+                // Unfiltered, the matrix spans every id up to the highest
+                // (deleted ids included, as above), so the source vector must too.
+                let node_vec_len = compact_to_id.as_ref().map_or_else(
+                    || g.node_id_bound(),
+                    |m| m.len() as u64,
+                );
                 GrB_Vector_new(&raw mut nodes, GrB_BOOL, node_vec_len);
                 GrB_Vector_assign_BOOL(
                     nodes,
@@ -2881,7 +3001,7 @@ fn register_maxflow(funcs: &mut Functions) {
                 )),
             };
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
 
             let Some(type_id) = g.get_type_id(&rel_types[0]) else {
                 return Err(format!(
@@ -3162,6 +3282,7 @@ fn register_maxflow(funcs: &mut Functions) {
                 let mut lag_g = create_lagraph_graph(
                     cap_mtx,
                     LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                    false,
                 )?;
                 let mut msg = new_msg();
                 lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());

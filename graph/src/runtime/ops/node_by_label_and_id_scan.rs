@@ -31,17 +31,21 @@ pub struct NodeByLabelAndIdScanOp<'a> {
 }
 
 impl<'a> NodeByLabelAndIdScanOp<'a> {
-    pub const fn new(
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         node_pattern: &'a QueryNode<Arc<String>, Variable>,
         filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         idx: NodeIdx<Dyn<IR>>,
+        record_cap: Option<usize>,
     ) -> Self {
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::new(node_pattern.alias.id),
+            // A label+id scan packs a whole `BATCH_SIZE` before the `Limit`
+            // can stop it: `LIMIT 1024` measured 1,668,388 instructions and
+            // `LIMIT 1025` 2,038,743 — a second batch for one extra row.
+            emitter: BatchedResultEmitter::new(node_pattern.alias.id, record_cap),
             node_pattern,
             filter,
             idx,
@@ -71,8 +75,7 @@ impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
                 let max = range.max().expect("range has a min, so it has a max");
                 let iter = self
                     .runtime
-                    .g
-                    .borrow()
+                    .graph()
                     .get_nodes(&self.node_pattern.labels, min)
                     .take_while(move |nid| u64::from(*nid) <= max)
                     .filter(move |nid| range.contains(u64::from(*nid)));

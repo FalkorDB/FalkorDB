@@ -155,7 +155,7 @@ impl VarLenIter<'_> {
     ) {
         self.current_start = Some(start_node);
         let rt = self.runtime;
-        let g = rt.g.borrow();
+        let g = rt.graph();
         // 0-hop case: the start node itself is a valid result.
         if self.min_hops == 0
             && (self.dest_id.is_none() || self.dest_id == Some(start_node))
@@ -195,7 +195,7 @@ impl VarLenIter<'_> {
     #[allow(clippy::too_many_lines)]
     fn advance(&mut self) {
         let rt = self.runtime;
-        let g = rt.g.borrow();
+        let g = rt.graph();
         let rp = self.rp;
         let start_node = self.current_start.expect("frame requires a start node");
         let reversed = self.reversed;
@@ -291,7 +291,17 @@ impl VarLenIter<'_> {
                             None,
                         ) {
                             Ok(Value::Bool(true)) => {}
-                            Ok(_) => continue,
+                            Ok(Value::Bool(false) | Value::Null) => continue,
+                            // As `FilterOp` answers it: a predicate that is
+                            // neither boolean nor null is a type error, not a
+                            // quiet rejection.
+                            Ok(value) => {
+                                *self.error.borrow_mut() = Some(format!(
+                                    "Type mismatch: expected Boolean but was {}",
+                                    value.name()
+                                ));
+                                return;
+                            }
                             Err(e) => {
                                 *self.error.borrow_mut() = Some(e);
                                 return;
@@ -446,16 +456,25 @@ impl<'a> CondVarLenTraverseOp<'a> {
         emit_path: bool,
         path_var: Option<u32>,
         idx: NodeIdx<Dyn<IR>>,
+        record_cap: Option<usize>,
     ) -> Self {
-        let emitter = BatchedResultEmitter::with_binding(VarLenEndpoints {
-            from: relationship_pattern.from.alias.id,
-            to: relationship_pattern.to.alias.id,
-            // A shared endpoint alias (`(a)-[*]->(a)`) binds one column; keep the
-            // `to` value (last-insert-wins) to match the row builder.
-            distinct: relationship_pattern.from.alias.id != relationship_pattern.to.alias.id,
-            path: emit_path.then_some(relationship_pattern.alias.id),
-            path_copy: path_var,
-        });
+        let emitter = BatchedResultEmitter::with_binding(
+            VarLenEndpoints {
+                from: relationship_pattern.from.alias.id,
+                to: relationship_pattern.to.alias.id,
+                // A shared endpoint alias (`(a)-[*]->(a)`) binds one column; keep the
+                // `to` value (last-insert-wins) to match the row builder.
+                distinct: relationship_pattern.from.alias.id != relationship_pattern.to.alias.id,
+                path: emit_path.then_some(relationship_pattern.alias.id),
+                path_copy: path_var,
+            },
+            // A variable-length traverse packs a whole `BATCH_SIZE` of expansions
+            // before the `Limit` downstream can stop it, and each one walks the
+            // pattern: `LIMIT 1024` measured 7,857,077 instructions and `LIMIT 1025`
+            // 14,600,574 — a second full batch for one extra row. `LIMIT 10` cost
+            // 7,034,073, all but 11% of the full batch.
+            record_cap,
+        );
         // Locate the `@prev(<id>)` marker variable (previous-edge reference
         // rewritten by the binder) inside the absorbed edge filter, if any.
         let prev_var = edge_filter.and_then(|filter| {
@@ -538,7 +557,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
             vec![to_id.unwrap()]
         } else {
             from_id.map_or_else(
-                || runtime.g.borrow().get_nodes(&rp.from.labels, 0).collect(),
+                || runtime.graph().get_nodes(&rp.from.labels, 0).collect(),
                 |id| vec![id],
             )
         };
@@ -555,7 +574,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
         let mut dest_label_ids: SmallVec<[LabelId; 2]> = SmallVec::new();
         let mut dest_label_missing = false;
         {
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
             for l in dest_labels.iter() {
                 if let Some(id) = g.get_label_id(l) {
                     dest_label_ids.push(id);
