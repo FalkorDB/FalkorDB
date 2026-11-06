@@ -394,6 +394,16 @@ static void _write_attr_refs
 	size_t count_width,             // 2 for an index, 1 for a constraint
 	EffectsBytes *out               // sink
 ) {
+	// A TRUNCATED COUNT IS NOT A SHORT LIST: the loop below writes all n pairs
+	// whatever the header said, so a count that does not fit its width leaves
+	// the reader taking the surplus pairs as the next record. The constraint
+	// path is bounded at 255 where the command is parsed - cmd_constraint.c
+	// rejects PROPERTIES outside 1..255 and carries the count as a uint8_t -
+	// so this is unreachable through a statement and asserted rather than
+	// handled; n is a uint16_t here only because index fields share the shape.
+	ASSERT((count_width >= 2 || n <= UINT8_MAX) &&
+		   "attribute count does not fit the width this record writes it at");
+
 	EffectsV3_WriteUint(out, n, count_width);
 
 	for(uint16_t i = 0; i < n; i++) {
@@ -483,11 +493,30 @@ static void _write_opt_u64
 // nothing is stated - so there is one gate, the vector half, not two.
 // `dimension` alone has no presence byte, because a vector field must have one:
 // a vector block carries five values behind four markers.
+//
+// THE GATE IS field_type, NOT o->is_vector, because field_type is all the
+// READER has: _ReadIndexOptions decides the block exists from
+// `field_type & INDEX_FLD_VECTOR`. Deciding it here from a second, independent
+// flag lets the two disagree - a vector field_type with is_vector clear omits
+// the mandatory dimension, and the reader then takes the next record's opening
+// bytes as it and parses from the middle of five u64s. Rust hit exactly this
+// and now refuses the pair outright (EncodeError::OptionsFieldTypeMismatch,
+// graph/src/effects/v3/records.rs); with no error channel here, the gate comes
+// off the wire field and the flag is asserted against it.
 static void _write_index_options
 (
 	const EffectsV3IndexOptions *o,  // options to write
+	uint32_t field_type,             // the record's field type, the reader's gate
 	EffectsBytes *out                // sink
 ) {
+	const bool vector = (field_type & INDEX_FLD_VECTOR) != 0;
+
+	// a caller that disagrees with itself: the values would be written against
+	// the reader's expectation either way round, so fail here rather than emit
+	// a buffer that desynchronises the stream
+	ASSERT(o->is_vector == vector &&
+		   "index options' is_vector contradicts the record's field_type");
+
 	// language
 	EffectsV3_WriteUint(out, o->has_language ? 1 : 0, 1);
 	if(o->has_language) {
@@ -523,7 +552,7 @@ static void _write_index_options
 		_write_name(o->phonetic, out);
 	}
 
-	if(!o->is_vector) {
+	if(!vector) {
 		return;
 	}
 
@@ -564,7 +593,8 @@ static void _encode_ddl_record
 					r->create_index.n_schemas, out);
 			EffectsV3_WriteUint(out, r->create_index.field_type, 4);
 			_write_attr_refs(r->create_index.attrs, r->create_index.n_attrs, 2, out);
-			_write_index_options(&r->create_index.options, out);
+			_write_index_options(&r->create_index.options,
+					r->create_index.field_type, out);
 			break;
 
 		case EFFECT_DROP_INDEX:
