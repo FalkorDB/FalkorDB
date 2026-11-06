@@ -207,6 +207,45 @@ void test_effectsV3Group_labelOrderDoesNotSplit(void) {
 	EffectsV3Grouping_Free(g);
 }
 
+// rule 3 is over the label SET, so a repeated label is not a second label
+//
+// THE TWO FILING PATHS MUST NORMALISE ALIKE. AddNode sorts and deduplicates;
+// StageUpdate used to only sort, so [7,7] opened a group of its own and wrote
+// the label twice into the record's LabelSet - while the same update arriving
+// through AddNode landed somewhere else entirely.
+//
+// Staged against a one-label update of the same shape rather than checked
+// alone: a count asserted on [7,7] by itself passes whenever the two paths
+// agree AND whenever neither deduplicates, which is the bug.
+void test_effectsV3Group_stagedUpdateLabelsAreASet(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	LabelID twice[] = { 7, 7 };
+	LabelID once[]  = { 7 };
+	SIValue v = SI_LongVal(1);
+
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, twice, 2, 0, 7, v);
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 11, once,  1, 0, 7, v);
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+			"[7,7] and [7] are the same label set and must be ONE record, "
+			"got %u", EffectsV3Grouping_RecordCount(g));
+
+	// and the repeat must not reach the wire: UPDATE_NODE is u32 opcode,
+	// u32 count, u16 n_labels, then the labels
+	size_t n = 0;
+	unsigned char *p = _encode(g, &n);
+
+	TEST_ASSERT_(_u32(p) == EFFECT_UPDATE_NODE, "expected an UPDATE_NODE record");
+
+	uint16_t n_labels = (uint16_t)(p[8] | (p[9] << 8));
+	TEST_ASSERT_(n_labels == 1,
+			"a repeated label is one label on the wire, got %u", n_labels);
+	TEST_ASSERT_(_u32(p + 10) == 7, "the label must be 7, got %u", _u32(p + 10));
+
+	free(p);
+	EffectsV3Grouping_Free(g);
+}
+
 //------------------------------------------------------------------------------
 // rule 2: groups sorted by key
 //------------------------------------------------------------------------------
@@ -808,6 +847,8 @@ TEST_LIST = {
 		test_effectsV3Group_valuesAreNotPartOfTheShape },
 	{ "EffectsV3Group:labelOrderDoesNotSplit",
 		test_effectsV3Group_labelOrderDoesNotSplit },
+	{ "EffectsV3Group:stagedUpdateLabelsAreASet",
+		test_effectsV3Group_stagedUpdateLabelsAreASet },
 	{ "EffectsV3Group:recordsAreSortedByKey",
 		test_effectsV3Group_recordsAreSortedByKey },
 	{ "EffectsV3Group:insertionOrderDoesNotChangeBytes",
