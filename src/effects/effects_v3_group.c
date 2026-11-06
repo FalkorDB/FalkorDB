@@ -807,9 +807,15 @@ void EffectsV3Grouping_StageUpdate
 		? sorted
 		: rm_malloc(sizeof(LabelID) * n_labels);
 
+	// SORTED AND DEDUPLICATED, the same normalisation AddNode applies: sorting
+	// alone does not make [7,7] and [7] the same shape, so a staged update
+	// would open its own group and write the repeated label into the record's
+	// LabelSet - while the identical update filed through AddNode landed in a
+	// different group. Rule 3 in effects_v3_group.h is over the label SET.
 	if(n_labels > 0) {
 		memcpy(norm, labels, sizeof(LabelID) * n_labels);
 		qsort(norm, n_labels, sizeof(LabelID), _cmp_label);
+		n_labels = _dedup_labels(norm, n_labels);
 	}
 
 	PendingUpdate *u =

@@ -540,9 +540,23 @@ void EffectsV3IdListBuilder_Free
 		return;
 	}
 
+	// BOTH Set arms own a bitmap - _maybe_collapse_run writes SET_DESCENDING
+	// for a run that reads downward - and testing one kind leaks the other
+	// half. Switched rather than if-ed, with no default, so a sixth kind is a
+	// compile error here rather than a silent leak, which is what
+	// EffectsV3IdListBuilder_FreeIdList below already does for the IdList's
+	// own blobs.
 	for(uint32_t i = 0; i < b->n_segments; i++) {
-		if(b->segments[i].kind == EFFECTS_V3_SEG_SET_ASCENDING) {
-			roaring64_bitmap_free(b->segments[i].bitmap.bitmap);
+		switch(b->segments[i].kind) {
+			case EFFECTS_V3_SEG_SET_ASCENDING:
+			case EFFECTS_V3_SEG_SET_DESCENDING:
+				roaring64_bitmap_free(b->segments[i].bitmap.bitmap);
+				break;
+
+			case EFFECTS_V3_SEG_RANGE_ASCENDING:
+			case EFFECTS_V3_SEG_RANGE_DESCENDING:
+			case EFFECTS_V3_SEG_REPEAT:
+				break;  // own nothing
 		}
 	}
 
