@@ -652,11 +652,17 @@ class testConcurrentQueryFlow(FlowTestsBase):
                 outcome['err'] = probe_err
                 outcome['res'] = probe_res
             else:
+                # finished within 1s: a "timed out" error => aborted at the gate
+                # (regression); any other error => unexpected failure; a clean
+                # success => the gate never engaged. only the last may skip.
                 try:
                     await probe_task
                     outcome['gate_not_engaged'] = True
                 except redis.exceptions.ResponseError as e:
-                    outcome['timed_out_at_gate'] = ("timed out" in str(e).lower())
+                    if "timed out" in str(e).lower():
+                        outcome['timed_out_at_gate'] = True
+                    else:
+                        outcome['early_error'] = str(e)
 
             await read_task
             await write_task
@@ -671,6 +677,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
         # loudly (this is the whole point of the test), never skip past it.
         self.env.assertFalse(outcome.get('timed_out_at_gate', False),
             message="reader was timed out while parked at the writer gate")
+        # any other probe failure is also a real failure, not a reason to skip
+        self.env.assertFalse(outcome.get('early_error'),
+            message="probe failed unexpectedly: %s" % outcome.get('early_error'))
         # the gate is a Linux (PREFER_WRITER) mechanism; if it never engaged the
         # scenario can't be built here - skip rather than false-fail
         if not outcome.get('parked'):
@@ -849,7 +858,11 @@ class testConcurrentQueryFlow(FlowTestsBase):
                 outcome['wait'] = loop.time() - t0
             else:
                 early = await asyncio.gather(*[p for p in probes if p.done()])
+                # a parked reader must never be aborted: a "timeout" is the gate
+                # regression and any "ERR:" is an unexpected failure - both must fail
+                # the test. only clean early successes mean the gate didn't engage.
                 outcome['timed_out_at_gate'] = any(o == "timeout" for o in early)
+                outcome['early_errors'] = [o for o in early if o not in ("ok", "timeout")]
 
             await read_task
             await write_task
@@ -869,6 +882,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
         # any reader aborted while parked at the gate -> regression -> FAIL
         self.env.assertFalse(outcome.get('timed_out_at_gate', False),
             message="a reader was timed out while parked at the writer gate")
+        # any other early probe failure is a real failure, not a reason to skip
+        self.env.assertEqual(outcome.get('early_errors', []), [],
+            message="unexpected probe errors: %r" % outcome.get('early_errors'))
         # writer gate is a Linux (PREFER_WRITER) mechanism; skip where it can't engage
         if not outcome.get('parked'):
             self.env.skip()
