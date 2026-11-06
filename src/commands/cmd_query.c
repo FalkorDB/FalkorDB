@@ -240,6 +240,7 @@ static void _ExecuteQuery
 	// is never timed out while merely waiting for a lock it doesn't hold (the same
 	// courtesy a queued writer already gets). writers (EXEC_THREAD_WRITER) and
 	// main-thread reads (EXEC_THREAD_MAIN, which hold the GIL) acquire blocking
+	bool acquired = true ;
 	if (command_ctx->thread == EXEC_THREAD_READER) {
 		// a reader held behind a writer parks at the writer gate. that is
 		// queue/wait time, not execution time, and it must NOT consume the query
@@ -249,17 +250,23 @@ static void _ExecuteQuery
 		// for as long as needed (bounded in practice by the writer completing),
 		// then resume EXECUTING and only now arm the execution timeout - so the
 		// timeout bounds the execution, never the gate wait.
-		QueryCtx_ResetStage (query_ctx) ;    // EXECUTING -> WAITING (park is wait time)
-		QueryCtx_TimeAcquireReadLock (0) ;   // 0 => block, park as long as needed
-		QueryCtx_AdvanceStage (query_ctx) ;  // WAITING -> EXECUTING
-		if (gq_ctx->enforce_timeout) {
+		QueryCtx_ResetStage (query_ctx) ;          // EXECUTING -> WAITING (park = wait time)
+		acquired = QueryCtx_TimeAcquireReadLock (0) ;  // 0 => block, park as long as needed
+		QueryCtx_AdvanceStage (query_ctx) ;        // WAITING -> EXECUTING
+		if (acquired && gq_ctx->enforce_timeout) {
 			gq_ctx->timeout = Query_SetTimeOut (command_ctx->timeout, plan) ;
 		}
 	} else {
 		QueryCtx_AcquireReadLock () ;
 	}
 
-	{
+	if (!acquired) {
+		// the gate park is unbounded, so a false return is a genuine read-lock
+		// acquisition error (not a timeout) - report it and skip execution rather
+		// than touch the graph without holding the read lock
+		ErrorCtx_SetError (EMSG_READ_LOCK_FAILED) ;
+		query_ctx->status = QueryExecutionStatus_FAILURE ;
+	} else {
 
 		if(exec_type == EXECUTION_TYPE_QUERY) {  // query operation
 			// set policy after lock acquisition,
