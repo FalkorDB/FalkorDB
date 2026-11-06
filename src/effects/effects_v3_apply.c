@@ -1640,8 +1640,10 @@ static bool _CreateIndexForSchema
 	Index idx = NULL ;
 
 	for (uint16_t i = 0 ; i < ci->n_attrs ; i++) {
+		// log=false: applying an effect emits no effect of its own, so
+		// 'stated' is never read. The reconstructed map serves for both.
 		idx = GraphHub_AddIndex (gc, schema->name, ci->attrs[i].name, et, t,
-				options, false) ;
+				options, options, false) ;
 
 		if (idx == NULL) {
 			RedisModule_Log (NULL, "warning",

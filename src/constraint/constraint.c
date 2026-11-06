@@ -350,9 +350,11 @@ void Constraint_Replicate
 	const char **attr_names ;
 	uint8_t n = Constraint_GetAttributes (c, &attr_ids, &attr_names) ;
 
-	// build a standalone effects buffer encoding the constraint creation
+	// an ordinary buffer again: v3 encodes constraint DDL now, so this no
+	// longer has to be forced to v2
 	EffectsBuffer *eb = EffectsBuffer_New () ;
 	EffectsBuffer_AddCreateConstraintEffect (eb, Constraint_GetType (c), et,
+			(uint32_t) Constraint_GetStatus (c),
 			label_id, label, attr_ids, attr_names, n) ;
 
 	size_t l = 0 ;

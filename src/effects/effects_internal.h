@@ -7,6 +7,8 @@
 
 #include "effects.h"
 #include "effects_bytes.h"
+#include "effects_v3_group.h"
+#include "writers/effects_writer.h"
 
 #include <stdio.h>
 
@@ -41,10 +43,41 @@ void EffectsBuffer_WriteSIValue
 	EffectsBuffer *buff
 );
 
+// write an attribute set: a count then (id, value) pairs
+//
+// v2's shape; v3 states a record's attribute ids once and its values per row
+void EffectsBuffer_WriteAttributeSet
+(
+	const AttributeSet set,  // attribute set to write
+	EffectsBuffer *eb        // effects-buffer
+);
+
 // increment number of effects recorded in buffer
 void EffectsBuffer_IncEffectCount
 (
 	EffectsBuffer *buff
+);
+
+// the v3 accumulator this buffer is filling, or NULL when it emits v2
+//
+// lets the per-effect writers route into v3 without EffectsBuffer ceasing to be
+// opaque to them
+EffectsV3Grouping *EffectsBuffer_V3
+(
+	const EffectsBuffer *eb  // effects-buffer
+);
+
+// take over a buffer's body so pre-built v3 records can be written into it
+//
+// Returns the sink to write into, or NULL if the buffer has already staged
+// effects of its own - those would be serialised over whatever is written here.
+// 'version' and 'flags' become the header the buffer emits, so a re-encode
+// reproduces the payload it decoded rather than the header this build prefers.
+EffectsBytes *EffectsBuffer_TakeBody
+(
+	EffectsBuffer *eb,  // effects-buffer
+	uint8_t version,    // version byte to emit
+	uint8_t flags       // flags byte to emit
 );
 
 // wrap a byte sink the caller owns as an effects-buffer
@@ -61,6 +94,12 @@ EffectsBuffer *EffectsBuffer_Wrap
 //------------------------------------------------------------------------------
 // shared apply-side helpers (defined in effects_apply.c)
 //------------------------------------------------------------------------------
+
+// the write table this buffer was built with, never NULL
+const EffectsWriter *EffectsBuffer_Writer
+(
+	const EffectsBuffer *eb  // effects-buffer
+);
 
 // resolve & verify a schema referenced by an effect via its id+name pair
 // (the id is authoritative - it's only valid because every schema mutation
