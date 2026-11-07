@@ -1,7 +1,7 @@
 """Per-flow-test-file measurement: server instructions/cycles/peak memory.
 
-Runs each flow test file through ./flow.sh (RLTest, --parallelism 1) against a
-given module. RLTest spawns transient redis-servers, and macOS `wait4` rusage
+Runs each flow test file through ./flow.sh (pytest, PARALLELISM=1) against a
+given module. The suite spawns transient redis-servers, and macOS `wait4` rusage
 does not fold grandchildren, so a background thread polls every redis-server pid
 that appears during the run and keeps its last-seen counters; each row is the
 SUM over the servers that file spawned. Teardown work after the final poll
@@ -139,7 +139,7 @@ def build_env(
 ) -> tuple[dict[str, str], tempfile.TemporaryDirectory | None]:
     """flow.sh hardcodes the module filename, so a foreign module is symlinked
     under the expected name (this is how the C module gets measured)."""
-    env = {**os.environ, "VERBOSE": "0", "PARALLELISM": "--parallelism 1"}
+    env = {**os.environ, "VERBOSE": "0", "PARALLELISM": "1"}
     target = "libfalkordb.dylib" if sys.platform == "darwin" else "libfalkordb.so"
     tmp: tempfile.TemporaryDirectory | None = None
     if module.name == target:

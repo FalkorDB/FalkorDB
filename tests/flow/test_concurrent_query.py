@@ -20,12 +20,13 @@ async def delete_graph(g):
         return False
 
 class testConcurrentQueryFlow(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.conn = redis.Redis(self.env.host, self.env.port)
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.conn = redis.Redis(cls.env.host, cls.env.port)
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def setUp(self):
+    def setup_method(self):
         self.conn.delete(GRAPH_ID)
         self.conn.delete(SECONDARY_GRAPH_ID)
 
@@ -86,7 +87,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
         for result in results:
             person_count = result.result_set[0][0]
-            self.env.assertEqual(person_count, len(people))
+            assert person_count == len(people)
     
     # Concurrently get neighbors of every node.
     def test_02_retrieve_neighbors(self):
@@ -99,7 +100,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
         # Fully connected graph + header row.
         expected_resultset_size = len(people) * (len(people)-1)
         for result in results:
-            self.env.assertEqual(len(result.result_set), expected_resultset_size)
+            assert len(result.result_set) == expected_resultset_size
 
     # Concurrent writes
     def test_03_concurrent_write(self):        
@@ -108,8 +109,8 @@ class testConcurrentQueryFlow(FlowTestsBase):
         queries = ["CREATE (:country {id:%d})" % i for i in range(CLIENT_COUNT)]
         results = self.run_queries_concurrently(queries)
         for result in results:
-            self.env.assertEqual(result.nodes_created, 1)
-            self.env.assertEqual(result.properties_set, 1)
+            assert result.nodes_created == 1
+            assert result.properties_set == 1
     
     # Try to delete graph multiple times.
     def test_04_concurrent_delete(self):
@@ -133,7 +134,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # Exactly one thread should have successfully deleted the graph.
-            self.env.assertEqual(len(results) - sum(isinstance(res, ResponseError) for res in results), 1)
+            assert len(results) - sum(isinstance(res, ResponseError) for res in results) == 1
 
             # close the connection pool
             await pool.aclose()
@@ -176,11 +177,11 @@ class testConcurrentQueryFlow(FlowTestsBase):
             await del_task
 
             # validate result.
-            self.env.assertTrue(all(r.result_set[0][0] == 900 for r in results))
+            assert all(r.result_set[0][0] == 900 for r in results)
 
             # Make sure Graph is empty, e.g. graph was deleted.
             resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
-            self.env.assertEqual(resultset[0][0], 0)
+            assert resultset[0][0] == 0
 
             #-------------------------------------------------------------------
             # Delete graph via GRAPH.DELETE.
@@ -200,11 +201,11 @@ class testConcurrentQueryFlow(FlowTestsBase):
             await del_task
 
             # validate result.
-            self.env.assertTrue(all(r.result_set[0][0] == 900 for r in results))
+            assert all(r.result_set[0][0] == 900 for r in results)
 
             # Make sure Graph is empty, e.g. graph was deleted.
             resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
-            self.env.assertEqual(resultset[0][0], 0)
+            assert resultset[0][0] == 0
 
             # Close the connection
             await async_conn.close()
@@ -247,9 +248,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
                                        # The write escalated to writer mode and found the key no
                                        # longer holds this graph, so it aborted before mutating.
                                        "graph was deleted or replaced while the query was running, aborting"]
-                self.env.assertContains(str(result), possible_exceptions)
+                assert str(result) in possible_exceptions
             else:
-                self.env.assertEqual(1000000, result.result_set[0][0])
+                assert 1000000 == result.result_set[0][0]
 
             # close the connection pool
             await pool.aclose()
@@ -305,9 +306,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID,
                                        "Encountered an empty key when opened key " + new_graph]
-                self.env.assertContains(str(result), possible_exceptions)
+                assert str(result) in possible_exceptions
             else:
-                self.env.assertEqual(1000000, result.result_set[0][0])
+                assert 1000000 == result.result_set[0][0]
 
             # close the connection pool
             await pool.aclose()
@@ -353,9 +354,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
                                        # The write escalated to writer mode and found the key no
                                        # longer holds this graph, so it aborted before mutating.
                                        "graph was deleted or replaced while the query was running, aborting"]
-                self.env.assertContains(str(result), possible_exceptions)
+                assert str(result) in possible_exceptions
             else:
-                self.env.assertEqual(1000000, result.result_set[0][0])
+                assert 1000000 == result.result_set[0][0]
 
             # close the connection pool
             await pool.aclose()
@@ -367,7 +368,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
     def test_09_concurrent_multiple_readers_after_big_write(self):
         # Test issue #890
-        self.graph = Graph(self.conn, GRAPH_ID)
+        type(self).graph = Graph(self.conn, GRAPH_ID)
         self.graph.query("""UNWIND(range(0, 999)) as x CREATE ()-[r:R]->() RETURN count(r)""")
 
         read_query = """MATCH (n)-[r:R]->(m) RETURN count(r) AS res UNION RETURN 0 AS res"""
@@ -377,7 +378,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
         results = self.run_queries_concurrently(queries)
 
         for result in results:
-            self.env.assertEqual(1000, result.result_set[0][0])
+            assert 1000 == result.result_set[0][0]
 
     def test_10_write_starvation(self):
         # make sure write query do not starve
@@ -442,7 +443,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
             count = sum(1 for res in results if res.result_set[0][1] < write_ts)
 
             # make sure write query wasn't starved
-            self.env.assertLessEqual(count, len(read_tasks) * 0.3)
+            assert count <= len(read_tasks) * 0.3
 
             # close the connection pool
             await pool.aclose()

@@ -102,8 +102,8 @@ uv run --project bench bench flow --module /tmp/falkordb-c.so --out bench/result
 uv run --project bench bench flow --compare bench/results/flow_c.csv --current bench/results/flow_rust.csv
 ```
 
-Runs each file in `flow_tests_done.txt` through `./flow.sh` (RLTest, parallelism
-1). RLTest spawns transient redis-servers and macOS `wait4` rusage does not fold
+Runs each file in `flow_tests_done.txt` through `./flow.sh` (pytest, parallelism
+1). The suite spawns transient redis-servers and macOS `wait4` rusage does not fold
 grandchildren, so a poller samples every redis-server pid that appears; each row
 is the **sum** over the servers that file spawned. Tests may legitimately fail on
 C (Rust-specific behaviours), so the compare table shows both failure counts.

@@ -8,55 +8,56 @@ GRAPH_ID = "timeout"
 
 
 class testQueryTimeout():
-    def __init__(self):
-        self.env, self.db = Env(moduleArgs="TIMEOUT 1000")
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(moduleArgs="TIMEOUT 1000")
 
         # skip test if we're running under sanitizer
         if SANITIZER:
-            self.env.skip() # sanitizer is not working correctly with replication
+            cls.env.skip() # sanitizer is not working correctly with replication
 
-        self.graph = self.db.select_graph(GRAPH_ID)
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
     def test01_read_write_query_timeout(self):
         query = "UNWIND range(0, 1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
         try:
             # The query is expected to timeout
             self.graph.query(query, timeout=1)
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as error:
-            self.env.assertContains("Query timed out", str(error))
+            assert "Query timed out" in str(error)
 
         try:
             # The query is expected to succeed
             self.graph.query(query, timeout=2000)
         except:
-            self.env.assertTrue(False)
+            assert False
 
         query = """UNWIND range(0, 1000000) AS x CREATE (p:Person {age: x%90, height: x%200, weight: x%80})"""
         try:
             # The query is expected to succeed
             self.graph.query(query, timeout=1)
-            self.env.assertTrue(True)
+            assert True
         except:
-            self.env.assertTrue(False)
+            assert False
 
     def test02_configured_timeout(self):
         # Verify that the module-level timeout is set to the default of 0
         timeout = self.db.config_get("timeout")
-        self.env.assertEqual(timeout, 1000)
+        assert timeout == 1000
 
         # Set a default timeout of 1 millisecond
         self.db.config_set("timeout", 1)
         timeout = self.db.config_get("timeout")
-        self.env.assertEqual(timeout, 1)
+        assert timeout == 1
 
         # Validate that a read query times out
         query = "UNWIND range(0,1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
         try:
             self.graph.query(query)
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as error:
-            self.env.assertContains("Query timed out", str(error))
+            assert "Query timed out" in str(error)
 
     def test03_timeout_index_scan(self):
         # set timeout to unlimited
@@ -102,7 +103,7 @@ class testQueryTimeout():
                 # The only ResponseError we expect here is "Query timed out"
                 # — anything else (Cypher error, wrong arity, ...) is a real
                 # problem and should surface, not be papered over.
-                self.env.assertContains("Query timed out", str(error))
+                assert "Query timed out" in str(error)
                 # `res` is unbound when the query raises, so we can't use
                 # res.run_time_ms. The second loop only needs a number that
                 # clamps into [1, 10] ms; the just-attempted 5 ms is a
@@ -114,9 +115,9 @@ class testQueryTimeout():
                 # query is expected to timeout
                 timeout = min(max(int(timeouts[i]), 1), 10)
                 res = self.graph.query(q, timeout=timeout)
-                self.env.assertTrue(False)
+                assert False
             except ResponseError as error:
-                self.env.assertContains("Query timed out", str(error))
+                assert "Query timed out" in str(error)
 
     def test04_query_timeout_free_resultset(self):
         query = "UNWIND range(0,3000000) AS x RETURN toString(x)"
@@ -126,69 +127,69 @@ class testQueryTimeout():
             # The query is expected to succeed
             res = self.graph.query(query + " LIMIT 1000", timeout=3000)
         except:
-            self.env.assertTrue(False)
+            assert False
 
         try:
             # The query is expected to timeout
             res = self.graph.query(query, timeout=max(int(res.run_time_ms), 1))
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as error:
-            self.env.assertContains("Query timed out", str(error))
+            assert "Query timed out" in str(error)
 
     def test05_invalid_loadtime_config(self):
         try:
             env, db = Env(moduleArgs="TIMEOUT 10 TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
             env.getConnection().ping()
-            self.env.assertTrue(False)
+            assert False
         except:
-            self.env.assertTrue(True)
+            assert True
 
     def test06_error_timeout_default_higher_than_timeout_max(self):
-        self.env, self.db = Env(moduleArgs="TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
+        type(self).env, type(self).db = Env(moduleArgs="TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
         # Refresh self.graph: spawn-mode Env() returns a new client/container,
         # so the self.graph captured in __init__ would still talk to the old
         # one (with its now-stale config). Subsequent tests in this class
         # query via self.graph and rely on the new TIMEOUT_DEFAULT.
-        self.graph = self.db.select_graph(GRAPH_ID)
+        type(self).graph = self.db.select_graph(GRAPH_ID)
 
         # get current timeout configuration
         max_timeout = self.db.config_get("TIMEOUT_MAX")
         default_timeout = self.db.config_get("TIMEOUT_DEFAULT")
 
-        self.env.assertEqual(max_timeout, 10)
-        self.env.assertEqual(default_timeout, 10)
+        assert max_timeout == 10
+        assert default_timeout == 10
 
         # try to set default-timeout to a higher value than max-timeout
         try:
             self.db.config_set("TIMEOUT_DEFAULT", max_timeout + 1)
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as error:
-            self.env.assertContains("TIMEOUT_DEFAULT configuration parameter cannot be set to a value higher than TIMEOUT_MAX", str(error))
+            assert "TIMEOUT_DEFAULT configuration parameter cannot be set to a value higher than TIMEOUT_MAX" in str(error)
 
         # try to set max-timeout to a lower value then default-timeout
         try:
             self.db.config_set("TIMEOUT_MAX", default_timeout - 1)
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as error:
-            self.env.assertContains("TIMEOUT_MAX configuration parameter cannot be set to a value lower than TIMEOUT_DEFAULT", str(error))
+            assert "TIMEOUT_MAX configuration parameter cannot be set to a value lower than TIMEOUT_DEFAULT" in str(error)
 
         # disable max timeout
         try:
             self.db.config_set("TIMEOUT_MAX", 0)
-            self.env.assertTrue(True)
+            assert True
             # revert timeout_max to 10
             self.db.config_set("TIMEOUT_MAX", 10)
         except ResponseError as error:
-            self.env.assertTrue(False)
+            assert False
 
         # disable default timeout
         try:
             self.db.config_set("TIMEOUT_DEFAULT", 0)
-            self.env.assertTrue(True)
+            assert True
             # revert timeout_default to 5
             self.db.config_set("TIMEOUT_DEFAULT", 5)
         except ResponseError as error:
-            self.env.assertTrue(False)
+            assert False
 
     def test07_read_write_query_timeout_default(self):
         queries = [
@@ -201,9 +202,9 @@ class testQueryTimeout():
                 try:
                     # The query is expected to timeout
                     self.graph.query(query)
-                    self.env.assertTrue(False)
+                    assert False
                 except ResponseError as error:
-                    self.env.assertContains("Query timed out", str(error))
+                    assert "Query timed out" in str(error)
 
             # disable timeout_default, timeout_max should be enforced
             self.db.config_set("TIMEOUT_DEFAULT", 0)
@@ -222,14 +223,14 @@ class testQueryTimeout():
             try:
                 # query is expected to fail
                 self.graph.query(query, timeout=max_timeout+1)
-                self.env.assertTrue(False)
+                assert False
             except ResponseError as error:
-                self.env.assertContains("The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value", str(error))
+                assert "The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value" in str(error)
 
     def test09_fallback(self):
         self.env.stop()
-        self.env, self.db = Env(moduleArgs="TIMEOUT 1")
-        self.graph = self.db.select_graph(GRAPH_ID)
+        type(self).env, type(self).db = Env(moduleArgs="TIMEOUT 1")
+        type(self).graph = self.db.select_graph(GRAPH_ID)
 
         configs = ["TIMEOUT_DEFAULT", "TIMEOUT_MAX"]
 
@@ -242,17 +243,17 @@ class testQueryTimeout():
             try:
                 # The query is expected to timeout
                 self.graph.query(query)
-                self.env.assertTrue(False)
+                assert False
             except ResponseError:
-                self.env.assertTrue(True)
+                assert True
 
             query = "UNWIND range(0, 1000000) AS x CREATE (:N {v: x})"
             try:
                 # The query is expected to succeed
                 self.graph.query(query)
-                self.env.assertTrue(True)
+                assert True
             except:
-                self.env.assertTrue(False)
+                assert False
 
     def test10_set_old_timeout_when_new_config_set(self):
         self.db.config_set("TIMEOUT_DEFAULT", 10)
@@ -260,17 +261,17 @@ class testQueryTimeout():
         # try to set timeout
         try:
             self.db.config_set("TIMEOUT", 20)
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as error:
-            self.env.assertContains("The TIMEOUT configuration parameter is deprecated. Please set TIMEOUT_MAX and TIMEOUT_DEFAULT instead", str(error))
+            assert "The TIMEOUT configuration parameter is deprecated. Please set TIMEOUT_MAX and TIMEOUT_DEFAULT instead" in str(error)
 
     # When timeout occurs while executing a PROFILE command, only the error-message
     # should return to user
     def test11_profile_no_double_response(self):
         # reset timeout params to default
         self.env.stop()
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        type(self).env, type(self).db = Env()
+        type(self).graph = self.db.select_graph(GRAPH_ID)
 
         # Set timeout parameters to small values (1 millisecond)
         self.db.config_set("TIMEOUT_MAX", 1)
@@ -282,19 +283,19 @@ class testQueryTimeout():
                    UNWIND range(0, 10000) AS y
                    CREATE (:P{v:x * y + y})"""
             self.graph.profile(q)
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
             # expecting to get a timeout error
-            self.env.assertContains("Query timed out", str(e))
+            assert "Query timed out" in str(e)
 
         # make sure no pending result exists
         res = self.graph.query("RETURN 1")
-        self.env.assertEqual(res.result_set[0][0], 1)
+        assert res.result_set[0][0] == 1
 
     def test12_concurrent_timeout(self):
         self.env.stop()
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        type(self).env, type(self).db = Env()
+        type(self).graph = self.db.select_graph(GRAPH_ID)
 
         self.graph.query("UNWIND range(1, 1000) AS x CREATE (:N {v:x})")
 

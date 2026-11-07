@@ -5,26 +5,28 @@ people = ["Roi", "Alon", "Ailon", "Boaz", "Tal", "Omri", "Ori"]
 
 
 class testGraphMultiPatternQueryFlow(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.populate_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.populate_graph()
 
-    def populate_graph(self):
+    @classmethod
+    def populate_graph(cls):
          # Create entities
         nodes = []
         for p in people:
             nodes.append(Node(labels="person", properties={"name": p}))
 
-        self.graph.query(f"CREATE {','.join(map(str, nodes))}")
+        cls.graph.query(f"CREATE {','.join(map(str, nodes))}")
 
     # Connect a single node to all other nodes.
     def test01_connect_node_to_rest(self):
         query = """MATCH(r:person {name:"Roi"}), (f:person) WHERE f.name <> r.name CREATE (r)-[:friend]->(f) RETURN count(f)"""
         actual_result = self.graph.query(query)
         friend_count = actual_result.result_set[0][0]
-        self.env.assertEqual(friend_count, 6)
-        self.env.assertEqual(actual_result.relationships_created, 6)
+        assert friend_count == 6
+        assert actual_result.relationships_created == 6
 
     def test02_verify_cartesian_product_streams_reset(self):
         # See https://github.com/RedisGraph/RedisGraph/issues/249
@@ -37,7 +39,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         for q in queries:
             actual_result = self.graph.query(q)
             records_count = len(actual_result.result_set)
-            self.env.assertEqual(records_count, expected_resultset_size)
+            assert records_count == expected_resultset_size
 
 
     def test03_reset_nested_cartesian_product(self):
@@ -74,8 +76,8 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         query = """MATCH(a:person), (b:person) WHERE a.name <> b.name CREATE (a)-[f:friend]->(b) RETURN count(f)"""
         actual_result = self.graph.query(query)
         friend_count = actual_result.result_set[0][0]
-        self.env.assertEqual(friend_count, 42)
-        self.env.assertEqual(actual_result.relationships_created, 42)
+        assert friend_count == 42
+        assert actual_result.relationships_created == 42
     
     # Perform a cartesian product of 3 sets.
     def test05_cartesian_product(self):
@@ -88,7 +90,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         for q, c in queries.items():
             actual_result = self.graph.query(q)
             friend_count = actual_result.result_set[0][0]
-            self.env.assertEqual(friend_count, c)
+            assert friend_count == c
 
     def test06_multiple_create_clauses(self):
         queries = ["""CREATE (:a {v:1}), (:b {v:2, z:3}), (:c), (:a)-[:r0 {k:9}]->(:b), (:c)-[:r1]->(:d)""",
@@ -96,7 +98,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
                    """CREATE (:a {v:1}), (:b {v:2, z:3}) CREATE (:c), (:a)-[:r0 {k:9}]->(:b) CREATE (:c)-[:r1]->(:d)"""]
         for q in queries:
             actual_result = self.graph.query(q)
-            self.env.assertEqual(actual_result.relationships_created, 2)
-            self.env.assertEqual(actual_result.properties_set, 4)
-            self.env.assertEqual(actual_result.nodes_created, 7)
+            assert actual_result.relationships_created == 2
+            assert actual_result.properties_set == 4
+            assert actual_result.nodes_created == 7
 

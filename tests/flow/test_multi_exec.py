@@ -20,9 +20,10 @@ UPDATE_QUERY = "MATCH (al:person {name:'Al'}) SET al.name = 'Steve'"
 
 
 class testMultiExecFlow(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.redis_con = self.env.getConnection()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.redis_con = cls.env.getConnection()
 
     def test_graph_entities(self):
         # Delete previous graph if exists.
@@ -67,21 +68,21 @@ class testMultiExecFlow(FlowTestsBase):
 
         two_edges = results[1]
         two_edges = two_edges[1][0][1]        
-        self.env.assertEqual(two_edges, 2)
+        assert two_edges == 2
 
         one_edge = results[3]
         one_edge = one_edge[1][0][1]
-        self.env.assertEqual(one_edge, 1)
+        assert one_edge == 1
 
         no_edges = results[5]
         no_edges = no_edges[1]
-        self.env.assertEqual(len(no_edges), 0)
+        assert len(no_edges) == 0
 
     def test_transaction_failure(self):
         redis_con_a = self.env.getConnection()
         redis_con_b = self.env.getConnection()
         results = redis_con_b.execute_command("INFO", "CLIENTS")
-        self.env.assertGreaterEqual(results['connected_clients'], 2)
+        assert results['connected_clients'] >= 2
 
         # Delete previous graph if exists.
         redis_con_a.execute_command("DEL", GRAPH_ID)
@@ -92,7 +93,7 @@ class testMultiExecFlow(FlowTestsBase):
         redis_con_a.execute_command("GRAPH.QUERY", GRAPH_ID, MATCH_QUERY)
         results = redis_con_a.execute_command("EXEC")
 
-        self.env.assertNotEqual(results, None)
+        assert results != None
 
         # read only query from client B - transaction OK
         redis_con_a.execute_command("WATCH", GRAPH_ID)
@@ -101,7 +102,7 @@ class testMultiExecFlow(FlowTestsBase):
         redis_con_a.execute_command("GRAPH.QUERY", GRAPH_ID, MATCH_QUERY)
         results = redis_con_a.execute_command("EXEC")
 
-        self.env.assertNotEqual(results, None)
+        assert results != None
 
         # write query from client B - transaction fails
         redis_con_a.execute_command("WATCH", GRAPH_ID)
@@ -110,7 +111,7 @@ class testMultiExecFlow(FlowTestsBase):
         redis_con_a.execute_command("GRAPH.QUERY", GRAPH_ID, MATCH_QUERY)
         results = redis_con_a.execute_command("EXEC")
 
-        self.env.assertEqual(results, None)
+        assert results == None
 
         # GRAPH.EXPLAIN is read only - no data change - transaction OK
         redis_con_a.execute_command("WATCH", GRAPH_ID)
@@ -119,4 +120,4 @@ class testMultiExecFlow(FlowTestsBase):
         redis_con_a.execute_command("GRAPH.QUERY", GRAPH_ID, MATCH_QUERY)
         results = redis_con_a.execute_command("EXEC")
 
-        self.env.assertNotEqual(results, None)
+        assert results != None

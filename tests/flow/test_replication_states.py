@@ -21,18 +21,19 @@ keys = {
 # in case we imported part of the data validate that we replicate it correctly.
 
 class testReplicationState():
-    def __init__(self):
+    @classmethod
+    def setup_class(cls):
         # skip test if we're running under sanitizer
         if SANITIZER:
-            Environment.skip(None) # sanitizer is not working correctly with replication
+            pytest.skip("sanitizer is not working correctly with replication")
 
-        self.env, self.db = Env(useSlaves=True, env='oss', moduleArgs='VKEY_MAX_ENTITY_COUNT 10')
-        self.master = self.env.getConnection()
-        self.slave = self.env.getSlaveConnection()
-        info = self.slave.info("Replication")
-        self.master_host = info["master_host"]
-        self.master_port = info["master_port"]
-        self.connection_state = Connection.Connected
+        cls.env, cls.db = Env(useSlaves=True, env='oss', moduleArgs='VKEY_MAX_ENTITY_COUNT 10')
+        cls.master = cls.env.getConnection()
+        cls.slave = cls.env.getSlaveConnection()
+        info = cls.slave.info("Replication")
+        cls.master_host = info["master_host"]
+        cls.master_port = info["master_port"]
+        cls.connection_state = Connection.Connected
 
     # check that the expected key count exists in both master and slave
     def _check(self, keys_master, keys_slave):
@@ -71,12 +72,12 @@ class testReplicationState():
     def _connect_replication(self):
         if self.connection_state == Connection.Disconnected:
             self.slave.slaveof(self.master_host, self.master_port)
-            self.connection_state = Connection.Connected
+            type(self).connection_state = Connection.Connected
 
     def _disconnect_replication(self):
         if self.connection_state == Connection.Connected:
             self.slave.slaveof()
-            self.connection_state = Connection.Disconnected
+            type(self).connection_state = Connection.Disconnected
 
     def _connection_permutation(self, state, i):
         if state[i] == 1:
@@ -104,48 +105,48 @@ class testReplicationState():
                 if not self._check(0, 0):
                     print(f"scenario: {scenario}")
                     print(f"connection_permutation: {connection_permutation}")
-                    self.assertTrue(False)
+                    assert False
 
                 self._connection_permutation(connection_permutation, 0)
 
                 aux = self.master.execute_command("GRAPH.DEBUG", "AUX", "START")
-                self.env.assertEqual(aux, 1)
+                assert aux == 1
 
                 self._connection_permutation(connection_permutation, 1)
 
                 if not self._step(scenario[0], 1):
                     print(f"scenario: {scenario}")
                     print(f"connection_permutation: {connection_permutation}")
-                    self.assertTrue(False)
+                    assert False
 
                 self._connection_permutation(connection_permutation, 2)
 
                 if not self._step(scenario[1], 2):
                     print(f"scenario: {scenario}")
                     print(f"connection_permutation: {connection_permutation}")
-                    self.assertTrue(False)
+                    assert False
 
                 self._connection_permutation(connection_permutation, 3)
 
                 if not self._step(scenario[2], 3):
                     print(f"scenario: {scenario}")
                     print(f"connection_permutation: {connection_permutation}")
-                    self.assertTrue(False)
+                    assert False
 
                 self._connection_permutation(connection_permutation, 4)
 
                 aux = self.master.execute_command("GRAPH.DEBUG", "AUX", "END")
-                self.env.assertEqual(aux, 0)
+                assert aux == 0
 
                 self._connect_replication()
 
                 if not self._check(1, 1):
                     print(f"scenario: {scenario}")
                     print(f"connection_permutation: {connection_permutation}")
-                    self.env.assertTrue(False)
+                    assert False
 
                 if not self._test_data():
                     print(f"scenario: {scenario}")
                     print(f"connection_permutation: {connection_permutation}")
-                    self.env.assertTrue(False)
+                    assert False
 

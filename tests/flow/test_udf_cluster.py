@@ -2,14 +2,15 @@ from common import *
 
 
 class testUDFCluster():
-    def __init__(self):
-        self.env, self.db = Env(env='oss-cluster', shardsCount=3)
-        self.master_1 = self.env.getConnection(shardId=1)
-        self.master_2 = self.env.getConnection(shardId=2)
-        self.master_3 = self.env.getConnection(shardId=3)
-        self.shards = [self.master_1, self.master_2, self.master_3]
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(env='oss-cluster', shardsCount=3)
+        cls.master_1 = cls.env.getConnection(shardId=1)
+        cls.master_2 = cls.env.getConnection(shardId=2)
+        cls.master_3 = cls.env.getConnection(shardId=3)
+        cls.shards = [cls.master_1, cls.master_2, cls.master_3]
 
-    def tearDown(self):
+    def teardown_method(self):
         for shard in self.shards:
             shard.execute_command("FLUSHALL")
             shard.execute_command("GRAPH.UDF", "FLUSH")
@@ -23,7 +24,7 @@ class testUDFCluster():
         # make sure all shards are clean
         for shard in self.shards:
             udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(len(udfs), 0)
+            assert len(udfs) == 0
 
         # load UDF to master_1
         script = """
@@ -31,16 +32,16 @@ class testUDFCluster():
         """
 
         res = self.db.udf_load("math", script)
-        self.env.assertEqual(res, "OK")
+        assert res == "OK"
 
         # collect UDFs from master_1
         master_1_udfs = self.master_1.execute_command("GRAPH.UDF", "LIST")
-        self.env.assertNotEqual(len(master_1_udfs), 0)
+        assert len(master_1_udfs) != 0
 
         # make sure UDFs been propagated to the rest of the cluster
         for shard in self.shards:
             udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(master_1_udfs, udfs)
+            assert master_1_udfs == udfs
 
         # update UDFs on master_2
         script = """
@@ -49,30 +50,30 @@ class testUDFCluster():
         """
 
         res = self.db.udf_load("math", script, replace=True)
-        self.env.assertEqual(res, "OK")
+        assert res == "OK"
 
         # collect UDFs from master_2
         master_2_udfs = self.master_2.execute_command("GRAPH.UDF", "LIST")
-        self.env.assertNotEqual(len(master_2_udfs), 0)
+        assert len(master_2_udfs) != 0
 
         # make sure UDFs been propagated to the rest of the cluster
         for shard in self.shards:
             udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(master_2_udfs, udfs)
+            assert master_2_udfs == udfs
 
         # make sure a failed load doesn't effects the cluster
         try:
             # LOAD should fail as 'math' lib already exists and we did not
             # specified REPLACE
             self.db.udf_load("math", script)
-            self.env.assertFalse(True)
+            assert not True
         except Exception:
             pass
 
         # make sure UDFs remaind as before the failed call
         for shard in self.shards:
             udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(master_2_udfs, udfs)
+            assert master_2_udfs == udfs
 
     def test_udf_delete_propagation(self):
         """
@@ -91,16 +92,16 @@ class testUDFCluster():
             script = scripts[i]
 
             res = self.db.udf_load(lib, script)
-            self.env.assertEqual(res, "OK")
+            assert res == "OK"
 
         # make sure all 3 libs are available throughout the cluster
         master_1_udfs = self.master_1.execute_command("GRAPH.UDF", "LIST")
-        self.env.assertEqual(len(master_1_udfs), 3)
+        assert len(master_1_udfs) == 3
 
         # make sure UDFs been propagated to the rest of the cluster
         for shard in self.shards:
             udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(master_1_udfs, udfs)
+            assert master_1_udfs == udfs
 
         # start removing libs
         remove_sequance = [(self.master_2, "B"),  # remove B from master 2
@@ -109,18 +110,18 @@ class testUDFCluster():
 
         for shard, lib in remove_sequance:
             res = self.db.udf_delete(lib)
-            self.env.assertEqual(res, "OK")
+            assert res == "OK"
 
             # make sure all nodes in the cluster has the same view over UDFs
             udfs = shard.execute_command("GRAPH.UDF", "LIST")
             for s in self.shards:
                 s_udfs = s.execute_command("GRAPH.UDF", "LIST")
-                self.env.assertEqual(udfs, s_udfs)
+                assert udfs == s_udfs
 
         # all shards should have no UDFs
         for s in self.shards:
             udfs = s.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(len(udfs), 0)
+            assert len(udfs) == 0
 
     def test_udf_flush_propagation(self):
         """
@@ -138,22 +139,22 @@ class testUDFCluster():
             script = scripts[i]
 
             res = self.db.udf_load(lib, script)
-            self.env.assertEqual(res, "OK")
+            assert res == "OK"
 
         # make sure all 3 libs are available throughout the cluster
         master_1_udfs = self.master_1.execute_command("GRAPH.UDF", "LIST")
-        self.env.assertEqual(len(master_1_udfs), 3)
+        assert len(master_1_udfs) == 3
 
         # make sure UDFs been propagated to the rest of the cluster
         for shard in self.shards:
             udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(master_1_udfs, udfs)
+            assert master_1_udfs == udfs
 
         # flush UDFs
         res = self.db.udf_flush()
-        self.env.assertEqual(res, "OK")
+        assert res == "OK"
 
         # all shards should have no UDFs
         for s in self.shards:
             udfs = s.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(len(udfs), 0)
+            assert len(udfs) == 0

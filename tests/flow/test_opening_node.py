@@ -23,9 +23,10 @@ def all_combinations_and_permutations(lst):
     return [list(x) for x in sorted(result, key=len)]
 
 class testOpeningNode():
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
     # in a pattern where both ends have only a single label
     # make sure the label with the least number of nodes associated with it
@@ -46,8 +47,8 @@ class testOpeningNode():
 
         for q in queries:
             plan = str(self.graph.explain(q))
-            self.env.assertContains("Node By Label Scan | (a:A)", plan)
-            self.env.assertContains("Conditional Traverse | (a)->(b:B)", plan)
+            assert "Node By Label Scan | (a:A)" in plan
+            assert "Conditional Traverse | (a)->(b:B)" in plan
 
         # increase number of A nodes
         # number of A nodes: 8
@@ -59,8 +60,8 @@ class testOpeningNode():
         # expecting B to open the traversal
         for q in queries:
             plan = str(self.graph.explain(q))
-            self.env.assertContains("Node By Label Scan | (b:B)", plan)
-            self.env.assertContains("Conditional Traverse | (b)<-(a:A)", plan)
+            assert "Node By Label Scan | (b:B)" in plan
+            assert "Conditional Traverse | (b)<-(a:A)" in plan
 
     # when there are multiple labels to pick from
     # make sure the label with the least number of nodes associated with it is
@@ -120,9 +121,9 @@ class testOpeningNode():
                 for q in queries:
                     plan = self.graph.explain(q)
                     label_scan = plan.collect_operations('Node By Label Scan')[0]
-                    self.env.assertContains(min_lbl, str(label_scan))
+                    assert min_lbl in str(label_scan)
 
                     res = self.graph.query(q).result_set
-                    self.env.assertEqual(len(res), 1)
-                    self.env.assertEqual(res[0][0], 1)
+                    assert len(res) == 1
+                    assert res[0][0] == 1
 

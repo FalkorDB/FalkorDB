@@ -3,11 +3,12 @@ from common import *
 GRAPH_ID = "betweenness"
 
 class testBetweenness(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
 
     def betweenness_centrality(self, nodeLabels=None, relationshipTypes=None, seed=10, samplingSize=16):
@@ -65,7 +66,7 @@ class testBetweenness(FlowTestsBase):
         for q in invalid_queries:
             try:
                 self.graph.query(q)
-                self.env.assertFalse(True)
+                assert not True
             except:
                 pass
 
@@ -73,7 +74,7 @@ class testBetweenness(FlowTestsBase):
         """Test Betweenness centrality algorithm behavior on an empty graph"""
         # verify graph is empty
         result = self.graph.query("MATCH (n) RETURN count(n) as count")
-        self.env.assertEqual(result.result_set[0][0], 0)
+        assert result.result_set[0][0] == 0
         
         # run betweenness centrality on empty graph
         result = self.betweenness_centrality()
@@ -81,7 +82,7 @@ class testBetweenness(FlowTestsBase):
         # if we reach here, the algorithm didn't throw an exception
         
         # check if it returned empty results (acceptable behavior)
-        self.env.assertEqual(len(result.result_set), 0)
+        assert len(result.result_set) == 0
 
     def test_betweenness_centrality(self):
         """Test betweenness centrality algorithm on a simple directed graph structure."""
@@ -125,24 +126,24 @@ class testBetweenness(FlowTestsBase):
 
         # Check that expected relationships hold for directed graph
         # B should have highest betweenness centrality
-        self.env.assertGreater(centrality_scores['B'], centrality_scores['A'])
-        self.env.assertGreater(centrality_scores['B'], centrality_scores['C'])
-        self.env.assertGreater(centrality_scores['B'], centrality_scores['D'])
-        self.env.assertGreater(centrality_scores['B'], centrality_scores['E'])
+        assert centrality_scores['B'] > centrality_scores['A']
+        assert centrality_scores['B'] > centrality_scores['C']
+        assert centrality_scores['B'] > centrality_scores['D']
+        assert centrality_scores['B'] > centrality_scores['E']
 
         # C and D should have medium betweenness centrality
-        self.env.assertGreater(centrality_scores['C'], centrality_scores['A'])
-        self.env.assertGreater(centrality_scores['D'], centrality_scores['A'])
+        assert centrality_scores['C'] > centrality_scores['A']
+        assert centrality_scores['D'] > centrality_scores['A']
 
         # A should have zero betweenness centrality (no shortest paths pass through it)
-        self.env.assertEqual(centrality_scores['A'], 0)
+        assert centrality_scores['A'] == 0
 
         # In directed graph, C and D aren't perfectly symmetrical
         # C is on the path to E, while D is also on path to E
-        self.env.assertEqual(centrality_scores['C'], centrality_scores['D'])  # Still equal in this specific topology
+        assert centrality_scores['C'] == centrality_scores['D']  # Still equal in this specific topology
 
         # E should have zero betweenness (no paths go through it)
-        self.env.assertEqual(centrality_scores['E'], 0)
+        assert centrality_scores['E'] == 0
 
     def test_betweenness_centrality_node_labels(self):
         """Test betweenness centrality algorithm with nodeLabels parameter."""
@@ -185,26 +186,26 @@ class testBetweenness(FlowTestsBase):
             centrality_scores[name] = score
 
         # Verify only Person nodes have scores
-        self.env.assertEqual(len(centrality_scores), 3)
+        assert len(centrality_scores) == 3
 
         # Verify Person nodes A, B, C are included
-        self.env.assertContains('A', centrality_scores)
-        self.env.assertContains('B', centrality_scores)
-        self.env.assertContains('C', centrality_scores)
+        assert 'A' in centrality_scores
+        assert 'B' in centrality_scores
+        assert 'C' in centrality_scores
 
         # Verify non-Person nodes are excluded
-        self.env.assertNotContains('D', centrality_scores)
-        self.env.assertNotContains('E', centrality_scores)
+        assert 'D' not in centrality_scores
+        assert 'E' not in centrality_scores
 
         # B should have highest centrality among Person nodes
-        self.env.assertGreater(centrality_scores['B'], centrality_scores['A'])
-        self.env.assertGreater(centrality_scores['B'], centrality_scores['C'])
+        assert centrality_scores['B'] > centrality_scores['A']
+        assert centrality_scores['B'] > centrality_scores['C']
 
         # A should have zero betweenness (no paths through it)
-        self.env.assertEqual(centrality_scores['A'], 0)
+        assert centrality_scores['A'] == 0
 
         # C should have zero betweenness (no paths through it)
-        self.env.assertEqual(centrality_scores['C'], 0)
+        assert centrality_scores['C'] == 0
 
     def test_betweenness_centrality_relationship_types(self):
         """Test betweenness centrality algorithm with relationshipTypes parameter."""
@@ -246,16 +247,16 @@ class testBetweenness(FlowTestsBase):
             centrality_scores[name] = score
 
         # Verify all nodes are included in results (relationship filter doesn't exclude nodes)
-        self.env.assertEqual(len(centrality_scores), 5)
+        assert len(centrality_scores) == 5
 
         # B should have a non-zero betweenness score (it's on the A->C path via FRIEND edges)
-        self.env.assertGreater(centrality_scores['B'], 0)
+        assert centrality_scores['B'] > 0
 
         # All other nodes should have zero betweenness (no FRIEND paths go through them)
-        self.env.assertEqual(centrality_scores['A'], 0)
-        self.env.assertEqual(centrality_scores['C'], 0)
-        self.env.assertEqual(centrality_scores['D'], 0)
-        self.env.assertEqual(centrality_scores['E'], 0)
+        assert centrality_scores['A'] == 0
+        assert centrality_scores['C'] == 0
+        assert centrality_scores['D'] == 0
+        assert centrality_scores['E'] == 0
 
         # Run algorithm again with different relationship types
         result = self.betweenness_centrality(relationshipTypes = ['WORKS_AT', 'NEAR'])
@@ -268,10 +269,10 @@ class testBetweenness(FlowTestsBase):
             centrality_scores_2[name] = score
 
         # D should now have non-zero betweenness (it's on the B->E path)
-        self.env.assertGreater(centrality_scores_2['D'], 0)
+        assert centrality_scores_2['D'] > 0
 
         # B should have a different score than in the first test
-        self.env.assertNotEqual(centrality_scores['B'], centrality_scores_2['B'])
+        assert centrality_scores['B'] != centrality_scores_2['B']
 
     def test_betweenness_centrality_combined_parameters(self):
         """Test betweenness centrality with combinations of nodeLabels and relationshipTypes parameters."""
@@ -320,11 +321,11 @@ class testBetweenness(FlowTestsBase):
             centrality_scores1[name] = score
 
         # Should only contain Person nodes
-        self.env.assertEqual(len(centrality_scores1), 3)
-        self.env.assertContains('A', centrality_scores1)
-        self.env.assertContains('B', centrality_scores1)
-        self.env.assertContains('C', centrality_scores1)
-        self.env.assertNotContains('D', centrality_scores1)
+        assert len(centrality_scores1) == 3
+        assert 'A' in centrality_scores1
+        assert 'B' in centrality_scores1
+        assert 'C' in centrality_scores1
+        assert 'D' not in centrality_scores1
 
         # Test 2: Filter only by FRIEND relationships
         result2 = self.betweenness_centrality(relationshipTypes = ['FRIEND'])
@@ -337,12 +338,12 @@ class testBetweenness(FlowTestsBase):
 
         # B should have highest betweenness as it's on the FRIEND path from A to C
         max_node_2 = max(centrality_scores2, key=centrality_scores2.get)
-        self.env.assertEqual(max_node_2, 'B')
+        assert max_node_2 == 'B'
 
         # All other nodes should have 0 betweenness for FRIEND relationships
         for node in centrality_scores2:
             if node != 'B':
-                self.env.assertEqual(centrality_scores2[node], 0)
+                assert centrality_scores2[node] == 0
 
         # Test 3: Combine Person nodes with FRIEND relationships
         result3 = self.betweenness_centrality(nodeLabels=['Person'],
@@ -355,11 +356,11 @@ class testBetweenness(FlowTestsBase):
             centrality_scores3[name] = score
 
         # Should only contain Person nodes
-        self.env.assertEqual(len(centrality_scores3), 3)
+        assert len(centrality_scores3) == 3
 
         # Results should match Test 2 for the Person nodes
         for node in ['A', 'B', 'C']:
-            self.env.assertEqual(centrality_scores2[node], centrality_scores3[node])
+            assert centrality_scores2[node] == centrality_scores3[node]
 
         # Test 4: Employee nodes with WORKS_WITH relationships
         result4 = self.betweenness_centrality(nodeLabels=['Employee'],
@@ -372,9 +373,9 @@ class testBetweenness(FlowTestsBase):
             centrality_scores4[name] = score
 
         # Should only contain Employee nodes
-        self.env.assertEqual(len(centrality_scores4), 2)
-        self.env.assertContains('D', centrality_scores4)
-        self.env.assertContains('E', centrality_scores4)
+        assert len(centrality_scores4) == 2
+        assert 'D' in centrality_scores4
+        assert 'E' in centrality_scores4
 
         # Test 5: Multiple node labels
         result5 = self.betweenness_centrality(nodeLabels=['Person', 'Employee'])
@@ -386,12 +387,12 @@ class testBetweenness(FlowTestsBase):
             centrality_scores5[name] = score
 
         # Should contain Person and Employee nodes
-        self.env.assertEqual(len(centrality_scores5), 5)
-        self.env.assertContains('A', centrality_scores5)
-        self.env.assertContains('B', centrality_scores5)
-        self.env.assertContains('C', centrality_scores5)
-        self.env.assertContains('D', centrality_scores5)
-        self.env.assertContains('E', centrality_scores5)
+        assert len(centrality_scores5) == 5
+        assert 'A' in centrality_scores5
+        assert 'B' in centrality_scores5
+        assert 'C' in centrality_scores5
+        assert 'D' in centrality_scores5
+        assert 'E' in centrality_scores5
 
         # Test 6: Multiple relationship types
         result6 = self.betweenness_centrality(relationshipTypes=['FRIEND', 'COLLEAGUE', 'WORKS_WITH'],
@@ -404,10 +405,10 @@ class testBetweenness(FlowTestsBase):
             centrality_scores6[name] = score
 
         # D should have zero betweenness (no paths through it)
-        self.env.assertEqual(centrality_scores6['D'], 0)
+        assert centrality_scores6['D'] == 0
 
         # Compare B's score between tests - it should be different with more relationship types
-        self.env.assertNotEqual(centrality_scores2['B'], centrality_scores6['B'])
+        assert centrality_scores2['B'] != centrality_scores6['B']
 
         # Test 7: Combine all parameters including sampling
         result7 = self.betweenness_centrality(nodeLabels=['Person', 'Employee'],
@@ -421,7 +422,7 @@ class testBetweenness(FlowTestsBase):
             centrality_scores7[name] = score
 
         # Should only contain Person and Employee nodes
-        self.env.assertEqual(len(centrality_scores7), 5)
+        assert len(centrality_scores7) == 5
 
         # Run the same test with a different seed
         result8 = self.betweenness_centrality(nodeLabels=['Person', 'Employee'],
@@ -435,5 +436,5 @@ class testBetweenness(FlowTestsBase):
             centrality_scores8[name] = score
 
         # Different seeds should give different results
-        self.env.assertNotEqual(centrality_scores7['B'], centrality_scores8['B'])
+        assert centrality_scores7['B'] != centrality_scores8['B']
 

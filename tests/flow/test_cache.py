@@ -12,12 +12,13 @@ GRAPH_IDS = ["Cache_Test_plans", "Cache_Sanity_Check", 'Cache_Test_Create',
 CACHE_SIZE = 16
 
 class testCache():
-    def __init__(self):
+    @classmethod
+    def setup_class(cls):
         # Have only one thread handling queries
-        self.env, self.db = Env(moduleArgs=f"THREAD_COUNT 8 CACHE_SIZE {CACHE_SIZE}")
-        self.conn = self.env.getConnection()
+        cls.env, cls.db = Env(moduleArgs=f"THREAD_COUNT 8 CACHE_SIZE {CACHE_SIZE}")
+        cls.conn = cls.env.getConnection()
 
-    def setUp(self):
+    def setup_method(self):
         self.conn.delete(*GRAPH_IDS)
 
     def compare_uncached_to_cached_query_plans(self, query, params=None):
@@ -26,20 +27,20 @@ class testCache():
         plan_graph.query("RETURN 1")
         uncached_plan = str(plan_graph.explain(query, params))
         cached_plan = str(plan_graph.explain(query, params))
-        self.env.assertEqual(uncached_plan, cached_plan)
+        assert uncached_plan == cached_plan
 
     def test_01_sanity_check(self):
         graph = self.db.select_graph('Cache_Sanity_Check')
         for i in range(CACHE_SIZE + 1):
             result = graph.query("MATCH (n) WHERE n.value = {val} RETURN n".format(val=i))
-            self.env.assertFalse(result.cached_execution)
+            assert not result.cached_execution
         
         for i in range(1, CACHE_SIZE + 1):
             result = graph.query("MATCH (n) WHERE n.value = {val} RETURN n".format(val=i))
-            self.env.assertTrue(result.cached_execution)
+            assert result.cached_execution
         
         result = graph.query("MATCH (n) WHERE n.value = 0 RETURN n")
-        self.env.assertFalse(result.cached_execution)
+        assert not result.cached_execution
 
 
     def test_02_test_create(self):
@@ -49,9 +50,9 @@ class testCache():
         self.compare_uncached_to_cached_query_plans(query)
         uncached_result = graph.query(query)
         cached_result = graph.query(query)
-        self.env.assertFalse(uncached_result.cached_execution)
-        self.env.assertTrue(cached_result.cached_execution)
-        self.env.assertEqual(uncached_result.nodes_created, cached_result.nodes_created)
+        assert not uncached_result.cached_execution
+        assert cached_result.cached_execution
+        assert uncached_result.nodes_created == cached_result.nodes_created
         
     def test_03_test_create_with_params(self):
         # Both queries do exactly the same operations
@@ -62,9 +63,9 @@ class testCache():
         uncached_result = graph.query(query, params)
         params = {'val' : 2}
         cached_result = graph.query(query, params)
-        self.env.assertFalse(uncached_result.cached_execution)
-        self.env.assertTrue(cached_result.cached_execution)
-        self.env.assertEqual(uncached_result.nodes_created, cached_result.nodes_created)
+        assert not uncached_result.cached_execution
+        assert cached_result.cached_execution
+        assert uncached_result.nodes_created == cached_result.nodes_created
 
     def test_04_test_delete(self):
         # Both queries do exactly the same operations
@@ -80,10 +81,10 @@ class testCache():
         uncached_result = graph.query(query, params)
         params = {'val': 1}
         cached_result = graph.query(query, params)
-        self.env.assertFalse(uncached_result.cached_execution)
-        self.env.assertTrue(cached_result.cached_execution)
-        self.env.assertEqual(uncached_result.relationships_deleted, cached_result.relationships_deleted)
-        self.env.assertEqual(uncached_result.nodes_deleted, cached_result.nodes_deleted)
+        assert not uncached_result.cached_execution
+        assert cached_result.cached_execution
+        assert uncached_result.relationships_deleted == cached_result.relationships_deleted
+        assert uncached_result.nodes_deleted == cached_result.nodes_deleted
 
     def test_05_test_merge(self):
         # Different outcome, same execution plan.
@@ -93,13 +94,13 @@ class testCache():
         self.compare_uncached_to_cached_query_plans(query, params)
         uncached_result = graph.query(query, params)
         cached_result = graph.query(query, params)
-        self.env.assertFalse(uncached_result.cached_execution)
-        self.env.assertTrue(cached_result.cached_execution)
-        self.env.assertEqual(uncached_result.properties_set, cached_result.properties_set)
-        self.env.assertEqual([[0]], uncached_result.result_set)
-        self.env.assertEqual(1, uncached_result.nodes_created)
-        self.env.assertEqual([[1]], cached_result.result_set)
-        self.env.assertEqual(0, cached_result.nodes_created)
+        assert not uncached_result.cached_execution
+        assert cached_result.cached_execution
+        assert uncached_result.properties_set == cached_result.properties_set
+        assert [[0]] == uncached_result.result_set
+        assert 1 == uncached_result.nodes_created
+        assert [[1]] == cached_result.result_set
+        assert 0 == cached_result.nodes_created
 
 
     def test_06_test_branching_with_path_filter(self):
@@ -113,10 +114,10 @@ class testCache():
         uncached_result = graph.query(query, params)
         params = {'val':3}
         cached_result = graph.query(query, params)
-        self.env.assertFalse(uncached_result.cached_execution)
-        self.env.assertTrue(cached_result.cached_execution)
-        self.env.assertEqual([[1]], uncached_result.result_set)
-        self.env.assertEqual([[2]], cached_result.result_set)
+        assert not uncached_result.cached_execution
+        assert cached_result.cached_execution
+        assert [[1]] == uncached_result.result_set
+        assert [[2]] == cached_result.result_set
 
 
     def test_07_test_optimizations_index(self):
@@ -130,10 +131,10 @@ class testCache():
         uncached_result = graph.query(query, params)
         params = {'val':2}
         cached_result = graph.query(query, params)
-        self.env.assertFalse(uncached_result.cached_execution)
-        self.env.assertTrue(cached_result.cached_execution)
-        self.env.assertEqual([[1]], uncached_result.result_set)
-        self.env.assertEqual([[2]], cached_result.result_set)
+        assert not uncached_result.cached_execution
+        assert cached_result.cached_execution
+        assert [[1]] == uncached_result.result_set
+        assert [[2]] == cached_result.result_set
 
 
     def test_08_test_optimizations_id_scan(self):
@@ -146,10 +147,10 @@ class testCache():
         uncached_result = graph.query(query, params)
         params = {'id':1}
         cached_result = graph.query(query, params)
-        self.env.assertFalse(uncached_result.cached_execution)
-        self.env.assertTrue(cached_result.cached_execution)
-        self.env.assertEqual([[0]], uncached_result.result_set)
-        self.env.assertEqual([[1]], cached_result.result_set)
+        assert not uncached_result.cached_execution
+        assert cached_result.cached_execution
+        assert [[0]] == uncached_result.result_set
+        assert [[1]] == cached_result.result_set
 
 
     def test_09_test_join(self):
@@ -162,10 +163,10 @@ class testCache():
         uncached_result = graph.query(query, params)
         params = {'val':3}
         cached_result = graph.query(query, params)
-        self.env.assertFalse(uncached_result.cached_execution)
-        self.env.assertTrue(cached_result.cached_execution)
-        self.env.assertEqual([[1, 2]], uncached_result.result_set)
-        self.env.assertEqual([[3, 4]], cached_result.result_set)
+        assert not uncached_result.cached_execution
+        assert cached_result.cached_execution
+        assert [[1, 2]] == uncached_result.result_set
+        assert [[3, 4]] == cached_result.result_set
 
     def test_10_test_edge_merge(self):
         # In this scenario, the same query is executed twice.
@@ -178,10 +179,10 @@ class testCache():
         query = "MATCH (a {val:1}), (b {val:2}) MERGE (a)-[e:leads]->(b) RETURN e"
         self.compare_uncached_to_cached_query_plans(query)
         uncached_result = graph.query(query)
-        self.env.assertEqual(1, uncached_result.relationships_created)
+        assert 1 == uncached_result.relationships_created
         cached_result = graph.query(query)
-        self.env.assertEqual(0, cached_result.relationships_created)
-        self.env.assertEqual(uncached_result.result_set, cached_result.result_set)
+        assert 0 == cached_result.relationships_created
+        assert uncached_result.result_set == cached_result.result_set
 
     def test_11_test_labelscan_update(self):
         # In this scenario a label scan is made for non existing label
@@ -189,14 +190,14 @@ class testCache():
         graph = self.db.select_graph('Cache_test_labelscan_update')
         query = "MATCH (n:Label) return n"
         result = graph.query(query)
-        self.env.assertEqual(0, len(result.result_set))
+        assert 0 == len(result.result_set)
         query = "MERGE (n:Label)"
         result = graph.query(query)
-        self.env.assertEqual(1, result.nodes_created)
+        assert 1 == result.nodes_created
         query = "MATCH (n:Label) return n"
         result = graph.query(query)
-        self.env.assertEqual(1, len(result.result_set))
-        self.env.assertEqual("Label", result.result_set[0][0].labels[0])
+        assert 1 == len(result.result_set)
+        assert "Label" == result.result_set[0][0].labels[0]
 
     def test_12_test_index_scan_update(self):
         # In this scenario a label scan and Update op are made for non-existent label,
@@ -206,18 +207,18 @@ class testCache():
         params = {'v': 1}
         query = "MERGE (n:Label {v: 1}) SET n.v = $v"
         result = graph.query(query, params)
-        self.env.assertEqual(0, len(result.result_set))
-        self.env.assertEqual(1, result.nodes_created)
-        self.env.assertEqual(1, result.labels_added)
+        assert 0 == len(result.result_set)
+        assert 1 == result.nodes_created
+        assert 1 == result.labels_added
 
         result = create_node_range_index(graph, 'Label', 'v', sync=True)
-        self.env.assertEqual(1, result.indices_created)
+        assert 1 == result.indices_created
 
         params = {'v': 5}
         query = "MERGE (n:Label {v: 1}) SET n.v = $v"
         result = graph.query(query, params)
-        self.env.assertEqual(0, result.nodes_created)
-        self.env.assertEqual(1, result.properties_set)
+        assert 0 == result.nodes_created
+        assert 1 == result.properties_set
 
     def test_13_test_skip_limit(self):
         # Test using parameters for skip and limit values,
@@ -228,18 +229,18 @@ class testCache():
         uncached_result = graph.query(query, params)
         expected_result = [[2]]
         cached_result = graph.query(query, params)
-        self.env.assertEqual(expected_result, cached_result.result_set)
-        self.env.assertEqual(uncached_result.result_set, cached_result.result_set)
-        self.env.assertFalse(uncached_result.cached_execution)
-        self.env.assertTrue(cached_result.cached_execution)
+        assert expected_result == cached_result.result_set
+        assert uncached_result.result_set == cached_result.result_set
+        assert not uncached_result.cached_execution
+        assert cached_result.cached_execution
 
         # Update the params
         params = {'s': 2, 'l': 2}
         # The new result should respect the new skip and limit.
         expected_result = [[3], [4]]
         cached_result = graph.query(query, params)
-        self.env.assertEqual(expected_result, cached_result.result_set)
-        self.env.assertTrue(cached_result.cached_execution)
+        assert expected_result == cached_result.result_set
+        assert cached_result.cached_execution
 
     def test_14_cache_eviction(self):
         # this tests spawns a new graph env` with a query-cache with just
@@ -252,7 +253,7 @@ class testCache():
         # stop previous env
         self.env.stop()
 
-        self.env, self.db = Env(moduleArgs='THREAD_COUNT 8 CACHE_SIZE 1')
+        type(self).env, type(self).db = Env(moduleArgs='THREAD_COUNT 8 CACHE_SIZE 1')
 
         # eviction
 
@@ -273,7 +274,7 @@ class testCache():
 
             results = await asyncio.gather(*tasks)
             for r in results:
-                self.env.assertEqual(r.result_set[0][0], 50001)
+                assert r.result_set[0][0] == 50001
 
             await pool.aclose()
 

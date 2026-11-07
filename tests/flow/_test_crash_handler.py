@@ -48,14 +48,15 @@ def validate_crash_report(env):
     with open(f"{env.logDir}/{logfilename}") as logfile:
         log = logfile.read()
 
-    env.assertContains("------ MODULES INFO OUTPUT ------", log)
-    env.assertContains("# graph_executing commands", log)
-    env.assertContains("=== REDIS BUG REPORT END", log)
+    assert "------ MODULES INFO OUTPUT ------" in log
+    assert "# graph_executing commands" in log
+    assert "=== REDIS BUG REPORT END" in log
 
 class testMainThreadCrashHandler():
-    def __init__(self):
-        self.env, self.db = Env(enableDebugCommand=True)
-        self.g = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(enableDebugCommand=True)
+        cls.g = cls.db.select_graph(GRAPH_ID)
 
     def test_crash_main_thread(self):
         if SANITIZER:
@@ -74,9 +75,10 @@ class testMainThreadCrashHandler():
         stop_threads(self.db, workers)
 
 class testThreadOOM():
-    def __init__(self):
-        self.env, self.db = Env(enableDebugCommand=True)
-        self.g = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(enableDebugCommand=True)
+        cls.g = cls.db.select_graph(GRAPH_ID)
 
     def test_crash_thread_oom(self):
         if SANITIZER:
@@ -95,9 +97,10 @@ class testThreadOOM():
         stop_threads(self.db, workers)
 
 class testThreadAssert():
-    def __init__(self):
-        self.env, self.db = Env(enableDebugCommand=True)
-        self.g = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(enableDebugCommand=True)
+        cls.g = cls.db.select_graph(GRAPH_ID)
 
     def test_crash_thread_assert(self):
         if SANITIZER:
@@ -116,9 +119,10 @@ class testThreadAssert():
         stop_threads(self.db, workers)
 
 class testThreadSegFault():
-    def __init__(self):
-        self.env, self.db = Env(enableDebugCommand=True)
-        self.g = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(enableDebugCommand=True)
+        cls.g = cls.db.select_graph(GRAPH_ID)
 
     def test_crash_thread_segfault(self):
         if SANITIZER:

@@ -8,11 +8,12 @@ GRAPH_ID = "params"
 
 
 class testParams(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
 
     def test_simple_params(self):
@@ -122,7 +123,7 @@ class testParams(FlowTestsBase):
 
         for q, expected in queries:
             actual = self.graph.query(q + " RETURN $x").result_set[0][0]
-            self.env.assertEqual(expected, actual)
+            assert expected == actual
 
         #-----------------------------------------------------------------------
         # random value utilities
@@ -189,7 +190,7 @@ class testParams(FlowTestsBase):
             q = "RETURN $x"
             expected = random_value()
             actual = self.graph.query(q, {'x': expected}).result_set[0][0]
-            self.env.assertEqual(expected, actual)
+            assert expected == actual
 
     def test_escaping_param(self):
         queries = [
@@ -223,8 +224,8 @@ class testParams(FlowTestsBase):
             res = self.graph.query(q).result_set[0]
             actual = res[0]
             raw = res[1]
-            self.env.assertEqual(expected, actual)
-            self.env.assertEqual(expected, raw)
+            assert expected == actual
+            assert expected == raw
 
     def test_backtick_param_name(self):
         queries = [("CYPHER `param`    = 1 RETURN $`param`",    1),
@@ -239,7 +240,7 @@ class testParams(FlowTestsBase):
         for q, expected in queries:
             res = self.graph.query(q).result_set[0]
             actual = res[0]
-            self.env.assertEqual(expected, actual)
+            assert expected == actual
 
     def test_invalid_param(self):
         invalid_queries = [
@@ -361,7 +362,7 @@ class testParams(FlowTestsBase):
 
         for q, expected in queries:
             actual = self.graph.query(q).result_set
-            self.env.assertEqual(actual, expected)
+            assert actual == expected
 
     def test_id_scan(self):
         self.graph.query("CREATE ({val:1})")
@@ -371,7 +372,7 @@ class testParams(FlowTestsBase):
         query_info = QueryInfo(query=query, description="Test id scan with params", expected_result=expected_results)
         self._assert_resultset_equals_expected(self.graph.query(query, params), query_info)
         plan = str(self.graph.explain(query, params=params))
-        self.env.assertContains('NodeByIdSeek', plan)
+        assert 'NodeByIdSeek' in plan
 
     def test_map_param(self):
         # test passing a map as a parameter value via the Python client dict interface
@@ -380,12 +381,12 @@ class testParams(FlowTestsBase):
         # simple map parameter returned as-is
         m = {'key': 'val'}
         result = self.graph.query("RETURN $m", {'m': m})
-        self.env.assertEqual(result.result_set, [[m]])
+        assert result.result_set == [[m]]
 
         # nested map
         nested = {'outer': {'inner': 42}}
         result = self.graph.query("RETURN $m", {'m': nested})
-        self.env.assertEqual(result.result_set, [[nested]])
+        assert result.result_set == [[nested]]
 
         # map used in SET +=
         self.graph.query("CREATE (n:MP {id: 1})")
@@ -393,13 +394,13 @@ class testParams(FlowTestsBase):
         result = self.graph.query(
             "MATCH (n:MP {id: 1}) SET n += $props RETURN n.title, n.count",
             {'props': props})
-        self.env.assertEqual(result.result_set, [['Hello', 99]])
+        assert result.result_set == [['Hello', 99]]
 
         # map with multiple parameters (scalar + map)
         result = self.graph.query(
             "RETURN $id, $props",
             {'id': 'abc', 'props': {'x': 1, 'y': 2}})
-        self.env.assertEqual(result.result_set, [['abc', {'x': 1, 'y': 2}]])
+        assert result.result_set == [['abc', {'x': 1, 'y': 2}]]
 
     def test_invalid_param_value_error(self):
         # When a parameter value is malformed (e.g. a Java client sending a Map
@@ -419,16 +420,15 @@ class testParams(FlowTestsBase):
         for q in bad_queries:
             try:
                 self.graph.query(q)
-                self.env.assertTrue(False,
-                    f"Expected error for malformed query: {q}")
+                assert False, f"Expected error for malformed query: {q}"
             except ResponseError as e:
                 # error must reference the parameter name that failed and
                 # must NOT be the cryptic Cypher parse error 'Invalid input
                 # ... expected =' that resulted from the corrupted-buffer bug
                 msg = str(e)
                 msg_lower = msg.lower()
-                self.env.assertContains("parameter", msg_lower)
-                self.env.assertContains("properties", msg)
-                self.env.assertNotContains("invalid input", msg_lower)
-                self.env.assertNotContains("expected '='", msg_lower)
+                assert "parameter" in msg_lower
+                assert "properties" in msg
+                assert "invalid input" not in msg_lower
+                assert "expected '='" not in msg_lower
 

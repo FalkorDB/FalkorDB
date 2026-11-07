@@ -8,11 +8,12 @@ import social.social_utils
 
 class testSocialFlow(FlowTestsBase):
 
-    def __init__(self):
-        self.env, self.db = Env()
-        redis_con = self.env.getConnection()
-        self.graph = Graph(redis_con, social.social_utils.graph_name)
-        social.social_utils.populate_graph(redis_con, self.graph)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        redis_con = cls.env.getConnection()
+        cls.graph = Graph(redis_con, social.social_utils.graph_name)
+        social.social_utils.populate_graph(redis_con, cls.graph)
  
     def assert_reversed_pattern(self, query, resultset):
         # Test reversed pattern query.
@@ -21,7 +22,7 @@ class testSocialFlow(FlowTestsBase):
         actual_result = self.graph.query(reversed_query)
 
         # assert result set
-        self.env.assertEqual(resultset.result_set, actual_result.result_set)
+        assert resultset.result_set == actual_result.result_set
 
     def test00_graph_entities(self):
         q = queries.graph_entities.query
@@ -352,7 +353,7 @@ class testSocialFlow(FlowTestsBase):
         for i in range(len(aggregations)):
             result_agg = self.graph.query(aggregations[i]).result_set
             result_none_agg = self.graph.query(none_aggregation[i]).result_set
-            self.env.assertTrue(result_agg == result_none_agg)
+            assert result_agg == result_none_agg
 
     def test28_delete_friendships(self):
         q = queries.delete_friendships_query.query

@@ -4,12 +4,14 @@ people = ["Roi", "Alon", "Ailon", "Boaz"]
 GRAPH_ID = "optimizations_plan"
 
 class testOptimizationsPlan(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.populate_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.populate_graph()
 
-    def populate_graph(self):
+    @classmethod
+    def populate_graph(cls):
         nodes = {}
         # Create entities
         for idx, p in enumerate(people):
@@ -26,76 +28,76 @@ class testOptimizationsPlan(FlowTestsBase):
 
         nodes_str = [str(n) for n in nodes.values()]
         edges_str = [str(e) for e in edges]
-        self.graph.query(f"CREATE {','.join(nodes_str+edges_str)}")
+        cls.graph.query(f"CREATE {','.join(nodes_str+edges_str)}")
 
         query = """MATCH (a)-[:know]->(b) CREATE (a)-[:know]->(b)"""
-        self.graph.query(query)
+        cls.graph.query(query)
 
     def test01_typeless_edge_count(self):
         query = """MATCH ()-[r]->() RETURN COUNT(r)"""
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Project", executionPlan)
-        self.env.assertNotContains("All Node Scan", executionPlan)
-        self.env.assertNotContains("Conditional Traverse", executionPlan)
-        self.env.assertNotContains("Aggregate", executionPlan)
+        assert "Project" in executionPlan
+        assert "All Node Scan" not in executionPlan
+        assert "Conditional Traverse" not in executionPlan
+        assert "Aggregate" not in executionPlan
         expected = [[36]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test02_typed_edge_count(self):
         query = """MATCH ()-[r:know]->() RETURN COUNT(r)"""
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Project", executionPlan)
-        self.env.assertNotContains("All Node Scan", executionPlan)
-        self.env.assertNotContains("Conditional Traverse", executionPlan)
-        self.env.assertNotContains("Aggregate", executionPlan)
+        assert "Project" in executionPlan
+        assert "All Node Scan" not in executionPlan
+        assert "Conditional Traverse" not in executionPlan
+        assert "Aggregate" not in executionPlan
         expected = [[24]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test03_unknown_typed_edge_count(self):
         query = """MATCH ()-[r:unknown]->() RETURN COUNT(r)"""
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Project", executionPlan)
-        self.env.assertNotContains("All Node Scan", executionPlan)
-        self.env.assertNotContains("Conditional Traverse", executionPlan)
-        self.env.assertNotContains("Aggregate", executionPlan)
+        assert "Project" in executionPlan
+        assert "All Node Scan" not in executionPlan
+        assert "Conditional Traverse" not in executionPlan
+        assert "Aggregate" not in executionPlan
         expected = [[0]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test04_typeless_edge_count_with_alias(self):
         query = """MATCH ()-[r]->() RETURN COUNT(r) as c"""
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Project", executionPlan)
-        self.env.assertNotContains("All Node Scan", executionPlan)
-        self.env.assertNotContains("Conditional Traverse", executionPlan)
-        self.env.assertNotContains("Aggregate", executionPlan)
+        assert "Project" in executionPlan
+        assert "All Node Scan" not in executionPlan
+        assert "Conditional Traverse" not in executionPlan
+        assert "Aggregate" not in executionPlan
         expected = [[36]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test05_typed_edge_count_with_alias(self):
         query = """MATCH ()-[r:know]->() RETURN COUNT(r) as c"""
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Project", executionPlan)
-        self.env.assertNotContains("All Node Scan", executionPlan)
-        self.env.assertNotContains("Conditional Traverse", executionPlan)
-        self.env.assertNotContains("Aggregate", executionPlan)
+        assert "Project" in executionPlan
+        assert "All Node Scan" not in executionPlan
+        assert "Conditional Traverse" not in executionPlan
+        assert "Aggregate" not in executionPlan
         expected = [[24]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test06_multiple_typed_edge_count_with_alias(self):
         query = """MATCH ()-[r:know | :works_with]->() RETURN COUNT(r) as c"""
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Project", executionPlan)
-        self.env.assertNotContains("All Node Scan", executionPlan)
-        self.env.assertNotContains("Conditional Traverse", executionPlan)
-        self.env.assertNotContains("Aggregate", executionPlan)
+        assert "Project" in executionPlan
+        assert "All Node Scan" not in executionPlan
+        assert "Conditional Traverse" not in executionPlan
+        assert "Aggregate" not in executionPlan
         expected = [[36]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test07_count_unreferenced_edge(self):
         query = """MATCH ()-[:know]->(b) RETURN COUNT(b)"""
@@ -104,73 +106,73 @@ class testOptimizationsPlan(FlowTestsBase):
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
         # Verify that the optimization was not applied.
-        self.env.assertNotContains("Project", executionPlan)
-        self.env.assertContains("Aggregate", executionPlan)
-        self.env.assertContains("All Node Scan", executionPlan)
-        self.env.assertContains("Conditional Traverse", executionPlan)
+        assert "Project" not in executionPlan
+        assert "Aggregate" in executionPlan
+        assert "All Node Scan" in executionPlan
+        assert "Conditional Traverse" in executionPlan
         expected = [[12]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test08_non_labeled_node_count(self):
         query = """MATCH (n) RETURN COUNT(n)"""
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Project", executionPlan)
-        self.env.assertNotContains("All Node Scan", executionPlan)
-        self.env.assertNotContains("Node By Label Scan", executionPlan)
-        self.env.assertNotContains("Aggregate", executionPlan)
+        assert "Project" in executionPlan
+        assert "All Node Scan" not in executionPlan
+        assert "Node By Label Scan" not in executionPlan
+        assert "Aggregate" not in executionPlan
         expected = [[4]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test09_non_labeled_node_count_with_alias(self):
         query = """MATCH (n) RETURN COUNT(n) as c"""
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Project", executionPlan)
-        self.env.assertNotContains("All Node Scan", executionPlan)
-        self.env.assertNotContains("Node By Label Scan", executionPlan)
-        self.env.assertNotContains("Aggregate", executionPlan)
+        assert "Project" in executionPlan
+        assert "All Node Scan" not in executionPlan
+        assert "Node By Label Scan" not in executionPlan
+        assert "Aggregate" not in executionPlan
         expected = [[4]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test10_labled_node_count(self):
         query = """MATCH (n:person) RETURN COUNT(n)"""
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Project", executionPlan)
-        self.env.assertNotContains("All Node Scan", executionPlan)
-        self.env.assertNotContains("Node By Label Scan", executionPlan)
-        self.env.assertNotContains("Aggregate", executionPlan)
+        assert "Project" in executionPlan
+        assert "All Node Scan" not in executionPlan
+        assert "Node By Label Scan" not in executionPlan
+        assert "Aggregate" not in executionPlan
         expected = [[4]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test11_value_hash_join(self):
         # Issue a query that joins two streams on a node property.
         query = """MATCH (p1:person)-[:know]->({name: 'Roi'}), (p2)-[]->(:person {name: 'Alon'}) WHERE p1.name = p2.name RETURN p2.name ORDER BY p2.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Value Hash Join", executionPlan)
-        self.env.assertNotContains("Cartesian Product", executionPlan)
+        assert "Value Hash Join" in executionPlan
+        assert "Cartesian Product" not in executionPlan
 
         resultset = self.graph.query(query).result_set
         expected = [['Ailon'], ['Boaz']]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
         # Issue a query that joins two streams on a function call.
         query = """MATCH (p1:person)-[:know]->({name: 'Roi'}) MATCH (p2)-[]->(:person {name: 'Alon'}) WHERE ID(p1) = ID(p2) RETURN p2.name ORDER BY p2.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Value Hash Join", executionPlan)
-        self.env.assertNotContains("Cartesian Product", executionPlan)
+        assert "Value Hash Join" in executionPlan
+        assert "Cartesian Product" not in executionPlan
 
         resultset = self.graph.query(query).result_set
-        self.env.assertEqual(resultset, expected) # same results expected
+        assert resultset == expected # same results expected
 
         query = """MATCH (p1:person)-[:know]->({name: 'Roi'}) MATCH (p2)-[]->(:person {name: 'Alon'}) WHERE p1 = p2 RETURN p2.name ORDER BY p2.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Value Hash Join", executionPlan)
-        self.env.assertNotContains("Cartesian Product", executionPlan)
+        assert "Value Hash Join" in executionPlan
+        assert "Cartesian Product" not in executionPlan
 
         resultset = self.graph.query(query).result_set
-        self.env.assertEqual(resultset, expected) # same results expected
+        assert resultset == expected # same results expected
 
     def test12_multiple_stream_value_hash_join(self):
         # Issue a query that joins three streams.
@@ -179,24 +181,24 @@ class testOptimizationsPlan(FlowTestsBase):
                    RETURN p2.name
                    ORDER BY p2.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Value Hash Join", executionPlan)
-        self.env.assertNotContains("Cartesian Product", executionPlan)
+        assert "Value Hash Join" in executionPlan
+        assert "Cartesian Product" not in executionPlan
 
         resultset = self.graph.query(query).result_set
         expected = [['Ailon'], ['Boaz']]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
         # Issue a query that joins four streams that all resolve the same entity.
         query = """MATCH (p1 {name: 'Ailon'}), (p2), (p3), (p4)
                    WHERE ID(p1) = ID(p2) AND ID(p2) = ID(p3) AND p3.name = p4.name
                    RETURN p4.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Value Hash Join", executionPlan)
-        self.env.assertNotContains("Cartesian Product", executionPlan)
+        assert "Value Hash Join" in executionPlan
+        assert "Cartesian Product" not in executionPlan
 
         expected = [['Ailon']]
         resultset = self.graph.query(query).result_set
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
         # Issue a query that joins four streams that all resolve the same entity, with multiple reapeating filter (issue #869).
         query = """MATCH (p1 {name: 'Ailon'}), (p2), (p3), (p4)
@@ -208,12 +210,12 @@ class testOptimizationsPlan(FlowTestsBase):
                          p4.name = p3.name
                    RETURN p4.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Value Hash Join", executionPlan)
-        self.env.assertNotContains("Cartesian Product", executionPlan)
+        assert "Value Hash Join" in executionPlan
+        assert "Cartesian Product" not in executionPlan
 
         expected = [['Ailon']]
         resultset = self.graph.query(query).result_set
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test13_duplicate_filter_placement(self):
         # Issue a query that joins three streams and contains a redundant filter.
@@ -221,69 +223,69 @@ class testOptimizationsPlan(FlowTestsBase):
                    WHERE id(p2) = id(p0) AND id(p1) = id(p2) AND id(p1) = id(p2)
                    RETURN p2.name ORDER BY p2.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Value Hash Join", executionPlan)
-        self.env.assertNotContains("Cartesian Product", executionPlan)
+        assert "Value Hash Join" in executionPlan
+        assert "Cartesian Product" not in executionPlan
 
         resultset = self.graph.query(query).result_set
         expected = [['Ailon'], ['Alon'], ['Boaz'], ['Roi']]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test14_distinct_aggregations(self):
         # Verify that the Distinct operation is removed from the aggregating query.
         query = """MATCH (src:person)-[:know]->(dest) RETURN DISTINCT src.name, COUNT(dest) ORDER BY src.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Aggregate", executionPlan)
-        self.env.assertNotContains("Distinct", executionPlan)
+        assert "Aggregate" in executionPlan
+        assert "Distinct" not in executionPlan
 
         resultset = self.graph.query(query).result_set
         expected = [['Ailon', 3],
                     ['Alon', 3],
                     ['Boaz', 3],
                     ['Roi', 3]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
 
         # Verify that the Distinct operation is not removed from a valid projection.
         query = """MATCH (src:person) WITH DISTINCT src MATCH (src)-[:know]->(dest) RETURN src.name, COUNT(dest) ORDER BY src.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Aggregate", executionPlan)
-        self.env.assertContains("Distinct", executionPlan)
+        assert "Aggregate" in executionPlan
+        assert "Distinct" in executionPlan
 
         resultset = self.graph.query(query).result_set
         # This query should emit the same result.
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test15_test_splitting_cartesian_product(self):
         query = """MATCH (p1), (p2), (p3) WHERE p1.name <> p2.name AND p2.name <> p3.name RETURN DISTINCT p2.name ORDER BY p2.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertEqual(2, executionPlan.count("Cartesian Product"))
+        assert 2 == executionPlan.count("Cartesian Product")
         expected = [['Ailon'],
                     ['Alon'],
                     ['Boaz'],
                     ['Roi']]
         resultset = self.graph.query(query).result_set
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
     
     def test16_test_splitting_cartesian_product_with_multiple_filters(self):
         query = """MATCH (p1), (p2), (p3) WHERE p1.name <> p2.name AND ID(p1) <> ID(p2) RETURN DISTINCT p2.name ORDER BY p2.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertEqual(2, executionPlan.count("Cartesian Product"))
+        assert 2 == executionPlan.count("Cartesian Product")
         expected = [['Ailon'],
                     ['Alon'],
                     ['Boaz'],
                     ['Roi']]
         resultset = self.graph.query(query).result_set
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test17_test_multiple_branch_filter_cp_optimization(self):
         query = """MATCH (p1), (p2), (p3), (p4) WHERE p1.val + p2.val = p3.val AND p3.val > 0 RETURN DISTINCT p3.name ORDER BY p3.name"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertEqual(2, executionPlan.count("Cartesian Product"))
+        assert 2 == executionPlan.count("Cartesian Product")
         expected = [['Ailon'],
                     ['Alon'],
                     ['Boaz']]
         resultset = self.graph.query(query).result_set
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     def test18_test_semi_apply_and_cp_optimize(self):
         self.graph.query ("CREATE ({val:0}), ({val:1})-[:R]->({val:2})-[:R]->({val:3})")
@@ -307,42 +309,42 @@ class testOptimizationsPlan(FlowTestsBase):
         # We want to make sure the optimization is not misplacing the semi apply bounded branch.
         resultset = self.graph.query("MATCH (n1), (n2), (n3), (n4) WHERE (n3)-[:R]->(n4 {val:n3.val+1}) AND n1.val + n2.val = n3.val AND n3.val > 1  RETURN DISTINCT n3.val ORDER BY n3.val").result_set
         expected = [[2]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
     
     def test19_test_filter_compaction_remove_true_filter(self):
         query = "MATCH (n) WHERE 1 = 1 RETURN n"
         executionPlan = str(self.graph.explain(query))
-        self.env.assertNotContains("Filter", executionPlan)
+        assert "Filter" not in executionPlan
 
     def test20_test_filter_compaction_not_removing_false_filter(self):
         query = "MATCH (n) WHERE 1 > 1 RETURN n"
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Filter", executionPlan)
+        assert "Filter" in executionPlan
         resultset = self.graph.query(query).result_set
         expected = []
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     # ExpandInto should be applied where possible on projected graph entities.
     def test21_expand_into_projected_endpoints(self):
         query = """MATCH (a)-[]->(b) WITH a, b MATCH (a)-[e]->(b) RETURN a.val, b.val ORDER BY a.val, b.val LIMIT 3"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertContains("Expand Into", executionPlan)
+        assert "Expand Into" in executionPlan
         resultset = self.graph.query(query).result_set
         expected = [[0, 1],
                     [0, 2],
                     [0, 3]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     # Variables bound in one scope should not be used to introduce ExpandInto ops in later scopes.
     def test22_no_expand_into_across_scopes(self):
         query = """MATCH (reused_1)-[]->(reused_2) WITH COUNT(reused_2) as edge_count MATCH (reused_1)-[]->(reused_2) RETURN edge_count, reused_1.val, reused_2.val ORDER BY reused_1.val, reused_2.val LIMIT 3"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertNotContains("Expand Into", executionPlan)
+        assert "Expand Into" not in executionPlan
         resultset = self.graph.query(query).result_set
         expected = [[14, 0, 1],
                     [14, 0, 2],
                     [14, 0, 3]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     # Test limit propagation, execution-plan operations such as
     # conditional traverse accumulate a batch of records before processing
@@ -369,7 +371,7 @@ class testOptimizationsPlan(FlowTestsBase):
 
         # make sure 'a' to 'b' traversal operation is aware of limit
         traverse_op = profile.collect_operations("Conditional Traverse")[1]
-        self.env.assertEqual(traverse_op.records_produced, 1)
+        assert traverse_op.records_produced == 1
         #self.env.assertContains("Conditional Traverse | (a)->(b) | Records produced: 1", profile)
 
         # query with LIMIT 1
@@ -385,7 +387,7 @@ class testOptimizationsPlan(FlowTestsBase):
         # profile query
         profile = graph.profile(query)
         expand_into_op = profile.collect_operations("Expand Into")[0]
-        self.env.assertEqual(expand_into_op.records_produced, 1)
+        assert expand_into_op.records_produced == 1
 
         # make sure 'a' to 'b' expand into traversal operation is aware of limit
         #self.env.assertContains("Expand Into | (a)->(b) | Records produced: 1", profile)
@@ -399,14 +401,14 @@ class testOptimizationsPlan(FlowTestsBase):
 
         # traversal from a to b shouldn't be effected by the limit.
         traverse_op = profile.collect_operations("Conditional Traverse")[0]
-        self.env.assertEqual(traverse_op.records_produced, 130)
+        assert traverse_op.records_produced == 130
         #self.env.assertNotContains("Conditional Traverse | (a)->(b) | Records produced: 130", profile)
 
     # "WHERE true" predicates should not build filter ops.
     def test24_compact_true_predicates(self):
         query = """MATCH (a) WHERE true RETURN a"""
         executionPlan = str(self.graph.explain(query))
-        self.env.assertNotContains("Filter", executionPlan)
+        assert "Filter" not in executionPlan
 
     # Cartesian product filter placement should not recurse into earlier scopes.
     def test25_optimize_cartesian_product_scoping(self):
@@ -415,7 +417,7 @@ class testOptimizationsPlan(FlowTestsBase):
         expected = [[0, 3],
                     [0, 3],
                     [0, 3]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     # Constant filters should not break Cartesian Product placement.
     def test26_optimize_cartesian_product_constant_filters(self):
@@ -424,7 +426,7 @@ class testOptimizationsPlan(FlowTestsBase):
         expected = [[0, 3],
                     [0, 3],
                     [0, 3]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     # Filters on single Cartesian Product branches should be placed properly.
     def test27_optimize_cartesian_product_complex_filter_trees(self):
@@ -433,7 +435,7 @@ class testOptimizationsPlan(FlowTestsBase):
         expected = [[0, 3],
                     [0, 3],
                     [0, 3]]
-        self.env.assertEqual(resultset, expected)
+        assert resultset == expected
 
     # Labels' order should be replaced properly.
     def test28_optimize_label_scan_switch_labels(self):
@@ -443,13 +445,13 @@ class testOptimizationsPlan(FlowTestsBase):
         # Make sure that the M is traversed first.
         query = "MATCH (n:N:M) RETURN n"
         plan = str(self.graph.explain(query))
-        self.env.assertContains("Node By Label Scan | (n:N:M)", plan)
+        assert "Node By Label Scan | (n:N:M)" in plan
 
         # Make sure multi-label is enforced, we're expecting only the node with
         # both :N and :M to be returned.
         res = self.graph.query(query)
-        self.env.assertEqual(len(res.result_set), 1)
-        self.env.assertEqual(res.result_set[0][0], Node(alias='n', labels=['N', 'M']))
+        assert len(res.result_set) == 1
+        assert res.result_set[0][0] == Node(alias='n', labels=['N', 'M'])
 
     # in cases where a referred label doesn't exist, the UNKNOW_LABEL_ID 
     # is being cached. Once the label is created we want to make sure that 
@@ -465,7 +467,7 @@ class testOptimizationsPlan(FlowTestsBase):
 
         # Make sure N is traversed first, as it has no nodes. (none existing)
         plan = str(self.graph.explain("MATCH (n:N:Q) RETURN n"))
-        self.env.assertContains("Node By Label Scan | (n:Q:N)", plan)
+        assert "Node By Label Scan | (n:Q:N)" in plan
 
         # Add label `N` to only node in the graph
         query = """MATCH (n:Q) SET n:N"""
@@ -478,10 +480,10 @@ class testOptimizationsPlan(FlowTestsBase):
         # |N| < |Q|
         query = """MATCH (n:N:Q) RETURN count(n)"""
         res = self.graph.query(query)
-        self.env.assertEqual(res.result_set, [[1]])
+        assert res.result_set == [[1]]
 
         plan = str(self.graph.explain(query))
-        self.env.assertContains("Node By Label Scan | (n:Q:N)", plan)
+        assert "Node By Label Scan | (n:Q:N)" in plan
 
     # mandatory match labels should not be replaced with optional ones in
     # optimize-label-scan
@@ -498,9 +500,9 @@ class testOptimizationsPlan(FlowTestsBase):
 
         # make sure N is traversed first, even though there are no nodes with
         # label Q
-        self.env.assertContains("Node By Label Scan | (n:N)", plan)
+        assert "Node By Label Scan | (n:N)" in plan
         res = self.graph.query(query)
-        self.env.assertEqual(res.result_set, [[1]])
+        assert res.result_set == [[1]]
 
         # create nodes so there are two nodes with label N, and one with label Q.
         self.graph.query("CREATE (:N:Q {v: 2})")
@@ -516,13 +518,13 @@ class testOptimizationsPlan(FlowTestsBase):
             # both mandatory labels are enforced by a single multi-label scan
             # (the runtime intersects the label matrices), while the optional
             # label `Z` is never used to seed a scan
-            self.env.assertContains("Node By Label Scan | (n:N:Q)", plan)
-            self.env.assertNotContains("Node By Label Scan | (n:Z", plan)
+            assert "Node By Label Scan | (n:N:Q)" in plan
+            assert "Node By Label Scan | (n:Z" not in plan
 
             # assert correctness of the results
             res = self.graph.query(q)
-            self.env.assertEqual(len(res.result_set), 1)
-            self.env.assertEqual(res.result_set[0][0], Node(labels=['N', 'Q'], properties={'v': 2}))
+            assert len(res.result_set) == 1
+            assert res.result_set[0][0] == Node(labels=['N', 'Q'], properties={'v': 2})
 
     def test31_optimize_optional_labels(self):
         """Tests that the optimization of the Label-Scan op works on optional
@@ -536,12 +538,12 @@ class testOptimizationsPlan(FlowTestsBase):
 
         # both labels are enforced by a single multi-label scan, and the scan
         # sits under the `Optional` so unmatched rows are still null-padded
-        self.env.assertContains("Node By Label Scan | (n:N:M)", plan)
-        self.env.assertContains("Optional", plan)
+        assert "Node By Label Scan | (n:N:M)" in plan
+        assert "Optional" in plan
 
         # no node carries label `M`, so the single row is null-padded
         res = self.graph.query(query)
-        self.env.assertEqual(res.result_set, [[None]])
+        assert res.result_set == [[None]]
 
         # make sure that labels from different `OPTIONAL MATCH` clauses are not
         # "mixed" in Label-Scan optimization
@@ -552,8 +554,8 @@ class testOptimizationsPlan(FlowTestsBase):
         # labels with label `M`
         # enforcing label `M` is redundant
         # the planner should discard the second OPTIONAL MATCH
-        self.env.assertContains("Node By Label Scan | (n:N)", plan)
-        self.env.assertNotContains("Conditional Traverse | (n:M)->(n:M)", plan)
+        assert "Node By Label Scan | (n:N)" in plan
+        assert "Conditional Traverse | (n:M)->(n:M)" not in plan
 
     def test32_remove_redundant_filters(self):
         # test that filter reduction is a run-time optimization
@@ -568,19 +570,19 @@ class testOptimizationsPlan(FlowTestsBase):
         # expecting 'Filter' operation to be removed
         params = {'param': 1}
         plan = str(self.graph.explain(q, params))
-        self.env.assertNotContains('Filter', plan)
+        assert 'Filter' not in plan
 
         # validate result-set
         res = self.graph.query(q, params).result_set
-        self.env.assertEqual(len(res), 1)
-        self.env.assertEqual(res[0][0], 4)
+        assert len(res) == 1
+        assert res[0][0] == 4
 
         # param = 2, WHERE $param = 1 evaluates to False
         # expecting 'Filter' operation to show up in execution-plan
         params = {'param': 2}
         plan = str(self.graph.explain(q, params))
-        self.env.assertContains('Filter', plan)
+        assert 'Filter' in plan
 
         # validate result-set
         res = self.graph.query(q, params).result_set
-        self.env.assertEqual(len(res), 0)
+        assert len(res) == 0

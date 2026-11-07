@@ -21,12 +21,13 @@ def worker(thread_id, db, task_queue, errors):
 
 class testMultiWriter():
 
-    def __init__(self):
+    @classmethod
+    def setup_class(cls):
         # Make sure DB utilizes multiple threads
-        self.env, self.db = Env(moduleArgs="THREAD_COUNT 4")
-        self.conn = self.env.getConnection()
+        cls.env, cls.db = Env(moduleArgs="THREAD_COUNT 4")
+        cls.conn = cls.env.getConnection()
 
-    def tearDown(self):
+    def teardown_method(self):
         self.conn.flushall()
 
     def test_orphan_writes(self):
@@ -71,13 +72,13 @@ class testMultiWriter():
             t.join()
 
         # validate no worker errors occurred
-        self.env.assertEqual(errors, [])
+        assert errors == []
 
         # validate each graph has the expected number of nodes
         for graph_name in GRAPHS:
             g = self.db.select_graph(graph_name)
             node_count = g.query("MATCH (n) RETURN count(n)").result_set[0][0]
-            self.env.assertEqual(node_count, 200)
+            assert node_count == 200
 
     def test_non_sequential(self):
         # Validate writes to different graph aren't held back
@@ -116,7 +117,7 @@ class testMultiWriter():
             t.join()
 
         # validate no worker errors occurred
-        self.env.assertEqual(errors, [])
+        assert errors == []
 
         # validate B's timestamp is smaller than A's
         q = "MATCH (n) RETURN max(n.v)"
@@ -127,5 +128,5 @@ class testMultiWriter():
         g = self.db.select_graph('B')
         B_max_ts = g.query(q).result_set[0][0]
 
-        self.env.assertGreater(A_max_ts, B_max_ts)
+        assert A_max_ts > B_max_ts
 

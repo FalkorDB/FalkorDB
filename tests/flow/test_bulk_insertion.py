@@ -17,18 +17,19 @@ def ping_server(stop_event, res, self, interval = 0.1, delay = 2):
         self.db.connection.ping()
         t1 = time.time() - t0
         # Verify that pinging the server takes less than delay seconds during bulk insertion
-        self.env.assertLess(t1, delay)
+        assert t1 < delay
         ping_count += 1
         time.sleep(interval)
 
     res[0] = ping_count
 
 class testGraphBulkInsertFlow(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
 
-        self.port = self.env.envRunner.port
-        self.graph = self.db.select_graph(GRAPH_ID)
+        cls.port = cls.env.envRunner.port
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
     # Run bulk loader script and validate terminal output
     def test01_run_script(self):
@@ -43,9 +44,9 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           GRAPH_ID])
 
         # The script should report 27 node creations and 56 edge creations
-        self.env.assertEqual(res.exit_code, 0)
-        self.env.assertContains('27 nodes created', res.output)
-        self.env.assertContains('56 relations created', res.output)
+        assert res.exit_code == 0
+        assert '27 nodes created' in res.output
+        assert '56 relations created' in res.output
 
     # Validate that the expected nodes and properties have been constructed
     def test02_validate_nodes(self):
@@ -66,7 +67,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                            ['Shelly Laslo Rooz', 31, 'female', 'married', 9],
                            ['Tal Doron', 32, 'male', 'single', 6],
                            ['Valerie Abigail Arad', 31, 'female', 'married', 10]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # Verify that the Country label exists, has the correct attributes, and is properly populated
         query_result = self.graph.query('MATCH (c:Country) RETURN c.name, ID(c) ORDER BY c.name')
@@ -83,7 +84,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                            ['Russia', 23],
                            ['Thailand', 26],
                            ['USA', 14]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
     # Validate that the expected relations and properties have been constructed
     def test03_validate_relations(self):
@@ -103,7 +104,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                            ['Ailon Velger', 'married', 'Jane Chernomorin'],
                            ['Alon Fital', 'married', 'Lucy Yanfital'],
                            ['Ori Laslo', 'married', 'Shelly Laslo Rooz']]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         query_result = self.graph.query('MATCH (a)-[e:VISITED]->(b) RETURN a.name, e.purpose, b.name ORDER BY e.purpose, a.name, b.name')
 
@@ -151,7 +152,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                            ['Valerie Abigail Arad', 'pleasure', 'Netherlands'],
                            ['Valerie Abigail Arad', 'pleasure', 'Russia']]
 
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
     def test04_private_identifiers(self):
         graphname = "tmpgraph1"
@@ -175,9 +176,9 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           graphname])
 
         # The script should report 3 node creations and 2 edge creations
-        self.env.assertEqual(res.exit_code, 0)
-        self.env.assertContains('3 nodes created', res.output)
-        self.env.assertContains('2 relations created', res.output)
+        assert res.exit_code == 0
+        assert '3 nodes created' in res.output
+        assert '2 relations created' in res.output
 
         # Delete temporary files
         os.remove('/tmp/nodes.tmp')
@@ -188,7 +189,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         query_result = tmp_graph.query('MATCH (a) RETURN a')
 
         for propname in query_result.header:
-            self.env.assertNotContains('_identifier', propname)
+            assert '_identifier' not in propname
 
     def test05_reused_identifier(self):
         graphname = "tmpgraph2"
@@ -211,8 +212,8 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           graphname])
 
         # The script should fail because a node identifier is reused
-        self.env.assertNotEqual(res.exit_code, 0)
-        self.env.assertContains('used multiple times', res.output)
+        assert res.exit_code != 0
+        assert 'used multiple times' in res.output
 
         # Run the script again without creating relations
         runner = CliRunner()
@@ -221,8 +222,8 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           graphname])
 
         # The script should succeed and create 3 nodes
-        self.env.assertEqual(res.exit_code, 0)
-        self.env.assertContains('3 nodes created', res.output)
+        assert res.exit_code == 0
+        assert '3 nodes created' in res.output
 
         # Delete temporary files
         os.remove('/tmp/nodes.tmp')
@@ -242,20 +243,20 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           '--max-token-count', 1,
                                           graphname])
 
-        self.env.assertEqual(res.exit_code, 0)
+        assert res.exit_code == 0
         # The script should report statistics multiple times
-        self.env.assertGreater(res.output.count('nodes created'), 1)
+        assert res.output.count('nodes created') > 1
 
         new_graph = self.db.select_graph(graphname)
 
         # Newly-created graph should be identical to graph created in single query
         original_result = self.graph.query('MATCH (p:Person) RETURN p, ID(p) ORDER BY p.name')
         new_result = new_graph.query('MATCH (p:Person) RETURN p, ID(p) ORDER BY p.name')
-        self.env.assertEqual(original_result.result_set, new_result.result_set)
+        assert original_result.result_set == new_result.result_set
 
         original_result = self.graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e, b.name ORDER BY e.relation, a.name')
         new_result = new_graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e, b.name ORDER BY e.relation, a.name')
-        self.env.assertEqual(original_result.result_set, new_result.result_set)
+        assert original_result.result_set == new_result.result_set
 
     def test07_script_failures(self):
         graphname = "tmpgraph3"
@@ -271,8 +272,8 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           graphname])
 
         # The script should fail because a row has the wrong number of fields
-        self.env.assertNotEqual(res.exit_code, 0)
-        self.env.assertContains('Expected 2 columns', str(res.exception))
+        assert res.exit_code != 0
+        assert 'Expected 2 columns' in str(res.exception)
 
         # Write temporary files
         with open('/tmp/nodes.tmp', mode='w') as csv_file:
@@ -292,8 +293,8 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           graphname])
 
         # The script should fail because a row has the wrong number of fields
-        self.env.assertNotEqual(res.exit_code, 0)
-        self.env.assertContains('should have at least 2 elements', str(res.exception))
+        assert res.exit_code != 0
+        assert 'should have at least 2 elements' in str(res.exception)
 
         with open('/tmp/relations.tmp', mode='w') as csv_file:
             out = csv.writer(csv_file)
@@ -307,17 +308,17 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           graphname])
 
         # The script should fail because an invalid node identifier was used
-        self.env.assertNotEqual(res.exit_code, 0)
-        self.env.assertContains('fakeidentifier', str(res.exception))
+        assert res.exit_code != 0
+        assert 'fakeidentifier' in str(res.exception)
         os.remove('/tmp/nodes.tmp')
         os.remove('/tmp/relations.tmp')
 
         # Test passing invalid arguments directly to the GRAPH.BULK endpoint
         try:
             self.db.execute_command("GRAPH.BULK", "a", "a", "a")
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
-            self.env.assertContains("Invalid graph operation on empty key", str(e))
+            assert "Invalid graph operation on empty key" in str(e)
 
     # Verify that numeric, boolean, and null types are properly handled
     def test08_property_types(self):
@@ -342,9 +343,9 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           '--relations', '/tmp/relations.tmp',
                                           graphname])
 
-        self.env.assertEqual(res.exit_code, 0)
-        self.env.assertContains('3 nodes created', res.output)
-        self.env.assertContains('3 relations created', res.output)
+        assert res.exit_code == 0
+        assert '3 nodes created' in res.output
+        assert '3 relations created' in res.output
 
         graph = self.db.select_graph(graphname)
         query_result = graph.query('MATCH (a)-[e]->() RETURN a.numeric, a.mixed, a.bool, e.prop ORDER BY a.numeric, e.prop')
@@ -353,7 +354,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                            [7, None, False, None]]
 
         # The graph should have the correct types for all properties
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
     # Verify that the bulk loader does not block the server
     def test09_large_bulk_insert(self):
@@ -385,7 +386,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         thread.join()
         ping_count = res[0]
         # Verify that at least one ping was issued
-        self.env.assertGreaterEqual(ping_count, 1)
+        assert ping_count >= 1
 
     # Verify that nodes with multiple labels are created correctly
     def test10_multiple_labels(self):
@@ -426,9 +427,9 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           '--relations', '/tmp/PART_OF.tmp',
                                           graphname])
 
-        self.env.assertEqual(res.exit_code, 0)
-        self.env.assertContains('6 nodes created', res.output)
-        self.env.assertContains('5 relations created', res.output)
+        assert res.exit_code == 0
+        assert '6 nodes created' in res.output
+        assert '5 relations created' in res.output
 
         graph = self.db.select_graph(graphname)
 
@@ -444,7 +445,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                 'MATCH (a:Place) RETURN a.name ORDER BY a.name']
         for q in queries:
             query_result = graph.query(q)
-            self.env.assertEqual(query_result.result_set, expected_result)
+            assert query_result.result_set == expected_result
 
         #-----------------------------------------------------------------------
         expected_result = [["Binghamton"],
@@ -457,7 +458,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         for q in queries:
             query_result = graph.query(q)
-            self.env.assertEqual(query_result.result_set, expected_result)
+            assert query_result.result_set == expected_result
 
 
         expected_result = [["Connecticut"],
@@ -469,7 +470,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         for q in queries:
             query_result = graph.query(q)
-            self.env.assertEqual(query_result.result_set, expected_result)
+            assert query_result.result_set == expected_result
 
         #-----------------------------------------------------------------------
         expected_result = [["Stamford", "Connecticut"],
@@ -487,7 +488,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         for r in relations:
             for q in queries:
                 query_result = graph.query(q.format(rel=r))
-                self.env.assertEqual(query_result.result_set, expected_result)
+                assert query_result.result_set == expected_result
 
         #-----------------------------------------------------------------------
         expected_result = [["Connecticut", "US"],
@@ -516,7 +517,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         for r in relations:
             for q in queries:
                 query_result = graph.query(q.format(rel=r))
-                self.env.assertEqual(query_result.result_set, expected_result)
+                assert query_result.result_set == expected_result
 
     # Verify that nodes with multiple labels are created correctly
     def test11_social_multiple_labels(self):
@@ -534,9 +535,9 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           graphname])
 
         # The script should report 27 node creations and 48 edge creations
-        self.env.assertEqual(res.exit_code, 0)
-        self.env.assertContains('27 nodes created', res.output)
-        self.env.assertContains('56 relations created', res.output)
+        assert res.exit_code == 0
+        assert '27 nodes created' in res.output
+        assert '56 relations created' in res.output
 
         #-----------------------------------------------------------------------
         # Verify that the Person and Visitor labels both exist and produce the same results when queried
@@ -562,7 +563,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         for q in queries:
             query_result = graph.query(q)
-            self.env.assertEqual(query_result.result_set, expected_result)
+            assert query_result.result_set == expected_result
 
         #-----------------------------------------------------------------------
         # Verify that the Country and Place labels both exist and produce the same results when queried
@@ -587,7 +588,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         for q in queries:
             query_result = graph.query(q)
-            self.env.assertEqual(query_result.result_set, expected_result)
+            assert query_result.result_set == expected_result
 
         #-----------------------------------------------------------------------
         # Validate results when performing traversals using all combinations of labels
@@ -632,7 +633,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         for q in queries:
             query_result = graph.query(q)
-            self.env.assertEqual(query_result.result_set, expected_result)
+            assert query_result.result_set == expected_result
 
         #-----------------------------------------------------------------------
         expected_result = [['Alon Fital', 'business', 'Prague'],
@@ -711,7 +712,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         for q in queries:
             query_result = graph.query(q)
-            self.env.assertEqual(query_result.result_set, expected_result)
+            assert query_result.result_set == expected_result
 
     def test12_load_large_graph(self):
         """make sure bulk-loader is able to load a large graph quickly"""
@@ -722,7 +723,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
             return
 
         graphname = "bulk-loader-large-graph"
-        self.graph = self.db.select_graph(graphname)
+        type(self).graph = self.db.select_graph(graphname)
 
         n_lbls = 3                # 3 different types of nodes
         n_rels = 2                # 2 different types of edges
@@ -807,26 +808,26 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         ping_count = pings[0]
         # Expecting at minimum ping every 2 seconds
-        self.env.assertGreaterEqual(ping_count, execution_time / 2)
+        assert ping_count >= execution_time / 2
 
         # validate script results
-        self.env.assertEqual(res.exit_code, 0)
-        self.env.assertContains(f'{node_lbl_count} nodes created', res.output)
-        self.env.assertContains(f'{edge_count} relations created', res.output)
+        assert res.exit_code == 0
+        assert f'{node_lbl_count} nodes created' in res.output
+        assert f'{edge_count} relations created' in res.output
 
         # make sure load time did not exceeds 80 seconds
-        self.env.assertLess(execution_time, 80)
+        assert execution_time < 80
 
         # validate graph node / edge count
         for l in labels:
             q = f"MATCH (n:{l}) RETURN count(n)"
             lbl_count = self.graph.query(q).result_set[0][0]
-            self.env.assertEqual(lbl_count, node_lbl_count)
+            assert lbl_count == node_lbl_count
 
         for r in relationships:
             q = f"MATCH ()-[e:{r}]->() RETURN count(e)"
             rel_count = self.graph.query(q).result_set[0][0]
-            self.env.assertEqual(rel_count, edge_rel_count)
+            assert rel_count == edge_rel_count
 
         # clean up
         for node_csv in node_csvs:
@@ -893,23 +894,23 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         # the test would then pass with the fix reverted.
         idx_n_query = "MATCH (n:N) WHERE n.v >= 0 RETURN count(n)"
         scan_n_query = "MATCH (n:N) WHERE n.v + 0 >= 0 RETURN count(n)"
-        self.env.assertContains('Node By Index Scan', str(graph.explain(idx_n_query)))
-        self.env.assertNotContains('Node By Index Scan', str(graph.explain(scan_n_query)))
+        assert 'Node By Index Scan' in str(graph.explain(idx_n_query))
+        assert 'Node By Index Scan' not in str(graph.explain(scan_n_query))
 
         idx_n = graph.query(idx_n_query).result_set[0][0]
         scan_n = graph.query(scan_n_query).result_set[0][0]
-        self.env.assertEqual(scan_n, 100)
-        self.env.assertEqual(idx_n, scan_n)
+        assert scan_n == 100
+        assert idx_n == scan_n
 
         idx_e_query = "MATCH ()-[r:R]->() WHERE r.w >= 0 RETURN count(r)"
         scan_e_query = "MATCH ()-[r:R]->() WHERE r.w + 0 >= 0 RETURN count(r)"
-        self.env.assertContains('Edge By Index Scan', str(graph.explain(idx_e_query)))
-        self.env.assertNotContains('Edge By Index Scan', str(graph.explain(scan_e_query)))
+        assert 'Edge By Index Scan' in str(graph.explain(idx_e_query))
+        assert 'Edge By Index Scan' not in str(graph.explain(scan_e_query))
 
         idx_e = graph.query(idx_e_query).result_set[0][0]
         scan_e = graph.query(scan_e_query).result_set[0][0]
-        self.env.assertEqual(scan_e, 99)
-        self.env.assertEqual(idx_e, scan_e)
+        assert scan_e == 99
+        assert idx_e == scan_e
 
         os.remove(node_csv)
         os.remove(rel_csv)

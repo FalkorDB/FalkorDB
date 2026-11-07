@@ -3,6 +3,11 @@ falkordb
 falkordb-bulk-loader
 hypothesis
 pytest
+pytest-xdist
+# falkordb 1.6's async cluster probe forwards every connection kwarg to a
+# sync redis.Redis(); redis-py 8.1 added `himport_registry` there, which the
+# sync constructor rejects. Cap until falkordb ships a fix.
+redis<8.1.0
 textual
 textual-dev
-RLTest>=0.7.25
+

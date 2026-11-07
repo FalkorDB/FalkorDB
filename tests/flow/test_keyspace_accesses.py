@@ -7,17 +7,18 @@ NEW_GRAPH_ID = "G2"
 
 
 class testKeyspaceAccesses(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.redis_con = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.redis_con = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
     
     def test00_test_data_valid_after_rename(self):
         node0 = Node(node_id=0, labels="L", properties={'name':'x', 'age':1})
         self.graph.query(f"CREATE {node0}")
         self.redis_con.rename(GRAPH_ID, NEW_GRAPH_ID)
 
-        self.graph = self.db.select_graph(NEW_GRAPH_ID)
+        type(self).graph = self.db.select_graph(NEW_GRAPH_ID)
 
         node1 = Node(node_id=1, labels="L", properties={'name':'x', 'age':1})
         self.graph.query(f"CREATE {node1}")
@@ -30,25 +31,25 @@ class testKeyspaceAccesses(FlowTestsBase):
     # Graph queries should fail gracefully on accessing non-graph keys.
     def test01_graph_access_on_invalid_key(self):
         self.redis_con.set("integer_key", 5)
-        self.graph = self.db.select_graph("integer_key")
+        type(self).graph = self.db.select_graph("integer_key")
         try:
             query = """MATCH (n) RETURN noneExistingFunc(n.age) AS cast"""
             self.graph.query(query)
             assert(False)
         except redis.ResponseError as e:
             # Expecting an error.
-            self.env.assertContains("Existing key has wrong Redis type", str(e))
+            assert "Existing key has wrong Redis type" in str(e)
             pass
 
         try:
             self.redis_con.execute_command("GRAPH.DELETE", "integer_key")
             assert(False)
         except redis.ResponseError as e:
-            self.env.assertContains("Existing key has wrong Redis type", str(e))
+            assert "Existing key has wrong Redis type" in str(e)
 
     # Fail gracefully on attempting a graph deletion of an empty key.
     def test02_graph_delete_on_empty_key(self):
-        self.graph = self.db.select_graph("nonexistent_key")
+        type(self).graph = self.db.select_graph("nonexistent_key")
         try:
             self.graph.delete()
             assert(False)

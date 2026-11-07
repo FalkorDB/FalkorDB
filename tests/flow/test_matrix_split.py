@@ -23,6 +23,7 @@ NOT spawn-forcing (the services job handles these directly):
 Outputs are emitted as `services_files=<json>` and `spawn_files=<json>` lines
 suitable for `>> $GITHUB_OUTPUT`."""
 
+import importlib.util
 import json
 import os
 import re
@@ -37,24 +38,44 @@ CLUSTER_RE = re.compile(
 # moduleArgs keys that can't be changed at runtime — these force spawn so
 # the module loads with the right value baked in. Anything not on this list
 # is assumed runtime-mutable via GRAPH.CONFIG SET and can ride a shared
-# service container. The list is conservative; add to it (don't remove from
-# it) if a key turns out to be load-time-only.
-IMMUTABLE_MODULE_ARGS = (
-    "CACHE_SIZE",
-    "THREAD_COUNT",
-    "OMP_THREAD_COUNT",
-    "IMPORT_FOLDER",
-    "TEMP_FOLDER",
-    "NODE_CREATION_BUFFER",
-    "BOLT_PORT",
-    "EFFECTS_THRESHOLD",
-    "MAX_INFO_QUERIES",
-    "ASYNC_DELETE",
-    "CMD_INFO",
-    "DELAY_INDEXING",
-    "JS_HEAP_SIZE",
-    "JS_STACK_SIZE",
-    "TIMEOUT",
+# service container.
+#
+# Loaded straight off its path rather than imported as `infra.module_args`
+# because this script also runs as a bare `python3 tests/flow/test_matrix_split.py`
+# CI step, before the test requirements exist, and `tests/infra/__init__.py`
+# would drag in pytest and redis. The list lives there so the service backend
+# and the root suites agree with this classifier instead of keeping a second
+# copy.
+#
+# Deliberately not `sys.path.insert(.../infra)`: pytest imports this file
+# during collection of tests/flow, so that would prepend the infra directory
+# to sys.path for the whole session and make `clients`, `docker`, `env`,
+# `local` and friends resolvable as top-level modules — shadowing e.g. the
+# PyPI `docker` SDK if it were ever added.
+def _load_immutable_module_args():
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "infra", "module_args.py")
+    spec = importlib.util.spec_from_file_location("_falkor_module_args", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.IMMUTABLE_MODULE_ARGS
+
+
+IMMUTABLE_MODULE_ARGS = _load_immutable_module_args()
+
+# Lifecycle control the shared service can't provide: a test that stops,
+# starts or restarts its server, or reaches for the server process itself,
+# needs an instance of its own. Under RLTest these silently ran against the
+# shared service in CI and only appeared to pass.
+#
+# `masterProcess` is reachable both directly and through the envRunner shim,
+# so match either spelling. The match is syntactic: it can't tell reachable
+# code from a skipped test body, and over-routing to spawn is the safe
+# direction — spawn can do everything services can.
+LIFECYCLE_RE = re.compile(
+    r"\benv\s*\.\s*(?:envRunner\s*\.\s*)?"
+    r"(stop|start|restart_and_reload|masterProcess)\b",
 )
 
 # `Env(...moduleArgs="...string...")` — capture the literal string content.
@@ -110,6 +131,9 @@ def needs_spawn(paths):
             continue
         # Cluster topology — always spawn.
         if CLUSTER_RE.search(content):
+            return True
+        # Server lifecycle control — always spawn.
+        if LIFECYCLE_RE.search(content):
             return True
         # moduleArgs with at least one immutable key — spawn.
         # Word-boundary match so e.g. "TIMEOUT" doesn't false-positive against

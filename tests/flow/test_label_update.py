@@ -5,19 +5,20 @@ from constraint_utils import create_unique_node_constraint, wait_on_constraint
 GRAPH_ID = "label_update"
 
 class testLabelUpdate():
-    def __init__(self):
-        self.env, self.db = Env(env='oss', useSlaves=True)
-        self.master = self.env.getConnection()
-        self.replica = self.env.getSlaveConnection()
-        self.master_graph = Graph(self.master, GRAPH_ID)
-        self.replica_graph = Graph(self.replica, GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(env='oss', useSlaves=True)
+        cls.master = cls.env.getConnection()
+        cls.replica = cls.env.getSlaveConnection()
+        cls.master_graph = Graph(cls.master, GRAPH_ID)
+        cls.replica_graph = Graph(cls.replica, GRAPH_ID)
 
         # enable effects replication
-        self.db.config_set("EFFECTS_THRESHOLD", 0)
+        cls.db.config_set("EFFECTS_THRESHOLD", 0)
 
-    def tearDown(self):
+    def teardown_method(self):
         self.master_graph.delete()
-        self.replica_graph = Graph(self.replica, GRAPH_ID)
+        type(self).replica_graph = Graph(self.replica, GRAPH_ID)
         self.master.execute_command("WAIT", "1", "0")
 
     def query_master_and_wait(self, query):
@@ -36,24 +37,24 @@ class testLabelUpdate():
         # Create nodes (fix: removed stray leading quote from original)
         query = f"UNWIND range(0, {REDUNDANCY_ITER_THRESHOLD * 10}) AS i CREATE ()"
         res = self.query_master_and_wait(query)
-        self.env.assertEqual(res.nodes_created, node_count)
+        assert res.nodes_created == node_count
 
         # --- bulk ADD path ---
         res = self.query_master_and_wait("MATCH (n) SET n:L RETURN n")
-        self.env.assertEqual(res.labels_added, 1)
+        assert res.labels_added == 1
         # Every node must now carry label L
         res = self.query_master_and_wait("MATCH (n:L) RETURN count(n) AS c")
-        self.env.assertEqual(res.result_set[0][0], node_count)
+        assert res.result_set[0][0] == node_count
 
         # --- bulk REMOVE path ---
         res = self.query_master_and_wait("MATCH (n:L) REMOVE n:L")
-        self.env.assertEqual(res.labels_removed, node_count)
+        assert res.labels_removed == node_count
 
         # No node should carry label L any longer
         res = self.query_master_and_wait("MATCH (n:L) RETURN count(n) AS c")
-        self.env.assertEqual(res.result_set[0][0], 0)
+        assert res.result_set[0][0] == 0
 
-        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+        assert graph_eq(self.master_graph, self.replica_graph)
 
     def test_same_label_multiple_set_remove(self):
         # A single query that touches the same label in multiple SET / REMOVE
@@ -64,32 +65,32 @@ class testLabelUpdate():
         res = self.query_master_and_wait(
             "MATCH (n:A) SET n:L WITH n SET n:L WITH n SET n:L RETURN n"
         )
-        self.env.assertEqual(res.labels_added, 1)
+        assert res.labels_added == 1
 
         res = self.query_master_and_wait("MATCH (n:A:L) RETURN count(n) AS c")
-        self.env.assertEqual(res.result_set[0][0], 1)
+        assert res.result_set[0][0] == 1
         
         # --- repeated REMOVE of the same label ---
         res = self.query_master_and_wait(
             "MATCH (n:A:L) REMOVE n:L WITH n REMOVE n:L RETURN n"
         )
-        self.env.assertEqual(res.labels_removed, 1)
+        assert res.labels_removed == 1
 
         res = self.query_master_and_wait("MATCH (n:A:L) RETURN count(n) AS c")
-        self.env.assertEqual(res.result_set[0][0], 0)
+        assert res.result_set[0][0] == 0
         
         # --- SET then REMOVE the same label within one query ---
         # Net effect on label M must be zero: it is added and immediately
         # removed
         self.query_master_and_wait("MATCH (n:A) SET n:L")   # give node L so query matches
         res = self.query_master_and_wait("MATCH (n:A:L) SET n:M WITH n REMOVE n:M RETURN n")
-        self.env.assertEqual(res.labels_added, 1)
-        self.env.assertEqual(res.labels_removed, 1)
+        assert res.labels_added == 1
+        assert res.labels_removed == 1
 
         res = self.query_master_and_wait("MATCH (n:A:M) RETURN count(n) AS c")
-        self.env.assertEqual(res.result_set[0][0], 0)
+        assert res.result_set[0][0] == 0
 
-        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+        assert graph_eq(self.master_graph, self.replica_graph)
 
     def test_redundant_label_set_remove(self):
         # A single query that touches the same label in multiple SET / REMOVE
@@ -98,17 +99,17 @@ class testLabelUpdate():
         # --- repeated SET of the same label ---
         # Three SET n:L clauses; the label must be recorded only once.
         res = self.query_master_and_wait("MATCH (n:A) SET n:L:L:L RETURN n")
-        self.env.assertEqual(res.labels_added, 1)
+        assert res.labels_added == 1
 
         res = self.query_master_and_wait("MATCH (n:A:L) RETURN count(n) AS c")
-        self.env.assertEqual(res.result_set[0][0], 1)
+        assert res.result_set[0][0] == 1
         
         # --- repeated REMOVE of the same label ---
         res = self.query_master_and_wait("MATCH (n:A:L) REMOVE n:L:L:L RETURN n")
-        self.env.assertEqual(res.labels_removed, 1)
+        assert res.labels_removed == 1
 
         res = self.query_master_and_wait("MATCH (n:A:L) RETURN count(n) AS c")
-        self.env.assertEqual(res.result_set[0][0], 0)
+        assert res.result_set[0][0] == 0
         
         # --- SET then REMOVE the same label within one query ---
         # Net effect on label M must be zero: it is added and immediately
@@ -116,26 +117,26 @@ class testLabelUpdate():
         self.query_master_and_wait("MATCH (n:A) SET n:L")   # give node L so query matches
 
         res = self.query_master_and_wait( "MATCH (n:A:L) SET n:M:M:M WITH n REMOVE n:M:M:M RETURN n")
-        self.env.assertEqual(res.labels_added, 1)
-        self.env.assertEqual(res.labels_removed, 1)
+        assert res.labels_added == 1
+        assert res.labels_removed == 1
 
         res = self.query_master_and_wait("MATCH (n:A:M) RETURN count(n) AS c")
-        self.env.assertEqual(res.result_set[0][0], 0)
+        assert res.result_set[0][0] == 0
 
-        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+        assert graph_eq(self.master_graph, self.replica_graph)
 
     def test_remove_nonexisting_label(self):
         # Try to remove a non existing label
         self.query_master_and_wait("CREATE (:A {v: 1})")
         
         res = self.query_master_and_wait("MATCH (n:A) REMOVE n:X RETURN n")
-        self.env.assertEqual(res.labels_removed, 0)
+        assert res.labels_removed == 0
 
         # make sure label 'X' wasn't added to the graph's schema
         labels = self.query_master_and_wait("CALL db.labels()").result_set[0][0]
-        self.env.assertNotContains("X", labels)
+        assert "X" not in labels
 
-        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+        assert graph_eq(self.master_graph, self.replica_graph)
 
     def test_constraint_violation_rollback(self):
         # A unique-constraint violation raised inside _LabelNodes_Single must
@@ -160,19 +161,19 @@ class testLabelUpdate():
             # The node with p=1 duplicates the existing :X node and must
             # trigger a constraint violation.
             self.query_master_and_wait("MATCH (n) WHERE NOT n:X SET n:X")
-            self.env.assertTrue(False)
+            assert False
         except Exception as e:
-            self.env.assertContains("constraint", str(e).lower())
+            assert "constraint" in str(e).lower()
         
         # Rollback must restore the graph to exactly one :X node.
         res = self.query_master_and_wait("MATCH (n:X) RETURN count(n)")
-        self.env.assertEqual(res.result_set[0][0], 1)
+        assert res.result_set[0][0] == 1
         
         # The original seed node must still be intact.
         res = self.query_master_and_wait("MATCH (n:X {name: 1}) RETURN count(n)")
-        self.env.assertEqual(res.result_set[0][0], 1)
+        assert res.result_set[0][0] == 1
 
-        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+        assert graph_eq(self.master_graph, self.replica_graph)
 
     #def test_failed_update_on_first_attempt(self):
 

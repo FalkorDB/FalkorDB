@@ -15,12 +15,13 @@ GRAPH_ID = "replication"
 
 class testReplication(FlowTestsBase):
 
-    def __init__(self):
+    @classmethod
+    def setup_class(cls):
         # skip test if we're running under sanitizer
         if SANITIZER:
-            Environment.skip(None) # sanitizer is not working correctly with replication
+            pytest.skip("sanitizer is not working correctly with replication")
 
-        self.env, self.db = Env(env='oss', useSlaves=True)
+        cls.env, cls.db = Env(env='oss', useSlaves=True)
 
     def test_CRUD_replication(self):
         # create a simple graph
@@ -94,23 +95,23 @@ class testReplication(FlowTestsBase):
         params = {'age': 10, 'name': 'jerry'}
 
         result = src.query(q, params)
-        self.env.assertEqual(result.nodes_created, 2)
+        assert result.nodes_created == 2
 
         create_unique_node_constraint(src, "Actor", "age", sync=True)
         c = get_constraint(src, "UNIQUE", "LABEL", "Actor", "age")
-        self.env.assertEqual(c.status, "FAILED")
+        assert c.status == "FAILED"
 
         # update entity
         q = "MATCH (n:L {id:$id}) SET n.id = $new_id"
         params = {'id': 1, 'new_id': 2}
         result = src.query(q, params)
-        self.env.assertEqual(result.properties_set, 1)
+        assert result.properties_set == 1
 
         # delete entity
         q = "MATCH (n:L {id:$id}) DELETE n"
         params = {'id': 0}
         result = src.query(q, params)
-        self.env.assertEqual(result.nodes_deleted, 1)
+        assert result.nodes_deleted == 1
 
         # the WAIT command forces master slave sync to complete
         source_con.execute_command("WAIT", "1", "0")
@@ -122,31 +123,31 @@ class testReplication(FlowTestsBase):
         q = "MATCH (s:L {id:2}) RETURN s.name"
         plan = str(src.explain(q))
         replica_plan = str(replica.explain(q))
-        env.assertContains("Index Scan", plan)
-        env.assertEqual(replica_plan, plan)
+        assert "Index Scan" in plan
+        assert replica_plan == plan
 
         # issue query on both source and replica
         # make sure results are the same
         result = src.ro_query(q).result_set
         replica_result = replica.ro_query(q).result_set
-        env.assertEqual(replica_result, result)
+        assert replica_result == result
 
         # make sure node count on both primary and replica is the same
         q = "MATCH (n) RETURN count(n)"
         result = src.ro_query(q).result_set
         replica_result = replica.ro_query(q).result_set
-        env.assertEqual(replica_result, result)
+        assert replica_result == result
 
         # make sure nodes are in sync
         q = "MATCH (n) RETURN n ORDER BY n"
         result = src.ro_query(q).result_set
         replica_result = replica.ro_query(q).result_set
-        env.assertEqual(replica_result, result)
+        assert replica_result == result
 
         # remove label
         q = "MATCH (s:L {id:2}) REMOVE s:L"
         result = src.query(q)
-        env.assertEqual(result.labels_removed, 1)
+        assert result.labels_removed == 1
 
         # the WAIT command forces master slave sync to complete
         source_con.execute_command("WAIT", "1", "0")
@@ -154,15 +155,15 @@ class testReplication(FlowTestsBase):
         q = "MATCH (s:L {id:2}) RETURN s"
         result = src.ro_query(q).result_set
         replica_result = replica.ro_query(q).result_set
-        env.assertEqual(len(result), 0)
-        env.assertEqual(replica_result, result)
+        assert len(result) == 0
+        assert replica_result == result
 
         # remove property
         q = "MATCH (s {id:$id}) SET s.id = $new_id RETURN s"
         params = {'id': 2, 'new_id': None}
 
         result = src.query(q, params)
-        env.assertEqual(result.properties_removed, 1)
+        assert result.properties_removed == 1
 
         # the WAIT command forces master slave sync to complete
         source_con.execute_command("WAIT", "1", "0")
@@ -170,19 +171,19 @@ class testReplication(FlowTestsBase):
         q = "MATCH (s {id:2}) RETURN s"
         result = src.ro_query(q).result_set
         replica_result = replica.ro_query(q).result_set
-        env.assertEqual(len(result), 0)
-        env.assertEqual(replica_result, result)
+        assert len(result) == 0
+        assert replica_result == result
 
         # make sure both primary and replica have the same set of indexes
         q = "CALL db.indexes() YIELD label, properties, language, stopwords, entitytype"
         result = src.ro_query(q).result_set
         replica_result = replica.ro_query(q).result_set
-        env.assertEqual(replica_result, result)
+        assert replica_result == result
 
         # drop fulltext index
         q = "CALL db.idx.fulltext.drop('L')"
         result = src.query(q)
-        env.assertEqual(result.indices_deleted, 3)
+        assert result.indices_deleted == 3
 
         # the WAIT command forces master slave sync to complete
         source_con.execute_command("WAIT", "1", "0")
@@ -195,12 +196,12 @@ class testReplication(FlowTestsBase):
         q = "CALL db.indexes() YIELD label, properties, language, stopwords, entitytype"
         result = src.ro_query(q).result_set
         replica_result = replica.ro_query(q).result_set
-        env.assertEqual(replica_result, result)
+        assert replica_result == result
 
         # make sure both primary and replica have the same set of constraints
         origin_result = list_constraints(src)
         replica_result = list_constraints(replica)
-        env.assertEqual(replica_result, origin_result)
+        assert replica_result == origin_result
 
         # drop constraint
         drop_unique_node_constraint(src, "L", "id")
@@ -211,7 +212,7 @@ class testReplication(FlowTestsBase):
         # make sure both primary and replica have the same set of constraints
         origin_result = list_constraints(src)
         replica_result = list_constraints(replica)
-        env.assertEqual(replica_result, origin_result)
+        assert replica_result == origin_result
 
         # drop failed constraint
         drop_unique_node_constraint(src, "Actor", "age")
@@ -222,5 +223,5 @@ class testReplication(FlowTestsBase):
         # make sure both primary and replica have the same set of constraints
         origin_result = list_constraints(src)
         replica_result = list_constraints(replica)
-        env.assertEqual(replica_result, origin_result)
+        assert replica_result == origin_result
 

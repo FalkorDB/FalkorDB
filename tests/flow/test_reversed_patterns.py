@@ -3,16 +3,18 @@ from common import *
 GRAPH_ID = "reversed_patterns"
 
 class testReversedPatterns(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.redis_con = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.populate_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.redis_con = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.populate_graph()
 
-    def populate_graph(self):
-        if GRAPH_ID not in self.db.list_graphs():
+    @classmethod
+    def populate_graph(cls):
+        if GRAPH_ID not in cls.db.list_graphs():
             # Create entities
-            self.graph.query("CREATE (:L {name:'SRC'})-[:E]->(:L {name:'DEST'})")
+            cls.graph.query("CREATE (:L {name:'SRC'})-[:E]->(:L {name:'DEST'})")
 
     # Verify that edges are not modified after entity deletion
     def test01_reversed_pattern(self):
@@ -20,4 +22,4 @@ class testReversedPatterns(FlowTestsBase):
         rightToLeft = """MATCH (c:L)<-[b]-(a:L) RETURN a, TYPE(b), c"""
         leftToRightResult = self.graph.query(leftToRight)
         rightToLeftResult = self.graph.query(rightToLeft)
-        self.env.assertEqual(leftToRightResult.result_set, rightToLeftResult.result_set)
+        assert leftToRightResult.result_set == rightToLeftResult.result_set

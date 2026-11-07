@@ -5,12 +5,14 @@ female = ["Hila", "Lucy"]
 
 
 class testGraphMixLabelsFlow(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph("G")
-        self.populate_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph("G")
+        cls.populate_graph()
 
-    def populate_graph(self):
+    @classmethod
+    def populate_graph(cls):
         nodes = {}
          # Create entities
         
@@ -30,50 +32,50 @@ class testGraphMixLabelsFlow(FlowTestsBase):
 
         nodes_str = [str(n) for n in nodes.values()]
         edges_str = [str(e) for e in edges]
-        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
+        cls.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
     # Connect a single node to all other nodes.
     def test_male_to_all(self):
         query = """MATCH (m:male)-[:knows]->(t) RETURN m,t ORDER BY m.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(len(actual_result.result_set), (len(male) * (len(male + female)-1)))
+        assert len(actual_result.result_set) == (len(male) * (len(male + female)-1))
     
     def test_male_to_male(self):
         query = """MATCH (m:male)-[:knows]->(t:male) RETURN m,t ORDER BY m.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(len(actual_result.result_set), (len(male) * (len(male)-1)))
+        assert len(actual_result.result_set) == (len(male) * (len(male)-1))
     
     def test_male_to_female(self):
         query = """MATCH (m:male)-[:knows]->(t:female) RETURN m,t ORDER BY m.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(len(actual_result.result_set), (len(male) * len(female)))
+        assert len(actual_result.result_set) == (len(male) * len(female))
     
     def test_female_to_all(self):
         query = """MATCH (f:female)-[:knows]->(t) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(len(actual_result.result_set), (len(female) * (len(male + female)-1)))
+        assert len(actual_result.result_set) == (len(female) * (len(male + female)-1))
 
     def test_female_to_male(self):
         query = """MATCH (f:female)-[:knows]->(t:male) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(len(actual_result.result_set), (len(female) * len(male)))
+        assert len(actual_result.result_set) == (len(female) * len(male))
     
     def test_female_to_female(self):
         query = """MATCH (f:female)-[:knows]->(t:female) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(len(actual_result.result_set), (len(female) * (len(female)-1)))
+        assert len(actual_result.result_set) == (len(female) * (len(female)-1))
     
     def test_all_to_female(self):
         query = """MATCH (f)-[:knows]->(t:female) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(len(actual_result.result_set), (len(male) * len(female)) + (len(female) * (len(female)-1)))
+        assert len(actual_result.result_set) == (len(male) * len(female)) + (len(female) * (len(female)-1))
 
     def test_all_to_male(self):
         query = """MATCH (f)-[:knows]->(t:male) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(len(actual_result.result_set), (len(male) * (len(male)-1)) + len(female) * len(male))
+        assert len(actual_result.result_set) == (len(male) * (len(male)-1)) + len(female) * len(male)
     
     def test_all_to_all(self):
         query = """MATCH (f)-[:knows]->(t) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(len(actual_result.result_set), (len(male+female) * (len(male+female)-1)))
+        assert len(actual_result.result_set) == (len(male+female) * (len(male+female)-1))

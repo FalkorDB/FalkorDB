@@ -3,12 +3,13 @@ from common import *
 GRAPH_ID = "CDLP"
 
 class testCDLP(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.conn = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
 
     def CDLP(self, nodeLabels=None, relationshipTypes=None, maxIterations=10):
@@ -66,7 +67,7 @@ class testCDLP(FlowTestsBase):
         for q in invalid_queries:
             try:
                 self.graph.query(q)
-                self.env.assertFalse(True)
+                assert not True
             except:
                 pass
 
@@ -74,7 +75,7 @@ class testCDLP(FlowTestsBase):
         """Test CDLP algorithm behavior on an empty graph"""
         # verify graph is empty
         result = self.graph.query("MATCH (n) RETURN count(n) as count")
-        self.env.assertEqual(result.result_set[0][0], 0)
+        assert result.result_set[0][0] == 0
         
         # run CDLP on empty graph
         result = self.CDLP()
@@ -82,7 +83,7 @@ class testCDLP(FlowTestsBase):
         # if we reach here, the algorithm didn't throw an exception
         
         # check if it returned empty results (acceptable behavior)
-        self.env.assertEqual(len(result.result_set), 0)
+        assert len(result.result_set) == 0
 
     def test_label_propagation_basic(self):
         """Test basic functionality of the label propagation algorithm."""
@@ -150,7 +151,7 @@ class testCDLP(FlowTestsBase):
             communities[community_id].append(name)
 
         # We expect exactly 3 distinct communities
-        self.env.assertEqual(len(communities), 3)
+        assert len(communities) == 3
 
         # Find which community each node belongs to
         community_lookup = {}
@@ -160,21 +161,21 @@ class testCDLP(FlowTestsBase):
 
         # Nodes in the same expected community should have the same community ID
         # Community 1
-        self.env.assertEqual(community_lookup['A'], community_lookup['B'])
-        self.env.assertEqual(community_lookup['A'], community_lookup['C'])
+        assert community_lookup['A'] == community_lookup['B']
+        assert community_lookup['A'] == community_lookup['C']
 
         # Community 2
-        self.env.assertEqual(community_lookup['D'], community_lookup['E'])
-        self.env.assertEqual(community_lookup['D'], community_lookup['F'])
+        assert community_lookup['D'] == community_lookup['E']
+        assert community_lookup['D'] == community_lookup['F']
 
         # Community 3
-        self.env.assertEqual(community_lookup['G'], community_lookup['H'])
-        self.env.assertEqual(community_lookup['G'], community_lookup['I'])
+        assert community_lookup['G'] == community_lookup['H']
+        assert community_lookup['G'] == community_lookup['I']
 
         # Verify that the expected communities are different from each other
-        self.env.assertNotEqual(community_lookup['A'], community_lookup['D'])
-        self.env.assertNotEqual(community_lookup['A'], community_lookup['G'])
-        self.env.assertNotEqual(community_lookup['D'], community_lookup['G'])
+        assert community_lookup['A'] != community_lookup['D']
+        assert community_lookup['A'] != community_lookup['G']
+        assert community_lookup['D'] != community_lookup['G']
 
     def test_label_propagation_node_label_filtering(self):
         """Test that the label propagation algorithm correctly filters by node labels."""
@@ -265,10 +266,10 @@ class testCDLP(FlowTestsBase):
         all_person_nodes = []
         for members in person_communities.values():
             all_person_nodes.extend(members)
-        self.env.assertEqual(sorted(all_person_nodes), ['A', 'B', 'C', 'D', 'H', 'K'])
+        assert sorted(all_person_nodes) == ['A', 'B', 'C', 'D', 'H', 'K']
 
         # We expect exactly 2 distinct Person communities
-        self.env.assertEqual(len(person_communities), 2)
+        assert len(person_communities) == 2
 
         # Find Person community IDs
         person_lookup = {}
@@ -277,13 +278,13 @@ class testCDLP(FlowTestsBase):
                 person_lookup[name] = community_id
 
         # Verify that Person nodes in the same expected community are together
-        self.env.assertEqual(person_lookup['A'], person_lookup['B'])
-        self.env.assertEqual(person_lookup['A'], person_lookup['C'])
-        self.env.assertEqual(person_lookup['D'], person_lookup['H'])
-        self.env.assertEqual(person_lookup['D'], person_lookup['K'])
+        assert person_lookup['A'] == person_lookup['B']
+        assert person_lookup['A'] == person_lookup['C']
+        assert person_lookup['D'] == person_lookup['H']
+        assert person_lookup['D'] == person_lookup['K']
 
         # Verify that Person nodes in different communities have different IDs
-        self.env.assertNotEqual(person_lookup['A'], person_lookup['D'])
+        assert person_lookup['A'] != person_lookup['D']
 
         # Run label propagation algorithm with User node label filter
         user_result = self.CDLP(nodeLabels=['User'])
@@ -301,10 +302,10 @@ class testCDLP(FlowTestsBase):
         all_user_nodes = []
         for members in user_communities.values():
             all_user_nodes.extend(members)
-        self.env.assertEqual(sorted(all_user_nodes), ['E', 'F', 'G', 'I', 'J', 'L'])
+        assert sorted(all_user_nodes) == ['E', 'F', 'G', 'I', 'J', 'L']
 
         # We expect exactly 2 distinct User communities
-        self.env.assertEqual(len(user_communities), 2)
+        assert len(user_communities) == 2
 
         # Find User community IDs
         user_lookup = {}
@@ -313,13 +314,13 @@ class testCDLP(FlowTestsBase):
                 user_lookup[name] = community_id
 
         # Verify that User nodes in the same expected community are together
-        self.env.assertEqual(user_lookup['E'], user_lookup['F'])
-        self.env.assertEqual(user_lookup['E'], user_lookup['G'])
-        self.env.assertEqual(user_lookup['I'], user_lookup['J'])
-        self.env.assertEqual(user_lookup['I'], user_lookup['L'])
+        assert user_lookup['E'] == user_lookup['F']
+        assert user_lookup['E'] == user_lookup['G']
+        assert user_lookup['I'] == user_lookup['J']
+        assert user_lookup['I'] == user_lookup['L']
 
         # Verify that User nodes in different communities have different IDs
-        self.env.assertNotEqual(user_lookup['E'], user_lookup['I'])
+        assert user_lookup['E'] != user_lookup['I']
 
     def test_label_propagation_relationship_filtering(self):
         """Test that the label propagation algorithm correctly filters by relationship types."""
@@ -414,7 +415,7 @@ class testCDLP(FlowTestsBase):
         # We expect exactly 2 KNOWS communities (among the KNOWS-connected nodes)
         knows_community_count = sum(1 for members in knows_connected_communities.values()
                                   if any(node in knows_connected_nodes for node in members))
-        self.env.assertEqual(knows_community_count, 2)
+        assert knows_community_count == 2
 
         # Find KNOWS community IDs for connected nodes
         knows_lookup = {}
@@ -425,16 +426,16 @@ class testCDLP(FlowTestsBase):
 
         # Verify that nodes in the same KNOWS community are together
         if 'A' in knows_lookup and 'B' in knows_lookup and 'C' in knows_lookup:
-            self.env.assertEqual(knows_lookup['A'], knows_lookup['B'])
-            self.env.assertEqual(knows_lookup['A'], knows_lookup['C'])
+            assert knows_lookup['A'] == knows_lookup['B']
+            assert knows_lookup['A'] == knows_lookup['C']
 
         if 'D' in knows_lookup and 'H' in knows_lookup and 'K' in knows_lookup:
-            self.env.assertEqual(knows_lookup['D'], knows_lookup['H'])
-            self.env.assertEqual(knows_lookup['D'], knows_lookup['K'])
+            assert knows_lookup['D'] == knows_lookup['H']
+            assert knows_lookup['D'] == knows_lookup['K']
 
         # Verify that nodes in different KNOWS communities have different IDs
         if 'A' in knows_lookup and 'D' in knows_lookup:
-            self.env.assertNotEqual(knows_lookup['A'], knows_lookup['D'])
+            assert knows_lookup['A'] != knows_lookup['D']
 
         # Run label propagation algorithm with WORKS_WITH relationship filter
         works_result = self.CDLP(relationshipTypes=['WORKS_WITH'])
@@ -462,7 +463,7 @@ class testCDLP(FlowTestsBase):
         # We expect exactly 2 WORKS_WITH communities (among the WORKS_WITH-connected nodes)
         works_community_count = sum(1 for members in works_connected_communities.values()
                                   if any(node in works_connected_nodes for node in members))
-        self.env.assertEqual(works_community_count, 2)
+        assert works_community_count == 2
 
         # Find WORKS_WITH community IDs for connected nodes
         works_lookup = {}
@@ -473,16 +474,16 @@ class testCDLP(FlowTestsBase):
 
         # Verify that nodes in the same WORKS_WITH community are together
         if 'E' in works_lookup and 'F' in works_lookup and 'G' in works_lookup:
-            self.env.assertEqual(works_lookup['E'], works_lookup['F'])
-            self.env.assertEqual(works_lookup['E'], works_lookup['G'])
+            assert works_lookup['E'] == works_lookup['F']
+            assert works_lookup['E'] == works_lookup['G']
 
         if 'I' in works_lookup and 'J' in works_lookup and 'L' in works_lookup:
-            self.env.assertEqual(works_lookup['I'], works_lookup['J'])
-            self.env.assertEqual(works_lookup['I'], works_lookup['L'])
+            assert works_lookup['I'] == works_lookup['J']
+            assert works_lookup['I'] == works_lookup['L']
 
         # Verify that nodes in different WORKS_WITH communities have different IDs
         if 'E' in works_lookup and 'I' in works_lookup:
-            self.env.assertNotEqual(works_lookup['E'], works_lookup['I'])
+            assert works_lookup['E'] != works_lookup['I']
 
         # Run label propagation algorithm with both relationship types
         both_result = self.CDLP(relationshipTypes=['KNOWS', 'WORKS_WITH'])
@@ -499,5 +500,5 @@ class testCDLP(FlowTestsBase):
         # We expect nodes in each of the 4 communities to remain in their separate communities
         # when using both relationship types
         combined_community_count = len(both_communities)
-        self.env.assertEqual(combined_community_count, 4)
+        assert combined_community_count == 4
 

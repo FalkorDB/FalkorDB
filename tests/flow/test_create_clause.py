@@ -4,11 +4,12 @@ from index_utils import *
 GRAPH_ID = "create-clause"
 
 class testCreateClause():
-    def __init__(self):
-        self.env, self.db = Env()
-        self.g = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.g = cls.db.select_graph(GRAPH_ID)
 
-    def tearDown(self):
+    def teardown_method(self):
         self.g.delete()
     
     def test01_create_dependency(self):
@@ -39,9 +40,9 @@ class testCreateClause():
             try:
                 self.g.query(q)
                 # should not reach this point
-                self.env.assertTrue(False)
+                assert False
             except Exception as e:
-                self.env.assertTrue("not defined" in str(e))
+                assert "not defined" in str(e)
 
     def test02_edge_reuse(self):
         queries = ["CREATE ()-[e:R]->()-[e:R]->()",
@@ -52,9 +53,9 @@ class testCreateClause():
             try:
                 self.g.query(q)
                 # should not reach this point
-                self.env.assertTrue(False)
+                assert False
             except Exception as e:
-                self.env.assertTrue("The bound variable 'e' can't be redeclared in a CREATE clause" in str(e))
+                assert "The bound variable 'e' can't be redeclared in a CREATE clause" in str(e)
 
     def test_03_edge_attributes(self):
         """make sure attribute-sets do not get swapped"""
@@ -80,19 +81,19 @@ class testCreateClause():
                ORDER BY e.v"""
         res = self.g.query(q).result_set
 
-        self.env.assertEqual(len(res), 2)
+        assert len(res) == 2
 
         s = res[0][0]
         v = res[0][1]
         d = res[0][2]
-        self.env.assertEqual(s, "C")
-        self.env.assertEqual(v, 1)
-        self.env.assertEqual(d, "D")
+        assert s == "C"
+        assert v == 1
+        assert d == "D"
 
         s = res[1][0]
         v = res[1][1]
         d = res[1][2]
-        self.env.assertEqual(s, "A")
-        self.env.assertEqual(v, 2)
-        self.env.assertEqual(d, "B")
+        assert s == "A"
+        assert v == 2
+        assert d == "B"
 

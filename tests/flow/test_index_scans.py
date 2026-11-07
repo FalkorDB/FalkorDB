@@ -7,16 +7,17 @@ GRAPH_ID = social.social_utils.graph_name
 
 
 class testIndexScanFlow():
-    def __init__(self):
-        self.env, self.db = Env()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
 
-    def setUp(self):
+    def setup_method(self):
         redis_con = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
         social.social_utils.populate_graph(redis_con, self.graph)
         self.build_indices()
 
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
 
     def build_indices(self):
@@ -28,34 +29,34 @@ class testIndexScanFlow():
     def test01_cartesian_product_mixed_scans(self):
         query = "MATCH (p:person), (c:country) WHERE p.age > 0 RETURN p.age, c.name ORDER BY p.age, c.name"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
-        self.env.assertContains('Label Scan', plan)
+        assert 'Node By Index Scan' in plan
+        assert 'Label Scan' in plan
         indexed_result = self.graph.query(query)
 
         query = "MATCH (p:person), (c:country) RETURN p.age, c.name ORDER BY p.age, c.name"
         plan = str(self.graph.explain(query))
-        self.env.assertNotContains('Node By Index Scan', plan)
-        self.env.assertContains('Label Scan', plan)
+        assert 'Node By Index Scan' not in plan
+        assert 'Label Scan' in plan
         unindexed_result = self.graph.query(query)
 
-        self.env.assertEqual(indexed_result.result_set, unindexed_result.result_set)
+        assert indexed_result.result_set == unindexed_result.result_set
 
     # Validate that Cartesian products using just index scans succeed
     def test02_cartesian_product_index_scans_only(self):
         query = "MATCH (p:person), (c:country) WHERE p.age > 0 AND c.name > '' RETURN p.age, c.name ORDER BY p.age, c.name"
         plan = str(self.graph.explain(query))
         # The two streams should both use index scans
-        self.env.assertEqual(plan.count('Node By Index Scan'), 2)
-        self.env.assertNotContains('Label Scan', plan)
+        assert plan.count('Node By Index Scan') == 2
+        assert 'Label Scan' not in plan
         indexed_result = self.graph.query(query)
 
         query = "MATCH (p:person), (c:country) RETURN p.age, c.name ORDER BY p.age, c.name"
         plan = str(self.graph.explain(query))
-        self.env.assertNotContains('Node By Index Scan', plan)
-        self.env.assertContains('Label Scan', plan)
+        assert 'Node By Index Scan' not in plan
+        assert 'Label Scan' in plan
         unindexed_result = self.graph.query(query)
 
-        self.env.assertEqual(indexed_result.result_set, unindexed_result.result_set)
+        assert indexed_result.result_set == unindexed_result.result_set
 
     # Validate that the appropriate bounds are respected when a Cartesian product uses the same index in two streams
     def test03_cartesian_product_reused_index(self):
@@ -63,73 +64,73 @@ class testIndexScanFlow():
         query = "MATCH (a:person {name: 'Omri Traub'}), (b:person) WHERE b.age <= 30 RETURN a.name, b.name ORDER BY a.name, b.name"
         plan = str(self.graph.explain(query))
         # The two streams should both use index scans
-        self.env.assertEqual(plan.count('Node By Index Scan'), 2)
-        self.env.assertNotContains('Label Scan', plan)
+        assert plan.count('Node By Index Scan') == 2
+        assert 'Label Scan' not in plan
 
 
         expected_result = [['Omri Traub', 'Gal Derriere'],
                            ['Omri Traub', 'Lucy Yanfital']]
         result = self.graph.query(query)
 
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
     # Validate index utilization when filtering on a numeric field with the `IN` keyword.
     def test04_test_in_operator_numerics(self):
         # Validate the transformation of IN to multiple OR expressions.
         query = "MATCH (p:person) WHERE p.age IN [1,2,3] RETURN p"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
 
         # Validate that nested arrays are not scanned in index.
         query = "MATCH (p:person) WHERE p.age IN [[1,2],3] RETURN p"
         plan = str(self.graph.explain(query))
-        self.env.assertNotContains('Node By Index Scan', plan)
-        self.env.assertContains('Label Scan', plan)
+        assert 'Node By Index Scan' not in plan
+        assert 'Label Scan' in plan
 
         # Validate the transformation of IN to multiple OR, over a range.
         query = "MATCH (p:person) WHERE p.age IN range(0,30) RETURN p.name ORDER BY p.name"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
 
         expected_result = [['Gal Derriere'], ['Lucy Yanfital']]
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
          # Validate the transformation of IN to empty index iterator.
         query = "MATCH (p:person) WHERE p.age IN [] RETURN p.name"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
 
         expected_result = []
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # Validate the transformation of IN OR IN to empty index iterators.
         query = "MATCH (p:person) WHERE p.age IN [] OR p.age IN [] RETURN p.name"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
 
         expected_result = []
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # Validate the transformation of multiple IN filters.
         query = "MATCH (p:person) WHERE p.age IN [26, 27, 30] OR p.age IN [33, 34, 35] RETURN p.name ORDER BY p.age"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
 
         expected_result = [['Gal Derriere'], ['Lucy Yanfital'], ['Omri Traub'], ['Noam Nativ']]
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # Validate the transformation of multiple IN filters.
         query = "MATCH (p:person) WHERE p.age IN [26, 27, 30] OR p.age IN [33, 34, 35] OR p.age IN [] RETURN p.name ORDER BY p.age"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
 
         expected_result = [['Gal Derriere'], ['Lucy Yanfital'], ['Omri Traub'], ['Noam Nativ']]
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # Validate the transformation of IN filters 1 not on attribute.
         query = """MATCH (p:person)
@@ -143,11 +144,11 @@ class testIndexScanFlow():
                    RETURN p.name ORDER BY p.age"""
 
         plan = str(self.graph.explain(query, params={'ids': ids}))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
 
         expected_result = [['Omri Traub'], ['Noam Nativ']]
         result = self.graph.ro_query(query, params={'ids': ids})
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
     # Validate index utilization when filtering on string fields with the `IN` keyword.
     def test05_test_in_operator_string_props(self):
@@ -156,51 +157,51 @@ class testIndexScanFlow():
         # Validate the transformation of IN to multiple OR expressions over string properties.
         query = "MATCH (p:person) WHERE p.name IN ['Gal Derriere', 'Lucy Yanfital'] RETURN p.name ORDER BY p.name"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
-        self.env.assertNotContains('Label Scan', plan)
+        assert 'Node By Index Scan' in plan
+        assert 'Label Scan' not in plan
 
         expected_result = [['Gal Derriere'], ['Lucy Yanfital']]
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # Combine numeric and string filters specified by IN.
         query = "MATCH (p:person) WHERE p.name IN ['Gal Derriere', 'Lucy Yanfital'] AND p.age in [30] RETURN p.name ORDER BY p.name"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
-        self.env.assertNotContains('Label Scan', plan)
+        assert 'Node By Index Scan' in plan
+        assert 'Label Scan' not in plan
 
         expected_result = [['Lucy Yanfital']]
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
          # Validate an empty index on IN with multiple indexes
         query = "MATCH (p:person) WHERE p.name IN [] OR p.age IN [] RETURN p.name"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
 
         expected_result = []
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # Combine IN filters with other relational filters.
         query = "MATCH (p:person) WHERE p.name IN ['Gal Derriere', 'Lucy Yanfital'] AND p.name < 'H' RETURN p.name ORDER BY p.name"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
-        self.env.assertNotContains('Label Scan', plan)
+        assert 'Node By Index Scan' in plan
+        assert 'Label Scan' not in plan
 
         expected_result = [['Gal Derriere']]
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         query = "MATCH (p:person) WHERE p.name IN ['Gal Derriere', 'Lucy Yanfital'] OR p.age = 33 RETURN p.name ORDER BY p.name"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
-        self.env.assertNotContains('Label Scan', plan)
+        assert 'Node By Index Scan' in plan
+        assert 'Label Scan' not in plan
 
         expected_result = [['Gal Derriere'], ['Lucy Yanfital'], ['Omri Traub']]
         result = self.graph.query(query)
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
     # ',' is the default separator for tag indices
     # we've updated our separator to '\0' this test verifies issue 696:
@@ -217,73 +218,73 @@ class testIndexScanFlow():
         query = """MATCH (a:Node{value:"A ValuePartition is a pattern that describes a restricted set of classes from which a property can be associated. The parent class is used in restrictions, and the covering axiom means that only members of the subclasses may be used as values."}) RETURN a"""
         plan = str(self.graph.explain(query))
         result_set = self.graph.query(query).result_set
-        self.env.assertContains('Node By Index Scan', plan)
-        self.env.assertEqual(len(result_set), 1)
+        assert 'Node By Index Scan' in plan
+        assert len(result_set) == 1
 
     def test07_index_scan_and_id(self):
         self.graph.delete()
         self.graph.query("UNWIND range(0, 9) AS i CREATE (a:person {age: i})")
 
         query_result = create_node_range_index(self.graph, 'person', 'age', sync=True)
-        self.env.assertEqual(1, query_result.indices_created)
+        assert 1 == query_result.indices_created
 
         query = """MATCH (n:person)
                    WHERE id(n)>=7 AND n.age<9
                    RETURN id(n) ORDER BY n.age"""
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
-        self.env.assertContains('Filter', plan)
+        assert 'Node By Index Scan' in plan
+        assert 'Filter' in plan
         query_result = self.graph.query(query)
 
-        self.env.assertEqual(2, len(query_result.result_set))
+        assert 2 == len(query_result.result_set)
         expected_result = [[7], [8]]
-        self.env.assertEqual(expected_result, query_result.result_set)
+        assert expected_result == query_result.result_set
 
     # Validate placement of index scans and filter ops when not all filters can be replaced.
     def test08_index_scan_multiple_filters(self):
         query = "MATCH (p:person) WHERE p.age = 30 AND NOT EXISTS(p.fakeprop) RETURN p.name"
         plan = str(self.graph.explain(query))
-        self.env.assertContains('Node By Index Scan', plan)
-        self.env.assertNotContains('Label Scan', plan)
-        self.env.assertContains('Filter', plan)
+        assert 'Node By Index Scan' in plan
+        assert 'Label Scan' not in plan
+        assert 'Filter' in plan
 
         query_result = self.graph.query(query)
         expected_result = ["Lucy Yanfital"]
-        self.env.assertEqual(query_result.result_set[0], expected_result)
+        assert query_result.result_set[0] == expected_result
 
     def test09_index_scan_with_params(self):
         query = "MATCH (p:person) WHERE p.age = $age RETURN p.name"
         params = {'age': 30}
         plan = str(self.graph.explain(query, params=params))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(query, params=params)
         expected_result = ["Lucy Yanfital"]
-        self.env.assertEqual(query_result.result_set[0], expected_result)
+        assert query_result.result_set[0] == expected_result
 
     def test10_index_scan_with_param_array(self):
         query = "MATCH (p:person) WHERE p.age in $ages RETURN p.name"
         params = {'ages': [30]}
         plan = str(self.graph.explain(query, params=params))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(query, params=params)
         expected_result = ["Lucy Yanfital"]
-        self.env.assertEqual(query_result.result_set[0], expected_result)
+        assert query_result.result_set[0] == expected_result
 
     def test11_single_index_multiple_scans(self):
         query = "MERGE (p1:person {age: 40}) MERGE (p2:person {age: 41})"
         plan = str(self.graph.explain(query))
         # Two index scans should be performed.
-        self.env.assertEqual(plan.count("Node By Index Scan"), 2)
+        assert plan.count("Node By Index Scan") == 2
 
         query_result = self.graph.query(query)
         # Two new nodes should be created.
-        self.env.assertEqual(query_result.nodes_created, 2)
+        assert query_result.nodes_created == 2
 
     def test12_remove_scans_before_index(self):
         query = "MATCH (a:person {age: 32})-[]->(b) WHERE (b:person)-[]->(a) RETURN a"
         plan = str(self.graph.explain(query))
         # One index scan should be performed.
-        self.env.assertEqual(plan.count("Node By Index Scan"), 1)
+        assert plan.count("Node By Index Scan") == 1
 
     def test13_point_index_scan(self):
         # create index
@@ -300,7 +301,7 @@ class testIndexScanFlow():
 
         # make sure index is used
         plan = str(self.graph.explain(q))
-        self.env.assertContains("Node By Index Scan", plan)
+        assert "Node By Index Scan" in plan
 
         # refine query from '<' to '<='
         q = """MATCH (r:restaurant)
@@ -309,7 +310,7 @@ class testIndexScanFlow():
 
         # make sure index is used
         plan = str(self.graph.explain(q))
-        self.env.assertContains("Node By Index Scan", plan)
+        assert "Node By Index Scan" in plan
 
         # index should NOT be used when searching for points outside of a circle
         # testing operand: '>', '>=' and '='
@@ -319,7 +320,7 @@ class testIndexScanFlow():
 
         # make sure index is NOT used
         plan = str(self.graph.explain(q))
-        self.env.assertNotContains("Node By Index Scan", plan)
+        assert "Node By Index Scan" not in plan
 
         q = """MATCH (r:restaurant)
         WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) >= 1000
@@ -327,7 +328,7 @@ class testIndexScanFlow():
 
         # make sure index is NOT used
         plan = str(self.graph.explain(q))
-        self.env.assertNotContains("Node By Index Scan", plan)
+        assert "Node By Index Scan" not in plan
 
         q = """MATCH (r:restaurant)
         WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) = 1000
@@ -335,35 +336,35 @@ class testIndexScanFlow():
 
         # make sure index is NOT used
         plan = str(self.graph.explain(q))
-        self.env.assertNotContains("Node By Index Scan", plan)
+        assert "Node By Index Scan" not in plan
 
     def test14_index_scan_utilize_array(self):
         # Querying indexed properties using IN a constant array should utilize indexes.
         query = "MATCH (a:person) WHERE a.age IN [34, 33] RETURN a.name ORDER BY a.name"
         plan = str(self.graph.explain(query))
         # One index scan should be performed.
-        self.env.assertEqual(plan.count("Node By Index Scan"), 1)
+        assert plan.count("Node By Index Scan") == 1
         query_result = self.graph.query(query)
         expected_result = [["Noam Nativ"],
                            ["Omri Traub"]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # Querying indexed properties using IN a generated array should utilize indexes.
         query = "MATCH (a:person) WHERE a.age IN range(33, 34) RETURN a.name ORDER BY a.name"
         plan = str(self.graph.explain(query))
         # One index scan should be performed.
-        self.env.assertEqual(plan.count("Node By Index Scan"), 1)
+        assert plan.count("Node By Index Scan") == 1
         query_result = self.graph.query(query)
         expected_result = [["Noam Nativ"],
                            ["Omri Traub"]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # Querying indexed properties using IN a non-constant array should not utilize indexes.
         query = "MATCH (a:person)-[]->(b) WHERE a.age IN b.arr RETURN a"
         plan = str(self.graph.explain(query))
         # No index scans should be performed.
-        self.env.assertEqual(plan.count("Label Scan"), 1)
-        self.env.assertEqual(plan.count("Node By Index Scan"), 0)
+        assert plan.count("Label Scan") == 1
+        assert plan.count("Node By Index Scan") == 0
 
         # Querying indexed properties using IN a with array with stop word.
         query = "CREATE (:country { name: 'a' })"
@@ -372,10 +373,10 @@ class testIndexScanFlow():
         query = "MATCH (a:country) WHERE a.name IN ['a'] RETURN a.name ORDER BY a.name"
         plan = str(self.graph.explain(query))
         # One index scan should be performed.
-        self.env.assertEqual(plan.count("Node By Index Scan"), 1)
+        assert plan.count("Node By Index Scan") == 1
         query_result = self.graph.query(query)
         expected_result = [['a']]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         query = "MATCH (a:country { name: 'a' }) DELETE a"
         self.graph.query(query)
@@ -398,7 +399,7 @@ class testIndexScanFlow():
         res = g.query(q)
         actual = res.result_set
         expected = [['hello world hello', 1.5], ['hello world hello world', 2]]
-        self.env.assertEqual(expected, actual)
+        assert expected == actual
 
     def test16_runtime_index_utilization(self):
         # find all person nodes with age in the range 33-37
@@ -409,10 +410,10 @@ class testIndexScanFlow():
         RETURN p.name
         ORDER BY p.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
         expected_result = [["Noam Nativ"], ["Omri Traub"]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # similar to the query above, only this time the filter is specified
         # by an OR condition
@@ -422,10 +423,10 @@ class testIndexScanFlow():
         RETURN p.name
         ORDER BY p.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
         expected_result = [["Noam Nativ"], ["Omri Traub"]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # find all person nodes with age equals 33 'x'
         # 'x' value is known only at runtime
@@ -434,10 +435,10 @@ class testIndexScanFlow():
         RETURN p.name
         ORDER BY p.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
         expected_result = [["Omri Traub"]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # find all person nodes with age equals x + 1
         # the expression x+1 is evaluated to the constant 33 only at runtime
@@ -448,10 +449,10 @@ class testIndexScanFlow():
         RETURN p.name
         ORDER BY p.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
         expected_result = [["Omri Traub"]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # same idea as previous query only we've switched the position of the
         # operands, queried entity (p.age) is now on the right hand side of the
@@ -462,10 +463,10 @@ class testIndexScanFlow():
         RETURN p.name
         ORDER BY p.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
         expected_result = [["Omri Traub"]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # find all person nodes 'b' with age greater than node 'a'
         # a's age value is determined only at runtime
@@ -478,10 +479,10 @@ class testIndexScanFlow():
         RETURN b.name
         ORDER BY b.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
         expected_result = [["Noam Nativ"]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # same idea as previous query, only this time we've switched filter
         # operands position, queries entity is on the right hand side
@@ -492,10 +493,10 @@ class testIndexScanFlow():
         RETURN b.name
         ORDER BY b.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
         expected_result = [["Noam Nativ"]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # check that the value is evaluated before sending it to index query
         q = """MATCH (b:person)
@@ -503,10 +504,10 @@ class testIndexScanFlow():
         RETURN b.name
         ORDER BY b.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
         expected_result = [['Ailon Velger'], ['Alon Fital'], ['Ori Laslo'], ['Roi Lipman'], ['Tal Doron']]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # check that the value is evaluated before sending it to index query
         q = """MATCH (a:person)
@@ -514,9 +515,9 @@ class testIndexScanFlow():
         RETURN a.name
         ORDER BY a.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # TODO: The following query uses the "Value Hash Join" where it would be
         # better to use "Index Scan"
@@ -538,10 +539,10 @@ class testIndexScanFlow():
                MATCH (a:person {age:age})
                RETURN a.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
         expected_result = [["leonard"]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # find all person nodes with age > [33]
         q = """WITH [33] AS age
@@ -549,10 +550,10 @@ class testIndexScanFlow():
                WHERE a.age > age
                RETURN a.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
         expected_result = [["leonard"], [["maynard"]]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
         # combine indexable value with none-indexable value index query
         q = """WITH [33] AS age, 'leonard' AS name
@@ -560,10 +561,10 @@ class testIndexScanFlow():
                WHERE a.age >= age AND a.name = name
                RETURN a.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
         query_result = self.graph.query(q)
         expected_result = [["leonard"]]
-        self.env.assertEqual(query_result.result_set, expected_result)
+        assert query_result.result_set == expected_result
 
     # test for https://github.com/RedisGraph/RedisGraph/issues/1980
     def test18_index_scan_inside_apply(self):
@@ -572,7 +573,7 @@ class testIndexScanFlow():
         result = self.graph.query("UNWIND range(1, 5) AS id OPTIONAL MATCH (u:L1{id: 5}) RETURN u.id")
 
         expected_result = [[5], [5], [5], [5], [5]]
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
     def test19_index_scan_numeric_accuracy(self):
         create_node_range_index(self.graph, 'L1', 'id', sync=True)
@@ -590,7 +591,7 @@ class testIndexScanFlow():
                                      RETURN u.id"""
         )
         expected_result = [[990000000262240069]]
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # test index search from child
         result = self.graph.query("""MATCH (u:L1)
@@ -599,7 +600,7 @@ class testIndexScanFlow():
                                      RETURN u.id"""
         )
         expected_result = [[990000000262240069]]
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # test index search with or
         result = self.graph.query("""MATCH (u:L1)
@@ -609,7 +610,7 @@ class testIndexScanFlow():
                                      ORDER BY u.id"""
         )
         expected_result = [[990000000262240069], [990000000262240070]]
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # test resetting index scan operation
         result = self.graph.query("""MATCH (u1:L1), (u2:L1)
@@ -618,7 +619,7 @@ class testIndexScanFlow():
                                      RETURN u1.id, u2.id
                                      ORDER BY u1.id, u2.id""")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # test resetting index scan operation when using the consume from child function
         result = self.graph.query("""MATCH (u:L1)
@@ -629,7 +630,7 @@ class testIndexScanFlow():
                                      RETURN u1.id, u2.id
                                      ORDER BY u1.id, u2.id""")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # test resetting index scan operation when rebuild index is required
         result = self.graph.query("""MATCH (u:L1)
@@ -640,7 +641,7 @@ class testIndexScanFlow():
                                      RETURN u1.id, u2.id
                                      ORDER BY u1.id, u2.id""")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # test index scan with 2 different attributes
         result = self.graph.query("""MATCH (u:L2)
@@ -648,7 +649,7 @@ class testIndexScanFlow():
                                            u.id2 = 990000000262240067
                                      RETURN u.id1, u.id2""")
         expected_result = [[990000000262240069, 990000000262240067]]
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
     def test20_index_scan_stopwords(self):
         #-----------------------------------------------------------------------
@@ -675,12 +676,12 @@ class testIndexScanFlow():
         # expecting node to return as stopwords are not enforced
         result = self.graph.query("MATCH (u:User {id: 'not'}) RETURN u")
         user = Node(labels='User', properties={'id': 'not'})
-        self.env.assertEqual(result.result_set[0][0], user)
+        assert result.result_set[0][0] == user
 
         # query fulltext index for user
         # expecting no results as stopwords are enforced
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('User', 'stop')")
-        self.env.assertEqual(result.result_set, [])
+        assert result.result_set == []
     
     def test21_invalid_distance_query(self):
         # create exact match index over User id
@@ -692,9 +693,9 @@ class testIndexScanFlow():
         # invalid query - distance() receives only 1 argument instead of 2
         try:
             self.graph.query("MATCH (u:User) WHERE distance(u.loc) < 20000 RETURN u")
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
-            self.env.assertContains("Received 1 arguments to function 'distance', expected at least 2", str(e))
+            assert "Received 1 arguments to function 'distance', expected at least 2" in str(e)
 
     def test_22_pickup_on_index_creation(self):
         g = Graph(self.env.getConnection(), 'late_index_creation')
@@ -708,18 +709,18 @@ class testIndexScanFlow():
         plan = str(g.explain(q))
 
         # expecting no index scan operation, as we've yet to create an index
-        self.env.assertNotContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' not in plan
 
         # create an index
         resultset = create_node_range_index(g, 'N', 'v', sync=True)
-        self.env.assertEqual(1, resultset.indices_created)
+        assert 1 == resultset.indices_created
 
         # re-issue the same query
         q = "MATCH (n:N) WHERE n.v = 1 RETURN n"
         plan = str(g.explain(q))
 
         # expecting an index scan operation
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
 
     def test_23_do_not_utilize_index_(self):
         # create graph
@@ -730,18 +731,18 @@ class testIndexScanFlow():
         plan = str(self.graph.explain(q))
 
         # expecting no index scan operation
-        self.env.assertNotContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' not in plan
 
         # create an index
         resultset = create_node_range_index(self.graph, 'N', 'v', sync=True)
-        self.env.assertEqual(1, resultset.indices_created)
+        assert 1 == resultset.indices_created
 
         # re-issue the same query
         q = "MATCH (n:N) WHERE id(n) IN [0] RETURN n"
         plan = str(self.graph.explain(q))
 
         # expecting an no index scan operation
-        self.env.assertNotContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' not in plan
 
     def test_24_multitype_index(self):
         # create index with multiple types
@@ -755,10 +756,10 @@ class testIndexScanFlow():
         # search using range
         q = "MATCH (p:person) WHERE p.name = 'Ailon Velger' RETURN p.name"
         plan = str(self.graph.explain(q))
-        self.env.assertContains('Node By Index Scan', plan)
+        assert 'Node By Index Scan' in plan
 
         result = self.graph.query(q).result_set
-        self.env.assertEqual(len(result), 1)
+        assert len(result) == 1
 
         # search usign fulltext
         q = """CALL db.idx.fulltext.queryNodes('person', 'A*') YIELD node
@@ -766,10 +767,10 @@ class testIndexScanFlow():
                ORDER BY name
                RETURN collect(name)"""
         names = self.graph.query(q).result_set[0][0]
-        self.env.assertContains('Alon Fital', names)
-        self.env.assertContains('Ailon Velger', names)
-        self.env.assertContains('Boaz Arad', names)
-        self.env.assertContains('Valerie Abigail Arad', names)
+        assert 'Alon Fital' in names
+        assert 'Ailon Velger' in names
+        assert 'Boaz Arad' in names
+        assert 'Valerie Abigail Arad' in names
 
     def test_25_unescaped_string(self):
         # make sure range index doesn't alter strings
@@ -780,11 +781,11 @@ class testIndexScanFlow():
         url = "http://mapper.acme.com/?ll=35.33977,-111.64513&z=13&t=R&marker0=37.17417%2C-113.32611%2CHurricane%2C%20Utah&marker1=33.34950%2C-110.99262%2CTop%20of%20the%20World\\%2C%20AZ&marker2=36.14666%2C-111.03209%2CCoal%20Mine%20Canyon\\%2C%20AZ&marker3=34.72585%2C-111.55126%2CApache%20Maid%20Mountain&marker4=35.34640%2C-111.67849%2CSan%20Francisco%20Peaks\\%2C%20Flagstaff&marker5=33.46420%2C-113.36047%2CCourthouse%20Rock\\%2C%20Maricopa%20County%20AZ&marker6=35.64082%2C-115.35916%2CRoach\\%2C%20Nevada&marker7=37.25276%2C-113.36773%2CSilver%20Reef&marker8=35.33001%2C-111.64627%2CDoyle%20Peak\\%2C%20Arizona&marker9=34.20086%2C-112.15294%2CBumble%20Bee\\%2C%20AZ"
         params = {'url': url}
         res = self.graph.query("CREATE (:Page {url: $url})", params)
-        self.env.assertEqual(res.nodes_created, 1)
+        assert res.nodes_created == 1
 
         # make sure we're able to locate node using index scan
         res = self.graph.query("MATCH (p:Page {url: $url}) RETURN p.url", params)
-        self.env.assertEqual(url, res.result_set[0][0])
+        assert url == res.result_set[0][0]
 
     def test_26_index_scan_with_other_filters(self):
         # make sure index is utilized when the compared value is not a trivial
@@ -842,7 +843,7 @@ class testIndexScanFlow():
 
         for q in queries:
             plan = self.graph.explain(q)
-            self.env.assertContains('Node By Index Scan', plan)
+            assert 'Node By Index Scan' in plan
 
     def test_27_multi_index_scan(self):
         # make sure multiple index scans are utilized
@@ -903,7 +904,7 @@ class testIndexScanFlow():
 
         for q in queries:
             plan = self.graph.explain(q)
-            self.env.assertContains('Node By Index Scan', plan)
+            assert 'Node By Index Scan' in plan
 
     def test_28_array_index(self):
         # test array indexing
@@ -928,15 +929,15 @@ class testIndexScanFlow():
         for sample in samples:
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
-            self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-            self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+            assert 'Label Scan' not in plan # not expecting label scan
+            assert 'Node By Index Scan' in plan # expecting index scan
 
             res = self.graph.query(q, {'x':sample}).result_set
-            self.env.assertEqual(len(res), 1)
+            assert len(res) == 1
 
         # try searching for a non existing sample
         res = self.graph.query(q, {'x':12345}).result_set
-        self.env.assertEqual(len(res), 0)
+        assert len(res) == 0
 
         #----------------------------------------------------------------------
         # strings array
@@ -952,15 +953,15 @@ class testIndexScanFlow():
         for sample in samples:
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
-            self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-            self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+            assert 'Label Scan' not in plan # not expecting label scan
+            assert 'Node By Index Scan' in plan # expecting index scan
 
             res = self.graph.query(q, {'x':sample}).result_set
-            self.env.assertEqual(len(res), 1)
+            assert len(res) == 1
 
         # try searching for a non existing sample
         res = self.graph.query(q, {'x':'non existing'}).result_set
-        self.env.assertEqual(len(res), 0)
+        assert len(res) == 0
 
         #----------------------------------------------------------------------
         # mix numerics & strings array
@@ -976,18 +977,18 @@ class testIndexScanFlow():
         for sample in samples:
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
-            self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-            self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+            assert 'Label Scan' not in plan # not expecting label scan
+            assert 'Node By Index Scan' in plan # expecting index scan
 
             res = self.graph.query(q, {'x':sample}).result_set
-            self.env.assertEqual(len(res), 2)
+            assert len(res) == 2
 
         # try searching for a non existing samples
         res = self.graph.query(q, {'x':'non existing'}).result_set
-        self.env.assertEqual(len(res), 0)
+        assert len(res) == 0
 
         res = self.graph.query(q, {'x':12345}).result_set
-        self.env.assertEqual(len(res), 0)
+        assert len(res) == 0
 
     def test_29_array_index(self):
         # test array indexing where the search entry is produced
@@ -1013,11 +1014,11 @@ class testIndexScanFlow():
 
         # make sure index is utilized
         plan = str(self.graph.explain(q))
-        self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-        self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+        assert 'Label Scan' not in plan # not expecting label scan
+        assert 'Node By Index Scan' in plan # expecting index scan
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(len(res), 6)
+        assert len(res) == 6
 
         # look up entity using exact match
         q = """WITH range(0, 10, 2) AS arr
@@ -1027,11 +1028,11 @@ class testIndexScanFlow():
 
         # make sure index is utilized
         plan = str(self.graph.explain(q))
-        self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-        self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+        assert 'Label Scan' not in plan # not expecting label scan
+        assert 'Node By Index Scan' in plan # expecting index scan
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(len(res), 1)
+        assert len(res) == 1
 
         # look up entity using exact match
         q = """WITH range(0, 10, 2) AS arr
@@ -1041,11 +1042,11 @@ class testIndexScanFlow():
 
         # make sure index is utilized
         plan = str(self.graph.explain(q))
-        self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-        self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+        assert 'Label Scan' not in plan # not expecting label scan
+        assert 'Node By Index Scan' in plan # expecting index scan
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(len(res), 1)
+        assert len(res) == 1
 
     def test_30_update_array_index(self):
         # test index update of array attributes
@@ -1064,11 +1065,11 @@ class testIndexScanFlow():
         for sample in samples:
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
-            self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-            self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+            assert 'Label Scan' not in plan # not expecting label scan
+            assert 'Node By Index Scan' in plan # expecting index scan
 
             res = self.graph.query(q, {'x':sample}).result_set
-            self.env.assertEqual(len(res), 1)
+            assert len(res) == 1
 
         # update the person node with a new set of samples
         new_samples = [51, 50, 46, 'a', 'ab']
@@ -1082,18 +1083,18 @@ class testIndexScanFlow():
         for sample in new_samples:
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
-            self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-            self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+            assert 'Label Scan' not in plan # not expecting label scan
+            assert 'Node By Index Scan' in plan # expecting index scan
 
             res = self.graph.query(q, {'x':sample}).result_set
-            self.env.assertEqual(len(res), 1)
+            assert len(res) == 1
 
         # use an old sample value and make sure node couldn't be located
         q = """MATCH (p:person)
                WHERE $x in p.samples
                RETURN p"""
         res = self.graph.query(q, {'x': samples[0]}).result_set
-        self.env.assertEqual(len(res), 0)
+        assert len(res) == 0
 
     def test_31_remove_array_index(self):
         # make sure removing an array attribute causes the entity
@@ -1113,11 +1114,11 @@ class testIndexScanFlow():
         for sample in samples:
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
-            self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-            self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+            assert 'Label Scan' not in plan # not expecting label scan
+            assert 'Node By Index Scan' in plan # expecting index scan
 
             res = self.graph.query(q, {'x':sample}).result_set
-            self.env.assertEqual(len(res), 1)
+            assert len(res) == 1
 
         # delete the array from the node
         q = """MATCH (p:person)
@@ -1131,11 +1132,11 @@ class testIndexScanFlow():
         for sample in samples:
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
-            self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-            self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+            assert 'Label Scan' not in plan # not expecting label scan
+            assert 'Node By Index Scan' in plan # expecting index scan
 
             res = self.graph.query(q, {'x':sample}).result_set
-            self.env.assertEqual(len(res), 0)
+            assert len(res) == 0
 
     def test_32_multiple_array_indexed_entities(self):
         # test array index lookup in situations where there are multiple
@@ -1158,11 +1159,11 @@ class testIndexScanFlow():
 
         # make sure index is utilized
         plan = str(self.graph.explain(q))
-        self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-        self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+        assert 'Label Scan' not in plan # not expecting label scan
+        assert 'Node By Index Scan' in plan # expecting index scan
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(res[0][0], 11)
+        assert res[0][0] == 11
 
     def test_33_non_supported_array_entries(self):
         # make sure we can find entities which contains non supported
@@ -1185,11 +1186,11 @@ class testIndexScanFlow():
 
         # make sure index is utilized
         plan = str(self.graph.explain(q))
-        self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-        self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+        assert 'Label Scan' not in plan # not expecting label scan
+        assert 'Node By Index Scan' in plan # expecting index scan
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(len(res), 1)
+        assert len(res) == 1
 
         # try to find an unsupported data type
         q = """WITH point({latitude: 10, longitude: 20}) AS entry
@@ -1199,11 +1200,11 @@ class testIndexScanFlow():
 
         # make sure index is utilized
         plan = str(self.graph.explain(q))
-        self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-        self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+        assert 'Label Scan' not in plan # not expecting label scan
+        assert 'Node By Index Scan' in plan # expecting index scan
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(len(res), 1)
+        assert len(res) == 1
 
     def test_34_exact_match_array_value(self):
         # make sure we can locate entities using exact match
@@ -1226,11 +1227,11 @@ class testIndexScanFlow():
 
         # make sure index is utilized
         plan = str(self.graph.explain(q, {'entries': entries}))
-        self.env.assertNotContains('Label Scan', plan) # not expecting label scan
-        self.env.assertContains('Node By Index Scan', plan) # expecting index scan
+        assert 'Label Scan' not in plan # not expecting label scan
+        assert 'Node By Index Scan' in plan # expecting index scan
 
         res = self.graph.query(q, {'entries': entries}).result_set
-        self.env.assertEqual(len(res), 1)
+        assert len(res) == 1
 
     def test_35_non_indexable_literal_retains_filter(self):
         # Regression (PR #393 review): `WHERE n.v = [1,2,3]` must not
@@ -1246,4 +1247,4 @@ class testIndexScanFlow():
         q = "MATCH (n:L) WHERE n.v = [1, 2, 3] RETURN n.v"
         res = self.graph.query(q).result_set
         # `n.v` is a scalar int, never a list — no row should match.
-        self.env.assertEqual(res, [])
+        assert res == []

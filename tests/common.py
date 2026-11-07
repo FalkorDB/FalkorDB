@@ -1,75 +1,81 @@
+"""Harness for the root suites (e2e, functions, TCK, MVCC, concurrency).
+
+Redis lifecycle is delegated to `tests.infra`, the same layer the flow
+suite uses, so all suites resolve the module the same way and behave the
+same against a local build, a spawned container, or an existing service.
+
+The module-level `client` / `g` globals are the interface the suites
+actually use (`common.g.query(...)`), so they are kept as-is.
+"""
+
 import os
-import platform
-import subprocess
+import sys
 import time
+import warnings
 
 from falkordb import FalkorDB
-from redis import Redis
-from redis.retry import Retry
-from redis.backoff import NoBackoff
 
-redis_server: subprocess.Popen = None
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from infra import Env, partition, teardown_all, uses_existing_service
+
+env = None
 client = None
 g = None
 shutdown = False
+_saved_addr = None
+
+GRAPH_ID = "test"
 
 
-def start_redis(release=None, moduleEnvs=[]):
-    global redis_server, client, g, shutdown
-    host = os.environ.get("FALKORDB_HOST", "localhost")
-    port = int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379")))
-    # In CI's services-container mode an external redis is already running with
-    # the module loaded; spawning locally would race the port. Fail loudly instead.
-    existing_env = os.environ.get("EXISTING_ENV", "").lower() == "1"
-    if release is None:
-        release = True if os.environ.get("RELEASE", "").lower() == "1" else False
-    default_target = "target/debug/libfalkordb.so"
-    if platform.system() == "Darwin":
-        default_target = default_target.replace(".so", ".dylib")
-    if release:
-        default_target = default_target.replace("debug", "release")
-    target = os.environ.get("TARGET", default_target)
-    # Bounded connect timeout + no-retry policy: redis-py 7.4 defaults retry
-    # ConnectionError indefinitely, which would hang the EXISTING_ENV probe
-    # if the service container isn't reachable. Fail fast so the caller's
-    # except branch fires within ~1s instead of after a long stall.
-    r = Redis(host=host, port=port, socket_connect_timeout=1,
-              retry=Retry(NoBackoff(), 0))
-    try:
-        r.ping()
-        client = FalkorDB(host=host, port=port)
-        g = client.select_graph("test")
-        return
-    except Exception as e:
-        if existing_env:
-            raise RuntimeError(
-                f"EXISTING_ENV=1 but cannot reach redis at {host}:{port}: {e}"
-            ) from e
-        shutdown = True
-        if os.path.exists("redis-test.log"):
-            os.remove("redis-test.log")
-        redis_server = subprocess.Popen(
-            ["/usr/local/bin/redis-server",
-             "--save", "", "--port", str(port), "--logfile", "redis-test.log",
-             "--loadmodule", target] + moduleEnvs,
-            stdout=subprocess.PIPE)
-    while True:
-        try:
-            r.ping()
-            client = FalkorDB(host=host, port=port)
-            g = client.select_graph("test")
-            return
-        except Exception:
-            # Backoff so a slow redis startup doesn't peg a CPU core.
-            time.sleep(0.05)
+def start_redis(release=None, moduleEnvs=()):
+    """Bring up a server and bind the `client` / `g` globals to it.
+
+    `moduleEnvs` is the flat `[KEY, VALUE, ...]` argv form the suites
+    already pass; `release` overrides the RELEASE environment variable for
+    module lookup.
+    """
+    global env, client, g, shutdown, _saved_addr
+    if release is not None:
+        os.environ["RELEASE"] = "1" if release else "0"
+    module_args = " ".join(moduleEnvs)
+    if module_args and uses_existing_service():
+        # The server is already up and its load-time args are fixed, so
+        # load-time-only keys can't be applied — GRAPH.CONFIG SET rejects
+        # them outright. Drop them rather than failing the whole module:
+        # the suites that pass them already skip the tests that depend on
+        # them in this mode (see the EXISTING_ENV skip in tests/test_e2e.py).
+        mutable, immutable = partition(module_args)
+        if immutable:
+            warnings.warn(
+                "ignoring load-time-only module args "
+                + ", ".join(f"{k}={v}" for k, v in immutable)
+                + " — attaching to an existing server, which was loaded with"
+                " whatever values it was started with.",
+                stacklevel=2)
+        module_args = " ".join(f"{k} {v}" for k, v in mutable)
+    env, client = Env(moduleArgs=module_args)
+    # Several suites fan work out over multiprocessing pools. Those children
+    # re-import this module from scratch (macOS spawns rather than forks), so
+    # the address has to travel in the environment for falkordb() to find it.
+    # CI sets these itself to point at the service container, so remember
+    # what was there and put it back on shutdown.
+    _saved_addr = (os.environ.get("FALKORDB_HOST"),
+                   os.environ.get("FALKORDB_PORT"))
+    os.environ["FALKORDB_HOST"] = str(env.host)
+    os.environ["FALKORDB_PORT"] = str(env.port)
+    g = client.select_graph(GRAPH_ID)
+    shutdown = True
+
 
 def falkordb():
-    """Construct a FalkorDB client honoring FALKORDB_HOST / FALKORDB_PORT.
+    """A second client pointed at the running server.
 
     Bare `FalkorDB()` defaults to localhost:6379, which silently bypasses
     the docker-services CI mode (where redis runs as a sibling container).
-    Use this helper instead so EXISTING_ENV tests connect to the right place.
     """
+    if env is not None:
+        return FalkorDB(host=env.host, port=env.port)
     return FalkorDB(
         host=os.environ.get("FALKORDB_HOST", "localhost"),
         port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
@@ -77,9 +83,20 @@ def falkordb():
 
 
 def shutdown_redis():
-    if shutdown:
-        client.connection.shutdown(nosave=True)
-        redis_server.wait()
+    global env, client, g, shutdown, _saved_addr
+    teardown_all()
+    env = client = g = None
+    shutdown = False
+    # Leaving our address set would point a later falkordb() at a dead
+    # server; blanket-deleting would drop CI's service address.
+    for name, prev in zip(("FALKORDB_HOST", "FALKORDB_PORT"),
+                          _saved_addr or (None, None)):
+        if prev is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = prev
+    _saved_addr = None
+
 
 def wait_for_indices_to_sync(graph):
     q = "CALL db.indexes() YIELD status WHERE status <> 'OPERATIONAL' RETURN count(1)"

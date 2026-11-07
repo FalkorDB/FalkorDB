@@ -20,15 +20,16 @@ async def issue_query(self, g, q):
         res = await g.ro_query(q)
         return False # no failures
     except Exception as e:
-        self.env.assertContains("Max pending queries exceeded", str(e))
+        assert "Max pending queries exceeded" in str(e)
         return True # failed due to internal queries queue limit
 
 class testPendingQueryLimit():
-    def __init__(self):
-        self.env, self.db = Env(moduleArgs="THREAD_COUNT 2")
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(moduleArgs="THREAD_COUNT 2")
         # create graph
-        self.g = self.db.select_graph(GRAPH_ID)
-        self.g.query("RETURN 3")
+        cls.g = cls.db.select_graph(GRAPH_ID)
+        cls.g.query("RETURN 3")
 
     def stress_server(self):
         async def run(self):
@@ -58,14 +59,14 @@ class testPendingQueryLimit():
     def test_01_query_limit_config(self):
         # read max queued queries config
         max_queued_queries = self.db.config_get("MAX_QUEUED_QUERIES")
-        self.env.assertEqual(max_queued_queries, 4294967295)
+        assert max_queued_queries == 4294967295
 
         # update configuration, set max queued queries
         self.db.config_set("MAX_QUEUED_QUERIES", 10)
 
         # re-read configuration
         max_queued_queries = self.db.config_get("MAX_QUEUED_QUERIES")
-        self.env.assertEqual(max_queued_queries, 10)
+        assert max_queued_queries == 10
 
     def test_02_overflow_no_limit(self):
         # no limit on number of pending queries
@@ -74,7 +75,7 @@ class testPendingQueryLimit():
 
         error_encountered = self.stress_server()
 
-        self.env.assertFalse(error_encountered)
+        assert not error_encountered
 
     def test_03_overflow_with_limit(self):
         # limit number of pending queries
@@ -83,4 +84,4 @@ class testPendingQueryLimit():
 
         error_encountered = self.stress_server()
 
-        self.env.assertTrue(error_encountered)
+        assert error_encountered

@@ -5,23 +5,24 @@ GRAPH_ID = "config"
 NUMBER_OF_CONFIGURATIONS = 23 # number of configurations available
 
 class testConfig(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.redis_con = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.redis_con = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
     def test01_config_get(self):
         # Try reading 'QUERY_MEM_CAPACITY' from config
         config_name = "QUERY_MEM_CAPACITY"
         response = self.db.config_get(config_name)
         expected_response = 0 # capacity=QUERY_MEM_CAPACITY_UNLIMITED
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         # Try reading all configurations
         response = self.redis_con.execute_command("GRAPH.CONFIG GET *")
 
         # 16 configurations should be reported
-        self.env.assertEqual(len(response), NUMBER_OF_CONFIGURATIONS)
+        assert len(response) == NUMBER_OF_CONFIGURATIONS
 
         # validate default configuration values
 
@@ -56,13 +57,13 @@ class testConfig(FlowTestsBase):
             value = config[1]
 
             # validate config name
-            self.env.assertEqual(name, default_config[i][0])
+            assert name == default_config[i][0]
 
             # validate config value
             if type(default_config[i][1]) is list:
-                self.env.assertContains(value, default_config[i][1])
+                assert value in default_config[i][1]
             else:
-                self.env.assertEqual(value, default_config[i][1])
+                assert value == default_config[i][1]
 
     def test02_config_get_invalid_name(self):
         # Ensure that getter fails on invalid parameters appropriately
@@ -82,29 +83,29 @@ class testConfig(FlowTestsBase):
 
         # Set configuration
         response = self.db.config_set(config_name, config_value)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Make sure config been updated.
         response = self.db.config_get(config_name)
         expected_response = config_value
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         config_name = "QUERY_MEM_CAPACITY"
         config_value = 1<<20 # 1MB
 
         # Set configuration
         response = self.db.config_set(config_name, config_value)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Make sure config been updated.
         response = self.db.config_get(config_name)
         expected_response = config_value
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
     def test04_config_set_multi(self):
         # Set multiple configuration values
         response = self.redis_con.execute_command("GRAPH.CONFIG SET RESULTSET_SIZE 3 QUERY_MEM_CAPACITY 100")
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Make sure both values been updated
         names = ["RESULTSET_SIZE", "QUERY_MEM_CAPACITY"]
@@ -112,7 +113,7 @@ class testConfig(FlowTestsBase):
         for name, val in zip(names, values):
             response = self.db.config_get(name)
             expected_response = val
-            self.env.assertEqual(response, expected_response)
+            assert response == expected_response
 
     def test05_config_set_invalid_multi(self):
         # Get current configuration
@@ -147,7 +148,7 @@ class testConfig(FlowTestsBase):
 
         # make sure configuration wasn't modified
         current_conf = self.redis_con.execute_command("GRAPH.CONFIG GET *")
-        self.env.assertEqual(prev_conf, current_conf)
+        assert prev_conf == current_conf
 
     def test06_config_set_invalid_name(self):
 
@@ -176,100 +177,100 @@ class testConfig(FlowTestsBase):
     def test08_config_reset_to_defaults(self):
         # Revert memory limit to default
         response = self.db.config_set("QUERY_MEM_CAPACITY", 0)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Change timeout value from default
         response = self.db.config_set("TIMEOUT", 5)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Make sure config been updated.
         response = self.db.config_get("TIMEOUT")
         expected_response = 5
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         # Revert timeout to unlimited
         response = self.db.config_set("TIMEOUT", 0)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Make sure config been updated.
         response = self.db.config_get("TIMEOUT")
         expected_response = 0
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         # Change timeout_default value from default
         response = self.db.config_set("TIMEOUT_DEFAULT", 5)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Make sure config been updated.
         response = self.db.config_get("TIMEOUT_DEFAULT")
         expected_response = 5
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         # Revert timeout_default to unlimited
         response = self.db.config_set("TIMEOUT_DEFAULT", 0)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Make sure config been updated.
         response = self.db.config_get("TIMEOUT_DEFAULT")
         expected_response = 0
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         # Change timeout_max value from default
         response = self.db.config_set("TIMEOUT_MAX", 5)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Make sure config been updated.
         response = self.db.config_get("TIMEOUT_MAX")
         expected_response = 5
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         # Revert timeout_max to unlimited
         response = self.db.config_set("TIMEOUT_MAX", 0)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Make sure config been updated.
         response = self.db.config_get("TIMEOUT_MAX")
         expected_response = 0
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         # Change resultset_size from default
         response = self.db.config_set("RESULTSET_SIZE", 2)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Validate modified resultset_size
         result = self.graph.query("UNWIND range(1, 10) AS v RETURN v")
-        self.env.assertEqual(len(result.result_set), 2)
+        assert len(result.result_set) == 2
 
         # Revert resultset_size to unlimited with a negative argument
         response = self.db.config_set("RESULTSET_SIZE", -100)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Make sure resultset_size has been updated to unlimited.
         response = self.db.config_get("RESULTSET_SIZE")
         expected_response = -1
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         response = self.db.config_get("NODE_CREATION_BUFFER")
         expected_response = 16384
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         response = self.db.config_get("DELAY_INDEXING")
         expected_response = 0
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         response = self.db.config_set("JS_HEAP_SIZE", 256 * 1024 * 1024)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         response = self.db.config_get("JS_HEAP_SIZE")
         expected_response = 256 * 1024 * 1024
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
         response = self.db.config_set("JS_STACK_SIZE", 1024 * 1024)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         response = self.db.config_get("JS_STACK_SIZE")
         expected_response = 1024 * 1024
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
     def test09_set_invalid_values(self):
         # The run-time configurations supported by RedisGraph are:
@@ -314,45 +315,46 @@ class testConfig(FlowTestsBase):
 
         # Set configuration
         response = self.db.config_set(config_name, config_value)
-        self.env.assertEqual(response, "OK")
+        assert response == "OK"
 
         # Make sure config been updated.
         response = self.db.config_get(config_name)
         expected_response = config_value
-        self.env.assertEqual(response, expected_response)
+        assert response == expected_response
 
     def test11_set_get_node_creation_buffer(self):
         # flush and stop is needed for memcheck for clean shutdown
         self.graph.delete()
         self.env.stop()
 
-        self.env, self.db = Env(moduleArgs='NODE_CREATION_BUFFER 0')
-        self.redis_con = self.env.getConnection()
+        type(self).env, type(self).db = Env(moduleArgs='NODE_CREATION_BUFFER 0')
+        type(self).redis_con = self.env.getConnection()
 
         # values less than 128 (such as 0, which this module was loaded with)
         # will be increased to 128
         creation_buffer_size = self.db.config_get("NODE_CREATION_BUFFER")
         expected_response =  128
-        self.env.assertEqual(creation_buffer_size, expected_response)
+        assert creation_buffer_size == expected_response
 
         # restart the server with a buffer argument of 600
-        self.env, self.db = Env(moduleArgs='NODE_CREATION_BUFFER 600')
-        self.redis_con = self.env.getConnection()
+        type(self).env, type(self).db = Env(moduleArgs='NODE_CREATION_BUFFER 600')
+        type(self).redis_con = self.env.getConnection()
 
         # the node creation buffer should be 1024, the next-greatest power of 2 of 600
         creation_buffer_size = self.db.config_get("NODE_CREATION_BUFFER")
         expected_response = 1024
-        self.env.assertEqual(creation_buffer_size, expected_response)
+        assert creation_buffer_size == expected_response
 
 import stat
 import shutil
 import tempfile
 
 class testConfigTempFolder:
-    def __init__(self):
-        self.env, self.db = Env()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
         if SANITIZER:
-            self.env.skip()
+            cls.env.skip()
 
     def teardown_method(self):
         if hasattr(self, 'conn'):
@@ -360,7 +362,7 @@ class testConfigTempFolder:
 
     def set_temp_folder(self, path):
         module_args = f"TEMP_FOLDER {path}"
-        self.env, self.db = Env(moduleArgs=module_args, enableDebugCommand=True)
+        type(self).env, type(self).db = Env(moduleArgs=module_args, enableDebugCommand=True)
 
         self.conn = self.env.getConnection()
 
@@ -377,7 +379,7 @@ class testConfigTempFolder:
         try:
             self.set_temp_folder(file_path)
             # setting TEMP_FOLDER to a file should have failed
-            self.env.assertFalse(True)
+            assert not True
         except Exception:
             pass
 
@@ -393,7 +395,7 @@ class testConfigTempFolder:
         # try updating TEMP_FOLDER
         try:
             self.set_temp_folder(non_existent)
-            self.env.assertFalse(True)
+            assert not True
         except Exception:
             pass
 
@@ -415,7 +417,7 @@ class testConfigTempFolder:
         try:
             self.set_temp_folder(no_perm_dir)
             # setting TEMP_FOLDER to a non writeable folder should have failed
-            self.env.assertFalse(True)
+            assert not True
         except Exception:
             pass
         finally:
@@ -432,7 +434,7 @@ class testConfigTempFolder:
 
         try:
             self.set_temp_folder(valid_dir)
-            self.env.assertEqual(self.db.config_get("TEMP_FOLDER"), valid_dir)
+            assert self.db.config_get("TEMP_FOLDER") == valid_dir
         finally:
             # clean up
             shutil.rmtree(valid_dir)
@@ -445,14 +447,9 @@ class testLoadTimeConfig(FlowTestsBase):
     and assertion utilities.
     """
 
-    def __init__(self):
-        """
-        Initialize the test class.
-
-        Note: super().__init__() must be called to ensure FlowTestsBase
-        performs any required setup (e.g. connecting to the test environment).
-        """
-        super().__init__()
+    @classmethod
+    def setup_class(cls):
+        """Nothing to set up: every test here launches its own environment."""
 
     def test01_loadtime_config(self):
         """
@@ -495,4 +492,4 @@ class testLoadTimeConfig(FlowTestsBase):
             elif val == "no":
                 val = False
 
-            env.assertEqual(db.config_get(name), val)
+            assert db.config_get(name) == val

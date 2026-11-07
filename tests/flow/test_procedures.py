@@ -14,20 +14,22 @@ node5 = Node(alias="n5", labels="fruit", properties={"name": "Banana", "value": 
 # e.g. db.idx.fulltext.queryNodes
 # Test over all procedure behavior in addition to procedure specifics.
 class testProcedures(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.populate_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.populate_graph()
 
-    def populate_graph(self):
-        if GRAPH_ID in self.db.list_graphs():
+    @classmethod
+    def populate_graph(cls):
+        if GRAPH_ID in cls.db.list_graphs():
             return
 
         edge = Edge(node1, "goWellWith", node5)
-        self.graph.query(f"CREATE {node1}, {node2}, {node3}, {node4}, {node5}, {edge}")
+        cls.graph.query(f"CREATE {node1}, {node2}, {node3}, {node4}, {node5}, {edge}")
 
         # Create full-text index.
-        create_node_fulltext_index(self.graph, "fruit", "name", sync=True)
+        create_node_fulltext_index(cls.graph, "fruit", "name", sync=True)
 
     # Compares two nodes based on their properties.
     def _compareNodes(self, a, b):
@@ -44,11 +46,9 @@ class testProcedures(FlowTestsBase):
     # Issue query and validates resultset.
     def queryAndValidate(self, query, expected_results, query_params={}):
         actual_resultset = self.graph.query(query, query_params).result_set
-        self.env.assertEqual(len(actual_resultset), len(expected_results))
+        assert len(actual_resultset) == len(expected_results)
         for i in range(len(actual_resultset)):
-            self.env.assertTrue(
-                self._inResultSet(expected_results[i], actual_resultset)
-            )
+            assert self._inResultSet(expected_results[i], actual_resultset)
 
     # Call procedure, omit yield, expecting all procedure outputs to
     # be included in result-set.
@@ -83,10 +83,10 @@ class testProcedures(FlowTestsBase):
                 args=["fruit", "Orange1"],
                 emit=["unknown"],
             )
-            self.env.assertFalse(1)
+            assert not 1
         except redis.ResponseError as e:
             # Expecting an error.
-            self.env.assertContains("Procedure `db.idx.fulltext.queryNodes` does not yield output `unknown`", str(e))
+            assert "Procedure `db.idx.fulltext.queryNodes` does not yield output `unknown`" in str(e)
 
         # Yield the same output multiple times.
         # Expect an error when trying to use the same output multiple times.
@@ -96,7 +96,7 @@ class testProcedures(FlowTestsBase):
                 args=["fruit", "Orange1"],
                 emit=["node", "node"],
             )
-            self.env.assertFalse(1)
+            assert not 1
         except redis.ResponseError as e:
             # Expecting an error.
             pass
@@ -106,7 +106,7 @@ class testProcedures(FlowTestsBase):
         # Expect an error when trying to omit arguments.
         try:
             self.graph.call_procedure("db.idx.fulltext.queryNodes")
-            self.env.assertFalse(1)
+            assert not 1
         except redis.ResponseError:
             # Expecting an error.
             pass
@@ -115,7 +115,7 @@ class testProcedures(FlowTestsBase):
         # Expect an error when trying to omit arguments.
         try:
             self.graph.call_procedure("db.idx.fulltext.queryNodes", args=["arg1"])
-            self.env.assertFalse(1)
+            assert not 1
         except redis.ResponseError:
             # Expecting an error.
             pass
@@ -128,7 +128,7 @@ class testProcedures(FlowTestsBase):
                 args=["fruit", "query", "fruit", "query"],
                 emit=["node"],
             )
-            self.env.assertFalse(1)
+            assert not 1
         except redis.ResponseError:
             # Expecting an error.
             pass
@@ -266,23 +266,23 @@ class testProcedures(FlowTestsBase):
     def test05_procedure_labels(self):
         actual_resultset = self.graph.call_procedure("db.labels").result_set
         expected_results = [["fruit"]]
-        self.env.assertEqual(actual_resultset, expected_results)
+        assert actual_resultset == expected_results
 
     def test06_procedure_relationshipTypes(self):
         actual_resultset = self.graph.call_procedure("db.relationshipTypes").result_set
         expected_results = [["goWellWith"]]
-        self.env.assertEqual(actual_resultset, expected_results)
+        assert actual_resultset == expected_results
 
     def test07_procedure_propertyKeys(self):
         actual_resultset = self.graph.call_procedure("db.propertyKeys").result_set
         expected_results = [["name"], ["value"]]
-        self.env.assertEqual(actual_resultset, expected_results)
+        assert actual_resultset == expected_results
 
     def test08_procedure_fulltext_syntax_error(self):
         try:
             query = """CALL db.idx.fulltext.queryNodes('fruit', 'Orange || Apple') YIELD node RETURN node"""
             self.graph.query(query)
-            self.env.assertFalse(1)
+            assert not 1
         except redis.ResponseError:
             # Expecting an error.
             pass
@@ -292,13 +292,13 @@ class testProcedures(FlowTestsBase):
             self.graph.call_procedure("dB.LaBeLS")
         except redis.ResponseError:
             # This should not cause an error
-            self.env.assertFalse(1)
+            assert not 1
             pass
 
         try:
             # looking for a non existing procedure
             self.graph.call_procedure("db.nonExistingProc")
-            self.env.assertFalse(1)
+            assert not 1
         except redis.ResponseError as e:
             # Expecting an error.
             pass
@@ -309,7 +309,7 @@ class testProcedures(FlowTestsBase):
             )
         except redis.ResponseError:
             # This should not cause an error
-            self.env.assertFalse(1)
+            assert not 1
             pass
 
     def test10_procedure_indexes(self):
@@ -318,36 +318,36 @@ class testProcedures(FlowTestsBase):
             "CALL db.indexes() YIELD label, properties"
         ).result_set
         expected_results = [["fruit", ["name"]]]
-        self.env.assertEqual(actual_resultset, expected_results)
+        assert actual_resultset == expected_results
 
         # Add an exact-match index to a different property on the same label..
         result = create_node_range_index(
             self.graph, "fruit", "other_property", sync=True
         )
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         # Verify that all indexes are reported.
         actual_resultset = self.graph.query(
             "CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties"
         ).result_set
         expected_results = [["fruit", ["name", "other_property"]]]
-        self.env.assertEqual(actual_resultset, expected_results)
+        assert actual_resultset == expected_results
 
         # Add an exact-match index to the full-text indexed property on the same label..
         result = create_node_range_index(self.graph, "fruit", "name", sync=True)
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         # Verify that all indexes are reported.
         actual_resultset = self.graph.query(
             "CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties"
         ).result_set
         expected_results = [["fruit", ["name", "other_property"]]]
-        self.env.assertEqual(actual_resultset, expected_results)
+        assert actual_resultset == expected_results
 
         # Validate the results when yielding only one element.
         actual_resultset = self.graph.query("CALL db.indexes() YIELD label").result_set
         expected_results = [["fruit"]]
-        self.env.assertEqual(actual_resultset, expected_results)
+        assert actual_resultset == expected_results
 
     def test11_list_procedures(self):
         # validates list of available procedures
@@ -380,7 +380,7 @@ class testProcedures(FlowTestsBase):
             ["READ", "dbms.functions"],
             ["READ", "dbms.procedures"],
         ]
-        self.env.assertEqual(actual_resultset, expected_result)
+        assert actual_resultset == expected_result
 
     def test12_list_functions(self):
         # test the functions procedure call
@@ -403,22 +403,16 @@ class testProcedures(FlowTestsBase):
         aggregation = f[5]
         variable_len = f[6]
 
-        self.env.assertEqual(name, "add")
-        self.env.assertEqual(
-            return_type,
-            "Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null",
-        )
-        self.env.assertEqual(
-            arguments,
-            [
+        assert name == "add"
+        assert return_type == "Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null"
+        assert arguments == [
                 "Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null",
                 "Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null",
-            ],
-        )
-        self.env.assertEqual(internal, True)
-        self.env.assertEqual(reducible, True)
-        self.env.assertEqual(aggregation, False)
-        self.env.assertEqual(variable_len, False)
+            ]
+        assert internal == True
+        assert reducible == True
+        assert aggregation == False
+        assert variable_len == False
 
         # -----------------------------------------------------------------------
 
@@ -432,13 +426,13 @@ class testProcedures(FlowTestsBase):
         aggregation = f[5]
         variable_len = f[6]
 
-        self.env.assertEqual(name, "avg")
-        self.env.assertEqual(return_type, "Float or Null")
-        self.env.assertEqual(arguments, ["Integer, Float, or Null"])
-        self.env.assertEqual(internal, False)
-        self.env.assertEqual(reducible, False)
-        self.env.assertEqual(aggregation, True)
-        self.env.assertEqual(variable_len, False)
+        assert name == "avg"
+        assert return_type == "Float or Null"
+        assert arguments == ["Integer, Float, or Null"]
+        assert internal == False
+        assert reducible == False
+        assert aggregation == True
+        assert variable_len == False
 
         # -----------------------------------------------------------------------
 
@@ -452,18 +446,12 @@ class testProcedures(FlowTestsBase):
         aggregation = f[5]
         variable_len = f[6]
 
-        self.env.assertEqual(name, "case")
-        self.env.assertEqual(
-            return_type,
-            "Map, Node, Edge, List, Path, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32",
-        )
-        self.env.assertEqual(
-            arguments,
-            [
+        assert name == "case"
+        assert return_type == "Map, Node, Edge, List, Path, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32"
+        assert arguments == [
                 "Map, Node, Edge, List, Path, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32"
-            ],
-        )
-        self.env.assertEqual(internal, True)
-        self.env.assertEqual(reducible, True)
-        self.env.assertEqual(aggregation, False)
-        self.env.assertEqual(variable_len, True)
+            ]
+        assert internal == True
+        assert reducible == True
+        assert aggregation == False
+        assert variable_len == True

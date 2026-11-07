@@ -4,12 +4,14 @@ GRAPH_ID = "relation_patterns"
 
 
 class testRelationPattern(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.populate_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.populate_graph()
 
-    def populate_graph(self):
+    @classmethod
+    def populate_graph(cls):
         # Construct a graph with the form:
         # (v1)-[:e]->(v2)-[:e]->(v3)
         node_props = ['v1', 'v2', 'v3']
@@ -22,7 +24,7 @@ class testRelationPattern(FlowTestsBase):
         e0 = Edge(nodes[0], "e", nodes[1])
         e1 = Edge(nodes[1], "e", nodes[2])
 
-        self.graph.query(f"CREATE {nodes[0]}, {nodes[1]}, {nodes[2]}, {e0}, {e1}")
+        cls.graph.query(f"CREATE {nodes[0]}, {nodes[1]}, {nodes[2]}, {e0}, {e1}")
 
     # Test patterns that traverse 1 edge.
     def test01_one_hop_traversals(self):
@@ -48,10 +50,10 @@ class testRelationPattern(FlowTestsBase):
         query = """MATCH (a)-[*..1]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
         result_e = self.graph.query(query)
 
-        self.env.assertEqual(result_b.result_set, result_a.result_set)
-        self.env.assertEqual(result_c.result_set, result_a.result_set)
-        self.env.assertEqual(result_d.result_set, result_a.result_set)
-        self.env.assertEqual(result_e.result_set, result_a.result_set)
+        assert result_b.result_set == result_a.result_set
+        assert result_c.result_set == result_a.result_set
+        assert result_d.result_set == result_a.result_set
+        assert result_e.result_set == result_a.result_set
 
     # Test patterns that traverse 2 edges.
     def test02_two_hop_traversals(self):
@@ -59,22 +61,22 @@ class testRelationPattern(FlowTestsBase):
         query = """MATCH (a)-[:e]->()-[:e]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v3']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Fixed-length two-hop traversal (same expected result)
         query = """MATCH (a)-[:e*2]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Variable-length traversal with a minimum bound of 2 (same expected result)
         query = """MATCH (a)-[*2..]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Conditional two-hop traversal with referenced intermediate node
         query = """MATCH (a)-[:e]->(b)-[:e]->(c) RETURN a.val, b.val, c.val ORDER BY a.val, b.val"""
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v2', 'v3']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     # Test variable-length patterns
     def test03_var_len_traversals(self):
@@ -84,17 +86,17 @@ class testRelationPattern(FlowTestsBase):
         expected_result = [['v1', 'v2'],
                            ['v1', 'v3'],
                            ['v2', 'v3']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Variable-length traversal without label (same expected result)
         query = """MATCH (a)-[*]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Variable-length traversal with bounds 1..2 (same expected result)
         query = """MATCH (a)-[:e*1..2]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Variable-length traversal with bounds 0..1
         # This will return every node and itself, as well as all
@@ -106,7 +108,7 @@ class testRelationPattern(FlowTestsBase):
                            ['v2', 'v2'],
                            ['v2', 'v3'],
                            ['v3', 'v3']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     # Test variable-length patterns with alternately labeled source
     # and destination nodes, which can cause different execution sequences.
@@ -117,22 +119,22 @@ class testRelationPattern(FlowTestsBase):
         expected_result = [['v1', 'v2'],
                            ['v1', 'v3'],
                            ['v2', 'v3']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Destination and edge labeled variable-length traversal (same expected result)
         query = """MATCH (a)-[:e*]->(b:L) RETURN a.val, b.val ORDER BY a.val, b.val"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Source labeled variable-length traversal (same expected result)
         query = """MATCH (a:L)-[*]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Destination labeled variable-length traversal (same expected result)
         query = """MATCH (a)-[*]->(b:L) RETURN a.val, b.val ORDER BY a.val, b.val"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     # Test traversals over explicit relationship types
     def test05_relation_types(self):
@@ -141,8 +143,8 @@ class testRelationPattern(FlowTestsBase):
         # (v1)-[:e]->(v2)-[:e]->(v3)-[:q]->(v4)-[:q]->(v5)
         query = """MATCH (n {val: 'v3'}) CREATE (n)-[:q]->(:L {val: 'v4'})-[:q]->(:L {val: 'v5'})"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.nodes_created, 2)
-        self.env.assertEqual(actual_result.relationships_created, 2)
+        assert actual_result.nodes_created == 2
+        assert actual_result.relationships_created == 2
 
         # Verify the graph structure
         query = """MATCH (a)-[e]->(b) RETURN a.val, b.val, TYPE(e) ORDER BY TYPE(e), a.val, b.val"""
@@ -151,20 +153,20 @@ class testRelationPattern(FlowTestsBase):
                            ['v2', 'v3', 'e'],
                            ['v3', 'v4', 'q'],
                            ['v4', 'v5', 'q']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Verify conditional traversals with explicit relation types
         query = """MATCH (a)-[:e]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v2'],
                            ['v2', 'v3']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         query = """MATCH (a)-[:q]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
         actual_result = self.graph.query(query)
         expected_result = [['v3', 'v4'],
                            ['v4', 'v5']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Verify conditional traversals with multiple explicit relation types
         query = """MATCH (a)-[e:e|:q]->(b) RETURN a.val, b.val, TYPE(e) ORDER BY TYPE(e), a.val, b.val"""
@@ -173,7 +175,7 @@ class testRelationPattern(FlowTestsBase):
                            ['v2', 'v3', 'e'],
                            ['v3', 'v4', 'q'],
                            ['v4', 'v5', 'q']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Verify variable-length traversals with explicit relation types
         query = """MATCH (a)-[:e*]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
@@ -181,14 +183,14 @@ class testRelationPattern(FlowTestsBase):
         expected_result = [['v1', 'v2'],
                            ['v1', 'v3'],
                            ['v2', 'v3']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         query = """MATCH (a)-[:q*]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
         actual_result = self.graph.query(query)
         expected_result = [['v3', 'v4'],
                            ['v3', 'v5'],
                            ['v4', 'v5']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Verify variable-length traversals with multiple explicit relation types
         query = """MATCH (a)-[:e|:q*]->(b) RETURN a.val, b.val ORDER BY a.val, b.val"""
@@ -203,7 +205,7 @@ class testRelationPattern(FlowTestsBase):
                            ['v3', 'v4'],
                            ['v3', 'v5'],
                            ['v4', 'v5']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     # Test traversals over transposed edge matrices.
     def test06_transposed_traversals(self):
@@ -213,13 +215,13 @@ class testRelationPattern(FlowTestsBase):
         plan = str(self.graph.explain(query))
 
         # Verify that the execution plan contains two traversals following opposing edge directions.
-        self.env.assertContains("<-", plan)
-        self.env.assertContains("->", plan)
+        assert "<-" in plan
+        assert "->" in plan
 
         # Verify results.
         actual_result = self.graph.query(query)
         expected_result = [[1]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test07_transposed_multi_hop(self):
         redis_con = self.env.getConnection()
@@ -241,14 +243,14 @@ class testRelationPattern(FlowTestsBase):
         q = """MATCH (a)-[*2]->(b)<-[*2]-(c) RETURN a.val, b.val, c.val ORDER BY a.val, b.val, c.val"""
         actual_result = g.query(q)
         expected_result = [['a', 'c', 'a'], ['a', 'c', 'e'], ['e', 'c', 'a'], ['e', 'c', 'e']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test08_transposed_varlen_traversal(self):
         # Verify that variable-length traversals with nested transpose operations perform correctly.
         query = """MATCH (a {val: 'v1'})-[*]-(b {val: 'v2'})-[:e]->(:L {val: 'v3'}) RETURN a.val ORDER BY a.val"""
         actual_result = self.graph.query(query)
         expected_result = [['v1']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test09_transposed_elem_order(self):
         redis_con = self.env.getConnection()
@@ -266,7 +268,7 @@ class testRelationPattern(FlowTestsBase):
         expected_result = [['ba', 'bc']]
         for query in queries:
             actual_result = g.query(query)
-            self.env.assertEqual(actual_result.result_set, expected_result)
+            assert actual_result.result_set == expected_result
 
     def test10_triple_edge_type(self):
         # Construct a simple graph:
@@ -284,7 +286,7 @@ class testRelationPattern(FlowTestsBase):
         import itertools
         for perm in itertools.permutations(labels):
             res = g.query(q.format(L0=perm[0], L1=perm[1], L2=perm[2]))
-            self.env.assertEqual(res.result_set, expected_result)
+            assert res.result_set == expected_result
 
     def test11_shared_node_detection(self):
         # Construct a simple graph
@@ -296,12 +298,12 @@ class testRelationPattern(FlowTestsBase):
         q = "MERGE (s)<-[:A]-(x)<-[:B]-(x)-[:B]->(t)<-[:B]-(x)"
         result = g.query(q)
 
-        self.env.assertEqual(result.nodes_created, 3)
-        self.env.assertEqual(result.relationships_created, 4)
+        assert result.nodes_created == 3
+        assert result.relationships_created == 4
 
         result = g.query(q)
-        self.env.assertEqual(result.nodes_created, 0)
-        self.env.assertEqual(result.relationships_created, 0)
+        assert result.nodes_created == 0
+        assert result.relationships_created == 0
 
     # test error reporting for invalid min, max variable length edge length
     def test12_lt_zero_hop_traversals(self):
@@ -338,18 +340,18 @@ class testRelationPattern(FlowTestsBase):
         ]
         for query, expected_result in query_to_expected_result:
             actual_result = g.query(query)
-            self.env.assertEqual(actual_result.result_set, expected_result)
+            assert actual_result.result_set == expected_result
 
         # for patterns of length equals to one, the expected result is of type edge
         q = "MATCH (a)-[r*1..1]->(b) RETURN r"
         actual_result = g.query(q)
 
         e01 = actual_result.result_set[0][0]      
-        self.env.assertEqual(e01.src_node, 0)
-        self.env.assertEqual(e01.dest_node, 1)
-        self.env.assertEqual(e01.relation, 'R')
+        assert e01.src_node == 0
+        assert e01.dest_node == 1
+        assert e01.relation == 'R'
 
         e12 = actual_result.result_set[1][0]
-        self.env.assertEqual(e12.src_node, 1)
-        self.env.assertEqual(e12.dest_node, 2)
-        self.env.assertEqual(e12.relation, 'R')
+        assert e12.src_node == 1
+        assert e12.dest_node == 2
+        assert e12.relation == 'R'

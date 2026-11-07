@@ -10,9 +10,10 @@ from common import *
 GRAPH_ID = "defrag"
 
 class testDefrag():
-    def __init__(self):
-        self.env, self.db = Env(enableDebugCommand=True)
-        self.conn = self.env.getConnection()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(enableDebugCommand=True)
+        cls.conn = cls.env.getConnection()
 
     def test_frag_ratio(self):
         #-----------------------------------------------------------------------
@@ -157,11 +158,11 @@ class testDefrag():
                RETURN properties(n), properties(e)"""
 
         res = g.query(q, params).result_set
-        self.env.assertGreater(len(res), 0)
+        assert len(res) > 0
 
         for row in res:
-            self.env.assertEqual(props, row[0])
-            self.env.assertEqual(props, row[1])
+            assert props == row[0]
+            assert props == row[1]
 
     def test_concurrent_writers_during_defrag(self):
         """Regression test for issue #1831: writer queries must hold a graph
@@ -271,15 +272,15 @@ class testDefrag():
             #------------------------------------------------------------------
 
             # server should still respond
-            self.env.assertTrue(conn.ping())
+            assert conn.ping()
 
             # query should return valid results
             res = g.query("MATCH (n:Item) RETURN count(n)").result_set
-            self.env.assertGreater(res[0][0], 0)
+            assert res[0][0] > 0
 
             # verify no connection-lost errors (would indicate a crash)
             crash_errors = [e for e in errors if "crash" in e.lower()]
-            self.env.assertEqual(len(crash_errors), 0)
+            assert len(crash_errors) == 0
 
         finally:
             #------------------------------------------------------------------
@@ -328,9 +329,10 @@ def _rnd(n):
     return "".join(random.choices(string.ascii_letters + string.digits, k=n))
 
 class testDefragStagedUpdate():
-    def __init__(self):
-        self.env, self.db = Env(enableDebugCommand=True)
-        self.conn = self.env.getConnection()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(enableDebugCommand=True)
+        cls.conn = cls.env.getConnection()
 
     def test_staged_update_uaf_during_defrag(self):
         test_start = time.time()  # bound total test time (setup + soak) to ~10s
@@ -368,7 +370,7 @@ class testDefragStagedUpdate():
         #----------------------------------------------------------------------
 
         # `hz` is the dominant lever: it sets how often serverCron (and thus the
-        # defrag cycle) fires. RLTest launches redis at the default hz=10; bump it
+        # defrag cycle) fires. Redis starts at the default hz=10; bump it
         # so defrag runs ~every 10ms and reliably lands in a writer's upgrade gap.
         keys = ["activedefrag", "active-defrag-threshold-lower",
                 "active-defrag-threshold-upper", "active-defrag-ignore-bytes",
@@ -480,11 +482,11 @@ class testDefragStagedUpdate():
             #------------------------------------------------------------------
             # 4. The server must still be alive (no defrag-induced UAF)
             #------------------------------------------------------------------
-            self.env.assertFalse(crashed.is_set())
-            self.env.assertTrue(conn.ping())
+            assert not crashed.is_set()
+            assert conn.ping()
             res = self.db.select_graph(graph_ids[0]).query(
                 "MATCH (n:Ent) RETURN count(n)").result_set
-            self.env.assertGreater(res[0][0], 0)
+            assert res[0][0] > 0
 
         finally:
             stop.set()
@@ -506,9 +508,10 @@ class testDefragStagedUpdate():
 # Requires jemalloc (active defrag is a no-op under libc malloc).
 
 class testDefragWriteHang():
-    def __init__(self):
-        self.env, self.db = Env(enableDebugCommand=True)
-        self.conn = self.env.getConnection()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(enableDebugCommand=True)
+        cls.conn = cls.env.getConnection()
 
     def test_write_not_orphaned_during_defrag(self):
         conn = self.conn
@@ -584,15 +587,15 @@ class testDefragWriteHang():
             finished = done.wait(timeout=90)
 
             # load must complete (no hung write) ...
-            self.env.assertTrue(finished)            # False => a write hung
-            self.env.assertIsNone(state["error"])
-            self.env.assertEqual(state["completed"], BATCHES)
+            assert finished            # False => a write hung
+            assert state["error"] is None
+            assert state["completed"] == BATCHES
 
             # ... with every write landed exactly once
             if finished and state["error"] is None:
                 res = self.db.select_graph(gname).query(
                     "MATCH (n:Node) RETURN count(n)").result_set
-                self.env.assertEqual(res[0][0], BATCHES * BATCH)
+                assert res[0][0] == BATCHES * BATCH
 
         finally:
             if t is not None:

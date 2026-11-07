@@ -4,13 +4,14 @@ from collections import Counter
 GRAPH_ID = "foreach"
 
 class testForeachFlow():
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
     def get_res_and_assertEquals(self, query, expected_result):
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
         return actual_result
 
     def test01_literal_list(self):
@@ -20,8 +21,8 @@ class testForeachFlow():
         res = self.graph.query("FOREACH(i in range(0, 4) | CREATE (n:N {v: i}))")
 
         # 5 nodes should have been created, and 5 properties set
-        self.env.assertEqual(res.nodes_created, 5)
-        self.env.assertEqual(res.properties_set, 5)
+        assert res.nodes_created == 5
+        assert res.properties_set == 5
 
         # validate that the correct nodes have been created
         self.get_res_and_assertEquals("MATCH (n) RETURN n.v ORDER BY n.v",
@@ -33,8 +34,8 @@ class testForeachFlow():
             )
 
         # make sure no nodes were created, and 3 properties were set
-        self.env.assertEqual(res.nodes_created, 0)
-        self.env.assertEqual(res.properties_set, 3)
+        assert res.nodes_created == 0
+        assert res.properties_set == 3
 
         # validate that the update is correct
         self.get_res_and_assertEquals("MATCH (n) RETURN n.v ORDER BY n.v",
@@ -46,8 +47,8 @@ class testForeachFlow():
         )
 
         # 5 nodes should have been created, and 5 properties set
-        self.env.assertEqual(res.nodes_created, 5)
-        self.env.assertEqual(res.properties_set, 5)
+        assert res.nodes_created == 5
+        assert res.properties_set == 5
 
         # delete the entities (the four nodes)
         res = self.graph.query("""
@@ -56,7 +57,7 @@ class testForeachFlow():
         )""")
 
         # validate the deletion
-        self.env.assertEqual(res.nodes_deleted, 5)
+        assert res.nodes_deleted == 5
 
         # remove the properties and labels of the nodes using REMOVE
         res = self.graph.query("""
@@ -67,11 +68,10 @@ class testForeachFlow():
         )""")
 
         # validate removal
-        self.env.assertEqual(res.properties_removed, 5)
-        self.env.assertEqual(res.labels_removed, 5)
+        assert res.properties_removed == 5
+        assert res.labels_removed == 5
         res = self.graph.query("MATCH (n) return labels(n), n.v")
-        self.env.assertEqual(res.result_set, 
-                    [[[], None], [[], None],[[], None], [[], None], [[], None]])
+        assert res.result_set == [[[], None], [[], None],[[], None], [[], None], [[], None]]
 
         # embedded foreach
         res = self.graph.query("""
@@ -84,8 +84,8 @@ class testForeachFlow():
         )
 
         # validate the actions of the query
-        self.env.assertEqual(res.nodes_created, 10)
-        self.env.assertEqual(res.properties_set, 20)
+        assert res.nodes_created == 10
+        assert res.properties_set == 20
 
     def test02_aliased_list(self):
         """tests that FOREACH with an aliased list works properly"""
@@ -98,8 +98,8 @@ class testForeachFlow():
         )
 
         # 5 nodes should have been created, and 5 properties set
-        self.env.assertEqual(res.nodes_created, 5)
-        self.env.assertEqual(res.properties_set, 5)
+        assert res.nodes_created == 5
+        assert res.properties_set == 5
 
         # validate that the correct nodes have been created
         self.get_res_and_assertEquals("MATCH (n) RETURN n.v ORDER BY n.v",
@@ -114,8 +114,8 @@ class testForeachFlow():
         )
 
         # make sure no nodes were created, and 3 properties were set
-        self.env.assertEqual(res.nodes_created, 0)
-        self.env.assertEqual(res.properties_set, 3)
+        assert res.nodes_created == 0
+        assert res.properties_set == 3
 
         # validate that the update is correct
         self.get_res_and_assertEquals("MATCH (n) RETURN n.v ORDER BY n.v",
@@ -130,8 +130,8 @@ class testForeachFlow():
         )
 
         # 5 nodes should have been created, and 5 properties set
-        self.env.assertEqual(res.nodes_created, 5)
-        self.env.assertEqual(res.properties_set, 5)
+        assert res.nodes_created == 5
+        assert res.properties_set == 5
 
         # delete the entities (the four nodes)
         res = self.graph.query("""
@@ -142,7 +142,7 @@ class testForeachFlow():
         )
 
         # validate the deletion
-        self.env.assertEqual(res.nodes_deleted, 5)
+        assert res.nodes_deleted == 5
         
         # remove the properties of the nodes using remove
         res = self.graph.query("""
@@ -154,11 +154,10 @@ class testForeachFlow():
         )
 
         # validate removal
-        self.env.assertEqual(res.properties_removed, 5)
-        self.env.assertEqual(res.labels_removed, 5)
+        assert res.properties_removed == 5
+        assert res.labels_removed == 5
         res = self.graph.query("MATCH (n) return labels(n), n.v")
-        self.env.assertEqual(res.result_set, 
-                    [[[], None], [[], None],[[], None], [[], None], [[], None]])
+        assert res.result_set == [[[], None], [[], None],[[], None], [[], None], [[], None]]
 
         # embedded foreach
         res = self.graph.query("""
@@ -172,8 +171,8 @@ class testForeachFlow():
         )
 
         # validate the actions of the query
-        self.env.assertEqual(res.nodes_created, 10)
-        self.env.assertEqual(res.properties_set, 20)
+        assert res.nodes_created == 10
+        assert res.properties_set == 20
 
     def test03_case(self):
         """tests a CASE WHEN THEN ELSE"""
@@ -188,7 +187,7 @@ class testForeachFlow():
         )
 
         # make sure a node was created
-        self.env.assertEqual(res.nodes_created, 1)
+        assert res.nodes_created == 1
 
         # same case with a negative test-clause
         res = self.graph.query("""
@@ -198,7 +197,7 @@ class testForeachFlow():
         )
 
         # make sure a node was not created
-        self.env.assertEqual(res.nodes_created, 0)
+        assert res.nodes_created == 0
 
     def test04_tie_with_foreach(self):
         """test the tieing of different segments with FOREACH"""
@@ -225,7 +224,7 @@ class testForeachFlow():
         res = self.graph.query(query)
 
         # 5 + 5 = 10 nodes created
-        self.env.assertEqual(res.nodes_created, 10)
+        assert res.nodes_created == 10
 
     def test05_multiple_records(self):
         """validate that multiple records are passed to Foreach appropriately.
@@ -244,8 +243,8 @@ class testForeachFlow():
             CREATE (m:M {v: 2*n.v})
         )"""
         )
-        self.env.assertEqual(res.nodes_created, 5)
-        self.env.assertEqual(res.properties_set, 5)
+        assert res.nodes_created == 5
+        assert res.properties_set == 5
 
         # validate that the creation is correct
         self.get_res_and_assertEquals("MATCH (m:M) RETURN m.v ORDER BY m.v",
@@ -276,11 +275,11 @@ class testForeachFlow():
         try:
             self.graph.query("FOREACH(i in [1, 2, 0, 3] | CREATE (n:N {v: 1/i}))")
         except redis.ResponseError as e:
-            self.env.assertContains("Division by zero", str(e))
+            assert "Division by zero" in str(e)
 
         # assure that no nodes are left (undo-log was applied correctly)
         res = self.graph.query("MATCH (n) return count(n)")
-        self.env.assertEqual(res.result_set[0][0], 0)
+        assert res.result_set[0][0] == 0
 
         # collect may not be used inside the list expression of FOREACH
         try:
@@ -291,7 +290,7 @@ class testForeachFlow():
             )"""
             )
         except redis.ResponseError as e:
-            self.env.assertContains("Invalid use of aggregating function 'collect'", str(e))
+            assert "Invalid use of aggregating function 'collect'" in str(e)
 
     def test08_complex(self):
         """complicate things up"""
@@ -313,9 +312,9 @@ class testForeachFlow():
         res = self.graph.query(query)
 
         # validate the query statistics
-        self.env.assertEqual(res.nodes_created, 4)
-        self.env.assertEqual(res.properties_set, 12)
-        self.env.assertEqual(res.nodes_deleted, 0)
+        assert res.nodes_created == 4
+        assert res.properties_set == 12
+        assert res.nodes_deleted == 0
 
         # validate that the end state is correct
         # there should be one node in the graph, with label N, 
@@ -324,18 +323,18 @@ class testForeachFlow():
         # and properties: {v: 1, name: 'raz'} and li from 1 to 4
         res = self.graph.query("MATCH (n:N) return n")
         n = Node(labels='N', properties={'v': 1, 'name': 'RAZ', 'li': [1, 2, 3, 4]})
-        self.env.assertEqual(len(res.result_set), 1)
-        self.env.assertEqual(res.result_set[0][0], n)
+        assert len(res.result_set) == 1
+        assert res.result_set[0][0] == n
 
         res = self.graph.query("MATCH (m:M) return m")
-        self.env.assertEqual(len(res.result_set), 4)
+        assert len(res.result_set) == 4
         for i in range(len(res.result_set)):
             m = Node(labels= 'M', properties={'v': 1, 'name': 'raz', 'li': [i+1]})
-            self.env.assertEqual(res.result_set[i][0], m)
+            assert res.result_set[i][0] == m
 
         # clear nodes with label M
         res = self.graph.query("MATCH (m:M) DELETE m")
-        self.env.assertEqual(res.nodes_deleted, 4)
+        assert res.nodes_deleted == 4
 
         #-----------------------------------------------------------------------
         # triple embedding of a FOREACH clause, referencing node properties
@@ -356,9 +355,9 @@ class testForeachFlow():
         res = self.graph.query(query)
 
         # validate the query statistics
-        self.env.assertEqual(res.nodes_created, 2)
-        self.env.assertEqual(res.properties_set, 6)
-        self.env.assertEqual(res.nodes_deleted, 0)
+        assert res.nodes_created == 2
+        assert res.properties_set == 6
+        assert res.nodes_deleted == 0
 
         # validate that the correct nodes were created
         n1 = Node(labels = 'TEMP',
@@ -398,9 +397,9 @@ class testForeachFlow():
         res = self.graph.query(query)
 
         # validate the correctness of the new state
-        self.env.assertEqual(res.nodes_created, 4)
-        self.env.assertEqual(res.properties_set, 8)
-        self.env.assertEqual(res.nodes_deleted, 0)
+        assert res.nodes_created == 4
+        assert res.properties_set == 8
+        assert res.nodes_deleted == 0
 
         # validate that the altered state is correct
         res = self.graph.query("MATCH (t:TEMP) RETURN t ORDER BY t.v ASC")
@@ -414,7 +413,7 @@ class testForeachFlow():
         t4 = Node(labels='TEMP')
         nodes = [t1, t2, t3, t4]
         for i in range(4):
-            self.env.assertEqual(res.result_set[i][0], nodes[i])
+            assert res.result_set[i][0] == nodes[i]
 
         # delete newly created nodes
         self.graph.query("MATCH (t:TEMP) DELETE t")
@@ -424,9 +423,9 @@ class testForeachFlow():
         (MATCH, UNWIND, CALL)"""
         try:
             self.graph.query("FOREACH(i in [1] | CREATE (:M)) MATCH (m:M) RETURN m")
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
-            self.env.assertContains("A WITH clause is required to introduce MATCH after an updating clause.", str(e))
+            assert "A WITH clause is required to introduce MATCH after an updating clause." in str(e)
 
         try:
             self.graph.query("""
@@ -436,16 +435,16 @@ class testForeachFlow():
             UNWIND [1, 2, 3] as x
             RETURN x"""
             )
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
-            self.env.assertContains("A WITH clause is required to introduce UNWIND after an updating clause.", str(e))
+            assert "A WITH clause is required to introduce UNWIND after an updating clause." in str(e)
 
         try:
             self.graph.query("FOREACH(i in [1] | CREATE (:M)) CALL db.labels() YIELD\
                 label RETURN label")
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
-            self.env.assertContains("A WITH clause is required to introduce CALL after an updating clause.", str(e))
+            assert "A WITH clause is required to introduce CALL after an updating clause." in str(e)
 
     def test10_edge_manipulation(self):
         """validate that edge (relationship) manipulation (creation, deletion update)
@@ -464,8 +463,8 @@ class testForeachFlow():
             CREATE (n1)-[:R]->(n2)
         )"""
         )
-        self.env.assertEqual(res.nodes_created, 2)
-        self.env.assertEqual(res.relationships_created, 1)
+        assert res.nodes_created == 2
+        assert res.relationships_created == 1
 
         # ----------------------------------------------------------------------
         # delete an edge
@@ -473,8 +472,8 @@ class testForeachFlow():
         
         # delete the edge using FOREACH
         res = self.graph.query("MATCH (n1)-[r]-(n2) FOREACH(i in [1] | DELETE r)")
-        self.env.assertEqual(res.nodes_deleted, 0)
-        self.env.assertEqual(res.relationships_deleted, 1)
+        assert res.nodes_deleted == 0
+        assert res.relationships_deleted == 1
 
         # ----------------------------------------------------------------------
         # delete a node that has an edge. Validate that the edge is deleted as
@@ -489,13 +488,13 @@ class testForeachFlow():
             CREATE (n1)-[:R]->(n2)
         )"""
         )
-        self.env.assertEqual(res.nodes_created, 0)
-        self.env.assertEqual(res.relationships_created, 1)
+        assert res.nodes_created == 0
+        assert res.relationships_created == 1
 
         # delete the nodes with FOREACH
         res = self.graph.query("MATCH (n) FOREACH(i in [1] | DELETE n)")
-        self.env.assertEqual(res.nodes_deleted, 2)
-        self.env.assertEqual(res.relationships_deleted, 1)
+        assert res.nodes_deleted == 2
+        assert res.relationships_deleted == 1
 
     def test11_path_reference(self):
         """reference a named path in the FOREACH clause"""
@@ -512,7 +511,7 @@ class testForeachFlow():
         )
 
         # make sure three nodes were created
-        self.env.assertEqual(res.nodes_created, 3)
+        assert res.nodes_created == 3
 
         # reference named paths defined in the outer scope, in the list exp
         res = self.graph.query(
@@ -526,7 +525,7 @@ class testForeachFlow():
         )
 
         # make sure two relationships were created
-        self.env.assertEqual(res.relationships_created, 2)
+        assert res.relationships_created == 2
 
         # reference named paths defined in the outer scope, in the list exp
         res = self.graph.query(
@@ -540,7 +539,7 @@ class testForeachFlow():
         )
 
         # make sure one relationship was created
-        self.env.assertEqual(res.relationships_created, 1)
+        assert res.relationships_created == 1
 
         # reference named paths defined in the outer scope, in the body
         res = self.graph.query(
@@ -554,8 +553,8 @@ class testForeachFlow():
         )
 
         # make sure no nodes were created, and one property was set
-        self.env.assertEqual(res.nodes_created, 0)
-        self.env.assertEqual(res.properties_set, 1)
+        assert res.nodes_created == 0
+        assert res.properties_set == 1
 
         # reference named paths defined in the body
         res = self.graph.query(
@@ -571,8 +570,8 @@ class testForeachFlow():
         )
 
         # make sure no nodes were created, and one property was set
-        self.env.assertEqual(res.nodes_created, 0)
-        self.env.assertEqual(res.properties_set, 1)
+        assert res.nodes_created == 0
+        assert res.properties_set == 1
 
     def test12_passes_empty_record(self):
         """Tests that when FOREACH is the first clause in the query, it passes
@@ -583,7 +582,7 @@ class testForeachFlow():
 
         # create a node with label `N`
         res = self.graph.query("CREATE (:N)")
-        self.env.assertEqual(res.nodes_created, 1)
+        assert res.nodes_created == 1
 
         # execute a query in which FOREACH is the first clause, and it is
         # followed by a scan that finds this node
@@ -599,9 +598,9 @@ class testForeachFlow():
         )
 
         # assure that no nodes were created, and one node was returned
-        self.env.assertEqual(res.nodes_created, 0)
-        self.env.assertEqual(len(res.result_set), 1)
-        self.env.assertEqual(res.result_set[0][0], Node(labels='N'))
+        assert res.nodes_created == 0
+        assert len(res.result_set) == 1
+        assert res.result_set[0][0] == Node(labels='N')
 
     def test13_empty_list(self):
         """Tests that given an empty list, Foreach passes no records"""
@@ -609,23 +608,23 @@ class testForeachFlow():
         res = self.graph.query("FOREACH(n IN [] | CREATE (:N))")
 
         # no nodes should have been created
-        self.env.assertEqual(res.nodes_created, 0)
+        assert res.nodes_created == 0
 
     def test14_unbound_list_var(self):
         """Tests that given an unbound list-var, an error is raised"""
 
         try:
             self.graph.query("FOREACH(n in li | CREATE (:N))")
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
-            self.env.assertContains("'li' not defined", str(e))
+            assert "'li' not defined" in str(e)
 
         # same check, when the list-var is the same as the list expression
         try:
             self.graph.query("FOREACH(n in n | CREATE (:N))")
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
-            self.env.assertContains("'n' not defined", str(e))
+            assert "'n' not defined" in str(e)
 
     def test15_foreach_and_index_scan(self):
         query = """UNWIND range(1,9) AS i 
@@ -639,7 +638,7 @@ class testForeachFlow():
                    FOREACH( n in nodes(p) | SET n.x = 3) RETURN count(n.v)"""
         result = self.graph.query(query)
         expected_result = [[5]]
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
     def test16_accumulate_updates(self):
         """Tests that updates in between cycles of body execution are treated
@@ -649,7 +648,7 @@ class testForeachFlow():
 
         # create a node with property `v` initialized with value 1
         res = self.graph.query("CREATE (:N {v: 1})")
-        self.env.assertEqual(res.nodes_created, 1)
+        assert res.nodes_created == 1
 
         query = """
         CYPHER li=[0, 1, 2, 3]
@@ -662,7 +661,7 @@ class testForeachFlow():
 
         res = self.graph.query(query)
         # check that the `v` property of the node is now 1 + 0 + 1 + 2 + 3 = 7
-        self.env.assertEqual(res.result_set[0][0], 7)
+        assert res.result_set[0][0] == 7
 
     def test17_bound_variables(self):
         """Tests that foreach bound variables correctly"""
@@ -670,7 +669,7 @@ class testForeachFlow():
         self.graph.delete()
 
         res = self.graph.query("""CREATE (:M), (:N {name: "a"}), (:N {name: "b"}), (:N {name: "c"})""")
-        self.env.assertEqual(res.nodes_created, 4)
+        assert res.nodes_created == 4
 
         query = """
         MATCH (n:N)
@@ -683,8 +682,8 @@ class testForeachFlow():
         """
 
         res = self.graph.query(query)
-        self.env.assertEqual(res.nodes_created, 0)
-        self.env.assertEqual(res.relationships_created, 3)
+        assert res.nodes_created == 0
+        assert res.relationships_created == 3
 
     def test18_foreach_within_conditional_traverse(self):
         """Tests that a FOREACH clause can be used within a conditional traversal"""
@@ -692,7 +691,7 @@ class testForeachFlow():
         self.graph.delete()
 
         res = self.graph.query("""CREATE ()""")
-        self.env.assertEqual(res.nodes_created, 1)
+        assert res.nodes_created == 1
 
         query = """
         FOREACH (n IN [] |
@@ -705,9 +704,9 @@ class testForeachFlow():
 
         try:
             self.graph.query(query)
-            self.env.assertTrue(True)
+            assert True
         except:
-            self.env.assertTrue(False)
+            assert False
 
     def test19_pattern_comprehension_in_list_expression(self):
         """Tests that a pattern comprehension can be used in the FOREACH list
@@ -725,7 +724,7 @@ class testForeachFlow():
             CASE WHEN size([(a)-[:R]->(b:B) | b]) > 1 THEN [1] ELSE [] END |
             SET a.multi = true
         )""")
-        self.env.assertEqual(res.properties_set, 1)
+        assert res.properties_set == 1
 
         # uncorrelated pattern comprehension
         res = self.graph.query("""
@@ -734,7 +733,7 @@ class testForeachFlow():
             CASE WHEN size([(:A)-[:R]->(b:B) | b]) > 1 THEN [1] ELSE [] END |
             SET a.literal_pc = true
         )""")
-        self.env.assertEqual(res.properties_set, 1)
+        assert res.properties_set == 1
 
         # pattern comprehension inside a nested FOREACH, referencing the
         # enclosing FOREACH's loop variable
@@ -747,7 +746,7 @@ class testForeachFlow():
                 SET x.nested = true
             )
         )""")
-        self.env.assertEqual(res.properties_set, 1)
+        assert res.properties_set == 1
 
         self.get_res_and_assertEquals(
             "MATCH (a:A) RETURN a.multi, a.literal_pc, a.nested",
@@ -760,14 +759,14 @@ class testForeachFlow():
             CASE WHEN size([(a)-[:R]->(b:B) | b]) > 5 THEN [1] ELSE [] END |
             SET a.never = true
         )""")
-        self.env.assertEqual(res.properties_set, 0)
+        assert res.properties_set == 0
 
         # the comprehension itself drives the loop
         res = self.graph.query("""
         MATCH (a:A)
         FOREACH (b IN [(a)-[:R]->(x:B) WHERE x.v = 2 | x] | SET b.filtered = 1)
         """)
-        self.env.assertEqual(res.properties_set, 1)
+        assert res.properties_set == 1
 
         self.get_res_and_assertEquals(
             "MATCH (b:B) RETURN b.v, b.filtered ORDER BY b.v",

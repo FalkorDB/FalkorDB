@@ -18,9 +18,10 @@ return result
 """
 
 class testCmdReg(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.conn = cls.env.getConnection()
 
     def test_deny_script(self):
         """Make sure none of the graph commands can run within LUA"""
@@ -30,14 +31,14 @@ class testCmdReg(FlowTestsBase):
 
         # collect all graph.* commands
         graph_commands = self.conn.execute_command("COMMAND list filterby module graph")
-        self.env.assertGreater(len(graph_commands), 0)
+        assert len(graph_commands) > 0
 
         for cmd in graph_commands:
             try:
                 result = script(args=[cmd])
-                self.env.assertFalse(True and "Expecting script invocation to fail")
+                assert not (True and "Expecting script invocation to fail")
             except ResponseError as e:
-                self.env.assertContains("This Redis command is not allowed from script", str(e))
+                assert "This Redis command is not allowed from script" in str(e)
 
     def test_command_metadata_flags(self):
         def _command_flags(command):
@@ -47,11 +48,11 @@ class testCmdReg(FlowTestsBase):
                 return set(command_info["flags"])
             return set(info[0][2])
 
-        self.env.assertContains("denyoom", _command_flags("graph.query"))
-        self.env.assertContains("denyoom", _command_flags("graph.profile"))
-        self.env.assertContains("denyoom", _command_flags("graph.constraint"))
-        self.env.assertContains("denyoom", _command_flags("graph.copy"))
+        assert "denyoom" in _command_flags("graph.query")
+        assert "denyoom" in _command_flags("graph.profile")
+        assert "denyoom" in _command_flags("graph.constraint")
+        assert "denyoom" in _command_flags("graph.copy")
 
-        self.env.assertContains("allow_busy", _command_flags("graph.config"))
-        self.env.assertContains("allow_busy", _command_flags("graph.slowlog"))
-        self.env.assertNotContains("allow_busy", _command_flags("graph.query"))
+        assert "allow_busy" in _command_flags("graph.config")
+        assert "allow_busy" in _command_flags("graph.slowlog")
+        assert "allow_busy" not in _command_flags("graph.query")

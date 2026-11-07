@@ -5,12 +5,14 @@ GRAPH_ID = "G"
 
 
 class testResultSetFlow(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.populate_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.populate_graph()
 
-    def populate_graph(self):
+    @classmethod
+    def populate_graph(cls):
         nodes = {}
         # Create entities
         for idx, p in enumerate(people):
@@ -26,7 +28,7 @@ class testResultSetFlow(FlowTestsBase):
 
         nodes_str = [str(node) for node in nodes.values()]
         edges_str = [str(edge) for edge in edges]
-        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
+        cls.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
 
     # Verify that scalar returns function properly
@@ -39,9 +41,9 @@ class testResultSetFlow(FlowTestsBase):
                            ['Ailon', 2],
                            ['Boaz', 3]]
 
-        self.env.assertEqual(len(result.result_set), 4)
-        self.env.assertEqual(len(result.header), 2) # 2 columns in result set
-        self.env.assertEqual(result.result_set, expected_result)
+        assert len(result.result_set) == 4
+        assert len(result.header) == 2 # 2 columns in result set
+        assert result.result_set == expected_result
 
     # Verify that full node returns function properly
     def test02_return_nodes(self):
@@ -49,8 +51,8 @@ class testResultSetFlow(FlowTestsBase):
         result = self.graph.query(query)
 
         # TODO add more assertions after updated client format is defined
-        self.env.assertEqual(len(result.result_set), 4)
-        self.env.assertEqual(len(result.header), 1) # 1 column in result set
+        assert len(result.result_set) == 4
+        assert len(result.header) == 1 # 1 column in result set
 
     # Verify that full edge returns function properly
     def test03_return_edges(self):
@@ -58,32 +60,32 @@ class testResultSetFlow(FlowTestsBase):
         result = self.graph.query(query)
 
         # TODO add more assertions after updated client format is defined
-        self.env.assertEqual(len(result.result_set), 12) # 12 relations (fully connected graph)
-        self.env.assertEqual(len(result.header), 1) # 1 column in result set
+        assert len(result.result_set) == 12 # 12 relations (fully connected graph)
+        assert len(result.header) == 1 # 1 column in result set
 
     def test04_mixed_returns(self):
         query = """MATCH (a)-[e]->() RETURN a.name, a, e ORDER BY a.val"""
         result = self.graph.query(query)
 
         # TODO add more assertions after updated client format is defined
-        self.env.assertEqual(len(result.result_set), 12) # 12 relations (fully connected graph)
-        self.env.assertEqual(len(result.header), 3) # 3 columns in result set
+        assert len(result.result_set) == 12 # 12 relations (fully connected graph)
+        assert len(result.header) == 3 # 3 columns in result set
 
     # Verify that the DISTINCT operator works with full entity returns
     def test05_distinct_full_entities(self):
         graph2 = self.db.select_graph("H")
         query = """CREATE (a)-[:e]->(), (a)-[:e]->()"""
         result = graph2.query(query)
-        self.env.assertEqual(result.nodes_created, 3)
-        self.env.assertEqual(result.relationships_created, 2)
+        assert result.nodes_created == 3
+        assert result.relationships_created == 2
 
         query = """MATCH (a)-[]->() RETURN a"""
         non_distinct = graph2.query(query)
         query = """MATCH (a)-[]->() RETURN DISTINCT a"""
         distinct = graph2.query(query)
 
-        self.env.assertEqual(len(non_distinct.result_set), 2)
-        self.env.assertEqual(len(distinct.result_set), 1)
+        assert len(non_distinct.result_set) == 2
+        assert len(distinct.result_set) == 1
 
     # Verify that RETURN * projections include all user-defined aliases.
     def test06_return_all(self):
@@ -91,11 +93,11 @@ class testResultSetFlow(FlowTestsBase):
         result = self.graph.query(query)
         # Validate the header strings of the 3 columns.
         # NOTE - currently, RETURN * populates values in alphabetical order, but that is subject to later change.
-        self.env.assertEqual(result.header[0][1], 'a')
-        self.env.assertEqual(result.header[1][1], 'b')
-        self.env.assertEqual(result.header[2][1], 'e')
+        assert result.header[0][1] == 'a'
+        assert result.header[1][1] == 'b'
+        assert result.header[2][1] == 'e'
         # Verify that 3 columns are returned
-        self.env.assertEqual(len(result.result_set[0]), 3)
+        assert len(result.result_set[0]) == 3
 
     # Tests for aggregation functions default values. Fix for issue 767.
     def test07_agg_func_default_values(self):
@@ -103,56 +105,56 @@ class testResultSetFlow(FlowTestsBase):
         # Max default value is null.
         query = """MATCH (a) return max(a.missing_field)"""
         result = self.graph.query(query)
-        self.env.assertEqual(None, result.result_set[0][0])
+        assert None == result.result_set[0][0]
 
         # Min default value is null.
         query = """MATCH (a) return min(a.missing_field)"""
         result = self.graph.query(query)
-        self.env.assertEqual(None, result.result_set[0][0])
+        assert None == result.result_set[0][0]
 
         # Count default value is 0.
         query = """MATCH (a) return count(a.missing_field)"""
         result = self.graph.query(query)
-        self.env.assertEqual(0, result.result_set[0][0])
+        assert 0 == result.result_set[0][0]
 
         # Avarage default value is 0.
         query = """MATCH (a) return avg(a.missing_field)"""
         result = self.graph.query(query)
-        self.env.assertEqual(None, result.result_set[0][0])
+        assert None == result.result_set[0][0]
 
         # Collect default value is an empty array.
         query = """MATCH (a) return collect(a.missing_field)"""
         result = self.graph.query(query)
-        self.env.assertEqual([], result.result_set[0][0])
+        assert [] == result.result_set[0][0]
 
         # StdDev default value is 0.
         query = """MATCH (a) return stdev(a.missing_field)"""
         result = self.graph.query(query)
-        self.env.assertEqual(0, result.result_set[0][0])
+        assert 0 == result.result_set[0][0]
 
         # percentileCont default value is null.
         query = """MATCH (a) return percentileCont(a.missing_field, 0.1)"""
         result = self.graph.query(query)
-        self.env.assertEqual(None, result.result_set[0][0])
+        assert None == result.result_set[0][0]
 
         # percentileDisc default value is null.
         query = """MATCH (a) return percentileDisc(a.missing_field, 0.1)"""
         result = self.graph.query(query)
-        self.env.assertEqual(None, result.result_set[0][0])
+        assert None == result.result_set[0][0]
 
     # Test returning multiple occurrence of an expression.
     def test08_return_duplicate_expression(self):
         query = """MATCH (a) return max(a.val) as x, max(a.val) as y"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], result.result_set[0][1])
+        assert result.result_set[0][0] == result.result_set[0][1]
 
         query = """MATCH (a) return a.val as x, a.val as y LIMIT 1"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], result.result_set[0][1])
+        assert result.result_set[0][0] == result.result_set[0][1]
 
         query = """return 1 as x, 1 as y"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], result.result_set[0][1])
+        assert result.result_set[0][0] == result.result_set[0][1]
 
     # Test implicit result-set size limit
     def test09_implicit_resultset_limit(self):
@@ -183,7 +185,7 @@ class testResultSetFlow(FlowTestsBase):
     def test10_carriage_return_in_result(self):
         query = """RETURN 'Foo\r\nBar'"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 'Foo\r\nBar')
+        assert result.result_set[0][0] == 'Foo\r\nBar'
 
     # Test entity functions on a directly deleted node
     # the node is still in scope after DELETE, attributes are valid
@@ -191,47 +193,47 @@ class testResultSetFlow(FlowTestsBase):
         # id() on deleted node should return a valid integer
         query = """CREATE (n:Person {name: 'Alice', age: 30}) DELETE n RETURN id(n)"""
         result = self.graph.query(query)
-        self.env.assertNotEqual(result.result_set[0][0], None)
+        assert result.result_set[0][0] != None
 
         # labels() on deleted node should return the node's labels
         query = """CREATE (n:Person {name: 'Alice', age: 30}) DELETE n RETURN labels(n)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], ['Person'])
+        assert result.result_set[0][0] == ['Person']
 
         # hasLabels() on deleted node should return true
         query = """CREATE (n:Person {name: 'Alice', age: 30}) DELETE n RETURN hasLabels(n, ['Person'])"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], True)
+        assert result.result_set[0][0] == True
 
         # properties() on deleted node should return the node's properties
         query = """CREATE (n:Person {name: 'Alice', age: 30}) DELETE n RETURN properties(n)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], {'name': 'Alice', 'age': 30})
+        assert result.result_set[0][0] == {'name': 'Alice', 'age': 30}
 
         # keys() on deleted node should return the node's keys
         query = """CREATE (n:Person {name: 'Alice', age: 30}) DELETE n RETURN keys(n)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], ['name', 'age'])
+        assert result.result_set[0][0] == ['name', 'age']
 
         # property access on deleted node should return the property value
         query = """CREATE (n:Person {name: 'Alice', age: 30}) DELETE n RETURN n.name"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 'Alice')
+        assert result.result_set[0][0] == 'Alice'
 
         # typeof on deleted node should return "Node"
         query = """CREATE (n:Person {name: 'Alice', age: 30}) DELETE n RETURN typeof(n)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], "Node")
+        assert result.result_set[0][0] == "Node"
 
         # indegree on deleted node should return 0
         query = """CREATE (n:Person {name: 'Alice', age: 30}) DELETE n RETURN indegree(n)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 0)
+        assert result.result_set[0][0] == 0
 
         # outdegree on deleted node should return 0
         query = """CREATE (n:Person {name: 'Alice', age: 30}) DELETE n RETURN outdegree(n)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 0)
+        assert result.result_set[0][0] == 0
 
     # Test entity functions on a directly deleted edge
     # the edge is still in scope after DELETE, attributes are valid
@@ -239,32 +241,32 @@ class testResultSetFlow(FlowTestsBase):
         # id() on deleted edge should return a valid integer
         query = """CREATE (a)-[r:KNOWS {since: 2020}]->(b) DELETE r RETURN id(r)"""
         result = self.graph.query(query)
-        self.env.assertNotEqual(result.result_set[0][0], None)
+        assert result.result_set[0][0] != None
 
         # type() on deleted edge should return the relationship type
         query = """CREATE (a)-[r:KNOWS {since: 2020}]->(b) DELETE r RETURN type(r)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], "KNOWS")
+        assert result.result_set[0][0] == "KNOWS"
 
         # properties() on deleted edge should return the edge's properties
         query = """CREATE (a)-[r:KNOWS {since: 2020}]->(b) DELETE r RETURN properties(r)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], {'since': 2020})
+        assert result.result_set[0][0] == {'since': 2020}
 
         # keys() on deleted edge should return the edge's keys
         query = """CREATE (a)-[r:KNOWS {since: 2020}]->(b) DELETE r RETURN keys(r)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], ['since'])
+        assert result.result_set[0][0] == ['since']
 
         # property access on deleted edge should return the property value
         query = """CREATE (a)-[r:KNOWS {since: 2020}]->(b) DELETE r RETURN r.since"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 2020)
+        assert result.result_set[0][0] == 2020
 
         # typeof on deleted edge should return "Edge"
         query = """CREATE (a)-[r:KNOWS {since: 2020}]->(b) DELETE r RETURN typeof(r)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], "Edge")
+        assert result.result_set[0][0] == "Edge"
 
     # Test returning deleted node via startNode/endNode
     # when endpoints are deleted and accessed via startNode/endNode,
@@ -273,39 +275,39 @@ class testResultSetFlow(FlowTestsBase):
         # startNode returns the deleted node with its labels and properties
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(a) WITH r, a DELETE a RETURN startNode(r)"""
         result = self.graph.query(query)
-        self.env.assertEqual(len(result.result_set), 1)
+        assert len(result.result_set) == 1
         node = result.result_set[0][0]
-        self.env.assertEqual(node.labels, ['Person'])
-        self.env.assertEqual(node.properties, {'name': 'Alice', 'age': 30})
+        assert node.labels == ['Person']
+        assert node.properties == {'name': 'Alice', 'age': 30}
 
         # endNode returns the deleted node with its labels and properties
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(a) WITH r, a DELETE a RETURN endNode(r)"""
         result = self.graph.query(query)
-        self.env.assertEqual(len(result.result_set), 1)
+        assert len(result.result_set) == 1
         node = result.result_set[0][0]
-        self.env.assertEqual(node.labels, ['Person'])
-        self.env.assertEqual(node.properties, {'name': 'Alice', 'age': 30})
+        assert node.labels == ['Person']
+        assert node.properties == {'name': 'Alice', 'age': 30}
 
         # both startNode and endNode are deleted
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(b:Person {name: 'Bob', age: 25}) WITH r, a, b DELETE a, b RETURN startNode(r), endNode(r)"""
         result = self.graph.query(query)
-        self.env.assertEqual(len(result.result_set), 1)
+        assert len(result.result_set) == 1
         start_node = result.result_set[0][0]
         end_node = result.result_set[0][1]
-        self.env.assertEqual(start_node.labels, ['Person'])
-        self.env.assertEqual(start_node.properties, {'name': 'Alice', 'age': 30})
-        self.env.assertEqual(end_node.labels, ['Person'])
-        self.env.assertEqual(end_node.properties, {'name': 'Bob', 'age': 25})
+        assert start_node.labels == ['Person']
+        assert start_node.properties == {'name': 'Alice', 'age': 30}
+        assert end_node.labels == ['Person']
+        assert end_node.properties == {'name': 'Bob', 'age': 25}
 
     # Test returning a deleted edge with properties
     def test14_deleted_edge_reply(self):
         # returning a deleted edge should include its relation type and properties
         query = """CREATE (a:Person {name: 'Alice'})-[r:KNOWS {since: 2020, weight: 0.5}]->(a) WITH r, a DELETE a RETURN r"""
         result = self.graph.query(query)
-        self.env.assertEqual(len(result.result_set), 1)
+        assert len(result.result_set) == 1
         edge = result.result_set[0][0]
-        self.env.assertEqual(edge.relation, "KNOWS")
-        self.env.assertEqual(edge.properties, {'since': 2020, 'weight': 0.5})
+        assert edge.relation == "KNOWS"
+        assert edge.properties == {'since': 2020, 'weight': 0.5}
 
     # Test entity functions on deleted node accessed via startNode
     # the node data is preserved from the deletion snapshot
@@ -313,42 +315,42 @@ class testResultSetFlow(FlowTestsBase):
         # properties() on deleted node via startNode should return its properties
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(a) WITH r, a DELETE a RETURN properties(startNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], {'name': 'Alice', 'age': 30})
+        assert result.result_set[0][0] == {'name': 'Alice', 'age': 30}
 
         # keys() on deleted node via startNode should return the node's keys
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(a) WITH r, a DELETE a RETURN keys(startNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], ['name', 'age'])
+        assert result.result_set[0][0] == ['name', 'age']
 
         # labels() on deleted node via startNode should return the node's labels
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(a) WITH r, a DELETE a RETURN labels(startNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], ['Person'])
+        assert result.result_set[0][0] == ['Person']
 
         # id() on deleted node via startNode should return a valid integer
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(a) WITH r, a DELETE a RETURN id(startNode(r))"""
         result = self.graph.query(query)
-        self.env.assertNotEqual(result.result_set[0][0], None)
+        assert result.result_set[0][0] != None
 
         # hasLabels on deleted node via startNode should return true
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(a) WITH r, a DELETE a RETURN hasLabels(startNode(r), ['Person'])"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], True)
+        assert result.result_set[0][0] == True
 
         # typeof on deleted node via startNode should return "Node"
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(a) WITH r, a DELETE a RETURN typeof(startNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], "Node")
+        assert result.result_set[0][0] == "Node"
 
         # indegree on deleted node via startNode should return 0
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(a) WITH r, a DELETE a RETURN indegree(startNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 0)
+        assert result.result_set[0][0] == 0
 
         # outdegree on deleted node via startNode should return 0
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(a) WITH r, a DELETE a RETURN outdegree(startNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 0)
+        assert result.result_set[0][0] == 0
 
     # Test entity functions on deleted node accessed via endNode
     # the node data is preserved from the deletion snapshot
@@ -356,42 +358,42 @@ class testResultSetFlow(FlowTestsBase):
         # properties() on deleted node via endNode should return its properties
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(b:Person {name: 'Bob', age: 25}) WITH r, a, b DELETE a, b RETURN properties(endNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], {'name': 'Bob', 'age': 25})
+        assert result.result_set[0][0] == {'name': 'Bob', 'age': 25}
 
         # keys() on deleted node via endNode should return the node's keys
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(b:Person {name: 'Bob', age: 25}) WITH r, a, b DELETE a, b RETURN keys(endNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], ['name', 'age'])
+        assert result.result_set[0][0] == ['name', 'age']
 
         # labels() on deleted node via endNode should return the node's labels
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(b:Person {name: 'Bob', age: 25}) WITH r, a, b DELETE a, b RETURN labels(endNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], ['Person'])
+        assert result.result_set[0][0] == ['Person']
 
         # id() on deleted node via endNode should return a valid integer
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(b:Person {name: 'Bob', age: 25}) WITH r, a, b DELETE a, b RETURN id(endNode(r))"""
         result = self.graph.query(query)
-        self.env.assertNotEqual(result.result_set[0][0], None)
+        assert result.result_set[0][0] != None
 
         # hasLabels on deleted node via endNode should return true
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(b:Person {name: 'Bob', age: 25}) WITH r, a, b DELETE a, b RETURN hasLabels(endNode(r), ['Person'])"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], True)
+        assert result.result_set[0][0] == True
 
         # typeof on deleted node via endNode should return "Node"
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(b:Person {name: 'Bob', age: 25}) WITH r, a, b DELETE a, b RETURN typeof(endNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], "Node")
+        assert result.result_set[0][0] == "Node"
 
         # indegree on deleted node via endNode should return 0
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(b:Person {name: 'Bob', age: 25}) WITH r, a, b DELETE a, b RETURN indegree(endNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 0)
+        assert result.result_set[0][0] == 0
 
         # outdegree on deleted node via endNode should return 0
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(b:Person {name: 'Bob', age: 25}) WITH r, a, b DELETE a, b RETURN outdegree(endNode(r))"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 0)
+        assert result.result_set[0][0] == 0
 
     # Test property access on deleted node via startNode/endNode
     # the node data is preserved from the deletion snapshot
@@ -399,12 +401,12 @@ class testResultSetFlow(FlowTestsBase):
         # accessing a property of a deleted node via startNode should return the value
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(a) WITH r, a DELETE a RETURN startNode(r).name"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 'Alice')
+        assert result.result_set[0][0] == 'Alice'
 
         # accessing a property of a deleted node via endNode should return the value
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS]->(b:Person {name: 'Bob', age: 25}) WITH r, a, b DELETE a, b RETURN endNode(r).name"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 'Bob')
+        assert result.result_set[0][0] == 'Bob'
 
     # Test edge entity functions when endpoints are deleted
     # edge is still in scope but implicitly deleted via endpoint deletion
@@ -412,29 +414,29 @@ class testResultSetFlow(FlowTestsBase):
         # id() on edge with deleted endpoints
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS {since: 2020}]->(a) WITH r, a DELETE a RETURN id(r)"""
         result = self.graph.query(query)
-        self.env.assertNotEqual(result.result_set[0][0], None)
+        assert result.result_set[0][0] != None
 
         # type() on edge with deleted endpoints
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS {since: 2020}]->(a) WITH r, a DELETE a RETURN type(r)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], "KNOWS")
+        assert result.result_set[0][0] == "KNOWS"
 
         # properties() on edge with deleted endpoints
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS {since: 2020}]->(a) WITH r, a DELETE a RETURN properties(r)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], {'since': 2020})
+        assert result.result_set[0][0] == {'since': 2020}
 
         # keys() on edge with deleted endpoints
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS {since: 2020}]->(a) WITH r, a DELETE a RETURN keys(r)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], ['since'])
+        assert result.result_set[0][0] == ['since']
 
         # property access on edge with deleted endpoints
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS {since: 2020}]->(a) WITH r, a DELETE a RETURN r.since"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], 2020)
+        assert result.result_set[0][0] == 2020
 
         # typeof on edge with deleted endpoints should return "Edge"
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS {since: 2020}]->(a) WITH r, a DELETE a RETURN typeof(r)"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.result_set[0][0], "Edge")
+        assert result.result_set[0][0] == "Edge"

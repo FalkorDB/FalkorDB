@@ -4,11 +4,12 @@ GRAPH_ID = "hashjoin"
 
 
 class testHashJoin(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
 
     def test_multi_hashjoins(self):
@@ -21,13 +22,13 @@ class testHashJoin(FlowTestsBase):
         plan = str(self.graph.explain(q))
 
         # Make sure plan contains 2 Value Hash Join operations
-        self.env.assertEqual(plan.count("Value Hash Join"), 2)
+        assert plan.count("Value Hash Join") == 2
 
         # Validate results
         expected_result = [[1,2,3]]
         actual_result = self.graph.query(q)
 
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test_argument_injection(self):
         # make sure ValueHashJoin is taken into account
@@ -44,7 +45,7 @@ class testHashJoin(FlowTestsBase):
         """
 
         res = self.graph.query(q)
-        self.env.assertEqual(res.relationships_created, 1)
+        assert res.relationships_created == 1
 
         queries = [
             """UNWIND [1] AS current_id
@@ -71,7 +72,7 @@ class testHashJoin(FlowTestsBase):
 
         for q in queries:
             res = self.graph.query(q)
-            self.env.assertEqual(res.relationships_created, 1)
+            assert res.relationships_created == 1
 
     def test_probe_batch_boundary(self):
         # Regression: a probe (left) row whose matches exactly fill an output
@@ -92,8 +93,8 @@ class testHashJoin(FlowTestsBase):
         # Ensure the query is actually planned as a Value Hash Join so the
         # regression keeps exercising the batch-boundary path.
         plan = str(self.graph.explain(q))
-        self.env.assertEqual(plan.count("Value Hash Join"), 1)
+        assert plan.count("Value Hash Join") == 1
 
         actual_result = self.graph.query(q)
-        self.env.assertEqual(actual_result.result_set, [[1, 1024], [2, 1]])
+        assert actual_result.result_set == [[1, 1024], [2, 1]]
 

@@ -51,19 +51,20 @@ class MemoryUsage:
         assert (abs(total_graph_sz_mb - expected) < 20)
 
 class testGraphMemoryUsage(FlowTestsBase):
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        type(self).graph = self.db.select_graph(GRAPH_ID)
 
-    def __init__(self):
+    @classmethod
+    def setup_class(cls):
         # No env='oss-cluster' — the tests below never use shardId or
         # cross-shard semantics; they only call self.env.getConnection() and
         # run queries against a single connection. Image-based CI doesn't
         # implement cluster spawn, and a raw shard connection answers
         # GRAPH.MEMORY USAGE with MOVED, so the flag has to stay off.
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        cls.env, cls.db = Env()
+        cls.conn = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
     def _graph_memory_usage(self, samples=100):
         """compute graph's memory consumption
@@ -74,7 +75,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         return MemoryUsage(res[17], res[1], res[7], res[11], res[9], res[13], res[15], res[3], res[5])
 
     def _assert_mb_close(self, actual, expected, tolerance_mb=1):
-        self.env.assertLessEqual(abs(actual - expected), tolerance_mb)
+        assert abs(actual - expected) <= tolerance_mb
 
     def test_invalid_call(self):
         """test error reporting from invalid calls to GRAPH.MEMORY USAGE"""
@@ -87,7 +88,7 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         try:
             res = self.conn.execute_command(cmd)
-            self.env.assertTrue(False)
+            assert False
         except:
             pass
 
@@ -96,7 +97,7 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         try:
             res = self.conn.execute_command(cmd)
-            self.env.assertTrue(False)
+            assert False
         except:
             pass
 
@@ -105,7 +106,7 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         try:
             res = self.conn.execute_command(cmd)
-            self.env.assertTrue(False)
+            assert False
         except:
             pass
 
@@ -117,7 +118,7 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         try:
             res = self.conn.execute_command(cmd)
-            self.env.assertTrue(False)
+            assert False
         except:
             pass
 
@@ -126,7 +127,7 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         try:
             res = self.conn.execute_command(cmd)
-            self.env.assertTrue(False)
+            assert False
         except:
             pass
 
@@ -135,7 +136,7 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         try:
             res = self.conn.execute_command(cmd)
-            self.env.assertTrue(False)
+            assert False
         except:
             pass
 
@@ -146,7 +147,7 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         try:
             res = self.conn.execute_command(cmd)
-            self.env.assertTrue(False)
+            assert False
         except:
             pass
 
@@ -159,14 +160,14 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         res = self._graph_memory_usage()
 
-        self.env.assertEqual(res.indices_sz_mb, 0)
-        self.env.assertEqual(res.edge_block_storage_sz_mb, 0)
-        self.env.assertEqual(res.label_matrices_sz_mb, 0)
-        self.env.assertEqual(res.unlabeled_node_attributes_sz_mb, 0)
-        self.env.assertEqual(res.relation_matrices_sz_mb, 0)
+        assert res.indices_sz_mb == 0
+        assert res.edge_block_storage_sz_mb == 0
+        assert res.label_matrices_sz_mb == 0
+        assert res.unlabeled_node_attributes_sz_mb == 0
+        assert res.relation_matrices_sz_mb == 0
 
-        self.env.assertGreater(res.total_graph_sz_mb, 0)
-        self.env.assertGreater(res.node_block_storage_sz_mb, 0)
+        assert res.total_graph_sz_mb > 0
+        assert res.node_block_storage_sz_mb > 0
 
         self._assert_mb_close(res.total_graph_sz_mb, res.node_block_storage_sz_mb)
 
@@ -179,15 +180,15 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         res = self._graph_memory_usage()
 
-        self.env.assertEqual(res.indices_sz_mb, 0)
-        self.env.assertEqual(res.edge_block_storage_sz_mb, 0)
-        self.env.assertEqual(res.unlabeled_node_attributes_sz_mb, 0)
-        self.env.assertEqual(res.relation_matrices_sz_mb, 0)
+        assert res.indices_sz_mb == 0
+        assert res.edge_block_storage_sz_mb == 0
+        assert res.unlabeled_node_attributes_sz_mb == 0
+        assert res.relation_matrices_sz_mb == 0
 
-        self.env.assertGreater(res.total_graph_sz_mb, 0)
-        self.env.assertGreater(res.node_block_storage_sz_mb, 0)
-        self.env.assertGreater(res.label_matrices_sz_mb, 0)
-        self.env.assertContains("A", res.node_attributes_by_label_storage_sz_mb)
+        assert res.total_graph_sz_mb > 0
+        assert res.node_block_storage_sz_mb > 0
+        assert res.label_matrices_sz_mb > 0
+        assert "A" in res.node_attributes_by_label_storage_sz_mb
 
         self._assert_mb_close(
             res.total_graph_sz_mb,
@@ -203,13 +204,13 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         res = self._graph_memory_usage()
 
-        self.env.assertEqual(res.indices_sz_mb, 0)
-        self.env.assertEqual(res.label_matrices_sz_mb, 0)
+        assert res.indices_sz_mb == 0
+        assert res.label_matrices_sz_mb == 0
 
-        self.env.assertGreater(res.total_graph_sz_mb, 0)
-        self.env.assertGreater(res.node_block_storage_sz_mb, 0)
-        self.env.assertGreater(res.edge_block_storage_sz_mb, 0)
-        self.env.assertGreater(res.relation_matrices_sz_mb, 0)
+        assert res.total_graph_sz_mb > 0
+        assert res.node_block_storage_sz_mb > 0
+        assert res.edge_block_storage_sz_mb > 0
+        assert res.relation_matrices_sz_mb > 0
 
         expected_total = (
             res.node_block_storage_sz_mb
@@ -227,14 +228,14 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         res = self._graph_memory_usage()
 
-        self.env.assertEqual(res.indices_sz_mb, 0)
-        self.env.assertEqual(res.edge_block_storage_sz_mb, 0)
-        self.env.assertEqual(res.label_matrices_sz_mb, 0)
-        self.env.assertEqual(res.unlabeled_node_attributes_sz_mb, 0)
-        self.env.assertEqual(res.relation_matrices_sz_mb, 0)
+        assert res.indices_sz_mb == 0
+        assert res.edge_block_storage_sz_mb == 0
+        assert res.label_matrices_sz_mb == 0
+        assert res.unlabeled_node_attributes_sz_mb == 0
+        assert res.relation_matrices_sz_mb == 0
 
-        self.env.assertGreater(res.total_graph_sz_mb, 0)
-        self.env.assertGreater(res.node_block_storage_sz_mb, 0)
+        assert res.total_graph_sz_mb > 0
+        assert res.node_block_storage_sz_mb > 0
         prev_node_storage_sz_mb = res.node_block_storage_sz_mb
 
         self._assert_mb_close(res.total_graph_sz_mb, res.node_block_storage_sz_mb)
@@ -244,14 +245,14 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.graph.query(q)
 
         res = self._graph_memory_usage()
-        self.env.assertGreater(res.unlabeled_node_attributes_sz_mb, 0)
+        assert res.unlabeled_node_attributes_sz_mb > 0
 
         # C keeps node_block_storage flat here: its nodes DataBlock reserves an
         # AttributeSet pointer per node up front, so seeding properties only
         # grows the separately-reported attribute sizes. Rust allocates the
         # attribute store's slot table lazily, so the first property write also
         # grows block storage - the same memory, paid later.
-        self.env.assertGreater(res.node_block_storage_sz_mb, prev_node_storage_sz_mb)
+        assert res.node_block_storage_sz_mb > prev_node_storage_sz_mb
 
     def test_indices_memory_usage(self):
         """make sure indices memory consumption is reported"""
@@ -270,8 +271,8 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         res = self._graph_memory_usage()
 
-        self.env.assertGreater(res.indices_sz_mb, 0)
-        self.env.assertGreater(res.total_graph_sz_mb, 0)
+        assert res.indices_sz_mb > 0
+        assert res.total_graph_sz_mb > 0
 
     def test_different_attributes_memory_consumption(self):
         """make sure we can compute memory consumption of each
@@ -293,13 +294,13 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         res = self._graph_memory_usage()
 
-        self.env.assertEqual(res.indices_sz_mb, 0)
-        self.env.assertEqual(res.edge_block_storage_sz_mb, 0)
-        self.env.assertEqual(res.label_matrices_sz_mb, 0)
-        self.env.assertEqual(res.relation_matrices_sz_mb, 0)
+        assert res.indices_sz_mb == 0
+        assert res.edge_block_storage_sz_mb == 0
+        assert res.label_matrices_sz_mb == 0
+        assert res.relation_matrices_sz_mb == 0
 
-        self.env.assertGreater(res.total_graph_sz_mb, 0)
-        self.env.assertGreater(res.node_block_storage_sz_mb, 0)
+        assert res.total_graph_sz_mb > 0
+        assert res.node_block_storage_sz_mb > 0
 
     def test_restricted_samples_size(self):
         """make sure samples size is restricted"""
@@ -313,14 +314,14 @@ class testGraphMemoryUsage(FlowTestsBase):
         # would take forever to complete
         res = self._graph_memory_usage(samples=2**64 - 1)
 
-        self.env.assertEqual(res.indices_sz_mb, 0)
-        self.env.assertEqual(res.edge_block_storage_sz_mb, 0)
-        self.env.assertEqual(res.label_matrices_sz_mb, 0)
-        self.env.assertEqual(res.unlabeled_node_attributes_sz_mb, 0)
-        self.env.assertEqual(res.relation_matrices_sz_mb, 0)
+        assert res.indices_sz_mb == 0
+        assert res.edge_block_storage_sz_mb == 0
+        assert res.label_matrices_sz_mb == 0
+        assert res.unlabeled_node_attributes_sz_mb == 0
+        assert res.relation_matrices_sz_mb == 0
 
-        self.env.assertGreater(res.total_graph_sz_mb, 0)
-        self.env.assertGreater(res.node_block_storage_sz_mb, 0)
+        assert res.total_graph_sz_mb > 0
+        assert res.node_block_storage_sz_mb > 0
 
         self._assert_mb_close(res.total_graph_sz_mb, res.node_block_storage_sz_mb)
 
@@ -335,13 +336,13 @@ class testGraphMemoryUsage(FlowTestsBase):
         # would take forever to complete
         res = self._graph_memory_usage()
 
-        self.env.assertEqual(res.indices_sz_mb, 0)
-        self.env.assertEqual(res.edge_block_storage_sz_mb, 0)
-        self.env.assertEqual(res.label_matrices_sz_mb, 0)
-        self.env.assertEqual(res.relation_matrices_sz_mb, 0)
-        self.env.assertEqual(res.total_graph_sz_mb, 0)
-        self.env.assertEqual(res.node_block_storage_sz_mb, 0)
-        self.env.assertEqual(res.unlabeled_node_attributes_sz_mb, 0)
+        assert res.indices_sz_mb == 0
+        assert res.edge_block_storage_sz_mb == 0
+        assert res.label_matrices_sz_mb == 0
+        assert res.relation_matrices_sz_mb == 0
+        assert res.total_graph_sz_mb == 0
+        assert res.node_block_storage_sz_mb == 0
+        assert res.unlabeled_node_attributes_sz_mb == 0
 
     def test_node_label_overlap(self):
         """test memory consumption of a graph containing multi label nodes"""
@@ -355,7 +356,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         node_storage = res.node_block_storage_sz_mb
 
         # make sure node storage memory consumption if greater than 0
-        self.env.assertGreater(node_storage, 0)
+        assert node_storage > 0
 
         # clear graph
         self.graph.delete()
@@ -437,7 +438,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         node_storage = res.node_block_storage_sz_mb
 
         # make sure node storage memory consumption if greater than 0
-        self.env.assertGreater(node_storage, 0)
+        assert node_storage > 0
 
         # clear graph
         self.graph.delete()
@@ -511,7 +512,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         res = self._graph_memory_usage(20)
 
         # make sure node attributes storage memory consumption if greater than 0
-        self.env.assertGreater(res.unlabeled_node_attributes_sz_mb, 0)
+        assert res.unlabeled_node_attributes_sz_mb > 0
 
     def test_graph_with_deleted_nodes(self):
         """test memory consumption of a graph containing deleted nodes"""
@@ -524,7 +525,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         node_storage = res.node_block_storage_sz_mb
 
         # make sure node storage memory consumption if greater than 0
-        self.env.assertGreater(node_storage, 0)
+        assert node_storage > 0
 
         # double the number of nodes
         q = "UNWIND range(0, 250000) AS x CREATE ({v:-x})"
@@ -533,7 +534,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         # memory consumption should dobule
         res = self._graph_memory_usage()
         double_sized_graph_node_storage = res.node_block_storage_sz_mb
-        self.env.assertGreater(double_sized_graph_node_storage, node_storage * 1.5)
+        assert double_sized_graph_node_storage > node_storage * 1.5
 
         # delete half of the nodes
         q = "MATCH (n) WHERE ID(n) % 2 = 0 DELETE n"
@@ -541,10 +542,10 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         # memory consumption should drop back to original
         res = self._graph_memory_usage()
-        self.env.assertGreater(res.node_block_storage_sz_mb, node_storage)
+        assert res.node_block_storage_sz_mb > node_storage
 
         # datablock remaind the same, delete array index grow
-        self.env.assertGreater(res.node_block_storage_sz_mb, double_sized_graph_node_storage)
+        assert res.node_block_storage_sz_mb > double_sized_graph_node_storage
 
     def test_graph_with_multi_edges(self):
         """test memory consumption of a graph containing multi-edges"""
@@ -566,9 +567,9 @@ class testGraphMemoryUsage(FlowTestsBase):
         res = self._graph_memory_usage()
 
         # validate graph's memory consumption
-        self.env.assertGreater(res.total_graph_sz_mb, 0)
-        self.env.assertGreater(res.edge_block_storage_sz_mb, 0)
-        self.env.assertGreater(res.edge_attributes_by_type_storage_sz_mb[1], 0)
+        assert res.total_graph_sz_mb > 0
+        assert res.edge_block_storage_sz_mb > 0
+        assert res.edge_attributes_by_type_storage_sz_mb[1] > 0
 
     def test_graph_with_empty_relationship_type(self):
         """test memory consumption of a graph containing an empty relationship-type"""
@@ -586,13 +587,13 @@ class testGraphMemoryUsage(FlowTestsBase):
         res = self._graph_memory_usage()
 
         # validate graph's memory consumption
-        self.env.assertEqual(res.indices_sz_mb, 0)
-        self.env.assertEqual(res.edge_block_storage_sz_mb, 0)
-        self.env.assertEqual(res.label_matrices_sz_mb, 0)
-        self.env.assertEqual(res.relation_matrices_sz_mb, 0)
-        self.env.assertEqual(res.total_graph_sz_mb, 0)
-        self.env.assertEqual(res.node_block_storage_sz_mb, 0)
-        self.env.assertEqual(res.unlabeled_node_attributes_sz_mb, 0)
+        assert res.indices_sz_mb == 0
+        assert res.edge_block_storage_sz_mb == 0
+        assert res.label_matrices_sz_mb == 0
+        assert res.relation_matrices_sz_mb == 0
+        assert res.total_graph_sz_mb == 0
+        assert res.node_block_storage_sz_mb == 0
+        assert res.unlabeled_node_attributes_sz_mb == 0
 
     def test_graph_recreate_memory_consumption(self):
         """test memory consumption of a graph which had a large set of deletions
@@ -610,7 +611,7 @@ class testGraphMemoryUsage(FlowTestsBase):
                CREATE (a)"""
 
         res = self.graph.query(q, {'node_count': node_count})
-        self.env.assertEqual(res.nodes_created, node_count)
+        assert res.nodes_created == node_count
 
         # create edges
         q = """MATCH (a)
@@ -620,13 +621,13 @@ class testGraphMemoryUsage(FlowTestsBase):
                CREATE (a)-[:R]->(a), (a)-[:R]->(b)"""
 
         res = self.graph.query(q, {'node_count': node_count})
-        self.env.assertEqual(res.relationships_created, edge_count)
+        assert res.relationships_created == edge_count
 
         # compute graph memory consumption
         original_memory_consumption = self._graph_memory_usage()
-        self.env.assertGreater(original_memory_consumption.total_graph_sz_mb, 0)
-        self.env.assertGreater(original_memory_consumption.node_block_storage_sz_mb, 0)
-        self.env.assertGreater(original_memory_consumption.edge_block_storage_sz_mb, 0)
+        assert original_memory_consumption.total_graph_sz_mb > 0
+        assert original_memory_consumption.node_block_storage_sz_mb > 0
+        assert original_memory_consumption.edge_block_storage_sz_mb > 0
 
         #-----------------------------------------------------------------------
         # delete entities
@@ -635,23 +636,21 @@ class testGraphMemoryUsage(FlowTestsBase):
         # delete all entities
         q = "MATCH (n) DELETE n"
         res = self.graph.query(q)
-        self.env.assertEqual(res.nodes_deleted, node_count)
-        self.env.assertEqual(res.relationships_deleted, edge_count)
+        assert res.nodes_deleted == node_count
+        assert res.relationships_deleted == edge_count
 
         # compute graph memory consumption
         deleted_memory_consumption = self._graph_memory_usage()
-        self.env.assertGreater(deleted_memory_consumption.total_graph_sz_mb, 0)
+        assert deleted_memory_consumption.total_graph_sz_mb > 0
 
         # C expects the datablocks to consume MORE space here, since they never
         # shrink and the deleted_idx array holds every deleted ID. The Rust
         # attribute store instead compacts a block once its abandoned entries
         # dominate, so deleting every entity releases the attribute arenas and
         # block storage drops - it must stay bounded by the original size.
-        self.env.assertLessEqual(deleted_memory_consumption.node_block_storage_sz_mb,
-                                 original_memory_consumption.node_block_storage_sz_mb)
+        assert deleted_memory_consumption.node_block_storage_sz_mb <= original_memory_consumption.node_block_storage_sz_mb
 
-        self.env.assertLessEqual(deleted_memory_consumption.edge_block_storage_sz_mb,
-                                 original_memory_consumption.edge_block_storage_sz_mb)
+        assert deleted_memory_consumption.edge_block_storage_sz_mb <= original_memory_consumption.edge_block_storage_sz_mb
 
         #-----------------------------------------------------------------------
         # restore entities
@@ -660,7 +659,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         q = "UNWIND range (1, $node_count) AS x CREATE (a)"
 
         res = self.graph.query(q, {'node_count': node_count})
-        self.env.assertEqual(res.nodes_created, node_count)
+        assert res.nodes_created == node_count
 
         q = """MATCH (a)
                WITH a, ID(a) + 1 AS b_id
@@ -669,7 +668,7 @@ class testGraphMemoryUsage(FlowTestsBase):
                CREATE (a)-[:R]->(a), (a)-[:R]->(b)"""
 
         res = self.graph.query(q, {'node_count': node_count})
-        self.env.assertEqual(res.relationships_created, edge_count)
+        assert res.relationships_created == edge_count
 
         # compute graph memory consumption
         #

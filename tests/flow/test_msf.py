@@ -6,20 +6,22 @@ GRAPH_ID      = "MSF"
 GRAPH_ID_RAND = "MSF_rand"
 
 class testMSF(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.randomGraph = self.db.select_graph(GRAPH_ID_RAND)
-        self.generate_random_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.conn = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.randomGraph = cls.db.select_graph(GRAPH_ID_RAND)
+        cls.generate_random_graph()
 
-    def tearDown(self):
+    def teardown_method(self):
         try:
             self.graph.delete()
         except:
             pass
 
-    def generate_random_graph(self):
+    @classmethod
+    def generate_random_graph(cls):
         # nodes of four different labels, each with 20 nodes
         nodes =[{"count": 20, "properties": 3, "labels": [l]} for l in "ABCD"]
 
@@ -34,7 +36,7 @@ class testMSF(FlowTestsBase):
                         {"type": "S", "source": l1, "target": l2, "count": 10})
 
         # call random graph
-        create_random_graph(self.randomGraph, nodes, edges)
+        create_random_graph(cls.randomGraph, nodes, edges)
 
         # ensure that each label is a connected component
         # by connecting one node (s) in label to every other one (n)
@@ -44,11 +46,11 @@ class testMSF(FlowTestsBase):
                 MATCH (n:{label}) 
                 CREATE (n)-[:R]->(s)"""
             
-            self.randomGraph.query(q)
+            cls.randomGraph.query(q)
         
         # set the wieghts 
         q = "MATCH ()-[r]->() SET r.weight = rand() * 100, r.cost = rand() * 10"
-        self.randomGraph.query(q)
+        cls.randomGraph.query(q)
 
     # find the minumum edge weight between all nodes with label 'src' node and 
     # all those with label 'dest'
@@ -100,7 +102,7 @@ class testMSF(FlowTestsBase):
         for q in invalid_queries:
             try:
                 self.graph.query(q)
-                self.env.assertFalse(True)
+                assert not True
             except redis.ResponseError as e:
                 pass
 
@@ -108,14 +110,14 @@ class testMSF(FlowTestsBase):
         """Test MSF algorithm behavior on an empty graph"""
 
         node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
-        self.env.assertEqual(node_count, 0)
+        assert node_count == 0
 
         # run MSF on empty graph
         result = self.graph.query("CALL algo.MSF() YIELD nodes, edges")
 
         # if we reach here, the algorithm didn't throw an exception
         # check if it returned empty results (acceptable behavior)
-        self.env.assertEqual(len(result.result_set), 0)
+        assert len(result.result_set) == 0
 
     def test_msf_on_missing_attributes(self):
         """Test MSF algorithm on multi edges with missing parameters"""
@@ -159,7 +161,7 @@ class testMSF(FlowTestsBase):
         #   0.2198  (n1 to n2)
         #   2.71828 (n4 to n5)
         ans_set = [[0.02189], [0.2198], [2.71828]]
-        self.env.assertEqual(ans_set, result_set)
+        assert ans_set == result_set
 
     def test_msf_on_missing_attributes_max(self):
         """Test MSF algorithm on multi edges with missing parameters"""
@@ -204,7 +206,7 @@ class testMSF(FlowTestsBase):
         #   3.14159  (n2 to n1)
 
         ans_set = [[.993284], [2.71828], [3.14159]]
-        self.env.assertEqual(ans_set, result_set)
+        assert ans_set == result_set
 
     def test_msf_on_unlabeled_graph(self):
         """Test MSF algorithm on unlabeled nodes with multiple connected components"""
@@ -236,15 +238,15 @@ class testMSF(FlowTestsBase):
         result_set = result.result_set
 
         # We should have exactly 3 different edges 
-        self.env.assertEqual(len(result_set), 3)
-        self.env.assertContains([4], result_set)
+        assert len(result_set) == 3
+        assert [4] in result_set
         
         # two edges in the cycle should be present
         cycle_count = 0
         for edge in result_set:
             if edge[0] in [1, 2, 3]:
                 cycle_count += 1
-        self.env.assertEqual(cycle_count, 2)
+        assert cycle_count == 2
 
 
     def test_msf_on_multitypes(self):
@@ -271,12 +273,12 @@ class testMSF(FlowTestsBase):
             UNWIND edges as e
             RETURN type(e), e.cost""")
         result_set = result.result_set
-        self.env.assertEqual(len(result_set), 1)
+        assert len(result_set) == 1
 
         # Check the edge and weight
         edge, weight = result_set[0]
-        self.env.assertEqual(edge, 'Kayak')
-        self.env.assertEqual(weight, 4)
+        assert edge == 'Kayak'
+        assert weight == 4
 
     def test_msf_on_multitypes_max(self):
         """Test MSF algorithm on nodes connected by multiple relationships"""
@@ -303,12 +305,12 @@ class testMSF(FlowTestsBase):
             RETURN type(e), e.cost""")
 
         result_set = result.result_set
-        self.env.assertEqual(len(result_set), 1)
+        assert len(result_set) == 1
 
         # Check the edge and weight
         edge, weight = result_set[0]
-        self.env.assertEqual(edge, 'Plane')
-        self.env.assertEqual(weight, 300)
+        assert edge == 'Plane'
+        assert weight == 300
 
     def test_msf_with_multiedge(self):
         """Test MSF algorithm with different relationship type filters"""
@@ -351,7 +353,7 @@ class testMSF(FlowTestsBase):
 
         result_set = result.result_set
         ans_set = [[1, 1234.0], [2, None]]
-        self.env.assertEqual(ans_set, result_set)
+        assert ans_set == result_set
 
         # Run MSF algorithm with relationship type B
         result = self.graph.query("""
@@ -364,7 +366,7 @@ class testMSF(FlowTestsBase):
 
         result_set = result.result_set
         ans_set = [[2, 1000.0], [2, 7654.0], [2, None]]
-        self.env.assertEqual(ans_set, result_set)
+        assert ans_set == result_set
         
         # Run MSF algorithm with both relationships
         result = self.graph.query("""
@@ -377,7 +379,7 @@ class testMSF(FlowTestsBase):
 
         result_set = result.result_set
         ans_set = [[2, 1000.0], [2, 7654.0], [2, None]]
-        self.env.assertEqual(ans_set, result_set)
+        assert ans_set == result_set
 
         # Run MSF algorithm with both relationships (max)
         result = self.graph.query("""
@@ -390,7 +392,7 @@ class testMSF(FlowTestsBase):
 
         result_set = result.result_set
         ans_set = [[0, 789134.0], [0, 8991234.0], [2, None]]
-        self.env.assertEqual(ans_set, result_set)
+        assert ans_set == result_set
 
         # set the edge 2->3 to have a non-numeric score
         q = "MATCH ({id:2})-[b:B]->({id:3}) SET b.score = 'Hello'"
@@ -405,9 +407,9 @@ class testMSF(FlowTestsBase):
             """)
 
         result_set = result.result_set
-        self.env.assertContains([2, 1000.0], result_set)
-        self.env.assertContains([2, 7654.0], result_set)
-        self.env.assertTrue([2, "Hello"] in result_set or [2, None] in result_set)
+        assert [2, 1000.0] in result_set
+        assert [2, 7654.0] in result_set
+        assert [2, "Hello"] in result_set or [2, None] in result_set
 
     def test_msf_rand_labels(self):
         """Test MSF algorithm on random graph with multiple labels"""
@@ -464,14 +466,14 @@ class testMSF(FlowTestsBase):
                 if(maxEdge is None): # components are disconnected.
                     # should return two spanning trees with 19 edges each.
                     # check that there are 19*2 = 38 edges total 
-                    self.env.assertEqual(len(result_set), 2)
-                    self.env.assertEqual(len(result_set[0][0]), 19)
-                    self.env.assertEqual(len(result_set[1][0]), 19)
+                    assert len(result_set) == 2
+                    assert len(result_set[0][0]) == 19
+                    assert len(result_set[1][0]) == 19
                 else:
                     # connected component with 40 nodes: must have 39 edges.
-                    self.env.assertEqual(len(result_set), 1)
-                    self.env.assertEqual(len(result_set[0][0]), 39)
-                    self.env.assertContains(maxEdge, result_set[0][0])
+                    assert len(result_set) == 1
+                    assert len(result_set[0][0]) == 39
+                    assert maxEdge in result_set[0][0]
 
     def test_msf_rand_forest_no_weight(self):
         """ Test that MSF correctly identifies and groups multiple trees """
@@ -504,7 +506,7 @@ class testMSF(FlowTestsBase):
             """).result_set
         # check these are equal
         result_set_individual = [[n[0], e[0]] for n, e in zip(node_set, edge_set)]
-        self.env.assertEqual(result_set_both, result_set_individual)
+        assert result_set_both == result_set_individual
 
         # get nodes and endpoints. 
         result_set = self.graph.query("""
@@ -518,9 +520,9 @@ class testMSF(FlowTestsBase):
         # check that there is one more node than edge and that each node can be 
         # found at least once in the resulting tree.
         for tree in result_set:
-            self.env.assertEqual(len(tree[0]), len(tree[1]) / 2 + 1)
+            assert len(tree[0]) == len(tree[1]) / 2 + 1
             if(len(tree[0]) == 1): continue
-            self.env.assertEqual(set(tree[0]), set(tree[1]))
+            assert set(tree[0]) == set(tree[1])
 
     def test_msf_no_relations(self):
         """ Test MSF on a graph with some nodes but no relationships """
@@ -547,7 +549,7 @@ class testMSF(FlowTestsBase):
                     [[8], []], 
                     [[9], []], 
                     [[10], []]]
-        self.env.assertEqual(result.result_set, expected)
+        assert result.result_set == expected
 
         # try deleting a node
         self.graph.query("MATCH (n) WHERE n.id = 1 DETACH DELETE n")
@@ -563,4 +565,4 @@ class testMSF(FlowTestsBase):
                     [[8], []], 
                     [[9], []], 
                     [[10], []]]
-        self.env.assertEqual(result.result_set, expected)
+        assert result.result_set == expected

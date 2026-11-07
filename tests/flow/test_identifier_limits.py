@@ -10,20 +10,21 @@ GRAPH_ID = "identifier_limits"
 
 
 class testIdentifierLimits:
-    def __init__(self):
-        self.env, self.db = Env()
-        self.con = self.env.getConnection()
-        self.con.delete(GRAPH_ID)
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.graph.query("CREATE (:Seed {v: 1})")
-        self.port = self.env.envRunner.port
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.con = cls.env.getConnection()
+        cls.con.delete(GRAPH_ID)
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.graph.query("CREATE (:Seed {v: 1})")
+        cls.port = cls.env.envRunner.port
 
     def _assert_identifier_too_long(self, fn):
         try:
             fn()
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("exceeds maximum length of 512", str(e))
+            assert "exceeds maximum length of 512" in str(e)
 
     # GRAPH.CONSTRAINT consumes command arguments directly (non-AST identifier path).
     def test01_constraint_command_identifier_length_limit(self):
@@ -54,13 +55,13 @@ class testIdentifierLimits:
             "MATCH (n) SET n += $props RETURN n",
             params={"props": {valid_key_add: 1}},
         )
-        self.env.assertEqual(result.properties_set, 1)
+        assert result.properties_set == 1
 
         result = self.graph.query(
             "MATCH (n) SET n = $props RETURN n",
             params={"props": {valid_key_replace: 2}},
         )
-        self.env.assertEqual(result.properties_set, 1)
+        assert result.properties_set == 1
 
         # 513-byte map keys fail with an explicit query error.
         self._assert_identifier_too_long(
@@ -84,10 +85,10 @@ class testIdentifierLimits:
 
         # 512-byte label and field names are accepted.
         result = create_node_fulltext_index(self.graph, valid_label, 'field')
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         result = create_node_fulltext_index(self.graph, 'L_proc', valid_field)
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         # 513-byte names fail with an explicit query error.
         self._assert_identifier_too_long(
@@ -104,7 +105,7 @@ class testIdentifierLimits:
 
         # 512-byte property name is accepted.
         result = create_node_range_index(self.graph, 'IndexLabel', valid_prop)
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         # 513-byte property name fails.
         self._assert_identifier_too_long(
@@ -126,7 +127,7 @@ class testIdentifierLimits:
         # Register and call a function with a 512-byte qualified name.
         self.db.udf_load(lib, script, True)
         result = self.graph.query(f"RETURN {lib}.{valid_func}()")
-        self.env.assertEqual(result.result_set, [[1]])
+        assert result.result_set == [[1]]
 
         # Calling a 513-byte function name fails at identifier-length validation.
         self._assert_identifier_too_long(
@@ -146,9 +147,9 @@ class testIdentifierLimits:
 
         try:
             self.db.udf_load(valid_lib, invalid_script, True)
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertFalse("Library name exceeds maximum length of 512" in str(e))
+            assert not "Library name exceeds maximum length of 512" in str(e)
 
         self._assert_identifier_too_long(
             lambda: self.db.udf_load(long_lib, invalid_script, True)
@@ -161,9 +162,9 @@ class testIdentifierLimits:
         long_name = "a" * 513
 
         def assert_bulk_fail(res):
-            self.env.assertNotEqual(res.exit_code, 0)
+            assert res.exit_code != 0
             combined = res.output + (str(res.exception) if res.exception else "")
-            self.env.assertContains("exceeds maximum length of 512", combined)
+            assert "exceeds maximum length of 512" in combined
 
         with runner.isolated_filesystem():
             # long label via --nodes-with-label

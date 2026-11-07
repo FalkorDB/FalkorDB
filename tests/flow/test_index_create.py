@@ -12,42 +12,43 @@ from execution_plan_util import locate_operation
 GRAPH_ID = "index_create"
 
 class testIndexCreationFlow():
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
     # full-text index creation
     def test01_fulltext_index_creation(self):
         # create an index over L:v0
         result = create_node_fulltext_index(self.graph, 'L', 'v0')
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         # create an index over L:v1 and L:v2
         result = create_node_fulltext_index(self.graph, 'L', 'v1', 'v2')
-        self.env.assertEqual(result.indices_created, 2)
+        assert result.indices_created == 2
 
         # create an index over L:v3, L:v4, L:v5 and L:v6
         result = create_node_fulltext_index(self.graph, 'L', 'v3', 'v4', 'v5', 'v6', sync=True)
-        self.env.assertEqual(result.indices_created, 4)
+        assert result.indices_created == 4
 
     def test02_fulltext_index_creation_label_config(self):
         # create an index over L1:v1
         result = self.graph.create_node_fulltext_index('L1', 'v1')
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         # create an index over L1:v2, v3
         result = self.graph.create_node_fulltext_index('L1', 'v2', 'v3')
-        self.env.assertEqual(result.indices_created, 2)
+        assert result.indices_created == 2
 
         # create an index over L2:p1 with stopwords
         result = self.graph.query(
             "CREATE FULLTEXT INDEX FOR (n:L2) ON (n.p1) OPTIONS {stopwords: ['The']}"
         )
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         # create an index over L2:v2
         result = self.graph.create_node_fulltext_index('L2', 'v2')
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         try:
             # try to add stopwords to L1 which already has fulltext fields - should fail
@@ -56,13 +57,13 @@ class testIndexCreationFlow():
             )
             assert False
         except ResponseError as e:
-            self.env.assertContains("Can not override index configuration", str(e))
+            assert "Can not override index configuration" in str(e)
 
         # create an index over L3:p1 with stopwords on a fresh label
         result = self.graph.query(
             "CREATE FULLTEXT INDEX FOR (n:L3) ON (n.p1) OPTIONS {stopwords: ['The']}"
         )
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         # try to update L1 index stopwords should failed
         try:
@@ -71,13 +72,13 @@ class testIndexCreationFlow():
             )
             assert False
         except ResponseError as e:
-            self.env.assertContains("Can not override index configuration", str(e))
+            assert "Can not override index configuration" in str(e)
 
         # create an index over L4:p1 with language on a fresh label
         result = self.graph.query(
             "CREATE FULLTEXT INDEX FOR (n:L4) ON (n.p1) OPTIONS {language: 'english'}"
         )
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         # try to update L1 index language should failed
         try:
@@ -86,18 +87,18 @@ class testIndexCreationFlow():
             )
             assert False
         except ResponseError as e:
-            self.env.assertContains("Can not override index configuration", str(e))
+            assert "Can not override index configuration" in str(e)
 
         # drop L1:p6 - not indexed, so an error should be raised
         try:
             self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.p6)")
             raise AssertionError("Expected DROP FULLTEXT INDEX for L1.p6 to fail")
         except ResponseError as e:
-            self.env.assertContains("Unable to drop index on :L1(p6): no such index.", str(e))
+            assert "Unable to drop index on :L1(p6): no such index." in str(e)
 
         # drop L1:v1 - is indexed, so indices_deleted should be 1
         result = self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.v1)")
-        self.env.assertEqual(result.indices_deleted, 1)
+        assert result.indices_deleted == 1
 
         try:
             # create an index over L5:p1 with unsupported language - should fail
@@ -106,7 +107,7 @@ class testIndexCreationFlow():
             )
             assert False
         except ResponseError as e:
-            self.env.assertContains("Language is not supported", str(e))
+            assert "Language is not supported" in str(e)
 
         try:
             # try to add language to L1 which still has fulltext fields - should fail
@@ -115,13 +116,13 @@ class testIndexCreationFlow():
             )
             assert False
         except ResponseError as e:
-            self.env.assertIn("Language is already set", str(e))
+            assert "Language is already set" in str(e)
 
         # create an index over L6:p1 with language on a fresh label
         result = self.graph.query(
             "CREATE FULLTEXT INDEX FOR (n:L6) ON (n.p1) OPTIONS {language: 'english'}"
         )
-        self.env.assertEqual(result.indices_created, 1)
+        assert result.indices_created == 1
 
         # --- Type validation errors (all on fresh label L7) ---
 
@@ -132,7 +133,7 @@ class testIndexCreationFlow():
             )
             assert False
         except ResponseError as e:
-            self.env.assertContains("Stopwords must be array", str(e))
+            assert "Stopwords must be array" in str(e)
 
         try:
             # create an index over L3:v1 with language should failed
@@ -142,14 +143,14 @@ class testIndexCreationFlow():
             )
             assert False
         except ResponseError as e:
-            self.env.assertContains("Language must be string", str(e))
+            assert "Language must be string" in str(e)
 
         try:
             # weight must be provided as numeric
             result = self.graph.query("CREATE FULLTEXT INDEX FOR (n:L7) ON (n.p1) OPTIONS {weight: '1'}")
             assert(False)
         except ResponseError as e:
-            self.env.assertContains("Weight must be numeric", str(e))
+            assert "Weight must be numeric" in str(e)
 
         try:
             # create an index over L3:v1 with nostem of type string should failed
@@ -159,7 +160,7 @@ class testIndexCreationFlow():
             )
             assert False
         except ResponseError as e:
-            self.env.assertContains("Nostem must be bool", str(e))
+            assert "Nostem must be bool" in str(e)
         
         try:
             # phonetic accepts either a bool or the 'dm:en' algorithm
@@ -171,26 +172,26 @@ class testIndexCreationFlow():
                 "Expected unsupported phonetic algorithm to raise"
             )
         except ResponseError as e:
-            self.env.assertContains("Unsupported phonetic algorithm", str(e))
+            assert "Unsupported phonetic algorithm" in str(e)
 
     def test03_multi_prop_index_creation(self):
         # create an index over person:age and person:name
         result = self.graph.query("CREATE INDEX ON :person(age, name)")
-        self.env.assertEqual(result.indices_created, 2)
+        assert result.indices_created == 2
 
         # try to create an index over person:age and person:name, index shouldn't be created as it already exist
         try:
             result = self.graph.query("CREATE INDEX ON :person(age, name)")
             assert(False)
         except ResponseError as e:
-            self.env.assertContains("Attribute 'age' is already indexed", str(e))
+            assert "Attribute 'age' is already indexed" in str(e)
 
         # try to create an index over person:name and person:age, index shouldn't be created as it already exist
         try:
             result = self.graph.query("CREATE INDEX ON :person(name, age)")
             assert(False)
         except ResponseError as e:
-            self.env.assertContains("Attribute 'name' is already indexed", str(e))
+            assert "Attribute 'name' is already indexed" in str(e)
 
         # try to create an index over person: age, name height,
         # operation should fail as 'age' and 'name' are already indexed
@@ -198,7 +199,7 @@ class testIndexCreationFlow():
             result = self.graph.query("CREATE INDEX ON :person(age, name, height)")
             assert(False)
         except ResponseError as e:
-            self.env.assertContains("Attribute 'age' is already indexed", str(e))
+            assert "Attribute 'age' is already indexed" in str(e)
 
         # try to create an index over person: gender, name and height
         # operation should fail as 'name' is already indexed
@@ -206,7 +207,7 @@ class testIndexCreationFlow():
             result = self.graph.query("CREATE INDEX ON :person(gender, name, height)")
             assert(False)
         except ResponseError as e:
-            self.env.assertContains("Attribute 'name' is already indexed", str(e))
+            assert "Attribute 'name' is already indexed" in str(e)
 
         # try to create an index with a duplicated field
         try:
@@ -216,16 +217,16 @@ class testIndexCreationFlow():
             # "duplicated in the same request" distinguishes this from
             # the "already indexed" case when `height` is previously
             # registered in a separate statement.
-            self.env.assertContains("Attribute 'height' is duplicated in the same request", str(e))
+            assert "Attribute 'height' is duplicated in the same request" in str(e)
 
     def test04_index_creation_pattern_syntax(self):
         # create an index over user:age and user:name
         result = self.graph.query("CREATE INDEX FOR (p:user) ON (p.age, p.name)")
-        self.env.assertEqual(result.indices_created, 2)
+        assert result.indices_created == 2
 
         # create an index over follow:prop1 and follow:prop2
         result = self.graph.query("CREATE INDEX FOR ()-[r:follow]-() ON (r.prop1, r.prop2)")
-        self.env.assertEqual(result.indices_created, 2)
+        assert result.indices_created == 2
 
     def test05_index_delete(self):
         async def create_drop_index(g):
@@ -256,87 +257,87 @@ class testIndexCreationFlow():
         # create index on invalid property name
         try:
             self.graph.query("CREATE INDEX FOR (p:Person) ON (p.m.n, p.p.q)")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("Invalid input '.': expected ')'", str(e))
+            assert "Invalid input '.': expected ')'" in str(e)
 
         # create index on invalid identifier
         try:
             self.graph.query("CREATE INDEX FOR (p:Person) ON (1.b)")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("Invalid input '1': expected an identifier", str(e))
+            assert "Invalid input '1': expected an identifier" in str(e)
 
         # create index on invalid property name: number
         try:
             self.graph.query("CREATE INDEX FOR (p:Person) ON (b.1)")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("Invalid input '1': expected a property name", str(e))
+            assert "Invalid input '1': expected a property name" in str(e)
 
         # create index without label
         try:
             self.graph.query("CREATE INDEX FOR (Person) ON (surname)")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("Invalid input ')': expected a label", str(e))
+            assert "Invalid input ')': expected a label" in str(e)
 
         # create index without property name
         try:
             self.graph.query("CREATE INDEX FOR (p:Person) ON (surname)")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("Invalid input ')': expected '.'", str(e))
+            assert "Invalid input ')': expected '.'" in str(e)
 
         # create index without identifier
         try:
             self.graph.query("CREATE INDEX FOR (p:Person) ON ()")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("Invalid input ')': expected an identifier", str(e))
+            assert "Invalid input ')': expected an identifier" in str(e)
 
         # create index for relationship on invalid property name
         try:
             self.graph.query("CREATE INDEX FOR ()-[n:T]-() ON (n.p.q)")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("Invalid input '.': expected ')'", str(e))
+            assert "Invalid input '.': expected ')'" in str(e)
 
         # create index for relationship on invalid identifier
         try:
             self.graph.query("CREATE INDEX FOR ()-[n:T]-() ON (1.b)")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("Invalid input '1': expected an identifier", str(e))
+            assert "Invalid input '1': expected an identifier" in str(e)
 
     def test07_index_creation_undefined_identifier(self):   
         # create index on undefined identifier
         try:
             self.graph.query("CREATE INDEX FOR (p:Person) ON (a.b)")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("'a' not defined", str(e))
+            assert "'a' not defined" in str(e)
 
         # create index on undefined identifier after defined identifier
         try:
             self.graph.query("CREATE INDEX FOR (p:Person) ON (p.x, a.b)")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("'a' not defined", str(e))
+            assert "'a' not defined" in str(e)
         
         # create index for relationship on undefined identifier
         try:
             self.graph.query("CREATE INDEX FOR ()-[n:T]-() ON (a.b)")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("'a' not defined", str(e))
+            assert "'a' not defined" in str(e)
 
         # create index for relationship on undefined identifier after defined identifier
         try:
             self.graph.query("CREATE INDEX FOR ()-[n:T]-() ON (n.x, a.b)")
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("'a' not defined", str(e))
+            assert "'a' not defined" in str(e)
 
     def test08_async_index_creation(self):
         # 1. create a large graph
@@ -363,13 +364,13 @@ class testIndexCreationFlow():
         #-----------------------------------------------------------------------
 
         res = create_node_range_index(g, 'L', 'v', sync=False)
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         #-----------------------------------------------------------------------
         # validate index is being populated
         #-----------------------------------------------------------------------
 
-        self.env.assertTrue(index_under_construction(g, 'L'))
+        assert index_under_construction(g, 'L')
 
         # while the index is being constructed
         # perform CRUD operations
@@ -380,10 +381,10 @@ class testIndexCreationFlow():
 
         q = "MATCH (n:L) WHERE n.v = 41 RETURN n.v LIMIT 1"
         res = g.query(q)
-        self.env.assertEqual(res.result_set[0][0], 41)
+        assert res.result_set[0][0] == 41
 
         plan = g.explain(q)
-        self.env.assertIsNone(locate_operation(plan.structured_plan, "Node By Index Scan"))
+        assert locate_operation(plan.structured_plan, "Node By Index Scan") is None
 
         #-----------------------------------------------------------------------
         # write while index is being constructed
@@ -412,7 +413,7 @@ class testIndexCreationFlow():
         wait_for_indices_to_sync(g)
 
         # index should be operational
-        self.env.assertFalse(index_under_construction(g, 'L'))
+        assert not index_under_construction(g, 'L')
 
         #-----------------------------------------------------------------------
         # validate index results
@@ -421,28 +422,28 @@ class testIndexCreationFlow():
         # index should be utilized
         q = "MATCH (n:L) WHERE n.v = 41 RETURN n.v LIMIT 1"
         plan = g.explain(q)
-        self.env.assertIsNotNone(locate_operation(plan.structured_plan, "Node By Index Scan"))
+        assert locate_operation(plan.structured_plan, "Node By Index Scan") is not None
 
         # find newly created node
         q = "MATCH (n:L {v:$v}) RETURN count(n)"
         res = g.query(q, {'v': max_node_v + 10}).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
         # find updated nodes
         q = "MATCH (n:L) WHERE n.v = $new_v RETURN count(n)"
         res = g.query(q, {'new_v': -max_node_v}).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
         # find updated node
         res = g.query(q, {'new_v': -1}).result_set
-        self.env.assertEqual(len(res), 1)
+        assert len(res) == 1
 
         # make sure deleted nodes aren't found 
         q = "MATCH (n:L) WHERE n.v = $id RETURN count(n)"
         res = g.query(q, {'id': max_node_v - 9}).result_set
-        self.env.assertEqual(res[0][0], 0)
+        assert res[0][0] == 0
         res = g.query(q, {'id': 2}).result_set
-        self.env.assertEqual(res[0][0], 0)
+        assert res[0][0] == 0
 
     def test09_async_fulltext_index_creation(self):
         # 1. create a large graph
@@ -468,13 +469,13 @@ class testIndexCreationFlow():
         #-----------------------------------------------------------------------
 
         res = self.graph.create_node_fulltext_index('L', 'h')
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         #-----------------------------------------------------------------------
         # validate index is being populated
         #-----------------------------------------------------------------------
 
-        self.env.assertTrue(index_under_construction(self.graph, 'L'))
+        assert index_under_construction(self.graph, 'L')
 
         # while the index is being constructed
         # perform CRUD operations
@@ -485,7 +486,7 @@ class testIndexCreationFlow():
 
         q = "RETURN 1"
         res = self.graph.query(q)
-        self.env.assertEqual(res.result_set[0][0], 1)
+        assert res.result_set[0][0] == 1
 
         #-----------------------------------------------------------------------
         # write while index is being constructed
@@ -528,7 +529,7 @@ class testIndexCreationFlow():
         wait_for_indices_to_sync(self.graph)
 
         # index should be operational
-        self.env.assertFalse(index_under_construction(self.graph, 'L'))
+        assert not index_under_construction(self.graph, 'L')
 
         #-----------------------------------------------------------------------
         # validate index results
@@ -537,12 +538,12 @@ class testIndexCreationFlow():
         for uid in uids_to_match:
             q = "CALL db.idx.fulltext.queryNodes('L', $uid) YIELD node RETURN count(node)"
             res = self.graph.query(q, {'uid': uid}).result_set
-            self.env.assertEqual(res[0][0], 1)
+            assert res[0][0] == 1
 
         for uid in uids_to_unmatch:
             q = "CALL db.idx.fulltext.queryNodes('L', $uid) YIELD node RETURN count(node)"
             res = self.graph.query(q, {'uid': uid}).result_set
-            self.env.assertEqual(res[0][0], 0)
+            assert res[0][0] == 0
 
     def test10_delete_interrupt_async_index_creation(self):
         # 1. create a large graph
@@ -567,13 +568,13 @@ class testIndexCreationFlow():
         #-----------------------------------------------------------------------
 
         res = self.graph.create_node_range_index('L', 'v')
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         #-----------------------------------------------------------------------
         # validate index is being populated
         #-----------------------------------------------------------------------
 
-        self.env.assertTrue(index_under_construction(self.graph, 'L'))
+        assert index_under_construction(self.graph, 'L')
 
         #-----------------------------------------------------------------------
         # delete graph while the index is being constructed 
@@ -583,7 +584,7 @@ class testIndexCreationFlow():
 
         # graph key should be removed, index creation should run to completion
         conn = self.env.getConnection()
-        self.env.assertFalse(conn.exists(GRAPH_ID))
+        assert not conn.exists(GRAPH_ID)
 
         # at the moment there's no way of checking index status once its graph
         # key had been removed
@@ -609,13 +610,13 @@ class testIndexCreationFlow():
         #-----------------------------------------------------------------------
 
         res = self.graph.create_node_fulltext_index('L', 'v')
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         #-----------------------------------------------------------------------
         # validate index is being populated
         #-----------------------------------------------------------------------
 
-        self.env.assertTrue(index_under_construction(self.graph, 'L'))
+        assert index_under_construction(self.graph, 'L')
 
         #-----------------------------------------------------------------------
         # delete graph while the index is being constructed 
@@ -624,7 +625,7 @@ class testIndexCreationFlow():
         self.graph.delete()
 
         # graph key should be removed, index creation should run to completion
-        self.env.assertFalse(conn.exists(GRAPH_ID))
+        assert not conn.exists(GRAPH_ID)
 
         # at the moment there's no way of checking index status once its graph
         # key had been removed
@@ -654,7 +655,7 @@ class testIndexCreationFlow():
         start = time()
 
         res = create_node_range_index(self.graph, 'L', 'v', sync=True)
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         # total index creation time
         elapsed = time() - start
@@ -665,7 +666,7 @@ class testIndexCreationFlow():
 
         q = "DROP INDEX ON :L(v)"
         res = self.graph.query(q)
-        self.env.assertEqual(res.indices_deleted, 1)
+        assert res.indices_deleted == 1
 
         # recreate the index, but this time introduce additionl fields
         # while the index is being populated
@@ -674,20 +675,20 @@ class testIndexCreationFlow():
 
         # introduce a new field
         res = self.graph.create_node_range_index('L', 'a')
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         # introduce a new field
         res = self.graph.create_node_range_index('L', 'b')
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         # remove field
         q = "DROP INDEX ON :L(a)"
         res = self.graph.query(q)
-        self.env.assertEqual(res.indices_deleted, 1)
+        assert res.indices_deleted == 1
 
         # introduce a new field
         res = self.graph.create_node_range_index('L', 'v')
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         # wait for index to become operational
         wait_for_indices_to_sync(self.graph)
@@ -698,7 +699,7 @@ class testIndexCreationFlow():
         # new index includes 2 fields (b,v) while the former index included just
         # one (v) we're expecting their overall construction time to be similar
         # using 3x to account for per-field attribute lookup overhead
-        self.env.assertTrue(elapsed_2 < elapsed * 3)
+        assert elapsed_2 < elapsed * 3
 
     def test13_multi_fulltext_index_creation(self):
         # interrupt index creation by adding/removing fields
@@ -725,7 +726,7 @@ class testIndexCreationFlow():
         #-----------------------------------------------------------------------
 
         res = create_node_fulltext_index(self.graph, 'L', 'v', sync=True)
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         #-----------------------------------------------------------------------
         # drop the index
@@ -733,27 +734,27 @@ class testIndexCreationFlow():
 
         q = "CALL db.idx.fulltext.drop('L')"
         res = self.graph.query(q)
-        self.env.assertEqual(res.indices_deleted, 1)
+        assert res.indices_deleted == 1
 
         # recreate the index, but this time introduce additionl fields
         # while the index is being populated
 
         # introduce a new field
         res = self.graph.create_node_fulltext_index('L', 'a')
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         # introduce a new field
         res = self.graph.create_node_fulltext_index('L', 'b')
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         # remove index
         q = "CALL db.idx.fulltext.drop('L')"
         res = self.graph.query(q)
-        self.env.assertEqual(res.indices_deleted, 2)
+        assert res.indices_deleted == 2
 
         # introduce a new field
         res = self.graph.create_node_fulltext_index('L', 'v')
-        self.env.assertEqual(res.indices_created, 1)
+        assert res.indices_created == 1
 
         # wait for index to become operational
         wait_for_indices_to_sync(self.graph)
@@ -801,9 +802,9 @@ class testIndexCreationFlow():
         # validate
         #-----------------------------------------------------------------------
 
-        self.env.assertEqual(label, 'L')
+        assert label == 'L'
 
-        self.env.assertEqual(properties, ['a', 'b', 'c', 'd', 'e', 'f', 'g'])
+        assert properties == ['a', 'b', 'c', 'd', 'e', 'f', 'g']
 
         expected_types = OrderedDict(
                 [
@@ -817,9 +818,9 @@ class testIndexCreationFlow():
                 ]
             )
 
-        self.env.assertEqual(types, expected_types)
-        self.env.assertEqual(language, 'english')
-        self.env.assertEqual(entitytype, 'NODE')
+        assert types == expected_types
+        assert language == 'english'
+        assert entitytype == 'NODE'
 
     def test15_index_progress_report(self):
         # create a relatively large graph
@@ -837,7 +838,7 @@ class testIndexCreationFlow():
         if("OPERATIONAL" in status):
             return
 
-        self.env.assertTrue("UNDER CONSTRUCTION" in status)
+        assert "UNDER CONSTRUCTION" in status
         while "UNDER CONSTRUCTION" in status:
             # extract progress n/m
             # "UNDER CONSTRUCTION 8000001/7537358"
@@ -848,8 +849,8 @@ class testIndexCreationFlow():
             n = int(n)
             m = int(m)
 
-            self.env.assertGreaterEqual(m, n) # m >= n
-            self.env.assertEqual(m, node_count)   # m == node_count
+            assert m >= n # m >= n
+            assert m == node_count   # m == node_count
 
             sleep(0.1)
 
@@ -863,8 +864,8 @@ class testIndexCreationFlow():
             graph.delete()
 
         result = create_node_range_index(graph, "N", "a")
-        self.env.assertEqual(result.indices_created, 1)
-        self.env.assertEqual(result.labels_added, 1)
+        assert result.indices_created == 1
+        assert result.labels_added == 1
 
     def test17_index_catalog_response(self):
         graph_name = "index_catalog_response"
@@ -887,16 +888,16 @@ class testIndexCreationFlow():
             "info",
         ]
         header = [column[1] for column in result.header]
-        self.env.assertEqual(header[: len(expected_header)], expected_header)
+        assert header[: len(expected_header)] == expected_header
 
-        self.env.assertEqual(len(result.header), len(result.result_set[0]))
+        assert len(result.header) == len(result.result_set[0])
         row_by_column = dict(zip(header, result.result_set[0]))
-        self.env.assertEqual(row_by_column["label"], "Person")
-        self.env.assertEqual(row_by_column["properties"], ["name"])
-        self.env.assertEqual(row_by_column["types"], OrderedDict([("name", ["FULLTEXT"])]))
-        self.env.assertEqual(row_by_column["options"], OrderedDict([("name", OrderedDict())]))
-        self.env.assertEqual(row_by_column["language"], "english")
-        self.env.assertEqual(row_by_column["stopwords"], [])
-        self.env.assertEqual(row_by_column["entitytype"], "NODE")
-        self.env.assertEqual(row_by_column["status"], "OPERATIONAL")
+        assert row_by_column["label"] == "Person"
+        assert row_by_column["properties"] == ["name"]
+        assert row_by_column["types"] == OrderedDict([("name", ["FULLTEXT"])])
+        assert row_by_column["options"] == OrderedDict([("name", OrderedDict())])
+        assert row_by_column["language"] == "english"
+        assert row_by_column["stopwords"] == []
+        assert row_by_column["entitytype"] == "NODE"
+        assert row_by_column["status"] == "OPERATIONAL"
 

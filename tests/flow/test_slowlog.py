@@ -7,10 +7,11 @@ from redis.asyncio import BlockingConnectionPool
 GRAPH_ID = "slowlog_test"
 
 class testSlowLog():
-    def __init__(self):
-        self.env, self.db = Env()
-        self.redis_con = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.redis_con = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
     def populate_slowlog(self, n):
         async def populate(self, n):
@@ -38,7 +39,7 @@ class testSlowLog():
         try:
             slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", "NONE_EXISTING_GRAPH")
         except ResponseError as e:
-            self.env.assertContains("Invalid graph operation on empty key", str(e))
+            assert "Invalid graph operation on empty key" in str(e)
 
         # issue the same query twice
         # the range is sized to run an order of magnitude past the slowlog's
@@ -52,7 +53,7 @@ class testSlowLog():
 
         # slow log should contain a single entry, no duplicates
         slowlog = self.graph.slowlog()
-        self.env.assertEqual(len(slowlog), 1)
+        assert len(slowlog) == 1
 
         # saturate slowlog
         self.populate_slowlog(20)
@@ -60,8 +61,8 @@ class testSlowLog():
         B = self.graph.slowlog()
 
         # calling slowlog multiple times should preduce the same result
-        self.env.assertEqual(A, B)
-        self.env.assertEqual(len(A), 10)
+        assert A == B
+        assert len(A) == 10
 
         server = self.redis_con.info("Server")
         if Version(server["redis_version"]) < Version("6.2.0"):
@@ -78,33 +79,33 @@ class testSlowLog():
         self.graph.query(q)
         B = self.graph.slowlog()
 
-        self.env.assertNotEqual(A, B)
+        assert A != B
 
         # get redis slowlog
         slowlog = self.redis_con.slowlog_get()
         slowlog_commands = [log["command"].decode('ascii') for log in slowlog]
 
         # validate the command added to redis slowlog
-        self.env.assertGreater(len(slowlog), 0)
-        self.env.assertContains(f"GRAPH.QUERY slowlog_test {q} --compact", slowlog_commands)
+        assert len(slowlog) > 0
+        assert f"GRAPH.QUERY slowlog_test {q} --compact" in slowlog_commands
 
     def test02_slowlog_reset(self):
         # reset none existing slowlog
         try:
             slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", "NONE_EXISTING_GRAPH", "RESET")
         except ResponseError as e:
-            self.env.assertContains("Invalid graph operation on empty key", str(e))
+            assert "Invalid graph operation on empty key" in str(e)
 
         # issue an unknown slowlog sub command
         try:
             slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "UNKNOW_SUB_CMD")
         except ResponseError as e:
-            self.env.assertContains("Unknown subcommand", str(e))
+            assert "Unknown subcommand" in str(e)
 
         # populate slowlog
         self.populate_slowlog(36)
         slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
-        self.env.assertGreater(len(slowlog), 0)
+        assert len(slowlog) > 0
 
         # clear slowlog
         # make sure there's no harm in double reseting
@@ -113,12 +114,12 @@ class testSlowLog():
 
         # expecting an empty slowlog
         slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
-        self.env.assertEqual(len(slowlog), 0)
+        assert len(slowlog) == 0
 
         # make sure slowlog repopulates after RESET
         self.populate_slowlog(36)
         slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
-        self.env.assertGreater(len(slowlog), 0)
+        assert len(slowlog) > 0
 
     def test03_cap_entry(self):
         # make sure slowlog entries are capped
@@ -146,12 +147,12 @@ class testSlowLog():
         latency = entry[3]
         params  = entry[4]
 
-        self.env.assertEqual(cmd, "GRAPH.QUERY")
-        self.env.assertEqual(params, None)
+        assert cmd == "GRAPH.QUERY"
+        assert params == None
 
         # reported query should be truncated
-        self.env.assertContains("...", q)
-        self.env.assertLess(len(q), len(query))
+        assert "..." in q
+        assert len(q) < len(query)
 
         #-----------------------------------------------------------------------
         # truncated params
@@ -170,12 +171,12 @@ class testSlowLog():
         latency = entry[3]
         params  = entry[4]
 
-        self.env.assertEqual(cmd, "GRAPH.QUERY")
-        self.env.assertEqual(query, q)
-        self.env.assertContains("...", params)
+        assert cmd == "GRAPH.QUERY"
+        assert query == q
+        assert "..." in params
 
         # reported param should be truncated
-        self.env.assertLess(len(params), len(long_string))
+        assert len(params) < len(long_string)
 
         #-----------------------------------------------------------------------
         # truncated query & params
@@ -194,15 +195,15 @@ class testSlowLog():
         latency = entry[3]
         params  = entry[4]
 
-        self.env.assertEqual(cmd, "GRAPH.QUERY")
+        assert cmd == "GRAPH.QUERY"
 
         # reported query should be truncated
-        self.env.assertContains("...", q)
-        self.env.assertLess(len(q), len(query))
+        assert "..." in q
+        assert len(q) < len(query)
 
         # reported param should be truncated
-        self.env.assertContains("...", params)
-        self.env.assertLess(len(params), len(long_string))
+        assert "..." in params
+        assert len(params) < len(long_string)
 
     def test04_same_query_diff_params(self):
         # make sure no new entries are added when the query remains the same
@@ -223,7 +224,7 @@ class testSlowLog():
         self.graph.query(query, {'i': 4})
 
         slowlog = self.graph.slowlog()
-        self.env.assertEqual(len(slowlog), 1)
+        assert len(slowlog) == 1
 
         entry = slowlog[0]
         q0 = entry[2]
@@ -235,7 +236,7 @@ class testSlowLog():
         self.graph.query(query, {'i': 49})
 
         slowlog = self.graph.slowlog()
-        self.env.assertEqual(len(slowlog), 1)
+        assert len(slowlog) == 1
 
         entry = slowlog[0]
         q1 = entry[2]
@@ -243,11 +244,11 @@ class testSlowLog():
         p1 = entry[4]
 
         # expecting the same query
-        self.env.assertEqual(q0, q1)
+        assert q0 == q1
 
         # expecting params to update
-        self.env.assertNotEqual(p0, p1)
-        self.env.assertContains('49', p1)
+        assert p0 != p1
+        assert '49' in p1
 
     def test05_fast_queries(self):
         # make sure fast queries do not enter the slowlog
@@ -260,7 +261,7 @@ class testSlowLog():
         self.graph.query(q)
 
         slowlog = self.graph.slowlog()
-        self.env.assertEqual(len(slowlog), 0)
+        assert len(slowlog) == 0
 
     def test06_force_replace(self):
         # make sure slowlog entries get replcaed
@@ -273,7 +274,7 @@ class testSlowLog():
         entries = self.graph.slowlog()
 
         # expecting 10 entries
-        self.env.assertEqual(len(entries), 10)
+        assert len(entries) == 10
 
         # issue 2 slower queries
         # expecting to have them replace existing entries
@@ -291,9 +292,9 @@ class testSlowLog():
         entries = self.graph.slowlog()
 
         # expecting 10 entries
-        self.env.assertEqual(len(entries), 10)
+        assert len(entries) == 10
 
         # make sure both q0 & q1 are in entries
         queries = [entry[2] for entry in entries]
-        self.env.assertContains (q0, queries)
-        self.env.assertContains (q1, queries)
+        assert q0 in queries
+        assert q1 in queries

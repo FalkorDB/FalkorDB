@@ -4,11 +4,12 @@ GRAPH_ID = "redundant_ops"
 
 
 class testRedundantOps(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def tearDown(self):
+    def teardown_method(self):
         # Delete the graph after every test so each test starts with a clean slate.
         self.graph.delete()
 
@@ -24,8 +25,8 @@ class testRedundantOps(FlowTestsBase):
         """
         exp_name, exp_children = expected
 
-        self.env.assertEqual(op.name, exp_name)
-        self.env.assertEqual(len(op.children), len(exp_children))
+        assert op.name == exp_name
+        assert len(op.children) == len(exp_children)
         for child, exp_child in zip(op.children, exp_children):
             self._assert_plan_shape(child, exp_child)
 
@@ -52,7 +53,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test02_redundant_optional_node_with_label(self):
         # OPTIONAL MATCH (a:L)
@@ -77,7 +78,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test03_redundant_optional_node_with_property(self):
         # OPTIONAL MATCH (a {v:1})
@@ -102,7 +103,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test04_redundant_optional_node_with_label_and_property(self):
         # OPTIONAL MATCH (a:L {v:1})
@@ -127,7 +128,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test05_redundant_optional_same_node_twice_bare(self):
         # OPTIONAL MATCH (a), (a)
@@ -152,7 +153,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test06_redundant_optional_same_node_bare_and_labeled(self):
         # OPTIONAL MATCH (a), (a:L)
@@ -177,7 +178,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test07_redundant_optional_same_node_property_and_labeled(self):
         # OPTIONAL MATCH (a {v:1}), (a:L)
@@ -202,7 +203,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test08_redundant_optional_same_node_all_constraints(self):
         # OPTIONAL MATCH (a:L {v:1}), (a:L), (a {v:1})
@@ -228,7 +229,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test09_redundant_optional_two_distinct_bound_nodes(self):
         # OPTIONAL MATCH (a), (b)
@@ -260,7 +261,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test10_call_redundant_optional_bare_node(self):
         # CALL { WITH a  OPTIONAL MATCH (a)  RETURN 1 AS x }
@@ -301,7 +302,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test11_call_redundant_optional_node_with_label(self):
         # CALL { WITH a  OPTIONAL MATCH (a:L)  RETURN 1 AS x }
@@ -340,7 +341,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test12_call_redundant_optional_node_with_property(self):
         # CALL { WITH a  OPTIONAL MATCH (a {v:1})  RETURN 1 AS x }
@@ -379,7 +380,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test13_call_redundant_optional_node_with_label_and_property(self):
         # CALL { WITH a  OPTIONAL MATCH (a:L {v:1})  RETURN 1 AS x }
@@ -418,7 +419,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test14_call_redundant_optional_same_node_bare_and_labeled(self):
         # CALL { WITH a  OPTIONAL MATCH (a), (a:L)  RETURN 1 AS x }
@@ -457,7 +458,7 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test15_call_redundant_optional_same_node_property_and_labeled(self):
         # CALL { WITH a  OPTIONAL MATCH (a {v:1}), (a:L)  RETURN 1 AS x }
@@ -496,5 +497,5 @@ class testRedundantOps(FlowTestsBase):
         )
 
         res = self.graph.query(query).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 

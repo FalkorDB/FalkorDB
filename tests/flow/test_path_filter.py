@@ -10,12 +10,13 @@ GRAPH_ID = "path_filters"
 
 
 class testPathFilter(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.conn = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def setUp(self):
+    def setup_method(self):
         self.conn.delete(GRAPH_ID)
 
     def test00_simple_path_filter(self):
@@ -128,13 +129,13 @@ class testPathFilter(FlowTestsBase):
 
         # Create index.
         result_set = create_node_range_index(self.graph, 'L', 'x', sync=True)
-        self.env.assertEqual(result_set.indices_created, 1)
+        assert result_set.indices_created == 1
 
         # Issue a query in which the bound variable stream of the SemiApply op is an Index Scan.
         query = "MATCH (n:L) WHERE (:L)<-[]-(n)<-[]-(:L {x: 'a'}) AND n.x = 'b' RETURN n.x"
         result_set = self.graph.query(query)
         expected_results = [['b']]
-        self.env.assertEqual(result_set.result_set, expected_results)
+        assert result_set.result_set == expected_results
 
     def test09_no_invalid_expand_into(self):
         node0  = Node(alias="n0", node_id=0, labels="L", properties={'x': 'a'})
@@ -148,12 +149,12 @@ class testPathFilter(FlowTestsBase):
         query = "MATCH (n:L)-[]->(:L) WHERE ({x: 'a'})-[]->(n) RETURN n.x"
         plan = str(self.graph.explain(query))
         # Verify that the execution plan has no Expand Into and two traversals.
-        self.env.assertNotContains("Expand Into", plan)
-        self.env.assertEqual(2, plan.count("Conditional Traverse"))
+        assert "Expand Into" not in plan
+        assert 2 == plan.count("Conditional Traverse")
 
         result_set = self.graph.query(query)
         expected_results = [['b']]
-        self.env.assertEqual(result_set.result_set, expected_results)
+        assert result_set.result_set == expected_results
 
     def test10_verify_apply_results(self):
         # Build a graph with 3 nodes and 3 edges, 2 of which have the same source.
@@ -169,7 +170,7 @@ class testPathFilter(FlowTestsBase):
         result_set = self.graph.query(query)
         # Each source node should be returned exactly once.
         expected_results = [['a'], ['b']]
-        self.env.assertEqual(result_set.result_set, expected_results)
+        assert result_set.result_set == expected_results
 
     def test11_unbound_path_filters(self):
         # Build a graph with 2 nodes connected by 1 edge.
@@ -183,7 +184,7 @@ class testPathFilter(FlowTestsBase):
         result_set = self.graph.query(query)
         # The WHERE filter evaluates to false, no results should be returned.
         expected_result = []
-        self.env.assertEqual(result_set.result_set, expected_result)
+        assert result_set.result_set == expected_result
 
         # Emit a query that uses a SemiApply op to return values.
         query = "MATCH (n:L) WHERE (:L)-[]->() RETURN n.x ORDER BY n.x"
@@ -191,7 +192,7 @@ class testPathFilter(FlowTestsBase):
         # The WHERE filter evaluates to true, all results should be returned.
         expected_result = [['a'],
                            ['b']]
-        self.env.assertEqual(result_set.result_set, expected_result)
+        assert result_set.result_set == expected_result
 
     def test12_label_introduced_in_path_filter(self):
         # Build a graph with 2 nodes connected by 1 edge.
@@ -204,7 +205,7 @@ class testPathFilter(FlowTestsBase):
         query = "MATCH (a1)-[]->(a2) WHERE (a1:L)-[]->(a2:L) return a1.x, a2.x"
         result_set = self.graph.query(query)
         expected_result = [['a', 'b']]
-        self.env.assertEqual(result_set.result_set, expected_result)
+        assert result_set.result_set == expected_result
 
     def test13_path_filter_in_different_scope(self):
         # Create a graph of the form:
@@ -221,7 +222,7 @@ class testPathFilter(FlowTestsBase):
         result_set = self.graph.query(query)
         expected_result = [['a'],
                            ['b']]
-        self.env.assertEqual(result_set.result_set, expected_result)
+        assert result_set.result_set == expected_result
 
     def test14_path_and_predicate_filters(self):
         # Build a graph with 2 nodes connected by 1 edge.
@@ -231,16 +232,16 @@ class testPathFilter(FlowTestsBase):
         query = "MATCH (a:L) WHERE (a)-[]->() AND a.x = 'a' return a.x"
         plan_1 = str(self.graph.explain(query))
         # The predicate filter should be evaluated between the Apply and Scan ops.
-        self.env.assertTrue(re.search('Semi Apply\s+Filter\s+Node By Label Scan', plan_1))
+        assert re.search('Semi Apply\s+Filter\s+Node By Label Scan', plan_1)
         result_set = self.graph.query(query)
         expected_result = [['a']]
-        self.env.assertEqual(result_set.result_set, expected_result)
+        assert result_set.result_set == expected_result
 
         # Swap the order of the WHERE clause filters.
         query = "MATCH (a:L) WHERE a.x = 'a' AND (a)-[]->() return a.x"
         plan_2 = str(self.graph.explain(query))
         # The plan should be identical to the one constructed previously.
-        self.env.assertEqual(plan_1, plan_2)
+        assert plan_1 == plan_2
 
     def test15_named_path_filter_position(self):
         # make sure the named path filter are positioned correctly
@@ -261,19 +262,19 @@ class testPathFilter(FlowTestsBase):
         plan = self.graph.explain(q)
 
         op_aggregate = plan.structured_plan
-        self.env.assertEqual(op_aggregate.name, 'Aggregate')
-        self.env.assertEqual(len(op_aggregate.children), 1)
+        assert op_aggregate.name == 'Aggregate'
+        assert len(op_aggregate.children) == 1
 
         op_filter = op_aggregate.children[0]
-        self.env.assertEqual(op_filter.name, 'Filter')
-        self.env.assertEqual(len(op_filter.children), 1)
+        assert op_filter.name == 'Filter'
+        assert len(op_filter.children) == 1
 
         op_project = op_filter.children[0]
-        self.env.assertEqual(op_project.name, 'Project')
-        self.env.assertEqual(len(op_project.children), 1)
+        assert op_project.name == 'Project'
+        assert len(op_project.children) == 1
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(res[0][0], 1)
+        assert res[0][0] == 1
 
     def test16_bidirectional_filter_path(self):
         # check bidirectional filter
@@ -294,16 +295,16 @@ class testPathFilter(FlowTestsBase):
         q = "MATCH (s:Service) WHERE NOT (s)--(:Service) RETURN s"
         res = self.graph.query(q).result_set
 
-        self.env.assertEqual(len(res), 1)
-        self.env.assertEqual(res[0][0], s2)
+        assert len(res) == 1
+        assert res[0][0] == s2
 
         # find all connected services
         q = "MATCH (s:Service) WHERE (s)--(:Service) RETURN s ORDER BY ID(s)"
         res = self.graph.query(q).result_set
 
-        self.env.assertEqual(len(res), 2)
-        self.env.assertEqual(res[0][0], s0)
-        self.env.assertEqual(res[1][0], s1)
+        assert len(res) == 2
+        assert res[0][0] == s0
+        assert res[1][0] == s1
 
         # clean up
         self.graph.query ("MATCH (s:Service) DELETE s")
@@ -329,7 +330,7 @@ class testPathFilter(FlowTestsBase):
 
         for q in queries:
             res = self.graph.query(q).result_set
-            self.env.assertEqual(res[0][0], 2)
+            assert res[0][0] == 2
 
         # count all connected services
         queries = ["MATCH (s:Service) WHERE (s)-[]->(:Service) RETURN count(1)",
@@ -340,7 +341,7 @@ class testPathFilter(FlowTestsBase):
 
         for q in queries:
             res = self.graph.query(q).result_set
-            self.env.assertEqual(res[0][0], 1)
+            assert res[0][0] == 1
 
         # clean up
         self.graph.query ("MATCH (s:Service) DELETE s")
@@ -359,67 +360,66 @@ class testPathFilter(FlowTestsBase):
         query = """MATCH (n)
                    WHERE ()-[:KNOWS]-() XOR n.name = 'Alice'
                    RETURN n.name ORDER BY n.name LIMIT 5"""
-        self.env.assertEqual(self.graph.query(query).result_set, [['Bob']])
+        assert self.graph.query(query).result_set == [['Bob']]
 
         # same predicate after WITH
         query = """MATCH (n) WITH n
                    WHERE ()-[:KNOWS]-() XOR n.name = 'Alice'
                    RETURN n.name ORDER BY n.name LIMIT 5"""
-        self.env.assertEqual(self.graph.query(query).result_set, [['Bob']])
+        assert self.graph.query(query).result_set == [['Bob']]
 
         # and under OPTIONAL MATCH
         query = """OPTIONAL MATCH (a)--(b)
                    WHERE ()--() XOR a.name = 'Alice'
                    RETURN a.name, b.name"""
-        self.env.assertEqual(self.graph.query(query).result_set, [['Bob', 'Alice']])
+        assert self.graph.query(query).result_set == [['Bob', 'Alice']]
 
         # correlated pattern: true for Alice, false for Bob
         query = """MATCH (n)
                    WHERE (n)-[:KNOWS]->() XOR n.name = 'Bob'
                    RETURN n.name ORDER BY n.name"""
-        self.env.assertEqual(self.graph.query(query).result_set, [['Alice'], ['Bob']])
+        assert self.graph.query(query).result_set == [['Alice'], ['Bob']]
 
         # XOR between two patterns
         query = """MATCH (n)
                    WHERE ()-[:KNOWS]-() XOR ()-[:NOPE]-()
                    RETURN n.name ORDER BY n.name"""
-        self.env.assertEqual(self.graph.query(query).result_set, [['Alice'], ['Bob']])
+        assert self.graph.query(query).result_set == [['Alice'], ['Bob']]
 
         # nested inside operators the decomposer does handle
         query = """MATCH (n)
                    WHERE n.name IS NOT NULL AND
                          ((n)-[:KNOWS]->() XOR n.name = 'Bob')
                    RETURN n.name ORDER BY n.name"""
-        self.env.assertEqual(self.graph.query(query).result_set, [['Alice'], ['Bob']])
+        assert self.graph.query(query).result_set == [['Alice'], ['Bob']]
 
         query = """MATCH (n)
                    WHERE NOT (()-[:KNOWS]-() XOR n.name = 'Alice')
                    RETURN n.name ORDER BY n.name"""
-        self.env.assertEqual(self.graph.query(query).result_set, [['Alice']])
+        assert self.graph.query(query).result_set == [['Alice']]
 
         # other non-decomposable positions: a comparison operand and a
         # function argument
         query = """MATCH (n)
                    WHERE ()-[:KNOWS]-() = true
                    RETURN n.name ORDER BY n.name"""
-        self.env.assertEqual(self.graph.query(query).result_set,
-                             [['Alice'], ['Bob']])
+        assert self.graph.query(query).result_set == [['Alice'], ['Bob']]
 
         query = """MATCH (n)
                    WHERE toString((n)-[:KNOWS]->()) = 'true'
                    RETURN n.name ORDER BY n.name"""
-        self.env.assertEqual(self.graph.query(query).result_set, [['Alice']])
+        assert self.graph.query(query).result_set == [['Alice']]
 
         # the decomposable shapes must keep their cheaper semi-join plans
         plan = self.graph.explain(
             "MATCH (n) WHERE (n)-[:KNOWS]-() RETURN n").structured_plan
-        self.env.assertIsNotNone(locate_operation(plan, "Semi Apply"))
+        assert locate_operation(plan, "Semi Apply") is not None
 
         plan = self.graph.explain(
             "MATCH (n) WHERE NOT (n)-[:KNOWS]-() RETURN n").structured_plan
-        self.env.assertIsNotNone(locate_operation(plan, "Anti Semi Apply"))
+        assert locate_operation(plan, "Anti Semi Apply") is not None
 
         plan = self.graph.explain(
             """MATCH (n) WHERE (n)-[:KNOWS]-() OR n.name = 'Alice'
                RETURN n""").structured_plan
-        self.env.assertIsNotNone(locate_operation(plan, "Or Apply Multiplexer"))
+        assert locate_operation(plan, "Or Apply Multiplexer") is not None

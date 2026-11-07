@@ -75,15 +75,17 @@
             "name": "Debug Flow Tests Linux",
             "type": "debugpy",
             "request": "launch",
-            "module": "RLTest",
-            "args": ["--test", "tests/flow/test_load_csv.py", "--module", "${workspaceFolder}/target/debug/libfalkordb.so", "--log-dir", "${workspaceFolder}/tests/flow/logs", "--no-progress", "-v"],
+            "module": "pytest",
+            "args": ["tests/flow/test_load_csv.py", "-v", "-p", "no:randomly"],
+            "env": {"TARGET_DIR": "${workspaceFolder}/target/debug"},
         },
         {
             "name": "Debug Flow Tests Mac",
             "type": "debugpy",
             "request": "launch",
-            "module": "RLTest",
-            "args": ["--test", "tests/flow/test_load_csv.py", "--module", "${workspaceFolder}/target/debug/libfalkordb.dylib", "--log-dir", "${workspaceFolder}/tests/flow/logs", "--no-progress", "-v"]
+            "module": "pytest",
+            "args": ["tests/flow/test_load_csv.py", "-v", "-p", "no:randomly"],
+            "env": {"TARGET_DIR": "${workspaceFolder}/target/debug"}
         },
     ]
 }

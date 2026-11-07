@@ -78,8 +78,8 @@ RUN apt update -y && \
 
 # Install the self-built redis-server / redis-cli at the same path the
 # upstream `redis:` image used (/usr/local/bin), so callers like
-# tests/common.py:52 ("/usr/local/bin/redis-server") and RLTest's PATH
-# lookup pick them up transparently.
+# tests/common.py:52 ("/usr/local/bin/redis-server") and the flow suite's
+# PATH lookup pick them up transparently.
 COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
 COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
 RUN redis-server --version && redis-cli --version
@@ -127,7 +127,7 @@ WORKDIR /data
 
 RUN python3 -m venv venv
 
-RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest RLTest
+RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest pytest-xdist "redis<8.1.0"
 
 # Build SuiteSparse:GraphBLAS v10.3.1 + LAGraph v1.2.1 with the FalkorDB-
 # specific tweaks: GB_control.h patch, vendored PreJIT kernels from the

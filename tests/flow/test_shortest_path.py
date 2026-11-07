@@ -4,12 +4,14 @@ nodes        =  []
 GRAPH_ID     =  "shortest_path"
 
 class testShortestPath(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.populate_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.populate_graph()
 
-    def populate_graph(self):
+    @classmethod
+    def populate_graph(cls):
         # Construct a graph with the form:
         # (a {v:1})-[:E]->(b {v:2})-[:E]->(c {v:3})-[:E]->(d {v:4}),
         # (a)-[:E]->(e {v:5})-[:E2]->(d)
@@ -29,7 +31,7 @@ class testShortestPath(FlowTestsBase):
         RETURN a, b, c, d, e
         """
 
-        res = self.graph.query(q).result_set
+        res = cls.graph.query(q).result_set
 
         global nodes
         nodes.append(res[0][0])
@@ -42,37 +44,37 @@ class testShortestPath(FlowTestsBase):
         query = """MATCH (a {v: 1}), (b {v: 4}), p = shortestPath((a)-[*]->(b)) RETURN p"""
         try:
             self.graph.query(query)
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
-            self.env.assertContains("FalkorDB currently only supports shortestPaths in WITH or RETURN clauses", str(e))
+            assert "FalkorDB currently only supports shortestPaths in WITH or RETURN clauses" in str(e)
 
         query = """MATCH (a {v: 1}), (b {v: 4}) RETURN shortestPath((a)-[*2..]->(b))"""
         try:
             self.graph.query(query)
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
-            self.env.assertContains("shortestPath does not support a minimal length different from 0 or 1", str(e))
+            assert "shortestPath does not support a minimal length different from 0 or 1" in str(e)
 
         query = """MATCH (a {v: 1}), (b {v: 4}) RETURN shortestPath((a)-[]->()-[*]->(b))"""
         try:
             self.graph.query(query)
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
-            self.env.assertContains("shortestPath requires a path containing a single relationship", str(e))
+            assert "shortestPath requires a path containing a single relationship" in str(e)
 
         query = """MATCH (a {v: 1}), (b {v: 4}) RETURN shortestPath((a)-[* {weight: 4}]->(b))"""
         try:
             self.graph.query(query)
-            self.env.assertTrue(False)
+            assert False
         except redis.ResponseError as e:
-            self.env.assertContains("filters on relationships in shortestPath", str(e))
+            assert "filters on relationships in shortestPath" in str(e)
 
         # Try iterating over an invalid relationship type
         query = """MATCH (a {v: 1}), (b {v: 4}) RETURN shortestPath((a)-[:FAKE*]->(b))"""
         actual_result = self.graph.query(query)
         # No results should be found
         expected_result = [[None]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test02_simple_shortest_path(self):
         query = """MATCH (a {v: 1}), (d {v: 4})
@@ -84,14 +86,14 @@ class testShortestPath(FlowTestsBase):
         # The shorter 2-hop traversal should be found
         # (a)-[]->(e)-[]->(d)
         expected_result = [[1], [5], [4]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Verify that a right-to-left traversal produces the same results
         query = """MATCH (a {v: 1}), (b {v: 4})
                    WITH shortestPath((b)<-[*]-(a)) AS p
                    UNWIND nodes(p) AS n
                    RETURN n.v"""
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test03_shortest_path_multiple_results(self):
         # Traverse from all source nodes to the destination node
@@ -102,7 +104,7 @@ class testShortestPath(FlowTestsBase):
                            [nodes[2], [nodes[2], nodes[3]]],
                            [nodes[3], None],
                            [nodes[4], [nodes[4], nodes[3]]]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test04_max_hops(self):
         # Traverse from all source nodes to the destination node if there is a single-hop path
@@ -115,7 +117,7 @@ class testShortestPath(FlowTestsBase):
                            [nodes[2], [nodes[2], nodes[3]]],
                            [nodes[3], None],
                            [nodes[4], [nodes[4], nodes[3]]]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test05_min_hops(self):
         # Traverse from all source nodes to the destination node with a minimum hop value of 0.
@@ -128,7 +130,7 @@ class testShortestPath(FlowTestsBase):
                            [nodes[2], [nodes[2], nodes[3]]],
                            [nodes[3], [nodes[3]]],
                            [nodes[4], [nodes[4], nodes[3]]]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test06_restricted_reltypes(self):
         # Traverse both relationship types
@@ -136,14 +138,14 @@ class testShortestPath(FlowTestsBase):
         actual_result = self.graph.query(query)
         # The shorter 2-hop traversal should be found
         expected_result = [[1], [5], [4]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Only traverse edges of type E
         query = """MATCH (a {v: 1}), (b {v: 4}) WITH shortestPath((a)-[:E*]->(b)) AS p UNWIND nodes(p) AS n RETURN n.v"""
         actual_result = self.graph.query(query)
         # The longer traversal will be found
         expected_result = [[1], [2], [3], [4]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test07_shortestPath_in_filter(self):
         # Traverse both relationship types
@@ -151,14 +153,14 @@ class testShortestPath(FlowTestsBase):
         actual_result = self.graph.query(query)
         # The shorter 2-hop traversal should be found
         expected_result = [[1, 4]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Traverse both relationship types
         query = """MATCH (a {v: 1}), (b {v: 4}) WHERE length(shortestPath((a)-[:E|:E2*]->())) > 0 RETURN a.v, b.v"""
         try:
             self.graph.query(query)
         except redis.ResponseError as e:
-            self.env.assertContains("A shortestPath requires bound nodes", str(e))
+            assert "A shortestPath requires bound nodes" in str(e)
 
         # shortestPath requires bound nodes
         queries = [
@@ -171,7 +173,7 @@ class testShortestPath(FlowTestsBase):
         for query in queries:
             try:
                 self.graph.query(query)
-                self.env.assertTrue(False)
+                assert False
             except redis.ResponseError as e:
-                self.env.assertContains("A shortestPath requires bound nodes", str(e))
+                assert "A shortestPath requires bound nodes" in str(e)
 

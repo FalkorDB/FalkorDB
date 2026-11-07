@@ -3,11 +3,12 @@ from common import *
 GRAPH_ID = "parser"
 
 class testParser(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
     
     def test_multiple_single_line_comments(self):
@@ -55,7 +56,7 @@ class testParser(FlowTestsBase):
         self.graph.query(q)
 
         # make sure graph.query ran without raising exception
-        self.env.assertTrue(True)
+        assert True
 
     def test_multiple_multi_line_comments(self):
         q = """
@@ -105,7 +106,7 @@ class testParser(FlowTestsBase):
         self.graph.query(q)
 
         # make sure graph.query ran without raising exception
-        self.env.assertTrue(True)
+        assert True
 
     def test_complex(self):
         q = """
@@ -297,7 +298,7 @@ class testParser(FlowTestsBase):
         self.graph.query(q)
 
         # make sure graph.query ran without raising exception
-        self.env.assertTrue(True)
+        assert True
 
     def test_midway_comment(self):
         q = """
@@ -311,7 +312,7 @@ class testParser(FlowTestsBase):
         self.graph.query(q)
 
         # make sure graph.query ran without raising exception
-        self.env.assertTrue(True)
+        assert True
 
         q = """
         MATCH (n) // oops -[]->(m)

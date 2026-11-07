@@ -21,12 +21,13 @@ GRAPH_ID = "varlength_traversal"
 
 
 class testVarLengthTraversal(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.conn = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def setUp(self):
+    def setup_method(self):
         self.conn.delete(GRAPH_ID)
 
     # ------------------------------------------------------------------ #
@@ -116,7 +117,7 @@ class testVarLengthTraversal(FlowTestsBase):
                 f"[1..{n}]={dict(full)}  !=  "
                 f"[1..{m}]={dict(low)} + [{m + 1}..{n}]={dict(high)}"
             )
-            self.env.assertEqual(full, union, depth=1, message=msg)
+            assert full == union, msg
 
     # ------------------------------------------------------------------ #
     #  Helper: assert the constant traversal invariant for range [1..n]  #
@@ -144,7 +145,7 @@ class testVarLengthTraversal(FlowTestsBase):
             f"[1..{n}]={dict(full)}  !=  "
             f"[1..1] + [2..2] + ... + [{n}..{n}] = {dict(union)}"
         )
-        self.env.assertEqual(full, union, depth=1, message=msg)
+        assert full == union, msg
 
     # ------------------------------------------------------------------ #
     #  Tests                                                             #
@@ -175,23 +176,15 @@ class testVarLengthTraversal(FlowTestsBase):
 
         # Every exact-depth-2 endpoint must appear in the range result.
         missing = two - rng
-        self.env.assertEqual(
-            missing,
-            set(),
-            message=(
+        assert missing == set(), (
                 f"*1..2 is NOT a superset of *2..2 -- drops endpoints {sorted(missing)}"
-            ),
-        )
+            )
 
         # Every exact-depth-1 endpoint must also be in the range result.
         missing1 = one - rng
-        self.env.assertEqual(
-            missing1,
-            set(),
-            message=(
+        assert missing1 == set(), (
                 f"*1..2 is NOT a superset of *1..1 -- drops endpoints {sorted(missing1)}"
-            ),
-        )
+            )
 
         self.assert_range_split_invariant(1, n=3)
         self.assert_traversal_union_invariant(1, n=5)
@@ -221,11 +214,7 @@ class testVarLengthTraversal(FlowTestsBase):
         rng1 = set(self.endpoints(start, "1..2"))
 
         # Every exact-depth-2 endpoint must appear in the range result.
-        self.env.assertEqual(
-            rng0,
-            rng1,
-            message=(f"*1..2 changes depending on order of edge declaration"),
-        )
+        assert rng0 == rng1, (f"*1..2 changes depending on order of edge declaration")
 
     def test02_cycle_counting(self):
         """
@@ -294,11 +283,7 @@ class testVarLengthTraversal(FlowTestsBase):
         # -- exact-depth counts (paths from 0 to 0 only) --
         for depth, expected in [(3, 27), (6, 216), (9, 216), (12, 0)]:
             got = Counter(self.endpoints(0, f"{depth}..{depth}"))[0]
-            self.env.assertEqual(
-                got,
-                expected,
-                message=f"*{depth}..{depth} paths from node 0 to node 0: expected {expected}, got {got}",
-            )
+            assert got == expected, f"*{depth}..{depth} paths from node 0 to node 0: expected {expected}, got {got}"
 
         # -- cumulative range counts (paths from 0 to 0 only) --
         for rng, expected in [
@@ -308,19 +293,11 @@ class testVarLengthTraversal(FlowTestsBase):
             ("1..12", 459),
         ]:
             got = Counter(self.endpoints(0, rng))[0]
-            self.env.assertEqual(
-                got,
-                expected,
-                message=f"[{rng}] paths from node 0 to node 0: expected {expected}, got {got}",
-            )
+            assert got == expected, f"[{rng}] paths from node 0 to node 0: expected {expected}, got {got}"
 
         # -- unbounded should equal [1..9] since no new paths exist beyond depth 9 --
         got_unbounded = Counter(self.endpoints(0))[0]
-        self.env.assertEqual(
-            got_unbounded,
-            459,
-            message=f"[1..] paths from node 0 to node 0: expected 459, got {got_unbounded}",
-        )
+        assert got_unbounded == 459, f"[1..] paths from node 0 to node 0: expected 459, got {got_unbounded}"
 
     def test05_chain_exact_depths(self):
         """Linear chain: *k..k returns exactly the node at hop k.
@@ -344,18 +321,10 @@ class testVarLengthTraversal(FlowTestsBase):
 
         for k in range(1, 6):
             got = self.endpoints(0, f"{k}..{k}")
-            self.env.assertEqual(
-                got,
-                [k],
-                message=f"*{k}..{k} from node 0: expected [{k}], got {got}",
-            )
+            assert got == [k], f"*{k}..{k} from node 0: expected [{k}], got {got}"
 
         got_range = self.endpoints(0, "1..3")
-        self.env.assertEqual(
-            got_range,
-            [1, 2, 3],
-            message=f"*1..3 from node 0: expected [1,2,3], got {got_range}",
-        )
+        assert got_range == [1, 2, 3], f"*1..3 from node 0: expected [1,2,3], got {got_range}"
 
         self.assert_range_split_invariant(0, n=5)
         self.assert_traversal_union_invariant(0, n=5)
@@ -372,25 +341,13 @@ class testVarLengthTraversal(FlowTestsBase):
         self.build_graph_from_edgelist(edges)
 
         got = self.endpoints(0, "2..4")
-        self.env.assertEqual(
-            got,
-            [2, 3, 4],
-            message=f"*2..4 from node 0: expected [2,3,4], got {got}",
-        )
+        assert got == [2, 3, 4], f"*2..4 from node 0: expected [2,3,4], got {got}"
 
         # Node 1 (depth 1) must be absent.
-        self.env.assertEqual(
-            1 in got,
-            False,
-            message=f"*2..4 incorrectly includes node 1 (depth 1)",
-        )
+        assert (1 in got) == False, f"*2..4 incorrectly includes node 1 (depth 1)"
 
         got_33 = self.endpoints(0, "3..3")
-        self.env.assertEqual(
-            got_33,
-            [3],
-            message=f"*3..3 from node 0: expected [3], got {got_33}",
-        )
+        assert got_33 == [3], f"*3..3 from node 0: expected [3], got {got_33}"
 
         self.assert_range_split_invariant(0, n=4)
         self.assert_traversal_union_invariant(0, n=4)
@@ -426,18 +383,10 @@ class testVarLengthTraversal(FlowTestsBase):
         ]
         for rng, expected in expected_exact:
             got = self.endpoints(0, rng)
-            self.env.assertEqual(
-                got,
-                expected,
-                message=f"*{rng} from node 0: expected {expected}, got {got}",
-            )
+            assert got == expected, f"*{rng} from node 0: expected {expected}, got {got}"
 
         got_14 = Counter(self.endpoints(0, "1..4"))
-        self.env.assertEqual(
-            got_14,
-            Counter({1: 2, 2: 1, 3: 2}),
-            message=f"*1..4 from node 0: expected {{1:2, 2:1, 3:2}}, got {dict(got_14)}",
-        )
+        assert got_14 == Counter({1: 2, 2: 1, 3: 2}), f"*1..4 from node 0: expected {{1:2, 2:1, 3:2}}, got {dict(got_14)}"
 
         self.assert_range_split_invariant(0, n=4)
         self.assert_traversal_union_invariant(0, n=5)
@@ -473,10 +422,7 @@ class testVarLengthTraversal(FlowTestsBase):
             "RETURN count(path) AS pathCount"
         )
         count = self.graph.query(q).result_set[0][0]
-        self.env.assertEqual(
-            count, 2,
-            message=f"*1..2 paths from 0 to 1 with self-loop: expected 2, got {count}",
-        )
+        assert count == 2, f"*1..2 paths from 0 to 1 with self-loop: expected 2, got {count}"
 
         # The self-loop itself must appear once in *1..2 from 0 to 0.
         q_loop = (
@@ -484,20 +430,14 @@ class testVarLengthTraversal(FlowTestsBase):
             "RETURN count(path) AS pathCount"
         )
         count_loop = self.graph.query(q_loop).result_set[0][0]
-        self.env.assertEqual(
-            count_loop, 1,
-            message=f"*1..2 paths from 0 to 0 (self-loop): expected 1, got {count_loop}",
-        )
+        assert count_loop == 1, f"*1..2 paths from 0 to 0 (self-loop): expected 1, got {count_loop}"
 
         # -- control: no self-loop, only direct edge --
         self.conn.delete(GRAPH_ID)
         self.build_graph_from_edgelist([(0, 1)])
 
         count_direct = self.graph.query(q).result_set[0][0]
-        self.env.assertEqual(
-            count_direct, 1,
-            message=f"*1..2 paths from 0 to 1 (no self-loop): expected 1, got {count_direct}",
-        )
+        assert count_direct == 1, f"*1..2 paths from 0 to 1 (no self-loop): expected 1, got {count_direct}"
 
         # -- extended repro: Diana/Bob scenario from the bug report --
         self.conn.delete(GRAPH_ID)
@@ -510,10 +450,7 @@ class testVarLengthTraversal(FlowTestsBase):
             "RETURN count(path) AS pathCount"
         )
         count_diana = self.graph.query(q_diana).result_set[0][0]
-        self.env.assertEqual(
-            count_diana, 2,
-            message=f"Diana->Bob *1..2 with self-loop: expected 2, got {count_diana}",
-        )
+        assert count_diana == 2, f"Diana->Bob *1..2 with self-loop: expected 2, got {count_diana}"
 
         # The split-union and traversal-union invariants must hold.
         # (Use the original simple graph: 0->0 self-loop + 0->1)

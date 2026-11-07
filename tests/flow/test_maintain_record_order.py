@@ -4,11 +4,12 @@ from common import *
 # eager operations used to reverse record order
 # these test verify that the input record order is maintained on output
 class testMaintainRecordOrder():
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph("maintain_order")
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph("maintain_order")
 
-    def setUp(self):
+    def setup_method(self):
         # delete graph before each test function
         try:
             self.graph.delete()
@@ -21,7 +22,7 @@ class testMaintainRecordOrder():
                RETURN x"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(res, [[0], [1]])
+        assert res == [[0], [1]]
 
     def test_update(self):
         # create a single node graph
@@ -33,7 +34,7 @@ class testMaintainRecordOrder():
                RETURN x"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(res, [[0], [1]])
+        assert res == [[0], [1]]
 
     def test_merge(self):
         q = """UNWIND [0, 1] AS x
@@ -41,7 +42,7 @@ class testMaintainRecordOrder():
                RETURN x"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(res, [[0], [1]])
+        assert res == [[0], [1]]
 
     def test_delete(self):
         # create a single node graph
@@ -53,7 +54,7 @@ class testMaintainRecordOrder():
                RETURN x"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(res, [[0], [1]])
+        assert res == [[0], [1]]
 
     def test_foreach(self):
         q = """UNWIND [0, 1] AS x
@@ -61,5 +62,5 @@ class testMaintainRecordOrder():
                RETURN x"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(res, [[0], [1]])
+        assert res == [[0], [1]]
 

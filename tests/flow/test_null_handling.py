@@ -3,14 +3,16 @@ from common import *
 GRAPH_ID = "null_handling"
 
 class testNullHandlingFlow(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.populate_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.populate_graph()
 
-    def populate_graph(self):
+    @classmethod
+    def populate_graph(cls):
         # Create a single node.
-        self.graph.query("CREATE (:L {v: 'v1'})")
+        cls.graph.query("CREATE (:L {v: 'v1'})")
 
     # Error when attempting to create a relationship with a null endpoint.
     def test01_create_null(self):
@@ -55,7 +57,7 @@ class testNullHandlingFlow(FlowTestsBase):
         # The property should be set on the real node and ignored on the null entity.
         assert(actual_result.properties_set == 1)
         expected_result = [[True, None, None]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     # DELETE should ignore null entities.
     def test04_delete_null(self):
@@ -68,7 +70,7 @@ class testNullHandlingFlow(FlowTestsBase):
         query = """MATCH (a) OPTIONAL MATCH (a)-[r]->(b) RETURN type(r), labels(b), b.v * 5"""
         actual_result = self.graph.query(query)
         expected_result = [[None, None, None]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     # Path functions should handle null inputs appropriately.
     def test06_null_named_path_function_inputs(self):
@@ -76,7 +78,7 @@ class testNullHandlingFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         # The path and function calls on it should return NULL, while collect() returns an empty array.
         expected_result = [[None, None, []]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     # Scan and traversal operations should gracefully handle NULL inputs.
     def test07_null_graph_entity_inputs(self):
@@ -84,40 +86,40 @@ class testNullHandlingFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         # Expect one NULL entity to be returned.
         expected_result = [[None]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         query = """WITH NULL AS a MATCH (a)-[e]->(b) RETURN a, e, b"""
         plan = str(self.graph.explain(query))
         # Verify that we are attempting to perform a traversal but no scan.
-        self.env.assertNotContains("Scan", plan)
-        self.env.assertContains("Conditional Traverse", plan)
+        assert "Scan" not in plan
+        assert "Conditional Traverse" in plan
         actual_result = self.graph.query(query)
         # Expect no results.
         expected_result = []
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         query = """WITH NULL AS e MATCH (a:L)-[e]->(b) RETURN a, e, b"""
         plan = str(self.graph.explain(query))
         # Verify that we are performing a scan and traversal.
-        self.env.assertContains("Conditional Traverse", plan)
+        assert "Conditional Traverse" in plan
         actual_result = self.graph.query(query)
         # Expect no results.
         expected_result = []
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     # ValueHashJoin ops should not treat null values as equal.
     def test08_null_value_hash_join(self):
         query = """MATCH (a), (b) WHERE a.fakeval = b.fakeval RETURN a, b"""
         plan = str(self.graph.explain(query))
         # Verify that we are performing a ValueHashJoin
-        self.env.assertContains("Value Hash Join", plan)
+        assert "Value Hash Join" in plan
         actual_result = self.graph.query(query)
         # Expect no results.
         expected_result = []
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         # Perform a sanity check on a ValueHashJoin that returns a result
         query = """MATCH (a), (b) WHERE a.v = b.v RETURN a.v, b.v"""
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v1']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result

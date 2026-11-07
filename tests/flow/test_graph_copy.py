@@ -9,9 +9,10 @@ GRAPH_ID = "graph_copy"
 
 # tests the GRAPH.COPY command
 class testGraphCopy():
-    def __init__(self):
-        self.env, self.db = Env(enableDebugCommand=True)
-        self.conn = self.env.getConnection()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(enableDebugCommand=True)
+        cls.conn = cls.env.getConnection()
 
     def graph_copy(self, src, dest):
         # invokes the GRAPH.COPY command
@@ -38,7 +39,7 @@ class testGraphCopy():
         # limit retries to 20
         for _ in range(max_iterations):
             try:
-                self.env.assertTrue(graph_eq(A, B))
+                assert graph_eq(A, B)
                 return
             except BusyLoadingError as e:
                 print("Retry!")
@@ -60,20 +61,20 @@ class testGraphCopy():
         # wrong number of arguments
         try:
             self.conn.execute_command("GRAPH.COPY", src)
-            self.env.assertTrue(False)
+            assert False
         except Exception:
             pass
 
         try:
             self.conn.execute_command("GRAPH.COPY", src, dest, 3)
-            self.env.assertTrue(False)
+            assert False
         except Exception:
             pass
 
         # src graph doesn't exists
         try:
             self.graph_copy(src, dest)
-            self.env.assertTrue(False)
+            assert False
         except Exception:
             pass
 
@@ -82,7 +83,7 @@ class testGraphCopy():
 
         try:
             self.graph_copy(src, dest)
-            self.env.assertTrue(False)
+            assert False
         except Exception:
             pass
         self.conn.delete(src)
@@ -95,9 +96,9 @@ class testGraphCopy():
         # key type doesn't matter
         try:
             self.graph_copy(src, src)
-            self.env.assertTrue(False)
+            assert False
         except ResponseError as e:
-            self.env.assertContains("destination key already exists", str(e))
+            assert "destination key already exists" in str(e)
 
         # clean up
         self.conn.delete(src, dest)
@@ -119,16 +120,16 @@ class testGraphCopy():
         self.graph_copy(src, dest)
 
         # validate that both src and dest graph exists and are the same
-        self.env.assertTrue(self.conn.type(src)  == 'graphdata')
-        self.env.assertTrue(self.conn.type(dest) == 'graphdata')
+        assert self.conn.type(src)  == 'graphdata'
+        assert self.conn.type(dest) == 'graphdata'
 
         dest_graph = self.db.select_graph(dest)
         
         # make sure both src and dest graph are empty
         src_node_count = src_graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
         dest_node_count = dest_graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
-        self.env.assertEqual(src_node_count, 0)
-        self.env.assertEqual(dest_node_count, 0)
+        assert src_node_count == 0
+        assert dest_node_count == 0
 
         # clean up
         src_graph.delete()
@@ -261,7 +262,7 @@ class testGraphCopy():
         self.db.config_set("VKEY_MAX_ENTITY_COUNT", 1)
 
         # make sure configuration chnaged
-        self.env.assertEqual(self.db.config_get("VKEY_MAX_ENTITY_COUNT"), 1)
+        assert self.db.config_get("VKEY_MAX_ENTITY_COUNT") == 1
 
         src_graph_id  = GRAPH_ID
         copy_graph_id = GRAPH_ID + "_copy"
@@ -295,10 +296,10 @@ class testGraphCopy():
         self.env.stop()
 
         # start a new environment, one which have a master and a replica
-        self.env, self.db = Env(env='oss', useSlaves=True)
+        type(self).env, type(self).db = Env(env='oss', useSlaves=True)
 
         master_con = self.env.getConnection()
-        self.conn = master_con
+        type(self).conn = master_con
 
         # create a random graph
         src_graph_id  = GRAPH_ID
@@ -315,7 +316,7 @@ class testGraphCopy():
         master_con.execute_command("WAIT", "1", "0")
 
         # make sure dest graph was replicated.
-        # Under RLTest (local dev) the replica lives on the same host at
+        # In local dev the replica lives on the same host at
         # port+1; under docker-per-class the replica is a sibling container
         # exposed via env.replica_host:env.replica_port.
         replica_host = getattr(self.env, "replica_host", "localhost")
@@ -335,7 +336,7 @@ class testGraphCopy():
         # GRAPH.COPY should succeed when other graphs exist in the database
 
         # refresh connection (test_08 may have restarted the environment)
-        self.conn = self.env.getConnection()
+        type(self).conn = self.env.getConnection()
         self.conn.flushall()
 
         dummy_id    = "dummy"

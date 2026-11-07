@@ -49,13 +49,18 @@ TCK_INCLUDE=<path> pytest tests/tck/test_tck.py -s                 # only scenar
 cargo build        # debug build required first (flow.sh defaults to target/debug)
 ./flow.sh
 ```
-`flow.sh` supports env vars for narrowing/debugging a run:
+`flow.sh` is a thin pytest wrapper. It supports env vars for narrowing/debugging a run:
 - `TEST="tests/flow/test_function_calls" ./flow.sh` — one file
 - `TEST="tests/flow/test_function_calls:testFunctionCallsFlow.test89_JOIN" ./flow.sh` — one test
-- `FAIL_FAST=1` — stop on first failure, run serially (`--parallelism 1`)
+- `FAIL_FAST=1` — stop on first failure (`pytest -x`), run serially
+- `PARALLELISM=N` — xdist worker count (default: one per core; `1` disables xdist)
 - `RELEASE=1` — run against `target/release` instead of `target/debug`
 - Progress is tracked in `flow_tests_done.txt` / `flow_tests_todo.txt`; logs
   land in `tests/flow/logs`.
+
+Anything `flow.sh` can do, plain pytest can too — `pytest tests/flow/test_x.py::testCls::test_fn`
+works, and a whole directory run (`pytest tests/flow`) is not restricted to
+`flow_tests_done.txt`. A redis-server is spawned per test class by `tests/infra`.
 
 ## Notes
 

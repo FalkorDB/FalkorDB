@@ -153,9 +153,10 @@ create_semicolon_delimited_csv()
 create_short_csv_without_header()
 
 class testLoadLocalCSV():
-    def __init__(self):
-        self.env, self.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
-        self.graph = self.db.select_graph(GRAPH_ID_LOCAL)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
+        cls.graph = cls.db.select_graph(GRAPH_ID_LOCAL)
 
     # test invalid invocations of the LOAD CSV command
     def test01_invalid_call(self):
@@ -175,7 +176,7 @@ class testLoadLocalCSV():
         for q in queries:
             try:
                 self.graph.query(q, {'arr': []})
-                self.env.assertFalse(True)
+                assert not True
             except Exception as e:
                 continue
 
@@ -183,7 +184,7 @@ class testLoadLocalCSV():
         q = "LOAD CSV FROM 'file://none_existing.csv' AS row RETURN row"
         try:
             self.graph.query(q)
-            self.env.assertFalse(True)
+            assert not True
         except Exception as e:
             # failed to open CSV file: a
             pass
@@ -195,7 +196,7 @@ class testLoadLocalCSV():
             q = f"LOAD CSV FROM '{uri}://none_existing.csv' AS row RETURN row"
             try:
                 self.graph.query(q)
-                self.env.assertFalse(True)
+                assert not True
             except Exception as e:
                 # failed to open CSV file: a
                 pass
@@ -207,7 +208,7 @@ class testLoadLocalCSV():
         for q in queries:
             try:
                 self.graph.query(q, {'file': 'file://' + MALFORMED_CSV})
-                self.env.assertFalse(True)
+                assert not True
             except Exception as e:
                 # failed to process malformed csv
                 pass
@@ -216,30 +217,30 @@ class testLoadLocalCSV():
         q = "LOAD CSV FROM $file AS row RETURN row ORDER BY row"
         result = self.graph.query(q, {'file': 'file://' + EMPTY_CELL_CSV}).result_set
         actual = result[1][0] # skip header row
-        self.env.assertContains("roi", actual)
-        self.env.assertContains(None, actual)
+        assert "roi" in actual
+        assert None in actual
 
         q = "LOAD CSV WITH HEADERS FROM $file AS row RETURN row"
         result = self.graph.query(q, {'file': 'file://' + EMPTY_CELL_CSV}).result_set
         actual = result[0][0]
-        self.env.assertNotContains('LastName', actual)
-        self.env.assertEqual(actual['FirstName'], 'roi')
-        self.env.assertEqual(actual['Age'], '40')
+        assert 'LastName' not in actual
+        assert actual['FirstName'] == 'roi'
+        assert actual['Age'] == '40'
 
         # create nodes from empty cell csv
         q = "LOAD CSV WITH HEADERS FROM $file AS row CREATE (p:Person) SET p = row RETURN p"
         result = self.graph.query(q, {'file': 'file://' + EMPTY_CELL_CSV}).result_set
         node = result[0][0]
-        self.env.assertEqual(len(node.properties), 2)
-        self.env.assertEqual(node.properties['Age'], '40')
-        self.env.assertEqual(node.properties['FirstName'], 'roi')
+        assert len(node.properties) == 2
+        assert node.properties['Age'] == '40'
+        assert node.properties['FirstName'] == 'roi'
 
     def test06_empty_column_csv(self):
         q = "LOAD CSV WITH HEADERS FROM $file AS row RETURN row ORDER BY row"
         try:
             self.graph.query(q, {'file': 'file://' + EMPTY_COLUMN_CSV})
             # CSV empty column name
-            self.env.assertFalse("we should have failed" and False)
+            assert not ("we should have failed" and False)
         except Exception:
             pass
 
@@ -264,7 +265,7 @@ class testLoadLocalCSV():
             result = g.query(q, {'file': 'file://' + file_name}).result_set
             for i, row in enumerate(result):
                 # validate result
-                self.env.assertEqual(row[0], expected[i])
+                assert row[0] == expected[i]
 
     def test08_project_csv_as_map(self):
         g = self.graph
@@ -290,7 +291,7 @@ class testLoadLocalCSV():
                 expected.append([obj])
             
             result = g.query(q, {'file': 'file://' + file}).result_set
-            self.env.assertEqual(result, expected)
+            assert result == expected
 
     def test09_load_csv_multiple_times(self):
         # project the same CSV multiple times
@@ -306,7 +307,7 @@ class testLoadLocalCSV():
             for row in SHORT_CSV_WITHOUT_HEADERS_DATA:
                 expected.append([i, row])
 
-        self.env.assertEqual(result, expected)
+        assert result == expected
 
     def test10_load_multiple_files(self):
         g = self.graph
@@ -323,13 +324,13 @@ class testLoadLocalCSV():
         file_1_rows = SHORT_CSV_WITHOUT_HEADERS_DATA
         file_2_rows = SHORT_CSV_WITH_HEADERS_HEADER + SHORT_CSV_WITH_HEADERS_DATA
 
-        self.env.assertEqual(len(file_1_rows), len(result[0][0]))
+        assert len(file_1_rows) == len(result[0][0])
         for item in file_1_rows:
-            self.env.assertTrue(item in result[0][0])
+            assert item in result[0][0]
 
-        self.env.assertEqual(len(file_2_rows), len(result[0][1]))
+        assert len(file_2_rows) == len(result[0][1])
         for item in file_2_rows:
-            self.env.assertTrue(item in result[0][1])
+            assert item in result[0][1]
 
     def test11_breakout_import_folder(self):
         # try accessing files outside of the import directory
@@ -342,7 +343,7 @@ class testLoadLocalCSV():
 
         try:
             res = g.query(q).result_set
-            self.env.assertFalse("we should not be here" and False)
+            assert not ("we should not be here" and False)
         except:
             pass
 
@@ -354,8 +355,8 @@ class testLoadLocalCSV():
         actual = self.graph.query(q).result_set
 
         # validate returned arrays
-        self.env.assertEqual(actual[0][0], BOM_CSV_HEADER)
-        self.env.assertEqual(actual[1][0], BOM_CSV_DATA)
+        assert actual[0][0] == BOM_CSV_HEADER
+        assert actual[1][0] == BOM_CSV_DATA
 
         #-----------------------------------------------------------------------
 
@@ -365,7 +366,7 @@ class testLoadLocalCSV():
 
         # validate returned dict
         expected = {k: v for k, v in zip(BOM_CSV_HEADER, BOM_CSV_DATA)}
-        self.env.assertEqual(actual[0][0], expected)
+        assert actual[0][0] == expected
 
     def test13_specify_delimiter(self):
         # read CSV using a different field delimiter
@@ -375,8 +376,8 @@ class testLoadLocalCSV():
         actual = self.graph.query(q).result_set
 
         # validate returned arrays
-        self.env.assertEqual(actual[0][0], SEMICOLON_CSV_HEADER[0])
-        self.env.assertEqual(actual[1][0], SEMICOLON_CSV_DATA[0])
+        assert actual[0][0] == SEMICOLON_CSV_HEADER[0]
+        assert actual[1][0] == SEMICOLON_CSV_DATA[0]
 
         #-----------------------------------------------------------------------
 
@@ -386,7 +387,7 @@ class testLoadLocalCSV():
 
         # validate returned dict
         expected = {k: v for k, v in zip(SEMICOLON_CSV_HEADER[0], SEMICOLON_CSV_DATA[0])}
-        self.env.assertEqual(actual[0][0], expected)
+        assert actual[0][0] == expected
 
     def test14_invalid_delimiter(self):
         # field delimiter must be one character in length
@@ -399,20 +400,21 @@ class testLoadLocalCSV():
                 self.graph.query(q).result_set
 
                 # expecting an error
-                self.env.assertFalse(True)
+                assert not True
             except Exception as e:
-                self.env.assertContains("CSV field terminator can only be one character wide", str(e))
+                assert "CSV field terminator can only be one character wide" in str(e)
 
 
 class testLoadRemoteCSV():
-    def __init__(self):
-        self.env, self.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
 
         # skip test if we're running under sanitizer
         if SANITIZER:
-            self.env.skip() # libcrypto.so seems to crash when running under sanitizer
+            cls.env.skip() # libcrypto.so seems to crash when running under sanitizer
 
-        self.graph = self.db.select_graph(GRAPH_ID_REMOTE)
+        cls.graph = cls.db.select_graph(GRAPH_ID_REMOTE)
 
     # test invalid invocations of the LOAD CSV command
     def test01_load_remote_csv(self):
@@ -434,7 +436,7 @@ class testLoadRemoteCSV():
 
         result = self.graph.query(query, {'url': url}).result_set
         for row in result:
-            self.env.assertContains(row[0], data)
+            assert row[0] in data
 
     def test_02_none_existing_url(self):
         query = "LOAD CSV FROM $url AS row RETURN row"
@@ -443,14 +445,15 @@ class testLoadRemoteCSV():
         for url in urls:
             try:
                 self.graph.query(query, {'url': url})
-                self.env.assertFalse("we should have failed" and False)
+                assert not ("we should have failed" and False)
             except Exception:
                 pass
 
 class testLoadCsvPlan():
-    def __init__(self):
-        self.env, self.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
     def test_edge_creation(self):
         # make sure the expected execution plan is constructed
@@ -479,10 +482,10 @@ class testLoadCsvPlan():
         # and a create clause
         for q in queries:
             plan = str(self.graph.explain(q, {'file': 'file://' + SHORT_CSV_WITH_HEADERS}))
-            self.env.assertContains("Node By Index Scan | (a:Person)", plan)
-            self.env.assertContains("Node By Index Scan | (b:Person)", plan)
-            self.env.assertContains("Cartesian Product", plan)
-            self.env.assertContains("Create", plan)
+            assert "Node By Index Scan | (a:Person)" in plan
+            assert "Node By Index Scan | (b:Person)" in plan
+            assert "Cartesian Product" in plan
+            assert "Create" in plan
 
         # run query and validate results
         # create nodes
@@ -490,7 +493,7 @@ class testLoadCsvPlan():
                MERGE (a:Person {name:row['First Name']})
                MERGE (b:Person {name: row['Last Name']})"""
         res = self.graph.query(q, {'file': 'file://' + SHORT_CSV_WITH_HEADERS})
-        self.env.assertEqual(res.nodes_created, 5)
+        assert res.nodes_created == 5
 
         # create edges
         q = """LOAD CSV WITH HEADERS FROM $file AS row
@@ -498,5 +501,5 @@ class testLoadCsvPlan():
                WHERE a.name = row['First Name'] AND b.name = row['Last Name']
                CREATE (a)-[:CALL]->(b)"""
         res = self.graph.query(q, {'file': 'file://' + SHORT_CSV_WITH_HEADERS})
-        self.env.assertEqual(res.relationships_created, 4)
+        assert res.relationships_created == 4
 

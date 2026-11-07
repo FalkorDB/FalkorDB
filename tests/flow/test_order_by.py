@@ -3,13 +3,15 @@ from common import *
 GRAPH_ID = "order_by_test"
 
 class testOrderBy(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.populate_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.populate_graph()
 
-    def populate_graph(self):
-        self.graph.query("""CREATE (:Person {id: 622, name: 'Mo'}),
+    @classmethod
+    def populate_graph(cls):
+        cls.graph.query("""CREATE (:Person {id: 622, name: 'Mo'}),
                                    (:Person {id: 819, name: 'Bing'}),
                                    (:Person {id: 819, name: 'Qiu'})""")
 
@@ -18,18 +20,18 @@ class testOrderBy(FlowTestsBase):
         q = """MATCH (n:Person) RETURN n.id, n.name ORDER BY n.id DESC, n.name ASC"""
         expected = [[819, "Bing"], [819, "Qiu"], [622, "Mo"]]
         actual_result = self.graph.query(q)
-        self.env.assertEqual(actual_result.result_set, expected)
+        assert actual_result.result_set == expected
 
         # Same query with limit, force use heap sort
         q = """MATCH (n:Person) RETURN n.id, n.name ORDER BY n.id DESC, n.name ASC LIMIT 10"""
         actual_result = self.graph.query(q)
-        self.env.assertEqual(actual_result.result_set, expected)
+        assert actual_result.result_set == expected
 
     def test02_foreach(self):
         """Tests that ORDER BY works properly with FOREACH before it"""
 
         res = self.graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
-        self.env.assertEqual(res.nodes_created, 2)
+        assert res.nodes_created == 2
 
         res = self.graph.query(
             """
@@ -43,8 +45,8 @@ class testOrderBy(FlowTestsBase):
         )
 
         # assert the order of the results
-        self.env.assertEqual(res.result_set[0][0], Node(labels='N', properties={'v': 2}))
-        self.env.assertEqual(res.result_set[1][0], Node(labels='N', properties={'v': 1}))
+        assert res.result_set[0][0] == Node(labels='N', properties={'v': 2})
+        assert res.result_set[1][0] == Node(labels='N', properties={'v': 1})
 
         res = self.graph.query(
             """
@@ -58,8 +60,8 @@ class testOrderBy(FlowTestsBase):
         )
 
         # assert the order of the results
-        self.env.assertEqual(res.result_set[0][0], Node(labels='N', properties={'v': 1}))
-        self.env.assertEqual(res.result_set[1][0], Node(labels='N', properties={'v': 2}))
+        assert res.result_set[0][0] == Node(labels='N', properties={'v': 1})
+        assert res.result_set[1][0] == Node(labels='N', properties={'v': 2})
 
     def test03_order_by_projected_exp(self):
         """order-by accesses projected alias by its original form"""
@@ -72,7 +74,7 @@ class testOrderBy(FlowTestsBase):
         expected = [[1], [2], [3]]
 
         actual = self.graph.query(q).result_set
-        self.env.assertEqual(actual, expected)
+        assert actual == expected
 
     def test04_order_by_alias_prop(self):
         """order-by access projected alias by its original name"""
@@ -85,7 +87,7 @@ class testOrderBy(FlowTestsBase):
         expected = [[{'v':1}], [{'v':2}], [{'v':3}]]
 
         actual = self.graph.query(q).result_set
-        self.env.assertEqual(actual, expected)
+        assert actual == expected
 
         # nest replaced expression within a larger expression
         q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
@@ -94,7 +96,7 @@ class testOrderBy(FlowTestsBase):
                RETURN X"""
 
         actual = self.graph.query(q).result_set
-        self.env.assertEqual(actual, expected)
+        assert actual == expected
 
         # nest replaced expression within a larger expression
         q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
@@ -103,7 +105,7 @@ class testOrderBy(FlowTestsBase):
                RETURN X"""
 
         actual = self.graph.query(q).result_set
-        self.env.assertEqual(actual, expected)
+        assert actual == expected
 
         # nest replaced expression within a larger expression
         q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
@@ -112,7 +114,7 @@ class testOrderBy(FlowTestsBase):
                RETURN X"""
 
         actual = self.graph.query(q).result_set
-        self.env.assertEqual(actual, expected)
+        assert actual == expected
 
         # nest replaced expression within a larger expression
         q = """UNWIND [{v:3}, {v:1}, {v:2}] AS element
@@ -121,7 +123,7 @@ class testOrderBy(FlowTestsBase):
                RETURN X"""
 
         actual = self.graph.query(q).result_set
-        self.env.assertEqual(actual, expected)
+        assert actual == expected
 
         # combine the two types of order-by rewritting
         q = """UNWIND [{v:3, y:3}, {v:1, y:1}, {v:2, y:2}] AS element
@@ -131,7 +133,7 @@ class testOrderBy(FlowTestsBase):
 
         expected = [[{'v':1, 'y':1}], [{'v':2, 'y':2}], [{'v':3, 'y':3}]]
         actual = self.graph.query(q).result_set
-        self.env.assertEqual(actual, expected)
+        assert actual == expected
 
     def test05_order_by_nonprojected(self):
         """order-by reference non-projected variables"""
@@ -145,7 +147,7 @@ class testOrderBy(FlowTestsBase):
 
         expected = [[1], [2], [3], [1], [2], [3], [1], [2], [3]]
         actual = self.graph.query(q).result_set
-        self.env.assertEqual(actual, expected)
+        assert actual == expected
 
         q = """UNWIND [1, 2] AS X
                UNWIND [1, 2] AS Y
@@ -155,7 +157,7 @@ class testOrderBy(FlowTestsBase):
 
         expected = [[1], [1], [2], [2]]
         actual = self.graph.query(q).result_set
-        self.env.assertEqual(actual, expected)
+        assert actual == expected
 
     def test06_order_by_unallowed(self):
         """order-by can not refer to non-projected variabels in aggregation scope"""
@@ -167,9 +169,9 @@ class testOrderBy(FlowTestsBase):
 
         try:
             self.graph.query(q).result_set
-            self.env.assertTrue(False and "should fail")
+            assert False and "should fail"
         except Exception as e:
-            self.env.assertContains("ORDER BY cannot reference variables not projected", str(e))
+            assert "ORDER BY cannot reference variables not projected" in str(e)
 
     def test07_order_aggregation(self):
         """computing an aggregation expression within the ORDER-BY clause
@@ -179,7 +181,7 @@ class testOrderBy(FlowTestsBase):
 
         try:
             res = self.graph.query(q).result_set
-            self.env.assertTrue(False and "expecting a failure")
+            assert False and "expecting a failure"
         except Exception as e:
-            self.env.assertContains("failed to map aggregation expression", str(e))
+            assert "failed to map aggregation expression" in str(e)
 

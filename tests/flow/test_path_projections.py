@@ -5,12 +5,14 @@ GRAPH_ID     =  "path_projections"
 
 
 class testPathProjections():
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        self.populate_graph()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
+        cls.populate_graph()
 
-    def populate_graph(self):
+    @classmethod
+    def populate_graph(cls):
         # Construct a graph with the form:
         # (v0)-[:E]->(v1)-[:E]->(v2)-[:E]->(v3), (v0)-[:E]->(v4)
 
@@ -28,7 +30,7 @@ class testPathProjections():
         nodes_str = [str(n) for n in nodes.values()]
         edges_str = [str(e) for e in edges]
 
-        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
+        cls.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
     def test01_single_source_projection(self):
         query = """MATCH (a {v: 0}) WITH (a)-[]->() AS paths
@@ -40,7 +42,7 @@ class testPathProjections():
         traversal04 = [nodes[0], nodes[4]]
         expected_result = [[traversal01],
                            [traversal04]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test02_multi_source_projection(self):
         query = """MATCH (a) WITH (a)-[]->() AS paths WHERE a.v < 2
@@ -53,7 +55,7 @@ class testPathProjections():
         expected_result = [[traversal01],
                            [traversal04],
                            [traversal12]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test03_multiple_projections(self):
         query = """MATCH (a {v: 1}) WITH (a)-[]->() AS p1, (a)<-[]-() AS p2
@@ -62,10 +64,10 @@ class testPathProjections():
         actual_result = self.graph.query(query)
         traversal = [[nodes[1], nodes[2]], [nodes[1], nodes[0]]]
         expected_result = [traversal]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
         plan = str(self.graph.explain(query))
-        self.env.assertEqual(2, plan.count("Apply"))
+        assert 2 == plan.count("Apply")
 
     def test04_variable_length_projection(self):
         query = """MATCH (a {v: 1}) WITH (a)-[*]->({v: 3}) AS paths
@@ -74,7 +76,7 @@ class testPathProjections():
         actual_result = self.graph.query(query)
         traversal = [nodes[1], nodes[2], nodes[3]]
         expected_result = [[traversal]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test05_no_bound_variables_projection(self):
         query = """MATCH (a {v: 1}) WITH a, ({v: 2})-[]->({v: 3}) AS paths
@@ -83,7 +85,7 @@ class testPathProjections():
         actual_result = self.graph.query(query)
         traversal = [nodes[2], nodes[3]]
         expected_result = [[nodes[1], traversal]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result
 
     def test06_nested_traversal(self):
         query = """MATCH (a {v: 1}) WITH a, [({v: 2})-[]->({v: 3})] AS path_arr
@@ -93,4 +95,4 @@ class testPathProjections():
         actual_result = self.graph.query(query)
         traversal = [nodes[2], nodes[3]]
         expected_result = [[nodes[1], traversal]]
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        assert actual_result.result_set == expected_result

@@ -9,16 +9,17 @@ import imdb.imdb_utils
 GRAPH_ID = imdb.imdb_utils.graph_name
 
 class testImdbFlow(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
 
-    def setUp(self):
+    def setup_method(self):
         self.graph     = self.db.select_graph(GRAPH_ID)
         actors, movies = imdb.imdb_utils.populate_graph(self.db, self.graph)
         self.imdb      = imdb.imdb_queries.IMDBQueries(actors, movies)
         self.queries   = self.imdb.queries()
 
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
 
     def assert_reversed_pattern(self, query, resultset):
@@ -28,7 +29,7 @@ class testImdbFlow(FlowTestsBase):
         actual_result = self.graph.query(reversed_query)
 
         # assert result set
-        self.env.assertEqual(resultset.result_set, actual_result.result_set)
+        assert resultset.result_set == actual_result.result_set
 
     def test_imdb(self):
         for q in self.queries:
@@ -49,7 +50,7 @@ class testImdbFlow(FlowTestsBase):
 
         q = self.imdb.actors_over_85_index_scan.query
         execution_plan = str(self.graph.explain(q))
-        self.env.assertContains('Index Scan', execution_plan)
+        assert 'Index Scan' in execution_plan
 
         actual_result = self.graph.query(q)
 
@@ -70,7 +71,7 @@ class testImdbFlow(FlowTestsBase):
 
         q = self.imdb.eighties_movies_index_scan.query
         execution_plan = str(self.graph.explain(q))
-        self.env.assertContains('Index Scan', execution_plan)
+        assert 'Index Scan' in execution_plan
 
         actual_result = self.graph.query(q)
 

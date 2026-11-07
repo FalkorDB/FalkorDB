@@ -6,16 +6,17 @@ from tests.flow.query_info import QueryInfo
 GRAPH_ID = "path"
 
 class testPath(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.conn = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
     def path_to_string(self, path):
         str_path = ", ".join([str(obj) for obj in path])
         return str_path
 
-    def setUp(self):
+    def setup_method(self):
         self.conn.delete(GRAPH_ID)
     
     def test_simple_path(self):
@@ -174,13 +175,13 @@ class testPath(FlowTestsBase):
         query = """MATCH p=()-[]->() RETURN nodes(p)[0].value, nodes(p)[1].value"""
         result = self.graph.query(query)
         expected_result = [[1, 2]]
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # Test access of properties introduced by the query.
         query = """MATCH p=(a)-[]->() SET a.newval = 'new' RETURN nodes(p)[0].value, nodes(p)[0].newval"""
         result = self.graph.query(query)
         expected_result = [[1, 'new']]
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
     # Test path deletion
     def test_path_deletion(self):
@@ -190,19 +191,19 @@ class testPath(FlowTestsBase):
         query = """MATCH p = (a:X)-[r:R]-(b:Y) DELETE p"""
         result = self.graph.query(query)
         expected_result = []
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
         query = """MATCH (a:X) DELETE a"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.nodes_deleted, 1)
+        assert result.nodes_deleted == 1
         query = """MATCH (b:Y) DELETE b"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.nodes_deleted, 1)
+        assert result.nodes_deleted == 1
 
         # Test delete empty path
         query = """MATCH p = (a:X)-[r:R]-(b:Y) DELETE p"""
         result = self.graph.query(query)
         expected_result = []
-        self.env.assertEqual(result.result_set, expected_result)
+        assert result.result_set == expected_result
 
         # Test delete simple path
         query = """CREATE (a:X), (b:Y)"""
@@ -211,8 +212,8 @@ class testPath(FlowTestsBase):
         self.graph.query(query)
         query = """MATCH p = (a:X)-[r:R]-(b:Y) DELETE p"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.nodes_deleted, 2)
-        self.env.assertEqual(result.relationships_deleted, 1)
+        assert result.nodes_deleted == 2
+        assert result.relationships_deleted == 1
 
         # Test delete 2 nodes, 2 relationships
         query = """CREATE (a:X), (b:Y)"""
@@ -223,8 +224,8 @@ class testPath(FlowTestsBase):
         self.graph.query(query)
         query = """MATCH p = (a:X)-[r:R]-(b:Y) DELETE p"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.nodes_deleted, 2)
-        self.env.assertEqual(result.relationships_deleted, 2)
+        assert result.nodes_deleted == 2
+        assert result.relationships_deleted == 2
 
         # Test delete multiple paths
         query = """CREATE (a:X), (b:Y), (c:Z), (d:W)"""
@@ -237,8 +238,8 @@ class testPath(FlowTestsBase):
         self.graph.query(query)
         query = """MATCH p = (n)-[r:R]-(m) DELETE p"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.nodes_deleted, 4)
-        self.env.assertEqual(result.relationships_deleted, 3)
+        assert result.nodes_deleted == 4
+        assert result.relationships_deleted == 3
 
         # Test delete path length 3
         query = """CREATE (a:X), (b:Y), (c:Z)"""
@@ -247,33 +248,33 @@ class testPath(FlowTestsBase):
         self.graph.query(query)
         query = """MATCH p = (n)<-[r1:R1]-(m)-[r2:R2]->(o) DELETE p"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.nodes_deleted, 0)
-        self.env.assertEqual(result.relationships_deleted, 0)
+        assert result.nodes_deleted == 0
+        assert result.relationships_deleted == 0
         query = """MATCH p = (n)-[r1:R1]-(m)-[r2:R2]-(o) DELETE p"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.nodes_deleted, 3)
-        self.env.assertEqual(result.relationships_deleted, 2)
+        assert result.nodes_deleted == 3
+        assert result.relationships_deleted == 2
         
         # Test delete nodes, edges and path
         query = """CREATE (a)-[b:B]->(c)"""
         self.graph.query(query)
         query = """MATCH p = (d)-[e]-(f) DELETE d,e,f,p"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.nodes_deleted, 2)
-        self.env.assertEqual(result.relationships_deleted, 1)
+        assert result.nodes_deleted == 2
+        assert result.relationships_deleted == 1
 
         # Test delete nodes
         query = """CREATE (a)-[b:B]->(c)"""
         self.graph.query(query)
         query = """MATCH p = (d)-[e]-(f) DELETE d,p"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.nodes_deleted, 2)
-        self.env.assertEqual(result.relationships_deleted, 1)
+        assert result.nodes_deleted == 2
+        assert result.relationships_deleted == 1
 
          # Test delete path duplicated match
         query = """CREATE (a)-[b:B]->(c)"""
         self.graph.query(query)
         query = """MATCH p = (d)-[e]-(f) MATCH q = (g)-[h]-(i) DELETE p,q"""
         result = self.graph.query(query)
-        self.env.assertEqual(result.nodes_deleted, 2)
-        self.env.assertEqual(result.relationships_deleted, 1)
+        assert result.nodes_deleted == 2
+        assert result.relationships_deleted == 1

@@ -68,8 +68,8 @@ def BGSAVE_loop(env, conn, stop_event):
                 break
             time.sleep(0.1) # sleep 100ms
 
-        env.assertFalse(in_progress)
-        env.assertEqual(results['rdb_last_bgsave_status'], "ok")
+        assert not in_progress
+        assert results['rdb_last_bgsave_status'] == "ok"
 
     conn.close()
 
@@ -93,14 +93,15 @@ def worker(conn, task_queue):
     conn.close()
 
 class testStressFlow():
-    def __init__(self):
-        self.env, _ = Env()
-        self.graph = Graph(self.env.getConnection(), GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, _ = Env()
+        cls.graph = Graph(cls.env.getConnection(), GRAPH_ID)
 
-    def setUp(self):
+    def setup_method(self):
         self.graph.create_node_range_index("Node", "v")
 
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
 
     def start_workers(self, worker_count, task_queue):
@@ -173,7 +174,7 @@ class testStressFlow():
         # Stop BGSAVE thread
         stop_event.set()
         bgsave_thread.join(timeout=10)
-        self.env.assertFalse(bgsave_thread.is_alive())
+        assert not bgsave_thread.is_alive()
         task_queue.join()
 
     def test02_write_only_workload(self):

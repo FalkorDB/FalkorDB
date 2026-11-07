@@ -4,12 +4,13 @@ GRAPH_ID = "centrality"
 
 
 class testCentrality(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.conn = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
 
     def centrality(
@@ -56,17 +57,17 @@ class testCentrality(FlowTestsBase):
         for q in invalid_queries:
             try:
                 self.graph.query(q)
-                self.env.assertFalse(True)
+                assert not True
             except ResponseError:
                 pass  # expected: invalid queries must raise
 
     def test02_centrality_empty_graph(self):
         """Test harmonic centrality on an empty graph returns no results"""
         result = self.graph.query("MATCH (n) RETURN count(n) as count")
-        self.env.assertEqual(result.result_set[0][0], 0)
+        assert result.result_set[0][0] == 0
 
         result = self.centrality()
-        self.env.assertEqual(len(result.result_set), 0)
+        assert len(result.result_set) == 0
 
     def test03_centrality_basic(self):
         """Test harmonic centrality on a directed path graph.
@@ -96,12 +97,12 @@ class testCentrality(FlowTestsBase):
         scores = {row[0]: row[1] for row in result.result_set}
 
         # ordering assertions (HLL gives accurate estimates for small cardinalities)
-        self.env.assertGreater(scores["A"], scores["B"])
-        self.env.assertGreater(scores["B"], scores["C"])
-        self.env.assertGreater(scores["C"], scores["D"])
+        assert scores["A"] > scores["B"]
+        assert scores["B"] > scores["C"]
+        assert scores["C"] > scores["D"]
 
         # D has no outgoing edges — score is exactly 0
-        self.env.assertEqual(scores["D"], 0.0)
+        assert scores["D"] == 0.0
 
     def test04_centrality_star(self):
         """Test harmonic centrality on a directed star graph.
@@ -131,11 +132,11 @@ class testCentrality(FlowTestsBase):
 
         # center has the highest score
         for leaf in ["L1", "L2", "L3", "L4", "L5"]:
-            self.env.assertGreater(scores["Center"], scores[leaf])
+            assert scores["Center"] > scores[leaf]
 
         # all leaves have no outgoing edges — score is exactly 0
         for leaf in ["L1", "L2", "L3", "L4", "L5"]:
-            self.env.assertEqual(scores[leaf], 0.0)
+            assert scores[leaf] == 0.0
 
     def test05_centrality_node_labels(self):
         """Test harmonic centrality with nodeLabels filter.
@@ -166,19 +167,19 @@ class testCentrality(FlowTestsBase):
         scores = {row[0]: row[1] for row in result.result_set}
 
         # only Person nodes returned
-        self.env.assertEqual(len(scores), 3)
-        self.env.assertContains("A", scores)
-        self.env.assertContains("B", scores)
-        self.env.assertContains("C", scores)
-        self.env.assertNotContains("D", scores)
-        self.env.assertNotContains("E", scores)
+        assert len(scores) == 3
+        assert "A" in scores
+        assert "B" in scores
+        assert "C" in scores
+        assert "D" not in scores
+        assert "E" not in scores
 
         # A reaches B and C through Person subgraph → highest score
-        self.env.assertGreater(scores["A"], scores["B"])
-        self.env.assertGreater(scores["B"], scores["C"])
+        assert scores["A"] > scores["B"]
+        assert scores["B"] > scores["C"]
 
         # C has no outgoing Person edges
-        self.env.assertEqual(scores["C"], 0.0)
+        assert scores["C"] == 0.0
 
     def test06_centrality_relationship_types(self):
         """Test harmonic centrality with relationshipTypes filter.
@@ -212,22 +213,22 @@ class testCentrality(FlowTestsBase):
         scores = {row[0]: row[1] for row in result.result_set}
 
         # all nodes returned
-        self.env.assertEqual(len(scores), 5)
+        assert len(scores) == 5
 
         # A reaches B and C via FRIEND, B reaches only C
-        self.env.assertGreater(scores["A"], scores["B"])
-        self.env.assertGreater(scores["B"], scores["C"])
+        assert scores["A"] > scores["B"]
+        assert scores["B"] > scores["C"]
 
         # C, D, E have no outgoing FRIEND edges
-        self.env.assertEqual(scores["C"], 0.0)
-        self.env.assertEqual(scores["D"], 0.0)
-        self.env.assertEqual(scores["E"], 0.0)
+        assert scores["C"] == 0.0
+        assert scores["D"] == 0.0
+        assert scores["E"] == 0.0
 
         # compare to full graph traversal — A's score should differ
         result_full = self.centrality()
         scores_full = {row[0]: row[1] for row in result_full.result_set}
 
-        self.env.assertNotEqual(scores["A"], scores_full["A"])
+        assert scores["A"] != scores_full["A"]
 
     def test07_centrality_combined_parameters(self):
         """Test harmonic centrality with both nodeLabels and relationshipTypes.
@@ -263,19 +264,19 @@ class testCentrality(FlowTestsBase):
         scores = {row[0]: row[1] for row in result.result_set}
 
         # only Person nodes returned
-        self.env.assertEqual(len(scores), 3)
-        self.env.assertContains("A", scores)
-        self.env.assertContains("B", scores)
-        self.env.assertContains("C", scores)
-        self.env.assertNotContains("D", scores)
-        self.env.assertNotContains("E", scores)
+        assert len(scores) == 3
+        assert "A" in scores
+        assert "B" in scores
+        assert "C" in scores
+        assert "D" not in scores
+        assert "E" not in scores
 
         # A reaches B and C, B reaches only C
-        self.env.assertGreater(scores["A"], scores["B"])
-        self.env.assertGreater(scores["B"], scores["C"])
+        assert scores["A"] > scores["B"]
+        assert scores["B"] > scores["C"]
 
         # C has no outgoing FRIEND edges within Person subgraph
-        self.env.assertEqual(scores["C"], 0.0)
+        assert scores["C"] == 0.0
 
     def test08_centrality_large_sparse(self):
         """Harmonic centrality on a larger sparse graph (HLL dot4 fast path).
@@ -312,11 +313,11 @@ class testCentrality(FlowTestsBase):
         scores = {row[0]: row[1] for row in rows}
 
         # every node is scored
-        self.env.assertEqual(len(scores), N)
+        assert len(scores) == N
 
         # node 0 reaches the whole downstream chain -> strictly highest score
-        self.env.assertEqual(rows[0][0], 0)
+        assert rows[0][0] == 0
 
         # the final node has no outgoing edges -> score is exactly 0
-        self.env.assertEqual(scores[N - 1], 0.0)
+        assert scores[N - 1] == 0.0
 

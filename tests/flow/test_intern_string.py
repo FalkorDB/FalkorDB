@@ -38,18 +38,19 @@ def assertStringPoolStats(conn, count, avg):
     assert objs_in_pool == count, f"expected count={count}, got {objs_in_pool}"
 
 class testInternString():
-    def __init__(self):
-        self.env, self.db = Env()
-        self.conn = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.conn = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
         # Synchronous deletion
-        self.db.config_set('ASYNC_DELETE', 'no')
+        cls.db.config_set('ASYNC_DELETE', 'no')
 
-    def tearDown(self):
+    def teardown_method(self):
         # clear DB
         self.conn.flushall()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        type(self).graph = self.db.select_graph(GRAPH_ID)
 
         assertStringPoolStats(self.conn, 0, 0)
 
@@ -71,8 +72,8 @@ class testInternString():
         q = "CREATE ({value: intern($s)})"
         res = self.graph.query(q, {'s': LARGE_STRING})
 
-        self.env.assertEqual(res.nodes_created, 1)
-        self.env.assertEqual(res.properties_set, 1)
+        assert res.nodes_created == 1
+        assert res.properties_set == 1
 
         # validate string pool stats, expecting a single object
         assertStringPoolStats(self.conn, 1, 1)
@@ -116,10 +117,10 @@ class testInternString():
             # make sure string wan't freed
             rows = self.graph.query("MATCH (n) RETURN n.value").result_set
             for row in rows:
-                self.env.assertEqual(row[0], SMALL_STRING)
+                assert row[0] == SMALL_STRING
 
             res = self.graph.query("MATCH (n) WITH n LIMIT 1 DELETE n")
-            self.env.assertEqual(res.nodes_deleted, 1)
+            assert res.nodes_deleted == 1
 
             # validate string pool stats
             avg = node_count - i - 1
@@ -128,7 +129,7 @@ class testInternString():
 
         # expecting graph to be empty
         node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
-        self.env.assertEqual(node_count, 0)
+        assert node_count == 0
 
         # validate string pool stats
         assertStringPoolStats(self.conn, 0, 0)
@@ -154,7 +155,7 @@ class testInternString():
         # delete string from each dedicated graph
         for i, g in enumerate(graphs):
             res = g.query("MATCH (n) delete n")
-            self.env.assertEqual(res.nodes_deleted, 1)
+            assert res.nodes_deleted == 1
 
             # validate string pool stats
             assertStringPoolStats(self.conn, 1, node_count - i)
@@ -163,7 +164,7 @@ class testInternString():
 
         # make sure string is valid
         value = self.graph.query("MATCH (n) RETURN n.value").result_set[0][0]
-        self.env.assertEqual(value, SMALL_STRING)
+        assert value == SMALL_STRING
 
         # delete the last graph in the DB
         self.graph.delete()
@@ -183,14 +184,14 @@ class testInternString():
 
         # delete first reference to shared string
         res = self.graph.query("MATCH (a:A) DELETE a")
-        self.env.assertEqual(res.nodes_deleted, 1)
+        assert res.nodes_deleted == 1
 
         # validate string pool stats
         assertStringPoolStats(self.conn, 1, 1)
 
         # verify that string is still valid
         res = self.graph.query("MATCH (b:B) RETURN b.v[0]").result_set
-        self.env.assertEqual(res[0][0], SMALL_STRING)
+        assert res[0][0] == SMALL_STRING
 
         # validate string pool stats
         assertStringPoolStats(self.conn, 1, 1)
@@ -209,8 +210,8 @@ class testInternString():
         # delete first reference
         self.graph.query("MATCH (a:A) SET a.a = NULL")
         res = self.graph.query("MATCH (a:A) RETURN a.b[0], a.c").result_set
-        self.env.assertEqual(res[0][0], SMALL_STRING)
-        self.env.assertEqual(res[0][1], SMALL_STRING)
+        assert res[0][0] == SMALL_STRING
+        assert res[0][1] == SMALL_STRING
 
         # validate string pool stats
         assertStringPoolStats(self.conn, 1, 2)
@@ -218,7 +219,7 @@ class testInternString():
         # delete second reference
         self.graph.query("MATCH (a:A) SET a.b = NULL")
         res = self.graph.query("MATCH (a:A) RETURN a.c").result_set
-        self.env.assertEqual(res[0][0], SMALL_STRING)
+        assert res[0][0] == SMALL_STRING
 
         # validate string pool stats
         assertStringPoolStats(self.conn, 1, 1)
@@ -245,10 +246,10 @@ class testInternString():
         res = self.graph.query(q, {'s': LARGE_STRING})
 
         # assert query results
-        self.env.assertEqual(res.nodes_created, 1)
-        self.env.assertEqual(res.properties_set, 1)
-        self.env.assertEqual(res.result_set[0][0], LARGE_STRING)
-        self.env.assertEqual(res.result_set[0][1], "String")
+        assert res.nodes_created == 1
+        assert res.properties_set == 1
+        assert res.result_set[0][0] == LARGE_STRING
+        assert res.result_set[0][1] == "String"
         assertStringPoolStats(self.conn, 1, 1)
 
         # try to overwrite an intern string with a regular string
@@ -262,7 +263,7 @@ class testInternString():
         try:
             # expecting query to fail
             res = self.graph.query(q)
-            self.env.assertFalse("query should fail")
+            assert not "query should fail"
         except:
             # expecting an error
             pass
@@ -270,8 +271,8 @@ class testInternString():
         # validate node's intern string was restored
         q = "MATCH (n) RETURN n.v, typeof(n.v)"
         res = self.graph.query(q).result_set
-        self.env.assertEqual(res[0][0], LARGE_STRING)
-        self.env.assertEqual(res[0][1], "String")
+        assert res[0][0] == LARGE_STRING
+        assert res[0][1] == "String"
         assertStringPoolStats(self.conn, 1, 1)
 
         #-----------------------------------------------------------------------
@@ -287,7 +288,7 @@ class testInternString():
         for q in queries:
             try:
                 self.graph.query(q).result_set
-                self.env.assertTrue(False and "query should raise an exception")
+                assert False and "query should raise an exception"
             except:
                 pass
 
@@ -302,12 +303,12 @@ class testInternString():
                RETURN a.v, typeof(a.v), b.v, typeof(b.v)"""
 
         res = self.graph.query(q, {'s': LARGE_STRING})
-        self.env.assertEqual(res.nodes_created, 2)
-        self.env.assertEqual(res.properties_set, 2)
-        self.env.assertEqual(LARGE_STRING, res.result_set[0][0])
-        self.env.assertEqual("String", res.result_set[0][1])
-        self.env.assertEqual(LARGE_STRING, res.result_set[0][2])
-        self.env.assertEqual("String", res.result_set[0][3])
+        assert res.nodes_created == 2
+        assert res.properties_set == 2
+        assert LARGE_STRING == res.result_set[0][0]
+        assert "String" == res.result_set[0][1]
+        assert LARGE_STRING == res.result_set[0][2]
+        assert "String" == res.result_set[0][3]
         assertStringPoolStats(self.conn, 1, 2)
 
     def test_stress_pool(self):
@@ -354,7 +355,7 @@ class testInternString():
 
         for q in queries:
             res = self.graph.query(q).result_set
-            self.env.assertTrue(res[0][0])
+            assert res[0][0]
 
         q = """UNWIND [intern('c'), intern('b'), intern('a'), 'a', 'c', 'b'] as x
                WITH x
@@ -362,7 +363,7 @@ class testInternString():
                RETURN collect(x)"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(['a', 'a', 'b', 'b', 'c', 'c'], res[0][0])
+        assert ['a', 'a', 'b', 'b', 'c', 'c'] == res[0][0]
 
         q = """UNWIND [intern('c'), intern('b'), intern('a'), 'a', 'c', 'b', 1, 2, 3] as x
                WITH x
@@ -370,24 +371,25 @@ class testInternString():
                RETURN collect(x)"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEqual(['a', 'a', 'b', 'b', 'c', 'c', 1, 2, 3], res[0][0])
+        assert ['a', 'a', 'b', 'b', 'c', 'c', 1, 2, 3] == res[0][0]
 
 class testInternStringPersistency():
-    def __init__(self):
-        self.env, self.db = Env(enableDebugCommand=True)
-        self.conn = self.env.getConnection()
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env(enableDebugCommand=True)
+        cls.conn = cls.env.getConnection()
 
         # skip test if we're running under Sanitizer
         if SANITIZER:
-            self.env.skip() # sanitizer is not working correctly with bulk
+            cls.env.skip() # sanitizer is not working correctly with bulk
 
         # Synchronous deletion
-        self.db.config_set('ASYNC_DELETE', 'no')
+        cls.db.config_set('ASYNC_DELETE', 'no')
 
         # clear DB
-        self.conn.flushall()
+        cls.conn.flushall()
 
-    def tearDown(self):
+    def teardown_method(self):
         # clear DB
         self.conn.flushall()
         self.graph = self.db.select_graph(GRAPH_ID)
@@ -418,33 +420,34 @@ class testInternStringPersistency():
 
         for g in graphs:
             res = g.query("MATCH (n) RETURN n.value").result_set[0][0]
-            self.env.assertEqual(res, SMALL_STRING)
+            assert res == SMALL_STRING
 
 class testInternStringReplication():
-    def __init__(self):
+    @classmethod
+    def setup_class(cls):
         # skip test if we're running under sanitizer
         if SANITIZER:
-            Environment.skip(None) # sanitizer is not working correctly with replication
+            pytest.skip("sanitizer is not working correctly with replication")
 
-        self.env, self.db = Env(env='oss', useSlaves=True)
-        self.conn = self.env.getConnection()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        cls.env, cls.db = Env(env='oss', useSlaves=True)
+        cls.conn = cls.env.getConnection()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-        self.source_con = self.env.getConnection()
-        self.replica_con = self.env.getSlaveConnection()
+        cls.source_con = cls.env.getConnection()
+        cls.replica_con = cls.env.getSlaveConnection()
 
         # force effects replication
-        self.db.config_set('EFFECTS_THRESHOLD', 0)
+        cls.db.config_set('EFFECTS_THRESHOLD', 0)
 
         # Synchronous deletion
-        self.source_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
-        self.replica_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
+        cls.source_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
+        cls.replica_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
 
         # clear DB
-        self.conn.flushall()
-        self.source_con.execute_command("WAIT", "1", "0")
+        cls.conn.flushall()
+        cls.source_con.execute_command("WAIT", "1", "0")
 
-    def tearDown(self):
+    def teardown_method(self):
         # clear DB
         self.source_con.flushall()
         self.source_con.execute_command("WAIT", "1", "0")

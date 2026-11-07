@@ -1,14 +1,16 @@
+import pytest
 from common import *
 
 GRAPH_ID = "pagerank"
 
 
 class testPagerank(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
 
     def test_invalid_invocation(self):
@@ -33,7 +35,7 @@ class testPagerank(FlowTestsBase):
         for q in invalid_queries:
             try:
                 self.graph.query(q)
-                self.env.assertFalse(True)
+                assert not True
             except:
                 pass
     
@@ -74,7 +76,7 @@ class testPagerank(FlowTestsBase):
         result = self.graph.query("CALL algo.pageRank(NULL, NULL) YIELD node, score RETURN node.name, score")
 
         # Validate result structure
-        self.env.assertEqual(len(result.result_set), 6)  # Should return 6 nodes
+        assert len(result.result_set) == 6  # Should return 6 nodes
 
         # Create a dictionary of node labels to scores
         scores = {}
@@ -86,7 +88,7 @@ class testPagerank(FlowTestsBase):
             scores[node_name] = score
 
         # Verify all nodes have a score
-        self.env.assertEqual(len(scores), 6)
+        assert len(scores) == 6
 
         # In this graph, nodes with more incoming edges should have higher PageRank scores
         # Node B has 2 incoming edges, others have 1
@@ -94,15 +96,15 @@ class testPagerank(FlowTestsBase):
         b_score = scores.get("B", 0)
         for label, score in scores.items():
             if label != "B":
-                self.env.assertGreaterEqual(b_score, score)
+                assert b_score >= score
 
         # Verify all scores sum to approximately 1.0 (allowing for floating point errors)
         score_sum = sum(scores.values())
-        self.env.assertAlmostEqual(score_sum, 1.0, delta=0.0001)
+        assert score_sum == pytest.approx(1.0, abs=0.0001)
 
         # Verify all scores are positive
         for label, score in scores.items():
-            self.env.assertGreater(score, 0)
+            assert score > 0
 
     def test_pagerank_specific_labels(self):
         """Test PageRank with specific node label and relationship type"""
@@ -131,7 +133,7 @@ class testPagerank(FlowTestsBase):
                                      RETURN node.name, score""")
 
         # Should only return the 2 Special nodes
-        self.env.assertEqual(len(result.result_set), 2)
+        assert len(result.result_set) == 2
 
         # Verify node labels
         labels = set()
@@ -139,7 +141,7 @@ class testPagerank(FlowTestsBase):
             node_name = record[0]
             labels.add(node_name)
 
-        self.env.assertEqual(labels, {"S1", "S2"})
+        assert labels == {"S1", "S2"}
 
         # Since S2 has an incoming edge and S1 doesn't, S2 should have a higher score
         scores = {}
@@ -148,7 +150,7 @@ class testPagerank(FlowTestsBase):
             score = record[1]
             scores[node_name] = score
 
-        self.env.assertGreater(scores["S2"], scores["S1"])
+        assert scores["S2"] > scores["S1"]
 
     def test_pagerank_empty_graph(self):
         """Test PageRank on an empty graph"""
@@ -156,5 +158,5 @@ class testPagerank(FlowTestsBase):
         result = self.graph.query("CALL algo.pageRank(NULL, NULL) YIELD node, score")
 
         # Should return an empty result set
-        self.env.assertEqual(len(result.result_set), 0)
+        assert len(result.result_set) == 0
 

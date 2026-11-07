@@ -1,16 +1,18 @@
+import pytest
 from common import *
 
 GRAPH_ID = "max_flow"
 
 class testMaxFlow(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
+    @classmethod
+    def setup_class(cls):
+        cls.env, cls.db = Env()
+        cls.graph = cls.db.select_graph(GRAPH_ID)
 
-    def tearDown(self):
+    def teardown_method(self):
         self.graph.delete()
         # re-create the graph object to get a fresh client-side schema cache
-        self.graph = self.db.select_graph(GRAPH_ID)
+        type(self).graph = self.db.select_graph(GRAPH_ID)
 
     def max_flow(self, sourceNodes, targetNodes, capacityProperty=None,
                  nodeLabels=[], relationshipTypes=None):
@@ -139,7 +141,7 @@ class testMaxFlow(FlowTestsBase):
         for q in invalid_queries:
             try:
                 self.graph.query(q)
-                self.env.assertFalse(True)
+                assert not True
             except Exception:
                 # Each query exercises a different config-validation path; a
                 # server-side error is the only acceptable outcome here.
@@ -163,7 +165,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertTrue(False, "Expected error for tensor relationship")
+            assert False, "Expected error for tensor relationship"
         except Exception as e:
             # Multi-edge (tensor) relationship → procedure rejects it.
             if "multi-edges" not in str(e):
@@ -194,7 +196,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertTrue(False, "Expected error for wide capacity range")
+            assert False, "Expected error for wide capacity range"
         except Exception as e:
             # Max capacity ≥ min * 2^32 would cause the solver to hang.
             if "capacity range too wide" not in str(e):
@@ -218,7 +220,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertFalse(True)
+            assert not True
         except Exception as e:
             # Empty source/sink lists → procedure must raise an error.
             if "expects at least one source" not in str(e):
@@ -242,8 +244,8 @@ class testMaxFlow(FlowTestsBase):
         """)
         # either empty result set or flow == 0
         if len(result.result_set) > 0:
-            self.env.assertEqual(result.result_set[0][0], [])
-            self.env.assertEqual(result.result_set[0][1], 0)
+            assert result.result_set[0][0] == []
+            assert result.result_set[0][1] == 0
 
     # ------------------------------------------------------------------ #
     #  single source, single sink – correctness                          #
@@ -266,9 +268,9 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD edgeFlows, maxFlow
         """)
-        self.env.assertEqual(len(result.result_set), 1)
-        self.env.assertEqual(result.result_set[0][1], 5)
-        self.env.assertEqual(result.result_set[0][0], [5,5])
+        assert len(result.result_set) == 1
+        assert result.result_set[0][1] == 5
+        assert result.result_set[0][0] == [5,5]
 
     def test_05_max_flow_bottleneck(self):
         """
@@ -291,8 +293,8 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD edgeFlows, maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][1], 3)
-        self.env.assertEqual(result.result_set[0][0], [3, 3, 3])
+        assert result.result_set[0][1] == 3
+        assert result.result_set[0][0] == [3, 3, 3]
 
     def test_06_max_flow_parallel_paths(self):
         """
@@ -323,8 +325,8 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD edgeFlows, maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][1], 8)
-        self.env.assertEqual(result.result_set[0][0], [4, 4, 4, 4])
+        assert result.result_set[0][1] == 8
+        assert result.result_set[0][0] == [4, 4, 4, 4]
 
     def test_07_max_flow_default_capacity(self):
         """When defaultCapacity is given, edges with missing or non-numeric
@@ -351,8 +353,8 @@ class testMaxFlow(FlowTestsBase):
             YIELD edgeFlows, maxFlow
         """)
         # two unit-capacity parallel paths -> flow = 2
-        self.env.assertEqual(result.result_set[0][0], [1,1,1,1])
-        self.env.assertEqual(result.result_set[0][1], 2)
+        assert result.result_set[0][0] == [1,1,1,1]
+        assert result.result_set[0][1] == 2
 
     # ------------------------------------------------------------------ #
     #  yield – subsets of output columns                                 #
@@ -373,8 +375,8 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertEqual(len(result.result_set), 1)
-        self.env.assertEqual(result.result_set[0][0], 7)
+        assert len(result.result_set) == 1
+        assert result.result_set[0][0] == 7
 
     def test_09_yield_nodes_only(self):
         """Requesting only YIELD nodes must return a non-empty array."""
@@ -393,9 +395,9 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD nodes
         """)
-        self.env.assertEqual(len(result.result_set), 1)
+        assert len(result.result_set) == 1
         yield_nodes = result.result_set[0][0]
-        self.env.assertEqual(nodes, yield_nodes)
+        assert nodes == yield_nodes
 
     def test_10_yield_edges_only(self):
         """Requesting only YIELD edges must return a non-empty array."""
@@ -413,9 +415,9 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD edges
         """)
-        self.env.assertEqual(len(result.result_set), 1)
+        assert len(result.result_set) == 1
         yield_edges = result.result_set[0][0]
-        self.env.assertEqual(edges, yield_edges)
+        assert edges == yield_edges
 
     def test_11_yield_nodes_edges_flow(self):
         """
@@ -445,18 +447,18 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD nodes, edges, edgeFlows, maxFlow
         """)
-        self.env.assertEqual(len(result.result_set), 1)
+        assert len(result.result_set) == 1
         nodes, edges, flows, maxflow = result.result_set[0]
 
-        self.env.assertEqual(len(nodes), 3)
-        self.env.assertEqual(len(edges), 2)
-        self.env.assertEqual(flows, [5,5])
-        self.env.assertEqual(maxflow, 5)
+        assert len(nodes) == 3
+        assert len(edges) == 2
+        assert flows == [5,5]
+        assert maxflow == 5
 
         node_ids = [n.id for n in nodes]
         for idx, e in enumerate(edges):
-            self.env.assertContains(e.src_node, node_ids)
-            self.env.assertTrue(e.properties['cap'] == flows[idx])
+            assert e.src_node in node_ids
+            assert e.properties['cap'] == flows[idx]
 
     # ------------------------------------------------------------------ #
     #  multi-source, single sink                                         #
@@ -491,8 +493,8 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD nodes, maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][1], 8)
-        self.env.assertEqual(len(result.result_set[0][0]), 3)
+        assert result.result_set[0][1] == 8
+        assert len(result.result_set[0][0]) == 3
 
     def test_13_max_flow_multi_source_bottleneck(self):
         """
@@ -524,7 +526,7 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][0], 4)
+        assert result.result_set[0][0] == 4
 
     # ------------------------------------------------------------------ #
     #  single source, multi-sink                                         #
@@ -559,8 +561,8 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD nodes, maxFlow
         """)
-        self.env.assertEqual(len(result.result_set[0][0]), 3)
-        self.env.assertEqual(result.result_set[0][1], 8)
+        assert len(result.result_set[0][0]) == 3
+        assert result.result_set[0][1] == 8
 
     def test_15_max_flow_single_source_multi_sink_bottleneck(self):
         """
@@ -594,7 +596,7 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][0], 6)
+        assert result.result_set[0][0] == 6
 
     # ------------------------------------------------------------------ #
     #  multi-source, multi-sink                                          #
@@ -634,7 +636,7 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][0], 10)
+        assert result.result_set[0][0] == 10
 
     def test_17_max_flow_multi_source_multi_sink_asymmetric(self):
         """
@@ -677,7 +679,7 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][0], 6)
+        assert result.result_set[0][0] == 6
 
     # ------------------------------------------------------------------ #
     #  multi-source / multi-sink output sanity                           #
@@ -714,18 +716,18 @@ class testMaxFlow(FlowTestsBase):
             YIELD nodes, edges
         """)
 
-        self.env.assertEqual(len(result.result_set), 1)
+        assert len(result.result_set) == 1
         nodes, edges = result.result_set[0]
 
         for node in nodes:
-            self.env.assertLessEqual(node.id, max_real_id)
+            assert node.id <= max_real_id
 
         for edge in edges:
-            self.env.assertLessEqual(edge.src_node, max_real_id)
-            self.env.assertLessEqual(edge.dest_node, max_real_id)
+            assert edge.src_node <= max_real_id
+            assert edge.dest_node <= max_real_id
 
         node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
-        self.env.assertEqual(node_count, 4)
+        assert node_count == 4
 
     # ------------------------------------------------------------------ #
     #  nodeLabels filter                                                 #
@@ -784,8 +786,8 @@ class testMaxFlow(FlowTestsBase):
         flow_filtered = result_filtered.result_set[0][0]
 
         # Filtering out the valve node must reduce (or equal) flow
-        self.env.assertGreaterEqual(flow_all, flow_filtered)
-        self.env.assertEqual(flow_filtered, 3)
+        assert flow_all >= flow_filtered
+        assert flow_filtered == 3
 
     # ------------------------------------------------------------------ #
     #  relationshipTypes filter                                          #
@@ -821,7 +823,7 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][0], 5)
+        assert result.result_set[0][0] == 5
 
     # ------------------------------------------------------------------ #
     #  single-element arrays equal single source / sink behaviour        #
@@ -846,7 +848,7 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][0], 9)
+        assert result.result_set[0][0] == 9
 
     # ------------------------------------------------------------------ #
     #  source == sink (degenerate case)                                  #
@@ -869,7 +871,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertTrue(False, "Expected error for overlapping "
+            assert False, ("Expected error for overlapping "
                                        "source and sink sets")
         except Exception as e:
             # source == sink means source/sink sets are not disjoint.
@@ -899,7 +901,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertTrue(False, "Expected error for overlapping "
+            assert False, ("Expected error for overlapping "
                                        "source and sink sets")
         except Exception as e:
             # A node in both sourceNodes and targetNodes → sets not disjoint.
@@ -926,7 +928,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertTrue(False, "Expected error for overlapping "
+            assert False, ("Expected error for overlapping "
                                        "source and sink sets")
         except Exception as e:
             # Source set contains the sink node → sets not disjoint.
@@ -953,7 +955,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertTrue(False, "Expected error for overlapping "
+            assert False, ("Expected error for overlapping "
                                        "source and sink sets")
         except Exception as e:
             # Target set contains the source node → sets not disjoint.
@@ -993,7 +995,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertTrue(False, "Expected error for overlapping "
+            assert False, ("Expected error for overlapping "
                                        "source and sink sets")
         except Exception as e:
             # Node x in both source and target sets → sets not disjoint.
@@ -1028,7 +1030,7 @@ class testMaxFlow(FlowTestsBase):
         """)
         # path A->B->D carries min(100,150)=100; path A->C->D carries min(200,50)=50
         # total = 150
-        self.env.assertEqual(result.result_set[0][0], 150)
+        assert result.result_set[0][0] == 150
 
     def test_25_max_flow_double_capacities(self):
         """Fractional (double) capacities."""
@@ -1050,7 +1052,7 @@ class testMaxFlow(FlowTestsBase):
             YIELD maxFlow
         """)
         # bottleneck is B->C at 1.75
-        self.env.assertAlmostEqual(result.result_set[0][0], 1.75, 5)
+        assert result.result_set[0][0] == pytest.approx(1.75, abs=5)
 
     def test_26_max_flow_mixed_int_double_capacities(self):
         """Mix of integer and double capacities on different edges."""
@@ -1077,7 +1079,7 @@ class testMaxFlow(FlowTestsBase):
         # path A->B->D carries min(10,7.25)=7.25
         # path A->C->D carries min(3.5,6)=3.5
         # total = 10.75
-        self.env.assertAlmostEqual(result.result_set[0][0], 10.75, 5)
+        assert result.result_set[0][0] == pytest.approx(10.75, abs=5)
 
     def test_27_max_flow_zero_capacity_edge(self):
         """An edge with capacity 0 should not carry any flow."""
@@ -1098,7 +1100,7 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][0], 0)
+        assert result.result_set[0][0] == 0
 
     def test_28_max_flow_large_integer_capacities(self):
         """Large integer capacities (millions)."""
@@ -1115,7 +1117,7 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][0], 1000000)
+        assert result.result_set[0][0] == 1000000
 
     def test_29_max_flow_small_double_capacities(self):
         """Very small fractional capacities."""
@@ -1132,7 +1134,7 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertAlmostEqual(result.result_set[0][0], 0.001, 6)
+        assert result.result_set[0][0] == pytest.approx(0.001, abs=6)
 
     # ------------------------------------------------------------------ #
     #  missing / non-numeric capacity without defaultCapacity → error    #
@@ -1159,7 +1161,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertTrue(False, "Expected error for missing attribute "
+            assert False, ("Expected error for missing attribute "
                                        "without defaultCapacity")
         except Exception as e:
             # Edge missing the capacity attribute with no defaultCapacity → error.
@@ -1183,7 +1185,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertTrue(False, "Expected error for string capacity "
+            assert False, ("Expected error for string capacity "
                                        "without defaultCapacity")
         except Exception as e:
             # String capacity attribute with no defaultCapacity → error.
@@ -1207,7 +1209,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertTrue(False, "Expected error for array capacity "
+            assert False, ("Expected error for array capacity "
                                        "without defaultCapacity")
         except Exception as e:
             # Array capacity attribute with no defaultCapacity → error.
@@ -1235,7 +1237,7 @@ class testMaxFlow(FlowTestsBase):
                 })
                 YIELD maxFlow
             """)
-            self.env.assertTrue(False, "Expected error for mixed valid/invalid "
+            assert False, ("Expected error for mixed valid/invalid "
                                        "capacities without defaultCapacity")
         except Exception as e:
             # Even one non-numeric edge with no defaultCapacity → error.
@@ -1270,7 +1272,7 @@ class testMaxFlow(FlowTestsBase):
             YIELD maxFlow
         """)
         # A->B cap=10, B->C cap=3 (default) → bottleneck = 3
-        self.env.assertEqual(result.result_set[0][0], 3)
+        assert result.result_set[0][0] == 3
 
     def test_35_max_flow_default_capacity_zero(self):
         """defaultCapacity: 0 turns missing-attribute edges into zero-capacity
@@ -1294,7 +1296,7 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertEqual(result.result_set[0][0], 0)
+        assert result.result_set[0][0] == 0
 
     def test_36_max_flow_default_capacity_double(self):
         """defaultCapacity accepts a fractional (double) fallback value."""
@@ -1312,7 +1314,7 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD maxFlow
         """)
-        self.env.assertAlmostEqual(result.result_set[0][0], 4.5, 5)
+        assert result.result_set[0][0] == pytest.approx(4.5, abs=5)
 
     def test_37_no_edges_of_relationship_type(self):
         """When the relationship type exists but no edges survive the label
@@ -1336,9 +1338,9 @@ class testMaxFlow(FlowTestsBase):
             })
             YIELD nodes, edges, edgeFlows, maxFlow
         """)
-        self.env.assertEqual(len(result.result_set), 1)
+        assert len(result.result_set) == 1
         row = result.result_set[0]
-        self.env.assertEqual(row[0], [])       # nodes
-        self.env.assertEqual(row[1], [])       # edges
-        self.env.assertEqual(row[2], [])       # edgeFlows
-        self.env.assertEqual(row[3], 0.0)      # maxFlow
+        assert row[0] == []       # nodes
+        assert row[1] == []       # edges
+        assert row[2] == []       # edgeFlows
+        assert row[3] == 0.0      # maxFlow
