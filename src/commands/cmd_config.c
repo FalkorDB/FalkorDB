@@ -105,7 +105,21 @@ void _Config_set
 	// validate configuration
 	//--------------------------------------------------------------------------
 
-	// dryrun configuration, make sure all configurations are valid
+	// argc is client-controlled; reject oversized batches rather than sizing
+	// stack arrays from client input - a single command can't meaningfully set
+	// more parameters than exist (repeated keys included), and this keeps the
+	// fixed-size arrays below bounded, avoiding stack exhaustion
+	int n_fields = argc / 2;
+	if(n_fields > Config_END_MARKER) {
+		RedisModule_ReplyWithError(ctx,
+				"too many configuration parameters in a single command");
+		return;
+	}
+
+	Config_Option_Field fields[Config_END_MARKER];  // collected fields to set
+	const char *vals[Config_END_MARKER];            // collected values to set
+
+	// validate field names and that each field is runtime-configurable
 	for(int i = 0; i < argc; i += 2) {
 		RedisModuleString *key = argv[i];
 		RedisModuleString *val = argv[i+1];
@@ -123,34 +137,42 @@ void _Config_set
 
 		// ensure field is a runtime configuration
 		bool configurable_field = false;
-		for(int i = 0; i < RUNTIME_CONFIG_COUNT; i++) {
-			if(RUNTIME_CONFIGS[i] == config_field) {
+		for(int j = 0; j < RUNTIME_CONFIG_COUNT; j++) {
+			if(RUNTIME_CONFIGS[j] == config_field) {
 				configurable_field = true;
 				break;
 			}
 		}
-	
+
 		// field is not allowed to be reconfigured
 		if(!configurable_field) {
 			RedisModule_ReplyWithError(ctx, "This configuration parameter cannot be set at run-time");
 			return;
 		}
 
-		// make sure value is valid
-		char *error = NULL;
-		const char *val_str = RedisModule_StringPtrLen(val, NULL);
-		if(!Config_Option_dryrun(config_field, val_str, &error)) {
-			if(error != NULL) {
-				RedisModule_ReplyWithError(ctx, error);
-			} else {
-				char *errmsg;
-				int rc __attribute__((unused));
-				rc = asprintf(&errmsg, "Failed to set config value %s to %s", config_name, val_str);
-				RedisModule_ReplyWithError(ctx, errmsg);
-				free(errmsg);
-			}
-			return;
+		fields[i / 2] = config_field;
+		vals[i / 2]   = RedisModule_StringPtrLen(val, NULL);
+	}
+
+	// dryrun the whole batch, applied cumulatively, so that a single command
+	// can't set a combination that is individually valid but jointly invalid
+	// (e.g. two mutually-exclusive options)
+	char *error = NULL;
+	int bad = Config_Option_dryrun_batch(fields, vals, n_fields, &error);
+	if(bad != -1) {
+		if(error != NULL) {
+			RedisModule_ReplyWithError(ctx, error);
+		} else {
+			// field name lives at argv[bad * 2], its value at vals[bad]
+			const char *bad_name = RedisModule_StringPtrLen(argv[bad * 2], NULL);
+			char *errmsg;
+			int rc __attribute__((unused));
+			rc = asprintf(&errmsg, "Failed to set config value %s to %s",
+					bad_name, vals[bad]);
+			RedisModule_ReplyWithError(ctx, errmsg);
+			free(errmsg);
 		}
+		return;
 	}
 
 	// if we're here configuration passed all validations
