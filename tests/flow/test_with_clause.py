@@ -386,3 +386,43 @@ class testWithClause(FlowTestsBase):
                 self.env.assertContains("Type mismatch", str(e))
         finally:
             g.delete()
+
+    def test15_where_after_limit_or_skip(self):
+        # A WHERE on a WITH filters the rows that WITH's SKIP and LIMIT kept,
+        # and the WHERE of a later MATCH filters rows that already went through
+        # them, so neither may run below those operators.
+        # https://github.com/FalkorDB/FalkorDB/issues/3694
+        g = self.db.select_graph("with_where_after_limit")
+
+        try:
+            g.query("UNWIND range(0, 4) AS i CREATE (:X {id: i})")
+            g.query("MATCH (a:X), (b:X) WHERE b.id = a.id + 1 CREATE (a)-[:R]->(b)")
+
+            cases = [
+                # the reported repro - LIMIT keeps ids 0 and 1, neither is 2
+                ("MATCH (n:X) WITH n ORDER BY n.id LIMIT 2 WHERE n.id = 2 RETURN n.id AS id", []),
+                # only one of the two kept rows passes
+                ("MATCH (n:X) WITH n ORDER BY n.id LIMIT 2 WHERE n.id > 0 RETURN n.id AS id", [[1]]),
+                # SKIP counts rows before the filter drops any
+                ("MATCH (n:X) WITH n ORDER BY n.id SKIP 3 WHERE n.id >= 3 RETURN n.id AS id", [[3], [4]]),
+                # no ORDER BY
+                ("UNWIND [1,2,3,4] AS x WITH x LIMIT 2 WHERE x = 3 RETURN x", []),
+                # the filter reads a projected alias
+                ("MATCH (n:X) WITH n.id AS id ORDER BY id DESC LIMIT 1 WHERE id < 3 RETURN id", []),
+                # an aggregate under the LIMIT
+                ("MATCH (n:X) WITH n.id % 2 AS g, count(*) AS c ORDER BY g LIMIT 1 WHERE g = 1 RETURN g, c", []),
+                # DISTINCT under the LIMIT
+                ("UNWIND [1,1,2,3] AS x WITH DISTINCT x ORDER BY x LIMIT 1 WHERE x = 2 RETURN x", []),
+                # the WHERE of a later MATCH
+                ("MATCH (n:X) WITH n ORDER BY n.id LIMIT 2 MATCH (n)-[:R]->(m) WHERE n.id = 3 RETURN n.id AS id, m.id AS m", []),
+                # controls: a second WITH, and a filter with no LIMIT to cross
+                ("MATCH (n:X) WITH n ORDER BY n.id LIMIT 2 WITH n WHERE n.id = 2 RETURN n.id AS id", []),
+                ("MATCH (n:X) WITH n ORDER BY n.id WHERE n.id = 2 RETURN n.id AS id", [[2]]),
+            ]
+
+            for query, expected in cases:
+                res = g.query(query)
+                # the query is in the comparison so that a failure names it
+                self.env.assertEqual((query, res.result_set), (query, expected))
+        finally:
+            g.delete()
