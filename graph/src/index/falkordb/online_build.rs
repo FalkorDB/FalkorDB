@@ -212,6 +212,8 @@ pub(crate) fn run_turn(
     sizing: Sizing,
     shift: u32,
 ) -> Turn {
+    // Declared first, so dropped last: on an early return, the versions this turn holds are
+    // freed while it is still counted, so GraphBLAS is not torn down under them.
     let Some(reading) = Reading::enter(run) else {
         return Turn::Gone;
     };
@@ -223,14 +225,9 @@ pub(crate) fn run_turn(
     let entities = sizing.batch(prepared.index_build_read(id).unwrap_or(0), shift);
     let batch = prepared.indexer_prepare(id, entities);
     let Some(mut batch) = batch else {
-        // Freed while still counted, so GraphBLAS is not torn down under it.
-        drop(prepared);
-        drop(reading);
         return Turn::Idle;
     };
     if run.stopping() {
-        drop(prepared);
-        drop(reading);
         return Turn::Gone;
     }
     // A batch at the floor catches up on whatever writers changed: none can be smaller.
