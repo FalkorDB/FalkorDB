@@ -67,14 +67,14 @@
 
 use std::sync::Arc;
 #[cfg(feature = "index-falkordb")]
-use std::sync::OnceLock;
+use std::sync::Weak;
 
 use arc_swap::ArcSwap;
 use thiserror::Error;
 
 use crate::graph::graph::{Graph, NodeOpError};
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::online_build::{self, BuildHost};
+use crate::index::falkordb::online_build;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
 
@@ -83,11 +83,29 @@ use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
 /// Provides snapshot isolation: readers see a consistent committed state
 /// while a writer can make changes that become visible only on commit.
 pub struct MvccGraph {
+    shared: Arc<Shared>,
+}
+
+/// What an [`MvccGraph`] shares with the background index builds running on it, which hold it
+/// weakly ([`WeakMvccGraph`]): its published version.
+struct Shared {
     /// Current committed graph version. Replaced only by a commit's compare-and-swap.
     graph: ArcSwap<Graph>,
-    /// How the background index builder reaches this graph, once its host registers it.
-    #[cfg(feature = "index-falkordb")]
-    build_host: OnceLock<Arc<dyn BuildHost>>,
+}
+
+unsafe impl Send for Shared {}
+unsafe impl Sync for Shared {}
+
+/// An [`MvccGraph`] held without keeping it alive: how a background index build reaches its graph.
+#[cfg(feature = "index-falkordb")]
+pub(crate) struct WeakMvccGraph(Weak<Shared>);
+
+#[cfg(feature = "index-falkordb")]
+impl WeakMvccGraph {
+    /// The graph, unless it is gone.
+    pub(crate) fn upgrade(&self) -> Option<MvccGraph> {
+        self.0.upgrade().map(|shared| MvccGraph { shared })
+    }
 }
 
 /// Why [`MvccGraph::commit`] refused a version. Whichever it is, the version
@@ -102,9 +120,6 @@ pub enum CommitError {
     #[error(transparent)]
     Invalid(#[from] NodeOpError),
 }
-
-unsafe impl Send for MvccGraph {}
-unsafe impl Sync for MvccGraph {}
 
 impl MvccGraph {
     #[must_use]
@@ -122,40 +137,16 @@ impl MvccGraph {
     #[must_use]
     pub fn from_graph(graph: Graph) -> Self {
         Self {
-            graph: ArcSwap::from_pointee(graph),
-            #[cfg(feature = "index-falkordb")]
-            build_host: OnceLock::new(),
+            shared: Arc::new(Shared {
+                graph: ArcSwap::from_pointee(graph),
+            }),
         }
     }
 
-    /// Register how the background index builder reaches this graph, and start the build of every
-    /// index the published version holds `Building`: one a commit brought in before any host was
-    /// registered (a `CREATE INDEX` that created its graph's key, inside `MULTI`/`EXEC` or replayed
-    /// from the AOF). From then on, each commit that brings in a `Building` index starts its
-    /// build. The first host registered is kept.
+    /// This graph, held without keeping it alive.
     #[cfg(feature = "index-falkordb")]
-    pub fn set_build_host(
-        &self,
-        host: Arc<dyn BuildHost>,
-    ) {
-        if self.build_host.set(Arc::clone(&host)).is_err() {
-            return;
-        }
-        for (id, generation) in self.read().building_indexes() {
-            online_build::enqueue(Arc::clone(&host), id, generation);
-        }
-    }
-
-    /// Register `old`'s builder host with this coordinator, which replaces `old` in place. Without
-    /// it, an index created on the replacement would never be built.
-    #[cfg(feature = "index-falkordb")]
-    pub fn inherit_build(
-        &self,
-        old: &Self,
-    ) {
-        if let Some(host) = old.build_host.get() {
-            self.set_build_host(Arc::clone(host));
-        }
+    pub(crate) fn downgrade(&self) -> WeakMvccGraph {
+        WeakMvccGraph(Arc::downgrade(&self.shared))
     }
 
     /// The published version. Takes no lock.
@@ -164,7 +155,7 @@ impl MvccGraph {
     /// versions if something committed in between.
     #[must_use]
     pub fn read(&self) -> Arc<Graph> {
-        self.graph.load_full()
+        self.shared.graph.load_full()
     }
 
     /// A private version of the published graph to build a write into.
@@ -176,7 +167,7 @@ impl MvccGraph {
     /// for it (#3093) — the fork goes stale instead ([`Self::is_stale`]).
     #[must_use]
     pub fn fork(&self) -> Graph {
-        self.graph.load().new_version()
+        self.shared.graph.load().new_version()
     }
 
     /// Whether a version was published after `fork` was made, so it no
@@ -193,7 +184,7 @@ impl MvccGraph {
         &self,
         fork: &Graph,
     ) -> bool {
-        self.graph.load().version + 1 != fork.version
+        self.shared.graph.load().version + 1 != fork.version
     }
 
     /// Bring a writer's `fork`, which is not stale ([`Self::is_stale`]), onto the indexer batches
@@ -209,7 +200,7 @@ impl MvccGraph {
         &self,
         fork: &mut Graph,
     ) {
-        let published = self.graph.load_full();
+        let published = self.shared.graph.load_full();
         // Until a build runs in the background, no published column is `Building`, and nothing
         // is rebased.
         if fork.overtaken_by_indexer_batches(&published) {
@@ -242,7 +233,7 @@ impl MvccGraph {
         &self,
         mut fork: Graph,
     ) -> Result<Arc<Graph>, CommitError> {
-        let published = self.graph.load_full();
+        let published = self.shared.graph.load_full();
         Self::prepare(&published, &mut fork, true)?;
         // The indexes to build, asked of the version this one replaces before it is replaced.
         #[cfg(feature = "index-falkordb")]
@@ -252,10 +243,8 @@ impl MvccGraph {
         // job per generation, which runs until that generation is `Ready` or gone, so a commit
         // made during the build, an indexer batch's included, starts nothing.
         #[cfg(feature = "index-falkordb")]
-        if let Some(host) = self.build_host.get() {
-            for (id, generation) in to_build {
-                online_build::enqueue(Arc::clone(host), id, generation);
-            }
+        for (id, generation) in to_build {
+            online_build::enqueue(self.downgrade(), id, generation);
         }
         Ok(version)
     }
@@ -297,7 +286,7 @@ impl MvccGraph {
         mut prepared: Graph,
         batch: &PreparedBatch,
     ) -> Result<IndexerCommit, CommitError> {
-        let published = self.graph.load_full();
+        let published = self.shared.graph.load_full();
         let fit = prepared.indexer_fit(&published, batch);
         let version = match fit {
             IndexerCommit::Same => {
@@ -389,7 +378,10 @@ impl MvccGraph {
         published: &Arc<Graph>,
         version: Arc<Graph>,
     ) -> Result<Arc<Graph>, CommitError> {
-        let previous = self.graph.compare_and_swap(published, Arc::clone(&version));
+        let previous = self
+            .shared
+            .graph
+            .compare_and_swap(published, Arc::clone(&version));
         if !Arc::ptr_eq(&previous, published) {
             return Err(CommitError::Stale);
         }
@@ -399,7 +391,9 @@ impl MvccGraph {
     }
 }
 
-impl Drop for MvccGraph {
+/// Once the graph and every build that reached it have let go: the last may be a build's job, on
+/// the builder's pool.
+impl Drop for Shared {
     fn drop(&mut self) {
         self.graph.load().cancel_indexing();
     }

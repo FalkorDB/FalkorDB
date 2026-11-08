@@ -3380,28 +3380,23 @@ impl TestHost {
     }
 }
 
-/// How the builder reaches a [`TestHost`]: weakly, as the Redis host does, so the graph's own
-/// registration does not keep it alive.
+/// A builder's host in these tests: a [`TestHost`]'s global lock. Holds the test host weakly, so
+/// a builder does not keep its graph alive.
 struct HostRef(Weak<TestHost>);
 
 impl BuildHost for HostRef {
-    fn read(&self) -> Option<Arc<Graph>> {
-        self.0.upgrade().map(|host| host.mvcc.read())
-    }
-
     fn publish(
         &self,
-        f: &mut dyn FnMut(&MvccGraph),
-    ) -> bool {
+        f: &mut dyn FnMut(),
+    ) {
         let Some(host) = self.0.upgrade() else {
-            return false;
+            return;
         };
         let _global = host.global.lock();
         if let Some(before) = host.before_publish.lock().take() {
             before(&host.mvcc);
         }
-        f(&host.mvcc);
-        true
+        f();
     }
 
     fn warn(
@@ -3436,6 +3431,14 @@ fn generation_of(
         .expect("the index is Building")
 }
 
+/// A builder with `sizing` that publishes through `host`, never started.
+fn builder_on(
+    host: &Arc<TestHost>,
+    sizing: Sizing,
+) -> Arc<Builder> {
+    Builder::new(sizing, Arc::new(HostRef(Arc::downgrade(host))))
+}
+
 /// A job for the generation of index `id` that `host`'s published version holds `Building`, on a
 /// builder of its own with `sizing`, never started: the test runs its batches itself
 /// ([`Job::step`]).
@@ -3445,8 +3448,8 @@ fn job_on(
     sizing: Sizing,
 ) -> Job {
     Job::new(
-        Builder::new(sizing),
-        Arc::new(HostRef(Arc::downgrade(host))),
+        builder_on(host, sizing),
+        host.mvcc.downgrade(),
         id.clone(),
         generation_of(host, id),
     )
@@ -3496,7 +3499,6 @@ fn a_commit_hands_the_builder_each_index_it_brings_in_building() {
         [(id(&v), v_is), (id(&w), w_is)],
         "v was created again"
     );
-    assert_eq!(after.building_indexes().len(), 2);
 }
 
 /// A job's step reads one batch of its index with no lock held, publishes it, and says whether the
@@ -3610,6 +3612,20 @@ fn a_job_whose_index_is_dropped_or_created_again_is_done() {
     }
 }
 
+/// A job holds its graph weakly: it does not keep a deleted graph alive, and once the graph is
+/// gone, the job is done.
+#[test]
+fn a_job_does_not_keep_its_graph_alive() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label, attr));
+    let mut job = job_on(&host, &id, Sizing::fixed(1));
+    let graph = host.mvcc.downgrade();
+    drop(host);
+    assert!(graph.upgrade().is_none(), "the job kept its graph alive");
+    assert_eq!(job.step(), Step::Done);
+}
+
 /// A batch that waited for what publishing needs while the builder stopped publishes nothing: it
 /// checks again once it holds it. The Redis shutdown handler stops the builder holding the GIL, so
 /// a batch waiting for the GIL gets it only after the stop, and must then leave the graph alone.
@@ -3618,10 +3634,10 @@ fn a_batch_that_waited_while_the_builder_stopped_publishes_nothing() {
     let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
     let host = TestHost::new(mvcc);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-    let builder = Builder::new(Sizing::fixed(2));
+    let builder = builder_on(&host, Sizing::fixed(2));
     let mut job = Job::new(
         Arc::clone(&builder),
-        Arc::new(HostRef(Arc::downgrade(&host))),
+        host.mvcc.downgrade(),
         id.clone(),
         generation_of(&host, &id),
     );
@@ -3635,47 +3651,59 @@ fn a_batch_that_waited_while_the_builder_stopped_publishes_nothing() {
     );
 }
 
+/// A stop is for good: a job run by hand after it never reads its graph, and one enqueued on the
+/// builder started again never runs.
+#[test]
+fn a_stopped_builder_runs_nothing() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let builder = builder_on(&host, Sizing::fixed(1));
+    let read = Arc::new(AtomicBool::new(false));
+    *builder.while_reading.lock() = Some(Box::new({
+        let read = Arc::clone(&read);
+        move || read.store(true, Ordering::SeqCst)
+    }));
+    builder.start(1);
+    builder.stop_within(Duration::from_secs(2));
+    let mut job = Job::new(
+        Arc::clone(&builder),
+        host.mvcc.downgrade(),
+        id.clone(),
+        generation_of(&host, &id),
+    );
+    assert_eq!(job.step(), Step::Done);
+    builder.start(1);
+    builder.enqueue(host.mvcc.downgrade(), id.clone(), generation_of(&host, &id));
+    thread::sleep(Duration::from_millis(100));
+    assert!(
+        !read.load(Ordering::SeqCst),
+        "a stopped builder read a graph"
+    );
+    assert_eq!(
+        cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
+        Some(BuildCursor::new(EntityType::Node)),
+        "a stopped builder published a batch"
+    );
+}
+
 /// Stopping the builder waits, with no limit, for a batch still reading a graph with no lock held,
 /// since the Redis module tears GraphBLAS down right after. The pool's own wait is bounded, and
 /// this batch is held inside its read for longer. The stopped batch then publishes nothing.
 #[test]
 fn a_stop_waits_for_a_batch_still_reading() {
-    /// [`HostRef`] whose first read holds its batch until the test releases it.
-    struct HeldRead {
-        host: Weak<TestHost>,
-        held: parking_lot::Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
-    }
-
-    impl BuildHost for HeldRead {
-        fn read(&self) -> Option<Arc<Graph>> {
-            let version = self.host.upgrade()?.mvcc.read();
-            if let Some((holding, release)) = self.held.lock().take() {
-                holding.send(()).unwrap();
-                release.recv().unwrap();
-            }
-            Some(version)
-        }
-
-        fn publish(
-            &self,
-            f: &mut dyn FnMut(&MvccGraph),
-        ) -> bool {
-            HostRef(self.host.clone()).publish(f)
-        }
-    }
-
     let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
     let host = TestHost::new(mvcc);
     let (holding, held) = mpsc::channel();
     let (release, released) = mpsc::channel();
-    let reach: Arc<dyn BuildHost> = Arc::new(HeldRead {
-        host: Arc::downgrade(&host),
-        held: parking_lot::Mutex::new(Some((holding, released))),
-    });
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-    let builder = Builder::new(Sizing::fixed(2));
+    let builder = builder_on(&host, Sizing::fixed(2));
+    *builder.while_reading.lock() = Some(Box::new(move || {
+        holding.send(()).unwrap();
+        released.recv().unwrap();
+    }));
     builder.start(1);
-    builder.enqueue(reach, id.clone(), generation_of(&host, &id));
+    builder.enqueue(host.mvcc.downgrade(), id.clone(), generation_of(&host, &id));
     held.recv_timeout(Duration::from_secs(10))
         .expect("a batch reads the graph");
     let stopped = AtomicBool::new(false);
@@ -3769,17 +3797,16 @@ fn a_jobs_batches_shrink_under_writers_and_grow_back() {
     );
 }
 
-/// The builder end to end, as a host drives it. Registering a graph's host starts the build of the
-/// index its published version holds `Building` (a `CREATE INDEX` committed before any host was
-/// registered), and a commit that creates another index starts that one. The pool builds both to
-/// `Ready` while a writer keeps re-valuing nodes in both, and each ends as a one-pass build of the
-/// final data. The writer is writing before either build starts, and the first batch to publish
-/// catches up on a write made while it read, so the builds run under writes however the threads
-/// are scheduled.
+/// The builder end to end, on a pool. It builds an index created before it started, and another
+/// created while it runs, to `Ready` while a writer keeps re-valuing nodes in both, and each ends
+/// as a one-pass build of the final data. The writer is writing before either build starts, and
+/// the first batch to publish catches up on a write made while it read, so the builds run under
+/// writes however the threads are scheduled.
 ///
-/// The only test in this crate that uses the builder itself, which is one per process.
+/// The builder is the test's own, so the test starts its jobs: a commit starts them on the
+/// module's, which no unit test starts ([`online_build::enqueue`]).
 #[test]
-fn the_builder_finishes_what_registering_and_commits_start_under_sustained_writes() {
+fn the_builder_finishes_its_builds_under_sustained_writes() {
     let nodes = online_build::SIZING.floor * 3 / 2;
     let values: Vec<i64> = (0..nodes as i64).collect();
     let (mvcc, label, v, ids) = mvcc_building(&values);
@@ -3790,6 +3817,9 @@ fn the_builder_finishes_what_registering_and_commits_start_under_sustained_write
             set_attr(g, id, &w, Value::Int(id as i64));
         }
     });
+    let index =
+        |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let builder = builder_on(&host, online_build::SIZING);
 
     let built = || {
         let g = host.mvcc.read();
@@ -3842,20 +3872,28 @@ fn the_builder_finishes_what_registering_and_commits_start_under_sustained_write
         wait_until("the writer's first write", || {
             writes.load(Ordering::SeqCst) > 0
         });
-        online_build::start(2);
-        host.mvcc
-            .set_build_host(Arc::new(HostRef(Arc::downgrade(&host))));
+        builder.start(2);
+        builder.enqueue(
+            host.mvcc.downgrade(),
+            index(&v),
+            generation_of(&host, &index(&v)),
+        );
         host.write(|g| create_index_on(g, &label, &w));
+        builder.enqueue(
+            host.mvcc.downgrade(),
+            index(&w),
+            generation_of(&host, &index(&w)),
+        );
         wait_until("both indexes to be built", built);
     });
-    online_build::stop();
+    builder.stop_within(Duration::from_secs(2));
 
     assert!(
         wrote.load(Ordering::SeqCst),
         "a write committed between the first batch's read and its publish"
     );
     let warnings = host.warnings.lock();
-    assert!(warnings.is_empty(), "a turn failed: {warnings:?}");
+    assert!(warnings.is_empty(), "a batch failed: {warnings:?}");
     let g = host.mvcc.read();
     for attr in [&v, &w] {
         assert_eq!(

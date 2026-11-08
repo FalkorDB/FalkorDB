@@ -1,14 +1,13 @@
 //! The background index builder: builds every `Building` index, in every graph, in batches, on a
 //! pool of its own.
 //!
-//! A commit that brings in a `Building` index starts a [`Job`] for it ([`MvccGraph::commit`]), and
-//! so does registering a graph's host, for each index its published version holds `Building`: one
-//! a commit brought in before any host was registered ([`MvccGraph::set_build_host`]). A job builds
-//! one generation of one index ([`IndexEntry::generation`]): it runs one batch on the pool, and
-//! submits itself again while that generation is `Building`. An index dropped, or dropped and
-//! created again, is another generation, so its job ends, and the commit that created the new one
-//! started a job of its own. Each generation is started once, so no two jobs build one index.
-//! Nothing here knows about Redis: a job reaches its graph through a [`BuildHost`].
+//! A commit that brings in a `Building` index starts a [`Job`] for it ([`MvccGraph::commit`]). A
+//! job builds one generation of one index ([`IndexEntry::generation`]): it runs one batch on the
+//! pool, and submits itself again while that generation is `Building`. An index dropped, or dropped
+//! and created again, is another generation, so its job ends, and the commit that created the new
+//! one started a job of its own. Each generation is started once, so no two jobs build one index.
+//! A job holds its graph weakly: once the graph is gone, so is the job. Nothing here knows about
+//! Redis: a batch publishes through the builder's [`BuildHost`].
 //!
 //! **A batch holds no lock while it reads.** It reads on a new build version of the published one
 //! ([`Graph::new_build_version`]), which only it holds, and then publishes through the host
@@ -25,34 +24,31 @@
 //! waited publishes nothing. The stop is for good.
 //!
 //! [`IndexEntry::generation`]: super::versioned::IndexEntry::generation
+//! [`MvccGraph::commit`]: crate::graph::mvcc_graph::MvccGraph::commit
+//! [`MvccGraph::commit_indexer_batch`]: crate::graph::mvcc_graph::MvccGraph::commit_indexer_batch
 
 use std::mem;
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
 use parking_lot::{RwLock, RwLockReadGuard};
 
 use super::versioned::{Discarded, IndexId, IndexerCommit};
-use crate::graph::graph::Graph;
-use crate::graph::mvcc_graph::MvccGraph;
+use crate::graph::mvcc_graph::WeakMvccGraph;
 use crate::threadpool::ThreadPool;
+#[cfg(test)]
+use parking_lot::Mutex;
 
-/// How the builder reaches one graph. Implemented by the host that owns the graph, and registered
-/// with it through [`MvccGraph::set_build_host`].
+/// What the builder needs of the host its graphs live in: one for every graph, given to the builder
+/// as it starts ([`start`]).
 pub trait BuildHost: Send + Sync {
-    /// The graph's published version, loaded under whatever guards the host's graph and released
-    /// before the version is read: a published version is never changed in place, so it may be
-    /// read with no lock held. `None` if the graph is gone.
-    fn read(&self) -> Option<Arc<Graph>>;
-
-    /// Run `f` on the graph's coordinator with what a writer holds to publish a version: the host's
-    /// global lock (the Redis host takes the GIL, then the graph's read lock to reach the
-    /// coordinator). `false` if the host refuses: the graph is gone.
+    /// Run `f`, which publishes a batch, holding what a writer holds to publish a version: the
+    /// host's global lock. The Redis host takes the GIL.
     fn publish(
         &self,
-        f: &mut dyn FnMut(&MvccGraph),
-    ) -> bool;
+        f: &mut dyn FnMut(),
+    );
 
     /// Report what an operator should see: a batch that failed, which the builder retries. The
     /// default writes to stderr; the Redis host logs it.
@@ -135,19 +131,30 @@ pub(crate) enum Step {
 /// make their own.
 pub(crate) struct Builder {
     sizing: Sizing,
+    host: Arc<dyn BuildHost>,
     pool: OnceLock<ThreadPool>,
     /// `false` once stopped, after which GraphBLAS may be torn down. A batch holds it read while it
     /// holds a graph version with no lock held, so the stop, which takes it to write, waits for
     /// those batches.
     running: RwLock<bool>,
+    /// Run once by the next batch while it reads, holding what it holds then: for a test that
+    /// needs a batch held there.
+    #[cfg(test)]
+    pub(crate) while_reading: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Builder {
-    pub(crate) fn new(sizing: Sizing) -> Arc<Self> {
+    pub(crate) fn new(
+        sizing: Sizing,
+        host: Arc<dyn BuildHost>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             sizing,
+            host,
             pool: OnceLock::new(),
             running: RwLock::new(true),
+            #[cfg(test)]
+            while_reading: Mutex::new(None),
         })
     }
 
@@ -175,19 +182,21 @@ impl Builder {
         }
     }
 
-    /// Start the job that builds generation `generation` of index `id` of `host`'s graph. Never
-    /// blocks: the builder's is called from [`MvccGraph::commit`], under the host's global lock.
+    /// Start the job that builds generation `generation` of index `id` of `graph`. Never blocks:
+    /// the builder's is called from [`MvccGraph::commit`], under the host's global lock.
+    ///
+    /// [`MvccGraph::commit`]: crate::graph::mvcc_graph::MvccGraph::commit
     pub(crate) fn enqueue(
         self: &Arc<Self>,
-        host: Arc<dyn BuildHost>,
+        graph: WeakMvccGraph,
         id: IndexId,
         generation: u64,
     ) {
-        self.submit(Job::new(Arc::clone(self), host, id, generation));
+        self.submit(Job::new(Arc::clone(self), graph, id, generation));
     }
 
-    /// Run `job`'s next batch on the pool. The module starts the builder as it loads, before any
-    /// graph exists, so a job always finds the pool.
+    /// Run `job`'s next batch on the pool. A builder takes jobs once started: the module's is
+    /// started before any graph exists ([`start`]), and a test starts its own.
     fn submit(
         &self,
         job: Job,
@@ -212,7 +221,7 @@ impl Builder {
 /// generation is `Ready` or gone.
 pub(crate) struct Job {
     builder: Arc<Builder>,
-    host: Arc<dyn BuildHost>,
+    graph: WeakMvccGraph,
     id: IndexId,
     generation: u64,
     /// The most entities the next batch reads: the cap at first, half the size of a batch writers
@@ -223,14 +232,14 @@ pub(crate) struct Job {
 impl Job {
     pub(crate) fn new(
         builder: Arc<Builder>,
-        host: Arc<dyn BuildHost>,
+        graph: WeakMvccGraph,
         id: IndexId,
         generation: u64,
     ) -> Self {
         let limit = builder.sizing.cap;
         Self {
             builder,
-            host,
+            graph,
             id,
             generation,
             limit,
@@ -262,9 +271,13 @@ impl Job {
         let Some(running) = self.builder.running() else {
             return Step::Done;
         };
-        let Some(published) = self.host.read() else {
+        // Held until the batch is over, then let go holding `running` and none of the host's locks,
+        // as the versions below are: if it is the last handle to a deleted graph, letting go frees
+        // the whole graph, which needs GraphBLAS up, and which the server should not wait for.
+        let Some(mvcc) = self.graph.upgrade() else {
             return Step::Done;
         };
+        let published = mvcc.read();
         let mut prepared = published.new_build_version();
         drop(published);
         if prepared.index_build_generation(&self.id) != Some(self.generation) {
@@ -279,6 +292,10 @@ impl Job {
         if entities > sizing.floor {
             batch.limit_catch_up(sizing.catch_up_max);
         }
+        #[cfg(test)]
+        if let Some(hold) = self.builder.while_reading.lock().take() {
+            hold();
+        }
         // Not held while publishing: the Redis shutdown handler stops the builder holding the GIL.
         drop(running);
 
@@ -292,8 +309,8 @@ impl Job {
         let mut prepared = Some(prepared);
         let mut replaced = None;
         let (builder, host, id, generation) =
-            (&self.builder, &self.host, &self.id, self.generation);
-        host.publish(&mut |mvcc| {
+            (&self.builder, &self.builder.host, &self.id, self.generation);
+        host.publish(&mut || {
             // Again, now that the host holds what publishing needs: a batch that waited for it
             // while the builder stopped publishes nothing.
             if builder.running().is_none() {
@@ -318,18 +335,21 @@ impl Job {
                 }
             };
         });
-        // The versions this batch still holds are freed holding `running` again, or, once the
-        // builder has stopped, left to the exiting process: GraphBLAS may be torn down by then.
+        // The versions this batch still holds, and its graph, are freed holding `running` again,
+        // or, once the builder has stopped, left to the exiting process: GraphBLAS may be torn
+        // down by then.
         match self.builder.running() {
             Some(_running) => {
                 drop(replaced);
                 drop(built);
                 drop(prepared);
+                drop(mvcc);
             }
             None => {
                 mem::forget(replaced);
                 mem::forget(built);
                 mem::forget(prepared);
+                mem::forget(mvcc);
             }
         }
         self.limit = match step {
@@ -347,29 +367,41 @@ const FAILED_RETRY: Duration = Duration::from_secs(1);
 /// How long [`stop`] waits for the builder's workers.
 const STOP_WAIT: Duration = Duration::from_secs(2);
 
-/// The builder: the one every graph's commits start jobs on.
-static BUILDER: LazyLock<Arc<Builder>> = LazyLock::new(|| Builder::new(SIZING));
+/// The builder: the one every graph's commits start jobs on, once started.
+static BUILDER: OnceLock<Arc<Builder>> = OnceLock::new();
 
-/// Start the builder's pool with `threads` workers (at least one). The module calls it as it
-/// loads, before any graph exists.
-pub fn start(threads: usize) {
-    BUILDER.start(threads);
+/// Start the builder: its pool, with `threads` workers (at least one), and the host its batches
+/// publish through. The module calls it as it loads, before any graph exists. Once: a later start
+/// does nothing.
+pub fn start(
+    threads: usize,
+    host: Arc<dyn BuildHost>,
+) {
+    BUILDER
+        .get_or_init(|| Builder::new(SIZING, host))
+        .start(threads);
 }
 
 /// Stop the builder, for good ([`Builder::stop_within`]): its workers get [`STOP_WAIT`], since the
 /// Redis shutdown handler calls this holding the GIL.
 pub fn stop() {
-    BUILDER.stop_within(STOP_WAIT);
+    if let Some(builder) = BUILDER.get() {
+        builder.stop_within(STOP_WAIT);
+    }
 }
 
-/// Start the build of generation `generation` of index `id` of `host`'s graph
-/// ([`Builder::enqueue`]).
+/// Start the build of generation `generation` of index `id` of `graph` ([`Builder::enqueue`]).
+/// Before the builder starts, nothing: the module starts it before any graph exists, and no unit
+/// test starts it. Tests share a process, so its jobs would build other tests' indexes while they
+/// run; a test that runs jobs makes a builder of its own.
 pub(crate) fn enqueue(
-    host: Arc<dyn BuildHost>,
+    graph: WeakMvccGraph,
     id: IndexId,
     generation: u64,
 ) {
-    BUILDER.enqueue(host, id, generation);
+    if let Some(builder) = BUILDER.get() {
+        builder.enqueue(graph, id, generation);
+    }
 }
 
 #[cfg(test)]
@@ -387,10 +419,7 @@ impl Sizing {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
-    use crate::entity_type::EntityType;
 
     /// A batch reads what its index's batches have read, between the floor and its job's limit.
     /// A fixed sizing reads its size whatever the count.
@@ -419,52 +448,5 @@ mod tests {
         }
         assert_eq!(Sizing::fixed(7).batch(5_000, 7), 7);
         assert_eq!(Sizing::fixed(7).batch(0, 7), 7);
-    }
-
-    /// A host that counts the times a batch reads its graph, which it never has.
-    #[derive(Default)]
-    struct Counted(AtomicUsize);
-
-    impl BuildHost for Counted {
-        fn read(&self) -> Option<Arc<Graph>> {
-            self.0.fetch_add(1, Ordering::SeqCst);
-            None
-        }
-
-        fn publish(
-            &self,
-            _: &mut dyn FnMut(&MvccGraph),
-        ) -> bool {
-            false
-        }
-    }
-
-    /// A stop is for good: a job started after it, or run by hand, never reads its graph, and a
-    /// start after it runs nothing.
-    #[test]
-    fn a_stopped_builder_runs_nothing() {
-        let builder = Builder::new(Sizing::fixed(1));
-        builder.start(1);
-        builder.stop_within(STOP_WAIT);
-        let host = Arc::new(Counted::default());
-        let id = IndexId::Column(
-            EntityType::Node,
-            (Arc::new("L".to_string()), Arc::new("v".to_string())),
-        );
-        let mut job = Job::new(
-            Arc::clone(&builder),
-            Arc::clone(&host) as Arc<dyn BuildHost>,
-            id.clone(),
-            0,
-        );
-        assert_eq!(job.step(), Step::Done);
-        builder.start(1);
-        builder.enqueue(Arc::clone(&host) as Arc<dyn BuildHost>, id, 0);
-        thread::sleep(Duration::from_millis(100));
-        assert_eq!(
-            host.0.load(Ordering::SeqCst),
-            0,
-            "a stopped builder read a graph"
-        );
     }
 }
