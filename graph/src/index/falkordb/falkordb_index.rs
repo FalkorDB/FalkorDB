@@ -640,8 +640,8 @@ impl FalkorDbIndex {
 
     /// Create an empty numeric column in the `Building` state, its cursor at the start, replacing
     /// any existing one. Indexer batches fill it from the start, live writes keep the part below
-    /// the cursor current, and reads fall through to RediSearch until the last batch flips it
-    /// `Ready`.
+    /// the cursor current, and a read it would serve scans instead ([`ScanFilter`]) until the last
+    /// batch flips it `Ready`.
     pub fn create_building(
         &mut self,
         entity: EntityType,

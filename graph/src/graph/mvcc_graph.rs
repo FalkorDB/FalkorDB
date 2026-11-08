@@ -240,8 +240,8 @@ impl MvccGraph {
         let to_build = fork.indexes_to_build_since(&published);
         let version = self.publish(&published, Arc::new(fork))?;
         // Each `Building` index this version brings in, new or created again, starts its build: a
-        // job per generation, which runs until that generation is `Ready` or gone, so a commit
-        // made during the build, an indexer batch's included, starts nothing.
+        // job per generation, started only by the commit that brings it in, so a commit made during
+        // the build, an indexer batch's included, starts nothing.
         #[cfg(feature = "index-falkordb")]
         for (id, generation) in to_build {
             online_build::enqueue(self.downgrade(), id, generation);
