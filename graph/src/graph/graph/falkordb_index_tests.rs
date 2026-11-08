@@ -3630,6 +3630,50 @@ fn a_job_does_not_keep_its_graph_alive() {
     assert_eq!(job.step(), Step::Cancelled);
 }
 
+/// A batch whose version is refused, which only a bug makes happen, fails its job: the job is not
+/// run again, and the host is warned once. Only that batch is refused, so a job that ran again
+/// would build the index: it stays `Building` instead, with nothing published, and the planner
+/// does not use it, so reads on it scan.
+#[test]
+fn a_job_whose_batch_is_refused_fails_and_leaves_its_index_building() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let generation = generation_of(&host, &id);
+    let builder = builder_on(&host, Sizing::fixed(1));
+    builder.refuse_publish.store(true, Ordering::SeqCst);
+    let mut job = Job::new(
+        Arc::clone(&builder),
+        host.mvcc.downgrade(),
+        id.clone(),
+        generation,
+    );
+    assert_eq!(job.step(), Step::Failed);
+    drop(job);
+
+    builder.refuse_publish.store(true, Ordering::SeqCst);
+    builder.start(1);
+    builder.enqueue(host.mvcc.downgrade(), id.clone(), generation);
+    // A job holds its builder until it ends.
+    wait_until("the job to end", || Arc::strong_count(&builder) == 1);
+    assert_eq!(host.warnings.lock().len(), 2, "one warning per job");
+    let g = host.mvcc.read();
+    assert_eq!(
+        building_generation(&g, &id),
+        Some(generation),
+        "the job ran again after its batch was refused"
+    );
+    assert_eq!(
+        cursor(&g, EntityType::Node, &label, &attr),
+        Some(BuildCursor::new(EntityType::Node)),
+        "nothing published"
+    );
+    assert!(
+        !g.is_indexed(&label, &attr, &IndexType::Range),
+        "the planner uses a column still Building"
+    );
+}
+
 /// A batch that waited for what publishing needs while the builder stopped publishes nothing: it
 /// checks again once it holds it. The Redis shutdown handler stops the builder holding the GIL, so
 /// a batch waiting for the GIL gets it only after the stop, and must then leave the graph alone.

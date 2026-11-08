@@ -3,11 +3,12 @@
 //!
 //! A commit that brings in a `Building` index starts a [`Job`] for it ([`MvccGraph::commit`]). A
 //! job builds one generation of one index ([`IndexEntry::generation`]): it runs one batch on the
-//! pool, and submits itself again while that generation is `Building`. An index dropped, or dropped
-//! and created again, is another generation, so its job ends, and the commit that created the new
-//! one started a job of its own. Each generation is started once, so no two jobs build one index.
-//! A job holds its graph weakly: once the graph is gone, so is the job. Nothing here knows about
-//! Redis: a batch publishes through the builder's [`BuildHost`].
+//! pool, and submits itself again while that generation is `Building`, unless the batch's version
+//! was refused ([`Step::Failed`]). An index dropped, or dropped and created again, is another
+//! generation, so its job ends, and the commit that created the new one started a job of its own.
+//! Each generation is started once, so no two jobs build one index. A job holds its graph weakly:
+//! once the graph is gone, so is the job. Nothing here knows about Redis: a batch publishes
+//! through the builder's [`BuildHost`].
 //!
 //! **A batch holds no lock while it reads.** It reads on a new build version of the published one
 //! ([`Graph::new_build_version`]), which only it holds, and then publishes through the host
@@ -29,15 +30,16 @@
 //! [`MvccGraph::commit_indexer_batch`]: crate::graph::mvcc_graph::MvccGraph::commit_indexer_batch
 
 use std::mem;
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::thread;
 use std::time::Duration;
 
 use parking_lot::{RwLock, RwLockReadGuard};
 
 use super::versioned::{Discarded, IndexId, IndexerCommit, PreparedBatch};
 use crate::graph::graph::Graph;
-use crate::graph::mvcc_graph::{MvccGraph, WeakMvccGraph};
+use crate::graph::mvcc_graph::{CommitError, MvccGraph, WeakMvccGraph};
 use crate::threadpool::ThreadPool;
 #[cfg(test)]
 use parking_lot::{FairMutex, FairMutexGuard, Mutex};
@@ -53,8 +55,8 @@ pub trait BuildHost: Send + Sync {
         f: &mut dyn FnMut(),
     );
 
-    /// Report what an operator should see: a batch that failed, which the builder retries. The
-    /// default writes to stderr; the Redis host logs it.
+    /// Report what an operator should see: a batch whose version was refused, after which its
+    /// index's build stops. The default writes to stderr; the Redis host logs it.
     fn warn(
         &self,
         message: &str,
@@ -158,9 +160,16 @@ pub(crate) enum Step {
     /// The batch published nothing: writers changed more of its index while it was read than its
     /// commit may catch up on ([`Sizing::catch_up_max`]). The next batch is half its size.
     TooLarge,
-    /// The batch's version was refused, which only a bug makes happen. The job runs again after
-    /// [`FAILED_RETRY`].
-    Retry,
+    /// The batch's version was refused, which only a bug makes happen, and the job ends, leaving
+    /// its generation `Building`. Reads on the index keep scanning, as they do while it is built,
+    /// and never reach another index. Writers keep adding the entities they write in it to the set
+    /// a batch clears, and no batch comes any more: the set grows until the index is dropped, or
+    /// the graph is deleted or loaded again, and each writer's commit that writes the index copies
+    /// it. An RDB load builds the index without the builder. A `CREATE INDEX` after a drop, or
+    /// replayed from an AOF or a replication stream, starts another job, which the same bug may
+    /// refuse too. A job that ran again instead could fail forever, reading a batch and logging a
+    /// warning each time.
+    Failed,
     /// The job's generation is `Ready`: its build is over.
     Done,
     /// The job is over before its generation is `Ready`, for a reason outside it: the builder has
@@ -187,6 +196,10 @@ pub(crate) struct Builder {
     /// needs a batch held there.
     #[cfg(test)]
     pub(crate) while_reading: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// Once set, the next batch's version is refused, as only a bug refuses one: for a test of
+    /// what a job does then ([`Step::Failed`]).
+    #[cfg(test)]
+    pub(crate) refuse_publish: AtomicBool,
 }
 
 impl Builder {
@@ -201,6 +214,8 @@ impl Builder {
             running: RwLock::new(true),
             #[cfg(test)]
             while_reading: Mutex::new(None),
+            #[cfg(test)]
+            refuse_publish: AtomicBool::new(false),
         })
     }
 
@@ -261,10 +276,25 @@ impl Builder {
         let running = self.running.read();
         (*running).then_some(running)
     }
+
+    /// Publish a batch's version ([`MvccGraph::commit_indexer_batch`]). A test can have it
+    /// refused.
+    fn commit(
+        &self,
+        mvcc: &MvccGraph,
+        prepared: Graph,
+        batch: &PreparedBatch,
+    ) -> Result<IndexerCommit, CommitError> {
+        #[cfg(test)]
+        if self.refuse_publish.swap(false, Ordering::SeqCst) {
+            return Err(CommitError::Stale);
+        }
+        mvcc.commit_indexer_batch(prepared, batch)
+    }
 }
 
 /// The build of one generation of one index: one batch at a time on its builder's pool, until that
-/// generation is `Ready` or gone.
+/// generation is `Ready` or gone, or a batch's version is refused ([`Step::Failed`]).
 pub(crate) struct Job {
     builder: Arc<Builder>,
     /// Held weakly, so the job does not keep a deleted graph alive: once the key is deleted and no
@@ -298,16 +328,13 @@ impl Job {
 
     /// One batch, on a worker of the pool, then the job submits itself again unless it is over.
     fn run(mut self) {
-        let step = self.step();
-        if matches!(step, Step::Done | Step::Cancelled) {
-            return;
+        match self.step() {
+            Step::More | Step::TooLarge => {
+                let builder = Arc::clone(&self.builder);
+                builder.submit(self);
+            }
+            Step::Done | Step::Cancelled | Step::Failed => {}
         }
-        if step == Step::Retry {
-            // Only after a bug: holding this worker for it costs nothing that matters.
-            thread::sleep(FAILED_RETRY);
-        }
-        let builder = Arc::clone(&self.builder);
-        builder.submit(self);
     }
 
     /// One batch of the job's index, published: as many entities as the index's batches have read,
@@ -346,17 +373,18 @@ impl Job {
                 return;
             };
             replaced = Some(mvcc.read());
-            step = match mvcc.commit_indexer_batch(prepared, &batch) {
+            step = match builder.commit(&mvcc, prepared, &batch) {
                 Ok(IndexerCommit::Discarded(Discarded::CatchUpTooLarge)) => Step::TooLarge,
                 Ok(_) => standing(&mvcc.read(), id, generation).unwrap_or(Step::More),
                 // Validation refused the version, or another was published while this commit ran,
                 // which only a host publishing without its global lock allows.
                 Err(e) => {
                     host.warn(&format!(
-                        "native index: an indexer batch of {id:?} was not published ({e}); it \
-                         will be retried"
+                        "native index: an indexer batch of {id:?} was not published ({e}); its \
+                         build has stopped, and the index is left under construction, so reads \
+                         on it scan. Loading the graph from an RDB builds it."
                     ));
-                    Step::Retry
+                    Step::Failed
                 }
             };
         });
@@ -373,7 +401,7 @@ impl Job {
         self.limit = match step {
             Step::More => self.limit.saturating_mul(2).min(sizing.cap),
             Step::TooLarge => (entities / 2).max(sizing.floor),
-            Step::Retry | Step::Done | Step::Cancelled => self.limit,
+            Step::Failed | Step::Done | Step::Cancelled => self.limit,
         };
         step
     }
@@ -445,13 +473,6 @@ fn standing(
     }
 }
 
-/// How long a job waits before running again after a batch whose version was refused. It runs
-/// again rather than end, which would leave its index `Building` for good, with reads going
-/// elsewhere unnoticed; and it waits, so that a refusal that repeats does not take the host's
-/// global lock in a loop. It waits on its worker, which runs nothing else meanwhile. It retries
-/// until its index is built, or the job is cancelled.
-const FAILED_RETRY: Duration = Duration::from_secs(1);
-
 /// How long [`stop`] waits for the builder's workers.
 const STOP_WAIT: Duration = Duration::from_secs(2);
 
@@ -507,7 +528,7 @@ impl Sizing {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
 
     use super::*;
 
