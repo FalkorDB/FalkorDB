@@ -13,7 +13,9 @@ GRAPH_ID = "index_create"
 
 class testIndexCreationFlow():
     def __init__(self):
-        self.env, self.db = Env()
+        # DEBUG LOADAOF, for the AOF replay test.
+        self.env, self.db = Env(enableDebugCommand=True)
+        self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
     # full-text index creation
@@ -966,47 +968,19 @@ class testIndexCreationFlow():
                 count = graph.ro_query(q).result_set[0][0]
                 self.env.assertEqual(count, n, message=f"index on L.{attr}")
 
-
-class testIndexCreationOnMissingKey():
     # CREATE INDEX as the first query on a key that does not exist creates the
     # graph, and commits the index before the graph is registered under its
     # key. An index the engine builds in the background must still be built:
     # registering the graph starts the build of every index it holds under
     # construction. Each test waits a bounded time, so an index left under
     # construction fails it rather than hanging it.
-    def __init__(self):
-        self.env, self.db = Env(enableDebugCommand=True)
-        self.conn = self.env.getConnection()
-
-    def tearDown(self):
-        # The AOF test turns appendonly on; turn it off for the next test.
-        try:
-            self.conn.config_set("appendonly", "no")
-        except Exception:
-            # Best effort: a failure here must not hide the test's own result, and the next
-            # test's setup does not depend on it.
-            pass
-        self.conn.flushall()
-
-    def _wait_operational(self, graph, label, timeout=30):
-        q = """CALL db.indexes() YIELD label, status
-               WHERE label = $label AND status <> 'OPERATIONAL'
-               RETURN count(1)"""
-        deadline = time() + timeout
-        while graph.ro_query(q, {'label': label}).result_set[0][0] != 0:
-            self.env.assertLess(time(), deadline,
-                                message=f"index on :{label} never became operational")
-            if time() >= deadline:
-                return
-            sleep(0.05)
-
     def _assert_index_serves(self, graph):
         graph.query("UNWIND range(1, 100) AS x CREATE (:L {v:x})")
         q = "MATCH (n:L) WHERE n.v = 42 RETURN n.v"
         self.env.assertIn("Node By Index Scan", str(graph.explain(q)))
         self.env.assertEqual(graph.ro_query(q).result_set, [[42]])
 
-    def test01_create_index_in_multi_exec(self):
+    def test20_create_index_on_missing_key_in_multi_exec(self):
         graph = self.db.select_graph("index_on_missing_key_multi")
         # A transactional pipeline sends MULTI, the query and EXEC on one connection.
         pipe = self.conn.pipeline(transaction=True)
@@ -1015,28 +989,33 @@ class testIndexCreationOnMissingKey():
         res = pipe.execute(raise_on_error=False)
         self.env.assertFalse(isinstance(res[0], Exception), message=str(res[0]))
         self.env.assertIn("Indices created: 1", str(res[0]))
-        self._wait_operational(graph, 'L')
+        wait_on_index(graph, 'L', timeout=30)
         self._assert_index_serves(graph)
+        graph.delete()
 
-    def test02_create_index_in_aof_replay(self):
-        # Start from an empty AOF, and replay it in-process with DEBUG LOADAOF.
-        # The CREATE INDEX is in it as a GRAPH.EFFECT: every write replicates
-        # as effects.
-        self.conn.flushall()
+    def test21_create_index_on_missing_key_in_aof_replay(self):
+        # Turn the AOF on, then replay it in-process with DEBUG LOADAOF. The
+        # rewrite that turning it on starts holds the dataset as it is; the
+        # CREATE INDEX comes after it, as a GRAPH.EFFECT: every write
+        # replicates as effects.
         self.conn.config_set("appendonly", "no")
         self.conn.config_set("appendonly", "yes")
-        deadline = time() + 30
-        # A rewrite can be scheduled and not yet started: wait for both, read from one reply.
-        while ((p := self.conn.info("persistence")).get("aof_rewrite_in_progress", 0)
-               or p.get("aof_rewrite_scheduled", 0)):
-            self.env.assertLess(time(), deadline, message="AOF rewrite did not finish")
-            if time() >= deadline:
-                break
-            sleep(0.1)
+        try:
+            deadline = time() + 30
+            # A rewrite can be scheduled and not yet started: wait for both, read from one reply.
+            while ((p := self.conn.info("persistence")).get("aof_rewrite_in_progress", 0)
+                   or p.get("aof_rewrite_scheduled", 0)):
+                self.env.assertLess(time(), deadline, message="AOF rewrite did not finish")
+                if time() >= deadline:
+                    break
+                sleep(0.1)
 
-        graph = self.db.select_graph("index_on_missing_key_aof")
-        graph.query("CREATE INDEX FOR (n:L) ON (n.v)")
-        self.conn.execute_command("DEBUG", "LOADAOF")
+            graph = self.db.select_graph("index_on_missing_key_aof")
+            graph.query("CREATE INDEX FOR (n:L) ON (n.v)")
+            self.conn.execute_command("DEBUG", "LOADAOF")
 
-        self._wait_operational(graph, 'L')
-        self._assert_index_serves(graph)
+            wait_on_index(graph, 'L', timeout=30)
+            self._assert_index_serves(graph)
+            graph.delete()
+        finally:
+            self.conn.config_set("appendonly", "no")
