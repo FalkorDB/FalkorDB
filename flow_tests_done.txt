@@ -58,6 +58,7 @@ tests/flow/test_intern_string.py
 tests/flow/test_keyspace_accesses.py
 tests/flow/test_label_update
 tests/flow/test_list
+tests/flow/test_long_clause_chains.py
 tests/flow/test_load_csv
 tests/flow/test_maintain_record_order.py
 tests/flow/test_map

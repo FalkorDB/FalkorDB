@@ -123,7 +123,7 @@ use thin_vec::ThinVec;
 use thiserror::Error;
 /// Opening of every rejection [`Parser::too_deep`] produces, and what
 /// [`is_too_deep`] recognises.
-const TOO_DEEP: &str = "Query nesting exceeds the maximum depth of";
+pub(crate) const TOO_DEEP: &str = "Query nesting exceeds the maximum depth of";
 
 /// A place where a pattern comprehension cannot be planned as a sub-plan, so
 /// the parser rejects one found there (#2308).
