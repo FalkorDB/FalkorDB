@@ -1,21 +1,26 @@
 import time
 
-# wait for index to be operational
-def _wait_on_index(graph, label):
+# wait for the indexes on `label` to be operational, polling with no pause, so
+# a test can time a build that takes milliseconds. With a timeout, an index
+# still not operational after it fails the wait rather than hanging the test.
+def wait_on_index(graph, label, timeout=None):
     q = f"""CALL db.indexes() YIELD label, status
     WHERE label = '{label}' AND status <> 'OPERATIONAL'
     RETURN count(1)"""
 
+    deadline = None if timeout is None else time.monotonic() + timeout
     while True:
         result = graph.ro_query(q)
         if result.result_set[0][0] == 0:
             break
+        if deadline is not None and time.monotonic() >= deadline:
+            raise AssertionError(f"index on {label} not operational after {timeout} s")
 
 def _create_index(graph, q, label=None, sync=False):
     res = graph.query(q)
 
     if sync:
-        _wait_on_index(graph, label)
+        wait_on_index(graph, label)
 
     return res
 
