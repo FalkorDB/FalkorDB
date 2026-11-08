@@ -91,7 +91,7 @@ pub(crate) struct Written {
     pub(crate) by_this_version: RoaringTreemap,
 }
 
-/// The name of any versioned index: what the builder's chains, a commit's report of what it created
+/// The name of any versioned index: what the builder's jobs, a commit's report of what it created
 /// and every per-index dispatch key on.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum IndexId {
@@ -136,7 +136,7 @@ pub(crate) struct IndexerBatch<K: VersionedIndex> {
     pub(crate) catch_up_limit: Option<u64>,
 }
 
-/// An indexer batch of any kind, as the indexer's turn keeps it from the version it was applied
+/// An indexer batch of any kind, as a builder's job keeps it from the version it was applied
 /// to ([`Graph::indexer_prepare`]) to its commit
 /// ([`MvccGraph::commit_indexer_batch`](crate::graph::mvcc_graph::MvccGraph::commit_indexer_batch)).
 pub(crate) struct PreparedBatch(Prepared);
@@ -224,8 +224,8 @@ fn catch_up_by(
 pub(crate) enum Discarded {
     /// The index was dropped, or dropped and created again.
     Gone,
-    /// Another batch committed on the same index since. The builder runs one chain of batches per
-    /// index, so this is a bug in that exclusion. It leaves nothing wrong: the later batch
+    /// Another batch committed on the same index since. The builder runs one job per generation of
+    /// an index, so this is a bug in that exclusion. It leaves nothing wrong: the later batch
     /// publishes nothing.
     AnotherBatch,
     /// Writers changed more of the index while the batch was read than its commit may catch up
@@ -790,48 +790,70 @@ impl Graph {
         }
     }
 
-    /// Every index this version holds `Building`: what registering a graph with the builder starts.
-    pub(crate) fn building_indexes(&self) -> Vec<IndexId> {
+    /// The generation of index `id` ([`IndexEntry::generation`]) if this version holds it
+    /// `Building`: which index a builder's job for it builds.
+    pub(crate) fn index_build_generation(
+        &self,
+        id: &IndexId,
+    ) -> Option<u64> {
+        match id {
+            IndexId::Column(entity, key) => {
+                IndexColumn::entry(&self.falkordb_index, &(*entity, key.clone()))
+                    .filter(|entry| entry.is_building())
+                    .map(|entry| entry.generation)
+            }
+        }
+    }
+
+    /// Every index this version holds `Building`, with its generation: what registering a graph
+    /// with the builder starts.
+    pub(crate) fn building_indexes(&self) -> Vec<(IndexId, u64)> {
         self.falkordb_index
             .column_names()
             .into_iter()
-            .filter(|name| {
-                IndexColumn::entry(&self.falkordb_index, name).is_some_and(IndexEntry::is_building)
+            .filter_map(|name| {
+                let generation = IndexColumn::entry(&self.falkordb_index, &name)
+                    .filter(|entry| entry.is_building())?
+                    .generation;
+                Some((IndexId::Column(name.0, name.1), generation))
             })
-            .map(|(entity, key)| IndexId::Column(entity, key))
             .collect()
     }
 
-    /// The indexes this version holds `Building` that `older` does not hold as the same index:
-    /// created since, or dropped and created again. What a commit hands the builder, so each build
-    /// starts once, however many commits it spans. Every writer's commit asks, so with no index
-    /// `Building` here it answers without looking any index up by name.
+    /// The indexes this version holds `Building` that `older` does not hold as the same index,
+    /// with their generations: created since, or dropped and created again. What a commit hands
+    /// the builder, so each build starts once, however many commits it spans. Every writer's commit
+    /// asks, so with no index `Building` here it answers without looking any index up by name.
     pub(crate) fn indexes_to_build_since(
         &self,
         older: &Self,
-    ) -> Vec<IndexId> {
+    ) -> Vec<(IndexId, u64)> {
         if !self.falkordb_index.has_building_columns() {
             return Vec::new();
         }
         self.falkordb_index
             .column_names()
             .into_iter()
-            .filter(|name| self.building_since::<IndexColumn>(older, name))
-            .map(|(entity, key)| IndexId::Column(entity, key))
+            .filter_map(|name| {
+                let generation = self.building_since::<IndexColumn>(older, &name)?;
+                Some((IndexId::Column(name.0, name.1), generation))
+            })
             .collect()
     }
 
-    /// [`Self::indexes_to_build_since`] for one index: `Building` here, and in `older` absent or
-    /// another generation.
+    /// [`Self::indexes_to_build_since`] for one index: its generation if it is `Building` here,
+    /// and in `older` absent or another generation.
     fn building_since<K: VersionedIndex>(
         &self,
         older: &Self,
         name: &K::Name,
-    ) -> bool {
-        K::entry(&self.falkordb_index, name).is_some_and(|ours| {
-            ours.is_building()
-                && K::entry(&older.falkordb_index, name)
-                    .is_none_or(|theirs| theirs.generation != ours.generation)
-        })
+    ) -> Option<u64> {
+        K::entry(&self.falkordb_index, name)
+            .filter(|ours| {
+                ours.is_building()
+                    && K::entry(&older.falkordb_index, name)
+                        .is_none_or(|theirs| theirs.generation != ours.generation)
+            })
+            .map(|ours| ours.generation)
     }
 }

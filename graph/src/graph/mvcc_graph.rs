@@ -141,8 +141,8 @@ impl MvccGraph {
         if self.build_host.set(Arc::clone(&host)).is_err() {
             return;
         }
-        for id in self.read().building_indexes() {
-            online_build::enqueue(Arc::clone(&host), id);
+        for (id, generation) in self.read().building_indexes() {
+            online_build::enqueue(Arc::clone(&host), id, generation);
         }
     }
 
@@ -248,13 +248,13 @@ impl MvccGraph {
         #[cfg(feature = "index-falkordb")]
         let to_build = fork.indexes_to_build_since(&published);
         let version = self.publish(&published, Arc::new(fork))?;
-        // Each `Building` index this version brings in, new or created again, starts its build:
-        // the builder runs one chain of batches per index until it is `Ready`, so a commit made
-        // during the build, an indexer batch's included, starts nothing.
+        // Each `Building` index this version brings in, new or created again, starts its build: a
+        // job per generation, which runs until that generation is `Ready` or gone, so a commit
+        // made during the build, an indexer batch's included, starts nothing.
         #[cfg(feature = "index-falkordb")]
         if let Some(host) = self.build_host.get() {
-            for id in to_build {
-                online_build::enqueue(Arc::clone(host), id);
+            for (id, generation) in to_build {
+                online_build::enqueue(Arc::clone(host), id, generation);
             }
         }
         Ok(version)
@@ -274,7 +274,7 @@ impl MvccGraph {
     ///   ([`Graph::caught_up_onto`]);
     /// - `batch`'s index was dropped or created again, or another batch committed on the same
     ///   index: nothing is published, and the index's next batch starts from its published cursor.
-    ///   Another batch on the index is a bug in the builder's one chain per index
+    ///   Another batch on the index is a bug in the builder's one job per generation
     ///   ([`AnotherBatch`](crate::index::falkordb::versioned::Discarded::AnotherBatch)), which
     ///   leaves nothing wrong.
     ///
