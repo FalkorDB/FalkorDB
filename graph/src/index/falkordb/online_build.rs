@@ -38,13 +38,14 @@ use super::versioned::{Discarded, IndexId, IndexerCommit};
 use crate::graph::mvcc_graph::WeakMvccGraph;
 use crate::threadpool::ThreadPool;
 #[cfg(test)]
-use parking_lot::Mutex;
+use parking_lot::{FairMutex, FairMutexGuard, Mutex};
 
 /// What the builder needs of the host its graphs live in: one for every graph, given to the builder
-/// as it starts ([`start`]).
+/// as it starts ([`start`]). The Redis module's takes the GIL; this crate's tests have one of
+/// their own.
 pub trait BuildHost: Send + Sync {
     /// Run `f`, which publishes a batch, holding what a writer holds to publish a version: the
-    /// host's global lock. The Redis host takes the GIL.
+    /// host's global lock.
     fn publish(
         &self,
         f: &mut dyn FnMut(),
@@ -57,6 +58,35 @@ pub trait BuildHost: Send + Sync {
         message: &str,
     ) {
         eprintln!("{message}");
+    }
+}
+
+/// The host of this crate's tests, without Redis: its global lock is a mutex of its own, in the
+/// place of the GIL. A writer holds it to commit ([`Self::lock`]), and a batch publishes holding
+/// it. Fair, so that writers committing back to back do not keep a batch out. Only tests use it,
+/// until the crate runs on its own somewhere.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct LocalHost {
+    global: FairMutex<()>,
+}
+
+#[cfg(test)]
+impl LocalHost {
+    /// The global lock, which a writer holds to commit.
+    pub(crate) fn lock(&self) -> FairMutexGuard<'_, ()> {
+        self.global.lock()
+    }
+}
+
+#[cfg(test)]
+impl BuildHost for LocalHost {
+    fn publish(
+        &self,
+        f: &mut dyn FnMut(),
+    ) {
+        let _global = self.lock();
+        f();
     }
 }
 
@@ -419,6 +449,8 @@ impl Sizing {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use super::*;
 
     /// A batch reads what its index's batches have read, between the floor and its job's limit.
@@ -448,5 +480,23 @@ mod tests {
         }
         assert_eq!(Sizing::fixed(7).batch(5_000, 7), 7);
         assert_eq!(Sizing::fixed(7).batch(0, 7), 7);
+    }
+
+    /// A batch publishes on a local host holding its global lock: not while a writer holds it.
+    #[test]
+    fn a_local_host_publishes_holding_its_global_lock() {
+        let host = LocalHost::default();
+        let published = AtomicBool::new(false);
+        thread::scope(|scope| {
+            let writer = host.lock();
+            scope.spawn(|| host.publish(&mut || published.store(true, Ordering::SeqCst)));
+            thread::sleep(Duration::from_millis(100));
+            assert!(
+                !published.load(Ordering::SeqCst),
+                "published while a writer held the lock"
+            );
+            drop(writer);
+        });
+        assert!(published.load(Ordering::SeqCst));
     }
 }

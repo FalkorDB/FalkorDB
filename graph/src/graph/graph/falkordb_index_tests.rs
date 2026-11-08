@@ -9,7 +9,9 @@ use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::{BuildCursor, IndexColumn, IndexKey};
 use crate::index::falkordb::graph_writes;
-use crate::index::falkordb::online_build::{self, BuildHost, Builder, Job, Sizing, Step};
+use crate::index::falkordb::online_build::{
+    self, BuildHost, Builder, Job, LocalHost, Sizing, Step,
+};
 use crate::index::falkordb::versioned::{
     BuildState, CatchUp, Discarded, IndexId, IndexerCommit, PreparedBatch, REFRESH_COST,
     VersionedIndex,
@@ -3342,13 +3344,12 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
 
 // --- The background builder ---
 
-/// A graph as the builder reaches it in these tests. A fair lock stands in for the host's global
-/// lock: a turn publishes holding it, and so does every writer here. `before_publish` runs once,
-/// holding it, just before the next turn's batch goes in. `warnings` keeps what the builder
-/// reports through the host.
+/// A graph as the builder reaches it in these tests, on a [`LocalHost`]: a batch publishes holding
+/// its global lock, and so does every writer here. `before_publish` runs once, holding it, just
+/// before the next batch goes in. `warnings` keeps what the builder reports through the host.
 struct TestHost {
     mvcc: MvccGraph,
-    global: parking_lot::FairMutex<()>,
+    local: LocalHost,
     before_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&MvccGraph) + Send>>>,
     warnings: parking_lot::Mutex<Vec<String>>,
 }
@@ -3357,7 +3358,7 @@ impl TestHost {
     fn new(mvcc: MvccGraph) -> Arc<Self> {
         Arc::new(Self {
             mvcc,
-            global: parking_lot::FairMutex::new(()),
+            local: LocalHost::default(),
             before_publish: parking_lot::Mutex::new(None),
             warnings: parking_lot::Mutex::new(Vec::new()),
         })
@@ -3368,7 +3369,7 @@ impl TestHost {
         &self,
         write: impl FnOnce(&mut Graph),
     ) {
-        let _global = self.global.lock();
+        let _global = self.local.lock();
         commit_write(&self.mvcc, write);
     }
 
@@ -3380,8 +3381,9 @@ impl TestHost {
     }
 }
 
-/// A builder's host in these tests: a [`TestHost`]'s global lock. Holds the test host weakly, so
-/// a builder does not keep its graph alive.
+/// A builder's host in these tests: it publishes through a [`TestHost`]'s [`LocalHost`], running
+/// the test host's `before_publish` first, and keeps the builder's warnings in the test host. Holds
+/// the test host weakly, so a builder does not keep its graph alive.
 struct HostRef(Weak<TestHost>);
 
 impl BuildHost for HostRef {
@@ -3392,11 +3394,12 @@ impl BuildHost for HostRef {
         let Some(host) = self.0.upgrade() else {
             return;
         };
-        let _global = host.global.lock();
-        if let Some(before) = host.before_publish.lock().take() {
-            before(&host.mvcc);
-        }
-        f();
+        host.local.publish(&mut || {
+            if let Some(before) = host.before_publish.lock().take() {
+                before(&host.mvcc);
+            }
+            f();
+        });
     }
 
     fn warn(
