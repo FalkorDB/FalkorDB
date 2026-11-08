@@ -9,7 +9,7 @@ use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::{BuildCursor, IndexColumn, IndexKey};
 use crate::index::falkordb::graph_writes;
-use crate::index::falkordb::online_build::{self, BuildHost, Indexer, Run, Sizing, Turn, run_turn};
+use crate::index::falkordb::online_build::{self, BuildHost, Builder, Job, Sizing, Step};
 use crate::index::falkordb::versioned::{
     BuildState, CatchUp, Discarded, IndexId, IndexerCommit, PreparedBatch, REFRESH_COST,
     VersionedIndex,
@@ -1621,7 +1621,7 @@ fn mvcc_building(values: &[i64]) -> (MvccGraph, Arc<String>, Arc<String>, Vec<u6
 }
 
 /// An indexer batch of at most `budget` entities of index `id`, applied to a new build version of
-/// `mvcc`'s published one, as the indexer's turn prepares it: the version and the batch.
+/// `mvcc`'s published one, as a builder's job prepares it: the version and the batch.
 fn prepare(
     mvcc: &MvccGraph,
     id: &IndexId,
@@ -2471,7 +2471,7 @@ fn a_writer_creating_past_a_final_batch_is_indexed_in_either_commit_order() {
 }
 
 /// Two indexer batches read from one version on the same column: the first publishes, the second
-/// finds the first in its way and publishes nothing. One chain of batches per column rules this
+/// finds the first in its way and publishes nothing. One job per generation of a column rules this
 /// out; the commit says so, for the builder to report.
 #[test]
 fn of_two_indexer_batches_on_one_column_only_the_first_publishes() {
@@ -3023,7 +3023,7 @@ fn check_column(
 /// Writers and indexer batches on real threads, on three columns at once: two node columns and an
 /// edge column.
 ///
-/// - One indexer thread per column, as the builder runs one chain of batches per column.
+/// - One indexer thread per column, as the builder runs one job per generation of a column.
 /// - Three writer threads. Each either forks, writes and escalates, or forks and writes under the
 ///   lock. They re-value nodes and edges, create nodes, delete nodes with their edges, take nodes
 ///   off the label, add edges, and now and then drop a column and create it again `Building`.
@@ -3425,9 +3425,37 @@ fn wait_until(
     }
 }
 
-/// A commit hands the builder each index its version brings in `Building`: one created, or one
-/// dropped and created again under the same name, which is another index. An index already
-/// `Building` in the version before, or brought in `Ready`, is not handed over again.
+/// The generation of index `id` that `host`'s published version holds `Building`.
+fn generation_of(
+    host: &TestHost,
+    id: &IndexId,
+) -> u64 {
+    host.mvcc
+        .read()
+        .index_build_generation(id)
+        .expect("the index is Building")
+}
+
+/// A job for the generation of index `id` that `host`'s published version holds `Building`, on a
+/// builder of its own with `sizing`, never started: the test runs its batches itself
+/// ([`Job::step`]).
+fn job_on(
+    host: &Arc<TestHost>,
+    id: &IndexId,
+    sizing: Sizing,
+) -> Job {
+    Job::new(
+        Builder::new(sizing),
+        Arc::new(HostRef(Arc::downgrade(host))),
+        id.clone(),
+        generation_of(host, id),
+    )
+}
+
+/// A commit hands the builder each index its version brings in `Building`, with its generation:
+/// one created, or one dropped and created again under the same name, which is another generation.
+/// An index already `Building` in the version before, or brought in `Ready`, is not handed over
+/// again.
 #[test]
 fn a_commit_hands_the_builder_each_index_it_brings_in_building() {
     let (mvcc, label, v, _) = mvcc_building(&[10, 20]);
@@ -3435,6 +3463,9 @@ fn a_commit_hands_the_builder_each_index_it_brings_in_building() {
     let u = Arc::new("u".to_string());
     let id = |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let before = mvcc.read();
+    let v_was = before
+        .index_build_generation(&id(&v))
+        .expect("v is Building");
     let mut after = before.new_version();
     assert!(
         after.indexes_to_build_since(&before).is_empty(),
@@ -3444,42 +3475,42 @@ fn a_commit_hands_the_builder_each_index_it_brings_in_building() {
     after
         .falkordb_index
         .create_numeric(EntityType::Node, &label, &u);
+    let w_is = after
+        .index_build_generation(&id(&w))
+        .expect("w is Building");
     assert_eq!(
         after.indexes_to_build_since(&before),
-        [id(&w)],
+        [(id(&w), w_is)],
         "w is new; u came in Ready"
     );
     drop_index_on(&mut after, &label, &v);
     create_index_on(&mut after, &label, &v);
+    let v_is = after
+        .index_build_generation(&id(&v))
+        .expect("v is Building again");
+    assert_ne!(v_is, v_was, "v created again is another generation");
     let mut handed = after.indexes_to_build_since(&before);
-    handed.sort_by_key(|id| format!("{id:?}"));
-    assert_eq!(handed, [id(&v), id(&w)], "v was created again");
+    handed.sort_by_key(|(id, _)| format!("{id:?}"));
+    assert_eq!(
+        handed,
+        [(id(&v), v_is), (id(&w), w_is)],
+        "v was created again"
+    );
     assert_eq!(after.building_indexes().len(), 2);
 }
 
-/// A turn reads one batch of its index with no lock held, publishes it, and says whether the index
-/// is still `Building`. Once the last batch made it `Ready`, a turn finds nothing to do.
+/// A job's step reads one batch of its index with no lock held, publishes it, and says whether the
+/// index is still `Building`. Once the last batch made it `Ready`, the job is done.
 #[test]
-fn a_turn_publishes_one_batch_and_says_whether_more_remain() {
+fn a_step_publishes_one_batch_and_says_whether_more_remain() {
     let values = [10, 20, 30, 40, 50];
     let (mvcc, label, attr, _) = mvcc_building(&values);
     let host = TestHost::new(mvcc);
-    let reach = HostRef(Arc::downgrade(&host));
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-    let run = Run::new();
+    let mut job = job_on(&host, &id, Sizing::fixed(2));
 
-    let turns: Vec<Turn> = (0..4)
-        .map(|_| run_turn(&reach, &id, &run, Sizing::fixed(2), 0))
-        .collect();
-    assert_eq!(
-        turns,
-        [
-            Turn::Committed { more: true },
-            Turn::Committed { more: true },
-            Turn::Committed { more: false },
-            Turn::Idle,
-        ]
-    );
+    let steps: Vec<Step> = (0..4).map(|_| job.step()).collect();
+    assert_eq!(steps, [Step::More, Step::More, Step::Done, Step::Done]);
     let g = host.mvcc.read();
     assert_eq!(cursor(&g, EntityType::Node, &label, &attr), None, "Ready");
     assert_eq!(
@@ -3488,17 +3519,16 @@ fn a_turn_publishes_one_batch_and_says_whether_more_remain() {
     );
 }
 
-/// A turn whose batch meets another batch's commit on its index publishes nothing
-/// ([`Discarded::AnotherBatch`]), and its index goes on: a bug in the builder's one chain per
-/// index, which only a test makes happen. It reports nothing: the index is still built right. No
-/// other test races two batches through a turn.
+/// A batch that meets another batch's commit on its index publishes nothing
+/// ([`Discarded::AnotherBatch`]), and its job goes on: a bug in the one job per generation, which
+/// only a test makes happen. It reports nothing: the index is still built right. No other test
+/// races two batches on one index.
 #[test]
-fn a_turn_that_meets_another_batch_on_its_index_publishes_nothing() {
+fn a_step_that_meets_another_batch_on_its_index_publishes_nothing() {
     let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
     let host = TestHost::new(mvcc);
-    let reach = HostRef(Arc::downgrade(&host));
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-    let run = Run::new();
+    let mut job = job_on(&host, &id, Sizing::fixed(1));
     let other = id.clone();
     host.before_publish(move |mvcc| {
         let (prepared, batch) = prepare(mvcc, &other, 1);
@@ -3507,10 +3537,7 @@ fn a_turn_that_meets_another_batch_on_its_index_publishes_nothing() {
             Ok(IndexerCommit::Same)
         );
     });
-    assert_eq!(
-        run_turn(&reach, &id, &run, Sizing::fixed(1), 0),
-        Turn::Discarded { more: true }
-    );
+    assert_eq!(job.step(), Step::More);
     assert_eq!(
         cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
         Some(BuildCursor::Node(NodeId::from(ids[1]))),
@@ -3520,18 +3547,17 @@ fn a_turn_that_meets_another_batch_on_its_index_publishes_nothing() {
     assert!(warnings.is_empty(), "{warnings:?}");
 }
 
-/// A turn whose index was dropped after its batch read it publishes nothing and ends its chain.
-/// One whose index was created again publishes nothing either, and goes on: its next batches build
-/// the new index from that index's own cursor.
+/// A job whose index was dropped after its batch read it publishes nothing and is done, and so is
+/// one whose index was created again: that is another generation, which a job of its own builds,
+/// from that index's own cursor.
 #[test]
-fn a_turn_on_an_index_dropped_or_created_again_publishes_nothing() {
+fn a_job_whose_index_is_dropped_or_created_again_is_done() {
     for again in [false, true] {
         let values = [10, 20, 30, 40];
         let (mvcc, label, attr, _) = mvcc_building(&values);
         let host = TestHost::new(mvcc);
-        let reach = HostRef(Arc::downgrade(&host));
         let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-        let run = Run::new();
+        let mut job = job_on(&host, &id, Sizing::fixed(2));
         let (l, a) = (label.clone(), attr.clone());
         host.before_publish(move |mvcc| {
             commit_write(mvcc, |g| {
@@ -3542,15 +3568,11 @@ fn a_turn_on_an_index_dropped_or_created_again_publishes_nothing() {
             });
         });
 
-        assert_eq!(
-            run_turn(&reach, &id, &run, Sizing::fixed(2), 0),
-            Turn::Discarded { more: again },
-            "again: {again}"
-        );
-        let published = host.mvcc.read();
+        assert_eq!(job.step(), Step::Done, "again: {again}");
         if !again {
             assert_eq!(
-                published
+                host.mvcc
+                    .read()
                     .falkordb_index
                     .column_state(EntityType::Node, &label, &attr),
                 None,
@@ -3559,14 +3581,25 @@ fn a_turn_on_an_index_dropped_or_created_again_publishes_nothing() {
             continue;
         }
         assert_eq!(
-            cursor(&published, EntityType::Node, &label, &attr),
+            cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
             Some(BuildCursor::new(EntityType::Node)),
             "the new index, untouched by the old one's batch"
         );
-        let mut turns = 0;
-        while run_turn(&reach, &id, &run, Sizing::fixed(2), 0) != Turn::Idle {
-            turns += 1;
-            assert!(turns < 10, "the new index is never built");
+        assert_eq!(
+            job.step(),
+            Step::Done,
+            "the old generation's job stays done"
+        );
+        assert_eq!(
+            cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
+            Some(BuildCursor::new(EntityType::Node)),
+            "without reading the new index"
+        );
+        let mut job = job_on(&host, &id, Sizing::fixed(2));
+        let mut steps = 1;
+        while job.step() != Step::Done {
+            steps += 1;
+            assert!(steps < 10, "the new index is never built");
         }
         let g = host.mvcc.read();
         assert_eq!(cursor(&g, EntityType::Node, &label, &attr), None);
@@ -3577,20 +3610,24 @@ fn a_turn_on_an_index_dropped_or_created_again_publishes_nothing() {
     }
 }
 
-/// A turn that waited for what publishing needs while the builder stopped publishes nothing: it
+/// A batch that waited for what publishing needs while the builder stopped publishes nothing: it
 /// checks again once it holds it. The Redis shutdown handler stops the builder holding the GIL, so
-/// a turn waiting for the GIL gets it only after the stop, and must then leave the graph alone.
+/// a batch waiting for the GIL gets it only after the stop, and must then leave the graph alone.
 #[test]
-fn a_turn_that_waited_while_the_builder_stopped_publishes_nothing() {
+fn a_batch_that_waited_while_the_builder_stopped_publishes_nothing() {
     let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
     let host = TestHost::new(mvcc);
-    let reach = HostRef(Arc::downgrade(&host));
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-    let run = Arc::new(Run::new());
-    let stopping = Arc::clone(&run);
-    host.before_publish(move |_| stopping.stop());
+    let builder = Builder::new(Sizing::fixed(2));
+    let mut job = Job::new(
+        Arc::clone(&builder),
+        Arc::new(HostRef(Arc::downgrade(&host))),
+        id.clone(),
+        generation_of(&host, &id),
+    );
+    host.before_publish(move |_| builder.stop_within(Duration::ZERO));
 
-    assert_eq!(run_turn(&reach, &id, &run, Sizing::fixed(2), 0), Turn::Gone);
+    assert_eq!(job.step(), Step::Done);
     assert_eq!(
         cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
         Some(BuildCursor::new(EntityType::Node)),
@@ -3598,12 +3635,12 @@ fn a_turn_that_waited_while_the_builder_stopped_publishes_nothing() {
     );
 }
 
-/// Stopping the builder waits, with no limit, for a turn still reading a graph with no lock held,
+/// Stopping the builder waits, with no limit, for a batch still reading a graph with no lock held,
 /// since the Redis module tears GraphBLAS down right after. The pool's own wait is bounded, and
-/// this turn is held inside its read for longer. The stopped turn then publishes nothing.
+/// this batch is held inside its read for longer. The stopped batch then publishes nothing.
 #[test]
-fn a_stop_waits_for_a_turn_still_reading() {
-    /// [`HostRef`] whose first read holds its turn until the test releases it.
+fn a_stop_waits_for_a_batch_still_reading() {
+    /// [`HostRef`] whose first read holds its batch until the test releases it.
     struct HeldRead {
         host: Weak<TestHost>,
         held: parking_lot::Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
@@ -3635,20 +3672,16 @@ fn a_stop_waits_for_a_turn_still_reading() {
         host: Arc::downgrade(&host),
         held: parking_lot::Mutex::new(Some((holding, released))),
     });
-    let indexer = Indexer::new(Box::new(|host, id, run, shift| {
-        run_turn(host, id, run, Sizing::fixed(2), shift)
-    }));
-    indexer.start(1);
-    indexer.enqueue(
-        reach,
-        IndexId::Column(EntityType::Node, (label.clone(), attr.clone())),
-    );
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let builder = Builder::new(Sizing::fixed(2));
+    builder.start(1);
+    builder.enqueue(reach, id.clone(), generation_of(&host, &id));
     held.recv_timeout(Duration::from_secs(10))
-        .expect("a turn reads the graph");
+        .expect("a batch reads the graph");
     let stopped = AtomicBool::new(false);
     let early = thread::scope(|scope| {
         scope.spawn(|| {
-            indexer.stop_within(Duration::from_millis(20));
+            builder.stop_within(Duration::from_millis(20));
             stopped.store(true, Ordering::SeqCst);
         });
         thread::sleep(Duration::from_millis(200));
@@ -3656,88 +3689,78 @@ fn a_stop_waits_for_a_turn_still_reading() {
         release.send(()).unwrap();
         early
     });
-    assert!(!early, "stop returned while a turn was still reading");
+    assert!(!early, "stop returned while a batch was still reading");
     assert!(stopped.load(Ordering::SeqCst));
     assert_eq!(
         cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
         Some(BuildCursor::new(EntityType::Node)),
-        "the stopped turn published nothing"
+        "the stopped batch published nothing"
     );
 }
 
-/// Under writers, a chain's batches shrink to what can commit, and grow back once they can. A batch
+/// Under writers, a job's batches shrink to what can commit, and grow back once they can. A batch
 /// larger than the floor that writers committed over publishes nothing, and the next one is half
-/// its size, down to the floor, which always commits; each batch that commits takes one halving
-/// back. Batches grow as the build reads, and it ends `Ready`, as a one-pass build of the final
-/// data.
+/// its size, down to the floor, which always commits; each batch that publishes doubles the limit
+/// back, and batches grow with what the build has read, up to it. The build ends `Ready`, as a
+/// one-pass build of the final data.
 #[test]
-fn a_chains_batches_shrink_under_writers_and_grow_back() {
-    /// The turns a writer commits during, between the batch's read and its publish.
+fn a_jobs_batches_shrink_under_writers_and_grow_back() {
+    /// The batches a writer commits during, between the batch's read and its publish.
     const WRITTEN_OVER: [usize; 3] = [5, 6, 7];
     let values: Vec<i64> = (0..300).collect();
     let (mvcc, label, attr, ids) = mvcc_building(&values);
     let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let sizing = Sizing {
         floor: 2,
         cap: 1_000,
         catch_up_max: 1,
     };
-    let turns: Arc<parking_lot::Mutex<Vec<(usize, Turn)>>> = Arc::default();
-    let indexer = {
-        let (host, turns, attr, ids) = (
-            Arc::clone(&host),
-            Arc::clone(&turns),
-            attr.clone(),
-            ids.clone(),
-        );
-        Indexer::new(Box::new(move |reach, id, run, shift| {
-            let n = turns.lock().len();
-            let read = host.mvcc.read().index_build_read(id).unwrap_or(0);
-            if WRITTEN_OVER.contains(&n) {
-                let (attr, written) = (attr.clone(), [ids[n], ids[n + 100]]);
-                host.before_publish(move |mvcc| {
-                    commit_write(mvcc, |g| {
-                        for id in written {
-                            set_attr(g, id, &attr, Value::Int(-1));
-                        }
-                    });
+    let mut job = job_on(&host, &id, sizing);
+    let mut steps = Vec::new();
+    loop {
+        let n = steps.len();
+        if WRITTEN_OVER.contains(&n) {
+            let (attr, written) = (attr.clone(), [ids[n], ids[n + 100]]);
+            host.before_publish(move |mvcc| {
+                commit_write(mvcc, |g| {
+                    for id in written {
+                        set_attr(g, id, &attr, Value::Int(-1));
+                    }
                 });
-            }
-            let turn = run_turn(reach, id, run, sizing, shift);
-            turns.lock().push((sizing.batch(read, shift), turn));
-            turn
-        }))
-    };
-    indexer.start(1);
-    indexer.enqueue(
-        Arc::new(HostRef(Arc::downgrade(&host))),
-        IndexId::Column(EntityType::Node, (label.clone(), attr.clone())),
-    );
-    wait_until("the build to end", || {
-        cursor(&host.mvcc.read(), EntityType::Node, &label, &attr).is_none()
-    });
-    indexer.stop_within(Duration::from_secs(10));
+            });
+        }
+        let read = host.mvcc.read().index_build_read(&id).unwrap_or(0);
+        let entities = sizing.batch(read, job.limit);
+        let step = job.step();
+        steps.push((entities, step));
+        if step == Step::Done {
+            break;
+        }
+        assert!(steps.len() < 100, "the build never ends");
+    }
 
-    let more = Turn::Committed { more: true };
+    let (more, too_large) = (Step::More, Step::TooLarge);
     assert_eq!(
-        *turns.lock(),
+        steps,
         [
             (2, more),
             (2, more),
             (4, more),
             (8, more),
             (16, more),
-            (32, Turn::TooLarge),
-            (16, Turn::TooLarge),
-            (8, Turn::TooLarge),
+            (32, too_large),
+            (16, too_large),
+            (8, too_large),
             (4, more),
-            (9, more),
-            (22, more),
-            (67, more),
-            (134, more),
-            (268, Turn::Committed { more: false }),
+            (8, more),
+            (16, more),
+            (32, more),
+            (64, more),
+            (128, more),
+            (256, Step::Done),
         ],
-        "doubling as the build reads, halving under writers down to what commits, and back"
+        "growing as the build reads, halving under writers down to what commits, and back"
     );
     let g = host.mvcc.read();
     assert_eq!(
@@ -3748,11 +3771,11 @@ fn a_chains_batches_shrink_under_writers_and_grow_back() {
 
 /// The builder end to end, as a host drives it. Registering a graph's host starts the build of the
 /// index its published version holds `Building` (a `CREATE INDEX` committed before any host was
-/// registered); a write that leaves it `Building` starts nothing more; a commit that creates
-/// another index starts that one. The pool then builds both to `Ready` while a writer keeps
-/// re-valuing nodes in both, and each ends as a one-pass build of the final data. The writer is
-/// writing before the pool starts, and the first batch to publish catches up on a write made while
-/// it read, so the builds run under writes however the threads are scheduled.
+/// registered), and a commit that creates another index starts that one. The pool builds both to
+/// `Ready` while a writer keeps re-valuing nodes in both, and each ends as a one-pass build of the
+/// final data. The writer is writing before either build starts, and the first batch to publish
+/// catches up on a write made while it read, so the builds run under writes however the threads
+/// are scheduled.
 ///
 /// The only test in this crate that uses the builder itself, which is one per process.
 #[test]
@@ -3767,19 +3790,6 @@ fn the_builder_finishes_what_registering_and_commits_start_under_sustained_write
             set_attr(g, id, &w, Value::Int(id as i64));
         }
     });
-    assert_eq!(online_build::pending(), 0);
-
-    host.mvcc
-        .set_build_host(Arc::new(HostRef(Arc::downgrade(&host))));
-    assert_eq!(online_build::pending(), 1, "registering started v");
-    host.write(|g| set_attr(g, ids[0], &v, Value::Int(-1)));
-    assert_eq!(
-        online_build::pending(),
-        1,
-        "a write that leaves v Building starts nothing"
-    );
-    host.write(|g| create_index_on(g, &label, &w));
-    assert_eq!(online_build::pending(), 2, "creating w started it");
 
     let built = || {
         let g = host.mvcc.read();
@@ -3827,12 +3837,15 @@ fn the_builder_finishes_what_registering_and_commits_start_under_sustained_write
             }
         }
         let _done = Done(&done);
-        // The pool starts once the writer is writing: on a busy machine a writer spawned after it
-        // may not write before both builds end.
+        // The builds start once the writer is writing: on a busy machine a writer spawned after
+        // them may not write before both end.
         wait_until("the writer's first write", || {
             writes.load(Ordering::SeqCst) > 0
         });
         online_build::start(2);
+        host.mvcc
+            .set_build_host(Arc::new(HostRef(Arc::downgrade(&host))));
+        host.write(|g| create_index_on(g, &label, &w));
         wait_until("both indexes to be built", built);
     });
     online_build::stop();

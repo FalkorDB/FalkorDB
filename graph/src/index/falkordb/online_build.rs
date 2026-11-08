@@ -1,43 +1,37 @@
-//! The background index builder: runs the indexer batches of every `Building` index, in every
-//! graph, on a pool of its own.
+//! The background index builder: builds every `Building` index, in every graph, in batches, on a
+//! pool of its own.
 //!
-//! An indexer batch reads the next entities of a `Building` index ([`Graph::indexer_prepare`]). The
-//! builder runs one chain of batches per index, each batch a turn on a worker of its own pool,
-//! which serves no queries, so no two batches ever run on one index, and the indexes of a graph, or
-//! of several, build side by side. A turn decides what comes next: its chain submits the index's
-//! next turn until the index is `Ready`. Nothing here knows about Redis: a host registers a
-//! [`BuildHost`] with each graph ([`MvccGraph::set_build_host`]), which is how the builder reads
-//! the graph and how it publishes as a writer does.
+//! A commit that brings in a `Building` index starts a [`Job`] for it ([`MvccGraph::commit`]), and
+//! so does registering a graph's host, for each index its published version holds `Building`: one
+//! a commit brought in before any host was registered ([`MvccGraph::set_build_host`]). A job builds
+//! one generation of one index ([`IndexEntry::generation`]): it runs one batch on the pool, and
+//! submits itself again while that generation is `Building`. An index dropped, or dropped and
+//! created again, is another generation, so its job ends, and the commit that created the new one
+//! started a job of its own. Each generation is started once, so no two jobs build one index.
+//! Nothing here knows about Redis: a job reaches its graph through a [`BuildHost`].
 //!
-//! **A turn holds no lock while it reads.** It takes its batch on a new build version of the
-//! published one ([`Graph::new_build_version`]), which only it holds, and then publishes through
-//! the host ([`MvccGraph::commit_indexer_batch`]). What committed meanwhile decides how the batch
-//! goes in; the rules writers and batches follow so that every published version stays correct, in
-//! whatever order they commit, are on [`BuildState`](super::versioned::BuildState). A batch's
-//! commit keeps the data version, so it never makes a writer's fork stale.
+//! **A batch holds no lock while it reads.** It reads on a new build version of the published one
+//! ([`Graph::new_build_version`]), which only it holds, and then publishes through the host
+//! ([`MvccGraph::commit_indexer_batch`]). What committed meanwhile decides how the batch goes in;
+//! the rules writers and batches follow so that every published version stays correct, in whatever
+//! order they commit, are on [`BuildState`](super::versioned::BuildState). A batch's commit keeps
+//! the data version, so it never makes a writer's fork stale.
 //!
-//! **When the builder runs.** A commit that brings in a `Building` index starts its chain
-//! ([`MvccGraph::commit`]): a `CREATE INDEX`, however it arrives, or an index dropped and created
-//! again. So does registering a graph's host, for every index its published version holds
-//! `Building`: one a commit brought in before any host was registered. A chain already running for
-//! the index takes one more turn when it would have ended, in case it ended on the index that was
-//! dropped.
+//! **Stopping.** Only the Redis shutdown handler stops the builder, and only where the server tears
+//! its modules down (`RS_GLOBAL_DTORS`: the sanitizer runs), and GraphBLAS is torn down next.
+//! [`stop`] waits for every batch still holding a graph version with no lock held, then a bounded
+//! time for the pool's workers: one may be waiting for the GIL, which the shutdown handler holds.
+//! A batch checks the builder is still running once it holds what publishing needs, so one that
+//! waited publishes nothing. The stop is for good.
 //!
-//! **Stopping.** [`stop`] waits a bounded time for the pool's workers, since a turn waiting for
-//! what its host needs to publish may be waiting on the caller (the Redis shutdown handler holds
-//! the GIL). A turn checks again that the builder is not stopping once it holds what publishing
-//! needs, so one that waited publishes nothing. Then `stop` waits, with no limit, for every turn
-//! still holding a version of a graph with no lock: each one ends, and the caller tears GraphBLAS
-//! down next. The builder starts once, and its stop is for good: the Redis module starts it as it
-//! loads, and stops it only in its shutdown handler.
+//! [`IndexEntry::generation`]: super::versioned::IndexEntry::generation
 
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use std::mem;
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::thread;
 use std::time::Duration;
+
+use parking_lot::{RwLock, RwLockReadGuard};
 
 use super::versioned::{Discarded, IndexId, IndexerCommit};
 use crate::graph::graph::Graph;
@@ -70,7 +64,7 @@ pub trait BuildHost: Send + Sync {
     }
 }
 
-/// How a chain sizes its batches ([`Sizing::batch`]).
+/// How a job sizes its batches ([`Sizing::batch`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Sizing {
     /// The fewest entities a batch reads.
@@ -78,7 +72,8 @@ pub(crate) struct Sizing {
     /// The most entities a batch reads.
     pub(crate) cap: usize,
     /// The most writers' changes a batch larger than `floor` catches up on at its commit, under
-    /// the host's locks ([`PreparedBatch::limit_catch_up`]).
+    /// the host's locks ([`PreparedBatch::limit_catch_up`]). A batch that would catch up on more
+    /// publishes nothing, and its job's next batch is half its size ([`Step::TooLarge`]).
     ///
     /// [`PreparedBatch::limit_catch_up`]: super::versioned::PreparedBatch::limit_catch_up
     pub(crate) catch_up_max: u64,
@@ -103,499 +98,278 @@ pub(crate) const SIZING: Sizing = Sizing {
 };
 
 impl Sizing {
-    /// How many entities the next batch of an index reads, when its batches have read `read` and
-    /// its chain halves them `shift` times ([`Chain::shift`]): `read` halved, between `floor` and
-    /// `cap`.
+    /// How many entities a batch reads, when its index's batches have read `read` and its job's
+    /// [`Job::limit`] is `limit`: `read`, between `floor` and `limit`.
     pub(crate) fn batch(
         self,
         read: u64,
-        shift: u32,
+        limit: usize,
     ) -> usize {
-        let size = usize::try_from(read.checked_shr(shift).unwrap_or(0)).unwrap_or(usize::MAX);
-        size.min(self.cap).max(self.floor)
+        usize::try_from(read)
+            .unwrap_or(usize::MAX)
+            .min(limit)
+            .max(self.floor)
     }
 }
 
-/// What one turn did.
+/// What a job's batch did, and so what the job does next ([`Job::step`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Turn {
-    /// The index was not `Building`: it was built, or dropped.
-    Idle,
-    /// The batch was published; `more` if the index is still `Building`.
-    Committed { more: bool },
-    /// The batch published nothing: its index was dropped or created again since the batch read
-    /// it, or another batch committed on it. `more` if the index, created again or not, is
-    /// `Building`: the next batch starts from its published cursor.
-    Discarded { more: bool },
+pub(crate) enum Step {
+    /// The batch was published, and the job's generation is still `Building`. The next batch may
+    /// be twice as large. Also when another batch on the index was published instead
+    /// ([`Discarded::AnotherBatch`]): a bug in the one job per generation, which leaves nothing
+    /// wrong.
+    More,
     /// The batch published nothing: writers changed more of its index while it was read than its
-    /// commit may catch up on ([`Sizing::catch_up_max`]). The index is still `Building`, and the
-    /// chain's next batch is half the size.
+    /// commit may catch up on ([`Sizing::catch_up_max`]). The next batch is half its size.
     TooLarge,
-    /// The host refused, or the builder is stopping.
-    Gone,
-    /// The batch panicked, or its version was refused. Under the Redis module a panic ends the
-    /// process (its panic hook exits), so there only a refused version comes back as this.
-    Failed,
+    /// The batch's version was refused, which only a bug makes happen. The job runs again after
+    /// [`FAILED_RETRY`].
+    Retry,
+    /// The job is over: its generation is `Ready`, dropped, or replaced by another, its graph is
+    /// gone, or the builder has stopped.
+    Done,
 }
 
-/// What an indexer's turns share with no lock held: whether it is stopping, and how many turns are
-/// queued and reading. One per indexer, which starts once and stops for good.
-pub(crate) struct Run {
-    /// Set by the stop: a turn not started gives up, and one started publishes nothing.
-    stopping: AtomicBool,
-    /// Turns submitted that have not started.
-    queued: AtomicUsize,
-    /// Turns holding a version of a graph with no lock held: from inside the read until the batch
-    /// is applied, and again while they free what they held. The stop waits for none to be left.
-    reading: AtomicUsize,
-}
-
-impl Run {
-    pub(crate) fn new() -> Self {
-        Self {
-            stopping: AtomicBool::new(false),
-            queued: AtomicUsize::new(0),
-            reading: AtomicUsize::new(0),
-        }
-    }
-
-    pub(crate) fn stopping(&self) -> bool {
-        self.stopping.load(Ordering::SeqCst)
-    }
-
-    /// Stop: a turn checks this before it reads and again once it holds what publishing needs.
-    pub(crate) fn stop(&self) {
-        self.stopping.store(true, Ordering::SeqCst);
-    }
-
-    /// Wait, with no limit, for every turn still holding a version with no lock held. Each one
-    /// ends: none waits on a lock while counted.
-    fn wait_for_readers(&self) {
-        while self.reading.load(Ordering::SeqCst) > 0 {
-            thread::sleep(Duration::from_millis(1));
-        }
-    }
-}
-
-/// A turn's place in [`Run::reading`], given up when dropped, however the turn ends.
-struct Reading<'a>(&'a Run);
-
-impl<'a> Reading<'a> {
-    /// `None`, counting nothing, once the run is stopping: the stop may already have seen no turn
-    /// left. Ordered against the stop flag (both `SeqCst`), so either the turn sees the flag or the
-    /// stop sees the turn.
-    fn enter(run: &'a Run) -> Option<Self> {
-        run.reading.fetch_add(1, Ordering::SeqCst);
-        let reading = Self(run);
-        (!run.stopping()).then_some(reading)
-    }
-}
-
-impl Drop for Reading<'_> {
-    fn drop(&mut self) {
-        self.0.reading.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-/// One turn of index `id` of the graph `host` reaches, in `run`: one indexer batch, published. It
-/// reads as many entities as `sizing` gives for what the index's batches have read and the chain's
-/// `shift` ([`Sizing::batch`]). A batch larger than the floor publishes nothing if its commit
-/// would catch up on more than `sizing.catch_up_max` of writers' changes ([`Turn::TooLarge`]).
-///
-/// The builder runs at most one turn per index at a time ([`Indexer`]). Two at once would still
-/// publish nothing wrong: the later commit finds the earlier batch on the index and publishes
-/// nothing ([`Discarded::AnotherBatch`]).
-pub(crate) fn run_turn(
-    host: &dyn BuildHost,
-    id: &IndexId,
-    run: &Run,
+/// Runs jobs on a pool of its own. The builder is one ([`start`], [`stop`], [`enqueue`]); tests
+/// make their own.
+pub(crate) struct Builder {
     sizing: Sizing,
-    shift: u32,
-) -> Turn {
-    // Declared first, so dropped last: on an early return, the versions this turn holds are
-    // freed while it is still counted, so GraphBLAS is not torn down under them.
-    let Some(reading) = Reading::enter(run) else {
-        return Turn::Gone;
-    };
-    let Some(published) = host.read() else {
-        return Turn::Gone;
-    };
-    let mut prepared = published.new_build_version();
-    drop(published);
-    let entities = sizing.batch(prepared.index_build_read(id).unwrap_or(0), shift);
-    let batch = prepared.indexer_prepare(id, entities);
-    let Some(mut batch) = batch else {
-        return Turn::Idle;
-    };
-    if run.stopping() {
-        return Turn::Gone;
-    }
-    // A batch at the floor catches up on whatever writers changed: none can be smaller.
-    if entities > sizing.floor {
-        batch.limit_catch_up(sizing.catch_up_max);
-    }
-    // Not counted while publishing: whoever stops the builder may hold what publishing needs (the
-    // Redis shutdown handler holds the GIL) while it waits for the turns reading.
-    drop(reading);
-
-    let mut turn = Turn::Gone;
-    // Held until the host has let go of what it holds, so that freeing the version the commit
-    // replaces, or what the batch built if it did not publish it, never happens under the host's
-    // locks. The commit takes `prepared`, and frees it there unless it publishes it as it is;
-    // `built` shares the index pages the batch made with it (a clone of an index copies no pages),
-    // so those are freed with `built`, after.
-    let built = prepared.falkordb_index.clone();
-    let mut prepared = Some(prepared);
-    let mut replaced = None;
-    let reached = host.publish(&mut |mvcc| {
-        // Again, now that the host holds what publishing needs: a turn that waited for it while
-        // the builder stopped publishes nothing.
-        if run.stopping() {
-            return;
-        }
-        let Some(prepared) = prepared.take() else {
-            return;
-        };
-        replaced = Some(mvcc.read());
-        turn = match mvcc.commit_indexer_batch(prepared, &batch) {
-            Ok(IndexerCommit::Same | IndexerCommit::Swap | IndexerCommit::CatchUp(_)) => {
-                Turn::Committed {
-                    more: mvcc.read().index_build_read(id).is_some(),
-                }
-            }
-            Ok(IndexerCommit::Discarded(Discarded::CatchUpTooLarge)) => Turn::TooLarge,
-            Ok(IndexerCommit::Discarded(_)) => Turn::Discarded {
-                more: mvcc.read().index_build_read(id).is_some(),
-            },
-            // Validation refused the version, or another was published while this commit ran,
-            // which only a host publishing without its global lock allows. Retried.
-            Err(e) => {
-                host.warn(&format!(
-                    "native index: an indexer batch of {id:?} was not published ({e}); it will be \
-                     retried"
-                ));
-                Turn::Failed
-            }
-        };
-    });
-    // The versions this turn still holds are freed counted again, or, once the builder is
-    // stopping, left to the exiting process: GraphBLAS may be torn down by then.
-    match Reading::enter(run) {
-        Some(_reading) => {
-            drop(replaced);
-            drop(built);
-            drop(prepared);
-        }
-        None => {
-            std::mem::forget(replaced);
-            std::mem::forget(built);
-            std::mem::forget(prepared);
-        }
-    }
-    if reached { turn } else { Turn::Gone }
+    pool: OnceLock<ThreadPool>,
+    /// `false` once stopped, after which GraphBLAS may be torn down. A batch holds it read while it
+    /// holds a graph version with no lock held, so the stop, which takes it to write, waits for
+    /// those batches.
+    running: RwLock<bool>,
 }
 
-// ---- Running the turns ----
-
-/// A turn as an [`Indexer`] runs it, given its chain's [`Chain::shift`]: [`run_turn`] for the
-/// builder; a stand-in in the tests of how turns are scheduled.
-type TurnFn = dyn Fn(&dyn BuildHost, &IndexId, &Run, u32) -> Turn + Send + Sync;
-
-/// An index's chain of turns: the graph, by its host, and the index. It builds whatever `Building`
-/// index the graph has under that name, so an index dropped and created again while its chain runs
-/// is built by the same chain, never by a second one.
-struct Chain {
-    host: Arc<dyn BuildHost>,
-    id: IndexId,
-    /// How many times the chain halves its batches ([`Sizing::batch`]): one more after each turn
-    /// writers made too large to commit ([`Turn::TooLarge`]), one fewer after each that committed.
-    /// A chain starts it at 0.
-    shift: u32,
-}
-
-/// Which index of which graph a [`Chain`] builds: its host's address, which the chain keeps alive,
-/// so no other host can take it while the chain is known, and the index.
-type ChainId = (usize, IndexId);
-
-fn chain_id(
-    host: &Arc<dyn BuildHost>,
-    id: &IndexId,
-) -> ChainId {
-    (Arc::as_ptr(host).cast::<()>() as usize, id.clone())
-}
-
-/// A chain the indexer knows: its host, and whether a commit created its index again while a turn
-/// ran, in which case the chain takes one more turn when it would have ended.
-struct Known {
-    host: Arc<dyn BuildHost>,
-    again: bool,
-}
-
-/// Runs the turns of every index being built, on a pool of its own: one chain of turns per index,
-/// so at most one turn per index at a time, and the indexes side by side. The builder is one of
-/// these ([`start`], [`stop`], [`enqueue`]); tests make their own.
-pub(crate) struct Indexer {
-    state: Mutex<IndexerState>,
-    turn: Box<TurnFn>,
-    run: Run,
-}
-
-struct IndexerState {
-    pool: Pool,
-    /// Every chain not ended: waiting for the start, queued or running while the indexer runs, and
-    /// as the stop left it after.
-    chains: HashMap<ChainId, Known>,
-}
-
-/// An indexer's pool, which starts once and stops for good.
-enum Pool {
-    /// Chains wait for the start.
-    NotStarted,
-    Running(Arc<ThreadPool>),
-    /// Chains are left as the stop found them.
-    Stopped,
-}
-
-impl Indexer {
-    pub(crate) fn new(turn: Box<TurnFn>) -> Arc<Self> {
+impl Builder {
+    pub(crate) fn new(sizing: Sizing) -> Arc<Self> {
         Arc::new(Self {
-            state: Mutex::new(IndexerState {
-                pool: Pool::NotStarted,
-                chains: HashMap::new(),
-            }),
-            turn,
-            run: Run::new(),
+            sizing,
+            pool: OnceLock::new(),
+            running: RwLock::new(true),
         })
     }
 
-    fn state(&self) -> MutexGuard<'_, IndexerState> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// Start the pool with `threads` workers (at least one), and submit every chain started before
-    /// it. Once only: a start while the pool runs, or after its stop, does nothing.
+    /// Start the pool with `threads` workers (at least one). Once: a later start does nothing, and
+    /// a start after the stop runs nothing.
     pub(crate) fn start(
-        self: &Arc<Self>,
+        &self,
         threads: usize,
     ) {
-        let mut state = self.state();
-        if !matches!(state.pool, Pool::NotStarted) {
-            return;
-        }
-        let pool = Arc::new(ThreadPool::named(threads.max(1), "falkordb-index-build"));
-        let chains: Vec<Chain> = state
-            .chains
-            .iter_mut()
-            .map(|((_, id), known)| {
-                known.again = false;
-                Chain {
-                    host: Arc::clone(&known.host),
-                    id: id.clone(),
-                    shift: 0,
-                }
-            })
-            .collect();
-        state.pool = Pool::Running(Arc::clone(&pool));
-        drop(state);
-        for chain in chains {
-            self.spawn(&pool, chain);
-        }
+        self.pool
+            .get_or_init(|| ThreadPool::named(threads.max(1), "falkordb-index-build"));
     }
 
-    /// Stop the pool, for good, waiting up to `wait` for its workers
-    /// ([`ThreadPool::shutdown_within`]); a worker still running a turn then is left behind, and
-    /// its turn publishes nothing. Then wait, with no limit, for every turn still holding a version
-    /// with no lock held. The chains not ended are left as they are.
+    /// Stop, for good. Waits, with no limit, for every batch still holding a graph version with no
+    /// lock held: none waits on a lock meanwhile. Then waits up to `wait` for the pool's workers
+    /// ([`ThreadPool::shutdown_within`]): one waiting for what its host needs to publish may be
+    /// waiting on the caller, and is left behind.
     pub(crate) fn stop_within(
         &self,
         wait: Duration,
     ) {
-        let pool = match std::mem::replace(&mut self.state().pool, Pool::Stopped) {
-            Pool::Running(pool) => pool,
-            Pool::NotStarted | Pool::Stopped => return,
-        };
-        self.run.stop();
-        pool.shutdown_within(wait);
-        self.run.wait_for_readers();
-    }
-
-    /// Chains waiting for a turn: queued on the pool while it runs; before the start and after the
-    /// stop, every chain not ended.
-    pub(crate) fn pending(&self) -> usize {
-        let state = self.state();
-        match state.pool {
-            Pool::Running(_) => self.run.queued.load(Ordering::SeqCst),
-            Pool::NotStarted | Pool::Stopped => state.chains.len(),
+        *self.running.write() = false;
+        if let Some(pool) = self.pool.get() {
+            pool.shutdown_within(wait);
         }
     }
 
-    /// Start the chain of index `id` of `host`'s graph, or, if the index has one, have that chain
-    /// take one more turn when it would end. Never blocks for long: the builder's is called from
-    /// [`MvccGraph::commit`], under the host's global lock.
+    /// Start the job that builds generation `generation` of index `id` of `host`'s graph. Never
+    /// blocks: the builder's is called from [`MvccGraph::commit`], under the host's global lock.
     pub(crate) fn enqueue(
         self: &Arc<Self>,
         host: Arc<dyn BuildHost>,
         id: IndexId,
+        generation: u64,
     ) {
-        let mut state = self.state();
-        match state.chains.entry(chain_id(&host, &id)) {
-            Entry::Occupied(mut known) => {
-                known.get_mut().again = true;
+        self.submit(Job::new(Arc::clone(self), host, id, generation));
+    }
+
+    /// Run `job`'s next batch on the pool. The module starts the builder as it loads, before any
+    /// graph exists, so a job always finds the pool.
+    fn submit(
+        &self,
+        job: Job,
+    ) {
+        debug_assert!(
+            self.pool.get().is_some(),
+            "a job was submitted before the builder started"
+        );
+        if let Some(pool) = self.pool.get() {
+            pool.spawn(move || job.run(), None);
+        }
+    }
+
+    /// What a batch holds while it holds a graph version with no lock held: `None` once stopped.
+    fn running(&self) -> Option<RwLockReadGuard<'_, bool>> {
+        let running = self.running.read();
+        (*running).then_some(running)
+    }
+}
+
+/// The build of one generation of one index: one batch at a time on its builder's pool, until that
+/// generation is `Ready` or gone.
+pub(crate) struct Job {
+    builder: Arc<Builder>,
+    host: Arc<dyn BuildHost>,
+    id: IndexId,
+    generation: u64,
+    /// The most entities the next batch reads: the cap at first, half the size of a batch writers
+    /// made too large to commit, and twice as many after each batch that published, up to the cap.
+    pub(crate) limit: usize,
+}
+
+impl Job {
+    pub(crate) fn new(
+        builder: Arc<Builder>,
+        host: Arc<dyn BuildHost>,
+        id: IndexId,
+        generation: u64,
+    ) -> Self {
+        let limit = builder.sizing.cap;
+        Self {
+            builder,
+            host,
+            id,
+            generation,
+            limit,
+        }
+    }
+
+    /// One batch, on a worker of the pool, then the job submits itself again unless it is done.
+    fn run(mut self) {
+        let step = self.step();
+        if step == Step::Done {
+            return;
+        }
+        if step == Step::Retry {
+            // Only after a bug: holding this worker for it costs nothing that matters.
+            thread::sleep(FAILED_RETRY);
+        }
+        let builder = Arc::clone(&self.builder);
+        builder.submit(self);
+    }
+
+    /// One batch of the job's index, published: as many entities as the index's batches have read,
+    /// between the floor and [`Self::limit`] ([`Sizing::batch`]), which the batch then moves. A
+    /// batch larger than the floor publishes nothing if its commit would catch up on more than
+    /// [`Sizing::catch_up_max`] of writers' changes ([`Step::TooLarge`]).
+    pub(crate) fn step(&mut self) -> Step {
+        let sizing = self.builder.sizing;
+        // Declared first, so dropped last: on an early return, the versions this batch holds are
+        // freed while it still holds this, so GraphBLAS is not torn down under them.
+        let Some(running) = self.builder.running() else {
+            return Step::Done;
+        };
+        let Some(published) = self.host.read() else {
+            return Step::Done;
+        };
+        let mut prepared = published.new_build_version();
+        drop(published);
+        if prepared.index_build_generation(&self.id) != Some(self.generation) {
+            return Step::Done;
+        }
+        let read = prepared.index_build_read(&self.id).unwrap_or(0);
+        let entities = sizing.batch(read, self.limit);
+        let Some(mut batch) = prepared.indexer_prepare(&self.id, entities) else {
+            return Step::Done;
+        };
+        // A batch at the floor catches up on whatever writers changed: none can be smaller.
+        if entities > sizing.floor {
+            batch.limit_catch_up(sizing.catch_up_max);
+        }
+        // Not held while publishing: the Redis shutdown handler stops the builder holding the GIL.
+        drop(running);
+
+        let mut step = Step::Done;
+        // Held until the host has let go of what it holds, so that freeing the version the commit
+        // replaces, or what the batch built if it did not publish it, never happens under the
+        // host's locks. The commit takes `prepared`, and frees it there unless it publishes it as
+        // it is; `built` shares the index pages the batch made with it (a clone of an index copies
+        // no pages), so those are freed with `built`, after.
+        let built = prepared.falkordb_index.clone();
+        let mut prepared = Some(prepared);
+        let mut replaced = None;
+        let (builder, host, id, generation) =
+            (&self.builder, &self.host, &self.id, self.generation);
+        host.publish(&mut |mvcc| {
+            // Again, now that the host holds what publishing needs: a batch that waited for it
+            // while the builder stopped publishes nothing.
+            if builder.running().is_none() {
                 return;
             }
-            Entry::Vacant(new) => {
-                new.insert(Known {
-                    host: Arc::clone(&host),
-                    again: false,
-                });
+            let Some(prepared) = prepared.take() else {
+                return;
+            };
+            replaced = Some(mvcc.read());
+            step = match mvcc.commit_indexer_batch(prepared, &batch) {
+                Ok(IndexerCommit::Discarded(Discarded::CatchUpTooLarge)) => Step::TooLarge,
+                Ok(_) if mvcc.read().index_build_generation(id) == Some(generation) => Step::More,
+                Ok(_) => Step::Done,
+                // Validation refused the version, or another was published while this commit ran,
+                // which only a host publishing without its global lock allows.
+                Err(e) => {
+                    host.warn(&format!(
+                        "native index: an indexer batch of {id:?} was not published ({e}); it \
+                         will be retried"
+                    ));
+                    Step::Retry
+                }
+            };
+        });
+        // The versions this batch still holds are freed holding `running` again, or, once the
+        // builder has stopped, left to the exiting process: GraphBLAS may be torn down by then.
+        match self.builder.running() {
+            Some(_running) => {
+                drop(replaced);
+                drop(built);
+                drop(prepared);
+            }
+            None => {
+                mem::forget(replaced);
+                mem::forget(built);
+                mem::forget(prepared);
             }
         }
-        // Before the start, the chain waits for it; after the stop, it is left as it is.
-        let Pool::Running(pool) = &state.pool else {
-            return;
+        self.limit = match step {
+            Step::More => self.limit.saturating_mul(2).min(sizing.cap),
+            Step::TooLarge => (entities / 2).max(sizing.floor),
+            Step::Retry | Step::Done => self.limit,
         };
-        let pool = Arc::clone(pool);
-        drop(state);
-        self.spawn(&pool, Chain { host, id, shift: 0 });
-    }
-
-    /// Submit `chain`'s next turn to `pool`.
-    fn spawn(
-        self: &Arc<Self>,
-        pool: &ThreadPool,
-        chain: Chain,
-    ) {
-        self.run.queued.fetch_add(1, Ordering::SeqCst);
-        let indexer = Arc::clone(self);
-        pool.spawn(move || indexer.take_turn(chain), None);
-    }
-
-    /// One turn of `chain`'s index, on a worker of the pool, then the decision on its next one.
-    fn take_turn(
-        self: &Arc<Self>,
-        mut chain: Chain,
-    ) {
-        self.run.queued.fetch_sub(1, Ordering::SeqCst);
-        if self.run.stopping() {
-            return;
-        }
-        // A panic in a turn is caught here only where no panic hook ends the process first, which
-        // the Redis module's does.
-        let turn = catch_unwind(AssertUnwindSafe(|| {
-            (self.turn)(chain.host.as_ref(), &chain.id, &self.run, chain.shift)
-        }))
-        .unwrap_or_else(|_| {
-            chain.host.warn(&format!(
-                "native index: an indexer batch of {:?} panicked; it will be retried",
-                chain.id
-            ));
-            Turn::Failed
-        });
-        chain.shift = match turn {
-            Turn::TooLarge => (chain.shift + 1).min(u64::BITS),
-            Turn::Committed { .. } => chain.shift.saturating_sub(1),
-            _ => chain.shift,
-        };
-        let next = next_turn(&turn);
-        if let Some(wait) = next
-            && !wait.is_zero()
-        {
-            // Only after a failure, which is a bug: holding this worker for it costs nothing that
-            // matters.
-            thread::sleep(wait);
-        }
-        self.after_turn(chain, next.is_some());
-    }
-
-    /// Submit `chain`'s next turn if `more`, or if a commit created its index again while this turn
-    /// ran; otherwise end the chain, and the next commit that creates its index starts a new one.
-    /// Nothing once the indexer is stopped: its chains are left as they are.
-    fn after_turn(
-        self: &Arc<Self>,
-        chain: Chain,
-        more: bool,
-    ) {
-        let mut state = self.state();
-        let Pool::Running(pool) = &state.pool else {
-            return;
-        };
-        let pool = Arc::clone(pool);
-        let id = chain_id(&chain.host, &chain.id);
-        let go = more
-            || match state.chains.get_mut(&id) {
-                Some(known) if known.again => {
-                    known.again = false;
-                    true
-                }
-                Some(_) => {
-                    state.chains.remove(&id);
-                    false
-                }
-                None => false,
-            };
-        drop(state);
-        if go {
-            self.spawn(&pool, chain);
-        }
+        step
     }
 }
 
-/// How long to wait before an index's next turn, after a turn that went `turn`; `None` when the
-/// index is done, and a commit that creates it again starts it again.
-fn next_turn(turn: &Turn) -> Option<Duration> {
-    match turn {
-        Turn::Committed { more: true } | Turn::Discarded { more: true } | Turn::TooLarge => {
-            Some(Duration::ZERO)
-        }
-        Turn::Failed => Some(FAILED_RETRY),
-        Turn::Committed { more: false }
-        | Turn::Discarded { more: false }
-        | Turn::Idle
-        | Turn::Gone => None,
-    }
-}
-
-/// How long an index waits before retrying after a turn failed: its batch panicked, or its version
-/// was refused.
+/// How long a job waits before running again after a batch whose version was refused.
 const FAILED_RETRY: Duration = Duration::from_secs(1);
 
 /// How long [`stop`] waits for the builder's workers.
 const STOP_WAIT: Duration = Duration::from_secs(2);
 
-/// The builder: the indexer every graph's commits start chains on.
-static BUILDER: LazyLock<Arc<Indexer>> = LazyLock::new(|| {
-    Indexer::new(Box::new(|host, id, run, shift| {
-        run_turn(host, id, run, SIZING, shift)
-    }))
-});
+/// The builder: the one every graph's commits start jobs on.
+static BUILDER: LazyLock<Arc<Builder>> = LazyLock::new(|| Builder::new(SIZING));
 
-/// Start the builder's pool with `threads` workers (at least one), and submit every chain not
-/// ended. Idempotent while it runs.
+/// Start the builder's pool with `threads` workers (at least one). The module calls it as it
+/// loads, before any graph exists.
 pub fn start(threads: usize) {
     BUILDER.start(threads);
 }
 
-/// Stop the builder. Its pool's workers get [`STOP_WAIT`]: one waiting for what its host needs to
-/// publish may be waiting on the caller (the Redis shutdown handler calls this holding the GIL),
-/// so it is left behind, and publishes nothing once it gets that. Then waits, with no limit, for
-/// every turn still holding a version of a graph with no lock held, since the caller tears
-/// GraphBLAS down next.
+/// Stop the builder, for good ([`Builder::stop_within`]): its workers get [`STOP_WAIT`], since the
+/// Redis shutdown handler calls this holding the GIL.
 pub fn stop() {
     BUILDER.stop_within(STOP_WAIT);
 }
 
-/// Chains waiting for a turn. For tests.
-#[must_use]
-pub fn pending() -> usize {
-    BUILDER.pending()
-}
-
-/// Start the build of index `id` of `host`'s graph ([`Indexer::enqueue`]).
+/// Start the build of generation `generation` of index `id` of `host`'s graph
+/// ([`Builder::enqueue`]).
 pub(crate) fn enqueue(
     host: Arc<dyn BuildHost>,
     id: IndexId,
+    generation: u64,
 ) {
-    BUILDER.enqueue(host, id);
+    BUILDER.enqueue(host, id, generation);
 }
 
 #[cfg(test)]
@@ -612,80 +386,48 @@ impl Sizing {
 }
 
 #[cfg(test)]
-impl Indexer {
-    /// Whether every chain has ended.
-    fn idle(&self) -> bool {
-        self.state().chains.is_empty()
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-    use std::sync::mpsc;
-    use std::time::Instant;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
     use crate::entity_type::EntityType;
 
-    /// A batch reads what its index's batches have read, halved once per shift, between the floor
-    /// and the cap. A fixed sizing reads its size whatever the count.
+    /// A batch reads what its index's batches have read, between the floor and its job's limit.
+    /// A fixed sizing reads its size whatever the count.
     #[test]
-    fn a_batch_reads_what_its_index_has_read_between_the_floor_and_the_cap() {
+    fn a_batch_reads_what_its_index_has_read_between_the_floor_and_its_limit() {
         let sizing = Sizing {
             floor: 10,
             cap: 1_000,
             catch_up_max: 0,
         };
-        for (read, shift, batch) in [
-            (0, 0, 10),
-            (9, 0, 10),
-            (400, 0, 400),
-            (400, 1, 200),
-            (400, 5, 12),
-            (400, 6, 10),
-            (5_000, 0, 1_000),
-            (5_000, 2, 1_000),
-            (5_000, 3, 625),
-            (u64::MAX, u64::BITS, 10),
+        for (read, limit, batch) in [
+            (0, 1_000, 10),
+            (9, 1_000, 10),
+            (400, 1_000, 400),
+            (400, 200, 200),
+            (400, 10, 10),
+            (5_000, 1_000, 1_000),
+            (5_000, 500, 500),
+            (u64::MAX, 1_000, 1_000),
         ] {
             assert_eq!(
-                sizing.batch(read, shift),
+                sizing.batch(read, limit),
                 batch,
-                "{read} read, shift {shift}"
+                "{read} read, limit {limit}"
             );
         }
-        assert_eq!(Sizing::fixed(7).batch(5_000, 0), 7);
-        assert_eq!(Sizing::fixed(7).batch(0, 0), 7);
+        assert_eq!(Sizing::fixed(7).batch(5_000, 7), 7);
+        assert_eq!(Sizing::fixed(7).batch(0, 7), 7);
     }
 
-    /// After a turn that published or discarded its batch with more to build, the next one runs
-    /// right away; after a failed one, a second later; after any other, there is none.
-    #[test]
-    fn a_turn_decides_when_the_next_one_runs() {
-        for more in [
-            Turn::Committed { more: true },
-            Turn::Discarded { more: true },
-            Turn::TooLarge,
-        ] {
-            assert_eq!(next_turn(&more), Some(Duration::ZERO), "{more:?}");
-        }
-        assert_eq!(next_turn(&Turn::Failed), Some(FAILED_RETRY));
-        for done in [
-            Turn::Committed { more: false },
-            Turn::Discarded { more: false },
-            Turn::Idle,
-            Turn::Gone,
-        ] {
-            assert_eq!(next_turn(&done), None, "{done:?}");
-        }
-    }
+    /// A host that counts the times a batch reads its graph, which it never has.
+    #[derive(Default)]
+    struct Counted(AtomicUsize);
 
-    /// A graph for the stand-in turns, which never reach it.
-    struct NoGraph;
-
-    impl BuildHost for NoGraph {
+    impl BuildHost for Counted {
         fn read(&self) -> Option<Arc<Graph>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
             None
         }
 
@@ -697,240 +439,32 @@ mod tests {
         }
     }
 
-    /// A stand-in turn's chain, as the turn sees it: its graph's address and the index.
-    fn chain_of(
-        host: &dyn BuildHost,
-        id: &IndexId,
-    ) -> ChainId {
-        (std::ptr::from_ref(host).cast::<()>() as usize, id.clone())
-    }
-
-    fn column(
-        entity: EntityType,
-        attr: &str,
-    ) -> IndexId {
-        IndexId::Column(
-            entity,
-            (Arc::new("L".to_string()), Arc::new(attr.to_string())),
-        )
-    }
-
-    fn wait_until(
-        what: &str,
-        mut done: impl FnMut() -> bool,
-    ) {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while !done() {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            thread::sleep(Duration::from_millis(1));
-        }
-    }
-
-    /// What the stand-in turns of [`one_turn_per_index_at_a_time_and_indexes_side_by_side`] saw.
-    #[derive(Default)]
-    struct Seen {
-        /// Turns running now, per chain and in all.
-        running: HashMap<ChainId, usize>,
-        running_all: usize,
-        /// The most turns ever running at once on one chain, and in all.
-        most_on_a_chain: usize,
-        most_at_once: usize,
-        /// Turns taken, per chain.
-        turns: HashMap<ChainId, usize>,
-    }
-
-    /// With more workers than indexes, and every index's build started again and again while it
-    /// runs, as commits that create an index anew do, no index ever has two turns at once, several
-    /// indexes do run at once, and every index gets all its turns. The turns are stand-ins that
-    /// only record what runs, so this checks the indexer alone: the one thing that keeps two turns
-    /// off one index.
+    /// A stop is for good: a job started after it, or run by hand, never reads its graph, and a
+    /// start after it runs nothing.
     #[test]
-    fn one_turn_per_index_at_a_time_and_indexes_side_by_side() {
-        const TURNS: usize = 30;
-        let seen = Arc::new(Mutex::new(Seen::default()));
-        let in_turn = Arc::clone(&seen);
-        let indexer = Indexer::new(Box::new(move |host, id, _, _| {
-            let chain = chain_of(host, id);
-            {
-                let mut seen = in_turn.lock().unwrap();
-                let running = seen.running.entry(chain.clone()).or_default();
-                *running += 1;
-                let running = *running;
-                seen.running_all += 1;
-                seen.most_on_a_chain = seen.most_on_a_chain.max(running);
-                seen.most_at_once = seen.most_at_once.max(seen.running_all);
-            }
-            thread::sleep(Duration::from_micros(300));
-            let mut seen = in_turn.lock().unwrap();
-            *seen.running.get_mut(&chain).unwrap() -= 1;
-            seen.running_all -= 1;
-            let turns = seen.turns.entry(chain).or_default();
-            *turns += 1;
-            Turn::Committed {
-                more: *turns < TURNS,
-            }
-        }));
-        let hosts: Vec<Arc<dyn BuildHost>> = (0..3)
-            .map(|_| Arc::new(NoGraph) as Arc<dyn BuildHost>)
-            .collect();
-        let ids = [
-            column(EntityType::Node, "a"),
-            column(EntityType::Node, "b"),
-            column(EntityType::Relationship, "a"),
-        ];
-        indexer.start(8);
-        thread::scope(|scope| {
-            for _ in 0..4 {
-                scope.spawn(|| {
-                    for _ in 0..40 {
-                        for host in &hosts {
-                            for id in &ids {
-                                indexer.enqueue(Arc::clone(host), id.clone());
-                            }
-                        }
-                        thread::sleep(Duration::from_micros(200));
-                    }
-                });
-            }
-        });
-        wait_until("every chain to end", || indexer.idle());
-        indexer.stop_within(STOP_WAIT);
-
-        let seen = seen.lock().unwrap();
-        assert_eq!(seen.most_on_a_chain, 1, "two turns on one index at once");
-        assert!(seen.most_at_once > 1, "the indexes never ran side by side");
-        let all: HashSet<&ChainId> = seen.turns.keys().collect();
-        assert_eq!(all.len(), hosts.len() * ids.len(), "an index never ran");
-        assert!(
-            seen.turns.values().all(|&turns| turns >= TURNS),
-            "an index stopped short: {:?}",
-            seen.turns.values().collect::<Vec<_>>()
+    fn a_stopped_builder_runs_nothing() {
+        let builder = Builder::new(Sizing::fixed(1));
+        builder.start(1);
+        builder.stop_within(STOP_WAIT);
+        let host = Arc::new(Counted::default());
+        let id = IndexId::Column(
+            EntityType::Node,
+            (Arc::new("L".to_string()), Arc::new("v".to_string())),
         );
-    }
-
-    /// A host for a turn that panics: it only keeps what the builder reports through it.
-    #[derive(Default)]
-    struct Reports(Mutex<Vec<String>>);
-
-    impl BuildHost for Reports {
-        fn read(&self) -> Option<Arc<Graph>> {
-            None
-        }
-
-        fn publish(
-            &self,
-            _: &mut dyn FnMut(&MvccGraph),
-        ) -> bool {
-            false
-        }
-
-        fn warn(
-            &self,
-            message: &str,
-        ) {
-            self.0.lock().unwrap().push(message.to_string());
-        }
-    }
-
-    /// A turn that panics is reported through its graph's host, and its index gets another turn
-    /// once the retry wait has passed.
-    #[test]
-    fn a_turn_that_panics_is_reported_through_its_host_and_retried() {
-        let turns = Arc::new(AtomicUsize::new(0));
-        let counted = Arc::clone(&turns);
-        let indexer = Indexer::new(Box::new(move |_, _, _, _| {
-            assert_ne!(
-                counted.fetch_add(1, Ordering::SeqCst),
-                0,
-                "the first turn panics"
-            );
-            Turn::Idle
-        }));
-        let reports = Arc::new(Reports::default());
-        indexer.start(1);
-        indexer.enqueue(
-            Arc::clone(&reports) as Arc<dyn BuildHost>,
-            column(EntityType::Node, "a"),
+        let mut job = Job::new(
+            Arc::clone(&builder),
+            Arc::clone(&host) as Arc<dyn BuildHost>,
+            id.clone(),
+            0,
         );
-        wait_until("the retried turn", || turns.load(Ordering::SeqCst) == 2);
-        wait_until("the chain to end", || indexer.idle());
-        indexer.stop_within(STOP_WAIT);
-        let reports = reports.0.lock().unwrap();
-        assert_eq!(reports.len(), 1, "{reports:?}");
-        assert!(reports[0].contains("panicked"), "{reports:?}");
-    }
-
-    /// An index created again while its chain's last turn runs (the turn finds it done, and the
-    /// commit that creates it again finds the chain still there) is built: the chain takes one more
-    /// turn instead of ending.
-    #[test]
-    fn an_index_created_again_as_its_chain_ends_is_built() {
-        let (in_turn, wait_in_turn) = mpsc::channel::<()>();
-        let (go, wait_go) = mpsc::channel::<()>();
-        let wait_go = Mutex::new(wait_go);
-        let turns = Arc::new(AtomicUsize::new(0));
-        let counted = Arc::clone(&turns);
-        let indexer = Indexer::new(Box::new(move |_, _, _, _| {
-            if counted.fetch_add(1, Ordering::Relaxed) == 0 {
-                in_turn.send(()).unwrap();
-                wait_go.lock().unwrap().recv().unwrap();
-            }
-            Turn::Idle
-        }));
-        let host: Arc<dyn BuildHost> = Arc::new(NoGraph);
-        indexer.start(2);
-        indexer.enqueue(Arc::clone(&host), column(EntityType::Node, "a"));
-        wait_in_turn.recv().unwrap();
-        indexer.enqueue(Arc::clone(&host), column(EntityType::Node, "a"));
-        go.send(()).unwrap();
-        wait_until("the chain to end", || indexer.idle());
-        indexer.stop_within(STOP_WAIT);
-        assert_eq!(turns.load(Ordering::Relaxed), 2, "one more turn");
-    }
-
-    /// A chain started before the pool waits for it. A stop is for good: the turn running then
-    /// ends seeing it, the turn queued behind it never runs, both chains are left as they were, and
-    /// a start after the stop runs nothing.
-    #[test]
-    fn a_chain_waits_for_the_pool_and_a_stop_is_for_good() {
-        let (a, b) = (column(EntityType::Node, "a"), column(EntityType::Node, "b"));
-        let (in_turn, wait_in_turn) = mpsc::channel::<()>();
-        let (go, wait_go) = mpsc::channel::<()>();
-        let wait_go = Mutex::new(wait_go);
-        let seen: Arc<Mutex<Vec<(IndexId, bool)>>> = Arc::default();
-        let in_seen = Arc::clone(&seen);
-        let indexer = Indexer::new(Box::new(move |_, id, run, _| {
-            // The second turn holds the pool's only worker until the test lets it go.
-            if in_seen.lock().unwrap().len() == 1 {
-                in_turn.send(()).unwrap();
-                wait_go.lock().unwrap().recv().unwrap();
-            }
-            in_seen.lock().unwrap().push((id.clone(), run.stopping()));
-            Turn::Idle
-        }));
-        let host: Arc<dyn BuildHost> = Arc::new(NoGraph);
-        indexer.enqueue(Arc::clone(&host), a.clone());
-        assert_eq!(indexer.pending(), 1, "waits for the pool");
-        indexer.start(1);
-        wait_until("a's first chain to end", || indexer.idle());
-
-        indexer.enqueue(Arc::clone(&host), a.clone());
-        wait_in_turn.recv().unwrap();
-        indexer.enqueue(Arc::clone(&host), b.clone());
-        assert_eq!(indexer.pending(), 1, "b's turn is queued behind a's");
-        thread::scope(|scope| {
-            scope.spawn(|| indexer.stop_within(Duration::from_millis(20)));
-            thread::sleep(Duration::from_millis(100));
-            go.send(()).unwrap();
-        });
-        thread::sleep(Duration::from_millis(100));
-        indexer.start(1);
+        assert_eq!(job.step(), Step::Done);
+        builder.start(1);
+        builder.enqueue(Arc::clone(&host) as Arc<dyn BuildHost>, id, 0);
         thread::sleep(Duration::from_millis(100));
         assert_eq!(
-            *seen.lock().unwrap(),
-            [(a.clone(), false), (a.clone(), true)],
-            "a's held turn ends after the stop; b's queued turn, and any after the stop, never run"
+            host.0.load(Ordering::SeqCst),
+            0,
+            "a stopped builder read a graph"
         );
-        assert_eq!(indexer.pending(), 2, "both chains are left as they were");
     }
 }
