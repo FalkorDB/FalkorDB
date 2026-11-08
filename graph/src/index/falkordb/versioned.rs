@@ -805,21 +805,6 @@ impl Graph {
         }
     }
 
-    /// Every index this version holds `Building`, with its generation: what registering a graph
-    /// with the builder starts.
-    pub(crate) fn building_indexes(&self) -> Vec<(IndexId, u64)> {
-        self.falkordb_index
-            .column_names()
-            .into_iter()
-            .filter_map(|name| {
-                let generation = IndexColumn::entry(&self.falkordb_index, &name)
-                    .filter(|entry| entry.is_building())?
-                    .generation;
-                Some((IndexId::Column(name.0, name.1), generation))
-            })
-            .collect()
-    }
-
     /// The indexes this version holds `Building` that `older` does not hold as the same index,
     /// with their generations: created since, or dropped and created again. What a commit hands
     /// the builder, so each build starts once, however many commits it spans. Every writer's commit

@@ -971,9 +971,9 @@ class testIndexCreationFlow():
     # CREATE INDEX as the first query on a key that does not exist creates the
     # graph, and commits the index before the graph is registered under its
     # key. An index the engine builds in the background must still be built:
-    # registering the graph starts the build of every index it holds under
-    # construction. Each test waits a bounded time, so an index left under
-    # construction fails it rather than hanging it.
+    # its commit starts the build, whether or not the key holds the graph yet.
+    # Each test waits a bounded time, so an index left under construction
+    # fails it rather than hanging it.
     def _assert_index_serves(self, graph):
         graph.query("UNWIND range(1, 100) AS x CREATE (:L {v:x})")
         q = "MATCH (n:L) WHERE n.v = 42 RETURN n.v"
@@ -1019,3 +1019,24 @@ class testIndexCreationFlow():
             graph.delete()
         finally:
             self.conn.config_set("appendonly", "no")
+
+    def test22_create_index_on_a_graph_loaded_from_several_keys(self):
+        # A graph saved as several keys loads into a placeholder, unless its
+        # own key loads last, and the graph replaces the placeholder once its
+        # last key is in. An index created on it afterwards must be built. The reload saves every graph on the server
+        # one entity per key, so it starts from an empty server.
+        self.conn.flushall()
+        vkey_max = self.db.config_get("VKEY_MAX_ENTITY_COUNT")
+        self.db.config_set("VKEY_MAX_ENTITY_COUNT", 1)
+        try:
+            graph = self.db.select_graph("index_after_multi_key_load")
+            graph.query("UNWIND range(1, 100) AS x CREATE (:L {v:x})")
+            self.conn.execute_command("DEBUG", "RELOAD")
+            graph.query("CREATE INDEX FOR (n:L) ON (n.v)")
+            wait_on_index(graph, 'L', timeout=30)
+            q = "MATCH (n:L) WHERE n.v = 42 RETURN n.v"
+            self.env.assertIn("Node By Index Scan", str(graph.explain(q)))
+            self.env.assertEqual(graph.ro_query(q).result_set, [[42]])
+            graph.delete()
+        finally:
+            self.db.config_set("VKEY_MAX_ENTITY_COUNT", vkey_max)

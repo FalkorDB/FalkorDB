@@ -121,5 +121,5 @@ graph/src/runtime/runtime.rs	map_to_index_options	2018	PROVEN	Search.fulltextUnk
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)
 graph/src/runtime/ops/commit.rs	next	69	MODELLED	lock path only (#3226): Locks.writerOpenScanProg (escalate at :93, commit_deferred_indexes → Indexer::commit → RediSearch_IndexAddDocument with the scan's spec read lock still held); properties noReacquire / LockOrdered refuted by bug3226_open_scan_upgrade, bug3226_open_scan_unordered (OPEN); scan-closed paths: spec_programs_ordered
 # Online index build (#2355): fns the background builder added, not modelled yet.
-graph/src/graph/mvcc_graph.rs	MvccGraph::set_build_host	140	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/graph/mvcc_graph.rs	MvccGraph::inherit_build	155	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/graph/mvcc_graph.rs	WeakMvccGraph::upgrade	109	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/graph/mvcc_graph.rs	MvccGraph::downgrade	151	NOT COVERED	online index build (#2355): not modelled yet

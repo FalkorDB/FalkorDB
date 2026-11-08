@@ -30,6 +30,8 @@ use crate::config::{
     CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, OMP_THREAD_COUNT,
     apply_module_args, get_thread_count, normalize_node_creation_buffer,
 };
+#[cfg(feature = "index-falkordb")]
+use crate::graph_core::RedisBuildHost;
 use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
 use crate::telemetry;
@@ -417,11 +419,14 @@ pub fn graph_init(
         }
     }
 
-    // The native index's background build pool: runs the indexer batches of every index left
-    // `Building`, however its `CREATE INDEX` arrived. Its own workers, so a build never takes a
-    // query thread.
+    // The native index's background builder: runs the indexer batches of every index left
+    // `Building`, however its `CREATE INDEX` arrived, on workers of its own, so a build never takes
+    // a query thread. Started before any graph exists: a commit made before would start no build.
     #[cfg(feature = "index-falkordb")]
-    online_build::start((*CONFIGURATION_INDEX_BUILD_THREAD_COUNT.lock(ctx)).max(1) as usize);
+    online_build::start(
+        (*CONFIGURATION_INDEX_BUILD_THREAD_COUNT.lock(ctx)).max(1) as usize,
+        Arc::new(RedisBuildHost),
+    );
 
     Status::Ok
 }

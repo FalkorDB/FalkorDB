@@ -239,22 +239,20 @@ graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::has_building_columns	1
 graph/src/index/falkordb/versioned.rs	PreparedBatch::limit_catch_up	147	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/index/falkordb/versioned.rs	Graph::index_build_read	782	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/index/falkordb/versioned.rs	Graph::index_build_generation	795	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/versioned.rs	Graph::building_indexes	810	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/index/falkordb/versioned.rs	Graph::indexes_to_build_since	827	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/index/falkordb/versioned.rs	Graph::building_since	846	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	BuildHost::read	47	NOT COVERED	BuildHost trait declaration (no body); the module host is RedisBuildHost (src/graph_core.rs)
-graph/src/index/falkordb/online_build.rs	BuildHost::publish	52	NOT COVERED	BuildHost trait declaration (no body); the module host is RedisBuildHost (src/graph_core.rs)
-graph/src/index/falkordb/online_build.rs	BuildHost::warn	59	NOT COVERED	BuildHost trait declaration (no body); the module host is RedisBuildHost (src/graph_core.rs)
-graph/src/index/falkordb/online_build.rs	Sizing::batch	103	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	BuildHost::publish	47	NOT COVERED	BuildHost trait declaration (no body); the module host is RedisBuildHost (src/graph_core.rs)
+graph/src/index/falkordb/online_build.rs	BuildHost::warn	54	NOT COVERED	BuildHost trait declaration (no body); the module host is RedisBuildHost (src/graph_core.rs)
+graph/src/index/falkordb/online_build.rs	Sizing::batch	98	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/index/falkordb/online_build.rs	Builder::new	146	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	Builder::start	156	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	Builder::stop_within	168	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	Builder::enqueue	180	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	Builder::submit	191	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	Builder::running	205	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	Job::new	224	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	Job::run	241	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	Job::step	258	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	start	348	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	stop	354	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	enqueue	360	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Builder::start	162	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Builder::stop_within	174	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Builder::enqueue	188	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Builder::submit	199	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Builder::running	213	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Job::new	232	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Job::run	249	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Job::step	266	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	start	368	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	stop	379	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	enqueue	389	NOT COVERED	online index build (#2355): not modelled yet
