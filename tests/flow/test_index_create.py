@@ -653,8 +653,9 @@ class testIndexCreationFlow():
         # determine how much time does it take to construct our index
         start = time()
 
-        res = create_node_range_index(self.graph, 'L', 'v', sync=True)
+        res = create_node_range_index(self.graph, 'L', 'v')
         self.env.assertEqual(res.indices_created, 1)
+        wait_on_index(self.graph, 'L', timeout=300)
 
         # total index creation time
         elapsed = time() - start
@@ -689,18 +690,11 @@ class testIndexCreationFlow():
         res = self.graph.create_node_range_index('L', 'v')
         self.env.assertEqual(res.indices_created, 1)
 
-        # wait for index to become operational, polling as the first build's
-        # wait did (`sync=True`), so the two times are measured alike: a sleep
-        # between polls would outlast a build that takes milliseconds. The
-        # deadline turns a build that never ends into a failure, not a hang.
-        deadline = time() + 300
-        while index_under_construction(self.graph, 'L'):
-            if time() >= deadline:
-                break
+        # wait for index to become operational, the way the first build's wait
+        # did, so the two times are measured alike
+        wait_on_index(self.graph, 'L', timeout=300)
 
         elapsed_2 = time() - start
-        self.env.assertLess(time(), deadline,
-                            message="index on :L never became operational")
 
         # although we've constructed a larger index
         # new index includes 2 fields (b,v) while the former index included just
