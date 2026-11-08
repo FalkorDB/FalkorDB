@@ -318,7 +318,7 @@ impl VersionedIndex for IndexColumn {
         place: impl Fn(u64) -> Option<BuildCursor>,
         (removes, adds): &mut (EncodedTuples, EncodedTuples),
     ) {
-        if let BuildState::Building { next, written } = state {
+        if let BuildState::Building { next, written, .. } = state {
             written.by_this_version.extend(log.iter().map(|w| w.id));
             let next = *next;
             // A batch reads an entity at or above the cursor when it reaches it, so its
@@ -781,16 +781,18 @@ impl FalkorDbIndex {
             .is_some_and(|entry| !entry.is_building())
     }
 
-    /// How many entities column `(entity, label, attr)`'s batches have read ([`IndexEntry::read`]),
-    /// or `None` if the column is `Ready` or does not exist.
+    /// How many entities column `(entity, label, attr)`'s batches have read
+    /// ([`BuildState::Building`]), or `None` if the column is `Ready` or does not exist.
     pub(crate) fn building_read(
         &self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
     ) -> Option<u64> {
-        let entry = self.entry(entity, label, attr)?;
-        entry.is_building().then_some(entry.read)
+        match self.entry(entity, label, attr)?.state {
+            BuildState::Building { read, .. } => Some(read),
+            BuildState::Ready => None,
+        }
     }
 
     /// Ready this version to be published: each index's sets of written entities are settled
