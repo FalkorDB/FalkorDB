@@ -3428,10 +3428,17 @@ fn generation_of(
     host: &TestHost,
     id: &IndexId,
 ) -> u64 {
-    host.mvcc
-        .read()
-        .index_build_generation(id)
-        .expect("the index is Building")
+    building_generation(&host.mvcc.read(), id).expect("the index is Building")
+}
+
+/// The generation of index `id` if `g` holds it `Building`.
+fn building_generation(
+    g: &Graph,
+    id: &IndexId,
+) -> Option<u64> {
+    g.index_generation(id)
+        .filter(|&(_, building)| building)
+        .map(|(generation, _)| generation)
 }
 
 /// A builder with `sizing` that publishes through `host`, never started.
@@ -3469,9 +3476,7 @@ fn a_commit_hands_the_builder_each_index_it_brings_in_building() {
     let u = Arc::new("u".to_string());
     let id = |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let before = mvcc.read();
-    let v_was = before
-        .index_build_generation(&id(&v))
-        .expect("v is Building");
+    let v_was = building_generation(&before, &id(&v)).expect("v is Building");
     let mut after = before.new_version();
     assert!(
         after.indexes_to_build_since(&before).is_empty(),
@@ -3481,9 +3486,7 @@ fn a_commit_hands_the_builder_each_index_it_brings_in_building() {
     after
         .falkordb_index
         .create_numeric(EntityType::Node, &label, &u);
-    let w_is = after
-        .index_build_generation(&id(&w))
-        .expect("w is Building");
+    let w_is = building_generation(&after, &id(&w)).expect("w is Building");
     assert_eq!(
         after.indexes_to_build_since(&before),
         [(id(&w), w_is)],
@@ -3491,9 +3494,7 @@ fn a_commit_hands_the_builder_each_index_it_brings_in_building() {
     );
     drop_index_on(&mut after, &label, &v);
     create_index_on(&mut after, &label, &v);
-    let v_is = after
-        .index_build_generation(&id(&v))
-        .expect("v is Building again");
+    let v_is = building_generation(&after, &id(&v)).expect("v is Building again");
     assert_ne!(v_is, v_was, "v created again is another generation");
     let mut handed = after.indexes_to_build_since(&before);
     handed.sort_by_key(|(id, _)| format!("{id:?}"));
@@ -3552,11 +3553,11 @@ fn a_step_that_meets_another_batch_on_its_index_publishes_nothing() {
     assert!(warnings.is_empty(), "{warnings:?}");
 }
 
-/// A job whose index was dropped after its batch read it publishes nothing and is done, and so is
-/// one whose index was created again: that is another generation, which a job of its own builds,
-/// from that index's own cursor.
+/// A job whose index was dropped after its batch read it publishes nothing and is cancelled, and so
+/// is one whose index was created again: that is another generation, which a job of its own builds,
+/// from that index's own cursor, to `Done`.
 #[test]
-fn a_job_whose_index_is_dropped_or_created_again_is_done() {
+fn a_job_whose_index_is_dropped_or_created_again_is_cancelled() {
     for again in [false, true] {
         let values = [10, 20, 30, 40];
         let (mvcc, label, attr, _) = mvcc_building(&values);
@@ -3573,7 +3574,7 @@ fn a_job_whose_index_is_dropped_or_created_again_is_done() {
             });
         });
 
-        assert_eq!(job.step(), Step::Done, "again: {again}");
+        assert_eq!(job.step(), Step::Cancelled, "again: {again}");
         if !again {
             assert_eq!(
                 host.mvcc
@@ -3592,8 +3593,8 @@ fn a_job_whose_index_is_dropped_or_created_again_is_done() {
         );
         assert_eq!(
             job.step(),
-            Step::Done,
-            "the old generation's job stays done"
+            Step::Cancelled,
+            "the old generation's job stays cancelled"
         );
         assert_eq!(
             cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
@@ -3616,7 +3617,7 @@ fn a_job_whose_index_is_dropped_or_created_again_is_done() {
 }
 
 /// A job holds its graph weakly: it does not keep a deleted graph alive, and once the graph is
-/// gone, the job is done.
+/// gone, the job is cancelled.
 #[test]
 fn a_job_does_not_keep_its_graph_alive() {
     let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
@@ -3626,7 +3627,7 @@ fn a_job_does_not_keep_its_graph_alive() {
     let graph = host.mvcc.downgrade();
     drop(host);
     assert!(graph.upgrade().is_none(), "the job kept its graph alive");
-    assert_eq!(job.step(), Step::Done);
+    assert_eq!(job.step(), Step::Cancelled);
 }
 
 /// A batch that waited for what publishing needs while the builder stopped publishes nothing: it
@@ -3644,9 +3645,19 @@ fn a_batch_that_waited_while_the_builder_stopped_publishes_nothing() {
         id.clone(),
         generation_of(&host, &id),
     );
-    host.before_publish(move |_| builder.stop_within(Duration::ZERO));
+    // On a thread of its own, with a deadline: had the batch held what the stop waits for while it
+    // waited to publish, the stop would wait for it for ever, and the test would hang, not fail.
+    host.before_publish(move |_| {
+        let (stopped, stop) = mpsc::channel();
+        thread::spawn(move || {
+            builder.stop_within(Duration::ZERO);
+            let _ = stopped.send(());
+        });
+        stop.recv_timeout(Duration::from_secs(10))
+            .expect("the stop waited for a batch waiting to publish");
+    });
 
-    assert_eq!(job.step(), Step::Done);
+    assert_eq!(job.step(), Step::Cancelled);
     assert_eq!(
         cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
         Some(BuildCursor::new(EntityType::Node)),
@@ -3675,7 +3686,7 @@ fn a_stopped_builder_runs_nothing() {
         id.clone(),
         generation_of(&host, &id),
     );
-    assert_eq!(job.step(), Step::Done);
+    assert_eq!(job.step(), Step::Cancelled);
     builder.start(1);
     builder.enqueue(host.mvcc.downgrade(), id.clone(), generation_of(&host, &id));
     thread::sleep(Duration::from_millis(100));

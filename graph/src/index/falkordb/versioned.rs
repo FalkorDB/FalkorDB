@@ -790,17 +790,17 @@ impl Graph {
         }
     }
 
-    /// The generation of index `id` ([`IndexEntry::generation`]) if this version holds it
-    /// `Building`: which index a builder's job for it builds.
-    pub(crate) fn index_build_generation(
+    /// The generation of index `id` ([`IndexEntry::generation`]), and whether this version holds
+    /// it `Building`, if it holds the index at all: which index a builder's job for it builds, and
+    /// whether that build is over.
+    pub(crate) fn index_generation(
         &self,
         id: &IndexId,
-    ) -> Option<u64> {
+    ) -> Option<(u64, bool)> {
         match id {
             IndexId::Column(entity, key) => {
                 IndexColumn::entry(&self.falkordb_index, &(*entity, key.clone()))
-                    .filter(|entry| entry.is_building())
-                    .map(|entry| entry.generation)
+                    .map(|entry| (entry.generation, entry.is_building()))
             }
         }
     }

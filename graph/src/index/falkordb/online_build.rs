@@ -18,10 +18,11 @@
 //!
 //! **Stopping.** Only the Redis shutdown handler stops the builder, and only where the server tears
 //! its modules down (`RS_GLOBAL_DTORS`: the sanitizer runs), and GraphBLAS is torn down next.
-//! [`stop`] waits for every batch still holding a graph version with no lock held, then a bounded
-//! time for the pool's workers: one may be waiting for the GIL, which the shutdown handler holds.
-//! A batch checks the builder is still running once it holds what publishing needs, so one that
-//! waited publishes nothing. The stop is for good.
+//! [`stop`] waits for every batch still reading a graph version or freeing what it holds, the work
+//! that calls GraphBLAS, then a bounded time for the pool's workers: one may be waiting for the
+//! GIL, which the shutdown handler holds. A batch checks the builder is still running once it holds
+//! what publishing needs, so one that waited publishes nothing, and leaves what it holds to the
+//! exiting process. The stop is for good.
 //!
 //! [`IndexEntry::generation`]: super::versioned::IndexEntry::generation
 //! [`MvccGraph::commit`]: crate::graph::mvcc_graph::MvccGraph::commit
@@ -34,8 +35,9 @@ use std::time::Duration;
 
 use parking_lot::{RwLock, RwLockReadGuard};
 
-use super::versioned::{Discarded, IndexId, IndexerCommit};
-use crate::graph::mvcc_graph::WeakMvccGraph;
+use super::versioned::{Discarded, IndexId, IndexerCommit, PreparedBatch};
+use crate::graph::graph::Graph;
+use crate::graph::mvcc_graph::{MvccGraph, WeakMvccGraph};
 use crate::threadpool::ThreadPool;
 #[cfg(test)]
 use parking_lot::{FairMutex, FairMutexGuard, Mutex};
@@ -91,6 +93,13 @@ impl BuildHost for LocalHost {
 }
 
 /// How a job sizes its batches ([`Sizing::batch`]).
+///
+/// A build goes in batches, not in one pass, because it runs while writers write. Each batch's
+/// commit catches up, under the host's global lock, on what writers changed in its index while it
+/// read, and holds what it read in memory until then: a batch bounds both. A job's batches grow:
+/// each reads as many entities as the index's batches have read so far, between `floor` and the
+/// job's limit ([`Job::limit`]). With no writers they go 10,000, 10,000, 20,000, 40,000, ...,
+/// doubling, and reach the 4M cap on the 11th, once 5.12M entities are read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Sizing {
     /// The fewest entities a batch reads.
@@ -152,9 +161,12 @@ pub(crate) enum Step {
     /// The batch's version was refused, which only a bug makes happen. The job runs again after
     /// [`FAILED_RETRY`].
     Retry,
-    /// The job is over: its generation is `Ready`, dropped, or replaced by another, its graph is
-    /// gone, or the builder has stopped.
+    /// The job's generation is `Ready`: its build is over.
     Done,
+    /// The job is over before its generation is `Ready`, for a reason outside it: the builder has
+    /// stopped, the graph is gone, or the index was dropped, or dropped and created again, which
+    /// is another generation that a job of its own builds.
+    Cancelled,
 }
 
 /// Runs jobs on a pool of its own. The builder is one ([`start`], [`stop`], [`enqueue`]); tests
@@ -164,8 +176,12 @@ pub(crate) struct Builder {
     host: Arc<dyn BuildHost>,
     pool: OnceLock<ThreadPool>,
     /// `false` once stopped, after which GraphBLAS may be torn down. A batch holds it read while it
-    /// holds a graph version with no lock held, so the stop, which takes it to write, waits for
-    /// those batches.
+    /// reads a graph version and while it frees what it holds, the work that calls GraphBLAS, so
+    /// the stop, which takes it to write, waits for those batches: a flag could not wait. Only the
+    /// Redis shutdown handler stops the builder, and only under a sanitizer or valgrind
+    /// (`RS_GLOBAL_DTORS`), which then tears GraphBLAS down, and a batch reading a version calls
+    /// GraphBLAS. It cannot join the pool instead: a worker may be waiting for the GIL, which the
+    /// handler holds. Elsewhere the lock is never contended.
     running: RwLock<bool>,
     /// Run once by the next batch while it reads, holding what it holds then: for a test that
     /// needs a batch held there.
@@ -198,10 +214,10 @@ impl Builder {
             .get_or_init(|| ThreadPool::named(threads.max(1), "falkordb-index-build"));
     }
 
-    /// Stop, for good. Waits, with no limit, for every batch still holding a graph version with no
-    /// lock held: none waits on a lock meanwhile. Then waits up to `wait` for the pool's workers
-    /// ([`ThreadPool::shutdown_within`]): one waiting for what its host needs to publish may be
-    /// waiting on the caller, and is left behind.
+    /// Stop, for good. Waits, with no limit, for every batch still reading a graph version or
+    /// freeing what it holds: none waits on a lock meanwhile. Then waits up to `wait` for the
+    /// pool's workers ([`ThreadPool::shutdown_within`]): one waiting for what its host needs to
+    /// publish may be waiting on the caller, and is left behind.
     pub(crate) fn stop_within(
         &self,
         wait: Duration,
@@ -251,6 +267,10 @@ impl Builder {
 /// generation is `Ready` or gone.
 pub(crate) struct Job {
     builder: Arc<Builder>,
+    /// Held weakly, so the job does not keep a deleted graph alive: once the key is deleted and no
+    /// query or batch still holds the graph, it is freed, and the job's next batch finds it gone
+    /// and ends. A strong handle would keep the whole graph in memory, and the job building it,
+    /// until its index is `Ready`.
     graph: WeakMvccGraph,
     id: IndexId,
     generation: u64,
@@ -276,10 +296,10 @@ impl Job {
         }
     }
 
-    /// One batch, on a worker of the pool, then the job submits itself again unless it is done.
+    /// One batch, on a worker of the pool, then the job submits itself again unless it is over.
     fn run(mut self) {
         let step = self.step();
-        if step == Step::Done {
+        if matches!(step, Step::Done | Step::Cancelled) {
             return;
         }
         if step == Step::Retry {
@@ -296,40 +316,16 @@ impl Job {
     /// [`Sizing::catch_up_max`] of writers' changes ([`Step::TooLarge`]).
     pub(crate) fn step(&mut self) -> Step {
         let sizing = self.builder.sizing;
-        // Declared first, so dropped last: on an early return, the versions this batch holds are
-        // freed while it still holds this, so GraphBLAS is not torn down under them.
-        let Some(running) = self.builder.running() else {
-            return Step::Done;
+        let Read {
+            mvcc,
+            prepared,
+            batch,
+            entities,
+        } = match self.read() {
+            Ok(read) => read,
+            Err(step) => return step,
         };
-        // Held until the batch is over, then let go holding `running` and none of the host's locks,
-        // as the versions below are: if it is the last handle to a deleted graph, letting go frees
-        // the whole graph, which needs GraphBLAS up, and which the server should not wait for.
-        let Some(mvcc) = self.graph.upgrade() else {
-            return Step::Done;
-        };
-        let published = mvcc.read();
-        let mut prepared = published.new_build_version();
-        drop(published);
-        if prepared.index_build_generation(&self.id) != Some(self.generation) {
-            return Step::Done;
-        }
-        let read = prepared.index_build_read(&self.id).unwrap_or(0);
-        let entities = sizing.batch(read, self.limit);
-        let Some(mut batch) = prepared.indexer_prepare(&self.id, entities) else {
-            return Step::Done;
-        };
-        // A batch at the floor catches up on whatever writers changed: none can be smaller.
-        if entities > sizing.floor {
-            batch.limit_catch_up(sizing.catch_up_max);
-        }
-        #[cfg(test)]
-        if let Some(hold) = self.builder.while_reading.lock().take() {
-            hold();
-        }
-        // Not held while publishing: the Redis shutdown handler stops the builder holding the GIL.
-        drop(running);
-
-        let mut step = Step::Done;
+        let mut step = Step::Cancelled;
         // Held until the host has let go of what it holds, so that freeing the version the commit
         // replaces, or what the batch built if it did not publish it, never happens under the
         // host's locks. The commit takes `prepared`, and frees it there unless it publishes it as
@@ -352,8 +348,7 @@ impl Job {
             replaced = Some(mvcc.read());
             step = match mvcc.commit_indexer_batch(prepared, &batch) {
                 Ok(IndexerCommit::Discarded(Discarded::CatchUpTooLarge)) => Step::TooLarge,
-                Ok(_) if mvcc.read().index_build_generation(id) == Some(generation) => Step::More,
-                Ok(_) => Step::Done,
+                Ok(_) => standing(&mvcc.read(), id, generation).unwrap_or(Step::More),
                 // Validation refused the version, or another was published while this commit ran,
                 // which only a host publishing without its global lock allows.
                 Err(e) => {
@@ -365,33 +360,96 @@ impl Job {
                 }
             };
         });
-        // The versions this batch still holds, and its graph, are freed holding `running` again,
-        // or, once the builder has stopped, left to the exiting process: GraphBLAS may be torn
-        // down by then.
+        // What the batch still holds is freed holding `running` again and none of the host's locks,
+        // or, once the builder has stopped, left to the exiting process: GraphBLAS may be torn down
+        // by then. The end of this function cannot do it, as it would free it either way. The
+        // graph is among it: if this is the last handle to a deleted graph, freeing it frees the
+        // whole graph, which the server should not wait for.
+        let held = (replaced, built, prepared, batch, mvcc);
         match self.builder.running() {
-            Some(_running) => {
-                drop(replaced);
-                drop(built);
-                drop(prepared);
-                drop(mvcc);
-            }
-            None => {
-                mem::forget(replaced);
-                mem::forget(built);
-                mem::forget(prepared);
-                mem::forget(mvcc);
-            }
+            Some(_running) => drop(held),
+            None => mem::forget(held),
         }
         self.limit = match step {
             Step::More => self.limit.saturating_mul(2).min(sizing.cap),
             Step::TooLarge => (entities / 2).max(sizing.floor),
-            Step::Retry | Step::Done => self.limit,
+            Step::Retry | Step::Done | Step::Cancelled => self.limit,
         };
         step
     }
+
+    /// The batch's read, with no lock of the host's held, or what the job does instead if there is
+    /// nothing to read.
+    fn read(&self) -> Result<Read, Step> {
+        let sizing = self.builder.sizing;
+        // Held through the read, and let go on return, before the batch waits for the host to
+        // publish it: the Redis shutdown handler stops the builder holding the GIL. Declared
+        // first, so dropped last: on an early return, what the read holds is freed while this is
+        // held, so GraphBLAS is not torn down under it.
+        let Some(_running) = self.builder.running() else {
+            return Err(Step::Cancelled);
+        };
+        let Some(mvcc) = self.graph.upgrade() else {
+            return Err(Step::Cancelled);
+        };
+        let mut prepared = mvcc.read().new_build_version();
+        if let Some(step) = standing(&prepared, &self.id, self.generation) {
+            return Err(step);
+        }
+        let read = prepared.index_build_read(&self.id).unwrap_or(0);
+        let entities = sizing.batch(read, self.limit);
+        // Never `None`: the index is `Building` in this version.
+        let Some(mut batch) = prepared.indexer_prepare(&self.id, entities) else {
+            return Err(Step::Cancelled);
+        };
+        // A batch at the floor catches up on whatever writers changed: none can be smaller.
+        if entities > sizing.floor {
+            batch.limit_catch_up(sizing.catch_up_max);
+        }
+        #[cfg(test)]
+        if let Some(hold) = self.builder.while_reading.lock().take() {
+            hold();
+        }
+        Ok(Read {
+            mvcc,
+            prepared,
+            batch,
+            entities,
+        })
+    }
 }
 
-/// How long a job waits before running again after a batch whose version was refused.
+/// What a batch's read hands its publish ([`Job::read`]).
+struct Read {
+    /// The job's graph, held until the batch is over.
+    mvcc: MvccGraph,
+    /// A new build version of the graph's published one, with the batch applied.
+    prepared: Graph,
+    batch: PreparedBatch,
+    /// How many entities the batch was to read ([`Sizing::batch`]): the last batch reads fewer.
+    entities: usize,
+}
+
+/// What a job for generation `generation` of index `id` does next, as `graph` holds it: `None`
+/// while that generation is `Building`; [`Step::Done`] once it is `Ready`; [`Step::Cancelled`] if
+/// the index was dropped, or holds another generation.
+fn standing(
+    graph: &Graph,
+    id: &IndexId,
+    generation: u64,
+) -> Option<Step> {
+    match graph.index_generation(id) {
+        Some((g, true)) if g == generation => None,
+        Some((g, false)) if g == generation => Some(Step::Done),
+        _ => Some(Step::Cancelled),
+    }
+}
+
+/// How long a job waits before running again after a batch whose version was refused. It runs
+/// again rather than end, which would leave its index `Building` for good, with reads going
+/// elsewhere unnoticed; and it waits, so that a refusal that repeats does not take the host's
+/// global lock in a loop. It waits on its worker, which runs nothing else meanwhile. It retries
+/// until its index is built, or the job is cancelled.
 const FAILED_RETRY: Duration = Duration::from_secs(1);
 
 /// How long [`stop`] waits for the builder's workers.
