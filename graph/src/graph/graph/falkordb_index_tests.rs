@@ -1904,12 +1904,12 @@ fn a_batch_refreshes_writers_changes_only_when_that_costs_less_than_inserting_it
     }
 }
 
-/// What a build has read ([`IndexEntry::read`]) moves with its cursor. Each batch adds its budget,
-/// and when a batch or a writer commits over another commit, the count goes where the cursor goes:
-/// a batch's swap, refresh or insert takes the batch's, and a writer's rebase the published copy's.
-/// An index created again starts over at 0.
+/// What a build has read ([`BuildState::Building`]) moves with its cursor. Each batch adds its
+/// budget, and when a batch or a writer commits over another commit, the count goes where the
+/// cursor goes: a batch's swap, refresh or insert takes the batch's, and a writer's rebase the
+/// published copy's. An index created again starts over at 0.
 ///
-/// [`IndexEntry::read`]: crate::index::falkordb::versioned::IndexEntry::read
+/// [`BuildState::Building`]: crate::index::falkordb::versioned::BuildState::Building
 #[test]
 fn what_a_build_has_read_moves_with_its_cursor() {
     let (mvcc, label, v, ids) = mvcc_building(&(0..30).collect::<Vec<_>>());

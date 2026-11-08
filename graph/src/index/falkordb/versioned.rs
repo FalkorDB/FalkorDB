@@ -43,18 +43,28 @@ use super::falkordb_index::{FalkorDbIndex, IndexColumn, IndexKey};
 /// index keeps none.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum BuildState<C> {
-    /// Some entities are not indexed yet — reads scan instead. `next` is where the next indexer
-    /// batch resumes.
-    Building { next: C, written: Written },
+    /// Some entities are not indexed yet — reads scan instead.
+    Building {
+        /// Where the next indexer batch resumes.
+        next: C,
+        /// How many entities the build's batches have read ([`IndexerBatch::read`]), which sizes
+        /// the builder's next batch. Only a batch moves it, as it moves `next`: a writer's rebase
+        /// takes the published copy's, and a batch's catch-up the batch's. Entities created or
+        /// deleted behind the cursor do not change it.
+        read: u64,
+        /// The entities writers changed in the index.
+        written: Written,
+    },
     /// Every entity is indexed — the index serves reads.
     Ready,
 }
 
 impl<C: Copy> BuildState<C> {
-    /// `Building` from `next`, with no entity written yet.
+    /// `Building` from `next`, with no entity read or written yet.
     pub(crate) fn building(next: C) -> Self {
         Self::Building {
             next,
+            read: 0,
             written: Written::default(),
         }
     }
@@ -106,11 +116,6 @@ pub(crate) struct IndexEntry<K: VersionedIndex> {
     /// of the published copy means no other batch committed on the index since the batch's
     /// version was made.
     indexer_commits: u64,
-    /// While `Building`: how many entities the build's batches have read ([`IndexerBatch::read`]),
-    /// which sizes the builder's next batch. Only a batch moves it, so it goes where the cursor
-    /// goes: a writer's rebase takes the published copy's, and a batch's catch-up the batch's.
-    /// Entities created or deleted behind the cursor do not change it.
-    pub(crate) read: u64,
 }
 
 /// One indexer batch of index `name`: the work it read, and where the index's next batch resumes
@@ -351,7 +356,6 @@ impl<K: VersionedIndex> IndexEntry<K> {
             state,
             generation,
             indexer_commits: 0,
-            read: 0,
         }
     }
 
@@ -392,8 +396,8 @@ impl<K: VersionedIndex> IndexEntry<K> {
         self.index.memory_usage() + written
     }
 
-    /// Add an indexer batch's `work`, read from this same version, then move the cursor to `next`,
-    /// or flip the index `Ready` when it is `None`, and count the `read` entities. `false`,
+    /// Add an indexer batch's `work`, read from this same version, then move the cursor to `next`
+    /// and count the `read` entities, or flip the index `Ready` when `next` is `None`. `false`,
     /// changing nothing, if the index is not `Building`.
     fn indexer_apply(
         &mut self,
@@ -406,16 +410,17 @@ impl<K: VersionedIndex> IndexEntry<K> {
         }
         self.index.indexer_add(work);
         self.indexer_commits += 1;
-        self.read = self.read.saturating_add(read);
         match (next, &mut self.state) {
             (
                 Some(next),
                 BuildState::Building {
                     next: cursor,
+                    read: so_far,
                     written,
                 },
             ) => {
                 *cursor = next;
+                *so_far = so_far.saturating_add(read);
                 // The batch read every entity at this version's values, writers' changes included.
                 if !written.since_last_indexer_step.is_empty() {
                     written.since_last_indexer_step = Arc::default();
@@ -600,6 +605,7 @@ impl Graph {
         let BuildState::Building {
             next: from,
             written,
+            ..
         } = &theirs.state
         else {
             return;
@@ -613,10 +619,9 @@ impl Graph {
             ours.cursor(),
             published,
         );
-        // The batch's state: its cursor, with nothing written since it.
+        // The batch's state: its cursor and read count, with nothing written since it.
         merged.state = ours.state.clone();
         merged.indexer_commits = ours.indexer_commits;
-        merged.read = ours.read;
         if let Some(slot) = K::entry_mut(&mut self.falkordb_index, name) {
             *slot = merged;
         }
@@ -773,7 +778,7 @@ impl Graph {
     }
 
     /// How many entities the batches of index `id` have read in this version
-    /// ([`IndexEntry::read`]), or `None` if it is not `Building`, so also whether it is.
+    /// ([`BuildState::Building`]), or `None` if it is not `Building`, so also whether it is.
     pub(crate) fn index_build_read(
         &self,
         id: &IndexId,
