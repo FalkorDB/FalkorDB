@@ -220,6 +220,10 @@ pub struct Parser<'a> {
     /// with everything else that decides whether the attempt can succeed.
     /// See [`Parser::parse_list_literal_or_comprehension`].
     not_pattern_comprehension: HashSet<PatternComprehensionAttempt>,
+    /// Set while a `CYPHER` parameter value is parsed as an expression: a sign run
+    /// is then limited to what the grammar took before runs parsed (`+`, `-` or
+    /// `+-`), at every nesting level, since the parser folds a run to its parity.
+    legacy_signs: bool,
 }
 
 /// Where and in what context [`Parser::parse_list_literal_or_comprehension`]
@@ -283,6 +287,7 @@ impl<'a> Parser<'a> {
             max_child_height: 0,
             forbidden_pattern_comprehension: None,
             not_pattern_comprehension: HashSet::new(),
+            legacy_signs: false,
         }
     }
 
@@ -437,7 +442,12 @@ impl<'a> Parser<'a> {
             return Ok(value);
         }
         self.restore_state(state);
-        evaluate_param(&self.parse_expr(false)?.root())
+        // `parse_expr` folds a run of signs to its parity, so `---1` would come out
+        // accepted: a parameter keeps the sign grammar it had before runs parsed.
+        self.legacy_signs = true;
+        let expr = self.parse_expr(false);
+        self.legacy_signs = false;
+        evaluate_param(&expr?.root())
     }
 
     /// Reads a literal: `null`, a boolean, a number, a string, a list, a map,
@@ -2226,21 +2236,43 @@ impl<'a> Parser<'a> {
                     }
                     stack.push((current + 1, None, 0));
                 } else if current == 9 {
-                    // unary add or subtract
-                    optional_match_token!(self.lexer, Plus);
-                    let is_negate = optional_match_token!(self.lexer, Dash);
-
-                    // Handle integer overflow with negation
-                    if is_negate && let Err(err) = self.lexer.current() {
-                        return Err(err.replace("Integer overflow '", "Integer overflow '-"));
+                    // unary add or subtract, any run of them: `- -5` is 5
+                    let mut negate_count = 0;
+                    let mut plus_count = 0;
+                    loop {
+                        match self.lexer.current() {
+                            Ok(token @ (Token::Plus | Token::Dash))
+                                if self.legacy_signs
+                                    && (negate_count > 0
+                                        || plus_count > 0 && matches!(token, Token::Plus)) =>
+                            {
+                                return Err(self
+                                    .lexer
+                                    .format_error(&format!("Invalid input {token:?}")));
+                            }
+                            Ok(Token::Plus) => plus_count += 1,
+                            Ok(Token::Dash) => negate_count += 1,
+                            // Handle integer overflow with negation
+                            Err(err) if negate_count > 0 => {
+                                return Err(
+                                    err.replace("Integer overflow '", "Integer overflow '-")
+                                );
+                            }
+                            _ => break,
+                        }
+                        self.lexer.next();
                     }
 
-                    let (res, height) = if is_negate {
-                        (Some(tree!(ExprIR::Negate)), 1)
+                    // Negate type-checks its operand, so `- -x` is not `x`.
+                    // A longer run still folds, keeping its parity, as NOT's
+                    // does: to one Negate, or to two the operand is placed under.
+                    if negate_count == 0 {
+                        stack.push((current, None, 0));
                     } else {
-                        (None, 0)
-                    };
-                    stack.push((current, res, height));
+                        for _ in 0..(2 - negate_count % 2) {
+                            stack.push((current, Some(tree!(ExprIR::Negate)), 1));
+                        }
+                    }
                     stack.push((current + 1, None, 0));
                 } else {
                     // primary expression
@@ -4024,6 +4056,27 @@ mod tests {
         }
     }
 
+    // Regression (#2309): a run of signs parsed only its first `+` and `-`, so
+    // `- -5` was "Invalid input Dash". It folds to one or two Negates by parity.
+    #[test]
+    fn chained_unary_signs_parse() {
+        with_functions();
+        for query in [
+            "RETURN - -5",
+            "RETURN --5",
+            "RETURN - - -5",
+            "RETURN -+5",
+            "RETURN +-+-5",
+            "RETURN --9223372036854775808",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "{query}");
+        }
+        let err = Parser::new("RETURN - -99999999999999999999")
+            .parse()
+            .expect_err("overflow");
+        assert!(err.contains("Integer overflow '-"), "{err}");
+    }
+
     // Negation of a non-number is Null, and i64::MIN negates to itself. Both
     // were `evaluate_param`'s behaviour and both are easy to lose.
     #[test]
@@ -4042,7 +4095,21 @@ mod tests {
         // Unnegated, those digits are i64::MAX + 1 and must still be refused.
         assert!(param_of("9223372036854775808").is_err());
         // A second `-` is not part of a literal, and never parsed before.
-        assert!(param_of("--1").is_err());
+        assert_eq!(format!("{:?}", param_of("+-1").unwrap()), "Int(-1)");
+        assert!(param_of("[+-1, -2, {a: -3}]").is_ok());
+        for value in [
+            "--1",
+            "---1",
+            "----1",
+            "--9223372036854775808",
+            "-+-1",
+            "++1",
+            "[--1]",
+            "{a: ---1}",
+            "[1, [-+1]]",
+        ] {
+            assert!(param_of(value).is_err(), "accepted parameter {value}");
+        }
     }
 
     // A value that is not a literal falls back to the expression path, so it
