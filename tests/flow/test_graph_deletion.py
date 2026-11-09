@@ -403,7 +403,9 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i})")
         self.env.assertEqual(res.nodes_created, 11)
 
-        # expecting IDs to be reused
+        # IDs freed by a query are not handed out again by the same query, as
+        # `WITH *` keeps the deleted nodes in scope and a later clause may still
+        # name them (#3164): fresh IDs here...
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
@@ -413,8 +415,9 @@ class testGraphDeletionFlow(FlowTestsBase):
         )
         self.env.assertEqual(res.nodes_deleted, 11)
         self.env.assertEqual(res.nodes_created, 11)
-        self.env.assertEqual(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
+        self.env.assertEqual(res.result_set, [[i] for i in range(11, 22)])
 
+        # ...and expecting them to be reused by the next query
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
@@ -442,7 +445,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         )
         self.env.assertEqual(res.nodes_deleted, 10)
         self.env.assertEqual(res.nodes_created, 10)
-        self.env.assertEqual(res.result_set, [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9]])
+        self.env.assertEqual(res.result_set, [[i + 10, i] for i in range(10)])
 
         res = self.graph.query("""
             MATCH (a:A)
@@ -1069,6 +1072,30 @@ class testGraphDeletionFlow(FlowTestsBase):
         for q in ["MATCH (s {n:'s'})-[:A]->()-[:A]->(t) RETURN t.n",
                   "MATCH (s {n:'s'})-[:A|B]->()-[:A|B]->(t) RETURN t.n"]:
             self.env.assertEqual(self.graph.query(q).result_set, [], message=q)
+
+
+    def test_deleted_node_id_is_not_reused_while_a_row_holds_it(self):
+        """#3164: `WITH *` / `WITH a` keep a deleted node in scope; a node
+        created after that must not take its id, or `SET a.x` / a second
+        `DELETE a` would hit the new node. Deleting a deleted node is a no-op,
+        counted once."""
+        self.graph.delete()
+        self.graph.query("CREATE (:N {id: 1}), (:N {id: 2})")
+
+        res = self.graph.query(
+            """MATCH (a:N {id: 1}) DELETE a
+               WITH *
+               CREATE (b:New {v: 1})
+               DELETE a
+               SET a.x = 5
+               RETURN b.v, b.x""")
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.result_set, [[1, None]])
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH (n) RETURN labels(n), properties(n) ORDER BY n.id").result_set,
+            [[["N"], {"id": 2}], [["New"], {"v": 1}]])
 
 
 class testGraphBulkDeletion(FlowTestsBase):

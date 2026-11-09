@@ -3105,3 +3105,261 @@ updating clause.")
                CALL { MATCH (q:B) RETURN q.v AS x UNION MATCH (q:A) RETURN q.v AS x }
                WITH n, x MATCH (m:B) RETURN n.v, x, m.v ORDER BY x, m.v""",
             [[1, 0, 0], [1, 0, 5], [1, 1, 0], [1, 1, 5], [1, 5, 0], [1, 5, 5]])
+
+    def _graph_contents(self):
+        """Every node (labels, properties) and relationship (type,
+        properties), order-independent."""
+        nodes = self.graph.query(
+            "MATCH (n) RETURN labels(n), properties(n)").result_set
+        edges = self.graph.query(
+            "MATCH ()-[r]->() RETURN type(r), properties(r)").result_set
+        return (sorted(map(str, nodes)), sorted(map(str, edges)))
+
+    def test_58_deleted_ids_are_not_reused_within_the_query(self):
+        """#3164: a CALL body commits once per input row. An id its DELETE
+        freed must not be handed to a node the next invocation creates, because
+        the next input row still holds the old node: its DELETE would remove the
+        NEW node, and its labels/properties would be read from the wrong
+        entity. Deleting an already-deleted entity is a no-op (Neo4j), and each
+        entity counts once in `Nodes deleted`."""
+
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("CREATE (:N {id:16}), (:N {id:120}), (:N {id:40})")
+
+        res = self.graph.query(
+            """UNWIND [1, 2, 3] AS i
+               MATCH (a:N {id: 16})
+               CALL {
+                   WITH a DETACH DELETE a RETURN 0 AS x
+                   UNION
+                   WITH i CREATE (:New {i: i}) RETURN 1 AS x
+               }
+               RETURN i, x ORDER BY i, x""")
+        self.env.assertEqual(res.result_set,
+                             [[1, 0], [1, 1], [2, 0], [2, 1], [3, 0], [3, 1]])
+        self.env.assertEqual(res.nodes_created, 3)
+        self.env.assertEqual(res.nodes_deleted, 1)
+
+        self.env.assertEqual(
+            self.graph.query("MATCH (a:N {id: 16}) RETURN count(a)").result_set,
+            [[0]])
+        self.env.assertEqual(
+            self.graph.query("MATCH (a:New) RETURN a.i ORDER BY a.i").result_set,
+            [[1], [2], [3]])
+        self.env.assertEqual(
+            self.graph.query("MATCH (a:N) RETURN a.id ORDER BY a.id").result_set,
+            [[40], [120]])
+        self.env.assertEqual(
+            self.graph.query("MATCH (a) RETURN count(a)").result_set, [[5]])
+
+        # The ids are ordinary free ids again for the next query.
+        res = self.graph.query("CREATE (:After)")
+        self.env.assertEqual(res.nodes_created, 1)
+
+    def test_59_deleted_relationship_ids_are_not_reused_within_the_query(self):
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query(
+            """CREATE (a:N {id:1}), (b:N {id:2}),
+                      (a)-[:R {id:1}]->(b), (a)-[:R {id:2}]->(b),
+                      (a)-[:R {id:3}]->(b)""")
+
+        res = self.graph.query(
+            """UNWIND [1, 2, 3] AS i
+               MATCH (:N {id: 1})-[r:R {id: 1}]->()
+               CALL {
+                   WITH r DELETE r RETURN 0 AS x
+                   UNION
+                   WITH i
+                   MATCH (a:N {id: 1}), (b:N {id: 2})
+                   CREATE (a)-[:NEW {i: i}]->(b)
+                   RETURN 1 AS x
+               }
+               RETURN i, x ORDER BY i, x""")
+        self.env.assertEqual(len(res.result_set), 6)
+        self.env.assertEqual(res.relationships_created, 3)
+        self.env.assertEqual(res.relationships_deleted, 1)
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH ()-[r]->() RETURN type(r), r.id, r.i ORDER BY type(r), r.id, r.i"
+            ).result_set,
+            [["NEW", None, 1], ["NEW", None, 2], ["NEW", None, 3],
+             ["R", 2, None], ["R", 3, None]])
+
+    def test_60_nested_call_and_merge_do_not_reuse_deleted_ids(self):
+        queries = [
+            # nested CALL
+            """UNWIND [1, 2, 3] AS i
+               MATCH (a:N {id: 1})
+               CALL {
+                   WITH a, i
+                   CALL {
+                       WITH a DETACH DELETE a RETURN 0 AS y
+                       UNION
+                       WITH i CREATE (:New {i: i}) RETURN 1 AS y
+                   }
+                   RETURN y
+               }
+               RETURN i, y""",
+            # MERGE in the body
+            """UNWIND [1, 2, 3] AS i
+               MATCH (a:N {id: 1})
+               CALL {
+                   WITH a DETACH DELETE a RETURN 0 AS y
+                   UNION
+                   WITH i MERGE (:New {i: i}) RETURN 1 AS y
+               }
+               RETURN i, y""",
+            # delete and create in the same body, one segment
+            """UNWIND [1, 2, 3] AS i
+               MATCH (a:N {id: 1})
+               CALL {
+                   WITH a, i
+                   DETACH DELETE a
+                   CREATE (:New {i: i})
+                   RETURN 1 AS y
+               }
+               RETURN i, y""",
+        ]
+        for q in queries:
+            self.graph.query("MATCH (n) DETACH DELETE n")
+            self.graph.query(
+                "CREATE (a:N {id: 1})-[:R]->(b:N {id: 2}), (a)-[:R]->(b)")
+            res = self.graph.query(q)
+            self.env.assertEqual(res.nodes_created, 3, depth=0)
+            self.env.assertEqual(res.nodes_deleted, 1, depth=0)
+            self.env.assertEqual(res.relationships_deleted, 2, depth=0)
+            self.env.assertEqual(
+                self.graph.query(
+                    "MATCH (n) RETURN labels(n), n.id, n.i ORDER BY n.id, n.i"
+                ).result_set,
+                [[["N"], 2, None], [["New"], None, 1], [["New"], None, 2],
+                 [["New"], None, 3]], depth=0)
+
+    def test_61_union_branch_without_import_keeps_its_own_labels(self):
+        """A UNION branch of a CALL body that imports nothing was bound with
+        scope ids that restart at 0; the outer MATCH's labels (also scope 0,
+        id 0) were applied over it, so `CREATE (:New)` created a `:N`."""
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("CREATE (:N {id: 1})")
+        self.graph.query(
+            """MATCH (a:N)
+               CALL { RETURN 0 AS x UNION CREATE (:New {i: 1}) RETURN 1 AS x }
+               RETURN x""")
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH (n) RETURN labels(n), n.id, n.i ORDER BY n.id, n.i"
+            ).result_set,
+            [[["N"], 1, None], [["New"], None, 1]])
+
+    def test_62_issue_3164_query(self):
+        """The reported query: the second branch's creates were shifted onto
+        ids the first branch's deletes had just freed, leaving unlabeled
+        nodes and deleting freshly created ones."""
+        # A graph of its own: `db.relationshipTypes()` feeds the outer rows, so
+        # the types other tests left behind would change the row counts.
+        g = self.db.select_graph(GRAPH_ID + "_3164")
+        g.query(
+            """CREATE (s:S {id:93}), (v:V {id:61,k9:true}),
+                      (n0:N {id:16,k7:'jUKnRFZAA'}), (n1:N {id:120,k6:'c'}),
+                      (n2:N {id:40}), (u:U {id:94,k5:false,klist:['Glgbw']}),
+                      (m:l2:l7:l3:l5:l1:l9 {id:96})""")
+        g.query(
+            """MATCH (s {id:93}), (v {id:61}), (n0 {id:16}), (n1 {id:120}),
+                     (n2 {id:40}), (u {id:94}), (m {id:96})
+               CREATE (s)-[:rt7 {id:3,k8:'GI'}]->(v),
+                      (n0)-[:rt0 {id:72,k8:'XL'}]->(v),
+                      (n0)-[:rt9 {id:19,k8:'a'}]->(n1),
+                      (n2)-[:R {id:50}]->(u),
+                      (n2)-[:R3 {id:160,klist:[]}]->(n2),
+                      (n2)-[:R {id:51}]->(n0),
+                      (m)-[:rt10 {k2:'wbXu',k6:'c'}]->(n1)""")
+        res = g.query(
+            """MATCH p0=({id:93})-[r0:rt7 {id:3}]->({k9:true})
+                     <-[r1:rt0 {id:72}]-
+                     (n0 {k7:'jUKnRFZAA'})-[r2:rt9]->(n1),
+                     ({k5:false,klist:['Glgbw']})<-[]-
+                     (n2)<-[r3]-(n2)-[]->(n0),(n1)
+               CALL db.relationshipTypes() YIELD relationshipType AS alias0
+               CALL algo.BFS(n0,2,'rt0') YIELD nodes AS alias1
+               UNWIND CASE WHEN r3.klist IS NULL THEN [] ELSE [r3.klist] END AS alias2
+               WITH *
+               MATCH (:l2:l7:l3:l5:l1:l9)-[:rt10 {k2:'wbXu',k6:'c'}]->(n1)
+               WHERE NOT (((true XOR true)
+                           OR (toStringOrNull(n1.k6) <= toStringOrNull(r2.k8)))
+                          OR (toStringOrNull(r0.k8) CONTAINS 'hD'))
+               CALL {
+                 WITH n0,n1,n2,alias1
+                 DETACH DELETE n2,n0
+                 RETURN n1 AS n3, alias1 AS alias3,
+                        toFloatOrNull(n1.k3) AS alias4,
+                        toIntegerOrNull(n1.k5) AS alias5,
+                        right(toStringOrNull(n1.k2),1) AS alias6
+                 UNION
+                 FOREACH (elem IN [true,false] | CREATE (:l0 {k11:elem}))
+                 MERGE (:l6 {id:130})-[:rt8 {id:514}]->(:l8 {id:131})
+                 CREATE (:l6 {id:132})
+                 RETURN null AS n3, null AS alias3, null AS alias4,
+                        null AS alias5, null AS alias6
+               }
+               RETURN count(*) AS c""")
+        # 6 outer rows x 2 branches (deleting twice is a no-op, row continues).
+        self.env.assertEqual(res.result_set, [[12]])
+        self.env.assertEqual(res.nodes_deleted, 2)
+        self.env.assertEqual(res.relationships_deleted, 5)
+        # per invocation: 2 x :l0 and one :l6 {id:132}; the MERGE creates once.
+        self.env.assertEqual(res.nodes_created, 6 * 3 + 2)
+
+        # No unlabeled nodes, the deleted ones are gone, the created ones survive.
+        self.env.assertEqual(
+            g.query(
+                "MATCH (n) WHERE size(labels(n)) = 0 RETURN count(n)").result_set,
+            [[0]])
+        self.env.assertEqual(
+            g.query("MATCH (n) WHERE n.id IN [16, 40] RETURN count(n)").result_set,
+            [[0]])
+        self.env.assertEqual(
+            g.query(
+                "MATCH (n:l0) RETURN count(n)").result_set, [[12]])
+        self.env.assertEqual(
+            g.query(
+                "MATCH (n:l6 {id:132}) RETURN count(n)").result_set, [[6]])
+        self.env.assertEqual(
+            g.query(
+                "MATCH (n:l6 {id:130})-[:rt8]->(m:l8 {id:131}) RETURN count(n)").result_set,
+            [[1]])
+        g.delete()
+
+    def test_63_cancelled_creation_ids_are_not_reused_within_the_query(self):
+        """#3164: a creation cancelled by a DELETE in the same segment returns
+        its id to the free set. A later segment of the query must not hand that
+        id out, since the row still carries the stale node/relationship and a
+        later DELETE of it would remove the new entity."""
+
+        g = self.graph
+        g.query("MATCH (n) DETACH DELETE n")
+        res = g.query(
+            """CREATE (a:N) DELETE a
+               WITH a
+               CALL { CREATE (:X) }
+               CREATE (c:Y)
+               DELETE a
+               RETURN count(*)""")
+        self.env.assertEqual(res.result_set, [[1]])
+        self.env.assertEqual(
+            g.query("MATCH (n) RETURN labels(n) ORDER BY labels(n)").result_set,
+            [[['X']], [['Y']]])
+
+        # cancelled by the cascade of a node delete
+        g.query("MATCH (n) DETACH DELETE n")
+        g.query(
+            """CREATE (a:N)-[r:R]->(c:N) DELETE a
+               WITH a, r
+               CALL { CREATE (:X)-[:Q]->(:X) }
+               CALL { CREATE (:X)-[:Q2]->(:X) }
+               DELETE r
+               RETURN count(*)""")
+        self.env.assertEqual(
+            g.query("MATCH ()-[r]->() RETURN type(r) ORDER BY type(r)").result_set,
+            [['Q'], ['Q2']])
+        self.env.assertEqual(
+            g.query("MATCH (n:X) RETURN count(n)").result_set, [[4]])

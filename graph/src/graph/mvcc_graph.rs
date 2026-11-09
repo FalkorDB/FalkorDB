@@ -348,6 +348,7 @@ impl MvccGraph {
         }
 
         new_graph.borrow_mut().trim_attr_stores();
+        new_graph.borrow_mut().end_id_quarantine();
 
         // Fold away any delta that has grown comparable to its base, then
         // materialize every committed base before publishing. The transaction
