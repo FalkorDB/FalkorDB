@@ -848,10 +848,19 @@ bool Index_SetLanguage
 	ASSERT(idx      != NULL);
 	ASSERT(language != NULL);
 
-	// fail if index already has language
-	if(idx->language != NULL && strcasecmp(idx->language, language) != 0) {
-		ErrorCtx_SetError(EMSG_INDEX_CANT_RECONFIG);
-		return false;
+	// a language can be configured only once
+	if(idx->language != NULL) {
+		// re-configuring to a different language is not allowed
+		if(strcasecmp(idx->language, language) != 0) {
+			ErrorCtx_SetError(EMSG_INDEX_CANT_RECONFIG);
+			return false;
+		}
+
+		// already set to this language - nothing to do.
+		// re-strdup'ing here would leak the existing string: adding a field to a
+		// fulltext index clones the active index (Index_Clone strdup's its
+		// language) and then re-applies the same language through this path
+		return true;
 	}
 
 	idx->language = rm_strdup(language);

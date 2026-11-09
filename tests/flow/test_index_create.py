@@ -881,3 +881,31 @@ class testIndexCreationFlow():
         self.env.assertEqual(row_by_column["entitytype"], "NODE")
         self.env.assertEqual(row_by_column["status"], "OPERATIONAL")
 
+    def test18_fulltext_add_field_same_language_no_leak(self):
+        # adding a field to an existing fulltext index that already carries a
+        # language must not leak the language string.
+        #
+        # adding a field clones the active index (Index_Clone strdup's its
+        # language), then the create path re-applies the same language via
+        # Index_SetLanguage. Index_SetLanguage used to overwrite the existing
+        # language pointer with a fresh strdup without freeing it, orphaning the
+        # clone's copy (an 8-byte leak surfaced by the ASAN flow suite). this
+        # deterministically exercises that path - functionally a no-op, but the
+        # sanitizer build fails on the leak if it regresses.
+        label = "FTLANG"
+
+        # create a fulltext index with an explicit language, wait operational
+        # (first field: fresh index, no clone)
+        create_node_fulltext_index(self.graph, label, 'a', language='english', sync=True)
+
+        # add a second field with the SAME language: clones the now-active index
+        # and re-applies 'english' - the path that used to leak
+        create_node_fulltext_index(self.graph, label, 'b', language='english', sync=True)
+
+        # both fields are indexed, language preserved, index operational
+        res = list_indicies(self.graph, label).result_set
+        self.env.assertEqual(len(res), 1)
+        self.env.assertEqual(sorted(res[0][1]), ['a', 'b'])  # properties
+        self.env.assertEqual(res[0][3], 'english')           # language
+        self.env.assertEqual(res[0][7], 'OPERATIONAL')       # status
+

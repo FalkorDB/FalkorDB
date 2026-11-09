@@ -415,21 +415,43 @@ static bool _DelegateQuery
 	// delegate query to the current graph writer thread
 	//--------------------------------------------------------------------------
 
-	// clear this thread data
-	ErrorCtx_Clear();
-	QueryCtx_RemoveFromTLS();
+	// capture the CommandCtx before the query is enqueued: the instant the
+	// query is queued the writer thread owns gq_ctx and may dequeue, execute
+	// and free it, so gq_ctx must not be dereferenced afterwards
+	CommandCtx *command_ctx = gq_ctx->command_ctx;
 
-	// untrack the CommandCtx
-	Globals_UntrackCommandCtx(gq_ctx->command_ctx);
-
-	// update execution thread to writer
-	gq_ctx->command_ctx->thread = EXEC_THREAD_WRITER;
-
-	// reset query stage from executing back to waiting
+	// mark the query as writer-bound and regress its stage from executing back
+	// to waiting *before* enqueuing: once queued another thread can dequeue and
+	// run it immediately, and _ExecuteQuery only re-establishes TLS / command
+	// tracking when it observes EXEC_THREAD_WRITER and advances a WAITING stage
+	command_ctx->thread = EXEC_THREAD_WRITER;
 	QueryCtx_ResetStage(gq_ctx->query_ctx);
 
-	// queue query
-	return GraphContext_EnqueueWriteQuery(gc, gq_ctx);
+	// queue query - this is the only operation here that can fail
+	if (!GraphContext_EnqueueWriteQuery(gc, gq_ctx)) {
+		// the write queue is full: delegation failed and this thread still owns
+		// gq_ctx. tear NOTHING down - restore only the thread/stage we mutated
+		// above - so the caller's cleanup path reports the error through this
+		// thread's still-present QueryCtx and untracks its still-tracked CommandCtx
+		command_ctx->thread = EXEC_THREAD_READER;
+		QueryCtx_AdvanceStage(gq_ctx->query_ctx);  // waiting -> executing
+		return false;
+	}
+
+	// delegation succeeded: hand off to the writer thread. tear down this thread's
+	// state ONLY here, on success, and AFTER the enqueue - NEVER before it:
+	//   - removing the QueryCtx/tracking before the enqueue would leave the
+	//     queue-full failure path above (which jumps to cleanup) reporting through
+	//     a missing QueryCtx -> the exact NULL-deref crash this fix exists to stop.
+	//   - do NOT untrack before the enqueue either: that was tried to close a
+	//     GRAPH.INFO use-after-free window, but it regressed the queue-full crash
+	//     under sustained saturation. the untrack stays here, after a successful
+	//     enqueue, and uses the captured command_ctx (gq_ctx may already be freed).
+	ErrorCtx_Clear();
+	Globals_UntrackCommandCtx(command_ctx);
+	QueryCtx_RemoveFromTLS();
+
+	return true;
 }
 
 // process all queued write queries
@@ -655,7 +677,14 @@ void _query
 		// thread failed getting exclusive write access to graph
 		// delegate query to current writer
 		if (!_DelegateQuery (gc, gq_ctx)) {
+			// the write queue is full; delegation failed and left this thread's
+			// TLS QueryCtx / CommandCtx tracking intact, so the shared cleanup
+			// below can safely report the error back to the client
 			ErrorCtx_SetError (EMSG_WRITE_QUEUE_FULL) ;
+
+			// the query was never enqueued - free the container here (exec_ctx
+			// is released by the cleanup path)
+			GraphQueryCtx_Free (gq_ctx) ;
 
 			// counter to GraphContext_IncreaseRefCount just above
 			GraphContext_DecreaseRefCount (gc) ;
