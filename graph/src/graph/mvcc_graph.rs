@@ -83,29 +83,13 @@ use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
 /// Provides snapshot isolation: readers see a consistent committed state
 /// while a writer can make changes that become visible only on commit.
 pub struct MvccGraph {
-    shared: Arc<Shared>,
-}
-
-/// What an [`MvccGraph`] shares with the background index builds running on it, which hold it
-/// weakly ([`WeakMvccGraph`]): its published version.
-struct Shared {
     /// Current committed graph version. Replaced only by a commit's compare-and-swap.
     graph: ArcSwap<Graph>,
-}
-
-unsafe impl Send for Shared {}
-unsafe impl Sync for Shared {}
-
-/// An [`MvccGraph`] held without keeping it alive: how a background index build reaches its graph.
-#[cfg(feature = "index-falkordb")]
-pub(crate) struct WeakMvccGraph(Weak<Shared>);
-
-#[cfg(feature = "index-falkordb")]
-impl WeakMvccGraph {
-    /// The graph, unless it is gone.
-    pub(crate) fn upgrade(&self) -> Option<MvccGraph> {
-        self.0.upgrade().map(|shared| MvccGraph { shared })
-    }
+    /// This coordinator, held without keeping it alive: what a commit hands each background index
+    /// build it starts. So the coordinator is dropped once its owner and every build that reached
+    /// it have let go, and the last may be a build's job, on the builder's pool.
+    #[cfg(feature = "index-falkordb")]
+    me: Weak<Self>,
 }
 
 /// Why [`MvccGraph::commit`] refused a version. Whichever it is, the version
@@ -121,6 +105,9 @@ pub enum CommitError {
     Invalid(#[from] NodeOpError),
 }
 
+unsafe impl Send for MvccGraph {}
+unsafe impl Sync for MvccGraph {}
+
 impl MvccGraph {
     #[must_use]
     pub fn new(
@@ -128,25 +115,21 @@ impl MvccGraph {
         e: u64,
         cache_size: usize,
         name: &str,
-    ) -> Self {
+    ) -> Arc<Self> {
         Self::from_graph(Graph::new(n, e, cache_size, 0, name))
     }
 
     /// Create an `MvccGraph` from an already-constructed `Graph`.
     /// Used by the RDB load path.
     #[must_use]
-    pub fn from_graph(graph: Graph) -> Self {
-        Self {
-            shared: Arc::new(Shared {
-                graph: ArcSwap::from_pointee(graph),
-            }),
-        }
-    }
-
-    /// This graph, held without keeping it alive.
-    #[cfg(feature = "index-falkordb")]
-    pub(crate) fn downgrade(&self) -> WeakMvccGraph {
-        WeakMvccGraph(Arc::downgrade(&self.shared))
+    // Without the native index, nothing holds the coordinator weakly.
+    #[cfg_attr(not(feature = "index-falkordb"), allow(unused_variables))]
+    pub fn from_graph(graph: Graph) -> Arc<Self> {
+        Arc::new_cyclic(|me| Self {
+            graph: ArcSwap::from_pointee(graph),
+            #[cfg(feature = "index-falkordb")]
+            me: Weak::clone(me),
+        })
     }
 
     /// The published version. Takes no lock.
@@ -155,7 +138,7 @@ impl MvccGraph {
     /// versions if something committed in between.
     #[must_use]
     pub fn read(&self) -> Arc<Graph> {
-        self.shared.graph.load_full()
+        self.graph.load_full()
     }
 
     /// A private version of the published graph to build a write into.
@@ -167,7 +150,7 @@ impl MvccGraph {
     /// for it (#3093) — the fork goes stale instead ([`Self::is_stale`]).
     #[must_use]
     pub fn fork(&self) -> Graph {
-        self.shared.graph.load().new_version()
+        self.graph.load().new_version()
     }
 
     /// Whether a version was published after `fork` was made, so it no
@@ -184,7 +167,7 @@ impl MvccGraph {
         &self,
         fork: &Graph,
     ) -> bool {
-        self.shared.graph.load().version + 1 != fork.version
+        self.graph.load().version + 1 != fork.version
     }
 
     /// Bring a writer's `fork`, which is not stale ([`Self::is_stale`]), onto the indexer batches
@@ -200,7 +183,7 @@ impl MvccGraph {
         &self,
         fork: &mut Graph,
     ) {
-        let published = self.shared.graph.load_full();
+        let published = self.graph.load_full();
         // Until a build runs in the background, no published column is `Building`, and nothing
         // is rebased.
         if fork.overtaken_by_indexer_batches(&published) {
@@ -233,7 +216,7 @@ impl MvccGraph {
         &self,
         mut fork: Graph,
     ) -> Result<Arc<Graph>, CommitError> {
-        let published = self.shared.graph.load_full();
+        let published = self.graph.load_full();
         Self::prepare(&published, &mut fork, true)?;
         // The indexes to build, asked of the version this one replaces before it is replaced.
         #[cfg(feature = "index-falkordb")]
@@ -244,7 +227,7 @@ impl MvccGraph {
         // the build, an indexer batch's included, starts nothing.
         #[cfg(feature = "index-falkordb")]
         for (id, generation) in to_build {
-            online_build::enqueue(self.downgrade(), id, generation);
+            online_build::enqueue(Weak::clone(&self.me), id, generation);
         }
         Ok(version)
     }
@@ -286,7 +269,7 @@ impl MvccGraph {
         mut prepared: Graph,
         batch: &PreparedBatch,
     ) -> Result<IndexerCommit, CommitError> {
-        let published = self.shared.graph.load_full();
+        let published = self.graph.load_full();
         let fit = prepared.indexer_fit(&published, batch);
         let version = match fit {
             IndexerCommit::Same => {
@@ -378,10 +361,7 @@ impl MvccGraph {
         published: &Arc<Graph>,
         version: Arc<Graph>,
     ) -> Result<Arc<Graph>, CommitError> {
-        let previous = self
-            .shared
-            .graph
-            .compare_and_swap(published, Arc::clone(&version));
+        let previous = self.graph.compare_and_swap(published, Arc::clone(&version));
         if !Arc::ptr_eq(&previous, published) {
             return Err(CommitError::Stale);
         }
@@ -391,9 +371,7 @@ impl MvccGraph {
     }
 }
 
-/// Once the graph and every build that reached it have let go: the last may be a build's job, on
-/// the builder's pool.
-impl Drop for Shared {
+impl Drop for MvccGraph {
     fn drop(&mut self) {
         self.graph.load().cancel_indexing();
     }

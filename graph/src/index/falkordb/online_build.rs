@@ -32,14 +32,14 @@
 use std::mem;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
 use parking_lot::{RwLock, RwLockReadGuard};
 
 use super::versioned::{Discarded, IndexId, IndexerCommit, PreparedBatch};
 use crate::graph::graph::Graph;
-use crate::graph::mvcc_graph::{CommitError, MvccGraph, WeakMvccGraph};
+use crate::graph::mvcc_graph::{CommitError, MvccGraph};
 use crate::threadpool::ThreadPool;
 #[cfg(test)]
 use parking_lot::{FairMutex, FairMutexGuard, Mutex};
@@ -249,7 +249,7 @@ impl Builder {
     /// [`MvccGraph::commit`]: crate::graph::mvcc_graph::MvccGraph::commit
     pub(crate) fn enqueue(
         self: &Arc<Self>,
-        graph: WeakMvccGraph,
+        graph: Weak<MvccGraph>,
         id: IndexId,
         generation: u64,
     ) {
@@ -301,7 +301,7 @@ pub(crate) struct Job {
     /// query or batch still holds the graph, it is freed, and the job's next batch finds it gone
     /// and ends. A strong handle would keep the whole graph in memory, and the job building it,
     /// until its index is `Ready`.
-    graph: WeakMvccGraph,
+    graph: Weak<MvccGraph>,
     id: IndexId,
     generation: u64,
     /// The most entities the next batch reads: the cap at first, half the size of a batch writers
@@ -312,7 +312,7 @@ pub(crate) struct Job {
 impl Job {
     pub(crate) fn new(
         builder: Arc<Builder>,
-        graph: WeakMvccGraph,
+        graph: Weak<MvccGraph>,
         id: IndexId,
         generation: u64,
     ) -> Self {
@@ -450,7 +450,7 @@ impl Job {
 /// What a batch's read hands its publish ([`Job::read`]).
 struct Read {
     /// The job's graph, held until the batch is over.
-    mvcc: MvccGraph,
+    mvcc: Arc<MvccGraph>,
     /// A new build version of the graph's published one, with the batch applied.
     prepared: Graph,
     batch: PreparedBatch,
@@ -504,7 +504,7 @@ pub fn stop() {
 /// test starts it. Tests share a process, so its jobs would build other tests' indexes while they
 /// run; a test that runs jobs makes a builder of its own.
 pub(crate) fn enqueue(
-    graph: WeakMvccGraph,
+    graph: Weak<MvccGraph>,
     id: IndexId,
     generation: u64,
 ) {
