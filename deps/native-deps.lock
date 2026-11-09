@@ -12,8 +12,8 @@
 [graphblas]
 path = deps/GraphBLAS
 url = https://github.com/DrTimothyAldenDavis/GraphBLAS.git
-rev = ea79e354877ad5e96fad13e161b8db6d661875e4
-pin = v10.5.0
+rev = 77013904177e18e191dc7b41c23de9c6bc36a2e9
+pin = v10.5.2
 
 [lagraph]
 path = deps/LAGraph
