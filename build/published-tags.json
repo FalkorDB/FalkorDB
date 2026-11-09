@@ -1,0 +1,114 @@
+{
+  "_about": [
+    "The published image tags, as data. build/check_published_tags.py reads this file",
+    "and checks every tag it lists against GHCR and Docker Hub.",
+    "The server name is the last part of a tag; a tag with no server suffix is Valkey.",
+    "{version} is a release version without the leading v (6.1.0, 6.1.0-rc.1); for the",
+    "latest channel it is the release latest* must point at. {ci_key} is the CI key",
+    "(pr-123, mg-<sha>); {arch} is a platform's arch_suffixes entry (x64, arm64v8).",
+    "A tag must exist on exactly the repos and registries listed for it, and on no other.",
+    "No public tag names an architecture: <tag>-<arch suffix> must not exist, except",
+    "the tags left from before the switch, which are never touched. A per-OS tag",
+    "never appears without its server suffix."
+  ],
+
+  "registries": {
+    "ghcr": "ghcr.io/falkordb",
+    "dockerhub": "docker.io/falkordb"
+  },
+
+  "repos": {
+    "falkordb": { "about": "the server with the browser", "browser": true },
+    "falkordb-server": { "about": "the server alone", "browser": false }
+  },
+
+  "browser": {
+    "_about": "run.sh starts the browser from $FALKORDB_BROWSER_PATH/server.js when BROWSER=1.",
+    "default_path": "/var/lib/falkordb/browser",
+    "entry": "server.js"
+  },
+
+  "left_from_before_the_switch": [
+    "docker.io/falkordb/falkordb:edge-x64",
+    "docker.io/falkordb/falkordb:edge-arm64v8",
+    "docker.io/falkordb/falkordb:latest-x64",
+    "docker.io/falkordb/falkordb:latest-arm64v8",
+    "docker.io/falkordb/falkordb-server:edge-x64",
+    "docker.io/falkordb/falkordb-server:edge-arm64v8",
+    "docker.io/falkordb/falkordb-server:latest-x64",
+    "docker.io/falkordb/falkordb-server:latest-arm64v8"
+  ],
+
+  "platforms": ["linux/amd64", "linux/arm64"],
+
+  "arch_suffixes": { "linux/amd64": "x64", "linux/arm64": "arm64v8" },
+
+  "servers": {
+    "valkey": { "product": "Valkey", "version": "9.1.2" },
+    "redis": { "product": "Redis", "version": "8.10.2" }
+  },
+
+  "base_os": {
+    "ubuntu-26.04": { "ID": "ubuntu", "VERSION_ID": "26.04" },
+    "debian-trixie": { "ID": "debian", "VERSION_CODENAME": "trixie" },
+    "alpine": { "ID": "alpine" },
+    "amazonlinux2023": { "ID": "amzn", "VERSION_ID": "2023" },
+    "rhel9": { "ID": "rhel", "VERSION_ID": "9.*" }
+  },
+
+  "channels": {
+    "edge": {
+      "registries": ["ghcr", "dockerhub"],
+      "images": [
+        { "tag": "edge-rs-valkey", "repos": ["falkordb", "falkordb-server"], "server": "valkey", "os": "ubuntu-26.04" },
+        { "tag": "edge-rs-redis", "repos": ["falkordb", "falkordb-server"], "server": "redis", "os": "debian-trixie" }
+      ],
+      "aliases": [
+        { "tag": "edge", "of": "edge-rs-valkey" },
+        { "tag": "edge-rs", "of": "edge-rs-valkey" }
+      ]
+    },
+
+    "release": {
+      "registries": ["ghcr", "dockerhub"],
+      "images": [
+        { "tag": "{version}-valkey", "repos": ["falkordb", "falkordb-server"], "server": "valkey", "os": "ubuntu-26.04" },
+        { "tag": "{version}-redis", "repos": ["falkordb", "falkordb-server"], "server": "redis", "os": "debian-trixie" },
+        { "tag": "{version}-alpine-valkey", "repos": ["falkordb-server"], "server": "valkey", "os": "alpine" },
+        { "tag": "{version}-amazonlinux2023-valkey", "repos": ["falkordb-server"], "server": "valkey", "os": "amazonlinux2023" },
+        { "tag": "{version}-rhel9-redis", "repos": ["falkordb-server"], "server": "redis", "os": "rhel9" },
+        { "tag": "{version}-amazonlinux2023-redis", "repos": ["falkordb-server"], "server": "redis", "os": "amazonlinux2023" }
+      ],
+      "aliases": [
+        { "tag": "{version}", "of": "{version}-valkey" }
+      ]
+    },
+
+    "latest": {
+      "registries": ["ghcr", "dockerhub"],
+      "images": [
+        { "tag": "latest-valkey", "repos": ["falkordb", "falkordb-server"], "server": "valkey", "os": "ubuntu-26.04", "follows": "{version}-valkey" },
+        { "tag": "latest-redis", "repos": ["falkordb", "falkordb-server"], "server": "redis", "os": "debian-trixie", "follows": "{version}-redis" }
+      ],
+      "aliases": [
+        { "tag": "latest", "of": "latest-valkey", "follows": "{version}" }
+      ]
+    },
+
+    "ci": {
+      "_about": [
+        "A merge-queue key (mg-<sha>) is new for every queue entry, so its unsuffixed",
+        "names (rc-<key>, rc-<key>-<arch>) cannot predate the switch and must not exist.",
+        "A pull-request key (pr-<N>) is reused across pushes, and a PR whose CI ran",
+        "before the switch keeps those names for up to 30 days, so they are allowed."
+      ],
+      "fresh_key_prefixes": ["mg-"],
+      "registries": ["ghcr"],
+      "images": [
+        { "tag": "rc-{ci_key}-valkey", "repos": ["falkordb", "falkordb-server"], "server": "valkey", "os": "ubuntu-26.04", "per_arch": "rc-{ci_key}-valkey-{arch}" },
+        { "tag": "rc-{ci_key}-redis", "repos": ["falkordb", "falkordb-server"], "server": "redis", "os": "debian-trixie", "per_arch": "rc-{ci_key}-redis-{arch}" }
+      ],
+      "aliases": []
+    }
+  }
+}
