@@ -133,9 +133,25 @@ RUN set -eux; \
 # the binary fails to load with "version not found" errors. trixie-slim
 # ships glibc 2.41 / GLIBCXX_3.4.33 which is compatible with everything
 # the toolchain (also trixie-derived) produces.
-FROM debian:trixie-slim AS server
+#
+# server-env-redis/server-env-valkey carry the server's name and release, as
+# build/runtime/Dockerfile's server-redis/server-valkey do; `server` is FROM
+# the one SERVER names and labels the image with them.
+FROM debian:trixie-slim AS server-env-redis
+ARG REDIS_VERSION
+ENV FALKORDB_SERVER=redis \
+    FALKORDB_SERVER_VERSION=${REDIS_VERSION}
+
+FROM debian:trixie-slim AS server-env-valkey
+ARG VALKEY_VERSION
+ENV FALKORDB_SERVER=valkey \
+    FALKORDB_SERVER_VERSION=${VALKEY_VERSION}
+
+FROM server-env-${SERVER} AS server
 ARG TARGETPLATFORM
-ARG SERVER
+
+LABEL com.falkordb.server.name="${FALKORDB_SERVER}" \
+      com.falkordb.server.version="${FALKORDB_SERVER_VERSION}"
 
 ENV FALKORDB_HOME=/var/lib/falkordb \
     FALKORDB_DATA_PATH=/var/lib/falkordb/data \
@@ -206,7 +222,6 @@ COPY --from=builder     /out/falkordb.so   ${FALKORDB_BIN_PATH}/falkordb.so
 # Sanitizer env defaults — overridable at runtime via `docker run -e …` or
 # GitHub Actions services.<svc>.env.
 ENV ARCH=${TARGETPLATFORM} \
-    FALKORDB_SERVER=${SERVER} \
     TLS=0 \
     BROWSER=0 \
     FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000" \
