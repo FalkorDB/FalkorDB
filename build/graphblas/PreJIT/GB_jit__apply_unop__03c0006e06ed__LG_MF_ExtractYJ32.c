@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.2, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -86,7 +86,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0xab7904d3b4d9775b ;
-    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 2 ;
     defn [0] = GB_LG_MF_ExtractYJ32_USER_DEFN ;
     defn [1] = NULL ;
     defn [2] = NULL ;
