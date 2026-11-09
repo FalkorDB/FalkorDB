@@ -35,9 +35,10 @@
 # Advisory: not part of ci-gate.
 #
 # Which proofs/ each job reads:
-#   - the scripts (pr_impact.py, lean_ci.sh, coverage.sh) and the COVERAGE rows
-#     that say which functions are verified come from the PR's base commit, so a
-#     PR cannot change the checks that judge it;
+#   - the scripts (pr_impact.py; the gate's proof_gate.sh, proof_gate_checks.py,
+#     lean_ci.sh and coverage.sh; the report's proof_review.py) and the COVERAGE
+#     rows that say which functions are verified come from the PR's base commit,
+#     so a PR cannot change the checks that judge it;
 #   - the Lean sources the re-prove edits, and the patch it suggests, are the
 #     PR head's, so a PR that already updated its proofs is re-proved from there.
 
@@ -313,7 +314,8 @@ jobs:
 
   # Fresh runner: none of the agent's processes or files reach it, only the two
   # uploaded files. It validates the patch and runs the gates on the PR head's
-  # proofs + patch, with the gate scripts from the PR's base commit.
+  # proofs + patch, with the gate scripts from the PR's base commit
+  # (proofs/proof_gate.sh says what it checks).
   gate:
     needs: [impact, reprove]
     runs-on: ubuntu-latest
@@ -342,6 +344,8 @@ jobs:
           sparse-checkout: |
             proofs/lean_ci.sh
             proofs/coverage.sh
+            proofs/proof_gate.sh
+            proofs/proof_gate_checks.py
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -370,329 +374,18 @@ jobs:
         id: gates
         env:
           PROOFS_SHA: ${{ needs.impact.outputs.proofs_sha }}
+        # proofs/proof_gate.sh, from the PR's base commit (see its header).
         run: |
-          set -uo pipefail
-          mkdir -p out
-          cp in/proofs.patch out/proofs.patch
-          cp in/reprove.md out/reprove.md
-          # The status and the head it is for go into the artifact too: proof-apply.yml
-          # commits the patch only for a `pass` on the PR's current head.
-          verdict() { echo "gates=$1" >> "$GITHUB_OUTPUT"; echo "$1" > "$GITHUB_WORKSPACE/out/gate_status"; }
-          echo "$PROOFS_SHA" > "$GITHUB_WORKSPACE/out/head_sha"
-          cd proofs-src
-          if [[ -s ../out/proofs.patch ]] && ! git apply --index ../out/proofs.patch 2> ../out/apply.log; then
-            { echo "Patch does not apply to the proofs base:"; echo '```'; cat ../out/apply.log; echo '```'; } > ../out/gates.md
-            verdict rejected; exit 0
+          set -euo pipefail
+          if [[ ! -f proofs-base/proofs/proof_gate.sh ]]; then
+            # A base branch from before the gate script existed.
+            mkdir -p out
+            echo "No proofs/proof_gate.sh on the base branch, so the patch was not checked." > out/gates.md
+            echo rejected > out/gate_status
+            echo "gates=rejected" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          # --no-renames: a rename is listed as its deletion and its addition, so both
-          # paths are checked. --raw gives each destination mode: only regular
-          # non-executable files (100644) or deletions (000000) are allowed.
-          raw=$(git diff --cached --raw --no-renames)
-          paths=$(git diff --cached --name-only --no-renames)
-          bad=$(printf '%s\n' "$paths" | grep -vE "$PROOF_PATHS" | grep -v '^$' || true)
-          bad+=$(printf '%s\n' "$paths" | grep -E "$PROOF_DENY" || true)
-          bad+=$(printf '%s\n' "$raw" | awk '$2 != "100644" && $2 != "000000" { print $NF " (mode " $2 ")" }')
-          # A file in a directory with no Lake configuration is never built, so its
-          # theorems would go unchecked while coverage.sh still counted its rows.
-          for p in $paths; do
-            [[ "$p" == proofs/FINDINGS.md ]] && continue
-            proj=$(cut -d/ -f1-2 <<< "$p")
-            if ! git cat-file -e "HEAD:$proj/lakefile.toml" 2>/dev/null && ! git cat-file -e "HEAD:$proj/lakefile.lean" 2>/dev/null; then
-              bad+="$p (no Lake project at $proj)"$'\n'
-            fi
-          done
-          if [[ -n "$bad" ]]; then
-            # shellcheck disable=SC2016  # literal Markdown backticks
-            { echo "Patch dropped: it touches files outside the proof allowlist:"; echo; printf '%s\n' "$bad" | sed 's/^/- `/; s/$/`/'; } > ../out/gates.md
-            verdict rejected; exit 0
-          fi
-          # Checks that need no Lean, so nothing in the patch runs before them:
-          #   - no build-time code added to a .lean file (#eval, elab, IO, ...): with
-          #     none, `lake build` only checks proofs and cannot touch this runner;
-          #   - existing theorem statements unchanged (a weaker one would still build);
-          #   - an explicit verdict for every changed function.
-          cp ../in/verdicts.json ../out/verdicts.json
-          cp ../in/impact.json ../out/impact.json
-          python3 - "$(git rev-parse HEAD)" ../in/impact.json ../in/verdicts.json ../out/added_theorems.json > ../out/checks.md 2> ../out/checks.err <<'EOF'
-          import json, re, subprocess, sys
-          base, impact_path, verdicts_path, added_path = sys.argv[1:]
-
-          def git(*a):
-              return subprocess.run(['git', *a], capture_output=True, text=True).stdout
-
-          def strip_comments(src):
-              """Blank -- and nested /- -/ comments, keeping string literals and newlines."""
-              out, i, n, depth, in_str = [], 0, len(src), 0, False
-              while i < n:
-                  c = src[i]
-                  if in_str:
-                      if c == '\\' and i + 1 < n:
-                          out.append(src[i:i + 2]); i += 2; continue
-                      if c == '"':
-                          in_str = False
-                      out.append(c); i += 1; continue
-                  if depth == 0 and c == '"':
-                      in_str = True; out.append(c); i += 1; continue
-                  if src.startswith('/-', i):
-                      depth += 1; out.append('  '); i += 2; continue
-                  if depth and src.startswith('-/', i):
-                      depth -= 1; out.append('  '); i += 2; continue
-                  if depth:
-                      out.append('\n' if c == '\n' else ' '); i += 1; continue
-                  if src.startswith('--', i):
-                      j = src.find('\n', i)
-                      j = n if j < 0 else j
-                      out.append(' ' * (j - i)); i = j; continue
-                  out.append(c); i += 1
-              return ''.join(out)
-
-          HEAD_RE = re.compile(r'(?:theorem|lemma)\s+([^\s(:{\[]+)')
-          NS_RE = re.compile(r'^\s*(namespace|section|end)\b\s*([^\s]*)', re.M)
-
-          def statement(src, k):
-              """Text from k to the first := outside brackets and strings."""
-              depth, i, in_str = 0, k, False
-              while i < len(src):
-                  c = src[i]
-                  if in_str:
-                      if c == '\\':
-                          i += 2; continue
-                      if c == '"':
-                          in_str = False
-                  elif c == '"':
-                      in_str = True
-                  elif c in '([{':
-                      depth += 1
-                  elif c in ')]}':
-                      depth -= 1
-                  elif depth == 0 and src.startswith(':=', i):
-                      break
-                  i += 1
-              # Collapse whitespace outside string literals only.
-              parts = re.split(r'("(?:\\.|[^"\\])*")', src[k:i])
-              return ''.join(p if p.startswith('"') else ' '.join(p.split()) + ' ' for p in parts).strip()
-
-          # Commands that change what an unchanged statement means: section variables
-          # (`variable (h : False)` + `include h` gives a theorem an impossible
-          # premise), name resolution (`open`), typeclass resolution (`instance`,
-          # `attribute [instance]`) and notation.
-          CONTEXT_RE = re.compile(r'^[ \t]*(?:local[ \t]+|scoped[ \t]+)?(variable|include|omit|open|export|attribute|instance|notation|'
-                                  r'infix|infixl|infixr|prefix|postfix|macro|syntax|universe|set_option)\b', re.M)
-
-          def command_text(src, k):
-              """A command from k: its line plus the indented lines that continue it."""
-              lines = src[k:].split('\n')
-              out = [lines[0]]
-              for line in lines[1:]:
-                  if not line.strip() or line[0] not in ' \t':
-                      break
-                  out.append(line)
-              return ' '.join(' '.join(out).split())
-
-          def decls(text):
-              """Fully qualified name -> (statement, the context commands before it, in order).
-
-              A name seen twice maps to None. The context is every namespace/section/end
-              and context command above the declaration, so adding, editing or moving
-              one changes it.
-              """
-              src = strip_comments(text)
-              scopes, events, ctx = [], [], []
-              for m in NS_RE.finditer(src):
-                  events.append((m.start(), m.group(1), m.group(2)))
-              for m in CONTEXT_RE.finditer(src):
-                  events.append((m.start(), 'context', command_text(src, m.start())))
-              for m in HEAD_RE.finditer(src):
-                  if m.start() and src[m.start() - 1] not in ' \t\n]':
-                      continue
-                  events.append((m.start(), 'decl', m))
-              found = {}
-              for pos, kind, arg in sorted(events, key=lambda e: e[0]):
-                  if kind in ('namespace', 'section'):
-                      scopes.append((kind, arg)); ctx.append(f'{kind} {arg}')
-                  elif kind == 'end':
-                      if scopes:
-                          scopes.pop()
-                      ctx.append(f'end {arg}')
-                  elif kind == 'context':
-                      ctx.append(arg)
-                  else:
-                      ns = [name for k2, name in scopes if k2 == 'namespace' and name]
-                      full = '.'.join(ns + [arg.group(1)])
-                      found[full] = None if full in found else (statement(src, arg.end()), tuple(ctx))
-              return found
-
-          problems = []
-          # Build-time code added to a .lean file.
-          # Code that runs while Lean elaborates, and unproven declarations. Matched on
-          # the added lines of each file after stripping that whole file's comments,
-          # so a word inside a multi-line doc comment does not count.
-          FORBID = re.compile(r'(#eval|#exec|#exit|\brun_cmd\b|\brun_elab\b|\brun_meta\b|\brun_tac\b|'
-                              r'\binitialize\b|\bbuiltin_initialize\b|\belab\b|\belab_rules\b|'
-                              r'\bmacro_rules\b|\bIO\b|\bunsafe\b|\bimplemented_by\b|\bextern\b|'
-                              r'\baxiom\b|\bsorry\b|\badmit\b|\bsorryAx\b|AXIOM-OK)')
-          added = {}
-          cur = None
-          for line in git('diff', '--cached', '--no-renames', '-U0', '--', '*.lean').splitlines():
-              if line.startswith('+++ '):
-                  cur = line[6:] if line.startswith('+++ b/') else None
-              elif line.startswith('@@') and cur:
-                  m = re.match(r'@@ -\S+ \+(\d+)(?:,(\d+))? @@', line)
-                  start, count = int(m.group(1)), int(m.group(2) or 1)
-                  added.setdefault(cur, set()).update(range(start, start + count))
-          for f, lines in added.items():
-              text = strip_comments(git('show', f':{f}')).split('\n')
-              for n in sorted(lines):
-                  if n - 1 < len(text):
-                      m = FORBID.search(text[n - 1])
-                      if m:
-                          problems.append(f'- `{f}:{n}` adds `{m.group(1)}`: `{text[n - 1].strip()[:120]}`')
-          if problems:
-              print('Patch dropped: it adds build-time code or an unproven declaration:')
-              print('\n'.join(problems))
-              print('REJECT')
-              sys.exit(0)
-
-          held = []
-          # Existing theorems: the statement and the context above it must be unchanged.
-          files = git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=MD', '--', '*.lean').split()
-          for f in files:
-              old, new = decls(git('show', f'{base}:{f}')), decls(git('show', f':{f}'))
-              for name, st in old.items():
-                  if name not in new:
-                      held.append(f'- `{f}` `{name}`: removed')
-                  elif st is None or new[name] is None:
-                      held.append(f'- `{f}` `{name}`: name declared more than once; review by hand')
-                  elif new[name][0] != st[0]:
-                      held.append(f'- `{f}` `{name}`: statement changed')
-                  elif new[name][1] != st[1]:
-                      came = [c for c in new[name][1] if c not in st[1]]
-                      gone = [c for c in st[1] if c not in new[name][1]]
-                      what = '; '.join([f'adds `{c[:80]}`' for c in came] + [f'removes `{c[:80]}`' for c in gone]) or 'reordered'
-                      held.append(f'- `{f}` `{name}`: context above it changed ({what})')
-
-          # The theorems the patch adds: fully qualified names of declarations in the
-          # patched .lean files (comments stripped, so neither a comment nor a Markdown
-          # file counts). lean_ci.sh builds them below; the report job posts a
-          # counterexample review only for a theorem named here.
-          added_thms = []
-          for f in git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=AM', '--', '*.lean').split():
-              old, new = decls(git('show', f'{base}:{f}')), decls(git('show', f':{f}'))
-              added_thms += [n for n, st in new.items() if st is not None and n not in old]
-          json.dump(sorted(set(added_thms)), open(added_path, 'w'))
-
-          # COVERAGE.tsv: no existing function may lose its row or move to a worse bucket
-          # (a function counts no better than its worst row).
-          RANK = {b: i for i, b in enumerate(['PROVEN', 'CONDITIONAL', 'AXIOMATISED', 'MODELLED', 'NOT COVERED', 'TEST-ONLY'])}
-
-          def worst(text):
-              out = {}
-              for line in text.splitlines()[1:]:
-                  cols = line.split('\t')
-                  if len(cols) < 4:
-                      continue
-                  key, rank = (cols[0], cols[1]), RANK.get(cols[3].strip(), len(RANK))
-                  out[key] = max(out.get(key, rank), rank)
-              return out
-
-          impact = json.load(open(impact_path))
-          gone_ok = {(r.get('file'), r.get('fn')) for r in impact.get('removed', []) if isinstance(r, dict)}
-
-          def bare(key):
-              # pr_impact.load_rows()'s name: `Lexer::set_pos` -> `set_pos`, `f/Arm` -> `f`.
-              name = key[1].strip().split('/')[0].split('::')[-1].split('.')[-1].split('(')[0].strip()
-              return (key[0].strip().lstrip('./'), name)
-
-          for f in git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=MD', '--', 'proofs/*/COVERAGE.tsv').split():
-              old, new = worst(git('show', f'{base}:{f}')), worst(git('show', f':{f}'))
-              names = {v: k for k, v in RANK.items()}
-              for key, rank in old.items():
-                  if key not in new and bare(key) not in gone_ok:
-                      held.append(f'- `{f}` `{key[0]}` `{key[1]}`: coverage row removed')
-                  elif key in new and new[key] > rank:
-                      held.append(f'- `{f}` `{key[0]}` `{key[1]}`: coverage {names.get(rank, "?")} → {names.get(new[key], "unknown bucket")}')
-          if held:
-              print('Held for review: an existing theorem statement, the context above one, or a coverage row changed:')
-              print('\n'.join(held))
-
-          VERDICTS = {'unchanged', 'model updated', 'counterexample'}
-          # A counterexample is posted as a review only with all of these (as in the report job).
-          CEX_FIELDS = ('theorem', 'why', 'repro', 'before', 'after')
-          try:
-              records = [v for v in json.load(open(verdicts_path)) if isinstance(v, dict)]
-              keys = [(str(v['file']), str(v['fn']), int(v['line'])) for v in records]
-              given_full = dict(zip(keys, records))
-              dups = sorted({k for k in keys if keys.count(k) > 1})
-          except Exception:
-              given_full, dups = {}, []
-          given = {k: v.get('verdict') if isinstance(v.get('verdict'), str) else None for k, v in given_full.items()}
-          missing = [c for c in impact['changed']
-                     if given.get((c['file'], c['fn'], int(c['line']))) not in VERDICTS
-                     or (c['file'], c['fn'], int(c['line'])) in dups]
-          noname = [k for k, v in given.items() if v in VERDICTS and not given_full[k].get('theorems')]
-          nocex = [k for k, v in given.items() if v == 'counterexample'
-                   and not all(isinstance(given_full[k].get(f), str) and given_full[k].get(f).strip()
-                               for f in CEX_FIELDS)]
-          if nocex:
-              print('Counterexamples missing theorem, why, repro, before or after, so not posted as a review (reported, not gated):')
-              print('\n'.join(f'- `{f}` `{fn}` (line {ln})' for f, fn, ln in nocex))
-          if noname:
-              print('Verdicts that name no Lean theorem (reported, not gated):')
-              print('\n'.join(f'- `{f}` `{fn}` (line {ln})' for f, fn, ln in noname))
-          if missing:
-              print('No valid verdict for:')
-              print('\n'.join(f"- `{c['file']}` `{c['fn']}` (line {c['line']})" for c in missing))
-          print('HELD' if held else '', 'INCOMPLETE' if missing else '')
-          EOF
-          rc=$?
-          if [[ $rc -ne 0 ]]; then
-            # A crash is never a pass: nothing below has checked the patch.
-            { echo "Patch dropped: the patch checks failed (exit $rc):"; echo '```'; tail -n 20 ../out/checks.err; echo '```'; } > ../out/gates.md
-            verdict rejected; exit 0
-          fi
-          if grep -q '^REJECT$' ../out/checks.md; then
-            sed '$d' ../out/checks.md > ../out/gates.md
-            verdict rejected; exit 0
-          fi
-          # The gate scripts come from the PR's base, not the PR: copy them over the
-          # PR's own (left unstaged, so the checks above only saw the patch).
-          cp ../proofs-base/proofs/lean_ci.sh ../proofs-base/proofs/coverage.sh proofs/
-          lean=skipped; cov=pass; ok=pass
-          if [[ -s ../out/proofs.patch ]]; then
-            lean=pass; proofs/lean_ci.sh > ../out/lean_ci.log 2>&1 || { lean=fail; ok=fail; }
-            # lake builds a project's default targets and what they import, so a file no
-            # target imports is never checked. Each added or changed .lean file must have
-            # a fresh .olean (this runner restores no cache).
-            unbuilt=""
-            for p in $(git diff --cached --name-only --no-renames --diff-filter=AM -- 'proofs/*.lean'); do
-              proj=$(cut -d/ -f1-2 <<< "$p"); mod=${p#"$proj"/}
-              [[ -f "$proj/.lake/build/lib/lean/${mod%.lean}.olean" ]] || unbuilt+="- \`$p\`"$'\n'
-            done
-            if [[ -n "$unbuilt" ]]; then
-              lean=fail; ok=fail
-              { echo; echo "Not built by any target of its project (import it from the project's root module):"; printf '%s' "$unbuilt"; } >> ../out/checks.md.tmp
-            fi
-          fi
-          COVERAGE_RUST_ROOT="$GITHUB_WORKSPACE/code" bash proofs/coverage.sh --unmatched > ../out/coverage.log 2>&1 || cov=fail
-          # coverage.sh exits 0 with findings; the counts decide (as in lean-proofs.yml).
-          unlisted=$(awk '/^TOTAL over all/ { print $(NF-3) }' ../out/coverage.log)
-          unmatched=$(sed -nE 's/.* ([0-9]+) rows unmatched.*/\1/p' ../out/coverage.log)
-          badb=$(sed -nE 's/.* ([0-9]+) bad buckets.*/\1/p' ../out/coverage.log)
-          # Same report lines as lean-proofs.yml's coverage gate.
-          untracked=$(grep -cE '^(projects without COVERAGE\.tsv|TEST-ONLY rows on fns the scanner sees as production code)' ../out/coverage.log || true)
-          if [[ "${unlisted:-}" != 0 || "${unmatched:-}" != 0 || "${badb:-}" != 0 || "$untracked" != 0 ]]; then cov=fail; fi
-          [[ "$cov" == fail ]] && ok=fail
-          tags=$(tail -n 1 ../out/checks.md)
-          {
-            echo "Gates: \`lean_ci.sh\` **$lean**; \`coverage.sh --unmatched\` **$cov** (unlisted=${unlisted:-?}, unmatched=${unmatched:-?}, bad buckets=${badb:-?}, untracked=${untracked:-?})."
-            echo
-            sed '$d' ../out/checks.md
-            [[ -f ../out/checks.md.tmp ]] && cat ../out/checks.md.tmp
-          } > ../out/gates.md
-          if [[ "$ok" == pass && "$tags" == *INCOMPLETE* ]]; then ok=incomplete; fi
-          if [[ "$ok" == pass && "$tags" == *HELD* ]]; then ok=held; fi
-          echo "lean=$lean" >> "$GITHUB_OUTPUT"
-          verdict "$ok"
+          bash proofs-base/proofs/proof_gate.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: ${{ always() }}
         with:
@@ -711,6 +404,14 @@ jobs:
     permissions:
       pull-requests: write   # the re-prove comment; nothing is pushed
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: proofs-base
+          sparse-checkout: |
+            proofs/proof_review.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         id: download
         # Absent when the re-prove or gate job failed before uploading; reported below.
@@ -787,101 +488,11 @@ jobs:
           # Earlier counterexamples, inline or in a review's own text, are not posted again.
           { gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/comments"
             gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews"; } > posted.json
-          python3 - out/verdicts.json out/impact.json out/added_theorems.json files.json posted.json > review.json <<'EOF'
-          import hashlib, json, os, re, sys
-          verdicts_path, impact_path, added_path, files_path, posted_path = sys.argv[1:]
-          head, run_url, bot = os.environ['HEAD'], os.environ['RUN_URL'], os.environ['BOT_LOGIN']
-
-          def pages(path):
-              # gh --paginate prints one JSON array per page.
-              text, out, i, dec = open(path).read(), [], 0, json.JSONDecoder()
-              while i < len(text):
-                  if text[i].isspace():
-                      i += 1; continue
-                  page, i = dec.raw_decode(text, i)
-                  out += page
-              return out
-
-          def text(v, limit):
-              return v.strip()[:limit] if isinstance(v, str) else ''
-
-          def fence(body, lang=''):
-              ticks = '`' * max(3, max((len(m) for m in re.findall(r'`+', body)), default=0) + 1)
-              return f'{ticks}{lang}\n{body}\n{ticks}'
-
-          def commentable(patch):
-              # Lines of the PR head a review comment may sit on: added and context lines.
-              lines, new = set(), 0
-              for l in (patch or '').split('\n'):
-                  m = re.match(r'@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@', l)
-                  if m:
-                      new = int(m.group(1)); continue
-                  if l.startswith('-') or l.startswith('\\'):
-                      continue
-                  lines.add(new); new += 1
-              return lines
-
-          def load(path, default):
-              try:
-                  return json.load(open(path))
-              except Exception:
-                  return default
-
-          verdicts = [v for v in load(verdicts_path, []) if isinstance(v, dict)]
-          # Only functions the diff touches (the gate's keys), and only theorems the gate
-          # saw the patch add as compiled, fully qualified declarations (not a comment
-          # or a Markdown line).
-          changed = {(c['file'], c['fn'], int(c['line'])) for c in load(impact_path, {}).get('changed', [])}
-          added = set(load(added_path, []))
-          by_path = {f['filename']: commentable(f.get('patch')) for f in pages(files_path)}
-          # Only this workflow's own earlier comments and reviews count as posted.
-          posted = '\n'.join(c.get('body') or '' for c in pages(posted_path)
-                             if (c.get('user') or {}).get('login') == bot)
-          comments, loose = [], []
-          for v in verdicts:
-              if v.get('verdict') != 'counterexample':
-                  continue
-              path, fn, thm = text(v.get('file'), 300), text(v.get('fn'), 200), text(v.get('theorem'), 300)
-              repro = text(v.get('repro'), 3000)
-              why, before, after = text(v.get('why'), 600), text(v.get('before'), 1000), text(v.get('after'), 1000)
-              try:
-                  line = int(v.get('line'))
-              except (TypeError, ValueError):
-                  continue
-              # All five fields (as the gate requires), so no review says "(not given)".
-              if not (path and fn and thm and why and repro and before and after):
-                  continue
-              if (path, fn, line) not in changed or thm not in added:
-                  continue
-              marker = f'<!-- proof-cex {path}:{fn}:{hashlib.sha1(repro.encode()).hexdigest()[:12]} -->'
-              if marker in posted:
-                  continue
-              posted += '\n' + marker  # a duplicate verdict in this run is not posted twice
-              body = '\n'.join([
-                  marker,
-                  f'**The Lean proofs found a probable bug in `{fn}`.**',
-                  '',
-                  why,
-                  '',
-                  'Reproduce:',
-                  fence(repro, 'cypher'),
-                  'Before this PR:', fence(before),
-                  'With this PR:', fence(after),
-                  '',
-                  f'<sub>Lean proves the counterexample on the model (`{thm}`, in the [run]({run_url})\'s `proof-gate` patch). '
-                  f'Confirm it on a server before acting on it. At {head[:9]}.</sub>',
-              ])
-              anchor = next((n for n in sorted(by_path.get(path, ())) if n >= line), None)
-              if anchor is None:
-                  loose.append(f'`{path}` `{fn}`\n\n{body}')
-              else:
-                  comments.append({'path': path, 'line': anchor, 'side': 'RIGHT', 'body': body})
-          if not comments and not loose:
-              print('{}'); sys.exit(0)
-          summary = f'The Lean proofs found {len(comments) + len(loose)} probable bug(s) in this PR; details below.'
-          print(json.dumps({'commit_id': head, 'event': 'COMMENT',
-                            'body': '\n\n---\n\n'.join([summary] + loose), 'comments': comments}))
-          EOF
+          if [[ ! -f proofs-base/proofs/proof_review.py ]]; then
+            echo "No proofs/proof_review.py on the base branch; no review posted."; exit 0
+          fi
+          python3 -I proofs-base/proofs/proof_review.py out/verdicts.json out/impact.json out/added_theorems.json \
+            files.json posted.json > review.json
           if [[ "$(cat review.json)" == "{}" ]]; then
             echo "No new counterexample to review."; exit 0
           fi
