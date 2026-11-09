@@ -92,7 +92,7 @@ void Globals_TrackCommandCtx
 // untrack CommandCtx
 void Globals_UntrackCommandCtx
 (
-	const CommandCtx *ctx  // CommandCtx to untrack
+	CommandCtx *ctx  // CommandCtx to untrack (its refcount is decremented)
 );
 
 // get all currently tracked CommandCtxs

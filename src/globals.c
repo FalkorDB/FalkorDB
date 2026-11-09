@@ -282,6 +282,14 @@ void Globals_TrackCommandCtx
 	// set ctx at the current thread entry
 	_globals.command_ctxs[tid] = ctx;
 
+	// the tracking slot holds a reference on the command. without it the slot is a
+	// weak pointer: a concurrent Globals_GetCommandCtxs (GRAPH.INFO) could
+	// CommandCtx_Incref a command that the owning thread already freed (reachable
+	// e.g. in the write-delegation window, where the delegating thread's slot still
+	// points at a command the writer may free). the slot's own reference keeps the
+	// command alive until it is untracked. released in Globals_UntrackCommandCtx.
+	CommandCtx_Incref ((CommandCtx *)ctx) ;
+
 	// release lock
 	Globals_Unlock () ;
 
@@ -292,7 +300,7 @@ void Globals_TrackCommandCtx
 // untrack CommandCtx
 void Globals_UntrackCommandCtx
 (
-	const CommandCtx *ctx  // CommandCtx to untrack
+	CommandCtx *ctx  // CommandCtx to untrack
 ) {
 	ASSERT(ctx != NULL);
 	ASSERT(_globals.command_ctxs != NULL);
@@ -304,12 +312,23 @@ void Globals_UntrackCommandCtx
 
 	ASSERT(_globals.command_ctxs[tid] == ctx);
 
-	// clear ctx at the current thread entry
-	// CommandCtx_Free will free it eventually
+	// clear ctx at the current thread entry. clearing the slot under the lock is
+	// the part that must be mutually exclusive with Globals_GetCommandCtxs (which
+	// holds the write lock): that function then either sees the slot and increfs a
+	// command the slot's own reference still keeps alive, or sees NULL.
 	_globals.command_ctxs[tid] = NULL;
 
 	// release lock
 	Globals_Unlock () ;
+
+	// drop the reference the slot held (balances the incref in
+	// Globals_TrackCommandCtx), OUTSIDE the lock. this can be the last reference:
+	// for a delegated write the writer thread may finish and drop the base
+	// reference before this (delegating) thread untracks, so freeing here must not
+	// run under the globals lock. deferring it is safe - the slot is already
+	// cleared, so no concurrent Globals_GetCommandCtxs can incref through it, and
+	// we still hold the reference we are dropping.
+	CommandCtx_Free (ctx) ;
 }
 
 // get all currently tracked CommandCtxs
