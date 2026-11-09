@@ -87,7 +87,9 @@ pub struct MvccGraph {
     graph: ArcSwap<Graph>,
     /// This coordinator, held without keeping it alive: what a commit hands each background index
     /// build it starts. So the coordinator is dropped once its owner and every build that reached
-    /// it have let go, and the last may be a build's job, on the builder's pool.
+    /// it have let go, and the last may be a build's job, on the builder's pool. It points at the
+    /// `Arc` [`Self::new`] and [`Self::from_graph`] return, so a coordinator must stay in it: one
+    /// taken out (`Arc::into_inner`) would start builds that can never reach it.
     #[cfg(feature = "index-falkordb")]
     me: Weak<Self>,
 }
@@ -244,6 +246,10 @@ impl MvccGraph {
     ///   `prepared`'s copy, or the batch, without them, is inserted into the published copy. The
     ///   result goes into a new build version of the published one, which is published
     ///   ([`Graph::caught_up_onto`]);
+    /// - writers, and catching up would do more than `batch`'s limit allows
+    ///   ([`PreparedBatch::limit_catch_up`]): nothing is published
+    ///   ([`CatchUpTooLarge`](crate::index::falkordb::versioned::Discarded::CatchUpTooLarge)), and
+    ///   the index's next batch starts from its published cursor;
     /// - `batch`'s index was dropped or created again, or another batch committed on the same
     ///   index: nothing is published, and the index's next batch starts from its published cursor.
     ///   Another batch on the index is a bug in the builder's one job per generation
@@ -255,8 +261,8 @@ impl MvccGraph {
     ///
     /// The caller holds the host's global lock, as a writer does to publish; it needs no
     /// per-graph lock. The fit is made against the published version this commit loads, and the
-    /// version is published over that one: a batch that writers overtook is caught up, not
-    /// refused.
+    /// version is published over that one: a batch that writers overtook is caught up, unless its
+    /// limit refuses the catch-up, and is never refused for being overtaken.
     ///
     /// # Errors
     ///
