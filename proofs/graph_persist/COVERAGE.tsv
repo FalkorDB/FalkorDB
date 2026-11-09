@@ -43,14 +43,15 @@ src/redis_type.rs	graphmeta_rdb_load	936	PROVEN	RedisType.metaLoad: metaLoad_spe
 src/redis_type.rs	graphmeta_rdb_save	959	PROVEN	RedisType.metaSave (= saveKeySlice, #3161): metaSave_of_slice, metaSave_rdbSave, metaSave_stale
 src/redis_type.rs	graphmeta_free	971	PROVEN	RedisType.metaFree: metaFree_spec
 src/redis_type.rs	graphmeta_aux_load	981	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
-graph/src/graph/mvcc_graph.rs	new	97	NOT COVERED	constructor
-graph/src/graph/mvcc_graph.rs	from_graph	111	MODELLED	RDB load path, live
-graph/src/graph/mvcc_graph.rs	read	118	NOT COVERED	Arc clone
-graph/src/graph/mvcc_graph.rs	fork	130	NOT COVERED	private version, takes nothing (proofs/versioned_matrix, proofs/search_concurrency cover it)
-graph/src/graph/mvcc_graph.rs	commit	205	NOT COVERED	schema_version bump/concurrency not modelled (publish/refusal: proofs/search_concurrency, proofs/versioned_matrix)
-graph/src/graph/mvcc_graph.rs	is_stale	144	NOT COVERED	version-number comparison (proofs/search_concurrency Mvcc.checkFork_stale)
-graph/src/graph/mvcc_graph.rs	commit_indexer_batch	235	NOT COVERED	proofs/search_concurrency Mvcc.batch_keeps_forks; fit decision in native_index
-graph/src/graph/mvcc_graph.rs	commit_version	261	NOT COVERED	proofs/search_concurrency Mvcc.commit_publishes
+graph/src/graph/mvcc_graph.rs	new	104	NOT COVERED	constructor
+graph/src/graph/mvcc_graph.rs	from_graph	116	MODELLED	RDB load path, live
+graph/src/graph/mvcc_graph.rs	read	127	NOT COVERED	Arc clone
+graph/src/graph/mvcc_graph.rs	fork	139	NOT COVERED	private version, takes nothing (proofs/versioned_matrix, proofs/search_concurrency cover it)
+graph/src/graph/mvcc_graph.rs	commit	202	NOT COVERED	schema_version bump/concurrency not modelled (publish/refusal: proofs/search_concurrency, proofs/versioned_matrix)
+graph/src/graph/mvcc_graph.rs	is_stale	153	NOT COVERED	version-number comparison (proofs/search_concurrency Mvcc.checkFork_stale)
+graph/src/graph/mvcc_graph.rs	commit_indexer_batch	243	NOT COVERED	proofs/search_concurrency Mvcc.batch_keeps_forks; fit decision in native_index
+graph/src/graph/mvcc_graph.rs	prepare	274	NOT COVERED	(the checks and last changes of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
+graph/src/graph/mvcc_graph.rs	publish	335	NOT COVERED	(the compare-and-swap and set_indexer_graph of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
 graph/src/graph/mvcc_graph.rs	drop	351	NOT COVERED	cancel indexing
 graph/src/graph/graph.rs	rebuild_derived_matrices	1040	AXIOMATISED	GraphBLAS transpose/set; node_cap = max(node_cap, saved dims) (#3250) proven in graph_queries Ids.rebuild_never_shrinks
 graph/src/graph/graph.rs	create_constraint	4501	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
@@ -71,3 +72,6 @@ src/serializers/decoder/mod.rs	rebuild_indexes	345	PROVEN	Persist.Indexes.rebuil
 src/serializers/decoder/mod.rs	pipe_load_graph	406	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
 src/serializers/decoder/mod.rs	vec_load_graph	421	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
 src/serializers/decoder/mod.rs	load_graph_from_reader	431	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof
+graph/src/runtime/runtime.rs	publish	581	NOT COVERED	new with the plain-Graph fork, not modelled yet: moves the runtime's fork into MvccGraph::commit and reads the Arc it published from then on
+graph/src/runtime/runtime.rs	QueryGraph::from	119	NOT COVERED	enum constructor
+graph/src/runtime/runtime.rs	QueryGraph::from	125	NOT COVERED	enum constructor

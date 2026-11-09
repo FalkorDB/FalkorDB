@@ -5,7 +5,7 @@
 
 use graph::{
     graph::{
-        graph::Plan,
+        graph::{Graph, Plan},
         graphblas::{GrB_Mode, GrB_init},
         mvcc_graph::MvccGraph,
     },
@@ -93,7 +93,10 @@ use libfuzzer_sys::{Corpus, fuzz_target};
 struct AlwaysWritable;
 
 impl graph::locks::WriteEscalation for AlwaysWritable {
-    fn upgrade_to_write(&self) -> Result<(), String> {
+    fn upgrade_to_write(
+        &self,
+        _fork: &mut Graph,
+    ) -> Result<(), String> {
         Ok(())
     }
 }
@@ -123,7 +126,7 @@ fuzz_target!(init: {
     std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
         let Ok(Plan {
             plan, parameters, ..
-        }) = g.read().borrow().get_plan(query)
+        }) = g.read().get_plan(query)
         else {
             return Corpus::Reject;
         };
@@ -132,9 +135,8 @@ fuzz_target!(init: {
         // blow past libFuzzer's 2048MB rss limit. Timed-out inputs return Err
         // and are rejected from the corpus.
         let runtime = Runtime::new(
-            g.read(),
+            g.fork(),
             parameters,
-            true,
             plan,
             false,
             String::new(),
