@@ -10,6 +10,7 @@
 #include "../util/rmalloc.h"
 #include "../configuration/config.h"
 #include <time.h>
+#include <errno.h>
 #include <assert.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -191,7 +192,8 @@ static void _indexer_acquire_write_lock
 	while (true) {
 		// hold the GIL for a single bounded attempt on the write lock
 		RedisModule_ThreadSafeContextLock (rm_ctx) ;
-		if (GraphContext_TimeAcquireWriteLock (gc, poll_interval) == 0) {
+		int rc = GraphContext_TimeAcquireWriteLock (gc, poll_interval) ;
+		if (rc == 0) {
 			// success: return holding BOTH the GIL and the write lock
 			if (gate_engaged) {
 				GraphContext_WriterGateLeave (gc) ;
@@ -202,8 +204,22 @@ static void _indexer_acquire_write_lock
 		// couldn't get it this slice: drop the GIL so the main thread runs
 		RedisModule_ThreadSafeContextUnlock (rm_ctx) ;
 
-		// once pushed back far enough, close the gate so new readers stop
-		// extending the wait during our hand-offs
+		if (rc != ETIMEDOUT) {
+			// an unexpected lock error (should never happen for a valid rwlock).
+			// do NOT spin on it forever, and do NOT leave the gate engaged - that
+			// would block every reader on this graph indefinitely. release the
+			// gate, then fall back to a single blocking acquire so the index build
+			// still completes and we still return holding the GIL + write lock.
+			if (gate_engaged) {
+				GraphContext_WriterGateLeave (gc) ;
+			}
+			RedisModule_ThreadSafeContextLock (rm_ctx) ;
+			GraphContext_AcquireWriteLock (gc) ;
+			return ;
+		}
+
+		// timed out this slice - once pushed back far enough, close the gate so
+		// new readers stop extending the wait during our hand-offs
 		if (!gate_engaged && ++slices >= GATE_THRESHOLD) {
 			GraphContext_WriterGateEnter (gc) ;
 			gate_engaged = true ;
