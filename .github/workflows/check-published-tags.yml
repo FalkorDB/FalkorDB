@@ -1,0 +1,121 @@
+name: Check published tags
+
+# Checks that every image tag of one channel holds the server, base OS and
+# architectures its name says, on GHCR and Docker Hub. The expected tags are
+# build/published-tags.json; the checks are build/check_published_tags.py.
+#
+# No automatic trigger: it judges tags after they are published. Publishing
+# workflows call it once they have pushed:
+#
+#   check-tags:
+#     needs: publish
+#     permissions:
+#       contents: read
+#       packages: read
+#     uses: ./.github/workflows/check-published-tags.yml
+#     with:
+#       target: edge
+#     secrets: inherit   # Docker Hub login, against its pull rate limit
+#
+# A caller chooses only the target (and, for CI images, the servers): the
+# workflow_call trigger declares no other input. The expected server versions
+# and where latest* points come from this repository, from the pins in
+# build/published-tags.json and its GitHub releases. Only a manual run
+# (workflow_dispatch) can override them, e.g. to check an older release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "edge, latest, a release version (6.1.0, 6.1.0-rc.1), or rc-<ci_key> (rc-pr-123, rc-mg-<sha>)"
+        required: true
+        type: string
+      servers:
+        description: "CI targets only: the servers to check, comma-separated (empty: all)"
+        required: false
+        type: string
+        default: ""
+      pins:
+        description: "Expected server versions, e.g. 'valkey=9.1.1 redis=8.10.1', for an older release or a release re-run after main moved its pins (empty: the pins in build/published-tags.json)"
+        required: false
+        type: string
+        default: ""
+      latest:
+        description: "The release latest* must point at, or auto: the newest stable GitHub release"
+        required: false
+        type: string
+        default: auto
+  workflow_call:
+    inputs:
+      target:
+        required: true
+        type: string
+      servers:
+        required: false
+        type: string
+        default: ""
+    secrets:
+      DOCKER_USERNAME:
+        required: false
+      DOCKER_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  check:
+    name: Check ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HAS_DOCKERHUB_LOGIN: ${{ secrets.DOCKER_USERNAME != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test the check itself
+        run: python3 build/test_check_published_tags.py
+
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Anonymous Docker Hub pulls are rate limited; log in when we can,
+      # before anything pulls from it. A tag it cannot inspect fails the check.
+      - if: env.HAS_DOCKERHUB_LOGIN == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - if: env.HAS_DOCKERHUB_LOGIN != 'true'
+        run: echo "::warning::No Docker Hub login (pass secrets to this workflow); its rate limit can fail tags it cannot inspect"
+
+      # The images are run on both platforms; arm64 runs under emulation.
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
+      - name: Check ${{ inputs.target }}
+        env:
+          TARGET: ${{ inputs.target }}
+          SERVERS: ${{ inputs.servers }}
+          # Empty under workflow_call, which declares neither input: a caller
+          # cannot change what the check expects.
+          PINS: ${{ inputs.pins }}
+          LATEST: ${{ inputs.latest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=(--latest "${LATEST:-auto}")
+          if [ -n "$SERVERS" ]; then
+            args+=(--servers "$SERVERS")
+          fi
+          read -r -a pins <<< "${PINS//,/ }"
+          for pin in "${pins[@]}"; do
+            args+=(--pin "$pin")
+          done
+          python3 build/check_published_tags.py "${args[@]}" -- "$TARGET"
