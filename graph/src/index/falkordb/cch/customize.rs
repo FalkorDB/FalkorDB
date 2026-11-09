@@ -84,28 +84,224 @@
 //! even lower apex, all of which were handled in an earlier iteration. So no iteration to a
 //! fixed point is needed.
 
+#[cfg(test)]
+use std::fmt::{self, Debug, Formatter};
+use std::ops::Index;
 use std::sync::Arc;
 
 use super::order::{Rank, Topology};
 use super::{Cch, CchError, CchInput, WeightCsr, index_id};
 use crate::graph::graph::NodeId;
 
-/// The four per-arc arrays a customization produces, indexed by arc id. Each is written
-/// once, by the customization that builds it, and never grows, so they are boxed slices.
+/// A versioned array of per-arc metric values: the storage of the four arrays of a
+/// [`Metric`].
+///
+/// The four arrays are the only mutable state in a [`Cch`]; everything structural is shared
+/// by `Arc`. A version must be cheap to take, because a writer takes one per write that
+/// recustomizes, and cheap to hold, because readers keep old versions alive.
+///
+/// The slots live in fixed chunks of [`CHUNK_LEN`], each behind its own `Arc`, and the
+/// chunk table is behind an `Arc` too (copy-on-write at two levels). Taking a version is
+/// one `Arc` bump. The first write to a version clones the table, one `Arc` bump per
+/// chunk; the first write to a chunk copies that chunk only. So a version owns the table
+/// plus the chunks it wrote, a read is two indexed loads, and there is nothing to compact.
+///
+/// A read indexes it like a slice (`array[slot]`); a write goes through [`Self::set`],
+/// which is where the copy happens.
+#[derive(Clone)]
+pub(crate) struct WeightArr<T: Copy> {
+    chunks: Arc<[Arc<[T]>]>,
+    len: usize,
+}
+
+/// Slots per chunk, as a power of two. A version's first write clones the table (one `Arc`
+/// per chunk) and copies every chunk it touches, so the choice trades table size against
+/// chunk size. Swept from 128 to 16,384 slots on the California road network (5.93M arcs):
+/// below 1,024 the per-version table dominates (a single-edge SET cost 1.9 ms at 128 against
+/// 0.23 ms at 1,024); on Linux 2,048 is a third faster than 1,024 (0.19 against 0.29 ms
+/// server p50) and halves the median bytes a version owns (0.23 MB against 0.42 MB) and the
+/// table (181 KB against 362 KB for the four arrays). An `f64` chunk (16 KB) still fits any
+/// L1D. Larger chunks buy little latency (0.16 ms at 8,192) and raise the worst case a
+/// version owns (2.8 MB at 8,192, 4.0 MB at 16,384, against 2.0 MB).
+const CHUNK_BITS: usize = 11;
+const CHUNK_LEN: usize = 1 << CHUNK_BITS;
+
+/// Lists the slots; only the tests print one.
+#[cfg(test)]
+impl<T: Copy + Debug> Debug for WeightArr<T> {
+    fn fmt(
+        &self,
+        formatter: &mut Formatter<'_>,
+    ) -> fmt::Result {
+        formatter.debug_list().entries(self.iter()).finish()
+    }
+}
+
+/// Equal when every slot reads the same, however the chunks are shared. Only the tests
+/// compare two.
+#[cfg(test)]
+impl<T: Copy + PartialEq> PartialEq for WeightArr<T> {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        self.len == other.len && self.iter().eq(other.iter())
+    }
+}
+
+impl<T: Copy> Index<usize> for WeightArr<T> {
+    type Output = T;
+
+    /// # Panics
+    /// If `slot` is out of range — an arc id that does not exist is a bug, not a miss.
+    #[inline]
+    fn index(
+        &self,
+        slot: usize,
+    ) -> &T {
+        &self.chunks[slot >> CHUNK_BITS][slot & (CHUNK_LEN - 1)]
+    }
+}
+
+impl<T: Copy> WeightArr<T> {
+    /// Cut a fully built array into chunks. The `Vec` is freed on return, so converting
+    /// arrays one at a time holds at most one of them twice.
+    fn from_vec(values: Vec<T>) -> Self {
+        Self {
+            chunks: values.chunks(CHUNK_LEN).map(Arc::from).collect(),
+            len: values.len(),
+        }
+    }
+
+    /// Writes into this version only: the table and the chunk holding `slot` are copied
+    /// first if any other version shares them.
+    ///
+    /// # Panics
+    /// If `slot` is out of range.
+    #[inline]
+    pub(crate) fn set(
+        &mut self,
+        slot: usize,
+        value: T,
+    ) {
+        let chunk = &mut Arc::make_mut(&mut self.chunks)[slot >> CHUNK_BITS];
+        Arc::make_mut(chunk)[slot & (CHUNK_LEN - 1)] = value;
+    }
+
+    /// A version that shares every chunk until either side writes.
+    fn new_version(&self) -> Self {
+        self.clone()
+    }
+
+    /// Heap bytes of the slots, the chunk table, and the two reference counts every `Arc`
+    /// allocation carries. Shared chunks are counted in full, as every version can reach all
+    /// of them. The struct itself is counted by whoever holds it.
+    fn memory_usage(&self) -> usize {
+        let counts = 2 * size_of::<usize>();
+        self.len * size_of::<T>() + self.chunks.len() * (size_of::<Arc<[T]>>() + counts) + counts
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    #[cfg(test)]
+    pub(crate) fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        self.chunks.iter().flat_map(|chunk| chunk.iter().copied())
+    }
+
+    /// Heap bytes this version holds that `base` does not share with it: its own table
+    /// (unless the two share one) and every chunk that is not the one `base` holds at the
+    /// same position. What taking a version from `base` and writing it has cost in memory.
+    #[cfg(test)]
+    fn owned_bytes_over(
+        &self,
+        base: &Self,
+    ) -> usize {
+        let counts = 2 * size_of::<usize>();
+        if Arc::ptr_eq(&self.chunks, &base.chunks) {
+            return 0;
+        }
+        let table = self.chunks.len() * size_of::<Arc<[T]>>() + counts;
+        let chunks: usize = self
+            .chunks
+            .iter()
+            .enumerate()
+            .filter(|&(position, chunk)| {
+                base.chunks
+                    .get(position)
+                    .is_none_or(|base_chunk| !Arc::ptr_eq(base_chunk, chunk))
+            })
+            .map(|(_, chunk)| chunk.len() * size_of::<T>() + counts)
+            .sum();
+        table + chunks
+    }
+}
+
+/// The four per-arc arrays a customization produces, indexed by arc id.
 pub(crate) struct Metric {
-    pub(crate) upward_weight: Box<[f64]>,
-    pub(crate) downward_weight: Box<[f64]>,
-    pub(crate) upward_middle: Box<[Option<Rank>]>,
-    pub(crate) downward_middle: Box<[Option<Rank>]>,
+    pub(crate) upward_weight: WeightArr<f64>,
+    pub(crate) downward_weight: WeightArr<f64>,
+    pub(crate) upward_middle: WeightArr<Option<Rank>>,
+    pub(crate) downward_middle: WeightArr<Option<Rank>>,
 }
 
 impl Metric {
+    /// A version whose four arrays share this one's chunks until either side writes.
+    fn new_version(&self) -> Self {
+        Self {
+            upward_weight: self.upward_weight.new_version(),
+            downward_weight: self.downward_weight.new_version(),
+            upward_middle: self.upward_middle.new_version(),
+            downward_middle: self.downward_middle.new_version(),
+        }
+    }
+
     /// Heap bytes of the four arrays; the inline headers are counted by the owning `Cch`.
     pub(crate) fn memory_usage(&self) -> usize {
-        size_of_val(&*self.upward_weight)
-            + size_of_val(&*self.downward_weight)
-            + size_of_val(&*self.upward_middle)
-            + size_of_val(&*self.downward_middle)
+        self.upward_weight.memory_usage()
+            + self.downward_weight.memory_usage()
+            + self.upward_middle.memory_usage()
+            + self.downward_middle.memory_usage()
+    }
+
+    /// Heap bytes of the four arrays this metric does not share with `base`
+    /// ([`WeightArr::owned_bytes_over`]).
+    #[cfg(test)]
+    pub(crate) fn owned_bytes_over(
+        &self,
+        base: &Self,
+    ) -> usize {
+        self.upward_weight.owned_bytes_over(&base.upward_weight)
+            + self.downward_weight.owned_bytes_over(&base.downward_weight)
+            + self.upward_middle.owned_bytes_over(&base.upward_middle)
+            + self.downward_middle.owned_bytes_over(&base.downward_middle)
+    }
+}
+
+/// The four arrays as flat boxed slices while a full customization rewrites every slot.
+///
+/// The relaxation sweep is bound by the latency of its scattered reads, and the chunk
+/// lookup of a [`WeightArr`] adds a dependent load to each (measured on `cch/p14`: a
+/// quarter slower on a 2.8M-arc grid, half slower through [`WeightArr::set`]). Building
+/// flat and cutting into chunks at the end costs one copy of each array, taken one array at
+/// a time.
+struct Buffers {
+    upward_weight: Box<[f64]>,
+    downward_weight: Box<[f64]>,
+    upward_middle: Box<[Option<Rank>]>,
+    downward_middle: Box<[Option<Rank>]>,
+}
+
+impl Buffers {
+    fn into_metric(self) -> Metric {
+        Metric {
+            upward_weight: WeightArr::from_vec(self.upward_weight.into_vec()),
+            downward_weight: WeightArr::from_vec(self.downward_weight.into_vec()),
+            upward_middle: WeightArr::from_vec(self.upward_middle.into_vec()),
+            downward_middle: WeightArr::from_vec(self.downward_middle.into_vec()),
+        }
     }
 }
 
@@ -220,9 +416,9 @@ pub(crate) fn customize(
 ) -> Result<Metric, CchError> {
     validate(topology, weights)?;
 
-    let mut metric = seed(topology, weights);
-    relax(topology, &mut metric);
-    Ok(metric)
+    let mut buffers = seed(topology, weights);
+    relax(topology, &mut buffers);
+    Ok(buffers.into_metric())
 }
 
 /// Original edges take their weight from `weights`; every other arc starts at infinity.
@@ -236,9 +432,9 @@ pub(crate) fn customize(
 fn seed(
     topology: &Topology,
     weights: &WeightCsr,
-) -> Metric {
+) -> Buffers {
     let arc_count = topology.arc_count();
-    let mut metric = Metric {
+    let mut metric = Buffers {
         upward_weight: vec![f64::INFINITY; arc_count].into_boxed_slice(),
         downward_weight: vec![f64::INFINITY; arc_count].into_boxed_slice(),
         upward_middle: vec![None; arc_count].into_boxed_slice(),
@@ -294,7 +490,7 @@ fn seed(
 /// guarantees by construction: a bug, never data.
 fn relax(
     topology: &Topology,
-    metric: &mut Metric,
+    metric: &mut Buffers,
 ) {
     for x in topology.ranks() {
         let above_x = topology.up(x);
@@ -390,6 +586,31 @@ impl Cch {
         })
     }
 
+    /// A copy for a new graph version: the [`Topology`] is shared by `Arc`, and the metric
+    /// through [`WeightArr::new_version`], which copies a chunk only when the copy writes
+    /// it. Recustomizing the copy in place ([`Self::recustomize_scoped`]) leaves this one
+    /// untouched, and costs the chunks it writes, not the metric.
+    #[must_use]
+    pub fn new_version(&self) -> Self {
+        Self {
+            topology: Arc::clone(&self.topology),
+            metric: self.metric.new_version(),
+        }
+    }
+
+    /// Heap bytes of the four weight arrays that this hierarchy holds and `base` does not
+    /// share: zero for a fresh [`Self::new_version`] of `base`, then the chunk table and the
+    /// chunks each write copied. The [`Topology`] is not counted (versions share it). For
+    /// two unrelated hierarchies it is the whole metric. Only the tests call it.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn metric_bytes_over(
+        &self,
+        base: &Self,
+    ) -> usize {
+        self.metric.owned_bytes_over(&base.metric)
+    }
+
     #[must_use]
     pub fn node_count(&self) -> usize {
         self.topology.node_count()
@@ -448,7 +669,13 @@ mod tests {
     use crate::graph::graph::NodeId;
     use crate::index::falkordb::cch::order::{Rank, Topology};
     use std::collections::HashMap;
+    use std::fmt::Debug;
     use std::sync::Arc;
+
+    use rand::rngs::SmallRng;
+    use rand::{RngExt, SeedableRng};
+
+    use super::{CHUNK_LEN, WeightArr};
 
     use crate::graph::graphblas::matrix::Matrix;
     use crate::index::falkordb::cch::testkit::{
@@ -1012,5 +1239,121 @@ mod tests {
         ] {
             assert_eq!(cch.customized(&input.weights).err(), expected, "{what}");
         }
+    }
+
+    /// A version is a plain `Vec` model: every slot must read as the model says.
+    fn assert_reads<T: Copy + PartialEq + Debug>(
+        array: &WeightArr<T>,
+        model: &[T],
+    ) {
+        assert_eq!(array.len(), model.len());
+        assert_eq!(array.iter().collect::<Vec<_>>(), model);
+        for (slot, &value) in model.iter().enumerate() {
+            assert_eq!(array[slot], value, "slot {slot}");
+        }
+    }
+
+    /// Slots on both sides of every chunk boundary, plus the first and the last.
+    fn edge_slots(len: usize) -> Vec<usize> {
+        let mut slots: Vec<usize> = (0..=len / CHUNK_LEN)
+            .flat_map(|chunk| [chunk * CHUNK_LEN, (chunk * CHUNK_LEN).wrapping_sub(1)])
+            .chain([0, len.wrapping_sub(1)])
+            .filter(|&slot| slot < len)
+            .collect();
+        slots.sort_unstable();
+        slots.dedup();
+        slots
+    }
+
+    /// `from_vec` cuts at every chunk boundary and keeps a partial last chunk; writes on
+    /// both sides of every boundary land where they should.
+    #[test]
+    fn weight_arr_handles_lengths_that_are_not_a_multiple_of_the_chunk() {
+        for len in [
+            0,
+            1,
+            CHUNK_LEN - 1,
+            CHUNK_LEN,
+            CHUNK_LEN + 1,
+            3 * CHUNK_LEN,
+            3 * CHUNK_LEN + 7,
+        ] {
+            let mut model: Vec<Option<Rank>> = vec![None; len];
+            let mut array = WeightArr::from_vec(model.clone());
+            assert_reads(&array, &model);
+            assert_eq!(array.chunks.len(), len.div_ceil(CHUNK_LEN), "len {len}");
+            for slot in edge_slots(len) {
+                array.set(slot, Some(Rank::new(slot)));
+                model[slot] = Some(Rank::new(slot));
+            }
+            assert_reads(&array, &model);
+        }
+    }
+
+    /// The point of the chunks: a write copies the chunk it lands in and nothing else, so
+    /// a version owns the chunks it wrote, not the array.
+    #[test]
+    fn a_write_copies_only_the_chunk_it_lands_in() {
+        let len = 4 * CHUNK_LEN + 9;
+        let base = WeightArr::from_vec((0..len).map(|slot| slot as f64).collect());
+        let mut version = base.new_version();
+        assert!(
+            Arc::ptr_eq(&base.chunks, &version.chunks),
+            "taking a version copies nothing"
+        );
+
+        version.set(2 * CHUNK_LEN + 1, -1.0);
+        version.set(2 * CHUNK_LEN + 2, -2.0); // same chunk: already the version's own
+        let shared: Vec<bool> = base
+            .chunks
+            .iter()
+            .zip(version.chunks.iter())
+            .map(|(left, right)| Arc::ptr_eq(left, right))
+            .collect();
+        assert_eq!(shared, [true, true, false, true, true]);
+        assert_eq!(base[2 * CHUNK_LEN + 1], (2 * CHUNK_LEN + 1) as f64);
+        assert_eq!(version[2 * CHUNK_LEN + 1], -1.0);
+    }
+
+    /// Random writes into a random family of versions, each checked against its own `Vec`.
+    #[test]
+    fn random_writes_across_versions_match_a_vec_model() {
+        let len = 3 * CHUNK_LEN + 11;
+        let mut rng = SmallRng::seed_from_u64(1);
+        let mut versions = vec![(WeightArr::from_vec(vec![0_u64; len]), vec![0_u64; len])];
+        for step in 0..4000 {
+            let pick = rng.random_range(0..versions.len());
+            if step % 50 == 0 {
+                let (array, model) = &versions[pick];
+                let fork = (array.new_version(), model.clone());
+                versions.push(fork);
+                continue;
+            }
+            let slot = rng.random_range(0..len);
+            let (array, model) = &mut versions[pick];
+            array.set(slot, step);
+            model[slot] = step;
+        }
+        for (array, model) in &versions {
+            assert_reads(array, model);
+        }
+    }
+
+    /// The same through a whole hierarchy: a `new_version` owns none of the metric until it
+    /// is written, and a fresh build owns all of it.
+    #[test]
+    fn a_new_version_owns_no_metric_until_it_is_written() {
+        let edges = grid(40, 40);
+        let input = to_input(&edges);
+        let cch = Cch::build(&input).expect("build");
+        let copy = cch.new_version();
+        assert_eq!(copy.metric_bytes_over(&cch), 0);
+        let other = Cch::build(&input).expect("another build");
+        assert_eq!(other.metric_bytes_over(&cch), cch.metric.memory_usage());
+
+        let mut written = cch.new_version();
+        written.metric.upward_weight.set(0, 0.5);
+        assert!(written.metric_bytes_over(&cch) > 0);
+        assert_eq!(cch.new_version().metric_bytes_over(&cch), 0);
     }
 }

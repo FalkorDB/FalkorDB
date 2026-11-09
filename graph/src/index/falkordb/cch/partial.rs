@@ -205,10 +205,10 @@ impl Cch {
 
             let changed_weight =
                 best_up != metric.upward_weight[slot] || best_dn != metric.downward_weight[slot];
-            metric.upward_weight[slot] = best_up;
-            metric.downward_weight[slot] = best_dn;
-            metric.upward_middle[slot] = mid_up;
-            metric.downward_middle[slot] = mid_dn;
+            metric.upward_weight.set(slot, best_up);
+            metric.downward_weight.set(slot, best_dn);
+            metric.upward_middle.set(slot, mid_up);
+            metric.downward_middle.set(slot, mid_dn);
 
             // A changed arc invalidates the top arc of every triangle it is the bottom of:
             // apex lo, other bottom arc (lo, w). All of those sit above lo, so they pop
@@ -251,10 +251,10 @@ mod tests {
 
     fn snapshot(m: &Metric) -> Snapshot {
         (
-            m.upward_weight.to_vec(),
-            m.downward_weight.to_vec(),
-            m.upward_middle.to_vec(),
-            m.downward_middle.to_vec(),
+            m.upward_weight.iter().collect(),
+            m.downward_weight.iter().collect(),
+            m.upward_middle.iter().collect(),
+            m.downward_middle.iter().collect(),
         )
     }
 
