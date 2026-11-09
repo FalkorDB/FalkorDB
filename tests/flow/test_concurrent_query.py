@@ -985,9 +985,12 @@ class testConcurrentQueryFlow(FlowTestsBase):
             # the pending-write queue behind it instead of executing. use nested
             # small ranges (bounded memory) rather than one giant range() - a
             # single range(0, 1.5e8) would eagerly materialize a ~2.4GB SIValue
-            # array in AR_RANGE and risk OOM on constrained runners
-            slow_read = ("UNWIND range(0, 15000) AS x UNWIND range(0, 15000) AS y "
-                         "WITH x, y WHERE x = -1 RETURN count(x)")
+            # array in AR_RANGE and risk OOM on constrained runners. the predicate
+            # MUST depend on BOTH loop vars, else the planner pushes it below the
+            # inner UNWIND and the nested loop never runs (the read finishes in ~ms
+            # and holds no lock)
+            slow_read = ("UNWIND range(0, 8000) AS x UNWIND range(0, 8000) AS y "
+                         "WITH x, y WHERE x + y < 0 RETURN count(x)")
 
             async def running_reads():
                 res = await loop.run_in_executor(None, lambda:
