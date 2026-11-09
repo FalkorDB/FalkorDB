@@ -384,6 +384,9 @@ impl MvccGraph {
         // before this statement's `borrow_mut()` guard was dropped, it panicked with "already
         // mutably borrowed".
         new_graph.borrow().set_indexer_graph(new_graph.clone());
+        // The version is published, so what its index DDL held back may happen now: the
+        // indexes it built start populating, from `new_graph`, which the indexers now hold.
+        new_graph.borrow().publish_indexes(&previous.borrow());
         Ok(())
     }
 }
