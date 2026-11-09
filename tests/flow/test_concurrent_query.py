@@ -982,8 +982,12 @@ class testConcurrentQueryFlow(FlowTestsBase):
                 return
 
             # a slow read holds the graph READ lock, so every write piles up in
-            # the pending-write queue behind it instead of executing
-            slow_read = "UNWIND range(0, 150000000) AS x WITH x WHERE x % 150000001 = 0 RETURN count(x)"
+            # the pending-write queue behind it instead of executing. use nested
+            # small ranges (bounded memory) rather than one giant range() - a
+            # single range(0, 1.5e8) would eagerly materialize a ~2.4GB SIValue
+            # array in AR_RANGE and risk OOM on constrained runners
+            slow_read = ("UNWIND range(0, 15000) AS x UNWIND range(0, 15000) AS y "
+                         "WITH x, y WHERE x = -1 RETURN count(x)")
 
             async def running_reads():
                 res = await loop.run_in_executor(None, lambda:
