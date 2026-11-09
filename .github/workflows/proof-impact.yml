@@ -402,6 +402,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      contents: read         # the base checkout of proofs/proof_review.py
       pull-requests: write   # the re-prove comment; nothing is pushed
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

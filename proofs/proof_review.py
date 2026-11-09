@@ -13,7 +13,9 @@ head, run_url, bot = os.environ['HEAD'], os.environ['RUN_URL'], os.environ['BOT_
 
 def pages(path):
     # gh --paginate prints one JSON array per page.
-    text, out, i, dec = open(path).read(), [], 0, json.JSONDecoder()
+    with open(path) as f:
+        text = f.read()
+    out, i, dec = [], 0, json.JSONDecoder()
     while i < len(text):
         if text[i].isspace():
             i += 1; continue
@@ -42,7 +44,8 @@ def commentable(patch):
 
 def load(path, default):
     try:
-        return json.load(open(path))
+        with open(path) as f:
+            return json.load(f)
     except Exception:
         return default
 
@@ -90,7 +93,9 @@ for v in verdicts:
         f'<sub>Lean proves the counterexample on the model (`{thm}`, in the [run]({run_url})\'s `proof-gate` patch). '
         f'Confirm it on a server before acting on it. At {head[:9]}.</sub>',
     ])
-    anchor = next((n for n in sorted(by_path.get(path, ())) if n >= line), None)
+    # On the function's own line only: the next commentable line may be in another
+    # function. Otherwise the counterexample goes in the review's text.
+    anchor = line if line in by_path.get(path, ()) else None
     if anchor is None:
         loose.append(f'`{path}` `{fn}`\n\n{body}')
     else:

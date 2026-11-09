@@ -14,6 +14,14 @@ base, impact_path, verdicts_path, added_path = sys.argv[1:]
 def git(*a):
     return subprocess.run(['git', *a], capture_output=True, text=True).stdout
 
+def read_json(path):
+    with open(path) as f:
+        return json.load(f)
+
+# A character literal such as '"' (not the prime in a name like h'): it holds no
+# string, comment or bracket, so the scanners below copy it as it is.
+CHAR_RE = re.compile(r"(?<![\w'.!?])'(?:\\(?:u\{[0-9A-Fa-f]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'")
+
 def strip_comments(src):
     """Blank -- and nested /- -/ comments, keeping string literals and newlines."""
     out, i, n, depth, in_str = [], 0, len(src), 0, False
@@ -25,6 +33,8 @@ def strip_comments(src):
             if c == '"':
                 in_str = False
             out.append(c); i += 1; continue
+        if depth == 0 and c == "'" and (m := CHAR_RE.match(src, i)):
+            out.append(m.group(0)); i = m.end(); continue
         if depth == 0 and c == '"':
             in_str = True; out.append(c); i += 1; continue
         if src.startswith('/-', i):
@@ -40,11 +50,27 @@ def strip_comments(src):
         out.append(c); i += 1
     return ''.join(out)
 
+def blank_strings(src):
+    """src with the inside of every string literal blanked (same length), so a
+    declaration keyword inside a string is not taken for a declaration."""
+    return re.sub(CHAR_RE.pattern + r'|"(?:\\.|[^"\\])*"',
+                  lambda m: m.group(0) if m.group(0)[0] == "'" else '"' + re.sub(r'[^\n]', ' ', m.group(0)[1:-1]) + '"', src)
+
 HEAD_RE = re.compile(r'(?:theorem|lemma)\s+([^\s(:{\[]+)')
-NS_RE = re.compile(r'^\s*(namespace|section|end)\b\s*([^\s]*)', re.M)
+# `mutual ... end` is a scope too: its `end` must not close the namespace around it.
+NS_RE = re.compile(r'^\s*(?:noncomputable[ \t]+)?(namespace|section|mutual|end)\b[ \t]*([^\s]*)', re.M)
+# Where the next command starts: the limit of a statement with no `:=`.
+NEXT_RE = re.compile(r'\n(?=[ \t]*(?:@\[[^\n]*\][ \t\n]*)?(?:(?:private|protected|noncomputable|partial|unsafe|nonrec)[ \t]+)*'
+                     r'(?:theorem|lemma|def|abbrev|instance|example|structure|inductive|class|opaque|axiom|'
+                     r'namespace|section|end|mutual|open|variable|set_option|attribute|#)\b)')
 
 def statement(src, k):
-    """Text from k to the first := outside brackets and strings."""
+    """Text from k to the first := outside brackets and strings.
+
+    A theorem proved by equation clauses (`| pat => proof`, no `:=`) ends at its
+    first clause instead: the line-leading `|` at the least indentation before
+    the next command (a `match` in the statement has its arms indented deeper).
+    """
     depth, i, in_str = 0, k, False
     while i < len(src):
         c = src[i]
@@ -53,6 +79,8 @@ def statement(src, k):
                 i += 2; continue
             if c == '"':
                 in_str = False
+        elif c == "'" and (m := CHAR_RE.match(src, i)):
+            i = m.end(); continue
         elif c == '"':
             in_str = True
         elif c in '([{':
@@ -62,6 +90,13 @@ def statement(src, k):
         elif depth == 0 and src.startswith(':=', i):
             break
         i += 1
+    nxt = NEXT_RE.search(src, k)
+    if nxt and nxt.start() < i:
+        bars = [m for m in re.finditer(r'\n([ \t]*)\|', src[k:nxt.start()])]
+        if bars:
+            i = k + min(bars, key=lambda m: (len(m.group(1)), m.start())).start()
+        else:
+            i = nxt.start()
     # Collapse whitespace outside string literals only.
     parts = re.split(r'("(?:\\.|[^"\\])*")', src[k:i])
     return ''.join(p if p.startswith('"') else ' '.join(p.split()) + ' ' for p in parts).strip()
@@ -91,22 +126,28 @@ def decls(text):
     one changes it.
     """
     src = strip_comments(text)
+    # Find commands with strings blanked; read their text from src (same offsets).
+    code = blank_strings(src)
     scopes, events, ctx = [], [], []
-    for m in NS_RE.finditer(src):
+    for m in NS_RE.finditer(code):
         events.append((m.start(), m.group(1), m.group(2)))
-    for m in CONTEXT_RE.finditer(src):
+    for m in CONTEXT_RE.finditer(code):
         events.append((m.start(), 'context', command_text(src, m.start())))
-    for m in HEAD_RE.finditer(src):
-        if m.start() and src[m.start() - 1] not in ' \t\n]':
+    for m in HEAD_RE.finditer(code):
+        if m.start() and code[m.start() - 1] not in ' \t\n]':
             continue
         events.append((m.start(), 'decl', m))
     found = {}
     for pos, kind, arg in sorted(events, key=lambda e: e[0]):
-        if kind in ('namespace', 'section'):
-            scopes.append((kind, arg)); ctx.append(f'{kind} {arg}')
+        if kind in ('namespace', 'section', 'mutual'):
+            # `namespace A.B` opens A, then B; `end B` closes only B.
+            for part in (arg.split('.') if arg else ['']):
+                scopes.append((kind, part))
+            ctx.append(f'{kind} {arg}')
         elif kind == 'end':
-            if scopes:
-                scopes.pop()
+            for _ in (arg.split('.') if arg else ['']):
+                if scopes:
+                    scopes.pop()
             ctx.append(f'end {arg}')
         elif kind == 'context':
             ctx.append(arg)
@@ -117,30 +158,28 @@ def decls(text):
     return found
 
 problems = []
-# Build-time code added to a .lean file.
-# Code that runs while Lean elaborates, and unproven declarations. Matched on
-# the added lines of each file after stripping that whole file's comments,
-# so a word inside a multi-line doc comment does not count.
+# Build-time code added to a .lean file: code that runs while Lean elaborates,
+# and unproven declarations. Each file is compared after stripping its comments,
+# before and after the patch, so a word inside a doc comment does not count and
+# uncommenting existing code (a deletion-only hunk) does.
 FORBID = re.compile(r'(#eval|#exec|#exit|\brun_cmd\b|\brun_elab\b|\brun_meta\b|\brun_tac\b|'
                     r'\binitialize\b|\bbuiltin_initialize\b|\belab\b|\belab_rules\b|'
                     r'\bmacro_rules\b|\bIO\b|\bunsafe\b|\bimplemented_by\b|\bextern\b|'
                     r'\baxiom\b|\bsorry\b|\badmit\b|\bsorryAx\b|AXIOM-OK)')
-added = {}
-cur = None
-for line in git('diff', '--cached', '--no-renames', '-U0', '--', '*.lean').splitlines():
-    if line.startswith('+++ '):
-        cur = line[6:] if line.startswith('+++ b/') else None
-    elif line.startswith('@@') and cur:
-        m = re.match(r'@@ -\S+ \+(\d+)(?:,(\d+))? @@', line)
-        start, count = int(m.group(1)), int(m.group(2) or 1)
-        added.setdefault(cur, set()).update(range(start, start + count))
-for f, lines in added.items():
-    text = strip_comments(git('show', f':{f}')).split('\n')
-    for n in sorted(lines):
-        if n - 1 < len(text):
-            m = FORBID.search(text[n - 1])
-            if m:
-                problems.append(f'- `{f}:{n}` adds `{m.group(1)}`: `{text[n - 1].strip()[:120]}`')
+for f in git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=AM', '--', '*.lean').split():
+    # The forbidden lines the file had before stay allowed, once each.
+    before = {}
+    for line in strip_comments(git('show', f'{base}:{f}')).split('\n'):
+        if FORBID.search(line):
+            before[line.strip()] = before.get(line.strip(), 0) + 1
+    for n, line in enumerate(strip_comments(git('show', f':{f}')).split('\n'), 1):
+        m = FORBID.search(line)
+        if not m:
+            continue
+        if before.get(line.strip(), 0):
+            before[line.strip()] -= 1
+            continue
+        problems.append(f'- `{f}:{n}` adds `{m.group(1)}`: `{line.strip()[:120]}`')
 if problems:
     print('Patch dropped: it adds build-time code or an unproven declaration:')
     print('\n'.join(problems))
@@ -173,10 +212,14 @@ added_thms = []
 for f in git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=AM', '--', '*.lean').split():
     old, new = decls(git('show', f'{base}:{f}')), decls(git('show', f':{f}'))
     added_thms += [n for n, st in new.items() if st is not None and n not in old]
-json.dump(sorted(set(added_thms)), open(added_path, 'w'))
+with open(added_path, 'w') as out:
+    json.dump(sorted(set(added_thms)), out)
 
 # COVERAGE.tsv: no existing function may lose its row or move to a worse bucket
-# (a function counts no better than its worst row).
+# (a function counts no better than its worst row). A row that claims more
+# coverage than before (a new row above NOT COVERED, or a better bucket) is held
+# too: its Lean names are free text, so nothing here checks they prove that
+# function.
 RANK = {b: i for i, b in enumerate(['PROVEN', 'CONDITIONAL', 'AXIOMATISED', 'MODELLED', 'NOT COVERED', 'TEST-ONLY'])}
 
 def worst(text):
@@ -189,7 +232,7 @@ def worst(text):
         out[key] = max(out.get(key, rank), rank)
     return out
 
-impact = json.load(open(impact_path))
+impact = read_json(impact_path)
 gone_ok = {(r.get('file'), r.get('fn')) for r in impact.get('removed', []) if isinstance(r, dict)}
 
 def bare(key):
@@ -205,6 +248,10 @@ for f in git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=M
             held.append(f'- `{f}` `{key[0]}` `{key[1]}`: coverage row removed')
         elif key in new and new[key] > rank:
             held.append(f'- `{f}` `{key[0]}` `{key[1]}`: coverage {names.get(rank, "?")} → {names.get(new[key], "unknown bucket")}')
+    for key, rank in new.items():
+        was = old.get(key, RANK['NOT COVERED'])
+        if rank < was:
+            held.append(f'- `{f}` `{key[0]}` `{key[1]}`: claims {names.get(rank)} (was {names.get(old[key]) if key in old else "no row"}); check its Lean names prove it')
 if held:
     print('Held for review: an existing theorem statement, the context above one, or a coverage row changed:')
     print('\n'.join(held))
@@ -213,7 +260,7 @@ VERDICTS = {'unchanged', 'model updated', 'counterexample'}
 # A counterexample is posted as a review only with all of these (as in the report job).
 CEX_FIELDS = ('theorem', 'why', 'repro', 'before', 'after')
 try:
-    records = [v for v in json.load(open(verdicts_path)) if isinstance(v, dict)]
+    records = [v for v in read_json(verdicts_path) if isinstance(v, dict)]
     keys = [(str(v['file']), str(v['fn']), int(v['line'])) for v in records]
     given_full = dict(zip(keys, records))
     dups = sorted({k for k in keys if keys.count(k) > 1})
