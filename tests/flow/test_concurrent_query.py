@@ -5,6 +5,24 @@ from falkordb.asyncio import FalkorDB
 from redis.asyncio import BlockingConnectionPool
 from redis.asyncio import Redis as AsyncRedis
 
+# overflowing a graph's 1024-deep write queue (test_17) needs >1024 concurrent
+# client connections, hence >1024 open file descriptors on both this process and
+# the server it later spawns. raise the soft limit (up to the hard cap) at import
+# time, before the server is launched, so the limit is inherited. best-effort:
+# where it can't be raised high enough, test_17 detects it and skips. the
+# original limit is kept and restored by test_17 afterwards, so this doesn't
+# leave an altered rlimit for the rest of the session
+_ORIG_NOFILE = None
+try:
+    import resource
+    _ORIG_NOFILE = resource.getrlimit(resource.RLIMIT_NOFILE)
+    _soft, _hard = _ORIG_NOFILE
+    _want = 8192 if _hard == resource.RLIM_INFINITY else min(8192, _hard)
+    if _soft < _want:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (_want, _hard))
+except Exception:
+    pass
+
 GRAPH_ID = "concurrent_query"       # Graph identifier.
 SECONDARY_GRAPH_ID = GRAPH_ID + "2" # Secondery graph identifier.
 CLIENT_COUNT = 16                   # Number of concurrent connections.
@@ -898,3 +916,140 @@ class testConcurrentQueryFlow(FlowTestsBase):
         # server stayed healthy and the write landed
         self.env.assertTrue(outcome['ping'])
         self.env.assertEqual(outcome['v2'], 1)
+
+
+    def test_17_write_queue_full_replies_cleanly(self):
+        # a full per-graph write queue (1024 pending writes) must make the next
+        # write reply "Write queue is full" - it must NOT crash the server.
+        #
+        # regression: _DelegateQuery tore down this thread's QueryCtx / CommandCtx
+        # tracking *before* confirming the enqueue succeeded. when the queue was
+        # full the enqueue failed, yet the caller's cleanup path still reported the
+        # error through the now-missing QueryCtx - a NULL deref in
+        # QueryCtx_GetRedisModuleCtx <- ErrorCtx_EmitException that segfaulted the
+        # server (release builds compile out the guarding assert).
+        #
+        # repro: hold the graph READ lock with one slow read, then fire more than
+        # 1024 writes at that graph at once so the pending-write queue overflows.
+
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        # the queue holds 1024; need comfortably more than that pending at once,
+        # each on its own blocked-client connection, to drive it past capacity
+        QUEUE_CAP = 1024
+        N = QUEUE_CAP + 176  # 1200
+
+        self.graph.query("CREATE (:N {v:1})")
+
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=N + 32, timeout=None,
+                    socket_timeout=120, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            loop = asyncio.get_running_loop()
+
+            # pre-open N connections so the write-flood below dispatches fast
+            # enough to saturate the queue while the read still holds the lock.
+            # this doubles as an environment probe: if the box can't sustain N
+            # client connections (FD limit / maxclients) a 1024-deep queue can't
+            # be overflowed here at all, so skip rather than flake
+            try:
+                await asyncio.gather(*[g.ro_query("RETURN 1") for _ in range(N)])
+            except Exception:
+                await pool.aclose()
+                self.conn.delete(GRAPH_ID)
+                self.env.skip()
+                return
+
+            # a slow read holds the graph READ lock, so every write piles up in
+            # the pending-write queue behind it instead of executing
+            slow_read = "UNWIND range(0, 150000000) AS x WITH x WHERE x % 150000001 = 0 RETURN count(x)"
+
+            async def running_reads():
+                res = await loop.run_in_executor(None, lambda:
+                    self.conn.execute_command("GRAPH.INFO", "RunningQueries"))
+                return len(res[1])
+
+            read_task = asyncio.create_task(g.ro_query(slow_read))
+
+            # the read must actually hold the READ lock before we flood
+            deadline = loop.time() + 20.0
+            while loop.time() < deadline and await running_reads() < 1:
+                await asyncio.sleep(0.02)
+
+            # fire N writes at the locked graph at once
+            writes = [asyncio.create_task(g.query(f"CREATE (:W {{i:{i}}})"))
+                      for i in range(N)]
+
+            # a "write queue is full" reply means the queue overflowed - its client
+            # isn't blocked so it returns while the accepted writes stay queued
+            # behind the read. this is the exact path that used to segfault
+            def overflow_count():
+                return sum(1 for t in writes if t.done()
+                           and t.exception() is not None
+                           and "write queue is full" in str(t.exception()).lower())
+
+            # wait until the queue overflows (bounded by the read still holding
+            # the lock - once it releases, the queue drains and can't overflow)
+            deadline = loop.time() + 60.0
+            while (loop.time() < deadline and overflow_count() == 0
+                   and not read_task.done()):
+                await asyncio.sleep(0.02)
+
+            saturated = overflow_count() > 0
+
+            # release the lock and let the queued writes drain
+            await read_task
+            results = await asyncio.gather(*writes, return_exceptions=True)
+
+            if not saturated:
+                # couldn't fill a 1024-deep queue before the read released
+                # (environment too slow / connection-limited) - nothing to assert
+                await pool.aclose()
+                self.conn.delete(GRAPH_ID)
+                self.env.skip()
+                return
+
+            # classify every write outcome
+            ok = full = other = 0
+            for r in results:
+                if isinstance(r, Exception):
+                    if "write queue is full" in str(r).lower():
+                        full += 1
+                    else:
+                        other += 1
+                else:
+                    ok += 1
+
+            # the overflow path was exercised ...
+            self.env.assertGreater(full, 0)
+            # ... cleanly: no connection resets / unexpected errors. a crash would
+            # surface here as dropped connections on the in-flight writes
+            self.env.assertEqual(other, 0, message=str([str(r) for r in results
+                if isinstance(r, Exception)
+                and "write queue is full" not in str(r).lower()][:5]))
+            # every write that made it into the queue committed
+            self.env.assertEqual(ok, N - full)
+
+            # the server stayed healthy and the accepted writes all landed
+            self.env.assertTrue(self.conn.ping())
+            res = await g.ro_query("MATCH (n:W) RETURN count(n)")
+            self.env.assertEqual(res.result_set[0][0], ok)
+
+            await pool.aclose()
+            self.conn.delete(GRAPH_ID)
+
+        try:
+            asyncio.run(run(self))
+        finally:
+            # restore the FD soft limit raised at import time (the server already
+            # inherited it at launch; only this test needed the client-side
+            # headroom), so the rest of the session runs with its original limit
+            if _ORIG_NOFILE is not None:
+                try:
+                    import resource
+                    resource.setrlimit(resource.RLIMIT_NOFILE, _ORIG_NOFILE)
+                except Exception:
+                    pass
