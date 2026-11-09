@@ -8,8 +8,8 @@ import VersionedMatrix.Cow
 | `alloc`, `cowNew` | `Matrix::new` / `decode` / `transpose` (each allocates a GraphBLAS handle) followed by `Cow::new`: `cowNew = cowWrap ∘ alloc` (`cowNew_eq`). Every in-tree caller of `Cow::new` is of this shape (below), so `cowNew_spec` (fresh and unpublished, no hypothesis about the caller beyond published handles being allocated) covers them |
 | callers of `Cow::new` | in `versioned_matrix.rs`: `Delta::new` (fed `Matrix::new` or `decode`), `Delta::transposed` (a `transpose` result), `VersionedMatrix::new` (`Matrix::new`), `from_matrix` (its only caller, `Tensor::rebuild_backward`'s `extract().transpose()` in `tensor.rs`, passes a fresh matrix), `VersionedMatrix::transpose`, `decode`; in `tensor.rs`: `Tensor::new` (`Matrix::new`), `decode`: none passes a clone or a matrix a published version holds |
 | `deref`    | `Cow::deref` (cow.rs:128) |
-| `mvccNew`  | `MvccGraph::new` (mvcc_graph.rs:113) / `from_graph` (:127): the published version |
-| `dropG`    | `impl Drop for MvccGraph` (:374): cancels the committed graph's indexing, once its owner and every build that reached it have let go |
+| `mvccNew`  | `MvccGraph::new` (mvcc_graph.rs:115) / `from_graph` (:129): the published version |
+| `dropG`    | `impl Drop for MvccGraph` (:380): cancels the committed graph's indexing, once its owner and every build that reached it have let go |
 -/
 namespace VMCow
 

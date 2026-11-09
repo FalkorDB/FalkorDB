@@ -21,8 +21,10 @@
 //! its modules down (`RS_GLOBAL_DTORS`: the sanitizer runs). [`stop`] waits a bounded time for the
 //! pool's workers, since one may be waiting for the GIL, which the shutdown handler holds, and says
 //! whether they all exited: the handler tears GraphBLAS down only then, so a worker left behind may
-//! still free what it holds. After the stop no batch starts, and one that waited to publish
-//! publishes nothing. The stop is for good.
+//! still free what it holds. A batch checks for the stop before it reads and again once it holds
+//! what publishing needs: after the stop, one that has not started reading does not, and one that
+//! waited to publish publishes nothing. One already reading goes on, inside the stop's wait or
+//! left behind by it. The stop is for good.
 //!
 //! [`IndexEntry::generation`]: super::versioned::IndexEntry::generation
 //! [`MvccGraph::commit`]: crate::graph::mvcc_graph::MvccGraph::commit
@@ -179,8 +181,9 @@ pub(crate) struct Builder {
     sizing: Sizing,
     host: Arc<dyn BuildHost>,
     pool: OnceLock<ThreadPool>,
-    /// Set by the stop, for good: no batch starts after it, and one that waited to publish
-    /// publishes nothing.
+    /// Set by the stop, for good. A batch checks it before it reads and again before it publishes:
+    /// one that has not started reading does not, and one that waited to publish publishes
+    /// nothing.
     stopped: AtomicBool,
     /// Run once by the next batch while it reads, holding what it holds then: for a test that
     /// needs a batch held there.
