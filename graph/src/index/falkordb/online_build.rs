@@ -185,10 +185,10 @@ pub(crate) struct Builder {
     /// one that has not started reading does not, and one that waited to publish publishes
     /// nothing.
     stopped: AtomicBool,
-    /// Run once by the next batch while it reads, holding what it holds then: for a test that
-    /// needs a batch held there.
+    /// Run once by the next batch while it reads, holding what it holds then, on the batch's
+    /// version: for a test that needs a batch held there, or what it read.
     #[cfg(test)]
-    pub(crate) while_reading: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    pub(crate) while_reading: Mutex<Option<Box<dyn FnOnce(&Graph) + Send>>>,
     /// Once set, the next batch's version is refused, as only a bug refuses one: for a test of
     /// what a job does then ([`Step::Failed`]).
     #[cfg(test)]
@@ -345,11 +345,18 @@ impl Job {
             Err(step) => return step,
         };
         let mut step = Step::Cancelled;
+        // Kept until the batch is over, so that what only they hold is freed with no lock of the
+        // host's held. A batch of scattered values copies most of its column:
+        // - `_built`, the batch's index: the commit takes `prepared` and frees it under the lock
+        //   unless it publishes it as it is, and with it the pages the batch copied. A clone of an
+        //   index shares its pages, so they are freed with this instead.
+        // - `_replaced`, the version published when the batch commits: the one its commit replaces,
+        //   and with it the column's old pages, or the one still published if nothing is.
+        // On an 8M-entity column, a large batch's publish held the GIL for about 1.6 ms with the
+        // replaced version's pages freed inside it, and 0.01 ms with them kept (a log of each
+        // publish's hold, release build).
+        let _built = prepared.falkordb_index.clone();
         let mut prepared = Some(prepared);
-        // The version the commit replaces, kept until the batch is over, so that what only it
-        // holds is freed with no lock of the host's held. A batch of scattered values copies most
-        // of its column, and the old pages go with that version: on an 8M-entity column, freeing
-        // them held the lock for about 1.6 ms per large batch.
         let mut _replaced = None;
         let (builder, host, id, generation) =
             (&self.builder, &self.builder.host, &self.id, self.generation);
@@ -412,7 +419,7 @@ impl Job {
         }
         #[cfg(test)]
         if let Some(hold) = self.builder.while_reading.lock().take() {
-            hold();
+            hold(&prepared);
         }
         Ok(Read {
             mvcc,

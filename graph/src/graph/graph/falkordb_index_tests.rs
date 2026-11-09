@@ -3662,6 +3662,64 @@ fn a_batch_frees_the_version_it_replaces_after_the_hosts_lock() {
     );
 }
 
+/// A batch its commit does not publish is freed once the batch is over, with no lock of the host's
+/// held: right after its commit, still holding the lock, the pages the batch copied are alive, and
+/// once the batch has returned, nothing holds them. Here the index is dropped just before the batch
+/// publishes, so the commit discards it, and the column's pages are the batch's alone.
+#[test]
+fn a_batch_frees_what_it_did_not_publish_after_the_hosts_lock() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let pages = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let builder = builder_on(&host, Sizing::fixed(1));
+    *builder.while_reading.lock() = Some(Box::new({
+        let (pages, label, attr) = (Arc::clone(&pages), label.clone(), attr.clone());
+        move |prepared: &Graph| {
+            let column = prepared
+                .falkordb_index
+                .numeric(EntityType::Node, &label, &attr)
+                .expect("the batch's column");
+            *pages.lock() = column.pages().iter().map(Arc::downgrade).collect();
+        }
+    }));
+    host.before_publish({
+        let (label, attr) = (label.clone(), attr.clone());
+        move |mvcc| {
+            commit_write(mvcc, |g| {
+                g.falkordb_index
+                    .drop_column(EntityType::Node, &label, &attr)
+            });
+        }
+    });
+    let alive_under_lock = Arc::new(AtomicBool::new(false));
+    host.after_publish({
+        let (alive, pages) = (Arc::clone(&alive_under_lock), Arc::clone(&pages));
+        move |_| {
+            let pages = pages.lock();
+            alive.store(
+                !pages.is_empty() && pages.iter().all(|page| page.upgrade().is_some()),
+                Ordering::SeqCst,
+            );
+        }
+    });
+    let mut job = Job::new(
+        Arc::clone(&builder),
+        Arc::downgrade(&host.mvcc),
+        id.clone(),
+        generation_of(&host, &id),
+    );
+    assert_eq!(job.step(), Step::Cancelled, "the index was dropped");
+    assert!(
+        alive_under_lock.load(Ordering::SeqCst),
+        "the discarded batch's pages were freed under the host's lock"
+    );
+    assert!(
+        pages.lock().iter().all(|page| page.upgrade().is_none()),
+        "the discarded batch's pages outlived it"
+    );
+}
+
 /// A job holds its graph weakly: it does not keep a deleted graph alive, and once the graph is
 /// gone, the job is cancelled.
 #[test]
@@ -3758,7 +3816,7 @@ fn a_stopped_builder_runs_nothing() {
     let read = Arc::new(AtomicBool::new(false));
     *builder.while_reading.lock() = Some(Box::new({
         let read = Arc::clone(&read);
-        move || read.store(true, Ordering::SeqCst)
+        move |_| read.store(true, Ordering::SeqCst)
     }));
     builder.start(1);
     assert!(
@@ -3802,7 +3860,7 @@ fn a_stop_that_leaves_a_worker_behind_says_so() {
     let (release, released) = mpsc::channel();
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let builder = builder_on(&host, Sizing::fixed(2));
-    *builder.while_reading.lock() = Some(Box::new(move || {
+    *builder.while_reading.lock() = Some(Box::new(move |_| {
         holding.send(()).unwrap();
         released.recv().unwrap();
     }));
