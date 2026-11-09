@@ -874,7 +874,10 @@ pub fn graph_bulk_insert(
         let result = result.and_then(|()| {
             fork.validate().map_err(|e| e.to_string())?;
             fork.commit_index_docs(&mut docs);
-            tg.graph.commit(fork).map(drop).map_err(|e| e.to_string())
+            tg.graph
+                .commit(fork)
+                .map(|_published| ())
+                .map_err(|e| e.to_string())
         });
         return match result {
             Ok(()) => {

@@ -137,7 +137,6 @@ fuzz_target!(init: {
         let runtime = Runtime::new(
             g.fork(),
             parameters,
-            true,
             plan,
             false,
             String::new(),

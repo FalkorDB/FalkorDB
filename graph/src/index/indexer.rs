@@ -31,9 +31,10 @@
 //!    |      and background population batches with write-path
 //!    |      commit_index calls so they never run concurrently.
 //!    |
-//!    +-- graph: Mutex<Option<Arc<Graph>>>
-//!           Latest committed graph snapshot shared with
-//!           background index population threads.
+//!    +-- graph: Arc<ArcSwapOption<Graph>>
+//!           Latest committed graph snapshot, shared by every clone of
+//!           this Indexer (each graph version and each background
+//!           population thread holds one), so a commit reaches them all.
 //! ```
 //!
 //! # Concurrency

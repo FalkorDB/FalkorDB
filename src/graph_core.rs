@@ -236,14 +236,12 @@ pub struct WriteMessage {
 }
 
 /// What `commit_and_replicate` needs to publish a finished write.
-struct WriteQueryOk<'r> {
-    /// The runtime that built the version, which publishes it.
-    runtime: &'r Runtime<'r>,
+struct WriteQueryOk {
     effects_buffer: Option<EffectsBuffer>,
     modified: bool,
 }
 
-impl<'r> WriteQueryOk<'r> {
+impl WriteQueryOk {
     /// Everything a finished write hands to `commit_and_replicate`, derived in
     /// one place from the runtime that produced it.
     ///
@@ -251,13 +249,10 @@ impl<'r> WriteQueryOk<'r> {
     /// and replicates like one — used to assemble this by hand, which meant two
     /// copies of the "did this change anything" predicate.
     fn new(
-        runtime: &'r Runtime<'r>,
+        runtime: &Runtime,
         stats: &QueryStatistics,
     ) -> Self {
         Self {
-            // The runtime publishes the version it built, so the version and
-            // the runtime cannot differ.
-            runtime,
             effects_buffer: take_effects_buffer(runtime),
             // `effects_count` as well as the counters: a query can replicate an
             // effect without moving any of them — index DDL does.
@@ -632,7 +627,6 @@ pub fn execute_query(
     let runtime = Runtime::new(
         g,
         parameters,
-        is_write,
         plan,
         false,
         (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
@@ -697,7 +691,6 @@ pub fn execute_profile(
     let runtime = Runtime::new(
         g,
         parameters,
-        false,
         plan.clone(),
         false,
         String::new(),
@@ -808,7 +801,6 @@ fn try_query_write(
     let runtime = Runtime::new(
         session.write_version(),
         parameters,
-        true,
         plan,
         false,
         (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
@@ -1518,7 +1510,7 @@ pub(crate) fn finish_write(
     // mutated — `LIMIT 0` short-circuits above `Commit`, for instance. There is
     // nothing to publish or replicate, and the private version goes with the
     // runtime.
-    session.with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, wq));
+    session.with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, runtime, wq));
 }
 
 /// Discard a write that failed, leaving the published state as it was.
@@ -1550,7 +1542,8 @@ fn commit_and_replicate(
     g: &ThreadedGraph,
     ctx: &Context,
     key_name: &Arc<str>,
-    wq: WriteQueryOk<'_>,
+    runtime: &Runtime,
+    wq: WriteQueryOk,
 ) {
     // Index document changes were already applied by each `CommitOp` while this
     // query held the write lock (so a later operator in the same query could see
@@ -1564,7 +1557,7 @@ fn commit_and_replicate(
     // `Commit` operator at all — index DDL — creates no ids and passes for the
     // same reason. There is also nothing this could do about a refusal: the
     // query has already succeeded and its reply is about to be serialized.
-    if let Err(e) = wq.runtime.publish(|fork| g.graph.commit(fork)) {
+    if let Err(e) = runtime.publish(|fork| g.graph.commit(fork)) {
         unreachable!("a write query's version is current and verified by now: {e}");
     }
     // Signal the key as modified so WATCH gets triggered.

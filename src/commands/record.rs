@@ -81,7 +81,6 @@ fn record_mut(
     let runtime = Runtime::new(
         g,
         parameters,
-        is_write,
         plan.clone(),
         true,
         (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),

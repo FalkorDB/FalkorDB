@@ -44,7 +44,6 @@ fn main() {
             let runtime = Runtime::new(
                 g.fork(),
                 parameters,
-                true,
                 plan,
                 false,
                 String::new(),

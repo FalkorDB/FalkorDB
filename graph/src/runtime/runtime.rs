@@ -454,7 +454,6 @@ impl<'a> Runtime<'a> {
     pub fn new(
         g: impl Into<QueryGraph>,
         parameters: HashMap<String, Value>,
-        write: bool,
         plan: Arc<DynTree<IR>>,
         inspect: bool,
         import_folder: String,
@@ -472,12 +471,13 @@ impl<'a> Runtime<'a> {
             vec![]
         };
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
+        // A write query runs on its own fork, a read query on a published version.
         let (published, fork) = match g.into() {
             QueryGraph::Published(g) => (OnceCell::from(g), None),
             QueryGraph::Fork(fork) => (OnceCell::new(), Some(fork)),
         };
-        if write {
-            let fork = fork.as_ref().expect("a write query runs on a fork");
+        let write = fork.is_some();
+        if let Some(fork) = &fork {
             pending.borrow_mut().set_schema_baseline(fork);
         }
         Self {
