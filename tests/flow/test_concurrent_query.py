@@ -925,6 +925,235 @@ class testConcurrentQueryFlow(FlowTestsBase):
         self.env.assertTrue(outcome['ping'])
         self.env.assertEqual(outcome['v2'], 1)
 
+    def test_19_index_build_stays_responsive(self):
+        # finishing an index build must NOT freeze the server. the indexer
+        # populates the index lock-free, then needs the graph WRITE lock to flip
+        # it active; a plain blocking acquire there pins Redis' GIL for as long as
+        # an in-flight long read holds the READ lock, freezing every client
+        # (Finding 3 of the writer-gate soak). the finish should wait for the lock
+        # in GIL-yielding slices, like the write path, so the server stays
+        # responsive throughout the build.
+        #
+        # reproduce: keep a continuous flood of long reads on the graph (so the
+        # READ lock is held the whole time), create an index, and probe PING
+        # responsiveness across the build. with the freeze a PING stalls ~a long
+        # read (seconds); with the fix the worst PING stays small.
+
+        # timing assertions are unreliable under instrumentation
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        # a graph large enough that the index populate scan overlaps the read
+        # flood and the build finishes while a long read holds the lock
+        self.conn.delete(GRAPH_ID)
+        self.graph.query("UNWIND range(1, 200000) AS x CREATE (:P {v:x})")
+
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=64, timeout=None, socket_timeout=60, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            # a long read (~3s) that holds the graph READ lock for its duration.
+            # nested small ranges keep the iteration count high with bounded memory
+            # (a single range(0, 3.6e7) would materialize a ~0.5GB SIValue array).
+            # the predicate MUST depend on BOTH loop vars, else the planner pushes
+            # it below the inner UNWIND and the nested loop never runs (the read
+            # would finish in ~ms and hold no lock)
+            long_read = ("UNWIND range(0, 6000) AS a UNWIND range(0, 6000) AS b "
+                         "WITH a, b WHERE a + b < 0 RETURN count(a)")
+
+            # unrelated connection used to probe server responsiveness
+            probe = AsyncRedis(port=self.env.port, decode_responses=True)
+            await probe.ping()
+
+            loop = asyncio.get_running_loop()
+
+            # keep a few long reads overlapping so the READ lock stays
+            # continuously held for the whole build - but only a few, so the
+            # worker pool is NOT saturated (that would just starve CREATE INDEX
+            # itself and never build the index)
+            stop = False
+            reads = []
+            async def flood():
+                while not stop:
+                    while (sum(1 for r in reads if not r.done()) < 3) and not stop:
+                        reads.append(asyncio.create_task(g.ro_query(long_read)))
+                    await asyncio.sleep(0.01)
+            flood_task = asyncio.create_task(flood())
+            await asyncio.sleep(0.3)  # hold the read lock before creating the index
+
+            # is the P index operational? (sync call, run off the event loop)
+            def index_ready():
+                res = self.graph.ro_query(
+                    "CALL db.indexes() YIELD label, status "
+                    "WHERE label = 'P' AND status = 'OPERATIONAL' RETURN count(1)")
+                return res.result_set[0][0] >= 1
+
+            # create the index: its populate + finish run on the indexer thread,
+            # the finish needing the write lock behind the read flood
+            create_task = asyncio.create_task(g.query("CREATE INDEX FOR (p:P) ON (p.v)"))
+
+            # sample PING on its OWN fixed cadence in a dedicated task, so a build
+            # freeze lands in a measured PING sample. (sampling PING inline with the
+            # readiness poll would let a freeze stall the blocking poll instead of a
+            # recorded PING, and the test could pass with the bug.)
+            latencies = []
+            ping_stop = False
+            async def ping_probe():
+                while not ping_stop:
+                    t0 = loop.time()
+                    try:
+                        await probe.ping()
+                        latencies.append(loop.time() - t0)
+                    except Exception:
+                        # a failed PING (e.g. the server died) must NOT look like a
+                        # fast sample - record infinite latency so worst-PING fails
+                        latencies.append(float('inf'))
+                    await asyncio.sleep(0.02)
+            ping_task = asyncio.create_task(ping_probe())
+
+            # independently poll until the index is operational (bounded)
+            built = False
+            deadline = loop.time() + 20.0
+            while loop.time() < deadline:
+                if await loop.run_in_executor(None, index_ready):
+                    built = True
+                    break
+                await asyncio.sleep(0.05)
+
+            # stop probing + flooding and drain everything
+            ping_stop = True
+            stop = True
+            await ping_task
+            await flood_task
+            await create_task
+            read_results = await asyncio.gather(*reads, return_exceptions=True)
+
+            # the readers exist only to hold the read lock; any exception means the
+            # contention setup broke (or the server died), which would make the
+            # assertions below vacuous - surface it instead of swallowing it
+            read_errors = [r for r in read_results if isinstance(r, Exception)]
+            self.env.assertEqual(read_errors, [], message=str(read_errors[:3]))
+
+            # the index finished building within the window
+            self.env.assertTrue(built)
+
+            # server stayed responsive during the build: with the GIL pinned (old
+            # behavior) a PING would stall ~a full long read. assert on the WORST
+            # PING - the freeze is a single event a median would hide
+            worst = max(latencies) if latencies else 0.0
+            self.env.assertLess(worst, 1.0)
+
+            # the index works
+            res = await g.ro_query("MATCH (p:P {v:42}) RETURN p.v")
+            self.env.assertEqual(res.result_set[0][0], 42)
+
+            await probe.aclose()
+            await pool.aclose()
+            self.conn.delete(GRAPH_ID)
+
+        asyncio.run(run(self))
+
+    def test_20_index_churn_under_long_read_is_safe(self):
+        # a concurrent CREATE/DROP INDEX while an index build is finishing behind a
+        # long read must not crash the server. the responsive acquire yields the
+        # GIL while waiting for the write lock, so a schema change can land between
+        # slices. the index object stays alive (all Index_Free's are serialized on
+        # the single indexer thread, which is busy populating), and the finish only
+        # activates while it is still the schema's pending index (pending_changes +
+        # identity guard). this hammers that window and asserts the server stays
+        # healthy and ends in a consistent state.
+
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        self.conn.delete(GRAPH_ID)
+        # big enough that the populate scan runs long enough to still be finishing
+        # while the reads below hold the lock
+        self.graph.query("UNWIND range(1, 300000) AS x CREATE (:P {v:x})")
+
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=32, timeout=None, socket_timeout=60, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+            loop = asyncio.get_running_loop()
+
+            # hold the READ lock with bounded memory (nested small ranges). the
+            # predicate depends on BOTH vars so the planner can't push it below the
+            # inner UNWIND (which would skip the nested loop and hold no lock)
+            long_read = ("UNWIND range(0, 6000) AS a UNWIND range(0, 6000) AS b "
+                         "WITH a, b WHERE a + b < 0 RETURN count(a)")
+
+            # keep 2 overlapping reads in flight so the READ lock stays held (2 is
+            # well under the worker-pool size, so writers aren't starved)
+            async def hold_read_lock(stop_box, reads):
+                while not stop_box[0]:
+                    while sum(1 for r in reads if not r.done()) < 2 and not stop_box[0]:
+                        reads.append(asyncio.create_task(g.ro_query(long_read)))
+                    await asyncio.sleep(0.01)
+
+            for _ in range(4):
+                # create the index FIRST, with no reader holding the lock, so it
+                # acquires the write lock immediately, schedules the populate and
+                # returns. the populate then runs on the indexer while the reads
+                # below hold the lock - so the build's FINISH is what waits
+                # (GIL-yielding) behind the reads: the window the DROP must race.
+                try:
+                    await g.query("CREATE INDEX FOR (p:P) ON (p.v)")
+                except redis.exceptions.ResponseError:
+                    pass  # may already exist from a previous round
+
+                stop_box = [False]
+                reads = []
+                flood_task = asyncio.create_task(hold_read_lock(stop_box, reads))
+                await asyncio.sleep(0.3)  # reads hold the lock; the finish is waiting
+
+                # drop while the finish is waiting behind the reads - the race
+                try:
+                    await g.query("DROP INDEX FOR (p:P) ON (p.v)")
+                except redis.exceptions.ResponseError:
+                    pass  # benign "no such index" if the build hadn't landed yet
+
+                stop_box[0] = True
+                await flood_task
+                read_results = await asyncio.gather(*reads, return_exceptions=True)
+
+                # the readers exist only to hold the read lock; any exception means
+                # the contention setup broke (or the server died), which would make
+                # the assertions below vacuous - surface it instead of swallowing it
+                read_errors = [r for r in read_results if isinstance(r, Exception)]
+                self.env.assertEqual(read_errors, [], message=str(read_errors[:3]))
+
+                # server survived this round
+                self.env.assertTrue(self.conn.ping())
+
+            # ends in a consistent, usable state: rebuild and verify the index
+            # actually becomes OPERATIONAL - a label scan would answer the query
+            # below even if activation regressed, so assert the status explicitly
+            try:
+                await g.query("DROP INDEX FOR (p:P) ON (p.v)")
+            except redis.exceptions.ResponseError:
+                pass
+            await g.query("CREATE INDEX FOR (p:P) ON (p.v)")
+
+            built = False
+            deadline = loop.time() + 30.0
+            while loop.time() < deadline:
+                res = await loop.run_in_executor(None, lambda: self.graph.ro_query(
+                    "CALL db.indexes() YIELD label, status "
+                    "WHERE label = 'P' AND status = 'OPERATIONAL' RETURN count(1)"))
+                if res.result_set[0][0] >= 1:
+                    built = True
+                    break
+                await asyncio.sleep(0.05)
+            self.env.assertTrue(built)
+
+            res = await g.ro_query("MATCH (p:P {v:7}) RETURN p.v")
+            self.env.assertEqual(res.result_set[0][0], 7)
+            await pool.aclose()
+            self.conn.delete(GRAPH_ID)
+
+        asyncio.run(run(self))
 
     def test_17_write_queue_full_replies_cleanly(self):
         # a full per-graph write queue (1024 pending writes) must make the next
