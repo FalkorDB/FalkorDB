@@ -1,4 +1,5 @@
-//! Phase 3: rank-pruned bidirectional search and path unpacking (#3210).
+//! Phase 3: an upward walk of the elimination tree from both ends, then path unpacking
+//! (#3210).
 //!
 //! The hierarchy is queried entirely in rank space. Both halves of the search only ever
 //! *climb* rank over the upward graph; they differ only in which per-arc weight they read —
@@ -12,59 +13,25 @@
 //! already folded into some arc above it. See [`customize`](super::customize) for the
 //! layout, and `src/procedures/proc_cch_idx_query.c` on `master` for the C original.
 //!
+//! Neither half needs a priority queue or a map. Every rank above `r` in the upward graph
+//! is an ancestor of `r` in Phase 1's elimination tree, whose parent of `r` is `up(r)[0]`,
+//! its lowest upper neighbour. So a climb from `r` can only reach `r`'s ancestor chain,
+//! which is already in rank order: each half relaxes the upward arcs of the ranks on its
+//! chain from the bottom up, and by the time it gets to a rank every arc into it has been
+//! relaxed. The two halves can only meet on the ancestors their chains share, from the
+//! lowest common ancestor to the root. This is the elimination-tree query of Dibbelt,
+//! Strasser and Wagner, "Customizable Contraction Hierarchies" (ACM JEA, 2016). The C
+//! original runs two Dijkstra searches instead; the weight is the same, and where two
+//! paths tie the one returned can differ.
+//!
 //! The search is stateless and reads nothing mutable, so any number of queries can run
 //! against one hierarchy in parallel.
-
-use std::cmp::Ordering;
-use std::collections::BinaryHeap;
 
 use rustc_hash::FxHashMap;
 
 use super::Cch;
 use super::order::Rank;
 use crate::graph::graph::NodeId;
-
-/// What one half of the search knows about a rank it has reached.
-#[derive(Clone, Copy)]
-struct Reached {
-    dist: f64,
-    /// Previous rank on the best route found so far; `None` only at the start.
-    pred: Option<Rank>,
-    /// Popped with its final distance — later, longer offers for it are stale.
-    finalized: bool,
-}
-
-/// A heap entry ordered so that `BinaryHeap`, which pops the *greatest*, pops the nearest
-/// rank. The rank breaks ties, so an equal-distance frontier is explored in a fixed order.
-#[derive(Clone, Copy, PartialEq)]
-struct Candidate {
-    dist: f64,
-    rank: Rank,
-}
-
-impl Eq for Candidate {}
-
-impl Ord for Candidate {
-    fn cmp(
-        &self,
-        other: &Self,
-    ) -> Ordering {
-        // reversed on both fields: nearest first, lowest rank first
-        other
-            .dist
-            .total_cmp(&self.dist)
-            .then_with(|| other.rank.cmp(&self.rank))
-    }
-}
-
-impl PartialOrd for Candidate {
-    fn partial_cmp(
-        &self,
-        other: &Self,
-    ) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
 
 /// Which direction of each arc a search half reads.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -75,77 +42,133 @@ enum Direction {
     Backward,
 }
 
-/// Dijkstra from `start` restricted to the upward graph.
-///
-/// Returns every rank reached. "Rank-pruned" is the whole point: a node's upward
-/// neighbourhood is a small fraction of its real one, so neither half explores the graph —
-/// they explore two thin cones that meet near the top of the hierarchy.
-fn search(
-    cch: &Cch,
-    start: Rank,
+/// What one half of the search knows about a rank on its chain.
+#[derive(Clone, Copy)]
+struct Reached {
+    /// Cheapest distance found so far from the half's start; infinite until reached.
+    dist: f64,
+    /// Chain position of the previous rank on that route; `None` at the start, and at a
+    /// rank not reached yet.
+    pred: Option<usize>,
+}
+
+/// One half of the search: its start rank's ancestor chain, and what it knows about each
+/// rank on it.
+struct Chain {
     direction: Direction,
-) -> FxHashMap<Rank, Reached> {
-    let topo = cch.topology();
-    let mut reached: FxHashMap<Rank, Reached> = FxHashMap::default();
-    reached.insert(
-        start,
-        Reached {
-            dist: 0.0,
-            pred: None,
-            finalized: false,
-        },
-    );
+    /// `ranks[0]` is the start, and `ranks[k + 1]` is the elimination-tree parent of
+    /// `ranks[k]`, so the ranks ascend and the last one is the root of the start's tree.
+    ranks: Vec<Rank>,
+    /// `reached[k]` is about `ranks[k]`.
+    reached: Vec<Reached>,
+}
 
-    let mut heap = BinaryHeap::new();
-    heap.push(Candidate {
-        dist: 0.0,
-        rank: start,
-    });
+impl Chain {
+    fn new(
+        cch: &Cch,
+        start: Rank,
+        direction: Direction,
+    ) -> Self {
+        let topology = cch.topology();
+        let mut ranks = vec![start];
+        let mut rank = start;
+        // a root has no upper neighbour
+        while let Some(&parent) = topology.up(rank).first() {
+            ranks.push(parent);
+            rank = parent;
+        }
+        let mut reached = vec![
+            Reached {
+                dist: f64::INFINITY,
+                pred: None,
+            };
+            ranks.len()
+        ];
+        reached[0].dist = 0.0;
+        Self {
+            direction,
+            ranks,
+            reached,
+        }
+    }
 
-    while let Some(Candidate { rank: cur, .. }) = heap.pop() {
-        let cur_dist = {
-            let rec = reached.get_mut(&cur).expect("popped an unreached rank");
-            if rec.finalized {
-                continue; // a stale duplicate offer
-            }
-            rec.finalized = true;
-            rec.dist
-        };
-
-        let range = topo.up_range(cur);
-        for (i, &next) in topo.up(cur).iter().enumerate() {
-            let slot = range.start + i;
-            let w = match direction {
+    /// Offer every upward arc of the rank at chain position `at` to the rank it leads to.
+    ///
+    /// Must be called for positions in ascending order: then every arc into `at` has
+    /// already been offered, so its distance is final.
+    fn relax_from(
+        &mut self,
+        cch: &Cch,
+        at: usize,
+    ) {
+        let dist = self.reached[at].dist;
+        if dist.is_infinite() {
+            return; // not reached: nothing to offer
+        }
+        let topology = cch.topology();
+        let rank = self.ranks[at];
+        // Every upper neighbour is an ancestor, so it is on the chain above `at`. Both
+        // lists ascend, so one cursor moving forward finds them all.
+        let mut position = at + 1;
+        for (slot, &above) in topology.up_range(rank).zip(topology.up(rank)) {
+            position = gallop_to(&self.ranks, position, above);
+            debug_assert_eq!(
+                self.ranks.get(position),
+                Some(&above),
+                "an upper neighbour must be an ancestor"
+            );
+            let weight = match self.direction {
                 Direction::Forward => cch.upward_weight(slot),
                 Direction::Backward => cch.downward_weight(slot),
             };
-            if !w.is_finite() {
-                // The arc exists, but carries nothing in this direction. Pruning here is
-                // an optimization, not a correctness guard -- `nd < rec.dist` below would
-                // reject an infinite offer anyway -- but without it every structurally
-                // adjacent rank would still be entered into the map at infinity, which is
-                // exactly the blow-up rank pruning exists to avoid.
-                continue;
-            }
-
-            let nd = cur_dist + w;
-            let rec = reached.entry(next).or_insert(Reached {
-                dist: f64::INFINITY,
-                pred: None,
-                finalized: false,
-            });
-            if !rec.finalized && nd < rec.dist {
-                rec.dist = nd;
-                rec.pred = Some(cur);
-                heap.push(Candidate {
-                    dist: nd,
-                    rank: next,
-                });
+            // an arc closed in this direction (`+inf`) offers `+inf`, which never wins
+            let offer = dist + weight;
+            let entry = &mut self.reached[position];
+            if offer < entry.dist {
+                entry.dist = offer;
+                entry.pred = Some(at);
             }
         }
     }
 
-    reached
+    /// The arcs from the start to the rank at chain position `at`, in travel order for a
+    /// forward half: `(lower position's rank, higher position's rank)` pairs, lowest first.
+    fn arcs_up_to(
+        &self,
+        mut at: usize,
+    ) -> Vec<(Rank, Rank)> {
+        let mut arcs = Vec::new();
+        while let Some(pred) = self.reached[at].pred {
+            arcs.push((self.ranks[pred], self.ranks[at]));
+            at = pred;
+        }
+        arcs.reverse();
+        arcs
+    }
+}
+
+/// The first position at or after `from` whose rank is at least `rank`, in an ascending
+/// `ranks`; `ranks.len()` if there is none.
+///
+/// Gallops forward 1, 2, 4, ... positions, then binary-searches the last step, so a rank a
+/// few positions ahead costs a few comparisons and a far one stays logarithmic. Upper
+/// neighbours sit close together on the chain, so most calls are the short case.
+fn gallop_to(
+    ranks: &[Rank],
+    from: usize,
+    rank: Rank,
+) -> usize {
+    // every position below `low` holds a smaller rank; `high` is the next one to probe
+    let mut low = from;
+    let mut high = from;
+    let mut step = 1;
+    while high < ranks.len() && ranks[high] < rank {
+        low = high + 1;
+        high += step;
+        step *= 2;
+    }
+    let high = high.min(ranks.len());
+    low + ranks[low..high].partition_point(|&r| r < rank)
 }
 
 /// The customized weight and middle of the arc directed `from -> to`, or `None` if the two
@@ -204,34 +227,6 @@ fn unpack(
     true
 }
 
-/// The shortcut-level route as a sequence of rank arcs, read off the two searches'
-/// predecessor chains: `start ... meet` forward, then `meet ... end` backward.
-fn route(
-    fwd: &FxHashMap<Rank, Reached>,
-    bwd: &FxHashMap<Rank, Reached>,
-    meet: Rank,
-) -> Vec<(Rank, Rank)> {
-    let mut arcs = Vec::new();
-
-    // forward half: walk predecessors back from the meeting point, then reverse
-    let mut cur = meet;
-    while let Some(pred) = fwd[&cur].pred {
-        arcs.push((pred, cur));
-        cur = pred;
-    }
-    arcs.reverse();
-
-    // backward half: the target's search ran backwards, so its predecessor chain from the
-    // meeting point already reads in travel order
-    cur = meet;
-    while let Some(pred) = bwd[&cur].pred {
-        arcs.push((cur, pred));
-        cur = pred;
-    }
-
-    arcs
-}
-
 /// Phase 3. See [`Cch::query`].
 pub(super) fn query(
     cch: &Cch,
@@ -247,40 +242,81 @@ pub(super) fn query(
         return Some((0.0, vec![src]));
     }
 
-    let topo = cch.topology();
-    let src_rank = topo.rank_of(NodeId::from(src));
-    let fwd = search(cch, src_rank, Direction::Forward);
-    let bwd = search(cch, topo.rank_of(NodeId::from(dst)), Direction::Backward);
+    let topology = cch.topology();
+    let src_rank = topology.rank_of(NodeId::from(src));
+    let mut forward = Chain::new(cch, src_rank, Direction::Forward);
+    let mut backward = Chain::new(
+        cch,
+        topology.rank_of(NodeId::from(dst)),
+        Direction::Backward,
+    );
 
-    // meet wherever the two cones overlap most cheaply. Iterating the smaller side keeps
-    // this proportional to the search, not to the graph.
-    let (small, large) = if fwd.len() <= bwd.len() {
-        (&fwd, &bwd)
-    } else {
-        (&bwd, &fwd)
-    };
-    let mut best = f64::INFINITY;
-    let mut meet = None;
-    for (&rank, here) in small {
-        let Some(there) = large.get(&rank) else {
-            continue;
-        };
-        let total = here.dist + there.dist;
-        // on a tie keep the lowest rank: the map's iteration order is not stable, and the
-        // same query must always return the same path
-        if total < best || (total == best && Some(rank) < meet) {
-            best = total;
-            meet = Some(rank);
-        }
-    }
-
-    let meet = meet?;
-    if !best.is_finite() {
+    // The ancestors both chains share are their common tail, from the lowest common ancestor
+    // to the root. No shared root means two trees, i.e. two components: no path.
+    let shared = forward
+        .ranks
+        .iter()
+        .rev()
+        .zip(backward.ranks.iter().rev())
+        .take_while(|(forward_rank, backward_rank)| forward_rank == backward_rank)
+        .count();
+    if shared == 0 {
         return None;
     }
+    let forward_first_shared = forward.ranks.len() - shared;
+    let backward_first_shared = backward.ranks.len() - shared;
+
+    // Below the lowest common ancestor the halves cannot meet: relax all of it.
+    for at in 0..forward_first_shared {
+        forward.relax_from(cch, at);
+    }
+    for at in 0..backward_first_shared {
+        backward.relax_from(cch, at);
+    }
+
+    // Then climb the shared ranks, deciding the meeting on the way: each rank's two
+    // distances are final when the climb gets to it.
+    let mut best = f64::INFINITY;
+    let mut meet = None; // offset into the shared ranks
+    for offset in 0..shared {
+        let forward_at = forward_first_shared + offset;
+        let backward_at = backward_first_shared + offset;
+        let (forward_dist, backward_dist) = (
+            forward.reached[forward_at].dist,
+            backward.reached[backward_at].dist,
+        );
+        // strictly less: on a tie the lower rank, met first, stays, so the same query always
+        // returns the same path. An infinite total never passes, so `meet` stays `None`
+        // exactly when no rank is reachable from both ends.
+        if forward_dist + backward_dist < best {
+            best = forward_dist + backward_dist;
+            meet = Some(offset);
+        }
+        // Weights are `>= 0`, so whatever a half offers from here costs at least its
+        // distance here; past `best` that cannot lead to a cheaper meeting higher up.
+        if forward_dist <= best {
+            forward.relax_from(cch, forward_at);
+        }
+        if backward_dist <= best {
+            backward.relax_from(cch, backward_at);
+        }
+    }
+    let meet = meet?;
+
+    // forward half from the source up to the meeting rank, then the backward half from the
+    // meeting rank down to the target: the backward search ran against travel, so its
+    // arcs are flipped back
+    let mut route = forward.arcs_up_to(forward_first_shared + meet);
+    route.extend(
+        backward
+            .arcs_up_to(backward_first_shared + meet)
+            .into_iter()
+            .rev()
+            .map(|(lower, higher)| (higher, lower)),
+    );
 
     let mut ranks = vec![src_rank];
-    for (a, b) in route(&fwd, &bwd, meet) {
+    for (a, b) in route {
         if !unpack(cch, a, b, &mut ranks) {
             // Only reachable if the hierarchy and the graph have drifted apart, which the
             // maintenance path is supposed to prevent. Return nothing rather than a route
@@ -292,7 +328,7 @@ pub(super) fn query(
 
     let mut nodes: Vec<u64> = ranks
         .into_iter()
-        .map(|rank| u64::from(topo.node_of(rank)))
+        .map(|rank| u64::from(topology.node_of(rank)))
         .collect();
     erase_loops(&mut nodes);
     Some((best, nodes))
@@ -335,6 +371,7 @@ fn erase_loops(route: &mut Vec<u64>) {
 mod tests {
     use crate::graph::graphblas::matrix::Matrix;
     use crate::index::falkordb::cch::Cch;
+    use crate::index::falkordb::cch::order::Rank;
     use crate::index::falkordb::cch::testkit::{
         all_pairs, assert_path_valid, disconnected_components, empty, grid, node_count, path,
         random_sparse, reweight, single_node, star, tied_paths, to_input, weights,
@@ -438,6 +475,22 @@ mod tests {
         assert_eq!(erase(&[7]), vec![7]);
         // 2 is erased with the cycle 1 2 3 1; the 3 after it must not find the erased one
         assert_eq!(erase(&[1, 2, 3, 1, 3]), vec![1, 3]);
+    }
+
+    #[test]
+    fn gallop_to_finds_the_first_position_at_or_above_a_rank() {
+        let ranks: Vec<Rank> = [2, 3, 5, 8, 13, 21, 34, 55, 89].map(Rank::new).to_vec();
+        for from in 0..=ranks.len() {
+            for rank in (0..100).map(Rank::new) {
+                let expected = from + ranks[from..].partition_point(|&r| r < rank);
+                assert_eq!(
+                    super::gallop_to(&ranks, from, rank),
+                    expected,
+                    "from {from}, rank {rank:?}"
+                );
+            }
+        }
+        assert_eq!(super::gallop_to(&[], 0, Rank::new(7)), 0);
     }
 
     #[test]
