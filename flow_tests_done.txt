@@ -67,6 +67,7 @@ tests/flow/test_meta_stats.py
 tests/flow/test_mix_labels
 tests/flow/test_module_args.py
 tests/flow/test_msf.py
+tests/flow/test_multi_db.py
 tests/flow/test_multi_exec.py
 tests/flow/test_multi_label.py
 tests/flow/test_multi_pattern

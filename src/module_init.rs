@@ -28,8 +28,10 @@ use crate::config::{
     CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, OMP_THREAD_COUNT,
     apply_module_args, get_thread_count, normalize_node_creation_buffer,
 };
-use crate::graph_core::rename_graph;
-use crate::redis_type::on_persistence;
+use crate::graph_core::{
+    GRAPH_REGISTRY, ThreadedGraph, graph_id, relocate_graph, selected_db, swap_graph_dbs,
+};
+use crate::redis_type::{GRAPH_TYPE, on_persistence};
 use crate::telemetry;
 use graph::graph::constraint::ConstraintStatus;
 use graph::{
@@ -82,6 +84,10 @@ static RedisModuleEvent_ReplicaChange: RedisModuleEvent = RedisModuleEvent { id:
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_Shutdown: RedisModuleEvent = RedisModuleEvent { id: 5, dataver: 1 };
 
+/// Redis event ID for SWAPDB (REDISMODULE_EVENT_SWAPDB).
+#[allow(non_upper_case_globals)]
+static RedisModuleEvent_SwapDB: RedisModuleEvent = RedisModuleEvent { id: 11, dataver: 1 };
+
 /// Subevent: this instance is now a master.
 const REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER: u64 = 0;
 /// Subevent: this instance is now a replica.
@@ -125,9 +131,9 @@ unsafe extern "C" fn on_fork_child() {
         return;
     }
 
-    let registry = crate::graph_core::GRAPH_REGISTRY.lock();
-    for graph_arc in registry.values() {
-        let tg: &crate::graph_core::ThreadedGraph = unsafe { &*graph_arc.data_ptr() };
+    let registry = GRAPH_REGISTRY.lock();
+    for entry in registry.values() {
+        let tg: &ThreadedGraph = unsafe { &*entry.graph.data_ptr() };
         let g = tg.graph.read();
         let graph = g.borrow();
         if !graph.is_synced() {
@@ -387,11 +393,25 @@ pub fn graph_init(
     unsafe {
         let res = redis_module::raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
             ctx.ctx,
-            4, // REDISMODULE_NOTIFY_GENERIC (covers RENAME)
+            4, // REDISMODULE_NOTIFY_GENERIC (covers RENAME and MOVE)
             Some(on_keyspace_event),
         );
         if res != REDISMODULE_OK as c_int {
             eprintln!("FalkorDB: failed to subscribe to keyspace events: code {res}");
+            return Status::Err;
+        }
+    }
+
+    // SWAPDB moves every key of two databases at once and fires no keyspace
+    // event; the registry follows it here.
+    unsafe {
+        let res = RedisModule_SubscribeToServerEvent.unwrap()(
+            ctx.ctx,
+            RedisModuleEvent_SwapDB,
+            Some(on_swapdb),
+        );
+        if res != REDISMODULE_OK as c_int {
+            eprintln!("FalkorDB: failed to subscribe to swapdb events: code {res}");
             return Status::Err;
         }
     }
@@ -496,10 +516,10 @@ unsafe extern "C" fn on_role_change(
 fn enforce_pending_constraints_after_promotion() {
     // Name and graph both: re-announcing needs the key to replicate under, and
     // the registry is the only place the two are paired.
-    let graphs: Vec<(String, _)> = crate::graph_core::GRAPH_REGISTRY
+    let graphs: Vec<(String, _)> = GRAPH_REGISTRY
         .lock()
-        .iter()
-        .map(|(name, g)| (name.clone(), g.clone()))
+        .values()
+        .map(|e| (e.name.clone(), e.graph.clone()))
         .collect();
     if graphs.is_empty() {
         return;
@@ -545,8 +565,9 @@ fn enforce_pending_constraints_after_promotion() {
             //   instead of committing into a graph nobody holds.
             //
             // `was_replicated: false` — this node is the master now, so the
-            // settled status is its to announce.
-            // `GRAPH_REGISTRY` is keyed by the Redis key rendered through
+            // settled status is its to announce, into the graph's own database
+            // (`attempt_settle` selects it from the registry).
+            // `GRAPH_REGISTRY` names the Redis key rendered through
             // `String::from_utf8_lossy`, so these bytes are exact for every key
             // that is valid UTF-8 -- which includes a key holding a NUL, since
             // NUL round-trips. A genuinely non-UTF-8 key is the one case the
@@ -587,8 +608,50 @@ unsafe extern "C" fn on_loading(
     }
 }
 
-/// Tracks the old key name during a two-phase RENAME notification.
-static RENAME_OLD_NAME: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
+/// Point the registry entry of the graph now stored at `key`, in the database
+/// `ctx` has selected, at that key. Returns where the graph was registered
+/// before, or `None` when the key holds no registered graph: the value, not the
+/// key's name, says whether a graph moved.
+unsafe fn relocate_graph_at_key(
+    ctx: *mut RedisModuleCtx,
+    key: *mut raw::RedisModuleString,
+    key_name: &str,
+) -> Option<(i32, String)> {
+    unsafe {
+        let k = raw::RedisModule_OpenKey.unwrap()(
+            ctx,
+            key,
+            raw::KeyMode::READ.bits() | raw::REDISMODULE_OPEN_KEY_NOTOUCH as i32,
+        );
+        if k.is_null() {
+            return None;
+        }
+        let mut old = None;
+        if raw::RedisModule_ModuleTypeGetType.unwrap()(k) == *GRAPH_TYPE.raw_type.borrow() {
+            let value = raw::RedisModule_ModuleTypeGetValue.unwrap()(k);
+            if !value.is_null() {
+                let graph = &*value.cast::<Arc<parking_lot::RwLock<ThreadedGraph>>>();
+                old = relocate_graph(graph_id(graph), selected_db(&Context::new(ctx)), key_name);
+            }
+        }
+        raw::RedisModule_CloseKey.unwrap()(k);
+        old
+    }
+}
+
+/// `SWAPDB`: graphs follow their database.
+unsafe extern "C" fn on_swapdb(
+    _ctx: *mut RedisModuleCtx,
+    _eid: RedisModuleEvent,
+    _subevent: u64,
+    data: *mut c_void,
+) {
+    if data.is_null() {
+        return;
+    }
+    let info = unsafe { &*data.cast::<raw::RedisModuleSwapDbInfo>() };
+    swap_graph_dbs(info.dbnum_first, info.dbnum_second);
+}
 
 /// Keyspace event callback for handling graph key renames.
 /// Redis RENAME fires two sequential events on the same thread:
@@ -617,24 +680,46 @@ unsafe extern "C" fn on_keyspace_event(
     let key_name = String::from_utf8_lossy(key_bytes);
 
     match event_str {
-        "rename_from" => {
-            // Keys, not names: `GRAPH_REGISTRY` is the module's index of the *keyspace*
-            // — `graph_rdb_save`, the virtual-key builder and the telemetry flusher all
-            // open a Redis key by the name they find there — so a rename has to re-key
-            // it to the key bytes Redis itself now holds. Truncating here left the
-            // registry naming `c` for a graph living at `c\0d`, which reads back as no
-            // graph at all: telemetry dropped its entries and an RDB save persisted the
-            // empty virtual-key placeholders as junk keys.
-            *RENAME_OLD_NAME.lock() = Some(key_name.to_string());
+        // Nothing to do on `rename_from`: the old name comes from the registry entry
+        // `rename_to` finds by the renamed value, exact where the key name is lossy.
+        "rename_from" | "move_from" => {
+            // (`move_from`: the event reaches every key that moves, and whether the key
+            // is a graph is decided by its value, which `move_to` can open. Matching
+            // `key_name` against the registry here compared two lossy renderings, so a
+            // plain key whose lossy name equalled a graph's — `b"g\xff"` and the graph
+            // `g\u{fffd}` — deleted that graph's telemetry stream.)
         }
         "rename_to" => {
-            let old = RENAME_OLD_NAME.lock().take();
-            if let Some(old_name) = old {
-                rename_graph(&old_name, &key_name);
+            // Keys, not names: the registry entry is the module's record of where
+            // the graph is in the *keyspace* — `graph_rdb_save`, the virtual-key
+            // builder and the telemetry flusher all open a Redis key by the name
+            // they find there — so it has to follow the key bytes Redis itself
+            // now holds. Found through the value now at the new key, which is
+            // exact even when another database holds a graph of the old name.
+            //
+            // The stream, in contrast, is named after the *graph*, and
+            // `telemetry::stream_name` truncates to it. Only a graph has one: the event
+            // reaches every key that is renamed, and `telemetry{k}` of a plain key `k`
+            // is nobody's history.
+            if let Some((_, old_name)) = unsafe { relocate_graph_at_key(ctx, key, &key_name) } {
+                telemetry::delete_stream(&Context::new(ctx), &old_name);
+            }
+        }
+        "move_to" => {
+            // `ctx` has the destination database selected. A graph that moved
+            // leaves its history behind: the stream is named after the graph and
+            // lives in the graph's database, and a graph created at the old place
+            // under the same name must not append to it. The registry entry, found
+            // by the value now at the destination, says exactly where the graph
+            // was; a plain key, or a graph the registry does not know, has no
+            // entry and nothing is deleted.
+            if let Some((src_db, src_name)) = unsafe { relocate_graph_at_key(ctx, key, &key_name) }
+            {
                 let context = Context::new(ctx);
-                // The stream, in contrast, is named after the *graph*, and
-                // `telemetry::stream_name` truncates to it.
-                telemetry::delete_stream(&context, &old_name);
+                let dst_db = selected_db(&context);
+                if src_db != dst_db {
+                    unsafe { telemetry::delete_stream_in_db(&context, src_db, &src_name) };
+                }
             }
         }
         _ => {}
