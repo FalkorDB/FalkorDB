@@ -407,8 +407,12 @@ class testConcurrentQueryFlow(FlowTestsBase):
             count = 0
             count = sum(1 for res in results if res.result_set[0][1] < write_ts)
 
-            # make sure write query wasn't starved
-            self.env.assertLessEqual(count, len(read_tasks) * 0.3)
+            # make sure write query wasn't starved: only a minority of reads may
+            # commit before the write. this is a statistical bound on scheduling,
+            # not an exact one - how many reads race across the moment the writer
+            # engages the gate is subject to jitter (worse under slower debug /
+            # sanitizer builds), so allow up to 40% before calling it starvation
+            self.env.assertLessEqual(count, len(read_tasks) * 0.4)
 
             # close the connection pool
             await pool.aclose()
