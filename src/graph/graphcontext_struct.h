@@ -33,6 +33,12 @@ typedef struct GraphContext {
 	atomic_bool     writer_waiting;        // set while the gate is engaged; atomic
 	                                       // so readers check it (and fast-path
 	                                       // past the gate) without the mutex
+	uint32_t        writer_gate_waiters;   // number of writers currently engaging
+	                                       // the gate (guarded by writer_gate_mutex);
+	                                       // writer_waiting clears only when it hits 0
+	                                       // so overlapping writers (e.g. a query
+	                                       // writer and the indexer) can't clear each
+	                                       // other's gate
 
 	int ref_count;                         // number of active references
 	char **attributes;                     // graph's attributes, attribute id

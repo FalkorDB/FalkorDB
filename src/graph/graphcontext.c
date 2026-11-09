@@ -506,7 +506,12 @@ void GraphContext_WriterGateEnter
 	ASSERT (gc != NULL) ;
 
 	pthread_mutex_lock (&gc->writer_gate_mutex) ;
-	atomic_store_explicit (&gc->writer_waiting, true, memory_order_release) ;
+	// engage the gate on the first waiter; a nested/overlapping waiter (e.g. a
+	// query writer and the indexer both waiting for this graph's write lock) just
+	// bumps the count so neither clears the gate while the other still waits
+	if (gc->writer_gate_waiters++ == 0) {
+		atomic_store_explicit (&gc->writer_waiting, true, memory_order_release) ;
+	}
 	pthread_mutex_unlock (&gc->writer_gate_mutex) ;
 }
 
@@ -519,8 +524,13 @@ void GraphContext_WriterGateLeave
 	ASSERT (gc != NULL) ;
 
 	pthread_mutex_lock (&gc->writer_gate_mutex) ;
-	atomic_store_explicit (&gc->writer_waiting, false, memory_order_release) ;
-	pthread_cond_broadcast (&gc->writer_gate_cond) ;
+	ASSERT (gc->writer_gate_waiters > 0) ;
+	// clear the gate and wake parked readers only once the LAST waiter leaves, so a
+	// writer that is still waiting keeps new readers parked
+	if (--gc->writer_gate_waiters == 0) {
+		atomic_store_explicit (&gc->writer_waiting, false, memory_order_release) ;
+		pthread_cond_broadcast (&gc->writer_gate_cond) ;
+	}
 	pthread_mutex_unlock (&gc->writer_gate_mutex) ;
 }
 
