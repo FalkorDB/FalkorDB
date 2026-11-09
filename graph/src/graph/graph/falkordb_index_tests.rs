@@ -3689,16 +3689,8 @@ fn a_batch_that_waited_while_the_builder_stopped_publishes_nothing() {
         id.clone(),
         generation_of(&host, &id),
     );
-    // On a thread of its own, with a deadline: had the batch held what the stop waits for while it
-    // waited to publish, the stop would wait for it for ever, and the test would hang, not fail.
     host.before_publish(move |_| {
-        let (stopped, stop) = mpsc::channel();
-        thread::spawn(move || {
-            builder.stop_within(Duration::ZERO);
-            let _ = stopped.send(());
-        });
-        stop.recv_timeout(Duration::from_secs(10))
-            .expect("the stop waited for a batch waiting to publish");
+        builder.stop_within(Duration::ZERO);
     });
 
     assert_eq!(job.step(), Step::Cancelled);
@@ -3723,7 +3715,10 @@ fn a_stopped_builder_runs_nothing() {
         move || read.store(true, Ordering::SeqCst)
     }));
     builder.start(1);
-    builder.stop_within(Duration::from_secs(2));
+    assert!(
+        builder.stop_within(Duration::from_secs(2)),
+        "an idle worker was left behind"
+    );
     let mut job = Job::new(
         Arc::clone(&builder),
         Arc::downgrade(&host.mvcc),
@@ -3749,11 +3744,12 @@ fn a_stopped_builder_runs_nothing() {
     );
 }
 
-/// Stopping the builder waits, with no limit, for a batch still reading a graph with no lock held,
-/// since the Redis module tears GraphBLAS down right after. The pool's own wait is bounded, and
-/// this batch is held inside its read for longer. The stopped batch then publishes nothing.
+/// A stop waits a bounded time for the pool's workers and says whether they all exited: the Redis
+/// module tears GraphBLAS down only then, as a worker left behind may still read or free a graph
+/// version. A batch held inside its read past the stop's wait leaves its worker behind; once it
+/// lets go, it publishes nothing, being stopped, and its worker exits.
 #[test]
-fn a_stop_waits_for_a_batch_still_reading() {
+fn a_stop_that_leaves_a_worker_behind_says_so() {
     let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
     let host = TestHost::new(mvcc);
     let (holding, held) = mpsc::channel();
@@ -3772,23 +3768,18 @@ fn a_stop_waits_for_a_batch_still_reading() {
     );
     held.recv_timeout(Duration::from_secs(10))
         .expect("a batch reads the graph");
-    let stopped = AtomicBool::new(false);
-    let early = thread::scope(|scope| {
-        scope.spawn(|| {
-            builder.stop_within(Duration::from_millis(20));
-            stopped.store(true, Ordering::SeqCst);
-        });
-        thread::sleep(Duration::from_millis(200));
-        let early = stopped.load(Ordering::SeqCst);
-        release.send(()).unwrap();
-        early
+    assert!(
+        !builder.stop_within(Duration::from_millis(20)),
+        "the stop says every worker exited while a batch was still reading"
+    );
+    release.send(()).unwrap();
+    wait_until("the worker left behind to exit", || {
+        builder.stop_within(Duration::from_millis(20))
     });
-    assert!(!early, "stop returned while a batch was still reading");
-    assert!(stopped.load(Ordering::SeqCst));
     assert_eq!(
         cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
         Some(BuildCursor::new(EntityType::Node)),
-        "the stopped batch published nothing"
+        "the stopped batch published"
     );
 }
 
