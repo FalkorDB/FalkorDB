@@ -30,9 +30,11 @@ typedef struct GraphContext {
 	// it. per-graph, so writers / readers on other graphs are unaffected
 	pthread_mutex_t writer_gate_mutex;     // guards the gate condvar wait/signal
 	pthread_cond_t  writer_gate_cond;      // signaled when the gate clears
-	atomic_uint     writer_gate_waiters;   // number of writers currently waiting for
-	                                       // this graph's write lock. > 0 means the
-	                                       // gate is engaged: new reader-queries park
+	atomic_uint     writer_gate_waiters;   // number of writers that have engaged the
+	                                       // gate (done lazily, after a couple of
+	                                       // slices still waiting for this graph's
+	                                       // write lock). > 0 means the gate is
+	                                       // engaged: new reader-queries park
 	                                       // instead of taking the read lock. atomic
 	                                       // so readers fast-path past the gate
 	                                       // (== 0) without the mutex; mutated only

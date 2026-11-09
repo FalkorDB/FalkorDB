@@ -927,11 +927,14 @@ class testConcurrentQueryFlow(FlowTestsBase):
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
-            # a long read that holds the graph READ lock for its duration. nested
-            # small ranges keep the iteration count high with bounded memory (a
-            # single range(0, 6e7) would materialize a ~1GB SIValue array)
-            long_read = ("UNWIND range(0, 8000) AS a UNWIND range(0, 8000) AS b "
-                         "WITH a, b WHERE a = -1 RETURN count(a)")
+            # a long read (~3s) that holds the graph READ lock for its duration.
+            # nested small ranges keep the iteration count high with bounded memory
+            # (a single range(0, 3.6e7) would materialize a ~0.5GB SIValue array).
+            # the predicate MUST depend on BOTH loop vars, else the planner pushes
+            # it below the inner UNWIND and the nested loop never runs (the read
+            # would finish in ~ms and hold no lock)
+            long_read = ("UNWIND range(0, 6000) AS a UNWIND range(0, 6000) AS b "
+                         "WITH a, b WHERE a + b < 0 RETURN count(a)")
 
             # unrelated connection used to probe server responsiveness
             probe = AsyncRedis(port=self.env.port, decode_responses=True)
@@ -975,9 +978,11 @@ class testConcurrentQueryFlow(FlowTestsBase):
                     t0 = loop.time()
                     try:
                         await probe.ping()
+                        latencies.append(loop.time() - t0)
                     except Exception:
-                        pass
-                    latencies.append(loop.time() - t0)
+                        # a failed PING (e.g. the server died) must NOT look like a
+                        # fast sample - record infinite latency so worst-PING fails
+                        latencies.append(float('inf'))
                     await asyncio.sleep(0.02)
             ping_task = asyncio.create_task(ping_probe())
 
@@ -1041,9 +1046,11 @@ class testConcurrentQueryFlow(FlowTestsBase):
             g = db.select_graph(GRAPH_ID)
             loop = asyncio.get_running_loop()
 
-            # hold the READ lock with bounded memory (nested small ranges)
+            # hold the READ lock with bounded memory (nested small ranges). the
+            # predicate depends on BOTH vars so the planner can't push it below the
+            # inner UNWIND (which would skip the nested loop and hold no lock)
             long_read = ("UNWIND range(0, 6000) AS a UNWIND range(0, 6000) AS b "
-                         "WITH a, b WHERE a = -1 RETURN count(a)")
+                         "WITH a, b WHERE a + b < 0 RETURN count(a)")
 
             # keep 2 overlapping reads in flight so the READ lock stays held (2 is
             # well under the worker-pool size, so writers aren't starved)
