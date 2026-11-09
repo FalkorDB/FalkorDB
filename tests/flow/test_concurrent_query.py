@@ -1082,3 +1082,84 @@ class testConcurrentQueryFlow(FlowTestsBase):
                     resource.setrlimit(resource.RLIMIT_NOFILE, _ORIG_NOFILE)
                 except Exception:
                     pass
+
+    def test_18_graph_info_during_delegated_writes(self):
+        # GRAPH.INFO RunningQueries (Globals_GetCommandCtxs) increfs every tracked
+        # CommandCtx, emits it, then frees its snapshot reference. a delegated
+        # write transfers ownership to the writer thread, which frees the
+        # CommandCtx when it finishes - while the delegating reader thread's
+        # tracking slot still points at it (the window between enqueue and
+        # untrack in _DelegateQuery). if the tracking slot does not hold its own
+        # reference, GRAPH.INFO can incref a CommandCtx the writer already freed:
+        # a use-after-free. hammer GRAPH.INFO from several clients while a stream
+        # of writes is delegated, so the sanitizer exercises that window.
+        #
+        # unlike test_17 this stays light (no 1024-deep queue, no 1200
+        # connections) so it runs under SANITIZER/VALGRIND, where the UAF is
+        # actually detectable.
+
+        WAVES = 30            # waves of concurrent writes
+        WRITES_PER_WAVE = 24  # delegated through the single-writer queue
+        HAMMERS = 3           # concurrent GRAPH.INFO RunningQueries callers
+
+        self.graph.query("CREATE (:N {v:1})")
+
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=WRITES_PER_WAVE + 16,
+                    timeout=None, socket_timeout=120, port=self.env.port,
+                    decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            # a dedicated client per hammer - never share one connection across
+            # concurrent GRAPH.INFO calls
+            info_clients = [AsyncRedis(port=self.env.port, decode_responses=True)
+                            for _ in range(HAMMERS)]
+
+            stop = False
+            info_errors = []
+
+            async def info_hammer(client):
+                while not stop:
+                    try:
+                        await client.execute_command("GRAPH.INFO", "RunningQueries")
+                    except Exception as e:
+                        info_errors.append(str(e))
+                        return
+
+            hammers = [asyncio.create_task(info_hammer(c)) for c in info_clients]
+            total = 0
+            try:
+                # each wave fires WRITES_PER_WAVE writes at once; one wins the
+                # writer election and the rest are delegated (enqueued behind it),
+                # so every wave tears down ~WRITES_PER_WAVE CommandCtxs in the
+                # delegation window while the hammers incref the tracking slots
+                for _ in range(WAVES):
+                    res = await asyncio.gather(
+                        *[g.query("CREATE (:W)") for _ in range(WRITES_PER_WAVE)],
+                        return_exceptions=True)
+                    for r in res:
+                        # a modest wave must never overflow the 1024-deep queue;
+                        # any error here is unexpected (a crash drops connections)
+                        self.env.assertFalse(isinstance(r, Exception),
+                                message=str(r))
+                        total += 1
+            finally:
+                stop = True
+                await asyncio.gather(*hammers, return_exceptions=True)
+                for c in info_clients:
+                    await c.aclose()
+
+            # the hammers must have completed cleanly - no UAF, no dropped
+            # connection, no error reply
+            self.env.assertEqual(info_errors, [])
+
+            # the server stayed healthy and every write landed
+            self.env.assertTrue(self.conn.ping())
+            res = await g.ro_query("MATCH (n:W) RETURN count(n)")
+            self.env.assertEqual(res.result_set[0][0], total)
+
+            await pool.aclose()
+            self.conn.delete(GRAPH_ID)
+
+        asyncio.run(run(self))

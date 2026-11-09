@@ -282,6 +282,14 @@ void Globals_TrackCommandCtx
 	// set ctx at the current thread entry
 	_globals.command_ctxs[tid] = ctx;
 
+	// the tracking slot holds a reference on the command. without it the slot is a
+	// weak pointer: a concurrent Globals_GetCommandCtxs (GRAPH.INFO) could
+	// CommandCtx_Incref a command that the owning thread already freed (reachable
+	// e.g. in the write-delegation window, where the delegating thread's slot still
+	// points at a command the writer may free). the slot's own reference keeps the
+	// command alive until it is untracked. released in Globals_UntrackCommandCtx.
+	CommandCtx_Incref ((CommandCtx *)ctx) ;
+
 	// release lock
 	Globals_Unlock () ;
 
@@ -305,8 +313,15 @@ void Globals_UntrackCommandCtx
 	ASSERT(_globals.command_ctxs[tid] == ctx);
 
 	// clear ctx at the current thread entry
-	// CommandCtx_Free will free it eventually
 	_globals.command_ctxs[tid] = NULL;
+
+	// release the reference the slot held (balances the incref in
+	// Globals_TrackCommandCtx). done under the lock, so clearing the slot and
+	// dropping its reference are atomic w.r.t. Globals_GetCommandCtxs (which holds
+	// the write lock). this is never the last reference in practice - the owning
+	// thread's base reference outlives tracking and is released later by
+	// CommandCtx_Free in the command's cleanup - so it won't free here.
+	CommandCtx_Free ((CommandCtx *)ctx) ;
 
 	// release lock
 	Globals_Unlock () ;

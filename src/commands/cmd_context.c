@@ -189,7 +189,11 @@ void CommandCtx_Free
 ) {
 	// decrement reference count
 	int prev_ref = atomic_fetch_sub (&cmd_ctx->ref_count, 1) ;
-	ASSERT (prev_ref < 3) ;
+	// budget: the base reference (1) + up to two tracking-slot references (the
+	// owning worker and, for a delegated write, the writer thread - see
+	// Globals_TrackCommandCtx) + one transient Globals_GetCommandCtxs / GRAPH.INFO
+	// snapshot reference = at most 4 live references at once
+	ASSERT (prev_ref < 5) ;
 
 	if (prev_ref == 1) {
 		// reference count is zero, free command context
