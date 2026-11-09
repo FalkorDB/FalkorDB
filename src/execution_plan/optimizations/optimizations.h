@@ -33,4 +33,5 @@ void batchOptionalMatch                (ExecutionPlan *plan) ;
 void filterVariableLengthEdges         (ExecutionPlan *plan) ;
 void reduceVarLenTraverseDestLabel     (ExecutionPlan *plan) ;
 void reduceCartesianProductStreamCount (ExecutionPlan *plan) ;
+void foldVariableLengthEdgeRelationFilter (ExecutionPlan *plan) ;
 
