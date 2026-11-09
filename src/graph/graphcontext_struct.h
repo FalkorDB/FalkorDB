@@ -29,16 +29,19 @@ typedef struct GraphContext {
 	// lock, so they can't slip in during the writer's GIL hand-offs and starve
 	// it. per-graph, so writers / readers on other graphs are unaffected
 	pthread_mutex_t writer_gate_mutex;     // guards the gate condvar wait/signal
-	pthread_cond_t  writer_gate_cond;      // signaled when writer_waiting clears
-	atomic_bool     writer_waiting;        // set while the gate is engaged; atomic
-	                                       // so readers check it (and fast-path
-	                                       // past the gate) without the mutex
-	uint32_t        writer_gate_waiters;   // number of writers currently engaging
-	                                       // the gate (guarded by writer_gate_mutex);
-	                                       // writer_waiting clears only when it hits 0
-	                                       // so overlapping writers (e.g. a query
-	                                       // writer and the indexer) can't clear each
-	                                       // other's gate
+	pthread_cond_t  writer_gate_cond;      // signaled when the gate clears
+	atomic_uint     writer_gate_waiters;   // number of writers currently waiting for
+	                                       // this graph's write lock. > 0 means the
+	                                       // gate is engaged: new reader-queries park
+	                                       // instead of taking the read lock. atomic
+	                                       // so readers fast-path past the gate
+	                                       // (== 0) without the mutex; mutated only
+	                                       // under writer_gate_mutex so the condvar
+	                                       // predicate is safe. a count (not a bool)
+	                                       // lets overlapping writers - a query writer
+	                                       // and the indexer, or two query writers -
+	                                       // avoid clearing each other's gate: it
+	                                       // clears only when the last waiter leaves
 
 	int ref_count;                         // number of active references
 	char **attributes;                     // graph's attributes, attribute id
