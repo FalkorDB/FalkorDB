@@ -71,8 +71,9 @@ pub fn apply_effects(
     // ordered by id, so the id space is legitimately fragmented partway through
     // and only has to be whole at the end.
     let mut docs = IndexDocs::default();
+    let mut index_ddl = Vec::new();
     for record in payload.records() {
-        apply_record(g, record?, &mut docs)?;
+        apply_record(g, record?, &mut docs, &mut index_ddl)?;
     }
 
     // Refusing a divergent buffer is this function's contract, and the refusal
@@ -84,6 +85,40 @@ pub fn apply_effects(
     // `CreateEdge` below): settled only at the end, like the id space, because
     // the cancelled pair's `DELETE_EDGE` follows its `CREATE_EDGE`.
     g.validate()?;
+
+    // Index DDL last, once no other record can refuse the buffer: the RediSearch
+    // index map is shared by every MVCC version, so discarding this version on a
+    // refusal would not undo a `CREATE_INDEX` / `DROP_INDEX` that had already run
+    // (#3023). In record order, so a drop and a re-create of one index keep
+    // their meaning. `docs` was collected against the indexes as they stood
+    // before this buffer's DDL; an index this buffer creates is populated from
+    // what the buffer wrote instead: RediSearch from the version it publishes,
+    // and the native index's columns (part of this version) from the graph as
+    // it now stands.
+    //
+    // One case this does not cover: a statement that is itself refused here
+    // (an index that already exists, a drop of one that does not) still leaves
+    // the statements before it applied.
+    //
+    // When one is refused, the indexes the earlier ones created or changed are
+    // repopulated from the committed graph: their population waits for this
+    // version, which is not going to be published.
+    // Each index once, however many statements changed it: a rebuild
+    // re-registers every field of the surviving spec, so repeating it per
+    // statement would be quadratic in the buffer and spawn redundant jobs.
+    let mut touched: Vec<(EntityType, Arc<String>)> = Vec::new();
+    for ddl in index_ddl {
+        let target = ddl.target();
+        if let Err(e) = ddl.run(g) {
+            for (entity_type, label) in &touched {
+                g.repopulate_abandoned_index(entity_type, label);
+            }
+            return Err(e);
+        }
+        if !touched.contains(&target) {
+            touched.push(target);
+        }
+    }
 
     // Both indexes once for the whole buffer: the native index's staged changes, then
     // RediSearch's documents. A record may undo an earlier one's entry — the cancelled pair, or
@@ -157,10 +192,84 @@ fn id_space_error_map(
     }
 }
 
+/// An index statement whose record has been verified, held back until the
+/// whole buffer has applied and validated (see [`apply_effects`]).
+enum IndexDdl {
+    Create {
+        index_type: IndexType,
+        schema_type: EntityType,
+        label: Arc<String>,
+        fields: Vec<Arc<String>>,
+        options: Option<IndexOptions>,
+    },
+    Drop {
+        index_type: IndexType,
+        schema_type: EntityType,
+        label: Arc<String>,
+        fields: Vec<Arc<String>>,
+    },
+}
+
+impl IndexDdl {
+    fn target(&self) -> (EntityType, Arc<String>) {
+        match self {
+            Self::Create {
+                schema_type, label, ..
+            }
+            | Self::Drop {
+                schema_type, label, ..
+            } => (*schema_type, label.clone()),
+        }
+    }
+
+    fn run(
+        self,
+        g: &mut Graph,
+    ) -> Result<(), ApplyError> {
+        // Population is spawned, not run here. `populate_indexes_sync` ran on
+        // the Redis main thread, so a replica applying an index over a large
+        // label froze for the whole build. It reads the *committed* graph, so
+        // it is told to wait for this version: until it is published, the
+        // committed graph lacks everything this buffer wrote, and nothing else
+        // indexes those entities — `docs` only collected for indexes that
+        // already existed. A later statement that drops or recreates the index
+        // does not race it either: the population ticket carries a generation,
+        // and a worker whose generation is stale stops.
+        let published_at = Some(g.version);
+        match self {
+            Self::Create {
+                index_type,
+                schema_type,
+                label,
+                fields,
+                options,
+            } => g.create_index_populated_at(
+                &index_type,
+                &schema_type,
+                &label,
+                &fields,
+                options,
+                published_at,
+            )?,
+            Self::Drop {
+                index_type,
+                schema_type,
+                label,
+                fields,
+            } => {
+                // Constraint protection was judged when the record was read.
+                g.drop_index_unchecked(&index_type, &schema_type, &label, &fields, published_at)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 fn apply_record(
     g: &mut Graph,
     record: Record,
     docs: &mut IndexDocs,
+    index_ddl: &mut Vec<IndexDdl>,
 ) -> Result<(), ApplyError> {
     match record {
         // One opcode, two variants: the wire's `SchemaType` byte is now the
@@ -429,27 +538,14 @@ fn apply_record(
             // dictionary has diverged on another.
             let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
-            // Population is spawned, not run here. `populate_indexes_sync` ran
-            // on the Redis main thread, so a replica applying an index over a
-            // large label froze for the whole build — the same class of problem
-            // as expanding ids while decoding.
-            //
-            // Spawning is safe for the reason it is safe on the primary, which
-            // has always done it under concurrent writes: `populate_index_batch`
-            // populates from a snapshot in 10,000-row batches, and entities
-            // written *after* the snapshot are indexed by the write path instead
-            // (`docs` into `commit_index`). A later record that drops
-            // or recreates the index does not race it either — the population
-            // ticket carries a generation, and a worker whose generation is
-            // stale releases its ticket and stops rather than committing
-            // documents into the new spec.
-            g.create_index(
-                &index_type,
-                &schema_type,
-                &label,
-                &fields,
-                index_options(&index_type, &options),
-            )?;
+            // Verified now, run once the buffer has applied: see `IndexDdl`.
+            index_ddl.push(IndexDdl::Create {
+                options: index_options(&index_type, &options),
+                index_type,
+                schema_type,
+                label,
+                fields,
+            });
             Ok(())
         }
 
@@ -472,7 +568,40 @@ fn apply_record(
             let index_type = index_type_of(field_type).map_err(DecodeError::from)?;
             let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
-            g.drop_index(&index_type, &schema_type, &label, &fields)?;
+            // Judged here, against the constraints this buffer has installed so
+            // far, as it was when the records applied in order: by the time the
+            // deferred statement runs, later records' constraints are in place.
+            let mut blocked =
+                g.index_drop_blocked_by_constraint(&index_type, &schema_type, &label, &fields);
+            if fields.is_empty() && index_type == IndexType::Range {
+                // An empty drop removes every field of its type, those an
+                // earlier queued create adds included, which the index map
+                // does not hold yet. Only a range index can back a constraint,
+                // so the scan of the queued statements is skipped for the
+                // others: it would make a buffer of N fulltext create/drop
+                // pairs quadratic.
+                blocked |= index_ddl.iter().any(|ddl| match ddl {
+                    IndexDdl::Create {
+                        index_type: t,
+                        schema_type: e,
+                        label: l,
+                        fields: added,
+                        ..
+                    } if t == &index_type && e == &schema_type && l == &label => {
+                        g.index_drop_blocked_by_constraint(&index_type, &schema_type, &label, added)
+                    }
+                    _ => false,
+                });
+            }
+            if blocked {
+                return Err(ApplyError::Graph("Index supports constraint".to_string()));
+            }
+            index_ddl.push(IndexDdl::Drop {
+                index_type,
+                schema_type,
+                label,
+                fields,
+            });
             Ok(())
         }
 
@@ -1646,6 +1775,64 @@ mod tests {
 
         // Nothing is built on the way to refusing either: `single_index_label`
         // runs before `Graph::create_index` is called at all.
+    }
+
+    #[test]
+    fn an_empty_drop_counts_the_fields_an_earlier_queued_create_adds() {
+        // [CREATE_INDEX A(zz), UNIQUE constraint A(zz), DROP_INDEX A []]: the
+        // empty drop removes every range field, `zz` included, which the index
+        // map does not hold yet because the create is deferred. The constraint
+        // protects it, so the buffer is refused at the drop.
+        let mut g = graph();
+        g.get_label_id_mut("A");
+        g.add_node_attribute_name("zz");
+
+        let mut buf = new_buffer();
+        Record::CreateIndex {
+            schema_type: EntityType::Node,
+            schemas: vec![SchemaRef {
+                id: 0,
+                name: "A".to_owned(),
+            }],
+            field_type: INDEX_FLD_RANGE,
+            fields: vec![AttrRef {
+                id: 0,
+                name: "zz".to_owned(),
+            }],
+            options: IndexFieldOptions::none_given(None),
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::CreateConstraint {
+            constraint_type: ConstraintType::Unique,
+            entity_type: EntityType::Node,
+            status: ConstraintStatus::Operational,
+            label_id: 0,
+            label: "A".to_owned(),
+            props: vec![AttrRef {
+                id: 0,
+                name: "zz".to_owned(),
+            }],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::DropIndex {
+            schema_type: EntityType::Node,
+            schemas: vec![SchemaRef {
+                id: 0,
+                name: "A".to_owned(),
+            }],
+            field_type: INDEX_FLD_RANGE,
+            fields: vec![],
+        }
+        .encode(&mut buf)
+        .unwrap();
+
+        let err = apply_effects(&mut g, &buf).expect_err("the drop must be refused");
+        assert!(
+            matches!(&err, ApplyError::Graph(m) if m == "Index supports constraint"),
+            "{err:?}"
+        );
     }
 
     #[test]
