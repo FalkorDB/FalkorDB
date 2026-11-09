@@ -65,7 +65,7 @@ def buildColumns (g : G) (e : EntityType) (label : String) (attrs : List String)
 structure Field where
   ty : FalkorDbIndex.IndexType
 
-/-- `populate` (`graph_writes.rs:490-501`). -/
+/-- `populate` (`graph_writes.rs:492-503`). -/
 def populate (g : G) (e : EntityType) (label : String) (fields : List (String × List Field)) : G :=
   fields.foldl (fun g af => if af.2.any (fun f => f.ty == .range) then buildInOneBatch g e label af.1 else g) g
 
@@ -410,6 +410,22 @@ theorem populate_skips (g : G) (e : EntityType) (label : String) (af : String ×
 theorem populate_builds (g : G) (e : EntityType) (label : String) (af : String × List Field)
     (h : af.2.any (fun f => f.ty == .range) = true) : populate g e label [af] = buildInOneBatch g e label af.1 := by
   unfold populate; simp only [List.foldl_cons, List.foldl_nil]; rw [h]; rfl
+
+/-- `populate` builds exactly the columns of a label's Range fields, each in one batch: it is `buildColumns` of
+    their attributes, in order. So the `buildColumns_*` theorems hold for what the RDB load builds. -/
+theorem populate_eq_buildColumns (g : G) (e : EntityType) (label : String) (fields : List (String × List Field)) :
+    populate g e label fields =
+      buildColumns g e label ((fields.filter (fun af => af.2.any (fun f => f.ty == .range))).map Prod.fst) := by
+  induction fields generalizing g with
+  | nil => rfl
+  | cons af rest ih =>
+    unfold populate buildColumns at *
+    simp only [List.foldl_cons, List.filter_cons]
+    by_cases h : af.2.any (fun f => f.ty == .range) = true
+    · simp only [h, ↓reduceIte, List.map_cons, List.foldl_cons]
+      exact ih _
+    · simp only [h, Bool.false_eq_true, ↓reduceIte]
+      exact ih _
 
 /-! ## The graph's entry points (`graph.rs`) -/
 
