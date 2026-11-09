@@ -1,13 +1,14 @@
 //! Customizable Contraction Hierarchies (CCH) path index — contract skeleton.
 //!
-//! Everything here is a stub: types and signatures the implementation changes build against.
-//! The engine does not call any of it yet: `Graph` only holds an empty list of indexes, and
+//! [`Cch`]'s methods are stubs: signatures the implementation changes build against. The
+//! engine does not call any of it yet: `Graph` only holds an empty list of indexes, and
 //! the query pipeline never reaches the `unimplemented!()` bodies below. (The public
 //! `Graph` methods in `graph.rs` are stubs too, or delegate to `FalkorDbIndex`'s CCH methods,
 //! which are, so a caller that invokes them directly reaches `unimplemented!()`.)
 //!
 //! Layout (one file per area, so changes to different areas do not touch each other's files):
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
+//! - `nd.rs`        the nested-dissection call behind Phase 1's ordering
 //! - `customize.rs` Phase 2: customization, `WeightArr` (#3209)
 //! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
@@ -18,6 +19,7 @@
 
 mod customize;
 mod input;
+mod nd;
 mod order;
 mod query;
 #[cfg(test)]
@@ -36,73 +38,103 @@ use thiserror::Error;
 /// The largest node count (`CchInput::n`, the graph's node capacity) a hierarchy is built
 /// for: the engine's own graph limit, `GrB_INDEX_MAX` (`2^60 - 1`). The id space refuses an
 /// id at or past it (`IdSpace::create`) and `node_cap`, the dimension of every node matrix,
-/// never grows past it, so no graph reaches [`Cch::build`] with more. Node ids, ranks and
-/// mids are `u64` throughout, so `u64::MAX` is free to be the "none" sentinel of the rank and
-/// mid arrays.
+/// never grows past it, so no graph reaches [`Cch::build`] with more. Every node id and
+/// rank is therefore below `usize::MAX`, which is what lets `Option<Rank>` be the size of a
+/// rank.
 ///
 /// A limit, not a promise: the hierarchy holds several dense arrays of `n + 1` entries, so in
 /// practice memory stops a graph well before this.
-#[allow(clippy::cast_possible_truncation)]
-pub const MAX_NODES: usize = GrB_INDEX_MAX as usize;
+#[allow(clippy::cast_possible_truncation)] // `2^60 - 1`; `try_from` is not usable in a `const`
+const MAX_NODES: usize = GrB_INDEX_MAX as usize;
 
-/// Compressed sparse row over `n` nodes, ids `u64`. Its arrays are sized once, when it is
-/// built, and never grow; they are `Vec`s as the GraphBLAS export hands them over.
+/// A `u64` node id or offset as an index.
+///
+/// # Panics
+/// If `id` does not fit a `usize`, which only a target narrower than 64 bits allows: every
+/// id and offset here is below [`MAX_NODES`] or a `Vec`'s length.
+fn id_index(id: u64) -> usize {
+    usize::try_from(id).expect("a node id or offset fits a usize")
+}
+
+/// An index as a `u64` node id or offset.
+///
+/// # Panics
+/// Never on a supported target: `usize` is at most 64 bits wide.
+fn index_id(index: usize) -> u64 {
+    u64::try_from(index).expect("an index fits a u64")
+}
+
+/// Compressed sparse row over `node_count` nodes, ids `u64`. Its arrays are sized once,
+/// when it is built, and never grow; they are `Vec`s as the GraphBLAS export hands them over.
 ///
 /// Every `Csr` here holds, by construction:
-/// * `p` has `n + 1` offsets, starting at 0, never decreasing, ending at `i.len()`;
-/// * every id in `i` is below `n`;
+/// * `row_offsets` has `node_count + 1` offsets, starting at 0, never decreasing, ending at
+///   `neighbors.len()`;
+/// * every id in `neighbors` is below `node_count`;
 /// * every row is sorted ascending and duplicate-free.
 ///
 /// A `Csr` exported from a GraphBLAS matrix gets all three from the export (`n + 1` row
 /// pointers, column indices below the dimension, sorted and unique within a row); the ones
 /// this module builds itself keep them.
 pub struct Csr {
-    n: usize,
-    /// `n + 1` offsets into `i`.
-    p: Vec<u64>,
-    /// Column ids, sorted and duplicate-free within each row.
-    i: Vec<u64>,
+    node_count: usize,
+    /// `node_count + 1` offsets into `neighbors`.
+    row_offsets: Vec<u64>,
+    /// Each row's node ids, sorted and duplicate-free within the row.
+    neighbors: Vec<u64>,
 }
 
 impl Csr {
-    /// The column ids of row `u`: `i[p[u]..p[u + 1]]`, sorted and duplicate-free.
+    /// The neighbors of `node`: `neighbors[row_offsets[node]..row_offsets[node + 1]]`, sorted
+    /// and duplicate-free.
     ///
     /// # Panics
-    /// If `u >= n`, or an offset is out of range of `i`.
+    /// If `node >= node_count`, or an offset is out of range of `neighbors`.
     #[must_use]
-    pub fn row(
+    fn row(
         &self,
-        u: usize,
+        node: usize,
     ) -> &[u64] {
-        &self.i[self.p[u] as usize..self.p[u + 1] as usize]
+        &self.neighbors[id_index(self.row_offsets[node])..id_index(self.row_offsets[node + 1])]
     }
 
-    /// Whether `p` is shaped as the type requires (`n + 1` offsets from 0 to `i.len()`,
-    /// never decreasing) and every id is below `n`. `O(n + nnz)`, no allocation: the check
-    /// that keeps a C library reading this `Csr` within its arrays.
+    /// Whether `row_offsets` is shaped as the type requires (`node_count + 1` offsets from 0 to
+    /// `neighbors.len()`, never decreasing) and every id is below `node_count`.
+    /// `O(node_count + neighbors)`, no allocation: the check that keeps the ordering backend
+    /// reading this `Csr` within its arrays.
     #[must_use]
-    pub fn is_well_formed(&self) -> bool {
-        let n = self.n;
-        // `len - 1`, not `n + 1`: `n` may be anything, `usize::MAX` included.
-        self.p.len().checked_sub(1) == Some(n)
-            && self.p[0] == 0
-            && self.p[n] as usize == self.i.len()
-            && self.p.windows(2).all(|w| w[0] <= w[1])
-            && self.i.iter().all(|&v| (v as usize) < n)
+    fn is_well_formed(&self) -> bool {
+        let node_count = self.node_count;
+        // `len - 1`, not `node_count + 1`: `node_count` may be anything, `usize::MAX` included.
+        self.row_offsets.len().checked_sub(1) == Some(node_count)
+            && self.row_offsets[0] == 0
+            && usize::try_from(self.row_offsets[node_count]) == Ok(self.neighbors.len())
+            && self
+                .row_offsets
+                .windows(2)
+                .all(|offsets| offsets[0] <= offsets[1])
+            && self
+                .neighbors
+                .iter()
+                .all(|&neighbor| usize::try_from(neighbor).is_ok_and(|index| index < node_count))
     }
 
     /// Whether this is the adjacency of a simple undirected graph: well formed, rows
-    /// sorted and duplicate-free, no self-loop, and every entry mirrored (`v` in row `u`
-    /// iff `u` in row `v`). What [`CchInput::skeleton`] holds by construction; checked in
-    /// debug builds and by the tests, not on the release path.
+    /// sorted and duplicate-free, no self-loop, and every entry mirrored (`b` in row `a`
+    /// iff `a` in row `b`). What [`CchInput::skeleton`] holds by construction; checked
+    /// again before the ordering backend reads it.
     #[must_use]
-    pub fn is_symmetric_simple(&self) -> bool {
+    fn is_symmetric_simple(&self) -> bool {
         self.is_well_formed()
-            && (0..self.n).all(|u| {
-                let r = self.row(u);
-                r.windows(2).all(|w| w[0] < w[1])
-                    && r.iter().all(|&v| {
-                        v as usize != u && self.row(v as usize).binary_search(&(u as u64)).is_ok()
+            && (0..self.node_count).all(|node| {
+                let row = self.row(node);
+                row.windows(2).all(|pair| pair[0] < pair[1])
+                    && row.iter().all(|&neighbor| {
+                        id_index(neighbor) != node
+                            && self
+                                .row(id_index(neighbor))
+                                .binary_search(&index_id(node))
+                                .is_ok()
                     })
             })
     }
@@ -132,7 +164,7 @@ pub struct CchInput {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CchIndexDef {
     rel_types: Vec<TypeId>,
-    pub weight_attr: u16,
+    weight_attr: u16,
 }
 
 impl CchIndexDef {
@@ -153,7 +185,7 @@ impl CchIndexDef {
     /// Sorted, duplicate-free — normalised by [`Self::new`], which is the only constructor.
     #[cfg(test)] // only the tests read it until the input build (#3211) does
     #[must_use]
-    pub fn rel_types(&self) -> &[TypeId] {
+    pub(crate) fn rel_types(&self) -> &[TypeId] {
         &self.rel_types
     }
 }
@@ -172,10 +204,20 @@ pub enum CchError {
     /// legal (a closed edge).
     #[error("a weight is negative or NaN")]
     InvalidWeight,
-    /// A bug, not bad input: the ordering backend failed on a well-formed graph, or
-    /// returned something other than a permutation. The message says which.
+    /// A bug, not bad input. The message says which.
     #[error("internal CCH error: {0}")]
     Internal(&'static str),
+    /// A bug, not bad input: no elimination order could be produced. The message is the
+    /// ordering's own error, the backend's included, as text: the backend is a dependency
+    /// of this module, not of its callers.
+    #[error("internal CCH error: {0}")]
+    Ordering(String),
+}
+
+impl From<order::OrderError> for CchError {
+    fn from(error: order::OrderError) -> Self {
+        Self::Ordering(error.to_string())
+    }
 }
 
 /// The hierarchy. Cheap to share behind an `Arc`: the six structural arrays never change after
@@ -453,15 +495,16 @@ mod tests {
         assert_eq!(a, b);
     }
 
-    /// `Csr::row` is the slice `p[u]..p[u + 1]` of `i`, empty rows included, and refuses a
-    /// row that does not exist rather than reading the next one.
+    /// `Csr::row` is the slice `row_offsets[node]..row_offsets[node + 1]` of `neighbors`,
+    /// empty rows included, and refuses a row that does not exist rather than reading the
+    /// next one.
     #[test]
     fn csr_row_slices_one_row() {
         // 0: [1, 2]   1: []   2: [0]
         let csr = Csr {
-            n: 3,
-            p: vec![0, 2, 2, 3],
-            i: vec![1, 2, 0],
+            node_count: 3,
+            row_offsets: vec![0, 2, 2, 3],
+            neighbors: vec![1, 2, 0],
         };
         assert_eq!(csr.row(0), &[1, 2]);
         assert!(csr.row(1).is_empty());
@@ -473,17 +516,17 @@ mod tests {
     /// undirected adjacency fails `is_symmetric_simple`, from the one clean path 0 - 1 - 2.
     #[test]
     fn csr_checks_catch_each_defect() {
-        let csr = |n: usize, p: &[u64], i: &[u64]| Csr {
-            n,
-            p: p.into(),
-            i: i.into(),
+        let csr = |node_count: usize, row_offsets: &[u64], neighbors: &[u64]| Csr {
+            node_count,
+            row_offsets: row_offsets.into(),
+            neighbors: neighbors.into(),
         };
         let clean = csr(3, &[0, 1, 3, 4], &[1, 0, 2, 1]);
         assert!(clean.is_well_formed() && clean.is_symmetric_simple());
         for bad in [
             csr(3, &[0, 1, 3], &[1, 0, 2]),       // n offsets, not n + 1
             csr(3, &[1, 1, 3, 4], &[1, 0, 2, 1]), // does not start at 0
-            csr(3, &[0, 1, 3, 3], &[1, 0, 2, 1]), // does not end at i.len()
+            csr(3, &[0, 1, 3, 3], &[1, 0, 2, 1]), // does not end at neighbors.len()
             csr(3, &[0, 2, 1, 4], &[1, 0, 2, 1]), // decreasing
             csr(3, &[0, 1, 3, 4], &[1, 0, 3, 1]), // id past n
         ] {

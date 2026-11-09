@@ -57,12 +57,16 @@ pub(crate) fn to_input(g: &Matrix<f64>) -> CchInput {
 fn csr(
     n: usize,
     rows: &[u64],
-    i: Vec<u64>,
+    cols: Vec<u64>,
 ) -> Csr {
-    let p = (0..=n as u64)
+    let row_offsets = (0..=n as u64)
         .map(|r| rows.partition_point(|&row| row < r) as u64)
         .collect();
-    Csr { n, p, i }
+    Csr {
+        node_count: n,
+        row_offsets,
+        neighbors: cols,
+    }
 }
 
 /// C's `test01_create_query_drop` valley, both ways: `0 - 1` direct is 10, `0 - 2 - 1` is 2.
@@ -82,7 +86,8 @@ pub(super) fn valley() -> Matrix<f64> {
 }
 
 /// The exact CCH customization oracle. `perm[rank] = node` is the
-/// elimination order, exactly the convention a CCH's own `perm` array uses:
+/// elimination order, the convention of [`Topology`](super::order::Topology)'s
+/// `rank_to_node` (and of C's `perm`):
 /// processing nodes in increasing rank order corresponds to eliminating
 /// them one at a time, lowest rank first.
 ///
@@ -183,9 +188,9 @@ pub(super) fn assert_input_invariants(input: &CchInput) {
     assert_csr_shape(&input.skeleton, input.n, "skeleton");
     assert_csr_shape(&input.weights.csr, input.n, "weights");
     assert_eq!(
-        input.weights.csr.i.len(),
+        input.weights.csr.neighbors.len(),
         input.weights.w.len(),
-        "weights.csr.i and weights.w must be the same length"
+        "weights.csr.neighbors and weights.w must be the same length"
     );
 
     let skeleton_pairs = csr_pairs(&input.skeleton);
@@ -218,25 +223,42 @@ pub(super) fn assert_input_invariants(input: &CchInput) {
     }
 }
 
-/// `csr.p` has `n + 1` non-decreasing offsets ending at `csr.i.len()`, and
-/// every row of `csr.i` is sorted, duplicate-free and in range `0..n`.
+/// `csr.row_offsets` has `n + 1` non-decreasing offsets ending at `csr.neighbors.len()`, and
+/// every row of `csr.neighbors` is sorted, duplicate-free and in range `0..n`.
 fn assert_csr_shape(
     csr: &Csr,
     n: usize,
     label: &str,
 ) {
-    assert_eq!(csr.n, n, "{label}.n must match CchInput.n");
-    assert_eq!(csr.p.len(), n + 1, "{label}.p must have n+1 offsets");
-    assert_eq!(*csr.p.first().unwrap_or(&0), 0, "{label}.p must start at 0");
     assert_eq!(
-        *csr.p.last().unwrap_or(&0) as usize,
-        csr.i.len(),
-        "{label}.p must end at i.len()"
+        csr.node_count, n,
+        "{label}.node_count must match CchInput.n"
+    );
+    assert_eq!(
+        csr.row_offsets.len(),
+        n + 1,
+        "{label}.row_offsets must have n+1 offsets"
+    );
+    assert_eq!(
+        *csr.row_offsets.first().unwrap_or(&0),
+        0,
+        "{label}.row_offsets must start at 0"
+    );
+    assert_eq!(
+        *csr.row_offsets.last().unwrap_or(&0) as usize,
+        csr.neighbors.len(),
+        "{label}.row_offsets must end at neighbors.len()"
     );
     for row in 0..n {
-        let (lo, hi) = (csr.p[row] as usize, csr.p[row + 1] as usize);
-        assert!(lo <= hi, "{label}.p is not non-decreasing at row {row}");
-        let row_cols = &csr.i[lo..hi];
+        let (lo, hi) = (
+            csr.row_offsets[row] as usize,
+            csr.row_offsets[row + 1] as usize,
+        );
+        assert!(
+            lo <= hi,
+            "{label}.row_offsets is not non-decreasing at row {row}"
+        );
+        let row_cols = &csr.neighbors[lo..hi];
         assert!(
             row_cols.windows(2).all(|pair| pair[0] < pair[1]),
             "{label} row {row} is not sorted/duplicate-free"
@@ -252,7 +274,7 @@ fn assert_csr_shape(
 
 /// `(row, col)` for every entry of `csr`, row by row.
 fn csr_pairs(csr: &Csr) -> Vec<(u64, u64)> {
-    (0..csr.n)
+    (0..csr.node_count)
         .flat_map(|row| csr.row(row).iter().map(move |&col| (row as u64, col)))
         .collect()
 }
@@ -658,10 +680,14 @@ mod self_tests {
     fn to_input_drops_self_loops_from_weights_and_skeleton() {
         let g = weights(2, &[(0, 0, 1.0), (0, 1, 3.0)]);
         let input = to_input(&g);
-        assert_eq!(*input.weights.csr.i, [1], "self-loop must not appear");
+        assert_eq!(
+            *input.weights.csr.neighbors,
+            [1],
+            "self-loop must not appear"
+        );
         // symmetrized (0,1): row 0 -> [1], row 1 -> [0]; no diagonal entry.
-        assert_eq!(*input.skeleton.p, [0, 1, 2]);
-        assert_eq!(*input.skeleton.i, [1, 0]);
+        assert_eq!(*input.skeleton.row_offsets, [0, 1, 2]);
+        assert_eq!(*input.skeleton.neighbors, [1, 0]);
     }
 
     // ---- the oracle cross-checks itself ---------------------------------
@@ -762,15 +788,15 @@ mod self_tests {
         let input = CchInput {
             n: 2,
             skeleton: Csr {
-                n: 2,
-                p: vec![0, 1, 1],
-                i: vec![1],
+                node_count: 2,
+                row_offsets: vec![0, 1, 1],
+                neighbors: vec![1],
             },
             weights: WeightCsr {
                 csr: Csr {
-                    n: 2,
-                    p: vec![0, 1, 1],
-                    i: vec![1],
+                    node_count: 2,
+                    row_offsets: vec![0, 1, 1],
+                    neighbors: vec![1],
                 },
                 w: vec![1.0],
             },
@@ -784,15 +810,15 @@ mod self_tests {
         let input = CchInput {
             n: 2,
             skeleton: Csr {
-                n: 2,
-                p: vec![0, 1, 2],
-                i: vec![1, 0],
+                node_count: 2,
+                row_offsets: vec![0, 1, 2],
+                neighbors: vec![1, 0],
             },
             weights: WeightCsr {
                 csr: Csr {
-                    n: 2,
-                    p: vec![0, 1, 1], // row 0: [0] -- a self-loop
-                    i: vec![0],
+                    node_count: 2,
+                    row_offsets: vec![0, 1, 1], // row 0: [0] -- a self-loop
+                    neighbors: vec![0],
                 },
                 w: vec![1.0],
             },
@@ -806,15 +832,15 @@ mod self_tests {
         let input = CchInput {
             n: 2,
             skeleton: Csr {
-                n: 2,
-                p: vec![0, 0, 0], // empty skeleton
-                i: vec![],
+                node_count: 2,
+                row_offsets: vec![0, 0, 0], // empty skeleton
+                neighbors: vec![],
             },
             weights: WeightCsr {
                 csr: Csr {
-                    n: 2,
-                    p: vec![0, 1, 1],
-                    i: vec![1],
+                    node_count: 2,
+                    row_offsets: vec![0, 1, 1],
+                    neighbors: vec![1],
                 },
                 w: vec![1.0],
             },
@@ -828,15 +854,15 @@ mod self_tests {
         let input = CchInput {
             n: 2,
             skeleton: Csr {
-                n: 2,
-                p: vec![0, 1, 2],
-                i: vec![1, 0],
+                node_count: 2,
+                row_offsets: vec![0, 1, 2],
+                neighbors: vec![1, 0],
             },
             weights: WeightCsr {
                 csr: Csr {
-                    n: 2,
-                    p: vec![0, 1, 1],
-                    i: vec![1],
+                    node_count: 2,
+                    row_offsets: vec![0, 1, 1],
+                    neighbors: vec![1],
                 },
                 w: vec![-1.0],
             },
@@ -850,15 +876,15 @@ mod self_tests {
         let input = CchInput {
             n: 3,
             skeleton: Csr {
-                n: 3,
-                p: vec![0, 2, 3, 3],
-                i: vec![2, 1, 0], // row 0 should be [1, 2], not [2, 1]
+                node_count: 3,
+                row_offsets: vec![0, 2, 3, 3],
+                neighbors: vec![2, 1, 0], // row 0 should be [1, 2], not [2, 1]
             },
             weights: WeightCsr {
                 csr: Csr {
-                    n: 3,
-                    p: vec![0, 0, 0, 0],
-                    i: vec![],
+                    node_count: 3,
+                    row_offsets: vec![0, 0, 0, 0],
+                    neighbors: vec![],
                 },
                 w: vec![],
             },
@@ -906,15 +932,15 @@ mod self_tests {
         let input = CchInput {
             n: 2,
             skeleton: Csr {
-                n: 2,
-                p: vec![0, 1, 2],
-                i: vec![1, 0],
+                node_count: 2,
+                row_offsets: vec![0, 1, 2],
+                neighbors: vec![1, 0],
             },
             weights: WeightCsr {
                 csr: Csr {
-                    n: 2,
-                    p: vec![0, 0, 0],
-                    i: vec![],
+                    node_count: 2,
+                    row_offsets: vec![0, 0, 0],
+                    neighbors: vec![],
                 },
                 w: vec![],
             },
