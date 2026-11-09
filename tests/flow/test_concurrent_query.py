@@ -1001,7 +1001,13 @@ class testConcurrentQueryFlow(FlowTestsBase):
             await ping_task
             await flood_task
             await create_task
-            await asyncio.gather(*reads, return_exceptions=True)
+            read_results = await asyncio.gather(*reads, return_exceptions=True)
+
+            # the readers exist only to hold the read lock; any exception means the
+            # contention setup broke (or the server died), which would make the
+            # assertions below vacuous - surface it instead of swallowing it
+            read_errors = [r for r in read_results if isinstance(r, Exception)]
+            self.env.assertEqual(read_errors, [], message=str(read_errors[:3]))
 
             # the index finished building within the window
             self.env.assertTrue(built)
@@ -1084,7 +1090,13 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
                 stop_box[0] = True
                 await flood_task
-                await asyncio.gather(*reads, return_exceptions=True)
+                read_results = await asyncio.gather(*reads, return_exceptions=True)
+
+                # the readers exist only to hold the read lock; any exception means
+                # the contention setup broke (or the server died), which would make
+                # the assertions below vacuous - surface it instead of swallowing it
+                read_errors = [r for r in read_results if isinstance(r, Exception)]
+                self.env.assertEqual(read_errors, [], message=str(read_errors[:3]))
 
                 # server survived this round
                 self.env.assertTrue(self.conn.ping())
