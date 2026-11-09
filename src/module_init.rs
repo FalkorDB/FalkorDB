@@ -472,13 +472,18 @@ unsafe extern "C" fn on_shutdown(
     // thread-safe context, which races with Redis tearing down server state
     // and produces a SIGSEGV under ASAN if left running.
     telemetry::shutdown_flusher_thread();
-    // Stop the index builder before the pool and GraphBLAS: a build turn reads a graph with no
-    // lock held, and must not be doing so while GraphBLAS is torn down under it.
+    // Stop the index builder before the pool. Its workers get a bounded wait, since one may be
+    // waiting for the GIL this handler holds; one left behind may still read or free a graph
+    // version, so GraphBLAS and RediSearch are then left to the exiting process.
     #[cfg(feature = "index-falkordb")]
-    online_build::stop();
+    let builder_exited = online_build::stop();
+    #[cfg(not(feature = "index-falkordb"))]
+    let builder_exited = true;
     threadpool::shutdown();
-    graph::graph::graphblas::matrix::shutdown();
-    unsafe { RediSearch_CleanupModule() };
+    if builder_exited {
+        graph::graph::graphblas::matrix::shutdown();
+        unsafe { RediSearch_CleanupModule() };
+    }
 }
 
 unsafe extern "C" fn on_role_change(
