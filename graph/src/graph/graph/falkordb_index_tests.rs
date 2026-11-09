@@ -3351,6 +3351,7 @@ struct TestHost {
     mvcc: Arc<MvccGraph>,
     local: LocalHost,
     before_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&MvccGraph) + Send>>>,
+    after_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&MvccGraph) + Send>>>,
     warnings: parking_lot::Mutex<Vec<String>>,
 }
 
@@ -3360,6 +3361,7 @@ impl TestHost {
             mvcc,
             local: LocalHost::default(),
             before_publish: parking_lot::Mutex::new(None),
+            after_publish: parking_lot::Mutex::new(None),
             warnings: parking_lot::Mutex::new(Vec::new()),
         })
     }
@@ -3379,11 +3381,19 @@ impl TestHost {
     ) {
         *self.before_publish.lock() = Some(Box::new(f));
     }
+
+    fn after_publish(
+        &self,
+        f: impl FnOnce(&MvccGraph) + Send + 'static,
+    ) {
+        *self.after_publish.lock() = Some(Box::new(f));
+    }
 }
 
 /// A builder's host in these tests: it publishes through a [`TestHost`]'s [`LocalHost`], running
-/// the test host's `before_publish` first, and keeps the builder's warnings in the test host. Holds
-/// the test host weakly, so a builder does not keep its graph alive.
+/// the test host's `before_publish` first and its `after_publish` last, both holding the lock, and
+/// keeps the builder's warnings in the test host. Holds the test host weakly, so a builder does not
+/// keep its graph alive.
 struct HostRef(Weak<TestHost>);
 
 impl BuildHost for HostRef {
@@ -3399,6 +3409,9 @@ impl BuildHost for HostRef {
                 before(&host.mvcc);
             }
             f();
+            if let Some(after) = host.after_publish.lock().take() {
+                after(&host.mvcc);
+            }
         });
     }
 
@@ -3614,6 +3627,39 @@ fn a_job_whose_index_is_dropped_or_created_again_is_cancelled() {
             one_pass(&g, EntityType::Node, &label, &attr, &values)
         );
     }
+}
+
+/// The version a batch's commit replaces is freed once the batch is over, with no lock of the
+/// host's held: right after the publish, still holding the lock, it is alive, and once the batch
+/// has returned, nothing holds it. A batch of scattered values copies most of its column, and the
+/// old pages go with that version.
+#[test]
+fn a_batch_frees_the_version_it_replaces_after_the_hosts_lock() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label, attr));
+    let replaced = Arc::downgrade(&host.mvcc.read());
+    let alive_under_lock = Arc::new(AtomicBool::new(false));
+    host.after_publish({
+        let (alive, replaced) = (Arc::clone(&alive_under_lock), replaced.clone());
+        move |mvcc| {
+            assert!(
+                !Weak::ptr_eq(&Arc::downgrade(&mvcc.read()), &replaced),
+                "the batch published nothing"
+            );
+            alive.store(replaced.upgrade().is_some(), Ordering::SeqCst);
+        }
+    });
+    let mut job = job_on(&host, &id, Sizing::fixed(1));
+    assert_eq!(job.step(), Step::More);
+    assert!(
+        alive_under_lock.load(Ordering::SeqCst),
+        "the replaced version was freed under the host's lock"
+    );
+    assert!(
+        replaced.upgrade().is_none(),
+        "the replaced version outlived its batch"
+    );
 }
 
 /// A job holds its graph weakly: it does not keep a deleted graph alive, and once the graph is
