@@ -1615,7 +1615,7 @@ fn set_then_delete_in_one_batch_leaves_no_entry() {
 
 /// An MVCC graph of `:Person` nodes with `v` = each of `values`, and a `Building` column on
 /// `(:Person, v)`.
-fn mvcc_building(values: &[i64]) -> (MvccGraph, Arc<String>, Arc<String>, Vec<u64>) {
+fn mvcc_building(values: &[i64]) -> (Arc<MvccGraph>, Arc<String>, Arc<String>, Vec<u64>) {
     let attr = Arc::new("v".to_string());
     let (mut g, label, ids) = people_with(&attr, values);
     create_index_on(&mut g, &label, &attr);
@@ -3348,14 +3348,14 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
 /// its global lock, and so does every writer here. `before_publish` runs once, holding it, just
 /// before the next batch goes in. `warnings` keeps what the builder reports through the host.
 struct TestHost {
-    mvcc: MvccGraph,
+    mvcc: Arc<MvccGraph>,
     local: LocalHost,
     before_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&MvccGraph) + Send>>>,
     warnings: parking_lot::Mutex<Vec<String>>,
 }
 
 impl TestHost {
-    fn new(mvcc: MvccGraph) -> Arc<Self> {
+    fn new(mvcc: Arc<MvccGraph>) -> Arc<Self> {
         Arc::new(Self {
             mvcc,
             local: LocalHost::default(),
@@ -3459,7 +3459,7 @@ fn job_on(
 ) -> Job {
     Job::new(
         builder_on(host, sizing),
-        host.mvcc.downgrade(),
+        Arc::downgrade(&host.mvcc),
         id.clone(),
         generation_of(host, id),
     )
@@ -3624,7 +3624,7 @@ fn a_job_does_not_keep_its_graph_alive() {
     let host = TestHost::new(mvcc);
     let id = IndexId::Column(EntityType::Node, (label, attr));
     let mut job = job_on(&host, &id, Sizing::fixed(1));
-    let graph = host.mvcc.downgrade();
+    let graph = Arc::downgrade(&host.mvcc);
     drop(host);
     assert!(graph.upgrade().is_none(), "the job kept its graph alive");
     assert_eq!(job.step(), Step::Cancelled);
@@ -3644,7 +3644,7 @@ fn a_job_whose_batch_is_refused_fails_and_leaves_its_index_building() {
     builder.refuse_publish.store(true, Ordering::SeqCst);
     let mut job = Job::new(
         Arc::clone(&builder),
-        host.mvcc.downgrade(),
+        Arc::downgrade(&host.mvcc),
         id.clone(),
         generation,
     );
@@ -3653,7 +3653,7 @@ fn a_job_whose_batch_is_refused_fails_and_leaves_its_index_building() {
 
     builder.refuse_publish.store(true, Ordering::SeqCst);
     builder.start(1);
-    builder.enqueue(host.mvcc.downgrade(), id.clone(), generation);
+    builder.enqueue(Arc::downgrade(&host.mvcc), id.clone(), generation);
     // A job holds its builder until it ends.
     wait_until("the job to end", || Arc::strong_count(&builder) == 1);
     assert_eq!(host.warnings.lock().len(), 2, "one warning per job");
@@ -3685,7 +3685,7 @@ fn a_batch_that_waited_while_the_builder_stopped_publishes_nothing() {
     let builder = builder_on(&host, Sizing::fixed(2));
     let mut job = Job::new(
         Arc::clone(&builder),
-        host.mvcc.downgrade(),
+        Arc::downgrade(&host.mvcc),
         id.clone(),
         generation_of(&host, &id),
     );
@@ -3726,13 +3726,17 @@ fn a_stopped_builder_runs_nothing() {
     builder.stop_within(Duration::from_secs(2));
     let mut job = Job::new(
         Arc::clone(&builder),
-        host.mvcc.downgrade(),
+        Arc::downgrade(&host.mvcc),
         id.clone(),
         generation_of(&host, &id),
     );
     assert_eq!(job.step(), Step::Cancelled);
     builder.start(1);
-    builder.enqueue(host.mvcc.downgrade(), id.clone(), generation_of(&host, &id));
+    builder.enqueue(
+        Arc::downgrade(&host.mvcc),
+        id.clone(),
+        generation_of(&host, &id),
+    );
     thread::sleep(Duration::from_millis(100));
     assert!(
         !read.load(Ordering::SeqCst),
@@ -3761,7 +3765,11 @@ fn a_stop_waits_for_a_batch_still_reading() {
         released.recv().unwrap();
     }));
     builder.start(1);
-    builder.enqueue(host.mvcc.downgrade(), id.clone(), generation_of(&host, &id));
+    builder.enqueue(
+        Arc::downgrade(&host.mvcc),
+        id.clone(),
+        generation_of(&host, &id),
+    );
     held.recv_timeout(Duration::from_secs(10))
         .expect("a batch reads the graph");
     let stopped = AtomicBool::new(false);
@@ -3932,13 +3940,13 @@ fn the_builder_finishes_its_builds_under_sustained_writes() {
         });
         builder.start(2);
         builder.enqueue(
-            host.mvcc.downgrade(),
+            Arc::downgrade(&host.mvcc),
             index(&v),
             generation_of(&host, &index(&v)),
         );
         host.write(|g| create_index_on(g, &label, &w));
         builder.enqueue(
-            host.mvcc.downgrade(),
+            Arc::downgrade(&host.mvcc),
             index(&w),
             generation_of(&host, &index(&w)),
         );
