@@ -109,7 +109,7 @@ No. `snapshot_isolated` proves a reader holding version `v` gets the same answer
 | `writerRecord_eq_sequential` | #3307's batched apply = applying each staged change one by one (filtered by the column's build state since #2351) | `Pending.lean` |
 | `queryNumeric_building` | a `Building` column is answered with a `ScanFilter`, never rows | `Query.lean` |
 | `scanNodes_below_cursor`, `scanEdges_below_cursor` | a batch reads exactly the entities that precede its returned cursor | `Build.lean` |
-| `buildInOneBatch_entry` | CREATE INDEX leaves a `Ready` column holding `from_entries` of the live pairs | `Ddl.lean` |
+| `buildInOneBatch_entry` | The RDB load's one-batch build leaves a `Ready` column holding `from_entries` of the live pairs; CREATE INDEX leaves it `Building` (`createIndex_entry`) | `Ddl.lean` |
 | `nodeAttrsSet_hit`, `nodesDeleted_hit` | An update replaces the old entry; a delete removes every entry | `Writes.lean` |
 | `snapshot_isolated`, `runUnit_spec` | Readers keep their version's index; a commit publishes its staged changes once | `Ddl.lean` |
 
