@@ -9,9 +9,13 @@ from redis.asyncio import Redis as AsyncRedis
 # client connections, hence >1024 open file descriptors on both this process and
 # the server it later spawns. raise the soft limit (up to the hard cap) at import
 # time, before the server is launched, so the limit is inherited. best-effort:
-# where it can't be raised high enough, test_17 detects it and skips. the
-# original limit is kept and restored by test_17 afterwards, so this doesn't
-# leave an altered rlimit for the rest of the session
+# where it can't be raised high enough, test_17 detects it and skips.
+#
+# this is a guarded, MONOTONIC bump: it only ever raises the soft limit toward the
+# hard cap, never lowers it, so no test loses headroom and an un-restored limit is
+# harmless. test_17 restores the original limit after it runs; if test_17 is
+# skipped (e.g. under SANITIZER/VALGRIND) or not selected, the raised-but-benign
+# limit simply persists for the session.
 _ORIG_NOFILE = None
 try:
     import resource
@@ -958,9 +962,23 @@ class testConcurrentQueryFlow(FlowTestsBase):
             try:
                 await asyncio.gather(*[g.ro_query("RETURN 1") for _ in range(N)])
             except Exception:
-                await pool.aclose()
-                self.conn.delete(GRAPH_ID)
-                self.env.skip()
+                # couldn't open N connections. this is only a benign capacity limit
+                # (FD limit / maxclients - which surfaces as a ResponseError, not
+                # just a ConnectionError) if the server is still healthy; a crash
+                # here must FAIL the test, not skip. check on a separate connection
+                server_alive = False
+                try:
+                    server_alive = bool(self.conn.ping())
+                except Exception:
+                    server_alive = False
+                try:
+                    await pool.aclose()
+                except Exception:
+                    pass
+                self.env.assertTrue(server_alive)  # a crash during pre-warm fails
+                if server_alive:
+                    self.conn.delete(GRAPH_ID)
+                    self.env.skip()
                 return
 
             # a slow read holds the graph READ lock, so every write piles up in
@@ -998,39 +1016,43 @@ class testConcurrentQueryFlow(FlowTestsBase):
                    and not read_task.done()):
                 await asyncio.sleep(0.02)
 
-            saturated = overflow_count() > 0
-
             # release the lock and let the queued writes drain
             await read_task
             results = await asyncio.gather(*writes, return_exceptions=True)
 
-            if not saturated:
-                # couldn't fill a 1024-deep queue before the read released
-                # (environment too slow / connection-limited) - nothing to assert
-                await pool.aclose()
-                self.conn.delete(GRAPH_ID)
-                self.env.skip()
-                return
-
             # classify every write outcome
             ok = full = other = 0
+            other_samples = []
             for r in results:
                 if isinstance(r, Exception):
                     if "write queue is full" in str(r).lower():
                         full += 1
                     else:
                         other += 1
+                        if len(other_samples) < 5:
+                            other_samples.append(str(r))
                 else:
                     ok += 1
 
-            # the overflow path was exercised ...
-            self.env.assertGreater(full, 0)
-            # ... cleanly: no connection resets / unexpected errors. a crash would
-            # surface here as dropped connections on the in-flight writes
-            self.env.assertEqual(other, 0, message=str([str(r) for r in results
-                if isinstance(r, Exception)
-                and "write queue is full" not in str(r).lower()][:5]))
-            # every write that made it into the queue committed
+            # unexpected errors ALWAYS fail - never masked by a skip. this catches
+            # both a crash (dropped connections on the in-flight writes) and a
+            # broken overflow path that replies with the wrong error, even if the
+            # queue never reached capacity
+            self.env.assertEqual(other, 0, message=str(other_samples))
+
+            if full == 0:
+                # the queue never overflowed before the read released: the
+                # environment couldn't fill a 1024-deep queue (too slow /
+                # connection-limited). with no unexpected errors every write must
+                # have simply succeeded; there's no overflow path to assert, skip
+                self.env.assertEqual(ok, N)
+                await pool.aclose()
+                self.conn.delete(GRAPH_ID)
+                self.env.skip()
+                return
+
+            # the overflow path was exercised: every write that made it into the
+            # queue committed
             self.env.assertEqual(ok, N - full)
 
             # the server stayed healthy and the accepted writes all landed

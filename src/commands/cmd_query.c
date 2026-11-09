@@ -427,23 +427,32 @@ static bool _DelegateQuery
 	command_ctx->thread = EXEC_THREAD_WRITER;
 	QueryCtx_ResetStage(gq_ctx->query_ctx);
 
+	// stop tracking this command on this thread *before* publishing the query:
+	// once queued the writer may dequeue, run and free command_ctx, and a global
+	// tracking slot still pointing at it would let a concurrent GRAPH.INFO
+	// (Globals_GetCommandCtxs -> CommandCtx_Incref) touch freed memory. on enqueue
+	// failure we re-track it below so the caller's cleanup stays balanced.
+	ErrorCtx_Clear();
+	Globals_UntrackCommandCtx(command_ctx);
+
 	// queue query - this is the only operation here that can fail
 	if (!GraphContext_EnqueueWriteQuery(gc, gq_ctx)) {
 		// the write queue is full: delegation failed and this thread still owns
-		// gq_ctx. restore the state mutated above so the caller's cleanup path
-		// - which reports the error through this thread's still-present QueryCtx
-		// and untracks its CommandCtx - runs on intact thread-local state
+		// gq_ctx. restore the state mutated above - re-track the command and
+		// restore thread/stage - so the caller's cleanup path, which reports the
+		// error through this thread's still-present QueryCtx and untracks its
+		// CommandCtx, runs on intact thread-local state
+		Globals_TrackCommandCtx(command_ctx);
 		command_ctx->thread = EXEC_THREAD_READER;
 		QueryCtx_AdvanceStage(gq_ctx->query_ctx);  // waiting -> executing
 		return false;
 	}
 
 	// delegation succeeded: the query now belongs to the writer thread, which
-	// re-establishes its own TLS and command tracking from gq_ctx. hand off by
-	// tearing down this thread's state (none of these touch gq_ctx, and the
-	// CommandCtx pointer is only compared, never dereferenced)
-	ErrorCtx_Clear();
-	Globals_UntrackCommandCtx(command_ctx);
+	// re-establishes its own TLS from gq_ctx. drop this thread's TLS QueryCtx -
+	// this only nils the thread-local key (never dereferences the QueryCtx, which
+	// the writer may already have freed), and is done only on success so the
+	// failure path above still has it for error reporting
 	QueryCtx_RemoveFromTLS();
 
 	return true;
