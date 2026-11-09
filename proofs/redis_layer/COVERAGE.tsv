@@ -124,7 +124,7 @@ src/graph_core.rs	execute_query_write	727	PROVEN	GraphCore.executeWrite (#3290 r
 src/graph_core.rs	try_query_write	773	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon): reply_after_commit, failed_no_commit, stale_run_silent
 src/graph_core.rs	WriteAttempt::from	766	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
 src/graph_core.rs	reply_profile	872	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
-src/graph_core.rs	BlockedClient::new	909	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	BlockedClient::new	915	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
 src/graph_core.rs	BlockedClient::drop	917	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
 src/graph_core.rs	compute_effective_timeout	935	PROVEN	Args.rustTimeout: rustTimeout_write_pq, rustTimeout_rw_uniform (#2998 fixed by #3000 2e8172d76), rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
 src/graph_core.rs	reply_invalid_graph_version	974	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
@@ -293,5 +293,5 @@ src/commands/udf.rs	udf_delete	141	PROVEN	Commands.udfCmd DELETE: udf_delete_one
 src/commands/udf.rs	udf_flush	170	PROVEN	Commands.udfCmd FLUSH: udf_flush_noargs
 src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filters, udf_list_withcode_anywhere
 # Online index build (#2355): fns the background builder added, not modelled yet.
-src/graph_core.rs	RedisBuildHost::publish	1619	NOT COVERED	online index build (#2355): not modelled yet
-src/graph_core.rs	RedisBuildHost::warn	1628	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::publish	1608	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::warn	1617	NOT COVERED	online index build (#2355): not modelled yet
