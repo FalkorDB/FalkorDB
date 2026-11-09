@@ -261,8 +261,9 @@ impl MvccGraph {
     ///
     /// The caller holds the host's global lock, as a writer does to publish; it needs no
     /// per-graph lock. The fit is made against the published version this commit loads, and the
-    /// version is published over that one: a batch that writers overtook is caught up, unless its
-    /// limit refuses the catch-up, and is never refused for being overtaken.
+    /// version is published over that one: a batch that writers overtook is caught up, or, if that
+    /// would do more than its limit allows, discarded; it is never refused as stale
+    /// ([`CommitError::Stale`]) for being overtaken.
     ///
     /// # Errors
     ///

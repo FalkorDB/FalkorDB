@@ -139,12 +139,12 @@ def wait_for_indices_to_sync(graph, timeout=None):
     # With a timeout, an index still not operational after it fails the wait, naming it,
     # rather than leaving the test to run until the CI job's limit.
     q = "CALL db.indexes() YIELD status WHERE status <> 'OPERATIONAL' RETURN count(1)"
-    deadline = None if timeout is None else time.time() + timeout
+    deadline = None if timeout is None else time.monotonic() + timeout
     while True:
         result = graph.ro_query(q)
         if result.result_set[0][0] == 0:
             break
-        if deadline is not None and time.time() >= deadline:
+        if deadline is not None and time.monotonic() >= deadline:
             pending = graph.ro_query("CALL db.indexes() YIELD label, status "
                                      "WHERE status <> 'OPERATIONAL' RETURN label, status").result_set
             raise AssertionError(f"indexes not operational after {timeout} s: {pending}")
