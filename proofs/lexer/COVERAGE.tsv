@@ -88,3 +88,4 @@ graph/src/parser/cypher.rs	parse_remove_items	3432	MODELLED	fragment: property-t
 graph/src/parser/cypher.rs	parse_foreach_clause	3469	MODELLED	recursion shape only = foreachChain (foreach_unbounded, bug: bypasses nested)
 graph/src/parser/cypher.rs	reject_aggregate	3551	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	find_aggregate_name	3563	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_update_target	3422	NOT COVERED	new on main in #2900: the SET/REMOVE property-target chain, now charged against MAX_TREE_DEPTH (it was the property-target loop the parse_set_items/parse_remove_items rows model as setTarget, set_target_unbounded); not modelled yet
