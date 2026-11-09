@@ -95,74 +95,74 @@ src/reply.rs	reply_stats	541	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (an
 src/reply.rs	reply_result	630	PROVEN	Resp.resultCalls: compact_reply, verbose_reply, noreturn_reply
 src/reply.rs	reply_verbose	679	PROVEN	Resp.resultCalls false: verbose_reply
 src/reply.rs	reply_compact	687	PROVEN	Resp.resultCalls true: compact_reply + Compact.decReply_enc; bytes_of_emits (RESP2 bytes)
-src/graph_core.rs	up_to_nul	87	PROVEN	Telemetry.upToNul / GraphCore.upToNulC: upToNul_idem, upToNulC_split, streamName_key_name
-src/graph_core.rs	c_graph_name	104	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key)); GraphCore.Lossy (from_utf8_lossy kept as a core-library hypothesis structure; KeyName.lossy is a separate concrete model, not bridged to it) — #2653: bug2653_nonutf8_key_mangled
-src/graph_core.rs	c_graph_key	119	PROVEN	GraphCore.cGraphKey: upToNulB_nonul, cGraphName_key
-src/graph_core.rs	register_graph	140	PROVEN	GraphCore.register: register_registered, register_get; MultiDb.query (registry keyed by name only, keyspace by (db,key)) — #2782 open: bug2782_same_name_other_db_aborts refutes KeyspaceRegistered/WritesSucceed
-src/graph_core.rs	graph_is_registered	188	PROVEN	GraphCore.isRegistered: free_unregisters, free_keeps_others; MultiDb.existing_ok (under KeyspaceRegistered), bug2782_invariant_broken: OPEN BUG #2782 refutes KeyspaceRegistered on main (kept PROVEN, bug named)
-src/graph_core.rs	rename_graph	202	PROVEN	GraphCore.rename: rename_moves, rename_absent
-src/graph_core.rs	WriteQueryOk::new	256	PROVEN	GraphCore.modified: modified_zero, modified_replicates_or_warns
-src/graph_core.rs	ffi::sanitise_error	318	PROVEN	GraphCore.sanitise: sanitise_nonul, sanitise_len, sanitise_id
-src/graph_core.rs	ffi::block_client	333	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::unblock_client	344	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::get_thread_safe_context	353	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::free_thread_safe_context	364	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::reply_error	373	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::signal_modified_key	390	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::yield_ctx	412	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::measure_time_start	429	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::measure_time_end	439	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::hold_string	456	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::free_string	467	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::trim_string_allocation	482	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::replicate_argv	497	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ThreadedGraph::new	553	PROVEN	GraphCore.TG.new: TG.new_idle (unbounded write channel, #3014)
-src/graph_core.rs	ThreadedGraph::from_mvcc	569	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle (unbounded write channel, #3014)
-src/graph_core.rs	execute_query	587	PROVEN	RoQuery.ro_never_writes, GraphCore.executeQuery/admissionKept: ro_write_rejected, read_releases_admission (#3014)
-src/graph_core.rs	execute_profile	674	PROVEN	GraphCore.profileDetect/admissionKept: profileDetect_write, read_releases_admission (#3014)
-src/graph_core.rs	execute_query_write	737	PROVEN	GraphCore.executeWrite (#3290 retry loop): executeWrite_first, stale_run_silent
-src/graph_core.rs	try_query_write	783	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon): reply_after_commit, failed_no_commit, stale_run_silent
-src/graph_core.rs	WriteAttempt::from	776	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
-src/graph_core.rs	reply_profile	884	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
-src/graph_core.rs	BlockedClient::new	921	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	BlockedClient::drop	929	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	compute_effective_timeout	947	PROVEN	Args.rustTimeout: rustTimeout_write_pq, rustTimeout_rw_uniform (#2998 fixed by #3000 2e8172d76), rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
-src/graph_core.rs	reply_invalid_graph_version	986	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
-src/graph_core.rs	admit	1000	PROVEN	GraphCore.admitQ: admit_bounded, capped (QueueSlot::try_acquire; never waits)
-src/graph_core.rs	query_mut	1011	PROVEN	GraphCore.dispatch/admitQ (#3014): stale_version, inline_uncapped, capped, admit_bounded
-src/graph_core.rs	query_sync	1215	PROVEN	GraphCore.syncOutcome: sync_err, sync_write_logs
-src/graph_core.rs	profile_mut	1344	PROVEN	GraphCore.profileOutcome/dispatch (admitQ, #3014): profile_write_runs_as_write, profile_read_replied, capped
-src/graph_core.rs	profile_sync	1445	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
-src/graph_core.rs	finish_write	1512	PROVEN	GraphCore.writeSteps (commit if escalated, else nothing: the version drops with the runtime, #3657): reply_after_commit, unescalated_silent
-src/graph_core.rs	abandon_write	1537	PROVEN	GraphCore.abandonSteps (resync only if version_is_current, nothing to release, #3657): failed_no_commit, stale_run_silent
-src/graph_core.rs	commit_and_replicate	1553	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; replicated key bytes = utf8(lossy(key)): KeyName.bug2653_nonutf8_key_mangled (#2653)
-src/graph_core.rs	process_write_queued_query	1599	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit); slot dropped on dequeue: SearchConcurrency Pool.paths_release_once
-src/graph_core.rs	CtxSink::replicate	1748	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
-src/graph_core.rs	graph_free	1761	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
-src/query_session.rs	QuerySession::begin	158	PROVEN	QuerySession.begin: escalate_order
-src/query_session.rs	QuerySession::begin_with	165	PROVEN	QuerySession.begin (facts parameter): upgrade_unregistered, reauth_replay
-src/query_session.rs	QuerySession::begin_writer	180	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order
-src/query_session.rs	QuerySession::facts	198	PROVEN	QuerySession.Facts (returns the facts it was begun with): reauth_replay
+src/graph_core.rs	up_to_nul	83	PROVEN	Telemetry.upToNul / GraphCore.upToNulC: upToNul_idem, upToNulC_split, streamName_key_name
+src/graph_core.rs	c_graph_name	100	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key)); GraphCore.Lossy (from_utf8_lossy kept as a core-library hypothesis structure; KeyName.lossy is a separate concrete model, not bridged to it) — #2653: bug2653_nonutf8_key_mangled
+src/graph_core.rs	c_graph_key	115	PROVEN	GraphCore.cGraphKey: upToNulB_nonul, cGraphName_key
+src/graph_core.rs	register_graph	136	PROVEN	GraphCore.register: register_registered, register_get; MultiDb.query (registry keyed by name only, keyspace by (db,key)) — #2782 open: bug2782_same_name_other_db_aborts refutes KeyspaceRegistered/WritesSucceed
+src/graph_core.rs	graph_is_registered	184	PROVEN	GraphCore.isRegistered: free_unregisters, free_keeps_others; MultiDb.existing_ok (under KeyspaceRegistered), bug2782_invariant_broken: OPEN BUG #2782 refutes KeyspaceRegistered on main (kept PROVEN, bug named)
+src/graph_core.rs	rename_graph	198	PROVEN	GraphCore.rename: rename_moves, rename_absent
+src/graph_core.rs	WriteQueryOk::new	251	PROVEN	GraphCore.modified: modified_zero, modified_replicates_or_warns
+src/graph_core.rs	ffi::sanitise_error	310	PROVEN	GraphCore.sanitise: sanitise_nonul, sanitise_len, sanitise_id
+src/graph_core.rs	ffi::block_client	325	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::unblock_client	336	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::get_thread_safe_context	345	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::free_thread_safe_context	356	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::reply_error	365	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::signal_modified_key	382	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::yield_ctx	404	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::measure_time_start	421	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::measure_time_end	431	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::hold_string	448	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::free_string	459	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::trim_string_allocation	474	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::replicate_argv	489	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ThreadedGraph::new	545	PROVEN	GraphCore.TG.new: TG.new_idle (unbounded write channel, #3014)
+src/graph_core.rs	ThreadedGraph::from_mvcc	561	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle (unbounded write channel, #3014)
+src/graph_core.rs	execute_query	579	PROVEN	RoQuery.ro_never_writes, GraphCore.executeQuery/admissionKept: ro_write_rejected, read_releases_admission (#3014)
+src/graph_core.rs	execute_profile	665	PROVEN	GraphCore.profileDetect/admissionKept: profileDetect_write, read_releases_admission (#3014)
+src/graph_core.rs	execute_query_write	727	PROVEN	GraphCore.executeWrite (#3290 retry loop): executeWrite_first, stale_run_silent
+src/graph_core.rs	try_query_write	773	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon): reply_after_commit, failed_no_commit, stale_run_silent
+src/graph_core.rs	WriteAttempt::from	766	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
+src/graph_core.rs	reply_profile	872	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
+src/graph_core.rs	BlockedClient::new	909	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	BlockedClient::drop	917	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	compute_effective_timeout	935	PROVEN	Args.rustTimeout: rustTimeout_write_pq, rustTimeout_rw_uniform (#2998 fixed by #3000 2e8172d76), rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
+src/graph_core.rs	reply_invalid_graph_version	974	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
+src/graph_core.rs	admit	988	PROVEN	GraphCore.admitQ: admit_bounded, capped (QueueSlot::try_acquire; never waits)
+src/graph_core.rs	query_mut	999	PROVEN	GraphCore.dispatch/admitQ (#3014): stale_version, inline_uncapped, capped, admit_bounded
+src/graph_core.rs	query_sync	1203	PROVEN	GraphCore.syncOutcome: sync_err, sync_write_logs
+src/graph_core.rs	profile_mut	1332	PROVEN	GraphCore.profileOutcome/dispatch (admitQ, #3014): profile_write_runs_as_write, profile_read_replied, capped
+src/graph_core.rs	profile_sync	1433	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
+src/graph_core.rs	finish_write	1500	PROVEN	GraphCore.writeSteps (commit if escalated, else nothing: the version drops with the runtime, #3657): reply_after_commit, unescalated_silent
+src/graph_core.rs	abandon_write	1525	PROVEN	GraphCore.abandonSteps (resync only if version_is_current, nothing to release, #3657): failed_no_commit, stale_run_silent
+src/graph_core.rs	commit_and_replicate	1541	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; replicated key bytes = utf8(lossy(key)): KeyName.bug2653_nonutf8_key_mangled (#2653)
+src/graph_core.rs	process_write_queued_query	1588	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit); slot dropped on dequeue: SearchConcurrency Pool.paths_release_once
+src/graph_core.rs	CtxSink::replicate	1737	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
+src/graph_core.rs	graph_free	1750	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
+src/query_session.rs	QuerySession::begin	157	PROVEN	QuerySession.begin: escalate_order
+src/query_session.rs	QuerySession::begin_with	164	PROVEN	QuerySession.begin (facts parameter): upgrade_unregistered, reauth_replay
+src/query_session.rs	QuerySession::begin_writer	179	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order
+src/query_session.rs	QuerySession::facts	197	PROVEN	QuerySession.Facts (returns the facts it was begun with): reauth_replay
 src/query_session.rs	QuerySession::write_version	211	PROVEN	QuerySession.writeVersion: writeVersion_takes_nothing (infallible; reader Unchecked(ver+1), writer Current; #3657)
 src/query_session.rs	QuerySession::is_stale	227	PROVEN	QuerySession.isStale: stale_sticky
 src/query_session.rs	QuerySession::is_writer	239	PROVEN	QuerySession.SS.writer: writeVersion_takes_nothing
-src/query_session.rs	QuerySession::check_fork	247	CONDITIONAL	QuerySession.checkFork: checkFork_spec, checkFork_noop, current_kept, stale_sticky, upgrade_stale; SearchConcurrency Mvcc.checkFork_stale/checkFork_on_committed; #3567 rebase_onto_indexer_batches (index progress only; native_index Rebase.V.rebased_keeps_data). CONDITIONAL on one undischarged hypothesis about other code: the rebase's one Err(Stale), a borrowed fork in a release build (graph/src/graph/mvcc_graph.rs rebase_onto_indexer_batches), never happens for an escalating writer's fork; the model has no such error, so checkFork_spec covers the is_stale refusal only
+src/query_session.rs	QuerySession::check_fork	251	CONDITIONAL	QuerySession.checkFork: checkFork_spec, checkFork_noop, current_kept, stale_sticky, upgrade_stale; SearchConcurrency Mvcc.checkFork_stale/checkFork_on_committed; #3567 rebase_onto_indexer_batches (index progress only; native_index Rebase.V.rebased_keeps_data). CONDITIONAL on one undischarged hypothesis about other code: the rebase's one Err(Stale), a borrowed fork in a release build (graph/src/graph/mvcc_graph.rs rebase_onto_indexer_batches), never happens for an escalating writer's fork; the model has no such error, so checkFork_spec covers the is_stale refusal only
 src/query_session.rs	QuerySession::version_is_current	235	PROVEN	QuerySession.versionIsCurrent: writeVersion_takes_nothing, current_kept (abandonSteps resyncs iff current: GraphCore.failed_no_commit)
-src/query_session.rs	WriteAbort::from	75	PROVEN	QuerySession.WriteAbort.ofCommit: ofCommit_stale, ofCommit_invalid, ofCommit_ne (Stale ↦ retry, Invalid ↦ permanent)
-src/query_session.rs	QuerySession::release_locks	281	PROVEN	QuerySession.release: release_none, release_order
-src/query_session.rs	QuerySession::graph_arc	289	PROVEN	QuerySession.graphArc: graphArc_id
-src/query_session.rs	QuerySession::with_graph	298	PROVEN	QuerySession.withGraph: withGraph_released
-src/query_session.rs	QuerySession::with_graph_mut	314	PROVEN	QuerySession.withGraphMut: escalate_writer
-src/query_session.rs	QuerySession::upgrade_to_write	332	PROVEN	QuerySession.upgrade/upgradeS (check_fork last, #3657): upgrade_twice, upgrade_unregistered, upgrade_state, upgrade_stale, upgradeSt_stale_visible (a Stale report leaves Version::Stale, so is_stale is true for the retry)
-src/query_session.rs	QuerySession::escalate	358	PROVEN	QuerySession.escalate: escalate_order, escalate_mode, escalate_writer
-src/query_session.rs	reauthorize_write	392	PROVEN	QuerySession.reauthorize: reauth_paused, reauth_replica, reauth_replay, reauth_main
-src/query_session.rs	QuerySession::upgrade_to_write	433	PROVEN	QuerySession.upgrade: upgrade_twice, upgrade_unregistered, upgrade_state
-src/query_session.rs	QuerySession::drop	443	PROVEN	QuerySession.release: release_none
-src/query_session.rs	hold_gil	463	PROVEN	QuerySession.gilAcquire: gil_nested, gil_stack, gil_main, gil_out_of_order
-src/query_session.rs	Gil::acquire	485	PROVEN	QuerySession.gilAcquire: gil_nested, gil_main, gil_stack
-src/query_session.rs	Gil::drop	508	PROVEN	QuerySession.gilDrop: gil_stack, gil_out_of_order
-src/query_session.rs	lock_gil	529	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
-src/query_session.rs	release_gil	542	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
+src/query_session.rs	WriteAbort::from	74	PROVEN	QuerySession.WriteAbort.ofCommit: ofCommit_stale, ofCommit_invalid, ofCommit_ne (Stale ↦ retry, Invalid ↦ permanent)
+src/query_session.rs	QuerySession::release_locks	289	PROVEN	QuerySession.release: release_none, release_order
+src/query_session.rs	QuerySession::graph_arc	297	PROVEN	QuerySession.graphArc: graphArc_id
+src/query_session.rs	QuerySession::with_graph	306	PROVEN	QuerySession.withGraph: withGraph_released
+src/query_session.rs	QuerySession::with_graph_mut	322	PROVEN	QuerySession.withGraphMut: escalate_writer
+src/query_session.rs	QuerySession::upgrade_to_write	343	PROVEN	QuerySession.upgrade/upgradeS (check_fork last, #3657): upgrade_twice, upgrade_unregistered, upgrade_state, upgrade_stale, upgradeSt_stale_visible (a Stale report leaves Version::Stale, so is_stale is true for the retry)
+src/query_session.rs	QuerySession::escalate	372	PROVEN	QuerySession.escalate: escalate_order, escalate_mode, escalate_writer
+src/query_session.rs	reauthorize_write	406	PROVEN	QuerySession.reauthorize: reauth_paused, reauth_replica, reauth_replay, reauth_main
+src/query_session.rs	QuerySession::upgrade_to_write	447	PROVEN	QuerySession.upgrade: upgrade_twice, upgrade_unregistered, upgrade_state
+src/query_session.rs	QuerySession::drop	460	PROVEN	QuerySession.release: release_none
+src/query_session.rs	hold_gil	480	PROVEN	QuerySession.gilAcquire: gil_nested, gil_stack, gil_main, gil_out_of_order
+src/query_session.rs	Gil::acquire	502	PROVEN	QuerySession.gilAcquire: gil_nested, gil_main, gil_stack
+src/query_session.rs	Gil::drop	525	PROVEN	QuerySession.gilDrop: gil_stack, gil_out_of_order
+src/query_session.rs	lock_gil	546	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
+src/query_session.rs	release_gil	559	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
 src/module_init.rs	pthread_atfork	91	AXIOMATISED	libc pthread_atfork declaration
 src/module_init.rs	on_fork_child	118	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
 src/module_init.rs	graph_init	139	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range; historical pre3328_* (W4-redis-3 / #3268, fixed by #3328)

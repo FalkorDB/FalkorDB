@@ -66,7 +66,7 @@ pub(crate) fn create_index<'a>(
     // Index DDL mutates the shared, non-MVCC index directly (not via `pending`)
     // and calls host FFI that needs the global lock, so become a writer first —
     // same contract as `CommitOp`.
-    runtime.write_escalation().upgrade_to_write()?;
+    runtime.upgrade_to_write()?;
     runtime
         .graph_mut()
         .create_index(index_type, entity_type, label, attrs, index_options)?;
@@ -97,7 +97,7 @@ pub(crate) fn drop_index<'a>(
         ));
     }
     // See `create_index`: DDL runs in writer mode.
-    runtime.write_escalation().upgrade_to_write()?;
+    runtime.upgrade_to_write()?;
     let dropped = runtime
         .graph_mut()
         .drop_index(index_type, entity_type, label, attrs)?;

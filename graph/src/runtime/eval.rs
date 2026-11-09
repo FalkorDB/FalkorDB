@@ -1075,7 +1075,13 @@ impl<'a> ExprEval<'a> {
                             row.insert(var, value);
                             match self.eval_node(&node.child(1), Some(&row), agg_group_key)? {
                                 Value::Bool(true) => {}
-                                _ => continue,
+                                Value::Bool(false) | Value::Null => continue,
+                                value => {
+                                    return Err(format!(
+                                        "Type mismatch: expected Boolean but was {}",
+                                        value.name()
+                                    ));
+                                }
                             }
                             acc.push(self.eval_node(&node.child(2), Some(&row), agg_group_key)?);
                         }

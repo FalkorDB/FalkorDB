@@ -62,13 +62,12 @@ use crate::{
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
 };
-use atomic_refcell::{AtomicRef, AtomicRefCell, AtomicRefMut};
 use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
 use std::{
-    cell::{Cell, RefCell},
+    cell::{Cell, OnceCell, Ref, RefCell, RefMut},
     collections::HashMap,
     marker::PhantomData,
     sync::Arc,
@@ -107,22 +106,33 @@ pub struct QueryStatistics {
 /// name-map lookup for the excess.
 const ATTR_ID_MEMO_CAP: usize = 32;
 
-/// A read query's borrow of its graph together with an owner of the cell it
-/// borrows. The guard is lifetime-extended to `'static`; it is sound because
-/// `_owner` keeps that cell alive for as long as the guard exists — fields drop
-/// in declaration order, so `guard` is released before `_owner` — whatever
-/// happens to anything else holding the graph.
-struct HeldRead {
-    guard: AtomicRef<'static, Graph>,
-    _owner: Arc<AtomicRefCell<Graph>>,
+/// The graph a [`Runtime`] is created on: a read query's published version,
+/// or a write query's fork.
+// Moved once, into `Runtime::new`: boxing the fork would only add an allocation.
+#[allow(clippy::large_enum_variant)]
+pub enum QueryGraph {
+    Published(Arc<Graph>),
+    Fork(Graph),
+}
+
+impl From<Arc<Graph>> for QueryGraph {
+    fn from(g: Arc<Graph>) -> Self {
+        Self::Published(g)
+    }
+}
+
+impl From<Graph> for QueryGraph {
+    fn from(fork: Graph) -> Self {
+        Self::Fork(fork)
+    }
 }
 
 /// Shared access to the graph a [`Runtime`] reads; see [`Runtime::graph`].
 pub enum GraphRef<'r> {
-    /// The read query's borrow, taken once for the query's whole life.
-    Held(&'r Graph),
-    /// A write query's per-access borrow.
-    Borrowed(AtomicRef<'r, Graph>),
+    /// A published version needs no borrow: nothing can change it.
+    Published(&'r Graph),
+    /// A write query's fork, borrowed so it is not changed meanwhile.
+    Fork(Ref<'r, Graph>),
 }
 
 impl std::ops::Deref for GraphRef<'_> {
@@ -130,8 +140,8 @@ impl std::ops::Deref for GraphRef<'_> {
 
     fn deref(&self) -> &Graph {
         match self {
-            Self::Held(g) => g,
-            Self::Borrowed(g) => g,
+            Self::Published(g) => g,
+            Self::Fork(g) => g,
         }
     }
 }
@@ -152,13 +162,13 @@ impl std::ops::Deref for GraphRef<'_> {
 pub struct Runtime<'a> {
     /// Query parameters ($param syntax)
     pub parameters: HashMap<String, Value>,
-    /// A read query's one borrow of its graph, held for the query's whole
-    /// life; see [`Self::graph`].
-    read_guard: Option<HeldRead>,
-    /// Graph being queried. Private, so it cannot be replaced or detached:
-    /// read it through [`Self::graph`] / [`Self::graph_mut`], or keep it with
-    /// [`Self::graph_arc`].
-    g: Arc<AtomicRefCell<Graph>>,
+    /// The published version this query reads: a read query's from the
+    /// start, a write query's once [`Self::publish`] published its fork.
+    published: OnceCell<Arc<Graph>>,
+    /// A write query's fork, until [`Self::publish`] takes it. Operators reach
+    /// the runtime through shared references, hence the cell. Read both
+    /// through [`Self::graph`] / [`Self::graph_mut`].
+    fork: RefCell<Option<Graph>>,
     /// Whether this is a write query
     pub write: bool,
     /// Batched mutations (lazy-initialized)
@@ -442,9 +452,8 @@ impl<'a> Runtime<'a> {
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        g: Arc<AtomicRefCell<Graph>>,
+        g: impl Into<QueryGraph>,
         parameters: HashMap<String, Value>,
-        write: bool,
         plan: Arc<DynTree<IR>>,
         inspect: bool,
         import_folder: String,
@@ -462,35 +471,19 @@ impl<'a> Runtime<'a> {
             vec![]
         };
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
-        if write {
-            pending.borrow_mut().set_schema_baseline(&g.borrow());
+        // A write query runs on its own fork, a read query on a published version.
+        let (published, fork) = match g.into() {
+            QueryGraph::Published(g) => (OnceCell::from(g), None),
+            QueryGraph::Fork(fork) => (OnceCell::new(), Some(fork)),
+        };
+        let write = fork.is_some();
+        if let Some(fork) = &fork {
+            pending.borrow_mut().set_schema_baseline(fork);
         }
-        // A read query runs on a published version and can take its borrow once
-        // here instead of on every access. Writers mutate a private fork, and
-        // nothing borrows a published version mutably (`MvccGraph`), so this
-        // borrow can be held for the whole query. Were that to change, the
-        // `borrow_mut` would panic rather than race.
-        //
-        let read_guard = (!write).then(|| {
-            let owner = Arc::clone(&g);
-            // SAFETY: the guard borrows the cell inside `owner`'s allocation,
-            // and `HeldRead` keeps `owner` alive for the guard's whole life
-            // (the guard is declared first, so it drops first). Moving the
-            // `Arc` does not move the cell it points to.
-            let guard = unsafe {
-                std::mem::transmute::<AtomicRef<'_, Graph>, AtomicRef<'static, Graph>>(
-                    owner.borrow(),
-                )
-            };
-            HeldRead {
-                guard,
-                _owner: owner,
-            }
-        });
         Self {
             parameters,
-            read_guard,
-            g,
+            published,
+            fork: RefCell::new(fork),
             write,
             pending,
             stats: RefCell::new(QueryStatistics::default()),
@@ -547,17 +540,16 @@ impl<'a> Runtime<'a> {
 
     /// The graph this query reads.
     ///
-    /// Concurrent read queries share one published version, so a borrow per
-    /// access made every one of them write the same borrow counter — a cache
-    /// line bounced between cores once per property read, which capped read
-    /// throughput at a few cores. A read query hands out the borrow it took
-    /// once in [`Self::new`]; a write query, which also borrows `g` mutably,
-    /// still borrows per access.
+    /// A published version needs no borrow: nothing can change it. A write
+    /// query's fork is borrowed per access, since it is also borrowed mutably.
     #[must_use]
     pub fn graph(&self) -> GraphRef<'_> {
-        match &self.read_guard {
-            Some(held) => GraphRef::Held(&held.guard),
-            None => GraphRef::Borrowed(self.g.borrow()),
+        match self.published.get() {
+            Some(g) => GraphRef::Published(g),
+            None => GraphRef::Fork(Ref::map(self.fork.borrow(), |fork| {
+                fork.as_ref()
+                    .expect("a write query's fork was refused at commit")
+            })),
         }
     }
 
@@ -565,43 +557,63 @@ impl<'a> Runtime<'a> {
     ///
     /// # Panics
     ///
-    /// On a read query: its graph is a published version, which a reader
-    /// only ever borrows shared (it holds that borrow for its whole life, see
-    /// [`Self::graph`]). Plans that write are run as write queries, so this
-    /// is a planner bug, reported by name rather than as the cell's
-    /// "already immutably borrowed".
+    /// On a read query, or a write query whose fork was published: a
+    /// published version is never changed. Plans that write are run as write
+    /// queries, so this is a planner bug.
     #[must_use]
-    pub fn graph_mut(&self) -> AtomicRefMut<'_, Graph> {
-        assert!(self.write, "graph_mut on a read query");
-        self.g.borrow_mut()
+    pub fn graph_mut(&self) -> RefMut<'_, Graph> {
+        RefMut::map(self.fork.borrow_mut(), |fork| {
+            fork.as_mut().expect("graph_mut on a published version")
+        })
     }
 
-    /// An owner of this query's graph, for code that keeps the graph past
-    /// the call that needs it: the version a write query publishes, and the
-    /// JS UDF context's callbacks. Everything else reads through
-    /// [`Self::graph`] / [`Self::graph_mut`]. The handle is a clone, so the
-    /// graph this runtime runs on cannot be replaced through it.
-    #[must_use]
-    pub fn graph_arc(&self) -> Arc<AtomicRefCell<Graph>> {
-        Arc::clone(&self.g)
+    /// Publish this write query's fork with `commit`, which takes it by value
+    /// and returns the version it published. The query reads that version from
+    /// then on, e.g. to serialize its reply.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `commit` returns. The fork is gone then: `commit` consumed it.
+    ///
+    /// # Panics
+    ///
+    /// On a read query, or if the fork was published already.
+    pub fn publish<E>(
+        &self,
+        commit: impl FnOnce(Graph) -> Result<Arc<Graph>, E>,
+    ) -> Result<(), E> {
+        let fork = self
+            .fork
+            .borrow_mut()
+            .take()
+            .expect("a write query's fork is published once");
+        let published = commit(fork)?;
+        assert!(self.published.set(published).is_ok(), "published once");
+        Ok(())
     }
 
-    /// Call `runtime.write_escalation().upgrade_to_write()?` before mutating
-    /// shared state (the index).
+    /// Become a writer before mutating shared state (the index), handing the
+    /// host this query's fork to check and rebase ([`WriteEscalation`]).
     ///
     /// Not a guard: the host owns the locks for the whole query — they must
     /// outlive `query()` so the host can commit — so this only *changes mode*,
     /// never releases.
-    #[must_use]
-    pub fn write_escalation(&self) -> &'a dyn crate::locks::WriteEscalation {
+    ///
+    /// # Errors
+    ///
+    /// If the host refuses the escalation.
+    ///
+    /// [`WriteEscalation`]: crate::locks::WriteEscalation
+    pub fn upgrade_to_write(&self) -> Result<(), String> {
         self.write_escalation
+            .upgrade_to_write(&mut self.graph_mut())
     }
 
     /// Undo the index documents earlier `Commit`s published, after this query
     /// failed. See [`Pending::resync_published_indexes`].
     pub fn resync_published_indexes(
         &self,
-        committed: &Arc<AtomicRefCell<Graph>>,
+        committed: &Graph,
     ) {
         self.pending
             .borrow_mut()

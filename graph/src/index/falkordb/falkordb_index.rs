@@ -1,11 +1,11 @@
 //! Folded-roots MVCC holder: the FalkorDB index state that lives
 //! on [`Graph`](crate::graph::Graph) as its own copy-on-write field, so
 //! `Graph::new_version()` forks it in `O(1)` per column and the committed-version
-//! `Arc<AtomicRefCell<Graph>>` swap publishes graph + index together — one atomic
+//! `Arc<Graph>` swap publishes graph + index together — one atomic
 //! step, no torn read.
 //!
 //! Deliberately **pure data — no reference back to `Graph`**. The RediSearch
-//! `Indexer` holds an `Arc<Mutex<Option<Arc<AtomicRefCell<Graph>>>>>` pointing
+//! `Indexer` holds an `Arc<ArcSwapOption<Graph>>` pointing
 //! back at the graph for background population; that cycle is exactly what this
 //! avoids. The write path mutates a version's own copy instead.
 
