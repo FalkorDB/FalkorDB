@@ -300,7 +300,7 @@ void Globals_TrackCommandCtx
 // untrack CommandCtx
 void Globals_UntrackCommandCtx
 (
-	const CommandCtx *ctx  // CommandCtx to untrack
+	CommandCtx *ctx  // CommandCtx to untrack
 ) {
 	ASSERT(ctx != NULL);
 	ASSERT(_globals.command_ctxs != NULL);
@@ -312,19 +312,23 @@ void Globals_UntrackCommandCtx
 
 	ASSERT(_globals.command_ctxs[tid] == ctx);
 
-	// clear ctx at the current thread entry
+	// clear ctx at the current thread entry. clearing the slot under the lock is
+	// the part that must be mutually exclusive with Globals_GetCommandCtxs (which
+	// holds the write lock): that function then either sees the slot and increfs a
+	// command the slot's own reference still keeps alive, or sees NULL.
 	_globals.command_ctxs[tid] = NULL;
-
-	// release the reference the slot held (balances the incref in
-	// Globals_TrackCommandCtx). done under the lock, so clearing the slot and
-	// dropping its reference are atomic w.r.t. Globals_GetCommandCtxs (which holds
-	// the write lock). this is never the last reference in practice - the owning
-	// thread's base reference outlives tracking and is released later by
-	// CommandCtx_Free in the command's cleanup - so it won't free here.
-	CommandCtx_Free ((CommandCtx *)ctx) ;
 
 	// release lock
 	Globals_Unlock () ;
+
+	// drop the reference the slot held (balances the incref in
+	// Globals_TrackCommandCtx), OUTSIDE the lock. this can be the last reference:
+	// for a delegated write the writer thread may finish and drop the base
+	// reference before this (delegating) thread untracks, so freeing here must not
+	// run under the globals lock. deferring it is safe - the slot is already
+	// cleared, so no concurrent Globals_GetCommandCtxs can incref through it, and
+	// we still hold the reference we are dropping.
+	CommandCtx_Free (ctx) ;
 }
 
 // get all currently tracked CommandCtxs

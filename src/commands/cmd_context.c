@@ -189,11 +189,14 @@ void CommandCtx_Free
 ) {
 	// decrement reference count
 	int prev_ref = atomic_fetch_sub (&cmd_ctx->ref_count, 1) ;
-	// budget: the base reference (1) + up to two tracking-slot references (the
-	// owning worker and, for a delegated write, the writer thread - see
-	// Globals_TrackCommandCtx) + one transient Globals_GetCommandCtxs / GRAPH.INFO
-	// snapshot reference = at most 4 live references at once
-	ASSERT (prev_ref < 5) ;
+	// a valid decrement always observes a positive reference count; a
+	// non-positive value means a double free / use-after-free. there is no small
+	// fixed upper bound to assert against: during write delegation one command
+	// briefly occupies BOTH the reader and the writer tracking slots (so a single
+	// Globals_GetCommandCtxs snapshots it twice), and any number of concurrent
+	// GRAPH.INFO callers can each hold a snapshot reference, so the live count is
+	// bounded only by the thread count
+	ASSERT (prev_ref >= 1) ;
 
 	if (prev_ref == 1) {
 		// reference count is zero, free command context
