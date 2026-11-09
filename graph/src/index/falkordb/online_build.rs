@@ -346,6 +346,11 @@ impl Job {
         };
         let mut step = Step::Cancelled;
         let mut prepared = Some(prepared);
+        // The version the commit replaces, kept until the batch is over, so that what only it
+        // holds is freed with no lock of the host's held. A batch of scattered values copies most
+        // of its column, and the old pages go with that version: on an 8M-entity column, freeing
+        // them held the lock for about 1.6 ms per large batch.
+        let mut _replaced = None;
         let (builder, host, id, generation) =
             (&self.builder, &self.builder.host, &self.id, self.generation);
         host.publish(&mut || {
@@ -357,6 +362,7 @@ impl Job {
             let Some(prepared) = prepared.take() else {
                 return;
             };
+            _replaced = Some(mvcc.read());
             step = match builder.commit(&mvcc, prepared, &batch) {
                 Ok(IndexerCommit::Discarded(Discarded::CatchUpTooLarge)) => Step::TooLarge,
                 Ok(_) => standing(&mvcc.read(), id, generation).unwrap_or(Step::More),
