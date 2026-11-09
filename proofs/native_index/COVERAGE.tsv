@@ -254,8 +254,8 @@ graph/src/index/falkordb/online_build.rs	Builder::commit	274	NOT COVERED	online 
 graph/src/index/falkordb/online_build.rs	Job::new	305	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/index/falkordb/online_build.rs	Job::run	322	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/index/falkordb/online_build.rs	Job::step	336	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	Job::read	391	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	standing	440	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	start	461	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	stop	474	NOT COVERED	online index build (#2355): not modelled yet
-graph/src/index/falkordb/online_build.rs	enqueue	484	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	Job::read	398	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	standing	447	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	start	468	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	stop	481	NOT COVERED	online index build (#2355): not modelled yet
+graph/src/index/falkordb/online_build.rs	enqueue	491	NOT COVERED	online index build (#2355): not modelled yet
