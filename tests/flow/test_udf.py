@@ -1961,3 +1961,86 @@ class test_udf_javascript():
         v = self.graph.query("RETURN lib_undef.undef()").result_set[0][0]
         self.env.assertEqual(v, None)
 
+
+    def test_forged_entity_by_prototype_tricks(self):
+        """
+        An object that shares a real entity's prototype or constructor is still
+        not that entity: only the instances the engine made are references to
+        graph entities.
+        """
+
+        script = """
+        function viaCreate(n) { return Object.create(Object.getPrototypeOf(n)); }
+        function viaSetProto(n) {
+            return Object.setPrototypeOf({id: 1000}, Object.getPrototypeOf(n));
+        }
+        function viaNew(n) { return new n.constructor(); }
+        function viaConstruct(n) { return Reflect.construct(n.constructor, []); }
+        function viaAssign(n) { return Object.assign(Object.create(n), {id: 1000}); }
+        falkor.register('viaCreate', viaCreate);
+        falkor.register('viaSetProto', viaSetProto);
+        falkor.register('viaNew', viaNew);
+        falkor.register('viaConstruct', viaConstruct);
+        falkor.register('viaAssign', viaAssign);
+        """
+        self.db.udf_load("protoforge", script)
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+
+        for f in ["viaCreate", "viaSetProto", "viaNew", "viaConstruct", "viaAssign"]:
+            for q in [f"MATCH (a {{id:0}}) WITH protoforge.{f}(a) AS n "
+                      "MATCH (b {id:1}) CREATE (b)-[:R]->(n)",
+                      f"MATCH (a {{id:0}}) RETURN startNode(protoforge.{f}(a))"]:
+                try:
+                    self.graph.query(q)
+                except ResponseError:
+                    pass
+
+        # the server is alive and the graph is unchanged
+        self.env.assertEqual(self.graph.query("MATCH ()-[r]->() RETURN count(r)").result_set, [[1]])
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set, [[2]])
+
+    def test_forged_entity_markers(self):
+        """
+        A plain JS object that copies the node/edge markers is a Map, not a
+        reference to a graph entity: it must not crash the server or create
+        an edge to a node that does not exist. Real entities still round-trip.
+        """
+
+        script = """
+        function fn(n) { return {__falkor_type:'node', __falkor_node_id: n}; }
+        function fe(n) { return {__falkor_type:'edge', __falkor_edge_id: n}; }
+        function same(x) { return x; }
+        function retag(x) { x.__falkor_node_id = 1000; return x; }
+        function nb(x) { return x.getNeighbors.call({__falkor_node_id: 1000}, {}); }
+        function tr(x) { return graph.traverse([{__falkor_node_id: 1000}]); }
+        falkor.register('fn', fn);
+        falkor.register('fe', fe);
+        falkor.register('same', same);
+        falkor.register('retag', retag);
+        falkor.register('nb', nb);
+        falkor.register('tr', tr);
+        """
+        self.db.udf_load("forge", script)
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+
+        for q in ["RETURN startNode(forge.fe(1000))",
+                  "RETURN type(forge.fe(1000))",
+                  "WITH forge.fn(7) AS n MATCH (a {id:0}) CREATE (a)-[:R]->(n)",
+                  "MATCH (a {id:0}) RETURN forge.nb(a)",
+                  "MATCH (a {id:0}) RETURN forge.tr(a)"]:
+            try:
+                self.graph.query(q)
+                assert False, f"Expected error for {q}"
+            except ResponseError:
+                pass
+
+        # the server is alive and the graph is unchanged
+        res = self.graph.query("MATCH (a)-[r]->(b) RETURN count(r), max(id(b))").result_set
+        self.env.assertEqual(res, [[1, 1]])
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set, [[2]])
+
+        # real entities round-trip, and editing their markers does not retarget them
+        res = self.graph.query("""MATCH p=(a {id:0})-[r]->(b)
+                                  RETURN forge.same(a) = a, forge.same(r) = r,
+                                         forge.same(p) = p, id(forge.retag(a))""").result_set
+        self.env.assertEqual(res, [[True, True, True, 0]])
