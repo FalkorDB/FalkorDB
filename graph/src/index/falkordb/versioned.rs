@@ -792,7 +792,7 @@ impl Graph {
 
     /// The generation of index `id` ([`IndexEntry::generation`]), and whether this version holds
     /// it `Building`, if it holds the index at all: which index a builder's job for it builds, and
-    /// whether that build is over.
+    /// whether that build is still going.
     pub(crate) fn index_generation(
         &self,
         id: &IndexId,
