@@ -50,8 +50,8 @@ graph/src/graph/mvcc_graph.rs	fork	139	NOT COVERED	private version, takes nothin
 graph/src/graph/mvcc_graph.rs	commit	202	NOT COVERED	schema_version bump/concurrency not modelled (publish/refusal: proofs/search_concurrency, proofs/versioned_matrix)
 graph/src/graph/mvcc_graph.rs	is_stale	153	NOT COVERED	version-number comparison (proofs/search_concurrency Mvcc.checkFork_stale)
 graph/src/graph/mvcc_graph.rs	commit_indexer_batch	243	NOT COVERED	proofs/search_concurrency Mvcc.batch_keeps_forks; fit decision in native_index
-graph/src/graph/mvcc_graph.rs	prepare	274	NOT COVERED	(the checks and last changes of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
-graph/src/graph/mvcc_graph.rs	publish	335	NOT COVERED	(the compare-and-swap and set_indexer_graph of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
+graph/src/graph/mvcc_graph.rs	prepare	315	NOT COVERED	(the checks and last changes of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
+graph/src/graph/mvcc_graph.rs	publish	376	NOT COVERED	(the compare-and-swap and set_indexer_graph of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
 graph/src/graph/mvcc_graph.rs	drop	351	NOT COVERED	cancel indexing
 graph/src/graph/graph.rs	rebuild_derived_matrices	1040	AXIOMATISED	GraphBLAS transpose/set; node_cap = max(node_cap, saved dims) (#3250) proven in graph_queries Ids.rebuild_never_shrinks
 graph/src/graph/graph.rs	create_constraint	4501	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
