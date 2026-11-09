@@ -54,14 +54,16 @@ pub use text_index_options::TextIndexOptions;
 pub use vector_index_options::VectorIndexOptions;
 
 use std::{
-    collections::HashMap,
+    cell::{Cell, RefCell},
+    collections::{HashMap, VecDeque},
     ffi::{CStr, CString},
     hash::Hash,
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
+    rc::{Rc, Weak},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicI32, AtomicU64, Ordering},
     },
 };
 
@@ -259,226 +261,289 @@ pub enum IndexQuery<T> {
     },
 }
 
-/// Lazy iterator over RediSearch query results.
-///
-/// Wraps the C `RSResultsIterator` and calls `RediSearch_ResultsIteratorNext`
-/// on each `.next()`. Frees the C iterator on `Drop`.
-///
-/// The mapper function `F` extracts the desired item type from each raw
-/// iterator step (e.g. just the ID, or ID + score).
-pub struct IndexResultsIter<T, F: FnMut(*mut RSResultsIterator, u64) -> T> {
-    iter: *mut RSResultsIterator,
-    /// Own a strong reference so the spec stays alive for the whole iteration,
-    /// even if a concurrent `DROP INDEX` runs. `None` for an empty iterator.
-    index: Option<OwnedIndex>,
-    map: F,
-}
-
-impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> IndexResultsIter<T, F> {
-    const fn new(
+/// One result of a RediSearch query, decoded from its document key and, for a
+/// scored query, the iterator's current score.
+pub trait IndexResult: Sized + 'static {
+    /// Decodes the result that `iter` returned as `key`. `None` skips a key of
+    /// an unexpected length.
+    ///
+    /// # Safety
+    ///
+    /// `key` points to `len` readable bytes, and `iter` is the open iterator
+    /// that returned it.
+    unsafe fn decode(
         iter: *mut RSResultsIterator,
-        index: Option<OwnedIndex>,
-        map: F,
-    ) -> Self {
-        Self { iter, index, map }
-    }
+        key: *const u8,
+        len: usize,
+    ) -> Option<Self>;
 }
 
-impl IndexResultsIter<u64, fn(*mut RSResultsIterator, u64) -> u64> {
-    #[must_use]
-    pub fn empty() -> Self {
-        Self {
-            iter: null_mut(),
-            index: None,
-            map: |_, id| id,
-        }
-    }
-}
-
-impl IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, u64) -> (u64, f64)> {
-    #[must_use]
-    pub fn empty_scored() -> Self {
-        Self {
-            iter: null_mut(),
-            index: None,
-            map: |_, id| (id, 0.0),
-        }
-    }
-}
-
-impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> Iterator for IndexResultsIter<T, F> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.iter.is_null() {
+impl IndexResult for u64 {
+    unsafe fn decode(
+        _iter: *mut RSResultsIterator,
+        key: *const u8,
+        len: usize,
+    ) -> Option<Self> {
+        // `Document::new` always writes a NODE_DOC_KEY_LEN-char hex key; skip
+        // anything else rather than let `decode_id` over-read.
+        if len != NODE_DOC_KEY_LEN {
+            debug_assert!(false, "unexpected node index key length {len}");
             return None;
         }
-        unsafe {
-            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
-            loop {
-                let mut key_len: usize = 0;
-                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
-                    .cast::<u8>();
-                if key.is_null() {
-                    return None;
-                }
-                // `Document::new` always writes a NODE_DOC_KEY_LEN-char hex key;
-                // skip anything else rather than let `decode_id` over-read.
-                if key_len != NODE_DOC_KEY_LEN {
-                    debug_assert!(false, "unexpected node index key length {key_len}");
-                    continue;
-                }
-                return Some((self.map)(self.iter, decode_id(key)));
+        Some(unsafe { decode_id(key) })
+    }
+}
+
+impl IndexResult for (u64, f64) {
+    unsafe fn decode(
+        iter: *mut RSResultsIterator,
+        key: *const u8,
+        len: usize,
+    ) -> Option<Self> {
+        let id = unsafe { u64::decode(iter, key, len) }?;
+        Some((id, unsafe { RediSearch_ResultsIteratorGetScore(iter) }))
+    }
+}
+
+impl IndexResult for (u64, u64, u64) {
+    unsafe fn decode(
+        _iter: *mut RSResultsIterator,
+        key: *const u8,
+        len: usize,
+    ) -> Option<Self> {
+        // `Document::new_edge` always writes an EDGE_DOC_KEY_LEN-char hex key;
+        // skip anything else rather than let `decode_triple` over-read.
+        if len != EDGE_DOC_KEY_LEN {
+            debug_assert!(false, "unexpected edge index key length {len}");
+            return None;
+        }
+        Some(unsafe { decode_triple(key) }.into())
+    }
+}
+
+impl IndexResult for (u64, u64, u64, f64) {
+    unsafe fn decode(
+        iter: *mut RSResultsIterator,
+        key: *const u8,
+        len: usize,
+    ) -> Option<Self> {
+        let (src, dst, edge_id) = unsafe { <(u64, u64, u64)>::decode(iter, key, len) }?;
+        Some((src, dst, edge_id, unsafe {
+            RediSearch_ResultsIteratorGetScore(iter)
+        }))
+    }
+}
+
+/// One RediSearch query. While its C iterator is open it holds RediSearch's
+/// global read lock and the spec's read lock.
+///
+/// Shared by the iterator that reads it and the thread's list of open queries,
+/// on one thread only. `release` never runs inside `next`, so the cells are
+/// never borrowed twice.
+struct OpenQuery<T> {
+    /// Null once the query is read to its end or released.
+    iter: Cell<*mut RSResultsIterator>,
+    /// The spec of `iter`. Valid while `iter` is open.
+    spec: *mut RSIndex,
+    /// Keeps the spec alive while `iter` is open, even across a `DROP INDEX`.
+    index: Cell<Option<OwnedIndex>>,
+    /// Results that `release` read before it freed `iter`. Empty while `iter`
+    /// is open, so `next` reads it only after `iter` is null.
+    read: RefCell<VecDeque<T>>,
+}
+
+impl<T: IndexResult> OpenQuery<T> {
+    #[inline]
+    fn next(&self) -> Option<T> {
+        let iter = self.iter.get();
+        if iter.is_null() {
+            return self.read.borrow_mut().pop_front();
+        }
+        self.read_next(iter)
+    }
+
+    /// Frees the iterator at its end, so a query read to its end holds no lock.
+    #[inline]
+    fn read_next(
+        &self,
+        iter: *mut RSResultsIterator,
+    ) -> Option<T> {
+        loop {
+            let mut key_len: usize = 0;
+            let key = unsafe { RediSearch_ResultsIteratorNext(iter, self.spec, &raw mut key_len) }
+                .cast::<u8>();
+            if key.is_null() {
+                self.free();
+                return None;
+            }
+            if let Some(item) = unsafe { T::decode(iter, key, key_len) } {
+                return Some(item);
             }
         }
     }
 }
 
-impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> Drop for IndexResultsIter<T, F> {
+impl<T> OpenQuery<T> {
+    fn free(&self) {
+        let iter = self.iter.replace(null_mut());
+        if !iter.is_null() {
+            unsafe { RediSearch_ResultsIteratorFree(iter) };
+        }
+        drop(self.index.take());
+    }
+}
+
+impl<T> Drop for OpenQuery<T> {
     fn drop(&mut self) {
-        if !self.iter.is_null() {
-            unsafe {
-                RediSearch_ResultsIteratorFree(self.iter);
+        self.free();
+    }
+}
+
+trait ReleaseQuery {
+    /// Read the remaining results into the query and free its C iterator.
+    fn release(&self);
+}
+
+impl<T: IndexResult> ReleaseQuery for OpenQuery<T> {
+    fn release(&self) {
+        let iter = self.iter.get();
+        if iter.is_null() {
+            return;
+        }
+        let mut read = self.read.borrow_mut();
+        while let Some(item) = self.read_next(iter) {
+            read.push_back(item);
+        }
+    }
+}
+
+thread_local! {
+    /// The RediSearch queries this thread has opened and not dropped.
+    static OPEN_QUERIES: RefCell<Vec<Weak<dyn ReleaseQuery>>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// Read every RediSearch query this thread has open to its end and free it, so
+/// the thread holds no RediSearch lock; each iterator then yields the results
+/// read here.
+///
+/// Call before the thread takes the GIL or writes an index. Holding a query's
+/// read locks there deadlocks against a GIL holder that waits for RediSearch's
+/// write lock, and a write to the scanned index aborts in `IndexSpec_LockWrite`.
+pub fn release_open_queries() {
+    for query in OPEN_QUERIES.take() {
+        if let Some(query) = query.upgrade() {
+            query.release();
+        }
+    }
+}
+
+/// Lazy iterator over one RediSearch query's results.
+///
+/// The first two results are read when the query opens. A query with at most
+/// one result is then read to its end: it holds no lock and is not listed. A
+/// longer query is listed in its thread's open queries, so
+/// [`release_open_queries`] can free it early.
+pub struct IndexResultsIter<T: 'static> {
+    state: ResultsState<T>,
+}
+
+enum ResultsState<T: 'static> {
+    /// The query had no result left.
+    Done,
+    /// The only result left. The query is freed.
+    Last(T),
+    /// The two results read at open, then the rest of the open query.
+    Two(T, T, Rc<OpenQuery<T>>),
+    /// The second result read at open, then the rest of the open query.
+    One(T, Rc<OpenQuery<T>>),
+    /// The rest of the open query.
+    Open(Rc<OpenQuery<T>>),
+}
+
+impl<T: IndexResult> IndexResultsIter<T> {
+    fn open(
+        iter: *mut RSResultsIterator,
+        index: OwnedIndex,
+    ) -> Self {
+        if iter.is_null() {
+            return Self::empty();
+        }
+        let query = OpenQuery {
+            iter: Cell::new(iter),
+            spec: index.as_ptr(),
+            index: Cell::new(Some(index)),
+            read: RefCell::new(VecDeque::new()),
+        };
+        // `read_next` frees the iterator at the end of the query.
+        let Some(first) = query.read_next(iter) else {
+            return Self::empty();
+        };
+        let Some(second) = query.read_next(iter) else {
+            return Self {
+                state: ResultsState::Last(first),
+            };
+        };
+        let query = Rc::new(query);
+        let listed: Weak<dyn ReleaseQuery> = Rc::downgrade(&query) as Weak<OpenQuery<T>>;
+        OPEN_QUERIES.with_borrow_mut(|open| {
+            open.retain(|q| q.strong_count() > 0);
+            open.push(listed);
+        });
+        Self {
+            state: ResultsState::Two(first, second, query),
+        }
+    }
+}
+
+impl<T: 'static> IndexResultsIter<T> {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            state: ResultsState::Done,
+        }
+    }
+}
+
+impl<T: IndexResult> Iterator for IndexResultsIter<T> {
+    type Item = T;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if let ResultsState::Open(query) = &self.state {
+            return query.next();
+        }
+        match std::mem::replace(&mut self.state, ResultsState::Done) {
+            ResultsState::Done => None,
+            ResultsState::Last(item) => Some(item),
+            ResultsState::Two(first, second, query) => {
+                self.state = ResultsState::One(second, query);
+                Some(first)
             }
+            ResultsState::One(second, query) => {
+                self.state = ResultsState::Open(query);
+                Some(second)
+            }
+            ResultsState::Open(_) => unreachable!("handled above"),
         }
     }
 }
 
 /// Iterator yielding entity IDs from range/tag/geo index queries.
-pub type IdIter = IndexResultsIter<u64, fn(*mut RSResultsIterator, u64) -> u64>;
+pub type IdIter = IndexResultsIter<u64>;
 
 /// Iterator yielding (entity ID, score) pairs from fulltext index queries.
-pub type ScoredIdIter = IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, u64) -> (u64, f64)>;
+pub type ScoredIdIter = IndexResultsIter<(u64, f64)>;
 
 /// Iterator yielding `(src, dst, edge_id)` triples from edge-index
 /// queries. Reads a 24-byte `[u64; 3]` key per result (as written by
 /// `Document::new_edge`).
-pub struct EdgeTripleIter {
-    iter: *mut RSResultsIterator,
-    /// Strong reference keeping the spec alive for the iteration's lifetime.
-    index: Option<OwnedIndex>,
-}
-
-impl EdgeTripleIter {
-    const fn new(
-        iter: *mut RSResultsIterator,
-        index: Option<OwnedIndex>,
-    ) -> Self {
-        Self { iter, index }
-    }
-
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self {
-            iter: null_mut(),
-            index: None,
-        }
-    }
-}
-
-impl Iterator for EdgeTripleIter {
-    type Item = (u64, u64, u64);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.iter.is_null() {
-            return None;
-        }
-        unsafe {
-            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
-            loop {
-                let mut key_len: usize = 0;
-                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
-                    .cast::<u8>();
-                if key.is_null() {
-                    return None;
-                }
-                // `Document::new_edge` always writes an EDGE_DOC_KEY_LEN-char hex
-                // key; skip anything else rather than let `decode_triple` over-read.
-                if key_len != EDGE_DOC_KEY_LEN {
-                    debug_assert!(false, "unexpected edge index key length {key_len}");
-                    continue;
-                }
-                return Some(decode_triple(key).into());
-            }
-        }
-    }
-}
-
-impl Drop for EdgeTripleIter {
-    fn drop(&mut self) {
-        if !self.iter.is_null() {
-            unsafe {
-                RediSearch_ResultsIteratorFree(self.iter);
-            }
-        }
-    }
-}
+pub type EdgeTripleIter = IndexResultsIter<(u64, u64, u64)>;
 
 /// Iterator yielding `(src, dst, edge_id, score)` tuples from edge
 /// fulltext queries. Like [`EdgeTripleIter`] but also exposes the
 /// relevance score via `RediSearch_ResultsIteratorGetScore`.
-pub struct ScoredEdgeTripleIter {
-    iter: *mut RSResultsIterator,
-    /// Strong reference keeping the spec alive for the iteration's lifetime.
-    index: Option<OwnedIndex>,
-}
-
-impl ScoredEdgeTripleIter {
-    const fn new(
-        iter: *mut RSResultsIterator,
-        index: Option<OwnedIndex>,
-    ) -> Self {
-        Self { iter, index }
-    }
-
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self {
-            iter: null_mut(),
-            index: None,
-        }
-    }
-}
-
-impl Iterator for ScoredEdgeTripleIter {
-    type Item = (u64, u64, u64, f64);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.iter.is_null() {
-            return None;
-        }
-        unsafe {
-            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
-            loop {
-                let mut key_len: usize = 0;
-                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
-                    .cast::<u8>();
-                if key.is_null() {
-                    return None;
-                }
-                // `Document::new_edge` always writes an EDGE_DOC_KEY_LEN-char hex
-                // key; skip anything else rather than let `decode_triple` over-read.
-                if key_len != EDGE_DOC_KEY_LEN {
-                    debug_assert!(false, "unexpected edge index key length {key_len}");
-                    continue;
-                }
-                let triple = decode_triple(key);
-                let score = RediSearch_ResultsIteratorGetScore(self.iter);
-                return Some((triple[0], triple[1], triple[2], score));
-            }
-        }
-    }
-}
-
-impl Drop for ScoredEdgeTripleIter {
-    fn drop(&mut self) {
-        if !self.iter.is_null() {
-            unsafe {
-                RediSearch_ResultsIteratorFree(self.iter);
-            }
-        }
-    }
-}
+pub type ScoredEdgeTripleIter = IndexResultsIter<(u64, u64, u64, f64)>;
 
 /// `ScoredIdIter` wrapped with the `Arc<ThinVec<f32>>` whose data was
 /// passed to `RediSearch_CreateVecSimNode`.
@@ -498,7 +563,7 @@ impl VectorScoredIdIter {
     #[must_use]
     pub fn empty(vector: Arc<thin_vec::ThinVec<f32>>) -> Self {
         Self {
-            inner: IndexResultsIter::empty_scored(),
+            inner: IndexResultsIter::empty(),
             _vector_owner: vector,
         }
     }
@@ -893,6 +958,9 @@ pub struct Index {
     /// acquired against an older published generation are released against
     /// the same counters.
     pending_slots: Arc<Mutex<PendingSlots>>,
+    /// Copy of `pending_slots.current_pending`, read without the mutex: a fork
+    /// can copy the mutex locked, and the RDB encoder reads this in the child.
+    current_pending: Arc<AtomicI32>,
     progress: AtomicU64,
     total: AtomicU64,
     language: Option<Arc<String>>,
@@ -1024,6 +1092,7 @@ impl Default for Index {
                 current_pending: 0,
                 stale_pending: 0,
             })),
+            current_pending: Arc::new(AtomicI32::new(0)),
             progress: AtomicU64::new(0),
             total: AtomicU64::new(0),
             language: None,
@@ -1055,6 +1124,7 @@ impl Index {
         slots.stale_pending += slots.current_pending;
         slots.current_generation = self.id;
         slots.current_pending = 0;
+        self.current_pending.store(0, Ordering::Relaxed);
     }
 
     /// Copy this `Index` for a clone-and-swap schema update.
@@ -1072,6 +1142,7 @@ impl Index {
             fields: self.fields.clone(),
             field_order: self.field_order.clone(),
             pending_slots: self.pending_slots.clone(),
+            current_pending: self.current_pending.clone(),
             progress: AtomicU64::new(self.progress.load(Ordering::Relaxed)),
             total: AtomicU64::new(self.total.load(Ordering::Relaxed)),
             language: self.language.clone(),
@@ -1703,7 +1774,7 @@ impl Index {
                 return IndexResultsIter::empty();
             }
             let iter = RediSearch_GetResultsIterator(query_node, index.as_ptr());
-            IndexResultsIter::new(iter, Some(index), |_, id| id)
+            IndexResultsIter::open(iter, index)
         }
     }
 
@@ -1724,7 +1795,7 @@ impl Index {
                 return EdgeTripleIter::empty();
             }
             let iter = RediSearch_GetResultsIterator(query_node, index.as_ptr());
-            EdgeTripleIter::new(iter, Some(index))
+            IndexResultsIter::open(iter, index)
         }
     }
 
@@ -1735,7 +1806,7 @@ impl Index {
     ) -> Result<ScoredIdIter, String> {
         let cstr = CString::new(query).map_err(|e| e.to_string())?;
         let Some(index) = self.spec.as_ref().and_then(|h| h.try_clone_ref()) else {
-            return Ok(IndexResultsIter::empty_scored());
+            return Ok(IndexResultsIter::empty());
         };
         let mut err: *mut c_char = null_mut();
         unsafe {
@@ -1746,10 +1817,7 @@ impl Index {
                 drop(CString::from_raw(err));
                 return Err(msg);
             }
-            Ok(IndexResultsIter::new(iter, Some(index), |iter, id| {
-                let score = RediSearch_ResultsIteratorGetScore(iter);
-                (id, score)
-            }))
+            Ok(IndexResultsIter::open(iter, index))
         }
     }
 
@@ -1775,7 +1843,7 @@ impl Index {
                 drop(CString::from_raw(err));
                 return Err(msg);
             }
-            Ok(ScoredEdgeTripleIter::new(iter, Some(index)))
+            Ok(IndexResultsIter::open(iter, index))
         }
     }
 
@@ -1812,7 +1880,7 @@ impl Index {
         let nbytes = std::mem::size_of_val(vector.as_slice());
         let Some(index) = self.spec.as_ref().and_then(|h| h.try_clone_ref()) else {
             return Ok(VectorScoredIdIter {
-                inner: IndexResultsIter::empty_scored(),
+                inner: IndexResultsIter::empty(),
                 _vector_owner: vector,
             });
         };
@@ -1826,7 +1894,7 @@ impl Index {
             );
             if query_node.is_null() {
                 return Ok(VectorScoredIdIter {
-                    inner: IndexResultsIter::empty_scored(),
+                    inner: IndexResultsIter::empty(),
                     _vector_owner: vector,
                 });
             }
@@ -1838,15 +1906,12 @@ impl Index {
             let iter = RediSearch_GetResultsIterator(query_node, index.as_ptr());
             if iter.is_null() {
                 return Ok(VectorScoredIdIter {
-                    inner: IndexResultsIter::empty_scored(),
+                    inner: IndexResultsIter::empty(),
                     _vector_owner: vector,
                 });
             }
             Ok(VectorScoredIdIter {
-                inner: IndexResultsIter::new(iter, Some(index), |it, id| {
-                    let score = RediSearch_ResultsIteratorGetScore(it);
-                    (id, score)
-                }),
+                inner: IndexResultsIter::open(iter, index),
                 _vector_owner: vector,
             })
         }
@@ -1897,7 +1962,7 @@ impl Index {
                 });
             }
             Ok(VectorScoredEdgeTripleIter {
-                inner: ScoredEdgeTripleIter::new(iter, Some(index)),
+                inner: IndexResultsIter::open(iter, index),
                 _vector_owner: vector,
             })
         }
@@ -2116,6 +2181,8 @@ impl Index {
         if generation_id == slots.current_generation {
             let prev = slots.current_pending;
             slots.current_pending += 1;
+            self.current_pending
+                .store(slots.current_pending, Ordering::Relaxed);
             prev
         } else {
             let prev = slots.stale_pending;
@@ -2135,6 +2202,8 @@ impl Index {
             let prev = slots.current_pending;
             if prev > 0 {
                 slots.current_pending -= 1;
+                self.current_pending
+                    .store(slots.current_pending, Ordering::Relaxed);
             }
             prev
         } else {
@@ -2164,6 +2233,17 @@ impl Index {
     #[must_use]
     pub fn pending_count(&self) -> i32 {
         self.pending_slots.lock().current_pending
+    }
+
+    /// Get the current pending changes count without the mutex, so a BGSAVE
+    /// fork child can read it: the fork copies a mutex that another thread
+    /// holds as locked, and no thread in the child can release it.
+    ///
+    /// Under a concurrent change it may return the count from before that
+    /// change. The planner reads [`Self::pending_count`] instead.
+    #[must_use]
+    pub fn pending_count_snapshot(&self) -> i32 {
+        self.current_pending.load(Ordering::Relaxed)
     }
 
     // --- language ---
