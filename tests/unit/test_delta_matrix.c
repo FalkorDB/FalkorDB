@@ -3,6 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "GraphBLAS.h"
 #include "src/util/rmalloc.h"
 #include "src/configuration/config.h"
 #include "src/graph/tensor/tensor.h"
@@ -1873,8 +1874,80 @@ void test_RGMatrix_setMatrices_preserves_deltas() {
 	TEST_ASSERT(B == NULL);
 }
 
+void test_Delta_Matrix_validate () {
+	GrB_Info info = GrB_SUCCESS;
+	Delta_Matrix A = NULL;
+
+	info = Delta_Matrix_new (&A, GrB_BOOL, 16, 16, true);
+	TEST_ASSERT (info == GrB_SUCCESS);
+
+	GrB_Matrix M  = DELTA_MATRIX_M (A);
+	GrB_Matrix TM = DELTA_MATRIX_TM (A);
+	GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS (A);
+
+	info = Delta_Matrix_setElement_BOOL (A, 1, 2);
+	TEST_ASSERT (info == GrB_SUCCESS);
+	info = Delta_Matrix_wait (A, true);
+	TEST_ASSERT (info == GrB_SUCCESS);
+
+	TEST_ASSERT(Delta_Matrix_validate(A, DM_TVAL_FULL));
+
+	//--------------------------------------------------------------------------
+	// Break transpose consistency
+	//--------------------------------------------------------------------------
+	info = GrB_Matrix_setElement_BOOL (TM, true, 7, 8) ;
+	TEST_ASSERT (info == GrB_SUCCESS) ;
+	TEST_ASSERT (!Delta_Matrix_validate (A, DM_TVAL_BASIC)) ;
+	info = GrB_Matrix_setElement_BOOL (M, true, 1, 1) ;
+	TEST_ASSERT (info == GrB_SUCCESS) ;
+
+	// This will pass basic validation
+	TEST_ASSERT (Delta_Matrix_validate (A, DM_TVAL_BASIC)) ;
+	TEST_ASSERT (!Delta_Matrix_validate (A, DM_TVAL_FAST)) ;
+
+	info = GrB_Matrix_removeElement (M, 1, 1) ;
+	TEST_ASSERT (info == GrB_SUCCESS) ;
+	info = GrB_Matrix_setElement_BOOL (M, true, 1, 7) ;
+	TEST_ASSERT (info == GrB_SUCCESS) ;
+
+	// This will pass basic validation
+	TEST_ASSERT (Delta_Matrix_validate (A, DM_TVAL_BASIC)) ;
+	TEST_ASSERT (!Delta_Matrix_validate (A, DM_TVAL_FAST)) ;
+	TEST_ASSERT (!Delta_Matrix_validate (A, DM_TVAL_FULL)) ;
+
+	info = Delta_transpose_calculate (A) ;
+	TEST_ASSERT (info == GrB_SUCCESS) ;
+	TEST_ASSERT(Delta_Matrix_validate(A, DM_TVAL_FULL)) ;
+
+	// Break a required delta-plus option.
+	info = GrB_set (DP, (int32_t) true, GxB_HYPER_HASH) ;
+	TEST_ASSERT (info == GrB_SUCCESS) ;
+	TEST_ASSERT(!Delta_Matrix_validate(A, DM_TVAL_BASIC)) ;
+
+	info = GrB_set (DP, (int32_t) false, GxB_HYPER_HASH) ;
+	TEST_ASSERT (info == GrB_SUCCESS) ;
+	TEST_ASSERT(Delta_Matrix_validate(A, DM_TVAL_BASIC)) ;
+
+	// Break disjointness: M and DP share a stored entry.
+	info = GrB_Matrix_setElement_BOOL (DP, true, 1, 2) ;
+	TEST_ASSERT (info == GrB_SUCCESS) ;
+	TEST_ASSERT(!Delta_Matrix_validate(A, DM_TVAL_BASIC)) ;
+
+	info = GrB_Matrix_removeElement (DP, 1, 2) ;
+	TEST_ASSERT (info == GrB_SUCCESS) ;
+	TEST_ASSERT(Delta_Matrix_validate(A, DM_TVAL_FULL)) ;
+
+	info = GrB_Matrix_removeElement (DP, 1, 2) ;
+	TEST_ASSERT (info == GrB_SUCCESS) ;
+	TEST_ASSERT (Delta_Matrix_validate (A, DM_TVAL_FULL)) ;
+
+	Delta_Matrix_free (&A) ;
+	TEST_ASSERT (A == NULL) ;
+}
+
 TEST_LIST = {
 	{"RGMatrix_new", test_RGMatrix_new},
+	{"Delta_Matrix_validate", test_Delta_Matrix_validate},
 	{"RGMatrix_setMatrices_preserves_deltas", test_RGMatrix_setMatrices_preserves_deltas},
 	{"RGMatrix_simple_set", test_RGMatrix_simple_set},
 	{"RGMatrix_del", test_RGMatrix_del},
