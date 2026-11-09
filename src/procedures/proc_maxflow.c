@@ -539,8 +539,26 @@ ProcedureResult Proc_MaxFlowInvoke
 	GrB_OK (Delta_Matrix_export (&U, R, GrB_UINT64, NULL)) ;
 
 	GrB_Matrix A ;
-	GrB_OK (Build_Matrix (&A, NULL, g, lbls, arr_len (lbls), rels,
-			arr_len(rels), false, false)) ;
+
+	PGTM_config conf = DEFAULT_PGTM_CONFIG;
+	conf.g         = g;
+	conf.lbls      = lbls;
+	conf.n_lbls    = arr_len(lbls);
+	conf.rels      = rels;
+	conf.n_rels    = arr_len(rels);
+	conf.direction = GRAPH_EDGE_DIR_OUTGOING;
+	conf.compact   = false;
+
+	GrB_OK (project_graph_to_matrix (&A, NULL, conf)) ;
+
+	// A is used as a mask against U below, so it must share U's dimensions;
+	// project_graph_to_matrix sizes its (non-compacted) output to the exact
+	// node count, which can be smaller than U's (Graph_RequiredMatrixDim,
+	// i.e. node capacity)
+	GrB_Index u_nrows, u_ncols ;
+	GrB_OK (GrB_Matrix_nrows (&u_nrows, U)) ;
+	GrB_OK (GrB_Matrix_ncols (&u_ncols, U)) ;
+	GrB_OK (GrB_Matrix_resize (A, u_nrows, u_ncols)) ;
 
 	GrB_Index nvals_A = 0;
 	GrB_OK (GrB_Matrix_nvals(&nvals_A, A));

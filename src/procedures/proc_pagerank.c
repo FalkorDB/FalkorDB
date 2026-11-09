@@ -142,8 +142,16 @@ ProcedureResult Proc_PagerankInvoke
 	GrB_Matrix A;
 	GrB_Info info;
 
-	info = Build_Matrix(&A, &pdata->nodes, g, p_lbls, n_lbls, p_rels, n_rels,
-			false, true);
+	PGTM_config conf = DEFAULT_PGTM_CONFIG;
+	conf.g         = g;
+	conf.lbls      = p_lbls;
+	conf.n_lbls    = n_lbls;
+	conf.rels      = p_rels;
+	conf.n_rels    = n_rels;
+	conf.direction = GRAPH_EDGE_DIR_OUTGOING;
+	conf.compact   = false;
+
+	info = project_graph_to_matrix(&A, &pdata->nodes, conf);
 
 	ASSERT(info         == GrB_SUCCESS);
 	ASSERT(A            != NULL);
