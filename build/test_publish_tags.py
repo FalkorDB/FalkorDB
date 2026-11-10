@@ -180,7 +180,9 @@ class RebuildTags(unittest.TestCase):
             ("edge", False), ("edge-rs", False), ("latest", False),  # other workflows' channels
             ("edge-c", False), ("edge-c-x64", False), ("edge-c-rhel9", False),  # the C engine's
             ("5.2.0", False), ("4.22.3", False),  # C engine versions
-            ("rc-mg-abc", False), ("rc-rebuild-x", False),  # CI's namespace
+            ("rc-mg-abc", False), ("rc-rebuild-x", False), ("rc", False),  # CI's namespace, or landing in it
+            ("test-aarch64", False), ("x86_64", False),  # architecture names, however spelled
+            ("v6.1.0", False), ("v6", False),  # versions have no leading v
             ("test-x64", False), ("foo-valkey", False), ("alpine", False),
             ("-x", False), ("a:b", False), ("", False),
         ):

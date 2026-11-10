@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -34,6 +35,10 @@ from typing import Callable, Iterable, Optional, Sequence
 
 GHCR = "ghcr.io/falkordb"
 DOCKER_HUB = "docker.io/falkordb"
+# tag-plan.yml's rehearsal points both at local registries, as
+# "<ghcr stand-in> <docker hub stand-in>"; nothing else sets it.
+if os.environ.get("PUBLISH_TAGS_REHEARSAL_REGISTRIES"):
+    GHCR, DOCKER_HUB = os.environ["PUBLISH_TAGS_REHEARSAL_REGISTRIES"].split()
 REGISTRIES = (GHCR, DOCKER_HUB)
 
 REPOS = ("falkordb", "falkordb-server")
@@ -69,6 +74,7 @@ RESERVED_PARTS = (
     set(SERVERS)
     | set(PLATFORMS)
     | {p.split("/")[1] for p in PLATFORMS.values()}
+    | {"aarch64", "x86_64"}
     | {os_name for os_name, _ in PER_OS}
 )
 
@@ -213,8 +219,12 @@ def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[d
     else:
         if not TAG_RE.match(tag):
             raise PlanError(f"tag '{tag}' is not a valid image tag")
-        if tag in RESERVED_TAGS or tag.startswith(RESERVED_PREFIXES):
-            raise PlanError(f"tag '{tag}' belongs to another workflow")
+        if re.match(r"^v\d", tag):
+            raise PlanError(f"tag '{tag}': image versions have no leading v")
+        # Judged on what would be pushed: `rc` alone would publish rc-valkey.
+        for name in server_tags(tag, DEFAULT_SERVER) + server_tags(tag, "redis"):
+            if name in RESERVED_TAGS or name.startswith(RESERVED_PREFIXES):
+                raise PlanError(f"tag '{tag}' would publish '{name}', which belongs to another workflow")
         check_parts(tag, "tag")
     if latest:
         if parse_version(tag) is None or is_prerelease(tag):
@@ -384,9 +394,11 @@ def check_source(step: Retag, runner: Callable = run) -> str:
         hint = ""
         if ":rc-mg-" in step.source:
             hint = (
-                ". The merge queue's images exist only for a commit it built after the switch to "
-                "server-named tags, and only until cleanup-rc-images.yml sweeps them; to publish "
-                "this commit anyway, rebuild it from source with release-image.yml"
+                ". The merge queue builds these only for commits after the switch to "
+                "server-named tags, and cleanup-rc-images.yml sweeps them after its TTL. A "
+                "commit from after the switch whose images were swept can be rebuilt from "
+                "source with release-image.yml; a commit from before it has no Valkey image "
+                "and cannot be published under these tags"
             )
         raise PlanError(f"cannot read {step.source}{hint}") from e
     pinned = f"{repository(step.source)}@{digest}"

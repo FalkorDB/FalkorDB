@@ -157,16 +157,18 @@ jobs:
           deadline=$(( SECONDS + 30 * 60 ))
           while :; do
             busy=""
-            # Only runs that have started: a run still queued (behind its
-            # concurrency group, say) has published nothing yet. Assigned on
-            # its own line, so a failed call fails the job instead of reading
-            # as "no release running".
-            runs=$(gh api "repos/${GH_REPO}/actions/workflows/release-tag.yml/runs?status=in_progress&per_page=20" \
-                     --jq '.workflow_runs[].id')
+            # Queued runs count too: a release published from the UI is
+            # public before its run starts. Assigned on its own line, so a
+            # failed call fails the job instead of reading as "no release
+            # running".
+            runs=$(gh api "repos/${GH_REPO}/actions/workflows/release-tag.yml/runs?per_page=20" \
+                     --jq '.workflow_runs[] | select(.status != "completed") | .id')
             for run in $runs; do
-              # An image job not scheduled yet counts as still to come.
+              # An image job not scheduled yet counts as still to come. A tag
+              # on an older version branch runs that branch's release-tag.yml,
+              # whose image job is a matrix: "image (falkordb)" and so on.
               states=$(gh api "repos/${GH_REPO}/actions/runs/${run}/jobs?per_page=100" --paginate \
-                         --jq '.jobs[] | select(.name == "image") | .status')
+                         --jq '.jobs[] | select(.name == "image" or (.name | startswith("image ("))) | .status')
               if [ -z "$states" ] || grep -qv '^completed$' <<<"$states"; then
                 busy="$busy https://github.com/${GH_REPO}/actions/runs/${run}"
               fi

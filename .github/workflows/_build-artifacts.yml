@@ -314,7 +314,10 @@ jobs:
             echo "::error::the server in $1 did not start"; exit 1
           }
           config() { docker exec "$1" redis-cli CONFIG GET "$2" | sed -n 2p; }
-          for WANT in $(jq -r '.[]' <<<"$SERVERS"); do
+          # On its own line, so a bad `servers` fails here rather than leaving
+          # the loop below with nothing to test.
+          WANTS=$(jq -er '.[]' <<<"$SERVERS")
+          for WANT in $WANTS; do
             IMAGE="falkordb-server:${OS}-${WANT}-${ARCH}"
             docker load --input "$RUNNER_TEMP/falkordb-server-${OS}-${WANT}-${ARCH}.tar"
             SERVER=$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$IMAGE" | sed -n 's/^FALKORDB_SERVER=//p')
