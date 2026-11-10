@@ -165,6 +165,8 @@ src/query_session.rs	lock_gil	546	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + 
 src/query_session.rs	release_gil	559	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
 src/module_init.rs	pthread_atfork	91	AXIOMATISED	libc pthread_atfork declaration
 src/module_init.rs	on_fork_child	118	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
+src/module_init.rs	sync_deepbind_environ	153	NOT COVERED	empty stub off Linux: RTLD_DEEPBIND is glibc-only, so there is nothing to repair
+src/module_init.rs	sync_deepbind_environ	156	AXIOMATISED	ld.so/libc FFI: dlopen(NULL) + dlsym("environ"), then a write to libc's own environ; its only logic copies a NULL-terminated pointer array; not modelled (exercised by tests/valkey_smoke.sh)
 src/module_init.rs	graph_init	139	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range; historical pre3328_* (W4-redis-3 / #3268, fixed by #3328)
 src/module_init.rs	info_func	423	PROVEN	ModuleInit.infoSections: info_normal
 src/module_init.rs	on_flush	438	PROVEN	ModuleInit.onFlush: onFlush_id
