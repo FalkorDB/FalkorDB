@@ -148,10 +148,7 @@ unsafe extern "C" fn on_fork_child() {
 /// When both views are already the same object (Redis, or a valkey-server
 /// without the copy relocation) this is a no-op. `RTLD_DEEPBIND` is
 /// glibc-only, and macOS dylibs must not reference `environ` directly, so the
-/// helper is a no-op off Linux.
-#[cfg(not(target_os = "linux"))]
-unsafe fn sync_deepbind_environ() {}
-
+/// helper exists only on Linux.
 #[cfg(target_os = "linux")]
 unsafe fn sync_deepbind_environ() {
     unsafe extern "C" {
@@ -261,6 +258,7 @@ pub fn graph_init(
         }
         // Must run after the `KMP_*` `set_var` calls above and before
         // GraphBLAS starts libomp, which reads `environ` once at init.
+        #[cfg(target_os = "linux")]
         sync_deepbind_environ();
         if let Err(err) = init(
             RedisModule_Alloc,
