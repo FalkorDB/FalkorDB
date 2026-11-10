@@ -879,15 +879,17 @@ def wait_for_replica(primary, replica, timeout=30):
         # A new connection does several reads before INFO's (CLIENT SETINFO,
         # and AUTH or SELECT when set), each under its own socket timeout, so
         # socket timeouts alone can't promise that. Run the call on a thread
-        # and stop waiting for it at the deadline. The socket timeouts make
-        # that thread end soon after. A fresh client is used, with retries
-        # off, so the caller's connection and settings are untouched.
+        # and stop waiting for it at the deadline. A thread given up on is
+        # abandoned: it is a daemon, and it and its connection may linger
+        # until its socket timeouts expire. A fresh client is used, with
+        # retries off, so the caller's connection and settings are untouched.
         left = deadline - time.time()
         if left <= 0:
             raise redis.exceptions.TimeoutError("wait_for_replica deadline passed")
         kwargs = dict(conn.connection_pool.connection_kwargs)
         kwargs.update(socket_timeout=left, socket_connect_timeout=left,
-                      retry=None, retry_on_timeout=False)
+                      retry=Retry(NoBackoff(), 0), retry_on_error=[],
+                      retry_on_timeout=False)
         pool = redis.ConnectionPool(
             connection_class=conn.connection_pool.connection_class, **kwargs)
         result = {}
