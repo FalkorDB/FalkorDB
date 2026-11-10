@@ -66,8 +66,6 @@
 //! and hands back the `Arc` it published.
 
 use std::sync::Arc;
-#[cfg(feature = "index-falkordb")]
-use std::sync::Weak;
 
 use arc_swap::ArcSwap;
 use thiserror::Error;
@@ -85,13 +83,6 @@ use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
 pub struct MvccGraph {
     /// Current committed graph version. Replaced only by a commit's compare-and-swap.
     graph: ArcSwap<Graph>,
-    /// This coordinator, held without keeping it alive: what a commit hands each background index
-    /// build it starts. So the coordinator is dropped once its owner and every build that reached
-    /// it have let go, and the last may be a build's job, on the builder's pool. It points at the
-    /// `Arc` [`Self::new`] and [`Self::from_graph`] return, so a coordinator must stay in it: one
-    /// taken out (`Arc::into_inner`) would start builds that can never reach it.
-    #[cfg(feature = "index-falkordb")]
-    me: Weak<Self>,
 }
 
 /// Why [`MvccGraph::commit`] refused a version. Whichever it is, the version
@@ -124,13 +115,9 @@ impl MvccGraph {
     /// Create an `MvccGraph` from an already-constructed `Graph`.
     /// Used by the RDB load path.
     #[must_use]
-    // Without the native index, nothing holds the coordinator weakly.
-    #[cfg_attr(not(feature = "index-falkordb"), allow(unused_variables))]
     pub fn from_graph(graph: Graph) -> Arc<Self> {
-        Arc::new_cyclic(|me| Self {
+        Arc::new(Self {
             graph: ArcSwap::from_pointee(graph),
-            #[cfg(feature = "index-falkordb")]
-            me: Weak::clone(me),
         })
     }
 
@@ -203,10 +190,11 @@ impl MvccGraph {
     /// A refusal needs no cleanup: nothing was taken, and the refused version
     /// is dropped.
     ///
-    /// Takes `&self`: publishing is a compare-and-swap of the published
+    /// Takes a shared reference: publishing is a compare-and-swap of the published
     /// pointer. The caller holds the host's global lock, which keeps commits
     /// apart and the swap out of the way of the host forking (#452); it needs no
-    /// per-graph lock.
+    /// per-graph lock. It takes the `Arc` the graph lives in so that it can hand each background
+    /// index build it starts a weak handle to it ([`Arc::downgrade`]).
     ///
     /// # Errors
     ///
@@ -215,7 +203,7 @@ impl MvccGraph {
     /// a host publishing without the global lock lets that happen),
     /// [`CommitError::Invalid`] if [`Graph::validate`] refuses it.
     pub fn commit(
-        &self,
+        self: &Arc<Self>,
         mut fork: Graph,
     ) -> Result<Arc<Graph>, CommitError> {
         let published = self.graph.load_full();
@@ -229,7 +217,7 @@ impl MvccGraph {
         // the build, an indexer batch's included, starts nothing.
         #[cfg(feature = "index-falkordb")]
         for (id, generation) in to_build {
-            online_build::enqueue(Weak::clone(&self.me), id, generation);
+            online_build::enqueue(Arc::downgrade(self), id, generation);
         }
         Ok(version)
     }
