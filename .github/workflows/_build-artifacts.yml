@@ -328,8 +328,9 @@ jobs:
           # The tarball's layers are already gzip-compressed.
           compression-level: 0
 
-      # continue-on-error hides an unpublished cell's failure outside pull
-      # requests, so say so in the run summary instead of staying green and silent.
+      # With tolerate_unpublished_failures (the release), continue-on-error
+      # hides an unpublished cell's failure, so say so in the run summary
+      # instead of staying green and silent.
       - name: Flag unpublished-cell failure
         if: failure() && !matrix.publish && inputs.tolerate_unpublished_failures
         env:
