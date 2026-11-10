@@ -34,6 +34,9 @@ REPOS = list(DATA["repos"])
 SUFFIX = DATA["arch_suffixes"]
 BROWSER_PATH = DATA["browser"]["default_path"]
 BROWSER_ENTRY = f"{BROWSER_PATH}/{DATA['browser']['entry']}"
+LEFT_OVER = {f"{REGISTRIES[name]}/{repo_tag}": digest
+             for name, tags in DATA["left_from_before_the_switch"].items() if not name.startswith("_")
+             for repo_tag, digest in tags.items()}
 PER_OS = (("alpine", "valkey"), ("amazonlinux2023", "valkey"), ("rhel9", "redis"), ("amazonlinux2023", "redis"))
 
 OS_RELEASE = {
@@ -146,6 +149,14 @@ class FakeDocker:
     def multi(self, server: str, base_os: str, **kwargs) -> str:
         return self.index(*(self.image(server, base_os, platform, **kwargs) for platform in PLATFORMS))
 
+    def keep(self, ref: str, digest: str) -> None:
+        """Publish a single-platform image under `ref` with a given digest, as
+        the tags left from before the switch are."""
+        like = self.images[self.image("redis", "debian-trixie", "linux/amd64", salt=digest)]
+        self.images[digest] = like
+        self.manifests[digest] = {"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": digest}
+        self.tags[ref] = digest
+
     def push(self, digest: str, repo: str, *tags: str, registries=(GHCR, HUB)) -> None:
         for registry in registries:
             for tag in tags:
@@ -163,7 +174,8 @@ class FakeDocker:
     def config(self, ref: str) -> dict:
         digest = ref.split("@", 1)[1]
         if digest in self.config_errors:
-            raise judge.InspectError("toomanyrequests")
+            # The worst case: the tag is there, but its config lookup says "not found".
+            raise judge.NotFound(f"{ref}: not found")
         return self.images[digest]["config"]
 
     def has_image(self, ref: str) -> bool:
@@ -618,17 +630,50 @@ class EdgeTest(unittest.TestCase):
         self.assertEqual(failed(checker), [(f"{HUB}/falkordb:edge-rs-valkey-x64", "must not exist")])
 
     def test_only_the_arch_tags_left_from_before_the_switch_are_allowed(self):
+        self.assertEqual(len(LEFT_OVER), 8)
         docker = FakeDocker()
         valkey = publish_edge(docker)
+        for ref, digest in LEFT_OVER.items():
+            docker.keep(ref, digest)
+        checker = check(docker, "edge")
+        self.assertEqual(failed(checker), [])
+        unchanged = [r for r in checker.results if r.check == "left from before the switch"]
+        self.assertEqual(sorted(r.subject for r in unchanged), sorted(LEFT_OVER))
+        self.assertTrue(all(r.detail == "unchanged" for r in unchanged))
         amd64 = docker.manifests[valkey["falkordb"]]["manifests"][0]["digest"]
-        for ref in DATA["left_from_before_the_switch"]:
-            docker.tags[ref] = amd64
-        self.assertEqual(failed(check(docker, "edge")), [])
         docker.push(amd64, "falkordb", "edge-x64", registries=(GHCR,))
         docker.push(amd64, "falkordb-server", "edge-rs-arm64v8", registries=(HUB,))
         self.assertEqual(sorted(failed(check(docker, "edge"))),
                          [(f"{HUB}/falkordb-server:edge-rs-arm64v8", "must not exist"),
                           (f"{GHCR}/falkordb:edge-x64", "must not exist")])
+
+    def test_a_left_over_arch_tag_that_was_pushed_again_fails(self):
+        docker = FakeDocker()
+        valkey = publish_edge(docker)
+        for ref, digest in LEFT_OVER.items():
+            docker.keep(ref, digest)
+        amd64 = docker.manifests[valkey["falkordb"]]["manifests"][0]["digest"]
+        docker.push(amd64, "falkordb", "edge-x64", registries=(HUB,))
+        checker = check(docker, "edge")
+        self.assertEqual(failed(checker), [(f"{HUB}/falkordb:edge-x64", "left from before the switch")])
+        self.assertIn(f"now {amd64}, was {LEFT_OVER[f'{HUB}/falkordb:edge-x64']}", checker.failures[0].detail)
+
+    def test_left_over_arch_tags_may_be_deleted_but_must_be_inspectable(self):
+        docker = FakeDocker()
+        publish_edge(docker)
+        checker = check(docker, "edge")
+        self.assertEqual(failed(checker), [])
+        deleted = [r for r in checker.results if r.check == "left from before the switch"]
+        self.assertEqual(sorted(r.subject for r in deleted), sorted(LEFT_OVER))
+        self.assertTrue(all(r.detail == "deleted" for r in deleted))
+        docker.errors[f"{HUB}/falkordb:latest-x64"] = judge.InspectError("toomanyrequests")
+        self.assertEqual(failed(check(docker, "edge")),
+                         [(f"{HUB}/falkordb:latest-x64", "left from before the switch")])
+
+    def test_left_over_tags_are_not_checked_on_ci_runs(self):
+        plan = judge.make_plan(DATA, judge.parse_target("rc-pr-1", DATA), servers=set(DATA["servers"]),
+                               registries=REGISTRIES)
+        self.assertEqual(plan.frozen, {})
 
     def test_todays_shape_reports_every_failure(self):
         """edge and edge-rs hold Redis on Debian with no labels, and there are
@@ -710,6 +755,32 @@ class ReleaseTest(unittest.TestCase):
         checker = check(docker, "6.1.0", latest="6.1.0")
         self.assertEqual(sorted(failed(checker)), [(f"{HUB}/falkordb-server:6.1.0-rhel9-x64", "must not exist"),
                                                    (f"{HUB}/falkordb-server:6.1.0-x64", "must not exist")])
+
+    def test_a_release_that_pushes_a_left_over_latest_arch_tag_again_fails(self):
+        docker = FakeDocker()
+        publish_release(docker, "6.1.0", latest=True)
+        for ref, digest in LEFT_OVER.items():
+            docker.keep(ref, digest)
+        amd64 = docker.manifests[docker.tags[f"{HUB}/falkordb-server:6.1.0-valkey"]]["manifests"][0]["digest"]
+        docker.push(amd64, "falkordb-server", "latest-x64", registries=(HUB,))
+        for target, latest in (("6.1.0", "6.1.0"), ("latest", "6.1.0"), ("6.0.9", "6.1.0")):
+            with self.subTest(target=target):
+                checker = check(docker, target, latest=latest)
+                self.assertIn((f"{HUB}/falkordb-server:latest-x64", "left from before the switch"),
+                              failed(checker))
+
+    def test_an_existing_tag_with_an_unreadable_config_is_not_absent(self):
+        """A single-platform tag whose config can't be read exists all the same."""
+        docker = FakeDocker()
+        publish_release(docker, "6.1.0", latest=True)
+        single = docker.image("redis", "rhel9", "linux/amd64")
+        docker.push(single, "falkordb-server", "6.1.0-rhel9-x64", registries=(HUB,))
+        docker.config_errors.add(single)
+        checker = check(docker, "6.1.0", latest="6.1.0")
+        self.assertIn((f"{HUB}/falkordb-server:6.1.0-rhel9-x64", "must not exist"), failed(checker))
+        loaded = checker._load_manifest(f"{HUB}/falkordb-server:6.1.0-rhel9-x64")
+        self.assertIsInstance(loaded, judge.InspectError)
+        self.assertNotIsInstance(loaded, judge.NotFound)
 
     def test_a_newest_release_that_did_not_move_latest_fails(self):
         docker = FakeDocker()
