@@ -120,7 +120,10 @@
         { "tag": "rc-{ci_key}-valkey", "repos": ["falkordb", "falkordb-server"], "server": "valkey", "os": "ubuntu-26.04", "per_arch": "rc-{ci_key}-valkey-{arch}" },
         { "tag": "rc-{ci_key}-redis", "repos": ["falkordb", "falkordb-server"], "server": "redis", "os": "debian-trixie", "per_arch": "rc-{ci_key}-redis-{arch}" }
       ],
-      "aliases": []
+      "aliases": [],
+      "queue_aliases": [
+        { "tag": "rc-{ci_key}", "of": "rc-{ci_key}-redis" }
+      ]
     }
   }
 }

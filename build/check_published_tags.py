@@ -352,8 +352,18 @@ def make_plan(
 
     if target.kind == "ci":
         channel = channels["ci"]
-        plan = plan_for(f"CI images rc-{target.ci_key}", channel,
-                        _channel_specs(channel, servers, ci_key=target.ci_key or ""))
+        specs = _channel_specs(channel, servers, ci_key=target.ci_key or "")
+        # A merge-queue run also publishes the bare rc-mg-<sha> as an alias of
+        # its Redis manifest, the name rust-push.yml and release-tag.yml
+        # promote from (_ci-pipeline.yml, image-redis).
+        if any((target.ci_key or "").startswith(p) for p in channel.get("every_server_key_prefixes", [])):
+            by_tag = {spec.tag: spec for spec in specs}
+            for alias in channel.get("queue_aliases", []):
+                of = by_tag.get(_fill(alias["of"], ci_key=target.ci_key or ""))
+                if of is not None:
+                    specs.append(TagSpec(tag=_fill(alias["tag"], ci_key=target.ci_key or ""),
+                                         repos=of.repos, expect=of.expect, alias_of=of.tag))
+        plan = plan_for(f"CI images rc-{target.ci_key}", channel, specs)
         # A merge-queue key is new for every entry; a pull-request key is
         # reused and may hold names from before the switch (see the data).
         fresh = any((target.ci_key or "").startswith(p) for p in channel.get("fresh_key_prefixes", []))

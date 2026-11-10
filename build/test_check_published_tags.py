@@ -235,7 +235,11 @@ def publish_ci(docker: FakeDocker, key: str, servers=("valkey", "redis")) -> Non
         for server in servers:
             images = [docker.image(server, OS_OF[server], platform, browser=browser_for(repo))
                       for platform in PLATFORMS]
-            docker.push(docker.index(*images), repo, f"rc-{key}-{server}", registries=(GHCR,))
+            index = docker.index(*images)
+            docker.push(index, repo, f"rc-{key}-{server}", registries=(GHCR,))
+            if key.startswith("mg-") and server == "redis":
+                # the merge queue also tags the Redis manifest rc-mg-<sha>
+                docker.push(index, repo, f"rc-{key}", registries=(GHCR,))
             for platform, image in zip(PLATFORMS, images, strict=True):
                 docker.push(image, repo, f"rc-{key}-{server}-{SUFFIX[platform]}", registries=(GHCR,))
 
@@ -1123,16 +1127,31 @@ class CiTest(unittest.TestCase):
         checker = check(docker, "rc-pr-1")
         self.assertEqual(failed(checker), [(f"{HUB}/falkordb:rc-pr-1-valkey-x64", "must not exist")])
 
-    def test_unsuffixed_names_of_a_merge_queue_key_fail(self):
+    def test_the_bare_merge_queue_tag_is_the_redis_manifest(self):
         docker = FakeDocker()
         publish_ci(docker, "mg-abc")
-        index = docker.tags[f"{GHCR}/falkordb:rc-mg-abc-valkey"]
-        docker.push(index, "falkordb", "rc-mg-abc", registries=(GHCR,))
+        self.assertEqual(failed(check(docker, "rc-mg-abc")), [])
+
+    def test_the_bare_merge_queue_tag_must_not_point_at_valkey(self):
+        docker = FakeDocker()
+        publish_ci(docker, "mg-abc")
+        docker.push(docker.tags[f"{GHCR}/falkordb:rc-mg-abc-valkey"], "falkordb", "rc-mg-abc",
+                    registries=(GHCR,))
+        self.assertTrue(failed(check(docker, "rc-mg-abc")))
+
+    def test_the_bare_merge_queue_tag_is_not_a_pull_request_name(self):
+        docker = FakeDocker()
+        publish_ci(docker, "pr-1")
+        docker.push(docker.tags[f"{GHCR}/falkordb:rc-pr-1-redis"], "falkordb", "rc-pr-1", registries=(GHCR,))
+        self.assertEqual(failed(check(docker, "rc-pr-1")), [])  # a reused PR key may keep it
+
+    def test_unsuffixed_arch_names_of_a_merge_queue_key_fail(self):
+        docker = FakeDocker()
+        publish_ci(docker, "mg-abc")
         docker.push(docker.tags[f"{GHCR}/falkordb:rc-mg-abc-valkey-x64"], "falkordb", "rc-mg-abc-x64",
                     registries=(GHCR,))
-        self.assertEqual(sorted(failed(check(docker, "rc-mg-abc"))),
-                         [(f"{GHCR}/falkordb:rc-mg-abc", "must not exist"),
-                          (f"{GHCR}/falkordb:rc-mg-abc-x64", "must not exist")])
+        self.assertEqual(failed(check(docker, "rc-mg-abc")),
+                         [(f"{GHCR}/falkordb:rc-mg-abc-x64", "must not exist")])
 
     def test_unsuffixed_names_of_a_merge_queue_key_on_docker_hub_fail(self):
         docker = FakeDocker()
