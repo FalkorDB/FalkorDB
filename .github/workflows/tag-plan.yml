@@ -53,7 +53,7 @@ jobs:
             section "release-tag.yml: prerelease 6.1.0-rc.1" release --version 6.1.0-rc.1 --sha "$SHA" --releases "$RUNNER_TEMP/releases.jsonl"
             section "release-tag.yml: per-OS images, 6.1.0" per-os --version 6.1.0
             section "release-tag.yml: per-OS images, 6.1.0-rc.1" per-os --version 6.1.0-rc.1
-            section "release-image.yml: rebuild of 6.1.0, mark_latest" rebuild --tag 6.1.0 --sha "$SHA" --latest --releases "$RUNNER_TEMP/releases.jsonl"
+            section "release-image.yml: rebuild of 6.1.0, mark_latest" rebuild --tag 6.1.0 --sha "$SHA" --run-id "$GITHUB_RUN_ID" --latest --releases "$RUNNER_TEMP/releases.jsonl"
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Runs the real --execute path, as rust-push.yml and release-tag.yml would,
