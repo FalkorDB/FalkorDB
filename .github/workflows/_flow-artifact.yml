@@ -7,8 +7,8 @@
 # startup failure, not a skipped job.
 #
 # No service containers and no registry read: the caller built the engine and
-# uploaded it, RLTest spawns the server (`server`, from the toolchain image)
-# locally with --loadmodule, and coverage profiles land straight in the
+# uploaded it, RLTest spawns `<server>-server` (redis-server or valkey-server, from the
+# toolchain image) locally with --loadmodule, and coverage profiles land straight in the
 # workspace. That is what lets a fork — and a
 # stacked pull request — run the flow suite at all.
 

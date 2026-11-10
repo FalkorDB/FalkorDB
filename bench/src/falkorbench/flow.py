@@ -1,8 +1,9 @@
 """Per-flow-test-file measurement: server instructions/cycles/peak memory.
 
 Runs each flow test file through ./flow.sh (RLTest, --parallelism 1) against a
-given module. RLTest spawns transient redis-servers, and macOS `wait4` rusage
-does not fold grandchildren, so a background thread polls every redis-server pid
+given module. RLTest spawns transient servers (redis-server, or valkey-server with
+FALKORDB_SERVER=valkey), and macOS `wait4` rusage does not fold grandchildren,
+so a background thread polls every redis-server / valkey-server pid
 that appears during the run and keeps its last-seen counters; each row is the
 SUM over the servers that file spawned. Teardown work after the final poll
 (~25 ms) is lost, which is fine for comparisons.
