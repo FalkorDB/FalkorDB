@@ -318,3 +318,13 @@ jobs:
           retention-days: 1
           # The tarball's layers are already gzip-compressed.
           compression-level: 0
+
+      # continue-on-error hides an unpublished cell's failure outside pull
+      # requests, so say so in the run summary instead of staying green and silent.
+      - name: Flag unpublished-cell failure
+        if: failure() && !matrix.publish && github.event_name != 'pull_request'
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          echo "::warning title=${SUFFIX} failed::unpublished cell ${SUFFIX} failed; not blocking because it is not published."
+          echo "### :warning: ${SUFFIX} failed (not published, so not blocking)" >> "$GITHUB_STEP_SUMMARY"

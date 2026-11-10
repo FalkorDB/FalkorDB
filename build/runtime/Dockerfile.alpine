@@ -184,7 +184,7 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 RUN apk upgrade --no-cache && \
     apk add --no-cache \
       libstdc++ libgcc libssl3 libcrypto3 ca-certificates openssl bash findutils setpriv && \
-    delgroup ping && \
+    { delgroup ping 2>/dev/null || true; } && \
     addgroup -S -g 999 falkordb && adduser -S -D -H -u 999 -G falkordb falkordb
 
 COPY ./build/runtime/gosu-setpriv.sh /usr/local/bin/gosu
