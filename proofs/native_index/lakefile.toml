@@ -1,0 +1,15 @@
+name = "falkor-native-index"
+defaultTargets = ["FalkorNativeIndex"]
+
+[[lean_lib]]
+name = "FalkorNativeIndex"
+
+# cow_btree's entry encoding and sorted-list lemmas are imported, not copied.
+[[require]]
+name = "falkor-cow-btree"
+path = "../cow_btree"
+
+# proofs/core's `roundNat`/`bitlen` (IEEE round-to-nearest-even) are imported, not copied.
+[[require]]
+name = "falkor-core"
+path = "../core"

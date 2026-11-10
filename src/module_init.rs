@@ -128,8 +128,7 @@ unsafe extern "C" fn on_fork_child() {
     let registry = crate::graph_core::GRAPH_REGISTRY.lock();
     for graph_arc in registry.values() {
         let tg: &crate::graph_core::ThreadedGraph = unsafe { &*graph_arc.data_ptr() };
-        let g = tg.graph.read();
-        let graph = g.borrow();
+        let graph = tg.graph.read();
         if !graph.is_synced() {
             std::process::abort();
         }
@@ -570,8 +569,7 @@ fn enforce_pending_constraints_after_promotion() {
             let pending: Vec<Settling> = {
                 let guard = tg.read();
                 let g = guard.graph.read();
-                g.borrow()
-                    .constraints()
+                g.constraints()
                     .iter()
                     .filter(|c| c.status == ConstraintStatus::UnderConstruction)
                     .map(|c| Settling {

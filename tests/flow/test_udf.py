@@ -1061,6 +1061,27 @@ class testUDF():
         self.env.assertEqual(res["attributes"]["id"], "edge_custom_id")
         self.env.assertEqual(res["attributes"]["role"], "dev")
 
+    def test_deleted_entities_seen_as_runtime_sees_them(self):
+        # Regression for #3454: a node deleted earlier in the same query must
+        # look the same to a UDF as it does to labels(n) / n.name, both when
+        # passed directly and as an edge endpoint (e.source).
+        script = """
+        function inspect_node(n) { return [n.labels, n.attributes.name]; }
+        function inspect_src(e) { return [e.source.labels, e.source.attributes.name]; }
+        falkor.register('inspect_node', inspect_node);
+        falkor.register('inspect_src', inspect_src);
+        """
+        self.db.udf_load("deleted", script, True)
+
+        self.graph.query("CREATE (:P {name: 'A'})-[:R]->(:Q {name: 'B'})")
+
+        q = """MATCH (n:P)-[r:R]->()
+               DETACH DELETE n
+               RETURN labels(n), n.name, deleted.inspect_node(n), deleted.inspect_src(r)"""
+        res = self.graph.query(q)
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.result_set, [[['P'], 'A', [['P'], 'A'], [['P'], 'A']]])
+
     def test_load_invalid_invocations(self):
         """
         Test invalid invocations of GRAPH.UDF LOAD:
@@ -1856,6 +1877,72 @@ class test_udf_javascript():
                                          = localdatetime('2020-01-02T03:04:05'),
                                          rt.id(date('2020-01-02')) = date('2020-01-02')""").result_set
         self.env.assertEqual(res, [[True, True]])
+
+    def test_qualified_name_collisions(self):
+        """
+        As in C, two libraries may not claim the same qualified name (compared
+        ignoring case), and calls are case-sensitive.
+        """
+
+        self.db.udf_load("Coll", "falkor.register('f', function() { return 1; });")
+        self.db.udf_load("a", "falkor.register('b.c', function() { return 1; });")
+
+        # `coll.f` collides with `Coll.f`
+        try:
+            self.db.udf_load("coll", "falkor.register('f', function() { return 2; });")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("'coll.f' already registered", str(e))
+        self.env.assertEqual(self.graph.query("RETURN Coll.f()").result_set, [[1]])
+
+        # library `a.b` registering `c` collides with `a`'s `b.c`
+        try:
+            self.db.udf_load("a.b", "falkor.register('c', function() { return 2; });")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("function 'a.b.c' already registered", str(e))
+        self.env.assertEqual(self.graph.query("RETURN a.b.c()").result_set, [[1]])
+
+        # replacing a library with its own names is fine
+        self.db.udf_load("Coll", "falkor.register('f', function() { return 3; });", replace=True)
+        self.env.assertEqual(self.graph.query("RETURN Coll.f()").result_set, [[3]])
+
+        # function names are case-sensitive
+        self.db.udf_load("cased", """falkor.register('f', function() { return 1; });
+                                     falkor.register('F', function() { return 2; });""")
+        res = self.graph.query("RETURN cased.f(), cased.F()").result_set
+        self.env.assertEqual(res, [[1, 2]])
+        try:
+            self.graph.query("RETURN CASED.f()")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Unknown function", str(e))
+
+    def test_get_neighbors_self_loop_once(self):
+        """
+        getNeighbors({returnType: 'edges'}) and graph.traverse report a
+        self-loop once, in every direction.
+        """
+
+        script = """
+        falkor.register('e', function(x, d) {
+            return x.getNeighbors({direction: d, returnType: 'edges'}).map(function(y) { return y.id; });
+        });
+        falkor.register('t', function(x, d) {
+            return graph.traverse([x], {direction: d, returnType: 'edges'})[0].map(function(y) { return y.id; });
+        });
+        """
+        self.db.udf_load("loop", script)
+        self.graph.query("""CREATE (a:A {id:0})-[:R {k:'ab'}]->(b:A {id:1})-[:R {k:'bc'}]->(c:A {id:2}),
+                                   (a)-[:R {k:'aa'}]->(a), (c)-[:S {k:'ca'}]->(a), (a)-[:R {k:'ab2'}]->(b)""")
+        rid = dict(self.graph.query("MATCH ()-[r]->() RETURN r.k, ID(r)").result_set)
+
+        expected = {'outgoing': ['ab', 'aa', 'ab2'], 'incoming': ['aa', 'ca'], 'both': ['ab', 'aa', 'ca', 'ab2']}
+        for d, keys in expected.items():
+            ids = sorted(rid[k] for k in keys)
+            res = self.graph.query(f"MATCH (n {{id: 0}}) RETURN loop.e(n, '{d}'), loop.t(n, '{d}')").result_set
+            self.env.assertEqual(sorted(res[0][0]), ids)
+            self.env.assertEqual(sorted(res[0][1]), ids)
 
     def test_deeply_nested_result_is_an_error(self):
         """

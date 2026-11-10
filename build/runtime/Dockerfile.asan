@@ -96,7 +96,23 @@ RUN set -eux; \
       cargo build --target "$RT"; \
     mkdir -p /out && cp "target/$RT/debug/libfalkordb.so" /out/falkordb.so
 
-# Stage 3 — runtime. debian:trixie-slim because the asan redis-server
+# Stage 3 -- symbolizer staging. Resolves what llvm-symbolizer really links
+# (NEEDED libLLVM soname via readelf, real file via ldd + readlink -f) and copies
+# those regular files into /opt/symbolizer/{bin,lib}, so the runtime stage's
+# single COPY is independent of symlinks, multiarch dirs and the libLLVM minor
+# version. Its own stage (not the end of `builder`) so it stays cheap and cached.
+FROM $BUILD_IMAGE AS symbolizer
+RUN set -eux; \
+    sym=/usr/lib/llvm-23/bin/llvm-symbolizer; \
+    soname=$(readelf -d "$sym" | sed -n 's/.*NEEDED.*\[\(libLLVM[^]]*\)\].*/\1/p'); \
+    test -n "$soname"; \
+    real=$(readlink -f "$(ldd "$sym" | awk -v s="$soname" '$1 == s {print $3}')"); \
+    test -f "$real"; \
+    mkdir -p /opt/symbolizer/bin /opt/symbolizer/lib; \
+    cp "$sym" /opt/symbolizer/bin/; \
+    cp "$real" "/opt/symbolizer/lib/$soname"
+
+# Stage 4 — runtime. debian:trixie-slim because the asan redis-server
 # (built in stage 1 against the toolchain image's glibc) needs GLIBC_2.38
 # and GLIBCXX_3.4.32 — bookworm-slim's glibc 2.36 can't satisfy these and
 # the binary fails to load with "version not found" errors. trixie-slim
@@ -145,14 +161,20 @@ RUN apt-get update && \
 # which pulls llvm-23-dev -> llvm-23 (the package that ships the symbolizer
 # and llvm-objcopy-23, already used by the builder stage above).
 #
-# The binary's RUNPATH is $ORIGIN/../lib, so keeping the /usr/lib/llvm-23
-# bin/lib layout makes it self-locating: no LD_LIBRARY_PATH, no ldconfig, and
-# no arch-specific multiarch path to get wrong. 101 KB of binary, and the
-# 143 MB libLLVM it links -- which the old `llvm-<major>` install pulled in anyway,
-# on top of ~90 MB of unused llvm tools and the clang/lldb/lld/clangd that
-# llvm.sh drags in by default and the purge above never removed.
-COPY --from=builder /usr/lib/llvm-23/lib/libLLVM.so.23.1 /usr/lib/llvm-23/lib/
-COPY --from=builder /usr/lib/llvm-23/bin/llvm-symbolizer /usr/lib/llvm-23/bin/
+# It is staged by the `symbolizer` stage below instead of COPYing fixed paths,
+# because the toolchain image's layout is not stable: libLLVM.so.23.1 under
+# /usr/lib/llvm-23/lib is a symlink into /usr/lib/<multiarch>/, the minor version
+# moves with apt.llvm.org (23.1.4 -> 23.1.5), and the 23.1.5 symbolizer is
+# linked WITHOUT the $ORIGIN/../lib RUNPATH that 23.1.4 had (PR #3626's toolchain
+# image: "libLLVM.so.23.1: cannot open shared object file"). So we no longer rely
+# on the RUNPATH: the staged lib dir is registered with ld.so.conf.d + ldconfig,
+# which is what every loader path (including ASAN's own spawn of the
+# symbolizer) goes through. 101 KB of binary, and the 143 MB libLLVM it links --
+# which the old `llvm-<major>` install pulled in anyway, on top of ~90 MB of
+# unused llvm tools and the clang/lldb/lld/clangd that llvm.sh drags in by
+# default and the purge above never removed.
+COPY --from=symbolizer /opt/symbolizer/ /usr/lib/llvm-23/
+RUN echo /usr/lib/llvm-23/lib > /etc/ld.so.conf.d/llvm-symbolizer.conf && ldconfig
 # Fail the build loudly if the closure above ever goes stale -- otherwise a
 # missing .so degrades ASAN output to raw addresses only at test time.
 RUN /usr/lib/llvm-23/bin/llvm-symbolizer --version

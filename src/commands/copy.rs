@@ -74,8 +74,7 @@ pub fn graph_copy(
 
     // Read-lock the source graph for the duration of the copy.
     let tg = src_graph.read();
-    let g = tg.graph.read();
-    let graph = g.borrow();
+    let graph = tg.graph.read();
 
     // Create pipe.
     let mut pipe_fds = [0i32; 2];
@@ -111,7 +110,6 @@ pub fn graph_copy(
 
     // Drop locks before blocking on pipe read (child has its own CoW copy).
     drop(graph);
-    drop(g);
     drop(tg);
 
     let result = serializers::decoder::pipe_load_graph(read_fd, cache_size, graph_name);
@@ -149,7 +147,7 @@ pub fn graph_copy(
     // Wrap the decoded graph and set on dest key.
     let mvcc = MvccGraph::from_graph(new_graph);
     let graph_arc = mvcc.read();
-    graph_arc.borrow().set_indexer_graph(graph_arc.clone());
+    graph_arc.set_indexer_graph(graph_arc.clone());
     let tg = ThreadedGraph::from_mvcc(mvcc);
     let boxed = Arc::new(RwLock::new(tg));
 

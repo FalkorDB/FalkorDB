@@ -220,6 +220,10 @@ pub struct Parser<'a> {
     /// with everything else that decides whether the attempt can succeed.
     /// See [`Parser::parse_list_literal_or_comprehension`].
     not_pattern_comprehension: HashSet<PatternComprehensionAttempt>,
+    /// Set while a `CYPHER` parameter value is parsed as an expression: a sign run
+    /// is then limited to what the grammar took before runs parsed (`+`, `-` or
+    /// `+-`), at every nesting level, since the parser folds a run to its parity.
+    legacy_signs: bool,
 }
 
 /// Where and in what context [`Parser::parse_list_literal_or_comprehension`]
@@ -283,6 +287,7 @@ impl<'a> Parser<'a> {
             max_child_height: 0,
             forbidden_pattern_comprehension: None,
             not_pattern_comprehension: HashSet::new(),
+            legacy_signs: false,
         }
     }
 
@@ -437,7 +442,12 @@ impl<'a> Parser<'a> {
             return Ok(value);
         }
         self.restore_state(state);
-        evaluate_param(&self.parse_expr(false)?.root())
+        // `parse_expr` folds a run of signs to its parity, so `---1` would come out
+        // accepted: a parameter keeps the sign grammar it had before runs parsed.
+        self.legacy_signs = true;
+        let expr = self.parse_expr(false);
+        self.legacy_signs = false;
+        evaluate_param(&expr?.root())
     }
 
     /// Reads a literal: `null`, a boolean, a number, a string, a list, a map,
@@ -1369,6 +1379,34 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Adds `relationship` to `query_graph`, rejecting an alias the pattern
+    /// already holds. Reusing an alias across relationship patterns is never
+    /// a back-reference: MATCH cannot bind it to two patterns, and
+    /// CREATE/MERGE would declare it twice. Every path shape (plain, named,
+    /// `allShortestPaths`, pattern comprehension) goes through here, so none
+    /// can drop the repeat on the floor.
+    fn add_pattern_relationship(
+        query_graph: &mut QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
+        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Arc<String>>>,
+        clause: &Keyword,
+    ) -> Result<(), String> {
+        let alias = relationship.alias.clone();
+        if query_graph.add_relationship(relationship) {
+            return Ok(());
+        }
+        Err(match clause {
+            Keyword::Match => {
+                format!(
+                    "Cannot use the same relationship variable '{alias}' for multiple patterns."
+                )
+            }
+            Keyword::Merge => {
+                format!("The bound variable '{alias}' can't be redeclared in a MERGE clause")
+            }
+            _ => format!("The bound variable '{alias}' can't be redeclared in a CREATE clause"),
+        })
+    }
+
     fn parse_pattern(
         &mut self,
         clause: &Keyword,
@@ -1413,6 +1451,9 @@ impl<'a> Parser<'a> {
                             if !matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
                                 break;
                             }
+                            // `<-` is lost once from/to are swapped when both
+                            // ends share one alias (`(a)<-[*]-(a)`); note it here.
+                            let is_incoming = self.lexer.current()? == Token::LessThan;
                             let (relationship, right) =
                                 self.parse_relationship_pattern(prev_node, clause)?;
 
@@ -1448,7 +1489,7 @@ impl<'a> Parser<'a> {
                                     relationship.max_hops,
                                 );
                                 new_rel.all_shortest_paths = if !relationship.bidirectional
-                                    && relationship.from.alias != left_alias
+                                    && (relationship.from.alias != left_alias || is_incoming)
                                 {
                                     AllShortestPaths::Reversed
                                 } else {
@@ -1458,26 +1499,20 @@ impl<'a> Parser<'a> {
 
                                 vars.push(relationship.alias.clone());
                                 vars.push(right.alias.clone());
-                                if !query_graph.add_relationship(relationship.clone())
-                                    && clause == &Keyword::Match
-                                {
-                                    return Err(format!(
-                                        "Cannot use the same relationship variable '{}' for multiple patterns.",
-                                        relationship.alias.as_str()
-                                    ));
-                                }
+                                Self::add_pattern_relationship(
+                                    &mut query_graph,
+                                    relationship,
+                                    clause,
+                                )?;
                             } else {
                                 // Fixed-length prefix/suffix relationship
                                 vars.push(relationship.alias.clone());
                                 vars.push(right.alias.clone());
-                                if !query_graph.add_relationship(relationship.clone())
-                                    && clause == &Keyword::Match
-                                {
-                                    return Err(format!(
-                                        "Cannot use the same relationship variable '{}' for multiple patterns.",
-                                        relationship.alias.as_str()
-                                    ));
-                                }
+                                Self::add_pattern_relationship(
+                                    &mut query_graph,
+                                    relationship,
+                                    clause,
+                                )?;
                             }
                             Self::add_pattern_node(
                                 &mut query_graph,
@@ -1517,14 +1552,7 @@ impl<'a> Parser<'a> {
                         vars.push(relationship.alias.clone());
                         vars.push(right.alias.clone());
                         left = right.clone();
-                        if !query_graph.add_relationship(relationship.clone())
-                            && clause == &Keyword::Match
-                        {
-                            return Err(format!(
-                                "Cannot use the same relationship variable '{}' for multiple patterns.",
-                                relationship.alias.as_str()
-                            ));
-                        }
+                        Self::add_pattern_relationship(&mut query_graph, relationship, clause)?;
                         Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &right, clause);
                     } else {
                         query_graph.add_path(Arc::new(QueryPath::new(ident, vars)));
@@ -1538,20 +1566,7 @@ impl<'a> Parser<'a> {
                 while let Token::Dash | Token::LessThan = self.lexer.current()? {
                     let (relationship, right) = self.parse_relationship_pattern(left, clause)?;
                     left = right.clone();
-                    if !query_graph.add_relationship(relationship.clone()) {
-                        if clause == &Keyword::Match {
-                            return Err(format!(
-                                "Cannot use the same relationship variable '{}' for multiple patterns.",
-                                relationship.alias.as_str()
-                            ));
-                        }
-                        if clause == &Keyword::Create {
-                            return Err(format!(
-                                "The bound variable '{}' can't be redeclared in a CREATE clause",
-                                relationship.alias.as_str()
-                            ));
-                        }
-                    }
+                    Self::add_pattern_relationship(&mut query_graph, relationship, clause)?;
                     Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &right, clause);
                 }
             }
@@ -1786,18 +1801,11 @@ impl<'a> Parser<'a> {
             let _alias = self.try_parse_ident();
 
             // Relationship types
-            let mut types = Vec::new();
-            if optional_match_token!(self.lexer, Colon) {
-                loop {
-                    types.push(self.parse_ident()?);
-                    let pipe = optional_match_token!(self.lexer, Pipe);
-                    let colon = optional_match_token!(self.lexer, Colon);
-                    if pipe || colon {
-                        continue;
-                    }
-                    break;
-                }
-            }
+            let types = if optional_match_token!(self.lexer, Colon) {
+                self.parse_relationship_types()?
+            } else {
+                vec![]
+            };
 
             // Variable length * and range
             let (min, max) = if optional_match_token!(self.lexer, Star) {
@@ -2228,21 +2236,43 @@ impl<'a> Parser<'a> {
                     }
                     stack.push((current + 1, None, 0));
                 } else if current == 9 {
-                    // unary add or subtract
-                    optional_match_token!(self.lexer, Plus);
-                    let is_negate = optional_match_token!(self.lexer, Dash);
-
-                    // Handle integer overflow with negation
-                    if is_negate && let Err(err) = self.lexer.current() {
-                        return Err(err.replace("Integer overflow '", "Integer overflow '-"));
+                    // unary add or subtract, any run of them: `- -5` is 5
+                    let mut negate_count = 0;
+                    let mut plus_count = 0;
+                    loop {
+                        match self.lexer.current() {
+                            Ok(token @ (Token::Plus | Token::Dash))
+                                if self.legacy_signs
+                                    && (negate_count > 0
+                                        || plus_count > 0 && matches!(token, Token::Plus)) =>
+                            {
+                                return Err(self
+                                    .lexer
+                                    .format_error(&format!("Invalid input {token:?}")));
+                            }
+                            Ok(Token::Plus) => plus_count += 1,
+                            Ok(Token::Dash) => negate_count += 1,
+                            // Handle integer overflow with negation
+                            Err(err) if negate_count > 0 => {
+                                return Err(
+                                    err.replace("Integer overflow '", "Integer overflow '-")
+                                );
+                            }
+                            _ => break,
+                        }
+                        self.lexer.next();
                     }
 
-                    let (res, height) = if is_negate {
-                        (Some(tree!(ExprIR::Negate)), 1)
+                    // Negate type-checks its operand, so `- -x` is not `x`.
+                    // A longer run still folds, keeping its parity, as NOT's
+                    // does: to one Negate, or to two the operand is placed under.
+                    if negate_count == 0 {
+                        stack.push((current, None, 0));
                     } else {
-                        (None, 0)
-                    };
-                    stack.push((current, res, height));
+                        for _ in 0..(2 - negate_count % 2) {
+                            stack.push((current, Some(tree!(ExprIR::Negate)), 1));
+                        }
+                    }
                     stack.push((current + 1, None, 0));
                 } else {
                     // primary expression
@@ -2855,9 +2885,10 @@ impl<'a> Parser<'a> {
             if let Some(var) = self.try_parse_ident()
                 && optional_match_token!(self.lexer, Equal)
                 && self.lexer.current()? == Token::LParen
-                && let Ok(result) =
+                && let Ok((result, repeated)) =
                     self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
             {
+                repeated.map_or(Ok(()), Err)?;
                 self.reject_forbidden_pattern_comprehension()?;
                 self.reject_aggregate(&result)?;
                 return Ok((result, false));
@@ -2866,8 +2897,10 @@ impl<'a> Parser<'a> {
 
             // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
             if self.lexer.current()? == Token::LParen {
-                if let Ok(result) = self.parse_pattern_comprehension(None, allow_pattern_predicate)
+                if let Ok((result, repeated)) =
+                    self.parse_pattern_comprehension(None, allow_pattern_predicate)
                 {
+                    repeated.map_or(Ok(()), Err)?;
                     self.reject_forbidden_pattern_comprehension()?;
                     self.reject_aggregate(&result)?;
                     return Ok((result, false));
@@ -2959,7 +2992,7 @@ impl<'a> Parser<'a> {
         &mut self,
         path_var: Option<Arc<String>>,
         allow_pattern_predicate: bool,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    ) -> Result<(DynTree<ExprIR<Arc<String>>>, Option<String>), String> {
         let first_node = self.parse_node_pattern()?;
 
         // Must have at least one relationship
@@ -2970,11 +3003,17 @@ impl<'a> Parser<'a> {
         let mut graph = QueryGraph::default();
         graph.add_node(first_node.clone());
 
+        // A repeated relationship variable is only reported once the whole
+        // comprehension has parsed: the caller tries this speculatively and
+        // would otherwise swallow the error and fall back to a list literal.
+        let mut repeated = None;
         let mut left = first_node;
         while matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
             let (rel, right) = self.parse_relationship_pattern(left, &Keyword::Match)?;
             graph.add_node(right.clone());
-            graph.add_relationship(rel);
+            if let Err(e) = Self::add_pattern_relationship(&mut graph, rel, &Keyword::Match) {
+                repeated.get_or_insert(e);
+            }
             left = right;
         }
 
@@ -2994,10 +3033,13 @@ impl<'a> Parser<'a> {
         let result_expr = self.parse_expr(allow_pattern_predicate)?;
         match_token!(self.lexer, RBrace);
 
-        Ok(tree!(
-            ExprIR::PatternComprehension(Box::new(graph)),
-            condition,
-            result_expr
+        Ok((
+            tree!(
+                ExprIR::PatternComprehension(Box::new(graph)),
+                condition,
+                result_expr
+            ),
+            repeated,
         ))
     }
 
@@ -3041,6 +3083,18 @@ impl<'a> Parser<'a> {
         Ok(Arc::new(QueryNode::new(alias, labels, Arc::new(attrs))))
     }
 
+    /// The type alternatives after a relationship's `:`: `A|B`, with the
+    /// legacy `A|:B` spelling. `A:B` is not one of them: an edge has exactly
+    /// one type, so a second `:` is left for the caller to reject.
+    fn parse_relationship_types(&mut self) -> Result<Vec<Arc<String>>, String> {
+        let mut types = vec![self.parse_ident()?];
+        while optional_match_token!(self.lexer, Pipe) {
+            optional_match_token!(self.lexer, Colon);
+            types.push(self.parse_ident()?);
+        }
+        Ok(types)
+    }
+
     #[allow(clippy::too_many_lines)]
     fn parse_relationship_pattern(
         &mut self,
@@ -3066,15 +3120,7 @@ impl<'a> Parser<'a> {
             };
             let mut types = HashSet::new();
             if optional_match_token!(self.lexer, Colon) {
-                loop {
-                    types.insert(self.parse_ident()?);
-                    let pipe = optional_match_token!(self.lexer, Pipe);
-                    let colon = optional_match_token!(self.lexer, Colon);
-                    if pipe || colon {
-                        continue;
-                    }
-                    break;
-                }
+                types.extend(self.parse_relationship_types()?);
             }
             let var_len = if optional_match_token!(self.lexer, Star) {
                 let start = if let Token::Integer(i) = self.lexer.current()? {
@@ -3324,17 +3370,8 @@ impl<'a> Parser<'a> {
         set_items: &mut Vec<SetItem<Arc<String>, Arc<String>>>,
     ) -> Result<(), String> {
         loop {
-            let (mut expr, recurse) = self.parse_primary_expr(false)?;
-            if recurse {
-                self.reject_unparenthesized_target(&expr)?;
-                expr = self.parse_expr(false)?;
-                match_token!(self.lexer, RParen);
-            }
-            if self.lexer.current()? == Token::Dot {
-                while self.lexer.current()? == Token::Dot {
-                    self.lexer.next();
-                    expr = self.parse_property_lookup(expr)?;
-                }
+            let (expr, has_properties) = self.parse_update_target()?;
+            if has_properties {
                 match_token!(self.lexer, Equal);
                 let value = Arc::new(self.parse_expr(false)?);
                 set_items.push(SetItem::Attribute {
@@ -3374,6 +3411,37 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parses what a `SET` or `REMOVE` item updates: an expression followed
+    /// by an optional `.prop.prop...` chain, reporting whether a chain was
+    /// present.
+    ///
+    /// Each lookup wraps the tree before it, so the chain is charged against
+    /// [`Self::MAX_TREE_DEPTH`] step by step, as the postfix chain in
+    /// [`Self::parse_expr_inner`] is: otherwise `n.a.a.a...` builds a tree
+    /// the binder overflows its stack walking, quadratically slowly.
+    fn parse_update_target(&mut self) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
+        let ((mut expr, recurse), child_height) =
+            self.with_child_height(|s| s.parse_primary_expr(false))?;
+        let mut height = child_height + Self::PRIMARY_LEVELS;
+        if recurse {
+            self.reject_unparenthesized_target(&expr)?;
+            expr = self.parse_expr(false)?;
+            height = self.expr_height;
+            match_token!(self.lexer, RParen);
+            self.expect_property_after_paren()?;
+        }
+        // The target itself may already be too tall, with no lookup to charge.
+        self.check_depth(height)?;
+        let has_properties = self.lexer.current()? == Token::Dot;
+        while self.lexer.current()? == Token::Dot {
+            self.lexer.next();
+            expr = self.parse_property_lookup(expr)?;
+            height += 1;
+            self.check_depth(height)?;
+        }
+        Ok((expr, has_properties))
+    }
+
     /// A `SET`/`REMOVE` target that opens a nested expression may only open
     /// it with `(`: an open list literal would otherwise be dropped and its
     /// first element read as the target, so `SET [n).x = 5` set `n.x`.
@@ -3385,6 +3453,20 @@ impl<'a> Parser<'a> {
             Ok(())
         } else {
             Err(self.lexer.format_error("Invalid input '[': expected '('"))
+        }
+    }
+
+    /// A parenthesized `SET`/`REMOVE` target is only allowed as the subject
+    /// of a property lookup, `(n).x`: the grammar has no `(n) = {..}`,
+    /// `(n):L` or `(n.x) = 5`, and C rejects them.
+    fn expect_property_after_paren(&self) -> Result<(), String> {
+        if self.lexer.current()? == Token::Dot {
+            Ok(())
+        } else {
+            Err(self.lexer.format_error(&format!(
+                "Invalid input '{}': expected '.'",
+                self.lexer.current_str()
+            )))
         }
     }
 
@@ -3405,17 +3487,8 @@ impl<'a> Parser<'a> {
         remove_items: &mut Vec<QueryExpr<Arc<String>>>,
     ) -> Result<(), String> {
         loop {
-            let (mut expr, recurse) = self.parse_primary_expr(false)?;
-            if recurse {
-                self.reject_unparenthesized_target(&expr)?;
-                expr = self.parse_expr(false)?;
-                match_token!(self.lexer, RParen);
-            }
-            if self.lexer.current()? == Token::Dot {
-                while self.lexer.current()? == Token::Dot {
-                    self.lexer.next();
-                    expr = self.parse_property_lookup(expr)?;
-                }
+            let (mut expr, has_properties) = self.parse_update_target()?;
+            if has_properties {
                 remove_items.push(Arc::new(expr));
             } else if self.lexer.current()? == Token::Colon {
                 expr = tree!(
@@ -3494,7 +3567,9 @@ impl<'a> Parser<'a> {
                     ..
                 } => {
                     self.lexer.next();
-                    body.push(self.parse_foreach_clause()?);
+                    // A nested FOREACH recurses like `CALL {}` does, so it is
+                    // bounded the same way.
+                    body.push(self.nested(Self::parse_foreach_clause)?);
                 }
                 _ => break,
             }
@@ -3579,13 +3654,22 @@ mod tests {
         // Warm the allocator so the first parse is not charged for it.
         assert_eq!(parse(&small).unwrap(), 1);
 
-        let t = std::time::Instant::now();
-        parse(&small).unwrap();
-        let small_elapsed = t.elapsed();
-
-        let t = std::time::Instant::now();
-        parse(&large).unwrap();
-        let large_elapsed = t.elapsed();
+        // A single sample is at the mercy of a loaded CI runner (one run saw
+        // 6.5ms vs 183ms: a 28x ratio from a stall, not from the parser).
+        // Preemption only ever adds time, so the fastest of several runs is
+        // the best estimate of the real cost.
+        let fastest = |q: &str| {
+            (0..5)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    parse(q).unwrap();
+                    t.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        let small_elapsed = fastest(&small);
+        let large_elapsed = fastest(&large);
 
         // 8x the input. Linear lands near 8x, the quadratic bug near 64x; the
         // bound sits between the two with room for a noisy CI machine.
@@ -3661,6 +3745,23 @@ mod tests {
             (
                 "map projection",
                 format!("MATCH (a) RETURN {}a{{.k}}{}", "[".repeat(n), "]".repeat(n)),
+            ),
+            // Clauses that build expressions or recurse outside parse_expr.
+            (
+                "set property chain",
+                format!("MATCH (n) SET n{} = 1", ".a".repeat(n)),
+            ),
+            (
+                "remove property chain",
+                format!("MATCH (n) REMOVE n{}", ".a".repeat(n)),
+            ),
+            (
+                "foreach",
+                format!(
+                    "{}CREATE (){}",
+                    "FOREACH (x IN [1] | ".repeat(n),
+                    ")".repeat(n)
+                ),
             ),
         ];
         // The same nesting an expression can hide, wrapped in a clause.
@@ -3747,6 +3848,22 @@ mod tests {
                     "{name}: {n} levels were accepted as a tree {height} deep",
                 );
             }
+        }
+    }
+
+    // A SET/REMOVE target is charged for the primary expression wrapped
+    // around what it nests even when no `.prop` follows it, so one a level or
+    // two over the cap is refused as too deep rather than as a bad target.
+    #[test]
+    fn update_target_without_property_is_bounded() {
+        with_functions();
+        let target = |n: usize| format!("abs({}1{})", "(".repeat(n), "+1)".repeat(n));
+        // 126 levels still fit under the cap and are rejected as a target.
+        for clause in ["REMOVE", "SET"] {
+            let err = parse_fully(&format!("MATCH (x) {clause} {}", target(126))).unwrap_err();
+            assert!(!is_too_deep(&err), "{clause}: {err}");
+            let err = parse_fully(&format!("MATCH (x) {clause} {}", target(127))).unwrap_err();
+            assert!(is_too_deep(&err), "{clause}: 127 levels: {err}");
         }
     }
 
@@ -3939,6 +4056,27 @@ mod tests {
         }
     }
 
+    // Regression (#2309): a run of signs parsed only its first `+` and `-`, so
+    // `- -5` was "Invalid input Dash". It folds to one or two Negates by parity.
+    #[test]
+    fn chained_unary_signs_parse() {
+        with_functions();
+        for query in [
+            "RETURN - -5",
+            "RETURN --5",
+            "RETURN - - -5",
+            "RETURN -+5",
+            "RETURN +-+-5",
+            "RETURN --9223372036854775808",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "{query}");
+        }
+        let err = Parser::new("RETURN - -99999999999999999999")
+            .parse()
+            .expect_err("overflow");
+        assert!(err.contains("Integer overflow '-"), "{err}");
+    }
+
     // Negation of a non-number is Null, and i64::MIN negates to itself. Both
     // were `evaluate_param`'s behaviour and both are easy to lose.
     #[test]
@@ -3957,7 +4095,21 @@ mod tests {
         // Unnegated, those digits are i64::MAX + 1 and must still be refused.
         assert!(param_of("9223372036854775808").is_err());
         // A second `-` is not part of a literal, and never parsed before.
-        assert!(param_of("--1").is_err());
+        assert_eq!(format!("{:?}", param_of("+-1").unwrap()), "Int(-1)");
+        assert!(param_of("[+-1, -2, {a: -3}]").is_ok());
+        for value in [
+            "--1",
+            "---1",
+            "----1",
+            "--9223372036854775808",
+            "-+-1",
+            "++1",
+            "[--1]",
+            "{a: ---1}",
+            "[1, [-+1]]",
+        ] {
+            assert!(param_of(value).is_err(), "accepted parameter {value}");
+        }
     }
 
     // A value that is not a literal falls back to the expression path, so it
@@ -4120,6 +4272,86 @@ mod tests {
                 Parser::new(query).parse().is_ok(),
                 "failed to parse: {query}"
             );
+        }
+    }
+
+    // A relationship variable names one edge, so repeating it inside one
+    // pattern is an error in every path shape. Named paths, every MERGE shape
+    // and pattern comprehensions used to drop the repeat silently.
+    #[test]
+    fn repeated_relationship_variable_is_rejected() {
+        with_functions();
+        for (query, expected) in [
+            (
+                "CREATE ()-[r:R]->()-[r:R]->()",
+                "The bound variable 'r' can't be redeclared in a CREATE clause",
+            ),
+            (
+                "CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d) RETURN p, q",
+                "The bound variable 'r' can't be redeclared in a CREATE clause",
+            ),
+            (
+                "CREATE p=(a)-[r:R]->(b)-[r:R]->(c) RETURN p",
+                "The bound variable 'r' can't be redeclared in a CREATE clause",
+            ),
+            (
+                "MERGE (a)-[r:R]->(b)-[r:R]->(c)",
+                "The bound variable 'r' can't be redeclared in a MERGE clause",
+            ),
+            (
+                "MERGE p=(a)-[r:R]->(b)-[r:R]->(c) RETURN p",
+                "The bound variable 'r' can't be redeclared in a MERGE clause",
+            ),
+            (
+                "MATCH p=(a)-[r]->(b)-[r]->(c) RETURN p",
+                "Cannot use the same relationship variable 'r' for multiple patterns.",
+            ),
+            (
+                "RETURN [(a)-[r]->(b)-[r]->(c) | r]",
+                "Cannot use the same relationship variable 'r' for multiple patterns.",
+            ),
+            (
+                "MATCH (a) RETURN [p = (a)-[r]->()<-[r]-() | p]",
+                "Cannot use the same relationship variable 'r' for multiple patterns.",
+            ),
+        ] {
+            assert_eq!(
+                Parser::new(query).parse().err().as_deref(),
+                Some(expected),
+                "{query}"
+            );
+        }
+    }
+
+    // A parenthesized SET/REMOVE target only opens a property lookup, and
+    // an edge's type alternatives are joined by `|`, never by a bare `:`.
+    #[test]
+    fn paren_update_targets_and_colon_joined_types_are_rejected() {
+        with_functions();
+        for query in [
+            "MATCH (n) SET (n.x) = 5",
+            "MATCH (n) SET (n) = {a: 1}",
+            "MATCH (n) SET (n) += {a: 1}",
+            "MATCH (n) SET (n):L",
+            "MATCH (n) REMOVE (n):L",
+            "MATCH ()-[:A:B]->() RETURN 1",
+            "MATCH ()-[r:A:B]->() RETURN 1",
+            "MATCH ()-[:A|B:C]->() RETURN 1",
+            "MATCH (a), (b) RETURN shortestPath((a)-[:A:B*]->(b))",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        for query in [
+            "MATCH (n) SET (n).x = 5",
+            "MATCH (n) SET (n).x.y = 5",
+            "MATCH (n) REMOVE (n).x",
+            "MATCH (n) SET n = {a: 1}, n:L",
+            "MATCH ()-[:A]->() RETURN 1",
+            "MATCH ()-[:A|B]->() RETURN 1",
+            "MATCH ()-[:A|:B|C]->() RETURN 1",
+            "MATCH (a), (b) RETURN shortestPath((a)-[:A|:B*]->(b))",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
         }
     }
 }

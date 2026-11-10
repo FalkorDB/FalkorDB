@@ -1,0 +1,5 @@
+name = "falkor-binder"
+defaultTargets = ["FalkorBinder"]
+
+[[lean_lib]]
+name = "FalkorBinder"

@@ -27,6 +27,10 @@
 //!   "indices_sz_mb",                              <int> ]
 //! ```
 //!
+//! `indices_sz_mb` is RediSearch's own estimate of its indexes, as C reports it.
+//! A build with `index-falkordb` adds the native index's columns, which hold the
+//! Range fields there, so the reply is C's nine pairs on every build.
+//!
 //! The `total_graph_sz_mb` value is the sum of all other MB-rounded
 //! components, which avoids truncation discrepancies when clients verify
 //! the total against the individual parts.
@@ -75,7 +79,7 @@ fn memory_report(
     // lock mode that the GIL lock-order assertion reads (#726).
     let report = {
         let session = QuerySession::begin(graph);
-        session.with_graph(|tg| tg.graph.read().borrow().memory_usage_report(samples))
+        session.with_graph(|tg| tg.graph.read().memory_usage_report(samples))
     };
 
     // Convert each component to MB using integer division, then compute total

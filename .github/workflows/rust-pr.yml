@@ -278,6 +278,38 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cargo run --locked --manifest-path native-deps/Cargo.toml -- lock --check
+  native-index:
+    # The native index (`index-falkordb`) is off by default, so `lint` and
+    # `coverage` never compile it: its unit tests and its lints run only here.
+    # The flow suites under the flag run in ci-pipeline's `nextgen-index-ledger`.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container: ${{ needs.check-files.outputs.toolchain_tag }}
+    needs:
+      - check-files
+      - docker
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: "native-index"
+      - name: Lint
+        # Both packages by name: with none selected, clippy lints only the root
+        # package's targets, and graph's tests are where most of the index's
+        # code under the flag lives.
+        run: |
+          CXX=clang++-23 cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb
+      - name: Unit tests
+        # The doctests link GraphBLAS's bundled zstd and the zstd-sys crate together, and
+        # both define the zstd error helpers: the same link flag `coverage` and `fuzz` pass.
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--allow-multiple-definition"
+          RUSTDOCFLAGS: "-C link-arg=-Wl,--allow-multiple-definition"
+        run: cargo test -p graph --features index-falkordb
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -439,6 +471,7 @@ jobs:
       - flow-test-matrix
       - ci-pipeline
       - lint
+      - native-index
       - coverage
       - fuzz
     steps:

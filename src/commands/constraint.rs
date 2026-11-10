@@ -47,10 +47,10 @@ fn is_valid_identifier(name: &str) -> bool {
 ///
 /// **After** the create succeeds, not before: `create_constraint` refuses a
 /// duplicate and a UNIQUE without its supporting index, and neither should leave
-/// a name interned. Rollback would discard it either way — everything here runs
-/// on the private version `MvccGraph::write` handed out, and `rollback` never
-/// publishes it — but not interning on a refused create keeps that independent
-/// of the MVCC model rather than reliant on it.
+/// a name interned. Dropping the fork would discard it either way — everything
+/// here runs on the private version `MvccGraph::fork` handed out, and a refused
+/// create never commits it — but not interning on a refused create keeps that
+/// independent of the MVCC model rather than reliant on it.
 ///
 /// **Before** the announcement, and after the baseline: the effect diffs against
 /// the baseline to decide what to announce.
@@ -209,14 +209,9 @@ pub fn settle_constraint(
             Ok(()) => break,
             // Transient: the window closes on its own. Nothing is held here —
             // `attempt_settle` has dropped its session, and with it the GIL and
-            // the write lock — so sleeping is safe.
-            // Both are transient windows that close on their own: a pause or
-            // failover ends, and the writer holding the MVCC slot commits.
-            Err(
-                reason @ (WriteAbort::ReplicaTrafficPaused
-                | WriteAbort::WriteSlotBusy
-                | WriteAbort::Stale),
-            ) => {
+            // the write lock — so sleeping is safe. A pause or failover ends, and
+            // a stale version is rebuilt on top of the commit that overtook it.
+            Err(reason @ (WriteAbort::ReplicaTrafficPaused | WriteAbort::Stale)) => {
                 if Instant::now() >= deadline {
                     for c in announce {
                         redis_module::logging::log_warning(format!(
@@ -304,12 +299,7 @@ fn attempt_settle(
             originated_here: false,
         },
     );
-    let results = session.with_graph(|tg| {
-        tg.graph
-            .read()
-            .borrow()
-            .compute_pending_constraint_results()
-    });
+    let results = session.with_graph(|tg| tg.graph.read().compute_pending_constraint_results());
     if results.is_empty() {
         return Ok(());
     }
@@ -317,36 +307,22 @@ fn attempt_settle(
     // Escalation takes the global lock before the write lock (#726) and keeps the
     // commit Arc-swap under it, so it cannot race a BGSAVE fork (#452) — the same
     // shape as bulk_insert's Phase 2.
-    session.upgrade_to_write()?;
-    // The closure reports whether it settled. `upgrade_to_write` takes the
-    // per-graph lock but not `MvccGraph`'s write slot, so another writer can
-    // still hold it here — and returning silently made `attempt_settle` answer
-    // `Ok(())`, which breaks the retry loop as if the constraint had settled and
-    // leaves it UNDER CONSTRUCTION with nothing logged and nothing to re-drive
-    // it. It is transient, so it belongs in the retry arm.
-    // `commit` validates the version before publishing it. The closure answers
-    // a bool, so a refusal is carried out here rather than returned: it is
-    // permanent, and retrying it until the deadline would report the constraint
-    // as merely stuck.
-    let mut invalid: Option<String> = None;
-    let settled = session
-        .with_graph_mut(|tg| {
-            let Some(g_arc) = tg.graph.write() else {
-                return false;
-            };
-            g_arc
-                .borrow_mut()
-                .apply_constraint_validation_results(results);
-            let settled = Arc::clone(&g_arc);
-            if let Err(e) = tg.graph.commit(g_arc) {
-                invalid = Some(e.to_string());
-                return false;
-            }
+    session.upgrade_to_write(None)?;
+    // A refusal from `commit` comes back as the `WriteAbort` it maps to, not
+    // flattened: the retry loop treats a stale version (retry) and an invalid
+    // one (permanent) as opposites. Answering one bool for refusals once made
+    // a permanent engine fault retry for the full five-minute budget, and an
+    // early return that answered `Ok(())` once reported a constraint settled
+    // that was still UNDER CONSTRUCTION, with nothing to re-drive it.
+    session
+        .with_graph_mut(|tg| -> Result<(), WriteAbort> {
+            let mut fork = tg.graph.fork();
+            fork.apply_constraint_validation_results(results);
+            let g = tg.graph.commit(fork)?;
 
             if was_replicated {
-                return true;
+                return Ok(());
             }
-            let g = settled.borrow();
             for c in announce {
                 // The constraint may have been dropped while validation ran:
                 // `drop_constraint` has no UNDER CONSTRUCTION guard and
@@ -398,22 +374,9 @@ fn attempt_settle(
                     )),
                 }
             }
-            true
+            Ok(())
         })
-        .expect("writer mode after upgrade_to_write");
-    if settled {
-        Ok(())
-    } else if let Some(e) = invalid {
-        // Before the busy arm, and not merged into it: the closure answers one
-        // bool for two very different refusals, and the retry loop treats them
-        // as opposites. Dropping this on the floor made a permanent engine
-        // fault look like a busy write slot, so the loop retried the same
-        // arithmetic on the same graph for the full five-minute budget and then
-        // reported the constraint as merely stuck.
-        Err(WriteAbort::Invalid(e))
-    } else {
-        Err(WriteAbort::WriteSlotBusy)
-    }
+        .expect("writer mode after upgrade_to_write")
 }
 
 pub fn graph_constraint(
@@ -546,12 +509,8 @@ pub fn graph_constraint(
         g
     };
 
-    let mut tg = graph.write();
-    let Some(g_arc) = tg.graph.write() else {
-        return Err(redis_module::RedisError::String(
-            "ERR another write is in progress, retry the query".into(),
-        ));
-    };
+    let tg = graph.write();
+    let mut fork = tg.graph.fork();
 
     // Not for replication: nothing propagates `GRAPH.CONSTRAINT` any more, so
     // this can only be set while replaying an AOF written by a build that did.
@@ -566,14 +525,14 @@ pub fn graph_constraint(
     // as `ADD_SCHEMA`/`ADD_ATTRIBUTE` ahead of the record whose ids depend on
     // it. Taking the baseline *after* registering would hide exactly the
     // entries that need announcing.
-    let baseline = SchemaBaseline::of(&g_arc.borrow());
+    let baseline = SchemaBaseline::of(&fork);
 
     let result: Result<bool, String> = {
-        let mut g = g_arc.borrow_mut();
+        let g = &mut fork;
         if is_create {
             match g.create_constraint(ct, entity_type, &label, &properties) {
                 Ok(needs_background_validation) => {
-                    register_constraint_schema(&mut g, entity_type, &label, &properties);
+                    register_constraint_schema(g, entity_type, &label, &properties);
                     Ok(needs_background_validation)
                 }
                 Err(e) => Err(e),
@@ -586,12 +545,7 @@ pub fn graph_constraint(
 
     match result {
         Ok(needs_background_validation) => {
-            // The effect is built from the graph this write mutated, so keep a
-            // handle before `commit` consumes the one it swaps in.
-            let mutated = Arc::clone(&g_arc);
-            tg.graph
-                .commit(g_arc)
-                .map_err(|e| WriteAbort::Invalid(e.to_string()))?;
+            let mutated = tg.graph.commit(fork).map_err(WriteAbort::from)?;
 
             // Spawn background validation for large datasets on a dedicated
             // OS thread (not the query threadpool). Validation can take
@@ -657,7 +611,7 @@ pub fn graph_constraint(
                 } else if needs_background_validation {
                     Some(Some(ConstraintStatus::UnderConstruction))
                 } else {
-                    find_status(&mutated.borrow(), ct, entity_type, &label, &properties).map(Some)
+                    find_status(&mutated, ct, entity_type, &label, &properties).map(Some)
                 };
                 let Some(status) = status else {
                     redis_module::logging::log_warning(format!(
@@ -675,7 +629,7 @@ pub fn graph_constraint(
                 };
                 let mut buf = EffectsBuffer::new();
                 match buf.build_constraint(
-                    &mutated.borrow(),
+                    &mutated,
                     is_create,
                     &AnnouncedConstraint {
                         ct,
@@ -713,12 +667,8 @@ pub fn graph_constraint(
             // The second half of a v2-era AOF's verbatim pair: the constraint
             // was created by the first copy, so this one has nothing to do.
             // Erroring here would fail the load of an otherwise valid file.
-            tg.graph.rollback();
             Ok(RedisValue::SimpleStringStatic("OK"))
         }
-        Err(e) => {
-            tg.graph.rollback();
-            Err(redis_module::RedisError::String(e))
-        }
+        Err(e) => Err(redis_module::RedisError::String(e)),
     }
 }

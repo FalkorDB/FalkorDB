@@ -59,30 +59,28 @@ pub fn graph_effect(
         g
     };
 
-    let mut tg = graph.write();
-    let Some(g_arc) = tg.graph.write() else {
-        return Err(RedisError::String(
-            "ERR another write is in progress, retry the query".to_string(),
-        ));
-    };
+    let tg = graph.write();
+    let mut fork = tg.graph.fork();
 
-    let result = {
-        let mut g = g_arc.borrow_mut();
-        // Dispatched on the version the buffer declares, not on the one this
-        // build writes — during a rolling upgrade the primary is routinely on a
-        // different build. A version with no impl at all is divergence rather
-        // than a compatibility case; `apply` rejects it and the guard below
-        // forces a resync.
-        EffectsPayload::apply(&mut g, buf).map_err(|e| e.to_string())
-    };
+    // Dispatched on the version the buffer declares, not on the one this
+    // build writes — during a rolling upgrade the primary is routinely on a
+    // different build. A version with no impl at all is divergence rather
+    // than a compatibility case; `apply` rejects it and the guard below
+    // forces a resync.
+    let result = EffectsPayload::apply(&mut fork, buf).map_err(|e| e.to_string());
 
     // Folded into the same result rather than handled in the `Ok` arm. `commit`
-    // validates before publishing, and a version it refuses is discarded — so
+    // validates before publishing, and a version it refuses is dropped — so
     // the master's write is missing here exactly as it would be if `apply` had
     // rejected the buffer, and it needs the same forced resync. Answered
     // separately, it replied with an error the master will not act on and left
     // this replica serving a graph that had silently stopped following.
-    let result = result.and_then(|()| tg.graph.commit(g_arc).map_err(|e| e.to_string()));
+    let result = result.and_then(|()| {
+        tg.graph
+            .commit(fork)
+            .map(|_published| ())
+            .map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(()) => {
@@ -90,12 +88,11 @@ pub fn graph_effect(
             Ok(RedisValue::SimpleStringStatic("OK"))
         }
         Err(e) => {
-            // Rolled back, so this graph is exactly as it was — but the write
-            // the master already made is now missing here, and every later
-            // effect lands on a graph that has drifted. Redis will not break
-            // the link over an error reply, so without this the replica serves
-            // wrong data until someone notices.
-            tg.graph.rollback();
+            // The version was dropped unpublished, so this graph is exactly as
+            // it was — but the write the master already made is now missing
+            // here, and every later effect lands on a graph that has drifted.
+            // Redis will not break the link over an error reply, so without
+            // this the replica serves wrong data until someone notices.
             // `on_failure` decides for itself whether this was replayed; a
             // client-sent payload returns the error below and nothing more.
             divergence_guard::on_failure(ctx, &key_str.to_string(), "GRAPH.EFFECT", &e, Some(buf));

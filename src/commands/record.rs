@@ -32,7 +32,7 @@ use crate::{
 use graph::{
     graph::graph::Plan,
     planner::IR,
-    runtime::runtime::{GetVariables, Runtime},
+    runtime::runtime::{GetVariables, QueryGraph, Runtime},
     threadpool::spawn,
 };
 use orx_tree::{Bfs, Collection, NodeRef};
@@ -62,7 +62,7 @@ fn record_mut(
     let Plan {
         plan, parameters, ..
     } = session
-        .with_graph(|tg| tg.graph.read().borrow().get_plan(query))
+        .with_graph(|tg| tg.graph.read().get_plan(query))
         .map_err(RedisError::String)?;
     let is_write = plan.iter().any(|n| {
         matches!(
@@ -71,22 +71,16 @@ fn record_mut(
         )
     });
     // Writes build a private version instead of mutating the published one in
-    // place (the MVCC write slot is claimed when the query escalates); reads run
-    // on the committed snapshot.
-    let g = if is_write {
-        let Ok(g) = session.write_version() else {
-            return Err(RedisError::String(
-                "ERR another write is in progress, retry the query".to_string(),
-            ));
-        };
-        g
+    // place (checked against the published graph when the query escalates);
+    // reads run on the committed snapshot.
+    let g: QueryGraph = if is_write {
+        session.write_version().into()
     } else {
-        session.with_graph(|tg| tg.graph.read())
+        session.with_graph(|tg| tg.graph.read()).into()
     };
     let runtime = Runtime::new(
         g,
         parameters,
-        is_write,
         plan.clone(),
         true,
         (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),

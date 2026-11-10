@@ -21,10 +21,14 @@ prejit_harvest = []
 # Native FalkorDB numeric index (the in-repo replacement for RediSearch). Gates
 # `index::falkordb` — the encoder, the cow_btree-backed index, and its runtime
 # wiring. Off by default: the shipped build is byte-for-byte unchanged until this
-# is switched on. The native index does not yet replace RediSearch: a numeric
-# Equal/Range predicate is served natively and everything else — strings, geo,
-# composite predicates, missing columns — still falls through to RediSearch.
-index-falkordb = []
+# is switched on. Under it the native index is the only Range index: a numeric
+# Equal, Range or IN list, or an OR of numeric equalities and IN lists on one
+# attribute, is served natively, and a predicate it cannot serve raises an error
+# instead of falling through to RediSearch. tests/flow/nextgen_index_xfail.txt
+# lists the flow tests that fail on one. Fulltext and Vector indexes are still
+# RediSearch's. The CCH shortest-path index (`index::falkordb::cch`) is part of
+# it, and its nested-dissection ordering is the only user of `feral-metis` below.
+index-falkordb = ["dep:feral-metis"]
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -32,10 +36,12 @@ index-falkordb = []
 [dependencies]
 ahash = "0.8"
 arc-swap = "1"
-atomic_refcell = "0.1.14"
 chrono = "0.4.45"
 crossfire = "3.1.19"
 csv = "1.4.0"
+# Nested-dissection ordering for the CCH index: MIT, from FalkorDB's fork of feral,
+# branch falkordb/i64, with 64-bit indices (FALKORDB.md there lists every change).
+feral-metis = { git = "https://github.com/FalkorDB/feral", rev = "f1271891d4719ff070e2eaf4a7641a7052604bcd", optional = true }
 itertools = "0.15.0"
 json-escape = "0.3.1"
 lru = "0.19.0"
@@ -66,3 +72,7 @@ stacker = "0.1.25"
 
 [build-dependencies]
 native-deps = { path = "../native-deps" }
+
+[dev-dependencies]
+# Test scaffolding in effects/v3 only.
+atomic_refcell = "0.1.14"

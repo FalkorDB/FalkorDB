@@ -564,3 +564,34 @@ class testMSF(FlowTestsBase):
                     [[9], []], 
                     [[10], []]]
         self.env.assertEqual(result.result_set, expected)
+    def test_msf_on_sparse_node_ids(self):
+        """MSF gives the same forest when deleted ids leave the active nodes
+        sparse in the id space (#3444).
+
+        Three live nodes whose ids are 0, 1 and about 5000: the compact id
+        mapping must come from the active nodes, not from a table spanning the
+        id range. The parallel edges between 1 and 2 exercise the multi-edge
+        pass, the part of MSF that maps original ids to compact ids."""
+        self.graph.query("""
+            CREATE (:N {id: 1}), (:N {id: 2})
+        """)
+        self.graph.query("UNWIND range(1, 5000) AS i CREATE (:Filler)")
+        self.graph.query("CREATE (:N {id: 3})")
+        self.graph.query("MATCH (f:Filler) DELETE f")
+        self.graph.query("""
+            MATCH (a:N {id: 1}), (b:N {id: 2}), (c:N {id: 3})
+            CREATE (a)-[:R {w: 5}]->(b),
+                   (a)-[:R {w: 2}]->(b),
+                   (a)-[:R {w: 9}]->(b),
+                   (b)-[:R {w: 4}]->(c),
+                   (b)-[:R {w: 1}]->(c)
+        """)
+
+        result = self.graph.query("""
+            CALL algo.MSF({weightAttribute: 'w'}) YIELD nodes, edges
+            RETURN [n IN nodes | n.id] AS ids, [e IN edges | e.w] AS ws
+        """)
+        self.env.assertEqual(len(result.result_set), 1)
+        ids, weights = result.result_set[0]
+        self.env.assertEqual(sorted(ids), [1, 2, 3])
+        self.env.assertEqual(sorted(weights), [1, 2])

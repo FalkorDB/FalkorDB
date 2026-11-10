@@ -437,3 +437,16 @@ class testBetweenness(FlowTestsBase):
         # Different seeds should give different results
         self.env.assertNotEqual(centrality_scores7['B'], centrality_scores8['B'])
 
+
+    def test_unknown_label_or_relationship_type(self):
+        """An unknown nodeLabels / relationshipTypes entry is an error (as in C)"""
+
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+        for config, msg in [("{nodeLabels: ['Nope']}", "betweenness configuration, unknown label Nope"),
+                            ("{nodeLabels: ['A', 'Nope']}", "betweenness configuration, unknown label Nope"),
+                            ("{relationshipTypes: ['Nope']}", "betweenness configuration, unknown relationship-type Nope")]:
+            try:
+                self.graph.query(f"CALL algo.betweenness({config}) YIELD node RETURN node")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertEqual(str(e), msg)

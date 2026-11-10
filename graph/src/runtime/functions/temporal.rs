@@ -430,6 +430,11 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
         }
     }
 
+    // A trailing number with no unit (`P5`, `P1Y5`, `P-`) is not a duration.
+    if !num_buf.is_empty() {
+        return Err(format!("Duration component has no unit: {num_buf}"));
+    }
+
     // Parse time part
     if let Some(tp) = time_part {
         num_buf.clear();
@@ -451,6 +456,9 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
                     _ => return Err(format!("Unknown duration time component: {ch}")),
                 }
             }
+        }
+        if !num_buf.is_empty() {
+            return Err(format!("Duration component has no unit: {num_buf}"));
         }
     }
 
@@ -514,6 +522,25 @@ pub fn construct_duration_secs(
     anchor_ts
         .checked_add(extra)
         .ok_or_else(|| "Duration overflow when combining components".to_string())
+        .and_then(check_date_range)
+}
+
+/// Largest civil year a date or duration may reach. `civil_from_days` returns
+/// an `i32` year, so past this the year would silently wrap; the margin keeps
+/// the `year - 1970` and month-carry arithmetic around it inside `i32` too.
+pub const MAX_DATE_YEAR: i32 = i32::MAX - 2000;
+
+/// The day counts of the first and last supported days, taken from the
+/// Gregorian calendar itself so leap days are counted and the (asymmetric)
+/// epoch-relative range is exact.
+const MIN_DATE_DAYS: i64 = crate::runtime::value::days_from_civil(-MAX_DATE_YEAR, 1, 1);
+const MAX_DATE_DAYS: i64 = crate::runtime::value::days_from_civil(MAX_DATE_YEAR, 12, 31);
+
+pub fn check_date_range(ts: i64) -> Result<i64, String> {
+    if !(MIN_DATE_DAYS..=MAX_DATE_DAYS).contains(&ts.div_euclid(86400)) {
+        return Err("Date out of range".to_string());
+    }
+    Ok(ts)
 }
 
 /// Decompose a duration (seconds from epoch) into (years, months, `remaining_seconds`).

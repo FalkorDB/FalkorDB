@@ -280,13 +280,11 @@ impl<'a> AllShortestPathsOp<'a> {
             move || {
                 while let Some((node, edges)) = stack.pop() {
                     if node == src && !edges.is_empty() {
+                        // Built dst→src; flip to src→dst — cycles too, or a
+                        // directed cycle is walked against its arrows. A
+                        // reversed pattern keeps the dst→src order.
                         let mut path = edges;
-                        if !is_cycle {
-                            // Built dst→src; reverse in place to src→dst. (Cycles
-                            // keep the DFS predecessor-chain order.)
-                            path.reverse();
-                        }
-                        if reverse {
+                        if !reverse {
                             path.reverse();
                         }
                         return Some(Value::List(Arc::new(path)));

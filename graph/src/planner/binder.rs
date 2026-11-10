@@ -894,8 +894,13 @@ impl Binder {
                         }
                         _ => (false, HashMap::new()),
                     };
+                    // The branch's scopes must not share ids with the live
+                    // outer ones: a branch variable would read the outer
+                    // variable's record slot. Start them where a plain CALL
+                    // body starts, above the outer scopes, which stay empty
+                    // placeholders here.
                     let mut binder = Self {
-                        env_stack: vec![HashMap::new()],
+                        env_stack: vec![HashMap::new(); self.env_stack.len() + 1],
                         use_parent_scope: false,
                         parent_to_child_scope: HashMap::new(),
                         copy_from_parent: HashMap::new(),
@@ -2338,19 +2343,19 @@ impl Binder {
             // that used to reach the runtime.
             ExprIR::Case { .. } => true,
 
-            // Non-boolean: literals, unary arithmetic, subscript, list comprehension
+            // Non-boolean: literals, unary arithmetic, slice, list comprehension
             ExprIR::List
             | ExprIR::Map
             | ExprIR::MapProjection
             | ExprIR::Negate
             | ExprIR::Length
-            | ExprIR::GetElement
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
             | ExprIR::PatternComprehension(_)
             | ExprIR::NestedPlan(_) => false,
 
-            // Boolean literals, comparisons, predicates, and runtime-typed nodes
+            // Boolean literals, comparisons, predicates, and runtime-typed
+            // nodes (a subscript returns whatever the element is)
             ExprIR::Eq
             | ExprIR::Neq
             | ExprIR::Lt
@@ -2371,6 +2376,7 @@ impl Binder {
             | ExprIR::Variable(_)
             | ExprIR::Parameter(_)
             | ExprIR::Property(_)
+            | ExprIR::GetElement
             | ExprIR::ShortestPath(_)
             | ExprIR::Pattern(_) => true,
 

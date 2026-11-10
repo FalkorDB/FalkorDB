@@ -74,19 +74,21 @@ use std::{
 
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
-use atomic_refcell::AtomicRefCell;
 use lru::LruCache;
 use orx_tree::DynTree;
 use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
 use thiserror::Error;
 
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::falkordb_index::ScanFilter;
 #[cfg(all(test, feature = "index-falkordb"))]
 use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
+    cch::{CchError, CchIndex, CchIndexDef},
     falkordb_index::{BuildCursor, FalkorDbIndex},
-    graph_writes::{self, index_only_writes},
+    graph_writes,
 };
 use crate::index::index_docs::IndexDocs;
 use crate::{
@@ -113,6 +115,53 @@ use crate::{
     runtime::{orderset::OrderSet, value::Value, vec_distance},
     threadpool::spawn,
 };
+
+/// The index fields that still need feeding to RediSearch in this build.
+///
+/// Every path that fills RediSearch goes through it: the per-write commits
+/// (`commit_index_kind`, `commit_edge_index_locked`), the build after `CREATE INDEX`
+/// (`populate_index`) and the build after an RDB load (`Graph::populate_indexes_sync`).
+///
+/// Without `index-falkordb` this is the identity function: RediSearch owns every kind.
+///
+/// With it, the native index owns every **Range** column. The scan ops route Range predicates to
+/// it, and unique constraints ask it for duplicates. Their calls to `get_indexed_nodes` /
+/// `get_indexed_edges`, RediSearch's only Range readers, are compiled only without the flag, so
+/// nothing in this build reads Range data from RediSearch. The two functions themselves are still
+/// compiled in: a caller added under the flag would read a RediSearch copy that writes no longer
+/// reach.
+///
+/// Dropping it is not just about the wasted write. A second copy of the data is what would let a
+/// native-index maintenance bug pass every test: the flag exists so that a gap *surfaces*, and a
+/// silent shadow copy in RediSearch is exactly the thing that stops it surfacing. It also makes
+/// the write path measurable — while both engines were fed, any write benchmark was timing the
+/// double-write rather than the native index.
+///
+/// Fulltext and Vector fields are untouched. They have no native equivalent, and their procedures
+/// still query RediSearch, so they are fed exactly as before. This is per **field**, not per
+/// index, so a label carrying both a Range and a Fulltext index keeps the Fulltext half.
+#[cfg(not(feature = "index-falkordb"))]
+fn redisearch_fields(
+    fields: HashMap<Arc<String>, Vec<Arc<Field>>>
+) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
+    fields
+}
+
+#[cfg(feature = "index-falkordb")]
+fn redisearch_fields(
+    fields: HashMap<Arc<String>, Vec<Arc<Field>>>
+) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
+    fields
+        .into_iter()
+        .filter_map(|(key, fields)| {
+            let kept: Vec<Arc<Field>> = fields
+                .into_iter()
+                .filter(|f| !matches!(f.ty, IndexType::Range))
+                .collect();
+            (!kept.is_empty()).then_some((key, kept))
+        })
+        .collect()
+}
 
 /// Result of query parsing and planning.
 ///
@@ -241,6 +290,8 @@ pub struct MemoryUsageReport {
     pub unlabeled_node_attr_sz: usize,
     pub edge_block_storage_sz: usize,
     pub edge_attr_by_type: Vec<(Arc<String>, usize)>,
+    /// RediSearch's own estimate of its indexes, and on a build with `index-falkordb` the native
+    /// index's columns as well.
     pub indices_sz: usize,
 }
 
@@ -517,11 +568,19 @@ fn populate_index(
     let Some(snapshot) = indexer.acquire_population_snapshot(&label) else {
         return;
     };
+    let fields = redisearch_fields(snapshot.fields);
+    if fields.is_empty() {
+        // Every field is the native index's, so RediSearch has nothing to build. The ticket
+        // still has to go back: until it does the index reports UNDER CONSTRUCTION and the
+        // planner does not use it.
+        indexer.release_population_ticket(&snapshot.ticket);
+        return;
+    }
     populate_index_batch(
         kind,
         label,
         indexer,
-        snapshot.fields,
+        fields,
         0,
         BatchCursor::default(),
         snapshot.ticket,
@@ -608,7 +667,7 @@ fn populate_index_batch(
                 let edge_triples: Vec<(u64, u64, u64)>;
                 let scanned_count: usize;
                 {
-                    let g = graph.borrow();
+                    let g = &*graph;
                     match kind {
                         IndexKind::Node => {
                             ids = g
@@ -695,8 +754,7 @@ fn populate_index_batch(
                     IndexKind::Node => {
                         let last_id = ids.last().copied();
                         for id in ids {
-                            let g = graph.borrow();
-                            if let Some(doc) = build_doc(id, false, &g, &|| Document::new(id)) {
+                            if let Some(doc) = build_doc(id, false, &graph, &|| Document::new(id)) {
                                 batch.push(doc);
                             }
                         }
@@ -711,9 +769,8 @@ fn populate_index_batch(
                     IndexKind::Edge => {
                         let last_pos = edge_triples.last().map(|(s, d, e)| (*s, *d, *e));
                         for (src, dst, eid) in edge_triples {
-                            let g = graph.borrow();
                             if let Some(doc) =
-                                build_doc(eid, true, &g, &|| Document::new_edge(src, dst, eid))
+                                build_doc(eid, true, &graph, &|| Document::new_edge(src, dst, eid))
                             {
                                 batch.push(doc);
                             }
@@ -1073,6 +1130,17 @@ impl Graph {
         }
     }
 
+    /// A new version for an indexer batch: [`Self::new_version`], but at the same data version,
+    /// since a batch changes no data. The batch's index tells what it changed (its
+    /// `indexer_commits`).
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub fn new_build_version(&self) -> Self {
+        let mut version = self.new_version();
+        version.version = self.version;
+        version
+    }
+
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
@@ -1260,11 +1328,20 @@ impl Graph {
         edge_id: RelationshipId,
         type_name: &str,
     ) -> bool {
-        self.get_type_id(type_name).is_some_and(|type_id| {
-            self.relationship_type_matrix
-                .get(edge_id.0, type_id.0 as u64)
-                .is_some()
-        })
+        self.get_type_id(type_name)
+            .is_some_and(|type_id| self.edge_has_type_id(edge_id, type_id))
+    }
+
+    /// Check if an edge has a specific relationship type by id (no string lookup).
+    #[must_use]
+    pub fn edge_has_type_id(
+        &self,
+        edge_id: RelationshipId,
+        type_id: TypeId,
+    ) -> bool {
+        self.relationship_type_matrix
+            .get(edge_id.0, type_id.0 as u64)
+            .is_some()
     }
 
     /// Get-or-create a relationship type by name, returning its `TypeId`.
@@ -2315,12 +2392,15 @@ impl Graph {
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
         self.relationship_matrices
             .iter()
-            .flat_map(move |m| m.iter(id.0, id.0, false).chain(m.iter(id.0, id.0, true)))
-            .map(|(src, dest, id)| {
-                let src_node = NodeId(src);
-                let dest_node = NodeId(dest);
-                (src_node, dest_node, RelationshipId(id))
+            .flat_map(move |m| {
+                // A self-loop is on the diagonal of both halves; take it from
+                // the outgoing one only.
+                let incoming = m
+                    .iter(id.0, id.0, true)
+                    .filter(|&(src, dest, _)| src != dest);
+                m.iter(id.0, id.0, false).chain(incoming)
             })
+            .map(|(src, dest, id)| (NodeId(src), NodeId(dest), RelationshipId(id)))
     }
 
     /// The lowest of `nodes` that still has a relationship, in either direction.
@@ -2397,21 +2477,25 @@ impl Graph {
         types: &[Arc<String>],
         direction: EdgeDirection,
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
-        let matrices: Vec<&Tensor> = if types.is_empty() {
-            self.relationship_matrices.iter().collect()
-        } else {
-            types
-                .iter()
-                .filter_map(|t| self.get_relationship_matrix(t))
-                .collect()
-        };
+        // The all-types case walks the matrices in place (it runs once per
+        // visited node in graph.traverse, so it must not allocate); only a
+        // typed lookup gathers its matrices, and an empty `Vec` costs nothing.
+        let all_types = types
+            .is_empty()
+            .then(|| self.relationship_matrices.iter())
+            .into_iter()
+            .flatten();
+        let matrices: Vec<&Tensor> = types
+            .iter()
+            .filter_map(|t| self.get_relationship_matrix(t))
+            .collect();
         let (with_outgoing, with_incoming) = match direction {
             EdgeDirection::Outgoing => (true, false),
             EdgeDirection::Incoming => (false, true),
             EdgeDirection::Both => (true, true),
         };
-        matrices
-            .into_iter()
+        all_types
+            .chain(matrices)
             .flat_map(move |m| {
                 let outgoing = with_outgoing
                     .then(|| m.iter(id.0, id.0, false))
@@ -3680,12 +3764,19 @@ impl Graph {
 
     /// Synchronously populate all pending indexes.
     /// Used after RDB load when the graph is fully constructed.
+    ///
+    /// RediSearch gets only the fields [`redisearch_fields`] keeps; under `index-falkordb` the
+    /// native columns are built from every field.
     pub fn populate_indexes_sync(&mut self) {
         let node_snapshots = self.node_indexer.acquire_population_snapshots();
         for snapshot in node_snapshots {
             let label = snapshot.ticket.label().clone();
-            let attrs = snapshot.fields;
-            if let Some(lm) = self.get_label_matrix(&label) {
+            #[cfg(feature = "index-falkordb")]
+            let native_attrs = snapshot.fields.clone();
+            let attrs = redisearch_fields(snapshot.fields);
+            if !attrs.is_empty()
+                && let Some(lm) = self.get_label_matrix(&label)
+            {
                 // Pre-resolve attribute indices to avoid string lookups per node
                 let resolved_attrs: Vec<(u16, Vec<_>)> = attrs
                     .iter()
@@ -3722,7 +3813,7 @@ impl Graph {
             self.node_indexer
                 .release_population_ticket(&snapshot.ticket);
             #[cfg(feature = "index-falkordb")]
-            graph_writes::populate(self, EntityType::Node, &label, &attrs);
+            graph_writes::populate(self, EntityType::Node, &label, &native_attrs);
         }
 
         // Edge indexes: symmetric to the node path, but walk the
@@ -3735,8 +3826,12 @@ impl Graph {
         let edge_snapshots = self.edge_indexer.acquire_population_snapshots();
         for snapshot in edge_snapshots {
             let type_name = snapshot.ticket.label().clone();
-            let attrs = snapshot.fields;
-            if let Some(tensor) = self.get_relationship_matrix(&type_name) {
+            #[cfg(feature = "index-falkordb")]
+            let native_attrs = snapshot.fields.clone();
+            let attrs = redisearch_fields(snapshot.fields);
+            if !attrs.is_empty()
+                && let Some(tensor) = self.get_relationship_matrix(&type_name)
+            {
                 let mut batch = Vec::new();
                 for (src, dst, eid) in tensor.iter(0, u64::MAX, false) {
                     // Allocate the RSDoc only once a field is present — edges
@@ -3765,23 +3860,34 @@ impl Graph {
             self.edge_indexer
                 .release_population_ticket(&snapshot.ticket);
             #[cfg(feature = "index-falkordb")]
-            graph_writes::populate(self, EntityType::Relationship, &type_name, &attrs);
+            graph_writes::populate(self, EntityType::Relationship, &type_name, &native_attrs);
         }
     }
 
     /// The indexer serialization locks, cloned so a caller can take them **before**
-    /// borrowing the graph.
+    /// borrowing the graph, and hold both across several index writes — the index undo
+    /// path, which writes node and edge documents through the published version.
     ///
     /// That is the order `populate_index_batch` uses (indexer lock held across its
-    /// graph borrow), so anything that needs a *mutable* borrow of the same version —
-    /// the index undo path — must take these first or the two collide, which
-    /// `AtomicRefCell` reports by panicking.
+    /// graph borrow). Every borrow involved is immutable, since index writes take
+    /// `&self`, so the order is kept for uniformity rather than to avoid a collision.
     #[must_use]
     pub fn index_locks(&self) -> (Arc<Mutex<()>>, Arc<Mutex<()>>) {
         (
             self.node_indexer.write_lock(),
             self.edge_indexer.write_lock(),
         )
+    }
+
+    /// Where entity `id` sits in this version's build order ([`BuildCursor::from_id`]): a node by
+    /// its id, an edge by its endpoints. `None` for an edge this version does not have.
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) fn build_place(
+        &self,
+        entity: EntityType,
+        id: u64,
+    ) -> Option<BuildCursor> {
+        BuildCursor::from_id(entity, id, &self.edge_endpoints)
     }
 
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
@@ -3793,19 +3899,11 @@ impl Graph {
     ) {
         #[cfg(feature = "index-falkordb")]
         {
-            // A `Building` column asks where a written entity sits in build order: a node by its
-            // id, an edge by its endpoints, which an edge this unit deleted no longer has.
+            // A `Building` column asks where a written entity sits in build order.
             let endpoints = &self.edge_endpoints;
-            self.falkordb_index
-                .apply(&mut docs.native, |entity, id| match entity {
-                    EntityType::Node => Some(BuildCursor::Node(NodeId::from(id))),
-                    EntityType::Relationship => {
-                        endpoints.get(id).map(|(src, dst)| BuildCursor::Edge {
-                            src: NodeId::from(src),
-                            dst: NodeId::from(dst),
-                        })
-                    }
-                });
+            self.falkordb_index.apply(&mut docs.native, |entity, id| {
+                BuildCursor::from_id(entity, id, endpoints)
+            });
         }
         #[cfg(not(feature = "index-falkordb"))]
         let _ = docs;
@@ -3833,7 +3931,7 @@ impl Graph {
 
     /// Write node index documents to RediSearch, taking the node indexer lock.
     pub fn commit_index(
-        &mut self,
+        &self,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
@@ -3846,7 +3944,7 @@ impl Graph {
     /// lock from [`Self::index_locks`] — which it must, to have borrowed the graph in
     /// the sanctioned order.
     pub fn commit_index_locked(
-        &mut self,
+        &self,
         guard: &MutexGuard<'_, ()>,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
@@ -3856,7 +3954,7 @@ impl Graph {
 
     /// Write edge index documents to RediSearch, taking the edge indexer lock.
     pub fn commit_edge_index(
-        &mut self,
+        &self,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     ) {
@@ -3868,7 +3966,7 @@ impl Graph {
     /// As [`Self::commit_edge_index`], for a caller already holding the edge indexer
     /// lock from [`Self::index_locks`].
     pub fn commit_edge_index_locked(
-        &mut self,
+        &self,
         _guard: &MutexGuard<'_, ()>,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
@@ -3882,7 +3980,12 @@ impl Graph {
         let mut add_docs: HashMap<Arc<String>, Vec<Document>> = HashMap::new();
         for (type_id, ids) in index_add_edge_docs.drain() {
             let name = &self.relationship_types[type_id as usize];
-            let fields = indexer.get_fields(name);
+            let fields = redisearch_fields(indexer.get_fields(name));
+            if fields.is_empty() {
+                // Every field is served natively. Skipping here also skips the endpoint
+                // resolution below, which is a scan over the type's tensor.
+                continue;
+            }
 
             // Resolve `(src, dst)` only for the edge ids we actually
             // need, instead of materializing the full tensor every
@@ -3944,23 +4047,13 @@ impl Graph {
     /// matching attribute store, then hand them to the underlying
     /// `Indexer::commit`.
     fn commit_index_kind(
-        &mut self,
+        &self,
         _guard: &MutexGuard<'_, ()>,
         kind: IndexKind,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         if index_add_docs.is_empty() && remove_docs.is_empty() {
-            return;
-        }
-
-        // Measurement gate, not a shipping mode: see `index_only_writes`. The native index
-        // was already maintained by the write hooks, so only the redundant RediSearch feed is
-        // dropped.
-        #[cfg(feature = "index-falkordb")]
-        if matches!(kind, IndexKind::Node) && index_only_writes() {
-            index_add_docs.clear();
-            remove_docs.clear();
             return;
         }
 
@@ -3972,7 +4065,10 @@ impl Graph {
         let mut add_docs = HashMap::new();
         for (slot, ids) in index_add_docs.drain() {
             let name = &names[slot as usize];
-            let fields = indexer.get_fields(name);
+            let fields = redisearch_fields(indexer.get_fields(name));
+            if fields.is_empty() {
+                continue; // every field of this label is served natively
+            }
             let mut docs = vec![];
             for id in ids {
                 let mut doc = Document::new(id);
@@ -4075,8 +4171,14 @@ impl Graph {
                     .map(|a| a.as_str())
                     .collect::<Vec<_>>()
                     .join(", ");
+                // `db.idx.fulltext.drop('L')` names no attribute: `:L`, as C.
+                let attrs = if attr_list.is_empty() {
+                    String::new()
+                } else {
+                    format!("({attr_list})")
+                };
                 Err(format!(
-                    "Unable to drop index on :{label}({attr_list}): no such index."
+                    "Unable to drop index on :{label}{attrs}: no such index."
                 ))
             }
         }
@@ -4100,48 +4202,83 @@ impl Graph {
         self.node_indexer.query(label, query).map(NodeId)
     }
 
-    /// Node ids for `query` from the index numeric column, or `None` to fall through to RediSearch
-    /// (non-numeric / composite / missing or `Building` column). Wraps
-    /// [`FalkorDbIndex::query_numeric`], mapping raw ids to `NodeId`. `use<>` keeps the returned
-    /// iterator free of the `&self` borrow — it owns its tree snapshot, so it outlives this
-    /// borrow.
+    /// Node ids for `query` from the index numeric column. Wraps [`FalkorDbIndex::query_numeric`],
+    /// mapping raw docs to `NodeId` (whose constructor is module-private) and preserving its
+    /// three-way answer: `Ok(rows)`, `Err(scan_filter)` (column still building — scan), or `None`
+    /// (cannot be served). `use<>` keeps the returned iterator free of the `&self` borrow — it
+    /// owns its tree snapshot, so it outlives this borrow.
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_nodes(
         &self,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<impl Iterator<Item = NodeId> + use<>> {
+    ) -> Option<Result<impl Iterator<Item = NodeId> + use<>, ScanFilter>> {
         self.falkordb_index
             .query_numeric(EntityType::Node, label, query)
-            .map(|iter| iter.map(NodeId))
+            .map(|answer| answer.map(|rows| rows.map(NodeId)))
     }
 
-    /// Answer an EDGE numeric `Equal`/`Range` from the index column for `type_name`, yielding
-    /// `(src, dst, edge_id)` — endpoints recovered from the graph's `edge_id → (src, dst)` reverse
-    /// index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them from its
-    /// 24-byte key). Endpoints are resolved eagerly into an owned iterator because the edge scan op
-    /// only holds a temporary graph borrow, so the result must not borrow `self`. `None` (fall back to
-    /// RediSearch) for non-numeric/composite predicates or a missing or `Building` column.
+    /// Answer an EDGE numeric query from the index column for `type_name`: an `Equal`, a `Range`,
+    /// an `IN` list, or an `OR` of equalities and `IN` lists on one attribute. Yields
+    /// `(src, dst, edge_id)`, with endpoints recovered from the graph's `edge_id → (src, dst)`
+    /// reverse index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them
+    /// from its 24-byte key). The iterator owns what it reads rather than borrowing `self`, because
+    /// the edge scan op only holds a temporary graph borrow. Three-way answer as for nodes:
+    /// `Ok(rows)`, `Err(scan_filter)` (still building — scan), `None` (not servable).
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_edges(
         &self,
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>> {
-        let iter = self
-            .falkordb_index
-            .query_numeric(EntityType::Relationship, type_name, query)?;
+    ) -> Option<Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>, ScanFilter>>
+    {
+        let answer =
+            self.falkordb_index
+                .query_numeric(EntityType::Relationship, type_name, query)?;
         // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
         // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
         // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump, and `get` is
         // the same lookup `endpoints_for_edge` does. Laziness matters here — a range scan
-        // under a LIMIT should stop at the limit, not materialize every match first.
-        let endpoints = Arc::clone(&self.edge_endpoints);
-        Some(iter.filter_map(move |eid| {
-            endpoints
-                .get(eid)
-                .map(|(src, dst)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+        // under a LIMIT should stop at the limit, not materialize every match first. `map` only
+        // runs on `Ok`, so a column still building does not even pay the refcount bump.
+        Some(answer.map(|rows| {
+            let endpoints = Arc::clone(&self.edge_endpoints);
+            rows.filter_map(move |eid| {
+                endpoints
+                    .get(eid)
+                    .map(|(src, dst)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+            })
         }))
+    }
+
+    /// Whether the scan standing in for a column still building keeps node `id`: whether its value
+    /// of `attr` matches `scan_filter`, so the built column would answer the query with it. `attr`
+    /// is the filter's attribute as [`Self::get_node_attribute_id`] resolves it, once per scan
+    /// rather than once per node. Reads the committed value, which is the one the column indexes.
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub fn node_matches(
+        &self,
+        id: NodeId,
+        attr: u16,
+        scan_filter: &ScanFilter,
+    ) -> bool {
+        self.get_node_attribute_by_idx(id, attr)
+            .is_some_and(|value| scan_filter.matches(&value))
+    }
+
+    /// [`Self::node_matches`] for relationship `id`, with `attr` resolved by
+    /// [`Self::get_relationship_attribute_id`].
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub fn relationship_matches(
+        &self,
+        id: RelationshipId,
+        attr: u16,
+        scan_filter: &ScanFilter,
+    ) -> bool {
+        self.get_relationship_attribute_by_idx(id, attr)
+            .is_some_and(|value| scan_filter.matches(&value))
     }
 
     #[must_use]
@@ -4722,16 +4859,12 @@ impl Graph {
         self.edge_indexer.cancel();
     }
 
-    /// Takes `&self` (not `&mut self`): it only publishes the graph
-    /// reference into the node/edge indexers' own `Mutex`-guarded fields,
-    /// via `Indexer::set_graph`. This lets `MvccGraph::commit()` call it
-    /// through an immutable borrow of the graph, so the background index
-    /// population thread's own immutable borrows of the same
-    /// `AtomicRefCell<Graph>` are never blocked by (or racing against) a
-    /// concurrent mutable borrow here -- see `MvccGraph::commit()`.
+    /// Hand the published version `graph` (which is `self`) to the node and
+    /// edge indexers, for background population to read. Called by
+    /// `MvccGraph::commit` once it published `graph`.
     pub fn set_indexer_graph(
         &self,
-        graph: Arc<AtomicRefCell<Self>>,
+        graph: Arc<Self>,
     ) {
         self.node_indexer.set_graph(graph.clone());
         self.edge_indexer.set_graph(graph);
@@ -4936,7 +5069,12 @@ impl Graph {
         }
 
         // --- indices ---
+        // RediSearch's own estimate, as C reports it. Under the flag the native columns hold the
+        // Range fields and RediSearch the rest, so both count: this version's pages, including
+        // those it shares with another version.
         let indices_sz = self.node_indexer.memory_usage() + self.edge_indexer.memory_usage();
+        #[cfg(feature = "index-falkordb")]
+        let indices_sz = indices_sz + self.falkordb_index.memory_usage();
 
         MemoryUsageReport {
             label_matrices_sz,
@@ -5070,7 +5208,78 @@ impl Graph {
             .next_building()
             .is_some_and(|(entity, key, _)| {
                 self.indexer_prepare(&IndexId::Column(entity, key), entities)
+                    .is_some()
             })
+    }
+}
+
+/// CCH shortest-path indexes. They live in the native index's state
+/// ([`FalkorDbIndex`]'s CCH methods), so they share its feature gate. What needs the graph
+/// (building a hierarchy) is done here, from `&self`, before the result is handed to the
+/// index.
+#[cfg(feature = "index-falkordb")]
+impl Graph {
+    /// Build a CCH index for `def` and hold it on this version of the graph. Synchronous:
+    /// unlike the RediSearch indexes there is no background population pass.
+    ///
+    /// # Errors
+    /// [`CchError::AlreadyExists`] if an index with the same definition is already held,
+    /// [`CchError::UnknownRelType`] / [`CchError::UnknownAttribute`] for an unresolvable
+    /// definition, and whatever [`Cch::build`](crate::index::falkordb::cch::Cch::build) reports.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn create_cch_index(
+        &mut self,
+        _def: CchIndexDef,
+    ) -> Result<(), CchError> {
+        unimplemented!("Graph API, #3212")
+    }
+
+    /// # Errors
+    /// [`CchError::NotFound`] if no index with this definition is held.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn drop_cch_index(
+        &mut self,
+        def: &CchIndexDef,
+    ) -> Result<(), CchError> {
+        self.falkordb_index.drop_cch(def)
+    }
+
+    /// Every CCH index definition held by this version, in no guaranteed order.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn cch_indexes(&self) -> impl Iterator<Item = &CchIndexDef> {
+        self.falkordb_index.cch_defs()
+    }
+
+    /// The index for `def`, if this version holds it and it is ready to answer: a building
+    /// index is not returned.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    #[must_use]
+    pub fn cch_index(
+        &self,
+        def: &CchIndexDef,
+    ) -> Option<&CchIndex> {
+        self.falkordb_index.cch_index(def)
+    }
+
+    /// Rebuild every CCH index from the current graph. Used by RDB load (the hierarchy is not
+    /// persisted, only the definition) and by maintenance.
+    ///
+    /// # Errors
+    /// Whatever [`Cch::build`](crate::index::falkordb::cch::Cch::build) reports for any held
+    /// definition.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn rebuild_cch_indexes(&mut self) -> Result<(), CchError> {
+        unimplemented!("Graph API, #3212")
     }
 }
 

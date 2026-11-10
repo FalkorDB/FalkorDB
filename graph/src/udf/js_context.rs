@@ -61,7 +61,7 @@ use rquickjs::{CatchResultExt, CaughtError, Context, Function, Persistent, Runti
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
 use crate::udf::get_udf_repo;
-use crate::udf::js_classes::clear_current_graph;
+use crate::udf::js_classes::with_graph;
 use crate::udf::js_globals;
 use crate::udf::type_convert;
 
@@ -258,7 +258,7 @@ fn rebuild_context(
         for lib in &libs {
             for qname in &lib.function_names {
                 if let Some(persistent) = raw_funcs.get(qname) {
-                    persistent_funcs.insert(qname.to_lowercase(), persistent.clone());
+                    persistent_funcs.insert(qname.clone(), persistent.clone());
                 }
             }
         }
@@ -289,10 +289,9 @@ pub fn call_udf_bridge(
         let state = state.borrow();
         let state = state.as_ref().ok_or("JS context not initialized")?;
 
-        let lower_name = name.to_lowercase();
         let persistent_fn = state
             .functions
-            .get(&lower_name)
+            .get(name)
             .ok_or_else(|| format!("UDF function '{name}' not found in JS context"))?;
 
         // Set up timeout interrupt handler. We always install one: a configured
@@ -304,52 +303,50 @@ pub fn call_udf_bridge(
             .runtime
             .set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
 
-        let result = state.context.with(|ctx| {
-            let js_fn: Function = persistent_fn
-                .clone()
-                .restore(&ctx)
-                .map_err(|e| format!("Failed to restore UDF function: {e}"))?;
+        // The JS helpers (`getNeighbors`, `traverse`) read the graph this query
+        // runs on; it is lent to them for this call only.
+        let graph = rt.graph();
+        let result = with_graph(&graph, || {
+            state.context.with(|ctx| {
+                let js_fn: Function = persistent_fn
+                    .clone()
+                    .restore(&ctx)
+                    .map_err(|e| format!("Failed to restore UDF function: {e}"))?;
 
-            // Set graph reference for JS classes that need it
-            let graph = rt.graph_arc();
-            crate::udf::js_classes::set_current_graph(graph.clone());
+                // Convert arguments
+                let js_args: Vec<rquickjs::Value> = args
+                    .iter()
+                    .map(|v| type_convert::value_to_js(&ctx, v, &graph, Some(rt)))
+                    .collect::<Result<Vec<_>, _>>()?;
 
-            // Convert arguments
-            let js_args: Vec<rquickjs::Value> = args
-                .iter()
-                .map(|v| type_convert::value_to_js(&ctx, v, &graph, Some(rt)))
-                .collect::<Result<Vec<_>, _>>()?;
+                // Call the function
+                let result = js_fn
+                    .call::<(rquickjs::function::Rest<rquickjs::Value>,), rquickjs::Value>((
+                        rquickjs::function::Rest(js_args),
+                    ))
+                    .catch(&ctx)
+                    .map_err(|e| {
+                        let msg = caught_error_message(&e, false);
+                        if msg.contains("interrupted") {
+                            "UDF Exception: Query timed out".to_string()
+                        } else if msg.contains("out of memory")
+                            || msg.contains("InternalError: stack overflow")
+                        {
+                            "out of memory".to_string()
+                        } else {
+                            format!("UDF Exception: {msg}")
+                        }
+                    })?;
 
-            // Call the function
-            let result = js_fn
-                .call::<(rquickjs::function::Rest<rquickjs::Value>,), rquickjs::Value>((
-                    rquickjs::function::Rest(js_args),
-                ))
-                .catch(&ctx)
-                .map_err(|e| {
-                    let msg = caught_error_message(&e, false);
-                    if msg.contains("interrupted") {
-                        "UDF Exception: Query timed out".to_string()
-                    } else if msg.contains("out of memory")
-                        || msg.contains("InternalError: stack overflow")
-                    {
-                        "out of memory".to_string()
-                    } else {
-                        format!("UDF Exception: {msg}")
-                    }
-                })?;
-
-            // Convert result back
-            type_convert::js_to_value(result)
+                // Convert result back
+                type_convert::js_to_value(result)
+            })
         });
 
         // Clear interrupt handler
         state
             .runtime
             .set_interrupt_handler(None::<Box<dyn FnMut() -> bool + Send>>);
-
-        // Clear graph reference
-        clear_current_graph();
 
         result
     })

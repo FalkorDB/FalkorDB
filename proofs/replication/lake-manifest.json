@@ -1,0 +1,14 @@
+{"version": "1.3.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "«falkor-effects-emit-apply»",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../effects_emit_apply",
+   "copy": false,
+   "configFile": "lakefile.toml"}],
+ "name": "«falkor-replication»",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}
