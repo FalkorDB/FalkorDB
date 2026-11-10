@@ -175,23 +175,43 @@ static void _clearEvent
 }
 
 // add queries to stream
+//
+// entries are added with XADD through RedisModule_Call with the '!' flag,
+// which replicates them to replicas and the AOF; Redis replaces the '*' ID with
+// the ID it assigned before propagating, so every node holds the same entries
+// under the same IDs
 static void _stream_queries
 (
-	RedisModuleCtx *ctx,    // redis module context
-	RedisModuleKey *key,    // stream key
-	CircularBuffer queries  // queries to stream
+	RedisModuleCtx *ctx,          // redis module context
+	RedisModuleString *keyname,   // stream key
+	CircularBuffer queries        // queries to stream
 ) {
 	LoggedQuery q ;
 
 	while (CircularBuffer_Read (queries, &q)) {
 		_populateEvent (ctx, &q) ;
 
-		RedisModule_StreamAdd (key, REDISMODULE_STREAM_ADD_AUTOID, NULL,
-				_event, FLD_COUNT) ;
+		RedisModuleCallReply *reply = RedisModule_Call (ctx, "XADD", "!scv",
+				keyname, "*", _event, (size_t) (FLD_COUNT * 2)) ;
 
 		// clean up
+		if (reply != NULL) {
+			RedisModule_FreeCallReply (reply) ;
+		}
 		LoggedQuery_Free (&q) ;
 		_clearEvent (ctx) ;
+	}
+}
+
+// discard queries without streaming them
+static void _discard_queries
+(
+	CircularBuffer queries  // queries to discard
+) {
+	LoggedQuery q ;
+
+	while (CircularBuffer_Read (queries, &q)) {
+		LoggedQuery_Free (&q) ;
 	}
 }
 
@@ -261,6 +281,24 @@ bool CronTask_streamFinishedQueries
 	uint64_t max_query_count = 0 ;
 	Config_Option_get (Config_CMD_INFO_MAX_QUERY_COUNT, &max_query_count) ;
 
+	// only the master writes to the telemetry streams, replicas receive the
+	// entries through replication
+	// queries logged on a replica, or while CMD_INFO is off, are discarded
+	bool info_enabled = false ;
+	Config_Option_get (Config_CMD_INFO, &info_enabled) ;
+
+	bool replica = (RedisModule_GetContextFlags (rm_ctx) &
+			REDISMODULE_CTX_FLAGS_SLAVE) ;
+
+	bool write = info_enabled && !replica ;
+
+	// the writes are propagated when the GIL is released, which Redis doesn't
+	// allow while replication traffic is paused (CLIENT PAUSE WRITE, FAILOVER,
+	// SHUTDOWN waiting for replicas): keep the logged queries for a later run
+	if (write && RedisModule_AvoidReplicaTraffic ()) {
+		goto cleanup ;
+	}
+
 	// initialize graph iterator
 	KeySpaceGraphIterator it ;
 	Globals_ScanGraphs (&it) ;
@@ -293,6 +331,12 @@ bool CronTask_streamFinishedQueries
 
 		CircularBuffer queries = QueriesLog_ResetQueries (queries_log) ;
 
+		if (!write) {
+			_discard_queries (queries) ;
+			GraphContext_DecreaseRefCount (gc) ;
+			continue ;
+		}
+
 		//----------------------------------------------------------------------
 		// stream queries
 		//----------------------------------------------------------------------
@@ -300,25 +344,35 @@ bool CronTask_streamFinishedQueries
 		RedisModuleString *keyname =
 			(RedisModuleString*) GraphContext_GetTelemetryStreamName (gc) ;
 
-		RedisModuleKey *key = RedisModule_OpenKey (rm_ctx, keyname,
-			REDISMODULE_WRITE) ;
-
 		// make sure key is of type stream
+		// without touching LRU, keyspace stats or notifications
+		RedisModuleKey *key = RedisModule_OpenKey (rm_ctx, keyname,
+			REDISMODULE_READ | REDISMODULE_OPEN_KEY_NOTOUCH |
+			REDISMODULE_OPEN_KEY_NONOTIFY | REDISMODULE_OPEN_KEY_NOSTATS) ;
 		int key_type = RedisModule_KeyType (key) ;
+		RedisModule_CloseKey (key) ;
+
 		if (key_type == REDISMODULE_KEYTYPE_STREAM ||
 			key_type == REDISMODULE_KEYTYPE_EMPTY) {
 			// add queries to stream
-			_stream_queries (rm_ctx, key, queries) ;
+			_stream_queries (rm_ctx, keyname, queries) ;
 
 			// cap stream
-			RedisModule_StreamTrimByLength (key,
-					REDISMODULE_STREAM_TRIM_APPROX, max_query_count) ;
+			// when replicating, Redis turns the approximate cap into the exact
+			// length it trimmed to, so replicas drop the same entries
+			RedisModuleCallReply *reply = RedisModule_Call (rm_ctx, "XTRIM",
+					"!sccl", keyname, "MAXLEN", "~",
+					(long long) max_query_count) ;
+
+			if (reply != NULL) {
+				RedisModule_FreeCallReply (reply) ;
+			}
 		} else {
-			// TODO: decide how to handle this...
+			// key holds a different type, drop the queries
+			_discard_queries (queries) ;
 		}
 
 		// clean up
-		RedisModule_CloseKey (key) ;
 		GraphContext_DecreaseRefCount (gc) ;
 	}
 
