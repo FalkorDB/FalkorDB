@@ -59,11 +59,6 @@ on:
         required: false
         type: boolean
         default: false
-      commit_sha:
-        description: "Commit to check the tests out at: the one the image was built from. Empty for the event's default ref."
-        required: false
-        type: string
-        default: ""
       include_spawn:
         description: "Run the spawn-bucket matrix too. Coverage sets this false until spawn-mode bind-mount lands in common.py."
         required: false
@@ -128,7 +123,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.commit_sha }}
           # persist-credentials defaults to true, which writes the token into
           # .git/config — and the next step runs ./flow.sh, which is test code
           # from the pull request, in this same workspace. Under merge_group
@@ -260,7 +254,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.commit_sha }}
           # persist-credentials defaults to true, which writes the token into
           # .git/config — and the next step runs ./flow.sh, which is test code
           # from the pull request, in this same workspace. Under merge_group

@@ -86,7 +86,6 @@ jobs:
       services_files: ${{ inputs.services_files }}
       spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
-      commit_sha: ${{ inputs.commit_sha }}
     secrets: inherit
 
   # Trivy scan of the RC images: master's `security-scan` job (build.yml),
@@ -228,8 +227,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The commit the RC image was built from, not the pull request's merge ref.
-          ref: ${{ inputs.commit_sha }}
           persist-credentials: false
       # The Rust unit tests run once, in build-engine (_ci-pipeline.yml).
       - name: Run pytest tests against the RC image
