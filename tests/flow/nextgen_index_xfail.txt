@@ -18,117 +18,46 @@
 # The second direction is what stops this file rotting into a list of things that quietly
 # started working. It also means closing a gap is a two-line change: the fix, and the deletion.
 #
-# Add an entry only with a reason, and put it in the group its ACTUAL error names — every entry
-# below was placed by reading the `native index cannot serve ...` message the run emitted, not by
-# reading the test's name. Three entries were previously in the wrong group because they were
-# grouped by name: two "cartesian product" tests that fail on a string bound, and one
-# "utilize_array" test that fails on a string union.
+# Add an entry only with a reason, and put it in the group its ACTUAL error names: read the
+# `native index cannot serve ...` message the run emitted, not the test's name.
 #
-# Not everything unimplemented shows up here. `can_utilize_index(&q) == false` routes to a label
-# scan before the index is consulted at all, so `IN []`, `IN [NULL]`, List/Map values and ints
-# above 2^53 still return correct results silently — as do several array tests (test_33,
-# test_34, test10, test17). Their passing says nothing about the native array tree either way.
-
-# ---------------------------------------------------------------------------
-# STRING elements inside array-valued properties — `ArrayContains`.
-# Numeric array elements ARE served: each one is a tuple in the column's separate array tree, and
-# `value IN n.prop` is a point lookup into it. `test_29_array_index` passes on that and has been
-# removed from this file.
-#
-# What is left is the string half. These tests index a list of strings and probe it, and there is
-# no native text kind, so this group closes with the text work, not with more array work.
-#
-# The two trees are separate on purpose: sharing one would make `WHERE n.v = 1` match a node
-# whose `v` is `[1, 2]`, and `Equal` has no post-filter to catch it.
-# ---------------------------------------------------------------------------
-error: an array-contains on `*` with a non-numeric value
-test_index_scans:testIndexScanFlow.test_28_array_index
-test_index_scans:testIndexScanFlow.test_30_update_array_index
-test_index_scans:testIndexScanFlow.test_31_remove_array_index
-test_index_scans:testIndexScanFlow.test_32_multiple_array_indexed_entities
-
-# ---------------------------------------------------------------------------
-# String and text predicates on a Range index — tags, stopwords, escaping, mixed-type columns.
-# RediSearch owns strings today; there is no native text kind yet (docs 10-13). This is by far the
-# largest group, and one text kind closes all of it. test_constraint's composite keys fail on a
-# conjunction with a string equality as a member.
-# ---------------------------------------------------------------------------
-error: equality on `*` with a non-numeric value
-error: range on `*` with a non-numeric bound
-error: an IN list on `*` with a non-numeric value
-error: a conjunction of 2 predicates [equality on `*` with a non-numeric value; equality on `*`]
-test_index_scans:testIndexScanFlow.test02_cartesian_product_index_scans_only
-test_index_scans:testIndexScanFlow.test03_cartesian_product_reused_index
-test_index_scans:testIndexScanFlow.test05_test_in_operator_string_props
-test_index_scans:testIndexScanFlow.test06_tag_separator
-test_index_scans:testIndexScanFlow.test14_index_scan_utilize_array
-test_index_scans:testIndexScanFlow.test20_index_scan_stopwords
-test_index_scans:testIndexScanFlow.test_24_multitype_index
-test_index_scans:testIndexScanFlow.test_25_unescaped_string
-test_index_scans:testIndexScanFlow.test_38_exclusive_equal_string_bounds
-test_index_delete:testNodeIndexDeletionFlow.test_07_reset_order
-test_index_updates:testIndexUpdatesFlow.test04_node_deletion
-test_edge_index_updates:testEdgeIndexUpdatesFlow.test04_edge_deletion
-test_edge_index_scans:testEdgeByIndexScanFlow.test15_chained_optional_match_indexed_edge
-test_edge_index_scans:testEdgeIndexRdbRoundtripFlow.test_undirected_pattern_emits_both_orientations
-test_constraint:testConstraintNodes.test02_constraint_violations
-test_constraint:testConstraintNodes.test06_constraint_fix
-test_constraint:testConstraintEdges.test02_edge_constraint_violations
-test_constraint:testConstraintEdges.test06_constraint_fix
-
 # ---------------------------------------------------------------------------
 # Geo predicates on a Range index — `Point`.
-# `encode_numeric` takes only numbers, so a point property is not in the numeric column, and there
-# is no native geo kind yet. RediSearch serves these today.
+# A point property has no kind in the column yet: the tag kind holds strings, the numeric kinds
+# numbers. The geo kind closes this group, and with it the ledger.
 # ---------------------------------------------------------------------------
 error: a geo predicate on `*`
 test_index_scans:testIndexScanFlow.test13_point_index_scan
 
 # ---------------------------------------------------------------------------
-# Conjunctions — CLOSED. Nothing left in this group.
+# What closed the other groups, for the archaeology:
 #
-# Three shapes used to land here, and all three are served now:
-#   the same predicate twice          -> no longer produced by the planner (see below)
-#   several bounds on ONE attribute   -> folded arithmetically into a single window
-#   bounds across TWO attributes      -> one column per attribute, intersected
+#   numeric arrays          -> a separate array tree per column; `value IN n.prop` is a point
+#                              lookup into it (#2453)
+#   conjunctions            -> same-attribute bounds fold arithmetically into one window;
+#                              cross-attribute ones intersect a column per attribute (#2453)
+#   strings and tags (18)   -> the tag kind: a per-column dictionary interning each distinct
+#                              string to a dense id, with the tree keyed by that id. Exact and
+#                              case-sensitive, because `utilize_index` keeps no filter over a
+#                              string equality. Lexicographic ranges resolve through the
+#                              dictionary rather than the key, so tokenizer-hostile strings
+#                              (separators, whitespace, backslashes) need no encoding at all —
+#                              which is what closed `test06_tag_separator`,
+#                              `test20_index_scan_stopwords` and `test_25_unescaped_string`.
+#                              Unique constraints on strings look their duplicates up in it.
+#   string arrays (4)       -> the tag kind's own array tree, as for numbers
 #
-# The duplicate came from an inline property map on a traversal endpoint
-# (`MATCH (a:L {p: v})-[]->(b)`) being lowered twice, which `push_filters_down` then merged into
-# `And(p, p)`. The cause was fixed, not the merge: `lower_inline_attrs` (planner/mod.rs) lowers
-# each inline map at most once, so there is no second copy to merge. `push_filters_down` does no
-# dedup, and its test `user_written_duplicate_is_not_touched` pins that a duplicate the user
-# writes is kept. The same-attribute fold serves such a duplicate as one window.
+# Two shapes reached the index during that work that no column could answer alone, and both are
+# now combined across columns rather than declined: a conjunction of unions
+# (`p.name IN [..] AND p.age IN [..]`) intersects, and a union across attributes
+# (`p.name IN [..] OR p.age = 33`) unions — materialised, since a doc satisfying both members is
+# one row in Cypher, not two.
 #
-# The same-attribute fold happens in the index rather than the planner because
-# `merge_range_queries` gives up whenever two conjuncts constrain the same side of the window: at
-# plan time the bounds may still be expressions it cannot compare, and by the time the index sees
-# them they are concrete values.
-#
-# The cross-attribute case is a set probe, not a sorted merge: `DocIter` yields docs in value
-# order, not id order, so the first attribute is materialised and the rest probe it.
-#
-# Still declined: a conjunction with a member that is not a numeric `Equal`/`Range` (one with a
-# null value or bound included).
-# With a string member that is the string gap, and its tests are in the string group above
-# (test_constraint's composite constraints). With an array-contains or an `IN` list member, no
-# test in these suites hits one today.
-# ---------------------------------------------------------------------------
+# Not everything unimplemented shows up here. `can_utilize_index(&q) == false` routes to a label scan before the index is
+# consulted at all, so `IN []`, `IN [NULL]`, List/Map values, temporals and ints above 2^53 still
+# return correct results without the index being asked. A union with a range member
+# (`n.v = 1 OR n.v > 5`) is still declined, and no test in these suites writes one but the probe
+# in `test_index_updates:testNativeOnlyFeedFlow`, which relies on it. Fulltext and Vector indexes
+# are not this index's job: they are still RediSearch's, and their procedures still query it.
 
-# ---------------------------------------------------------------------------
-# IGNORED in both directions (`!` prefix) — NOT a native-index gap.
 #
-# The check skips a `!` entry entirely: it is neither required to fail nor required to pass. That
-# is for a test that fails on some environments and passes on others, where either direction of
-# the normal check would be permanently red somewhere.
-#
-# Use it sparingly. An entry here needs evidence that the flag is not involved; one the flag does
-# cause, but only on some runs, goes in its cause's group with the reason. Removing the `!` turns an
-# entry back into a normal expected-failure.
-#
-# `test05_index_delete` lived here briefly. It was never an index problem: FalkorDB 1.6.2 declares
-# `redis>=7.1.0` with no upper bound, and redis-py 8.x connection pools carry kwargs that
-# `Redis.__init__` rejects (`himport_registry` on 8.1, `maint_notifications_pool_handler` on 8.0),
-# which the async cluster probe splats straight into a constructor. Pinning `redis<8` locally
-# fixed it and the whole flow suite along with it. If it reappears, check the client versions
-# before suspecting the index.
-# ---------------------------------------------------------------------------

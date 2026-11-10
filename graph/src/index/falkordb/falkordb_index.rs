@@ -41,8 +41,7 @@ pub type IndexKey = (Arc<String>, Arc<String>);
 /// `Box<dyn>`, no boxed iterators, and exhaustive matching forces every kind to
 /// be handled (an unimplemented kind fails loudly, never silently). A Range column
 /// ([`RangeIndex`]) holds the kinds of one attribute together, as a RediSearch Range field
-/// does; the numeric kind is the only one so far. More variants (Text, Vector) land with their
-/// kinds.
+/// does: numeric and tag so far. More variants (Text, Vector) land with their kinds.
 #[derive(Clone)]
 pub enum IndexColumn {
     Range(RangeIndex),
@@ -96,11 +95,12 @@ impl IndexColumn {
 
     /// The scalar tree and key `value` takes in *this* column, or `None` when no kind indexes it
     /// as a scalar (a list, whose elements are keys of the array trees instead; a temporal; a map).
+    /// The key is `None` for a value the column has never stored (a string it never interned).
     #[must_use]
     pub fn encode_value(
         &self,
         value: &Value,
-    ) -> Option<(KeyKind, u64)> {
+    ) -> Option<(KeyKind, Option<u64>)> {
         match self {
             Self::Range(idx) => idx.encode_value(value),
         }
@@ -288,7 +288,8 @@ fn placed_in(
 pub struct EqualCandidates<'a> {
     column: &'a IndexColumn,
     kind: KeyKind,
-    key: u64,
+    /// `None` for a value the column has never stored: no entity holds it.
+    key: Option<u64>,
 }
 
 impl EqualCandidates<'_> {
@@ -297,13 +298,16 @@ impl EqualCandidates<'_> {
     /// `edge_id`s for an edge column.
     #[must_use]
     pub fn rows(&self) -> DocIter {
-        self.column.rows_at(self.kind, self.key)
+        match self.key {
+            Some(key) => self.column.rows_at(self.kind, key),
+            None => DocIter::Set(std::collections::HashSet::new().into_iter()),
+        }
     }
 
     /// Which lookup this is: its column and the key it reads. Two lookups with the same id answer
     /// with the same rows.
     #[must_use]
-    pub fn id(&self) -> (usize, KeyKind, u64) {
+    pub fn id(&self) -> (usize, KeyKind, Option<u64>) {
         (std::ptr::from_ref(self.column).addr(), self.kind, self.key)
     }
 }
@@ -985,7 +989,8 @@ impl FalkorDbIndex {
     /// each differently:
     ///
     /// * `Some(Ok(rows))` — served here, from `Ready` columns. Possibly zero rows: a predicate
-    ///   Cypher says cannot match (`n.v = null`, a `NULL` bound) is *answered*, not declined.
+    ///   Cypher says cannot match (`n.v = null`, a comparison across types) is *answered*, not
+    ///   declined.
     /// * `Some(Err(scan_filter))` — a shape the columns serve, on a column that is still
     ///   `Building`. The caller scans and keeps what the [`ScanFilter`] matches. This is a timing
     ///   state, not a capability gap, so it must never surface as an error.
@@ -1367,17 +1372,20 @@ mod tests {
         );
         // A shape the column declines stays `None` mid-build: that is a gap, not a timing state,
         // and answering with a `ScanFilter` would let it scan quietly until the build finished.
-        let in_mixed = IndexQuery::InList {
+        let in_unindexable = IndexQuery::InList {
             key: attr.clone(),
             list: Value::List(Arc::new(
-                [Value::Int(10), Value::String(arc("x"))]
-                    .into_iter()
-                    .collect(),
+                [
+                    Value::Int(10),
+                    Value::List(Arc::new([Value::Int(1)].into_iter().collect())),
+                ]
+                .into_iter()
+                .collect(),
             )),
         };
         assert!(
-            idx.query_column(Node, &label, &in_mixed).is_none(),
-            "a mixed IN list is unservable whatever the column's state"
+            idx.query_column(Node, &label, &in_unindexable).is_none(),
+            "an IN list holding a value no kind indexes is unservable whatever the column's state"
         );
 
         // A batch indexes nodes 0..=2 at their current values, and stops before node 3.
@@ -1739,12 +1747,21 @@ mod tests {
             Vec::<u64>::new()
         );
 
-        // A string on the same Range index has no kind to serve it yet.
+        // A string on the same Range index is the tag kind's, which holds none here.
         let str_eq = IndexQuery::Equal {
             key: key.clone(),
             value: Value::String(Arc::new("x".to_string())),
         };
-        assert!(idx.query_column(Node, &label, &str_eq).is_none());
+        assert_eq!(
+            rows(idx.query_column(Node, &label, &str_eq)),
+            Vec::<u64>::new()
+        );
+        // A value no kind holds is declined.
+        let list_eq = IndexQuery::Equal {
+            key: key.clone(),
+            value: Value::List(Arc::new([Value::Int(1)].into_iter().collect())),
+        };
+        assert!(idx.query_column(Node, &label, &list_eq).is_none());
         // A conjunction on ONE attribute is served — it folds to a single window.
         let eq2 = IndexQuery::Equal {
             key: key.clone(),
@@ -1854,8 +1871,22 @@ mod tests {
                     vec![Value::Int(30), Value::String(Arc::new("x".to_string()))]
                 )
             ),
+            Some(vec![1]),
+            "a mixed list reads every kind it names"
+        );
+        assert_eq!(
+            served(
+                Node,
+                &in_list(
+                    &attr,
+                    vec![
+                        Value::Int(30),
+                        Value::List(Arc::new([Value::Int(1)].into_iter().collect()))
+                    ]
+                )
+            ),
             None,
-            "a non-numeric value declines the whole list"
+            "a value no kind holds declines the whole list"
         );
         assert_eq!(
             served(Node, &in_list(&attr, Vec::new())),
@@ -1924,9 +1955,18 @@ mod tests {
             Some(vec![]),
             "an empty answer from a Ready column means no entity holds the value"
         );
+        assert_eq!(
+            candidates(&idx, &Value::String(arc("1"))),
+            Some(vec![]),
+            "the tag kind holds every string, so it can say none holds this one"
+        );
         assert!(
-            candidates(&idx, &Value::String(arc("1"))).is_none(),
-            "a numeric column does not index strings, so it cannot say none holds one"
+            candidates(
+                &idx,
+                &Value::List(Arc::new([Value::Int(1)].into_iter().collect()))
+            )
+            .is_none(),
+            "no kind indexes a list as a scalar, so it cannot say none holds one"
         );
         assert!(
             candidates(&idx, &Value::Float(f64::NAN)).is_none(),
@@ -1960,6 +2000,58 @@ mod tests {
         assert!(
             candidates(&idx, &Value::Int(1)).is_none(),
             "a Building column cannot rule an entity out"
+        );
+    }
+
+    /// A building column answers a string predicate with a scan that selects by value: the scan
+    /// must keep a string no indexer batch has interned yet, which an id taken from the tag
+    /// dictionary at query time could not name.
+    #[test]
+    fn a_building_column_scans_for_strings_by_value() {
+        let (label, attr) = (arc("P"), arc("name"));
+        let mut idx = FalkorDbIndex::new();
+        idx.create_building(Node, &label, &attr);
+        let s = |x: &str| Value::String(arc(x));
+        let filter = |q: &IndexQuery<Value>| match idx.query_column(Node, &label, q) {
+            Some(Err(filter)) => filter,
+            Some(Ok(_)) => panic!("a building column answered from its trees"),
+            None => panic!("a string predicate was declined"),
+        };
+
+        let eq = filter(&IndexQuery::Equal {
+            key: attr.clone(),
+            value: s("bob"),
+        });
+        assert!(
+            eq.matches(|_| Some(s("bob"))),
+            "never interned, still matched"
+        );
+        assert!(!eq.matches(|_| Some(s("Bob"))));
+        assert!(!eq.matches(|_| None), "an entity without the attribute");
+
+        let range = filter(&IndexQuery::Range {
+            key: attr.clone(),
+            min: Some(s("a")),
+            max: Some(s("c")),
+            include_min: true,
+            include_max: false,
+        });
+        assert!(range.matches(|_| Some(s("bob"))));
+        assert!(!range.matches(|_| Some(s("carol"))));
+        assert!(
+            !range.matches(|_| Some(Value::Int(1))),
+            "a number is not in a string range"
+        );
+
+        let contains = filter(&IndexQuery::ArrayContains {
+            key: attr.clone(),
+            value: s("x"),
+        });
+        let list = |xs: &[&str]| Value::List(Arc::new(xs.iter().map(|x| s(x)).collect()));
+        assert!(contains.matches(|_| Some(list(&["y", "x"]))));
+        assert!(
+            !contains.matches(|_| Some(s("x"))),
+            "a scalar is not a list holding it"
         );
     }
 

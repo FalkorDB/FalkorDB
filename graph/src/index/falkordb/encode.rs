@@ -40,25 +40,37 @@ pub fn encode_numeric(value: &Value) -> Option<u64> {
     (!x.is_nan()).then(|| encode_f64(x))
 }
 
-/// Which kind of stored value a key comes from, and so which of a column's two trees it lives in.
+/// Which tree of a column a key lives in: the kind of value it indexes, and whether it came from a
+/// scalar or from the elements of a list.
 ///
-/// A numeric column keeps **scalar** values and the elements of **list** values apart. One tree
-/// for both would give a node with `v = [1, 2]` the key for `1`, so `WHERE n.v = 1`, which is false
-/// in Cypher, would match it, and `Equal` has no post-filter to catch that (its plan is a bare
-/// `Node By Index Scan`). RediSearch keeps the same separation with its `numeric:arr` sub-field;
-/// this is the native equivalent. It lives here because the encoder is what decides it: see
-/// [`for_each_stored_key`].
+/// A column keeps **scalar** values and the elements of **list** values apart. One tree for both
+/// would give a node with `v = [1, 2]` the key for `1`, so `WHERE n.v = 1`, which is false in
+/// Cypher, would match it, and `Equal` has no post-filter to catch that (its plan is a bare
+/// `Node By Index Scan`). RediSearch keeps the same separation with its `numeric:arr` and
+/// `string:arr` sub-fields; this is the native equivalent.
+///
+/// A Cypher property is not typed, so one Range column holds whatever the entities put in it:
+/// numbers ([`Scalar`](Self::Scalar), [`Array`](Self::Array)) and strings ([`Tag`](Self::Tag),
+/// [`TagArray`](Self::TagArray)), each in the tree that can order it. Every tree's keys are `u64`, so a column's tuples move between threads and versions as
+/// plain `(key, doc)` pairs whatever their kind.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum KeyKind {
-    /// A scalar value: at most one key per entity.
+    /// A numeric scalar value: at most one key per entity, its [`encode_numeric`] image.
     Scalar,
-    /// The elements of a list value: one key per numeric element, read only by `value IN n.prop`.
+    /// The numeric elements of a list value: one key per element, read only by `value IN n.prop`.
     Array,
+    /// A string scalar value: its id in the column's tag dictionary.
+    Tag,
+    /// The string elements of a list value: one dictionary id per distinct element.
+    TagArray,
 }
 
 impl KeyKind {
     /// Every kind, in order.
-    pub const ALL: [Self; 2] = [Self::Scalar, Self::Array];
+    pub const ALL: [Self; 4] = [Self::Scalar, Self::Array, Self::Tag, Self::TagArray];
+
+    /// The numeric kinds, the trees [`for_each_stored_key`] fills.
+    pub const NUMERIC: [Self; 2] = [Self::Scalar, Self::Array];
 }
 
 /// Call `emit` with each key a **stored** value contributes, and the kind of key it is.

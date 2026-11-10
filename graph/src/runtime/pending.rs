@@ -2306,10 +2306,9 @@ mod native_unique_tests {
         );
     }
 
-    /// A numeric column does not index strings. It must decline one rather than answer "no
-    /// rows", which would accept the duplicate; the scan finds it.
+    /// A string is looked up in the column's tag kind, and the lookup finds the duplicate.
     #[test]
-    fn a_string_duplicate_on_a_numeric_column_is_found_by_the_scan() {
+    fn a_string_duplicate_is_found_by_the_native_lookup() {
         let mut g = graph();
         g.falkordb_index
             .create_column(EntityType::Node, &arc("U"), &arc("id"));
@@ -2321,7 +2320,7 @@ mod native_unique_tests {
                 &[("id", string("b"))],
             ],
         );
-        assert!(!looked_up(
+        assert!(looked_up(
             &g,
             EntityType::Node,
             "U",
@@ -2447,11 +2446,12 @@ mod native_unique_tests {
     }
 
     /// Members whose lookups are the same read them once per check. No column answers for a
-    /// string today, so every member of a `(tenant, id)` key with string ids looks up only the
+    /// list as a scalar, so every member of a `(tenant, id)` key with list ids looks up only the
     /// tenant, whose column holds the whole label. The check compares each candidate with every
     /// member's key, so reading the tenant once covers them all.
     #[test]
     fn members_with_the_same_lookups_read_them_once() {
+        let list_id = |id: &str| Value::List(Arc::new([string(id)].into_iter().collect()));
         let mut g = graph();
         for attr in ["tenant", "id"] {
             g.falkordb_index
@@ -2460,8 +2460,8 @@ mod native_unique_tests {
         // 50 nodes of tenant 7, a duplicate of the key of node 3, and one node of tenant 8.
         let rows: Vec<[(&str, Value); 2]> = (0..50)
             .chain([3])
-            .map(|i| [("tenant", Value::Int(7)), ("id", string(&format!("u{i}")))])
-            .chain([[("tenant", Value::Int(8)), ("id", string("u0"))]])
+            .map(|i| [("tenant", Value::Int(7)), ("id", list_id(&format!("u{i}")))])
+            .chain([[("tenant", Value::Int(8)), ("id", list_id("u0"))]])
             .collect();
         let ids = nodes(
             &mut g,
@@ -2474,7 +2474,7 @@ mod native_unique_tests {
                 EntityType::Node,
                 &arc("U"),
                 &props,
-                &[Value::Int(tenant), string(id)],
+                &[Value::Int(tenant), list_id(id)],
             )
             .expect("the tenant's column answers")
         };

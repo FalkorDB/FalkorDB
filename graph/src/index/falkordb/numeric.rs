@@ -29,7 +29,7 @@ const BRANCH_MAX: usize = 256;
 /// to justify it — not a default to inherit.
 const DOC_BYTES: usize = 8;
 
-type Tree = CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
+pub(super) type Tree = CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
 
 /// Lazy iterator of matching entity ids, yielded in `(value, id)` order.
 type TreeIter = RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
@@ -333,6 +333,9 @@ impl NumericIndex {
         match kind {
             KeyKind::Scalar => &mut self.tree,
             KeyKind::Array => &mut self.array_tree,
+            KeyKind::Tag | KeyKind::TagArray => {
+                unreachable!("the numeric kind holds only numeric trees")
+            }
         }
     }
 
@@ -417,6 +420,7 @@ impl NumericIndex {
 
 impl RangeKind for NumericIndex {
     type Keys = KeySet;
+    type Element = u64;
 
     /// A scalar is stored under its key in the scalar tree, and a list under each numeric
     /// element's key in the array tree ([`encode::for_each_stored_key`]).
@@ -436,16 +440,7 @@ impl RangeKind for NumericIndex {
         tuples: &EncodedTuples,
     ) {
         for kind in Self::TREES {
-            let tuples = &tuples[kind];
-            if tuples.is_empty() {
-                continue;
-            }
-            let tree = self.tree_mut(kind);
-            if tree.is_empty() {
-                *tree = Tree::from_sorted(tuples);
-            } else {
-                tree.insert_batch(tuples);
-            }
+            add_sorted(self.tree_mut(kind), &tuples[kind]);
         }
     }
 
@@ -454,9 +449,7 @@ impl RangeKind for NumericIndex {
         tuples: &EncodedTuples,
     ) {
         for kind in Self::TREES {
-            if !tuples[kind].is_empty() {
-                self.tree_mut(kind).remove_batch(&tuples[kind]);
-            }
+            remove_sorted(self.tree_mut(kind), &tuples[kind]);
         }
     }
 
@@ -475,19 +468,7 @@ impl RangeKind for NumericIndex {
         &self,
         keys: KeySet,
     ) -> DocIter {
-        match keys {
-            // `lo > hi` yields nothing.
-            KeySet::Empty => DocIter::One(self.tree.range(1, 0)),
-            KeySet::Point(key) => DocIter::One(self.tree.point(key)),
-            KeySet::Range(lo, hi) => DocIter::One(self.tree.range(lo, hi)),
-            // No cursor is built here — see [`UnionIter`]. The tree snapshot is taken now, so
-            // every member is answered from the same version however late its cursor is created.
-            KeySet::Keys(keys) => DocIter::Many(UnionIter {
-                tree: self.tree.clone(),
-                keys: keys.into_iter(),
-                current: None,
-            }),
-        }
+        docs_in(&self.tree, keys)
     }
 
     /// A point lookup into the array tree, so each matching doc is reached through one key and
@@ -500,9 +481,9 @@ impl RangeKind for NumericIndex {
     /// approximate where the scalar tree may not.
     fn lists_holding(
         &self,
-        key: u64,
+        key: &u64,
     ) -> DocIter {
-        DocIter::One(self.array_tree.point(key))
+        docs_in(&self.array_tree, KeySet::Point(*key))
     }
 
     fn is_scalar_in(
@@ -513,10 +494,57 @@ impl RangeKind for NumericIndex {
     }
 
     fn is_list_holding(
-        key: u64,
+        key: &u64,
         value: &Value,
     ) -> bool {
-        stores(value, KeyKind::Array, |stored| stored == key)
+        stores(value, KeyKind::Array, |stored| stored == *key)
+    }
+}
+
+/// The docs under `keys` in `tree`: one cursor for an empty set, a point or a window, and a lazy
+/// chain of point cursors for a set of keys. Every kind's trees are read this way.
+pub(super) fn docs_in(
+    tree: &Tree,
+    keys: KeySet,
+) -> DocIter {
+    match keys {
+        // `lo > hi` yields nothing.
+        KeySet::Empty => DocIter::One(tree.range(1, 0)),
+        KeySet::Point(key) => DocIter::One(tree.point(key)),
+        KeySet::Range(lo, hi) => DocIter::One(tree.range(lo, hi)),
+        // No cursor is built here — see [`UnionIter`]. The tree snapshot is taken now, so every
+        // member is answered from the same version however late its cursor is created.
+        KeySet::Keys(keys) => DocIter::Many(UnionIter {
+            tree: tree.clone(),
+            keys: keys.into_iter(),
+            current: None,
+        }),
+    }
+}
+
+/// Add sorted, unique `tuples` to `tree`. Into an empty tree they are bulk-built, bottom-up, rather
+/// than merged in.
+pub(super) fn add_sorted(
+    tree: &mut Tree,
+    tuples: &[(u64, u64)],
+) {
+    if tuples.is_empty() {
+        return;
+    }
+    if tree.is_empty() {
+        *tree = Tree::from_sorted(tuples);
+    } else {
+        tree.insert_batch(tuples);
+    }
+}
+
+/// Remove sorted, unique `tuples` from `tree`.
+pub(super) fn remove_sorted(
+    tree: &mut Tree,
+    tuples: &[(u64, u64)],
+) {
+    if !tuples.is_empty() {
+        tree.remove_batch(tuples);
     }
 }
 
@@ -727,7 +755,7 @@ mod tests {
         // A bound of a type no kind holds is declined, not answered "no rows".
         assert!(
             idx.query(&range(
-                Some(Value::String(Arc::new("a".to_string()))),
+                Some(Value::List(Arc::new([Value::Int(1)].into_iter().collect()))),
                 None,
                 true,
                 true
@@ -882,10 +910,13 @@ mod tests {
         assert!(
             idx.query(&in_list(
                 &attr,
-                [Value::Int(10), Value::String(Arc::new("a".to_string()))]
+                [
+                    Value::Int(10),
+                    Value::List(Arc::new([Value::Int(1)].into_iter().collect()))
+                ]
             ))
             .is_none(),
-            "a mixed list must fall back rather than drop the non-numeric value"
+            "a list with a value no kind holds must fall back rather than drop that value"
         );
         assert!(
             idx.query(&in_list(&attr, Vec::new())).is_none(),
@@ -932,7 +963,10 @@ mod tests {
                 eq(10),
                 in_list(
                     &attr,
-                    [Value::Int(20), Value::String(Arc::new("a".to_string()))]
+                    [
+                        Value::Int(20),
+                        Value::List(Arc::new([Value::Int(1)].into_iter().collect()))
+                    ]
                 ),
             ]))
             .is_none(),
@@ -1409,7 +1443,7 @@ mod tests {
                 eq("a", 1),
                 IndexQuery::Equal {
                     key: Arc::new("a".to_string()),
-                    value: Value::String(Arc::new("x".to_string())),
+                    value: Value::List(Arc::new([Value::Int(1)].into_iter().collect())),
                 },
             ]))
             .is_none(),

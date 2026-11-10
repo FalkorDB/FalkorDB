@@ -41,7 +41,7 @@ pub(crate) fn native_unique_query<'g>(
 /// (a tenant): every member looks up only the tenant, and reading it once per
 /// member would make a bulk insert quadratic.
 #[derive(Default)]
-pub(crate) struct ReadOnce(RefCell<FxHashSet<Vec<(usize, KeyKind, u64)>>>);
+pub(crate) struct ReadOnce(RefCell<FxHashSet<Vec<(usize, KeyKind, Option<u64>)>>>);
 
 impl ReadOnce {
     /// The candidates of `lookups` ([`fewest_candidates`]), or none when an

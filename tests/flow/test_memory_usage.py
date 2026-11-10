@@ -302,8 +302,8 @@ class testGraphMemoryUsage(FlowTestsBase):
         create_node_range_index(g, 'P', 'v', sync=True)
         try:
             # A predicate the native index cannot serve is an error there, as in
-            # test_index_updates' testNativeOnlyFeedFlow; a string equality is one.
-            g.query("MATCH (n:P) WHERE n.v = 'probe' RETURN n")
+            # test_index_updates' testNativeOnlyFeedFlow; a union with a range member is one.
+            g.query("MATCH (n:P) WHERE n.v = 1 OR n.v > 7 RETURN n")
             return False
         except ResponseError as e:
             self.env.assertContains("native index cannot serve", str(e))

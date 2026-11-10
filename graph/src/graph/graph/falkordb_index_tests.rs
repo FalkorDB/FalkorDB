@@ -4705,12 +4705,20 @@ fn a_building_columns_scan_keeps_what_the_array_tree_answers() {
 }
 
 /// `query_column` serves `v IN n.attr` from the array tree and `n.attr = v` from the scalar tree,
-/// and declines a probe the encoder cannot represent.
+/// and declines a probe no kind can represent.
 #[test]
 fn array_contains_is_routed_to_the_array_tree() {
-    let (mut g, label, attr, ids) = graph_with_index(2);
+    let (mut g, label, attr, ids) = graph_with_index(3);
     set_attr(&mut g, ids[0], &attr, Value::Int(5));
     set_attr(&mut g, ids[1], &attr, ints(&[5, 6]));
+    let strings = |xs: &[&str]| {
+        Value::List(Arc::new(
+            xs.iter()
+                .map(|x| Value::String(Arc::new((*x).to_string())))
+                .collect(),
+        ))
+    };
+    set_attr(&mut g, ids[2], &attr, strings(&["x", "y"]));
     let probe = |v: Value| IndexQuery::ArrayContains {
         key: attr.clone(),
         value: v,
@@ -4725,8 +4733,20 @@ fn array_contains_is_routed_to_the_array_tree() {
     assert_eq!(rows(&eq(&attr, 5)), Some(vec![ids[0]]));
     assert_eq!(
         rows(&probe(Value::String(Arc::new("x".to_string())))),
+        Some(vec![ids[2]]),
+        "a string probe reads the tag kind's array tree"
+    );
+    assert_eq!(
+        rows(&probe(Value::String(Arc::new("z".to_string())))),
+        Some(vec![]),
+        "a string no list holds"
+    );
+    assert_eq!(
+        rows(&probe(Value::Point(crate::runtime::value::Point::new(
+            1.0, 2.0
+        )))),
         None,
-        "a non-numeric probe is not this column's to answer"
+        "no kind indexes a point inside a list"
     );
 }
 

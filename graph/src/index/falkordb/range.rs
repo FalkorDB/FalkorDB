@@ -1,13 +1,15 @@
 //! The Range column: one `(label, attribute)` index, made of the kinds a RediSearch Range field is
-//! made of — NUMERIC, TAG and GEO. Only the numeric kind exists so far; the others land as further
-//! fields of [`RangeIndex`], each implementing [`RangeKind`].
+//! made of — NUMERIC, TAG and GEO. The numeric and tag kinds exist so far; GEO lands as a further
+//! field of [`RangeIndex`] implementing [`RangeKind`].
 //!
 //! A Cypher property is not typed, so one column has to hold whatever the entities put in it. The
-//! kinds are therefore not alternatives but **co-resident**, and a predicate is routed by the type
-//! of its operand.
+//! kinds are therefore not alternatives but **co-resident**: a column with `age = 30` on one node
+//! and `age = 'thirty'` on another stores each in the kind that can order it, and a predicate is
+//! routed by the type of its operand.
 //!
-//! Every kind's keys are `u64`, each in a tree of its own [`KeyKind`], so a column's tuples move
-//! between threads and versions as [`EncodedTuples`] whatever their kind.
+//! Every kind's keys are `u64` (the numeric encoding, a tag dictionary id), each in a tree of its
+//! own [`KeyKind`], so a column's tuples move between threads and versions as [`EncodedTuples`]
+//! whatever their kind.
 //!
 //! Routing is exhaustive and total. Every predicate either reaches a kind, is answered empty
 //! because it cannot match — a `NULL` operand, say, or a scalar predicate and a list predicate on
@@ -21,7 +23,8 @@ use std::{iter, slice};
 use rustc_hash::FxHashSet;
 
 use super::encode::{KeyKind, encode_numeric};
-use super::numeric::{DocIter, EncodedTuples, KeySet, NumericIndex};
+use super::numeric::{DistinctIter, DocIter, EncodedTuples, KeySet, NumericIndex};
+use super::tag::{StrSel, TagIndex};
 use crate::index::IndexQuery;
 use crate::runtime::value::Value;
 
@@ -37,6 +40,9 @@ use crate::runtime::value::Value;
 pub trait RangeKind {
     /// A set of this kind's keys: what a predicate over its scalars selects.
     type Keys;
+
+    /// A list element this kind's array tree is probed for: `x IN n.v`.
+    type Element;
 
     /// Call `emit` with each tuple `value` is stored under in this kind, as the tree it goes in and
     /// its key. Nothing when the kind holds no part of `value`.
@@ -71,10 +77,10 @@ pub trait RangeKind {
         keys: Self::Keys,
     ) -> DocIter;
 
-    /// The entities whose value is a list holding an element stored under `key`.
+    /// The entities whose value is a list holding `element`.
     fn lists_holding(
         &self,
-        key: u64,
+        element: &Self::Element,
     ) -> DocIter;
 
     /// Whether `value` is one [`scalars`](Self::scalars) returns for `keys`: what a scan standing
@@ -84,28 +90,130 @@ pub trait RangeKind {
         value: &Value,
     ) -> bool;
 
-    /// Whether `value` is one [`lists_holding`](Self::lists_holding) returns for `key`.
+    /// Whether `value` is one [`lists_holding`](Self::lists_holding) returns for `element`.
     fn is_list_holding(
-        key: u64,
+        element: &Self::Element,
         value: &Value,
     ) -> bool;
 }
 
 /// Which kind holds a scalar value, and therefore which kind answers a predicate over it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Kind {
+enum Kind<'a> {
     Numeric,
+    /// A string, which the tag kind holds.
+    Tag(&'a Arc<String>),
 }
 
-impl Kind {
-    /// The kind that indexes `value`, or `None` for a value no kind holds (`NULL`, a string, a
-    /// point, a temporal, a list, a map, a vector). A list is deliberately not a kind: its
-    /// *elements* are indexed by the numeric kind's array tree, but the list itself is not a value
-    /// any predicate can be routed by. Temporals are not indexed, as in the RediSearch path ([`encode_numeric`]).
-    const fn of(value: &Value) -> Option<Self> {
+impl<'a> Kind<'a> {
+    /// The kind that indexes `value`, or `None` for a value no kind holds (`NULL`, a point, a
+    /// temporal, a list, a map, a vector). A list is deliberately not a kind: its *elements* are
+    /// indexed by the kinds' array trees, but the list itself is not a value any predicate can be
+    /// routed by. Temporals are not indexed, as in the RediSearch path ([`encode_numeric`]).
+    const fn of(value: &'a Value) -> Option<Self> {
         match value {
             Value::Int(_) | Value::Float(_) | Value::Bool(_) => Some(Self::Numeric),
+            Value::String(s) => Some(Self::Tag(s)),
             _ => None,
+        }
+    }
+
+    /// Whether `self` and `other` are the same kind, whatever their values.
+    const fn same(
+        &self,
+        other: &Self,
+    ) -> bool {
+        matches!(
+            (self, other),
+            (Self::Numeric, Self::Numeric) | (Self::Tag(_), Self::Tag(_))
+        )
+    }
+}
+
+/// The scalars a predicate selects, per kind: the numeric keys and the strings.
+///
+/// A scalar is of one kind, so what a conjunction selects is each kind's share intersected on its
+/// own ([`and`](Self::and)) — `n.v = 1 AND n.v = 'a'` selects nothing — and what a union selects
+/// is each kind's share united on its own: `n.v IN [1, 'a']` reads the numeric tree for `1` and
+/// the tag tree for `'a'`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Scalars {
+    pub numeric: KeySet,
+    pub tag: StrSel,
+}
+
+impl Scalars {
+    /// Selects no scalar.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            numeric: KeySet::Empty,
+            tag: StrSel::none(),
+        }
+    }
+
+    /// The numeric scalars with a key in `keys`, and no string.
+    #[must_use]
+    pub const fn numeric(keys: KeySet) -> Self {
+        Self {
+            numeric: keys,
+            tag: StrSel::none(),
+        }
+    }
+
+    /// The strings `strings` selects, and no number.
+    #[must_use]
+    pub const fn tag(strings: StrSel) -> Self {
+        Self {
+            numeric: KeySet::Empty,
+            tag: strings,
+        }
+    }
+
+    /// Whether this selects no scalar by construction.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.numeric == KeySet::Empty && self.tag.is_empty()
+    }
+
+    /// Whether `value` is a scalar this selects.
+    fn contains(
+        &self,
+        value: &Value,
+    ) -> bool {
+        NumericIndex::is_scalar_in(&self.numeric, value) || TagIndex::is_scalar_in(&self.tag, value)
+    }
+
+    /// What both select, kind by kind.
+    fn and(
+        self,
+        other: Self,
+    ) -> Self {
+        Self {
+            numeric: self.numeric.and(other.numeric),
+            tag: self.tag.intersect(other.tag),
+        }
+    }
+}
+
+/// A list element a probe asks for, in the kind that holds it: `x IN n.v`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Element {
+    /// A number, by its key in the numeric array tree.
+    Numeric(u64),
+    /// A string, by value: the tag dictionary may not have interned it yet.
+    Tag(Arc<String>),
+}
+
+impl Element {
+    /// Whether `value` is a list holding this element.
+    fn is_held_by(
+        &self,
+        value: &Value,
+    ) -> bool {
+        match self {
+            Self::Numeric(key) => NumericIndex::is_list_holding(key, value),
+            Self::Tag(s) => TagIndex::is_list_holding(s, value),
         }
     }
 }
@@ -120,24 +228,23 @@ impl Kind {
 /// conjunction of a scalar predicate with a list predicate selects nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Selection {
-    /// Scalar values with a key in the set: `=`, a range, `IN`, and conjunctions and unions of them.
-    Scalars(KeySet),
-    /// List values holding an element under `first` and under each of `rest`: `x IN n.v`, and
-    /// conjunctions of it.
-    ListsHolding { first: u64, rest: Vec<u64> },
+    /// Scalar values, per kind: `=`, a range, `IN`, and conjunctions and unions of them.
+    Scalars(Scalars),
+    /// List values holding `first` and each of `rest`: `x IN n.v`, and conjunctions of it.
+    ListsHolding { first: Element, rest: Vec<Element> },
 }
 
 impl Selection {
     /// Selects nothing.
     #[must_use]
     pub const fn empty() -> Self {
-        Self::Scalars(KeySet::Empty)
+        Self::Scalars(Scalars::none())
     }
 
     /// Whether this selects nothing by construction.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        matches!(self, Self::Scalars(KeySet::Empty))
+        matches!(self, Self::Scalars(scalars) if scalars.is_empty())
     }
 
     /// Whether the column selects an entity holding `value`: the scan's check while the column
@@ -148,10 +255,10 @@ impl Selection {
         value: &Value,
     ) -> bool {
         match self {
-            Self::Scalars(keys) => NumericIndex::is_scalar_in(keys, value),
+            Self::Scalars(scalars) => scalars.contains(value),
             Self::ListsHolding { first, rest } => iter::once(first)
                 .chain(rest)
-                .all(|&key| NumericIndex::is_list_holding(key, value)),
+                .all(|element| element.is_held_by(value)),
         }
     }
 
@@ -187,9 +294,10 @@ impl Selection {
     /// unknown in Cypher — and is answered empty; a value no kind holds is declined.
     fn equal(value: &Value) -> Option<Self> {
         match Kind::of(value) {
-            Some(Kind::Numeric) => Some(Self::Scalars(
+            Some(Kind::Numeric) => Some(Self::Scalars(Scalars::numeric(
                 encode_numeric(value).map_or(KeySet::Empty, KeySet::Point),
-            )),
+            ))),
+            Some(Kind::Tag(s)) => Some(Self::Scalars(Scalars::tag(StrSel::Set(vec![s.clone()])))),
             None if matches!(value, Value::Null) => Some(Self::empty()),
             None => None,
         }
@@ -201,26 +309,9 @@ impl Selection {
     /// `1`. A value no kind holds declines the **whole** list: answering from the rest would
     /// silently drop the rows that value would have matched.
     fn equal_to_any(values: &[Value]) -> Option<Self> {
-        let mut keys = Vec::new();
-        Self::push_equal_keys(values, &mut keys)?;
-        Some(Self::Scalars(KeySet::of_keys(keys)))
-    }
-
-    /// Push onto `keys` the key [`equal`](Self::equal) selects for each of `values`, or decline
-    /// (`None`) at a value no kind holds.
-    fn push_equal_keys(
-        values: &[Value],
-        keys: &mut Vec<u64>,
-    ) -> Option<()> {
-        for value in values {
-            match Self::equal(value)? {
-                Self::Scalars(KeySet::Point(key)) => keys.push(key),
-                // `NULL`, or a number with no key (`NaN`): it matches nothing, so adds no key.
-                Self::Scalars(KeySet::Empty) => {}
-                other => unreachable!("an equality selects one key or none, not {other:?}"),
-            }
-        }
-        Some(())
+        let mut equal = EqualValues::default();
+        equal.push(values)?;
+        Some(equal.selection())
     }
 
     /// The selection of `n.v <op> bound`.
@@ -228,6 +319,9 @@ impl Selection {
     /// Cypher orders numbers only with numbers, so a range with a `NULL` bound matches nothing and
     /// is answered **empty** rather than declined: that is not a gap in the index, it is the
     /// language. A bound of a type no kind holds is declined.
+    ///
+    /// Cypher orders strings with strings too, so a range whose bounds are of two kinds
+    /// (`n.v >= 1 AND n.v < 'z'` merged into one) is answered empty as well.
     fn range(
         min: Option<&Value>,
         max: Option<&Value>,
@@ -235,34 +329,56 @@ impl Selection {
         include_max: bool,
     ) -> Option<Self> {
         let mut null_bound = false;
+        let mut kind: Option<Kind> = None;
+        let mut mixed = false;
         for bound in [min, max].into_iter().flatten() {
             match Kind::of(bound) {
-                Some(Kind::Numeric) => {}
+                Some(this) => match &kind {
+                    Some(seen) if !seen.same(&this) => mixed = true,
+                    Some(_) => {}
+                    None => kind = Some(this),
+                },
                 None if matches!(bound, Value::Null) => null_bound = true,
                 None => return None,
             }
         }
-        Some(if null_bound {
-            Self::empty()
-        } else {
-            Self::Scalars(NumericIndex::range_keys(min, max, include_min, include_max))
-        })
+        if null_bound || mixed {
+            return Some(Self::empty());
+        }
+        let as_str = |bound: Option<&Value>| match bound {
+            Some(Value::String(s)) => Some(s.clone()),
+            _ => None,
+        };
+        Some(Self::Scalars(match kind {
+            Some(Kind::Tag(_)) => Scalars::tag(StrSel::Window {
+                min: as_str(min),
+                max: as_str(max),
+                include_min,
+                include_max,
+            }),
+            Some(Kind::Numeric) | None => {
+                Scalars::numeric(NumericIndex::range_keys(min, max, include_min, include_max))
+            }
+        }))
     }
 
     /// The selection of `value IN n.v`, where `n.v` is a list: the lists holding `value`.
     ///
-    /// Only the numeric kind has an array tree so far: a probe of any other type (a `NULL`
-    /// included) is declined and stays visible as a gap.
+    /// The numeric and tag kinds have array trees, as RediSearch has `numeric:arr` and
+    /// `string:arr`. A probe of any other type (a `NULL` included) is declined and stays visible as
+    /// a gap: RediSearch indexes no point inside a list either.
     fn lists_holding(value: &Value) -> Option<Self> {
-        match Kind::of(value)? {
-            Kind::Numeric => Some(match encode_numeric(value) {
-                Some(first) => Self::ListsHolding {
-                    first,
-                    rest: Vec::new(),
-                },
-                None => Self::empty(),
-            }),
-        }
+        let first = match Kind::of(value)? {
+            Kind::Numeric => match encode_numeric(value) {
+                Some(key) => Element::Numeric(key),
+                None => return Some(Self::empty()),
+            },
+            Kind::Tag(s) => Element::Tag(s.clone()),
+        };
+        Some(Self::ListsHolding {
+            first,
+            rest: Vec::new(),
+        })
     }
 
     /// An `OR` of `=`s and `IN` lists, all on one attribute — `a = 1 OR a IN [2, 3]`: the scalars
@@ -277,7 +393,7 @@ impl Selection {
         if !on_one_attribute(members) {
             return None;
         }
-        let mut keys = Vec::new();
+        let mut equal = EqualValues::default();
         for &member in members {
             let values = match member {
                 IndexQuery::Equal { value, .. } => slice::from_ref(value),
@@ -287,9 +403,9 @@ impl Selection {
                 } if !items.is_empty() => items.as_slice(),
                 _ => return None,
             };
-            Self::push_equal_keys(values, &mut keys)?;
+            equal.push(values)?;
         }
-        Some(Self::Scalars(KeySet::of_keys(keys)))
+        Some(equal.selection())
     }
 
     /// A conjunction of predicates on **one** attribute: what every conjunct selects
@@ -345,6 +461,40 @@ impl Selection {
             }
             _ => Self::empty(),
         }
+    }
+}
+
+/// The values a union of equalities selects, per kind: `n.v IN [1, 'a', null]`.
+#[derive(Default)]
+struct EqualValues {
+    keys: Vec<u64>,
+    strings: Vec<Arc<String>>,
+}
+
+impl EqualValues {
+    /// Add what [`Selection::equal`] selects for each of `values`, or decline (`None`) at a value
+    /// no kind holds. A `NULL`, or a number with no key (`NaN`), matches nothing and adds nothing.
+    fn push(
+        &mut self,
+        values: &[Value],
+    ) -> Option<()> {
+        for value in values {
+            match Kind::of(value) {
+                Some(Kind::Numeric) => self.keys.extend(encode_numeric(value)),
+                Some(Kind::Tag(s)) => self.strings.push(s.clone()),
+                None if matches!(value, Value::Null) => {}
+                None => return None,
+            }
+        }
+        Some(())
+    }
+
+    /// The scalars equal to any of the values pushed.
+    fn selection(self) -> Selection {
+        Selection::Scalars(Scalars {
+            numeric: KeySet::of_keys(self.keys),
+            tag: StrSel::set(self.strings),
+        })
     }
 }
 
@@ -410,17 +560,18 @@ pub(super) fn attributes_of<'a>(
 
 /// One indexed `(label, attribute)`: the kinds of the same column.
 ///
-/// `Clone` is `O(1)` — a root-`Arc` bump per tree — so a graph version forks its index snapshot
-/// cheaply.
+/// `Clone` is `O(1)` — a root-`Arc` bump per tree, and one for the shared tag dictionary — so a
+/// graph version forks its index snapshot cheaply.
 ///
 /// A method that asks every kind — the writes, `is_empty`, `memory_usage` — starts with
-/// `let Self { numeric } = self`, a pattern without `..`: a new kind is a compile error in each of
+/// `let Self { numeric, tag } = self`, a pattern without `..`: a new kind is a compile error in each of
 /// them until it is asked too. A method that routes to one kind matches on [`Kind`], [`KeyKind`]
 /// or [`Selection`], so the compiler finds it once the new kind adds a variant to the one it
 /// matches on.
 #[derive(Clone, Default)]
 pub struct RangeIndex {
     numeric: NumericIndex,
+    tag: TagIndex,
 }
 
 impl RangeIndex {
@@ -436,15 +587,24 @@ impl RangeIndex {
         &self.numeric
     }
 
+    /// The tag kind, for tests that look at its dictionary.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn tag(&self) -> &TagIndex {
+        &self.tag
+    }
+
     /// Call `emit` with each key a stored `value` takes in this column, and its [`KeyKind`]: a
-    /// scalar lands in at most one kind, and a list's elements in the kinds' array trees.
+    /// scalar lands in at most one kind, and a list's elements in the kinds' array trees. Interns a
+    /// string the column has not seen.
     pub fn for_each_stored_key(
         &self,
         value: &Value,
-        emit: impl FnMut(KeyKind, u64),
+        mut emit: impl FnMut(KeyKind, u64),
     ) {
-        let Self { numeric } = self;
-        numeric.for_each_stored_key(value, emit);
+        let Self { numeric, tag } = self;
+        numeric.for_each_stored_key(value, &mut emit);
+        tag.for_each_stored_key(value, emit);
     }
 
     /// Append the tuples `(value, id)` takes in this column to `out`, each with the tuples of its
@@ -518,8 +678,9 @@ impl RangeIndex {
         tuples: &mut EncodedTuples,
     ) {
         tuples.sort_dedup();
-        let Self { numeric } = self;
+        let Self { numeric, tag } = self;
         numeric.add_encoded(tuples);
+        tag.add_encoded(tuples);
     }
 
     /// Remove already-encoded tuples (a unit of work's collapsed removes).
@@ -528,34 +689,40 @@ impl RangeIndex {
         tuples: &mut EncodedTuples,
     ) {
         tuples.sort_dedup();
-        let Self { numeric } = self;
+        let Self { numeric, tag } = self;
         numeric.remove_encoded(tuples);
+        tag.remove_encoded(tuples);
     }
 
     /// Whether the column holds no tuples in any kind.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        let Self { numeric } = self;
-        numeric.is_empty()
+        let Self { numeric, tag } = self;
+        numeric.is_empty() && tag.is_empty()
     }
 
     /// Heap bytes every kind's trees hold.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        let Self { numeric } = self;
-        numeric.memory_usage()
+        let Self { numeric, tag } = self;
+        numeric.memory_usage() + tag.memory_usage()
     }
 
     /// The scalar tree and key `value` takes, or `None` when no kind indexes it as a scalar (a
     /// list: its elements are in the array trees, which say which lists contain a value, not
-    /// which equal a list).
+    /// which equal a list). The key is `None` for a string the column never interned, which no
+    /// entity holds.
+    ///
+    /// Reads the tag dictionary, never interns: a unique-constraint check asks this of a value
+    /// whose write may yet be refused, and the dictionary is append-only.
     #[must_use]
     pub fn encode_value(
         &self,
         value: &Value,
-    ) -> Option<(KeyKind, u64)> {
+    ) -> Option<(KeyKind, Option<u64>)> {
         match Kind::of(value)? {
-            Kind::Numeric => encode_numeric(value).map(|k| (KeyKind::Scalar, k)),
+            Kind::Numeric => encode_numeric(value).map(|k| (KeyKind::Scalar, Some(k))),
+            Kind::Tag(s) => Some((KeyKind::Tag, self.tag.id_of(s))),
         }
     }
 
@@ -568,7 +735,8 @@ impl RangeIndex {
     ) -> DocIter {
         match kind {
             KeyKind::Scalar => self.numeric.scalars(KeySet::Point(key)),
-            KeyKind::Array => self.numeric.lists_holding(key),
+            KeyKind::Array => self.numeric.lists_holding(&key),
+            KeyKind::Tag | KeyKind::TagArray => self.tag.rows_at(kind, key),
         }
     }
 
@@ -579,9 +747,20 @@ impl RangeIndex {
         selection: Selection,
     ) -> DocIter {
         match selection {
-            Selection::Scalars(keys) => self.numeric.scalars(keys),
+            Selection::Scalars(Scalars { numeric, tag }) => {
+                // A scalar is of one kind, so the kinds' streams hold no doc in common, and an
+                // empty share is not read.
+                match (numeric == KeySet::Empty, tag.is_empty()) {
+                    (false, false) => DocIter::Distinct(DistinctIter::new(vec![
+                        self.numeric.scalars(numeric),
+                        self.tag.scalars(tag),
+                    ])),
+                    (true, false) => self.tag.scalars(tag),
+                    _ => self.numeric.scalars(numeric),
+                }
+            }
             Selection::ListsHolding { first, rest } => {
-                let lists = self.numeric.lists_holding(first);
+                let lists = self.lists_holding(&first);
                 if rest.is_empty() {
                     return lists;
                 }
@@ -594,13 +773,23 @@ impl RangeIndex {
                         break;
                     }
                     found = self
-                        .numeric
-                        .lists_holding(element)
+                        .lists_holding(&element)
                         .filter(|doc| found.contains(doc))
                         .collect();
                 }
                 DocIter::Set(found.into_iter())
             }
+        }
+    }
+
+    /// The lists holding `element`, in the kind that holds it.
+    fn lists_holding(
+        &self,
+        element: &Element,
+    ) -> DocIter {
+        match element {
+            Element::Numeric(key) => self.numeric.lists_holding(key),
+            Element::Tag(s) => self.tag.lists_holding(s),
         }
     }
 
@@ -618,8 +807,10 @@ impl RangeIndex {
     #[cfg(test)]
     #[must_use]
     pub fn tuples(&self) -> Vec<(KeyKind, u64, u64)> {
-        let Self { numeric } = self;
-        numeric.tuples()
+        let Self { numeric, tag } = self;
+        let mut tuples = numeric.tuples();
+        tuples.extend(tag.tuples());
+        tuples
     }
 
     /// The scalars equal to the number `value`, reached as a query reaches them. For tests.
@@ -753,17 +944,14 @@ mod tests {
         let (idx, vs) = sample();
         assert!(ids(&idx, &eq(Value::Null), &vs).is_empty());
         assert!(ids(&idx, &range(Some(Value::Null), None), &vs).is_empty());
-        assert!(
-            idx.query(&eq(Value::String(Arc::new("x".to_string()))))
-                .is_none()
-        );
+        let point = Value::Point(Point {
+            latitude: 1.0,
+            longitude: 2.0,
+        });
+        assert!(idx.query(&eq(point.clone())).is_none());
         assert!(idx.query(&eq(list(vec![Value::Int(1)]))).is_none());
         assert!(
-            idx.query(&range(
-                Some(Value::Null),
-                Some(Value::String(Arc::new("x".to_string())))
-            ))
-            .is_none(),
+            idx.query(&range(Some(Value::Null), Some(point))).is_none(),
             "a bound no kind holds declines, even beside a NULL one"
         );
         assert!(idx.query(&contains(Value::Null)).is_none());
@@ -784,7 +972,7 @@ mod tests {
         assert!(
             idx.query(&IndexQuery::Or(vec![
                 eq(Value::Int(1)),
-                eq(Value::String(Arc::new("x".to_string())))
+                eq(list(vec![Value::Int(1)]))
             ]))
             .is_none()
         );
@@ -834,9 +1022,9 @@ mod tests {
         ]);
         assert_eq!(
             Selection::of(&q),
-            Some(Selection::Scalars(KeySet::Point(
+            Some(Selection::Scalars(Scalars::numeric(KeySet::Point(
                 encode_numeric(&Value::Int(7)).unwrap()
-            ))),
+            )))),
             "one key to read"
         );
         assert_eq!(ids(&idx, &q, &vs), vec![3]);
@@ -864,13 +1052,185 @@ mod tests {
         assert!(ids(&idx, &q, &vs).is_empty());
     }
 
-    /// Batch maintenance must agree with the one-at-a-time path.
+    fn s(x: &str) -> Value {
+        Value::String(Arc::new(x.to_string()))
+    }
+
+    fn range_ex(
+        min: Option<Value>,
+        max: Option<Value>,
+        include_min: bool,
+        include_max: bool,
+    ) -> IndexQuery<Value> {
+        IndexQuery::Range {
+            key: attr(),
+            min,
+            max,
+            include_min,
+            include_max,
+        }
+    }
+
+    /// A column holding numbers and strings at once — the mixed-type column
+    /// `test_24_multitype_index` exercises. Each predicate must reach its own kind and see only
+    /// its own values.
+    fn multitype() -> (RangeIndex, Vec<(Value, u64)>) {
+        let values = vec![
+            (Value::Int(1), 1),
+            (Value::Float(2.5), 2),
+            (s("apple"), 3),
+            (s("banana"), 4),
+        ];
+        let mut idx = RangeIndex::new();
+        for (v, id) in &values {
+            idx.add(v, *id);
+        }
+        (idx, values)
+    }
+
+    #[test]
+    fn each_type_reaches_its_own_kind() {
+        let (idx, vs) = multitype();
+        assert_eq!(ids(&idx, &eq(Value::Int(1)), &vs), vec![1]);
+        assert_eq!(ids(&idx, &eq(s("apple")), &vs), vec![3]);
+        // A numeric range sees only the numbers; a string range only the strings.
+        assert_eq!(
+            ids(&idx, &range(Some(Value::Int(0)), Some(Value::Int(10))), &vs),
+            vec![1, 2]
+        );
+        assert_eq!(
+            ids(&idx, &range(Some(s("a")), Some(s("z"))), &vs),
+            vec![3, 4]
+        );
+    }
+
+    /// Cypher's cross-type comparisons are unknown, so they match nothing. That is an **answer**,
+    /// not a gap — declining would turn a legal query into an error.
+    #[test]
+    fn cross_type_comparisons_answer_empty() {
+        let (idx, vs) = multitype();
+        assert!(ids(&idx, &range(Some(Value::Int(0)), Some(s("z"))), &vs).is_empty());
+        assert!(ids(&idx, &range(Some(s("a")), Some(Value::Int(9))), &vs).is_empty());
+    }
+
+    /// `IN [...]` over a mixed list is served from every kind at once, and each doc appears once.
+    #[test]
+    fn a_mixed_union_reads_every_kind() {
+        let (idx, vs) = multitype();
+        let q = IndexQuery::Or(vec![eq(Value::Int(1)), eq(s("banana"))]);
+        assert_eq!(ids(&idx, &q, &vs), vec![1, 4]);
+        let in_list = IndexQuery::InList {
+            key: attr(),
+            list: list(vec![Value::Float(2.5), s("apple"), s("apple")]),
+        };
+        assert_eq!(ids(&idx, &in_list, &vs), vec![2, 3]);
+        let q = IndexQuery::Or(vec![eq(s("apple")), eq(Value::Null)]);
+        assert_eq!(ids(&idx, &q, &vs), vec![3], "a NULL member adds nothing");
+    }
+
+    /// String conjuncts fold by intersecting what they select, and a conjunction across kinds is
+    /// unsatisfiable rather than declined.
+    #[test]
+    fn conjunctions_fold_within_a_kind_and_die_across_kinds() {
+        let (idx, vs) = multitype();
+        // 'a' <= v < 'b' AND v >= 'apple'  ->  just "apple"
+        let q = IndexQuery::And(vec![
+            range_ex(Some(s("a")), Some(s("b")), true, false),
+            range_ex(Some(s("apple")), None, true, true),
+        ]);
+        assert_eq!(ids(&idx, &q, &vs), vec![3]);
+        let q = IndexQuery::And(vec![eq(s("apple")), eq(s("banana"))]);
+        assert!(ids(&idx, &q, &vs).is_empty(), "contradictory strings");
+        let q = IndexQuery::And(vec![eq(Value::Int(1)), eq(s("apple"))]);
+        assert_eq!(
+            Selection::of(&q),
+            Some(Selection::empty()),
+            "no scalar is a number and a string"
+        );
+        // A mixed union inside a conjunction keeps the share of the kind the rest constrains.
+        let q = IndexQuery::And(vec![
+            IndexQuery::Or(vec![eq(s("apple")), eq(Value::Int(1))]),
+            range(Some(s("a")), None),
+        ]);
+        assert_eq!(ids(&idx, &q, &vs), vec![3]);
+        let q = IndexQuery::And(vec![
+            IndexQuery::Or(vec![eq(s("apple")), eq(Value::Int(1))]),
+            range(Some(Value::Int(0)), None),
+        ]);
+        assert_eq!(ids(&idx, &q, &vs), vec![1]);
+    }
+
+    /// List elements are split between the kinds' array trees, and a scalar predicate must not see
+    /// them (nor an array probe see a scalar). A list may hold elements of both kinds, so probes of
+    /// both kinds can hold together.
+    #[test]
+    fn list_elements_split_between_the_kinds() {
+        let vs = vec![
+            (s("a"), 1),
+            (Value::Int(1), 2),
+            (list(vec![s("a"), Value::Int(1)]), 3),
+            (list(vec![s("a")]), 4),
+        ];
+        let mut idx = RangeIndex::new();
+        for (v, id) in &vs {
+            idx.add(v, *id);
+        }
+        assert_eq!(ids(&idx, &contains(s("a")), &vs), vec![3, 4]);
+        assert_eq!(ids(&idx, &contains(Value::Int(1)), &vs), vec![3]);
+        assert_eq!(ids(&idx, &contains(s("never")), &vs), Vec::<u64>::new());
+        assert_eq!(ids(&idx, &eq(s("a")), &vs), vec![1], "the scalar only");
+        assert_eq!(
+            ids(&idx, &eq(Value::Int(1)), &vs),
+            vec![2],
+            "the scalar only"
+        );
+        let q = IndexQuery::And(vec![contains(s("a")), contains(Value::Int(1))]);
+        assert_eq!(ids(&idx, &q, &vs), vec![3], "a list holding both");
+    }
+
+    /// Re-indexing across kinds: the remove must route on the *old* value, or the tuple is
+    /// stranded in the kind nothing will look at again.
+    #[test]
+    fn a_value_changing_kind_leaves_nothing_behind() {
+        let mut idx = RangeIndex::new();
+        idx.add(&Value::Int(1), 1);
+        idx.remove(&Value::Int(1), 1);
+        idx.add(&s("1"), 1);
+        let vs = [(s("1"), 1)];
+        assert!(ids(&idx, &eq(Value::Int(1)), &vs).is_empty());
+        assert_eq!(ids(&idx, &eq(s("1")), &vs), vec![1]);
+        idx.remove(&s("1"), 1);
+        assert!(idx.is_empty(), "no tuple stranded in any kind");
+    }
+
+    /// A unique-constraint lookup reads the dictionary and never interns: the write it checks may
+    /// be refused, and an entry, once added, stays for the column's life.
+    #[test]
+    fn encode_value_does_not_intern() {
+        let mut idx = RangeIndex::new();
+        idx.add(&s("a"), 1);
+        assert!(matches!(
+            idx.encode_value(&s("a")),
+            Some((KeyKind::Tag, Some(_)))
+        ));
+        assert_eq!(
+            idx.encode_value(&s("never stored")),
+            Some((KeyKind::Tag, None)),
+            "a string no entity holds has no key"
+        );
+        assert_eq!(idx.tag.dict().len(), 1, "and the lookup did not add one");
+        assert_eq!(idx.encode_value(&list(vec![s("a")])), None);
+    }
+
+    /// Batch maintenance must agree with the one-at-a-time path, for every kind at once.
     #[test]
     fn batch_ops_match_single_ops() {
         let entries = vec![
             (Value::Int(3), 1u64),
             (list(vec![Value::Int(4), Value::Int(5)]), 2),
             (Value::Null, 3),
+            (s("x"), 4),
+            (list(vec![s("y"), Value::Int(6)]), 5),
         ];
         let mut scratch = EncodedTuples::default();
         let mut batched = RangeIndex::new();
@@ -880,7 +1240,7 @@ mod tests {
             singly.add(v, *id);
         }
         assert_eq!(batched.tuples(), singly.tuples());
-        assert_eq!(batched.tuples().len(), 3);
+        assert_eq!(batched.tuples().len(), 6);
         batched.remove_batch(entries.iter().cloned(), &mut scratch);
         assert!(batched.is_empty());
     }
