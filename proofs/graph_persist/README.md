@@ -158,11 +158,11 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 70 rows: `redis_type.rs` (27), `graphblas/serialization.rs` (17), the encoder and decoder (7 each), `mvcc_graph.rs` (7), `graph.rs` (5).
+`COVERAGE.tsv` has 71 rows: `redis_type.rs` (28), `graphblas/serialization.rs` (17), the encoder and decoder (7 each), `mvcc_graph.rs` (7), `graph.rs` (5).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 47 |
+| PROVEN | 48 |
 | MODELLED | 2 |
 | NOT COVERED | 10 |
 | AXIOMATISED | 11 |

@@ -173,11 +173,11 @@ All `.lean` files except the root are under `RedisLayer/`. The project has no La
 
 ## Coverage
 
-`COVERAGE.tsv` has 294 rows across `src/`. The biggest files are `buffered_io.rs` (55), `graph_core.rs` (44), `telemetry.rs` (36), `query_session.rs` (25) and `bulk_insert.rs` (22).
+`COVERAGE.tsv` has 295 rows across `src/`. The biggest files are `buffered_io.rs` (55), `graph_core.rs` (44), `telemetry.rs` (36), `query_session.rs` (25) and `bulk_insert.rs` (22).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 254 |
+| PROVEN | 255 |
 | AXIOMATISED | 34 |
 | NOT COVERED | 6 |
 
