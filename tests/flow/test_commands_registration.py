@@ -37,7 +37,9 @@ class testCmdReg(FlowTestsBase):
                 result = script(args=[cmd])
                 self.env.assertFalse(True and "Expecting script invocation to fail")
             except ResponseError as e:
-                self.env.assertContains("This Redis command is not allowed from script", str(e))
+                # The server words this error: "This Redis command ..." or
+                # "This Valkey command ...".
+                self.env.assertContains("command is not allowed from script", str(e))
 
     def test_command_metadata_flags(self):
         def _command_flags(command):
