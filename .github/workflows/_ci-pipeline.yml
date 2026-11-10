@@ -137,9 +137,13 @@ jobs:
       - name: Check that a module sees a NULL environ under this valkey-server
         run: |
           cc -shared -fPIC -o /tmp/environ-probe.so tests/valkey_environ_probe.c
-          out=$(timeout 30 valkey-server --port 0 --save '' \
+          out=$(timeout -k 5 30 valkey-server --port 0 --save '' \
             --loadmodule /tmp/environ-probe.so 2>&1 || true)
-          echo "$out" | grep 'environ-probe:' || true
+          if ! echo "$out" | grep 'environ-probe:'; then
+            echo "$out"
+            echo "The probe module did not run; see the server output above." >&2
+            exit 1
+          fi
           echo "$out" | grep -q 'environ-probe: NULL' || {
             echo "A module sees a live environ here, so this job cannot catch #3493." >&2
             exit 1
