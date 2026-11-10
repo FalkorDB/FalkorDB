@@ -224,11 +224,7 @@ fn seed(
             continue; // a self-loop is never on a shortest path
         }
         let (rank_u, rank_v) = (topology.rank_of(u.into()), topology.rank_of(v.into()));
-        // Every directed weight entry (u, v) has u-v in the skeleton the hierarchy was built
-        // from, so for weights of that same graph the arc is there. A miss means the weights
-        // come from a later version of the graph than the hierarchy was built for, one that
-        // joined two nodes the hierarchy does not: dropping the weight would make queries
-        // silently too long, so the caller rebuilds instead.
+        // `customize` was given a weight for an edge not in the structure: return an error.
         let Some(slot) = topology.arc_slot(rank_u, rank_v) else {
             return Err(CchError::NeedsRebuild);
         };
