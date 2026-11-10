@@ -9,7 +9,7 @@
 //! Layout (one file per area, so changes to different areas do not touch each other's files):
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
 //! - `nd.rs`        the nested-dissection call behind Phase 1's ordering
-//! - `customize.rs` Phase 2: customization, `WeightArr` (#3209)
+//! - `customize.rs` Phase 2: customization (#3209)
 //! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
@@ -25,6 +25,7 @@ mod query;
 #[cfg(test)]
 pub(crate) mod testkit;
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use roaring::RoaringTreemap;
@@ -33,6 +34,8 @@ use super::falkordb_index::FalkorDbIndex;
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 use crate::graph::graph::{Graph, TypeId};
 use crate::graph::graphblas::tensor::GrB_INDEX_MAX;
+use customize::Metric;
+use order::Topology;
 use thiserror::Error;
 
 /// The largest node count (`CchInput::n`, the graph's node capacity) a hierarchy is built
@@ -76,7 +79,7 @@ fn index_id(index: usize) -> u64 {
 /// A `Csr` exported from a GraphBLAS matrix gets all three from the export (`n + 1` row
 /// pointers, column indices below the dimension, sorted and unique within a row); the ones
 /// this module builds itself keep them.
-pub struct Csr {
+pub(crate) struct Csr {
     node_count: usize,
     /// `node_count + 1` offsets into `neighbors`.
     row_offsets: Vec<u64>,
@@ -95,7 +98,19 @@ impl Csr {
         &self,
         node: usize,
     ) -> &[u64] {
-        &self.neighbors[id_index(self.row_offsets[node])..id_index(self.row_offsets[node + 1])]
+        &self.neighbors[self.row_range(node)]
+    }
+
+    /// Where `node`'s row sits in `neighbors` (and in a [`WeightCsr`]'s `values`):
+    /// `row_offsets[node]..row_offsets[node + 1]`.
+    ///
+    /// # Panics
+    /// If `node >= node_count`.
+    fn row_range(
+        &self,
+        node: usize,
+    ) -> Range<usize> {
+        id_index(self.row_offsets[node])..id_index(self.row_offsets[node + 1])
     }
 
     /// Whether `row_offsets` is shaped as the type requires (`node_count + 1` offsets from 0 to
@@ -142,22 +157,23 @@ impl Csr {
 
 /// Directed weights: same shape as a [`Csr`], with one weight per entry.
 pub struct WeightCsr {
-    pub csr: Csr,
-    pub w: Vec<f64>,
+    csr: Csr,
+    /// One weight per entry of `csr.neighbors`.
+    values: Vec<f64>,
 }
 
 /// What `Graph` hands the hierarchy builder (built by #3211, consumed by #3208 and #3209).
 pub struct CchInput {
-    pub n: usize,
+    n: usize,
     /// Symmetric, no self-loops ([`Csr::is_symmetric_simple`]): `CchInput::build` takes it
     /// as the pattern union of the weights and their transpose after dropping the diagonal.
     /// Phase 1 only.
-    pub skeleton: Csr,
+    skeleton: Csr,
     /// Directed. One entry per node pair: the cheapest weight over all parallel edges and all
     /// indexed relationship types. A missing or non-numeric attribute counts as 1.0.
     /// An absent entry means "no edge". Weights must be `>= 0`; `+inf` is legal and means a
     /// closed edge: it exists, but no path can use it.
-    pub weights: WeightCsr,
+    weights: WeightCsr,
 }
 
 /// Identity of an index. The key is the whole definition.
@@ -204,6 +220,13 @@ pub enum CchError {
     /// legal (a closed edge).
     #[error("a weight is negative or NaN")]
     InvalidWeight,
+    /// The weights are not shaped for the hierarchy: a different node count, or an edge
+    /// between two nodes it has no arc for. They come from a later version of the graph than
+    /// the one the hierarchy was built for, and only a rebuild can take them. Expected on a
+    /// live graph, not a bug. A malformed weight CSR is a bug, [`Self::Internal`], and a
+    /// build never returns this.
+    #[error("the weights do not match the CCH hierarchy: it needs a rebuild")]
+    NeedsRebuild,
     /// A bug, not bad input. The message says which.
     #[error("internal CCH error: {0}")]
     Internal(&'static str),
@@ -221,37 +244,21 @@ impl From<order::OrderError> for CchError {
 }
 
 /// The hierarchy. Cheap to share behind an `Arc`: the six structural arrays never change after
-/// `build`; only the four weight arrays are rewritten by `customize`.
+/// `build`, and a new metric is a new hierarchy sharing them ([`Cch::customized`]).
+///
+/// The internal layout — the two id spaces, what an arc id means, and what each of the four
+/// arrays holds — is documented in [`customize`], which scoped recustomization (#3217) and
+/// any later change to how the weight arrays are stored code against.
 pub struct Cch {
-    // filled in by the ordering (#3208) and customization (#3209) changes
+    /// Phase 1's output: the elimination order and the chordal supergraph. Metric
+    /// independent, so every version of this index shares one.
+    topology: Arc<Topology>,
+    /// Phase 2's output: the four per-arc arrays, indexed by arc id.
+    #[allow(dead_code)] // this change writes it; the query (#3210) is its reader
+    metric: Metric,
 }
 
 impl Cch {
-    /// Phase 1 + Phase 2.
-    ///
-    /// # Errors
-    /// [`CchError::InvalidWeight`] for a negative or NaN weight.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3208 and #3209. Nothing calls it yet.
-    pub fn build(_input: &CchInput) -> Result<Self, CchError> {
-        unimplemented!("hierarchy build, #3208 and #3209")
-    }
-
-    /// Phase 2 only, same structure, new weights.
-    ///
-    /// # Errors
-    /// [`CchError::InvalidWeight`] for a negative or NaN weight.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3209. Nothing calls it yet.
-    pub fn customize(
-        &mut self,
-        _weights: &WeightCsr,
-    ) -> Result<(), CchError> {
-        unimplemented!("customization, #3209")
-    }
-
     /// Recompute the metric after the edges in `changed` changed weight, touching only the
     /// arcs those changes can reach.
     ///
@@ -259,7 +266,7 @@ impl Cch {
     /// last customization — raised, lowered, removed, or added where the hierarchy already
     /// has an arc. Direction does not matter (an arc carries both), duplicates are fine,
     /// and self-loops are ignored. `weights` is the **complete** new metric, the same
-    /// [`WeightCsr`] a full [`Cch::customize`] would take:
+    /// [`WeightCsr`] a full [`Cch::customized`] would take:
     /// - a removed edge is simply absent from it, and seeds its arc with infinity, as an
     ///   explicit `+inf` (a closed edge) does;
     /// - every pair whose weight differs from the previous metric must be in `changed`.
@@ -297,23 +304,6 @@ impl Cch {
     ) -> Option<(f64, Vec<u64>)> {
         unimplemented!("query, #3210")
     }
-
-    /// # Panics
-    /// Always — unimplemented until #3209. Nothing calls it yet.
-    #[must_use]
-    pub fn node_count(&self) -> usize {
-        unimplemented!("customization, #3209")
-    }
-
-    /// Only the tests call it.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3209. Nothing calls it yet.
-    #[cfg(test)]
-    #[must_use]
-    pub fn memory_usage(&self) -> usize {
-        unimplemented!("customization, #3209")
-    }
 }
 
 /// What [`Cch::recustomize_scoped`] did.
@@ -326,8 +316,8 @@ pub enum Recustomized {
     /// A changed pair has no arc in the hierarchy (a new adjacency), names a node the
     /// hierarchy does not have, or `weights` is shaped for a different node count.
     /// Recustomizing cannot represent it: the structure has to be rebuilt. **Nothing was
-    /// written.** On the `Full` path this is also what `customize`'s
-    /// `CchError::Internal` shape refusal becomes, so the two paths answer alike.
+    /// written.** On the `Full` path this is also what [`Cch::customized`]'s
+    /// [`CchError::NeedsRebuild`] becomes, so the two paths answer alike.
     NeedsRebuild,
 }
 
@@ -472,6 +462,7 @@ pub struct CchDirty {
 mod tests {
     use super::{Cch, CchIndex, CchIndexDef, Csr, TypeId};
     use crate::graph::{graph::Graph, graphblas::test_init};
+    use crate::index::falkordb::cch::testkit::{empty, to_input};
     use crate::index::falkordb::versioned::{BuildState, IndexEntry, VersionedIndex};
     use std::sync::Arc;
 
@@ -562,7 +553,7 @@ mod tests {
         );
 
         let def = CchIndexDef::new(vec![TypeId(1)], 0);
-        let cch = Arc::new(Cch {});
+        let cch = Arc::new(Cch::build(&to_input(&empty(0))).expect("empty hierarchy"));
         g.falkordb_index.cch_indexes.insert(
             def.clone(),
             IndexEntry::new(

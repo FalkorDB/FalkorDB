@@ -23,11 +23,6 @@
 //! row, so each row is attached to its parent as soon as it is built
 //! ([`chordal_supergraph`]).
 
-// Phase 1 lands on its own, before anything outside this file calls it: `Cch` grows its
-// topology field in the customization change (#3209). Until then the tests below are the
-// only caller, so only the non-test build is exempt.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::ops::Range;
@@ -139,6 +134,7 @@ pub(crate) struct Topology {
     /// Upward adjacency.
     upward: RankRows,
     /// Downward adjacency: the transpose of `upward`.
+    #[allow(dead_code)] // built with `upward`; scoped recustomization (#3217) is its reader
     downward: RankRows,
 }
 
@@ -168,6 +164,7 @@ impl RankRows {
     }
 
     /// Bytes held by both arrays.
+    #[cfg(test)]
     fn memory_usage(&self) -> usize {
         size_of_val(&*self.offsets) + size_of_val(&*self.neighbors)
     }
@@ -229,6 +226,7 @@ impl Topology {
     }
 
     /// The node eliminated at `rank`.
+    #[cfg(test)] // the query change (#3210) is its first caller outside the tests
     pub(crate) fn node_of(
         &self,
         rank: Rank,
@@ -242,6 +240,16 @@ impl Topology {
         node: NodeId,
     ) -> Rank {
         self.node_to_rank[node_index(node)]
+    }
+
+    /// The whole order as raw ids, `rank_to_node[rank] = node`: only the tests take it, for
+    /// the kit's oracles, which work on `u64`s.
+    #[cfg(test)]
+    pub(crate) fn rank_to_node_ids(&self) -> Vec<u64> {
+        self.rank_to_node
+            .iter()
+            .map(|&node| u64::from(node))
+            .collect()
     }
 
     /// Every rank above `rank` in the chordal supergraph, ascending.
@@ -261,6 +269,7 @@ impl Topology {
     }
 
     /// Every rank below `rank` in the chordal supergraph, ascending.
+    #[cfg(test)] // scoped recustomization (#3217) is its first caller outside the tests
     pub(crate) fn down(
         &self,
         rank: Rank,
