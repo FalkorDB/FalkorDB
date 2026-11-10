@@ -45,6 +45,13 @@ The commands below use `docker exec` on a container named `falkordb`; replace
 the name with yours. If you set `REDIS_ARGS`, the Valkey image reads it too
 when `VALKEY_ARGS` is not set, so start it with the same setting.
 
+Wherever a `docker run` below says "your other options", repeat the options of
+your Redis container: `REDIS_ARGS`/`VALKEY_ARGS`, `TLS` and its certificates,
+password or ACL settings and mounts, ports. Only `FALKORDB_REDIS_MIGRATION`
+is added in step 3 and left out in step 4. The data must be in a named volume
+or a bind mount: a container started with `--rm` and an anonymous volume
+loses its data when stopped, so copy the data out first.
+
 1. **Back up the volume.** The steps below rewrite its files. Stop your
    applications from writing to FalkorDB until step 3 has finished: writes
    after the `SAVE` in step 2 are not in the files Valkey loads.
