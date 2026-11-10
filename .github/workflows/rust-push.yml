@@ -89,33 +89,35 @@ jobs:
             -t ghcr.io/falkordb/falkordb-build:latest \
             "ghcr.io/falkordb/falkordb-build:${CI_KEY}"
 
-  # Promote the runtime images the MERGE QUEUE built (rc-mg-<sha>-redis, the
-  # Redis leg's) to the rolling `:edge` channel on every trunk merge —
-  # byte-identical retag.
+  # Promote the runtime images the MERGE QUEUE built and tested
+  # (rc-mg-<sha>-valkey and rc-mg-<sha>-redis) to the rolling tags on every
+  # trunk merge: edge-rs-valkey and edge-rs-redis, with edge and edge-rs
+  # pointing at Valkey. It is a retag of the same manifests, never a rebuild,
+  # on both repositories and both registries; build/publish_tags.py lists the
+  # tags, checks each source first, and checks every tag's digest after.
   #
-  # Deliberately NOT the PR's own rc-pr-<N> image, even though same-repo PRs
-  # still publish one. That image is built from the PR head; the queue's is
-  # built from the merge candidate, which is what actually lands. Promoting the
-  # PR image would ship bytes that were never tested in the combination that
-  # merged — the staleness this whole change exists to remove. A fork PR has no
-  # rc-pr-<N> at all, so keying on it would simply fail for forks.
+  # Deliberately NOT the PR's own rc-pr-<N> images, even though same-repo PRs
+  # still publish them. Those are built from the PR head; the queue's are
+  # built from the merge candidate, which is what actually lands. A fork PR
+  # has no rc-pr-<N> at all, so keying on it would simply fail for forks.
   #
-  # `:edge` serves the Rust engine now that this tree is the default branch.
-  # The C engine's rolling images moved to the `edge-c` family on `master`, and
-  # C never published to GHCR, so there is no contention on either registry.
-  # `:edge-rs` stays as a deprecated alias. Bare `:latest` is untouched — that
-  # pointer moves only on a release, via release-tag.yml. See issue #2290.
+  # The C engine's rolling images are the `edge-c` family on `master`, and C
+  # never published to GHCR, so there is no contention on either registry.
+  # `latest` is untouched: it moves only on a release, via release-tag.yml.
   promote-edge:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        repo: [falkordb, falkordb-server]
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test the tag plan
+        run: python3 build/test_publish_tags.py
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
@@ -131,30 +133,60 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Promote rc-mg-${{ github.sha }}-redis → :edge (${{ matrix.repo }})
+      - name: Promote rc-mg-${{ github.sha }}-<server> to the rolling tags
+        run: python3 build/publish_tags.py edge --sha "$GITHUB_SHA" --execute
+
+  # The tag check also checks latest*, which fails while a release is between
+  # publishing its GitHub release and pushing its images. So wait for the
+  # image job of any release-tag.yml run still going; if one is still going
+  # after 30 minutes, fail here, naming it, rather than run the check.
+  await-release:
+    needs: promote-edge
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      actions: read
+    steps:
+      - name: Wait for release images still being pushed
         env:
-          CI_KEY: mg-${{ github.sha }}
-          REPO:   ${{ matrix.repo }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # One imagetools call fans the SAME multi-arch manifest out to both
-          # registries — still a retag, never a rebuild, so the bytes PR CI
-          # validated are the bytes that ship. Same pattern release-tag.yml
-          # uses for semver tags.
-          # `:edge` is the primary rolling channel now that this tree is the
-          # default branch. `:edge-rs` is kept as an alias so anything already
-          # pinned to it keeps working — same manifest, so the extra tags cost
-          # nothing. It is deprecated and will be dropped once consumers move.
-          #
-          # No contention with the C engine: its rolling images moved to the
-          # `edge-c` family on `master`, and C never published to GHCR at all.
-          # See issue #2290.
-          docker buildx imagetools create \
-            -t "ghcr.io/falkordb/${REPO}:edge" \
-            -t "docker.io/falkordb/${REPO}:edge" \
-            -t "ghcr.io/falkordb/${REPO}:edge-rs" \
-            -t "docker.io/falkordb/${REPO}:edge-rs" \
-            "ghcr.io/falkordb/${REPO}:rc-${CI_KEY}-redis"
+          deadline=$(( SECONDS + 30 * 60 ))
+          while :; do
+            busy=""
+            for run in $(gh api "repos/${GH_REPO}/actions/workflows/release-tag.yml/runs?per_page=20" \
+                           --jq '.workflow_runs[] | select(.status != "completed") | .id'); do
+              # An image job not scheduled yet counts as still to come.
+              states=$(gh api "repos/${GH_REPO}/actions/runs/${run}/jobs?per_page=100" --paginate \
+                         --jq '.jobs[] | select(.name == "image") | .status')
+              if [ -z "$states" ] || grep -qv '^completed$' <<<"$states"; then
+                busy="$busy https://github.com/${GH_REPO}/actions/runs/${run}"
+              fi
+            done
+            if [ -z "$busy" ]; then
+              echo "No release is pushing images."
+              break
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::release-tag.yml is still pushing images after 30 minutes:${busy}. The tag check would fail on latest* until it finishes; re-run this workflow's failed jobs once it has."
+              exit 1
+            fi
+            echo "waiting for release images:${busy}"
+            sleep 30
+          done
+
+  check-tags:
+    needs: await-release
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/check-published-tags.yml
+    with:
+      target: edge
+    # Docker Hub login, against its anonymous pull rate limit.
+    secrets: inherit
 
   flow-test-matrix:
     runs-on: ubuntu-latest
@@ -209,6 +241,11 @@ jobs:
           llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-23 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      # Coverage runs on Valkey, the harness default. tests/common.py starts the
+      # server with --logfile redis-test.log.
+      - name: Check the server this job ran (valkey)
+        if: ${{ success() }}
+        run: tests/assert_server_log.sh valkey redis-test.log
       - name: Upload unit test coverage to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
@@ -271,6 +308,10 @@ jobs:
           llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-23 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      # Coverage runs on Valkey, flow.sh's default.
+      - name: Check the server this job ran (valkey)
+        if: ${{ success() }}
+        run: tests/assert_server_log.sh valkey tests/flow/logs
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
