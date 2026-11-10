@@ -52,6 +52,11 @@ is added in step 3 and left out in step 4. The data must be in a named volume
 or a bind mount: a container started with `--rm` and an anonymous volume
 loses its data when stopped, so copy the data out first.
 
+If the server needs a password or an ACL user, every `redis-cli` call below
+must authenticate too: pass `-e REDISCLI_AUTH=<password>` (and
+`-e REDISCLI_USER=<user>` where it applies) to each `docker exec`, or add
+`--user`/`--pass` to the `redis-cli` command.
+
 1. **Back up the volume.** The steps below rewrite its files. Stop your
    applications from writing to FalkorDB until step 3 has finished: writes
    after the `SAVE` in step 2 are not in the files Valkey loads.
