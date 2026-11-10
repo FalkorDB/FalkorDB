@@ -47,10 +47,14 @@ when `VALKEY_ARGS` is not set, so start it with the same setting.
 
 Wherever a `docker run` below says "your other options", repeat the options of
 your Redis container: `REDIS_ARGS`/`VALKEY_ARGS`, `TLS` and its certificates,
-password or ACL settings and mounts, ports. Only `FALKORDB_REDIS_MIGRATION`
+password or ACL settings and mounts, ports, minus any option only Redis has
+(Valkey refuses to start on an option it does not know, such as
+`key-memory-histograms`). Only `FALKORDB_REDIS_MIGRATION`
 is added in step 3 and left out in step 4. The data must be in a named volume
 or a bind mount: a container started with `--rm` and an anonymous volume
-loses its data when stopped, so copy the data out first.
+loses its data when stopped. Copy the data directory out of such a container
+(`docker cp falkordb:/var/lib/falkordb/data <dir>`) only after the final save
+and AOF rewrite in step 2, and before stopping it.
 
 If the server needs a password or an ACL user, every `redis-cli` call below
 must authenticate too: pass `-e REDISCLI_AUTH=<password>` to each
@@ -103,8 +107,11 @@ must authenticate too: pass `-e REDISCLI_AUTH=<password>` to each
    docker exec falkordb redis-cli SAVE
    ```
 
-   With AOF on, also rewrite the AOF and wait until the rewrite has finished,
-   which is when both `aof_rewrite_*` values read `:0` (a rewrite waits,
+   With AOF on, also rewrite the AOF. If a rewrite is already running,
+   `BGREWRITEAOF` is refused or deferred and that earlier rewrite may still
+   hold the streams you deleted: wait until `aof_rewrite_in_progress` and
+   `aof_rewrite_scheduled` are `:0`, then run `BGREWRITEAOF` again, and wait
+   again until the rewrite has finished, which is when both `aof_rewrite_*` values read `:0` (a rewrite waits,
    `scheduled:1`, while a save runs) and `aof_last_bgrewrite_status` reads `ok`:
 
    ```sh
