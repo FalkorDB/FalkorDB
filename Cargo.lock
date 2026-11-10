@@ -1770,7 +1770,7 @@ checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
 [[package]]
 name = "valkey-module"
 version = "0.1.15"
-source = "git+https://github.com/gkorland/valkeymodule-rs?branch=fix%2Fresp-string-bytes#3eb66d941e70523a4b374329e63d43236321a470"
+source = "git+https://github.com/valkey-io/valkeymodule-rs?rev=e4df023371ad4a5f532ef88407847f2bde287482#e4df023371ad4a5f532ef88407847f2bde287482"
 dependencies = [
  "backtrace",
  "bindgen 0.70.1",
@@ -1793,7 +1793,7 @@ dependencies = [
 [[package]]
 name = "valkey-module-macros-internals"
 version = "0.1.15"
-source = "git+https://github.com/gkorland/valkeymodule-rs?branch=fix%2Fresp-string-bytes#3eb66d941e70523a4b374329e63d43236321a470"
+source = "git+https://github.com/valkey-io/valkeymodule-rs?rev=e4df023371ad4a5f532ef88407847f2bde287482#e4df023371ad4a5f532ef88407847f2bde287482"
 dependencies = [
  "lazy_static",
  "proc-macro2",
