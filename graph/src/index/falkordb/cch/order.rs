@@ -164,7 +164,6 @@ impl RankRows {
     }
 
     /// Bytes held by both arrays.
-    #[cfg(test)]
     fn memory_usage(&self) -> usize {
         size_of_val(&*self.offsets) + size_of_val(&*self.neighbors)
     }
@@ -303,7 +302,6 @@ impl Topology {
 
     /// Bytes held by the topology: the struct itself (it lives on the heap, behind the
     /// `Arc` every version of the index shares) and its six arrays.
-    #[cfg(test)]
     pub(crate) fn memory_usage(&self) -> usize {
         size_of::<Self>()
             + size_of_val(&*self.rank_to_node)

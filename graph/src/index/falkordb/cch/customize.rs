@@ -101,7 +101,6 @@ pub(crate) struct Metric {
 
 impl Metric {
     /// Heap bytes of the four arrays; the inline headers are counted by the owning `Cch`.
-    #[cfg(test)]
     pub(crate) fn memory_usage(&self) -> usize {
         size_of_val(&*self.upward_weight)
             + size_of_val(&*self.downward_weight)
@@ -419,9 +418,9 @@ impl Cch {
     }
 
     /// Bytes held by this hierarchy: the struct itself, the shared [`Topology`], and the
-    /// four weight arrays. Two versions sharing one `Topology` each report its bytes. Only
-    /// the tests call it.
-    #[cfg(test)]
+    /// four weight arrays. Two versions sharing one `Topology` each report its bytes, as
+    /// [`VersionedIndex::memory_usage`](super::super::versioned::VersionedIndex::memory_usage)
+    /// counts a shared page.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         // `size_of::<Self>()` already covers `Metric`'s four inline headers

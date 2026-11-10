@@ -47,6 +47,22 @@ fn hold(
     cch
 }
 
+/// `GRAPH.MEMORY USAGE` counts a held hierarchy and its type list, and stops counting it once
+/// dropped.
+#[test]
+fn memory_usage_counts_each_held_hierarchy() {
+    let mut g = graph("cch_memory");
+    let before = g.falkordb_index.memory_usage();
+    let a = CchIndexDef::new(vec![TypeId(1), TypeId(2)], 0);
+    let cch = hold(&mut g, &a);
+    assert_eq!(
+        g.falkordb_index.memory_usage() - before,
+        cch.memory_usage() + 2 * size_of::<TypeId>()
+    );
+    assert_eq!(g.drop_cch_index(&a), Ok(()));
+    assert_eq!(g.falkordb_index.memory_usage(), before);
+}
+
 fn graph(name: &str) -> Graph {
     test_init::ensure_init();
     Graph::new(16, 16, 1, 0, name)

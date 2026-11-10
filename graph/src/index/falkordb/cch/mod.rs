@@ -360,8 +360,6 @@ pub enum Recustomized {
 #[derive(Clone)]
 pub struct CchIndex {
     pub def: CchIndexDef,
-    // Read by the tests only until write maintenance reads it.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) cch: Arc<Cch>,
 }
 
@@ -474,10 +472,10 @@ impl VersionedIndex for CchIndex {
         unreachable!("CCH is not dispatched through IndexId until the background build")
     }
 
-    /// Never called: [`FalkorDbIndex::memory_usage`] counts the node and edge columns only, since
-    /// the hierarchy holds no arrays until #3208 and #3209.
+    /// The hierarchy ([`Cch::memory_usage`]) and the definition's type list. A `Topology`
+    /// shared with another version is counted here too, as every index counts a shared page.
     fn memory_usage(&self) -> usize {
-        unreachable!("GRAPH.MEMORY USAGE counts no CCH index until the hierarchy holds arrays")
+        self.cch.memory_usage() + size_of_val(self.def.rel_types())
     }
 }
 

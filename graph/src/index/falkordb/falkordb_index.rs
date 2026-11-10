@@ -628,17 +628,23 @@ impl FalkorDbIndex {
         self.node_columns.len() + self.edge_columns.len()
     }
 
-    /// Heap bytes every column holds in this version, node and edge
-    /// ([`VersionedIndex::memory_usage`]): what a build with `index-falkordb` adds to
-    /// `indices_sz_mb` in `GRAPH.MEMORY USAGE`. Walks every page of every column. The CCH
-    /// indexes are not counted: their hierarchy holds no arrays until #3208 and #3209.
+    /// Heap bytes every index holds in this version, node and edge columns and CCH
+    /// hierarchies ([`VersionedIndex::memory_usage`]): what a build with `index-falkordb` adds
+    /// to `indices_sz_mb` in `GRAPH.MEMORY USAGE`. Walks every page of every column.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        self.node_columns
+        let columns: usize = self
+            .node_columns
             .values()
             .chain(self.edge_columns.values())
             .map(IndexEntry::memory_usage)
-            .sum()
+            .sum();
+        let hierarchies: usize = self
+            .cch_indexes
+            .values()
+            .map(IndexEntry::memory_usage)
+            .sum();
+        columns + hierarchies
     }
 
     /// The column map for `entity` — node labels and relationship types keep
