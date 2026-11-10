@@ -2,9 +2,14 @@ ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
 # Which server the image ships FalkorDB on: `redis` (default) or `valkey`.
-# Selects the `server-${SERVER}` stage below; the other server's builder stage
-# is never built.
+# Selects the `server-${SERVER}` stage below, and the `base-${SERVER}` OS the
+# server is built and run on; the other server's stages are never built.
 ARG SERVER=redis
+# Base OS of each server's image: Valkey runs on Ubuntu LTS, Redis on Debian.
+# Callers pick an image by SERVER alone; these only change what a SERVER maps
+# to, e.g. `--build-arg VALKEY_BASE_IMAGE=debian:trixie-slim`.
+ARG REDIS_BASE_IMAGE=debian:trixie-slim
+ARG VALKEY_BASE_IMAGE=ubuntu:26.04
 # Server versions. Override via `--build-arg REDIS_VERSION=X.Y.Z` /
 # `--build-arg VALKEY_VERSION=X.Y.Z` to ship against a different release
 # without editing the Dockerfile. Every Dockerfile that builds a server pins
@@ -68,7 +73,23 @@ FROM scratch AS artifact
 COPY --from=builder /out/falkordb.so /falkordb.so
 
 # ---------------------------------------------------------------------------
-# Server builder stages — debian:trixie-slim + minimal build deps.
+# Base OS, chosen by SERVER (see REDIS_BASE_IMAGE / VALKEY_BASE_IMAGE above).
+# The server is compiled (server-builder-base) and run (server-base) on the
+# same base, so it links against the glibc and OpenSSL its image ships.
+# ---------------------------------------------------------------------------
+FROM ${REDIS_BASE_IMAGE} AS base-redis
+FROM ${VALKEY_BASE_IMAGE} AS base-valkey
+# ubuntu:26.04 labels itself as Canonical's Ubuntu image (title "ubuntu",
+# Canonical's description, its own version and date), and a FalkorDB image
+# must not pass for it. A label cannot be unset, so these are blanked.
+# debian:trixie-slim sets no labels.
+LABEL org.opencontainers.image.title="" \
+      org.opencontainers.image.description="" \
+      org.opencontainers.image.version="" \
+      org.opencontainers.image.created=""
+
+# ---------------------------------------------------------------------------
+# Server builder stages — the base OS + minimal build deps.
 #
 # We build the server binaries ourselves (build/build-server.sh, shared with
 # every other image that ships a server) instead of inheriting
@@ -89,7 +110,7 @@ COPY --from=builder /out/falkordb.so /falkordb.so
 # losing the upstream image's attestation chain. Acceptable for a DB
 # vendor distribution.
 # ---------------------------------------------------------------------------
-FROM debian:trixie-slim AS server-builder-base
+FROM base-${SERVER} AS server-builder-base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN set -eux; \
     apt-get update; \
@@ -107,9 +128,10 @@ ARG VALKEY_VERSION
 RUN build-server valkey "${VALKEY_VERSION}" /server-install
 
 # ---------------------------------------------------------------------------
-# Runtime image — debian:trixie-slim, no build tools.
+# Runtime image — the base OS, no build tools. The same apt steps run on
+# Debian (redis) and Ubuntu (valkey).
 # ---------------------------------------------------------------------------
-FROM debian:trixie-slim AS server-base
+FROM base-${SERVER} AS server-base
 
 ENV FALKORDB_HOME=/var/lib/falkordb \
     FALKORDB_DATA_PATH=/var/lib/falkordb/data \
@@ -130,7 +152,8 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 #                                     browser entrypoint drops to nextjs
 #
 # CVE trim: purge python3.13 + force-remove essential packages not needed at
-# runtime (ncurses, perl, login, passwd, util-linux). With no LLVM in this image any more
+# runtime (ncurses, perl, login, passwd, util-linux), and on Ubuntu the
+# non-essential e2fsprogs. With no LLVM in this image any more
 # we can run the trim straight through without the load-bearing ordering the
 # old layout required.
 RUN set -eux; \
@@ -154,14 +177,26 @@ RUN set -eux; \
     (dpkg --purge passwd || true); \
     # util-linux, mount and bsdutils ship the setuid mount/umount/su plus
     # nsenter/unshare, and between them carry most of the image's HIGH
-    # findings that Debian has not fixed yet. Nothing here runs them, and no
-    # other installed package depends on them or on their five libraries.
+    # findings that Debian has not fixed yet. Nothing here runs them. On
+    # Debian no other installed package depends on them or on their
+    # libraries. On Ubuntu e2fsprogs depends on libblkid1 and libuuid1, so it
+    # goes too, with logsave, libext2fs2t64, libss2 and libcom-err2, which
+    # nothing outside this list uses. Debian's slim image has none of these
+    # five, and Ubuntu's has no liblastlog2-2: dpkg skips a package that is
+    # not installed.
     # No `|| true`: if a new dependent appears, fail the build rather than
     # silently ship them — the Trivy gate ignores unfixed findings, so
     # nothing else would notice.
     dpkg --force-remove-essential --purge \
         util-linux mount bsdutils \
-        libmount1 libblkid1 libuuid1 libsmartcols1 liblastlog2-2; \
+        libmount1 libblkid1 libuuid1 libsmartcols1 liblastlog2-2 \
+        e2fsprogs logsave libext2fs2t64 libss2 libcom-err2; \
+    # ubuntu:26.04 also carries Pebble (/usr/bin/pebble, /var/lib/pebble),
+    # a Go binary no package owns, so apt can never update it, and nothing
+    # here runs it. Deleting it does not shrink the image (the file stays in
+    # the base layer), but it is gone from the filesystem and from what Trivy
+    # scans. Debian has neither path.
+    rm -rf /usr/bin/pebble /var/lib/pebble; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/debconf/*
 
@@ -209,16 +244,22 @@ COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
-# Runtime-stage sanity (cheap belt-and-braces; the load-bearing checks are in
-# the builder stage where binutils is available). Verify falkordb.so deps,
-# that the shipped server is the one the labels name, and that every entry
-# point this image is expected to ship is present and runnable in this base —
-# the sentinel/check-* symlinks are covered here so a future COPY-only
-# refactor cannot silently drop them again (issue #2827).
+# Runtime-stage sanity, on the OS the image ships. The builder stage, where
+# binutils is available, checks the .so on the toolchain image's OS, which
+# need not be this one. Verify falkordb.so deps, and that this base resolves
+# every library and symbol version it needs. Then that the shipped server is
+# the one the labels name, and that every entry point this image is expected
+# to ship is present and runnable in this base — the sentinel/check-*
+# symlinks are covered here so a future COPY-only refactor cannot silently
+# drop them again (issue #2827).
 RUN deps="$(ldd ${FALKORDB_BIN_PATH}/falkordb.so | awk '{print $1}' | sort -u)" && \
     echo "$deps" && \
     if echo "$deps" | grep -E '^(libomp|libgomp|libgraphblas|liblagraph|liblagraphx|libredisearch|libVectorSimilarity)'; then \
         echo "FAIL: forbidden dyn dep in final image"; exit 1; \
+    fi && \
+    if ! lddr="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so 2>&1)" || \
+        echo "$lddr" | grep -qE 'undefined symbol|not found'; then \
+        echo "FAIL: this base cannot resolve falkordb.so's libraries or symbols:"; echo "$lddr"; exit 1; \
     fi && \
     "${FALKORDB_SERVER}-server" --version | grep -F " v=${FALKORDB_SERVER_VERSION} " && \
     for name in "${FALKORDB_SERVER}" redis; do \
@@ -255,11 +296,12 @@ ENV FALKORDB_BROWSER_PATH=/var/lib/falkordb/browser \
 
 # The falkordb-browser image is Alpine-based; only its /app tree and entrypoint
 # are copied here, so this stage must provide the userland they expect:
-#   * node(1) from node:26 links against libatomic.so.1 and libstdc++.so.6,
-#     neither of which is in debian:trixie-slim.
+#   * node(1) from node:26 links against libatomic.so.1 and libstdc++.so.6.
+#     Neither base image ships libatomic1; libstdc++6 is there only because
+#     apt and libapt-pkg depend on it, so it is named here too.
 #   * docker-entrypoint.sh drops privileges with su-exec(1), an Alpine tool.
-#     Debian's equivalent is gosu (installed in `server`), symlinked under
-#     the expected name.
+#     The Debian and Ubuntu equivalent is gosu (installed in `server`),
+#     symlinked under the expected name.
 # Without these the browser never starts (see issue #2750).
 RUN set -eux; \
     apt-get update; \
