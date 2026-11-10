@@ -712,20 +712,30 @@ class Checker:
             self.record(manifest.digest == expected, RELATIONS, ref, f"{platform} of {spec.tag}", detail)
 
     def _check_same_digest_everywhere(self, plan: Plan) -> None:
-        if len(plan.registries) < 2:
-            return
-        for spec in plan.specs:
-            for repo in spec.repos:
-                found = {}
-                for registry in plan.registries:
-                    digest = self.digest(f"{registry}/{repo}:{spec.tag}")
-                    if digest:
-                        found[registry] = digest
-                if len(found) < 2:
-                    continue  # a missing tag is already a failure of its own
-                listing = ", ".join(f"{registry} {digest}" for registry, digest in found.items())
-                self.record(len(set(found.values())) == 1, RELATIONS, f"{repo}:{spec.tag}",
-                            "same digest on every registry", listing)
+        """Every tag this target checks holds one digest on every registry it is
+        published to. latest* is checked here too when the target does not own
+        it: edge and older-release runs have it in `latest_specs`, on
+        `latest_registries`."""
+        groups = [(plan.specs, plan.registries), (plan.latest_specs, plan.latest_registries)]
+        seen = set()
+        for specs, registries in groups:
+            if len(registries) < 2:
+                continue
+            for spec in specs:
+                for repo in spec.repos:
+                    if (repo, spec.tag) in seen:
+                        continue
+                    seen.add((repo, spec.tag))
+                    found = {}
+                    for registry in registries:
+                        digest = self.digest(f"{registry}/{repo}:{spec.tag}")
+                        if digest:
+                            found[registry] = digest
+                    if len(found) < 2:
+                        continue  # a missing tag is already a failure of its own
+                    listing = ", ".join(f"{registry} {digest}" for registry, digest in found.items())
+                    self.record(len(set(found.values())) == 1, RELATIONS, f"{repo}:{spec.tag}",
+                                "same digest on every registry", listing)
 
     def _check_latest(self, plan: Plan) -> None:
         """latest* must point at the newest stable release, whatever this
