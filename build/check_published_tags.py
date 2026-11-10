@@ -17,7 +17,8 @@ channel publishes to:
   * an alias (edge, edge-rs, X.Y.Z, latest) has the digest of the tag it stands
     for, a tag has the same digest on every registry, and a CI per-arch tag is
     that platform of its multi-arch tag;
-  * latest* point at the newest stable GitHub release, whatever was published;
+  * latest* point at the newest stable GitHub release, whatever was published
+    (while that release has no images yet, they cannot be checked, and fail);
   * no tag exists where the contract says it must not: a per-OS tag on
     falkordb or without its server suffix, a CI tag on Docker Hub, or a public
     tag naming an architecture; the few left from before the switch are
@@ -258,8 +259,9 @@ def _absent_refs(plan: Plan, public: bool, left_over: set[str], fresh_ci_key: bo
     """Where the plan's tags must not exist: on repos and registries not
     listed for them; for public tags, under an architecture suffix (bar the
     tags left from before the switch); a per-OS tag without its server
-    suffix; and, for a CI key that cannot predate the switch, the CI tags
-    without their server suffix. Every name the plan expects is taken back out."""
+    suffix; and CI tags without their server suffix, anywhere but the CI
+    registries, and there too for a key that cannot predate the switch.
+    Every name the plan expects is taken back out."""
     def tags_of(spec: TagSpec) -> list[str]:
         per_arch = [_fill(spec.per_arch, arch=s) for s in plan.arch_suffixes.values()] if spec.per_arch else []
         return [spec.tag, *per_arch]
@@ -270,8 +272,8 @@ def _absent_refs(plan: Plan, public: bool, left_over: set[str], fresh_ci_key: bo
                  for reg in plan.latest_registries for repo in spec.repos}
     absent: dict[str, str] = {}
 
-    def forbid(name: str, why: str) -> None:
-        for registry in plan.all_registries:
+    def forbid(name: str, why: str, registries: list[str] | None = None) -> None:
+        for registry in plan.all_registries if registries is None else registries:
             for repo in plan.repos:
                 ref = f"{registry}/{repo}:{name}"
                 if ref not in left_over:
@@ -285,12 +287,19 @@ def _absent_refs(plan: Plan, public: bool, left_over: set[str], fresh_ci_key: bo
                     if ref not in expected:
                         absent[ref] = (f"{tag} belongs on {', '.join(spec.repos)} "
                                        f"in {', '.join(plan.registries)} only")
-    if fresh_ci_key:
+    if not public:
+        # A pull-request key may keep names from before the switch on the CI
+        # registries; no CI name was ever published anywhere else.
+        elsewhere = [registry for registry in plan.all_registries if registry not in plan.registries]
         for spec in plan.specs:
-            if spec.without_server:
-                forbid(spec.without_server, f"{spec.tag} has no name without its server")
-                for suffix in plan.arch_suffixes.values():
-                    forbid(f"{spec.without_server}-{suffix}", f"{spec.tag} has no name without its server")
+            if not spec.without_server:
+                continue
+            unsuffixed = [spec.without_server, *(f"{spec.without_server}-{s}" for s in plan.arch_suffixes.values())]
+            for name in unsuffixed:
+                if fresh_ci_key:
+                    forbid(name, f"{spec.tag} has no name without its server")
+                else:
+                    forbid(name, f"CI tags belong in {', '.join(plan.registries)} only", elsewhere)
     if public:
         for spec in plan.specs + plan.latest_specs:
             if spec.without_server:
@@ -375,18 +384,22 @@ def make_plan(
     return plan
 
 
-def newest_stable(releases: list[dict]) -> str | None:
-    """The highest X.Y.Z among published, non-prerelease GitHub releases."""
-    best: tuple[int, ...] | None = None
+def stable_releases(releases: list[dict]) -> list[str]:
+    """Every X.Y.Z with a published, non-prerelease GitHub release, newest first."""
+    found: set[tuple[int, ...]] = set()
     for release in releases:
         if release.get("draft") or release.get("prerelease"):
             continue
         match = RELEASE_VERSION.match(release.get("tag_name", ""))
-        if not match or match.group("pre"):
-            continue
-        core = tuple(int(part) for part in match.group("core").split("."))
-        best = max(best, core) if best else core
-    return ".".join(map(str, best)) if best else None
+        if match and not match.group("pre"):
+            found.add(tuple(int(part) for part in match.group("core").split(".")))
+    return [".".join(map(str, core)) for core in sorted(found, reverse=True)]
+
+
+def newest_stable(releases: list[dict]) -> str | None:
+    """The highest X.Y.Z among published, non-prerelease GitHub releases."""
+    stable = stable_releases(releases)
+    return stable[0] if stable else None
 
 
 def latest_rule(releases: list[dict], candidate: str | None, repo: str) -> tuple[str | None, str]:
@@ -708,44 +721,47 @@ class Checker:
         if plan.latest_error:
             self.record(False, RELATIONS, "latest*", "points at the newest stable release", plan.latest_error)
             return
-        check = f"points at {plan.latest_version}"
+        version = plan.latest_version or ""
         repos = sorted({repo for spec in plan.latest_specs for repo in spec.repos})
         for registry in plan.latest_registries:
             for repo in repos:
                 specs = [spec for spec in plan.latest_specs if repo in spec.repos]
-                releases = [self.manifest(f"{registry}/{repo}:{spec.follows}") for spec in specs]
-                if specs and all(isinstance(result, NotFound) for result in releases):
-                    # Its GitHub release exists, its images don't yet: the
-                    # release workflow publishes the release first, then the
-                    # images, and its own run judges them.
-                    self.record(True, RELATIONS, f"{registry}/{repo}:latest*", check,
-                                f"not judged: {plan.latest_version} has no images here yet")
-                    continue
-                for spec in specs:
-                    ref = f"{registry}/{repo}:{spec.tag}"
-                    other_ref = f"{registry}/{repo}:{spec.follows}"
-                    latest, other = self.manifest(ref), self.manifest(other_ref)
-                    for name, result in ((ref, latest), (other_ref, other)):
-                        if isinstance(result, Exception) and not isinstance(result, NotFound):
-                            self.record(False, RELATIONS, ref, check, f"could not inspect {name}: {result}")
-                            break
-                    else:
-                        self._judge_latest(ref, latest, other_ref, other, check)
+                self._check_latest_in(registry, repo, version, specs)
 
-    def _judge_latest(self, ref: str, latest: Manifest | Exception, other_ref: str,
-                      other: Manifest | Exception, check: str) -> None:
-        if isinstance(latest, NotFound) and isinstance(other, NotFound):
-            # Neither name existed before the switch (latest-valkey for 6.0.4).
-            self.record(True, RELATIONS, ref, check, f"neither it nor {other_ref} exists")
-        elif isinstance(latest, NotFound):
-            self.record(False, RELATIONS, ref, check, f"missing, but {other_ref} exists")
-        elif isinstance(other, NotFound):
-            self.record(False, RELATIONS, ref, check, f"{latest.digest}, but {other_ref} does not exist")
-        elif latest.digest != other.digest:
-            self.record(False, RELATIONS, ref, check,
-                        f"digest {latest.digest} is not {other_ref}'s {other.digest}")
-        else:
-            self.record(True, RELATIONS, ref, check, f"{other_ref} (same digest)")
+    def _check_latest_in(self, registry: str, repo: str, version: str, specs: list[TagSpec]) -> None:
+        subject = f"{registry}/{repo}:latest*"
+        check = f"points at {version}"
+        releases = {spec.follows: self.manifest(f"{registry}/{repo}:{spec.follows}") for spec in specs}
+        for tag, result in releases.items():
+            if isinstance(result, Exception) and not isinstance(result, NotFound):
+                self.record(False, RELATIONS, subject, check, f"could not inspect {registry}/{repo}:{tag}: {result}")
+                return
+        if all(isinstance(result, NotFound) for result in releases.values()):
+            # Its GitHub release is published before its images: in that
+            # window, or if its images never came, latest* cannot be checked.
+            self.record(False, RELATIONS, subject, check,
+                        f"{version} has no images here yet, so latest* cannot be checked")
+            return
+        for ok, ref, verdict_check, detail in self._latest_verdicts(registry, repo, version, specs, releases):
+            self.record(ok, RELATIONS, ref, verdict_check, detail)
+
+    def _latest_verdicts(self, registry: str, repo: str, version: str, specs: list[TagSpec],
+                         releases: dict[str, Manifest | Exception]) -> list[tuple[bool, str, str, str]]:
+        """Each latest* tag against `version`'s tag, as (ok, ref, check, detail)."""
+        # A release with a server-suffixed tag is from after the switch,
+        # and has all of them; one from before has only the bare version.
+        after_switch = any(isinstance(releases[spec.follows], Manifest) for spec in specs if not spec.alias_of)
+        verdicts = []
+        for spec in specs:
+            ref = f"{registry}/{repo}:{spec.tag}"
+            other_ref = f"{registry}/{repo}:{spec.follows}"
+            latest = self.manifest(ref)
+            if isinstance(latest, Exception) and not isinstance(latest, NotFound):
+                ok, detail = False, f"could not inspect {ref}: {latest}"
+            else:
+                ok, detail = _judge_latest(latest, other_ref, releases[spec.follows], version, after_switch)
+            verdicts.append((ok, ref, f"points at {version}", detail))
+        return verdicts
 
     def _check_absent(self, plan: Plan) -> None:
         present = 0
@@ -937,6 +953,23 @@ class Checker:
         else:
             self.record(not found, IMAGES, subject, "browser",
                         f"{', '.join(sorted(found))} is there; expected no browser" if found else "none, as expected")
+
+
+def _judge_latest(latest: Manifest | Exception, other_ref: str, other: Manifest | Exception,
+                  version: str, after_switch: bool) -> tuple[bool, str]:
+    """One latest* tag against the release's tag it must equal."""
+    if isinstance(latest, NotFound) and isinstance(other, NotFound):
+        if after_switch:
+            return False, (f"missing, and so is {other_ref}: {version} has server-suffixed tags, "
+                           f"so it must have this one too")
+        return True, f"neither it nor {other_ref} exists: {version} is from before the switch"
+    if isinstance(latest, NotFound):
+        return False, f"missing, but {other_ref} exists"
+    if isinstance(other, NotFound):
+        return False, f"{latest.digest}, but {other_ref} does not exist"
+    if latest.digest != other.digest:
+        return False, f"digest {latest.digest} is not {other_ref}'s {other.digest}"
+    return True, f"{other_ref} (same digest)"
 
 
 def _holds(facts: Facts, expected: str) -> str:
