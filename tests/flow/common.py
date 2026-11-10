@@ -4,6 +4,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from functools import wraps
@@ -873,25 +874,42 @@ def wait_for_replica(primary, replica, timeout=30):
     deadline = time.time() + timeout
 
     def bounded_info(conn):
-        # Bound each INFO by the time left in the budget, so an unresponsive
-        # server can't block past the deadline: the connect and the reply
-        # each get half of what is left, so together they fit in it. Retries
-        # are off for the same reason. A fresh client is used so the caller's
-        # timeouts are untouched.
+        # Bound each INFO, connection handshake included, by the time left in
+        # the budget, so an unresponsive server can't block past the deadline.
+        # A new connection does several reads before INFO's (CLIENT SETINFO,
+        # and AUTH or SELECT when set), each under its own socket timeout, so
+        # socket timeouts alone can't promise that. Run the call on a thread
+        # and stop waiting for it at the deadline. The socket timeouts make
+        # that thread end soon after. A fresh client is used, with retries
+        # off, so the caller's connection and settings are untouched.
         left = deadline - time.time()
         if left <= 0:
             raise redis.exceptions.TimeoutError("wait_for_replica deadline passed")
         kwargs = dict(conn.connection_pool.connection_kwargs)
-        kwargs.update(socket_timeout=left / 2, socket_connect_timeout=left / 2,
+        kwargs.update(socket_timeout=left, socket_connect_timeout=left,
                       retry=None, retry_on_timeout=False)
         pool = redis.ConnectionPool(
             connection_class=conn.connection_pool.connection_class, **kwargs)
-        client = redis.Redis(connection_pool=pool)
-        try:
-            return client.info("replication")
-        finally:
-            client.close()
-            pool.disconnect()
+        result = {}
+
+        def run():
+            client = redis.Redis(connection_pool=pool)
+            try:
+                result["info"] = client.info("replication")
+            except Exception as e:
+                result["error"] = e
+            finally:
+                client.close()
+                pool.disconnect()
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        t.join(left)
+        if t.is_alive():
+            raise redis.exceptions.TimeoutError("INFO did not reply within the deadline")
+        if "error" in result:
+            raise result["error"]
+        return result["info"]
 
     target = bounded_info(primary)["master_repl_offset"]
     info = {}
