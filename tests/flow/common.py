@@ -888,7 +888,7 @@ def wait_for_replica(primary, replica, timeout=30):
             raise redis.exceptions.TimeoutError("wait_for_replica deadline passed")
         kwargs = dict(conn.connection_pool.connection_kwargs)
         kwargs.update(socket_timeout=left, socket_connect_timeout=left,
-                      retry=Retry(NoBackoff(), 0), retry_on_error=[],
+                      retry=NO_RETRY, retry_on_error=[],
                       retry_on_timeout=False)
         pool = redis.ConnectionPool(
             connection_class=conn.connection_pool.connection_class, **kwargs)
