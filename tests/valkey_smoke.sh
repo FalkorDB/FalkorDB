@@ -19,9 +19,12 @@ WORKDIR=$(mktemp -d)
 LOG="$WORKDIR/valkey.log"
 PID=
 
+# Only reached with the server still running on a failure path; the success
+# path shuts it down and checks how it exited. SIGKILL, because a server that
+# is wedged ignores SIGTERM and the wait would never return.
 cleanup() {
     if [[ -n "$PID" ]] && kill -0 "$PID" 2>/dev/null; then
-        kill "$PID"
+        kill -KILL "$PID"
         wait "$PID" 2>/dev/null || true
     fi
     rm -rf "$WORKDIR"
@@ -66,6 +69,20 @@ cli INFO persistence | grep -q 'rdb_bgsave_in_progress:0' || fail "BGSAVE did no
 cli INFO persistence | grep -q 'rdb_last_bgsave_status:ok' || fail "BGSAVE failed"
 
 kill -0 "$PID" 2>/dev/null || fail "valkey-server died"
+
+# Shut the server down here, not in the EXIT trap, so that a crash or a hang
+# while it exits (module teardown, libomp's exit handlers) fails the test.
+kill -TERM "$PID"
+for _ in $(seq 100); do
+    kill -0 "$PID" 2>/dev/null || break
+    sleep 0.1
+done
+kill -0 "$PID" 2>/dev/null && fail "valkey-server did not shut down"
+status=0
+wait "$PID" || status=$?
+PID=
+# A signal shows up as 128 + its number, e.g. 139 for SIGSEGV.
+[[ "$status" == 0 ]] || fail "valkey-server exited with status $status on shutdown"
 if grep -q 'BUG REPORT' "$LOG"; then
     fail "valkey-server reported a crash"
 fi
