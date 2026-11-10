@@ -4212,31 +4212,31 @@ impl Graph {
         self.node_indexer.query(label, query).map(NodeId)
     }
 
-    /// Node ids for `query` from the index numeric column. Wraps [`FalkorDbIndex::query_numeric`],
+    /// Node ids for `query` from the native index column. Wraps [`FalkorDbIndex::query_column`],
     /// mapping raw docs to `NodeId` (whose constructor is module-private) and preserving its
     /// three-way answer: `Ok(rows)`, `Err(scan_filter)` (column still building — scan), or `None`
     /// (cannot be served). `use<>` keeps the returned iterator free of the `&self` borrow — it
     /// owns its tree snapshot, so it outlives this borrow.
     #[cfg(feature = "index-falkordb")]
-    pub fn query_index_numeric_nodes(
+    pub fn query_index_nodes(
         &self,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
     ) -> Option<Result<impl Iterator<Item = NodeId> + use<>, ScanFilter>> {
         self.falkordb_index
-            .query_numeric(EntityType::Node, label, query)
+            .query_column(EntityType::Node, label, query)
             .map(|answer| answer.map(|rows| rows.map(NodeId)))
     }
 
-    /// Answer an EDGE numeric query from the index column for `type_name`: an `Equal`, a `Range`,
-    /// an `IN` list, or an `OR` of equalities and `IN` lists on one attribute. Yields
+    /// Answer an EDGE query from the native index columns for `type_name`
+    /// ([`FalkorDbIndex::query_column`]). Yields
     /// `(src, dst, edge_id)`, with endpoints recovered from the graph's `edge_id → (src, dst)`
     /// reverse index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them
     /// from its 24-byte key). The iterator owns what it reads rather than borrowing `self`, because
     /// the edge scan op only holds a temporary graph borrow. Three-way answer as for nodes:
     /// `Ok(rows)`, `Err(scan_filter)` (still building — scan), `None` (not servable).
     #[cfg(feature = "index-falkordb")]
-    pub fn query_index_numeric_edges(
+    pub fn query_index_edges(
         &self,
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
@@ -4244,7 +4244,7 @@ impl Graph {
     {
         let answer =
             self.falkordb_index
-                .query_numeric(EntityType::Relationship, type_name, query)?;
+                .query_column(EntityType::Relationship, type_name, query)?;
         // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
         // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
         // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump, and `get` is

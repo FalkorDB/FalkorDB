@@ -2282,7 +2282,7 @@ mod native_unique_tests {
     fn a_numeric_duplicate_is_found_by_the_native_lookup() {
         let mut g = graph();
         g.falkordb_index
-            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
         let ids = nodes(
             &mut g,
             &[
@@ -2312,7 +2312,7 @@ mod native_unique_tests {
     fn a_string_duplicate_on_a_numeric_column_is_found_by_the_scan() {
         let mut g = graph();
         g.falkordb_index
-            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
         let ids = nodes(
             &mut g,
             &[
@@ -2365,7 +2365,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["s", "n"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         let ids = nodes(
             &mut g,
@@ -2399,7 +2399,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["tenant", "id"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         // 50 nodes of one tenant, then a duplicate of node 3's key.
         let rows: Vec<[(&str, Value); 2]> = (0..50)
@@ -2455,7 +2455,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["tenant", "id"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         // 50 nodes of tenant 7, a duplicate of the key of node 3, and one node of tenant 8.
         let rows: Vec<[(&str, Value); 2]> = (0..50)
@@ -2510,7 +2510,7 @@ mod native_unique_tests {
     fn a_composite_key_with_a_building_column_reads_its_ready_one() {
         let mut g = graph();
         g.falkordb_index
-            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
         let ids = nodes(
             &mut g,
             &[
@@ -2545,7 +2545,7 @@ mod native_unique_tests {
         let mut g = graph();
         let ty = arc("R");
         g.falkordb_index
-            .create_numeric(EntityType::Relationship, &ty, &arc("id"));
+            .create_column(EntityType::Relationship, &ty, &arc("id"));
         let ends = g
             .node_id_space()
             .reserve(2, &RoaringTreemap::new())

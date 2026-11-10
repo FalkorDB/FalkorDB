@@ -25,7 +25,7 @@ const BRANCH_MAX: usize = 256;
 /// to justify it — not a default to inherit.
 const DOC_BYTES: usize = 8;
 
-type Tree = CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
+pub(super) type Tree = CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
 
 /// Lazy iterator of matching entity ids, yielded in `(value, id)` order.
 type TreeIter = RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
@@ -33,7 +33,7 @@ type TreeIter = RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
 /// Lazy iterator of matching entity ids.
 ///
 /// `One` is a single cursor over a contiguous key range. `Many` chains several — the shape an
-/// `IN [...]` union takes, one cursor per distinct member. An enum rather than a boxed trait
+/// `IN [...]` union, a mixed-type union, a string range or a geo cell cover takes. An enum rather than a boxed trait
 /// object because the scan op already boxes the result once; a second layer of dynamic dispatch
 /// per id would be pure overhead.
 ///
@@ -43,8 +43,8 @@ type TreeIter = RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
 pub enum DocIter {
     One(TreeIter),
     Many(UnionIter),
-    /// An already-materialised doc set — a cross-attribute intersection, which cannot be produced
-    /// lazily from value-ordered streams. Distinct by construction.
+    /// An already-materialised doc set — an intersection, or a union across attributes, which
+    /// cannot be produced lazily from value-ordered streams. Distinct by construction.
     Set(std::collections::hash_set::IntoIter<u64>),
 }
 
@@ -79,7 +79,7 @@ impl KeySet {
     /// uniqueness overall: a doc appears under at most one key in the scalar tree, which is the
     /// only tree an `IN` list or a union reads (a list value's elements live in the array tree), so
     /// distinct keys cannot both hold the same doc.
-    fn distinct(mut keys: Vec<u64>) -> Self {
+    pub(super) fn distinct(mut keys: Vec<u64>) -> Self {
         keys.sort_unstable();
         keys.dedup();
         Self::Keys(keys)
@@ -103,12 +103,12 @@ impl KeySet {
 /// The keys a numeric predicate selects, and which of a column's two trees they are keys of: the
 /// scalar tree for `Equal`, `Range`, `IN` and unions, the array tree for `value IN n.prop`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Selection {
+pub struct KeySelection {
     pub kind: KeyKind,
     pub keys: KeySet,
 }
 
-impl Selection {
+impl KeySelection {
     /// Keys of the scalar tree.
     #[must_use]
     pub const fn scalar(keys: KeySet) -> Self {
@@ -136,22 +136,70 @@ impl Selection {
     }
 }
 
-/// The cursor chain behind a union: the keys still to visit, and a cursor over the current one.
+/// The cursor chain behind a union: the key windows still to visit, and a cursor over the current
+/// one. A window names its tree by position, so one chain can span the trees a mixed union touches
+/// (`n.v IN [1, 'a']` reads the numeric tree and the tag tree) with one tree clone per tree, not
+/// per window.
 ///
 /// **One cursor exists at a time, and none until the first `next()`.** `RangeIter::new` performs a
 /// full root-to-leaf descent in its constructor, so building a cursor per member up front made
 /// `IN $list` with 100k members do 100k descents — and hold 100k live snapshots — before yielding
 /// a single row. Under a `LIMIT`, almost all of that work is thrown away.
 ///
-/// The tree is **owned**, not borrowed. That is load-bearing rather than a lifetime convenience:
+/// The trees are **owned**, not borrowed. That is load-bearing rather than a lifetime convenience:
 /// the eager version happened to share one root because every `point()` call sat inside a single
 /// `&self` borrow. Deferring those calls past the borrow means the snapshot has to be pinned here,
 /// or a member visited after a concurrent write would descend into a newer root and the union
-/// would be a torn read. The clone is an `O(1)` root-`Arc` bump.
+/// would be a torn read. Each clone is an `O(1)` root-`Arc` bump.
+///
+/// Windows must be **disjoint**, or a doc lying in two of them is yielded twice. Every producer
+/// upholds that: union members are deduplicated by key, and a union reads scalar trees only, where
+/// each doc sits under one key. An **array** tree holds a doc under one key per element, so a union
+/// of several windows over an array tree could yield a doc twice; no producer builds one (an
+/// array-contains probe is a single key).
 pub struct UnionIter {
-    tree: Tree,
-    keys: std::vec::IntoIter<u64>,
+    trees: Vec<Tree>,
+    /// `(tree, lo, hi)`: the inclusive key window to scan in `trees[tree]`.
+    windows: std::vec::IntoIter<(usize, u64, u64)>,
     current: Option<TreeIter>,
+}
+
+impl UnionIter {
+    /// A chain over `windows`, each naming its tree by position in `trees`.
+    #[must_use]
+    pub(super) fn new(
+        trees: Vec<Tree>,
+        windows: Vec<(usize, u64, u64)>,
+    ) -> Self {
+        Self {
+            trees,
+            windows: windows.into_iter(),
+            current: None,
+        }
+    }
+
+    /// A chain over the distinct `keys` of one tree.
+    #[must_use]
+    pub(super) fn points(
+        tree: Tree,
+        keys: Vec<u64>,
+    ) -> Self {
+        Self::new(vec![tree], keys.into_iter().map(|k| (0, k, k)).collect())
+    }
+
+    /// Windows not yet visited.
+    #[cfg(test)]
+    #[must_use]
+    pub(super) fn pending(&self) -> usize {
+        self.windows.len()
+    }
+
+    /// Whether a cursor has been built yet.
+    #[cfg(test)]
+    #[must_use]
+    pub(super) fn has_cursor(&self) -> bool {
+        self.current.is_some()
+    }
 }
 
 impl Iterator for UnionIter {
@@ -162,11 +210,18 @@ impl Iterator for UnionIter {
             if let Some(doc) = self.current.as_mut().and_then(Iterator::next) {
                 return Some(doc);
             }
-            // Current member exhausted (or not started): descend for the next one. Keys are
-            // distinct, so this advances — it cannot spin.
-            self.current = Some(self.tree.point(self.keys.next()?));
+            // Current window exhausted (or not started): descend for the next one. Each step
+            // consumes a window, so this cannot spin.
+            let (tree, lo, hi) = self.windows.next()?;
+            self.current = Some(self.trees[tree].range(lo, hi));
         }
     }
+}
+
+/// An iterator over no entries of `tree` (`lo > hi` yields nothing).
+#[must_use]
+pub(super) fn empty_docs(tree: &Tree) -> DocIter {
+    DocIter::One(tree.range(1, 0))
 }
 
 /// Encoded `(key, doc)` tuples for one column, kept apart by [`KeyKind`]: what everything that
@@ -178,7 +233,7 @@ impl Iterator for UnionIter {
 /// tuple would cost 8 more bytes per tuple for what the position already says.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct EncodedTuples {
-    by_kind: [Vec<(u64, u64)>; 2],
+    by_kind: [Vec<(u64, u64)>; KeyKind::ALL.len()],
 }
 
 impl Index<KeyKind> for EncodedTuples {
@@ -205,9 +260,9 @@ impl EncodedTuples {
     /// Tuples of scalar values only: the shape a column holding no list values produces.
     #[must_use]
     pub fn scalars(scalar: Vec<(u64, u64)>) -> Self {
-        Self {
-            by_kind: [scalar, Vec::new()],
-        }
+        let mut tuples = Self::default();
+        tuples[KeyKind::Scalar] = scalar;
+        tuples
     }
 
     /// Whether there are no tuples of either kind.
@@ -216,7 +271,7 @@ impl EncodedTuples {
         self.by_kind.iter().all(Vec::is_empty)
     }
 
-    /// How many tuples there are, of both kinds.
+    /// How many tuples there are, of every kind.
     #[must_use]
     pub fn len(&self) -> usize {
         self.by_kind.iter().map(Vec::len).sum()
@@ -393,7 +448,7 @@ impl NumericIndex {
     }
 
     /// The tree holding keys of `kind`.
-    fn tree_ref(
+    pub(super) fn tree_ref(
         &self,
         kind: KeyKind,
     ) -> &Tree {
@@ -404,7 +459,7 @@ impl NumericIndex {
     }
 
     /// The tree holding keys of `kind`, to change.
-    fn tree_mut(
+    pub(super) fn tree_mut(
         &mut self,
         kind: KeyKind,
     ) -> &mut Tree {
@@ -427,7 +482,7 @@ impl NumericIndex {
         &self,
         value: &Value,
     ) -> DocIter {
-        self.lookup(Selection::scalar(Self::point_keys(value)))
+        self.lookup(KeySelection::scalar(Self::point_keys(value)))
     }
 
     /// Entity ids stored under the encoded key `key`.
@@ -450,7 +505,7 @@ impl NumericIndex {
         include_min: bool,
         include_max: bool,
     ) -> DocIter {
-        self.lookup(Selection::scalar(Self::range_keys(
+        self.lookup(KeySelection::scalar(Self::range_keys(
             min,
             max,
             include_min,
@@ -473,7 +528,7 @@ impl NumericIndex {
         &self,
         value: &Value,
     ) -> DocIter {
-        self.lookup(Selection {
+        self.lookup(KeySelection {
             kind: KeyKind::Array,
             keys: Self::point_keys(value),
         })
@@ -497,7 +552,7 @@ impl NumericIndex {
     /// from these, and a scan standing in for a column still building checks each entity against
     /// them, so the scan keeps exactly what the column will answer.
     #[must_use]
-    pub fn keys(q: &IndexQuery<Value>) -> Option<Selection> {
+    pub fn keys(q: &IndexQuery<Value>) -> Option<KeySelection> {
         let keys = match q {
             IndexQuery::Equal { value, .. } => Self::point_keys(value),
             IndexQuery::Range {
@@ -514,42 +569,38 @@ impl NumericIndex {
             IndexQuery::Or(children) => Self::union(children)?,
             IndexQuery::And(children) => Self::intersect_same_key(children)?,
             IndexQuery::ArrayContains { value, .. } => {
-                return Some(Selection {
+                return Some(KeySelection {
                     kind: KeyKind::Array,
                     keys: Self::point_keys(value),
                 });
             }
             _ => return None,
         };
-        Some(Selection::scalar(keys))
+        Some(KeySelection::scalar(keys))
     }
 
     /// The entity ids under `selection`'s keys, in the tree of its kind.
     #[must_use]
     pub fn lookup(
         &self,
-        selection: Selection,
+        selection: KeySelection,
     ) -> DocIter {
         let tree = self.tree_ref(selection.kind);
         match selection.keys {
-            KeySet::Empty => self.empty(),
+            KeySet::Empty => empty_docs(tree),
             KeySet::Point(k) => DocIter::One(tree.point(k)),
             KeySet::Range(lo, hi) => DocIter::One(tree.range(lo, hi)),
             // No cursor is built here — see [`UnionIter`]. The tree snapshot is taken now, so
             // every member is answered from the same version however late its cursor is created.
-            KeySet::Keys(keys) => DocIter::Many(UnionIter {
-                tree: tree.clone(),
-                keys: keys.into_iter(),
-                current: None,
-            }),
+            KeySet::Keys(keys) => DocIter::Many(UnionIter::points(tree.clone(), keys)),
         }
     }
 
-    fn point_keys(value: &Value) -> KeySet {
+    pub(super) fn point_keys(value: &Value) -> KeySet {
         encode_numeric(value).map_or(KeySet::Empty, KeySet::Point)
     }
 
-    fn range_keys(
+    pub(super) fn range_keys(
         min: Option<&Value>,
         max: Option<&Value>,
         include_min: bool,
@@ -744,11 +795,6 @@ impl NumericIndex {
             }
         }
         Some(KeySet::distinct(keys))
-    }
-
-    /// An iterator over no entries (`lo > hi` yields nothing).
-    fn empty(&self) -> DocIter {
-        DocIter::One(self.tree.range(1, 0))
     }
 
     /// Bulk-build from `(value, id)` pairs in any order. Non-numeric / `NaN`
@@ -1222,14 +1268,14 @@ mod tests {
             panic!("an IN list must produce DocIter::Many");
         };
         assert!(
-            u.current.is_none(),
+            !u.has_cursor(),
             "no cursor may exist before the first next()"
         );
-        assert_eq!(u.keys.len(), 100, "and every member is still pending");
+        assert_eq!(u.pending(), 100, "and every member is still pending");
 
         assert_eq!(u.next(), Some(0));
-        assert!(u.current.is_some(), "the first row descends for its member");
-        assert_eq!(u.keys.len(), 99, "exactly one member consumed");
+        assert!(u.has_cursor(), "the first row descends for its member");
+        assert_eq!(u.pending(), 99, "exactly one member consumed");
     }
 
     /// Deferring the descents means later members are visited after the caller has moved on, so

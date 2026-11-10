@@ -326,7 +326,7 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                         // the failure is diagnosable rather than a bare "no rows".
                         #[cfg(feature = "index-falkordb")]
                         let it: Option<Box<dyn Iterator<Item = NodeId>>> = match g
-                            .query_index_numeric_nodes(self.index, &q)
+                            .query_index_nodes(self.index, &q)
                         {
                             Some(Ok(rows)) => Some(Box::new(rows)),
                             // The column exists and will serve this once its build reaches

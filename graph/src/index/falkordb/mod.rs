@@ -30,6 +30,9 @@ pub mod online_build;
 pub mod pending_writes;
 
 #[cfg(feature = "index-falkordb")]
+pub mod range;
+
+#[cfg(feature = "index-falkordb")]
 pub mod unique;
 
 #[cfg(feature = "index-falkordb")]

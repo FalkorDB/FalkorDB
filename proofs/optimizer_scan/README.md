@@ -85,7 +85,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_scan`, not
 | W7-scan-1 | `vl_leaf_fires_over_filter`, `vl_leaf_drops_filter` | The var-length leaf rewrite prunes a Filter wrapper: `MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w:2})` returns an extra row | **Open** |
 | — | `IdSeek.lean` examples on `g5` | `id(n) > -1` returns 0 rows, and non-integer bounds error. Reported as bugs 3–4 of [`../optimizer_rewrites`](../optimizer_rewrites) | **Open** |
 
-The `IndexCex.lean` examples also reproduce bugs owned by [`../index_layer`](../index_layer): a folded `date()` constant returns every node (C3); `IN [.., date()]` drops the item (C9); multi-label AND/OR (C5, C6); Bool/Int conflation (C1, shared with C); array-contains inside AND (C10, shared with C). C2 (temporals indexed as numbers, #3076) and C11 (`n.v > 'B' AND n.v < 'B'`, #3072) are fixed; their examples now state agreement.
+The `IndexCex.lean` examples also reproduce bugs owned by [`../index_layer`](../index_layer): a folded `date()` constant returns every node (C3); `IN [.., date()]` drops the item (C9); multi-label AND/OR (C5, C6); Bool/Int conflation (C1, shared with C). C2 (temporals indexed as numbers, #3076), C10 (array-contains inside AND, shared with C, #3736) and C11 (`n.v > 'B' AND n.v < 'B'`, #3072) are fixed; their examples now state agreement.
 
 **Hazard, not a confirmed bug:** `utilize_node_by_id` calls `parent().unwrap()` on the scan it rewrites. W4-plan-4's repro (`CALL db.labels() YIELD label MATCH (n)`) is rejected by validation since #3297 (and had stopped crashing before that, because the scan has a parent), but the `unwrap` remains. [`../optimizer_rewrites`](../optimizer_rewrites) models it as `root_scan_has_no_parent`.
 

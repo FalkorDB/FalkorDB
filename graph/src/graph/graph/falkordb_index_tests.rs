@@ -109,7 +109,7 @@ fn new_version_isolates_the_falkordb_index() {
     let mut committed = Graph::new(64, 64, 10, 1, "t");
     committed
         .falkordb_index
-        .create_numeric(EntityType::Node, &label, &attr);
+        .create_column(EntityType::Node, &label, &attr);
     committed
         .falkordb_index
         .numeric_mut(EntityType::Node, &label, &attr)
@@ -194,7 +194,7 @@ fn create_index_leaves_the_node_column_to_its_batches() {
     assert!(
         matches!(
             g.falkordb_index
-                .query_numeric(EntityType::Node, &label, &eq(&attr, 20)),
+                .query_column(EntityType::Node, &label, &eq(&attr, 20)),
             Some(Err(_))
         ),
         "a read that reaches a Building column scans"
@@ -210,7 +210,7 @@ fn create_index_leaves_the_node_column_to_its_batches() {
     assert!(
         matches!(
             g.falkordb_index
-                .query_numeric(EntityType::Node, &label, &eq(&attr, 20)),
+                .query_column(EntityType::Node, &label, &eq(&attr, 20)),
             Some(Ok(_))
         ),
         "a Ready column serves reads"
@@ -321,7 +321,7 @@ fn create_index_leaves_the_edge_column_to_its_batches() {
     assert!(g.is_edge_indexed(&ty, &attr, &IndexType::Range));
     assert_eq!(
         g.falkordb_index
-            .query_numeric(EntityType::Relationship, &ty, &eq(&attr, 2))
+            .query_column(EntityType::Relationship, &ty, &eq(&attr, 2))
             .map(|answer| match answer {
                 Ok(rows) => rows.collect::<Vec<u64>>(),
                 Err(_) => panic!("a Ready column answered with a ScanFilter"),
@@ -350,7 +350,7 @@ fn graph_with_index(n: usize) -> (Graph, Arc<String>, Arc<String>, Vec<u64>) {
     let label = Arc::new("Person".to_string());
     let attr = Arc::new("v".to_string());
     g.falkordb_index
-        .create_numeric(EntityType::Node, &label, &attr);
+        .create_column(EntityType::Node, &label, &attr);
     let lid = g.get_label_id_mut("Person");
     let ids: Vec<u64> = reserve_nodes(&mut g, n);
     let mut set = RoaringTreemap::new();
@@ -466,7 +466,7 @@ fn unlabeled_graph_with_index() -> (Graph, Arc<String>, Arc<String>, u64) {
     let label = Arc::new("Person".to_string());
     let attr = Arc::new("v".to_string());
     g.falkordb_index
-        .create_numeric(EntityType::Node, &label, &attr);
+        .create_column(EntityType::Node, &label, &attr);
     let _lid = g.get_label_id_mut("Person"); // register the label matrix
     let ids: Vec<u64> = reserve_nodes(&mut g, 1);
     let mut set = RoaringTreemap::new();
@@ -554,7 +554,7 @@ fn edge_writes_maintain_the_index() {
     let ty = Arc::new("R".to_string());
     let attr = Arc::new("w".to_string());
     g.falkordb_index
-        .create_numeric(EntityType::Relationship, &ty, &attr);
+        .create_column(EntityType::Relationship, &ty, &attr);
     let aid = g.get_or_create_rel_attr_id(&attr);
 
     // Two nodes, a and b, and three a->b edges with w = 10, 20, 30.
@@ -1218,7 +1218,7 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
     for batch in 0.. {
         assert!(batch < 64, "the build stopped making progress");
         for (i, q) in node_queries.iter().enumerate() {
-            if let Some(Err(scan_filter)) = g.query_index_numeric_nodes(&label, q) {
+            if let Some(Err(scan_filter)) = g.query_index_nodes(&label, q) {
                 let scan_filter = scan_filter
                     .resolve(|attr| g.get_node_attribute_id(attr).map(|attr| attr as u16))
                     .expect("registered");
@@ -1231,7 +1231,7 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
             }
         }
         for (i, q) in edge_queries.iter().enumerate() {
-            if let Some(Err(scan_filter)) = g.query_index_numeric_edges(&ty, q) {
+            if let Some(Err(scan_filter)) = g.query_index_edges(&ty, q) {
                 let scan_filter = scan_filter
                     .resolve(|attr| {
                         g.get_relationship_attribute_id(attr)
@@ -1271,12 +1271,12 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
 
     for (edges, i, scanned) in kept {
         let built = if edges {
-            match g.query_index_numeric_edges(&ty, &edge_queries[i]) {
+            match g.query_index_edges(&ty, &edge_queries[i]) {
                 Some(Ok(rows)) => rows.map(|(_, _, edge)| u64::from(edge)).collect(),
                 _ => panic!("edge query {i}: a built column serves it"),
             }
         } else {
-            match g.query_index_numeric_nodes(&label, &node_queries[i]) {
+            match g.query_index_nodes(&label, &node_queries[i]) {
                 Some(Ok(rows)) => rows.map(u64::from).collect(),
                 _ => panic!("node query {i}: a built column serves it"),
             }
@@ -1493,7 +1493,7 @@ fn replica_node_rows_maintain_the_index() {
     let label = Arc::new("Person".to_string());
     let attr = Arc::new("v".to_string());
     g.falkordb_index
-        .create_numeric(EntityType::Node, &label, &attr);
+        .create_column(EntityType::Node, &label, &attr);
     let lid = g.get_label_id_mut("Person").0 as u64;
     let aid = g.get_or_create_node_attr_id(&attr);
 
@@ -1556,7 +1556,7 @@ fn replica_edge_update_of_type_maintains_the_index() {
     let ty = Arc::new("R".to_string());
     let attr = Arc::new("w".to_string());
     g.falkordb_index
-        .create_numeric(EntityType::Relationship, &ty, &attr);
+        .create_column(EntityType::Relationship, &ty, &attr);
     let aid = g.get_or_create_rel_attr_id(&attr);
     let nodes = reserve_nodes(&mut g, 2);
     g.create_nodes(&nodes.iter().copied().collect())
@@ -3552,7 +3552,7 @@ fn a_commit_hands_the_builder_each_index_it_brings_in_building() {
     create_index_on(&mut after, &label, &w);
     after
         .falkordb_index
-        .create_numeric(EntityType::Node, &label, &u);
+        .create_column(EntityType::Node, &label, &u);
     let w_is = building_generation(&after, &id(&w)).expect("w is Building");
     assert_eq!(
         after.indexes_to_build_since(&before),
@@ -4528,7 +4528,7 @@ fn batched_build_carries_list_values_under_concurrent_writes() {
     assert_eq!(contains(&g, &label, &attr, 2), vec![ids[1]]);
     assert!(
         matches!(
-            g.falkordb_index.query_numeric(
+            g.falkordb_index.query_column(
                 EntityType::Node,
                 &label,
                 &IndexQuery::ArrayContains {
@@ -4601,7 +4601,7 @@ fn building_scans_and_built_answers(
     let mut kept = Vec::new();
     loop {
         for (i, q) in queries.iter().enumerate() {
-            if let Some(Err(scan_filter)) = g.query_index_numeric_nodes(label, q) {
+            if let Some(Err(scan_filter)) = g.query_index_nodes(label, q) {
                 let scan_filter = scan_filter
                     .resolve(|attr| g.get_node_attribute_id(attr).map(|attr| attr as u16))
                     .expect("registered");
@@ -4622,7 +4622,7 @@ fn building_scans_and_built_answers(
     let built = queries
         .iter()
         .enumerate()
-        .map(|(i, q)| match g.query_index_numeric_nodes(label, q) {
+        .map(|(i, q)| match g.query_index_nodes(label, q) {
             Some(Ok(rows)) => {
                 let mut ids: Vec<u64> = rows.map(u64::from).collect();
                 ids.sort_unstable();
@@ -4699,7 +4699,7 @@ fn a_building_columns_scan_keeps_what_the_array_tree_answers() {
     }
 }
 
-/// `query_numeric` serves `v IN n.attr` from the array tree and `n.attr = v` from the scalar tree,
+/// `query_column` serves `v IN n.attr` from the array tree and `n.attr = v` from the scalar tree,
 /// and declines a probe the encoder cannot represent.
 #[test]
 fn array_contains_is_routed_to_the_array_tree() {
@@ -4711,7 +4711,7 @@ fn array_contains_is_routed_to_the_array_tree() {
         value: v,
     };
     let rows =
-        |q: &IndexQuery<Value>| match g.falkordb_index.query_numeric(EntityType::Node, &label, q) {
+        |q: &IndexQuery<Value>| match g.falkordb_index.query_column(EntityType::Node, &label, q) {
             Some(Ok(r)) => Some(r.collect::<Vec<_>>()),
             Some(Err(_)) => panic!("the column is Ready"),
             None => None,
