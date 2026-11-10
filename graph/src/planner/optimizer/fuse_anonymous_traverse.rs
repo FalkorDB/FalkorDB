@@ -29,7 +29,7 @@
 //! `sibling_edges` and `transposed = false`. When any condition fails the
 //! pair is left alone and the fast/slow paths run as before.
 
-use orx_tree::{Bfs, DynTree, NodeRef};
+use orx_tree::{Bfs, DynTree, NodeRef, Traversal};
 
 use super::super::IR;
 use super::references::ir_references_variable;
@@ -72,10 +72,15 @@ fn intermediate_unreferenced(
     var_id: u32,
     scope_id: u32,
 ) -> bool {
+    // Two local traversers: the plan walk holds one while each node's check
+    // walks its expressions with the other. Only reached for a candidate
+    // CondTraverse pair, so these are not on the common path.
+    let mut nodes = Traversal.bfs();
+    let mut exprs = Traversal.bfs();
     !plan
         .root()
-        .indices::<Bfs>()
-        .any(|idx| ir_references_variable(plan.node(idx).data(), var_id, scope_id))
+        .indices_with(&mut nodes)
+        .any(|idx| ir_references_variable(plan.node(idx).data(), var_id, scope_id, &mut exprs))
 }
 
 /// Returns true when `parent_ct` (outer) and `child_ct` (its only CT child)
@@ -191,12 +196,15 @@ fn can_fuse(
     true
 }
 
-pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
+pub(super) fn fuse_anonymous_traverse(
+    plan: &mut DynTree<IR>,
+    traverser: &mut Bfs,
+) {
     loop {
         // Find one fusable pair (parent CT, child CT). Restart after each
         // mutation to avoid stale node indices.
         let mut fuse_target: Option<orx_tree::NodeIdx<orx_tree::Dyn<IR>>> = None;
-        for idx in plan.root().indices::<Bfs>() {
+        for idx in plan.root().indices_with(traverser) {
             let parent_node = plan.node(idx);
             if !matches!(parent_node.data(), IR::CondTraverse { .. }) {
                 continue;

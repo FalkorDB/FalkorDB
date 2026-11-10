@@ -42,20 +42,21 @@ pub(super) fn ir_references_variable(
     ir: &IR,
     var_id: u32,
     scope_id: u32,
+    traverser: &mut Bfs,
 ) -> bool {
     match ir {
         IR::Project { exprs, copies } => {
             exprs
                 .iter()
-                .any(|(_, expr)| expr_references_variable(expr, var_id, scope_id))
+                .any(|(_, expr)| expr_references_variable(expr, var_id, scope_id, traverser))
                 || copies
                     .iter()
                     .any(|(v, _)| v.id == var_id && v.scope_id == scope_id)
         }
-        IR::Filter(expr) => expr_references_variable(expr, var_id, scope_id),
+        IR::Filter(expr) => expr_references_variable(expr, var_id, scope_id, traverser),
         IR::Sort(exprs) => exprs
             .iter()
-            .any(|(expr, _)| expr_references_variable(expr, var_id, scope_id)),
+            .any(|(expr, _)| expr_references_variable(expr, var_id, scope_id, traverser)),
         IR::Aggregate {
             keys,
             aggregations,
@@ -63,10 +64,10 @@ pub(super) fn ir_references_variable(
             ..
         } => {
             keys.iter()
-                .any(|(_, expr)| expr_references_variable(expr, var_id, scope_id))
+                .any(|(_, expr)| expr_references_variable(expr, var_id, scope_id, traverser))
                 || aggregations
                     .iter()
-                    .any(|(_, expr)| expr_references_variable(expr, var_id, scope_id))
+                    .any(|(_, expr)| expr_references_variable(expr, var_id, scope_id, traverser))
                 // Variables carried through from the input. Both sides are
                 // counted: over-reporting a reader only makes a caller keep
                 // something it could have dropped.
@@ -82,13 +83,13 @@ pub(super) fn ir_references_variable(
         }),
         // The list they iterate is read; `UNWIND [e] AS x` reads `e`.
         IR::Unwind { expr: list, var } | IR::ForEach { list, var } => {
-            expr_references_variable(list, var_id, scope_id)
+            expr_references_variable(list, var_id, scope_id, traverser)
                 || (var.id == var_id && var.scope_id == scope_id)
         }
         IR::Delete { exprs, .. } | IR::Remove(exprs) => exprs
             .iter()
-            .any(|expr| expr_references_variable(expr, var_id, scope_id)),
-        IR::Set(items) => set_items_reference_variable(items, var_id, scope_id),
+            .any(|expr| expr_references_variable(expr, var_id, scope_id, traverser)),
+        IR::Set(items) => set_items_reference_variable(items, var_id, scope_id, traverser),
         // The pattern's property expressions are read too:
         // `MERGE (x {w: e.w})` reads `e`, as `CREATE` does below.
         IR::Merge {
@@ -96,24 +97,24 @@ pub(super) fn ir_references_variable(
             on_create,
             on_match,
         } => {
-            query_graph_references_variable(pattern, var_id, scope_id)
-                || set_items_reference_variable(on_create, var_id, scope_id)
-                || set_items_reference_variable(on_match, var_id, scope_id)
+            query_graph_references_variable(pattern, var_id, scope_id, traverser)
+                || set_items_reference_variable(on_create, var_id, scope_id, traverser)
+                || set_items_reference_variable(on_match, var_id, scope_id, traverser)
         }
         IR::ValueHashJoin { lhs_exp, rhs_exp } => {
-            expr_references_variable(lhs_exp, var_id, scope_id)
-                || expr_references_variable(rhs_exp, var_id, scope_id)
+            expr_references_variable(lhs_exp, var_id, scope_id, traverser)
+                || expr_references_variable(rhs_exp, var_id, scope_id, traverser)
         }
         IR::ProcedureCall { args, .. } => args
             .iter()
-            .any(|expr| expr_references_variable(expr, var_id, scope_id)),
+            .any(|expr| expr_references_variable(expr, var_id, scope_id, traverser)),
         // Predicates relocated out of a Filter by an optimizer pass.
         IR::NodeByIndexScan { query, .. } | IR::EdgeByIndexScan { query, .. } => {
-            index_query_references_variable(query, var_id, scope_id)
+            index_query_references_variable(query, var_id, scope_id, traverser)
         }
         IR::NodeByLabelAndIdScan { filter, .. } | IR::NodeByIdSeek { filter, .. } => filter
             .iter()
-            .any(|(expr, _)| expr_references_variable(expr, var_id, scope_id)),
+            .any(|(expr, _)| expr_references_variable(expr, var_id, scope_id, traverser)),
         // A walk prunes per edge on its pattern's own attrs (`-[:R* {w: p.v}]->`
         // reads `p`) and, for CVLT, on a WHERE predicate absorbed into
         // `edge_filter`.
@@ -123,21 +124,21 @@ pub(super) fn ir_references_variable(
             path_var,
             ..
         } => {
-            expr_references_variable(&relationship.attrs, var_id, scope_id)
+            expr_references_variable(&relationship.attrs, var_id, scope_id, traverser)
                 || edge_filter
                     .as_ref()
-                    .is_some_and(|f| expr_references_variable(f, var_id, scope_id))
+                    .is_some_and(|f| expr_references_variable(f, var_id, scope_id, traverser))
                 || path_var
                     .as_ref()
                     .is_some_and(|v| v.id == var_id && v.scope_id == scope_id)
         }
         IR::AllShortestPaths(relationship) => {
-            expr_references_variable(&relationship.attrs, var_id, scope_id)
+            expr_references_variable(&relationship.attrs, var_id, scope_id, traverser)
         }
         IR::NodeByFulltextScan { label, query, .. }
         | IR::EdgeByFulltextScan { label, query, .. } => {
-            expr_references_variable(label, var_id, scope_id)
-                || expr_references_variable(query, var_id, scope_id)
+            expr_references_variable(label, var_id, scope_id, traverser)
+                || expr_references_variable(query, var_id, scope_id, traverser)
         }
         IR::NodeByVectorScan {
             label,
@@ -153,22 +154,26 @@ pub(super) fn ir_references_variable(
             vector,
             ..
         } => {
-            expr_references_variable(label, var_id, scope_id)
-                || expr_references_variable(attr, var_id, scope_id)
-                || expr_references_variable(k, var_id, scope_id)
-                || expr_references_variable(vector, var_id, scope_id)
+            expr_references_variable(label, var_id, scope_id, traverser)
+                || expr_references_variable(attr, var_id, scope_id, traverser)
+                || expr_references_variable(k, var_id, scope_id, traverser)
+                || expr_references_variable(vector, var_id, scope_id, traverser)
         }
         IR::LoadCsv {
             file_path,
             delimiter,
             ..
         } => {
-            expr_references_variable(file_path, var_id, scope_id)
-                || expr_references_variable(delimiter, var_id, scope_id)
+            expr_references_variable(file_path, var_id, scope_id, traverser)
+                || expr_references_variable(delimiter, var_id, scope_id, traverser)
         }
-        IR::Skip(expr) | IR::Limit(expr) => expr_references_variable(expr, var_id, scope_id),
+        IR::Skip(expr) | IR::Limit(expr) => {
+            expr_references_variable(expr, var_id, scope_id, traverser)
+        }
         // Constructor patterns: `CREATE (n {p: x})` reads `x`.
-        IR::Create(pattern) => query_graph_references_variable(pattern, var_id, scope_id),
+        IR::Create(pattern) => {
+            query_graph_references_variable(pattern, var_id, scope_id, traverser)
+        }
         // Structural or variable-free: they bind and route rows, and hold no
         // expression that could name this variable.
         IR::Argument(_)
@@ -205,8 +210,10 @@ pub(super) fn index_query_references_variable(
     query: &IndexQuery<QueryExpr<Variable>>,
     var_id: u32,
     scope_id: u32,
+    traverser: &mut Bfs,
 ) -> bool {
-    let refs = |e: &QueryExpr<Variable>| expr_references_variable(e, var_id, scope_id);
+    let mut refs =
+        |e: &QueryExpr<Variable>| expr_references_variable(e, var_id, scope_id, traverser);
     // An explicit stack rather than recursion: `And` and `Or` nest to whatever
     // depth the query's predicates do.
     let mut pending = vec![query];
@@ -217,7 +224,7 @@ pub(super) fn index_query_references_variable(
             }
             IndexQuery::InList { list, .. } => refs(list),
             IndexQuery::Range { min, max, .. } => {
-                min.as_ref().is_some_and(&refs) || max.as_ref().is_some_and(&refs)
+                min.as_ref().is_some_and(&mut refs) || max.as_ref().is_some_and(&mut refs)
             }
             IndexQuery::Point { point, radius, .. } => refs(point) || refs(radius),
             IndexQuery::And(qs) | IndexQuery::Or(qs) => {
@@ -237,6 +244,8 @@ mod tests {
     use std::sync::Arc;
 
     use orx_tree::DynTree;
+
+    use orx_tree::Traversal;
 
     use super::index_query_references_variable;
     use crate::index::indexer::IndexQuery;
@@ -273,13 +282,28 @@ mod tests {
                 IndexQuery::And(vec![eq(var(3, 0)), eq(var(7, 1))]),
             ]),
         ]);
-        assert!(index_query_references_variable(&deep, 7, 1));
-        assert!(index_query_references_variable(&deep, 1, 0));
+        assert!(index_query_references_variable(
+            &deep,
+            7,
+            1,
+            &mut Traversal.bfs()
+        ));
+        assert!(index_query_references_variable(
+            &deep,
+            1,
+            0,
+            &mut Traversal.bfs()
+        ));
         assert!(
-            !index_query_references_variable(&deep, 7, 0),
+            !index_query_references_variable(&deep, 7, 0, &mut Traversal.bfs()),
             "same id, other scope"
         );
-        assert!(!index_query_references_variable(&deep, 9, 0));
+        assert!(!index_query_references_variable(
+            &deep,
+            9,
+            0,
+            &mut Traversal.bfs()
+        ));
     }
 }
 
@@ -288,26 +312,28 @@ fn query_graph_references_variable(
     pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
     var_id: u32,
     scope_id: u32,
+    traverser: &mut Bfs,
 ) -> bool {
     pattern
         .nodes()
         .iter()
-        .any(|n| expr_references_variable(&n.attrs, var_id, scope_id))
+        .any(|n| expr_references_variable(&n.attrs, var_id, scope_id, traverser))
         || pattern
             .relationships()
             .iter()
-            .any(|r| expr_references_variable(&r.attrs, var_id, scope_id))
+            .any(|r| expr_references_variable(&r.attrs, var_id, scope_id, traverser))
 }
 
 fn set_items_reference_variable(
     items: &[SetItem<Arc<String>, Variable>],
     var_id: u32,
     scope_id: u32,
+    traverser: &mut Bfs,
 ) -> bool {
     items.iter().any(|item| match item {
         SetItem::Attribute { target, value, .. } => {
-            expr_references_variable(target, var_id, scope_id)
-                || expr_references_variable(value, var_id, scope_id)
+            expr_references_variable(target, var_id, scope_id, traverser)
+                || expr_references_variable(value, var_id, scope_id, traverser)
         }
         SetItem::Label { var, .. } => var.id == var_id && var.scope_id == scope_id,
     })
@@ -318,8 +344,9 @@ pub(super) fn expr_references_variable(
     expr: &DynTree<ExprIR<Variable>>,
     var_id: u32,
     scope_id: u32,
+    traverser: &mut Bfs,
 ) -> bool {
-    subtree_references_variable(&expr.root(), var_id, scope_id)
+    subtree_references_variable(&expr.root(), var_id, scope_id, traverser)
 }
 
 /// The same question for one subtree of an expression — `utilize_node_by_id`
@@ -328,7 +355,8 @@ pub(super) fn subtree_references_variable(
     node: &DynNode<ExprIR<Variable>>,
     var_id: u32,
     scope_id: u32,
+    traverser: &mut Bfs,
 ) -> bool {
-    node.walk::<Bfs>()
+    node.walk_with(traverser)
         .any(|e| matches!(e, ExprIR::Variable(v) if v.id == var_id && v.scope_id == scope_id))
 }

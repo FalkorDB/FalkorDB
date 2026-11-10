@@ -53,7 +53,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use orx_tree::{DynNode, DynTree, NodeRef};
+use orx_tree::{Bfs, DynNode, DynTree, NodeRef};
 
 use crate::{
     parser::ast::{ExprIR, QueryExpr, Variable},
@@ -61,7 +61,7 @@ use crate::{
 };
 
 use super::super::IR;
-use super::{collect_expr_variables, collect_subtree_variables};
+use super::{collect_expr_variables_with, collect_subtree_variables};
 
 /// Replaces `Filter(a = b) -> CartesianProduct(ChildA, ChildB)` with
 /// `ValueHashJoin(ChildA, ChildB)` when the equality predicate's left side
@@ -70,27 +70,53 @@ use super::{collect_expr_variables, collect_subtree_variables};
 ///
 /// Uses a recursive tree-rebuild approach to cleanly restructure multi-child
 /// CartesianProduct nodes.
-pub(super) fn replace_cartesian_with_hash_join(optimized_plan: &mut DynTree<IR>) {
-    let new_plan = rebuild_with_hash_joins(&optimized_plan.root());
+pub(super) fn replace_cartesian_with_hash_join(
+    optimized_plan: &mut DynTree<IR>,
+    traverser: &mut Bfs,
+) {
+    // The rebuild clones every node of the plan, and on a plan with no
+    // `Filter -> CartesianProduct` it reproduces its input exactly. Most plans
+    // have none, and this runs on every execution — a plan-cache hit included —
+    // so it was a quarter of `optimize()`'s time on plans it could not change.
+    if !has_filter_over_cartesian(&optimized_plan.root()) {
+        return;
+    }
+    let new_plan = rebuild_with_hash_joins(&optimized_plan.root(), traverser);
     *optimized_plan = new_plan;
+}
+
+/// Whether any `Filter` in the subtree sits directly on a `CartesianProduct`,
+/// the only shape `rebuild_with_hash_joins` rewrites. Recursive over
+/// `children()`, so it allocates nothing.
+fn has_filter_over_cartesian(node: &DynNode<IR>) -> bool {
+    (matches!(node.data(), IR::Filter(_))
+        && node
+            .get_child(0)
+            .is_some_and(|child| matches!(child.data(), IR::CartesianProduct)))
+        || node
+            .children()
+            .any(|child| has_filter_over_cartesian(&child))
 }
 
 /// Recursively rebuilds the plan tree, converting Filter -> CartesianProduct
 /// patterns into ValueHashJoin where applicable.
-fn rebuild_with_hash_joins(node: &DynNode<IR>) -> DynTree<IR> {
+fn rebuild_with_hash_joins(
+    node: &DynNode<IR>,
+    traverser: &mut Bfs,
+) -> DynTree<IR> {
     if let IR::Filter(filter) = node.data()
         && let Some(child) = node.get_child(0)
         && matches!(child.data(), IR::CartesianProduct)
-        && let Some(result) = try_hash_join_rewrite(filter, &child)
+        && let Some(result) = try_hash_join_rewrite(filter, &child, traverser)
     {
         // Recursively apply to the result (may find more join opportunities).
-        return rebuild_with_hash_joins(&result.root());
+        return rebuild_with_hash_joins(&result.root(), traverser);
     }
 
     // Default: clone this node's data and recursively rebuild children.
     let mut new_tree = DynTree::new(node.data().clone());
     for child in node.children() {
-        let child_tree = rebuild_with_hash_joins(&child);
+        let child_tree = rebuild_with_hash_joins(&child, traverser);
         new_tree.root_mut().push_child_tree(child_tree);
     }
     new_tree
@@ -101,6 +127,7 @@ fn rebuild_with_hash_joins(node: &DynNode<IR>) -> DynTree<IR> {
 fn try_hash_join_rewrite(
     filter: &QueryExpr<Variable>,
     cp_node: &DynNode<IR>,
+    traverser: &mut Bfs,
 ) -> Option<DynTree<IR>> {
     let conjuncts: Vec<DynTree<ExprIR<Variable>>> = if matches!(filter.root().data(), ExprIR::And) {
         filter
@@ -128,8 +155,8 @@ fn try_hash_join_rewrite(
         }
         let lhs_tree = conjunct.root().child(0).clone_as_tree();
         let rhs_tree = conjunct.root().child(1).clone_as_tree();
-        let lhs_vars = collect_expr_variables(&lhs_tree);
-        let rhs_vars = collect_expr_variables(&rhs_tree);
+        let lhs_vars = collect_expr_variables_with(&lhs_tree, traverser);
+        let rhs_vars = collect_expr_variables_with(&rhs_tree, traverser);
         if lhs_vars.is_empty() || rhs_vars.is_empty() {
             continue;
         }
