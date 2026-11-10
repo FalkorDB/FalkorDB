@@ -1,11 +1,11 @@
 file	function	line	bucket	lean_name_or_reason
-src/allocator.rs	alloc	44	PROVEN	Allocator.step (.alloc ok n): null_alloc_uncounted, run_traffic, query_accounting, alloc_passthrough (RedisAlloc = FFI input)
-src/allocator.rs	dealloc	65	PROVEN	Allocator.step (.dealloc n): run_traffic, query_accounting, disabled_frozen (RedisAlloc::dealloc = FFI effect)
-src/allocator.rs	enable_tracking	89	PROVEN	Allocator.step .enable: enable_sets, query_accounting
-src/allocator.rs	disable_tracking	97	PROVEN	Allocator.step .disable: disable_clears, disabled_frozen
-src/allocator.rs	current_thread_usage	106	PROVEN	Allocator.usage: query_accounting, other_thread_invisible, fresh_thread_counts
-src/allocator.rs	net_thread_usage	114	PROVEN	Allocator.net: net_saturates, query_accounting, other_thread_invisible
-src/allocator.rs	reset_counter	123	PROVEN	Allocator.step .reset: reset_zero, query_accounting
+src/allocator.rs	alloc	52	PROVEN	Allocator.step (.alloc ok n): null_alloc_uncounted, run_traffic, query_accounting, alloc_passthrough (RedisAlloc = FFI input)
+src/allocator.rs	dealloc	73	PROVEN	Allocator.step (.dealloc n): run_traffic, query_accounting, disabled_frozen (RedisAlloc::dealloc = FFI effect)
+src/allocator.rs	enable_tracking	97	PROVEN	Allocator.step .enable: enable_sets, query_accounting
+src/allocator.rs	disable_tracking	105	PROVEN	Allocator.step .disable: disable_clears, disabled_frozen
+src/allocator.rs	current_thread_usage	114	PROVEN	Allocator.usage: query_accounting, other_thread_invisible, fresh_thread_counts
+src/allocator.rs	net_thread_usage	122	PROVEN	Allocator.net: net_saturates, query_accounting, other_thread_invisible
+src/allocator.rs	reset_counter	127	PROVEN	Allocator.step .reset: reset_zero, query_accounting
 src/dispatch.rs	must_run_inline	36	AXIOMATISED	Redis ctx flags (RM_GetContextFlags); predicate identical to C cmd_dispatcher.c main_thread; not modelled beyond that
 src/divergence_guard.rs	is_replayed	41	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
 src/divergence_guard.rs	on_failure	53	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
