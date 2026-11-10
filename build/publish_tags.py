@@ -69,13 +69,18 @@ RESERVED_PREFIXES = ("rc-", "edge-c-")
 FIRST_MAJOR = 6
 # Parts of a tag that say what it holds. A version or an ad-hoc tag carrying
 # one would collide with, or impersonate, another tag: 6.1.0-alpine's Valkey
-# tag would be 6.1.0's Alpine tag.
+# tag would be 6.1.0's Alpine tag. Compared lower-cased, after splitting on
+# `.`, `-` and `_` (so x86_64 is refused through `x86`).
 RESERVED_PARTS = (
-    set(SERVERS)
-    | set(PLATFORMS)
+    set(PLATFORMS)
     | {p.split("/")[1] for p in PLATFORMS.values()}
-    | {"aarch64", "x86", "x86_64"}
-    | {os_name for os_name, _ in PER_OS}
+    | {"aarch64", "x86", "i386", "i686", "arm", "armv6", "armv7", "armv8", "armhf", "armel",
+       "ppc64le", "s390x", "riscv64"}
+)
+# Server and OS names, with or without a version: redis8 reads as Redis 8,
+# rhel8 as an OS, whatever the tag holds.
+RESERVED_PART_RE = re.compile(
+    r"(" + "|".join(sorted(set(SERVERS) | {"alpine", "rhel", "amazonlinux", "ubuntu", "debian"})) + r")\d*"
 )
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -114,7 +119,7 @@ class Assemble:
 
 def parse_version(text: str):
     """(major, minor, patch, prerelease-or-None) of X.Y.Z[-pre], else None."""
-    m = VERSION_RE.match(text)
+    m = VERSION_RE.fullmatch(text)
     if not m:
         return None
     return int(m[1]), int(m[2]), int(m[3]), m[4]
@@ -123,7 +128,7 @@ def parse_version(text: str):
 def check_parts(tag: str, what: str) -> None:
     # Case-blind, and split on `_` too: X64 and test_x64 name an architecture.
     for part in re.split(r"[._-]", tag.lower()):
-        if part in RESERVED_PARTS:
+        if part in RESERVED_PARTS or RESERVED_PART_RE.fullmatch(part):
             raise PlanError(
                 f"{what} '{tag}' contains '{part}', which tags use to name a "
                 "server, an OS or an architecture"
@@ -141,7 +146,7 @@ def check_version(version: str) -> None:
 
 
 def check_sha(sha: str) -> None:
-    if not SHA_RE.match(sha):
+    if not SHA_RE.fullmatch(sha):
         raise PlanError(f"commit '{sha}' is not a full 40-character SHA")
 
 
@@ -218,13 +223,14 @@ def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[d
     if parse_version(tag) is not None:
         check_version(tag)
     else:
-        if not TAG_RE.match(tag):
+        if not TAG_RE.fullmatch(tag):
             raise PlanError(f"tag '{tag}' is not a valid image tag")
-        if re.match(r"^v\d", tag):
+        if re.match(r"v\d", tag, re.IGNORECASE):
             raise PlanError(f"tag '{tag}': image versions have no leading v")
         # Judged on what would be pushed: `rc` alone would publish rc-valkey.
         for name in server_tags(tag, DEFAULT_SERVER) + server_tags(tag, "redis"):
-            if name in RESERVED_TAGS or name.startswith(RESERVED_PREFIXES):
+            # Case-blind: Latest or RC-x would read as the real channels.
+            if name.lower() in RESERVED_TAGS or name.lower().startswith(RESERVED_PREFIXES):
                 raise PlanError(f"tag '{tag}' would publish '{name}', which belongs to another workflow")
         check_parts(tag, "tag")
     if latest:
@@ -257,7 +263,7 @@ def find_archives(images_dir: Path) -> dict:
     """
     found = {}
     for path in sorted(images_dir.rglob("*.tar")):
-        m = ARCHIVE_RE.match(path.name)
+        m = ARCHIVE_RE.fullmatch(path.name)
         key = m and (m["os"], m["server"], m["arch"])
         if not m or (key[0], key[1]) not in PER_OS or key[2] not in PLATFORMS:
             raise PlanError(f"{path}: not a per-OS image archive this release publishes")

@@ -67,7 +67,7 @@ class EdgeTags(unittest.TestCase):
             self.assertRegex(step.source, r":rc-mg-[0-9a-f]{40}-(valkey|redis)$")
 
     def test_needs_a_full_sha(self):
-        for bad in ("abc123", SHA.upper(), SHA + "0", ""):
+        for bad in ("abc123", SHA.upper(), SHA + "0", "", SHA + "\n"):
             with self.assertRaises(pt.PlanError):
                 pt.edge_plan(bad)
 
@@ -126,7 +126,7 @@ class ReleaseTags(unittest.TestCase):
         self.assertTrue(pt.moves_latest("6.1.0", rels))
 
     def test_version_shape(self):
-        for bad in ("v6.1.0", "6.1", "6.1.0.1", "6.1.0-", "latest", "5.9.9", "4.22.3"):
+        for bad in ("v6.1.0", "6.1", "6.1.0.1", "6.1.0-", "latest", "5.9.9", "4.22.3", "6.1.0\n"):
             with self.assertRaises(pt.PlanError, msg=bad):
                 pt.release_plan(bad, SHA, [])
 
@@ -174,6 +174,13 @@ class RebuildTags(unittest.TestCase):
             both("falkordb-server", "edge-test-redis"),
         )
 
+    def test_ordinary_tags_still_pass(self):
+        for tag in ("edge-test", "my_build", "Test.1", "nightly-2026", "hotfix_6.2", "feature-X",
+                    "x64ish", "x86test", "6.2.0", "6.2.0-RC.1", "6.2.0-beta.2", "6.2.0-rc.1.x"):
+            pt.rebuild_plan(tag, SHA, latest=False)
+        for version in ("6.2.0-RC.1", "6.2.0-rc1", "6.2.0-alpha"):
+            pt.release_plan(version, SHA, [])
+
     def test_refusals(self):
         for tag, latest in (
             ("6.1.0-rc.1", True),  # a prerelease never moves latest
@@ -183,6 +190,10 @@ class RebuildTags(unittest.TestCase):
             ("rc-mg-abc", False), ("rc-rebuild-x", False), ("rc", False),  # CI's namespace, or landing in it
             ("test-aarch64", False), ("x86_64", False),  # architecture names, however spelled
             ("build-X64", False), ("foo-ARM64", False), ("test_x64", False), ("x86-test", False),
+            ("foo-armv7", False), ("foo-i386", False), ("foo-s390x", False), ("foo-riscv64", False),
+            ("foo-redis8", False), ("test-Valkey9", False), ("foo-rhel8", False), ("foo-ubuntu", False),
+            ("Latest", False), ("EDGE", False), ("Edge-RS", False), ("Rc", False), ("RC-foo", False),
+            ("Edge-C-x", False), ("V6.1.0", False), ("foo\n", False), ("foo-x64\n", False),
             ("v6.1.0", False), ("v6", False),  # versions have no leading v
             ("test-x64", False), ("foo-valkey", False), ("alpine", False),
             ("-x", False), ("a:b", False), ("", False),
