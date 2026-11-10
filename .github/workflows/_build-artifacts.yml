@@ -309,6 +309,12 @@ jobs:
           if [ "$HZ" != "44" ]; then echo "::error::${SERVER} with only ${OTHER} set got hz '$HZ', expected 44"; exit 1; fi
           echo "OK: falkordb-server:${SUFFIX} loads the module, answers, runs as falkordb, and takes ${SERVER}'s own args, else the other's, never both"
 
+      - name: Check falkordb-server on a Redis 8 data volume (${{ matrix.suffix }})
+        if: matrix.image
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: tests/docker/redis8_volume_check.sh "falkordb-server:${SUFFIX}"
+
       - name: Upload falkordb-server image (${{ matrix.suffix }})
         if: matrix.image && inputs.export_images && matrix.publish
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
