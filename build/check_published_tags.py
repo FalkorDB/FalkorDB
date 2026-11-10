@@ -757,7 +757,8 @@ class Checker:
             # Its GitHub release is published before its images: in that
             # window, or if its images never came, latest* cannot be checked.
             self.record(False, RELATIONS, subject, check,
-                        f"{version} has no images here yet, so latest* cannot be checked")
+                        f"{version} has no images here yet, so latest* cannot be checked; "
+                        f"re-run this check once {version}'s image jobs have finished")
             return
         for ok, ref, verdict_check, detail in self._latest_verdicts(registry, repo, version, specs, releases,
                                                                     after_switch):

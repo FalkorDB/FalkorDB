@@ -615,7 +615,8 @@ class EdgeTest(unittest.TestCase):
                 checker = check(docker, "edge", latest="6.1.0")
                 self.assertEqual(failed(checker), [(f"{registry}/{repo}:latest*", "points at 6.1.0")
                                                    for registry in (GHCR, HUB) for repo in REPOS])
-                self.assertIn("6.1.0 has no images here yet, so latest* cannot be checked",
+                self.assertIn("6.1.0 has no images here yet, so latest* cannot be checked; "
+                              "re-run this check once 6.1.0's image jobs have finished",
                               checker.failures[0].detail)
         # No older release is looked at: every lookup counts against
         # Docker Hub's rate limit.
@@ -1228,8 +1229,9 @@ class CommandLineTest(unittest.TestCase):
                      {"tag_name": "v6.0.4", "draft": False, "prerelease": False}]]
         code, out, summary = self.run_main(docker, releases, "edge")
         self.assertEqual(code, 1)
-        self.assertIn("6.1.0 has no images here yet, so latest* cannot be checked", out)
-        self.assertIn("cannot be checked", summary)
+        self.assertIn("6.1.0 has no images here yet, so latest* cannot be checked; "
+                      "re-run this check once 6.1.0's image jobs have finished", out)
+        self.assertIn("re-run this check once 6.1.0's image jobs have finished", summary)
 
     def test_main_reports_an_unknown_latest_in_the_step_summary(self):
         code, _, summary = self.run_main(FakeDocker(), judge.InspectError("gh: no token"), "latest")
