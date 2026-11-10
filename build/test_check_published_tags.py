@@ -548,6 +548,18 @@ class EdgeTest(unittest.TestCase):
         checker = check(docker, "edge")
         self.assertEqual(failed(checker), [("falkordb-server:edge-rs-redis", "same digest on every registry")])
 
+    def test_latest_rebuilt_with_its_release_on_one_registry_only_fails(self):
+        """Docker Hub's newest release and its latest* were rebuilt together, so
+        each registry is self-consistent; they differ from each other."""
+        docker = FakeDocker()
+        publish_edge(docker)
+        publish_release(docker, "6.1.0", latest=True)
+        docker.push(docker.multi("valkey", "ubuntu-26.04", browser=True, salt="rebuilt"), "falkordb",
+                    "6.1.0-valkey", "6.1.0", "latest-valkey", "latest", registries=(HUB,))
+        checker = check(docker, "edge", latest="6.1.0")
+        self.assertIn(("falkordb:latest-valkey", "same digest on every registry"), failed(checker))
+        self.assertIn(("falkordb:latest", "same digest on every registry"), failed(checker))
+
     def test_the_wrong_base_os_fails(self):
         docker = FakeDocker()
         publish_edge(docker)
