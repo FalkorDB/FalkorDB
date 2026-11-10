@@ -15,9 +15,13 @@
 //! 2. Each query runs on a single thread, so per-thread tracking is sufficient
 //! 3. Counters can be reset before each query for accurate per-query stats
 
+#[cfg(test)]
+use std::alloc::System;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
 use std::thread_local;
+#[cfg(not(test))]
+use valkey_module::alloc::ValkeyAlloc;
 
 /// Global allocator that delegates to Redis while tracking allocations per-thread.
 ///
@@ -47,11 +51,9 @@ unsafe impl GlobalAlloc for ThreadCountingAllocator {
     ) -> *mut u8 {
         // Unit tests run outside Redis, where its allocator does not exist.
         #[cfg(test)]
-        let ptr = unsafe { std::alloc::System.alloc(layout) };
+        let ptr = unsafe { System.alloc(layout) };
         #[cfg(not(test))]
-        let ptr = unsafe {
-            valkey_module::alloc::ValkeyAlloc::alloc(&valkey_module::alloc::ValkeyAlloc, layout)
-        };
+        let ptr = unsafe { ValkeyAlloc.alloc(layout) };
         if !ptr.is_null() {
             TRACKING_ENABLED.with(|enabled| {
                 if enabled.get() {
@@ -69,15 +71,11 @@ unsafe impl GlobalAlloc for ThreadCountingAllocator {
     ) {
         #[cfg(test)]
         unsafe {
-            std::alloc::System.dealloc(ptr, layout);
+            System.dealloc(ptr, layout);
         };
         #[cfg(not(test))]
         unsafe {
-            valkey_module::alloc::ValkeyAlloc::dealloc(
-                &valkey_module::alloc::ValkeyAlloc,
-                ptr,
-                layout,
-            );
+            ValkeyAlloc.dealloc(ptr, layout);
         };
         TRACKING_ENABLED.with(|enabled| {
             if enabled.get() {

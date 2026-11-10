@@ -11,7 +11,9 @@ use parking_lot::RwLock;
 use std::os::raw::c_int;
 use std::os::unix::io::{FromRawFd, OwnedFd};
 use std::sync::Arc;
-use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
+use valkey_module::{
+    Context, KeyType, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue,
+};
 
 unsafe extern "C" {
     fn pipe(pipefd: *mut c_int) -> c_int;
@@ -70,7 +72,7 @@ pub fn graph_copy(
         return Err(ValkeyError::Str("destination key already exists"));
     }
     // Also check if dest key exists as any other type.
-    if dest_key.key_type() != valkey_module::KeyType::Empty {
+    if dest_key.key_type() != KeyType::Empty {
         return Err(ValkeyError::Str("destination key already exists"));
     }
 

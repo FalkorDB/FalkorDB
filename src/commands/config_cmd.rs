@@ -45,7 +45,7 @@ use crate::config::{
     TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
 };
 use std::sync::atomic::Ordering;
-use valkey_module::{Context, NextArg, ValkeyResult, ValkeyString, ValkeyValue};
+use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
 
 /// C's reply for a name it does not know, in GET and SET alike.
 pub(crate) const UNKNOWN_FIELD: &str = "Unknown configuration field";
@@ -325,7 +325,7 @@ pub fn graph_config(
 ) -> ValkeyResult {
     // Arity as C's `Graph_Config`: `GET <name>` exactly, `SET` with name/value pairs.
     if args.len() < 3 {
-        return Err(valkey_module::ValkeyError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let argc = args.len();
     let mut args = args.into_iter().skip(1);
@@ -336,55 +336,48 @@ pub fn graph_config(
     match sub_command.to_ascii_uppercase().as_str() {
         "GET" => {
             if argc != 3 {
-                return Err(valkey_module::ValkeyError::WrongArity);
+                return Err(ValkeyError::WrongArity);
             }
             let name = args.next_str()?;
             if name == "*" {
                 // Return all configs in order.
                 let mut result = Vec::with_capacity(CONFIG_NAMES.len());
                 for &cfg_name in CONFIG_NAMES {
-                    result.push(
-                        config_get_one(ctx, cfg_name)
-                            .map_err(valkey_module::ValkeyError::String)?,
-                    );
+                    result.push(config_get_one(ctx, cfg_name).map_err(ValkeyError::String)?);
                 }
                 Ok(ValkeyValue::Array(result))
             } else {
                 let upper = name.to_ascii_uppercase();
-                config_get_one(ctx, &upper).map_err(valkey_module::ValkeyError::String)
+                config_get_one(ctx, &upper).map_err(ValkeyError::String)
             }
         }
         "SET" => {
             if argc < 4 || argc % 2 == 1 {
-                return Err(valkey_module::ValkeyError::WrongArity);
+                return Err(ValkeyError::WrongArity);
             }
             // Collect all name-value pairs.
             let mut pairs = Vec::new();
             while let Ok(n) = args.next_str() {
                 let name = n.to_ascii_uppercase();
-                let value = args.next_str().map_err(|_| {
-                    valkey_module::ValkeyError::Str("Missing value for configuration parameter")
-                })?;
+                let value = args
+                    .next_str()
+                    .map_err(|_| ValkeyError::Str("Missing value for configuration parameter"))?;
                 pairs.push((name, value.to_string()));
             }
 
             if pairs.is_empty() {
-                return Err(valkey_module::ValkeyError::Str(
-                    "Missing configuration parameter name",
-                ));
+                return Err(ValkeyError::Str("Missing configuration parameter name"));
             }
 
             // Validate all pairs first (for atomic multi-set).
             let mut validated = Vec::with_capacity(pairs.len());
             for (name, value) in &pairs {
-                let v =
-                    validate_config_set(name, value).map_err(valkey_module::ValkeyError::String)?;
+                let v = validate_config_set(name, value).map_err(ValkeyError::String)?;
                 validated.push((name.as_str(), v));
             }
 
             // Cross-validate timeout configuration constraints.
-            validate_timeout_cross_constraints(&validated)
-                .map_err(valkey_module::ValkeyError::String)?;
+            validate_timeout_cross_constraints(&validated).map_err(ValkeyError::String)?;
 
             // Apply all validated values.
             let mut js_config_changed = false;
@@ -403,7 +396,7 @@ pub fn graph_config(
 
             Ok(ValkeyValue::SimpleStringStatic("OK"))
         }
-        _ => Err(valkey_module::ValkeyError::String(
+        _ => Err(ValkeyError::String(
             "Unknown subcommand for GRAPH.CONFIG".to_string(),
         )),
     }

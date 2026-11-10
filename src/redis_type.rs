@@ -59,8 +59,8 @@ use valkey_module::raw::{
     save_unsigned,
 };
 use valkey_module::{
-    Context, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, ValkeyError,
-    native_types::ValkeyType,
+    Context, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleEvent, RedisModuleTypeMethods,
+    ValkeyError, native_types::ValkeyType,
 };
 
 /// The configured `CACHE_SIZE`, for a graph an RDB callback is building.
@@ -372,7 +372,7 @@ pub unsafe extern "C" fn pre_fork_prepare() {
 /// Called by Redis internals with a valid module context.
 pub unsafe extern "C" fn on_persistence(
     ctx: *mut RedisModuleCtx,
-    _eid: valkey_module::RedisModuleEvent,
+    _eid: RedisModuleEvent,
     subevent: u64,
     _data: *mut c_void,
 ) {

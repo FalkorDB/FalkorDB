@@ -18,7 +18,9 @@ use roaring::RoaringTreemap;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::Arc;
-use valkey_module::{Context, ContextFlags, NextArg, ValkeyResult, ValkeyString, ValkeyValue, raw};
+use valkey_module::{
+    Context, ContextFlags, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw,
+};
 
 // Binary property type markers (matching Python bulk loader's TYPE enum)
 const BI_NULL: u8 = 0;
@@ -699,7 +701,7 @@ pub fn graph_bulk_insert(
     args: Vec<ValkeyString>,
 ) -> ValkeyResult {
     if args.len() < 3 {
-        return Err(valkey_module::ValkeyError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
 
     // Contexts that cannot block run inline, with RM_Yield so Redis still handles PING
@@ -743,35 +745,30 @@ pub fn graph_bulk_insert(
             .cloned();
         if begin {
             if found.is_some() {
-                return Err(valkey_module::ValkeyError::String(format!(
+                return Err(ValkeyError::String(format!(
                     "Graph with name '{key_str}' cannot be created, as key '{key_str}' already exists."
                 )));
             }
         } else if found.is_none() {
-            return Err(valkey_module::ValkeyError::Str(
-                "ERR Invalid graph operation on empty key",
-            ));
+            return Err(ValkeyError::Str("ERR Invalid graph operation on empty key"));
         }
         found
     };
 
     // Parse counts
-    let node_count = parse_count(node_count_str)
-        .ok_or(valkey_module::ValkeyError::Str("Error parsing node count."))?;
-    let edge_count = parse_count(args.next_str()?).ok_or(valkey_module::ValkeyError::Str(
-        "Error parsing relation count.",
-    ))?;
-    let node_token_count = parse_count(args.next_str()?).ok_or(valkey_module::ValkeyError::Str(
-        "Error parsing node token count.",
-    ))?;
-    let rel_token_count = parse_count(args.next_str()?).ok_or(valkey_module::ValkeyError::Str(
-        "Error parsing relation token count.",
-    ))?;
+    let node_count =
+        parse_count(node_count_str).ok_or(ValkeyError::Str("Error parsing node count."))?;
+    let edge_count =
+        parse_count(args.next_str()?).ok_or(ValkeyError::Str("Error parsing relation count."))?;
+    let node_token_count =
+        parse_count(args.next_str()?).ok_or(ValkeyError::Str("Error parsing node token count."))?;
+    let rel_token_count = parse_count(args.next_str()?)
+        .ok_or(ValkeyError::Str("Error parsing relation token count."))?;
 
     // Collect remaining binary token args
     let token_strings: Vec<ValkeyString> = args.collect();
     if token_strings.len() != node_token_count + rel_token_count {
-        return Err(valkey_module::ValkeyError::Str(
+        return Err(ValkeyError::Str(
             "Bulk insert format error, token count mismatch.",
         ));
     }
@@ -791,8 +788,7 @@ pub fn graph_bulk_insert(
     //--------------------------------------------------------------------------
     // A malformed header reports exactly what it reports when the insert itself trips over
     // it below — only sooner, before any graph state exists to roll back.
-    let header_err =
-        |e: String| valkey_module::ValkeyError::String(format!("ERR bulk insert failed: {e}"));
+    let header_err = |e: String| ValkeyError::String(format!("ERR bulk insert failed: {e}"));
     let (node_tokens, rel_tokens) = token_strings.split_at(node_token_count);
 
     let mut node_ceiling = 0usize;
@@ -800,7 +796,7 @@ pub fn graph_bulk_insert(
         node_ceiling += max_records(token.as_slice(), "Label name", 0).map_err(header_err)?;
     }
     if node_count > node_ceiling {
-        return Err(valkey_module::ValkeyError::String(format!(
+        return Err(ValkeyError::String(format!(
             "Bulk insert format error, declared node count {node_count} exceeds the \
              {node_ceiling} node records the payload describes."
         )));
@@ -812,7 +808,7 @@ pub fn graph_bulk_insert(
             .map_err(header_err)?;
     }
     if edge_count > edge_ceiling {
-        return Err(valkey_module::ValkeyError::String(format!(
+        return Err(ValkeyError::String(format!(
             "Bulk insert format error, declared relation count {edge_count} exceeds the \
              {edge_ceiling} edge records the payload describes."
         )));
@@ -843,7 +839,7 @@ pub fn graph_bulk_insert(
     if inline {
         let tokens: Vec<&[u8]> = token_strings
             .iter()
-            .map(valkey_module::ValkeyString::as_slice)
+            .map(ValkeyString::as_slice)
             .collect();
         let tg = graph.write();
         let mut fork = tg.graph.fork();
@@ -892,9 +888,7 @@ pub fn graph_bulk_insert(
                 if begin {
                     discard_created_graph(ctx, &key_str);
                 }
-                Err(valkey_module::ValkeyError::String(format!(
-                    "ERR bulk insert failed: {e}"
-                )))
+                Err(ValkeyError::String(format!("ERR bulk insert failed: {e}")))
             }
         };
     }

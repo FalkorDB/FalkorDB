@@ -65,7 +65,10 @@ use std::{
     },
     time::Instant,
 };
-use valkey_module::{Context, ContextFlags, ValkeyResult, ValkeyString, ValkeyValue, raw};
+use valkey_module::logging::{ValkeyLogLevel, log_warning};
+use valkey_module::{
+    Context, ContextFlags, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw,
+};
 
 use crate::allocator::{
     current_thread_usage, disable_tracking, enable_tracking, net_thread_usage, reset_counter,
@@ -1120,7 +1123,7 @@ pub fn query_mut(
                 if track_mem {
                     let (allocated, deallocated) = current_thread_usage();
                     ctx.log(
-                        valkey_module::logging::ValkeyLogLevel::Notice,
+                        ValkeyLogLevel::Notice,
                         &format!(
                             "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
                             allocated as isize - deallocated as isize
@@ -1304,7 +1307,7 @@ fn query_sync(
                         // replicates a query that already succeeded there, so
                         // this failing means the two have diverged.
                         divergence_guard::on_failure(ctx, key_name, "GRAPH.QUERY", &err, None);
-                        return Err(valkey_module::ValkeyError::String(err));
+                        return Err(ValkeyError::String(err));
                     }
                 }
             } else {
@@ -1329,7 +1332,7 @@ fn query_sync(
             }
         }
         Err(err) => {
-            return Err(valkey_module::ValkeyError::String(err));
+            return Err(ValkeyError::String(err));
         }
     }
     Ok(ValkeyValue::NoReply)
@@ -1478,7 +1481,7 @@ fn profile_sync(
                     if mem_capacity > 0 {
                         disable_tracking();
                     }
-                    return Err(valkey_module::ValkeyError::String(err));
+                    return Err(ValkeyError::String(err));
                 }
             }
         }
@@ -1488,7 +1491,7 @@ fn profile_sync(
             }
             // See `query_sync`: a replayed command failing is divergence.
             divergence_guard::on_failure(ctx, key_name, "GRAPH.PROFILE", &err, None);
-            return Err(valkey_module::ValkeyError::String(err));
+            return Err(ValkeyError::String(err));
         }
     }
     if mem_capacity > 0 {
@@ -1578,7 +1581,7 @@ fn commit_and_replicate(
     // nothing to recover it. Loud rather than silent: this is how the
     // first-full-sync window went unnoticed.
     let Some(buf) = wq.effects_buffer else {
-        valkey_module::logging::log_warning(format!(
+        log_warning(format!(
             "graph '{key_name}' was modified but produced no effects payload; \
              the change will not reach replicas or the AOF"
         ));

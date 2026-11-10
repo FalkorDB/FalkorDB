@@ -7,7 +7,9 @@ use crate::{
 use graph::graph::mvcc_graph::MvccGraph;
 use parking_lot::RwLock;
 use std::sync::Arc;
-use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
+use valkey_module::{
+    Context, KeyType, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue,
+};
 
 pub fn graph_restore(
     ctx: &Context,
@@ -39,7 +41,7 @@ pub fn graph_restore(
     {
         return Err(ValkeyError::Str("restore graph failed, key already exists"));
     }
-    if dest_key.key_type() != valkey_module::KeyType::Empty {
+    if dest_key.key_type() != KeyType::Empty {
         return Err(ValkeyError::Str("restore graph failed, key already exists"));
     }
 

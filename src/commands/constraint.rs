@@ -12,7 +12,10 @@ use graph::identifier_limits::validate_identifier_len;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use valkey_module::{Context, ContextFlags, NextArg, ValkeyResult, ValkeyString, ValkeyValue};
+use valkey_module::logging::{log_notice, log_warning};
+use valkey_module::{
+    Context, ContextFlags, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue,
+};
 
 /// Validate that a name is a valid identifier: starts with a letter or underscore,
 /// followed by letters, digits, or underscores.
@@ -214,7 +217,7 @@ pub fn settle_constraint(
             Err(reason @ (WriteAbort::ReplicaTrafficPaused | WriteAbort::Stale)) => {
                 if Instant::now() >= deadline {
                     for c in announce {
-                        valkey_module::logging::log_warning(format!(
+                        log_warning(format!(
                             "constraint on {:?} {} ({}) is stuck UNDER CONSTRUCTION: writes were \
                              refused for {}s across {attempts} attempts, so validation could not \
                              publish its result. It is not being enforced. Recover with \
@@ -238,7 +241,7 @@ pub fn settle_constraint(
                 // which is what lets a test assert it was exercised rather
                 // than pass because the window was never hit.
                 if attempts == 1 {
-                    valkey_module::logging::log_notice(format!(
+                    log_notice(format!(
                         "constraint announcement on graph '{key_display}' is deferred ({reason}); \
                          retrying for up to {}s",
                         RETRY_BUDGET.as_secs(),
@@ -256,7 +259,7 @@ pub fn settle_constraint(
             // Logged loudly because the constraint is left unenforced and the id
             // space it was refused over is an engine fault, not a user error.
             Err(WriteAbort::Invalid(e)) => {
-                valkey_module::logging::log_warning(format!(
+                log_warning(format!(
                     "constraint announcement on graph '{key_display}' was refused: {e}. \
                      The constraint is not being enforced."
                 ));
@@ -359,7 +362,7 @@ fn attempt_settle(
                     // nothing can re-drive it because `GRAPH.CONSTRAINT CREATE`
                     // answers "already exists". Silent, and only visible as a
                     // replica that enforces a constraint the master does not.
-                    Err(e) => valkey_module::logging::log_warning(format!(
+                    Err(e) => log_warning(format!(
                         "constraint on {:?} {} ({}) settled locally but could not be \
                          announced ({e}); replicas will keep reporting it UNDER \
                          CONSTRUCTION. Recover with GRAPH.CONSTRAINT DROP on graph \
@@ -385,7 +388,7 @@ pub fn graph_constraint(
 ) -> ValkeyResult {
     // GRAPH.CONSTRAINT CREATE|DROP <key> UNIQUE|MANDATORY NODE|RELATIONSHIP <label> PROPERTIES <count> <prop1>...
     if args.len() < 8 {
-        return Err(valkey_module::ValkeyError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let mut args = args.into_iter().skip(1);
 
@@ -395,9 +398,7 @@ pub fn graph_constraint(
         "CREATE" => true,
         "DROP" => false,
         _ => {
-            return Err(valkey_module::ValkeyError::String(
-                "Invalid constraint operation".into(),
-            ));
+            return Err(ValkeyError::String("Invalid constraint operation".into()));
         }
     };
 
@@ -410,9 +411,7 @@ pub fn graph_constraint(
         "UNIQUE" => ConstraintType::Unique,
         "MANDATORY" => ConstraintType::Mandatory,
         _ => {
-            return Err(valkey_module::ValkeyError::String(
-                "Invalid constraint type".into(),
-            ));
+            return Err(ValkeyError::String("Invalid constraint type".into()));
         }
     };
 
@@ -422,17 +421,15 @@ pub fn graph_constraint(
         "NODE" => EntityType::Node,
         "RELATIONSHIP" => EntityType::Relationship,
         _ => {
-            return Err(valkey_module::ValkeyError::String(
-                "Invalid constraint entity type".into(),
-            ));
+            return Err(ValkeyError::String("Invalid constraint entity type".into()));
         }
     };
 
     // Label name
     let label_str = args.next_str()?;
-    validate_identifier_len(label_str, "Label name").map_err(valkey_module::ValkeyError::String)?;
+    validate_identifier_len(label_str, "Label name").map_err(ValkeyError::String)?;
     if !is_valid_identifier(label_str) {
-        return Err(valkey_module::ValkeyError::String(format!(
+        return Err(ValkeyError::String(format!(
             "Label name {label_str} is invalid"
         )));
     }
@@ -441,19 +438,15 @@ pub fn graph_constraint(
     // PROPERTIES keyword
     let props_kw = args.next_str()?;
     if !props_kw.eq_ignore_ascii_case("PROPERTIES") {
-        return Err(valkey_module::ValkeyError::String(
-            "Expected PROPERTIES keyword".into(),
-        ));
+        return Err(ValkeyError::String("Expected PROPERTIES keyword".into()));
     }
 
     // Property count: Redis `string2ll` as in C (canonical decimal, no `+1` / `01`)
     let prop_count: i64 = args.next_arg()?.parse_integer().map_err(|_| {
-        valkey_module::ValkeyError::String(
-            "Number of properties must be an integer between 1 and 255".into(),
-        )
+        ValkeyError::String("Number of properties must be an integer between 1 and 255".into())
     })?;
     if !(1..=255).contains(&prop_count) {
-        return Err(valkey_module::ValkeyError::String(
+        return Err(ValkeyError::String(
             "Number of properties must be an integer between 1 and 255".into(),
         ));
     }
@@ -462,16 +455,15 @@ pub fn graph_constraint(
     let mut properties = Vec::with_capacity(prop_count as usize);
     for _ in 0..prop_count {
         let prop_str = args.next_str()?;
-        validate_identifier_len(prop_str, "Property name")
-            .map_err(valkey_module::ValkeyError::String)?;
+        validate_identifier_len(prop_str, "Property name").map_err(ValkeyError::String)?;
         if !is_valid_identifier(prop_str) {
-            return Err(valkey_module::ValkeyError::String(format!(
+            return Err(ValkeyError::String(format!(
                 "Property name {prop_str} is invalid"
             )));
         }
         let prop = Arc::new(prop_str.to_string());
         if properties.contains(&prop) {
-            return Err(valkey_module::ValkeyError::String(
+            return Err(ValkeyError::String(
                 "Properties cannot contain duplicates".into(),
             ));
         }
@@ -480,9 +472,7 @@ pub fn graph_constraint(
 
     // Reject trailing tokens
     if args.next().is_some() {
-        return Err(valkey_module::ValkeyError::String(
-            "Unexpected extra arguments".into(),
-        ));
+        return Err(ValkeyError::String("Unexpected extra arguments".into()));
     }
 
     // Open or create graph
@@ -494,7 +484,7 @@ pub fn graph_constraint(
         g.clone()
     } else {
         if !is_create {
-            return Err(valkey_module::ValkeyError::String(
+            return Err(ValkeyError::String(
                 "Unable to drop constraint, no such constraint.".into(),
             ));
         }
@@ -619,7 +609,7 @@ pub fn graph_constraint(
                     find_status(&mutated, ct, entity_type, &label, &properties).map(Some)
                 };
                 let Some(status) = status else {
-                    valkey_module::logging::log_warning(format!(
+                    log_warning(format!(
                         "constraint CREATE on {entity_type:?} '{label}' was applied but its \
                          status could not be read back, so it was not announced; it will not \
                          reach replicas or the AOF. Recover with GRAPH.CONSTRAINT DROP on \
@@ -655,7 +645,7 @@ pub fn graph_constraint(
                     // AOF. Same shape as `graph_core`'s "modified but produced
                     // no effects payload", and loud for the same reason: it is
                     // divergence that nothing else will report.
-                    Err(e) => valkey_module::logging::log_warning(format!(
+                    Err(e) => log_warning(format!(
                         "constraint {} on {entity_type:?} '{label}' was applied but could \
                          not be announced ({e}); it will not reach replicas or the AOF",
                         if is_create { "CREATE" } else { "DROP" },
@@ -674,6 +664,6 @@ pub fn graph_constraint(
             // Erroring here would fail the load of an otherwise valid file.
             Ok(ValkeyValue::SimpleStringStatic("OK"))
         }
-        Err(e) => Err(valkey_module::ValkeyError::String(e)),
+        Err(e) => Err(ValkeyError::String(e)),
     }
 }

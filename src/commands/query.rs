@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 #[cfg(feature = "fuzz")]
 use std::{fs::File, io::Write};
-use valkey_module::{Context, NextArg, ValkeyResult, ValkeyString};
+use valkey_module::{Context, NextArg, ValkeyResult, ValkeyString, ValkeyValue};
 
 #[cfg(feature = "fuzz")]
 static FILE_ID: AtomicI32 = AtomicI32::new(0);
@@ -129,7 +129,7 @@ pub fn graph_query(
         && provided_version != 0
     {
         reply_invalid_graph_version(ctx, 0);
-        return Ok(valkey_module::ValkeyValue::NoReply);
+        return Ok(ValkeyValue::NoReply);
     }
 
     let result = query_mut(

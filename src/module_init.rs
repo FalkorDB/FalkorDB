@@ -52,7 +52,7 @@ use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc};
 use valkey_module::{
     Context, ContextFlags, InfoContext, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc,
     RedisModule_Free, RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx,
-    RedisModuleEvent, Status, basic_info_command_handler, logging::log_warning, raw,
+    RedisModuleEvent, Status, ValkeyString, basic_info_command_handler, logging::log_warning, raw,
 };
 
 /// Redis event ID for FlushDB event (database flush/clear).
@@ -204,7 +204,7 @@ unsafe fn sync_deepbind_environ() {
 
 pub fn graph_init(
     ctx: &Context,
-    args: &[valkey_module::ValkeyString],
+    args: &[ValkeyString],
 ) -> Status {
     graph::thread_id::set_main_thread();
     panic::set_hook(Box::new(|info| {
@@ -224,10 +224,7 @@ pub fn graph_init(
 
     // Every module argument, parsed and validated the way C's `Config_Init`
     // does. A bad argument refuses the load, as in C.
-    let args: Vec<String> = args
-        .iter()
-        .map(valkey_module::ValkeyString::to_string_lossy)
-        .collect();
+    let args: Vec<String> = args.iter().map(ValkeyString::to_string_lossy).collect();
     if let Err(err) = apply_module_args(ctx, &args) {
         ctx.log_warning(&err);
         return Status::Err;
@@ -455,7 +452,7 @@ pub fn graph_init(
 
     // Subscribe to keyspace notifications for graph key rename handling.
     unsafe {
-        let res = valkey_module::raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
+        let res = raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
             ctx.ctx,
             4, // REDISMODULE_NOTIFY_GENERIC (covers RENAME)
             Some(on_keyspace_event),
@@ -685,15 +682,14 @@ unsafe extern "C" fn on_keyspace_event(
     ctx: *mut RedisModuleCtx,
     _type: c_int,
     event: *const std::os::raw::c_char,
-    key: *mut valkey_module::raw::RedisModuleString,
+    key: *mut raw::RedisModuleString,
 ) -> c_int {
     let event_str = unsafe { std::ffi::CStr::from_ptr(event) }
         .to_str()
         .unwrap_or("");
 
     let mut key_len: usize = 0;
-    let key_ptr =
-        unsafe { valkey_module::raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut key_len) };
+    let key_ptr = unsafe { raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut key_len) };
     let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr.cast(), key_len) };
     // Lossy rather than rejected: a Redis key name is arbitrary bytes, and every other
     // producer of a registry name converts the same lossy way — `register_graph` off

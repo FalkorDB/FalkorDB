@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! +-------------------------------+    +----------------------------+
-//! | ValkeyGILGuard configs         |    | Atomic configs             |
+//! | ValkeyGILGuard configs        |    | Atomic configs             |
 //! | (set at module load)          |    | (changeable at runtime)    |
 //! |-------------------------------|    |----------------------------|
 //! | CACHE_SIZE                    |    | TIMEOUT / TIMEOUT_DEFAULT  |
@@ -132,7 +132,7 @@ pub static BOLT_PORT: AtomicI64 = AtomicI64::new(65535);
 /// clamped rather than rejected, matching C's `Config_cmd_info_max_queries_set`.
 pub const MAX_INFO_QUERIES_CAP: i64 = 1000;
 
-pub fn get_thread_count(ctx: &valkey_module::Context) -> i64 {
+pub fn get_thread_count(ctx: &Context) -> i64 {
     let val = *CONFIGURATION_THREAD_COUNT.lock(ctx);
     if val > 0 {
         val
