@@ -826,8 +826,8 @@ fn key_holds_graph(
     // NULL context, like every other string this module builds off the command path,
     // so Redis does not tie it to an auto-memory pool that outlives the call.
     let key_name = ValkeyString::create_from_slice(ptr::null_mut(), name.as_bytes());
-    // NOTOUCH: reporting on a query must not make the graph look more recently used
-    // than the query already made it.
+    // NOTOUCH: a report must not make the graph look more recently used than the query did.
+    // No `wrong_type_compat`: any `Err` just means "not our graph" and is never replied.
     let key = ctx.open_key_with_flags(&key_name, KeyFlags::NOTOUCH);
     matches!(
         key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE),
