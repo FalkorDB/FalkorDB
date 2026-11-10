@@ -57,14 +57,15 @@ class testGraphList(FlowTestsBase):
         # the key's bytes, as C replies it.
         con = self.env.getConnection()
         name = b"\xc3\x28g"  # 0xC3 starts a 2-byte sequence; 0x28 cannot continue it
-        con.execute_command("GRAPH.QUERY", name, "RETURN 1")
-        self.create_graph("utf8", con)
+        try:
+            con.execute_command("GRAPH.QUERY", name, "RETURN 1")
+            self.create_graph("utf8", con)
 
-        graphs = con.execute_command("GRAPH.LIST", **{NEVER_DECODE: True})
-        self.env.assertEqual(sorted(graphs), sorted([name, b"utf8"]))
-        self.env.assertTrue(con.ping())
-
-        con.delete(name, "utf8")
+            graphs = con.execute_command("GRAPH.LIST", **{NEVER_DECODE: True})
+            self.env.assertEqual(sorted(graphs), sorted([name, b"utf8"]))
+            self.env.assertTrue(con.ping())
+        finally:
+            con.delete(name, "utf8")
 
     def test_graph_list_spans_scan_pages(self):
         # SCAN returns a page of about 10 keys and a cursor to resume from; GRAPH.LIST
@@ -72,14 +73,15 @@ class testGraphList(FlowTestsBase):
         con = self.env.getConnection()
         graphs = [f"page_graph_{i}" for i in range(40)]
         others = [f"page_string_{i}" for i in range(200)]
-        for g in graphs:
-            self.create_graph(g, con)
-        for k in others:
-            con.set(k, "x")
+        try:
+            for g in graphs:
+                self.create_graph(g, con)
+            for k in others:
+                con.set(k, "x")
 
-        self.env.assertEqual(sorted(self.db.list_graphs()), sorted(graphs))
-
-        con.delete(*graphs, *others)
+            self.env.assertEqual(sorted(self.db.list_graphs()), sorted(graphs))
+        finally:
+            con.delete(*graphs, *others)
 
 # tests the list datatype
 class testList(FlowTestsBase):
