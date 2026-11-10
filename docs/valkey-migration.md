@@ -53,8 +53,8 @@ or a bind mount: a container started with `--rm` and an anonymous volume
 loses its data when stopped, so copy the data out first.
 
 If the server needs a password or an ACL user, every `redis-cli` call below
-must authenticate too: pass `-e REDISCLI_AUTH=<password>` (and
-`-e REDISCLI_USER=<user>` where it applies) to each `docker exec`, or add
+must authenticate too: pass `-e REDISCLI_AUTH=<password>` to each
+`docker exec` (and add `--user <user>` to `redis-cli` for an ACL user), or add
 `--user`/`--pass` to the `redis-cli` command.
 
 1. **Back up the volume.** The steps below rewrite its files. Stop your
