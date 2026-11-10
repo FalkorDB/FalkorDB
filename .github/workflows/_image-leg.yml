@@ -86,6 +86,7 @@ jobs:
       services_files: ${{ inputs.services_files }}
       spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
+      commit_sha: ${{ inputs.commit_sha }}
     secrets: inherit
 
   # Trivy scan of the RC images: master's `security-scan` job (build.yml),
@@ -227,23 +228,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The commit the RC image was built from, not the pull request's merge ref.
+          ref: ${{ inputs.commit_sha }}
           persist-credentials: false
-      - run: rustup default stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: "release"
-      # Cargo unit tests run against in-process code and don't touch the server.
-      - name: Run cargo unit tests
-        run: |
-          # Doctests are linked separately by rustdoc (which ignores RUSTFLAGS /
-          # .cargo rustflags), so they need the duplicate-symbol allowance for
-          # libredisearch_rs.a's bundled std via RUSTDOCFLAGS. Also disable release
-          # LTO for the test build: the embedded C/Rust archives carry no LLVM
-          # bitcode, so a release-LTO doctest fails with "Can't find section .llvmbc"
-          # (same reason the fuzz job sets CARGO_PROFILE_RELEASE_LTO=false).
-          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
-          # The module crate's own unit tests (the RDB codec); `--lib` skips doctests.
-          CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p falkordb-rs --lib
+      # The Rust unit tests run once, in build-engine (_ci-pipeline.yml).
       - name: Run pytest tests against the RC image
         id: pytest
         run: |
