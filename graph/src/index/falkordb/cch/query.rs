@@ -293,11 +293,13 @@ pub(super) fn query(
             meet = Some(offset);
         }
         // Weights are `>= 0`, so whatever a half offers from here costs at least its
-        // distance here; past `best` that cannot lead to a cheaper meeting higher up.
-        if forward_dist <= best {
+        // distance here. At `best` or past it, that cannot lead to a cheaper meeting higher
+        // up, and a tie would not move the meeting (strictly less, above), so the half
+        // stops offering.
+        if forward_dist < best {
             forward.relax_from(cch, forward_at);
         }
-        if backward_dist <= best {
+        if backward_dist < best {
             backward.relax_from(cch, backward_at);
         }
     }
@@ -373,54 +375,21 @@ mod tests {
     use crate::index::falkordb::cch::Cch;
     use crate::index::falkordb::cch::order::Rank;
     use crate::index::falkordb::cch::testkit::{
-        all_pairs, assert_path_valid, disconnected_components, empty, grid, node_count, path,
-        random_sparse, reweight, single_node, star, tied_paths, to_input, weights,
-        with_isolated_nodes, with_zero_weight_edge, zero_weight_cycle,
+        all_pairs, disconnected_components, empty, grid, path, random_sparse, reweight,
+        single_node, star, tied_paths, to_input, weights, with_isolated_nodes,
+        with_zero_weight_edge, zero_weight_cycle,
     };
+    use crate::testkit::check_index_against_oracle;
 
-    /// Every pair, against the kit's Dijkstra for the weight and its path checker for the
-    /// witness. `assert_path_valid` deliberately does not check that a *cheaper* path
-    /// exists, so the two halves are both needed: `all_pairs` says the weight is optimal,
-    /// `assert_path_valid` says the returned nodes actually realise it.
+    /// Every ordered pair against the shared oracle ([`check_index_against_oracle`]): the
+    /// kit's Dijkstra for reachability and weight, compared with a tolerance (the hierarchy
+    /// sums an arc's weight in another order than Dijkstra, so a fractional weight can
+    /// differ in the last bits), and every returned path checked to realise that weight and
+    /// to repeat no node (a caller turning hops into edges, `db.idx.cch.query`, must not be
+    /// handed a loop).
     fn check_all_pairs(edges: &Matrix<f64>) {
         let cch = Cch::build(&to_input(edges)).expect("build");
-        let truth = all_pairs(edges);
-
-        let n = node_count(edges) as u64;
-        for s in 0..n {
-            for t in 0..n {
-                let expected = truth[s as usize][t as usize];
-                match cch.query(s, t) {
-                    Some((weight, nodes)) => {
-                        assert!(
-                            expected.is_finite(),
-                            "{s}->{t}: answered {weight} where nothing is reachable"
-                        );
-                        assert_eq!(weight, expected, "{s}->{t} weight");
-                        assert_path_valid(edges, s, t, weight, &nodes);
-                        assert_simple(&nodes, s, t);
-                    }
-                    None => assert!(
-                        expected.is_infinite(),
-                        "{s}->{t}: answered unreachable, but the oracle says {expected}"
-                    ),
-                }
-            }
-        }
-    }
-
-    /// `assert_path_valid` checks hops and the sum, not that the path is simple. A shortest
-    /// path never needs to repeat a node, and a caller turning hops into edges (`db.idx.cch.query`, #3215) must
-    /// not be handed a loop.
-    fn assert_simple(
-        nodes: &[u64],
-        s: u64,
-        t: u64,
-    ) {
-        let mut seen = std::collections::HashSet::new();
-        for &v in nodes {
-            assert!(seen.insert(v), "{s}->{t}: path {nodes:?} repeats node {v}");
-        }
+        check_index_against_oracle(|s, t| cch.query(s, t), edges);
     }
 
     /// Half the edges at weight zero: plenty of zero-cost cycles, which is where the two
@@ -475,6 +444,24 @@ mod tests {
         assert_eq!(erase(&[7]), vec![7]);
         // 2 is erased with the cycle 1 2 3 1; the 3 after it must not find the erased one
         assert_eq!(erase(&[1, 2, 3, 1, 3]), vec![1, 3]);
+    }
+
+    /// Weights far apart in magnitude: the hierarchy sums this path in another order than
+    /// Dijkstra does, so the two can differ in the last bits of `1e16 + 2`. The oracle's
+    /// tolerance accepts that; an exact comparison would fail on it.
+    #[test]
+    fn weights_summed_in_another_order_agree_within_the_tolerance() {
+        check_all_pairs(&weights(
+            4,
+            &[
+                (3, 2, 1e16),
+                (2, 1, 1.0),
+                (1, 0, 1.0),
+                (0, 1, 1.0),
+                (1, 2, 1.0),
+                (2, 3, 1e16),
+            ],
+        ));
     }
 
     #[test]

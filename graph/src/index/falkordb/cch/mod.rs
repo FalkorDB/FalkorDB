@@ -296,6 +296,9 @@ impl Cch {
     /// `None` when `dst` is unreachable from `src`, or when either is not a node of this
     /// hierarchy. `src == dst` is the single-node path of weight `0.0`.
     ///
+    /// Also `None` when every path's weight overflows `f64` (a chain of weights near
+    /// `f64::MAX`): the sum is `+inf`, which reads as "no path", as in C.
+    ///
     /// Also `None` when unpacking a shortcut on the route finds an arc missing: the
     /// hierarchy no longer matches the graph it was built from, which is a bug, not an
     /// unreachable pair.
