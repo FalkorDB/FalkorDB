@@ -214,9 +214,9 @@ pub fn register(funcs: &mut Functions) {
                             });
 
                             // Build the `info.fields` list: one entry per
-                            // underlying RediSearch field name, not per
+                            // field name C's RediSearch schema has, not per
                             // user-facing attribute. A single range attr
-                            // expands into up to three RediSearch fields —
+                            // expands into three fields —
                             // the scalar (e.g. `range:a`) plus the numeric-
                             // and string-array companions used by list
                             // lookups (`a:numeric:arr`, `a:string:arr`) —
@@ -232,18 +232,16 @@ pub fn register(funcs: &mut Functions) {
                                     continue;
                                 };
                                 for field in field_list {
-                                    let name = field.name.to_str().unwrap_or("").to_string();
+                                    let name = field.name.to_str().unwrap_or("");
                                     if !name.is_empty() {
-                                        rs_field_names.push(name);
+                                        rs_field_names.push(name.to_string());
                                     }
-                                    if let Some(arr_name) = field.numeric_arr_name()
-                                        && let Ok(s) = arr_name.to_str() {
-                                            rs_field_names.push(s.to_string());
-                                        }
-                                    if let Some(arr_name) = field.string_arr_name()
-                                        && let Ok(s) = arr_name.to_str() {
-                                            rs_field_names.push(s.to_string());
-                                        }
+                                    // A range attribute reports C's two array companions
+                                    // too: the names C's RediSearch schema gives them.
+                                    if field.ty == IndexType::Range {
+                                        rs_field_names.push(format!("{name}:numeric:arr"));
+                                        rs_field_names.push(format!("{name}:string:arr"));
+                                    }
                                 }
                             }
                             rs_field_names.push(String::from("NONE_INDEXABLE_FIELDS"));

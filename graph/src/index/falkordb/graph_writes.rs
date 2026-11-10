@@ -30,7 +30,7 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
 use crate::entity_type::EntityType;
-use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId, TypeId};
+use crate::graph::graph::{DeletedNodeLabel, Graph, LabelId, NodeId, RelationshipId, TypeId};
 use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
@@ -38,6 +38,37 @@ use super::falkordb_index::{BuildCursor, IndexColumn, IndexKey};
 use super::numeric::EncodedTuples;
 use super::pending_writes::IndexChanges;
 use super::versioned::IndexId;
+
+/// Which labels (or relationship types), by id, have at least one column: resolved once per
+/// write call, so an entity under no indexed label costs a lookup here and nothing more. Without
+/// it every attribute of every written entity was hashed against the column map, which made
+/// writes to unindexed labels 25% dearer once any label had an index.
+struct Routed(Vec<bool>);
+
+impl Routed {
+    fn of(
+        g: &Graph,
+        entity: EntityType,
+    ) -> Self {
+        let names = match entity {
+            EntityType::Node => g.get_labels(),
+            EntityType::Relationship => g.get_types(),
+        };
+        Self(
+            names
+                .iter()
+                .map(|name| g.falkordb_index.has_label_columns(entity, name))
+                .collect(),
+        )
+    }
+
+    fn has(
+        &self,
+        id: usize,
+    ) -> bool {
+        self.0.get(id).copied().unwrap_or(false)
+    }
+}
 
 // ---- Nodes ----
 
@@ -54,10 +85,15 @@ pub fn node_attrs_set(
     if !g.falkordb_index.has_columns(EntityType::Node) {
         return IndexChanges::new(EntityType::Node);
     }
+    let routed = Routed::of(g, EntityType::Node);
     let mut changes = IndexChanges::new(EntityType::Node);
     let mut labels = Vec::new();
     for (&id, written) in attrs {
         node_label_ids_into(g, id, &mut labels);
+        labels.retain(|l| routed.has(l.0));
+        if labels.is_empty() {
+            continue;
+        }
         for (attr_id, new_value) in written {
             let Some(attr) = g.node_attr_name(*attr_id) else {
                 continue;
@@ -93,6 +129,15 @@ pub fn node_rows_set(
     if !g.falkordb_index.has_columns(EntityType::Node) || attr_ids.is_empty() {
         return IndexChanges::new(EntityType::Node);
     }
+    let routed = Routed::of(g, EntityType::Node);
+    let label_ids: Vec<u64> = label_ids
+        .iter()
+        .copied()
+        .filter(|&l| routed.has(l as usize))
+        .collect();
+    if label_ids.is_empty() {
+        return IndexChanges::new(EntityType::Node);
+    }
     let mut changes = IndexChanges::new(EntityType::Node);
     let attrs: Vec<Option<Arc<String>>> = attr_ids.iter().map(|&a| g.node_attr_name(a)).collect();
     for (&id, row) in ids.iter().zip(rows.chunks_exact(attr_ids.len())) {
@@ -101,7 +146,7 @@ pub fn node_rows_set(
                 continue;
             };
             let old = g.get_node_attribute_by_idx(NodeId::from(id), attr_id);
-            for &label_id in label_ids {
+            for &label_id in &label_ids {
                 let label = &g.get_labels()[label_id as usize];
                 if let Some(old) = &old {
                     changes.remove(&g.falkordb_index, label, attr, old, id);
@@ -126,16 +171,20 @@ pub fn new_node_attrs(
     if !g.falkordb_index.has_columns(EntityType::Node) {
         return IndexChanges::new(EntityType::Node);
     }
+    let routed = Routed::of(g, EntityType::Node);
     let mut changes = IndexChanges::new(EntityType::Node);
     for (&id, written) in attrs {
         let Some(label_ids) = new_labels.get(&id) else {
             continue; // no labels this transaction, so nothing routes to a column
         };
+        if !label_ids.iter().any(|&l| routed.has(l as usize)) {
+            continue;
+        }
         for (attr_id, value) in written {
             let Some(attr) = g.node_attr_name(*attr_id) else {
                 continue;
             };
-            for &label_id in label_ids {
+            for &label_id in label_ids.iter().filter(|&&l| routed.has(l as usize)) {
                 let label = &g.get_labels()[label_id as usize];
                 changes.add(&g.falkordb_index, label, &attr, value, id);
             }
@@ -154,13 +203,22 @@ pub fn bulk_node_attrs(
     if !g.falkordb_index.has_columns(EntityType::Node) {
         return IndexChanges::new(EntityType::Node);
     }
+    let routed = Routed::of(g, EntityType::Node);
+    let label_ids: Vec<LabelId> = label_ids
+        .iter()
+        .copied()
+        .filter(|l| routed.has(l.0))
+        .collect();
+    if label_ids.is_empty() {
+        return IndexChanges::new(EntityType::Node);
+    }
     let mut changes = IndexChanges::new(EntityType::Node);
     for (id, written) in rows {
         for (attr_id, value) in written {
             let Some(attr) = g.node_attr_name(*attr_id) else {
                 continue;
             };
-            for label_id in label_ids {
+            for label_id in &label_ids {
                 let label = &g.get_labels()[label_id.0];
                 changes.add(&g.falkordb_index, label, &attr, value, *id);
             }
@@ -182,9 +240,12 @@ pub fn labels_added(
     if !g.falkordb_index.has_columns(EntityType::Node) {
         return IndexChanges::new(EntityType::Node);
     }
+    let routed = Routed::of(g, EntityType::Node);
     let mut changes = IndexChanges::new(EntityType::Node);
     for (&id, &label_id) in label_rows.iter().zip(label_cols) {
-        add_node_under_label(&mut changes, g, id, label_id);
+        if routed.has(label_id as usize) {
+            add_node_under_label(&mut changes, g, id, label_id);
+        }
     }
     changes
 }
@@ -199,8 +260,9 @@ pub fn labels_product_added(
     if !g.falkordb_index.has_columns(EntityType::Node) {
         return IndexChanges::new(EntityType::Node);
     }
+    let routed = Routed::of(g, EntityType::Node);
     let mut changes = IndexChanges::new(EntityType::Node);
-    for &label_id in label_ids {
+    for &label_id in label_ids.iter().filter(|&&l| routed.has(l as usize)) {
         for &id in ids {
             add_node_under_label(&mut changes, g, id, label_id);
         }
@@ -219,29 +281,41 @@ pub fn labels_removed(
     if !g.falkordb_index.has_columns(EntityType::Node) {
         return IndexChanges::new(EntityType::Node);
     }
+    let routed = Routed::of(g, EntityType::Node);
     let mut changes = IndexChanges::new(EntityType::Node);
     for (&id, &label_id) in label_rows.iter().zip(label_cols) {
-        remove_node_under_label(&mut changes, g, id, label_id);
+        if routed.has(label_id as usize) {
+            remove_node_under_label(&mut changes, g, id, label_id);
+        }
     }
     changes
 }
 
 /// DELETE: remove every indexed value of each deleted node. Called while its labels and
-/// attributes are still there.
+/// attributes are still there, with its labels as the `(node, label)` pairs the delete collected,
+/// grouped by node: a label-matrix lookup per node costs more than the whole delete otherwise
+/// does, and a node under no indexed label reads no attribute.
 pub fn nodes_deleted(
     g: &Graph,
-    ids: &RoaringTreemap,
+    pairs: &[DeletedNodeLabel],
 ) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Node) {
         return IndexChanges::new(EntityType::Node);
     }
+    let routed = Routed::of(g, EntityType::Node);
     let mut changes = IndexChanges::new(EntityType::Node);
-    let mut labels = Vec::new();
-    for id in ids {
-        node_label_ids_into(g, id, &mut labels);
+    for node in pairs.chunk_by(|a, b| a.node == b.node) {
+        let id = node[0].node;
+        let mut labels = node
+            .iter()
+            .filter(|p| routed.has(p.label as usize))
+            .peekable();
+        if labels.peek().is_none() {
+            continue;
+        }
+        let labels: Vec<&Arc<String>> = labels.map(|p| &g.get_labels()[p.label as usize]).collect();
         for (attr, value) in g.get_node_all_attrs(NodeId::from(id)) {
-            for label_id in &labels {
-                let label = &g.get_labels()[label_id.0];
+            for label in &labels {
                 changes.remove(&g.falkordb_index, label, &attr, &value, id);
             }
         }
@@ -284,15 +358,17 @@ fn edge_attrs_set_with(
     if !g.falkordb_index.has_columns(EntityType::Relationship) {
         return IndexChanges::new(EntityType::Relationship);
     }
+    let routed = Routed::of(g, EntityType::Relationship);
     let mut changes = IndexChanges::new(EntityType::Relationship);
     for (&id, written) in attrs {
         if written.is_empty() {
             continue;
         }
-        let type_name = match type_id {
-            Some(type_id) => &g.get_types()[type_id.0],
-            None => edge_type(g, id),
-        };
+        let type_id = type_id.unwrap_or_else(|| edge_type_id(g, id));
+        if !routed.has(type_id.0) {
+            continue;
+        }
+        let type_name = &g.get_types()[type_id.0];
         for (attr_id, new_value) in written {
             let Some(attr) = g.rel_attr_name(*attr_id) else {
                 continue;
@@ -316,12 +392,17 @@ pub fn new_edge_attrs(
     if !g.falkordb_index.has_columns(EntityType::Relationship) {
         return IndexChanges::new(EntityType::Relationship);
     }
+    let routed = Routed::of(g, EntityType::Relationship);
     let mut changes = IndexChanges::new(EntityType::Relationship);
     for (&id, written) in attrs {
         if written.is_empty() {
             continue;
         }
-        let type_name = edge_type(g, id);
+        let type_id = edge_type_id(g, id);
+        if !routed.has(type_id.0) {
+            continue;
+        }
+        let type_name = &g.get_types()[type_id.0];
         for (attr_id, value) in written {
             if let Some(attr) = g.rel_attr_name(*attr_id) {
                 changes.add(&g.falkordb_index, type_name, &attr, value, id);
@@ -340,7 +421,9 @@ pub fn bulk_edge_attrs(
     rows: &[(u64, Vec<(u16, Value)>)],
     type_id: TypeId,
 ) -> IndexChanges {
-    if !g.falkordb_index.has_columns(EntityType::Relationship) {
+    if !g.falkordb_index.has_columns(EntityType::Relationship)
+        || !Routed::of(g, EntityType::Relationship).has(type_id.0)
+    {
         return IndexChanges::new(EntityType::Relationship);
     }
     let mut changes = IndexChanges::new(EntityType::Relationship);
@@ -364,6 +447,7 @@ pub fn edges_deleted(
     if !g.falkordb_index.has_columns(EntityType::Relationship) {
         return IndexChanges::new(EntityType::Relationship);
     }
+    let routed = Routed::of(g, EntityType::Relationship);
     let mut changes = IndexChanges::new(EntityType::Relationship);
     for id in ids {
         let mut attrs = g
@@ -372,7 +456,11 @@ pub fn edges_deleted(
         if attrs.peek().is_none() {
             continue;
         }
-        let type_name = edge_type(g, id);
+        let type_id = edge_type_id(g, id);
+        if !routed.has(type_id.0) {
+            continue;
+        }
+        let type_name = &g.get_types()[type_id.0];
         for (attr, value) in attrs {
             changes.remove(&g.falkordb_index, type_name, &attr, &value, id);
         }
@@ -552,11 +640,11 @@ fn node_label_ids_into(
 /// upholds that: create and SET touch a live edge, and the delete paths call in before the graph
 /// tears the type matrix down. A panic here is a tripwire for a caller that breaks the order.
 /// That beats skipping maintenance silently and leaving a stale entry.
-fn edge_type(
+fn edge_type_id(
     g: &Graph,
     id: u64,
-) -> &Arc<String> {
-    &g.get_types()[g.get_relationship_type_id(RelationshipId::from(id)).0]
+) -> TypeId {
+    g.get_relationship_type_id(RelationshipId::from(id))
 }
 
 /// The tuples of `column` for up to `entities` `label` nodes, or `label`-typed edges, from `from`

@@ -12,12 +12,13 @@
 //!
 //! Routing is exhaustive and total. Every predicate either reaches a kind, is answered empty
 //! because it cannot match — a `NULL` operand, say, or a scalar predicate and a list predicate on
-//! the same attribute — or is declined; and a decline is a hard error under `index-falkordb`,
-//! because there is no other index to try. The three outcomes are kept apart deliberately: an empty
-//! answer that should have been a decline is exactly how an unimplemented kind hides.
+//! the same attribute — or is declined; and a decline sends the scan op to a scan that checks the
+//! predicate itself, because there is no other index to try. The three outcomes are kept apart
+//! deliberately: an empty answer that should have been a decline would silently drop the rows the
+//! scan would have kept.
 
+use std::iter;
 use std::sync::Arc;
-use std::{iter, slice};
 
 use rustc_hash::FxHashSet;
 
@@ -202,6 +203,18 @@ impl Scalars {
         NumericIndex::is_scalar_in(&self.numeric, value)
             || TagIndex::is_scalar_in(&self.tag, value)
             || GeoIndex::is_scalar_in(&self.geo, value)
+    }
+
+    /// What either selects, kind by kind.
+    fn or(
+        self,
+        other: Self,
+    ) -> Self {
+        Self {
+            numeric: self.numeric.or(other.numeric),
+            tag: self.tag.or(other.tag),
+            geo: self.geo.or(other.geo),
+        }
     }
 
     /// What both select, kind by kind.
@@ -431,31 +444,28 @@ impl Selection {
         )))))
     }
 
-    /// An `OR` of `=`s and `IN` lists, all on one attribute — `a = 1 OR a IN [2, 3]`: the scalars
-    /// equal to any of their values. `members` are the `OR`'s [`atoms`], so nested `OR`s are
+    /// An `OR` of predicates on scalars, all on one attribute — `a = 1 OR a IN [2, 'x']`,
+    /// `a = 1 OR a > 7`, the shapes C's index serves: the scalars any member selects, united kind
+    /// by kind ([`Scalars::or`]). `members` are the `OR`'s [`atoms`], so nested `OR`s are
     /// flattened: the nesting carries no meaning for one column.
     ///
     /// Every member must target the same attribute: answering `a = 1 OR b = 2` from one column
-    /// would look up both values in `a` and return wrong rows, not missing ones. Any other member —
-    /// a range, an array-contains, a conjunction — declines the union, and so does an empty `IN`
-    /// list (for [`of`](Self::of)'s reason) and a value no kind holds.
+    /// would look up both values in `a` and return wrong rows, not missing ones. A member no kind
+    /// serves declines the union, and so does one selecting lists (`1 IN a`): a list holding two
+    /// probed elements would be read once per element. A declined union is answered by a scan that
+    /// checks the predicate.
     pub(super) fn disjunction(members: &[&IndexQuery<Value>]) -> Option<Self> {
         if !on_one_attribute(members) {
             return None;
         }
-        let mut equal = EqualValues::default();
+        let mut union = Scalars::none();
         for &member in members {
-            let values = match member {
-                IndexQuery::Equal { value, .. } => slice::from_ref(value),
-                IndexQuery::InList {
-                    list: Value::List(items),
-                    ..
-                } if !items.is_empty() => items.as_slice(),
-                _ => return None,
-            };
-            equal.push(values)?;
+            match Self::of(member)? {
+                Self::Scalars(scalars) => union = union.or(scalars),
+                Self::ListsHolding { .. } => return None,
+            }
         }
-        Some(equal.selection())
+        Some(Self::Scalars(union))
     }
 
     /// A conjunction of predicates on **one** attribute: what every conjunct selects
@@ -1355,6 +1365,88 @@ mod tests {
             KeySet::Windows(vec![(8, 10), (20, 22), (50, 50)])
         );
         assert!(w.contains(25) && !w.contains(35));
+    }
+
+    /// A union with range members is served, not declined: `a = 1 OR a > 7` and its kin, the
+    /// shapes C's index serves. Overlapping members read each doc once (`ids` compares the sorted
+    /// lookup with the scan, so a doc read twice fails it).
+    #[test]
+    fn a_union_with_ranges_is_served_once_per_doc() {
+        let values: Vec<(Value, u64)> = (0..10)
+            .map(|i| (Value::Int(i), i as u64))
+            .chain([(s("x"), 10), (s("y"), 11), (Value::Float(1.0), 12)])
+            .collect();
+        let mut idx = RangeIndex::new();
+        for (v, id) in &values {
+            idx.add(v, *id);
+        }
+        let gt = |v: Value| range_ex(Some(v), None, false, false);
+        let lt = |v: Value| range_ex(None, Some(v), false, false);
+        let ge = |v: Value| range_ex(Some(v), None, true, false);
+        assert_eq!(
+            ids(
+                &idx,
+                &IndexQuery::Or(vec![eq(Value::Int(1)), gt(Value::Int(7))]),
+                &values
+            ),
+            vec![1, 8, 9, 12]
+        );
+        // Overlapping members, in one kind and across kinds.
+        let q = IndexQuery::Or(vec![
+            lt(Value::Int(5)),
+            eq(Value::Int(3)),
+            gt(Value::Int(2)),
+        ]);
+        assert_eq!(
+            Selection::of(&q),
+            Some(Selection::Scalars(Scalars::numeric(KeySet::Range(
+                0,
+                u64::MAX
+            )))),
+            "the members' windows merge into one"
+        );
+        assert_eq!(
+            ids(&idx, &q, &values),
+            (0..10).chain([12]).collect::<Vec<_>>()
+        );
+        let q = IndexQuery::Or(vec![
+            IndexQuery::InList {
+                key: attr(),
+                list: list(vec![Value::Int(1), Value::Int(2)]),
+            },
+            ge(s("x")),
+            lt(Value::Int(2)),
+        ]);
+        assert_eq!(ids(&idx, &q, &values), vec![0, 1, 2, 10, 11, 12]);
+        // A string set and a string window together.
+        let q = IndexQuery::Or(vec![eq(s("x")), gt(s("x")), eq(s("never"))]);
+        assert_eq!(ids(&idx, &q, &values), vec![10, 11]);
+        // A conjunction inside a union.
+        let q = IndexQuery::Or(vec![
+            IndexQuery::And(vec![gt(Value::Int(2)), lt(Value::Int(5))]),
+            eq(Value::Int(8)),
+        ]);
+        assert_eq!(ids(&idx, &q, &values), vec![3, 4, 8]);
+        // A member on another attribute is not this column's to answer.
+        let other = IndexQuery::Equal {
+            key: Arc::new("w".to_string()),
+            value: Value::Int(1),
+        };
+        assert!(Selection::of(&IndexQuery::Or(vec![gt(Value::Int(7)), other])).is_none());
+    }
+
+    /// A union of list probes is declined: an entity has a key per element, so a list holding
+    /// two probed elements would be read twice. The scan op answers it with a scan that checks the
+    /// predicate, and so does a union mixing a list probe into scalars.
+    #[test]
+    fn a_union_over_array_elements_is_declined() {
+        for q in [
+            IndexQuery::Or(vec![contains(Value::Int(1)), contains(Value::Int(2))]),
+            IndexQuery::Or(vec![contains(Value::Int(2)), contains(s("x"))]),
+            IndexQuery::Or(vec![contains(Value::Int(2)), eq(Value::Int(2))]),
+        ] {
+            assert_eq!(Selection::of(&q), None, "{q:?}");
+        }
     }
 
     /// Re-indexing across kinds: the remove must route on the *old* value, or the tuple is

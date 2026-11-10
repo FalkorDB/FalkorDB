@@ -62,10 +62,10 @@ use roaring::RoaringTreemap;
 
 use super::Index;
 pub use super::{
-    Document, Field, IdIter, IndexInfo, IndexQuery, IndexResultsIter, IndexType, ScoredIdIter,
+    Document, Field, IndexInfo, IndexQuery, IndexResultsIter, IndexType, ScoredIdIter,
     TextIndexOptions, VectorIndexOptions, VectorScoredEdgeTripleIter, VectorScoredIdIter,
 };
-use crate::{graph::graph::Graph, runtime::value::Value};
+use crate::graph::graph::Graph;
 
 pub enum IndexOptions {
     Text(TextIndexOptions),
@@ -297,34 +297,38 @@ impl Indexer {
                 label_indexes.insert_field(attr.clone(), field);
             }
         }
-        if label_indexes.has_rs_index() {
-            // Adding fields to an existing RediSearch index. For most
-            // field types we append to the live spec, but adding a
-            // vector field forces a drop+rebuild: RediSearch's HNSW
-            // state on the existing vector field gets corrupted when
-            // the subsequent populate phase re-adds documents with
-            // ADD_REPLACE, leaving KNN queries returning fewer hits
-            // than the data warrants. Matches the C FalkorDB behavior
-            // (Index_Disable + Index_ConstructStructure).
-            let adds_vector = *index_type == IndexType::Vector;
-            if adds_vector {
-                label_indexes.recreate_index(label)?;
+        // RediSearch holds only Fulltext and Vector fields; a Range field lives in the native index
+        // alone. So a Range index creates no RediSearch spec, and adds no field to one.
+        if *index_type != IndexType::Range {
+            if label_indexes.has_rs_index() {
+                // Adding fields to an existing RediSearch index. For most
+                // field types we append to the live spec, but adding a
+                // vector field forces a drop+rebuild: RediSearch's HNSW
+                // state on the existing vector field gets corrupted when
+                // the subsequent populate phase re-adds documents with
+                // ADD_REPLACE, leaving KNN queries returning fewer hits
+                // than the data warrants. Matches the C FalkorDB behavior
+                // (Index_Disable + Index_ConstructStructure).
+                let adds_vector = *index_type == IndexType::Vector;
+                if adds_vector {
+                    label_indexes.recreate_index(label)?;
+                } else {
+                    label_indexes.register_fields(&new_fields, field_options.as_ref())?;
+                }
             } else {
+                let effective_stopwords = stopwords
+                    .clone()
+                    .or_else(|| label_indexes.stopwords().cloned());
+                let effective_language = language
+                    .clone()
+                    .or_else(|| label_indexes.language().cloned());
+                label_indexes.create_rs_index(
+                    label,
+                    effective_stopwords.as_ref(),
+                    effective_language.as_ref(),
+                )?;
                 label_indexes.register_fields(&new_fields, field_options.as_ref())?;
             }
-        } else {
-            let effective_stopwords = stopwords
-                .clone()
-                .or_else(|| label_indexes.stopwords().cloned());
-            let effective_language = language
-                .clone()
-                .or_else(|| label_indexes.language().cloned());
-            label_indexes.create_rs_index(
-                label,
-                effective_stopwords.as_ref(),
-                effective_language.as_ref(),
-            )?;
-            label_indexes.register_fields(&new_fields, field_options.as_ref())?;
         }
 
         // Update the label indexes with global settings
@@ -477,32 +481,6 @@ impl Indexer {
             return index.contains_field(field);
         }
         false
-    }
-
-    #[must_use]
-    pub fn query(
-        &self,
-        label: &Arc<String>,
-        query: IndexQuery<Value>,
-    ) -> IdIter {
-        if let Some(index) = self.index.load().get(label) {
-            return index.query(query);
-        }
-        IndexResultsIter::empty()
-    }
-
-    /// Like `query`, but for edge indexes: yields `(src, dst, edge_id)`
-    /// triples read from the 24-byte document key.
-    #[must_use]
-    pub fn query_edges(
-        &self,
-        label: &Arc<String>,
-        query: IndexQuery<Value>,
-    ) -> super::EdgeTripleIter {
-        if let Some(index) = self.index.load().get(label) {
-            return index.query_edges(query);
-        }
-        super::EdgeTripleIter::empty()
     }
 
     pub fn fulltext_query(

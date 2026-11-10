@@ -23,20 +23,17 @@
 //! can reject loading an incomplete module.
 
 use crate::commands::constraint::{Settling, settle_constraint};
-#[cfg(feature = "index-falkordb")]
 use crate::config::CONFIGURATION_INDEX_BUILD_THREAD_COUNT;
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
     CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, OMP_THREAD_COUNT,
     apply_module_args, get_thread_count, normalize_node_creation_buffer,
 };
-#[cfg(feature = "index-falkordb")]
 use crate::graph_core::RedisBuildHost;
 use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::graph::constraint::ConstraintStatus;
-#[cfg(feature = "index-falkordb")]
 use graph::index::falkordb::online_build;
 use graph::{
     graph::graphblas::matrix::init,
@@ -487,7 +484,6 @@ pub fn graph_init(
     // The native index's background builder: runs the indexer batches of every index left
     // `Building`, however its `CREATE INDEX` arrived, on workers of its own, so a build never takes
     // a query thread. Started before any graph exists: a commit made before would start no build.
-    #[cfg(feature = "index-falkordb")]
     online_build::start(
         (*CONFIGURATION_INDEX_BUILD_THREAD_COUNT.lock(ctx)).max(1) as usize,
         Arc::new(RedisBuildHost),
@@ -540,10 +536,7 @@ unsafe extern "C" fn on_shutdown(
     // Stop the index builder before the pool. Its workers get a bounded wait, since one may be
     // waiting for the GIL this handler holds; one left behind may still read or free a graph
     // version, so GraphBLAS and RediSearch are then left to the exiting process.
-    #[cfg(feature = "index-falkordb")]
     let builder_exited = online_build::stop();
-    #[cfg(not(feature = "index-falkordb"))]
-    let builder_exited = true;
     threadpool::shutdown();
     if builder_exited {
         graph::graph::graphblas::matrix::shutdown();

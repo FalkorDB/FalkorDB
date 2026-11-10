@@ -71,9 +71,7 @@ use arc_swap::ArcSwap;
 use thiserror::Error;
 
 use crate::graph::graph::{Graph, NodeOpError};
-#[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::online_build;
-#[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
 
 /// MVCC coordinator for concurrent graph access.
@@ -167,7 +165,6 @@ impl MvccGraph {
     /// For a writer that forked before it held the write lock, as it escalates, right after
     /// [`Self::is_stale`]: what it publishes and reads from then on has the batches' progress, and
     /// nothing else publishes before its own commit.
-    #[cfg(feature = "index-falkordb")]
     pub fn rebase_onto_indexer_batches(
         &self,
         fork: &mut Graph,
@@ -209,13 +206,11 @@ impl MvccGraph {
         let published = self.graph.load_full();
         Self::prepare(&published, &mut fork, true)?;
         // The indexes to build, asked of the version this one replaces before it is replaced.
-        #[cfg(feature = "index-falkordb")]
         let to_build = fork.indexes_to_build_since(&published);
         let version = self.publish(&published, Arc::new(fork))?;
         // Each `Building` index this version brings in, new or created again, starts its build: a
         // job per generation, started only by the commit that brings it in, so a commit made during
         // the build, an indexer batch's included, starts nothing.
-        #[cfg(feature = "index-falkordb")]
         for (id, generation) in to_build {
             online_build::enqueue(Arc::downgrade(self), id, generation);
         }
@@ -258,7 +253,6 @@ impl MvccGraph {
     /// [`CommitError::Invalid`] if [`Graph::validate`] refuses the version, [`CommitError::Stale`]
     /// if another version was published while this commit ran (only a host publishing without the
     /// global lock lets that happen). Nothing is published.
-    #[cfg(feature = "index-falkordb")]
     pub(crate) fn commit_indexer_batch(
         &self,
         mut prepared: Graph,
@@ -303,7 +297,6 @@ impl MvccGraph {
         }
         debug_assert!(writer || published.version == new_graph.version);
         new_graph.validate()?;
-        #[cfg(feature = "index-falkordb")]
         {
             new_graph
                 .falkordb_index

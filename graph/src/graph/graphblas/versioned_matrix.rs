@@ -69,7 +69,6 @@
 //! position), producing the effective state — sorted by `(row, col)` —
 //! without materializing a merged matrix or issuing per-entry point lookups.
 
-#[cfg(feature = "index-falkordb")]
 use std::borrow;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -94,10 +93,8 @@ use crate::graph::{
 /// GraphBLAS handle), so a `Cow`'s `to_mut` or `into_owned` on a borrowed
 /// base would hand out the shared base itself, and a write through it would
 /// change every version that holds it. A matrix of one's own is a `dup()`.
-#[cfg(feature = "index-falkordb")]
 pub(crate) struct Effective<'a, T>(borrow::Cow<'a, Matrix<T>>);
 
-#[cfg(feature = "index-falkordb")]
 impl<T> Effective<'_, T> {
     /// Whether this is the base itself, not a merged copy.
     #[cfg(test)]
@@ -106,7 +103,6 @@ impl<T> Effective<'_, T> {
     }
 }
 
-#[cfg(feature = "index-falkordb")]
 impl<T> Deref for Effective<'_, T> {
     type Target = Matrix<T>;
 
@@ -127,7 +123,6 @@ impl<T> Deref for Effective<'_, T> {
 /// The layers must not have pending work: reading a pending layer finishes
 /// that work, a mutation of a matrix readers may share. The callers wait
 /// first.
-#[cfg(feature = "index-falkordb")]
 pub(super) fn effective<'a, T: EWiseAdd + MatrixType>(
     m: &'a Matrix<T>,
     dp: &Matrix<T>,
@@ -759,7 +754,6 @@ impl<T> VersionedMatrix<T> {
 
     /// The matrix a reader sees, `(m ∖ dm) ∪ dp`, as one GraphBLAS matrix
     /// (see [`Effective`]): no copy when both deltas are empty.
-    #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub(crate) fn effective(&self) -> Effective<'_, T>
     where
@@ -1607,7 +1601,6 @@ mod tests {
 
     use super::super::matrix::{Dup, Matrix};
     use super::super::test_init::ensure_init;
-    #[cfg(feature = "index-falkordb")]
     use super::effective;
     use super::{
         MIN_FOLD_DELTA, READ_FOLD_K, VersionedMatrix, WRITE_FOLD_K, should_fold, should_fold_read,
@@ -1618,7 +1611,6 @@ mod tests {
     /// "not deleted" and let the committed entry through. Checked with `dm`
     /// alone and with a pending addition in `dp`.
     #[test]
-    #[cfg(feature = "index-falkordb")]
     fn effective_masks_dm_by_structure_not_value() {
         ensure_init();
         let mut m = Matrix::<u64>::new(4, 4);

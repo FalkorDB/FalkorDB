@@ -64,11 +64,11 @@ graph/src/runtime/eval.rs	NeighborIter::new_reversed	204	NOT COVERED	idem
 graph/src/runtime/eval.rs	NeighborIter::neighbors	232	NOT COVERED	idem
 graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1364	NOT COVERED	differential-tested vs C (matches except undirected: C errors, Rust answers)
 graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1449	NOT COVERED	bidirectional BFS; stop rule argued in comments, not formalised
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::new	58	PROVEN	IndexScan.IxSt.new/extraLabels: ixNew_spec
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	100	PROVEN	IndexScan.evalIQ: evalIQ_eq, evalIQ_inList (one InList since #2383), evalIQ_inList_err (W2-index-3, still open)
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::can_utilize_index	263	PROVEN	IndexScan.canUse: canUse_spec, canUseL_iff; InList arm (#2383): canUse_inListV_eq_or, canUse_inListV_empty, canUse_inList_nonlist
-graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	266	PROVEN	IndexScan.indexable/losesPrecision: canUse_spec
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	312	PROVEN	IndexScan.scanRow (IndexSound = RediSearch contract): scanRow_spec, scans_stream
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::new	56	PROVEN	IndexScan.IxSt.new/extraLabels: ixNew_spec
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	98	PROVEN	IndexScan.evalIQ: evalIQ_eq, evalIQ_inList (one InList since #2383), evalIQ_inList_err (W2-index-3, still open)
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::can_utilize_index	261	PROVEN	IndexScan.canUse: canUse_spec, canUseL_iff; InList arm (#2383): canUse_inListV_eq_or, canUse_inListV_empty, canUse_inList_nonlist
+graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	264	PROVEN	IndexScan.indexable/losesPrecision: canUse_spec
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	310	NOT COVERED	#3750: native index only (the model assumed the RediSearch contract), with a checked scan on a decline; not re-modelled yet
 graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::new	47	PROVEN	IndexScan.VecSt.new: vecNew_spec
 graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::next	83	PROVEN	IndexScan.vecRow: vecRow_spec, scans_stream
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	IndexScan.vecArgs: vecArgs_ok, vecArgs_bad_k
@@ -78,10 +78,10 @@ graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::new	47	PROV
 graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::next	78	PROVEN	IndexScan.ftArgs (fulltext index = FFI): ftArgs_spec, scans_stream
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::new	40	PROVEN	IndexScan.ftNew/VecSt.new: ftNew_spec
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::next	75	PROVEN	IndexScan.edgeVecRow/vecArgs: edgeVecRow_spec, vecArgs_ok
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	80	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	118	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	277	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
-graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	280	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	328	PROVEN	IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7), scans_stream
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query/native-in-list	100	NOT COVERED	the index-falkordb IN-list branch (#3743): keeps a point, and keeps the list whole when a member no kind holds is in it; not modelled (the PROVEN theorem covers the default build)
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query/native-in-list	118	NOT COVERED	the index-falkordb IN-list branch (#3743): keeps a point, and keeps the list whole when a member no kind holds is in it; not modelled (the PROVEN theorem covers the default build)
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	78	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	116	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	275	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
+graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	278	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	326	NOT COVERED	#3750: native index only (the model assumed the RediSearch contract), with a checked scan on a decline; not re-modelled yet
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query/native-in-list	98	NOT COVERED	the index-falkordb IN-list branch (#3743): keeps a point, and keeps the list whole when a member no kind holds is in it; not modelled (the PROVEN theorem covers the default build)
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query/native-in-list	116	NOT COVERED	the index-falkordb IN-list branch (#3743): keeps a point, and keeps the list whole when a member no kind holds is in it; not modelled (the PROVEN theorem covers the default build)

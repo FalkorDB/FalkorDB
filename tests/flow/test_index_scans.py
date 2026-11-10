@@ -1452,14 +1452,6 @@ class testIndexScanFlow():
         g.create_node_range_index('L', 'loc')
         wait_for_indices_to_sync(g)
         g.query(create)
-        # Only the native index is held to this: RediSearch still drops a
-        # point from an IN list and misses a point range.
-        try:
-            g.query("MATCH (n:L) WHERE n.loc = 1 OR n.loc > 7 RETURN n")
-            g.delete()
-            return
-        except ResponseError as e:
-            self.env.assertContains("native index cannot serve", str(e))
         for q, want in zip(queries, expected):
             self.env.assertContains('Node By Index Scan', str(g.explain(q)), message=q)
             self.env.assertEqual(g.query(q).result_set, want, message=q)
@@ -1543,3 +1535,107 @@ class testIndexScanFlow():
         self.graph.query("MATCH (n:rt) DELETE n")
         self.env.assertEqual(contains(4), 0)
         self.env.assertEqual(eq(9), 0)
+
+    def test_47_unservable_values_match_a_scan(self):
+        # A value no index lookup answers exactly (a date, an integer past 2^53)
+        # sends the scan op to a label scan, and the planner keeps a filter for
+        # it only when it can see the value coming, not when a constant folds to
+        # one. The scan must check the predicate itself, or it returns every
+        # node of the label (#2958).
+        queries = [
+            "MATCH (n:U) WHERE n.v = date('2020-01-01') RETURN n.k ORDER BY n.k",
+            "MATCH (n:U {v: date('2020-01-01')}) RETURN n.k ORDER BY n.k",
+            "MATCH (n:U) WHERE n.v > date('2019-01-01') RETURN n.k ORDER BY n.k",
+            "MATCH (n:U) WHERE n.v IN [date('2020-01-01'), 5] RETURN n.k ORDER BY n.k",
+            "MATCH (n:U) WHERE n.v = 4503599627370495 + 4503599627370495 + 3 RETURN n.k ORDER BY n.k",
+            "MATCH (n:U) WHERE n.v > 4503599627370495 * 2 RETURN n.k ORDER BY n.k",
+        ]
+        edge_queries = [
+            "MATCH ()-[n:UR]->() WHERE n.v = date('2020-01-01') RETURN n.k ORDER BY n.k",
+            "MATCH ()-[n:UR {v: date('2020-01-01')}]->() RETURN n.k ORDER BY n.k",
+            "MATCH ()-[n:UR]->() WHERE n.v > date('2019-01-01') RETURN n.k ORDER BY n.k",
+            "MATCH ()-[n:UR]->() WHERE n.v IN [date('2020-01-01'), 5] RETURN n.k ORDER BY n.k",
+            "MATCH ()-[n:UR]->() WHERE n.v = 4503599627370495 + 4503599627370495 + 3 RETURN n.k ORDER BY n.k",
+            "MATCH ()-[n:UR]->() WHERE n.v > 4503599627370495 * 2 RETURN n.k ORDER BY n.k",
+        ]
+        create = ("CREATE (:U {v: 5, k: 'int'}), (:U {v: date('2020-01-01'), k: 'date'}), "
+                  "(:U {v: 9007199254740993, k: 'big'}), "
+                  "()-[:UR {v: 5, k: 'int'}]->(), ()-[:UR {v: date('2020-01-01'), k: 'date'}]->(), "
+                  "()-[:UR {v: 9007199254740993, k: 'big'}]->()")
+
+        truth = self.db.select_graph('unservable_scan')
+        truth.query(create)
+        expected = [truth.query(q).result_set for q in queries + edge_queries]
+        truth.delete()
+
+        g = self.db.select_graph('unservable_index')
+        g.create_node_range_index('U', 'v')
+        g.create_edge_range_index('UR', 'v')
+        wait_for_indices_to_sync(g)
+        g.query(create)
+        for q, want in zip(queries + edge_queries, expected):
+            self.env.assertEqual(g.query(q).result_set, want, message=q)
+        g.delete()
+
+    def test_46_declined_shapes_match_a_scan(self):
+        # Shapes the native index declines: a union with a range member, a
+        # conjunction holding a union across other attributes, and a union
+        # with a member on an attribute that has no index. The planner has
+        # already dropped the filter it pushed down, so the scan op falls back
+        # to the label and checks the predicate itself. It has to keep exactly
+        # the rows a plain scan keeps, nodes and relationships alike.
+        node_queries = [
+            "MATCH (n:Q) WHERE n.a = 1 OR n.a > 7 RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
+            "MATCH (n:Q) WHERE n.a = 1 AND (n.b = 2 OR n.c = 3) RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
+            "MATCH (n:Q) WHERE n.a IN [1, 2] OR n.a >= 'x' RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
+            "MATCH (n:Q) WHERE n.a < 3 OR n.a = 'y' OR n.b = 5 RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
+            "MATCH (n:Q) WHERE n.a = 1 OR n.d = 4 RETURN n.a, n.b, n.c ORDER BY n.a, n.b, n.c",
+        ]
+        edge_queries = [q.replace("(n:Q)", "()-[n:QR]->()") for q in node_queries]
+        create = ("UNWIND range(0, 9) AS i "
+                  "CREATE (x:Q {a: i, b: i % 3, c: i % 4, d: i % 5})"
+                  "-[:QR {a: i, b: i % 3, c: i % 4, d: i % 5}]->(x) "
+                  "WITH 1 AS one LIMIT 1 "
+                  "CREATE (:Q {a: 'x', b: 2}), (:Q {a: 'y', c: 3}), (:Q {a: 1.0}), (:Q {b: 5}), "
+                  "()-[:QR {a: 'x', b: 2}]->(), ()-[:QR {a: 'y', c: 3}]->(), ()-[:QR {a: 1.0}]->(), "
+                  "()-[:QR {b: 5}]->()")
+
+        truth = self.db.select_graph('declined_shapes_scan')
+        truth.query(create)
+        expected = [truth.query(q).result_set for q in node_queries + edge_queries]
+        truth.delete()
+
+        g = self.db.select_graph('declined_shapes_index')
+        for attr in ['a', 'b', 'c']:
+            g.create_node_range_index('Q', attr)
+            g.create_edge_range_index('QR', attr)
+        wait_for_indices_to_sync(g)
+        g.query(create)
+        for q, want in zip(node_queries + edge_queries, expected):
+            plan = str(g.explain(q))
+            self.env.assertEqual(g.query(q).result_set, want, message=f"{q}\n{plan}")
+        g.delete()
+
+    def test_48_range_index_beside_fulltext_index(self):
+        # A range index on an attribute that already has a fulltext index
+        # must be queried through its own (range) field, not the fulltext
+        # one that was registered first.
+        g = self.db.select_graph("range_beside_fulltext")
+        try:
+            g.query("CREATE (:L {s:'foo', v:1}), (:L {s:'bar', v:2}), (:L {s:'dog', v:3})")
+            create_node_fulltext_index(g, 'L', 's', 'v', sync=True)
+            create_node_range_index(g, 'L', 's', 'v', sync=True)
+            for q, expected in [
+                    ("MATCH (n:L) WHERE n.s = 'foo' RETURN n.s", [['foo']]),
+                    ("MATCH (n:L) WHERE n.s > 'c' RETURN n.s", [['dog'], ['foo']]),
+                    ("MATCH (n:L {s:'bar'}) RETURN n.s", [['bar']]),
+                    ("MATCH (n:L) WHERE n.s IN ['foo', 'dog'] RETURN n.s", [['dog'], ['foo']]),
+                    ("MATCH (n:L) WHERE n.v = 2 RETURN n.s", [['bar']]),
+                    ("MATCH (n:L) WHERE n.v >= 2 RETURN n.s", [['bar'], ['dog']])]:
+                self.env.assertContains('Node By Index Scan', str(g.explain(q)))
+                self.env.assertEqual(sorted(g.query(q).result_set), expected, message=q)
+            # The fulltext index still answers fulltext queries.
+            res = g.query("CALL db.idx.fulltext.queryNodes('L', 'foo') YIELD node RETURN node.s")
+            self.env.assertEqual(res.result_set, [['foo']])
+        finally:
+            g.delete()

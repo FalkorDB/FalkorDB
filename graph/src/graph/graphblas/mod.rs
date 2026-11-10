@@ -72,7 +72,6 @@
 
 #[cfg(test)]
 mod block_scaling_bench;
-#[cfg(feature = "index-falkordb")]
 mod csr;
 #[cfg(test)]
 mod degree_bench;
@@ -83,7 +82,6 @@ pub mod lagraphx_bindings;
 pub mod matrix;
 #[cfg(test)]
 mod me_delta_bench;
-#[cfg(feature = "index-falkordb")]
 pub(crate) mod scalar;
 pub mod serialization;
 pub mod tensor;
@@ -141,7 +139,6 @@ pub(crate) mod instr {
 /// # Panics
 /// If it does not fit a `usize`, which only a target narrower than 64 bits
 /// allows: GraphBLAS counts what this process holds in memory.
-#[cfg(any(test, feature = "index-falkordb"))]
 pub(crate) fn length(count: u64) -> usize {
     usize::try_from(count).expect("a GraphBLAS count fits a usize")
 }

@@ -42,7 +42,6 @@ use crossfire::{
     MTx, Rx,
     mpsc::{List, unbounded_blocking},
 };
-#[cfg(feature = "index-falkordb")]
 use graph::index::falkordb::online_build::BuildHost;
 use graph::{
     effects::payload::take_effects_buffer,
@@ -54,7 +53,6 @@ use graph::{
 };
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
-#[cfg(feature = "index-falkordb")]
 use redis_module::logging::log_warning;
 use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
 use std::{
@@ -73,7 +71,6 @@ use crate::allocator::{
 use crate::dispatch::must_run_inline;
 use crate::divergence_guard;
 use crate::query_session::QuerySession;
-#[cfg(feature = "index-falkordb")]
 use crate::query_session::hold_gil;
 
 /// The prefix of `s` before its first NUL byte, or all of `s` if it holds none.
@@ -1591,7 +1588,7 @@ fn commit_and_replicate(
     buf.replicate(&CtxSink(ctx), key_name.as_bytes());
 }
 
-// ---- The native index builder's host (feature: index-falkordb) ----
+// ---- The native index builder's host ----
 //
 // The build itself (when batches run, on which threads, and how they commit) is the graph crate's
 // (`graph::index::falkordb::online_build`), and so is how a build reaches its graph. This is only
@@ -1599,10 +1596,8 @@ fn commit_and_replicate(
 // starts the builder with it.
 
 /// The Redis server, as the native index builder needs it: one for every graph.
-#[cfg(feature = "index-falkordb")]
 pub struct RedisBuildHost;
 
-#[cfg(feature = "index-falkordb")]
 impl BuildHost for RedisBuildHost {
     /// The GIL, which every writer holds to commit.
     fn publish(

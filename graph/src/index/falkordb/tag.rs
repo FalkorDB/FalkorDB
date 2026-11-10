@@ -41,6 +41,9 @@ pub enum StrSel {
     Set(Vec<Arc<String>>),
     /// Every string between these bounds, in byte (codepoint) order.
     Window(StrBounds),
+    /// Every string any member selects: a union with a window in it (`v = 'a' OR v > 'x'`). The
+    /// members are never themselves unions.
+    Any(Vec<StrSel>),
 }
 
 impl StrSel {
@@ -81,6 +84,34 @@ impl StrSel {
         match self {
             Self::Set(strings) => strings.is_empty(),
             Self::Window(window) => is_empty_window(window),
+            Self::Any(members) => members.iter().all(Self::is_empty),
+        }
+    }
+
+    /// The strings either selects: a union of string predicates on one attribute. Two sets stay a
+    /// set; anything with a window in it is an [`Any`](Self::Any), flattened.
+    #[must_use]
+    pub fn or(
+        self,
+        other: Self,
+    ) -> Self {
+        match (self, other) {
+            (a, b) if b.is_empty() => a,
+            (a, b) if a.is_empty() => b,
+            (Self::Set(mut a), Self::Set(b)) => {
+                a.extend(b);
+                Self::set(a)
+            }
+            (a, b) => {
+                let mut members = Vec::new();
+                for side in [a, b] {
+                    match side {
+                        Self::Any(inner) => members.extend(inner),
+                        other => members.push(other),
+                    }
+                }
+                Self::Any(members)
+            }
         }
     }
 
@@ -93,6 +124,9 @@ impl StrSel {
                 .iter()
                 .map(|s| (Bound::Included(s.clone()), Bound::Included(s.clone())))
                 .collect(),
+            // Members may overlap (`v = 'a' OR v >= 'a'`): their ranges are merged, so no doc is
+            // read twice.
+            Self::Any(members) => merge_ranges(members.iter().flat_map(Self::ranges).collect()),
             Self::Window(window) if is_empty_window(window) => Vec::new(),
             Self::Window(window) => vec![window.clone()],
         }
@@ -107,6 +141,7 @@ impl StrSel {
         match self {
             Self::Set(strings) => strings.binary_search(s).is_ok(),
             Self::Window(window) => window.contains(s),
+            Self::Any(members) => members.iter().any(|member| member.contains(s)),
         }
     }
 
@@ -117,6 +152,12 @@ impl StrSel {
         other: Self,
     ) -> Self {
         match (self, other) {
+            (Self::Any(members), b) | (b, Self::Any(members)) => Self::Any(
+                members
+                    .into_iter()
+                    .map(|member| member.intersect(b.clone()))
+                    .collect(),
+            ),
             (Self::Set(a), b) | (b, Self::Set(a)) => {
                 Self::Set(a.into_iter().filter(|s| b.contains(s)).collect())
             }
@@ -167,6 +208,33 @@ fn cmp_hi(
             .cmp(y)
             .then(matches!(a, Bound::Included(_)).cmp(&matches!(b, Bound::Included(_)))),
     }
+}
+
+/// `ranges` as disjoint ranges in key order, each key in exactly the ranges it was in before.
+/// Ranges that overlap or meet with no key between them are joined; two that both exclude the key
+/// between them (`< 'x'` and `> 'x'`) are not, since `x` is in neither.
+fn merge_ranges(mut ranges: Vec<StrBounds>) -> Vec<StrBounds> {
+    // Whether a range ending at `hi` and one starting at `lo` leave no key between them.
+    let joins = |hi: &Bound<Arc<String>>, lo: &Bound<Arc<String>>| match (hi, lo) {
+        (Bound::Unbounded, _) | (_, Bound::Unbounded) => true,
+        (Bound::Excluded(x), Bound::Excluded(y)) => y < x,
+        (Bound::Included(x) | Bound::Excluded(x), Bound::Included(y) | Bound::Excluded(y)) => {
+            y <= x
+        }
+    };
+    ranges.sort_by(|a, b| cmp_lo(&a.0, &b.0));
+    let mut out: Vec<StrBounds> = Vec::with_capacity(ranges.len());
+    for (lo, hi) in ranges {
+        match out.last_mut() {
+            Some((_, last_hi)) if joins(last_hi, &lo) => {
+                if cmp_hi(&hi, last_hi) == Ordering::Greater {
+                    *last_hi = hi;
+                }
+            }
+            _ => out.push((lo, hi)),
+        }
+    }
+    out
 }
 
 /// The tag kind of one `(label, attribute)` column: entity ids keyed by their string value.
@@ -618,5 +686,57 @@ mod tests {
             .expect("a string range is served")
             .collect();
         assert_eq!(docs, vec![3, 2], "bravo, then charlie");
+    }
+
+    /// A union of string selections reads each doc once, however its members overlap, and keeps
+    /// out a key both of two excluding members leave out.
+    #[test]
+    fn a_union_of_strings_reads_each_doc_once() {
+        let mut idx = RangeIndex::new();
+        for (i, x) in ["a", "b", "c", "x", "y"].iter().enumerate() {
+            idx.add(&val(x), i as u64);
+        }
+        let eq = |x: &str| IndexQuery::Equal {
+            key: attr(),
+            value: val(x),
+        };
+        let cmp = |min: Option<&str>, max: Option<&str>, inc: bool| IndexQuery::Range {
+            key: attr(),
+            min: min.map(val),
+            max: max.map(val),
+            include_min: inc,
+            include_max: inc,
+        };
+        for (q, want) in [
+            (
+                IndexQuery::Or(vec![eq("a"), cmp(Some("a"), None, true)]),
+                vec![0, 1, 2, 3, 4],
+            ),
+            (
+                IndexQuery::Or(vec![
+                    cmp(None, Some("x"), false),
+                    cmp(Some("x"), None, false),
+                ]),
+                vec![0, 1, 2, 4],
+            ),
+            (
+                IndexQuery::Or(vec![
+                    cmp(Some("a"), Some("b"), true),
+                    cmp(Some("b"), Some("c"), true),
+                    eq("y"),
+                ]),
+                vec![0, 1, 2, 4],
+            ),
+        ] {
+            let docs: Vec<u64> = idx
+                .query(&q)
+                .expect("a union of strings is served")
+                .collect();
+            let mut sorted = docs.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(docs.len(), sorted.len(), "a doc read twice: {q:?}");
+            assert_eq!(sorted, want, "{q:?}");
+        }
     }
 }
