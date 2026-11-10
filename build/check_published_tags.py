@@ -15,8 +15,8 @@ channel publishes to:
   * a falkordb image carries the browser (BROWSER=1 and server.js under
     FALKORDB_BROWSER_PATH), and a falkordb-server image does not (BROWSER=0);
   * an alias (edge, edge-rs, X.Y.Z, latest) has the digest of the tag it stands
-    for, a tag has the same digest on every registry, and a CI per-arch tag is
-    that platform of its multi-arch tag;
+    for, a tag has the same digest on every registry, and a CI per-arch tag is,
+    by its own digest, that platform's manifest of its multi-arch tag;
   * latest* point at the newest stable GitHub release, whatever was published
     (while that release has no images yet, they cannot be checked, and fail);
   * no tag exists where the contract says it must not: a per-OS tag on
@@ -680,8 +680,9 @@ class Checker:
 
     def _check_per_arch(self, plan: Plan, registry: str, repo: str, spec: TagSpec,
                         index: Manifest | None) -> None:
-        """Each per-arch tag holds only its platform, and is that platform of
-        the multi-arch tag (when that exists; its absence is its own failure)."""
+        """Each per-arch tag is that platform's manifest of the multi-arch tag
+        itself, not an index around it (when the multi-arch tag exists; its
+        absence is its own failure)."""
         for platform in plan.platforms:
             arch_tag = _fill(spec.per_arch or "", arch=plan.arch_suffixes[platform])
             ref = f"{registry}/{repo}:{arch_tag}"
@@ -690,19 +691,25 @@ class Checker:
                 self.record(False, TAGS, ref, "exists", _describe_missing(manifest))
                 continue
             self.record(True, TAGS, ref, "exists", manifest.digest)
-            if list(manifest.platforms) != [platform]:
-                self.record(False, TAGS, ref, "architectures",
-                            f"holds {', '.join(manifest.platforms) or 'nothing'}, expected only {platform}")
+            if list(manifest.platforms) != [platform] or manifest.duplicates:
+                listed = ", ".join(list(manifest.platforms) + manifest.duplicates) or "nothing"
+                self.record(False, TAGS, ref, "architectures", f"holds {listed}, expected only {platform}")
                 continue
             self.record(True, TAGS, ref, "architectures", platform)
-            digest = manifest.platforms[platform]
-            self._want_content(registry, repo, arch_tag, digest, platform, spec.expect)
+            self._want_content(registry, repo, arch_tag, manifest.platforms[platform], platform, spec.expect)
             if index is None:
                 continue
             expected = index.platforms.get(platform)
-            self.record(digest == expected, RELATIONS, ref, f"{platform} of {spec.tag}",
-                        "same digest" if digest == expected
-                        else f"digest {digest} differs from the multi-arch tag's {expected or '(none)'}")
+            if manifest.digest == expected:
+                detail = "same digest"
+            elif manifest.is_index and manifest.platforms[platform] == expected:
+                detail = (f"an index ({manifest.digest}) around the multi-arch tag's {platform} manifest, "
+                          f"not that manifest")
+            else:
+                kind = "an index" if manifest.is_index else "a manifest"
+                detail = (f"{kind} with digest {manifest.digest}, not the multi-arch tag's {platform} manifest "
+                          f"{expected}" if expected else f"the multi-arch tag lists no {platform} to compare with")
+            self.record(manifest.digest == expected, RELATIONS, ref, f"{platform} of {spec.tag}", detail)
 
     def _check_same_digest_everywhere(self, plan: Plan) -> None:
         if len(plan.registries) < 2:
@@ -767,7 +774,9 @@ class Checker:
     def _latest_verdicts(self, registry: str, repo: str, version: str, specs: list[TagSpec],
                          releases: dict[str, Manifest | Exception],
                          after_switch: bool | None) -> list[tuple[bool, str, str, str]]:
-        """Each latest* tag against `version`'s tag, as (ok, ref, check, detail)."""
+        """Each latest* tag against `version`'s tag, and after the switch the
+        bare latest against `version`'s -valkey tag too (latest stands for
+        latest-valkey), as (ok, ref, check, detail)."""
         verdicts = []
         for spec in specs:
             ref = f"{registry}/{repo}:{spec.tag}"
@@ -778,6 +787,21 @@ class Checker:
             else:
                 ok, detail = _judge_latest(latest, other_ref, releases[spec.follows], version, after_switch)
             verdicts.append((ok, ref, f"points at {version}", detail))
+            # After the switch the bare alias also stands for its server tag
+            # (latest = latest-valkey, so N = N-valkey); before it, N-valkey
+            # doesn't exist and there is nothing to compare. Only judged when
+            # latest = N held, so a single mistake reports once: this fails
+            # only when N and N-valkey differ.
+            target = next((s for s in specs if s.tag == spec.alias_of), None)
+            if ok and spec.alias_of and target and isinstance(latest, Manifest):
+                server_ref = f"{registry}/{repo}:{target.follows}"
+                server = releases.get(target.follows)
+                if isinstance(server, Manifest):
+                    same = latest.digest == server.digest
+                    verdicts.append((same, ref, f"same image as {target.follows}",
+                                     f"{server_ref} (same digest)" if same
+                                     else f"digest {latest.digest} is {other_ref}'s, not {server_ref}'s "
+                                          f"{server.digest}: {spec.follows} and {target.follows} differ"))
         return verdicts
 
     def _check_absent(self, plan: Plan) -> None:
