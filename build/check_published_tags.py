@@ -196,6 +196,9 @@ class Plan:
     # are in `specs`) or doesn't concern it (CI).
     latest_specs: list[TagSpec] = field(default_factory=list)
     latest_registries: list[str] = field(default_factory=list)
+    # The release tags of latest_version, every server and OS (the whole release
+    # channel): any one existing means that release is from after the switch.
+    latest_release_specs: list[TagSpec] = field(default_factory=list)
     latest_version: str | None = None
     latest_error: str | None = None
 
@@ -390,6 +393,8 @@ def make_plan(
         plan.specs += _channel_specs(latest, servers, version=version)
     elif latest_version is not None:
         plan.latest_specs = _channel_specs(latest, servers, version=latest_version)
+        plan.latest_release_specs = _channel_specs(channels["release"], set(data["servers"]),
+                                                   version=latest_version)
     plan.absent = _absent_refs(plan, True, set(left_over))
     plan.frozen = left_over
     return plan
@@ -571,11 +576,12 @@ class Checker:
             for entry in raw["manifests"]:
                 platform = entry.get("platform") or {}
                 annotations = entry.get("annotations") or {}
-                if platform.get("os") in (None, "unknown"):
-                    continue  # attestation manifests
                 if annotations.get("vnd.docker.reference.type") == "attestation-manifest":
                     continue
-                name = f"{platform['os']}/{platform.get('architecture', '?')}"
+                # Any other entry counts, a missing or unknown platform included:
+                # it is listed under that name and fails the exact-platform check
+                # instead of slipping by as an attestation.
+                name = f"{platform.get('os') or '?'}/{platform.get('architecture') or '?'}"
                 if name in platforms:
                     duplicates.append(name)
                 else:
@@ -712,20 +718,30 @@ class Checker:
             self.record(manifest.digest == expected, RELATIONS, ref, f"{platform} of {spec.tag}", detail)
 
     def _check_same_digest_everywhere(self, plan: Plan) -> None:
-        if len(plan.registries) < 2:
-            return
-        for spec in plan.specs:
-            for repo in spec.repos:
-                found = {}
-                for registry in plan.registries:
-                    digest = self.digest(f"{registry}/{repo}:{spec.tag}")
-                    if digest:
-                        found[registry] = digest
-                if len(found) < 2:
-                    continue  # a missing tag is already a failure of its own
-                listing = ", ".join(f"{registry} {digest}" for registry, digest in found.items())
-                self.record(len(set(found.values())) == 1, RELATIONS, f"{repo}:{spec.tag}",
-                            "same digest on every registry", listing)
+        """Every tag this target checks holds one digest on every registry it is
+        published to. latest* is checked here too when the target does not own
+        it: edge and older-release runs have it in `latest_specs`, on
+        `latest_registries`."""
+        groups = [(plan.specs, plan.registries), (plan.latest_specs, plan.latest_registries)]
+        seen = set()
+        for specs, registries in groups:
+            if len(registries) < 2:
+                continue
+            for spec in specs:
+                for repo in spec.repos:
+                    if (repo, spec.tag) in seen:
+                        continue
+                    seen.add((repo, spec.tag))
+                    found = {}
+                    for registry in registries:
+                        digest = self.digest(f"{registry}/{repo}:{spec.tag}")
+                        if digest:
+                            found[registry] = digest
+                    if len(found) < 2:
+                        continue  # a missing tag is already a failure of its own
+                    listing = ", ".join(f"{registry} {digest}" for registry, digest in found.items())
+                    self.record(len(set(found.values())) == 1, RELATIONS, f"{repo}:{spec.tag}",
+                                "same digest on every registry", listing)
 
     def _check_latest(self, plan: Plan) -> None:
         """latest* must point at the newest stable release, whatever this
@@ -743,6 +759,11 @@ class Checker:
         suffixed = [self.manifest(f"{registry}/{repo}:{spec.follows}")
                     for registry in plan.latest_registries for spec in plan.latest_specs if not spec.alias_of
                     for repo in spec.repos]
+        # The per-OS tags (alpine, amazonlinux2023, rhel9) count too, so a
+        # release with only those is not taken for one from before the switch.
+        suffixed += [self.manifest(f"{registry}/{repo}:{spec.tag}")
+                     for registry in plan.latest_registries for spec in plan.latest_release_specs
+                     if not spec.alias_of for repo in spec.repos]
         after_switch: bool | None = any(isinstance(result, Manifest) for result in suffixed)
         if not after_switch and any(not isinstance(result, (Manifest, NotFound)) for result in suffixed):
             after_switch = None  # one could not be read: can't tell

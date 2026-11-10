@@ -500,6 +500,17 @@ class EdgeTest(unittest.TestCase):
         self.assertEqual(checks_failed(checker), {"architectures"})
         self.assertIn("also lists linux/s390x", checker.failures[0].detail)
 
+    def test_an_extra_manifest_without_a_platform_or_attestation_note_fails(self):
+        """Only a manifest annotated as an attestation is skipped; a bare
+        descriptor with no platform is an unvalidated image, not one."""
+        docker = FakeDocker()
+        valkey = publish_edge(docker)
+        digest = valkey["falkordb-server"]
+        docker.manifests[digest]["manifests"].append({"digest": "sha256:" + "ab" * 32})
+        checker = check(docker, "edge")
+        self.assertIn("architectures", checks_failed(checker))
+        self.assertIn("also lists ?/?", " ".join(r.detail for r in checker.failures))
+
     def test_a_single_platform_manifest_under_a_public_tag_fails(self):
         docker = FakeDocker()
         publish_edge(docker)
@@ -547,6 +558,18 @@ class EdgeTest(unittest.TestCase):
                     "edge-rs-redis", registries=(HUB,))
         checker = check(docker, "edge")
         self.assertEqual(failed(checker), [("falkordb-server:edge-rs-redis", "same digest on every registry")])
+
+    def test_latest_rebuilt_with_its_release_on_one_registry_only_fails(self):
+        """Docker Hub's newest release and its latest* were rebuilt together, so
+        each registry is self-consistent; they differ from each other."""
+        docker = FakeDocker()
+        publish_edge(docker)
+        publish_release(docker, "6.1.0", latest=True)
+        docker.push(docker.multi("valkey", "ubuntu-26.04", browser=True, salt="rebuilt"), "falkordb",
+                    "6.1.0-valkey", "6.1.0", "latest-valkey", "latest", registries=(HUB,))
+        checker = check(docker, "edge", latest="6.1.0")
+        self.assertIn(("falkordb:latest-valkey", "same digest on every registry"), failed(checker))
+        self.assertIn(("falkordb:latest", "same digest on every registry"), failed(checker))
 
     def test_the_wrong_base_os_fails(self):
         docker = FakeDocker()
@@ -637,6 +660,21 @@ class EdgeTest(unittest.TestCase):
         self.assertEqual({r.subject for r in checker.failures},
                          {f"{registry}/{repo}:latest-redis" for registry in (GHCR, HUB) for repo in REPOS})
         self.assertIn("6.1.0 has server-suffixed tags, so it must have this one too", checker.failures[0].detail)
+
+    def test_a_release_with_only_a_per_os_tag_is_from_after_the_switch(self):
+        """6.1.0-alpine-valkey exists, so the missing 6.1.0-{valkey,redis} and
+        latest-{valkey,redis} are a partial push, not a release from before."""
+        docker = FakeDocker()
+        publish_edge(docker)
+        publish_release(docker, "6.1.0", latest=True)
+        self.assertIn(f"{GHCR}/falkordb-server:6.1.0-alpine-valkey", docker.tags)
+        for registry in (GHCR, HUB):
+            for repo in REPOS:
+                for tag in ("6.1.0-valkey", "6.1.0-redis", "latest-valkey", "latest-redis"):
+                    del docker.tags[f"{registry}/{repo}:{tag}"]
+        checker = check(docker, "edge", latest="6.1.0")
+        self.assertEqual(checks_failed(checker), {"points at 6.1.0"})
+        self.assertIn("6.1.0 has server-suffixed tags", checker.failures[0].detail)
 
     def test_a_release_after_the_switch_on_one_registry_is_after_it_on_every_registry(self):
         """A partial push: Docker Hub got the bare 6.1.0 only."""
