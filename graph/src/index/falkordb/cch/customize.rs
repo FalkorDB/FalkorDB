@@ -122,32 +122,59 @@ fn well_formed(weights: &WeightCsr) -> bool {
         && (0..csr.node_count).all(|node| csr.row(node).windows(2).all(|pair| pair[0] < pair[1]))
 }
 
-/// Whether `weights` fits `topology`: the same node count, [`well_formed`], and an arc in the
-/// chordal supergraph for every entry other than a self-loop. Looks at no weight value.
-///
-/// A pure check that never panics, whatever `weights` holds: the gate [`customize`] goes
-/// through (and the test-only `Cch::fits`). `false` means only a rebuild can take these
-/// weights, because they come from a later version of the graph than the hierarchy was
-/// built for (one that gained a node or a new adjacency), or that they are malformed, a bug
-/// [`validate`] tells apart.
-pub(crate) fn fits(
+/// Why weights do not fit a hierarchy ([`check_shape`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Misfit {
+    /// Weights for another node count: from a later graph, which gained nodes.
+    NodeCount,
+    /// Not the shape [`CchInput::build`](super::CchInput) gives ([`well_formed`]): a bug.
+    Malformed,
+    /// An entry between two nodes the hierarchy has no arc for: a later graph's new
+    /// adjacency.
+    NoArc,
+}
+
+impl From<Misfit> for CchError {
+    /// A later graph needs a rebuild; a malformed CSR is a bug.
+    fn from(misfit: Misfit) -> Self {
+        match misfit {
+            Misfit::NodeCount | Misfit::NoArc => Self::NeedsRebuild,
+            Misfit::Malformed => Self::Internal("the weight CSR is malformed"),
+        }
+    }
+}
+
+/// Whether `weights` fits `topology`, and if not, why: the same node count, [`well_formed`],
+/// and an arc in the chordal supergraph for every entry other than a self-loop. Looks at no
+/// weight value. Checked in that order, each before anything reads what it guards, so it
+/// never panics, whatever `weights` holds.
+fn check_shape(
     topology: &Topology,
     weights: &WeightCsr,
-) -> bool {
+) -> Result<(), Misfit> {
     let csr = &weights.csr;
-    csr.node_count == topology.node_count()
-        && well_formed(weights)
-        && (0..csr.node_count).all(|row| {
-            let u = index_id(row);
-            let rank_u = topology.rank_of(NodeId::from(u));
-            csr.row(row).iter().all(|&v| {
-                // a self-loop is never seeded, so it needs no arc
-                v == u
-                    || topology
-                        .arc_slot(rank_u, topology.rank_of(NodeId::from(v)))
-                        .is_some()
-            })
+    if csr.node_count != topology.node_count() {
+        return Err(Misfit::NodeCount);
+    }
+    if !well_formed(weights) {
+        return Err(Misfit::Malformed);
+    }
+    let every_entry_has_an_arc = (0..csr.node_count).all(|row| {
+        let u = index_id(row);
+        let rank_u = topology.rank_of(NodeId::from(u));
+        csr.row(row).iter().all(|&v| {
+            // a self-loop is never seeded, so it needs no arc
+            v == u
+                || topology
+                    .arc_slot(rank_u, topology.rank_of(NodeId::from(v)))
+                    .is_some()
         })
+    });
+    if every_entry_has_an_arc {
+        Ok(())
+    } else {
+        Err(Misfit::NoArc)
+    }
 }
 
 /// Reject a metric this index cannot be correct for, before any of it is written.
@@ -166,7 +193,7 @@ pub(crate) fn fits(
 ///    [`CchInput::build`](super::CchInput) with it, so one without it is a bug,
 ///    [`CchError::Internal`], refused rather than indexed past an array's end. A repeated
 ///    pair would be seeded twice, the last weight silently winning.
-/// 3. **An arc for every entry** ([`fits`]): a new adjacency, an edge between two nodes the
+/// 3. **An arc for every entry**: a new adjacency, an edge between two nodes the
 ///    hierarchy does not join, is the other "later graph" case, [`CchError::NeedsRebuild`].
 ///    It is checked before the weights, so weights with both a new adjacency and an invalid
 ///    weight ask for the rebuild, which then refuses that weight.
@@ -175,15 +202,7 @@ fn validate(
     topology: &Topology,
     weights: &WeightCsr,
 ) -> Result<(), CchError> {
-    if weights.csr.node_count != topology.node_count() {
-        return Err(CchError::NeedsRebuild);
-    }
-    if !well_formed(weights) {
-        return Err(CchError::Internal("the weight CSR is malformed"));
-    }
-    if !fits(topology, weights) {
-        return Err(CchError::NeedsRebuild);
-    }
+    check_shape(topology, weights)?;
     // A negative weight, `-inf` and NaN are refused; `+inf` and `-0.0` are not.
     if weights
         .values
@@ -412,7 +431,7 @@ impl Cch {
     /// Whether [`Self::customized`] would accept the shape of `input`'s weights: same node
     /// count, sane arrays, and no adjacency the hierarchy has no arc for. Looks at no weight
     /// value, so `true` does not rule out [`CchError::InvalidWeight`]. `false` means only a
-    /// rebuild can take these weights. The same check `customized` runs (see [`fits`]).
+    /// rebuild can take these weights. The same check `customized` runs ([`check_shape`]).
     /// Only the tests call it.
     #[cfg(test)]
     #[must_use]
@@ -420,7 +439,7 @@ impl Cch {
         &self,
         input: &CchInput,
     ) -> bool {
-        fits(&self.topology, &input.weights)
+        check_shape(&self.topology, &input.weights).is_ok()
     }
 
     pub(crate) fn topology(&self) -> &Topology {
