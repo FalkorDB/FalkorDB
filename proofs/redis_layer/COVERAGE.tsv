@@ -276,7 +276,7 @@ src/commands/info.rs	graph_info	22	PROVEN	Commands.infoSections: info_all, info_
 src/commands/info.rs	format_avg	88	PROVEN	Commands.formatAvg: formatAvg_int
 src/commands/list.rs	c_reply_name	48	PROVEN	Commands.cReplyName: cReplyName_nonul
 src/commands/list.rs	reply_bytes	59	PROVEN	Commands.replyBytes: replyBytes_str, replyBytes_nonstr (CallReply string bytes = FFI input)
-src/commands/list.rs	graph_list	67	PROVEN	Commands.scanLoop (each element through replyBytes): scanLoop_nonul, scanLoop_strs, scanLoop_page_none
+src/commands/list.rs	graph_list	67	PROVEN	Commands.scanLoop (each element through replyBytes): scanLoop_nonul, scanLoop_strs, scanPage_nonstr, scanLoop_page_none
 src/commands/memory.rs	c_schema_name	65	PROVEN	Commands.cSchemaName = cReplyName: cReplyName_nonul
 src/commands/memory.rs	memory_report	69	PROVEN	Commands.memTotal/memFields: memTotal_sum
 src/commands/memory.rs	graph_memory	181	PROVEN	Commands.memArgs: memArgs_default, memArgs_samples (SAMPLES 0 accepted, #3053), memArgs_samples_err

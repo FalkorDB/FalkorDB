@@ -158,18 +158,18 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 71 rows: `redis_type.rs` (28), `graphblas/serialization.rs` (17), the encoder and decoder (7 each), `mvcc_graph.rs` (7), `graph.rs` (5).
+`COVERAGE.tsv` has 77 rows: `redis_type.rs` (28), `graphblas/serialization.rs` (17), `mvcc_graph.rs` (10), the encoder and decoder (7 each), `graph.rs` (5), `runtime.rs` (3).
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 48 |
 | MODELLED | 2 |
-| NOT COVERED | 10 |
+| NOT COVERED | 16 |
 | AXIOMATISED | 11 |
 
 - **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `delete_key` and `key_holds_graph` (Redis module API); `rebuild_derived_matrices` (GraphBLAS).
 - **MODELLED:** `from_u64` (the payload-directory state tags, exercised by the live round trips) and `MvccGraph::from_graph` (the RDB load path, checked live).
-- **NOT COVERED:** four trait declarations or `unimplemented!` defaults in `serialization.rs`, and six `MvccGraph` functions (`new`, `read`, `write`, `commit`, `rollback`, `drop`) whose concurrency is not modelled here. The validated `commit` is proven in `search_concurrency` and `versioned_matrix`; `bash proofs/coverage.sh` counts each function once, in its best bucket.
+- **NOT COVERED:** four trait declarations or `unimplemented!` defaults in `serialization.rs`; nine `MvccGraph` functions (`new`, `read`, `fork`, `commit`, `is_stale`, `commit_indexer_batch`, `prepare`, `publish`, `drop`) whose concurrency is not modelled here; and three in `runtime.rs` (`publish` and two `QueryGraph::from` constructors). The validated `commit` is proven in `search_concurrency` and `versioned_matrix`; `bash proofs/coverage.sh` counts each function once, in its best bucket.
 
 ## What the model does not cover
 
