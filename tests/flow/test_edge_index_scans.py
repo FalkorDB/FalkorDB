@@ -1014,3 +1014,85 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
         finally:
             with_idx.delete()
             no_idx.delete()
+
+    # A row-invariant index query under bound endpoints is answered from the
+    # kept hit set after the first row (#3376). Every shape must still agree
+    # with the same query on a graph that has no index.
+    def test_bound_endpoint_hit_cache(self):
+        with_idx = self.db.select_graph("edge_idx_bound_cache")
+        no_idx = self.db.select_graph("edge_idx_bound_cache_plain")
+        setup = """UNWIND range(1, 40) AS i CREATE (:N {id: i})
+                   WITH DISTINCT 1 AS _ UNWIND range(1, 600) AS k
+                   MATCH (x:N {id: (k * 7) % 40 + 1}), (y:N {id: (k * 13) % 40 + 1})
+                   CREATE (x)-[:P {v: k}]->(y)"""
+        try:
+            with_idx.query("CREATE INDEX FOR (n:N) ON (n.id)")
+            create_edge_range_index(with_idx, 'P', 'v', sync=True)
+            with_idx.query(setup)
+            no_idx.query("CREATE INDEX FOR (n:N) ON (n.id)")
+            no_idx.query(setup)
+            for q in ["MATCH (a:N)-[r:P]->(b:N) WHERE r.v > 400 RETURN id(r), a.id, b.id",
+                      "MATCH (a:N)<-[r:P]-(b:N) WHERE r.v > 400 RETURN id(r), a.id, b.id",
+                      "MATCH (a:N)-[r:P]-(b:N) WHERE r.v > 590 RETURN id(r), a.id, b.id",
+                      "MATCH (a:N)-[r:P {v: 77}]->(b:N) RETURN id(r), a.id, b.id",
+                      "MATCH (a:N {id: 3})-[r:P]->(b) WHERE r.v > 100 RETURN id(r), b.id",
+                      "MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 RETURN id(r), a.id, b.id"]:
+                self.env.assertContains('Edge By Index Scan', str(with_idx.explain(q)))
+                self.env.assertEqual(sorted(with_idx.query(q).result_set),
+                                     sorted(no_idx.query(q).result_set), message=q)
+            q = "MATCH (a:N)-[r:P]->(a) WHERE r.v > 1 RETURN id(r), a.id"
+            self.env.assertEqual(sorted(with_idx.query(q).result_set),
+                                 sorted(no_idx.query(q).result_set), message=q)
+            # A parameter is row-invariant too.
+            q = "MATCH (a:N)-[r:P]->(b:N) WHERE r.v > $m RETURN id(r), a.id, b.id"
+            self.env.assertEqual(sorted(with_idx.query(q, {'m': 450}).result_set),
+                                 sorted(no_idx.query(q, {'m': 450}).result_set))
+            # A bound value that changes per row must not be cached.
+            q = "UNWIND range(1, 40) AS i MATCH (a:N {id: i})-[r:P]->(b:N) WHERE r.v > i * 10 RETURN id(r), a.id, b.id"
+            self.env.assertEqual(sorted(with_idx.query(q).result_set),
+                                 sorted(no_idx.query(q).result_set))
+        finally:
+            with_idx.delete()
+            no_idx.delete()
+
+    # A write query's upstream CALL {} commits new edges between batches, so the
+    # hit set must not be kept across them: every node sees its own new edge.
+    def test_bound_endpoint_hit_cache_skipped_by_write_query(self):
+        g = self.db.select_graph("edge_idx_bound_cache_write")
+        try:
+            g.query("UNWIND range(1, 3000) AS i CREATE (:N {id: i})")
+            create_edge_range_index(g, 'P', 'v', sync=True)
+            q = ("MATCH (a:N) CALL { WITH a CREATE (a)-[:P {v: 5}]->(a) } "
+                 "WITH a MATCH (a)-[r:P]->(b) WHERE r.v = 5 RETURN count(r)")
+            self.env.assertContains('Edge By Index Scan', str(g.explain(q)))
+            self.env.assertEqual(g.query(q).result_set[0][0], 3000)
+        finally:
+            g.delete()
+
+    # A LIMIT above a bound-endpoint edge index scan, with or without a Filter
+    # between them (a labelled destination adds one), keeps the answer equal to
+    # the unindexed graph; the hit cache stays off so the scan streams.
+    def test_bound_endpoint_hit_cache_under_limit(self):
+        with_idx = self.db.select_graph("edge_idx_bound_cache_lim")
+        no_idx = self.db.select_graph("edge_idx_bound_cache_lim_plain")
+        setup = """UNWIND range(1, 40) AS i CREATE (:N {id: i})
+                   WITH DISTINCT 1 AS _ UNWIND range(1, 600) AS k
+                   MATCH (x:N {id: (k * 7) % 40 + 1}), (y:N {id: (k * 13) % 40 + 1})
+                   CREATE (x)-[:P {v: k}]->(y)"""
+        try:
+            create_edge_range_index(with_idx, 'P', 'v', sync=True)
+            with_idx.query(setup)
+            no_idx.query(setup)
+            q = ("MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 "
+                 "RETURN count(r) AS c LIMIT 1")
+            self.env.assertEqual(with_idx.query(q).result_set, no_idx.query(q).result_set)
+            for q in ["MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 RETURN id(r) LIMIT 5",
+                      "MATCH (a:N)-[r:P]->(b:N) WHERE r.v >= 500 RETURN id(r) LIMIT 5"]:
+                self.env.assertContains('Edge By Index Scan', str(with_idx.explain(q)))
+                full = {row[0] for row in no_idx.query(q.replace(" LIMIT 5", "")).result_set}
+                got = [row[0] for row in with_idx.query(q).result_set]
+                self.env.assertEqual(len(got), 5)
+                self.env.assertLessEqual(set(got), full)
+        finally:
+            with_idx.delete()
+            no_idx.delete()
