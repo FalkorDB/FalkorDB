@@ -870,14 +870,36 @@ def wait_for_replica(primary, replica, timeout=30):
     primary has marked online, which can be before the replica has loaded its
     initial sync. So read the primary's offset, then wait for the replica's
     link to be up and its offset to reach it."""
-    target = primary.info("replication")["master_repl_offset"]
     deadline = time.time() + timeout
+
+    def bounded_info(conn):
+        # Bound each INFO by the time left in the budget, so an unresponsive
+        # server can't block past the deadline. Retries are off for the same
+        # reason. A fresh client is used so the caller's timeouts are untouched.
+        left = max(deadline - time.time(), 0.1)
+        kwargs = dict(conn.connection_pool.connection_kwargs)
+        kwargs.update(socket_timeout=left, socket_connect_timeout=left,
+                      retry=None, retry_on_timeout=False)
+        pool = redis.ConnectionPool(
+            connection_class=conn.connection_pool.connection_class, **kwargs)
+        client = redis.Redis(connection_pool=pool)
+        try:
+            return client.info("replication")
+        finally:
+            client.close()
+            pool.disconnect()
+
+    target = bounded_info(primary)["master_repl_offset"]
     info = {}
     while time.time() < deadline:
-        info = replica.info("replication")
-        if (info.get("master_link_status") == "up"
-                and info.get("slave_repl_offset", -1) >= target):
-            return
+        try:
+            info = bounded_info(replica)
+        except (redis.exceptions.TimeoutError, redis.exceptions.ConnectionError):
+            info = {}
+        else:
+            if (info.get("master_link_status") == "up"
+                    and info.get("slave_repl_offset", -1) >= target):
+                return
         time.sleep(0.01)
     raise AssertionError(
         f"replica did not reach the primary's offset {target} within {timeout}s "
