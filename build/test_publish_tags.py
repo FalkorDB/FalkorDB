@@ -132,7 +132,7 @@ class ReleaseTags(unittest.TestCase):
 
     def test_prerelease_cannot_name_a_server_os_or_arch(self):
         # 6.1.0-alpine's Valkey tag would be 6.1.0's Alpine image tag.
-        for bad in ("6.1.0-alpine", "6.1.0-redis", "6.1.0-rc.1-valkey", "6.1.0-x64",
+        for bad in ("6.1.0-alpine", "6.1.0-redis", "6.1.0-rc.1-valkey", "6.1.0-x64", "6.1.0-ARM64", "6.1.0-Valkey",
                     "6.1.0-arm64", "6.1.0-rhel9", "6.1.0-amazonlinux2023.1"):
             with self.assertRaises(pt.PlanError, msg=bad):
                 pt.release_plan(bad, SHA, [])
@@ -182,6 +182,7 @@ class RebuildTags(unittest.TestCase):
             ("5.2.0", False), ("4.22.3", False),  # C engine versions
             ("rc-mg-abc", False), ("rc-rebuild-x", False), ("rc", False),  # CI's namespace, or landing in it
             ("test-aarch64", False), ("x86_64", False),  # architecture names, however spelled
+            ("build-X64", False), ("foo-ARM64", False), ("test_x64", False), ("x86-test", False),
             ("v6.1.0", False), ("v6", False),  # versions have no leading v
             ("test-x64", False), ("foo-valkey", False), ("alpine", False),
             ("-x", False), ("a:b", False), ("", False),

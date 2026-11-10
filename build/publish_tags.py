@@ -74,7 +74,7 @@ RESERVED_PARTS = (
     set(SERVERS)
     | set(PLATFORMS)
     | {p.split("/")[1] for p in PLATFORMS.values()}
-    | {"aarch64", "x86_64"}
+    | {"aarch64", "x86", "x86_64"}
     | {os_name for os_name, _ in PER_OS}
 )
 
@@ -121,7 +121,8 @@ def parse_version(text: str):
 
 
 def check_parts(tag: str, what: str) -> None:
-    for part in re.split(r"[.-]", tag):
+    # Case-blind, and split on `_` too: X64 and test_x64 name an architecture.
+    for part in re.split(r"[._-]", tag.lower()):
         if part in RESERVED_PARTS:
             raise PlanError(
                 f"{what} '{tag}' contains '{part}', which tags use to name a "
