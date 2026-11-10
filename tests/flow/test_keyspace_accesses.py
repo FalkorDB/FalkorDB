@@ -112,5 +112,5 @@ class testKeyspaceAccesses(FlowTestsBase):
         # Nothing overwrote the string or left a graph behind.
         self.env.assertEqual(self.redis_con.get("string_key"), "x")
         self.env.assertEqual(self.redis_con.exists(create_key, "copy_dest"), 0)
-        self.env.assertFalse("string_key" in self.redis_con.execute_command("GRAPH.LIST"))
+        self.env.assertNotContains("string_key", self.redis_con.execute_command("GRAPH.LIST"))
         self.redis_con.delete("string_key")
