@@ -177,8 +177,8 @@ ARG REDIS_VERSION
 ARG VALKEY_VERSION
 
 # Install the self-built servers at the same path the upstream `redis:` image
-# used (/usr/local/bin), so tests/common.py ("/usr/local/bin/redis-server",
-# or valkey-server with FALKORDB_SERVER=valkey) and RLTest's PATH lookup
+# used (/usr/local/bin), so tests/common.py ("/usr/local/bin/valkey-server",
+# or redis-server with FALKORDB_SERVER=redis) and RLTest's PATH lookup
 # pick them up transparently. Directory COPYs, so the sentinel/check-*
 # symlinks come along.
 COPY --from=redis-builder  /server-install/ /usr/local/

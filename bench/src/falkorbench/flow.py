@@ -76,8 +76,14 @@ def require_macos() -> None:
 
 
 def redis_pids() -> set[int]:
-    # redis rewrites its proc title to "redis-server *:PORT", so -x won't match.
-    out = subprocess.run(["pgrep", "-f", "redis-server"], capture_output=True, text=True).stdout
+    # The server rewrites its proc title to "redis-server *:PORT" (or
+    # "valkey-server *:PORT", either maybe behind a path), so -x won't match.
+    # Anchored to the program name, so a command line that only mentions a
+    # server (a branch called ...-valkey-server-..., or RLTest's
+    # --oss-redis-path /path/valkey-server argument) is not counted.
+    out = subprocess.run(
+        ["pgrep", "-f", "^([^ ]*/)?(redis|valkey)-server( |$)"], capture_output=True, text=True
+    ).stdout
     return {int(p) for p in out.split()}
 
 
@@ -139,7 +145,15 @@ def build_env(
 ) -> tuple[dict[str, str], tempfile.TemporaryDirectory | None]:
     """flow.sh hardcodes the module filename, so a foreign module is symlinked
     under the expected name (this is how the C module gets measured)."""
-    env = {**os.environ, "VERBOSE": "0", "PARALLELISM": "--parallelism 1"}
+    # flow.sh starts valkey-server unless told otherwise. These measurements
+    # are compared against the C module, which runs on Redis, so Redis stays the
+    # default here; FALKORDB_SERVER=valkey in the environment measures Valkey.
+    env = {
+        **os.environ,
+        "FALKORDB_SERVER": os.environ.get("FALKORDB_SERVER") or "redis",
+        "VERBOSE": "0",
+        "PARALLELISM": "--parallelism 1",
+    }
     target = "libfalkordb.dylib" if sys.platform == "darwin" else "libfalkordb.so"
     tmp: tempfile.TemporaryDirectory | None = None
     if module.name == target:
