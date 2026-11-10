@@ -30,22 +30,22 @@ use super::{
 /// Row-major CSR export of a GraphBLAS matrix: what [`Matrix::take_csr`] hands
 /// back.
 ///
-/// Row `r` owns the entries `row_ptr[r] .. row_ptr[r + 1]`: their column
-/// indices are that slice of `col_idx`, ascending and duplicate-free, and —
+/// Row `r` owns the entries `row_offsets[r] .. row_offsets[r + 1]`: their column
+/// indices are that slice of `column_indices`, ascending and duplicate-free, and —
 /// unless `V` is `()`, the pattern alone — their values are the same slice of
-/// `vals`.
-/// `row_ptr` has `nrows + 1` entries and ends at the entry count. The widths
+/// `values`.
+/// `row_offsets` has `nrows + 1` entries and ends at the entry count. The widths
 /// are GraphBLAS's own, `P` for the offsets and `I` for the column indices
 /// (`u32` or `u64` each), which the caller asks the matrix for before
 /// exporting.
 pub struct CsrExport<P = u64, I = u32, V = ()> {
     pub(crate) nrows: u64,
-    /// `nrows + 1` offsets into `col_idx` (and `vals`, when non-empty).
-    pub row_ptr: Vec<P>,
+    /// `nrows + 1` offsets into `column_indices` (and `values`, when non-empty).
+    pub row_offsets: Vec<P>,
     /// One column index per entry, ascending within each row.
-    pub col_idx: Vec<I>,
+    pub column_indices: Vec<I>,
     /// One value per entry; empty for the pattern export (`V = ()`).
-    pub vals: Vec<V>,
+    pub values: Vec<V>,
 }
 
 /// Why [`Matrix::take_csr`] (or [`Matrix::prepare_csr`]) refused a matrix. The export never converts the
@@ -99,6 +99,15 @@ impl CsrExportError {
             Self::Setting(_) => "CSR export: GraphBLAS refused a storage setting",
         }
     }
+}
+
+/// A GraphBLAS count (`GrB_Index`, or a byte size) as a length.
+///
+/// # Panics
+/// If it does not fit a `usize`, which only a target narrower than 64 bits
+/// allows: GraphBLAS counts what this process holds in memory.
+fn length(count: u64) -> usize {
+    usize::try_from(count).expect("a GraphBLAS count fits a usize")
 }
 
 /// A Rust type a GraphBLAS array is read as bit for bit, with no conversion.
@@ -284,7 +293,7 @@ impl Unloaded {
         &self,
         len: usize,
     ) -> bool {
-        len == 0 || (T::holds(self.ty) && self.n as usize >= len)
+        len == 0 || (T::holds(self.ty) && length(self.n) >= len)
     }
 
     /// The first `len` entries as a `Vec<T>`, which [`Self::fits`] allows.
@@ -299,7 +308,7 @@ impl Unloaded {
         self,
         len: usize,
     ) -> Vec<T> {
-        let size = self.size as usize;
+        let size = length(self.size);
         if !self.x.is_null()
             && self.handling == GrB_Desc_Value::GrB_DEFAULT as c_int
             && size.is_multiple_of(size_of::<T>())
@@ -318,13 +327,13 @@ impl Unloaded {
         if len == 0 {
             return Vec::new();
         }
-        let mut out = Vec::<T>::with_capacity(n as usize);
+        let mut out = Vec::<T>::with_capacity(length(n));
         let mut got = n;
         // SAFETY: `out` has room for `n` values, the length of `v`, which holds
         // the array again; `fits` checked that `n >= len`.
         unsafe {
             grb!(T::extract(v, out.as_mut_ptr(), &raw mut got));
-            out.set_len(got as usize);
+            out.set_len(length(got));
         }
         out.truncate(len);
         out
@@ -378,7 +387,7 @@ where
             "a materialized matrix is never jumbled"
         );
         let nrows = (*container).nrows;
-        let nvals = (*container).nvals as usize;
+        let nvals = length((*container).nvals);
         if (*container).format != GxB_SPARSE as i32
             || (*container).orientation != GrB_Orientation::GrB_ROWMAJOR as i32
         {
@@ -392,7 +401,7 @@ where
         let p = Unloaded::unload((*container).p);
         let i = Unloaded::unload((*container).i);
         let x = V::HAS_VALUES.then(|| Unloaded::unload((*container).x));
-        let what = if !p.fits::<P>(nrows as usize + 1) {
+        let what = if !p.fits::<P>(length(nrows) + 1) {
             Some("the offsets")
         } else if !i.fits::<I>(nvals) {
             Some("the column indices")
@@ -410,17 +419,17 @@ where
         }
 
         // Checked: the arrays leave the container for good.
-        let row_ptr = p.into_vec::<P>(nrows as usize + 1);
-        let col_idx = i.into_vec::<I>(nvals);
-        let vals = x.map_or_else(Vec::new, |x| x.into_vec::<V>(nvals));
+        let row_offsets = p.into_vec::<P>(length(nrows) + 1);
+        let column_indices = i.into_vec::<I>(nvals);
+        let values = x.map_or_else(Vec::new, |x| x.into_vec::<V>(nvals));
         // What the container still holds (an iso pattern value, an array
         // copied rather than adopted) is GraphBLAS's to free.
         grb!(GxB_Container_free(&raw mut container));
         Ok(CsrExport {
             nrows,
-            row_ptr,
-            col_idx,
-            vals,
+            row_offsets,
+            column_indices,
+            values,
         })
     }
 }
@@ -467,8 +476,8 @@ mod tests {
     fn entries<V>(csr: &CsrExport<u64, u32, V>) -> Vec<(u64, u64)> {
         let mut out = Vec::new();
         for r in 0..csr.nrows as usize {
-            for k in csr.row_ptr[r]..csr.row_ptr[r + 1] {
-                out.push((r as u64, u64::from(csr.col_idx[k as usize])));
+            for k in csr.row_offsets[r]..csr.row_offsets[r + 1] {
+                out.push((r as u64, u64::from(csr.column_indices[k as usize])));
             }
         }
         out
@@ -496,13 +505,13 @@ mod tests {
             .take_csr::<u64, u32, ()>()
             .expect("a CSR-ready matrix exports");
         assert_eq!(csr.nrows, 5);
-        assert_eq!(csr.row_ptr.len(), 6);
-        assert_eq!(csr.row_ptr, vec![0, 3, 3, 4, 6, 6]);
+        assert_eq!(csr.row_offsets.len(), 6);
+        assert_eq!(csr.row_offsets, vec![0, 3, 3, 4, 6, 6]);
         assert_eq!(
             entries(&csr),
             vec![(0, 0), (0, 2), (0, 4), (2, 2), (3, 0), (3, 1)]
         );
-        assert!(csr.vals.is_empty(), "pattern export carries no values");
+        assert!(csr.values.is_empty(), "pattern export carries no values");
         // The entries moved out: the matrix keeps none of them.
         taken(&m);
     }
@@ -528,9 +537,9 @@ mod tests {
         let csr = m
             .take_csr::<u32, u32, f64>()
             .expect("a CSR-ready matrix exports");
-        assert_eq!(csr.row_ptr, vec![0u32, 2, 2, 3]);
-        assert_eq!(csr.col_idx, vec![1, 2, 0]);
-        assert_eq!(csr.vals, vec![1.5, 2.5, 7.25]);
+        assert_eq!(csr.row_offsets, vec![0u32, 2, 2, 3]);
+        assert_eq!(csr.column_indices, vec![1, 2, 0]);
+        assert_eq!(csr.values, vec![1.5, 2.5, 7.25]);
     }
 
     /// An all-equal FP64 matrix is stored iso (one value for every entry). The
@@ -559,8 +568,8 @@ mod tests {
         let csr = m
             .take_csr::<u64, u32, f64>()
             .expect("expanded, the matrix exports");
-        assert_eq!(csr.vals, vec![4.0, 4.0, 4.0]);
-        assert_eq!(csr.col_idx, vec![0, 2, 1]);
+        assert_eq!(csr.values, vec![4.0, 4.0, 4.0]);
+        assert_eq!(csr.column_indices, vec![0, 2, 1]);
 
         // The pattern does not care, and its iso value stays with GraphBLAS.
         let mut m = iso();
