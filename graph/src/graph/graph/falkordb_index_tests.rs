@@ -1652,7 +1652,7 @@ fn escalate(
 
 /// One writer's unit of work on `mvcc`: fork, `write` into the fork, commit it.
 fn commit_write(
-    mvcc: &MvccGraph,
+    mvcc: &Arc<MvccGraph>,
     write: impl FnOnce(&mut Graph),
 ) {
     let mut fork = mvcc.fork();
@@ -3350,8 +3350,8 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
 struct TestHost {
     mvcc: Arc<MvccGraph>,
     local: LocalHost,
-    before_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&MvccGraph) + Send>>>,
-    after_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&MvccGraph) + Send>>>,
+    before_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&Arc<MvccGraph>) + Send>>>,
+    after_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&Arc<MvccGraph>) + Send>>>,
     warnings: parking_lot::Mutex<Vec<String>>,
 }
 
@@ -3377,14 +3377,14 @@ impl TestHost {
 
     fn before_publish(
         &self,
-        f: impl FnOnce(&MvccGraph) + Send + 'static,
+        f: impl FnOnce(&Arc<MvccGraph>) + Send + 'static,
     ) {
         *self.before_publish.lock() = Some(Box::new(f));
     }
 
     fn after_publish(
         &self,
-        f: impl FnOnce(&MvccGraph) + Send + 'static,
+        f: impl FnOnce(&Arc<MvccGraph>) + Send + 'static,
     ) {
         *self.after_publish.lock() = Some(Box::new(f));
     }
