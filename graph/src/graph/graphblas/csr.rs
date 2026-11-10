@@ -48,7 +48,7 @@ pub struct CsrExport<P = u64, I = u32, V = ()> {
     pub vals: Vec<V>,
 }
 
-/// Why [`Matrix::take_csr`] refused a matrix. The export never converts the
+/// Why [`Matrix::take_csr`] (or [`Matrix::prepare_csr`]) refused a matrix. The export never converts the
 /// storage or casts an array: the caller sets the matrix up
 /// ([`Matrix::prepare_csr`]) and anything else is refused, the matrix left as
 /// it was. The handle and the value type are checked before the unload; the
@@ -79,6 +79,11 @@ pub enum CsrExportError {
     /// indices).
     #[error("{0} are not of the requested type")]
     Array(&'static str),
+    /// [`Matrix::prepare_csr`] only: GraphBLAS refused one of the storage
+    /// settings, with this `GrB_Info` (a conversion allocates in proportion to
+    /// the matrix, so it can run out of memory).
+    #[error("GraphBLAS refused a storage setting: {0:?}")]
+    Setting(GrB_Info),
 }
 
 impl CsrExportError {
@@ -91,6 +96,7 @@ impl CsrExportError {
             Self::NotCsr => "CSR export: the matrix is not stored as sorted row-major sparse",
             Self::IsoValues => "CSR export: the values are stored iso",
             Self::Array(_) => "CSR export: an array is not of the requested type",
+            Self::Setting(_) => "CSR export: GraphBLAS refused a storage setting",
         }
     }
 }
@@ -433,7 +439,8 @@ mod tests {
     /// checks all of it and sets none of it. Iso values are left alone, for
     /// the iso test; a caller exporting values asks for `V = f64`.
     fn csr_ready<T>(m: &mut Matrix<T>) {
-        grb!(m.prepare_csr::<u64, u32, ()>());
+        m.prepare_csr::<u64, u32, ()>()
+            .expect("an unshared matrix is set up");
     }
 
     /// Break one storage setting behind `prepare_csr`'s back, as a matrix
@@ -511,7 +518,8 @@ mod tests {
             m.set(i, j, w);
         }
         m.wait();
-        grb!(m.prepare_csr::<u32, u32, f64>());
+        m.prepare_csr::<u32, u32, f64>()
+            .expect("an unshared matrix is set up");
 
         assert_eq!(
             m.take_csr::<u64, u32, f64>().err(),
@@ -546,7 +554,8 @@ mod tests {
             Some(CsrExportError::IsoValues)
         );
         assert_eq!(m.nvals(), 3, "refused, the matrix keeps its entries");
-        grb!(m.prepare_csr::<u64, u32, f64>());
+        m.prepare_csr::<u64, u32, f64>()
+            .expect("an unshared matrix is set up");
         let csr = m
             .take_csr::<u64, u32, f64>()
             .expect("expanded, the matrix exports");
@@ -630,9 +639,14 @@ mod tests {
         );
         intact(&m);
 
-        // A clone shares the handle and would see the matrix empty mid-export.
+        // A clone shares the handle and would see the matrix empty mid-export,
+        // or its storage convert under it mid-read.
         let mut m = fresh();
         let clone = m.clone();
+        assert_eq!(
+            m.prepare_csr::<u64, u32, f64>().err(),
+            Some(CsrExportError::SharedHandle)
+        );
         assert_eq!(
             m.take_csr::<u64, u32, f64>().err(),
             Some(CsrExportError::SharedHandle)

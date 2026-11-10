@@ -43,34 +43,34 @@ graph/src/graph/graphblas/matrix.rs	sparsity_status	1243	PROVEN	GBWGlue.sparsity
 graph/src/graph/graphblas/matrix.rs	nvals	1263	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/matrix.rs	remove	1272	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
 graph/src/graph/graphblas/matrix.rs	print	1284	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	dup	1446	PROVEN	Own.dup_independent_ownership (fresh Arc<Handle>/Mutex/flag)
-graph/src/graph/graphblas/matrix.rs	dup	1450	PROVEN	Own.dup_independent_ownership (fresh Arc<Handle>/Mutex/flag)
-graph/src/graph/graphblas/matrix.rs	count_value_eq	1504	PROVEN	Decode.countValueEq_spec / countValueEq_markers (#3033; GrB_Matrix_select_UINT64 + GrB_VALUEEQ_UINT64 then nvals = number of entries equal to y, C contract as hypothesis SelectValueEqSpec, not an axiom; Info debugAssert)
-graph/src/graph/graphblas/matrix.rs	new	1526	PROVEN	Index.matrixNewOk / create_safe_iff: assert fires iff dim > 2^60 (#2892)
-graph/src/graph/graphblas/matrix.rs	set	1550	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	get	1565	PROVEN	GrbInfo.Disposition.propagate (non-success -> None)
-graph/src/graph/graphblas/matrix.rs	iter	1584	PROVEN	RowIter.drain_seek_eq_spec
-graph/src/graph/graphblas/matrix.rs	build	1593	PROVEN	Index.len_cast_lossless (rows.len() as u64)
-graph/src/graph/graphblas/matrix.rs	new	1836	PROVEN	Index.create_safe_iff / create_2pow61_crashes (#2892 boundary)
-graph/src/graph/graphblas/matrix.rs	get	1867	PROVEN	GrbInfo.Disposition.propagate (non-success -> None)
-graph/src/graph/graphblas/matrix.rs	set	1883	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	assign_product_true	1907	PROVEN	Index.len_cast_lossless (len() as u64)
-graph/src/graph/graphblas/matrix.rs	build	1936	PROVEN	Index.len_cast_lossless (rows.len() as u64)
-graph/src/graph/graphblas/matrix.rs	delta_lmxm	1973	PROVEN	DeltaLmxm.deltaLmxm (matrix.rs:1631-1768 branch for branch, GrB calls as spec definitions): deltaLmxm_spec (path counts, no assumption on layers); deltaLmxm_correct = F*(M-DM+DP) given dm ⊆ m; deltaLmxm_eff (VM.Inv.dm_m: the VersionedMatrix invariant, discharged), deltaLmxm_tensor (Tensor.Inv); #3492 (a3a99bdbc) fix: delta_lmxm_keeps_live_path, delta_lmxm_drops_when_all_paths_deleted, needs_dm_sub_m
-graph/src/graph/graphblas/matrix.rs	iter	2113	PROVEN	RowIter.drain_seek_eq_spec
-graph/src/graph/graphblas/matrix.rs	extract	2134	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	pos	2137	PROVEN	GBWGlue.posB/posU: posB_eq, posU_eq
-graph/src/graph/graphblas/matrix.rs	extract	2146	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	pos	2154	PROVEN	GBWGlue.posB: posB_eq
-graph/src/graph/graphblas/matrix.rs	extract	2165	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	pos	2174	PROVEN	GBWGlue.posU: posU_eq, posU_agrees
-graph/src/graph/graphblas/matrix.rs	drop	2197	PROVEN	Iter::drop (#3090): Own.iter_frees_iterator_before_matrix, detached_iter_frees_only_matrix, iterDrop_state (then Arc<Handle> release, arc_frees_once)
-graph/src/graph/graphblas/matrix.rs	matrix	2208	PROVEN	Iter::matrix (#3090): private accessor returning self.m.0 (same read as Matrix::inner, GBWGlue.MatH.inner_eq); no free, no ownership transfer
-graph/src/graph/graphblas/matrix.rs	new	2219	PROVEN	RowIter.drain_seek_eq_spec
-graph/src/graph/graphblas/matrix.rs	detached	2240	PROVEN	RowIter.drain_empty_matrix (depleted, yields nothing)
-graph/src/graph/graphblas/matrix.rs	attach	2251	AXIOMATISED	GxB_Iterator_new (assert, OOM only) + rowIterator_attach (debugAssert)
-graph/src/graph/graphblas/matrix.rs	seek	2276	PROVEN	RowIter.drain_seek_eq_spec (seekRow + NO_VALUE loop)
-graph/src/graph/graphblas/matrix.rs	next	2309	PROVEN	RowIter.drainL_eq_filter / drain_no_duplication; test ok_row_iterator_exactly_once
+graph/src/graph/graphblas/matrix.rs	dup	1449	PROVEN	Own.dup_independent_ownership (fresh Arc<Handle>/Mutex/flag)
+graph/src/graph/graphblas/matrix.rs	dup	1453	PROVEN	Own.dup_independent_ownership (fresh Arc<Handle>/Mutex/flag)
+graph/src/graph/graphblas/matrix.rs	count_value_eq	1507	PROVEN	Decode.countValueEq_spec / countValueEq_markers (#3033; GrB_Matrix_select_UINT64 + GrB_VALUEEQ_UINT64 then nvals = number of entries equal to y, C contract as hypothesis SelectValueEqSpec, not an axiom; Info debugAssert)
+graph/src/graph/graphblas/matrix.rs	new	1529	PROVEN	Index.matrixNewOk / create_safe_iff: assert fires iff dim > 2^60 (#2892)
+graph/src/graph/graphblas/matrix.rs	set	1553	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	get	1568	PROVEN	GrbInfo.Disposition.propagate (non-success -> None)
+graph/src/graph/graphblas/matrix.rs	iter	1587	PROVEN	RowIter.drain_seek_eq_spec
+graph/src/graph/graphblas/matrix.rs	build	1596	PROVEN	Index.len_cast_lossless (rows.len() as u64)
+graph/src/graph/graphblas/matrix.rs	new	1839	PROVEN	Index.create_safe_iff / create_2pow61_crashes (#2892 boundary)
+graph/src/graph/graphblas/matrix.rs	get	1870	PROVEN	GrbInfo.Disposition.propagate (non-success -> None)
+graph/src/graph/graphblas/matrix.rs	set	1886	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	assign_product_true	1910	PROVEN	Index.len_cast_lossless (len() as u64)
+graph/src/graph/graphblas/matrix.rs	build	1939	PROVEN	Index.len_cast_lossless (rows.len() as u64)
+graph/src/graph/graphblas/matrix.rs	delta_lmxm	1976	PROVEN	DeltaLmxm.deltaLmxm (matrix.rs:1631-1768 branch for branch, GrB calls as spec definitions): deltaLmxm_spec (path counts, no assumption on layers); deltaLmxm_correct = F*(M-DM+DP) given dm ⊆ m; deltaLmxm_eff (VM.Inv.dm_m: the VersionedMatrix invariant, discharged), deltaLmxm_tensor (Tensor.Inv); #3492 (a3a99bdbc) fix: delta_lmxm_keeps_live_path, delta_lmxm_drops_when_all_paths_deleted, needs_dm_sub_m
+graph/src/graph/graphblas/matrix.rs	iter	2116	PROVEN	RowIter.drain_seek_eq_spec
+graph/src/graph/graphblas/matrix.rs	extract	2137	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	pos	2140	PROVEN	GBWGlue.posB/posU: posB_eq, posU_eq
+graph/src/graph/graphblas/matrix.rs	extract	2149	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	pos	2157	PROVEN	GBWGlue.posB: posB_eq
+graph/src/graph/graphblas/matrix.rs	extract	2168	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	pos	2177	PROVEN	GBWGlue.posU: posU_eq, posU_agrees
+graph/src/graph/graphblas/matrix.rs	drop	2200	PROVEN	Iter::drop (#3090): Own.iter_frees_iterator_before_matrix, detached_iter_frees_only_matrix, iterDrop_state (then Arc<Handle> release, arc_frees_once)
+graph/src/graph/graphblas/matrix.rs	matrix	2211	PROVEN	Iter::matrix (#3090): private accessor returning self.m.0 (same read as Matrix::inner, GBWGlue.MatH.inner_eq); no free, no ownership transfer
+graph/src/graph/graphblas/matrix.rs	new	2222	PROVEN	RowIter.drain_seek_eq_spec
+graph/src/graph/graphblas/matrix.rs	detached	2243	PROVEN	RowIter.drain_empty_matrix (depleted, yields nothing)
+graph/src/graph/graphblas/matrix.rs	attach	2254	AXIOMATISED	GxB_Iterator_new (assert, OOM only) + rowIterator_attach (debugAssert)
+graph/src/graph/graphblas/matrix.rs	seek	2279	PROVEN	RowIter.drain_seek_eq_spec (seekRow + NO_VALUE loop)
+graph/src/graph/graphblas/matrix.rs	next	2312	PROVEN	RowIter.drainL_eq_filter / drain_no_duplication; test ok_row_iterator_exactly_once
 graph/src/graph/graphblas/vector.rs	drop	75	AXIOMATISED	GrB_Vector_free / GxB_Iterator_free, single owner
 graph/src/graph/graphblas/vector.rs	from	87	PROVEN	GBWGlue.vecFrom: ptr_vecFrom
 graph/src/graph/graphblas/vector.rs	from	96	PROVEN	GBWGlue.vecFrom: ptr_vecFrom
@@ -1216,33 +1216,33 @@ graph/src/graph/graphblas/serialization.rs	encode_with_range	40	PROVEN	GBWSerial
 graph/src/graph/graphblas/serialization.rs	decode	64	AXIOMATISED	trait method declaration (no body): its contract is the structure GBWSerial.Codec, an obligation each impl owes; Codec.roundtrip is a field, so Codec.roundtrip2 proves nothing about an impl (instances are proved in their own projects, e.g. VMOps.decode_encode)
 graph/src/graph/graphblas/serialization.rs	decode_with_count	76	PROVEN	GBWSerial.decodeWithCountDefault: defaults_panic
 graph/src/graph/graphblas/serialization.rs	from_u64	146	PROVEN	GBWSerial.fromU64: fromU64_disc, fromU64_some, fromU64_none
-graph/src/graph/graphblas/matrix.rs	Matrix<f64>::new	1626	NOT COVERED	not modelled yet: `#[cfg(any(test, feature = "index-falkordb"))] impl Matrix<f64>`, the test kit's block, now also the CCH input's (#3211)
-graph/src/graph/graphblas/matrix.rs	Matrix<f64>::set	1653	NOT COVERED	not modelled yet: `#[cfg(any(test, feature = "index-falkordb"))] impl Matrix<f64>`, the test kit's block, now also the CCH input's (#3211)
-graph/src/graph/graphblas/matrix.rs	Matrix<f64>::build	1673	NOT COVERED	not modelled yet: `#[cfg(any(test, feature = "index-falkordb"))] impl Matrix<f64>`, the test kit's block, now also the CCH input's (#3211)
-graph/src/graph/graphblas/matrix.rs	Matrix<f64>::extract_tuples	1701	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
+graph/src/graph/graphblas/matrix.rs	Matrix<f64>::new	1629	NOT COVERED	not modelled yet: `#[cfg(any(test, feature = "index-falkordb"))] impl Matrix<f64>`, the test kit's block, now also the CCH input's (#3211)
+graph/src/graph/graphblas/matrix.rs	Matrix<f64>::set	1656	NOT COVERED	not modelled yet: `#[cfg(any(test, feature = "index-falkordb"))] impl Matrix<f64>`, the test kit's block, now also the CCH input's (#3211)
+graph/src/graph/graphblas/matrix.rs	Matrix<f64>::build	1676	NOT COVERED	not modelled yet: `#[cfg(any(test, feature = "index-falkordb"))] impl Matrix<f64>`, the test kit's block, now also the CCH input's (#3211)
+graph/src/graph/graphblas/matrix.rs	Matrix<f64>::extract_tuples	1704	NOT COVERED	TEST-ONLY: `#[cfg(test)] impl Matrix<f64>` (#3320)
 graph/src/graph/graphblas/matrix.rs	EWiseAdd::add_op	343	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
 graph/src/graph/graphblas/matrix.rs	bits	506	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
 graph/src/graph/graphblas/matrix.rs	Matrix::drop_diagonal	1049	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
 graph/src/graph/graphblas/matrix.rs	Matrix::prepare_csr	1319	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/matrix.rs	Matrix::set_i32	1347	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/matrix.rs	Matrix::take_csr	1400	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/matrix.rs	Matrix::min_value	1735	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/matrix.rs	Matrix::sum_value	1745	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/matrix.rs	Matrix::reduce_fp64	1753	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/matrix.rs	Matrix::pattern_union	1810	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	CsrExportError::reason	87	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	holds	111	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	extract	119	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	holds	129	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	extract	133	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	holds	146	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	extract	150	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	holds	160	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	extract	164	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	holds	176	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	extract	180	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	Unloaded::unload	234	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	Unloaded::reload	258	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	Unloaded::fits	277	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	Unloaded::into_vec	292	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
-graph/src/graph/graphblas/csr.rs	take_out_csr	345	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/matrix.rs	Matrix::set_i32	1350	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/matrix.rs	Matrix::take_csr	1403	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/matrix.rs	Matrix::min_value	1738	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/matrix.rs	Matrix::sum_value	1748	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/matrix.rs	Matrix::reduce_fp64	1756	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/matrix.rs	Matrix::pattern_union	1813	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	CsrExportError::reason	92	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	holds	117	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	extract	125	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	holds	135	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	extract	139	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	holds	152	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	extract	156	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	holds	166	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	extract	170	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	holds	182	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	extract	186	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	Unloaded::unload	240	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	Unloaded::reload	264	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	Unloaded::fits	283	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	Unloaded::into_vec	298	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
+graph/src/graph/graphblas/csr.rs	take_out_csr	351	NOT COVERED	not modelled yet: CCH input wrappers, CSR export and the effective matrix (#3211)
