@@ -97,6 +97,7 @@ test_index_scans:testIndexScanFlow.test13_point_index_scan
 # ---------------------------------------------------------------------------
 error: a conjunction of 2 predicates [equality on `*`; range on `*`]
 test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test28_post_filter_keeps_pushed_conjuncts
+test_index_scans:testIndexScanFlow.test_37_multi_label_conditions_stay_on_their_index
 test_index_scans:testIndexScanFlow.test_43_merged_filters_use_the_index
 
 # ---------------------------------------------------------------------------
