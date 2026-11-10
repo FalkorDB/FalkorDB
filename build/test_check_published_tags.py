@@ -500,6 +500,17 @@ class EdgeTest(unittest.TestCase):
         self.assertEqual(checks_failed(checker), {"architectures"})
         self.assertIn("also lists linux/s390x", checker.failures[0].detail)
 
+    def test_an_extra_manifest_without_a_platform_or_attestation_note_fails(self):
+        """Only a manifest annotated as an attestation is skipped; a bare
+        descriptor with no platform is an unvalidated image, not one."""
+        docker = FakeDocker()
+        valkey = publish_edge(docker)
+        digest = valkey["falkordb-server"]
+        docker.manifests[digest]["manifests"].append({"digest": "sha256:" + "ab" * 32})
+        checker = check(docker, "edge")
+        self.assertIn("architectures", checks_failed(checker))
+        self.assertIn("also lists ?/?", " ".join(r.detail for r in checker.failures))
+
     def test_a_single_platform_manifest_under_a_public_tag_fails(self):
         docker = FakeDocker()
         publish_edge(docker)

@@ -576,11 +576,12 @@ class Checker:
             for entry in raw["manifests"]:
                 platform = entry.get("platform") or {}
                 annotations = entry.get("annotations") or {}
-                if platform.get("os") in (None, "unknown"):
-                    continue  # attestation manifests
                 if annotations.get("vnd.docker.reference.type") == "attestation-manifest":
                     continue
-                name = f"{platform['os']}/{platform.get('architecture', '?')}"
+                # Any other entry counts, a missing or unknown platform included:
+                # it is listed under that name and fails the exact-platform check
+                # instead of slipping by as an attestation.
+                name = f"{platform.get('os') or '?'}/{platform.get('architecture') or '?'}"
                 if name in platforms:
                     duplicates.append(name)
                 else:
