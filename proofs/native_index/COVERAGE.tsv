@@ -136,16 +136,12 @@ graph/src/index/falkordb/versioned.rs	Graph::rebase_index	533	PROVEN	Rebase.EN.r
 graph/src/index/falkordb/graph_writes.rs	entity_tuples	445	PROVEN	Rebase.entityTuples: entityTuples_spec (the tuple of each id whose label or type holds, none otherwise)
 graph/src/graph/mvcc_graph.rs	MvccGraph::rebase_onto_indexer_batches	171	PROVEN	Rebase.mvccRebase: mvccRebase_noop (nothing overtaken: Ok, fork untouched), mvccRebase_unborrowed (an escalating writer's fork always succeeds), mvccRebase_borrowed_release/_debug (Err(Stale) / panic); V.rebased_keeps_data, V.rebased_not_stale (no data version change); the fork is now a plain Graph taken by &mut, so the borrowed arms (mvccRebase_borrowed_*) describe code that is gone and mvccRebase_noop/_unborrowed are the whole function
 graph/src/graph/graph.rs	Graph::build_place	3886	PROVEN	Rebase.BuildCursor.fromId (with the version's edge endpoints): fromId_spec
-graph/src/graph/graph.rs	Graph::create_cch_index	5304	PROVEN	Cch.graphCreateCchIndex: graphCreateCchIndex_panics (unimplemented!, #3212; nothing calls it)
-graph/src/graph/graph.rs	Graph::drop_cch_index	5327	PROVEN	Cch.graphDropCchIndex: graphDropCchIndex_panics (through FalkorDbIndex::drop_cch, unimplemented!, #3212)
-graph/src/graph/graph.rs	Graph::cch_indexes	5335	PROVEN	Cch.graphCchIndexes: graphCchIndexes_panics (through FalkorDbIndex::cch_defs, unimplemented!, #3212)
-graph/src/graph/graph.rs	Graph::cch_index	5342	PROVEN	Cch.graphCchIndex: graphCchIndex_panics (through FalkorDbIndex::cch_index, unimplemented!, #3212)
-graph/src/graph/graph.rs	Graph::rebuild_cch_indexes	5274	PROVEN	Cch.graphRebuildCchIndexes: graphRebuildCchIndexes_panics (unimplemented!, #3212)
+graph/src/graph/graph.rs	Graph::create_cch_index	5304	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
+graph/src/graph/graph.rs	Graph::drop_cch_index	5327	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
+graph/src/graph/graph.rs	Graph::cch_indexes	5335	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
+graph/src/graph/graph.rs	Graph::cch_index	5342	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
 graph/src/graph/graph.rs	query_index_nodes	4222	NOT COVERED	native Range column (#3740): query_index_numeric_nodes until #3736; wraps query_column, re-target pending
 graph/src/graph/graph.rs	query_index_edges	4240	NOT COVERED	native Range column (#3740): query_index_numeric_edges until #3736; wraps query_column, re-target pending
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_index	1183	PROVEN	Cch.indexCchIndex: indexCchIndex_panics (unimplemented!, #3212)
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_defs	1193	PROVEN	Cch.indexCchDefs: indexCchDefs_panics (unimplemented! before the `std::iter::empty()` that only pins the return type)
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::drop_cch	1220	PROVEN	Cch.indexDropCch: indexDropCch_panics (unimplemented!, #3212)
 graph/src/index/falkordb/cch/mod.rs	Csr::row	98	PROVEN	Cch.Csr.row?: row?_spec (i[p[u]..p[u+1]], none = the panic), row?_isSome_of_wf (a well-formed Csr never panics for u < n)
 graph/src/index/falkordb/cch/mod.rs	Csr::is_well_formed	122	PROVEN	Cch.Csr.isWellFormed: isWellFormed_iff (n+1 offsets from 0, never decreasing, ending at i.len(); every id below n)
 graph/src/index/falkordb/cch/mod.rs	Csr::is_symmetric_simple	143	PROVEN	Cch.Csr.isSymmetricSimple: isSymmetricSimple_iff (well formed, rows strictly increasing, no self-loop, entries mirrored; binary_search by its std contract on a sorted slice), isSymmetricSimple_any_bs
@@ -239,6 +235,11 @@ graph/src/index/falkordb/falkordb_index.rs	ScanFilter::resolve	466	NOT COVERED	n
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::for_each_stored_key	895	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::intersect_columns	1024	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::intersect_columns::group	1032	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_index	1183	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_defs	1193	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::drop_cch	1220	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_entry	1173	NOT COVERED	not modelled yet: the CCH Graph index API and Cch::fits (#3212, #3361)
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::add_cch	1201	NOT COVERED	not modelled yet: the CCH Graph index API and Cch::fits (#3212, #3361)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::create_column	680	PROVEN	createNumeric (Ready, RDB-load path): numeric_createNumeric, entry_createNumeric (create_numeric until #3736; the column is a RangeIndex holding only its numeric kind)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::query_column	974	NOT COVERED	native Range column (#3740): query_numeric until #3736, whose routing moved into range::Selection::of; queryNumeric models the pre-#3736 match, re-target pending
 graph/src/index/falkordb/falkordb_index.rs	ScanFilter::matches	483	NOT COVERED	native Range column (#3740): matches through range::Selection::matches since #3736, re-target pending
@@ -271,6 +272,8 @@ graph/src/index/falkordb/cch/customize.rs	Cch::upward_weight	382	NOT COVERED	not
 graph/src/index/falkordb/cch/customize.rs	Cch::downward_weight	390	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
 graph/src/index/falkordb/cch/customize.rs	Cch::upward_middle	399	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
 graph/src/index/falkordb/cch/customize.rs	Cch::downward_middle	407	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
+graph/src/index/falkordb/cch/customize.rs	well_formed	117	NOT COVERED	not modelled yet: the CCH Graph index API and Cch::fits (#3212, #3361)
+graph/src/index/falkordb/cch/customize.rs	fits	133	NOT COVERED	not modelled yet: the CCH Graph index API and Cch::fits (#3212, #3361)
 graph/src/index/falkordb/cch/query.rs	Chain::new	67	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
 graph/src/index/falkordb/cch/query.rs	Chain::relax_from	99	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
 graph/src/index/falkordb/cch/query.rs	Chain::arcs_up_to	136	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
