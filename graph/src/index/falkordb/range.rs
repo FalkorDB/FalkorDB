@@ -1,15 +1,14 @@
 //! The Range column: one `(label, attribute)` index, made of the kinds a RediSearch Range field is
-//! made of — NUMERIC, TAG and GEO. The numeric and tag kinds exist so far; GEO lands as a further
-//! field of [`RangeIndex`] implementing [`RangeKind`].
+//! made of — NUMERIC, TAG and GEO — each a field of [`RangeIndex`] implementing [`RangeKind`].
 //!
 //! A Cypher property is not typed, so one column has to hold whatever the entities put in it. The
-//! kinds are therefore not alternatives but **co-resident**: a column with `age = 30` on one node
-//! and `age = 'thirty'` on another stores each in the kind that can order it, and a predicate is
-//! routed by the type of its operand.
+//! kinds are therefore not alternatives but **co-resident**: a column with `v = 30` on one node,
+//! `v = 'thirty'` on another and `v = point(...)` on a third stores each in the kind that can
+//! order it, and a predicate is routed by the type of its operand.
 //!
-//! Each kind keys its trees on what orders it — a number's `u64` encoding, a string's bytes — one
-//! tree per [`KeyKind`], and a column's tuples move between threads and versions as
-//! [`EncodedTuples`] whatever their kind.
+//! Each kind keys its trees on what orders it — a number's `u64` encoding, a string's bytes, a
+//! point's Morton code — one tree per [`KeyKind`], and a column's tuples move between threads and
+//! versions as [`EncodedTuples`] whatever their kind.
 //!
 //! Routing is exhaustive and total. Every predicate either reaches a kind, is answered empty
 //! because it cannot match — a `NULL` operand, say, or a scalar predicate and a list predicate on
@@ -23,6 +22,7 @@ use std::{iter, slice};
 use rustc_hash::FxHashSet;
 
 use super::encode::{ColumnKey, KeyKind, encode_numeric};
+use super::geo::{GeoIndex, cover_of};
 use super::numeric::{DistinctIter, DocIter, EncodedTuples, KeySet, NumericIndex};
 use super::tag::{StrSel, TagIndex};
 use crate::index::IndexQuery;
@@ -104,17 +104,20 @@ enum Kind<'a> {
     Numeric,
     /// A string, which the tag kind holds.
     Tag(&'a Arc<String>),
+    /// A point, which the geo kind holds.
+    Geo,
 }
 
 impl<'a> Kind<'a> {
-    /// The kind that indexes `value`, or `None` for a value no kind holds (`NULL`, a point, a
-    /// temporal, a list, a map, a vector). A list is deliberately not a kind: its *elements* are
+    /// The kind that indexes `value`, or `None` for a value no kind holds (`NULL`, a temporal, a
+    /// list, a map, a vector). A list is deliberately not a kind: its *elements* are
     /// indexed by the kinds' array trees, but the list itself is not a value any predicate can be
     /// routed by. Temporals are not indexed, as in the RediSearch path ([`encode_numeric`]).
     const fn of(value: &'a Value) -> Option<Self> {
         match value {
             Value::Int(_) | Value::Float(_) | Value::Bool(_) => Some(Self::Numeric),
             Value::String(s) => Some(Self::Tag(s)),
+            Value::Point(_) => Some(Self::Geo),
             _ => None,
         }
     }
@@ -126,12 +129,12 @@ impl<'a> Kind<'a> {
     ) -> bool {
         matches!(
             (self, other),
-            (Self::Numeric, Self::Numeric) | (Self::Tag(_), Self::Tag(_))
+            (Self::Numeric, Self::Numeric) | (Self::Tag(_), Self::Tag(_)) | (Self::Geo, Self::Geo)
         )
     }
 }
 
-/// The scalars a predicate selects, per kind: the numeric keys and the strings.
+/// The scalars a predicate selects, per kind: the numeric keys, the strings, and the geo cells.
 ///
 /// A scalar is of one kind, so what a conjunction selects is each kind's share intersected on its
 /// own ([`and`](Self::and)) — `n.v = 1 AND n.v = 'a'` selects nothing — and what a union selects
@@ -141,6 +144,7 @@ impl<'a> Kind<'a> {
 pub struct Scalars {
     pub numeric: KeySet,
     pub tag: StrSel,
+    pub geo: KeySet,
 }
 
 impl Scalars {
@@ -150,6 +154,7 @@ impl Scalars {
         Self {
             numeric: KeySet::Empty,
             tag: StrSel::none(),
+            geo: KeySet::Empty,
         }
     }
 
@@ -159,6 +164,7 @@ impl Scalars {
         Self {
             numeric: keys,
             tag: StrSel::none(),
+            geo: KeySet::Empty,
         }
     }
 
@@ -168,13 +174,24 @@ impl Scalars {
         Self {
             numeric: KeySet::Empty,
             tag: strings,
+            geo: KeySet::Empty,
+        }
+    }
+
+    /// The points in the geo cells `cells`, and nothing else.
+    #[must_use]
+    pub const fn geo(cells: KeySet) -> Self {
+        Self {
+            numeric: KeySet::Empty,
+            tag: StrSel::none(),
+            geo: cells,
         }
     }
 
     /// Whether this selects no scalar by construction.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.numeric == KeySet::Empty && self.tag.is_empty()
+        self.numeric == KeySet::Empty && self.tag.is_empty() && self.geo == KeySet::Empty
     }
 
     /// Whether `value` is a scalar this selects.
@@ -182,7 +199,9 @@ impl Scalars {
         &self,
         value: &Value,
     ) -> bool {
-        NumericIndex::is_scalar_in(&self.numeric, value) || TagIndex::is_scalar_in(&self.tag, value)
+        NumericIndex::is_scalar_in(&self.numeric, value)
+            || TagIndex::is_scalar_in(&self.tag, value)
+            || GeoIndex::is_scalar_in(&self.geo, value)
     }
 
     /// What both select, kind by kind.
@@ -193,6 +212,7 @@ impl Scalars {
         Self {
             numeric: self.numeric.and(other.numeric),
             tag: self.tag.intersect(other.tag),
+            geo: self.geo.and(other.geo),
         }
     }
 }
@@ -279,8 +299,7 @@ impl Selection {
             IndexQuery::ArrayContains { value, .. } => Self::lists_holding(value),
             IndexQuery::Or(_) => Self::disjunction(&atoms(query)?),
             IndexQuery::And(_) => Self::conjunction(&atoms(query)?),
-            // No geo kind yet.
-            IndexQuery::Point { .. } => None,
+            IndexQuery::Point { point, radius, .. } => Self::within(point, radius),
         }
     }
 
@@ -292,6 +311,11 @@ impl Selection {
                 encode_numeric(value).map_or(KeySet::Empty, KeySet::Point),
             ))),
             Some(Kind::Tag(s)) => Some(Self::Scalars(Scalars::tag(StrSel::Set(vec![s.clone()])))),
+            // The grid cell, a superset of the equal points: see the geo module on why the filter
+            // is always retained over a point operand.
+            Some(Kind::Geo) => Some(Self::Scalars(Scalars::geo(
+                GeoIndex::key_of(value).map_or(KeySet::Empty, KeySet::Point),
+            ))),
             None if matches!(value, Value::Null) => Some(Self::empty()),
             None => None,
         }
@@ -350,6 +374,11 @@ impl Selection {
                 include_min,
                 include_max,
             )),
+            // Points compare (`compare_value` orders them by longitude, then latitude), but the
+            // Morton key does not follow that order. Every point is the superset: the planner keeps
+            // the filter over a point operand, which is never a bare literal, so it narrows the
+            // rows to the true comparison.
+            Some(Kind::Geo) => Scalars::geo(KeySet::Range(0, u64::MAX)),
             Some(Kind::Numeric) | None => {
                 Scalars::numeric(NumericIndex::range_keys(min, max, include_min, include_max))
             }
@@ -368,11 +397,38 @@ impl Selection {
                 None => return Some(Self::empty()),
             },
             Kind::Tag(s) => ColumnKey::Tag(s.clone()),
+            Kind::Geo => return None,
         };
         Some(Self::ListsHolding {
             first,
             rest: Vec::new(),
         })
+    }
+
+    /// The selection of `distance(n.v, centre) < radius` — the geo cells covering the disk's
+    /// bounding box, a superset the caller's retained filter narrows. A `NULL` centre or radius
+    /// makes the predicate `NULL`, which holds for nothing: answered empty. So does a radius that
+    /// is not a number: comparing a distance with a string or a list is `NULL` too. A centre that
+    /// is not a point is declined, since then the predicate is not the shape the planner
+    /// promised.
+    fn within(
+        centre: &Value,
+        radius: &Value,
+    ) -> Option<Self> {
+        if matches!(centre, Value::Null) || matches!(radius, Value::Null) {
+            return Some(Self::empty());
+        }
+        let Value::Point(centre) = centre else {
+            return None;
+        };
+        let radius = match radius {
+            Value::Int(i) => *i as f64,
+            Value::Float(f) => *f,
+            _ => return Some(Self::empty()),
+        };
+        Some(Self::Scalars(Scalars::geo(KeySet::of_windows(cover_of(
+            centre, radius,
+        )))))
     }
 
     /// An `OR` of `=`s and `IN` lists, all on one attribute — `a = 1 OR a IN [2, 3]`: the scalars
@@ -463,6 +519,7 @@ impl Selection {
 struct EqualValues {
     keys: Vec<u64>,
     strings: Vec<Arc<String>>,
+    cells: Vec<u64>,
 }
 
 impl EqualValues {
@@ -476,6 +533,7 @@ impl EqualValues {
             match Kind::of(value) {
                 Some(Kind::Numeric) => self.keys.extend(encode_numeric(value)),
                 Some(Kind::Tag(s)) => self.strings.push(s.clone()),
+                Some(Kind::Geo) => self.cells.extend(GeoIndex::key_of(value)),
                 None if matches!(value, Value::Null) => {}
                 None => return None,
             }
@@ -488,6 +546,7 @@ impl EqualValues {
         Selection::Scalars(Scalars {
             numeric: KeySet::of_keys(self.keys),
             tag: StrSel::set(self.strings),
+            geo: KeySet::of_keys(self.cells),
         })
     }
 }
@@ -558,7 +617,7 @@ pub(super) fn attributes_of<'a>(
 /// cheaply.
 ///
 /// A method that asks every kind — the writes, `is_empty`, `memory_usage` — starts with
-/// `let Self { numeric, tag } = self`, a pattern without `..`: a new kind is a compile error in each of
+/// `let Self { numeric, tag, geo } = self`, a pattern without `..`: a new kind is a compile error in each of
 /// them until it is asked too. A method that routes to one kind matches on [`Kind`], [`KeyKind`]
 /// or [`Selection`], so the compiler finds it once the new kind adds a variant to the one it
 /// matches on.
@@ -566,6 +625,7 @@ pub(super) fn attributes_of<'a>(
 pub struct RangeIndex {
     numeric: NumericIndex,
     tag: TagIndex,
+    geo: GeoIndex,
 }
 
 impl RangeIndex {
@@ -597,9 +657,10 @@ impl RangeIndex {
         value: &Value,
         mut emit: impl FnMut(KeyKind, ColumnKey),
     ) {
-        let Self { numeric, tag } = self;
+        let Self { numeric, tag, geo } = self;
         numeric.for_each_stored_key(value, &mut emit);
-        tag.for_each_stored_key(value, emit);
+        tag.for_each_stored_key(value, &mut emit);
+        geo.for_each_stored_key(value, emit);
     }
 
     /// Append the tuples `(value, id)` takes in this column to `out`, each with the tuples of its
@@ -673,9 +734,10 @@ impl RangeIndex {
         tuples: &mut EncodedTuples,
     ) {
         tuples.sort_dedup();
-        let Self { numeric, tag } = self;
+        let Self { numeric, tag, geo } = self;
         numeric.add_encoded(tuples);
         tag.add_encoded(tuples);
+        geo.add_encoded(tuples);
     }
 
     /// Remove already-encoded tuples (a unit of work's collapsed removes).
@@ -684,23 +746,24 @@ impl RangeIndex {
         tuples: &mut EncodedTuples,
     ) {
         tuples.sort_dedup();
-        let Self { numeric, tag } = self;
+        let Self { numeric, tag, geo } = self;
         numeric.remove_encoded(tuples);
         tag.remove_encoded(tuples);
+        geo.remove_encoded(tuples);
     }
 
     /// Whether the column holds no tuples in any kind.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        let Self { numeric, tag } = self;
-        numeric.is_empty() && tag.is_empty()
+        let Self { numeric, tag, geo } = self;
+        numeric.is_empty() && tag.is_empty() && geo.is_empty()
     }
 
     /// Heap bytes every kind's trees hold.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        let Self { numeric, tag } = self;
-        numeric.memory_usage() + tag.memory_usage()
+        let Self { numeric, tag, geo } = self;
+        numeric.memory_usage() + tag.memory_usage() + geo.memory_usage()
     }
 
     /// The scalar tree and key `value` takes, or `None` when no kind indexes it as a scalar (a
@@ -716,6 +779,7 @@ impl RangeIndex {
                 encode_numeric(value).map(|k| (KeyKind::Scalar, ColumnKey::Encoded(k)))
             }
             Kind::Tag(s) => Some((KeyKind::Tag, ColumnKey::Tag(s.clone()))),
+            Kind::Geo => GeoIndex::key_of(value).map(|k| (KeyKind::Geo, ColumnKey::Encoded(k))),
         }
     }
 
@@ -730,6 +794,7 @@ impl RangeIndex {
             (KeyKind::Scalar, ColumnKey::Encoded(k)) => self.numeric.scalars(KeySet::Point(*k)),
             (KeyKind::Array, ColumnKey::Encoded(k)) => self.numeric.lists_holding(k),
             (KeyKind::Tag | KeyKind::TagArray, ColumnKey::Tag(s)) => self.tag.rows_at(kind, s),
+            (KeyKind::Geo, ColumnKey::Encoded(k)) => self.geo.scalars(KeySet::Point(*k)),
             _ => unreachable!("a key of the kind's own type"),
         }
     }
@@ -741,16 +806,23 @@ impl RangeIndex {
         selection: Selection,
     ) -> DocIter {
         match selection {
-            Selection::Scalars(Scalars { numeric, tag }) => {
+            Selection::Scalars(Scalars { numeric, tag, geo }) => {
                 // A scalar is of one kind, so the kinds' streams hold no doc in common, and an
                 // empty share is not read.
-                match (numeric == KeySet::Empty, tag.is_empty()) {
-                    (false, false) => DocIter::Distinct(DistinctIter::new(vec![
-                        self.numeric.scalars(numeric),
-                        self.tag.scalars(tag),
-                    ])),
-                    (true, false) => self.tag.scalars(tag),
-                    _ => self.numeric.scalars(numeric),
+                let mut streams = Vec::new();
+                if numeric != KeySet::Empty {
+                    streams.push(self.numeric.scalars(numeric));
+                }
+                if !tag.is_empty() {
+                    streams.push(self.tag.scalars(tag));
+                }
+                if geo != KeySet::Empty {
+                    streams.push(self.geo.scalars(geo));
+                }
+                match streams.len() {
+                    0 => self.numeric.scalars(KeySet::Empty),
+                    1 => streams.pop().expect("one stream"),
+                    _ => DocIter::Distinct(DistinctIter::new(streams)),
                 }
             }
             Selection::ListsHolding { first, rest } => {
@@ -801,10 +873,11 @@ impl RangeIndex {
     #[cfg(test)]
     #[must_use]
     pub fn tuples(&self) -> Vec<(KeyKind, ColumnKey, u64)> {
-        let Self { numeric, tag } = self;
+        let Self { numeric, tag, geo } = self;
         let mut tuples: Vec<_> = numeric
             .tuples()
             .into_iter()
+            .chain(geo.tuples())
             .map(|(kind, key, doc)| (kind, ColumnKey::Encoded(key), doc))
             .collect();
         tuples.extend(
@@ -946,14 +1019,11 @@ mod tests {
         let (idx, vs) = sample();
         assert!(ids(&idx, &eq(Value::Null), &vs).is_empty());
         assert!(ids(&idx, &range(Some(Value::Null), None), &vs).is_empty());
-        let point = Value::Point(Point {
-            latitude: 1.0,
-            longitude: 2.0,
-        });
-        assert!(idx.query(&eq(point.clone())).is_none());
+        assert!(idx.query(&eq(Value::Date(1))).is_none());
         assert!(idx.query(&eq(list(vec![Value::Int(1)]))).is_none());
         assert!(
-            idx.query(&range(Some(Value::Null), Some(point))).is_none(),
+            idx.query(&range(Some(Value::Null), Some(Value::Date(1))))
+                .is_none(),
             "a bound no kind holds declines, even beside a NULL one"
         );
         assert!(idx.query(&contains(Value::Null)).is_none());
@@ -1073,7 +1143,14 @@ mod tests {
         }
     }
 
-    /// A column holding numbers and strings at once — the mixed-type column
+    fn pt(
+        lat: f32,
+        lon: f32,
+    ) -> Value {
+        Value::Point(Point::new(lat, lon))
+    }
+
+    /// A column holding numbers, strings and a point at once — the mixed-type column
     /// `test_24_multitype_index` exercises. Each predicate must reach its own kind and see only
     /// its own values.
     fn multitype() -> (RangeIndex, Vec<(Value, u64)>) {
@@ -1082,6 +1159,7 @@ mod tests {
             (Value::Float(2.5), 2),
             (s("apple"), 3),
             (s("banana"), 4),
+            (pt(1.0, 2.0), 5),
         ];
         let mut idx = RangeIndex::new();
         for (v, id) in &values {
@@ -1095,6 +1173,7 @@ mod tests {
         let (idx, vs) = multitype();
         assert_eq!(ids(&idx, &eq(Value::Int(1)), &vs), vec![1]);
         assert_eq!(ids(&idx, &eq(s("apple")), &vs), vec![3]);
+        assert_eq!(ids(&idx, &eq(pt(1.0, 2.0)), &vs), vec![5]);
         // A numeric range sees only the numbers; a string range only the strings.
         assert_eq!(
             ids(&idx, &range(Some(Value::Int(0)), Some(Value::Int(10))), &vs),
@@ -1113,14 +1192,38 @@ mod tests {
         let (idx, vs) = multitype();
         assert!(ids(&idx, &range(Some(Value::Int(0)), Some(s("z"))), &vs).is_empty());
         assert!(ids(&idx, &range(Some(s("a")), Some(Value::Int(9))), &vs).is_empty());
+        assert!(ids(&idx, &range(Some(pt(0.0, 0.0)), Some(Value::Int(9))), &vs).is_empty());
+        // A point range is answered with every point: the Morton key does not follow the order
+        // points compare in, and the retained filter narrows the superset.
+        assert_eq!(ids(&idx, &range(Some(pt(0.0, 0.0)), None), &vs), vec![5]);
+        // A `NULL` centre or radius makes `distance(..) < r` `NULL`, and so does a radius that is
+        // not a number: no rows, not a decline.
+        for (point, radius) in [
+            (Value::Null, Value::Int(100)),
+            (pt(1.0, 2.0), Value::Null),
+            (pt(1.0, 2.0), s("100")),
+        ] {
+            let q = IndexQuery::Point {
+                key: attr(),
+                point,
+                radius,
+            };
+            assert!(ids(&idx, &q, &vs).is_empty());
+        }
+        let q = IndexQuery::Point {
+            key: attr(),
+            point: Value::Int(1),
+            radius: Value::Int(100),
+        };
+        assert!(idx.query(&q).is_none(), "a centre that is not a point");
     }
 
     /// `IN [...]` over a mixed list is served from every kind at once, and each doc appears once.
     #[test]
     fn a_mixed_union_reads_every_kind() {
         let (idx, vs) = multitype();
-        let q = IndexQuery::Or(vec![eq(Value::Int(1)), eq(s("banana"))]);
-        assert_eq!(ids(&idx, &q, &vs), vec![1, 4]);
+        let q = IndexQuery::Or(vec![eq(Value::Int(1)), eq(s("banana")), eq(pt(1.0, 2.0))]);
+        assert_eq!(ids(&idx, &q, &vs), vec![1, 4, 5]);
         let in_list = IndexQuery::InList {
             key: attr(),
             list: list(vec![Value::Float(2.5), s("apple"), s("apple")]),
@@ -1190,6 +1293,70 @@ mod tests {
         assert_eq!(ids(&idx, &q, &vs), vec![3], "a list holding both");
     }
 
+    /// A distance predicate is served from the geo kind, as a superset the caller's retained
+    /// filter narrows. Under `AND` with a point equality it stays one lookup of the cell windows.
+    #[test]
+    fn a_distance_predicate_reaches_the_geo_kind() {
+        let vs = vec![
+            (pt(51.5074, -0.1278), 1), // London
+            (pt(48.8566, 2.3522), 2),  // Paris
+            (s("not a point"), 3),
+        ];
+        let mut idx = RangeIndex::new();
+        for (v, id) in &vs {
+            idx.add(v, *id);
+        }
+        let near = |radius: i64| IndexQuery::Point {
+            key: attr(),
+            point: pt(51.5, -0.12),
+            radius: Value::Int(radius),
+        };
+        assert_eq!(ids(&idx, &near(20_000), &vs), vec![1]);
+        let q = IndexQuery::And(vec![near(20_000), eq(pt(51.5074, -0.1278))]);
+        assert!(
+            matches!(
+                Selection::of(&q),
+                Some(Selection::Scalars(Scalars {
+                    geo: KeySet::Point(_),
+                    ..
+                }))
+            ),
+            "the cell of the equality, kept by the cover: {:?}",
+            Selection::of(&q)
+        );
+        assert_eq!(ids(&idx, &q, &vs), vec![1]);
+        let q = IndexQuery::And(vec![near(20_000), eq(pt(48.8566, 2.3522))]);
+        assert!(ids(&idx, &q, &vs).is_empty(), "Paris is not near London");
+        let q = IndexQuery::And(vec![near(20_000), near(400_000)]);
+        assert_eq!(
+            ids(&idx, &q, &vs),
+            vec![1],
+            "two covers meet in the smaller"
+        );
+    }
+
+    /// Two sets of key windows meet in their pairwise overlaps, and a point in a window is kept.
+    #[test]
+    fn key_windows_intersect() {
+        let w = KeySet::Windows(vec![(0, 10), (20, 30), (40, 50)]);
+        assert_eq!(
+            w.clone().and(KeySet::Range(5, 25)),
+            KeySet::Windows(vec![(5, 10), (20, 25)])
+        );
+        assert_eq!(w.clone().and(KeySet::Range(21, 29)), KeySet::Range(21, 29));
+        assert_eq!(w.clone().and(KeySet::Range(11, 19)), KeySet::Empty);
+        assert_eq!(w.clone().and(KeySet::Point(45)), KeySet::Point(45));
+        assert_eq!(
+            w.clone().and(KeySet::of_keys(vec![1, 15, 41])),
+            KeySet::Keys(vec![1, 41])
+        );
+        assert_eq!(
+            w.clone().and(KeySet::Windows(vec![(8, 22), (50, 60)])),
+            KeySet::Windows(vec![(8, 10), (20, 22), (50, 50)])
+        );
+        assert!(w.contains(25) && !w.contains(35));
+    }
+
     /// Re-indexing across kinds: the remove must route on the *old* value, or the tuple is
     /// stranded in the kind nothing will look at again.
     #[test]
@@ -1228,6 +1395,8 @@ mod tests {
             (Value::Null, 3),
             (s("x"), 4),
             (list(vec![s("y"), Value::Int(6)]), 5),
+            (pt(1.0, 1.0), 6),
+            (list(vec![pt(1.0, 1.0)]), 7), // no kind holds a point in a list
         ];
         let mut scratch = EncodedTuples::default();
         let mut batched = RangeIndex::new();
@@ -1237,7 +1406,7 @@ mod tests {
             singly.add(v, *id);
         }
         assert_eq!(batched.tuples(), singly.tuples());
-        assert_eq!(batched.tuples().len(), 6);
+        assert_eq!(batched.tuples().len(), 7);
         batched.remove_batch(entries.iter().cloned(), &mut scratch);
         assert!(batched.is_empty());
     }

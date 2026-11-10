@@ -241,13 +241,23 @@ impl<'a> EdgeByIndexScanOp<'a> {
                     // Kept as one `InList`, as in `NodeByIndexScanOp`: one attribute by
                     // construction, and RediSearch builds the same union from either shape.
                     Value::List(items) => {
+                        // The native index also holds points (its geo kind). Dropping one here
+                        // would lose the rows holding it: the retained filter can only remove
+                        // rows, never add them back.
                         let keep = |v: &Value| {
                             matches!(
                                 v,
                                 Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
-                            )
+                            ) || (cfg!(feature = "index-falkordb") && matches!(v, Value::Point(_)))
                         };
-                        let items = if items.iter().all(keep) {
+                        // Under the flag, a member no kind holds (a date, a map) keeps the list
+                        // whole: `can_utilize_index` then sends the query to a scan, whose retained
+                        // filter checks every member. Dropping it would lose the rows holding it,
+                        // which the filter cannot add back. A `NULL` member matches nothing and
+                        // is still dropped.
+                        let unservable = cfg!(feature = "index-falkordb")
+                            && items.iter().any(|v| !keep(v) && !matches!(v, Value::Null));
+                        let items = if unservable || items.iter().all(keep) {
                             items
                         } else {
                             Arc::new(items.iter().filter(|v| keep(v)).cloned().collect())

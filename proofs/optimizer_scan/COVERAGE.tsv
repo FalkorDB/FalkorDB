@@ -70,6 +70,7 @@ graph/src/runtime/runtime.rs	evaluate_id_filter (support, not a target file)	142
 graph/src/index/mod.rs	build_query_node (support, not a target file)	1477	MODELLED	Index.build; sel_eq, sel_range, sel_and2 (RediSearch node semantics as definitions)
 graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query	100	PROVEN	EdgeInline.evalIQE_ok, evalIQE_inList_err, evalIQ_inList
 graph/src/runtime/ops/node_by_index_scan.rs	new	58	PROVEN	EdgeInline.extraLabels_spec, scanRow_eq_sel
-graph/src/runtime/ops/node_by_index_scan.rs	can_utilize_index	253	PROVEN	EdgeInline.canUtilize_empty; Index.cu_inList, cu_merge, canUtilize_inList_eq_or (InList arm, #2383: same terms as the old Or)
-graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	256	PROVEN	EdgeInline.isIndexable_spec
-graph/src/runtime/ops/node_by_index_scan.rs	next	302	PROVEN	EdgeInline.scanRow_eq_sel; Index.utilize_sound
+graph/src/runtime/ops/node_by_index_scan.rs	can_utilize_index	263	PROVEN	EdgeInline.canUtilize_empty; Index.cu_inList, cu_merge, canUtilize_inList_eq_or (InList arm, #2383: same terms as the old Or)
+graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	266	PROVEN	EdgeInline.isIndexable_spec
+graph/src/runtime/ops/node_by_index_scan.rs	next	312	PROVEN	EdgeInline.scanRow_eq_sel; Index.utilize_sound
+graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query/native-in-list	100	NOT COVERED	the index-falkordb IN-list branch (#3743): keeps a point, and keeps the list whole when a member no kind holds is in it; not modelled (the PROVEN theorem covers the default build)
