@@ -874,11 +874,15 @@ def wait_for_replica(primary, replica, timeout=30):
 
     def bounded_info(conn):
         # Bound each INFO by the time left in the budget, so an unresponsive
-        # server can't block past the deadline. Retries are off for the same
-        # reason. A fresh client is used so the caller's timeouts are untouched.
-        left = max(deadline - time.time(), 0.1)
+        # server can't block past the deadline: the connect and the reply
+        # each get half of what is left, so together they fit in it. Retries
+        # are off for the same reason. A fresh client is used so the caller's
+        # timeouts are untouched.
+        left = deadline - time.time()
+        if left <= 0:
+            raise redis.exceptions.TimeoutError("wait_for_replica deadline passed")
         kwargs = dict(conn.connection_pool.connection_kwargs)
-        kwargs.update(socket_timeout=left, socket_connect_timeout=left,
+        kwargs.update(socket_timeout=left / 2, socket_connect_timeout=left / 2,
                       retry=None, retry_on_timeout=False)
         pool = redis.ConnectionPool(
             connection_class=conn.connection_pool.connection_class, **kwargs)

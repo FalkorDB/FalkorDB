@@ -1302,7 +1302,7 @@ class testConstraintReplication():
         deadline = time.time() + 30
         while time.time() < deadline:
             wait_for_replica(self.source, self.replica,
-                             timeout=max(deadline - time.time(), 0.1))
+                             timeout=max(deadline - time.time(), 0.01))
             cs = list_constraints(replica_g)
             if len(cs) == 6 and all(c.status == 'OPERATIONAL' for c in cs):
                 break
@@ -1357,7 +1357,7 @@ class testConstraintReplication():
         c = None
         while time.time() < deadline:
             wait_for_replica(self.source, self.replica,
-                             timeout=max(deadline - time.time(), 0.1))
+                             timeout=max(deadline - time.time(), 0.01))
             c = get_constraint(replica_g, 'MANDATORY', 'NODE', lbl, 'v')
             if c is not None and c.status != 'UNDER CONSTRUCTION':
                 break
