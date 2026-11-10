@@ -130,7 +130,13 @@ jobs:
         run: |
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends valkey-server valkey-tools \
-            libstdc++6 libssl3t64 zlib1g libzstd1
+            libstdc++6 libssl3t64 zlib1g libzstd1 binutils
+      # Without the copy relocation an unfixed module passes too, so fail here
+      # rather than go quietly green if a rebuild of the package drops it.
+      - name: Check that this valkey-server copy-relocates environ
+        run: |
+          readelf -rW "$(readlink -f "$(command -v valkey-server)")" \
+            | grep -E '_COPY +[0-9a-f]+ +_*environ@'
       - name: Load the engine into Valkey
         run: tests/valkey_smoke.sh target/release/libfalkordb.so
   # The flow suites only run under redis-server, which never takes the
