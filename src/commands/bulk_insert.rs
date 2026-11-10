@@ -837,10 +837,7 @@ pub fn graph_bulk_insert(
     // consumed. Replication here is verbatim: this is the real command context, so
     // `ctx->client->argv` is the client's own vector.
     if inline {
-        let tokens: Vec<&[u8]> = token_strings
-            .iter()
-            .map(ValkeyString::as_slice)
-            .collect();
+        let tokens: Vec<&[u8]> = token_strings.iter().map(ValkeyString::as_slice).collect();
         let tg = graph.write();
         let mut fork = tg.graph.fork();
         let mut docs = IndexDocs::default();

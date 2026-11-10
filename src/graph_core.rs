@@ -54,8 +54,6 @@ use graph::{
 };
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
-#[cfg(feature = "index-falkordb")]
-use valkey_module::logging::log_warning;
 use std::{
     collections::HashMap,
     os::raw::{c_char, c_void},
