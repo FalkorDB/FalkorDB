@@ -1307,21 +1307,24 @@ impl<T> Matrix<T> {
     /// Sparse stays pinned (`GxB_SPARSITY_CONTROL`), but the iso expansion is a
     /// one-off conversion, so call this after the last write.
     ///
-    /// Returns `GrB_SUCCESS`, or the first `GrB_Info` that is not, with the
-    /// remaining fields left unset: a conversion allocates in proportion to
-    /// the matrix, so it can run out of memory, and the caller decides whether
-    /// that is a bug (`grb!`) or an error to report.
-    ///
-    /// Takes `&mut self`: a clone sharing the handle could otherwise be
-    /// reading while the storage converts under it.
+    /// # Errors
+    /// [`CsrExportError::SharedHandle`] if a clone shares this handle: it could
+    /// be reading while the storage converts under it, and `&mut self` alone
+    /// does not rule a clone out. Nothing is set then.
+    /// [`CsrExportError::Setting`] with the first `GrB_Info` that is not
+    /// `GrB_SUCCESS`, the remaining fields left unset: a conversion allocates
+    /// in proportion to the matrix, so it can run out of memory.
     #[cfg(feature = "index-falkordb")]
-    #[must_use]
-    pub(crate) fn prepare_csr<P, I, V>(&mut self) -> GrB_Info
+    pub(crate) fn prepare_csr<P, I, V>(&mut self) -> Result<(), CsrExportError>
     where
         P: GrbElem + Into<u64>,
         I: GrbElem + Into<u64>,
         V: CsrValue,
     {
+        // `get_mut`, as in `take_csr`: a handle found unshared really is ours.
+        if Arc::get_mut(&mut self.m).is_none() {
+            return Err(CsrExportError::SharedHandle);
+        }
         let fields = [
             Some((
                 GrB_Orientation::GrB_ROWMAJOR as i32,
@@ -1335,10 +1338,10 @@ impl<T> Matrix<T> {
         for (value, field) in fields.into_iter().flatten() {
             let info = self.set_i32(value, field);
             if info != GrB_Info::GrB_SUCCESS {
-                return info;
+                return Err(CsrExportError::Setting(info));
             }
         }
-        GrB_Info::GrB_SUCCESS
+        Ok(())
     }
 
     /// `GrB_Matrix_set_INT32` under the wrapper's lock (setting a field can
