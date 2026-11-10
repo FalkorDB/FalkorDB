@@ -217,6 +217,9 @@ RUN unresolved="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so 2>&1 | grep -E 'undefi
         done; \
         # valkey-check-rdb only reads --version after a file argument; see
         # build/runtime/Dockerfile.
+        # A missing or dangling entry point would print "...check-rdb: not found",
+        # which the grep below matches, so check it resolves to an executable first.
+        bin="$(command -v "${name}-check-rdb")" && [ -x "$bin" ] || exit 1; \
         "${name}-check-rdb" --version 2>&1 | grep -E 'check-rdb|Checking RDB file' || exit 1; \
     done && \
     test "$(gosu falkordb id -u):$(gosu falkordb id -g)" = "999:999"

@@ -228,6 +228,9 @@ RUN deps="$(ldd ${FALKORDB_BIN_PATH}/falkordb.so | awk '{print $1}' | sort -u)" 
         # valkey-check-rdb reads --version only after a file argument, and
         # otherwise checks a file named "--version": either reply proves the
         # entry point runs in check-rdb mode.
+        # A missing or dangling entry point would print "...check-rdb: not found",
+        # which the grep below matches, so check it resolves to an executable first.
+        bin="$(command -v "${name}-check-rdb")" && [ -x "$bin" ] || exit 1; \
         "${name}-check-rdb" --version 2>&1 | grep -E 'check-rdb|Checking RDB file' || exit 1; \
     done
 
