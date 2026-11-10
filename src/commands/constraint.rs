@@ -507,7 +507,9 @@ pub fn graph_constraint(
         // rebuilt from that name (`GraphContext_SetKey`) — not at the key the
         // command addressed, which differs once it holds a NUL.
         let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
-        create_key.set_value(&GRAPH_TYPE, g.clone())?;
+        create_key
+            .set_value(&GRAPH_TYPE, g.clone())
+            .map_err(wrong_type_compat)?;
         register_graph(name, g.clone());
         g
     };

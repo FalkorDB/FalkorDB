@@ -57,7 +57,9 @@ pub fn graph_effect(
         // the replication path, so the divergence would be between a replica
         // and the master it is meant to be copying.
         let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
-        create_key.set_value(&GRAPH_TYPE, g.clone())?;
+        create_key
+            .set_value(&GRAPH_TYPE, g.clone())
+            .map_err(wrong_type_compat)?;
         register_graph(name, g.clone());
         g
     };

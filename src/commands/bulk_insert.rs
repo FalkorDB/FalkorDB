@@ -830,7 +830,8 @@ pub fn graph_bulk_insert(
                 *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
                 &name,
             )));
-            key.set_value(&GRAPH_TYPE, g.clone())?;
+            key.set_value(&GRAPH_TYPE, g.clone())
+                .map_err(wrong_type_compat)?;
             register_graph(name, g.clone());
             g
         }

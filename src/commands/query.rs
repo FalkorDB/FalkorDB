@@ -149,7 +149,9 @@ pub fn graph_query(
     // addressed key absent, exactly as in C.
     let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
     drop(key);
-    create_key.set_value(&GRAPH_TYPE, graph.clone())?;
+    create_key
+        .set_value(&GRAPH_TYPE, graph.clone())
+        .map_err(wrong_type_compat)?;
     register_graph(name, graph);
     result
 }

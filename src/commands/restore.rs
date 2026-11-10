@@ -56,7 +56,9 @@ pub fn graph_restore(
     let tg = ThreadedGraph::from_mvcc(mvcc);
     let boxed = Arc::new(RwLock::new(tg));
 
-    dest_key.set_value(&GRAPH_TYPE, boxed.clone())?;
+    dest_key
+        .set_value(&GRAPH_TYPE, boxed.clone())
+        .map_err(wrong_type_compat)?;
     // Registered under the key it was written to — see `graph_core::register_graph`.
     register_graph(dest_name.to_string(), boxed);
 

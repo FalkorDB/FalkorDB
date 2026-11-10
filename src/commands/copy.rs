@@ -155,7 +155,9 @@ pub fn graph_copy(
     let tg = ThreadedGraph::from_mvcc(mvcc);
     let boxed = Arc::new(RwLock::new(tg));
 
-    dest_key.set_value(&GRAPH_TYPE, boxed.clone())?;
+    dest_key
+        .set_value(&GRAPH_TYPE, boxed.clone())
+        .map_err(wrong_type_compat)?;
     // Registered under the key it was written to: the registry is the module's index of
     // the *keyspace*, and `graph_rdb_save`, the virtual-key builder and the telemetry
     // flusher all address Redis by the name they find here.

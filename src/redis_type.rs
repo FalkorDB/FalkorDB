@@ -891,8 +891,9 @@ const WRONG_TYPE_VALKEY: &str = "Existing key has wrong Valkey type";
 /// switch from `redis-module` to `valkey-module`.
 const WRONG_TYPE_COMPAT: &str = "Existing key has wrong Redis type";
 
-/// `map_err` adapter for `get_value(&GRAPH_TYPE)`: keeps the client-visible
-/// wrong-type error identical to the one `redis-module` produced.
+/// `map_err` adapter for `get_value(&GRAPH_TYPE)` and `set_value(&GRAPH_TYPE, ..)`,
+/// which both check the key's type: keeps the client-visible wrong-type error
+/// identical to the one `redis-module` produced.
 pub fn wrong_type_compat(err: ValkeyError) -> ValkeyError {
     match err {
         ValkeyError::Str(msg) if msg == WRONG_TYPE_VALKEY => ValkeyError::Str(WRONG_TYPE_COMPAT),
