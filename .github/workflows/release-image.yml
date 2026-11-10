@@ -22,7 +22,7 @@ on:
         description: "Commit SHA to build"
         required: true
       mark_latest:
-        description: "Also tag latest, latest-valkey and latest-redis (moves the latest pointers — use with care; refused for a prerelease)"
+        description: "Also tag latest, latest-valkey and latest-redis. Refused unless the tag is the highest stable version with a published GitHub release"
         type: boolean
         default: false
 
@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.commit_sha }}
-          path: src
+          path: built-commit
           persist-credentials: false
 
       # Validate Cargo.toml only against a semver-shaped tag, so operators can
@@ -76,19 +76,25 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           MARK_LATEST: ${{ inputs.mark_latest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if echo "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            CARGO_VERSION=$(cargo metadata --no-deps --format-version=1 --manifest-path src/Cargo.toml \
+            CARGO_VERSION=$(cargo metadata --no-deps --format-version=1 --manifest-path built-commit/Cargo.toml \
               | jq -r '.packages[] | select(.name=="falkordb-rs") | .version')
             if [ "$CARGO_VERSION" != "$TAG" ]; then
               echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($TAG)"
               exit 1
             fi
           fi
-          SHA=$(git -C src rev-parse HEAD)
+          SHA=$(git -C built-commit rev-parse HEAD)
           LATEST=()
-          if [ "$MARK_LATEST" = "true" ]; then LATEST=(--latest); fi
+          if [ "$MARK_LATEST" = "true" ]; then
+            gh api "/repos/${GH_REPO}/releases" --paginate \
+              --jq '.[] | {tag_name, draft, prerelease}' > "$RUNNER_TEMP/releases.jsonl"
+            LATEST=(--latest --releases "$RUNNER_TEMP/releases.jsonl")
+          fi
           python3 build/test_publish_tags.py
           python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" "${LATEST[@]}"
           {
@@ -149,8 +155,16 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
           SHA: ${{ needs.prepare.outputs.sha }}
           MARK_LATEST: ${{ inputs.mark_latest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # latest* moves only to the highest stable version with a published
+          # GitHub release, read again right before the push.
           LATEST=()
-          if [ "$MARK_LATEST" = "true" ]; then LATEST=(--latest); fi
+          if [ "$MARK_LATEST" = "true" ]; then
+            gh api "/repos/${GH_REPO}/releases" --paginate \
+              --jq '.[] | {tag_name, draft, prerelease}' > "$RUNNER_TEMP/releases.jsonl"
+            LATEST=(--latest --releases "$RUNNER_TEMP/releases.jsonl")
+          fi
           python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" "${LATEST[@]}" --execute

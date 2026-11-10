@@ -56,8 +56,12 @@ PER_OS = (
 
 SERVER_LABEL = "com.falkordb.server.name"
 
-# Whole tags other workflows own; a rebuild may not publish over them.
-RESERVED_TAGS = {"edge", "edge-rs", "latest"}
+# Whole tags other workflows own; a rebuild may not publish over them. The C
+# engine publishes the edge-c family from master.
+RESERVED_TAGS = {"edge", "edge-rs", "edge-c", "latest"}
+RESERVED_PREFIXES = ("rc-", "edge-c-")
+# The C engine owns every version below 6.0.0.
+FIRST_MAJOR = 6
 # Parts of a tag that say what it holds. A version or an ad-hoc tag carrying
 # one would collide with, or impersonate, another tag: 6.1.0-alpine's Valkey
 # tag would be 6.1.0's Alpine tag.
@@ -123,6 +127,8 @@ def check_version(version: str) -> None:
     v = parse_version(version)
     if v is None:
         raise PlanError(f"version '{version}' is not X.Y.Z[-prerelease] (no leading v)")
+    if v[0] < FIRST_MAJOR:
+        raise PlanError(f"version '{version}' is a C engine version (below {FIRST_MAJOR}.0.0)")
     if v[3] is not None:
         check_parts(v[3], "prerelease")
 
@@ -195,19 +201,29 @@ def release_plan(version: str, sha: str, releases: Iterable[dict]) -> list:
     return _named_plan(version, lambda repo, server: f"{GHCR}/{repo}:rc-mg-{sha}-{server}", latest)
 
 
-def rebuild_plan(tag: str, sha: str, latest: bool) -> list:
-    """release-image.yml's tags, from the images it rebuilt from source."""
+def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[dict]] = None) -> list:
+    """release-image.yml's tags, from the images it rebuilt from source.
+
+    latest* moves only where a release would move it: `tag` must be the
+    highest stable version with a published GitHub release, in `releases`.
+    """
     check_sha(sha)
     if parse_version(tag) is not None:
         check_version(tag)
     else:
         if not TAG_RE.match(tag):
             raise PlanError(f"tag '{tag}' is not a valid image tag")
-        if tag in RESERVED_TAGS or tag.startswith("rc-"):
+        if tag in RESERVED_TAGS or tag.startswith(RESERVED_PREFIXES):
             raise PlanError(f"tag '{tag}' belongs to another workflow")
         check_parts(tag, "tag")
-    if latest and is_prerelease(tag):
-        raise PlanError(f"a prerelease never moves latest; '{tag}' is one")
+    if latest:
+        if parse_version(tag) is None or is_prerelease(tag):
+            raise PlanError(f"latest only moves to a stable X.Y.Z version; '{tag}' is not one")
+        if releases is None or not moves_latest(tag, releases):
+            raise PlanError(
+                f"latest stays where it is: '{tag}' is not the highest stable version "
+                "with a published GitHub release"
+            )
     return _named_plan(tag, lambda repo, server: f"{GHCR}/{repo}:rc-rebuild-{sha}-{server}", latest)
 
 
@@ -357,8 +373,24 @@ def digest_of(ref: str, runner: Callable = run) -> str:
 
 
 def check_source(step: Retag, runner: Callable = run) -> str:
-    """The digest of step.source, once it holds the server and platforms it should."""
-    out = runner(["docker", "buildx", "imagetools", "inspect", "--format", "{{json .Image}}", step.source])
+    """The digest of step.source, once it holds the server and platforms it should.
+
+    The digest is read first and the checks run on it, so the digest that is
+    published is the one that was checked, even if the tag moves meanwhile.
+    """
+    try:
+        digest = digest_of(step.source, runner)
+    except subprocess.CalledProcessError as e:
+        hint = ""
+        if ":rc-mg-" in step.source:
+            hint = (
+                ". The merge queue's images exist only for a commit it built after the switch to "
+                "server-named tags, and only until cleanup-rc-images.yml sweeps them; to publish "
+                "this commit anyway, rebuild it from source with release-image.yml"
+            )
+        raise PlanError(f"cannot read {step.source}{hint}") from e
+    pinned = f"{repository(step.source)}@{digest}"
+    out = runner(["docker", "buildx", "imagetools", "inspect", "--format", "{{json .Image}}", pinned])
     images = {k: v for k, v in json.loads(out).items() if k != "unknown/unknown"}
     want = set(PLATFORMS.values())
     if set(images) != want:
@@ -367,7 +399,7 @@ def check_source(step: Retag, runner: Callable = run) -> str:
         server = ((image.get("config") or {}).get("Labels") or {}).get(SERVER_LABEL)
         if server != step.server:
             raise PlanError(f"{step.source} {platform}: {SERVER_LABEL} is {server!r}, expected {step.server!r}")
-    return digest_of(step.source, runner)
+    return digest
 
 
 def check_archive(step: Assemble, arch: str, path: str, runner: Callable = run) -> None:
@@ -437,7 +469,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p = sub.add_parser("rebuild", help="release-image.yml's tags from its rc-rebuild-<sha> images")
     p.add_argument("--tag", required=True)
     p.add_argument("--sha", required=True)
-    p.add_argument("--latest", action="store_true", help="also move latest*")
+    p.add_argument("--latest", action="store_true",
+                   help="also move latest*; refused unless the tag is the highest stable version with a published release")
+    p.add_argument("--releases", help="with --latest: the GitHub releases, as for `release`")
 
     p = sub.add_parser("per-os", help="per-OS falkordb-server images from their archives")
     p.add_argument("--version", required=True)
@@ -454,7 +488,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         elif args.channel == "release":
             plan = release_plan(args.version, args.sha, read_releases(args.releases))
         elif args.channel == "rebuild":
-            plan = rebuild_plan(args.tag, args.sha, args.latest)
+            releases = read_releases(args.releases) if args.releases else None
+            plan = rebuild_plan(args.tag, args.sha, args.latest, releases)
         else:
             if args.execute and not args.images:
                 raise PlanError("--execute needs --images")
@@ -470,6 +505,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"published {sum(len(s.tags) for s in plan)} tags")
     except PlanError as e:
         print(f"::error::{e}", file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as e:
+        print(f"::error::{shlex.join(e.cmd)} failed with exit code {e.returncode}", file=sys.stderr)
         return 1
     return 0
 

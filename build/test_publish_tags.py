@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -125,7 +126,7 @@ class ReleaseTags(unittest.TestCase):
         self.assertTrue(pt.moves_latest("6.1.0", rels))
 
     def test_version_shape(self):
-        for bad in ("v6.1.0", "6.1", "6.1.0.1", "6.1.0-", "latest"):
+        for bad in ("v6.1.0", "6.1", "6.1.0.1", "6.1.0-", "latest", "5.9.9", "4.22.3"):
             with self.assertRaises(pt.PlanError, msg=bad):
                 pt.release_plan(bad, SHA, [])
 
@@ -146,10 +147,21 @@ class RebuildTags(unittest.TestCase):
             want[f"ghcr.io/falkordb/{repo}:rc-rebuild-{SHA}-redis"] = both(repo, "6.1.0-redis")
         self.assertEqual(got, want)
 
-    def test_latest_when_asked(self):
-        tags = all_tags(pt.rebuild_plan("6.1.0", SHA, latest=True))
+    def test_latest_when_asked_for_the_latest_release(self):
+        tags = all_tags(pt.rebuild_plan("6.1.0", SHA, latest=True, releases=RELEASES + [release("v6.1.0")]))
         for repo in ("falkordb", "falkordb-server"):
             self.assertLessEqual(both(repo, "latest", "latest-valkey", "latest-redis"), tags)
+
+    def test_latest_only_where_a_release_would_move_it(self):
+        rels = RELEASES + [release("v6.1.0"), release("v6.0.5"), release("v6.2.0", draft=True)]
+        for tag in ("6.0.5",      # a backport
+                    "6.2.0",      # no published release
+                    "6.1.0-rc.1",  # a prerelease
+                    "edge-test"):  # not a version
+            with self.assertRaises(pt.PlanError, msg=tag):
+                pt.rebuild_plan(tag, SHA, latest=True, releases=rels)
+        with self.assertRaises(pt.PlanError):
+            pt.rebuild_plan("6.1.0", SHA, latest=True)  # no release list to judge by
 
     def test_ad_hoc_tag(self):
         got = by_source(pt.rebuild_plan("edge-test", SHA, latest=False))
@@ -166,7 +178,9 @@ class RebuildTags(unittest.TestCase):
         for tag, latest in (
             ("6.1.0-rc.1", True),  # a prerelease never moves latest
             ("edge", False), ("edge-rs", False), ("latest", False),  # other workflows' channels
-            ("rc-mg-abc", False),  # CI's namespace
+            ("edge-c", False), ("edge-c-x64", False), ("edge-c-rhel9", False),  # the C engine's
+            ("5.2.0", False), ("4.22.3", False),  # C engine versions
+            ("rc-mg-abc", False), ("rc-rebuild-x", False),  # CI's namespace
             ("test-x64", False), ("foo-valkey", False), ("alpine", False),
             ("-x", False), ("a:b", False), ("", False),
         ):
@@ -232,7 +246,7 @@ class ContractRules(unittest.TestCase):
         yield pt.edge_plan(SHA)
         yield pt.release_plan("6.1.0", SHA, [release("v6.1.0")])
         yield pt.release_plan("6.1.0-rc.1", SHA, [release("v6.1.0-rc.1")])
-        yield pt.rebuild_plan("6.1.0", SHA, latest=True)
+        yield pt.rebuild_plan("6.1.0", SHA, latest=True, releases=[release("v6.1.0")])
         yield pt.rebuild_plan("edge-test", SHA, latest=False)
         yield pt.per_os_plan("6.1.0")
         yield pt.per_os_plan("6.1.0-rc.1")
@@ -270,31 +284,48 @@ class ContractRules(unittest.TestCase):
 
 
 class BuildCells(unittest.TestCase):
-    """_build-artifacts.yml builds every per-OS archive a release needs, and no other."""
+    """_build-artifacts.yml builds every per-OS archive a release needs, under the
+    names find_archives() reads, and publishes no other."""
+
+    def workflow(self):
+        return (Path(__file__).resolve().parent.parent / ".github/workflows/_build-artifacts.yml").read_text()
 
     def cells(self):
-        text = (Path(__file__).resolve().parent.parent / ".github/workflows/_build-artifacts.yml").read_text()
-        m = re.search(r"ALL='(\[.*?\])'", text, re.S)
+        m = re.search(r"ALL='(\[.*?\])'", self.workflow(), re.S)
         self.assertIsNotNone(m, "ALL='[...]' not found in _build-artifacts.yml")
         return json.loads(m[1])
 
     def test_archives(self):
         built = set()
         for cell in self.cells():
-            self.assertTrue(cell["publish"], f"{cell['suffix']} is not published")
             self.assertEqual(cell["platform"], pt.PLATFORMS[cell["arch"]])
             self.assertEqual(bool(cell["servers"]), cell["image"], cell["suffix"])
             if not cell["image"]:
+                self.assertEqual(cell["os"], "", cell["suffix"])
                 continue
-            # The workflow names each archive <os>-<server>-<arch> from the
-            # suffix, so an image cell's suffix must be <os>-<arch>.
-            self.assertTrue(cell["suffix"].endswith("-" + cell["arch"]), cell["suffix"])
-            os_name = cell["suffix"][: -len(cell["arch"]) - 1]
+            self.assertEqual(cell["suffix"], f"{cell['os']}-{cell['arch']}")
+            if not cell["publish"]:
+                continue
             for server in cell["servers"]:
-                self.assertNotIn((os_name, server, cell["arch"]), built)
-                built.add((os_name, server, cell["arch"]))
+                self.assertNotIn((cell["os"], server, cell["arch"]), built)
+                built.add((cell["os"], server, cell["arch"]))
         want = {(o, s, a) for o, s in pt.PER_OS for a in pt.PLATFORMS}
         self.assertEqual(built, want)
+
+    def test_archive_names(self):
+        # Every step that names an archive names it the way find_archives()
+        # reads it: falkordb-server-<os>-<server>-<arch>.tar.
+        text = self.workflow()
+        for server in pt.SERVERS:
+            self.assertIn(f"if: matrix.image && contains(matrix.servers, '{server}')", text)
+            dest = f"dest=${{{{ runner.temp }}}}/falkordb-server-${{{{ matrix.os }}}}-{server}-${{{{ matrix.arch }}}}.tar"
+            self.assertIn(dest, text)
+            self.assertIn(f"SERVER={server}", text)
+        self.assertIn('docker load --input "$RUNNER_TEMP/falkordb-server-${OS}-${WANT}-${ARCH}.tar"', text)
+        self.assertIn("path: ${{ runner.temp }}/falkordb-server-${{ matrix.os }}-*-${{ matrix.arch }}.tar", text)
+        for os_name, server in pt.PER_OS:
+            for arch in pt.PLATFORMS:
+                self.assertRegex(f"falkordb-server-{os_name}-{server}-{arch}.tar", pt.ARCHIVE_RE)
 
 
 class FakeRegistry:
@@ -316,7 +347,10 @@ class FakeRegistry:
                 if ref in self.moved:
                     return "something else"
                 return self.tags.get(ref, f"manifest of {ref}")
-            server = self.labels.get(ref, ref.rsplit("-", 1)[-1])
+            # Inspected by digest: resolve it to the tag the digest was read from.
+            self.assert_pinned(ref)
+            source = self.by_digest[ref.split("@", 1)[1]].removeprefix("manifest of ")
+            server = self.labels.get(source, source.rsplit("-", 1)[-1])
             return json.dumps({p: {"config": {"Labels": {pt.SERVER_LABEL: server}}} for p in self.platforms})
         if cmd[:4] == ["docker", "buildx", "imagetools", "create"]:
             digest = cmd[-1].split("@", 1)[1]
@@ -337,6 +371,11 @@ class FakeRegistry:
         if cmd[:2] == ["podman", "manifest"]:
             return ""
         raise AssertionError(f"unexpected command {cmd}")
+
+    @staticmethod
+    def assert_pinned(ref):
+        if "@sha256:" not in ref:
+            raise AssertionError(f"inspected {ref} by tag; the checks must run on the digest")
 
     @property
     def by_digest(self):
@@ -382,6 +421,21 @@ class Execute(unittest.TestCase):
             with self.assertRaises(pt.PlanError):
                 pt.execute(plan, fake)
             self.assertEqual(fake.creates(), [], kw)
+
+    def test_a_missing_queue_image_names_the_rebuild_path_and_pushes_nothing(self):
+        # A commit the queue built before the switch has no rc-mg-<sha>-<server>.
+        plan = pt.release_plan("6.0.5", SHA, [])
+        fake = self.fake(plan)
+        missing = plan[0].source
+
+        def runner(cmd):
+            if cmd[-1] == missing and "inspect" in cmd:
+                raise subprocess.CalledProcessError(1, cmd)
+            return fake(cmd)
+
+        with self.assertRaisesRegex(pt.PlanError, f"cannot read {re.escape(missing)}.*release-image.yml"):
+            pt.execute(plan, runner)
+        self.assertEqual(fake.creates(), [])
 
     def test_a_tag_that_does_not_hold_the_digest_fails(self):
         plan = pt.edge_plan(SHA)
@@ -429,15 +483,27 @@ class Execute(unittest.TestCase):
 
 
 class CommandLine(unittest.TestCase):
-    def test_dry_run_prints_and_pushes_nothing(self):
+    def test_dry_run_prints_and_runs_nothing(self):
         import contextlib
         import io
+        from unittest import mock
 
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            self.assertEqual(pt.main(["edge", "--sha", SHA, "--json"]), 0)
-        plan = json.loads(out.getvalue())
-        self.assertEqual(len(plan), 4)
+        with tempfile.TemporaryDirectory() as d:
+            rels = Path(d) / "releases.jsonl"
+            rels.write_text(json.dumps(release("v6.1.0")) + "\n")
+            runs = (
+                (["edge", "--sha", SHA], 4),
+                (["release", "--version", "6.1.0", "--sha", SHA, "--releases", str(rels)], 4),
+                (["rebuild", "--tag", "6.1.0", "--sha", SHA, "--latest", "--releases", str(rels)], 4),
+                (["per-os", "--version", "6.1.0"], 4),
+            )
+            with mock.patch("subprocess.run", side_effect=AssertionError("ran a command")) as ran:
+                for argv, steps in runs:
+                    out = io.StringIO()
+                    with contextlib.redirect_stdout(out):
+                        self.assertEqual(pt.main(argv + ["--json"]), 0, argv)
+                    self.assertEqual(len(json.loads(out.getvalue())), steps, argv)
+            ran.assert_not_called()
 
     def test_errors_exit_nonzero(self):
         import contextlib

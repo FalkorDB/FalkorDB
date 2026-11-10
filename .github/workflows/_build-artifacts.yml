@@ -95,12 +95,14 @@ jobs:
           PLATFORMS: ${{ inputs.platforms }}
         run: |
           set -euo pipefail
-          # {suffix, arch, platform, runner, dockerfile, build_image, cxx, image, servers, publish}.
+          # {suffix, os, arch, platform, runner, dockerfile, build_image, cxx, image, servers, publish}.
           # `dockerfile` provides the `artifact` target; `build_image` is the
           # chef/builder base (Debian toolchain image) or "" for self-contained
           # per-OS Dockerfiles; `cxx` is the C++ compiler passed to the builder;
           # `image` says the Dockerfile's `server` target is built here too,
-          # once per server in `servers` (empty unless `image`). The per-OS
+          # once per server in `servers` (empty unless `image`), as
+          # falkordb-server-<os>-<server>-<arch>; `os` is "" unless `image`, and
+          # an image cell's suffix is <os>-<arch>. The per-OS
           # images a release publishes are build/publish_tags.py's PER_OS, on
           # both architectures; its tests check this list builds exactly those.
           # `publish`: publish:false cells build and smoke-test but upload
@@ -110,14 +112,14 @@ jobs:
           # and the output. It is a boolean on every cell (checked below):
           # GitHub expressions treat a missing key as equal to false.
           ALL='[
-            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false,"servers":[],"publish":true},
-            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false,"servers":[],"publish":true},
-            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++","image":true,"servers":["redis"],"publish":true},
-            {"suffix":"rhel9-arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++","image":true,"servers":["redis"],"publish":true},
-            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true,"servers":["redis","valkey"],"publish":true},
-            {"suffix":"amazonlinux2023-arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true,"servers":["redis","valkey"],"publish":true},
-            {"suffix":"alpine-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"servers":["valkey"],"publish":true},
-            {"suffix":"alpine-arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"servers":["valkey"],"publish":true}
+            {"suffix":"x64","os":"","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false,"servers":[],"publish":true},
+            {"suffix":"arm64v8","os":"","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false,"servers":[],"publish":true},
+            {"suffix":"rhel9-x64","os":"rhel9","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++","image":true,"servers":["redis"],"publish":true},
+            {"suffix":"rhel9-arm64v8","os":"rhel9","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++","image":true,"servers":["redis"],"publish":true},
+            {"suffix":"amazonlinux2023-x64","os":"amazonlinux2023","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true,"servers":["redis","valkey"],"publish":true},
+            {"suffix":"amazonlinux2023-arm64v8","os":"amazonlinux2023","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true,"servers":["redis","valkey"],"publish":true},
+            {"suffix":"alpine-x64","os":"alpine","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"servers":["valkey"],"publish":true},
+            {"suffix":"alpine-arm64v8","os":"alpine","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"servers":["valkey"],"publish":true}
           ]'
           NOT_BOOL=$(printf '%s' "$ALL" | jq -r '[ .[] | select((.publish | type) != "boolean") | .suffix ] | join(",")')
           if [ -n "$NOT_BOOL" ]; then
@@ -127,6 +129,11 @@ jobs:
           BAD_SERVERS=$(printf '%s' "$ALL" | jq -r '[ .[] | select((.servers | type) != "array" or (.servers | length > 0) != .image or any(.servers[]; . != "redis" and . != "valkey")) | .suffix ] | join(",")')
           if [ -n "$BAD_SERVERS" ]; then
             echo "::error::cells whose \"servers\" is not redis/valkey for an image cell, or empty otherwise: $BAD_SERVERS"
+            exit 1
+          fi
+          BAD_OS=$(printf '%s' "$ALL" | jq -r '[ .[] | select(if .image then .suffix != "\(.os)-\(.arch)" or .os == "" else .os != "" end) | .suffix ] | join(",")')
+          if [ -n "$BAD_OS" ]; then
+            echo "::error::cells whose \"os\" does not match their suffix: $BAD_OS"
             exit 1
           fi
           if [ -z "${PLATFORMS// /}" ] || [ "$PLATFORMS" = "all" ]; then
@@ -246,34 +253,45 @@ jobs:
       # The `server` target reuses the `builder` stage the step above just
       # built, from this runner's build cache, so the module is not compiled
       # again and every server's image ships the same .so as the release asset.
-      # One image per server in `servers`; the Dockerfile's SERVER build arg
-      # picks the server.
-      - name: Build falkordb-server images (${{ matrix.suffix }})
-        if: matrix.image
+      # One step per server, for each server in `servers`; the Dockerfile's
+      # SERVER build arg picks the server.
+      - name: Build falkordb-server image (${{ matrix.suffix }}, redis)
+        if: matrix.image && contains(matrix.servers, 'redis')
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         env:
-          DOCKERFILE: ${{ matrix.dockerfile }}
-          PLATFORM: ${{ matrix.platform }}
-          SUFFIX: ${{ matrix.suffix }}
-          ARCH: ${{ matrix.arch }}
-          SERVERS: ${{ toJSON(matrix.servers) }}
-          BUILD_IMAGE: ${{ matrix.build_image }}
-          CXX: ${{ matrix.cxx }}
-        run: |
-          set -euo pipefail
-          OS="${SUFFIX%-"$ARCH"}"
-          mkdir -p "$RUNNER_TEMP/images"
-          for SERVER in $(jq -r '.[]' <<<"$SERVERS"); do
-            docker buildx build . \
-              --file "$DOCKERFILE" \
-              --target server \
-              --platform "$PLATFORM" \
-              --provenance=false \
-              --build-arg "BUILD_IMAGE=${BUILD_IMAGE}" \
-              --build-arg "CXX=${CXX}" \
-              --build-arg "SERVER=${SERVER}" \
-              --tag "falkordb-server:${OS}-${SERVER}-${ARCH}" \
-              --output "type=docker,dest=${RUNNER_TEMP}/images/falkordb-server-${OS}-${SERVER}-${ARCH}.tar"
-          done
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: server
+          platforms: ${{ matrix.platform }}
+          tags: falkordb-server:${{ matrix.os }}-redis-${{ matrix.arch }}
+          outputs: type=docker,dest=${{ runner.temp }}/falkordb-server-${{ matrix.os }}-redis-${{ matrix.arch }}.tar
+          provenance: false
+          build-args: |
+            BUILD_IMAGE=${{ matrix.build_image }}
+            CXX=${{ matrix.cxx }}
+            SERVER=redis
+          cache-from: type=gha,scope=artifact-${{ matrix.suffix }}
+
+      - name: Build falkordb-server image (${{ matrix.suffix }}, valkey)
+        if: matrix.image && contains(matrix.servers, 'valkey')
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: server
+          platforms: ${{ matrix.platform }}
+          tags: falkordb-server:${{ matrix.os }}-valkey-${{ matrix.arch }}
+          outputs: type=docker,dest=${{ runner.temp }}/falkordb-server-${{ matrix.os }}-valkey-${{ matrix.arch }}.tar
+          provenance: false
+          build-args: |
+            BUILD_IMAGE=${{ matrix.build_image }}
+            CXX=${{ matrix.cxx }}
+            SERVER=valkey
+          cache-from: type=gha,scope=artifact-${{ matrix.suffix }}
 
       # Start each image as a user would: it runs the server its name says, the
       # module loads and answers a query, and run.sh has dropped the server to
@@ -281,12 +299,11 @@ jobs:
       - name: Smoke-test falkordb-server images (${{ matrix.suffix }})
         if: matrix.image
         env:
-          SUFFIX: ${{ matrix.suffix }}
+          OS: ${{ matrix.os }}
           ARCH: ${{ matrix.arch }}
           SERVERS: ${{ toJSON(matrix.servers) }}
         run: |
           set -euo pipefail
-          OS="${SUFFIX%-"$ARCH"}"
           cleanup() { docker rm -f smoke smoke-args smoke-fallback >/dev/null 2>&1 || true; }
           trap 'rc=$?; if [ "$rc" -ne 0 ]; then docker logs smoke || true; docker logs smoke-args || true; docker logs smoke-fallback || true; fi; cleanup' EXIT
           wait_pong() {
@@ -299,7 +316,7 @@ jobs:
           config() { docker exec "$1" redis-cli CONFIG GET "$2" | sed -n 2p; }
           for WANT in $(jq -r '.[]' <<<"$SERVERS"); do
             IMAGE="falkordb-server:${OS}-${WANT}-${ARCH}"
-            docker load --input "$RUNNER_TEMP/images/falkordb-server-${OS}-${WANT}-${ARCH}.tar"
+            docker load --input "$RUNNER_TEMP/falkordb-server-${OS}-${WANT}-${ARCH}.tar"
             SERVER=$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$IMAGE" | sed -n 's/^FALKORDB_SERVER=//p')
             if [ "$SERVER" != "$WANT" ]; then echo "::error::$IMAGE has FALKORDB_SERVER '$SERVER', expected $WANT"; exit 1; fi
             case "$SERVER" in
@@ -344,7 +361,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image-falkordb-server-${{ matrix.suffix }}
-          path: ${{ runner.temp }}/images/*.tar
+          path: ${{ runner.temp }}/falkordb-server-${{ matrix.os }}-*-${{ matrix.arch }}.tar
           if-no-files-found: error
           retention-days: 1
           # The tarballs' layers are already gzip-compressed.

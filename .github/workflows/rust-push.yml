@@ -156,8 +156,13 @@ jobs:
           deadline=$(( SECONDS + 30 * 60 ))
           while :; do
             busy=""
-            for run in $(gh api "repos/${GH_REPO}/actions/workflows/release-tag.yml/runs?per_page=20" \
-                           --jq '.workflow_runs[] | select(.status != "completed") | .id'); do
+            # Only runs that have started: a run still queued (behind its
+            # concurrency group, say) has published nothing yet. Assigned on
+            # its own line, so a failed call fails the job instead of reading
+            # as "no release running".
+            runs=$(gh api "repos/${GH_REPO}/actions/workflows/release-tag.yml/runs?status=in_progress&per_page=20" \
+                     --jq '.workflow_runs[].id')
+            for run in $runs; do
               # An image job not scheduled yet counts as still to come.
               states=$(gh api "repos/${GH_REPO}/actions/runs/${run}/jobs?per_page=100" --paginate \
                          --jq '.jobs[] | select(.name == "image") | .status')

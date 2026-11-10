@@ -86,6 +86,11 @@ jobs:
           ref: ${{ inputs.tag || github.ref_name }}
           persist-credentials: false
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: publish-tools
+          persist-credentials: false
+
       - name: Validate tag and Cargo.toml version
         id: check
         env:
@@ -121,6 +126,16 @@ jobs:
           fi
 
           if [ -n "$PRE" ]; then PRERELEASE=true; else PRERELEASE=false; fi
+
+          # The tags this release will publish, before anything is published:
+          # a version they cannot be refuses here, not after the GitHub
+          # release exists. From this workflow's own commit, as the image
+          # jobs run it.
+          python3 publish-tools/build/test_publish_tags.py
+          : > "$RUNNER_TEMP/no-releases.jsonl"
+          python3 publish-tools/build/publish_tags.py release --version "$SEMVER" \
+            --sha "$(git rev-parse HEAD)" --releases "$RUNNER_TEMP/no-releases.jsonl"
+          python3 publish-tools/build/publish_tags.py per-os --version "$SEMVER"
 
           {
             echo "tag=$TAG"
@@ -283,7 +298,9 @@ jobs:
   # pinned by version.
   publish-images:
     needs: [guard, build-artifacts]
-    runs-on: ubuntu-latest
+    # Pinned: the push needs podman and skopeo, which this image ships
+    # (4.9.3 and 1.13.3); ubuntu-latest moving on could take them away.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
