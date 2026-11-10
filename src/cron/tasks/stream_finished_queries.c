@@ -176,30 +176,58 @@ static void _clearEvent
 
 // add queries to stream
 //
-// entries are added with XADD through RedisModule_Call with the '!' flag,
-// which replicates them to replicas and the AOF; Redis replaces the '*' ID with
-// the ID it assigned before propagating, so every node holds the same entries
-// under the same IDs
+// each entry is replicated to replicas and the AOF as an XADD carrying the ID
+// the master assigned, so every node holds the same entries under the same IDs
 static void _stream_queries
 (
 	RedisModuleCtx *ctx,          // redis module context
-	RedisModuleString *keyname,   // stream key
+	RedisModuleKey *key,          // stream key, opened for writing
+	RedisModuleString *keyname,   // stream key name
 	CircularBuffer queries        // queries to stream
 ) {
 	LoggedQuery q ;
+	RedisModuleStreamID id ;
 
 	while (CircularBuffer_Read (queries, &q)) {
 		_populateEvent (ctx, &q) ;
 
-		RedisModuleCallReply *reply = RedisModule_Call (ctx, "XADD", "!scv",
-				keyname, "*", _event, (size_t) (FLD_COUNT * 2)) ;
+		if (RedisModule_StreamAdd (key, REDISMODULE_STREAM_ADD_AUTOID, &id,
+					_event, FLD_COUNT) == REDISMODULE_OK) {
+			RedisModuleString *id_str =
+				RedisModule_CreateStringFromStreamID (ctx, &id) ;
+
+			RedisModule_Replicate (ctx, "XADD", "ssv", keyname, id_str,
+					_event, (size_t) (FLD_COUNT * 2)) ;
+
+			RedisModule_FreeString (ctx, id_str) ;
+		}
 
 		// clean up
-		if (reply != NULL) {
-			RedisModule_FreeCallReply (reply) ;
-		}
 		LoggedQuery_Free (&q) ;
 		_clearEvent (ctx) ;
+	}
+}
+
+// cap stream at 'max_len' entries
+//
+// the master trims approximately, dropping whole stream nodes only, and the
+// trim is replicated as the exact length it left: node boundaries can differ
+// on a replica, where an approximate trim would drop a different number of
+// entries
+static void _trim_stream
+(
+	RedisModuleCtx *ctx,          // redis module context
+	RedisModuleKey *key,          // stream key, opened for writing
+	RedisModuleString *keyname,   // stream key name
+	uint64_t max_len              // max number of entries to keep
+) {
+	long long deleted = RedisModule_StreamTrimByLength (key,
+			REDISMODULE_STREAM_TRIM_APPROX, max_len) ;
+
+	// a trim that deleted nothing is not replicated
+	if (deleted > 0) {
+		RedisModule_Replicate (ctx, "XTRIM", "sccl", keyname, "MAXLEN", "=",
+				(long long) RedisModule_ValueLength (key)) ;
 	}
 }
 
@@ -344,35 +372,25 @@ bool CronTask_streamFinishedQueries
 		RedisModuleString *keyname =
 			(RedisModuleString*) GraphContext_GetTelemetryStreamName (gc) ;
 
-		// make sure key is of type stream
-		// without touching LRU, keyspace stats or notifications
 		RedisModuleKey *key = RedisModule_OpenKey (rm_ctx, keyname,
-			REDISMODULE_READ | REDISMODULE_OPEN_KEY_NOTOUCH |
-			REDISMODULE_OPEN_KEY_NONOTIFY | REDISMODULE_OPEN_KEY_NOSTATS) ;
-		int key_type = RedisModule_KeyType (key) ;
-		RedisModule_CloseKey (key) ;
+				REDISMODULE_WRITE) ;
 
+		// make sure key is of type stream
+		int key_type = RedisModule_KeyType (key) ;
 		if (key_type == REDISMODULE_KEYTYPE_STREAM ||
 			key_type == REDISMODULE_KEYTYPE_EMPTY) {
 			// add queries to stream
-			_stream_queries (rm_ctx, keyname, queries) ;
+			_stream_queries (rm_ctx, key, keyname, queries) ;
 
 			// cap stream
-			// when replicating, Redis turns the approximate cap into the exact
-			// length it trimmed to, so replicas drop the same entries
-			RedisModuleCallReply *reply = RedisModule_Call (rm_ctx, "XTRIM",
-					"!sccl", keyname, "MAXLEN", "~",
-					(long long) max_query_count) ;
-
-			if (reply != NULL) {
-				RedisModule_FreeCallReply (reply) ;
-			}
+			_trim_stream (rm_ctx, key, keyname, max_query_count) ;
 		} else {
 			// key holds a different type, drop the queries
 			_discard_queries (queries) ;
 		}
 
 		// clean up
+		RedisModule_CloseKey (key) ;
 		GraphContext_DecreaseRefCount (gc) ;
 	}
 

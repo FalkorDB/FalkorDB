@@ -74,15 +74,18 @@ class LoggedQuery:
 def StreamName(graph):
     return f"telemetry{{{graph.name}}}"
 
-def consumeStream(conn, env, stream, drop=True, n_items=1):
+def consumeStream(conn, env, stream, drop=True, n_items=1, timeout=30):
     # wait for telemetry stream to be created
     t = 'none' # type of stream_key
+    deadline = time.time() + timeout
 
-    while t == 'none':
+    while t == 'none' and time.time() < deadline:
         time.sleep(0.2)
         t = conn.type(stream)
 
     env.assertEquals(t, "stream")
+    if t != "stream":
+        return []
 
     # convert stream events to LoggedQueries
     logged_queries = []
@@ -483,13 +486,56 @@ class testGraphInfo():
 
         # back on: new queries are written, the ones issued while off are not
         self.graph.query("RETURN 'on'")
-        appeared = _wait_for(lambda: self.conn.exists(stream))
-        self.env.assertTrue(appeared)
-        if not appeared:
-            return
-
         logged_queries = consumeStream(self.conn, self.env, stream, n_items=1)
         self.env.assertEquals([q.Query for q in logged_queries], ["RETURN 'on'"])
+
+    def test09_cmd_info_back_on_before_cron_runs(self):
+        """a query issued while CMD_INFO is off is not written, even when
+           CMD_INFO is turned back on before the cron task's next run"""
+
+        stream = StreamName(self.graph)
+        self.conn.delete(stream)
+
+        # no wait between the toggles: the cron task, which runs every 250ms
+        # to 3 seconds, most likely sees CMD_INFO on
+        try:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no")
+            self.graph.query("RETURN 'off'")
+        finally:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "yes")
+
+        self.graph.query("RETURN 'on'")
+        logged_queries = consumeStream(self.conn, self.env, stream, n_items=1)
+        self.env.assertEquals([q.Query for q in logged_queries], ["RETURN 'on'"])
+
+    def test10_cmd_info_off_before_logged_queries_are_written(self):
+        """queries logged while CMD_INFO is on, and not yet written when it is
+           turned off, are dropped"""
+
+        stream = StreamName(self.graph)
+
+        # the read-only query below needs the graph to exist
+        self.graph.query("RETURN 'create'")
+        self.env.assertTrue(_wait_for(lambda: self.conn.exists(stream)))
+        self.conn.delete(stream)
+
+        try:
+            try:
+                # while writes are paused the cron task keeps the logged
+                # queries instead of writing them
+                self.conn.execute_command("CLIENT", "PAUSE", "30000", "WRITE")
+                self.graph.ro_query("RETURN 'logged while on'")
+
+                # the cron task runs at least every 3 seconds
+                time.sleep(4)
+                self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no")
+            finally:
+                self.conn.execute_command("CLIENT", "UNPAUSE")
+
+            time.sleep(4)
+            self.env.assertFalse(self.conn.exists(stream))
+        finally:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "yes")
 
 def _wait_for(condition, timeout=10):
     """poll condition until it holds or timeout seconds pass"""
@@ -524,33 +570,53 @@ class testGraphInfoOffAtLoad():
             self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "yes")
 
             self.graph.query("RETURN 'on'")
-            appeared = _wait_for(lambda: self.conn.exists(stream))
-            self.env.assertTrue(appeared)
-            if not appeared:
-                return
-
             logged_queries = consumeStream(self.conn, self.env, stream, n_items=1)
             self.env.assertEquals([q.Query for q in logged_queries], ["RETURN 'on'"])
         finally:
             self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no")
 
-def _pairs(reply):
-    """turn a flat [k1, v1, k2, v2, ...] reply into a dict"""
-    return {reply[i]: reply[i + 1] for i in range(0, len(reply), 2)}
+class testGraphInfoAof():
+    """queries replayed from the AOF are not logged again, the AOF already
+       holds their entries"""
+
+    def __init__(self):
+        self.env, self.db = Env(useAof=True, enableDebugCommand=True)
+        self.conn = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+    def test01_aof_replay_writes_no_entries(self):
+        stream = StreamName(self.graph)
+
+        try:
+            # replicate the writes as GRAPH.QUERY, so loading the AOF replays
+            # the queries themselves
+            self.db.config_set("EFFECTS_THRESHOLD", 999999)
+
+            for _ in range(3):
+                self.graph.query("CREATE ()")
+            self.env.assertTrue(_wait_for(lambda: self.conn.exists(stream) and
+                self.conn.xinfo_stream(stream)["entries-added"] == 3))
+
+            self.env.assertEquals(self.conn.execute_command("DEBUG", "LOADAOF"), "OK")
+
+            # the cron task runs at least every 3 seconds
+            time.sleep(4)
+            info = self.conn.xinfo_stream(stream)
+            self.env.assertEquals(info["entries-added"], 3)
+            self.env.assertEquals(info["length"], 3)
+        finally:
+            self.db.config_set("EFFECTS_THRESHOLD", 0)
 
 def StreamState(conn, stream):
     """a stream's entry IDs and consumer-group counters, None if it doesn't exist"""
     if conn.type(stream) != 'stream':
         return None
 
-    info   = _pairs(conn.execute_command("XINFO", "STREAM", stream))
-    groups = [_pairs(g) for g in conn.execute_command("XINFO", "GROUPS", stream)]
-
     return {
         "ids"           : [entry[0] for entry in conn.xrange(stream)],
-        "entries-added" : info["entries-added"],
+        "entries-added" : conn.xinfo_stream(stream)["entries-added"],
         "groups"        : [(g["name"], g["last-delivered-id"], g["entries-read"],
-                            g["lag"]) for g in groups],
+                            g["lag"]) for g in conn.xinfo_groups(stream)],
     }
 
 class testGraphInfoReplication():
@@ -588,9 +654,10 @@ class testGraphInfoReplication():
         _wait_for(lambda: StreamState(replica, stream) == StreamState(master, stream))
         self.env.assertEquals(StreamState(replica, stream), StreamState(master, stream))
 
-    def _address(self, conn):
-        kwargs = conn.connection_pool.connection_kwargs
-        return kwargs['host'], kwargs['port']
+    def _port(self, conn):
+        """the port of the server conn is connected to"""
+        runner = self.env.envRunner
+        return runner.port if conn is self.master else runner.slavePort
 
     def test01_replication_pause_defers_writes(self):
         """while replication traffic is paused the master keeps its logged
@@ -689,12 +756,19 @@ class testGraphInfoReplication():
         # failover: the replica becomes the master
         #-----------------------------------------------------------------------
 
+        # the replica serves one more query and is promoted straight away,
+        # before its cron task's next run
+        replica_graph.ro_query("MATCH (n) RETURN count(n)")
         replica.execute_command("REPLICAOF", "NO", "ONE")
-        host, port = self._address(replica)
-        master.execute_command("REPLICAOF", host, port)
+        master.execute_command("REPLICAOF", "localhost", self._port(replica))
         master, replica = replica, master
         self.env.assertTrue(_wait_for(lambda:
             replica.info("replication")["master_link_status"] == "up"))
+
+        # the queries the new master served as a replica were never logged:
+        # its cron task runs at least every 3 seconds and writes nothing
+        time.sleep(4)
+        self.env.assertEquals(master.xinfo_stream(stream)["entries-added"], 4)
 
         # the exporter's next read delivers the one entry it hasn't seen,
         # and the group has read exactly what the stream received
@@ -713,8 +787,7 @@ class testGraphInfoReplication():
         # and so does a full sync from it
         sync_full = master.info("stats")["sync_full"]
         replica.execute_command("REPLICAOF", "NO", "ONE")
-        host, port = self._address(master)
-        replica.execute_command("REPLICAOF", host, port)
+        replica.execute_command("REPLICAOF", "localhost", self._port(master))
         self.env.assertTrue(_wait_for(lambda:
             master.info("stats")["sync_full"] > sync_full and
             replica.info("replication")["master_link_status"] == "up", timeout=30))

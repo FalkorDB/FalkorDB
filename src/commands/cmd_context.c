@@ -22,6 +22,7 @@ CommandCtx *CommandCtx_New
 	GraphContext *graph_ctx,        // graph context
 	ExecutorThread thread,          // which thread executes this command
 	bool replicated_command,        // whether this instance was spawned by a replication command
+	bool log_query,                 // log the query to telemetry once it finishes
 	bool compact,                   // whether this query was issued with the compact flag
 	long long timeout,              // the query timeout, if specified
 	bool timeout_rw,                // apply timeout on both read and write queries
@@ -39,6 +40,7 @@ CommandCtx *CommandCtx_New
 	context->thread             = thread;
 	context->compact            = compact;
 	context->timeout            = timeout;
+	context->log_query          = log_query;
 	context->ref_count          = ATOMIC_VAR_INIT(1);
 	context->graph_ctx          = graph_ctx;
 	context->timeout_rw         = timeout_rw;

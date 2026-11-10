@@ -92,15 +92,10 @@ static int _ExportAPIs
 	return REDISMODULE_OK ;
 }
 
-// starts cron and register recurring tasks
+// starts cron
+// recurring tasks are registered once the globals are initialized
 static bool _Cron_Start(void) {
-	// start CRON
-	bool res = Cron_Start();
-
-	// register recurring tasks
-	Cron_AddRecurringTasks();
-
-	return res;
+	return Cron_Start();
 }
 
 // print FalkorDB configuration
@@ -385,6 +380,9 @@ int RedisModule_OnLoad
 
 	// set up global variables scoped to the entire module
 	Globals_Init();
+
+	// register recurring tasks, which read the globals
+	Cron_AddRecurringTasks();
 
 	setupCrashHandlers(ctx);
 
