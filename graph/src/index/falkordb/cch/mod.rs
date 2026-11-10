@@ -254,7 +254,6 @@ pub struct Cch {
     /// independent, so every version of this index shares one.
     topology: Arc<Topology>,
     /// Phase 2's output: the four per-arc arrays, indexed by arc id.
-    #[allow(dead_code)] // this change writes it; the query (#3210) is its reader
     metric: Metric,
 }
 
@@ -294,15 +293,25 @@ impl Cch {
 
     /// Cheapest weight and node sequence. Mapping node pairs to edge ids is the caller's job.
     ///
+    /// `None` when `dst` is unreachable from `src`, or when either is not a node of this
+    /// hierarchy. `src == dst` is the single-node path of weight `0.0`.
+    ///
+    /// Also `None` when every path's weight overflows `f64` (a chain of weights near
+    /// `f64::MAX`): the sum is `+inf`, which reads as "no path", as in C.
+    ///
+    /// Also `None` when unpacking a shortcut on the route finds an arc missing: the
+    /// hierarchy no longer matches the graph it was built from, which is a bug, not an
+    /// unreachable pair.
+    ///
     /// # Panics
-    /// Always — unimplemented until #3210. Nothing calls it yet.
+    /// On that missing arc when `debug_assertions` are on.
     #[must_use]
     pub fn query(
         &self,
-        _src: u64,
-        _dst: u64,
+        src: u64,
+        dst: u64,
     ) -> Option<(f64, Vec<u64>)> {
-        unimplemented!("query, #3210")
+        query::query(self, src, dst)
     }
 }
 
