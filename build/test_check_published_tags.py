@@ -650,6 +650,21 @@ class EdgeTest(unittest.TestCase):
                          {f"{registry}/{repo}:latest-redis" for registry in (GHCR, HUB) for repo in REPOS})
         self.assertIn("6.1.0 has server-suffixed tags, so it must have this one too", checker.failures[0].detail)
 
+    def test_a_release_with_only_a_per_os_tag_is_from_after_the_switch(self):
+        """6.1.0-alpine-valkey exists, so the missing 6.1.0-{valkey,redis} and
+        latest-{valkey,redis} are a partial push, not a release from before."""
+        docker = FakeDocker()
+        publish_edge(docker)
+        publish_release(docker, "6.1.0", latest=True)
+        self.assertIn(f"{GHCR}/falkordb-server:6.1.0-alpine-valkey", docker.tags)
+        for registry in (GHCR, HUB):
+            for repo in REPOS:
+                for tag in ("6.1.0-valkey", "6.1.0-redis", "latest-valkey", "latest-redis"):
+                    del docker.tags[f"{registry}/{repo}:{tag}"]
+        checker = check(docker, "edge", latest="6.1.0")
+        self.assertEqual(checks_failed(checker), {"points at 6.1.0"})
+        self.assertIn("6.1.0 has server-suffixed tags", checker.failures[0].detail)
+
     def test_a_release_after_the_switch_on_one_registry_is_after_it_on_every_registry(self):
         """A partial push: Docker Hub got the bare 6.1.0 only."""
         docker = FakeDocker()
