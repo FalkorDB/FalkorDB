@@ -688,6 +688,35 @@ class EdgeTest(unittest.TestCase):
         self.assertEqual({r.subject.rsplit(":", 1)[1] for r in checker.failures}, {"latest-valkey", "latest"})
         self.assertEqual(len(checker.failures), 8)  # 2 tags x 2 repos x 2 registries
 
+    def test_latest_must_be_latest_valkey_after_the_switch_on_an_edge_run(self):
+        """latest and 6.1.0 both Redis, latest-valkey and 6.1.0-valkey Valkey: the pairs agree, the alias doesn't."""
+        docker = FakeDocker()
+        publish_edge(docker)
+        publish_release(docker, "6.1.0", latest=True)
+        for repo in REPOS:
+            redis = docker.tags[f"{GHCR}/{repo}:6.1.0-redis"]
+            docker.push(redis, repo, "6.1.0", "latest")
+        checker = check(docker, "edge", latest="6.1.0")
+        self.assertEqual(failed(checker), [(f"{registry}/{repo}:latest", "same image as 6.1.0-valkey")
+                                           for registry in (GHCR, HUB) for repo in REPOS])
+        self.assertIn("6.1.0 and 6.1.0-valkey differ", checker.failures[0].detail)
+
+    def test_one_mistake_in_latest_reports_once(self):
+        """latest-valkey left behind, or latest left behind: one failure per place, not two."""
+        for stale in ("latest-valkey", "latest"):
+            with self.subTest(stale=stale):
+                docker = FakeDocker()
+                publish_edge(docker)
+                publish_release(docker, "6.0.9", latest=True)
+                publish_release(docker, "6.1.0", latest=False)
+                for repo in REPOS:
+                    for tag in ("latest", "latest-valkey", "latest-redis"):
+                        if tag != stale:  # moved to 6.1.0; the stale one stays on 6.0.9
+                            docker.push(docker.tags[f"{GHCR}/{repo}:{tag.replace('latest', '6.1.0')}"], repo, tag)
+                checker = check(docker, "edge", latest="6.1.0")
+                self.assertEqual(failed(checker), [(f"{registry}/{repo}:{stale}", "points at 6.1.0")
+                                                   for registry in (GHCR, HUB) for repo in REPOS])
+
     def test_an_uninspectable_latest_fails_instead_of_passing(self):
         docker = FakeDocker()
         publish_release(docker, "6.0.4", latest=True)
@@ -1130,6 +1159,26 @@ class CiTest(unittest.TestCase):
                     "falkordb", "rc-pr-1-valkey-arm64v8", registries=(GHCR,))
         checker = check(docker, "rc-pr-1")
         self.assertEqual(failed(checker), [(f"{GHCR}/falkordb:rc-pr-1-valkey-arm64v8", "architectures")])
+
+    def test_a_per_arch_tag_that_is_an_index_around_the_platform_fails(self):
+        """The per-arch tag must be that platform's manifest itself."""
+        docker = FakeDocker()
+        publish_ci(docker, "pr-1")
+        x64 = docker.tags[f"{GHCR}/falkordb:rc-pr-1-valkey-x64"]
+        docker.push(docker.index(x64), "falkordb", "rc-pr-1-valkey-x64", registries=(GHCR,))
+        checker = check(docker, "rc-pr-1")
+        self.assertEqual(failed(checker), [(f"{GHCR}/falkordb:rc-pr-1-valkey-x64", "linux/amd64 of rc-pr-1-valkey")])
+        self.assertIn("around the multi-arch tag's linux/amd64 manifest, not that manifest", checker.failures[0].detail)
+
+    def test_a_per_arch_index_listing_its_platform_twice_fails(self):
+        docker = FakeDocker()
+        publish_ci(docker, "pr-1")
+        x64 = docker.tags[f"{GHCR}/falkordb:rc-pr-1-valkey-x64"]
+        redis_x64 = docker.image("redis", "debian-trixie", "linux/amd64", browser=True)
+        docker.push(docker.index(x64, redis_x64), "falkordb", "rc-pr-1-valkey-x64", registries=(GHCR,))
+        checker = check(docker, "rc-pr-1")
+        self.assertEqual(failed(checker), [(f"{GHCR}/falkordb:rc-pr-1-valkey-x64", "architectures")])
+        self.assertIn("holds linux/amd64, linux/amd64", checker.failures[0].detail)
 
     def test_per_arch_tags_are_checked_when_the_multi_arch_tag_is_missing(self):
         docker = FakeDocker()
