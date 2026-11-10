@@ -1,17 +1,22 @@
 #!/bin/sh
 
 # The image ships one server, named by FALKORDB_SERVER (set in the Dockerfile):
-# redis or valkey. Its arguments come from REDIS_ARGS; VALKEY_ARGS is accepted
-# as another name for it (both are passed when both are set).
+# redis or valkey. Its arguments come from its own variable, REDIS_ARGS or
+# VALKEY_ARGS, or from the other one when its own is unset, empty or only
+# whitespace, so one setting works on either image. The two are never joined.
 SERVER="${FALKORDB_SERVER:-redis}"
 case "$SERVER" in
-    redis | valkey) ;;
+    redis) own_args="${REDIS_ARGS:-}" other_args="${VALKEY_ARGS:-}" ;;
+    valkey) own_args="${VALKEY_ARGS:-}" other_args="${REDIS_ARGS:-}" ;;
     *)
         echo "Error: FALKORDB_SERVER must be redis or valkey, not '$SERVER'." >&2
         exit 1
         ;;
 esac
-SERVER_ARGS="${REDIS_ARGS:-} ${VALKEY_ARGS:-}"
+case "$own_args" in
+    *[![:space:]]*) SERVER_ARGS="$own_args" ;;
+    *) SERVER_ARGS="$other_args" ;;
+esac
 
 # The server runs as the unprivileged `falkordb` user (uid 999, created in the
 # Dockerfile), as in the official redis image. The container itself still
