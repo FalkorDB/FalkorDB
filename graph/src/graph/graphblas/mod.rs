@@ -82,6 +82,8 @@ pub mod lagraphx_bindings;
 pub mod matrix;
 #[cfg(test)]
 mod me_delta_bench;
+#[cfg(feature = "index-falkordb")]
+pub(crate) mod scalar;
 pub mod serialization;
 pub mod tensor;
 pub mod vector;
