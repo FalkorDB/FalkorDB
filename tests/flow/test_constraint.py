@@ -1301,7 +1301,7 @@ class testConstraintReplication():
         replica_g = Graph(self.replica, GRAPH_ID)
         deadline = time.time() + 30
         while time.time() < deadline:
-            wait_for_replica(self.source, self.replica)
+            wait_for_replica(self.source, self.replica, timeout=5)
             cs = list_constraints(replica_g)
             if len(cs) == 6 and all(c.status == 'OPERATIONAL' for c in cs):
                 break
@@ -1355,7 +1355,7 @@ class testConstraintReplication():
         deadline = time.time() + 30
         c = None
         while time.time() < deadline:
-            wait_for_replica(self.source, self.replica)
+            wait_for_replica(self.source, self.replica, timeout=5)
             c = get_constraint(replica_g, 'MANDATORY', 'NODE', lbl, 'v')
             if c is not None and c.status != 'UNDER CONSTRUCTION':
                 break
