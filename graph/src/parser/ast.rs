@@ -980,6 +980,17 @@ impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetIte
 
 /// Query clause IR - represents each clause type in a Cypher query.
 ///
+/// What `CREATE CCH INDEX` and `DROP CCH INDEX` name: the relationship types
+/// and the weight attribute, as written.
+///
+/// The types keep parse order and may repeat; `CchIndexDef::new` normalises
+/// them once they are resolved to ids at run time.
+#[derive(Clone, Debug)]
+pub struct CchIndexSpec {
+    pub rel_types: Vec<Arc<String>>,
+    pub weight_attr: Arc<String>,
+}
+
 /// A complete query is a sequence of these clauses. The planner converts
 /// this AST into an execution plan.
 #[derive(Debug)]
@@ -1071,15 +1082,9 @@ pub enum QueryIR<TVar> {
     /// A CCH path index spans one or more relationship types, unlike every other
     /// index type (which takes a single label) -- hence its own variant rather
     /// than reusing `CreateIndex`.
-    CreateCchIndex {
-        rel_types: Vec<Arc<String>>,
-        weight_attr: Arc<String>,
-    },
+    CreateCchIndex(CchIndexSpec),
     /// DROP CCH INDEX FOR ()-[e:A|B]->() ON (e.w)
-    DropCchIndex {
-        rel_types: Vec<Arc<String>>,
-        weight_attr: Arc<String>,
-    },
+    DropCchIndex(CchIndexSpec),
     /// UNION of multiple sub-query branches.
     /// `all` is true for UNION ALL (keep duplicates), false for UNION (deduplicate).
     Union {
@@ -1188,16 +1193,16 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
                     "DROP {index_type:?} {entity_type:?} INDEX ON :{label}({attrs:?})"
                 )
             }
-            Self::CreateCchIndex {
+            Self::CreateCchIndex(CchIndexSpec {
                 rel_types,
                 weight_attr,
-            } => {
+            }) => {
                 writeln!(f, "CREATE CCH INDEX ON :{rel_types:?}({weight_attr})")
             }
-            Self::DropCchIndex {
+            Self::DropCchIndex(CchIndexSpec {
                 rel_types,
                 weight_attr,
-            } => {
+            }) => {
                 writeln!(f, "DROP CCH INDEX ON :{rel_types:?}({weight_attr})")
             }
             Self::Query { clauses, .. } => {
@@ -1365,10 +1370,7 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
             Self::DropIndex { .. } => iter
                 .next()
                 .map_or(Ok(()), |first| first.inner_validate(iter)),
-            Self::CreateCchIndex { .. } => iter
-                .next()
-                .map_or(Ok(()), |first| first.inner_validate(iter)),
-            Self::DropCchIndex { .. } => iter
+            Self::CreateCchIndex(_) | Self::DropCchIndex(_) => iter
                 .next()
                 .map_or(Ok(()), |first| first.inner_validate(iter)),
             Self::Query { clauses, .. } => {

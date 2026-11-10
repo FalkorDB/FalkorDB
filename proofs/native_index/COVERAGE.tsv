@@ -302,10 +302,10 @@ graph/src/index/falkordb/cch/input/weight_ops.rs	Drop::drop	242	NOT COVERED	not 
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightContext::new	87	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::tensor_weights	343	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::multi_edge_pass	387	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/ddl.rs	cch_error_message	15	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
-graph/src/index/falkordb/cch/ddl.rs	check_ddl_allowed	35	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
 graph/src/index/falkordb/cch/ddl.rs	create_cch_index	52	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
 graph/src/index/falkordb/cch/ddl.rs	drop_cch_index	95	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
+graph/src/index/falkordb/cch/ddl.rs	CchError::query_message	23	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
+graph/src/index/falkordb/cch/ddl.rs	resolve_cch_index	55	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	302	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; nodeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; edgeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/index/falkordb/range.rs	RangeKind::for_each_stored_key	43	NOT COVERED	native Range column (#3740): trait signature; not modelled yet

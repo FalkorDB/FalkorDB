@@ -459,20 +459,8 @@ impl Binder {
                 index_type,
                 entity_type,
             }),
-            QueryIR::CreateCchIndex {
-                rel_types,
-                weight_attr,
-            } => Ok(QueryIR::CreateCchIndex {
-                rel_types,
-                weight_attr,
-            }),
-            QueryIR::DropCchIndex {
-                rel_types,
-                weight_attr,
-            } => Ok(QueryIR::DropCchIndex {
-                rel_types,
-                weight_attr,
-            }),
+            QueryIR::CreateCchIndex(spec) => Ok(QueryIR::CreateCchIndex(spec)),
+            QueryIR::DropCchIndex(spec) => Ok(QueryIR::DropCchIndex(spec)),
             QueryIR::Delete { exprs, detach } => {
                 let exprs = exprs
                     .iter()

@@ -311,8 +311,8 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::IncludePending { .. }
                 | IR::CreateIndex { .. }
                 | IR::DropIndex { .. }
-                | IR::CreateCchIndex { .. }
-                | IR::DropCchIndex { .. } => {}
+                | IR::CreateCchIndex(_)
+                | IR::DropCchIndex(_) => {}
                 IR::NodeByLabelScan { node, .. }
                 | IR::AllNodeScan(node)
                 | IR::NodeByIndexScan { node, .. }
@@ -1424,18 +1424,12 @@ impl<'a> Runtime<'a> {
                 entity_type,
             } => super::index_ddl::drop_index(self, label, attrs, index_type, entity_type),
             #[cfg(feature = "index-falkordb")]
-            IR::CreateCchIndex {
-                rel_types,
-                weight_attr,
-            } => cch::ddl::create_cch_index(self, rel_types, weight_attr),
+            IR::CreateCchIndex(spec) => cch::ddl::create_cch_index(self, spec),
             #[cfg(feature = "index-falkordb")]
-            IR::DropCchIndex {
-                rel_types,
-                weight_attr,
-            } => cch::ddl::drop_cch_index(self, rel_types, weight_attr),
+            IR::DropCchIndex(spec) => cch::ddl::drop_cch_index(self, spec),
             // The statements parse in every build; only executing them needs the feature.
             #[cfg(not(feature = "index-falkordb"))]
-            IR::CreateCchIndex { .. } | IR::DropCchIndex { .. } => Err(String::from(
+            IR::CreateCchIndex(_) | IR::DropCchIndex(_) => Err(String::from(
                 "CCH indexes are not available: this module was built without the \
                  index-falkordb feature",
             )),

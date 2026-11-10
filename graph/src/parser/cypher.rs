@@ -100,8 +100,8 @@ use crate::entity_type::EntityType;
 use crate::identifier_limits::{is_identifier_too_long, validate_identifier_len};
 use crate::index::indexer::IndexType;
 use crate::parser::ast::{
-    AllShortestPaths, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
-    QueryRelationship, RawQueryIR, ReduceVars, SetItem, ShortestPathInfo,
+    AllShortestPaths, CchIndexSpec, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR,
+    QueryNode, QueryPath, QueryRelationship, RawQueryIR, ReduceVars, SetItem, ShortestPathInfo,
 };
 use crate::parser::lexer::{Keyword, Lexer, Token};
 use crate::runtime::orderset::OrderSet;
@@ -577,7 +577,7 @@ impl<'a> Parser<'a> {
     fn parse_index_ops(&mut self) -> Result<Option<RawQueryIR>, String> {
         if optional_match_token!(self.lexer => Create) {
             if optional_match_token!(self.lexer => Cch) {
-                return self.parse_cch_index_create().map(Some);
+                return Ok(Some(QueryIR::CreateCchIndex(self.parse_cch_index_spec()?)));
             }
             let fulltext = optional_match_token!(self.lexer => Fulltext);
             let vector = !fulltext && optional_match_token!(self.lexer => Vector);
@@ -684,7 +684,7 @@ impl<'a> Parser<'a> {
         }
         if optional_match_token!(self.lexer => Drop) {
             if optional_match_token!(self.lexer => Cch) {
-                return self.parse_cch_index_drop().map(Some);
+                return Ok(Some(QueryIR::DropCchIndex(self.parse_cch_index_spec()?)));
             }
             let fulltext = optional_match_token!(self.lexer => Fulltext);
             let vector = !fulltext && optional_match_token!(self.lexer => Vector);
@@ -781,19 +781,18 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    /// Parses the relationship-pattern and weight-property tail shared by
-    /// `CREATE CCH INDEX` and `DROP CCH INDEX`, after the `CCH` keyword has
-    /// already been consumed:
+    /// Parses the tail shared by `CREATE CCH INDEX` and `DROP CCH INDEX`, after
+    /// `parse_index_ops` has consumed the verb and the `CCH` keyword:
     ///
     /// ```text
-    /// FOR ()-[e:A|B|...]->() ON (e.weight)
+    /// INDEX FOR ()-[e:A|B|...]->() ON (e.weight)
     /// ```
     ///
     /// A CCH path index is relationship-only and spans one or more types, so
     /// this does not share the node/single-label parsing used by every other
-    /// index type. Returns the (possibly repeated, parse-order) relationship
-    /// type names and the weight attribute name.
-    fn parse_cch_index_pattern(&mut self) -> Result<(Vec<Arc<String>>, Arc<String>), String> {
+    /// index type. The relationship types keep parse order and may repeat.
+    fn parse_cch_index_spec(&mut self) -> Result<CchIndexSpec, String> {
+        match_token!(self.lexer => Index);
         match_token!(self.lexer => For);
         match_token!(self.lexer, LParen);
         if !optional_match_token!(self.lexer, RParen) {
@@ -804,15 +803,11 @@ impl<'a> Parser<'a> {
         let nkey = self.parse_ident()?;
         match_token!(self.lexer, Colon);
         // `:A|B`, `:A|:B` and `:A:B` alike, as in a relationship pattern.
-        let mut rel_types = Vec::new();
-        loop {
+        // A non-short-circuit `|`, so `|:` is consumed as one separator: `||`
+        // would leave the `:` for `parse_ident`, which rejects it.
+        let mut rel_types = vec![self.parse_ident()?];
+        while optional_match_token!(self.lexer, Pipe) | optional_match_token!(self.lexer, Colon) {
             rel_types.push(self.parse_ident()?);
-            let pipe = optional_match_token!(self.lexer, Pipe);
-            let colon = optional_match_token!(self.lexer, Colon);
-            if pipe || colon {
-                continue;
-            }
-            break;
         }
         match_token!(self.lexer, RBrace);
         match_token!(self.lexer, Dash);
@@ -835,26 +830,7 @@ impl<'a> Parser<'a> {
         }
         match_token!(self.lexer, RParen);
 
-        Ok((rel_types, weight_attr))
-    }
-
-    /// `CREATE CCH INDEX FOR ()-[e:A|B]->() ON (e.w)`. The `CCH` keyword has
-    /// already been consumed by `parse_index_ops`.
-    fn parse_cch_index_create(&mut self) -> Result<RawQueryIR, String> {
-        match_token!(self.lexer => Index);
-        let (rel_types, weight_attr) = self.parse_cch_index_pattern()?;
-        Ok(QueryIR::CreateCchIndex {
-            rel_types,
-            weight_attr,
-        })
-    }
-
-    /// `DROP CCH INDEX FOR ()-[e:A|B]->() ON (e.w)`. The `CCH` keyword has
-    /// already been consumed by `parse_index_ops`.
-    fn parse_cch_index_drop(&mut self) -> Result<RawQueryIR, String> {
-        match_token!(self.lexer => Index);
-        let (rel_types, weight_attr) = self.parse_cch_index_pattern()?;
-        Ok(QueryIR::DropCchIndex {
+        Ok(CchIndexSpec {
             rel_types,
             weight_attr,
         })
@@ -4467,10 +4443,10 @@ mod cch_index_ddl_tests {
     fn create_cch_index_single_type() {
         let ir = parse("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.w)").unwrap();
         match ir {
-            QueryIR::CreateCchIndex {
+            QueryIR::CreateCchIndex(CchIndexSpec {
                 rel_types,
                 weight_attr,
-            } => {
+            }) => {
                 assert_eq!(names(&rel_types), vec!["ROAD"]);
                 assert_eq!(weight_attr.as_str(), "w");
             }
@@ -4485,7 +4461,7 @@ mod cch_index_ddl_tests {
         // through in the order they were written.
         let ir = parse("CREATE CCH INDEX FOR ()-[e:B|A|B]->() ON (e.w)").unwrap();
         match ir {
-            QueryIR::CreateCchIndex { rel_types, .. } => {
+            QueryIR::CreateCchIndex(CchIndexSpec { rel_types, .. }) => {
                 assert_eq!(names(&rel_types), vec!["B", "A", "B"]);
             }
             other => panic!("expected CreateCchIndex, got {other:?}"),
@@ -4496,10 +4472,10 @@ mod cch_index_ddl_tests {
     fn drop_cch_index_single_type() {
         let ir = parse("DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.w)").unwrap();
         match ir {
-            QueryIR::DropCchIndex {
+            QueryIR::DropCchIndex(CchIndexSpec {
                 rel_types,
                 weight_attr,
-            } => {
+            }) => {
                 assert_eq!(names(&rel_types), vec!["ROAD"]);
                 assert_eq!(weight_attr.as_str(), "w");
             }
@@ -4511,7 +4487,7 @@ mod cch_index_ddl_tests {
     fn drop_cch_index_multi_type() {
         let ir = parse("DROP CCH INDEX FOR ()-[e:ROAD|FERRY]->() ON (e.w)").unwrap();
         match ir {
-            QueryIR::DropCchIndex { rel_types, .. } => {
+            QueryIR::DropCchIndex(CchIndexSpec { rel_types, .. }) => {
                 assert_eq!(names(&rel_types), vec!["ROAD", "FERRY"]);
             }
             other => panic!("expected DropCchIndex, got {other:?}"),
@@ -4524,8 +4500,7 @@ mod cch_index_ddl_tests {
             for verb in ["CREATE", "DROP"] {
                 let query = format!("{verb} CCH INDEX FOR ()-[e:{types}]->() ON (e.w)");
                 let rel_types = match parse(&query).unwrap() {
-                    QueryIR::CreateCchIndex { rel_types, .. }
-                    | QueryIR::DropCchIndex { rel_types, .. } => rel_types,
+                    QueryIR::CreateCchIndex(spec) | QueryIR::DropCchIndex(spec) => spec.rel_types,
                     other => panic!("{query}: expected a CCH index, got {other:?}"),
                 };
                 assert_eq!(names(&rel_types), vec!["A", "B"], "{query}");
@@ -4536,7 +4511,7 @@ mod cch_index_ddl_tests {
     #[test]
     fn create_cch_index_case_insensitive_keyword() {
         let ir = parse("create cch index for ()-[e:road]->() on (e.w)").unwrap();
-        assert!(matches!(ir, QueryIR::CreateCchIndex { .. }));
+        assert!(matches!(ir, QueryIR::CreateCchIndex(_)));
     }
 
     #[test]
@@ -4797,7 +4772,7 @@ mod cch_index_ddl_tests {
         use crate::index::falkordb::cch::CchIndexDef;
 
         let ir = parse("CREATE CCH INDEX FOR ()-[e:B|A|B]->() ON (e.w)").unwrap();
-        let QueryIR::CreateCchIndex { rel_types, .. } = ir else {
+        let QueryIR::CreateCchIndex(CchIndexSpec { rel_types, .. }) = ir else {
             panic!("expected CreateCchIndex");
         };
         // Stand-in resolution: alphabetical name -> TypeId, as a real resolver

@@ -54,24 +54,24 @@ src/graph_core.rs	replicate_argv	495	AXIOMATISED	Redis module API FFI wrapper (r
 src/graph_core.rs	new	551	PROVEN	unbounded write channel (#3014); Locks.never_stuck_3014 (send never waits)
 src/graph_core.rs	from_mvcc	567	MODELLED	as new
 src/graph_core.rs	execute_query	585	MODELLED	Mvcc Ev.read on snapshot; write detection not modelled
-src/graph_core.rs	execute_profile	671	MODELLED	as execute_query
-src/graph_core.rs	execute_query_write	733	PROVEN	Mvcc fork/checkFork (#3290/#3657): inline_write_ok, stale_then_rerun, checkFork_on_committed (retry sees the inline write) (BUG 5; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
-src/graph_core.rs	reply_profile	878	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
-src/graph_core.rs	new	915	AXIOMATISED	RM_BlockClient FFI
-src/graph_core.rs	drop	923	AXIOMATISED	RM_UnblockClient FFI
-src/graph_core.rs	compute_effective_timeout	941	NOT COVERED	config arithmetic, not concurrency
-src/graph_core.rs	reply_invalid_graph_version	980	NOT COVERED	reply formatting
-src/graph_core.rs	admit	994	PROVEN	Pool.acquireLoop/acquire_bounded; Locks.succ3014 dispatch (reject, never wait): main_never_blocks, inv3014_step
-src/graph_core.rs	query_mut	1005	PROVEN	Locks.main_never_blocks/never_stuck_3014/inv3014_step (admit + unbounded spawn, #3014); drain producer (send then CAS)
-src/graph_core.rs	query_sync	1209	PROVEN	Mvcc.inline_write_ok (inline writer = escalate 0 then forkCur; never refused by a matching queued write, #3290)
-src/graph_core.rs	profile_mut	1338	PROVEN	same admission/producer protocol as query_mut: Locks.main_never_blocks, never_stuck_3014
-src/graph_core.rs	profile_sync	1439	MODELLED	as query_sync
-src/graph_core.rs	finish_write	1506	PROVEN	Mvcc Ev.commit (session in writer mode) / Ev.abandon (never escalated: the version just drops with the runtime)
-src/graph_core.rs	abandon_write	1531	PROVEN	Mvcc Ev.abandon (the fork is dropped, nothing to roll back); index resync not modelled
-src/graph_core.rs	commit_and_replicate	1547	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
-src/graph_core.rs	process_write_queued_query	1625	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
-src/graph_core.rs	replicate	1774	AXIOMATISED	RM_Replicate FFI
-src/graph_core.rs	graph_free	1787	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
+src/graph_core.rs	execute_profile	662	MODELLED	as execute_query
+src/graph_core.rs	execute_query_write	715	PROVEN	Mvcc fork/checkFork (#3290/#3657): inline_write_ok, stale_then_rerun, checkFork_on_committed (retry sees the inline write) (BUG 5; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+src/graph_core.rs	reply_profile	853	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
+src/graph_core.rs	new	890	AXIOMATISED	RM_BlockClient FFI
+src/graph_core.rs	drop	898	AXIOMATISED	RM_UnblockClient FFI
+src/graph_core.rs	compute_effective_timeout	916	NOT COVERED	config arithmetic, not concurrency
+src/graph_core.rs	reply_invalid_graph_version	955	NOT COVERED	reply formatting
+src/graph_core.rs	admit	969	PROVEN	Pool.acquireLoop/acquire_bounded; Locks.succ3014 dispatch (reject, never wait): main_never_blocks, inv3014_step
+src/graph_core.rs	query_mut	980	PROVEN	Locks.main_never_blocks/never_stuck_3014/inv3014_step (admit + unbounded spawn, #3014); drain producer (send then CAS)
+src/graph_core.rs	query_sync	1184	PROVEN	Mvcc.inline_write_ok (inline writer = escalate 0 then forkCur; never refused by a matching queued write, #3290)
+src/graph_core.rs	profile_mut	1313	PROVEN	same admission/producer protocol as query_mut: Locks.main_never_blocks, never_stuck_3014
+src/graph_core.rs	profile_sync	1414	MODELLED	as query_sync
+src/graph_core.rs	finish_write	1481	PROVEN	Mvcc Ev.commit (session in writer mode) / Ev.abandon (never escalated: the version just drops with the runtime)
+src/graph_core.rs	abandon_write	1506	PROVEN	Mvcc Ev.abandon (the fork is dropped, nothing to roll back); index resync not modelled
+src/graph_core.rs	commit_and_replicate	1522	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
+src/graph_core.rs	process_write_queued_query	1600	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
+src/graph_core.rs	replicate	1749	AXIOMATISED	RM_Replicate FFI
+src/graph_core.rs	graph_free	1762	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
 src/query_session.rs	begin	157	MODELLED	reader mode (graphR acquire)
 src/query_session.rs	begin_with	164	MODELLED	reader mode
 src/query_session.rs	begin_writer	179	PROVEN	Locks.inlineWriterProg ordered (all_programs_ordered)
@@ -117,7 +117,7 @@ graph/src/index/indexer.rs	enabled	720	PROVEN	Tickets.operational_iff
 graph/src/graph/graph.rs	populate_index_batch	595	PROVEN	Tickets.batch; inv_batch, main_operational_complete
 graph/src/graph/graph.rs	vector_query_nodes	4375	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/graph/graph.rs	vector_query_edges	4435	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
-graph/src/runtime/runtime.rs	map_to_index_options	2018	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
+graph/src/runtime/runtime.rs	map_to_index_options	2012	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)
 graph/src/runtime/ops/commit.rs	next	69	MODELLED	lock path only (#3226): Locks.writerOpenScanProg (escalate at :93, commit_deferred_indexes → Indexer::commit → RediSearch_IndexAddDocument with the scan's spec read lock still held); properties noReacquire / LockOrdered refuted by bug3226_open_scan_upgrade, bug3226_open_scan_unordered (OPEN); scan-closed paths: spec_programs_ordered
 # Online index build (#2355): fns the background builder added, not modelled yet.

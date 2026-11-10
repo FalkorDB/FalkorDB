@@ -52,8 +52,8 @@ use crate::{
     entity_type::EntityType,
     index::indexer::{IndexQuery, IndexType},
     parser::ast::{
-        AllShortestPaths, BoundQueryIR, ExprIR, NestedPlanRef, QueryExpr, QueryGraph, QueryIR,
-        QueryNode, QueryPath, QueryRelationship, SetItem, SupportAggregation, Variable,
+        AllShortestPaths, BoundQueryIR, CchIndexSpec, ExprIR, NestedPlanRef, QueryExpr, QueryGraph,
+        QueryIR, QueryNode, QueryPath, QueryRelationship, SetItem, SupportAggregation, Variable,
     },
     runtime::functions::GraphFn,
     runtime::orderset::OrderSet,
@@ -329,15 +329,25 @@ pub enum IR {
     },
     /// CREATE CCH INDEX operation. Spans one or more relationship types, unlike
     /// `CreateIndex`'s single label.
-    CreateCchIndex {
-        rel_types: Vec<Arc<String>>,
-        weight_attr: Arc<String>,
-    },
+    CreateCchIndex(CchIndexSpec),
     /// DROP CCH INDEX operation.
-    DropCchIndex {
-        rel_types: Vec<Arc<String>>,
-        weight_attr: Arc<String>,
-    },
+    DropCchIndex(CchIndexSpec),
+}
+
+impl IR {
+    /// Whether a plan holding this operator is a write query: a `Commit`, or
+    /// index DDL (which writes without one).
+    #[must_use]
+    pub const fn makes_write_query(&self) -> bool {
+        matches!(
+            self,
+            Self::Commit
+                | Self::CreateIndex { .. }
+                | Self::DropIndex { .. }
+                | Self::CreateCchIndex(_)
+                | Self::DropCchIndex(_)
+        )
+    }
 }
 
 /// Returns true if the subtree rooted at `idx` contains any node matching `predicate`.
@@ -545,16 +555,16 @@ impl Display for IR {
             Self::DropIndex { label, attrs, .. } => {
                 write!(f, "Drop Index | :{label}({attrs:?})")
             }
-            Self::CreateCchIndex {
+            Self::CreateCchIndex(CchIndexSpec {
                 rel_types,
                 weight_attr,
-            } => {
+            }) => {
                 write!(f, "Create CCH Index | :{rel_types:?}([{weight_attr:?}])")
             }
-            Self::DropCchIndex {
+            Self::DropCchIndex(CchIndexSpec {
                 rel_types,
                 weight_attr,
-            } => {
+            }) => {
                 write!(f, "Drop CCH Index | :{rel_types:?}([{weight_attr:?}])")
             }
         }
@@ -3330,20 +3340,8 @@ impl Planner {
                     entity_type
                 })
             }
-            QueryIR::CreateCchIndex {
-                rel_types,
-                weight_attr,
-            } => tree!(IR::CreateCchIndex {
-                rel_types,
-                weight_attr
-            }),
-            QueryIR::DropCchIndex {
-                rel_types,
-                weight_attr,
-            } => tree!(IR::DropCchIndex {
-                rel_types,
-                weight_attr
-            }),
+            QueryIR::CreateCchIndex(spec) => tree!(IR::CreateCchIndex(spec)),
+            QueryIR::DropCchIndex(spec) => tree!(IR::DropCchIndex(spec)),
             // Multi-clause query: plan each clause and stitch together.
             QueryIR::Query { clauses: q, write } => self.plan_query(q, write),
             QueryIR::Union { branches, all } => {

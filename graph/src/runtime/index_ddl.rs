@@ -35,11 +35,7 @@ pub(crate) fn create_index<'a>(
     entity_type: &EntityType,
     options: Option<&QueryExpr<Variable>>,
 ) -> Result<BatchOp<'a>, String> {
-    if !runtime.write {
-        return Err(String::from(
-            "graph.RO_QUERY is to be executed only on read-only queries",
-        ));
-    }
+    reject_read_only_query(runtime)?;
     // The evaluated map is kept, not just the parsed options: it is what goes on
     // the wire for v3, and this is the only place it exists. A plan scan cannot
     // rebuild it — the expression has to be evaluated to know what it says.
@@ -91,11 +87,7 @@ pub(crate) fn drop_index<'a>(
     index_type: &IndexType,
     entity_type: &EntityType,
 ) -> Result<BatchOp<'a>, String> {
-    if !runtime.write {
-        return Err(String::from(
-            "graph.RO_QUERY is to be executed only on read-only queries",
-        ));
-    }
+    reject_read_only_query(runtime)?;
     // See `create_index`: DDL runs in writer mode.
     runtime.upgrade_to_write()?;
     let dropped = runtime
@@ -104,6 +96,18 @@ pub(crate) fn drop_index<'a>(
     runtime.stats.borrow_mut().indexes_dropped += dropped;
     emit_effect(runtime, false, label, attrs, index_type, entity_type, None)?;
     Ok(BatchOp::Once(None))
+}
+
+/// Index DDL is a write: refuse it in a `GRAPH.RO_QUERY`, with C's message.
+/// Shared with `CREATE`/`DROP CCH INDEX`.
+pub(crate) fn reject_read_only_query(runtime: &Runtime<'_>) -> Result<(), String> {
+    if runtime.write {
+        Ok(())
+    } else {
+        Err(String::from(
+            "graph.RO_QUERY is to be executed only on read-only queries",
+        ))
+    }
 }
 
 /// Append this statement to the query's effects buffer.
