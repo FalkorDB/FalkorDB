@@ -28,7 +28,12 @@
 //! No arguments are accepted beyond the command name itself; extra arguments
 //! result in a `WrongArity` error.
 
-use valkey_module::{Context, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
+use valkey_module::{
+    CallOptionsBuilder, CallReply, CallResult, Context, ValkeyError, ValkeyResult, ValkeyString,
+    ValkeyValue,
+};
+
+const LIST_FAILED: ValkeyError = ValkeyError::Str("ERR Failed to list graphs");
 
 /// The name `GRAPH.LIST` replies for one key `SCAN` returned.
 ///
@@ -40,20 +45,22 @@ use valkey_module::{Context, ValkeyError, ValkeyResult, ValkeyString, ValkeyValu
 /// (`ValkeyValue::SimpleString`, i.e. `RM_ReplyWithSimpleString`) escapes nothing, so a
 /// key holding CR/LF let a client inject arbitrary RESP into the *next* reply on the
 /// connection. `StringBuffer` is C's reply, and carries the bytes it is handed.
+fn c_reply_name(key: &[u8]) -> ValkeyValue {
+    let end = key.iter().position(|b| *b == 0).unwrap_or(key.len());
+    ValkeyValue::StringBuffer(key[..end].to_vec())
+}
+
+/// The bytes of a string element of a `SCAN` reply.
 ///
-/// `SCAN` returns a name as a `SimpleString` when its bytes are valid UTF-8 and as a
-/// `StringBuffer` when they are not; both arms need the same treatment, or the bytes
-/// past a NUL still leak for a non-UTF-8 key.
-fn c_reply_name(name: ValkeyValue) -> ValkeyValue {
-    let mut bytes = match name {
-        ValkeyValue::SimpleString(s) | ValkeyValue::BulkString(s) => s.into_bytes(),
-        ValkeyValue::StringBuffer(b) => b,
-        other => return other,
-    };
-    if let Some(end) = bytes.iter().position(|b| *b == 0) {
-        bytes.truncate(end);
+/// A key is binary, so these bytes need not be UTF-8. `valkey-module` converts a
+/// `Context::call` reply into a `ValkeyValue` with `to_string().unwrap()`, which panics
+/// on a key such as `b"\xc3\x28g"`, and a panic here aborts the server. The reply is
+/// read as raw bytes instead.
+fn reply_bytes<'a>(reply: &'a CallResult<'_>) -> Option<&'a [u8]> {
+    match reply {
+        Ok(CallReply::String(s)) => Some(s.as_bytes()),
+        _ => None,
     }
-    ValkeyValue::StringBuffer(bytes)
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -65,6 +72,8 @@ pub fn graph_list(
         return Err(ValkeyError::WrongArity);
     }
 
+    // `v`, the format `Context::call` uses, so the server sees the same call.
+    let options = CallOptionsBuilder::new().build();
     let mut a = [
         ctx.create_string("0"),
         ctx.create_string("TYPE"),
@@ -72,20 +81,23 @@ pub fn graph_list(
     ];
     let mut res = Vec::new();
     loop {
-        let call_res = ctx.call("SCAN", a.iter().collect::<Vec<_>>().as_slice())?;
-        match call_res {
-            ValkeyValue::Array(mut arr) => {
-                if let ValkeyValue::Array(arr) = arr.remove(1) {
-                    res.extend(arr.into_iter().map(c_reply_name));
-                }
-                if let ValkeyValue::SimpleString(i) = arr.remove(0) {
-                    if i == "0" {
-                        return Ok(ValkeyValue::Array(res));
-                    }
-                    a[0] = ctx.create_string(i);
-                }
-            }
-            _ => return Err(ValkeyError::Str("ERR Failed to list graphs")),
+        let reply: CallResult =
+            ctx.call_ext("SCAN", &options, a.iter().collect::<Vec<_>>().as_slice());
+        let CallReply::Array(page) = reply.map_err(ValkeyError::from)? else {
+            return Err(LIST_FAILED);
+        };
+        // `[cursor, [key, ...]]`
+        let (Some(cursor), Some(Ok(CallReply::Array(keys)))) = (page.get(0), page.get(1)) else {
+            return Err(LIST_FAILED);
+        };
+        for key in keys.iter() {
+            res.push(c_reply_name(reply_bytes(&key).ok_or(LIST_FAILED)?));
         }
+        let cursor = reply_bytes(&cursor).ok_or(LIST_FAILED)?;
+        if cursor == b"0" {
+            return Ok(ValkeyValue::Array(res));
+        }
+        // From the bytes: `create_string` goes through `CString::new(..).unwrap()`.
+        a[0] = ValkeyString::create_from_slice(ctx.get_raw(), cursor);
     }
 }

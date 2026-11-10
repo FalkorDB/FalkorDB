@@ -1,4 +1,5 @@
 from common import *
+from redis.client import NEVER_DECODE
 
 GRAPH_ID = "graph_list"
 
@@ -48,6 +49,37 @@ class testGraphList(FlowTestsBase):
         con.execute_command("GRAPH.DELETE", "Z")
         graphs = self.db.list_graphs()
         self.env.assertEqual(graphs, [])
+
+    def test_graph_list_non_utf8_key(self):
+        # A key is binary-safe, so a graph can live under bytes that are not UTF-8.
+        # GRAPH.LIST finds graphs with SCAN, and a reply conversion that assumed UTF-8
+        # panicked on this key, which took the server down. The name comes back as
+        # the key's bytes, as C replies it.
+        con = self.env.getConnection()
+        name = b"\xc3\x28g"  # 0xC3 starts a 2-byte sequence; 0x28 cannot continue it
+        con.execute_command("GRAPH.QUERY", name, "RETURN 1")
+        self.create_graph("utf8", con)
+
+        graphs = con.execute_command("GRAPH.LIST", **{NEVER_DECODE: True})
+        self.env.assertEqual(sorted(graphs), sorted([name, b"utf8"]))
+        self.env.assertTrue(con.ping())
+
+        con.delete(name, "utf8")
+
+    def test_graph_list_spans_scan_pages(self):
+        # SCAN returns a page of about 10 keys and a cursor to resume from; GRAPH.LIST
+        # has to follow the cursor to the end, and skip the keys that are not graphs.
+        con = self.env.getConnection()
+        graphs = [f"page_graph_{i}" for i in range(40)]
+        others = [f"page_string_{i}" for i in range(200)]
+        for g in graphs:
+            self.create_graph(g, con)
+        for k in others:
+            con.set(k, "x")
+
+        self.env.assertEqual(sorted(self.db.list_graphs()), sorted(graphs))
+
+        con.delete(*graphs, *others)
 
 # tests the list datatype
 class testList(FlowTestsBase):
