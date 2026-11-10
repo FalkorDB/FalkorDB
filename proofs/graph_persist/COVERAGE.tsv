@@ -72,6 +72,6 @@ src/serializers/decoder/mod.rs	rebuild_indexes	345	PROVEN	Persist.Indexes.rebuil
 src/serializers/decoder/mod.rs	pipe_load_graph	406	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
 src/serializers/decoder/mod.rs	vec_load_graph	421	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
 src/serializers/decoder/mod.rs	load_graph_from_reader	431	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof
-graph/src/runtime/runtime.rs	publish	581	NOT COVERED	new with the plain-Graph fork, not modelled yet: moves the runtime's fork into MvccGraph::commit and reads the Arc it published from then on
-graph/src/runtime/runtime.rs	QueryGraph::from	119	NOT COVERED	enum constructor
-graph/src/runtime/runtime.rs	QueryGraph::from	125	NOT COVERED	enum constructor
+graph/src/runtime/runtime.rs	publish	585	NOT COVERED	new with the plain-Graph fork, not modelled yet: moves the runtime's fork into MvccGraph::commit and reads the Arc it published from then on
+graph/src/runtime/runtime.rs	QueryGraph::from	121	NOT COVERED	enum constructor
+graph/src/runtime/runtime.rs	QueryGraph::from	127	NOT COVERED	enum constructor

@@ -14,11 +14,11 @@ graph/src/planner/optimizer/fuse_anonymous_traverse.rs	intermediate_unreferenced
 graph/src/planner/optimizer/fuse_anonymous_traverse.rs	can_fuse	83	PROVEN	Helpers.canFuse_spec (all preconditions of Passes.fuse_same_support; #2390: no node_attrs_empty, both edges also unreferenced)
 graph/src/planner/optimizer/fuse_anonymous_traverse.rs	fuse_anonymous_traverse	194	PROVEN	Passes.fuse_same_support, fuse_changes_multiplicity; Helpers.canFuse_spec; References2.fuse_unread_sound
 graph/src/planner/optimizer/references.rs	ir_references_variable	41	PROVEN	References.refsNew: refsNew_complete (every read seen, under the planner invariant PlanInv = planner_build planMatch_stripped), refsNew_sound (only reads or bound vars), refsNew_sees_unwind/create/foreach; refsNew_misses_sibling_edges (W2-traverse-1)
-graph/src/planner/optimizer/references.rs	index_query_references_variable	204	PROVEN	References.iqLoop/iqRefs: iqLoop_iff (explicit stack = some operand mentions v, any And/Or depth), iqRefs_iff
-graph/src/planner/optimizer/references.rs	query_graph_references_variable	287	PROVEN	References.qgRefs (node attrs then rel attrs), within refsNew_complete/refsNew_sound
-graph/src/planner/optimizer/references.rs	set_items_reference_variable	302	PROVEN	References.setItemsRefs: setItemsRefs_iff (= v in SetItem.reads, label by (id, scope))
-graph/src/planner/optimizer/references.rs	expr_references_variable	317	PROVEN	References.exprRefs_iff; Helpers.refsVar_iff (BFS by (id, scope) on the tree model)
-graph/src/planner/optimizer/references.rs	subtree_references_variable	327	PROVEN	References.subtreeRefs_iff; Helpers.refsVar_iff (same BFS on a subtree)
+graph/src/planner/optimizer/references.rs	index_query_references_variable	206	PROVEN	References.iqLoop/iqRefs: iqLoop_iff (explicit stack = some operand mentions v, any And/Or depth), iqRefs_iff
+graph/src/planner/optimizer/references.rs	query_graph_references_variable	289	PROVEN	References.qgRefs (node attrs then rel attrs), within refsNew_complete/refsNew_sound
+graph/src/planner/optimizer/references.rs	set_items_reference_variable	304	PROVEN	References.setItemsRefs: setItemsRefs_iff (= v in SetItem.reads, label by (id, scope))
+graph/src/planner/optimizer/references.rs	expr_references_variable	319	PROVEN	References.exprRefs_iff; Helpers.refsVar_iff (BFS by (id, scope) on the tree model)
+graph/src/planner/optimizer/references.rs	subtree_references_variable	329	PROVEN	References.subtreeRefs_iff; Helpers.refsVar_iff (same BFS on a subtree)
 graph/src/planner/optimizer/fuse_optional_traverse.rs	fusable_traverse	40	PROVEN	Helpers.fusable_spec (= hypothesis of Passes.fuse_optional_correct)
 graph/src/planner/optimizer/fuse_optional_traverse.rs	fused_traverse	81	PROVEN	Helpers.fusedCT_spec (same traverse, optional = true); Passes.optCT
 graph/src/planner/optimizer/fuse_optional_traverse.rs	fuse_optional_traverse	105	PROVEN	Passes.fuse_optional_correct
