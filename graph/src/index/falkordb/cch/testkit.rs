@@ -47,7 +47,7 @@ pub(crate) fn to_input(g: &Matrix<f64>) -> CchInput {
         skeleton: csr(n, &skeleton_rows, skeleton_cols),
         weights: WeightCsr {
             csr: csr(n, &rows, cols),
-            w,
+            values: w,
         },
     }
 }
@@ -204,8 +204,8 @@ pub(super) fn assert_input_invariants(input: &CchInput) {
     assert_csr_shape(&input.weights.csr, input.n, "weights");
     assert_eq!(
         input.weights.csr.neighbors.len(),
-        input.weights.w.len(),
-        "weights.csr.neighbors and weights.w must be the same length"
+        input.weights.values.len(),
+        "weights.csr.neighbors and weights.values must be the same length"
     );
 
     let skeleton_pairs = csr_pairs(&input.skeleton);
@@ -221,7 +221,7 @@ pub(super) fn assert_input_invariants(input: &CchInput) {
     }
 
     let weight_pairs = csr_pairs(&input.weights.csr);
-    for (&(u, v), &w) in weight_pairs.iter().zip(&input.weights.w) {
+    for (&(u, v), &w) in weight_pairs.iter().zip(&input.weights.values) {
         assert_ne!(u, v, "weights has a self-loop at node {u}");
         assert!(w >= 0.0, "weight on ({u}, {v}) is {w}, must be >= 0");
         assert!(
@@ -813,7 +813,7 @@ mod self_tests {
                     row_offsets: vec![0, 1, 1],
                     neighbors: vec![1],
                 },
-                w: vec![1.0],
+                values: vec![1.0],
             },
         };
         assert_input_invariants(&input);
@@ -835,7 +835,7 @@ mod self_tests {
                     row_offsets: vec![0, 1, 1], // row 0: [0] -- a self-loop
                     neighbors: vec![0],
                 },
-                w: vec![1.0],
+                values: vec![1.0],
             },
         };
         assert_input_invariants(&input);
@@ -857,7 +857,7 @@ mod self_tests {
                     row_offsets: vec![0, 1, 1],
                     neighbors: vec![1],
                 },
-                w: vec![1.0],
+                values: vec![1.0],
             },
         };
         assert_input_invariants(&input);
@@ -879,7 +879,7 @@ mod self_tests {
                     row_offsets: vec![0, 1, 1],
                     neighbors: vec![1],
                 },
-                w: vec![-1.0],
+                values: vec![-1.0],
             },
         };
         assert_input_invariants(&input);
@@ -901,7 +901,7 @@ mod self_tests {
                     row_offsets: vec![0, 0, 0, 0],
                     neighbors: vec![],
                 },
-                w: vec![],
+                values: vec![],
             },
         };
         assert_input_invariants(&input);
@@ -909,7 +909,7 @@ mod self_tests {
 
     /// Each weight lands on its own pair: distinct weights over several rows and columns,
     /// read back out of the `WeightCsr` as triples, are `g`'s entries but the self-loops. A
-    /// reordered `w` keeps every structural check green and fails this.
+    /// reordered `values` keeps every structural check green and fails this.
     #[test]
     fn to_input_puts_each_weight_on_its_own_pair() {
         let edges = [
@@ -924,7 +924,7 @@ mod self_tests {
         let input = to_input(&weights(4, &edges));
         let got: Vec<(u64, u64, f64)> = csr_pairs(&input.weights.csr)
             .into_iter()
-            .zip(input.weights.w.iter().copied())
+            .zip(input.weights.values.iter().copied())
             .map(|((u, v), w)| (u, v, w))
             .collect();
         let want: Vec<(u64, u64, f64)> = edges.into_iter().filter(|e| e.0 != e.1).collect();
@@ -936,7 +936,7 @@ mod self_tests {
     #[test]
     fn to_input_keeps_an_invalid_weight() {
         for w in [f64::NAN, -1.0, f64::NEG_INFINITY] {
-            let got = to_input(&weights(2, &[(0, 1, w)])).weights.w[0];
+            let got = to_input(&weights(2, &[(0, 1, w)])).weights.values[0];
             assert_eq!(got.to_bits(), w.to_bits(), "{w}");
         }
     }
@@ -957,7 +957,7 @@ mod self_tests {
                     row_offsets: vec![0, 0, 0],
                     neighbors: vec![],
                 },
-                w: vec![],
+                values: vec![],
             },
         };
         assert_input_invariants(&input);

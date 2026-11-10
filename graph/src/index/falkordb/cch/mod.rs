@@ -25,6 +25,7 @@ mod query;
 #[cfg(test)]
 pub(crate) mod testkit;
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use roaring::RoaringTreemap;
@@ -97,7 +98,19 @@ impl Csr {
         &self,
         node: usize,
     ) -> &[u64] {
-        &self.neighbors[id_index(self.row_offsets[node])..id_index(self.row_offsets[node + 1])]
+        &self.neighbors[self.row_range(node)]
+    }
+
+    /// Where `node`'s row sits in `neighbors` (and in a [`WeightCsr`]'s `values`):
+    /// `row_offsets[node]..row_offsets[node + 1]`.
+    ///
+    /// # Panics
+    /// If `node >= node_count`.
+    fn row_range(
+        &self,
+        node: usize,
+    ) -> Range<usize> {
+        id_index(self.row_offsets[node])..id_index(self.row_offsets[node + 1])
     }
 
     /// Whether `row_offsets` is shaped as the type requires (`node_count + 1` offsets from 0 to
@@ -145,7 +158,8 @@ impl Csr {
 /// Directed weights: same shape as a [`Csr`], with one weight per entry.
 pub struct WeightCsr {
     csr: Csr,
-    w: Vec<f64>,
+    /// One weight per entry of `csr.neighbors`.
+    values: Vec<f64>,
 }
 
 /// What `Graph` hands the hierarchy builder (built by #3211, consumed by #3208 and #3209).
@@ -238,7 +252,7 @@ impl From<order::OrderError> for CchError {
 pub struct Cch {
     /// Phase 1's output: the elimination order and the chordal supergraph. Metric
     /// independent, so every version of this index shares one.
-    topo: Arc<Topology>,
+    topology: Arc<Topology>,
     /// Phase 2's output: the four per-arc arrays, indexed by arc id.
     #[allow(dead_code)] // this change writes it; the query (#3210) is its reader
     metric: Metric,

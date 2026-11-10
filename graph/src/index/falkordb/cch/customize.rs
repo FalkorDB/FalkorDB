@@ -22,14 +22,14 @@
 //! ## Arc ids
 //!
 //! The chordal supergraph is held as upward rows over ranks ([`Topology::up`]). An **arc
-//! id** (called a *slot* in the code) numbers the arcs row by row: rank `lo`'s arcs are the
-//! slots [`Topology::up_range(lo)`](Topology::up_range), and
+//! id** (called a *slot* in the code) numbers the arcs row by row: rank `lower`'s arcs are
+//! the slots [`Topology::up_range(lower)`](Topology::up_range), and
 //!
 //! ```text
-//! slot up_range(lo).start + i   <->   the arc between ranks lo and up(lo)[i]
+//! slot up_range(lower).start + i   <->   the arc between ranks lower and up(lower)[i]
 //! ```
 //!
-//! `lo < hi` always: a rank only lists its *upper* neighbors.
+//! `lower < higher` always: a rank only lists its *upper* neighbors.
 //! [`Topology::arc_slot`] is the reverse lookup: given an arc's two ends, in either order,
 //! its slot.
 //!
@@ -39,16 +39,16 @@
 //! ## The four arrays
 //!
 //! All four are indexed by arc id and so all have [`Topology::arc_count`] entries. For slot
-//! `k` joining ranks `lo` and `hi`:
+//! `k` joining ranks `lower` and `higher`:
 //!
 //! | array | meaning |
 //! |---|---|
-//! | `up_w[k]`   | cheapest `lo -> hi` weight through nodes of rank `< lo` |
-//! | `dn_w[k]`   | cheapest `hi -> lo` weight through nodes of rank `< lo` |
-//! | `up_mid[k]` | rank of the apex `up_w[k]` routes through, if any |
-//! | `dn_mid[k]` | rank of the apex `dn_w[k]` routes through, if any |
+//! | `upward_weight[k]` | cheapest `lower -> higher` weight through nodes of rank `< lower` |
+//! | `downward_weight[k]` | cheapest `higher -> lower` weight through nodes of rank `< lower` |
+//! | `upward_middle[k]` | rank of the apex `upward_weight[k]` routes through, if any |
+//! | `downward_middle[k]` | rank of the apex `downward_weight[k]` routes through, if any |
 //!
-//! "through nodes of rank `< lo`" is the whole invariant: an arc holds the shortest path
+//! "through nodes of rank `< lower`" is the whole invariant: an arc holds the shortest path
 //! between its endpoints that uses *only strictly lower-ranked* intermediates. A weight of
 //! `f64::INFINITY` means no such path exists — including for the arcs that exist purely as
 //! fill-in and never acquire one, and for an edge whose own weight is `+inf`: a closed edge
@@ -56,17 +56,19 @@
 //! `[0, +inf]` (`+inf + x = +inf`), and nothing here subtracts weights, so no NaN can
 //! arise.
 //!
-//! `up_mid[k] == None` means the arc's weight is its own original edge, with nothing to
-//! unpack; otherwise the arc expands to `lo -> up_mid[k] -> hi`, each half of which is
-//! itself an arc to expand recursively. A mid rank is always strictly below `lo`.
-//! `Option<Rank>` is the size of a [`Rank`], so the mid arrays cost no more than a
+//! `upward_middle[k] == None` means the arc's weight is its own original edge, with nothing
+//! to unpack; otherwise the arc expands to `lower -> upward_middle[k] -> higher`, each half of
+//! which is itself an arc to expand recursively. A middle rank is always strictly below
+//! `lower`.
+//! `Option<Rank>` is the size of a [`Rank`], so the middle arrays cost no more than a
 //! sentinel would.
 //!
 //! ## Ties
 //!
 //! Every improvement is a strict `<`, so a tie never moves an arc:
-//! - an original edge that a detour only ties keeps its own weight and records no mid;
-//! - among detours that tie, the lowest apex (the first one the sweep reaches) is the mid.
+//! - an original edge that a detour only ties keeps its own weight and records no middle
+//!   rank;
+//! - among detours that tie, the lowest apex (the first one the sweep reaches) is the middle rank.
 //!
 //! The result is therefore one exact set of arrays for a given metric and order, which is
 //! what lets a scoped recustomization be compared bit for bit with a full one. Any other
@@ -85,25 +87,25 @@
 use std::sync::Arc;
 
 use super::order::{Rank, Topology};
-use super::{Cch, CchError, CchInput, WeightCsr};
+use super::{Cch, CchError, CchInput, WeightCsr, index_id};
 
 /// The four per-arc arrays a customization produces, indexed by arc id. Each is written
 /// once, by the customization that builds it, and never grows, so they are boxed slices.
 pub(crate) struct Metric {
-    pub(crate) up_w: Box<[f64]>,
-    pub(crate) dn_w: Box<[f64]>,
-    pub(crate) up_mid: Box<[Option<Rank>]>,
-    pub(crate) dn_mid: Box<[Option<Rank>]>,
+    pub(crate) upward_weight: Box<[f64]>,
+    pub(crate) downward_weight: Box<[f64]>,
+    pub(crate) upward_middle: Box<[Option<Rank>]>,
+    pub(crate) downward_middle: Box<[Option<Rank>]>,
 }
 
 impl Metric {
     /// Heap bytes of the four arrays; the inline headers are counted by the owning `Cch`.
     #[cfg(test)]
     pub(crate) fn memory_usage(&self) -> usize {
-        size_of_val(&*self.up_w)
-            + size_of_val(&*self.dn_w)
-            + size_of_val(&*self.up_mid)
-            + size_of_val(&*self.dn_mid)
+        size_of_val(&*self.upward_weight)
+            + size_of_val(&*self.downward_weight)
+            + size_of_val(&*self.upward_middle)
+            + size_of_val(&*self.downward_middle)
     }
 }
 
@@ -132,23 +134,27 @@ impl Metric {
 /// weights with both a new adjacency and an invalid weight give
 /// [`CchError::InvalidWeight`]: a rebuild would refuse that weight the same way.
 fn validate(
-    topo: &Topology,
+    topology: &Topology,
     weights: &WeightCsr,
 ) -> Result<(), CchError> {
     let csr = &weights.csr;
-    let n = topo.node_count();
-    if csr.node_count != n {
+    let node_count = topology.node_count();
+    if csr.node_count != node_count {
         return Err(CchError::NeedsRebuild);
     }
     // Rows are sliced only once the offsets are known to be in range.
     if !csr.is_well_formed()
-        || weights.w.len() != csr.neighbors.len()
-        || !(0..n).all(|node| csr.row(node).windows(2).all(|pair| pair[0] < pair[1]))
+        || weights.values.len() != csr.neighbors.len()
+        || !(0..node_count).all(|node| csr.row(node).windows(2).all(|pair| pair[0] < pair[1]))
     {
         return Err(CchError::Internal("the weight CSR is malformed"));
     }
     // A negative weight, `-inf` and NaN are refused; `+inf` and `-0.0` are not.
-    if weights.w.iter().any(|w| w.is_nan() || *w < 0.0) {
+    if weights
+        .values
+        .iter()
+        .any(|weight| weight.is_nan() || *weight < 0.0)
+    {
         return Err(CchError::InvalidWeight);
     }
     Ok(())
@@ -156,19 +162,17 @@ fn validate(
 
 impl WeightCsr {
     /// Every stored entry as `(row, column, weight)`, row by row, columns ascending within a
-    /// row. Assumes the offsets are valid (`n + 1` of them, non-decreasing, the last at most
-    /// `neighbors.len()`) and that `w` has one weight per entry; see [`validate`].
+    /// row. Assumes the offsets are valid (`node_count + 1` of them, non-decreasing, the last
+    /// at most `neighbors.len()`) and that `values` has one weight per entry; see
+    /// [`validate`].
     pub(crate) fn entries(&self) -> impl Iterator<Item = (u64, u64, f64)> + '_ {
-        (0..self.csr.node_count).flat_map(move |u| {
-            let (lo, hi) = (
-                self.csr.row_offsets[u] as usize,
-                self.csr.row_offsets[u + 1] as usize,
-            );
-            #[allow(clippy::cast_possible_truncation)]
-            self.csr.neighbors[lo..hi]
+        (0..self.csr.node_count).flat_map(move |row| {
+            let entries = self.csr.row_range(row);
+            let u = index_id(row);
+            self.csr.neighbors[entries.clone()]
                 .iter()
-                .zip(&self.w[lo..hi])
-                .map(move |(&v, &w)| (u as u64, v, w))
+                .zip(&self.values[entries])
+                .map(move |(&v, &weight)| (u, v, weight))
         })
     }
 }
@@ -181,13 +185,13 @@ impl WeightCsr {
 /// between two nodes the hierarchy has no arc for, which only a rebuild can add), and
 /// [`CchError::Internal`] if `weights` is malformed (a bug). See [`validate`].
 pub(crate) fn customize(
-    topo: &Topology,
+    topology: &Topology,
     weights: &WeightCsr,
 ) -> Result<Metric, CchError> {
-    validate(topo, weights)?;
+    validate(topology, weights)?;
 
-    let mut metric = seed(topo, weights)?;
-    relax(topo, &mut metric);
+    let mut metric = seed(topology, weights)?;
+    relax(topology, &mut metric);
     Ok(metric)
 }
 
@@ -198,40 +202,41 @@ pub(crate) fn customize(
 /// will miss. Scattering the edges into infinity-filled arrays instead touches each *edge*
 /// once, and the chordal supergraph has far more arcs than the graph has edges.
 fn seed(
-    topo: &Topology,
+    topology: &Topology,
     weights: &WeightCsr,
 ) -> Result<Metric, CchError> {
-    let arcs = topo.arc_count();
+    let arc_count = topology.arc_count();
     let mut metric = Metric {
-        up_w: vec![f64::INFINITY; arcs].into_boxed_slice(),
-        dn_w: vec![f64::INFINITY; arcs].into_boxed_slice(),
-        up_mid: vec![None; arcs].into_boxed_slice(),
-        dn_mid: vec![None; arcs].into_boxed_slice(),
+        upward_weight: vec![f64::INFINITY; arc_count].into_boxed_slice(),
+        downward_weight: vec![f64::INFINITY; arc_count].into_boxed_slice(),
+        upward_middle: vec![None; arc_count].into_boxed_slice(),
+        downward_middle: vec![None; arc_count].into_boxed_slice(),
     };
 
     // Parallelisable, but not done: every stored entry (u, v) writes exactly one slot of
-    // `up_w` (if `u` ranks below `v`) or `dn_w` (if above), and the two directions of a pair
-    // go to different arrays, so with duplicate-free rows no two entries write the same
-    // location and the rows are independent. What stops a one-line change is that the
-    // writes go through `&mut` arrays, which would have to be split by row or slot range.
-    for (u, v, w) in weights.entries() {
+    // `upward_weight` (if `u` ranks below `v`) or `downward_weight` (if above), and the two
+    // directions of a pair go to different arrays, so with duplicate-free rows no two entries
+    // write the same location and the rows are independent. What stops a one-line change is
+    // that the writes go through `&mut` arrays, which would have to be split by row or slot
+    // range.
+    for (u, v, weight) in weights.entries() {
         if u == v {
             continue; // a self-loop is never on a shortest path
         }
-        let (rank_u, rank_v) = (topo.rank_of(u.into()), topo.rank_of(v.into()));
+        let (rank_u, rank_v) = (topology.rank_of(u.into()), topology.rank_of(v.into()));
         // Every directed weight entry (u, v) has u-v in the skeleton the hierarchy was built
         // from, so for weights of that same graph the arc is there. A miss means the weights
         // come from a later version of the graph than the hierarchy was built for, one that
         // joined two nodes the hierarchy does not: dropping the weight would make queries
         // silently too long, so the caller rebuilds instead.
-        let Some(slot) = topo.arc_slot(rank_u, rank_v) else {
+        let Some(slot) = topology.arc_slot(rank_u, rank_v) else {
             return Err(CchError::NeedsRebuild);
         };
 
         if rank_u < rank_v {
-            metric.up_w[slot] = w;
+            metric.upward_weight[slot] = weight;
         } else {
-            metric.dn_w[slot] = w;
+            metric.downward_weight[slot] = weight;
         }
     }
 
@@ -253,7 +258,7 @@ fn seed(
 /// the other, but independence in that sense is not enough: iterations of different `x`
 /// can also write the *same* arc `(y, z)` (any two common lower neighbours of `y` and `z`),
 /// so running them concurrently would race on its weight and, on a tie, change which `x`
-/// is recorded as the mid. A parallel version has to change the loop (for example, have
+/// is recorded as the middle rank. A parallel version has to change the loop (for example, have
 /// each arc pull the minimum over its own lower triangles, so each is written once) and
 /// keep the tie rules. That has not been implemented or measured here.
 ///
@@ -261,49 +266,49 @@ fn seed(
 /// If the topology is not chordal (a `z` missing from `up(y)`), which [`Topology`]
 /// guarantees by construction: a bug, never data.
 fn relax(
-    topo: &Topology,
+    topology: &Topology,
     metric: &mut Metric,
 ) {
-    for x in topo.ranks() {
-        let up = topo.up(x);
-        let base = topo.up_range(x).start;
+    for x in topology.ranks() {
+        let above_x = topology.up(x);
+        let x_slots_start = topology.up_range(x).start;
 
-        for (i, &y) in up.iter().enumerate() {
+        for (i, &y) in above_x.iter().enumerate() {
             // x -> y and y -> x. Both are final: the only writes below land on arcs whose
             // lower endpoint is y or above, never on x's own row.
-            let w_xy_up = metric.up_w[base + i];
-            let w_xy_dn = metric.dn_w[base + i];
+            let x_to_y = metric.upward_weight[x_slots_start + i];
+            let y_to_x = metric.downward_weight[x_slots_start + i];
 
-            let up_y = topo.up(y);
-            let base_y = topo.up_range(y).start;
+            let above_y = topology.up(y);
+            let y_slots_start = topology.up_range(y).start;
             let mut cursor = 0;
 
-            // `up` is ascending, so everything past i is the z > y half of each pair, and
-            // each unordered pair {y, z} is visited exactly once.
-            for (j, &z) in up.iter().enumerate().skip(i + 1) {
-                let w_xz_up = metric.up_w[base + j];
-                let w_xz_dn = metric.dn_w[base + j];
+            // `above_x` is ascending, so everything past i is the z > y half of each pair,
+            // and each unordered pair {y, z} is visited exactly once.
+            for (j, &z) in above_x.iter().enumerate().skip(i + 1) {
+                let x_to_z = metric.upward_weight[x_slots_start + j];
+                let z_to_x = metric.downward_weight[x_slots_start + j];
 
-                cursor += up_y[cursor..]
+                cursor += above_y[cursor..]
                     .iter()
                     .position(|&above| above == z)
                     .unwrap_or_else(|| {
                         panic!("chordal closure broken: no arc between {y:?} and {z:?}")
                     });
-                let slot = base_y + cursor;
+                let slot = y_slots_start + cursor;
 
                 // y -> x -> z improves the upward arc
-                let cand_up = w_xy_dn + w_xz_up;
-                if cand_up < metric.up_w[slot] {
-                    metric.up_w[slot] = cand_up;
-                    metric.up_mid[slot] = Some(x);
+                let y_to_z_through_x = y_to_x + x_to_z;
+                if y_to_z_through_x < metric.upward_weight[slot] {
+                    metric.upward_weight[slot] = y_to_z_through_x;
+                    metric.upward_middle[slot] = Some(x);
                 }
 
                 // z -> x -> y improves the downward arc
-                let cand_dn = w_xz_dn + w_xy_up;
-                if cand_dn < metric.dn_w[slot] {
-                    metric.dn_w[slot] = cand_dn;
-                    metric.dn_mid[slot] = Some(x);
+                let z_to_y_through_x = z_to_x + x_to_y;
+                if z_to_y_through_x < metric.downward_weight[slot] {
+                    metric.downward_weight[slot] = z_to_y_through_x;
+                    metric.downward_middle[slot] = Some(x);
                 }
             }
         }
@@ -324,14 +329,14 @@ impl Cch {
         debug_assert_eq!(input.skeleton.node_count, input.n);
         debug_assert_eq!(input.weights.csr.node_count, input.n);
 
-        let topo = Arc::new(Topology::build(&input.skeleton)?);
-        let metric = customize(&topo, &input.weights).map_err(|error| match error {
+        let topology = Arc::new(Topology::build(&input.skeleton)?);
+        let metric = customize(&topology, &input.weights).map_err(|error| match error {
             CchError::NeedsRebuild => {
                 CchError::Internal("the input's weights do not match its own skeleton")
             }
             other => other,
         })?;
-        Ok(Self { topo, metric })
+        Ok(Self { topology, metric })
     }
 
     /// Phase 2 only: a hierarchy with the same structure, sharing this one's [`Topology`],
@@ -350,14 +355,14 @@ impl Cch {
         weights: &WeightCsr,
     ) -> Result<Self, CchError> {
         Ok(Self {
-            topo: Arc::clone(&self.topo),
-            metric: customize(&self.topo, weights)?,
+            topology: Arc::clone(&self.topology),
+            metric: customize(&self.topology, weights)?,
         })
     }
 
     #[must_use]
     pub fn node_count(&self) -> usize {
-        self.topo.node_count()
+        self.topology.node_count()
     }
 
     /// Bytes held by this hierarchy: the struct itself, the shared [`Topology`], and the
@@ -367,49 +372,49 @@ impl Cch {
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         // `size_of::<Self>()` already covers `Metric`'s four inline headers
-        size_of::<Self>() + self.topo.memory_usage() + self.metric.memory_usage()
+        size_of::<Self>() + self.topology.memory_usage() + self.metric.memory_usage()
     }
 
     #[cfg(test)]
     pub(crate) fn topology(&self) -> &Topology {
-        &self.topo
+        &self.topology
     }
 
-    /// Cheapest `lo -> hi` weight of arc `slot`, through strictly lower-ranked nodes only.
+    /// Cheapest `lower -> higher` weight of arc `slot`, through strictly lower-ranked nodes only.
     #[cfg(test)]
-    pub(crate) fn up_weight(
+    pub(crate) fn upward_weight(
         &self,
         slot: usize,
     ) -> f64 {
-        self.metric.up_w[slot]
+        self.metric.upward_weight[slot]
     }
 
-    /// Cheapest `hi -> lo` weight of arc `slot`.
+    /// Cheapest `higher -> lower` weight of arc `slot`.
     #[cfg(test)]
-    pub(crate) fn dn_weight(
+    pub(crate) fn downward_weight(
         &self,
         slot: usize,
     ) -> f64 {
-        self.metric.dn_w[slot]
+        self.metric.downward_weight[slot]
     }
 
-    /// The apex rank `up_weight(slot)` routes through, or `None` if the arc is just its
+    /// The apex rank `upward_weight(slot)` routes through, or `None` if the arc is just its
     /// original edge.
     #[cfg(test)]
-    pub(crate) fn up_mid(
+    pub(crate) fn upward_middle(
         &self,
         slot: usize,
     ) -> Option<Rank> {
-        self.metric.up_mid[slot]
+        self.metric.upward_middle[slot]
     }
 
-    /// The apex rank `dn_weight(slot)` routes through, or `None`.
+    /// The apex rank `downward_weight(slot)` routes through, or `None`.
     #[cfg(test)]
-    pub(crate) fn dn_mid(
+    pub(crate) fn downward_middle(
         &self,
         slot: usize,
     ) -> Option<Rank> {
-        self.metric.dn_mid[slot]
+        self.metric.downward_middle[slot]
     }
 }
 
@@ -435,7 +440,7 @@ mod tests {
     }
 
     /// The weight of the original `u -> v` edge in node space, or infinity if there is
-    /// none. What an arc must hold when it records no mid.
+    /// none. What an arc must hold when it records no middle rank.
     fn original(
         input: &CchInput,
         u: u64,
@@ -445,7 +450,7 @@ mod tests {
         let row = csr.row_offsets[u as usize] as usize..csr.row_offsets[u as usize + 1] as usize;
         row.clone()
             .find(|&k| csr.neighbors[k] == v)
-            .map_or(f64::INFINITY, |k| input.weights.w[k])
+            .map_or(f64::INFINITY, |k| input.weights.values[k])
     }
 
     /// The weight of each detour `from -> x -> to` through a common lower neighbor `x` of
@@ -455,38 +460,39 @@ mod tests {
         from: Rank,
         to: Rank,
     ) -> Vec<(Rank, f64)> {
-        let topo = cch.topology();
-        let below_to = topo.down(to);
-        topo.down(from)
+        let topology = cch.topology();
+        let below_to = topology.down(to);
+        topology
+            .down(from)
             .iter()
             .filter(|x| below_to.binary_search(x).is_ok())
             .map(|&x| {
-                let into_x = topo.arc_slot(x, from).expect("x is below from");
-                let out_of_x = topo.arc_slot(x, to).expect("x is below to");
-                (x, cch.dn_weight(into_x) + cch.up_weight(out_of_x))
+                let into_x = topology.arc_slot(x, from).expect("x is below from");
+                let out_of_x = topology.arc_slot(x, to).expect("x is below to");
+                (x, cch.downward_weight(into_x) + cch.upward_weight(out_of_x))
             })
             .collect()
     }
 
-    /// The tie rules (module doc, "Ties") for one arc direction: a recorded mid strictly
+    /// The tie rules (module doc, "Ties") for one arc direction: a recorded middle rank strictly
     /// beats the original edge, and no lower apex ties it.
     fn check_tie_rules(
         cch: &Cch,
         (from, to): (Rank, Rank),
         weight: f64,
-        mid: Option<Rank>,
+        middle: Option<Rank>,
         original: f64,
     ) {
-        let Some(mid) = mid else { return };
+        let Some(middle) = middle else { return };
         assert!(
             weight < original,
-            "arc {from:?}->{to:?} records mid {mid:?} for {weight}, which only ties its own \
+            "arc {from:?}->{to:?} routes through {middle:?} for {weight}, which only ties its own \
              edge ({original}): the edge must win a tie"
         );
         for (x, through_x) in detours(cch, from, to) {
             assert!(
-                x >= mid || through_x > weight,
-                "arc {from:?}->{to:?} records mid {mid:?}, but the lower apex {x:?} ties it"
+                x >= middle || through_x > weight,
+                "arc {from:?}->{to:?} routes through {middle:?}, but the lower apex {x:?} ties it"
             );
         }
     }
@@ -494,86 +500,98 @@ mod tests {
     /// Every arc holds exactly the lower-restricted shortest path between its endpoints —
     /// checked against the kit's `lower_rank_distances`, which derives that quantity from
     /// the edge list and the elimination order alone and shares no code with the triangle
-    /// sweep it is checking. Each mid obeys the tie rules: the result is one exact set of
+    /// sweep it is checking. Each middle rank obeys the tie rules: the result is one exact set of
     /// arrays, not any of several that answer alike.
     fn check_metric(
         cch: &Cch,
         edges: &Matrix<f64>,
         input: &CchInput,
     ) {
-        let topo = cch.topology();
-        let expected = lower_rank_distances(edges, &topo.rank_to_node_ids());
+        let topology = cch.topology();
+        let expected = lower_rank_distances(edges, &topology.rank_to_node_ids());
 
-        for lo in topo.ranks() {
-            let range = topo.up_range(lo);
-            for (i, &hi) in topo.up(lo).iter().enumerate() {
+        for lower in topology.ranks() {
+            let range = topology.up_range(lower);
+            for (i, &higher) in topology.up(lower).iter().enumerate() {
                 let slot = range.start + i;
-                let (u, v) = (u64::from(topo.node_of(lo)), u64::from(topo.node_of(hi)));
+                let (u, v) = (
+                    u64::from(topology.node_of(lower)),
+                    u64::from(topology.node_of(higher)),
+                );
 
                 assert_eq!(
-                    cch.up_weight(slot),
+                    cch.upward_weight(slot),
                     expected[u as usize][v as usize],
-                    "arc {u}->{v} (ranks {lo:?}->{hi:?}, slot {slot}) upward weight"
+                    "arc {u}->{v} (ranks {lower:?}->{higher:?}, slot {slot}) upward weight"
                 );
                 assert_eq!(
-                    cch.dn_weight(slot),
+                    cch.downward_weight(slot),
                     expected[v as usize][u as usize],
-                    "arc {v}->{u} (ranks {hi:?}->{lo:?}, slot {slot}) downward weight"
+                    "arc {v}->{u} (ranks {higher:?}->{lower:?}, slot {slot}) downward weight"
                 );
 
-                // The mid is what the query change (#3210) unpacks a shortcut with, so it has to be more than
-                // plausible: the recorded detour must reproduce the arc's own weight.
-                if let Some(m) = cch.up_mid(slot) {
+                // The middle rank is what the query change (#3210) unpacks a shortcut with, so
+                // it has to be more than plausible: the recorded detour must reproduce the
+                // arc's own weight.
+                if let Some(middle) = cch.upward_middle(slot) {
                     assert!(
-                        m < lo,
-                        "arc {lo:?}-{hi:?} routes through rank {m:?}, not below it"
+                        middle < lower,
+                        "arc {lower:?}-{higher:?} routes through rank {middle:?}, not below it"
                     );
-                    let to_mid = topo.arc_slot(m, lo).expect("mid is adjacent to lo");
-                    let from_mid = topo.arc_slot(m, hi).expect("mid is adjacent to hi");
+                    let to_mid = topology
+                        .arc_slot(middle, lower)
+                        .expect("middle is adjacent to lower");
+                    let from_mid = topology
+                        .arc_slot(middle, higher)
+                        .expect("middle is adjacent to higher");
                     assert_eq!(
-                        cch.up_weight(slot),
-                        cch.dn_weight(to_mid) + cch.up_weight(from_mid),
-                        "arc {lo:?}->{hi:?} does not equal its recorded detour via {m:?}"
+                        cch.upward_weight(slot),
+                        cch.downward_weight(to_mid) + cch.upward_weight(from_mid),
+                        "arc {lower:?}->{higher:?} does not equal its recorded detour via {middle:?}"
                     );
                 } else {
                     assert_eq!(
-                        cch.up_weight(slot),
+                        cch.upward_weight(slot),
                         original(input, u, v),
-                        "arc {lo:?}->{hi:?} records no mid, so it must be its own original edge"
+                        "arc {lower:?}->{higher:?} has no middle rank, so it must be its own edge"
                     );
                 }
                 check_tie_rules(
                     cch,
-                    (lo, hi),
-                    cch.up_weight(slot),
-                    cch.up_mid(slot),
+                    (lower, higher),
+                    cch.upward_weight(slot),
+                    cch.upward_middle(slot),
                     original(input, u, v),
                 );
 
-                if let Some(m) = cch.dn_mid(slot) {
+                if let Some(middle) = cch.downward_middle(slot) {
                     assert!(
-                        m < lo,
-                        "arc {hi:?}-{lo:?} routes through rank {m:?}, not below it"
+                        middle < lower,
+                        "arc {higher:?}-{lower:?} routes through rank {middle:?}, not below it"
                     );
-                    let to_mid = topo.arc_slot(m, hi).expect("mid is adjacent to hi");
-                    let from_mid = topo.arc_slot(m, lo).expect("mid is adjacent to lo");
+                    let to_mid = topology
+                        .arc_slot(middle, higher)
+                        .expect("middle is adjacent to higher");
+                    let from_mid = topology
+                        .arc_slot(middle, lower)
+                        .expect("middle is adjacent to lower");
                     assert_eq!(
-                        cch.dn_weight(slot),
-                        cch.dn_weight(to_mid) + cch.up_weight(from_mid),
-                        "arc {hi:?}->{lo:?} does not equal its recorded detour via {m:?}"
+                        cch.downward_weight(slot),
+                        cch.downward_weight(to_mid) + cch.upward_weight(from_mid),
+                        "arc {higher:?}->{lower:?} does not equal its recorded detour via {middle:?}"
                     );
                 } else {
                     assert_eq!(
-                        cch.dn_weight(slot),
+                        cch.downward_weight(slot),
                         original(input, v, u),
-                        "arc {hi:?}->{lo:?} records no mid, so it must be its own original edge"
+                        "arc {higher:?}->{lower:?} has no middle rank, so it must be its own edge"
                     );
                 }
                 check_tie_rules(
                     cch,
-                    (hi, lo),
-                    cch.dn_weight(slot),
-                    cch.dn_mid(slot),
+                    (higher, lower),
+                    cch.downward_weight(slot),
+                    cch.downward_middle(slot),
                     original(input, v, u),
                 );
             }
@@ -590,7 +608,7 @@ mod tests {
         edges: &Matrix<f64>,
     ) {
         let truth = all_pairs(edges);
-        let topo = cch.topology();
+        let topology = cch.topology();
 
         // Each shortcut as an edge of its own, next to the original one: the cheaper of the
         // two is the pair's weight.
@@ -602,16 +620,19 @@ mod tests {
             let cur = augmented.entry((u, v)).or_insert(f64::INFINITY);
             *cur = cur.min(w);
         };
-        for lo in topo.ranks() {
-            let range = topo.up_range(lo);
-            for (i, &hi) in topo.up(lo).iter().enumerate() {
+        for lower in topology.ranks() {
+            let range = topology.up_range(lower);
+            for (i, &higher) in topology.up(lower).iter().enumerate() {
                 let slot = range.start + i;
-                let (u, v) = (u64::from(topo.node_of(lo)), u64::from(topo.node_of(hi)));
-                if cch.up_weight(slot).is_finite() {
-                    add(u, v, cch.up_weight(slot));
+                let (u, v) = (
+                    u64::from(topology.node_of(lower)),
+                    u64::from(topology.node_of(higher)),
+                );
+                if cch.upward_weight(slot).is_finite() {
+                    add(u, v, cch.upward_weight(slot));
                 }
-                if cch.dn_weight(slot).is_finite() {
-                    add(v, u, cch.dn_weight(slot));
+                if cch.downward_weight(slot).is_finite() {
+                    add(v, u, cch.downward_weight(slot));
                 }
             }
         }
@@ -665,27 +686,27 @@ mod tests {
     fn a_shortcut_records_the_apex_it_routes_through() {
         let edges = weights(3, &[(0, 1, 2.0), (1, 0, 2.0), (0, 2, 5.0), (2, 0, 5.0)]);
         let input = to_input(&edges);
-        let topo = Topology::from_order(&input.skeleton, node_id_order(3)).expect("phase 1");
-        let metric = super::customize(&topo, &input.weights).expect("phase 2");
+        let topology = Topology::from_order(&input.skeleton, node_id_order(3)).expect("phase 1");
+        let metric = super::customize(&topology, &input.weights).expect("phase 2");
         let rank = Rank::new;
 
         // ranks are node ids in node-id order; eliminating 0 joins 1 and 2
-        let slot = topo
+        let slot = topology
             .arc_slot(rank(1), rank(2))
             .expect("fill-in arc 1-2 exists");
-        assert_eq!(metric.up_w[slot], 7.0, "1 -> 0 -> 2");
-        assert_eq!(metric.dn_w[slot], 7.0, "2 -> 0 -> 1");
-        assert_eq!(metric.up_mid[slot], Some(rank(0)), "apex is rank 0");
-        assert_eq!(metric.dn_mid[slot], Some(rank(0)));
+        assert_eq!(metric.upward_weight[slot], 7.0, "1 -> 0 -> 2");
+        assert_eq!(metric.downward_weight[slot], 7.0, "2 -> 0 -> 1");
+        assert_eq!(metric.upward_middle[slot], Some(rank(0)), "apex is rank 0");
+        assert_eq!(metric.downward_middle[slot], Some(rank(0)));
 
         // the two original arcs keep their own weight and have nothing to unpack
-        let a01 = topo.arc_slot(rank(0), rank(1)).expect("arc 0-1");
-        assert_eq!(metric.up_w[a01], 2.0);
-        assert_eq!(metric.up_mid[a01], None);
+        let a01 = topology.arc_slot(rank(0), rank(1)).expect("arc 0-1");
+        assert_eq!(metric.upward_weight[a01], 2.0);
+        assert_eq!(metric.upward_middle[a01], None);
     }
 
     /// Hand-checked tie: 2 and 3 have no edge, and are joined at weight 2 through apex 0
-    /// and through apex 1 alike. The lowest apex stays the mid, the rule `relax` says a
+    /// and through apex 1 alike. The lowest apex stays the middle rank, the rule `relax` says a
     /// parallel version has to keep.
     #[test]
     fn a_tie_keeps_the_lowest_apex_as_the_mid() {
@@ -694,22 +715,22 @@ mod tests {
             both_ways.extend([(u, v, 1.0), (v, u, 1.0)]);
         }
         let input = to_input(&weights(4, &both_ways));
-        let topo = Topology::from_order(&input.skeleton, node_id_order(4)).expect("phase 1");
-        let metric = super::customize(&topo, &input.weights).expect("phase 2");
+        let topology = Topology::from_order(&input.skeleton, node_id_order(4)).expect("phase 1");
+        let metric = super::customize(&topology, &input.weights).expect("phase 2");
         let rank = Rank::new;
 
-        let slot = topo
+        let slot = topology
             .arc_slot(rank(2), rank(3))
             .expect("fill-in arc 2-3 exists");
-        assert_eq!(metric.up_w[slot], 2.0);
-        assert_eq!(metric.dn_w[slot], 2.0);
+        assert_eq!(metric.upward_weight[slot], 2.0);
+        assert_eq!(metric.downward_weight[slot], 2.0);
         assert_eq!(
-            metric.up_mid[slot],
+            metric.upward_middle[slot],
             Some(rank(0)),
             "2 -> 3 ties via 0 and 1: the lowest apex"
         );
         assert_eq!(
-            metric.dn_mid[slot],
+            metric.downward_middle[slot],
             Some(rank(0)),
             "3 -> 2 ties via 0 and 1: the lowest apex"
         );
@@ -717,8 +738,8 @@ mod tests {
 
     /// Hand-checked tie with the original edge: 1-2 weighs 2 directly and 2 through apex 0
     /// (0-1 and 0-2 weigh 1 each). The edge wins: the arc keeps weight 2 and records no
-    /// mid, the rule `relax`'s strict `<` implements and a scoped or parallel version has to
-    /// keep.
+    /// middle rank, the rule `relax`'s strict `<` implements and a scoped or parallel version
+    /// has to keep.
     #[test]
     fn a_tie_with_the_original_edge_keeps_the_edge() {
         let mut both_ways = Vec::new();
@@ -726,15 +747,21 @@ mod tests {
             both_ways.extend([(u, v, w), (v, u, w)]);
         }
         let input = to_input(&weights(3, &both_ways));
-        let topo = Topology::from_order(&input.skeleton, node_id_order(3)).expect("phase 1");
-        let metric = super::customize(&topo, &input.weights).expect("phase 2");
+        let topology = Topology::from_order(&input.skeleton, node_id_order(3)).expect("phase 1");
+        let metric = super::customize(&topology, &input.weights).expect("phase 2");
         let rank = Rank::new;
 
-        let slot = topo.arc_slot(rank(1), rank(2)).expect("arc 1-2");
-        assert_eq!(metric.up_w[slot], 2.0);
-        assert_eq!(metric.dn_w[slot], 2.0);
-        assert_eq!(metric.up_mid[slot], None, "1 -> 2: the edge wins the tie");
-        assert_eq!(metric.dn_mid[slot], None, "2 -> 1: the edge wins the tie");
+        let slot = topology.arc_slot(rank(1), rank(2)).expect("arc 1-2");
+        assert_eq!(metric.upward_weight[slot], 2.0);
+        assert_eq!(metric.downward_weight[slot], 2.0);
+        assert_eq!(
+            metric.upward_middle[slot], None,
+            "1 -> 2: the edge wins the tie"
+        );
+        assert_eq!(
+            metric.downward_middle[slot], None,
+            "2 -> 1: the edge wins the tie"
+        );
     }
 
     /// A negative, NaN or -inf weight is refused. `-0.0` is `>= 0`, so it is a weight like
@@ -761,7 +788,7 @@ mod tests {
     }
 
     /// Closing an edge is the same metric as removing it, on the kit's graph families,
-    /// every arc compared, mids included: closing every edge of a random third of the
+    /// every arc compared, middle ranks included: closing every edge of a random third of the
     /// pairs, then customizing that same topology without those edges.
     #[test]
     fn closing_an_edge_gives_the_metric_of_removing_it() {
@@ -779,28 +806,31 @@ mod tests {
                 .collect();
             let removed = weights(n, &kept);
             let closed_input = to_input(&closed);
-            let topo = Topology::build(&closed_input.skeleton).expect("phase 1");
-            let with_closed = super::customize(&topo, &closed_input.weights).expect("closed");
+            let topology = Topology::build(&closed_input.skeleton).expect("phase 1");
+            let with_closed = super::customize(&topology, &closed_input.weights).expect("closed");
             let cch = Cch {
-                topo: topo.into(),
+                topology: topology.into(),
                 metric: with_closed,
             };
             check_metric(&cch, &closed, &closed_input);
 
             // the oracle over the graph without the closed edges, on the same order
             let expected = lower_rank_distances(&removed, &cch.topology().rank_to_node_ids());
-            let topo = cch.topology();
-            for lo in topo.ranks() {
-                let range = topo.up_range(lo);
-                for (i, &hi) in topo.up(lo).iter().enumerate() {
-                    let (u, v) = (u64::from(topo.node_of(lo)), u64::from(topo.node_of(hi)));
+            let topology = cch.topology();
+            for lower in topology.ranks() {
+                let range = topology.up_range(lower);
+                for (i, &higher) in topology.up(lower).iter().enumerate() {
+                    let (u, v) = (
+                        u64::from(topology.node_of(lower)),
+                        u64::from(topology.node_of(higher)),
+                    );
                     assert_eq!(
-                        cch.up_weight(range.start + i),
+                        cch.upward_weight(range.start + i),
                         expected[u as usize][v as usize],
                         "graph #{idx}: arc {u}->{v}"
                     );
                     assert_eq!(
-                        cch.dn_weight(range.start + i),
+                        cch.downward_weight(range.start + i),
                         expected[v as usize][u as usize],
                         "graph #{idx}: arc {v}->{u}"
                     );
@@ -848,7 +878,7 @@ mod tests {
         };
 
         let mut short = to_input(&path(4));
-        short.weights.w = short.weights.w[1..].into();
+        short.weights.values = short.weights.values[1..].into();
         malformed("one weight short", &short.weights);
 
         // offsets that go backwards would panic while slicing a row
@@ -872,7 +902,7 @@ mod tests {
         let csr = &mut repeated.weights.csr;
         let at = csr.row_offsets[1] as usize;
         csr.neighbors.insert(at, csr.neighbors[at]);
-        repeated.weights.w.insert(at, 7.0);
+        repeated.weights.values.insert(at, 7.0);
         for offset in &mut csr.row_offsets[2..] {
             *offset += 1;
         }
@@ -901,15 +931,15 @@ mod tests {
         // splice a 0 -> 0 entry into row 0 of the weights, keeping it sorted
         let csr = &mut with_loop.weights.csr;
         csr.neighbors = [&[0], &csr.neighbors[..]].concat();
-        with_loop.weights.w = [&[0.5], &with_loop.weights.w[..]].concat();
+        with_loop.weights.values = [&[0.5], &with_loop.weights.values[..]].concat();
         for offset in &mut csr.row_offsets[1..] {
             *offset += 1;
         }
-        let topo = Topology::build(&input.skeleton).expect("phase 1");
-        let plain = super::customize(&topo, &input.weights).expect("plain");
-        let looped = super::customize(&topo, &with_loop.weights).expect("with a loop");
-        assert_eq!(plain.up_w, looped.up_w);
-        assert_eq!(plain.dn_w, looped.dn_w);
+        let topology = Topology::build(&input.skeleton).expect("phase 1");
+        let plain = super::customize(&topology, &input.weights).expect("plain");
+        let looped = super::customize(&topology, &with_loop.weights).expect("with a loop");
+        assert_eq!(plain.upward_weight, looped.upward_weight);
+        assert_eq!(plain.downward_weight, looped.downward_weight);
     }
 
     /// Recustomizing must land exactly where a fresh build on the new metric would. The
@@ -925,19 +955,19 @@ mod tests {
         let built = Cch::build(&first).expect("build");
         let cch = built.customized(&second.weights).expect("recustomize");
         assert!(
-            Arc::ptr_eq(&cch.topo, &built.topo),
+            Arc::ptr_eq(&cch.topology, &built.topology),
             "the topology is shared, not rebuilt"
         );
         check_metric(&cch, &rescaled, &second);
 
         let fresh = Cch::build(&second).expect("fresh build");
-        assert_eq!(cch.metric.up_w, fresh.metric.up_w);
-        assert_eq!(cch.metric.dn_w, fresh.metric.dn_w);
-        assert_eq!(cch.metric.up_mid, fresh.metric.up_mid);
-        assert_eq!(cch.metric.dn_mid, fresh.metric.dn_mid);
+        assert_eq!(cch.metric.upward_weight, fresh.metric.upward_weight);
+        assert_eq!(cch.metric.downward_weight, fresh.metric.downward_weight);
+        assert_eq!(cch.metric.upward_middle, fresh.metric.upward_middle);
+        assert_eq!(cch.metric.downward_middle, fresh.metric.downward_middle);
         // ... and the arrays did change, while the hierarchy it came from kept its own
-        assert_ne!(cch.metric.up_w, built.metric.up_w);
+        assert_ne!(cch.metric.upward_weight, built.metric.upward_weight);
         let original = Cch::build(&first).expect("build");
-        assert_eq!(built.metric.up_w, original.metric.up_w);
+        assert_eq!(built.metric.upward_weight, original.metric.upward_weight);
     }
 }
