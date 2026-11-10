@@ -22,8 +22,13 @@
 #
 # Tag format:
 #   create_manifest=true   → builds push to ${repo}:${tag}-${arch}; manifest
-#                            job combines per-arch tags into ${repo}:${tag}.
+#                            job combines per-arch tags into ${repo}:${tag},
+#                            and into ${repo}:${alias_tag} too when one is given.
 #   create_manifest=false  → builds push directly to ${repo}:${tag}; no manifest.
+#
+# `server` picks the server every cell ships (the Dockerfiles' SERVER build
+# arg). CI callers put it in the tag themselves, as the last part before the
+# arch: rc-<ci_key>-<server>, rc-<ci_key>-<server>-<arch>.
 
 name: Build runtime image (flavour, reusable)
 
@@ -35,9 +40,21 @@ on:
         required: true
         type: string
       tag:
-        description: "Image tag (e.g. rc-pr-42, rc-pr-42-asan, 0.1.0)"
+        description: "Image tag (e.g. rc-pr-42-valkey, rc-pr-42-asan-valkey, 0.1.0)"
         required: true
         type: string
+      server:
+        description: "Server the image ships: redis or valkey. Passed as the SERVER build arg."
+        required: false
+        type: string
+        default: "redis"
+      alias_tag:
+        description: >
+          A second tag for the multi-arch manifest, pointing at the same images.
+          Only with create_manifest. Empty for none.
+        required: false
+        type: string
+        default: ""
       commit_sha:
         description: "Commit SHA to check out and build"
         required: true
@@ -132,6 +149,7 @@ jobs:
           build-args: |
             BROWSER_TAG=${{ inputs.browser_tag }}
             BUILD_IMAGE=${{ inputs.build_image }}
+            SERVER=${{ inputs.server }}
           # When create_manifest=true (release), push per-arch tags so the
           # manifest job below can combine them. When false (instrumented),
           # push directly to the bare tag — single-arch images don't need
@@ -206,6 +224,7 @@ jobs:
       - name: Assemble multi-arch manifests
         env:
           TAG:       ${{ inputs.tag }}
+          ALIAS_TAG: ${{ inputs.alias_tag }}
           IS_LATEST: ${{ inputs.is_latest }}
           PUSH_HUB:  ${{ inputs.push_to_dockerhub }}
           CELLS:     ${{ inputs.cells }}
@@ -229,8 +248,11 @@ jobs:
 
             for REGISTRY in $REGISTRIES; do
               EXTRA_TAGS=""
+              if [ -n "$ALIAS_TAG" ]; then
+                EXTRA_TAGS="-t ${REGISTRY}/${REPO}:${ALIAS_TAG}"
+              fi
               if [ "$IS_LATEST" = "true" ]; then
-                EXTRA_TAGS="-t ${REGISTRY}/${REPO}:latest"
+                EXTRA_TAGS="$EXTRA_TAGS -t ${REGISTRY}/${REPO}:latest"
               fi
               docker buildx imagetools create \
                 -t "${REGISTRY}/${REPO}:${TAG}" \

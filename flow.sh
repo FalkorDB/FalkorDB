@@ -40,7 +40,7 @@ fi
 
 # Two execution modes, selected by FALKORDB_TEST_IMAGE:
 #
-# - CI mode (FALKORDB_TEST_IMAGE set, e.g. ghcr.io/falkordb/falkordb-server:rc-pr-N):
+# - CI mode (FALKORDB_TEST_IMAGE set, e.g. ghcr.io/falkordb/falkordb-server:rc-pr-N-valkey):
 #   tests/flow/common.py Env() handles all redis lifecycle (connects to the
 #   shared `master` GHA service, or spawns a private container when the test
 #   passes load-time moduleArgs). RLTest gets --env existing-env so it doesn't

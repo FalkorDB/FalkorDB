@@ -3,17 +3,20 @@
 # There is ONE definition per flavour. What varies between a pull request and a
 # merge-queue entry is the VEHICLE, not the tests:
 #
-#   artifact - build libfalkordb.so, upload it, let RLTest spawn redis locally.
-#              No registry write, no `packages:` permission, so it runs on the
-#              read-only token a fork gets and on a stacked pull request.
-#   image    - build and publish the RC image, run the cells against it in
+#   artifact - build libfalkordb.so, upload it, let RLTest spawn the server
+#              locally (Valkey, from the toolchain image). No registry write, no
+#              `packages:` permission, so it runs on the read-only token a fork
+#              gets.
+#   image    - build and publish the RC images, run the cells against them in
 #              service containers. This is what ships, so it is what the merge
-#              queue gates on.
+#              queue gates on. One leg per server (_image-leg.yml): Valkey
+#              always, Redis when `redis_leg` is set (every queue entry, and a
+#              pull request labelled `ci-both-servers`).
 #
 # Coverage is always the artifact vehicle: the profiles have to land in the
 # workspace, and nothing ships the coverage image. a-sanitizer is image-only
-# for now - converting it needs an instrumented redis-server alongside the
-# module, which is its own change.
+# for now - converting it needs an instrumented server alongside the module,
+# which is its own change. Coverage and a-sanitizer run on Valkey only.
 
 name: CI pipeline (reusable)
 
@@ -21,7 +24,7 @@ on:
   workflow_call:
     inputs:
       ci_key:
-        description: "Per-run key: pr-<N> on a pull request, mg-<sha> in the merge queue. Runtime tags are rc-<ci_key>."
+        description: "Per-run key: pr-<N> on a pull request, mg-<sha> in the merge queue. Runtime tags are rc-<ci_key>-<server>."
         required: true
         type: string
       commit_sha:
@@ -47,9 +50,17 @@ on:
       use_image:
         description: >
           Gate the image vehicle. True in the merge queue, where the published
-          image is the thing being gated on. False on a pull request, where the
-          artifact vehicle has already run the same suites and publishing an
-          image only exists so release-tag.yml can retag one.
+          images are the thing being gated on, and on a same-repo pull request.
+          False on a fork pull request, which cannot push images and runs the
+          artifact vehicle instead.
+        required: false
+        type: boolean
+        default: false
+      redis_leg:
+        description: >
+          Also run the image vehicle on Redis (_image-leg.yml with server redis),
+          next to Valkey. True in the merge queue and on a same-repo pull request
+          labelled `ci-both-servers`. The Redis leg runs only with use_image too.
         required: false
         type: boolean
         default: false
@@ -105,6 +116,10 @@ jobs:
         run: |
           . /data/venv/bin/activate
           RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+      # tests/common.py starts the server with --logfile redis-test.log.
+      - name: Check the server this job ran (valkey)
+        if: ${{ !cancelled() }}
+        run: tests/assert_server_log.sh valkey redis-test.log
   # Valkey dlopen()s modules with RTLD_DEEPBIND, which Redis does not, so a
   # module that loads fine under redis-server can crash valkey-server on load
   # (#3493). The crash needs a valkey-server that copy-relocates `environ`:
@@ -150,8 +165,9 @@ jobs:
           }
       - name: Load the engine into Valkey
         run: tests/valkey_smoke.sh target/release/libfalkordb.so
-  # The flow suites only run under redis-server, which never takes the
-  # Valkey-only load path, so run the smoke test on the coverage build too.
+  # The flow suites run on the toolchain image's own build of valkey-server,
+  # not on Ubuntu's package that valkey-smoke needs to reach #3493's load path,
+  # so run the smoke test on the coverage build too.
   # Ubuntu ships no llvm-23 to read these profiles, so they are converted and
   # uploaded by valkey-coverage-report inside the toolchain image.
   valkey-coverage:
@@ -222,11 +238,12 @@ jobs:
           files: ./codecov.txt
           flags: valkey-smoke
           disable_search: true
-  # Release flavour. The vehicle is the whole difference between the two events:
-  # a pull request tests the binary it just built, the queue tests the image it
-  # is about to promote. Same file list, same flavour config — two thin calls
-  # rather than one, because a job cannot choose its `uses:` at runtime and the
-  # two shapes cannot share a workflow run (see _flow-artifact.yml's header).
+  # Release flavour. The vehicle is the whole difference between the events: a
+  # fork pull request tests the binary it just built; a same-repo pull request
+  # and the queue test the images (image-valkey, image-redis below). Same file
+  # list, same flavour config — separate thin calls, because a job cannot choose
+  # its `uses:` at runtime and the two shapes cannot share a workflow run (see
+  # _flow-artifact.yml's header).
   flow-release:
     needs: [build-engine]
     if: ${{ !cancelled() && !inputs.use_image && needs.build-engine.result == 'success' }}
@@ -235,24 +252,9 @@ jobs:
       contents: read
     with:
       flavour: release
+      server: valkey
       archs: '["amd64"]'
       test_files: ${{ inputs.test_files }}
-      build_image: ${{ inputs.build_image }}
-    secrets: inherit
-
-  flow-release-image:
-    needs: [build-rc-image]
-    if: ${{ !cancelled() && inputs.use_image && needs.build-rc-image.result == 'success' }}
-    uses: ./.github/workflows/_flow-flavour.yml
-    permissions:
-      contents: read
-      packages: read
-    with:
-      flavour: release
-      image: ghcr.io/falkordb/falkordb-server:rc-${{ inputs.ci_key }}
-      archs: '["amd64", "arm64"]'
-      services_files: ${{ inputs.services_files }}
-      spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
     secrets: inherit
 
@@ -267,6 +269,7 @@ jobs:
       contents: read
     with:
       flavour: coverage
+      server: valkey
       archs: '["amd64"]'
       test_files: ${{ inputs.test_files }}
       build_image: ${{ inputs.build_image }}
@@ -275,125 +278,96 @@ jobs:
       collect_coverage: true
     secrets: inherit
 
-  build-rc-image:
+  # The image vehicle, one leg per server: build the RC images, then run
+  # test-image, the release flow matrix and Trivy against them. Valkey's flow
+  # cells run on amd64 and arm64. Redis's run on amd64; its arm64 images are
+  # built (and scanned) but not tested.
+  image-valkey:
     if: ${{ inputs.use_image }}
-    uses: ./.github/workflows/_build-flavour.yml
+    uses: ./.github/workflows/_image-leg.yml
     permissions:
       contents: read
       packages: write
     with:
-      flavour: release
-      tag: rc-${{ inputs.ci_key }}
+      server: valkey
+      ci_key: ${{ inputs.ci_key }}
       commit_sha: ${{ inputs.commit_sha }}
-      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
-      browser_tag: edge
       build_image: ${{ inputs.build_image }}
-      # push_to_dockerhub left at default false — PR RC builds stay on GHCR.
-      # create_manifest defaults true (release is multi-arch).
+      services_files: ${{ inputs.services_files }}
+      spawn_files: ${{ inputs.spawn_files }}
+      flow_archs: '["amd64", "arm64"]'
+    secrets: inherit
 
-  # Trivy scan of the RC images: master's `security-scan` job (build.yml),
-  # ported. Fails on a HIGH or CRITICAL vulnerability that has a fixed version;
-  # unfixed ones go in the JSON report but do not gate, since nothing in this
-  # repo can clear them.
-  #
-  # Image vehicle only, like everything else that needs the RC image. Every
-  # merge still passes through it: a fork pull request skips it, but its
-  # merge-queue entry builds the image and scans it. And it scans what ships:
-  # `:edge` (rust-push.yml) and releases (release-tag.yml) retag the queue's
-  # rc-mg-<sha> image rather than rebuilding it.
-  #
-  # `full` is FROM `server` plus the bundled browser, so scanning `full` covers
-  # both repos. The per-arch tags are single-platform manifests, so one amd64
-  # runner fetches the arm64 image from the registry with no emulation.
-  #
-  # What Trivy sees here is the Debian packages and the browser's node_modules.
-  # It cannot see the Rust crates linked into libfalkordb.so or the
-  # redis-server built from source: neither carries package metadata.
-  security-scan:
-    needs: [build-rc-image]
-    if: ${{ !cancelled() && inputs.use_image && needs.build-rc-image.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+  image-redis:
+    if: ${{ inputs.use_image && inputs.redis_leg }}
+    uses: ./.github/workflows/_image-leg.yml
     permissions:
       contents: read
-      packages: read
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x64, arm64v8]
-    env:
-      IMAGE: ghcr.io/falkordb/falkordb:rc-${{ inputs.ci_key }}-${{ matrix.arch }}
+      packages: write
+    with:
+      server: redis
+      ci_key: ${{ inputs.ci_key }}
+      commit_sha: ${{ inputs.commit_sha }}
+      build_image: ${{ inputs.build_image }}
+      services_files: ${{ inputs.services_files }}
+      spawn_files: ${{ inputs.spawn_files }}
+      flow_archs: '["amd64"]'
+      # rust-push.yml (`:edge`) and release-tag.yml (releases) still retag the
+      # unsuffixed rc-mg-<sha>, so in the queue that name keeps holding Redis,
+      # as before the servers split.
+      alias_tag: ${{ startsWith(inputs.ci_key, 'mg-') && format('rc-{0}', inputs.ci_key) || '' }}
+    secrets: inherit
+
+  # A leg that should have run but was skipped reports no failure, so the
+  # pipeline would pass without it. This job checks each leg ran exactly when
+  # this run requires it, and passed, and names the leg that did not.
+  #
+  # What is required comes from the event itself (`github` is the caller's
+  # context here), not from use_image/redis_leg, which are what skip the legs:
+  # judged by those inputs, a caller that passed a wrong one would also be
+  # told the skip was fine. The queue requires both servers. A same-repo pull
+  # request requires Valkey, and Redis when it asked for it (redis_leg is the
+  # only record of the label). A fork requires neither: it has no image
+  # vehicle.
+  server-legs:
+    needs: [image-valkey, image-redis]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Login to GHCR
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Trivy comes from its GitHub release, checked against the release's
-      # checksums file. setup-trivy (which trivy-action calls by default)
-      # downloads through get.trivy.dev, and a DNS outage there failed every
-      # scan, so both trivy-action steps skip it.
-      - name: Install Trivy
+      - name: Check each server's leg
         env:
-          TRIVY_VERSION: '0.76.1'
+          QUEUE: ${{ github.event_name == 'merge_group' }}
+          SAME_REPO_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+          REDIS_LEG: ${{ inputs.redis_leg }}
+          VALKEY_RESULT: ${{ needs.image-valkey.result }}
+          REDIS_RESULT: ${{ needs.image-redis.result }}
         run: |
-          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
-          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          dir="$RUNNER_TEMP/trivy-bin"
-          mkdir -p "$dir"
-          cd "$RUNNER_TEMP"
-          curl -sSfL --retry 3 -O "$base/$tarball" -O "$base/trivy_${TRIVY_VERSION}_checksums.txt"
-          grep " ${tarball}\$" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
-          tar -xzf "$tarball" -C "$dir" trivy
-          echo "$dir" >> "$GITHUB_PATH"
-          "$dir/trivy" --version
-
-      - name: Scan (full report)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
-        with:
-          image-ref: ${{ env.IMAGE }}
-          format: json
-          output: trivy-report.json
-          exit-code: '0'
-          skip-setup-trivy: true
-
-      - name: Upload report
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: trivy-report-${{ matrix.arch }}
-          path: trivy-report.json
-          if-no-files-found: ignore
-          retention-days: 30
-
-      - name: Fail on fixable HIGH/CRITICAL vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
-        with:
-          image-ref: ${{ env.IMAGE }}
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: '1'
-          skip-setup-trivy: true
-
-      # master posts these as a PR comment. That needs `pull-requests: write`
-      # and has no pull request to land on in the merge queue; the run summary
-      # needs neither.
-      - name: Summarise blocking findings
-        if: ${{ failure() && hashFiles('trivy-report.json') != '' }}
-        run: |
-          {
-            echo "### Trivy: fixable HIGH/CRITICAL in \`$IMAGE\`"
-            echo
-            echo "| Severity | ID | Package | Installed | Fixed | Target |"
-            echo "|---|---|---|---|---|---|"
-            jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]?
-                   | select((.Severity == "HIGH" or .Severity == "CRITICAL") and (.FixedVersion // "") != "")
-                   | "| \(.Severity) | \(.VulnerabilityID) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion) | \($t) |"' \
-              trivy-report.json
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          status=0
+          check() {
+            local leg=$1 required=$2 result=$3
+            if [ "$required" = true ]; then
+              echo "$leg leg: required, $result"
+              [ "$result" = success ] && return
+              echo "::error::the $leg leg is required in this run and its result is '$result'"
+            else
+              echo "$leg leg: not required, $result"
+              [ "$result" = skipped ] && return
+              echo "::error::the $leg leg is not required in this run, but it ran ('$result')"
+            fi
+            status=1
+          }
+          valkey_required=false redis_required=false
+          if [ "$QUEUE" = true ]; then
+            valkey_required=true redis_required=true
+          elif [ "$SAME_REPO_PR" = true ]; then
+            valkey_required=true
+            if [ "$REDIS_LEG" = true ]; then redis_required=true; fi
+          fi
+          check valkey "$valkey_required" "$VALKEY_RESULT"
+          check redis "$redis_required" "$REDIS_RESULT"
+          exit $status
 
   # Build the asan instrumented runtime image (amd64-only). Single cell,
   # no manifest needed (push directly to the bare tag).
@@ -405,99 +379,15 @@ jobs:
       packages: write
     with:
       flavour: a-sanitizer
+      server: valkey
       # Note: asan image lives under the `falkordb` repo (not `falkordb-server`)
       # — historical from when the asan image bundled the browser stage.
-      tag: rc-${{ inputs.ci_key }}-asan
+      tag: rc-${{ inputs.ci_key }}-asan-valkey
       commit_sha: ${{ inputs.commit_sha }}
       cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb"}]'
       dockerfile: build/runtime/Dockerfile.asan
       build_image: ${{ inputs.build_image }}
       create_manifest: false
-
-  # Build the coverage-instrumented runtime image (amd64-only).
-  test-image:
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    container:
-      image: ${{ inputs.build_image }}
-      # Mount the runner's docker socket so the "Capture service container
-      # logs on failure" step below can run `docker ps`/`docker logs` against
-      # the GHA service container. Without this the log-capture step is a
-      # silent no-op (and could mask the upload-artifact step).
-      options: --volume /var/run/docker.sock:/var/run/docker.sock
-    needs: [build-rc-image]
-    if: ${{ inputs.use_image && (!cancelled() && needs.build-rc-image.result == 'success') }}
-    permissions:
-      contents: read
-      packages: read
-    services:
-      falkordb:
-        image: ghcr.io/falkordb/falkordb-server:rc-${{ inputs.ci_key }}
-        credentials:
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-        ports: ["6379:6379"]
-        env:
-          # Empty FALKORDB_ARGS overrides the image's compiled-in default
-          # (MAX_QUEUED_QUERIES 25 ...) so the service starts with the
-          # module's true zero-config defaults; tests that need specific
-          # config bring it via GRAPH.CONFIG SET.
-          FALKORDB_ARGS: ""
-    env:
-      EXISTING_ENV: "1"
-      FALKORDB_HOST: falkordb
-      FALKORDB_PORT: "6379"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup default stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: "release"
-      # Cargo unit tests run against in-process code and don't touch redis.
-      - name: Run cargo unit tests
-        run: |
-          # Doctests are linked separately by rustdoc (which ignores RUSTFLAGS /
-          # .cargo rustflags), so they need the duplicate-symbol allowance for
-          # libredisearch_rs.a's bundled std via RUSTDOCFLAGS. Also disable release
-          # LTO for the test build: the embedded C/Rust archives carry no LLVM
-          # bitcode, so a release-LTO doctest fails with "Can't find section .llvmbc"
-          # (same reason the fuzz job sets CARGO_PROFILE_RELEASE_LTO=false).
-          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
-          # The module crate's own unit tests (the RDB codec); `--lib` skips doctests.
-          CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p falkordb-rs --lib
-      - name: Run pytest tests against the RC image
-        run: |
-          . /data/venv/bin/activate
-          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
-      - name: Run TCK tests against the RC image
-        run: |
-          . /data/venv/bin/activate
-          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
-      # Capture the GHA service container's stdout/stderr so a failing run
-      # carries the redis lifecycle, module RedisModule_Log output, and any
-      # ASAN/LSan reports off the runner. The service container is named
-      # after its YAML key ("falkordb"); `docker logs` is run via the
-      # /var/run/docker.sock the runner shares with the job container.
-      - name: Capture service container logs on failure
-        if: failure()
-        run: |
-          mkdir -p tests/flow/logs
-          # Dump every container the runner can see — GHA service containers
-          # are named after their YAML key but a workflow-run prefix can show
-          # up too; iterating all containers is safer than matching by name.
-          for cid in $(docker ps -aq); do
-            name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
-            docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
-          done
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: test-service-logs
-          path: tests/flow/logs/
-          if-no-files-found: ignore
 
   # Per-flavour flow-test cells. Each `flow-<flavour>` block calls
   # _flow-flavour.yml, which runs the services + spawn matrices for that
@@ -515,9 +405,10 @@ jobs:
       packages: read
     with:
       flavour: a-sanitizer
+      server: valkey
       # Note: asan image lives under the `falkordb` repo (not `falkordb-server`)
       # — historical from when the asan image bundled the browser stage.
-      image: ghcr.io/falkordb/falkordb:rc-${{ inputs.ci_key }}-asan
+      image: ghcr.io/falkordb/falkordb:rc-${{ inputs.ci_key }}-asan-valkey
       archs: '["amd64"]'
       services_files: ${{ inputs.services_files }}
       spawn_files: ${{ inputs.spawn_files }}
@@ -554,7 +445,7 @@ jobs:
   # combined output of all of them; a per-file matrix would need cross-cell collection to say
   # anything.
   #
-  # The artifact vehicle, as `_flow-artifact.yml`: RLTest starts redis itself with the downloaded
+  # The artifact vehicle, as `_flow-artifact.yml`: RLTest starts Valkey itself with the downloaded
   # module, so there is no service and no registry read, and every event runs it.
   nextgen-index-ledger:
     needs: [build-engine-nextgen]
@@ -621,6 +512,11 @@ jobs:
           python3 tests/flow/check_xfail_ledger.py \
             --ledger tests/flow/nextgen_index_xfail.txt \
             --results /tmp/nextgen_flow.log
+      # RLTest clears tests/flow/logs on every flow.sh run, so this sees the
+      # last suite's servers.
+      - name: Check the server this job ran (valkey)
+        if: ${{ !cancelled() }}
+        run: tests/assert_server_log.sh valkey tests/flow/logs
       - name: Upload flow log
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

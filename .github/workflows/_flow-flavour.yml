@@ -27,6 +27,12 @@ on:
         description: "Full image ref for the falkordb service+replica containers"
         required: true
         type: string
+      server:
+        description: >
+          The server `image` runs: redis or valkey. Names the cells and their
+          artifacts, and every cell checks its server logs name this server.
+        required: true
+        type: string
       archs:
         description: "JSON array of architectures (e.g. '[\"amd64\",\"arm64\"]' or '[\"amd64\"]')"
         required: true
@@ -64,7 +70,7 @@ jobs:
   # `inputs.image` must already exist — the caller is responsible for
   # building it via _build-flavour.yml in rust-pr.yml.
   services:
-    name: ${{ inputs.flavour }}-flow-svc ${{ matrix.test_file }} (${{ matrix.arch }})
+    name: ${{ inputs.flavour }}-flow-svc ${{ matrix.test_file }} (${{ inputs.server }}, ${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
@@ -169,19 +175,25 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./codecov.txt
           disable_search: true
-      - name: Capture service container logs on failure
-        if: failure()
+      # On every outcome, not only on failure: the check below reads them.
+      - name: Capture service container logs
+        if: ${{ !cancelled() }}
         run: |
           mkdir -p tests/flow/logs
           for cid in $(docker ps -aq); do
             name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
             docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
           done
+      - name: Check the server this cell ran (${{ inputs.server }})
+        if: ${{ !cancelled() }}
+        env:
+          SERVER: ${{ inputs.server }}
+        run: tests/assert_server_log.sh "$SERVER" tests/flow/logs
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: ${{ inputs.flavour }}-flow-svc-logs-${{ strategy.job-index }}
+          name: ${{ inputs.flavour }}-${{ inputs.server }}-flow-svc-logs-${{ strategy.job-index }}
           path: tests/flow/logs/
           if-no-files-found: ignore
 
@@ -190,7 +202,7 @@ jobs:
   # spawn-mode profraw bind-mount lands in tests/flow/common.py).
   spawn:
     if: ${{ inputs.include_spawn }}
-    name: ${{ inputs.flavour }}-flow ${{ matrix.test_file }} (${{ matrix.arch }})
+    name: ${{ inputs.flavour }}-flow ${{ matrix.test_file }} (${{ inputs.server }}, ${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
@@ -249,6 +261,13 @@ jobs:
         run: |
           . /data/venv/bin/activate
           TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
+      # Spawned servers log to redis-logs/<alias>/ (tests/flow/common.py); what
+      # they print before their log file opens is in tests/flow/logs.
+      - name: Check the server this cell ran (${{ inputs.server }})
+        if: ${{ !cancelled() }}
+        env:
+          SERVER: ${{ inputs.server }}
+        run: tests/assert_server_log.sh "$SERVER" redis-logs tests/flow/logs
       - name: Collect coverage (profraw → lcov)
         if: ${{ !cancelled() && inputs.collect_coverage }}
         env:
@@ -277,6 +296,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: ${{ inputs.flavour }}-flow-spawn-logs-${{ strategy.job-index }}
+          name: ${{ inputs.flavour }}-${{ inputs.server }}-flow-spawn-logs-${{ strategy.job-index }}
           path: tests/flow/logs/
           if-no-files-found: ignore
