@@ -130,6 +130,18 @@ class ReleaseTags(unittest.TestCase):
             with self.assertRaises(pt.PlanError, msg=bad):
                 pt.release_plan(bad, SHA, [])
 
+    def test_every_tag_of_the_longest_version_fits(self):
+        """A version is refused up front if any channel's tag would pass the
+        registries' 128 characters, so no release is half published."""
+        longest = "6.2.0-rc." + "1" * (pt.MAX_VERSION_LENGTH - len("6.2.0-rc."))
+        plans = (pt.release_plan(longest, SHA, []), pt.per_os_plan(longest),
+                 pt.rebuild_plan(longest, SHA, latest=False, run_id="9" * 20))
+        tags = [tag for plan in plans for tag in all_tags(plan)]
+        self.assertEqual(max(len(t.rsplit(":", 1)[1]) for t in tags), pt.MAX_TAG_LENGTH)
+        for plan in (pt.release_plan, lambda v, *_: pt.per_os_plan(v)):
+            with self.assertRaisesRegex(pt.PlanError, "characters"):
+                plan(longest + "1", SHA, [])
+
     def test_prerelease_cannot_name_a_server_os_or_arch(self):
         # 6.1.0-alpine's Valkey tag would be 6.1.0's Alpine image tag.
         for bad in ("6.1.0-alpine", "6.1.0-redis", "6.1.0-rc.1-valkey", "6.1.0-x64", "6.1.0-ARM64", "6.1.0-Valkey",

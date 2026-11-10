@@ -61,6 +61,16 @@ PER_OS = (
 
 SERVER_LABEL = "com.falkordb.server.name"
 
+# The registries refuse a tag longer than this. A version is judged against the
+# longest suffix any channel adds to it (a per-OS tag's -<os>-<server>), so a
+# release is refused before anything is pushed, never half published.
+MAX_TAG_LENGTH = 128
+LONGEST_VERSION_SUFFIX = max(
+    [len(f"-{server}") for server in SERVERS]
+    + [len(f"-{os_name}-{server}") for os_name, server in PER_OS]
+)
+MAX_VERSION_LENGTH = MAX_TAG_LENGTH - LONGEST_VERSION_SUFFIX
+
 # Whole tags other workflows own; a rebuild may not publish over them. The C
 # engine publishes the edge-c family from master.
 RESERVED_TAGS = {"edge", "edge-rs", "edge-c", "latest"}
@@ -140,6 +150,11 @@ def check_version(version: str) -> None:
     v = parse_version(version)
     if v is None:
         raise PlanError(f"version '{version}' is not X.Y.Z[-prerelease] (no leading v)")
+    if len(version) > MAX_VERSION_LENGTH:
+        raise PlanError(
+            f"version '{version}' is {len(version)} characters; the longest is {MAX_VERSION_LENGTH}, "
+            f"so its tags fit the registries' {MAX_TAG_LENGTH}"
+        )
     if v[0] < FIRST_MAJOR:
         raise PlanError(f"version '{version}' is a C engine version (below {FIRST_MAJOR}.0.0)")
     if v[3] is not None:
