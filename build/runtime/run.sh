@@ -4,6 +4,9 @@
 # redis or valkey. Its arguments come from its own variable, REDIS_ARGS or
 # VALKEY_ARGS, or from the other one when its own is unset, empty or only
 # whitespace, so one setting works on either image. The two are never joined.
+# Options only the other server understands (e.g. Redis-only configs in
+# REDIS_ARGS on a valkey image) are passed through and make the server refuse
+# to start: set the variable that matches the image.
 SERVER="${FALKORDB_SERVER:-redis}"
 case "$SERVER" in
     redis) own_args="${REDIS_ARGS:-}" other_args="${VALKEY_ARGS:-}" ;;
@@ -13,6 +16,10 @@ case "$SERVER" in
         exit 1
         ;;
 esac
+if ! command -v "${SERVER}-server" >/dev/null 2>&1; then
+    echo "Error: ${SERVER}-server is not in this image; FALKORDB_SERVER is set by the image and should not be overridden." >&2
+    exit 1
+fi
 case "$own_args" in
     *[![:space:]]*) SERVER_ARGS="$own_args" ;;
     *) SERVER_ARGS="$other_args" ;;
