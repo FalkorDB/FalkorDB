@@ -8,7 +8,7 @@
     "(pr-123, mg-<sha>); {arch} is a platform's arch_suffixes entry (x64, arm64v8).",
     "A tag must exist on exactly the repos and registries listed for it, and on no other.",
     "No public tag names an architecture: <tag>-<arch suffix> must not exist, except",
-    "the tags left from before the switch, which are never touched. A per-OS tag",
+    "the tags left from before the switch, which are gone or keep their digests. A per-OS tag",
     "never appears without its server suffix."
   ],
 
@@ -28,16 +28,23 @@
     "entry": "server.js"
   },
 
-  "left_from_before_the_switch": [
-    "docker.io/falkordb/falkordb:edge-x64",
-    "docker.io/falkordb/falkordb:edge-arm64v8",
-    "docker.io/falkordb/falkordb:latest-x64",
-    "docker.io/falkordb/falkordb:latest-arm64v8",
-    "docker.io/falkordb/falkordb-server:edge-x64",
-    "docker.io/falkordb/falkordb-server:edge-arm64v8",
-    "docker.io/falkordb/falkordb-server:latest-x64",
-    "docker.io/falkordb/falkordb-server:latest-arm64v8"
-  ],
+  "left_from_before_the_switch": {
+    "_about": [
+      "Arch-named Docker Hub tags published before the switch. They are never touched:",
+      "each must be absent (#803 deletes them) or hold the digest it had, captured",
+      "2026-11-10. No other tag may name an architecture."
+    ],
+    "dockerhub": {
+      "falkordb:edge-x64": "sha256:a3a81fc3bdaffbc4a7c5fc59dbbddc014f4f0071f8573c7a3037e4d20eb2be81",
+      "falkordb:edge-arm64v8": "sha256:95b9967a852ff7e501c12a67110f4642a8b64db45c275e6cd9aa6c14c5e9c9c6",
+      "falkordb:latest-x64": "sha256:0a9fe4d1ee0bdda8e0a85ff36d3f03ca9ab91cd9441c4a836afae32e4014e2f7",
+      "falkordb:latest-arm64v8": "sha256:ef165354369ff8eb64cb95d5e950a4d7b974f8d297b0ae1fdb73db68808e01cb",
+      "falkordb-server:edge-x64": "sha256:3f7743890bbdbf2e74379ef0c5e5501a6689594f372c2f881051fb7312d51e2e",
+      "falkordb-server:edge-arm64v8": "sha256:6d03a76a6a8e4b0ab973cfaf1e103f7a3ae7434c79a5bd0a0bfd4c084d72d85d",
+      "falkordb-server:latest-x64": "sha256:8a6881f4887e7bcb2f9217ef71d46aa548d04b27d0a21aba78073bc1e8c75c40",
+      "falkordb-server:latest-arm64v8": "sha256:d4f5c7a99928422f6d998cebe834733530c2f851f10355002db1c9405bea3ceb"
+    }
+  },
 
   "platforms": ["linux/amd64", "linux/arm64"],
 

@@ -20,7 +20,8 @@ channel publishes to:
   * latest* point at the newest stable GitHub release, whatever was published;
   * no tag exists where the contract says it must not: a per-OS tag on
     falkordb or without its server suffix, a CI tag on Docker Hub, or a public
-    tag naming an architecture (bar the few left from before the switch).
+    tag naming an architecture; the few left from before the switch are
+    either gone or still hold the digest they had.
 
 Every failure is reported, not just the first, and the exit status is 1 if
 there is any. Needs docker with buildx, and gh unless --latest names a version.
@@ -188,6 +189,7 @@ class Plan:
     arch_suffixes: dict[str, str]
     specs: list[TagSpec]
     absent: dict[str, str] = field(default_factory=dict)  # ref -> why it must not exist
+    frozen: dict[str, str] = field(default_factory=dict)  # ref -> the only digest it may hold
     # Where latest* must point when this target doesn't move them; checked by
     # digest only. Empty when the target moves latest (then the latest tags
     # are in `specs`) or doesn't concern it (CI).
@@ -316,7 +318,11 @@ def make_plan(
     must point at (None for CI targets, or when it could not be worked out:
     then `latest_error` says why)."""
     channels = data["channels"]
-    left_over = set(data.get("left_from_before_the_switch", []))
+    left_over = {
+        f"{registries[name]}/{repo_tag}": digest
+        for name, tags in data.get("left_from_before_the_switch", {}).items() if not name.startswith("_")
+        for repo_tag, digest in tags.items()
+    }
     if target.kind != "ci" and latest_version is None and latest_error is None:
         raise ValueError("a public target needs the release latest* points at, or why it is unknown")
 
@@ -339,7 +345,7 @@ def make_plan(
         # A merge-queue key is new for every entry; a pull-request key is
         # reused and may hold names from before the switch (see the data).
         fresh = any((target.ci_key or "").startswith(p) for p in channel.get("fresh_key_prefixes", []))
-        plan.absent = _absent_refs(plan, False, left_over, fresh_ci_key=fresh)
+        plan.absent = _absent_refs(plan, False, set(left_over), fresh_ci_key=fresh)
         return plan
 
     version = target.version
@@ -364,7 +370,8 @@ def make_plan(
         plan.specs += _channel_specs(latest, servers, version=version)
     elif latest_version is not None:
         plan.latest_specs = _channel_specs(latest, servers, version=latest_version)
-    plan.absent = _absent_refs(plan, True, left_over)
+    plan.absent = _absent_refs(plan, True, set(left_over))
+    plan.frozen = left_over
     return plan
 
 
@@ -488,6 +495,7 @@ class Checker:
         self.results: list[Result] = []
         self._release_target = False
         self._manifests: dict[str, Manifest | Exception] = {}
+        self._digests: dict[str, str | Exception] = {}
         # (platform digest, platform the index lists it as) ->
         #     (ref to pull it by, [(registry, repo:tag, expect)])
         self._content: dict[tuple[str, str], tuple[str, list[tuple[str, str, Expect]]]] = {}
@@ -508,12 +516,29 @@ class Checker:
             self._manifests[ref] = self._load_manifest(ref)
         return self._manifests[ref]
 
-    def prefetch(self, refs: list[str]) -> None:
-        """Inspect many tags at once; the checks then read the cache."""
+    def prefetch(self, refs: list[str], digest_only: list[str]) -> None:
+        """Inspect many tags at once; the checks then read the caches. For
+        `digest_only` refs (names that must be absent or unchanged) only the
+        digest is read, one registry call each."""
         todo = [ref for ref in dict.fromkeys(refs) if ref not in self._manifests]
+        todo_digests = [ref for ref in dict.fromkeys(digest_only) if ref not in self._digests]
         with ThreadPoolExecutor(REGISTRY_WORKERS) as pool:
             for ref, manifest in zip(todo, pool.map(self._load_manifest, todo), strict=True):
                 self._manifests[ref] = manifest
+            for ref, digest in zip(todo_digests, pool.map(self._load_digest, todo_digests), strict=True):
+                self._digests[ref] = digest
+
+    def digest_of(self, ref: str) -> str | Exception:
+        """The tag's digest, or why it has none (NotFound when it is absent)."""
+        if ref not in self._digests:
+            self._digests[ref] = self._load_digest(ref)
+        return self._digests[ref]
+
+    def _load_digest(self, ref: str) -> str | Exception:
+        try:
+            return self.docker.manifest(ref)["digest"]
+        except (NotFound, InspectError) as error:
+            return error
 
     def _load_manifest(self, ref: str) -> Manifest | Exception:
         try:
@@ -540,7 +565,8 @@ class Checker:
         try:
             config = self.docker.config(f"{repo}@{raw['digest']}")
         except (NotFound, InspectError) as error:
-            return error
+            # The tag exists; only its config is unreadable. Never "absent".
+            return InspectError(f"{ref} exists ({raw['digest']}), but its config cannot be read: {error}")
         platform = f"{config.get('os')}/{config.get('architecture')}"
         return Manifest(raw["digest"], False, {platform: raw["digest"]})
 
@@ -552,7 +578,7 @@ class Checker:
 
     def check(self, plan: Plan) -> None:
         self._release_target = plan.kind in ("release", "latest")
-        self.prefetch(self._refs(plan))
+        self.prefetch(self._refs(plan), list(plan.absent) + list(plan.frozen))
         for spec in plan.specs:
             for registry in plan.registries:
                 for repo in spec.repos:
@@ -561,6 +587,7 @@ class Checker:
         self._check_same_digest_everywhere(plan)
         self._check_latest(plan)
         self._check_absent(plan)
+        self._check_frozen(plan)
 
     @staticmethod
     def _refs(plan: Plan) -> list[str]:
@@ -579,7 +606,7 @@ class Checker:
             for registry in plan.latest_registries:
                 for repo in spec.repos:
                     refs += [f"{registry}/{repo}:{spec.tag}", f"{registry}/{repo}:{spec.follows}"]
-        return refs + list(plan.absent)
+        return refs
 
     def _check_tag(self, plan: Plan, registry: str, repo: str, spec: TagSpec) -> None:
         ref = f"{registry}/{repo}:{spec.tag}"
@@ -723,16 +750,30 @@ class Checker:
     def _check_absent(self, plan: Plan) -> None:
         present = 0
         for ref, why in plan.absent.items():
-            result = self.manifest(ref)
+            result = self.digest_of(ref)
             if isinstance(result, NotFound):
                 continue
             present += 1
-            detail = (f"exists ({result.digest}); {why}" if isinstance(result, Manifest)
+            detail = (f"exists ({result}); {why}" if isinstance(result, str)
                       else f"could not inspect: {result}")
             self.record(False, TAGS, ref, "must not exist", detail)
         if not present:
             self.record(True, TAGS, plan.title, "must not exist",
                         f"none of the {len(plan.absent)} forbidden names exists")
+
+    def _check_frozen(self, plan: Plan) -> None:
+        """Tags from before the switch are never touched: gone, or as they were."""
+        for ref, digest in plan.frozen.items():
+            result = self.digest_of(ref)
+            if isinstance(result, NotFound):
+                self.record(True, TAGS, ref, "left from before the switch", "deleted")
+            elif not isinstance(result, str):
+                self.record(False, TAGS, ref, "left from before the switch", f"could not inspect: {result}")
+            elif result != digest:
+                self.record(False, TAGS, ref, "left from before the switch",
+                            f"now {result}, was {digest}; a tag from before the switch is never touched")
+            else:
+                self.record(True, TAGS, ref, "left from before the switch", "unchanged")
 
     # -- inside the image ------------------------------------------------
 
