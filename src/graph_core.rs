@@ -42,6 +42,8 @@ use crossfire::{
     MTx, Rx,
     mpsc::{List, unbounded_blocking},
 };
+#[cfg(feature = "index-falkordb")]
+use graph::index::falkordb::online_build::BuildHost;
 use graph::{
     effects::payload::take_effects_buffer,
     effects::{EffectsBuffer, ReplicationSink},
@@ -52,6 +54,8 @@ use graph::{
 };
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
+#[cfg(feature = "index-falkordb")]
+use redis_module::logging::log_warning;
 use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
 use std::{
     collections::HashMap,
@@ -69,6 +73,8 @@ use crate::allocator::{
 use crate::dispatch::must_run_inline;
 use crate::divergence_guard;
 use crate::query_session::QuerySession;
+#[cfg(feature = "index-falkordb")]
+use crate::query_session::hold_gil;
 
 /// The prefix of `s` before its first NUL byte, or all of `s` if it holds none.
 ///
@@ -526,7 +532,7 @@ pub mod ffi {
 pub static REPLICATION_CONSUMERS: AtomicBool = AtomicBool::new(true);
 
 pub struct ThreadedGraph {
-    pub graph: MvccGraph,
+    pub graph: Arc<MvccGraph>,
     /// An unlimited channel, bounded by admission: every message carries the
     /// [`QueueSlot`] its query took before dispatch, so the `MAX_QUEUED_QUERIES`
     /// check covers it. Senders are pool workers holding this graph's read lock
@@ -558,7 +564,7 @@ impl ThreadedGraph {
 
     /// Create a `ThreadedGraph` from an existing `MvccGraph`.
     /// Used by the RDB load path.
-    pub fn from_mvcc(graph: MvccGraph) -> Self {
+    pub fn from_mvcc(graph: Arc<MvccGraph>) -> Self {
         let (sender, receiver) = unbounded_blocking();
         Self {
             graph,
@@ -1583,6 +1589,37 @@ fn commit_and_replicate(
     // about it. What the bytes are, and what still has to happen to them, is
     // the format's.
     buf.replicate(&CtxSink(ctx), key_name.as_bytes());
+}
+
+// ---- The native index builder's host (feature: index-falkordb) ----
+//
+// The build itself (when batches run, on which threads, and how they commit) is the graph crate's
+// (`graph::index::falkordb::online_build`), and so is how a build reaches its graph. This is only
+// what the builder needs of Redis: the lock a batch publishes under, and the log. Module init
+// starts the builder with it.
+
+/// The Redis server, as the native index builder needs it: one for every graph.
+#[cfg(feature = "index-falkordb")]
+pub struct RedisBuildHost;
+
+#[cfg(feature = "index-falkordb")]
+impl BuildHost for RedisBuildHost {
+    /// The GIL, which every writer holds to commit.
+    fn publish(
+        &self,
+        f: &mut dyn FnMut(),
+    ) {
+        let _gil = hold_gil();
+        f();
+    }
+
+    /// Into the server's log, as a warning, from whichever thread the builder runs on.
+    fn warn(
+        &self,
+        message: &str,
+    ) {
+        log_warning(message);
+    }
 }
 
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {

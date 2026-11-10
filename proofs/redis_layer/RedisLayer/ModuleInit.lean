@@ -109,10 +109,26 @@ theorem onLoading_only_end (s : Nat) : onLoading s = true ↔ s = 3 ∨ s = 4 :=
 def onFlush {σ} (s : σ) : σ := s
 theorem onFlush_id {σ} (s : σ) : onFlush s = s := rfl
 
-/-- `on_shutdown` (`:451`): the teardown order. -/
-def onShutdown : List String := ["telemetry::shutdown_flusher_thread", "threadpool::shutdown",
-  "matrix::shutdown", "RediSearch_CleanupModule"]
-theorem onShutdown_flusher_first : onShutdown.head? = some "telemetry::shutdown_flusher_thread" := rfl
+/-- `on_shutdown` (`:465`): the teardown order. With the native index (`nativeIndex`) the index
+builder is stopped before the pool, and GraphBLAS and RediSearch are torn down only if every
+builder worker exited (`builderExited`, what `online_build::stop` returns): one left behind may
+still read or free a graph version. -/
+def onShutdown (nativeIndex builderExited : Bool) : List String :=
+  ["telemetry::shutdown_flusher_thread"] ++
+  (if nativeIndex then ["online_build::stop"] else []) ++
+  ["threadpool::shutdown"] ++
+  (if !nativeIndex || builderExited then ["matrix::shutdown", "RediSearch_CleanupModule"] else [])
+theorem onShutdown_flusher_first (n b : Bool) :
+    (onShutdown n b).head? = some "telemetry::shutdown_flusher_thread" := by
+  cases n <;> cases b <;> rfl
+/-- GraphBLAS is torn down only once no builder worker is left: never under one still running. -/
+theorem onShutdown_no_teardown_under_a_left_worker :
+    "matrix::shutdown" ∉ onShutdown true false := by decide
+/-- Without the native index, the order is as it was: no builder to stop or wait for. -/
+theorem onShutdown_without_native_index (b : Bool) :
+    onShutdown false b = ["telemetry::shutdown_flusher_thread", "threadpool::shutdown",
+      "matrix::shutdown", "RediSearch_CleanupModule"] := by
+  cases b <;> rfl
 
 /-- `on_fork_child` (`:118`): abort iff this is the main-thread (BGSAVE) fork and some
 graph is not fully synced. -/

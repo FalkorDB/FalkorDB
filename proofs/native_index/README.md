@@ -55,7 +55,7 @@ A column is created `Building` (`create_building`) and filled by indexer batches
 
 - **Writes.** `writerRecord_eq_sequential` states what a unit of work does to a column at any state: its staged changes, filtered by `stateLog`, applied one by one. `stateLog_removes` / `stateLog_adds` say the filter keeps every removal and an addition only for an entity `place`d below the cursor (a node by its id, an edge by its `(src, dst)` pair, `None` for an edge deleted in the unit). The filter runs *before* the collapse: `building_reuse_removed` shows a removed-then-re-added tuple for an entity at or above the cursor (a reused edge id) is still removed, where collapsing first would have kept it (`collapse_first_would_keep`). Writes never move the cursor (`applyWrites_state`).
 - **Batches.** `scanNodes_below_cursor` and `scanEdges_below_cursor` prove the entities a batch read are exactly those that `precede` the cursor it returns (with the matrices iterated in ascending order, a GraphBLAS fact), so "indexed" and "below the cursor" are the same set; a batch never stops inside a multi-edge `(src, dst)` pair (`edgeLoop_spec`). `prepareBatch_building` / `prepareBatch_idle` say a batch adds its tuples and moves the cursor (or flips `Ready`), and changes nothing on a column that is gone or not `Building`.
-- **CREATE INDEX** is one batch of unlimited size: `buildInOneBatch_entry` proves the column is then `Ready` and holds exactly `from_entries` of the live pairs, so `createIndex_nodeScan_agrees` carries `nodeScan_native_agrees` over to the new batch path.
+- **CREATE INDEX** creates each column `Building` for the background builder (#2355): `createIndex_entry`, and `createIndex_not_ready` (it serves no reads until its build is over). The RDB load builds a column in one batch of unlimited size: `buildInOneBatch_entry` proves the column is then `Ready` and holds exactly `from_entries` of the live pairs, so `buildColumns_nodeScan_agrees` carries `nodeScan_native_agrees` over to the batch path.
 
 **4c. What does a read do under `index-falkordb`, and is there a fallthrough? (#3547, #2386)**
 
@@ -109,7 +109,7 @@ No. `snapshot_isolated` proves a reader holding version `v` gets the same answer
 | `writerRecord_eq_sequential` | #3307's batched apply = applying each staged change one by one (filtered by the column's build state since #2351) | `Pending.lean` |
 | `queryNumeric_building` | a `Building` column is answered with a `ScanFilter`, never rows | `Query.lean` |
 | `scanNodes_below_cursor`, `scanEdges_below_cursor` | a batch reads exactly the entities that precede its returned cursor | `Build.lean` |
-| `buildInOneBatch_entry` | CREATE INDEX leaves a `Ready` column holding `from_entries` of the live pairs | `Ddl.lean` |
+| `buildInOneBatch_entry` | The RDB load's one-batch build leaves a `Ready` column holding `from_entries` of the live pairs; CREATE INDEX leaves it `Building` (`createIndex_entry`) | `Ddl.lean` |
 | `nodeAttrsSet_hit`, `nodesDeleted_hit` | An update replaces the old entry; a delete removes every entry | `Writes.lean` |
 | `snapshot_isolated`, `runUnit_spec` | Readers keep their version's index; a commit publishes its staged changes once | `Ddl.lean` |
 
