@@ -490,19 +490,20 @@ impl Vector<f64> {
     #[must_use]
     pub(crate) fn extract_tuples(&self) -> (Vec<u64>, Vec<f64>) {
         let mut count = self.nvals();
-        let mut keys = vec![0; count as usize];
-        let mut vals = vec![0.0; count as usize];
+        let length = |count| usize::try_from(count).expect("a vector's entries fit a usize");
+        let mut indices = vec![0; length(count)];
+        let mut values = vec![0.0; length(count)];
         grb!(unsafe {
             GrB_Vector_extractTuples_FP64(
-                keys.as_mut_ptr(),
-                vals.as_mut_ptr(),
+                indices.as_mut_ptr(),
+                values.as_mut_ptr(),
                 &raw mut count,
                 self.v,
             )
         });
-        keys.truncate(count as usize);
-        vals.truncate(count as usize);
-        (keys, vals)
+        indices.truncate(length(count));
+        values.truncate(length(count));
+        (indices, values)
     }
 }
 

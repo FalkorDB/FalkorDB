@@ -218,12 +218,12 @@ fn adopted_arrays_come_from_graphblas_and_rust_frees_them_once() {
     let before = RUST_ALLOC_BYTES.load(Ordering::SeqCst);
     let csr = m.take_csr::<u32, u32, f64>().expect("exports");
     let during = RUST_ALLOC_BYTES.load(Ordering::SeqCst) - before;
-    assert_eq!(csr.row_ptr.len(), N as usize + 1);
-    assert_eq!(csr.col_idx.len(), csr.vals.len());
+    assert_eq!(csr.row_offsets.len(), N as usize + 1);
+    assert_eq!(csr.column_indices.len(), csr.values.len());
     let arrays = [
-        csr.row_ptr.as_ptr().cast::<c_void>(),
-        csr.col_idx.as_ptr().cast(),
-        csr.vals.as_ptr().cast(),
+        csr.row_offsets.as_ptr().cast::<c_void>(),
+        csr.column_indices.as_ptr().cast(),
+        csr.values.as_ptr().cast(),
     ];
     assert!(during < 1024, "the export allocated {during} bytes in Rust");
     for p in arrays {
