@@ -804,7 +804,7 @@ mod blocks {
             assert_eq!(want.len(), multi.len() + single.len(), "{layer}: oracle");
 
             let mut w = Matrix::<f64>::new(n, n);
-            WeightOps::get().accumulate(&mut w, t, &ctx, n);
+            WeightOps::get().accumulate(&mut w, t, &ctx);
             check_weights(&w).expect("valid weights");
             assert_eq!(w.nvals(), want.len() as u64, "{layer}: arc count");
             for (&(s, d), &min) in &want {
@@ -859,7 +859,7 @@ mod narrow_tensor {
         };
         let check = |t: &Tensor, layer: &str| {
             let mut w = Matrix::<f64>::new(n, n);
-            WeightOps::get().accumulate(&mut w, t, &ctx, n);
+            WeightOps::get().accumulate(&mut w, t, &ctx);
             check_weights(&w).expect("valid weights");
             let edges: Vec<_> = t.iter_edges().collect();
             assert_eq!(w.nvals(), edges.len() as u64, "{layer}: arc count");

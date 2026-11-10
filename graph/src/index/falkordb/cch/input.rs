@@ -34,16 +34,16 @@ use std::sync::OnceLock;
 
 use crate::graph::attribute_store::AttributeStore;
 use crate::graph::graph::Graph;
-use crate::graph::graphblas::matrix::{CsrExportError, Descriptor, Matrix, grb};
+use crate::graph::graphblas::matrix::{CsrExport, Descriptor, Matrix, grb};
+use crate::graph::graphblas::scalar::Scalar;
 use crate::graph::graphblas::tensor::{MULTI_EDGE, MeBlock, Tensor, compound_key_inverse};
 use crate::graph::graphblas::vector::Vector;
 use crate::graph::graphblas::{
     GrB_ALL, GrB_BOOL, GrB_BinaryOp, GrB_FP64, GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_new,
-    GrB_MIN_FP64, GrB_MIN_MONOID_FP64, GrB_Matrix_apply_IndexOp_UDT, GrB_Scalar, GrB_Scalar_free,
-    GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Semiring, GrB_Semiring_new, GrB_Type,
-    GrB_Type_new, GrB_UINT64, GrB_Vector, GrB_Vector_assign_UDT, GrB_Vector_free, GrB_Vector_new,
-    GrB_mxv, GxB_BinaryOp_new_IndexOp, GxB_IndexBinaryOp, GxB_IndexBinaryOp_new,
-    GxB_index_binary_function, GxB_index_unary_function,
+    GrB_Info, GrB_MIN_FP64, GrB_MIN_MONOID_FP64, GrB_Matrix_apply_IndexOp_UDT, GrB_Semiring,
+    GrB_Semiring_new, GrB_Type, GrB_Type_new, GrB_UINT64, GrB_Vector, GrB_Vector_assign_UDT,
+    GrB_Vector_free, GrB_Vector_new, GrB_mxv, GxB_BinaryOp_new_IndexOp, GxB_IndexBinaryOp,
+    GxB_IndexBinaryOp_new, GxB_index_binary_function, GxB_index_unary_function,
 };
 use crate::runtime::value::Value;
 
@@ -104,10 +104,22 @@ struct WeightContext {
     attribute: u16,
 }
 
+impl WeightContext {
+    /// The context as GraphBLAS takes a user-defined value: a pointer it
+    /// copies the value from, and never writes through.
+    fn as_value(&self) -> *mut c_void {
+        ptr::from_ref(self).cast_mut().cast()
+    }
+}
+
 /// Weight of one edge id: the numeric weight attribute, or
 /// [`DEFAULT_WEIGHT`] when it is missing or not a number, or
 /// [`INVALID_WEIGHT`] when it is negative or NaN. `+inf` is kept: a closed
 /// edge.
+///
+/// # Safety
+/// `context.attributes` points to a live `AttributeStore` that nobody writes
+/// for the duration of the call, as [`WeightContext`] describes.
 ///
 /// # Panic safety
 /// Called from GraphBLAS OpenMP worker threads, where a panic ends the process
@@ -242,10 +254,11 @@ impl CchInput {
         def: &CchIndexDef,
     ) -> Result<Self, CchError> {
         let tensors = graph.relationship_tensors();
-        let mut selected = Vec::with_capacity(def.rel_types().len());
-        for rel_type in def.rel_types() {
-            selected.push(tensors.get(rel_type.0).ok_or(CchError::UnknownRelType)?);
-        }
+        let selected = def
+            .rel_types()
+            .iter()
+            .map(|rel_type| tensors.get(rel_type.0).ok_or(CchError::UnknownRelType))
+            .collect::<Result<Vec<_>, _>>()?;
         let attributes = graph.relationship_attrs();
         if usize::from(def.weight_attr) >= graph.property_key_count() {
             return Err(CchError::UnknownAttribute);
@@ -267,7 +280,7 @@ impl CchInput {
         let ops = WeightOps::get();
         let mut weights = Matrix::<f64>::new(node_count, node_count);
         for tensor in &selected {
-            ops.accumulate(&mut weights, tensor, &context, node_count);
+            ops.accumulate(&mut weights, tensor, &context);
         }
         check_weights(&weights)?;
 
@@ -298,31 +311,45 @@ impl CchInput {
         //
         // Both matrices are owned by this function alone, so neither call can
         // find a shared handle, and a set-up matrix cannot be refused by the
-        // export: a refusal is a bug. A setting GraphBLAS refuses (out of
-        // memory while converting) is reported the same way.
-        let internal = |error: CsrExportError| CchError::Internal(error.reason());
-        skeleton.prepare_csr::<u64, u64, ()>().map_err(internal)?;
-        let skeleton_csr = skeleton.take_csr::<u64, u64, ()>().map_err(internal)?;
-        weights.prepare_csr::<u64, u64, f64>().map_err(internal)?;
-        let weights_csr = weights.take_csr::<u64, u64, f64>().map_err(internal)?;
+        // export: a refusal is a bug, [`CchError::CsrExport`]. A setting
+        // GraphBLAS refuses (out of memory while converting) is reported the
+        // same way.
+        skeleton.prepare_csr::<u64, u64, ()>()?;
+        let skeleton = skeleton.take_csr::<u64, u64, ()>()?.into();
+        weights.prepare_csr::<u64, u64, f64>()?;
+        let weights = weights.take_csr::<u64, u64, f64>()?.into();
         let input = Self {
             n: id_index(node_count),
-            skeleton: Csr {
-                node_count: id_index(skeleton_csr.nrows),
-                row_offsets: skeleton_csr.row_offsets,
-                neighbors: skeleton_csr.column_indices,
-            },
-            weights: WeightCsr {
-                csr: Csr {
-                    node_count: id_index(weights_csr.nrows),
-                    row_offsets: weights_csr.row_offsets,
-                    neighbors: weights_csr.column_indices,
-                },
-                values: weights_csr.values,
-            },
+            skeleton,
+            weights,
         };
         debug_assert!(input.skeleton.is_symmetric_simple());
         Ok(input)
+    }
+}
+
+/// The skeleton as GraphBLAS exported it: its arrays become the `Csr`'s.
+impl From<CsrExport<u64, u64, ()>> for Csr {
+    fn from(export: CsrExport<u64, u64, ()>) -> Self {
+        Self {
+            node_count: export.row_count(),
+            row_offsets: export.row_offsets,
+            neighbors: export.column_indices,
+        }
+    }
+}
+
+/// The weights as GraphBLAS exported them: pattern and values, unchanged.
+impl From<CsrExport<u64, u64, f64>> for WeightCsr {
+    fn from(export: CsrExport<u64, u64, f64>) -> Self {
+        Self {
+            csr: Csr {
+                node_count: export.row_count(),
+                row_offsets: export.row_offsets,
+                neighbors: export.column_indices,
+            },
+            values: export.values,
+        }
     }
 }
 
@@ -352,6 +379,47 @@ fn check_weights(weights: &Matrix<f64>) -> Result<(), CchError> {
     Ok(())
 }
 
+/// The multi-edge pass's `contexts`: a full vector of `length` entries of the
+/// user-defined type [`WeightOps::context_type`], every one the context (iso,
+/// one stored value). Freed on drop.
+struct ContextVector(GrB_Vector);
+
+impl ContextVector {
+    fn new(
+        context_type: GrB_Type,
+        length: u64,
+        context: &WeightContext,
+    ) -> Self {
+        let mut vector: GrB_Vector = null_mut();
+        // SAFETY: `GrB_Vector_new` writes a new vector, which `Self` then
+        // frees.
+        grb!(unsafe { GrB_Vector_new(&raw mut vector, context_type, length) });
+        let contexts = Self(vector);
+        // SAFETY: our live vector, of the context's type; the assign copies
+        // the context value into every entry.
+        grb!(unsafe {
+            GrB_Vector_assign_UDT(
+                contexts.0,
+                null_mut(),
+                null_mut(),
+                context.as_value(),
+                GrB_ALL,
+                length,
+                null_mut(),
+            )
+        });
+        contexts
+    }
+}
+
+impl Drop for ContextVector {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is live and ours alone.
+        let info = unsafe { GrB_Vector_free(&raw mut self.0) };
+        debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+    }
+}
+
 /// The GraphBLAS objects the weight passes need, created once per process,
 /// the first time an input is built, and never freed: as in C
 /// (`cch_index.c`, `pthread_once`), so nothing GraphBLAS still holds can
@@ -378,20 +446,36 @@ impl WeightOps {
     }
 
     fn new() -> Self {
+        // The operators keep their typed signatures, which match what
+        // GraphBLAS passes argument by argument (only pointee types differ).
+        // The bindings' function types are `Option<extern fn>`, which has the
+        // layout of a bare fn pointer with `None` as null.
+        // SAFETY: both transmutes are between fn pointers of the same ABI and
+        // arity, so each yields `Some` of the (non-null) operator.
+        let (inline_fn, multi_edge_fn) = unsafe {
+            (
+                transmute::<InlineWeightFn, GxB_index_unary_function>(cch_inline_weight_op),
+                transmute::<MultiEdgeWeightFn, GxB_index_binary_function>(cch_multi_edge_weight_op),
+            )
+        };
+        let mut context_type: GrB_Type = null_mut();
+        let mut inline_op: GrB_IndexUnaryOp = null_mut();
+        let mut multi_edge_index_op: GxB_IndexBinaryOp = null_mut();
+        let mut multi_edge_op: GrB_BinaryOp = null_mut();
+        let mut multi_edge_semiring: GrB_Semiring = null_mut();
+        // An index-binary operator enters a semiring as a binary operator
+        // with its theta bound. Theta is unused (the context comes in `y`,
+        // so nothing per build is bound here), but it must be a value; the
+        // binary operator keeps its own copy.
+        let theta = Scalar::from(false);
+        // SAFETY: each call writes a new object to its out-pointer, and takes
+        // only objects created before it (or built-in ones). None is freed:
+        // they live for the process, as `WeightOps` says.
         unsafe {
-            let mut context_type: GrB_Type = null_mut();
             grb!(GrB_Type_new(
                 &raw mut context_type,
                 size_of::<WeightContext>()
             ));
-            // The operators keep their typed signatures, which match what
-            // GraphBLAS passes argument by argument (only pointee types
-            // differ). The bindings' function types are `Option<extern fn>`,
-            // which has the layout of a bare fn pointer with `None` as null,
-            // so the transmute yields `Some` of the (non-null) operator.
-            let inline_fn =
-                transmute::<InlineWeightFn, GxB_index_unary_function>(cch_inline_weight_op);
-            let mut inline_op: GrB_IndexUnaryOp = null_mut();
             grb!(GrB_IndexUnaryOp_new(
                 &raw mut inline_op,
                 inline_fn,
@@ -399,10 +483,6 @@ impl WeightOps {
                 GrB_UINT64,
                 context_type
             ));
-
-            let multi_edge_fn =
-                transmute::<MultiEdgeWeightFn, GxB_index_binary_function>(cch_multi_edge_weight_op);
-            let mut multi_edge_index_op: GxB_IndexBinaryOp = null_mut();
             grb!(GxB_IndexBinaryOp_new(
                 &raw mut multi_edge_index_op,
                 multi_edge_fn,
@@ -413,31 +493,21 @@ impl WeightOps {
                 null_mut(),
                 null_mut()
             ));
-            // An index-binary operator enters a semiring as a binary operator
-            // with its theta bound. Theta is unused (the context comes in `y`,
-            // so nothing per build is bound here), but it must be a value.
-            let mut theta: GrB_Scalar = null_mut();
-            grb!(GrB_Scalar_new(&raw mut theta, GrB_BOOL));
-            grb!(GrB_Scalar_setElement_BOOL(theta, false));
-            let mut multi_edge_op: GrB_BinaryOp = null_mut();
             grb!(GxB_BinaryOp_new_IndexOp(
                 &raw mut multi_edge_op,
                 multi_edge_index_op,
-                theta
+                theta.ptr()
             ));
-            // The binary operator holds its own copy of theta.
-            grb!(GrB_Scalar_free(&raw mut theta));
-            let mut multi_edge_semiring: GrB_Semiring = null_mut();
             grb!(GrB_Semiring_new(
                 &raw mut multi_edge_semiring,
                 GrB_MIN_MONOID_FP64,
                 multi_edge_op
             ));
-            Self {
-                context_type,
-                inline_op,
-                multi_edge_semiring,
-            }
+        }
+        Self {
+            context_type,
+            inline_op,
+            multi_edge_semiring,
         }
     }
 
@@ -448,14 +518,13 @@ impl WeightOps {
         weights: &mut Matrix<f64>,
         tensor: &Tensor,
         context: &WeightContext,
-        node_count: u64,
     ) {
         // No emptiness guard: both passes are GraphBLAS calls, which do nothing
         // on an empty matrix, where `Tensor::edge_count` can walk every
         // parallel edge on the host when multi-edge deltas are pending.
-        self.inline_pass(weights, tensor, context, node_count);
+        self.inline_pass(weights, tensor, context);
         if tensor.has_multi_edge() {
-            self.multi_pass(weights, tensor, context, node_count);
+            self.multi_pass(weights, tensor, context);
         }
     }
 
@@ -469,8 +538,8 @@ impl WeightOps {
         weights: &mut Matrix<f64>,
         tensor: &Tensor,
         context: &WeightContext,
-        node_count: u64,
     ) {
+        let node_count = weights.nrows();
         let mut effective = tensor.effective_fwd();
         // The forward matrix is `node_cap` square, as `weights` is, unless a tensor
         // outgrew it (see `build`): then resize it to `weights`'s shape. `to_mut`
@@ -479,17 +548,20 @@ impl WeightOps {
         if effective.nrows() != node_count || effective.ncols() != node_count {
             effective.to_mut().resize(node_count, node_count);
         }
-        unsafe {
-            grb!(GrB_Matrix_apply_IndexOp_UDT(
+        // SAFETY: live matrices and operators; GraphBLAS copies the context
+        // value and calls `cch_inline_weight_op` with it, under `context`'s
+        // own guarantee.
+        grb!(unsafe {
+            GrB_Matrix_apply_IndexOp_UDT(
                 weights.inner(),
                 null_mut(),
                 GrB_MIN_FP64,
                 self.inline_op,
                 effective.inner(),
-                ptr::from_ref(context).cast_mut().cast::<c_void>(),
-                null_mut()
-            ));
-        }
+                context.as_value(),
+                null_mut(),
+            )
+        });
     }
 
     /// Multi-edge pairs: every id lives in its block's `multi_edges[row][id]`
@@ -512,7 +584,6 @@ impl WeightOps {
         weights: &mut Matrix<f64>,
         tensor: &Tensor,
         context: &WeightContext,
-        node_count: u64,
     ) {
         for (block, multi_edges) in tensor.edge_versioned_all() {
             let multi_edges = multi_edges.effective();
@@ -521,34 +592,20 @@ impl WeightOps {
             }
             let column_count = multi_edges.ncols();
             let pair_minimums = Vector::<f64>::new(multi_edges.nrows());
-            unsafe {
-                let mut contexts: GrB_Vector = null_mut();
-                grb!(GrB_Vector_new(
-                    &raw mut contexts,
-                    self.context_type,
-                    column_count
-                ));
-                grb!(GrB_Vector_assign_UDT(
-                    contexts,
-                    null_mut(),
-                    null_mut(),
-                    ptr::from_ref(context).cast_mut().cast::<c_void>(),
-                    GrB_ALL,
-                    column_count,
-                    null_mut()
-                ));
-                grb!(GrB_mxv(
+            let contexts = ContextVector::new(self.context_type, column_count, context);
+            // SAFETY: live matrix, vectors and semiring.
+            grb!(unsafe {
+                GrB_mxv(
                     pair_minimums.ptr(),
                     null_mut(),
                     null_mut(),
                     self.multi_edge_semiring,
                     multi_edges.inner(),
-                    contexts,
-                    null_mut()
-                ));
-                grb!(GrB_Vector_free(&raw mut contexts));
-            }
-            if let Some(pairs) = pair_weights_from_keys(&pair_minimums, block, node_count) {
+                    contexts.0,
+                    null_mut(),
+                )
+            });
+            if let Some(pairs) = pair_weights_from_keys(&pair_minimums, block, weights.nrows()) {
                 weights.element_wise_add(None, None, Some(&pairs), None);
             }
         }

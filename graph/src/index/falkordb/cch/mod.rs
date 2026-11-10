@@ -33,6 +33,7 @@ use roaring::RoaringTreemap;
 use super::falkordb_index::FalkorDbIndex;
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 use crate::graph::graph::{Graph, TypeId};
+use crate::graph::graphblas::matrix::CsrExportError;
 use crate::graph::graphblas::tensor::GrB_INDEX_MAX;
 use customize::Metric;
 use order::Topology;
@@ -229,6 +230,10 @@ pub enum CchError {
     /// A bug, not bad input. The message says which.
     #[error("internal CCH error: {0}")]
     Internal(&'static str),
+    /// A bug, not bad input: the CSR export refused a matrix the input build set up for it,
+    /// or GraphBLAS could not convert one (out of memory).
+    #[error("internal CCH error: CSR export: {0}")]
+    CsrExport(#[from] CsrExportError),
     /// A bug, not bad input: no elimination order could be produced. The message is the
     /// ordering's own error, the backend's included, as text: the backend is a dependency
     /// of this module, not of its callers.
