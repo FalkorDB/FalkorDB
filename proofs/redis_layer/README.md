@@ -173,18 +173,18 @@ All `.lean` files except the root are under `RedisLayer/`. The project has no La
 
 ## Coverage
 
-`COVERAGE.tsv` has 295 rows across `src/`. The biggest files are `buffered_io.rs` (55), `graph_core.rs` (44), `telemetry.rs` (36), `query_session.rs` (24) and `bulk_insert.rs` (22).
+`COVERAGE.tsv` has 297 rows across `src/`. The biggest files are `buffered_io.rs` (55), `graph_core.rs` (46), `telemetry.rs` (36), `query_session.rs` (24) and `bulk_insert.rs` (22).
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 253 |
 | CONDITIONAL | 1 |
 | AXIOMATISED | 34 |
-| NOT COVERED | 7 |
+| NOT COVERED | 9 |
 
 - **AXIOMATISED:** wrappers around the Redis module API (`RedisModule_*`), libc (`pipe`, `fork`, `_exit`, `waitpid`, `pthread_atfork`), the OS clock and file-descriptor I/O. Most are in `graph_core.rs` (15).
 - **CONDITIONAL:** `QuerySession::check_fork`; its reason column names the hypothesis.
-- **NOT COVERED:** `sync_deepbind_environ` (`src/module_init.rs`, Linux-only, bound to ld.so and libc), and the six functions of `src/divergence_guard.rs`. Those six rows' reason column says "covered by proofs/replication narrative", but `replication` now models them line by line in `Guard.lean` and lists them as PROVEN; `bash proofs/coverage.sh` counts each function once, in its best bucket.
+- **NOT COVERED:** `sync_deepbind_environ` (`src/module_init.rs`, Linux-only, bound to ld.so and libc); `RedisBuildHost::publish` and `RedisBuildHost::warn` (`src/graph_core.rs`, the online index build, not modelled yet); and the six functions of `src/divergence_guard.rs`. Those six rows' reason column says "covered by proofs/replication narrative", but `replication` now models them line by line in `Guard.lean` and lists them as PROVEN; `bash proofs/coverage.sh` counts each function once, in its best bucket.
 
 ## What the model does not cover
 
