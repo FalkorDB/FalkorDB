@@ -21,7 +21,8 @@ Before Valkey starts, the image finds the file Valkey would load:
 
 - with AOF off (the default), the RDB file, `dump.rdb` unless `dbfilename`
   says otherwise;
-- with AOF on, the base file the AOF manifest lists.
+- with AOF on, the base file the AOF manifest lists (with no manifest, the
+  legacy single-file AOF).
 
 It reads the configuration the way Valkey does: the config file given in
 `VALKEY_ARGS` (or `REDIS_ARGS`), the files it includes, and the options after
@@ -43,7 +44,13 @@ The commands below use `docker exec` on a container named `falkordb`; replace
 the name with yours. If you set `REDIS_ARGS`, the Valkey image reads it too
 when `VALKEY_ARGS` is not set, so start it with the same setting.
 
-1. **Back up the volume.** The steps below rewrite its files.
+1. **Back up the volume.** The steps below rewrite its files. Stop your
+   applications from writing to FalkorDB until step 3 has finished: writes
+   after the `SAVE` in step 2 are not in the files Valkey loads.
+
+   The `docker exec` examples below assume the default plain connection. With
+   `TLS=1`, add `--tls --cacert "$FALKORDB_TLS_PATH/ca.crt"` to every
+   `redis-cli` call.
 
 2. **On the Redis image**, remove what Valkey cannot read, and save.
 
@@ -56,6 +63,9 @@ when `VALKEY_ARGS` is not set, so start it with the same setting.
    docker exec falkordb sh -c \
      'redis-cli --scan --pattern "telemetry{*}" | while IFS= read -r key; do redis-cli DEL "$key"; done'
    ```
+
+   `--scan` covers database 0, where FalkorDB keeps its keys. If you use other
+   databases, repeat the scan with `redis-cli -n <db>` for each.
 
    If you keep other data next to your graphs, delete or convert any other
    stream, any hash with field expiry, and any key of a type only Redis has,
@@ -96,7 +106,8 @@ when `VALKEY_ARGS` is not set, so start it with the same setting.
 
    ```sh
    docker run -d --name falkordb -v <volume>:/var/lib/falkordb/data \
-     -e FALKORDB_REDIS_MIGRATION=1 falkordb/falkordb-server:<valkey tag>
+     -e FALKORDB_REDIS_MIGRATION=1 <your other options, VALKEY_ARGS included> \
+     falkordb/falkordb-server:<valkey tag>
    ```
 
    The image starts Valkey with `--rdb-version-check relaxed`, which lets it
@@ -120,6 +131,7 @@ when `VALKEY_ARGS` is not set, so start it with the same setting.
    ```sh
    docker stop falkordb && docker rm falkordb
    docker run -d --name falkordb -v <volume>:/var/lib/falkordb/data \
+     <your other options, VALKEY_ARGS included> \
      falkordb/falkordb-server:<valkey tag>
    ```
 
