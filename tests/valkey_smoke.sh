@@ -27,7 +27,9 @@ PID=
 cleanup() {
     local status=$?
     if [[ -n "$PID" ]] && kill -0 "$PID" 2>/dev/null; then
-        kill -KILL "$PID"
+        # `|| true`: it may exit between the check and the kill, and errexit
+        # would then abort the trap before the log is printed.
+        kill -KILL "$PID" 2>/dev/null || true
         wait "$PID" 2>/dev/null || true
     fi
     if [[ "$status" != 0 ]]; then
