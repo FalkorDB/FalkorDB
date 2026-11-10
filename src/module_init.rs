@@ -188,8 +188,16 @@ unsafe fn sync_deepbind_environ() {
             snapshot.extend_from_slice(std::slice::from_raw_parts(src, len));
         }
         snapshot.push(std::ptr::null_mut());
+        // The snapshot is a point-in-time view: a later `setenv` updates only
+        // the executable's copy, so code that scans `environ` directly (e.g.
+        // `std::env::vars()`) will not see it. `getenv`/`std::env::var` go
+        // through libc and are unaffected. libomp only needs it once, at init.
+        //
         // SAFETY: `ours` points to libc's `char **environ`; this runs on the
-        // main thread during module load, before any thread reads it.
+        // main thread during module load, before any thread reads it. The
+        // source array `*live` is only read, never freed or modified here, and
+        // the strings it points to are never freed by glibc, so the copied
+        // pointers stay valid for the life of the process.
         *ours = Box::leak(snapshot.into_boxed_slice()).as_mut_ptr();
     }
 }

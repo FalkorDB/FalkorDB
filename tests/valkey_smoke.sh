@@ -14,7 +14,8 @@ set -euo pipefail
 MODULE=$(realpath "${1:-target/release/libfalkordb.so}")
 SERVER=${VALKEY_SERVER:-valkey-server}
 CLI=${VALKEY_CLI:-valkey-cli}
-PORT=${VALKEY_PORT:-6390}
+# A random high port by default, so a stray local server doesn't collide.
+PORT=${VALKEY_PORT:-$((20000 + RANDOM % 20000))}
 WORKDIR=$(mktemp -d)
 LOG="$WORKDIR/valkey.log"
 PID=
