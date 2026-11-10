@@ -76,6 +76,7 @@ class FakeDocker:
         self.config_errors: set[str] = set()  # platform digests whose config cannot be read
         self.pulls: list[str] = []
         self.removed: list[str] = []
+        self.inspected: list[str] = []  # every ref whose manifest was asked for
 
     # -- building the world --------------------------------------------------
 
@@ -165,6 +166,7 @@ class FakeDocker:
     # -- the Docker interface ------------------------------------------------
 
     def manifest(self, ref: str) -> dict:
+        self.inspected.append(ref)
         if ref in self.errors:
             raise self.errors[ref]
         if ref not in self.tags:
@@ -238,13 +240,25 @@ def publish_ci(docker: FakeDocker, key: str, servers=("valkey", "redis")) -> Non
                 docker.push(image, repo, f"rc-{key}-{server}-{SUFFIX[platform]}", registries=(GHCR,))
 
 
+def publish_pre_switch_latest(docker: FakeDocker, version: str = "6.0.4") -> None:
+    """latest as it is today: a bare release from before the switch, with no
+    -valkey/-redis tags."""
+    for repo in REPOS:
+        old = docker.multi("redis", "debian-trixie", label=None, env=None, browser=browser_for(repo),
+                           salt=version + repo)
+        docker.push(old, repo, version, "latest")
+
+
 def check(docker: FakeDocker, target: str, *, servers=None, latest: str | None = None,
           latest_error: str | None = None, pins=None) -> judge.Checker:
     """Check a target the way main() does. A public target always knows
-    where latest* points; 6.0.4, with no images in the fake, by default."""
+    where latest* points: by default at today's pre-switch 6.0.4, published
+    here unless the test published 6.0.4 itself."""
     parsed = judge.parse_target(target, DATA)
     if parsed.kind != "ci" and latest is None and latest_error is None:
         latest = "6.0.4"
+        if f"{GHCR}/falkordb:6.0.4" not in docker.tags:
+            publish_pre_switch_latest(docker)
     plan = judge.make_plan(DATA, parsed, servers=set(servers or DATA["servers"]),
                            registries=REGISTRIES, latest_version=latest, latest_error=latest_error)
     checker = judge.Checker(DATA, docker, dict(PIN, **(pins or {})))
@@ -566,7 +580,7 @@ class EdgeTest(unittest.TestCase):
         self.assertEqual(failed(checker), [])
         details = [r.detail for r in checker.results if r.check == "points at 6.0.4"]
         self.assertEqual(len(details), 12)
-        self.assertEqual(sum("neither it nor" in d for d in details), 8)
+        self.assertEqual(sum("is from before the switch" in d for d in details), 8)
 
     def test_a_stray_latest_valkey_before_the_first_new_release_fails(self):
         docker = FakeDocker()
@@ -580,16 +594,61 @@ class EdgeTest(unittest.TestCase):
                                            (f"{HUB}/falkordb:latest-valkey", "points at 6.0.4")])
         self.assertIn("but", checker.failures[0].detail)
 
-    def test_a_release_whose_images_are_not_out_yet_is_not_judged(self):
-        """Its GitHub release is published before its images."""
+    def test_latest_left_on_an_older_release_fails_on_an_edge_run(self):
         docker = FakeDocker()
         publish_edge(docker)
         publish_release(docker, "6.0.4", latest=True)
+        publish_release(docker, "6.1.0", latest=False)
         checker = check(docker, "edge", latest="6.1.0")
-        self.assertEqual(failed(checker), [])
-        skipped = [r for r in checker.results if r.check == "points at 6.1.0"]
-        self.assertEqual(len(skipped), 4)  # 2 repos x 2 registries
-        self.assertTrue(all("not judged: 6.1.0 has no images here yet" in r.detail for r in skipped))
+        self.assertEqual(checks_failed(checker), {"points at 6.1.0"})
+        self.assertEqual(len(checker.failures), 12)
+
+    def test_latest_cannot_be_checked_while_the_newest_release_has_no_images(self):
+        """Its GitHub release is published before its images. Passing in that
+        window would let an edge publish that moved latest go unseen."""
+        docker = FakeDocker()
+        valkey = publish_edge(docker)
+        publish_release(docker, "6.0.4", latest=True)
+        for moved in (False, True):
+            if moved:
+                docker.push(valkey["falkordb"], "falkordb", "latest", "latest-valkey")
+            with self.subTest(latest_moved_to_edge=moved):
+                checker = check(docker, "edge", latest="6.1.0")
+                self.assertEqual(failed(checker), [(f"{registry}/{repo}:latest*", "points at 6.1.0")
+                                                   for registry in (GHCR, HUB) for repo in REPOS])
+                self.assertIn("6.1.0 has no images here yet, so latest* cannot be checked",
+                              checker.failures[0].detail)
+        # No older release is looked at: every lookup counts against
+        # Docker Hub's rate limit.
+        self.assertFalse([ref for ref in docker.inspected if ":6.0.4" in ref])
+
+    def test_a_release_from_after_the_switch_must_have_both_server_tags(self):
+        """latest-redis and 6.1.0-redis both missing passes only for a release
+        from before the switch."""
+        docker = FakeDocker()
+        publish_edge(docker)
+        publish_release(docker, "6.1.0", latest=True)
+        for registry in (GHCR, HUB):
+            for repo in REPOS:
+                del docker.tags[f"{registry}/{repo}:6.1.0-redis"]
+                del docker.tags[f"{registry}/{repo}:latest-redis"]
+        checker = check(docker, "edge", latest="6.1.0")
+        self.assertEqual(checks_failed(checker), {"points at 6.1.0"})
+        self.assertEqual({r.subject for r in checker.failures},
+                         {f"{registry}/{repo}:latest-redis" for registry in (GHCR, HUB) for repo in REPOS})
+        self.assertIn("6.1.0 has server-suffixed tags, so it must have this one too", checker.failures[0].detail)
+
+    def test_a_release_with_only_its_redis_tag_must_have_the_valkey_pair_too(self):
+        docker = FakeDocker()
+        publish_edge(docker)
+        publish_release(docker, "6.1.0", latest=True)
+        for registry in (GHCR, HUB):
+            for repo in REPOS:
+                for tag in ("6.1.0-valkey", "latest-valkey", "6.1.0", "latest"):
+                    del docker.tags[f"{registry}/{repo}:{tag}"]
+        checker = check(docker, "edge", latest="6.1.0")
+        self.assertEqual({r.subject.rsplit(":", 1)[1] for r in checker.failures}, {"latest-valkey", "latest"})
+        self.assertEqual(len(checker.failures), 8)  # 2 tags x 2 repos x 2 registries
 
     def test_an_uninspectable_latest_fails_instead_of_passing(self):
         docker = FakeDocker()
@@ -599,6 +658,15 @@ class EdgeTest(unittest.TestCase):
         checker = check(docker, "edge", latest="6.0.4")
         self.assertEqual(failed(checker), [(f"{HUB}/falkordb:latest", "points at 6.0.4")])
         self.assertIn("could not inspect", checker.failures[0].detail)
+
+    def test_an_uninspectable_release_tag_fails_the_latest_check(self):
+        docker = FakeDocker()
+        publish_release(docker, "6.0.4", latest=True)
+        publish_edge(docker)
+        docker.errors[f"{HUB}/falkordb:6.0.4-redis"] = judge.InspectError("toomanyrequests")
+        checker = check(docker, "edge", latest="6.0.4")
+        self.assertEqual(failed(checker), [(f"{HUB}/falkordb:latest*", "points at 6.0.4")])
+        self.assertIn(f"could not inspect {HUB}/falkordb:6.0.4-redis", checker.failures[0].detail)
 
     def test_not_knowing_where_latest_points_fails(self):
         docker = FakeDocker()
@@ -911,6 +979,9 @@ class LatestRuleTest(unittest.TestCase):
                 self.assertRaises(judge.InspectError):
             judge.github_releases("o/r")
 
+    def test_stable_releases_newest_first(self):
+        self.assertEqual(judge.stable_releases(list(self.RELEASES)), ["6.0.4", "4.22.3"])
+
     def test_no_stable_release_is_an_error(self):
         version, why = judge.latest_rule([{"tag_name": "v1.0.0-rc.1", "prerelease": True}], None, "o/r")
         self.assertIsNone(version)
@@ -969,6 +1040,18 @@ class CiTest(unittest.TestCase):
         docker.push(docker.tags[f"{GHCR}/falkordb:rc-pr-1-valkey-x64"], "falkordb", "rc-pr-1-x64",
                     registries=(GHCR,))
         self.assertEqual(failed(check(docker, "rc-pr-1")), [])
+
+    def test_unsuffixed_names_of_a_pull_request_key_on_docker_hub_fail(self):
+        """Only GHCR ever held CI tags; the allowance for old names stops there."""
+        docker = FakeDocker()
+        publish_ci(docker, "pr-1")
+        docker.push(docker.tags[f"{GHCR}/falkordb:rc-pr-1-valkey"], "falkordb", "rc-pr-1", registries=(HUB,))
+        docker.push(docker.tags[f"{GHCR}/falkordb:rc-pr-1-valkey-x64"], "falkordb", "rc-pr-1-x64",
+                    registries=(HUB,))
+        checker = check(docker, "rc-pr-1")
+        self.assertEqual(sorted(failed(checker)), [(f"{HUB}/falkordb:rc-pr-1", "must not exist"),
+                                                   (f"{HUB}/falkordb:rc-pr-1-x64", "must not exist")])
+        self.assertIn(f"CI tags belong in {GHCR} only", checker.failures[0].detail)
 
     def test_a_per_arch_tag_that_is_not_the_multi_arch_tags_platform_fails(self):
         docker = FakeDocker()
@@ -1076,6 +1159,17 @@ class CommandLineTest(unittest.TestCase):
             code, _, summary = self.run_main(FakeDocker(), [], "rc-pr-1")
         self.assertEqual(code, 2)
         self.assertIn("the check crashed: RuntimeError('boom')", summary)
+
+    def test_main_fails_latest_while_the_newest_release_has_no_images(self):
+        docker = FakeDocker()
+        publish_edge(docker)
+        publish_release(docker, "6.0.4", latest=True)
+        releases = [[{"tag_name": "v6.1.0", "draft": False, "prerelease": False},
+                     {"tag_name": "v6.0.4", "draft": False, "prerelease": False}]]
+        code, out, summary = self.run_main(docker, releases, "edge")
+        self.assertEqual(code, 1)
+        self.assertIn("6.1.0 has no images here yet, so latest* cannot be checked", out)
+        self.assertIn("cannot be checked", summary)
 
     def test_main_reports_an_unknown_latest_in_the_step_summary(self):
         code, _, summary = self.run_main(FakeDocker(), judge.InspectError("gh: no token"), "latest")
