@@ -25,19 +25,27 @@
 # WHAT IT DOES
 #   1. guard             — validate tag shape, major >= 6, Cargo.toml version match
 #   2. create-release    — create the GitHub Release (idempotent)
-#   3. build-artifacts   — build the per-platform .so files, and the rhel9 and
-#                          amazonlinux2023 server images (_build-artifacts.yml)
+#   3. build-artifacts   — build the per-platform .so files, and the per-OS
+#                          server images on both architectures
+#                          (_build-artifacts.yml)
 #   4. publish-artifacts — require the full set, checksum, upload to the release
-#   5. image             — retag the validated rc-mg-<sha>-redis manifest to semver,
-#                          and to :latest if this is the highest release
-#   6. publish-images    — push the per-OS server images as <semver>-<os>-<arch>
-#   7. browser-tests     — exercise the published image
+#   5. image             — retag the validated rc-mg-<sha>-valkey and -redis
+#                          manifests to <semver>-valkey, <semver>-redis and
+#                          <semver> (Valkey), and to latest* if this is the
+#                          highest published stable release
+#   6. publish-images    — push the per-OS server images, one multi-arch index
+#                          each, as <semver>-<os>-<server>
+#   7. check-tags        — check every tag the release published
+#   8. browser-tests     — exercise the published image
+#
+# build/publish_tags.py works out every tag pushed here; its tests are the
+# list of what a release, a prerelease and the per-OS images get.
 #
 # workflow_dispatch re-runs all of it for an existing tag; every step is
 # idempotent (existing release reused, assets uploaded with --clobber, retag
 # overwrites). To rebuild the images from source instead of retagging — the
-# rc-mg-<sha>-redis image was swept, or the commit never went through the merge
-# queue — use release-image.yml.
+# rc-mg-<sha>-<server> images were swept, or the commit never went through the
+# merge queue — use release-image.yml.
 
 name: Release (tag)
 
@@ -164,6 +172,7 @@ jobs:
       # Release builds run on a tag that is already in this repository —
       # reviewed code, so this build may write the cache.
       trusted_revision: true
+      tolerate_unpublished_failures: true
       export_images: true
     # No `secrets: inherit` — the reusable build only needs the auto GITHUB_TOKEN.
 
@@ -211,22 +220,26 @@ jobs:
             dist/falkordb-*.so dist/falkordb-*.so.sha256 dist/SHA256SUMS \
             --clobber
 
-  # Runtime images: retag the multi-arch manifest the merge queue built and
-  # tested for this commit (rc-mg-<sha>-redis, the Redis leg's) to the release tags on both registries.
-  # No layer rebuild — what CI validated is what ships. That image only exists
-  # for a commit that went through the queue, and only for cleanup-rc-images.yml's
-  # TTL; otherwise rebuild from source with release-image.yml.
+  # Runtime images: retag the multi-arch manifests the merge queue built and
+  # tested for this commit (rc-mg-<sha>-valkey and rc-mg-<sha>-redis) to the
+  # release tags, on both repositories and both registries. No layer rebuild:
+  # what CI validated is what ships. Those images only exist for a commit that
+  # went through the queue, and only for cleanup-rc-images.yml's TTL;
+  # otherwise rebuild from source with release-image.yml.
   image:
     needs: [guard, create-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        repo: [falkordb, falkordb-server]
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test the tag plan
+        run: python3 build/test_publish_tags.py
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to Docker Hub
@@ -242,40 +255,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Retag rc-mg-${{ needs.guard.outputs.commit_sha }}-redis → ${{ needs.guard.outputs.semver }} (${{ matrix.repo }})
+      - name: Retag rc-mg-${{ needs.guard.outputs.commit_sha }}-<server> → ${{ needs.guard.outputs.semver }}
         env:
           GH_TOKEN:   ${{ secrets.GITHUB_TOKEN }}
           GH_REPO:    ${{ github.repository }}
-          TAG:        ${{ needs.guard.outputs.semver }}
+          SEMVER:     ${{ needs.guard.outputs.semver }}
           COMMIT_SHA: ${{ needs.guard.outputs.commit_sha }}
-          REPO:       ${{ matrix.repo }}
         run: |
           set -euo pipefail
-          SRC="ghcr.io/falkordb/${REPO}:rc-mg-${COMMIT_SHA}-redis"
-          TAGS=(-t "ghcr.io/falkordb/${REPO}:${TAG}" -t "falkordb/${REPO}:${TAG}")
-          # :latest moves only when this release is the highest semver across all
-          # non-draft, non-prerelease releases, so a backport patch on an old
-          # version branch does not clobber it. Decided here, right before the
-          # push, so a newer release published meanwhile is already in the list.
-          HIGHEST=$(gh api "/repos/${GH_REPO}/releases" --paginate \
-            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
-            | sed 's/^v//' \
-            | sort -V \
-            | tail -1)
-          echo "highest published release: $HIGHEST; this release: $TAG"
-          if [ "$HIGHEST" = "$TAG" ]; then
-            # From 6.0 GA the Rust engine is the default, so :latest moves on
-            # BOTH registries — same as the rebuild path in _build-flavour.yml.
-            TAGS+=(-t "ghcr.io/falkordb/${REPO}:latest" -t "falkordb/${REPO}:latest")
-          fi
-          docker buildx imagetools create "${TAGS[@]}" "${SRC}"
+          # latest* moves only when this release is the highest stable version
+          # with a published (non-draft) GitHub release, so a backport patch on
+          # an old version branch does not clobber it and a prerelease never
+          # moves it. The list is read here, right before the push, so a newer
+          # release published meanwhile is already in it.
+          gh api "/repos/${GH_REPO}/releases" --paginate \
+            --jq '.[] | {tag_name, draft, prerelease}' > "$RUNNER_TEMP/releases.jsonl"
+          python3 build/publish_tags.py release --version "$SEMVER" --sha "$COMMIT_SHA" \
+            --releases "$RUNNER_TEMP/releases.jsonl" --execute
 
-  # Per-OS server images: falkordb-server:<semver>-rhel9-x64 and
-  # -amazonlinux2023-x64. Unlike the Debian images, nothing before the release
-  # builds them, so build-artifacts builds them from the tagged commit next to
-  # the .so files, and this job pushes them. Pushing here rather than in the
-  # build keeps registry credentials out of the job that compiles code. No
-  # :latest-<os> tag: these are pinned by version.
+  # Per-OS server images, falkordb-server:<semver>-<os>-<server>. Unlike the
+  # Debian images, nothing before the release builds them, so build-artifacts
+  # builds them from the tagged commit next to the .so files, one archive per
+  # OS, server and architecture, and this job pushes them. Pushing here rather
+  # than in the build keeps registry credentials out of the job that compiles
+  # code. Each tag is one multi-arch index; the per-arch images under it are
+  # pushed by digest with no tag of their own. No latest-<os> tag: these are
+  # pinned by version.
   publish-images:
     needs: [guard, build-artifacts]
     runs-on: ubuntu-latest
@@ -283,11 +288,20 @@ jobs:
       contents: read
       packages: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test the tag plan
+        run: python3 build/test_publish_tags.py
+
       - name: Download server images
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: image-falkordb-server-*
-          path: images
+          path: ${{ runner.temp }}/images
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to Docker Hub
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -302,29 +316,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push falkordb-server:${{ needs.guard.outputs.semver }}-<os>
+      # podman assembles each index and pushes it to GHCR; the script then
+      # copies that index to Docker Hub with imagetools, so both hold one digest.
+      - name: Login to GHCR (podman)
         env:
-          SEMVER:   ${{ needs.guard.outputs.semver }}
-          SUFFIXES: ${{ needs.build-artifacts.outputs.image_suffixes }}
-        run: |
-          set -euo pipefail
-          # Completeness gate: push nothing unless every image is here.
-          MISSING=""
-          for s in $(printf '%s' "$SUFFIXES" | jq -r '.[]'); do
-            if [ -z "$(find images -name "falkordb-server-${s}.tar" -print -quit)" ]; then
-              MISSING="$MISSING falkordb-server-${s}"
-            fi
-          done
-          if [ -n "$MISSING" ]; then
-            echo "::error::missing server images:$MISSING"; exit 1
-          fi
-          for s in $(printf '%s' "$SUFFIXES" | jq -r '.[]'); do
-            docker load --input "$(find images -name "falkordb-server-${s}.tar" -print -quit)"
-            for DST in "falkordb/falkordb-server:${SEMVER}-${s}" "ghcr.io/falkordb/falkordb-server:${SEMVER}-${s}"; do
-              docker tag "falkordb-server:${s}" "$DST"
-              docker push "$DST"
-            done
-          done
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: podman login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+
+      - name: Push falkordb-server:${{ needs.guard.outputs.semver }}-<os>-<server>
+        env:
+          SEMVER: ${{ needs.guard.outputs.semver }}
+        # The script pushes nothing unless every per-OS archive is there and
+        # holds the platform and server its name says.
+        run: python3 build/publish_tags.py per-os --version "$SEMVER" --images "$RUNNER_TEMP/images" --execute
+
+  # One check after every image job: latest* is judged against the release's
+  # own tags, so a check before all of them are pushed would fail.
+  check-tags:
+    needs: [guard, image, publish-images]
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/check-published-tags.yml
+    with:
+      target: ${{ needs.guard.outputs.semver }}
+    # Docker Hub login, against its anonymous pull rate limit.
+    secrets: inherit
 
   # Browser tests for the released image. Mirrors the C engine's
   # browser-tests-trigger.yml hook so both engines exercise the browser on a

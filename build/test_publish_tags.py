@@ -269,6 +269,34 @@ class ContractRules(unittest.TestCase):
             self.assertEqual(len(tags), len(set(tags)))
 
 
+class BuildCells(unittest.TestCase):
+    """_build-artifacts.yml builds every per-OS archive a release needs, and no other."""
+
+    def cells(self):
+        text = (Path(__file__).resolve().parent.parent / ".github/workflows/_build-artifacts.yml").read_text()
+        m = re.search(r"ALL='(\[.*?\])'", text, re.S)
+        self.assertIsNotNone(m, "ALL='[...]' not found in _build-artifacts.yml")
+        return json.loads(m[1])
+
+    def test_archives(self):
+        built = set()
+        for cell in self.cells():
+            self.assertTrue(cell["publish"], f"{cell['suffix']} is not published")
+            self.assertEqual(cell["platform"], pt.PLATFORMS[cell["arch"]])
+            self.assertEqual(bool(cell["servers"]), cell["image"], cell["suffix"])
+            if not cell["image"]:
+                continue
+            # The workflow names each archive <os>-<server>-<arch> from the
+            # suffix, so an image cell's suffix must be <os>-<arch>.
+            self.assertTrue(cell["suffix"].endswith("-" + cell["arch"]), cell["suffix"])
+            os_name = cell["suffix"][: -len(cell["arch"]) - 1]
+            for server in cell["servers"]:
+                self.assertNotIn((os_name, server, cell["arch"]), built)
+                built.add((os_name, server, cell["arch"]))
+        want = {(o, s, a) for o, s in pt.PER_OS for a in pt.PLATFORMS}
+        self.assertEqual(built, want)
+
+
 class FakeRegistry:
     """Answers the commands execute() runs, and records them."""
 
