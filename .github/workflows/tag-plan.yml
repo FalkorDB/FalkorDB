@@ -1,0 +1,57 @@
+name: Tag plan
+
+# Shows the image tags the publishing workflows would push, without pushing
+# anything: rust-push.yml's rolling tags, release-tag.yml's tags for a release
+# and a prerelease (including the per-OS images), and release-image.yml's.
+# They come from build/publish_tags.py, the same code those workflows run with
+# --execute, and its tests check them against the contract's table of tags.
+#
+# Runs on pull requests that change the script or a workflow that publishes
+# with it, and on demand.
+
+on:
+  pull_request:
+    paths:
+      - build/publish_tags.py
+      - build/test_publish_tags.py
+      - .github/workflows/_build-artifacts.yml
+      - .github/workflows/release-image.yml
+      - .github/workflows/release-tag.yml
+      - .github/workflows/rust-push.yml
+      - .github/workflows/tag-plan.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test the tag plan
+        run: python3 build/test_publish_tags.py
+
+      - name: Print the tags each publish would push
+        env:
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          # Sample versions. 6.1.0 is given a published GitHub release so the
+          # plan shows latest* moving; the prerelease never moves it.
+          printf '%s\n' '{"tag_name":"v6.1.0","draft":false,"prerelease":false}' \
+                        '{"tag_name":"v6.1.0-rc.1","draft":false,"prerelease":true}' > "$RUNNER_TEMP/releases.jsonl"
+          {
+            echo '## Tags each publish would push (nothing is pushed)'
+            section() { echo; echo "### $1"; echo; echo '```'; shift; python3 build/publish_tags.py "$@"; echo '```'; }
+            section "rust-push.yml: edge, for $SHA" edge --sha "$SHA"
+            section "release-tag.yml: release 6.1.0 (highest published release)" release --version 6.1.0 --sha "$SHA" --releases "$RUNNER_TEMP/releases.jsonl"
+            section "release-tag.yml: prerelease 6.1.0-rc.1" release --version 6.1.0-rc.1 --sha "$SHA" --releases "$RUNNER_TEMP/releases.jsonl"
+            section "release-tag.yml: per-OS images, 6.1.0" per-os --version 6.1.0
+            section "release-tag.yml: per-OS images, 6.1.0-rc.1" per-os --version 6.1.0-rc.1
+            section "release-image.yml: rebuild of 6.1.0, mark_latest" rebuild --tag 6.1.0 --sha "$SHA" --latest
+          } | tee -a "$GITHUB_STEP_SUMMARY"
