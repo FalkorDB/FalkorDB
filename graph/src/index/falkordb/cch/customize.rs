@@ -321,13 +321,16 @@ impl Cch {
     /// # Errors
     /// [`CchError::InvalidWeight`] for a negative or NaN weight,
     /// [`CchError::Ordering`] if no elimination order can be produced, and
-    /// [`CchError::Internal`] if `input` contradicts itself: weights for another node count
-    /// or with an edge its skeleton lacks, or a malformed CSR. [`CchInput::build`] makes the
-    /// weights and the skeleton from one graph, so each is a bug; never
-    /// [`CchError::NeedsRebuild`], since this is the rebuild.
+    /// [`CchError::Internal`] if `input` contradicts itself: a skeleton or weights for
+    /// another node count than `input`'s, weights with an edge its skeleton lacks, or a
+    /// malformed CSR. [`CchInput::build`] makes the weights and the skeleton from one graph,
+    /// so each is a bug; never [`CchError::NeedsRebuild`], since this is the rebuild.
     pub fn build(input: &CchInput) -> Result<Self, CchError> {
-        debug_assert_eq!(input.skeleton.node_count, input.n);
-        debug_assert_eq!(input.weights.csr.node_count, input.n);
+        if input.skeleton.node_count != input.n || input.weights.csr.node_count != input.n {
+            return Err(CchError::Internal(
+                "the input's skeleton or weights are for another node count",
+            ));
+        }
 
         let topology = Arc::new(Topology::build(&input.skeleton)?);
         let metric = customize(&topology, &input.weights).map_err(|error| match error {
@@ -907,6 +910,31 @@ mod tests {
             *offset += 1;
         }
         malformed("a repeated pair", &repeated.weights);
+    }
+
+    /// An input that contradicts its own node count is a bug in whatever built it: `build`
+    /// refuses it as [`CchError::Internal`], in debug and release builds alike, before
+    /// anything is ordered or indexed. Never [`CchError::NeedsRebuild`]: this is the rebuild.
+    #[test]
+    fn build_refuses_an_input_for_another_node_count() {
+        let internal = |what: &str, input: &CchInput| {
+            assert!(
+                matches!(Cch::build(input), Err(CchError::Internal(_))),
+                "{what}"
+            );
+        };
+
+        let mut weights_too_wide = to_input(&path(4));
+        weights_too_wide.weights = to_input(&path(5)).weights;
+        internal("weights for 5 nodes, input for 4", &weights_too_wide);
+
+        let mut skeleton_too_wide = to_input(&path(4));
+        skeleton_too_wide.skeleton = to_input(&path(5)).skeleton;
+        internal("a skeleton for 5 nodes, input for 4", &skeleton_too_wide);
+
+        let mut count_too_small = to_input(&path(4));
+        count_too_small.n = 3;
+        internal("both for 4 nodes, input for 3", &count_too_small);
     }
 
     /// The degenerate graphs: no node at all, and one node with no edge. Both build and
