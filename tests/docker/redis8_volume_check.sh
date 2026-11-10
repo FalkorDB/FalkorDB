@@ -333,8 +333,10 @@ if [ "$SERVER" = valkey ]; then
     migration_ready "$v"
     start "$CASE" "$IMAGE" "$v" -e FALKORDB_REDIS_MIGRATION=1 -e TLS=1
     tls_cli() { docker exec "$PREFIX-$CASE" sh -c 'redis-cli --tls --cacert "$FALKORDB_TLS_PATH/ca.crt" "$@"' sh "$@"; }
+    # gen-certs.sh generates 2048-bit DH parameters before the server starts,
+    # which took over 30 s on a CI arm64 runner: allow up to 5 minutes.
     _check=""
-    for _ in $(seq 1 60); do
+    for _ in $(seq 1 600); do
         _check=$(tls_cli CONFIG GET rdb-version-check 2>/dev/null | sed -n 2p)
         [ -n "$_check" ] && break
         [ "$(docker inspect -f '{{.State.Running}}' "$PREFIX-$CASE")" = true ] || break
