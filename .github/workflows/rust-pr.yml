@@ -44,12 +44,14 @@ jobs:
       file_changed: ${{ steps.check.outputs.changed }}
       # One key for every per-run tag: `pr-<N>` on a pull request (byte-identical
       # to what this workflow produced before) and `mg-<sha>` in the queue. The
-      # runtime images are `rc-<ci_key>`, the toolchain is `<ci_key>`.
+      # runtime images are `rc-<ci_key>-<server>`, the toolchain is `<ci_key>`.
       ci_key: ${{ steps.key.outputs.ci_key }}
       # Resolved once, read everywhere. This expression used to be repeated at
       # eleven call sites; a missed one fails closed in the ugliest way — a PR
       # that mostly works.
       toolchain_tag: ${{ steps.toolchain.outputs.tag }}
+      # Whether the image vehicle also runs on Redis (see `Decide the Redis leg`).
+      redis_leg: ${{ steps.redis-leg.outputs.redis_leg }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -187,6 +189,48 @@ jobs:
             echo "tag=ghcr.io/falkordb/falkordb-build:latest" | tee -a "$GITHUB_OUTPUT"
           fi
 
+      # The queue tests both servers before an image is promoted. A pull request
+      # runs Valkey, and Redis too when it carries the `ci-both-servers` label.
+      # The label is read from the API rather than from the event, so "Re-run
+      # all jobs" after adding it picks it up. Adding a label does not start a
+      # run by itself: this workflow does not trigger on `labeled`, because a
+      # new run cancels the one in progress, and every label would restart CI.
+      # A fork has no image vehicle, so the label does nothing there.
+      - name: Decide the Redis leg
+        id: redis-leg
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "merge_group" ]; then
+            echo "merge queue: both servers"
+            echo "redis_leg=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$IS_FORK" = "true" ]; then
+            echo "fork pull request: no image vehicle, so Valkey only; the merge queue runs Redis"
+            echo "redis_leg=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Materialised first, not piped into grep -q (see the diff step above).
+          # A failed lookup runs Valkey only rather than failing the run: the
+          # label only adds a leg, and the queue runs Redis regardless.
+          if ! gh api "/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUM}" --jq '.labels[].name' > /tmp/labels.txt; then
+            echo "::warning::could not read this pull request's labels, so ci-both-servers is not honoured in this run; re-run to retry."
+            echo "redis_leg=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! grep -qxF ci-both-servers /tmp/labels.txt; then
+            echo "no ci-both-servers label: Valkey only"
+            echo "redis_leg=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ci-both-servers label: both servers"
+            echo "redis_leg=true" >> "$GITHUB_OUTPUT"
+          fi
+
   # When build/Dockerfile changes, rebuild the toolchain image at a PR-scoped
   # tag (ghcr.io/falkordb/falkordb-build:pr-<N>, multi-arch). Other jobs in
   # this workflow pick up the new toolchain via the `container:` references
@@ -244,6 +288,7 @@ jobs:
       # The image vehicle only in the queue, and only from a branch that can
       # push. A fork pull request runs the artifact vehicle and nothing else.
       use_image: ${{ github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository }}
+      redis_leg: ${{ needs.check-files.outputs.redis_leg == 'true' }}
     secrets: inherit
 
   lint:
@@ -362,6 +407,10 @@ jobs:
           llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-23 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      # tests/common.py starts the server with --logfile redis-test.log.
+      - name: Check the server this job ran (valkey)
+        if: ${{ !cancelled() }}
+        run: tests/assert_server_log.sh valkey redis-test.log
       - name: Upload unit test coverage to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
@@ -419,6 +468,11 @@ jobs:
           "$TOOLCHAIN_LLVM_COV" --version
           "$TOOLCHAIN_LLVM_COV" export --format=lcov --instr-profile fuzz/coverage/fuzz_target_runtime/coverage.profdata target/x86_64-unknown-linux-gnu/coverage/x86_64-unknown-linux-gnu/release/fuzz_target_runtime > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      # The TCK run above seeds the corpus; tests/common.py starts its server
+      # with --logfile redis-test.log.
+      - name: Check the server this job ran (valkey)
+        if: ${{ !cancelled() }}
+        run: tests/assert_server_log.sh valkey redis-test.log
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
@@ -463,6 +517,11 @@ jobs:
   # It must also keep reporting on BOTH events — a required check that the
   # merge_group run never reports fails the merge on a status that never
   # arrives. Hence `if: !cancelled()`.
+  #
+  # Both servers are covered through ci-pipeline: its image-valkey and
+  # image-redis legs fail it, and so does its server-legs job when a leg this
+  # run requires was skipped (Valkey in the queue and on a same-repo pull
+  # request; Redis in the queue and under `ci-both-servers`).
   ci-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
