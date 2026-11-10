@@ -49,6 +49,8 @@ use crate::graph::graphblas::{
 };
 
 #[cfg(feature = "index-falkordb")]
+use super::csr::length;
+#[cfg(feature = "index-falkordb")]
 use super::matrix::grb;
 use super::serialization::{Decode, Encode, Reader, Writer};
 use super::{
@@ -102,6 +104,11 @@ impl From<GrB_Vector> for Vector<u64> {
 }
 
 impl<T> Vector<T> {
+    #[must_use]
+    pub const fn ptr(&self) -> GrB_Vector {
+        self.v
+    }
+
     pub fn clear(&mut self) {
         unsafe {
             let info = GrB_Vector_clear(self.v);
@@ -182,11 +189,6 @@ impl Vector<bool> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         v
-    }
-
-    #[must_use]
-    pub const fn ptr(&self) -> GrB_Vector {
-        self.v
     }
 
     #[must_use]
@@ -481,16 +483,10 @@ impl Vector<f64> {
         }
     }
 
-    #[must_use]
-    pub(crate) const fn ptr(&self) -> GrB_Vector {
-        self.v
-    }
-
     /// Every stored entry as parallel index and value arrays, in index order.
     #[must_use]
     pub(crate) fn extract_tuples(&self) -> (Vec<u64>, Vec<f64>) {
         let mut count = self.nvals();
-        let length = |count| usize::try_from(count).expect("a vector's entries fit a usize");
         let mut indices = vec![0; length(count)];
         let mut values = vec![0.0; length(count)];
         grb!(unsafe {
@@ -539,11 +535,6 @@ impl Vector<u64> {
     #[allow(clippy::iter_without_into_iter)]
     pub fn iter(&self) -> Iter<u64> {
         Iter::new(self)
-    }
-
-    #[must_use]
-    pub const fn ptr(&self) -> GrB_Vector {
-        self.v
     }
 
     /// The sum of the stored values (`PLUS` monoid; 0 when empty).

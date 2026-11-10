@@ -142,8 +142,9 @@ impl<T> Deref for Effective<'_, T> {
 /// `⊕` from the element type ([`EWiseAdd`]), so on a `u64` layer a pending
 /// value in `dp` shadows the committed one; `dp ∩ dm = ∅`, so the mask never
 /// drops a pending addition. The mask is structural: a pair is deleted by
-/// being in `dm`, whatever value `dm` stores there. The same expression the
-/// delta fold writes into the new base, here into a matrix of its own, and
+/// being in `dm`, whatever value `dm` stores there. The delta fold writes the
+/// same union into the new base with a valued mask, which reads alike because
+/// `dm` stores only `true`; here it goes into a matrix of its own, and is
 /// skipped entirely when both deltas are empty.
 ///
 /// The layers must not have pending work: reading a pending layer finishes

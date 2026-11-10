@@ -13,9 +13,6 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use graph::graph::graphblas::matrix::{self, Matrix};
-use graph::graph::graphblas::{
-    GrB_Info, GrB_Matrix_set_INT32, GrB_Orientation, GxB_Option_Field, GxB_SPARSE,
-};
 
 /// A fixed-size, allocation-free log of addresses, appended to from inside
 /// the allocators while [`RECORDING`] is set.
@@ -51,13 +48,27 @@ impl Log {
         self.len.store(0, Ordering::SeqCst);
     }
 
+    /// How many entries the log holds so far: a mark for [`Self::count_from`].
+    fn len(&self) -> usize {
+        let len = self.len.load(Ordering::SeqCst);
+        assert!(len <= Self::CAP, "log overflowed");
+        len
+    }
+
     fn count(
         &self,
         p: *const c_void,
     ) -> usize {
-        let len = self.len.load(Ordering::SeqCst);
-        assert!(len <= Self::CAP, "log overflowed");
-        self.slots[..len]
+        self.count_from(0, p)
+    }
+
+    /// How many times `p` was logged from the mark `from` on.
+    fn count_from(
+        &self,
+        from: usize,
+        p: *const c_void,
+    ) -> usize {
+        self.slots[from..self.len()]
             .iter()
             .filter(|s| s.load(Ordering::SeqCst) == p as usize)
             .count()
@@ -144,28 +155,16 @@ unsafe extern "C" fn logging_free(p: *mut c_void) {
 }
 
 /// A CSR-ready `n x n` FP64 matrix with distinct values, so it is not iso:
-/// sparse, row-major, 32-bit offsets and column indices. `Matrix::prepare_csr`
-/// is private to the crate, so this sets the raw fields.
+/// sparse, row-major, 32-bit offsets and column indices.
 fn weights(n: u64) -> Matrix<f64> {
     let mut m = Matrix::<f64>::new(n, n);
-    for (value, field) in [
-        (GxB_SPARSE as i32, GxB_Option_Field::GxB_SPARSITY_CONTROL),
-        (
-            GrB_Orientation::GrB_ROWMAJOR as i32,
-            GxB_Option_Field::GrB_STORAGE_ORIENTATION_HINT,
-        ),
-        (32, GxB_Option_Field::GxB_OFFSET_INTEGER_HINT),
-        (32, GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT),
-    ] {
-        let info = unsafe { GrB_Matrix_set_INT32(m.inner(), value, field as _) };
-        assert_eq!(info, GrB_Info::GrB_SUCCESS);
-    }
     for r in 0..n {
         for k in 1..4 {
             m.set(r, (r * 7 + k * 13) % n, (r * 4 + k) as f64);
         }
     }
-    m.wait();
+    m.prepare_csr::<u32, u32, f64>()
+        .expect("an unshared matrix is set up");
     m
 }
 
@@ -216,6 +215,7 @@ fn adopted_arrays_come_from_graphblas_and_rust_frees_them_once() {
     start();
     let mut m = weights(N);
     let before = RUST_ALLOC_BYTES.load(Ordering::SeqCst);
+    let grb_mark = GRB_ALLOC.len();
     let csr = m.take_csr::<u32, u32, f64>().expect("exports");
     let during = RUST_ALLOC_BYTES.load(Ordering::SeqCst) - before;
     assert_eq!(csr.row_offsets.len(), N as usize + 1);
@@ -228,6 +228,11 @@ fn adopted_arrays_come_from_graphblas_and_rust_frees_them_once() {
     assert!(during < 1024, "the export allocated {during} bytes in Rust");
     for p in arrays {
         assert!(grb_live(p), "each array is a block GraphBLAS allocated");
+        assert_eq!(
+            GRB_ALLOC.count_from(grb_mark, p),
+            0,
+            "the matrix's own array, not a copy GraphBLAS made during the export"
+        );
     }
     // The arrays stay live until `csr` drops, so no other block can take
     // their addresses in between: every free logged from here is theirs.

@@ -78,7 +78,9 @@ const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_st
 #[cfg(feature = "index-falkordb")]
 use super::csr::take_out_csr;
 #[cfg(feature = "index-falkordb")]
-pub use super::csr::{CsrExport, CsrExportError, CsrValue, GrbElem};
+pub use super::csr::{CsrArray, CsrExport, CsrExportError, CsrIndex, CsrValue, GrbElem};
+#[cfg(feature = "index-falkordb")]
+use super::scalar::Scalar;
 use super::vector::Vector;
 use super::{
     GrB_BOOL, GrB_BinaryOp, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R,
@@ -154,19 +156,23 @@ pub(crate) use grb;
 /// the whole server process.
 ///
 /// # Safety
-/// Rust's `#[global_allocator]` must free what the given malloc returns: the
-/// CSR export ([`Matrix::take_csr`]) hands GraphBLAS's own arrays over as
-/// `Vec`s, which the global allocator then frees or reallocates. For every
-/// block the malloc returns, the global allocator's `dealloc` and `realloc`
+/// Rust's `#[global_allocator]` must free what the given malloc, calloc and
+/// realloc return: the CSR export ([`Matrix::take_csr`]) hands GraphBLAS's own
+/// arrays over as `Vec`s, which the global allocator then frees or
+/// reallocates, and GraphBLAS may have allocated any of them through any of
+/// the three. For every block they return, the global allocator's `dealloc` and `realloc`
 /// must accept that pointer under a layout whose size is the block's
 /// requested size and whose alignment is at most 8, and free it as the given
 /// free would. That holds for the two pairs this crate runs with, because
 /// their `dealloc` ignores the layout:
-/// - in the module, `RedisModule_Alloc`/`RedisModule_Free`, and a global
-///   allocator over `redis_module::alloc::RedisAlloc` (`dealloc` is
+/// - in the module, `RedisModule_Alloc`/`Calloc`/`Realloc`/`Free`, and a
+///   global allocator over `redis_module::alloc::RedisAlloc` (`dealloc` is
 ///   `RedisModule_Free(ptr)`);
-/// - in tests on unix, libc `malloc`/`free`, and `std::alloc::System`
-///   (`dealloc` is `free(ptr)`).
+/// - in tests on unix, libc `malloc`/`calloc`/`realloc`/`free`, and
+///   `std::alloc::System` (`dealloc` is `free(ptr)`).
+///
+/// GraphBLAS calls no calloc (it uses malloc and a memset), and with realloc
+/// `None` it uses malloc, `memcpy` and free instead.
 #[allow(clippy::similar_names)]
 pub unsafe fn init(
     user_malloc_function: Option<unsafe extern "C" fn(arg1: usize) -> *mut c_void>,
@@ -498,17 +504,6 @@ unsafe fn pin_sparse(m: GrB_Matrix) {
         )
     };
     debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-}
-
-/// The width in bits of a CSR integer array of type `T` (`u32` or `u64`), as
-/// GraphBLAS's `*_INTEGER_HINT` fields take it.
-#[cfg(feature = "index-falkordb")]
-const fn bits<T: Into<u64>>() -> i32 {
-    match size_of::<T>() {
-        4 => 32,
-        8 => 64,
-        _ => panic!("a CSR array is either 32 or 64 bits wide"),
-    }
 }
 
 impl<T> Decode<19> for Matrix<T> {
@@ -1315,23 +1310,23 @@ impl<T> Matrix<T> {
     /// `GrB_SUCCESS`, the remaining fields left unset: a conversion allocates
     /// in proportion to the matrix, so it can run out of memory.
     #[cfg(feature = "index-falkordb")]
-    pub(crate) fn prepare_csr<P, I, V>(&mut self) -> Result<(), CsrExportError>
-    where
-        P: GrbElem + Into<u64>,
-        I: GrbElem + Into<u64>,
-        V: CsrValue,
-    {
+    pub fn prepare_csr<P: CsrIndex, I: CsrIndex, V: CsrValue>(
+        &mut self
+    ) -> Result<(), CsrExportError> {
         // `get_mut`, as in `take_csr`: a handle found unshared really is ours.
         if Arc::get_mut(&mut self.m).is_none() {
             return Err(CsrExportError::SharedHandle);
         }
+        // mitigation for a GraphBLAS bug.
+        // TODO: remove once GraphBLAS is updated
+        self.wait();
         let fields = [
             Some((
                 GrB_Orientation::GrB_ROWMAJOR as i32,
                 GxB_Option_Field::GrB_STORAGE_ORIENTATION_HINT,
             )),
-            Some((bits::<P>(), GxB_Option_Field::GxB_OFFSET_INTEGER_HINT)),
-            Some((bits::<I>(), GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT)),
+            Some((P::BITS, GxB_Option_Field::GxB_OFFSET_INTEGER_HINT)),
+            Some((I::BITS, GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT)),
             Some((GxB_SPARSE as i32, GxB_Option_Field::GxB_SPARSITY_CONTROL)),
             V::HAS_VALUES.then_some((0, GxB_Option_Field::GxB_ISO)),
         ];
@@ -1400,12 +1395,9 @@ impl<T> Matrix<T> {
     /// # Errors
     /// [`CsrExportError`] naming the first precondition the matrix fails.
     #[cfg(feature = "index-falkordb")]
-    pub fn take_csr<P, I, V>(&mut self) -> Result<CsrExport<P, I, V>, CsrExportError>
-    where
-        P: GrbElem + Into<u64>,
-        I: GrbElem + Into<u64>,
-        V: CsrValue,
-    {
+    pub fn take_csr<P: CsrIndex, I: CsrIndex, V: CsrValue>(
+        &mut self
+    ) -> Result<CsrExport<P, I, V>, CsrExportError> {
         // Serialize against `wait()` and `dup()`: materializing and
         // round-tripping through the container both mutate the GrB object even
         // though the entries do not change.
@@ -1419,22 +1411,22 @@ impl<T> Matrix<T> {
         }
         let m = self.inner();
 
-        unsafe {
-            if V::HAS_VALUES {
-                let mut ty: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
-                grb!(GxB_Matrix_type(ty.as_mut_ptr(), m));
-                if !V::holds(ty.assume_init()) {
-                    return Err(CsrExportError::NotFp64);
-                }
+        if V::HAS_VALUES {
+            let mut element_type: GrB_Type = null_mut();
+            // SAFETY: `m` is this wrapper's live handle.
+            grb!(unsafe { GxB_Matrix_type(&raw mut element_type, m) });
+            if !V::holds(element_type) {
+                return Err(CsrExportError::WrongValueType);
             }
-
-            // MATERIALIZE flushes pending tuples and zombies and unjumbles each
-            // row — which is what makes the exported column indices ascending
-            // within a row. It changes no setting, and it is a real flush, so
-            // later `wait()` calls can take their cheap path.
-            grb!(GrB_Matrix_wait(m, GrB_WaitMode::GrB_MATERIALIZE as _));
-            self.has_pending.store(false, Ordering::Release);
         }
+
+        // MATERIALIZE flushes pending tuples and zombies and unjumbles each
+        // row — which is what makes the exported column indices ascending
+        // within a row. It changes no setting, and it is a real flush, so
+        // later `wait()` calls can take their cheap path.
+        // SAFETY: `m` is this wrapper's live handle, and the lock is held.
+        grb!(unsafe { GrB_Matrix_wait(m, GrB_WaitMode::GrB_MATERIALIZE as _) });
+        self.has_pending.store(false, Ordering::Release);
 
         // The storage is the caller's choice: `take_out_csr` checks it on the
         // unloaded container, and never sets it.
@@ -1816,23 +1808,22 @@ impl Matrix<bool> {
         b: &Matrix<TB>,
         descriptor: Option<Descriptor>,
     ) {
-        unsafe {
-            let mut one: GrB_Scalar = null_mut();
-            grb!(GrB_Scalar_new(&raw mut one, GrB_BOOL));
-            grb!(GrB_Scalar_setElement_BOOL(one, true));
-            grb!(GxB_Matrix_eWiseUnion(
+        let one = Scalar::from(true);
+        // SAFETY: every handle is live: the three matrices', the scalar this
+        // scope owns, and a built-in operator and descriptor.
+        grb!(unsafe {
+            GxB_Matrix_eWiseUnion(
                 self.inner(),
                 null_mut(),
                 null_mut(),
                 GrB_ONEB_BOOL,
                 a.inner(),
-                one,
+                one.ptr(),
                 b.inner(),
-                one,
-                descriptor.map_or(null_mut(), Into::into)
-            ));
-            grb!(GrB_Scalar_free(&raw mut one));
-        }
+                one.ptr(),
+                descriptor.map_or(null_mut(), Into::into),
+            )
+        });
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
@@ -2650,6 +2641,53 @@ mod weight_tests {
     use super::super::GxB_Matrix_iso;
     use super::{Descriptor, Matrix, grb};
     use crate::graph::graphblas::test_init;
+
+    fn weights(values: &[f64]) -> Matrix<f64> {
+        let mut m = Matrix::<f64>::new(4, 4);
+        for (k, &value) in (0u64..).zip(values) {
+            m.set(k / 4, k % 4, value);
+        }
+        m
+    }
+
+    /// Each monoid's identity on an empty matrix, and both reductions read
+    /// pending entries, stored values and an iso matrix alike.
+    #[test]
+    fn min_and_sum_value_on_empty_pending_and_iso_matrices() {
+        test_init::ensure_init();
+        let empty = weights(&[]);
+        assert_eq!((empty.min_value(), empty.sum_value()), (f64::INFINITY, 0.0));
+
+        let pending = weights(&[3.0, 1.5, 2.0]);
+        assert_eq!((pending.min_value(), pending.sum_value()), (1.5, 6.5));
+
+        let iso = weights(&[2.0, 2.0, 2.0]);
+        iso.wait();
+        let mut is_iso = false;
+        grb!(unsafe { GxB_Matrix_iso(&raw mut is_iso, iso.inner()) });
+        assert!(is_iso, "equal values are stored iso");
+        assert_eq!((iso.min_value(), iso.sum_value()), (2.0, 6.0));
+    }
+
+    /// `min` skips a NaN and `+` does not; `+inf` next to `-inf` sums to NaN,
+    /// and an overflowing sum is `+inf`.
+    #[test]
+    fn min_and_sum_value_on_nan_infinities_and_overflow() {
+        test_init::ensure_init();
+        let nan = weights(&[1.0, f64::NAN]);
+        assert_eq!(nan.min_value(), 1.0);
+        assert!(nan.sum_value().is_nan());
+
+        let opposed = weights(&[f64::INFINITY, f64::NEG_INFINITY]);
+        assert_eq!(opposed.min_value(), f64::NEG_INFINITY);
+        assert!(opposed.sum_value().is_nan());
+
+        let overflow = weights(&[f64::MAX, f64::MAX, 0.0]);
+        assert_eq!(
+            (overflow.min_value(), overflow.sum_value()),
+            (0.0, f64::INFINITY)
+        );
+    }
 
     /// An index outside the dimensions is a caller bug, not an absent entry.
     #[test]
