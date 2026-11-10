@@ -192,7 +192,8 @@ jobs:
       # The queue tests both servers before an image is promoted. A pull request
       # runs Valkey, and Redis too when it carries the `ci-both-servers` label.
       # The label is read from the API rather than from the event, so "Re-run
-      # all jobs" after adding it picks it up. Adding a label does not start a
+      # all jobs" (not "Re-run failed jobs", which skips this job) or a new
+      # push after adding it picks it up. Adding a label does not start a
       # run by itself: this workflow does not trigger on `labeled`, because a
       # new run cancels the one in progress, and every label would restart CI.
       # A fork has no image vehicle, so the label does nothing there.
@@ -409,7 +410,7 @@ jobs:
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       # tests/common.py starts the server with --logfile redis-test.log.
       - name: Check the server this job ran (valkey)
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         run: tests/assert_server_log.sh valkey redis-test.log
       - name: Upload unit test coverage to Codecov
         if: ${{ !cancelled() }}
@@ -471,7 +472,7 @@ jobs:
       # The TCK run above seeds the corpus; tests/common.py starts its server
       # with --logfile redis-test.log.
       - name: Check the server this job ran (valkey)
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         run: tests/assert_server_log.sh valkey redis-test.log
 
       - name: Upload coverage reports to Codecov

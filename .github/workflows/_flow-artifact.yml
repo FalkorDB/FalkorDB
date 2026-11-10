@@ -114,7 +114,7 @@ jobs:
           mkdir -p test-results
           TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh 2>&1 | tee test-results/flow.log
       - name: Check the server this cell ran (${{ inputs.server }})
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         run: tests/assert_server_log.sh "$FALKORDB_SERVER" tests/flow/logs
       - name: Collect coverage (profraw -> lcov)
         if: ${{ !cancelled() && inputs.collect_coverage }}

@@ -295,7 +295,7 @@ jobs:
           path: test-counts/
           retention-days: 7
       - name: Check the server this job ran (${{ inputs.server }})
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         env:
           SERVER: ${{ inputs.server }}
         run: tests/assert_server_log.sh "$SERVER" tests/flow/logs

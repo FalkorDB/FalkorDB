@@ -209,7 +209,7 @@ jobs:
           path: test-counts/
           retention-days: 7
       - name: Check the server this cell ran (${{ inputs.server }})
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         env:
           SERVER: ${{ inputs.server }}
         run: tests/assert_server_log.sh "$SERVER" tests/flow/logs
@@ -289,7 +289,7 @@ jobs:
       # Spawned servers log to redis-logs/<alias>/ (tests/flow/common.py); what
       # they print before their log file opens is in tests/flow/logs.
       - name: Check the server this cell ran (${{ inputs.server }})
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         env:
           SERVER: ${{ inputs.server }}
         run: tests/assert_server_log.sh "$SERVER" redis-logs tests/flow/logs
