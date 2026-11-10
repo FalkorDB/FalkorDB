@@ -355,6 +355,17 @@ def make_plan(
         # reused and may hold names from before the switch (see the data).
         fresh = any((target.ci_key or "").startswith(p) for p in channel.get("fresh_key_prefixes", []))
         plan.absent = _absent_refs(plan, False, set(left_over), fresh_ci_key=fresh)
+        # Servers left out of the check still have no CI names off the CI
+        # registries; on them, a left-out server's images may well exist.
+        elsewhere = [registry for registry in plan.all_registries if registry not in plan.registries]
+        for spec in _channel_specs(channel, set(data["servers"]) - servers, ci_key=target.ci_key or ""):
+            per_arch = [_fill(spec.per_arch, arch=a) for a in plan.arch_suffixes.values()] if spec.per_arch else []
+            names = [spec.tag, *per_arch]
+            for name in names:
+                for registry in elsewhere:
+                    for repo in plan.repos:
+                        plan.absent.setdefault(f"{registry}/{repo}:{name}",
+                                               f"CI tags belong in {', '.join(plan.registries)} only")
         return plan
 
     version = target.version
@@ -384,22 +395,17 @@ def make_plan(
     return plan
 
 
-def stable_releases(releases: list[dict]) -> list[str]:
-    """Every X.Y.Z with a published, non-prerelease GitHub release, newest first."""
-    found: set[tuple[int, ...]] = set()
+def newest_stable(releases: list[dict]) -> str | None:
+    """The highest X.Y.Z among published, non-prerelease GitHub releases."""
+    best: tuple[int, ...] | None = None
     for release in releases:
         if release.get("draft") or release.get("prerelease"):
             continue
         match = RELEASE_VERSION.match(release.get("tag_name", ""))
         if match and not match.group("pre"):
-            found.add(tuple(int(part) for part in match.group("core").split(".")))
-    return [".".join(map(str, core)) for core in sorted(found, reverse=True)]
-
-
-def newest_stable(releases: list[dict]) -> str | None:
-    """The highest X.Y.Z among published, non-prerelease GitHub releases."""
-    stable = stable_releases(releases)
-    return stable[0] if stable else None
+            core = tuple(int(part) for part in match.group("core").split("."))
+            best = max(best, core) if best else core
+    return ".".join(map(str, best)) if best else None
 
 
 def latest_rule(releases: list[dict], candidate: str | None, repo: str) -> tuple[str | None, str]:
@@ -723,12 +729,23 @@ class Checker:
             return
         version = plan.latest_version or ""
         repos = sorted({repo for spec in plan.latest_specs for repo in spec.repos})
+        # A release with a server-suffixed tag anywhere is from after the
+        # switch, and has all of them everywhere; one from before has only
+        # the bare version. Decided once, so a partial push can't pass here
+        # as "from before the switch" because it reached another registry.
+        suffixed = [self.manifest(f"{registry}/{repo}:{spec.follows}")
+                    for registry in plan.latest_registries for spec in plan.latest_specs if not spec.alias_of
+                    for repo in spec.repos]
+        after_switch: bool | None = any(isinstance(result, Manifest) for result in suffixed)
+        if not after_switch and any(not isinstance(result, (Manifest, NotFound)) for result in suffixed):
+            after_switch = None  # one could not be read: can't tell
         for registry in plan.latest_registries:
             for repo in repos:
                 specs = [spec for spec in plan.latest_specs if repo in spec.repos]
-                self._check_latest_in(registry, repo, version, specs)
+                self._check_latest_in(registry, repo, version, specs, after_switch)
 
-    def _check_latest_in(self, registry: str, repo: str, version: str, specs: list[TagSpec]) -> None:
+    def _check_latest_in(self, registry: str, repo: str, version: str, specs: list[TagSpec],
+                         after_switch: bool | None) -> None:
         subject = f"{registry}/{repo}:latest*"
         check = f"points at {version}"
         releases = {spec.follows: self.manifest(f"{registry}/{repo}:{spec.follows}") for spec in specs}
@@ -742,15 +759,14 @@ class Checker:
             self.record(False, RELATIONS, subject, check,
                         f"{version} has no images here yet, so latest* cannot be checked")
             return
-        for ok, ref, verdict_check, detail in self._latest_verdicts(registry, repo, version, specs, releases):
+        for ok, ref, verdict_check, detail in self._latest_verdicts(registry, repo, version, specs, releases,
+                                                                    after_switch):
             self.record(ok, RELATIONS, ref, verdict_check, detail)
 
     def _latest_verdicts(self, registry: str, repo: str, version: str, specs: list[TagSpec],
-                         releases: dict[str, Manifest | Exception]) -> list[tuple[bool, str, str, str]]:
+                         releases: dict[str, Manifest | Exception],
+                         after_switch: bool | None) -> list[tuple[bool, str, str, str]]:
         """Each latest* tag against `version`'s tag, as (ok, ref, check, detail)."""
-        # A release with a server-suffixed tag is from after the switch,
-        # and has all of them; one from before has only the bare version.
-        after_switch = any(isinstance(releases[spec.follows], Manifest) for spec in specs if not spec.alias_of)
         verdicts = []
         for spec in specs:
             ref = f"{registry}/{repo}:{spec.tag}"
@@ -956,9 +972,13 @@ class Checker:
 
 
 def _judge_latest(latest: Manifest | Exception, other_ref: str, other: Manifest | Exception,
-                  version: str, after_switch: bool) -> tuple[bool, str]:
-    """One latest* tag against the release's tag it must equal."""
+                  version: str, after_switch: bool | None) -> tuple[bool, str]:
+    """One latest* tag against the release's tag it must equal. `after_switch`
+    is None when that could not be told: a server-suffixed tag was unreadable."""
     if isinstance(latest, NotFound) and isinstance(other, NotFound):
+        if after_switch is None:
+            return False, (f"missing, and so is {other_ref}, but whether {version} is from before the switch "
+                           f"can't be told: one of its server-suffixed tags could not be inspected")
         if after_switch:
             return False, (f"missing, and so is {other_ref}: {version} has server-suffixed tags, "
                            f"so it must have this one too")
@@ -1130,7 +1150,7 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             parser.error(f"--servers must name some of: {', '.join(sorted(all_servers))}")
         every = data["channels"]["ci"].get("every_server_key_prefixes", [])
         if servers != all_servers and any((target.ci_key or "").startswith(prefix) for prefix in every):
-            parser.error(f"--servers: rc-{target.ci_key} has every server's images; all of them are checked")
+            parser.error(f"--servers: rc-{target.ci_key} has every server's images; omit --servers or name them all")
 
     pins = {name: spec["version"] for name, spec in data["servers"].items()}
     for item in args.pin:
