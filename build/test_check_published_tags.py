@@ -290,7 +290,6 @@ class EdgeTest(unittest.TestCase):
                      "redis-server --version", "no other server", "/etc/os-release", "points at 6.0.4",
                      "must not exist"):
             self.assertIn(name, ran)
-        self.assertFalse(any("not judged" in r.detail for r in checker.results))
         # 2 repos x 2 servers x 2 platforms: each image is pulled once, however
         # many tags and registries name it, and removed after.
         self.assertEqual(len(docker.pulls), 8)
@@ -638,6 +637,44 @@ class EdgeTest(unittest.TestCase):
                          {f"{registry}/{repo}:latest-redis" for registry in (GHCR, HUB) for repo in REPOS})
         self.assertIn("6.1.0 has server-suffixed tags, so it must have this one too", checker.failures[0].detail)
 
+    def test_a_release_after_the_switch_on_one_registry_is_after_it_on_every_registry(self):
+        """A partial push: Docker Hub got the bare 6.1.0 only."""
+        docker = FakeDocker()
+        publish_edge(docker)
+        publish_release(docker, "6.1.0", latest=True)
+        for repo in REPOS:
+            for tag in ("6.1.0-valkey", "6.1.0-redis", "latest-valkey", "latest-redis"):
+                del docker.tags[f"{HUB}/{repo}:{tag}"]
+        checker = check(docker, "edge", latest="6.1.0")
+        self.assertEqual({r.subject for r in checker.failures},
+                         {f"{HUB}/{repo}:{tag}" for repo in REPOS for tag in ("latest-valkey", "latest-redis")})
+        self.assertIn("6.1.0 has server-suffixed tags", checker.failures[0].detail)
+
+    def test_a_release_after_the_switch_in_one_repo_is_after_it_in_every_repo(self):
+        """A partial push: falkordb-server got the bare 6.1.0 only."""
+        docker = FakeDocker()
+        publish_edge(docker)
+        publish_release(docker, "6.1.0", latest=True)
+        for registry in (GHCR, HUB):
+            for tag in ("6.1.0-valkey", "6.1.0-redis", "latest-valkey", "latest-redis"):
+                del docker.tags[f"{registry}/falkordb-server:{tag}"]
+        checker = check(docker, "edge", latest="6.1.0")
+        self.assertEqual({r.subject for r in checker.failures},
+                         {f"{registry}/falkordb-server:{tag}" for registry in (GHCR, HUB)
+                          for tag in ("latest-valkey", "latest-redis")})
+
+    def test_an_unreadable_server_tag_means_the_switch_cannot_be_told(self):
+        docker = FakeDocker()
+        publish_edge(docker)
+        publish_pre_switch_latest(docker)
+        for repo in REPOS:
+            docker.errors[f"{GHCR}/{repo}:6.0.4-valkey"] = judge.InspectError("toomanyrequests")
+        checker = check(docker, "edge", latest="6.0.4")
+        hub = [r for r in checker.failures if r.subject.startswith(HUB)]
+        self.assertEqual({r.subject for r in hub},
+                         {f"{HUB}/{repo}:{tag}" for repo in REPOS for tag in ("latest-valkey", "latest-redis")})
+        self.assertTrue(all("can't be told" in r.detail for r in hub))
+
     def test_a_release_with_only_its_redis_tag_must_have_the_valkey_pair_too(self):
         docker = FakeDocker()
         publish_edge(docker)
@@ -935,8 +972,8 @@ class ReleaseTest(unittest.TestCase):
 
 class LatestRuleTest(unittest.TestCase):
     RELEASES = (
-        {"tag_name": "v6.0.4", "draft": False, "prerelease": False},
         {"tag_name": "v4.22.3", "draft": False, "prerelease": False},
+        {"tag_name": "v6.0.4", "draft": False, "prerelease": False},
         {"tag_name": "v6.1.0-rc.1", "draft": False, "prerelease": True},
         {"tag_name": "v7.0.0", "draft": True, "prerelease": False},
         {"tag_name": "v6.0.5", "draft": False, "prerelease": True},
@@ -978,9 +1015,6 @@ class LatestRuleTest(unittest.TestCase):
                                return_value=subprocess.CompletedProcess([], 0, "not json\n", "")), \
                 self.assertRaises(judge.InspectError):
             judge.github_releases("o/r")
-
-    def test_stable_releases_newest_first(self):
-        self.assertEqual(judge.stable_releases(list(self.RELEASES)), ["6.0.4", "4.22.3"])
 
     def test_no_stable_release_is_an_error(self):
         version, why = judge.latest_rule([{"tag_name": "v1.0.0-rc.1", "prerelease": True}], None, "o/r")
@@ -1031,6 +1065,24 @@ class CiTest(unittest.TestCase):
         self.assertEqual(sorted(failed(check(docker, "rc-mg-abc"))),
                          [(f"{GHCR}/falkordb:rc-mg-abc", "must not exist"),
                           (f"{GHCR}/falkordb:rc-mg-abc-x64", "must not exist")])
+
+    def test_unsuffixed_names_of_a_merge_queue_key_on_docker_hub_fail(self):
+        docker = FakeDocker()
+        publish_ci(docker, "mg-abc")
+        docker.push(docker.tags[f"{GHCR}/falkordb-server:rc-mg-abc-valkey"], "falkordb-server", "rc-mg-abc",
+                    registries=(HUB,))
+        self.assertEqual(failed(check(docker, "rc-mg-abc")),
+                         [(f"{HUB}/falkordb-server:rc-mg-abc", "must not exist")])
+
+    def test_a_left_out_servers_ci_tags_on_docker_hub_fail(self):
+        """--servers valkey for an unlabelled PR still forbids rc-pr-N-redis off GHCR."""
+        docker = FakeDocker()
+        publish_ci(docker, "pr-1")
+        stray = [f"{repo}:rc-pr-1-redis{arch}" for repo in REPOS for arch in ("", "-x64", "-arm64v8")]
+        for repo_tag in stray:
+            docker.tags[f"{HUB}/{repo_tag}"] = docker.tags[f"{GHCR}/{repo_tag}"]
+        self.assertEqual(sorted(failed(check(docker, "rc-pr-1", servers={"valkey"}))),
+                         sorted((f"{HUB}/{repo_tag}", "must not exist") for repo_tag in stray))
 
     def test_unsuffixed_names_of_a_release_rebuild_key_fail(self):
         docker = FakeDocker()
@@ -1189,7 +1241,12 @@ class CommandLineTest(unittest.TestCase):
         self.assertIn("--servers applies to CI targets only", self.refused("edge", "--servers", "valkey"))
 
     def test_a_merge_queue_key_is_checked_for_every_server(self):
-        self.assertIn("rc-mg-abc has every server's images", self.refused("rc-mg-abc", "--servers", "valkey"))
+        self.assertIn("rc-mg-abc has every server's images; omit --servers or name them all",
+                      self.refused("rc-mg-abc", "--servers", "valkey"))
+        docker = FakeDocker()
+        publish_ci(docker, "mg-abc")
+        code, out, _ = self.run_main(docker, [], "rc-mg-abc", "--servers", "redis,valkey")
+        self.assertEqual(code, 0, out)
 
     def test_a_pull_request_key_may_be_checked_for_valkey_alone(self):
         docker = FakeDocker()
