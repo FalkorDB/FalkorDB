@@ -6,7 +6,7 @@ pushes are the tags this file's tests check:
 
   edge     rust-push.yml     the queue's rc-mg-<sha>-<server> → the rolling tags
   release  release-tag.yml   the queue's rc-mg-<sha>-<server> → <version>[, latest]
-  rebuild  release-image.yml rc-rebuild-<sha>-<server> → <tag>[, latest]
+  rebuild  release-image.yml rc-rebuild-<sha>-<run>-<server> → <tag>[, latest]
   per-os   release-tag.yml   per-OS server image archives → <version>-<os>-<server>
 
 The server is always the last part of a tag, and a tag with no server means
@@ -84,6 +84,7 @@ RESERVED_PART_RE = re.compile(
 )
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+RUN_ID_RE = re.compile(r"^[0-9]{1,20}$")
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
 TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 ARCHIVE_RE = re.compile(
@@ -213,13 +214,27 @@ def release_plan(version: str, sha: str, releases: Iterable[dict]) -> list:
     return _named_plan(version, lambda repo, server: f"{GHCR}/{repo}:rc-mg-{sha}-{server}", latest)
 
 
-def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[dict]] = None) -> list:
-    """release-image.yml's tags, from the images it rebuilt from source.
+def rebuild_key(sha: str, run_id: Optional[str] = None) -> str:
+    """The CI key release-image.yml stages a rebuild under: rebuild-<sha>,
+    plus the workflow run's id, so two rebuilds of one commit (for different
+    tags, which do not share a concurrency group) never share staging tags."""
+    check_sha(sha)
+    if run_id is None:
+        return f"rebuild-{sha}"
+    if not RUN_ID_RE.fullmatch(run_id):
+        raise PlanError(f"run id '{run_id}' is not a workflow run id (digits only)")
+    return f"rebuild-{sha}-{run_id}"
+
+
+def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[dict]] = None,
+                 run_id: Optional[str] = None) -> list:
+    """release-image.yml's tags, from the images it rebuilt from source under
+    rc-<rebuild_key(sha, run_id)>-<server>.
 
     latest* moves only where a release would move it: `tag` must be the
     highest stable version with a published GitHub release, in `releases`.
     """
-    check_sha(sha)
+    key = rebuild_key(sha, run_id)
     if parse_version(tag) is not None:
         check_version(tag)
     else:
@@ -241,7 +256,7 @@ def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[d
                 f"latest stays where it is: '{tag}' is not the highest stable version "
                 "with a published GitHub release"
             )
-    return _named_plan(tag, lambda repo, server: f"{GHCR}/{repo}:rc-rebuild-{sha}-{server}", latest)
+    return _named_plan(tag, lambda repo, server: f"{GHCR}/{repo}:rc-{key}-{server}", latest)
 
 
 def _named_plan(name: str, source: Callable, latest: bool) -> list:
@@ -485,9 +500,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--releases", required=True,
                    help="file of the repository's GitHub releases, one {tag_name, draft, prerelease} per line; - for stdin")
 
-    p = sub.add_parser("rebuild", help="release-image.yml's tags from its rc-rebuild-<sha> images")
+    p = sub.add_parser("rebuild", help="release-image.yml's tags from its rc-rebuild-<sha>-<run> images")
     p.add_argument("--tag", required=True)
     p.add_argument("--sha", required=True)
+    p.add_argument("--run-id", required=True,
+                   help="the release-image.yml run whose images to publish (github.run_id)")
     p.add_argument("--latest", action="store_true",
                    help="also move latest*; refused unless the tag is the highest stable version with a published release")
     p.add_argument("--releases", help="with --latest: the GitHub releases, as for `release`")
@@ -508,7 +525,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             plan = release_plan(args.version, args.sha, read_releases(args.releases))
         elif args.channel == "rebuild":
             releases = read_releases(args.releases) if args.releases else None
-            plan = rebuild_plan(args.tag, args.sha, args.latest, releases)
+            plan = rebuild_plan(args.tag, args.sha, args.latest, releases, run_id=args.run_id)
         else:
             if args.execute and not args.images:
                 raise PlanError("--execute needs --images")

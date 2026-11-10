@@ -147,6 +147,23 @@ class RebuildTags(unittest.TestCase):
             want[f"ghcr.io/falkordb/{repo}:rc-rebuild-{SHA}-redis"] = both(repo, "6.1.0-redis")
         self.assertEqual(got, want)
 
+    def test_each_run_publishes_its_own_staging_images(self):
+        """Rebuilds of one commit for different tags run side by side, so
+        each reads only the images its own run staged."""
+        sources = {s for s in by_source(pt.rebuild_plan("6.1.0", SHA, latest=False, run_id="42"))}
+        self.assertEqual(sources, {f"ghcr.io/falkordb/{repo}:rc-rebuild-{SHA}-42-{server}"
+                                   for repo in ("falkordb", "falkordb-server") for server in ("valkey", "redis")})
+        for bad in ("", "12a", "-1", "1-valkey", "1" * 21):
+            with self.subTest(run_id=bad), self.assertRaises(pt.PlanError):
+                pt.rebuild_plan("6.1.0", SHA, latest=False, run_id=bad)
+
+    def test_the_command_line_needs_the_run_id(self):
+        import contextlib
+        import io
+
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            pt.main(["rebuild", "--tag", "6.1.0", "--sha", SHA])
+
     def test_latest_when_asked_for_the_latest_release(self):
         tags = all_tags(pt.rebuild_plan("6.1.0", SHA, latest=True, releases=RELEASES + [release("v6.1.0")]))
         for repo in ("falkordb", "falkordb-server"):
@@ -500,7 +517,7 @@ class CommandLine(unittest.TestCase):
     def test_dry_run_prints_and_runs_nothing(self):
         import contextlib
         import io
-        from unittest import mock
+        import unittest.mock as mock
 
         with tempfile.TemporaryDirectory() as d:
             rels = Path(d) / "releases.jsonl"
@@ -508,7 +525,7 @@ class CommandLine(unittest.TestCase):
             runs = (
                 (["edge", "--sha", SHA], 4),
                 (["release", "--version", "6.1.0", "--sha", SHA, "--releases", str(rels)], 4),
-                (["rebuild", "--tag", "6.1.0", "--sha", SHA, "--latest", "--releases", str(rels)], 4),
+                (["rebuild", "--tag", "6.1.0", "--sha", SHA, "--run-id", "42", "--latest", "--releases", str(rels)], 4),
                 (["per-os", "--version", "6.1.0"], 4),
             )
             with mock.patch("subprocess.run", side_effect=AssertionError("ran a command")) as ran:

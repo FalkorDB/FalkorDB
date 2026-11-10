@@ -7,8 +7,11 @@ name: Release image
 # cleanup-rc-images.yml), when the commit never went through the queue, or to
 # publish an ad-hoc tag.
 #
-# Both servers are built, into GHCR only, as rc-rebuild-<sha>-<server> (and
-# rc-rebuild-<sha>-<server>-<arch> under it). The publish job then retags them
+# Both servers are built, into GHCR only, as rc-rebuild-<sha>-<run>-<server>
+# (and rc-rebuild-<sha>-<run>-<server>-<arch> under it), <run> being this
+# workflow run's id: rebuilds of one commit for different tags are in different
+# concurrency groups, so each must publish only what it built and tested. The
+# publish job then retags them
 # the way a release is: <tag>-valkey, <tag>-redis and <tag> (Valkey), plus
 # latest* when asked, on both repositories and both registries. No public tag
 # names an architecture. build/publish_tags.py works out the tags.
@@ -109,7 +112,7 @@ jobs:
             LATEST=(--latest --releases "$RUNNER_TEMP/releases.jsonl")
           fi
           python3 build/test_publish_tags.py
-          python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" "${LATEST[@]}"
+          python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" --run-id "$GITHUB_RUN_ID" "${LATEST[@]}"
           {
             echo "tag=${TAG}"
             echo "sha=${SHA}"
@@ -130,7 +133,7 @@ jobs:
     with:
       flavour: release
       server: ${{ matrix.server }}
-      tag: rc-rebuild-${{ needs.prepare.outputs.sha }}-${{ matrix.server }}
+      tag: rc-rebuild-${{ needs.prepare.outputs.sha }}-${{ github.run_id }}-${{ matrix.server }}
       commit_sha: ${{ needs.prepare.outputs.sha }}
       cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
       browser_tag: latest
@@ -163,10 +166,11 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Retag rc-rebuild-${{ needs.prepare.outputs.sha }}-<server> → ${{ needs.prepare.outputs.tag }}
+      - name: Retag rc-rebuild-${{ needs.prepare.outputs.sha }}-${{ github.run_id }}-<server> → ${{ needs.prepare.outputs.tag }}
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
           SHA: ${{ needs.prepare.outputs.sha }}
+          RUN_ID: ${{ github.run_id }}
           MARK_LATEST: ${{ inputs.mark_latest }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -180,4 +184,4 @@ jobs:
               --jq '.[] | {tag_name, draft, prerelease}' > "$RUNNER_TEMP/releases.jsonl"
             LATEST=(--latest --releases "$RUNNER_TEMP/releases.jsonl")
           fi
-          python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" "${LATEST[@]}" --execute
+          python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" --run-id "$RUN_ID" "${LATEST[@]}" --execute
