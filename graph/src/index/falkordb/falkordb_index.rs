@@ -1062,7 +1062,7 @@ impl FalkorDbIndex {
         let mut columns = Vec::with_capacity(per_attr.len());
         for (attr, conjuncts) in per_attr {
             let entry = self.entry(entity, label, attr)?;
-            let selection = Selection::conjunction(conjuncts)?;
+            let selection = Selection::conjunction(&conjuncts)?;
             columns.push((attr, entry, selection));
         }
         if columns.iter().any(|(_, entry, _)| entry.is_building()) {

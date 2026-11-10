@@ -15,8 +15,8 @@
 //! because there is no other index to try. The three outcomes are kept apart deliberately: an empty
 //! answer that should have been a decline is exactly how an unimplemented kind hides.
 
-use std::iter;
 use std::sync::Arc;
+use std::{iter, slice};
 
 use rustc_hash::FxHashSet;
 
@@ -173,11 +173,11 @@ impl Selection {
             IndexQuery::InList {
                 list: Value::List(items),
                 ..
-            } if !items.is_empty() => Self::equal_to_any(items.iter()),
+            } if !items.is_empty() => Self::equal_to_any(items),
             IndexQuery::InList { .. } => None,
             IndexQuery::ArrayContains { value, .. } => Self::lists_holding(value),
-            IndexQuery::Or(members) => Self::disjunction(members),
-            IndexQuery::And(members) => Self::conjunction(members),
+            IndexQuery::Or(_) => Self::disjunction(&atoms(query)?),
+            IndexQuery::And(_) => Self::conjunction(&atoms(query)?),
             // No geo kind yet.
             IndexQuery::Point { .. } => None,
         }
@@ -195,13 +195,23 @@ impl Selection {
         }
     }
 
-    /// The scalars equal to any of `values`: `n.v IN [..]`, and unions of equalities.
+    /// The scalars equal to any of `values`: `n.v IN [..]`.
     ///
     /// Each value is routed as [`equal`](Self::equal) routes it, so `x IN [1, null]` matches only
-    /// `1`. A value no kind holds declines the **whole** union: answering from the rest would
+    /// `1`. A value no kind holds declines the **whole** list: answering from the rest would
     /// silently drop the rows that value would have matched.
-    fn equal_to_any<'a>(values: impl IntoIterator<Item = &'a Value>) -> Option<Self> {
+    fn equal_to_any(values: &[Value]) -> Option<Self> {
         let mut keys = Vec::new();
+        Self::push_equal_keys(values, &mut keys)?;
+        Some(Self::Scalars(KeySet::of_keys(keys)))
+    }
+
+    /// Push onto `keys` the key [`equal`](Self::equal) selects for each of `values`, or decline
+    /// (`None`) at a value no kind holds.
+    fn push_equal_keys(
+        values: &[Value],
+        keys: &mut Vec<u64>,
+    ) -> Option<()> {
         for value in values {
             match Self::equal(value)? {
                 Self::Scalars(KeySet::Point(key)) => keys.push(key),
@@ -210,7 +220,7 @@ impl Selection {
                 other => unreachable!("an equality selects one key or none, not {other:?}"),
             }
         }
-        Some(Self::Scalars(KeySet::of_keys(keys)))
+        Some(())
     }
 
     /// The selection of `n.v <op> bound`.
@@ -255,55 +265,55 @@ impl Selection {
         }
     }
 
-    /// An `OR` of `=`s and `IN` lists, all on one attribute — `a = 1 OR a IN [2, 3]`. Nested `OR`s
-    /// are flattened: the nesting carries no meaning for one column.
+    /// An `OR` of `=`s and `IN` lists, all on one attribute — `a = 1 OR a IN [2, 3]`: the scalars
+    /// equal to any of their values. `members` are the `OR`'s [`atoms`], so nested `OR`s are
+    /// flattened: the nesting carries no meaning for one column.
     ///
     /// Every member must target the same attribute: answering `a = 1 OR b = 2` from one column
     /// would look up both values in `a` and return wrong rows, not missing ones. Any other member —
-    /// a range, an array-contains, an empty list, a conjunction — declines the union.
-    pub(super) fn disjunction<'a>(
-        members: impl IntoIterator<Item = &'a IndexQuery<Value>>
-    ) -> Option<Self> {
-        let members = leaves(members, |query| match query {
-            IndexQuery::Or(nested) => Some(nested.as_slice()),
-            _ => None,
-        })?;
-        if !on_one_attribute(&members) {
+    /// a range, an array-contains, a conjunction — declines the union, and so does an empty `IN`
+    /// list (for [`of`](Self::of)'s reason) and a value no kind holds.
+    fn disjunction(members: &[&IndexQuery<Value>]) -> Option<Self> {
+        if !on_one_attribute(members) {
             return None;
         }
-        let mut values = Vec::with_capacity(members.len());
-        for member in members {
-            match member {
-                IndexQuery::Equal { value, .. } => values.push(value),
+        let mut keys = Vec::new();
+        for &member in members {
+            let values = match member {
+                IndexQuery::Equal { value, .. } => slice::from_ref(value),
                 IndexQuery::InList {
                     list: Value::List(items),
                     ..
-                } if !items.is_empty() => values.extend(items.iter()),
+                } if !items.is_empty() => items.as_slice(),
                 _ => return None,
-            }
+            };
+            Self::push_equal_keys(values, &mut keys)?;
         }
-        Self::equal_to_any(values)
+        Some(Self::Scalars(KeySet::of_keys(keys)))
     }
 
-    /// A conjunction of predicates on **one** attribute, nested `AND`s flattened: what every
-    /// conjunct selects ([`and`](Self::and)). On scalars that is arithmetic on keys
-    /// ([`KeySet::and`]), so `n.v = 5 AND n.v > 2` reads one key and `n.v >= 0 AND n.v IN [5, 7]`
-    /// reads two, not the window.
+    /// A conjunction of predicates on **one** attribute: what every conjunct selects
+    /// ([`and`](Self::and)). On scalars that is arithmetic on keys ([`KeySet::and`]), so
+    /// `n.v = 5 AND n.v > 2` reads one key and `n.v >= 0 AND n.v IN [5, 7]` reads two, not the
+    /// window.
+    ///
+    /// `conjuncts` are atoms — no conjunct is itself an `AND`: an `AND`'s [`atoms`], or one
+    /// attribute's share of a conjunction across several, which `intersect_columns` has
+    /// flattened.
     ///
     /// A conjunct that selects nothing (a `NULL` operand) empties the conjunction, even beside one
     /// no kind serves: `n.v = null AND <anything>` holds for nothing. Otherwise a conjunct no kind
     /// serves declines the conjunction, and so does one on another attribute.
-    pub(super) fn conjunction<'a>(
-        members: impl IntoIterator<Item = &'a IndexQuery<Value>>
-    ) -> Option<Self> {
-        let conjuncts = leaves(members, |query| match query {
-            IndexQuery::And(nested) => Some(nested.as_slice()),
-            _ => None,
-        })?;
-        if !on_one_attribute(&conjuncts) {
+    pub(super) fn conjunction(conjuncts: &[&IndexQuery<Value>]) -> Option<Self> {
+        debug_assert!(
+            !conjuncts.iter().any(|q| matches!(q, IndexQuery::And(_))),
+            "conjuncts are atoms: a nested `AND` that folds to empty would answer what the flat \
+             conjunction declines"
+        );
+        if !on_one_attribute(conjuncts) {
             return None;
         }
-        let selections: Vec<Option<Self>> = conjuncts.into_iter().map(Self::of).collect();
+        let selections: Vec<Option<Self>> = conjuncts.iter().copied().map(Self::of).collect();
         if selections.iter().flatten().any(Self::is_empty) {
             return Some(Self::empty());
         }
@@ -338,29 +348,30 @@ impl Selection {
     }
 }
 
-/// The leaves of `members`, with any combinator `nested` opens flattened into them:
-/// `And(And(a, b), c)` constrains what `And(a, b, c)` does. `None` when `members`, or a combinator
-/// nested in it, is empty: an empty `AND` or `OR` names no column.
-fn leaves<'a>(
-    members: impl IntoIterator<Item = &'a IndexQuery<Value>>,
-    nested: fn(&IndexQuery<Value>) -> Option<&[IndexQuery<Value>]>,
-) -> Option<Vec<&'a IndexQuery<Value>>> {
-    fn push<'a>(
-        members: impl IntoIterator<Item = &'a IndexQuery<Value>>,
-        nested: fn(&IndexQuery<Value>) -> Option<&[IndexQuery<Value>]>,
-        out: &mut Vec<&'a IndexQuery<Value>>,
-    ) -> Option<()> {
-        let before = out.len();
-        for member in members {
-            match nested(member) {
-                Some(inner) => push(inner, nested, out)?,
-                None => out.push(member),
-            }
-        }
-        (out.len() > before).then_some(())
+/// The atoms of an `AND` or an `OR`: its members, with each member that is the same combinator
+/// opened into its own — `And(And(a, b), c)` constrains what `And(a, b, c)` does. A member that is
+/// the other combinator is one atom: `a AND (b OR c)` has two. Any other predicate is its own only
+/// atom. `None` when the combinator, or one opened in it, has no members: an empty `AND` or `OR`
+/// names no column.
+fn atoms(query: &IndexQuery<Value>) -> Option<Vec<&IndexQuery<Value>>> {
+    let (IndexQuery::And(members) | IndexQuery::Or(members)) = query else {
+        return Some(vec![query]);
+    };
+    if members.is_empty() {
+        return None;
     }
     let mut out = Vec::new();
-    push(members, nested, &mut out)?;
+    for member in members {
+        let same = matches!(
+            (query, member),
+            (IndexQuery::And(_), IndexQuery::And(_)) | (IndexQuery::Or(_), IndexQuery::Or(_))
+        );
+        if same {
+            out.extend(atoms(member)?);
+        } else {
+            out.push(member);
+        }
+    }
     Some(out)
 }
 
@@ -401,6 +412,12 @@ pub(super) fn attributes_of<'a>(
 ///
 /// `Clone` is `O(1)` — a root-`Arc` bump per tree — so a graph version forks its index snapshot
 /// cheaply.
+///
+/// A method that asks every kind — the writes, `is_empty`, `memory_usage` — starts with
+/// `let Self { numeric } = self`, a pattern without `..`: a new kind is a compile error in each of
+/// them until it is asked too. A method that routes to one kind matches on [`Kind`], [`KeyKind`]
+/// or [`Selection`], so the compiler finds it once the new kind adds a variant to the one it
+/// matches on.
 #[derive(Clone, Default)]
 pub struct RangeIndex {
     numeric: NumericIndex,
@@ -426,7 +443,8 @@ impl RangeIndex {
         value: &Value,
         emit: impl FnMut(KeyKind, u64),
     ) {
-        self.numeric.for_each_stored_key(value, emit);
+        let Self { numeric } = self;
+        numeric.for_each_stored_key(value, emit);
     }
 
     /// Append the tuples `(value, id)` takes in this column to `out`, each with the tuples of its
@@ -500,7 +518,8 @@ impl RangeIndex {
         tuples: &mut EncodedTuples,
     ) {
         tuples.sort_dedup();
-        self.numeric.add_encoded(tuples);
+        let Self { numeric } = self;
+        numeric.add_encoded(tuples);
     }
 
     /// Remove already-encoded tuples (a unit of work's collapsed removes).
@@ -509,19 +528,22 @@ impl RangeIndex {
         tuples: &mut EncodedTuples,
     ) {
         tuples.sort_dedup();
-        self.numeric.remove_encoded(tuples);
+        let Self { numeric } = self;
+        numeric.remove_encoded(tuples);
     }
 
     /// Whether the column holds no tuples in any kind.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.numeric.is_empty()
+        let Self { numeric } = self;
+        numeric.is_empty()
     }
 
     /// Heap bytes every kind's trees hold.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        self.numeric.memory_usage()
+        let Self { numeric } = self;
+        numeric.memory_usage()
     }
 
     /// The scalar tree and key `value` takes, or `None` when no kind indexes it as a scalar (a
@@ -596,7 +618,8 @@ impl RangeIndex {
     #[cfg(test)]
     #[must_use]
     pub fn tuples(&self) -> Vec<(KeyKind, u64, u64)> {
-        self.numeric.tuples()
+        let Self { numeric } = self;
+        numeric.tuples()
     }
 
     /// The scalars equal to the number `value`, reached as a query reaches them. For tests.
@@ -634,6 +657,8 @@ impl RangeIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::graph::{NodeId, RelationshipId};
+    use crate::runtime::value::Point;
     use thin_vec::ThinVec;
 
     fn attr() -> Arc<String> {
@@ -858,5 +883,105 @@ mod tests {
         assert_eq!(batched.tuples().len(), 3);
         batched.remove_batch(entries.iter().cloned(), &mut scratch);
         assert!(batched.is_empty());
+    }
+
+    /// A value of each [`Value`] variant, and the floats that encode specially. The `match` names
+    /// every variant, so a new one does not compile until it is named here: a reminder to sample
+    /// it too, which nothing checks.
+    fn one_of_each() -> Vec<Value> {
+        let values = vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Int(-3),
+            Value::Float(2.5),
+            Value::Float(-0.0),
+            Value::Float(f64::NAN),
+            Value::String(Arc::new("x".to_string())),
+            list(vec![Value::Int(1)]),
+            Value::Map(Arc::default()),
+            Value::Node(NodeId::from(1)),
+            Value::Relationship(RelationshipId::from(1)),
+            Value::Path(Arc::default()),
+            Value::VecF32(Arc::default()),
+            Value::Point(Point {
+                latitude: 1.0,
+                longitude: 2.0,
+            }),
+            Value::Datetime(1),
+            Value::Date(1),
+            Value::Time(1),
+            Value::Duration(1),
+        ];
+        for value in &values {
+            match value {
+                Value::Null
+                | Value::Bool(_)
+                | Value::Int(_)
+                | Value::Float(_)
+                | Value::String(_)
+                | Value::List(_)
+                | Value::Map(_)
+                | Value::Node(_)
+                | Value::Relationship(_)
+                | Value::Path(_)
+                | Value::VecF32(_)
+                | Value::Point(_)
+                | Value::Datetime(_)
+                | Value::Date(_)
+                | Value::Time(_)
+                | Value::Duration(_) => {}
+            }
+        }
+        values
+    }
+
+    /// Whether the column would store `value` under any key.
+    fn stores(
+        idx: &RangeIndex,
+        value: &Value,
+    ) -> bool {
+        let mut any = false;
+        idx.for_each_stored_key(value, |_, _| any = true);
+        any
+    }
+
+    /// A write and a lookup route a value alike: whatever a column stores, the predicate on that
+    /// value finds — `n.v = x` for a scalar, `x IN n.v` for each element of a list. The two are
+    /// separate code: a lookup routes by [`Kind::of`], a write by what each kind's encoder emits.
+    /// A kind that stored a type `Kind::of` sends elsewhere would lose those rows to every lookup,
+    /// and comparing with the scan cannot catch it, as the scan checks the same selection.
+    #[test]
+    fn a_stored_value_is_found_by_its_own_predicate() {
+        let rows = |answer: Option<DocIter>| answer.map(Iterator::collect::<Vec<_>>);
+        let mut checked = 0;
+        for value in one_of_each() {
+            let mut idx = RangeIndex::new();
+            idx.add(&value, 1);
+            if matches!(value, Value::List(_)) || !stores(&idx, &value) {
+                continue;
+            }
+            assert_eq!(
+                rows(idx.query(&eq(value.clone()))),
+                Some(vec![1]),
+                "{value:?} is stored, so `n.v = {value:?}` finds it"
+            );
+            checked += 1;
+        }
+
+        let elements = one_of_each();
+        let mut idx = RangeIndex::new();
+        idx.add(&list(elements.clone()), 1);
+        for element in elements {
+            if !stores(&idx, &list(vec![element.clone()])) {
+                continue;
+            }
+            assert_eq!(
+                rows(idx.query(&contains(element.clone()))),
+                Some(vec![1]),
+                "{element:?} is stored as an element, so `{element:?} IN n.v` finds it"
+            );
+            checked += 1;
+        }
+        assert_ne!(checked, 0, "the sample reaches a kind");
     }
 }
