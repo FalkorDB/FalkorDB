@@ -96,10 +96,11 @@ jobs:
   # on both repositories and both registries; build/publish_tags.py lists the
   # tags, checks each source first, and checks every tag's digest after.
   #
-  # Deliberately NOT the PR's own rc-pr-<N> images, even though same-repo PRs
-  # still publish them. Those are built from the PR head; the queue's are
-  # built from the merge candidate, which is what actually lands. A fork PR
-  # has no rc-pr-<N> at all, so keying on it would simply fail for forks.
+  # Deliberately NOT the PR's own rc-pr-<N>-<server> images, even though
+  # same-repo PRs still publish them. Those are built from the PR head; the
+  # queue's are built from the merge candidate, which is what actually lands.
+  # A fork PR has no rc-pr-<N>-<server> at all, so keying on it would simply
+  # fail for forks.
   #
   # The C engine's rolling images are the `edge-c` family on `master`, and C
   # never published to GHCR, so there is no contention on either registry.
