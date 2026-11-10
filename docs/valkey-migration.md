@@ -84,7 +84,12 @@ when `VALKEY_ARGS` is not set, so start it with the same setting.
    docker exec falkordb redis-cli INFO persistence | grep -E 'aof_rewrite_(scheduled|in_progress)'
    ```
 
-   Stop the container.
+   Stop and remove the container, so that step 3 can reuse its name. The
+   data stays in the volume:
+
+   ```sh
+   docker stop falkordb && docker rm falkordb
+   ```
 
 3. **Start the Valkey image with `FALKORDB_REDIS_MIGRATION=1`** on the same
    volume:
@@ -105,11 +110,20 @@ when `VALKEY_ARGS` is not set, so start it with the same setting.
    With AOF on, also run `BGREWRITEAOF` and wait for it, as in step 2.
 
    If Valkey stops with `Can't handle foreign type or opcode`, a key it
-   cannot read is still in the files. The volume is unchanged: go back to
-   step 2 on the Redis image.
+   cannot read is still in the files. The volume is unchanged: remove the
+   container and go back to step 2 on the Redis image.
 
-4. **Restart the Valkey image without `FALKORDB_REDIS_MIGRATION`.** The files
-   are Valkey's now, and the image starts as usual.
+4. **Start the Valkey image again without `FALKORDB_REDIS_MIGRATION`.**
+   `docker restart` would keep the variable, so remove the container and run
+   it again without `-e FALKORDB_REDIS_MIGRATION=1`:
+
+   ```sh
+   docker stop falkordb && docker rm falkordb
+   docker run -d --name falkordb -v <volume>:/var/lib/falkordb/data \
+     falkordb/falkordb-server:<valkey tag>
+   ```
+
+   The files are Valkey's now, and the image starts as usual.
 
 Query statistics start again from empty: `GRAPH.CONFIG SET CMD_INFO` lasts
 only until the Redis server stops, and Valkey writes new `telemetry{}`
