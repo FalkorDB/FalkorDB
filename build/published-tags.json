@@ -104,13 +104,17 @@
 
     "ci": {
       "_about": [
-        "A merge-queue key (mg-<sha>) is new for every queue entry, so its unsuffixed",
+        "A merge-queue key (mg-<sha>) is new for every queue entry, and a release rebuild's",
+        "(rebuild-<sha>, from release-image.yml) is new for every rebuild, so their unsuffixed",
         "names (rc-<key>, rc-<key>-<arch>) cannot predate the switch and must not exist.",
+        "A merge-queue key has every server's images; a pull-request key has Valkey's, and",
+        "Redis's only with the ci-both-servers label, so callers pass the servers it has.",
         "A pull-request key (pr-<N>) is reused across pushes, and a PR whose CI ran",
         "before the switch keeps those names on GHCR for up to 30 days, so they are allowed",
         "there; no CI tag was ever published to Docker Hub, so none may exist there."
       ],
-      "fresh_key_prefixes": ["mg-"],
+      "fresh_key_prefixes": ["mg-", "rebuild-"],
+      "every_server_key_prefixes": ["mg-"],
       "registries": ["ghcr"],
       "images": [
         { "tag": "rc-{ci_key}-valkey", "repos": ["falkordb", "falkordb-server"], "server": "valkey", "os": "ubuntu-26.04", "per_arch": "rc-{ci_key}-valkey-{arch}" },
