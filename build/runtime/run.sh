@@ -197,9 +197,15 @@ server_config() {
                 for (i = 1; i <= n; i++) load(files[i], depth + 1)
             } else if (key == name) value = arg
         }
-        # Apply config file f; depth only bounds an include cycle.
+        # Apply config file f. A file already being read is an include cycle
+        # and is skipped; depth is only a backstop against runaway nesting.
         function load(f, depth,    lines, n, i, line, a) {
-            if (depth > 8) return
+            if (f in active) return
+            if (depth > 100) {
+                print "Warning: config includes nested more than 100 deep; the Redis data check ignores " f > "/dev/stderr"
+                return
+            }
+            active[f] = 1
             n = 0
             while ((getline line < f) > 0) lines[++n] = line
             close(f)
@@ -211,6 +217,7 @@ server_config() {
                 split("", a)
                 if (splitargs(line, a) == 2) apply(a[1], a[2], depth)
             }
+            delete active[f]
         }
         BEGIN { cwd = ENVIRON["SERVER_CONFIG_CWD"]; value = "" }
         {
@@ -301,6 +308,10 @@ valkey_preflight() {
             if [ -n "$_base" ]; then
                 check_redis_file "${_aof_dir}/${_base}"
             fi
+        else
+            # No manifest: a legacy single-file AOF, which Valkey upgrades
+            # (moves into the AOF directory) and then loads, preamble and all.
+            check_redis_file "${FALKORDB_DATA_PATH}/${_appendfilename:-appendonly.aof}"
         fi
     else
         _dbfilename=$(server_config dbfilename)
