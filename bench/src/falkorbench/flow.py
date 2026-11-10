@@ -148,9 +148,12 @@ def build_env(
     # flow.sh starts valkey-server unless told otherwise. These measurements
     # are compared against the C module, which runs on Redis, so Redis stays the
     # default here; FALKORDB_SERVER=valkey in the environment measures Valkey.
+    server = os.environ.get("FALKORDB_SERVER") or "redis"
+    if server not in ("redis", "valkey"):
+        raise ValueError(f"FALKORDB_SERVER must be redis or valkey, not {server!r}")
     env = {
         **os.environ,
-        "FALKORDB_SERVER": os.environ.get("FALKORDB_SERVER") or "redis",
+        "FALKORDB_SERVER": server,
         "VERBOSE": "0",
         "PARALLELISM": "--parallelism 1",
     }

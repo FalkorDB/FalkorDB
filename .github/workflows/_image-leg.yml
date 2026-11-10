@@ -270,7 +270,7 @@ jobs:
             docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
           done
       - name: Check the server this job ran (${{ inputs.server }})
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         env:
           SERVER: ${{ inputs.server }}
         run: tests/assert_server_log.sh "$SERVER" tests/flow/logs

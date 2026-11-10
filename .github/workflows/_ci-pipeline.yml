@@ -118,7 +118,7 @@ jobs:
           RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
       # tests/common.py starts the server with --logfile redis-test.log.
       - name: Check the server this job ran (valkey)
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         run: tests/assert_server_log.sh valkey redis-test.log
   # Valkey dlopen()s modules with RTLD_DEEPBIND, which Redis does not, so a
   # module that loads fine under redis-server can crash valkey-server on load
@@ -515,7 +515,7 @@ jobs:
       # RLTest clears tests/flow/logs on every flow.sh run, so this sees the
       # last suite's servers.
       - name: Check the server this job ran (valkey)
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         run: tests/assert_server_log.sh valkey tests/flow/logs
       - name: Upload flow log
         if: ${{ !cancelled() }}

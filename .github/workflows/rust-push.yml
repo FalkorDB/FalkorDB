@@ -211,7 +211,7 @@ jobs:
       # Coverage runs on Valkey, the harness default. tests/common.py starts the
       # server with --logfile redis-test.log.
       - name: Check the server this job ran (valkey)
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         run: tests/assert_server_log.sh valkey redis-test.log
       - name: Upload unit test coverage to Codecov
         if: ${{ !cancelled() }}
@@ -277,7 +277,7 @@ jobs:
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       # Coverage runs on Valkey, flow.sh's default.
       - name: Check the server this job ran (valkey)
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         run: tests/assert_server_log.sh valkey tests/flow/logs
       - name: Upload flow logs on failure
         if: failure()
