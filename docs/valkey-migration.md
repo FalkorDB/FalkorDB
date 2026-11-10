@@ -82,12 +82,14 @@ must authenticate too: pass `-e REDISCLI_AUTH=<password>` to each
    ```sh
    docker exec falkordb redis-cli GRAPH.CONFIG SET CMD_INFO no
    docker exec falkordb sh -c \
-     'redis-cli --scan --pattern "telemetry{*}" | while IFS= read -r key; do redis-cli DEL "$key"; done'
+     'redis-cli --scan --pattern "telemetry{*}" | while IFS= read -r key; do [ "$(redis-cli TYPE "$key")" = stream ] && redis-cli DEL "$key"; done'
    ```
 
    `--scan` covers database 0, where FalkorDB keeps its keys. If you use other
-   databases, repeat both commands with `redis-cli -n <db>` (on the `--scan`
-   and on the `DEL`) for each.
+   databases, repeat both commands, and the stream listing below, with
+   `redis-cli -n <db>` on every `redis-cli` call in them, for each database.
+   The cleanup deletes only keys of type `stream`, so a graph or string that
+   happens to match the name is left alone.
 
    If you keep other data next to your graphs, delete or convert any other
    stream, any hash with field expiry, and any key of a type only Redis has,
