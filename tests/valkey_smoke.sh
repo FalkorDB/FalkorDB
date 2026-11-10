@@ -19,13 +19,20 @@ WORKDIR=$(mktemp -d)
 LOG="$WORKDIR/valkey.log"
 PID=
 
-# Only reached with the server still running on a failure path; the success
-# path shuts it down and checks how it exited. SIGKILL, because a server that
-# is wedged ignores SIGTERM and the wait would never return.
+# The server is still running here only on a failure path; the success path
+# shuts it down and checks how it exited. SIGKILL, because a server that is
+# wedged ignores SIGTERM and the wait would never return. The log is printed
+# on every failure, including a command failing under `set -e`, since the
+# crash report in it is gone once the work directory is removed.
 cleanup() {
+    local status=$?
     if [[ -n "$PID" ]] && kill -0 "$PID" 2>/dev/null; then
         kill -KILL "$PID"
         wait "$PID" 2>/dev/null || true
+    fi
+    if [[ "$status" != 0 ]]; then
+        echo "---- valkey log ----" >&2
+        cat "$LOG" >&2 || true
     fi
     rm -rf "$WORKDIR"
 }
@@ -33,8 +40,6 @@ trap cleanup EXIT
 
 fail() {
     echo "FAIL: $*" >&2
-    echo "---- valkey log ----" >&2
-    cat "$LOG" >&2 || true
     exit 1
 }
 
