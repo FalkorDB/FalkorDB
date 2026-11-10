@@ -235,7 +235,8 @@ server_config() {
     '
 }
 
-# aof_base_file MANIFEST: the base file an AOF manifest lists, read as the
+# aof_base_file MANIFEST: two lines: the base file an AOF manifest lists (empty
+# when none), then the number of base and incr records in it. Read as the
 # server reads it (valkey aof.c, aofLoadManifestFromFile): `#` lines skipped,
 # each line split into key/value arguments as sdssplitargs splits it, so a
 # name written quoted (`file "aof file.aof.1.base.rdb" ...`) comes out whole,
@@ -249,9 +250,11 @@ aof_base_file() {
             if (n < 6 || n % 2) next
             split("", kv)
             for (i = 1; i < n; i += 2) kv[tolower(a[i])] = a[i + 1]
-            if (substr(kv["type"], 1, 1) == "b") base = kv["file"]
+            t = substr(kv["type"], 1, 1)
+            if (t == "b") base = kv["file"]
+            if (t == "b" || t == "i") records++
         }
-        END { print base }
+        END { print base; print records + 0 }
     ' "$1"
 }
 
@@ -304,13 +307,20 @@ valkey_preflight() {
         _aof_dir="${FALKORDB_DATA_PATH}/${_appenddirname:-appendonlydir}"
         _manifest="${_aof_dir}/${_appendfilename:-appendonly.aof}.manifest"
         if [ -r "$_manifest" ]; then
-            _base=$(aof_base_file "$_manifest")
+            _info=$(aof_base_file "$_manifest")
+            _base=$(printf '%s\n' "$_info" | sed -n 1p)
+            _records=$(printf '%s\n' "$_info" | sed -n 2p)
             if [ -n "$_base" ]; then
                 check_redis_file "${_aof_dir}/${_base}"
             fi
         else
-            # No manifest: a legacy single-file AOF, which Valkey upgrades
-            # (moves into the AOF directory) and then loads, preamble and all.
+            _base="" _records=0
+        fi
+        # A legacy single-file AOF in the data directory, which Valkey upgrades
+        # (moves into the AOF directory) and then loads, preamble and all, when
+        # the manifest is missing, lists no base or incr file, or its base
+        # file is not there (aof.c, loadAppendOnlyFiles).
+        if [ "${_records:-0}" -eq 0 ] || { [ -n "$_base" ] && [ ! -e "${_aof_dir}/${_base}" ]; }; then
             check_redis_file "${FALKORDB_DATA_PATH}/${_appendfilename:-appendonly.aof}"
         fi
     else

@@ -35,7 +35,8 @@ no command that only Redis has.
 
 ## Keep running Redis
 
-Use a Redis image of FalkorDB, a tag ending in `-redis`, on the volume.
+Use a Redis image of FalkorDB on the volume: one whose
+`com.falkordb.server.name` label is `redis` (see above for how to check).
 Nothing needs to change.
 
 ## Migrate to Valkey
@@ -49,8 +50,12 @@ when `VALKEY_ARGS` is not set, so start it with the same setting.
    after the `SAVE` in step 2 are not in the files Valkey loads.
 
    The `docker exec` examples below assume the default plain connection. With
-   `TLS=1`, add `--tls --cacert "$FALKORDB_TLS_PATH/ca.crt"` to every
-   `redis-cli` call.
+   `TLS=1`, run each one through the container's shell so that the CA path
+   expands inside it, for example:
+
+   ```sh
+   docker exec falkordb sh -c 'redis-cli --tls --cacert "$FALKORDB_TLS_PATH/ca.crt" SAVE'
+   ```
 
 2. **On the Redis image**, remove what Valkey cannot read, and save.
 
@@ -65,7 +70,8 @@ when `VALKEY_ARGS` is not set, so start it with the same setting.
    ```
 
    `--scan` covers database 0, where FalkorDB keeps its keys. If you use other
-   databases, repeat the scan with `redis-cli -n <db>` for each.
+   databases, repeat both commands with `redis-cli -n <db>` (on the `--scan`
+   and on the `DEL`) for each.
 
    If you keep other data next to your graphs, delete or convert any other
    stream, any hash with field expiry, and any key of a type only Redis has,
@@ -86,12 +92,12 @@ when `VALKEY_ARGS` is not set, so start it with the same setting.
    ```
 
    With AOF on, also rewrite the AOF and wait until the rewrite has finished,
-   which is when both of these read `:0` (a rewrite waits, `scheduled:1`,
-   while a save runs):
+   which is when both `aof_rewrite_*` values read `:0` (a rewrite waits,
+   `scheduled:1`, while a save runs) and `aof_last_bgrewrite_status` reads `ok`:
 
    ```sh
    docker exec falkordb redis-cli BGREWRITEAOF
-   docker exec falkordb redis-cli INFO persistence | grep -E 'aof_rewrite_(scheduled|in_progress)'
+   docker exec falkordb redis-cli INFO persistence | grep -E 'aof_rewrite_(scheduled|in_progress)|aof_last_bgrewrite_status'
    ```
 
    Stop and remove the container, so that step 3 can reuse its name. The
@@ -121,8 +127,10 @@ when `VALKEY_ARGS` is not set, so start it with the same setting.
    With AOF on, also run `BGREWRITEAOF` and wait for it, as in step 2.
 
    If Valkey stops with `Can't handle foreign type or opcode`, a key it
-   cannot read is still in the files. The volume is unchanged: remove the
-   container and go back to step 2 on the Redis image.
+   cannot read is still in the files. The data is unchanged (the image may have
+   changed the files' owner to the `falkordb` user, uid 999; restore the owner
+   if you run something else on the volume): remove the container and go back
+   to step 2 on the Redis image.
 
 4. **Start the Valkey image again without `FALKORDB_REDIS_MIGRATION`.**
    `docker restart` would keep the variable, so remove the container and run
