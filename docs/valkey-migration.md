@@ -54,7 +54,10 @@ is added in step 3 and left out in step 4. The data must be in a named volume
 or a bind mount: a container started with `--rm` and an anonymous volume
 loses its data when stopped. Copy the data directory out of such a container
 (`docker cp falkordb:/var/lib/falkordb/data <dir>`) only after the final save
-and AOF rewrite in step 2, and before stopping it.
+and AOF rewrite in step 2, and before stopping it. Then create a named
+volume and copy the files into it (for example with
+`docker run --rm -v <dir>:/from -v <volume>:/to alpine cp -a /from/. /to/`),
+and use that volume in step 3.
 
 If the server needs a password or an ACL user, every `redis-cli` call below
 must authenticate too: pass `-e REDISCLI_AUTH=<password>` to each
@@ -88,6 +91,9 @@ must authenticate too: pass `-e REDISCLI_AUTH=<password>` to each
    `--scan` covers database 0, where FalkorDB keeps its keys. If you use other
    databases, repeat both commands, and the stream listing below, with
    `redis-cli -n <db>` on every `redis-cli` call in them, for each database.
+   The cleanup needs `SCAN`, `TYPE` and `DEL` access (an ACL user without
+   `TYPE` would skip every key), so run it as a user that has them. Run the
+   stream listing below afterwards: it must print nothing before you save.
    The cleanup deletes only keys of type `stream`, so a graph or string that
    happens to match the name is left alone.
 
