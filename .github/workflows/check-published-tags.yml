@@ -67,6 +67,10 @@ permissions:
 jobs:
   check:
     name: Check ${{ inputs.target }}
+    # A manual run executes the dispatched ref's code with the registry logins
+    # below, so only the default branch may be dispatched. workflow_call runs
+    # the caller's ref (a publishing workflow on main or a release tag).
+    if: github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
