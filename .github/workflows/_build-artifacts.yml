@@ -1,21 +1,31 @@
 # Reusable workflow: build the falkordb shared library (.so) for every release
-# platform and upload each as a workflow artifact. BUILD ONLY — it never uploads
-# to a GitHub Release. Callers: release-tag.yml (the release, which then
-# publishes what this built) and build-artifacts.yml (pre-release verification).
+# platform and upload each published one as a workflow artifact. BUILD ONLY —
+# it never uploads to a GitHub Release. Callers: release-tag.yml (the release,
+# which then publishes what this built) and build-artifacts.yml (pre-release
+# verification).
 #
 # The platform list below is the ONLY one: callers pick from it by suffix and
 # never carry their own copy. New platforms (see #608) are added here.
 #
 # Each cell extracts the .so from the `artifact` target of its Dockerfile (for
-# x64/arm64v8, the exact .so the runtime image ships) and uploads it as
-# `falkordb-<suffix>.so` together with its `.sha256`. Cells are independent
-# (fail-fast: false) and run on native runners (no QEMU) for maximum parallelism.
+# x64/arm64v8, the exact .so the runtime image ships) and, unless the cell is
+# `publish: false`, uploads it as `falkordb-<suffix>.so` together with its
+# `.sha256`. Cells are independent (fail-fast: false) and run on native runners
+# (no QEMU) for maximum parallelism.
 #
-# Cells marked `image` (rhel9, amazonlinux2023) also build their Dockerfile's
-# `server` target, the falkordb-server image for that OS, and start it to check
-# that the module loads and answers a query. With `export_images` the image is
-# uploaded too, as `image-falkordb-server-<suffix>`, for the release to push.
-# x64/arm64v8 have no such step: the merge queue builds the Debian images.
+# Cells marked `image` (rhel9, amazonlinux2023, alpine) also build their
+# Dockerfile's `server` target, the falkordb-server image for that OS, and start
+# it to check that the module loads and answers a query. With `export_images`
+# the image is uploaded too, as `image-falkordb-server-<suffix>`, for the
+# release to push. x64/arm64v8 have no such step: the merge queue builds the
+# Debian images.
+#
+# Cells marked `publish: false` (alpine) are built and smoke-tested like any
+# other, but upload nothing and are left out of the `suffixes`/`image_suffixes`
+# outputs, so a release does not ship them. Outside pull requests their failure
+# does not fail this workflow either: a release still waits for them to finish,
+# but is not stopped by one that fails. On a pull request they fail it like any
+# other cell.
 
 name: Build artifacts (reusable)
 
@@ -53,13 +63,15 @@ on:
     outputs:
       suffixes:
         description: >-
-          JSON array of the suffixes this run built. The release's publish step
-          requires an artifact for every one of them.
+          JSON array of the published suffixes this run built (cells with
+          `publish: false` are built but not listed). The release's publish
+          step requires an artifact for every one of them.
         value: ${{ jobs.cells.outputs.suffixes }}
       image_suffixes:
         description: >-
-          JSON array of the suffixes this run built a server image for. The
-          release's image push requires every one of them.
+          JSON array of the published suffixes this run built a server image
+          for (cells with `publish: false` are not listed). The release's image
+          push requires every one of them.
         value: ${{ jobs.cells.outputs.image_suffixes }}
 
 jobs:
@@ -77,17 +89,30 @@ jobs:
           PLATFORMS: ${{ inputs.platforms }}
         run: |
           set -euo pipefail
-          # {suffix, arch, platform, runner, dockerfile, build_image, cxx, image}.
+          # {suffix, arch, platform, runner, dockerfile, build_image, cxx, image, publish}.
           # `dockerfile` provides the `artifact` target; `build_image` is the
           # chef/builder base (Debian toolchain image) or "" for self-contained
           # per-OS Dockerfiles; `cxx` is the C++ compiler passed to the builder;
           # `image` says the Dockerfile's `server` target is built here too.
+          # `publish`: publish:false cells build and smoke-test but upload
+          # nothing, because release-tag.yml uploads every falkordb-*.so
+          # artifact; dropping them from `suffixes` alone would not keep them
+          # out of a release. Setting it back to true brings back both uploads
+          # and both outputs. It is a boolean on every cell (checked below):
+          # GitHub expressions treat a missing key as equal to false.
           ALL='[
-            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false},
-            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false},
-            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++","image":true},
-            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true}
+            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false,"publish":true},
+            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false,"publish":true},
+            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++","image":true,"publish":true},
+            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true,"publish":true},
+            {"suffix":"alpine-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"publish":false},
+            {"suffix":"alpine-arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"publish":false}
           ]'
+          NOT_BOOL=$(printf '%s' "$ALL" | jq -r '[ .[] | select((.publish | type) != "boolean") | .suffix ] | join(",")')
+          if [ -n "$NOT_BOOL" ]; then
+            echo "::error::cells without a boolean \"publish\": $NOT_BOOL"
+            exit 1
+          fi
           if [ -z "${PLATFORMS// /}" ] || [ "$PLATFORMS" = "all" ]; then
             CELLS=$(printf '%s' "$ALL" | jq -c .)
           else
@@ -99,18 +124,23 @@ jobs:
             fi
             CELLS=$(printf '%s' "$ALL" | jq -c --argjson want "$WANT" '[ .[] | select(.suffix as $s | $want | index($s)) ]')
           fi
-          SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[].suffix ]')
-          IMAGE_SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[] | select(.image) | .suffix ]')
+          SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[] | select(.publish) | .suffix ]')
+          IMAGE_SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[] | select(.image and .publish) | .suffix ]')
           {
             echo "cells=$CELLS"
             echo "suffixes=$SUFFIXES"
             echo "image_suffixes=$IMAGE_SUFFIXES"
           } >> "$GITHUB_OUTPUT"
-          echo "Building: $SUFFIXES (server images: $IMAGE_SUFFIXES)"
+          echo "Building: $(printf '%s' "$CELLS" | jq -c '[ .[].suffix ]') (published: $SUFFIXES; published server images: $IMAGE_SUFFIXES)"
 
   build:
     needs: cells
     runs-on: ${{ matrix.runner }}
+    # A cell that is not published cannot fail the workflow outside pull
+    # requests, so it cannot keep a release from shipping the cells that are.
+    # In a called workflow `github` is the caller's context, so a pull request
+    # run of build-artifacts.yml stays strict.
+    continue-on-error: ${{ !matrix.publish && github.event_name != 'pull_request' }}
     permissions:
       contents: read
       packages: read
@@ -191,6 +221,7 @@ jobs:
           cat "$DIST/falkordb-${SUFFIX}.so.sha256"
 
       - name: Upload artifact
+        if: matrix.publish
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: falkordb-${{ matrix.suffix }}.so
@@ -279,7 +310,7 @@ jobs:
           echo "OK: falkordb-server:${SUFFIX} loads the module, answers, runs as falkordb, and takes ${SERVER}'s own args, else the other's, never both"
 
       - name: Upload falkordb-server image (${{ matrix.suffix }})
-        if: matrix.image && inputs.export_images
+        if: matrix.image && inputs.export_images && matrix.publish
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image-falkordb-server-${{ matrix.suffix }}
