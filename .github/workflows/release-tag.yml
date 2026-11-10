@@ -164,6 +164,7 @@ jobs:
       # Release builds run on a tag that is already in this repository —
       # reviewed code, so this build may write the cache.
       trusted_revision: true
+      tolerate_unpublished_failures: true
       export_images: true
     # No `secrets: inherit` — the reusable build only needs the auto GITHUB_TOKEN.
 

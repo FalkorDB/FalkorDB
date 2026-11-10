@@ -22,10 +22,11 @@
 #
 # Cells marked `publish: false` (alpine) are built and smoke-tested like any
 # other, but upload nothing and are left out of the `suffixes`/`image_suffixes`
-# outputs, so a release does not ship them. Outside pull requests their failure
-# does not fail this workflow either: a release still waits for them to finish,
-# but is not stopped by one that fails. On a pull request they fail it like any
-# other cell.
+# outputs, so a release does not ship them. With the caller's
+# `tolerate_unpublished_failures` (the release sets it) their failure does not
+# fail this workflow either: a release still waits for them to finish, but is
+# not stopped by one that fails. Otherwise (pull requests, manual runs) they
+# fail it like any other cell.
 
 name: Build artifacts (reusable)
 
@@ -57,6 +58,14 @@ on:
         description: >-
           Upload the per-OS server images as workflow artifacts (the release
           pushes them). Without it they are built and tested, then dropped.
+        required: false
+        type: boolean
+        default: false
+      tolerate_unpublished_failures:
+        description: >-
+          Do not fail the workflow when a `publish: false` cell fails (the
+          release sets this so an unpublished cell cannot block what ships).
+          Defaults to FALSE: pull-request and manual verification stay strict.
         required: false
         type: boolean
         default: false
@@ -136,11 +145,11 @@ jobs:
   build:
     needs: cells
     runs-on: ${{ matrix.runner }}
-    # A cell that is not published cannot fail the workflow outside pull
-    # requests, so it cannot keep a release from shipping the cells that are.
-    # In a called workflow `github` is the caller's context, so a pull request
-    # run of build-artifacts.yml stays strict.
-    continue-on-error: ${{ !matrix.publish && github.event_name != 'pull_request' }}
+    # With `tolerate_unpublished_failures` (the release), a cell that is not
+    # published cannot fail the workflow, so it cannot keep a release from
+    # shipping the cells that are. Callers that do not opt in (pull-request and
+    # manual verification) stay strict.
+    continue-on-error: ${{ !matrix.publish && inputs.tolerate_unpublished_failures }}
     permissions:
       contents: read
       packages: read
@@ -322,7 +331,7 @@ jobs:
       # continue-on-error hides an unpublished cell's failure outside pull
       # requests, so say so in the run summary instead of staying green and silent.
       - name: Flag unpublished-cell failure
-        if: failure() && !matrix.publish && github.event_name != 'pull_request'
+        if: failure() && !matrix.publish && inputs.tolerate_unpublished_failures
         env:
           SUFFIX: ${{ matrix.suffix }}
         run: |
