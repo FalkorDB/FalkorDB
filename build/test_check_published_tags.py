@@ -1032,6 +1032,14 @@ class CiTest(unittest.TestCase):
                          [(f"{GHCR}/falkordb:rc-mg-abc", "must not exist"),
                           (f"{GHCR}/falkordb:rc-mg-abc-x64", "must not exist")])
 
+    def test_unsuffixed_names_of_a_release_rebuild_key_fail(self):
+        docker = FakeDocker()
+        publish_ci(docker, "rebuild-abc")
+        docker.push(docker.tags[f"{GHCR}/falkordb:rc-rebuild-abc-valkey"], "falkordb", "rc-rebuild-abc",
+                    registries=(GHCR,))
+        self.assertEqual(failed(check(docker, "rc-rebuild-abc")),
+                         [(f"{GHCR}/falkordb:rc-rebuild-abc", "must not exist")])
+
     def test_unsuffixed_names_of_a_pull_request_key_are_allowed(self):
         """A PR whose CI ran before the switch keeps rc-pr-<N> for a while."""
         docker = FakeDocker()
@@ -1179,6 +1187,15 @@ class CommandLineTest(unittest.TestCase):
 
     def test_servers_is_refused_for_public_tags(self):
         self.assertIn("--servers applies to CI targets only", self.refused("edge", "--servers", "valkey"))
+
+    def test_a_merge_queue_key_is_checked_for_every_server(self):
+        self.assertIn("rc-mg-abc has every server's images", self.refused("rc-mg-abc", "--servers", "valkey"))
+
+    def test_a_pull_request_key_may_be_checked_for_valkey_alone(self):
+        docker = FakeDocker()
+        publish_ci(docker, "pr-1", servers=("valkey",))
+        code, out, _ = self.run_main(docker, [], "rc-pr-1", "--servers", "valkey")
+        self.assertEqual(code, 0, out)
 
     def test_a_prerelease_cannot_be_named_latest(self):
         self.assertIn("a prerelease never moves latest", self.refused("6.1.0-rc.1", "--latest", "6.1.0-rc.1"))

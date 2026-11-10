@@ -1128,6 +1128,9 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         servers = {name.strip() for name in args.servers.split(",") if name.strip()}
         if not servers or not servers <= all_servers:
             parser.error(f"--servers must name some of: {', '.join(sorted(all_servers))}")
+        every = data["channels"]["ci"].get("every_server_key_prefixes", [])
+        if servers != all_servers and any((target.ci_key or "").startswith(prefix) for prefix in every):
+            parser.error(f"--servers: rc-{target.ci_key} has every server's images; all of them are checked")
 
     pins = {name: spec["version"] for name, spec in data["servers"].items()}
     for item in args.pin:
