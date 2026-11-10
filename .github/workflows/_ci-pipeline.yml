@@ -108,8 +108,9 @@ jobs:
   # Valkey dlopen()s modules with RTLD_DEEPBIND, which Redis does not, so a
   # module that loads fine under redis-server can crash valkey-server on load
   # (#3493). The crash needs a valkey-server that copy-relocates `environ`:
-  # Ubuntu's package does, while the official valkey/valkey images and Debian's
-  # package do not and would pass even without the fix. Hence Ubuntu's Valkey.
+  # Ubuntu's amd64 package does, while its arm64 build, the official
+  # valkey/valkey images and Debian's package do not and would pass even
+  # without the fix. Hence Ubuntu's Valkey, on an amd64 runner.
   valkey-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -130,13 +131,19 @@ jobs:
         run: |
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends valkey-server valkey-tools \
-            libstdc++6 libssl3t64 zlib1g libzstd1 binutils
-      # Without the copy relocation an unfixed module passes too, so fail here
-      # rather than go quietly green if a rebuild of the package drops it.
-      - name: Check that this valkey-server copy-relocates environ
+            libstdc++6 libssl3t64 zlib1g libzstd1 gcc libc6-dev
+      # If a later package loses RTLD_DEEPBIND or the copy relocation, an
+      # unfixed engine loads fine too; fail here rather than go quietly green.
+      - name: Check that a module sees a NULL environ under this valkey-server
         run: |
-          readelf -rW "$(readlink -f "$(command -v valkey-server)")" \
-            | grep -E '_COPY +[0-9a-f]+ +_*environ@'
+          cc -shared -fPIC -o /tmp/environ-probe.so tests/valkey_environ_probe.c
+          out=$(timeout 30 valkey-server --port 0 --save '' \
+            --loadmodule /tmp/environ-probe.so 2>&1 || true)
+          echo "$out" | grep 'environ-probe:' || true
+          echo "$out" | grep -q 'environ-probe: NULL' || {
+            echo "A module sees a live environ here, so this job cannot catch #3493." >&2
+            exit 1
+          }
       - name: Load the engine into Valkey
         run: tests/valkey_smoke.sh target/release/libfalkordb.so
   # The flow suites only run under redis-server, which never takes the
