@@ -50,15 +50,22 @@ def buildInOneBatch (g : G) (e : EntityType) (label attr : String) : G :=
   let g := { g with idx := g.idx.createBuilding e label attr }
   (g.indexerPrepare (.column e (label, attr)) usizeMax).1
 
-/-- `create_index` (`graph_writes.rs:396-408`). -/
+/-- `create_index` (`graph_writes.rs:394-406`): each listed attribute's column created `Building`, its cursor at
+    the start, for the background builder to fill (`online_build.rs`, the online build, #2355). -/
 def createIndex (g : G) (t : FalkorDbIndex.IndexType) (e : EntityType) (label : String) (attrs : List String) : G :=
-  if t = .range then attrs.foldl (fun g a => buildInOneBatch g e label a) g else g
+  if t = .range then { g with idx := attrs.foldl (fun x a => x.createBuilding e label a) g.idx } else g
+
+/-- Every listed attribute's column built in one unlimited batch each (`build_in_one_batch`): what the RDB load
+    builds for a label's Range fields (`populate`, `graph_writes.rs:492-503`), and what `create_index` did before
+    the online build (#2355). -/
+def buildColumns (g : G) (e : EntityType) (label : String) (attrs : List String) : G :=
+  attrs.foldl (fun g a => buildInOneBatch g e label a) g
 
 /-- An index field: just its type. -/
 structure Field where
   ty : FalkorDbIndex.IndexType
 
-/-- `populate` (`graph_writes.rs:490-501`). -/
+/-- `populate` (`graph_writes.rs:492-503`). -/
 def populate (g : G) (e : EntityType) (label : String) (fields : List (String × List Field)) : G :=
   fields.foldl (fun g af => if af.2.any (fun f => f.ty == .range) then buildInOneBatch g e label af.1 else g) g
 
@@ -274,6 +281,40 @@ theorem buildInOneBatch_entry (g : G) (hf : g.Fits) (e : EntityType) (label attr
 theorem createIndex_nonrange (g : G) (t : FalkorDbIndex.IndexType) (h : t ≠ .range) (e l attrs) :
     createIndex g t e l attrs = g := by simp [createIndex, h]
 
+/-- `create_index` changes only the index: the graph's data is as it was. -/
+theorem createIndex_fields (g : G) (e : EntityType) (label : String) (attrs : List String) :
+    ∃ i, createIndex g .range e label attrs = { g with idx := i } :=
+  ⟨attrs.foldl (fun x a => x.createBuilding e label a) g.idx, by simp [createIndex]⟩
+
+/-- Each column `create_index` lists is created `Building`, empty, its cursor at the start; every other column is
+    as it was. -/
+theorem createIndex_entry (g : G) (e : EntityType) (label : String) (attrs : List String) (e' : EntityType)
+    (l a : String) :
+    (createIndex g .range e label attrs).idx.entry e' l a =
+      if e = e' ∧ l = label ∧ a ∈ attrs then some ⟨.numeric NumericIndex.new, .building (BuildCursor.new e)⟩
+      else g.idx.entry e' l a := by
+  simp only [createIndex, ↓reduceIte]
+  induction attrs generalizing g with
+  | nil => simp
+  | cons b bs ih =>
+    simp only [List.foldl_cons]
+    have := ih { g with idx := g.idx.createBuilding e label b }
+    simp only at this
+    rw [this]
+    unfold FalkorDbIndex.createBuilding
+    rw [entry_insertColumn]
+    by_cases he : e = e' <;> by_cases hl : l = label <;> by_cases hab : a = b <;> by_cases hbs : a ∈ bs <;>
+      simp_all [eq_comm]
+
+/-- ... so a column `create_index` creates serves no reads until its build is over: `readyNumeric` declines
+    it, and the planner and the scan operators scan instead. -/
+theorem createIndex_not_ready (g : G) (e : EntityType) (label : String) (attrs : List String) (a : String)
+    (h : a ∈ attrs) :
+    (createIndex g .range e label attrs).idx.readyNumeric e label a = none := by
+  unfold FalkorDbIndex.readyNumeric
+  rw [createIndex_entry]
+  simp [h, IndexEntry.isBuilding]
+
 /-- A build changes the index only (graph data, hence `Fits`, are kept). -/
 theorem buildInOneBatch_fields (g : G) (e : EntityType) (label attr : String) :
     ∃ i, buildInOneBatch g e label attr = { g with idx := i } := by
@@ -305,18 +346,18 @@ theorem foldBuild_fields (e : EntityType) (label : String) :
     obtain ⟨j, hj⟩ := ih (buildInOneBatch y e label z)
     refine ⟨j, ?_⟩; rw [hj, hi]
 
-theorem createIndex_fields (g : G) (e : EntityType) (label : String) (attrs : List String) :
-    ∃ i, createIndex g .range e label attrs = { g with idx := i } := by
-  unfold createIndex; simp only [if_true]; exact foldBuild_fields e label attrs g
+theorem buildColumns_fields (g : G) (e : EntityType) (label : String) (attrs : List String) :
+    ∃ i, buildColumns g e label attrs = { g with idx := i } := by
+  unfold buildColumns; exact foldBuild_fields e label attrs g
 
-/-- `create_index` builds every listed attribute's column from the live graph, each `Ready` (later
+/-- `buildColumns` builds every listed attribute's column from the live graph, each `Ready` (later
     builds of *other* attributes do not disturb it; the graph data read is unchanged by building). -/
-theorem createIndex_builds (g : G) (hf : g.Fits) (e : EntityType) (label : String) :
+theorem buildColumns_builds (g : G) (hf : g.Fits) (e : EntityType) (label : String) :
     ∀ (attrs : List String) (a : String), a ∈ attrs →
-      (createIndex g .range e label attrs).idx.entry e label a =
+      (buildColumns g e label attrs).idx.entry e label a =
         some ⟨.numeric (NumericIndex.fromEntries (collectEntries g e label a)), .ready⟩ := by
   intro attrs
-  unfold createIndex; simp only [if_true]
+  unfold buildColumns
   have data := foldBuild_fields e label
   have fitsF : ∀ (ys : List String) (y : G), y.Fits → (ys.foldl (fun g a => buildInOneBatch g e label a) y).Fits := by
     intro ys y hy; obtain ⟨i, hi⟩ := data ys y; rw [hi]; exact fits_of_fields y _ hy rfl rfl
@@ -351,14 +392,14 @@ theorem createIndex_builds (g : G) (hf : g.Fits) (e : EntityType) (label : Strin
       rw [keep bs _ hf1 a hb, buildInOneBatch_entry g hf]
       simp
 
-/-- ... so a column `create_index` built serves reads: it is `Ready`, and `readyNumeric` is its
+/-- ... so a column `buildColumns` built serves reads: it is `Ready`, and `readyNumeric` is its
     `from_entries` index. -/
-theorem createIndex_ready (g : G) (hf : g.Fits) (e : EntityType) (label : String) (attrs : List String) (a : String)
+theorem buildColumns_ready (g : G) (hf : g.Fits) (e : EntityType) (label : String) (attrs : List String) (a : String)
     (h : a ∈ attrs) :
-    (createIndex g .range e label attrs).idx.readyNumeric e label a =
+    (buildColumns g e label attrs).idx.readyNumeric e label a =
       some (NumericIndex.fromEntries (collectEntries g e label a)) := by
   unfold FalkorDbIndex.readyNumeric
-  rw [createIndex_builds g hf e label attrs a h]
+  rw [buildColumns_builds g hf e label attrs a h]
   simp [IndexEntry.isBuilding, IndexColumn.ix]
 
 /-- `populate` builds a column exactly for the attributes with a Range field. -/
@@ -369,6 +410,22 @@ theorem populate_skips (g : G) (e : EntityType) (label : String) (af : String ×
 theorem populate_builds (g : G) (e : EntityType) (label : String) (af : String × List Field)
     (h : af.2.any (fun f => f.ty == .range) = true) : populate g e label [af] = buildInOneBatch g e label af.1 := by
   unfold populate; simp only [List.foldl_cons, List.foldl_nil]; rw [h]; rfl
+
+/-- `populate` builds exactly the columns of a label's Range fields, each in one batch: it is `buildColumns` of
+    their attributes, in order. So the `buildColumns_*` theorems hold for what the RDB load builds. -/
+theorem populate_eq_buildColumns (g : G) (e : EntityType) (label : String) (fields : List (String × List Field)) :
+    populate g e label fields =
+      buildColumns g e label ((fields.filter (fun af => af.2.any (fun f => f.ty == .range))).map Prod.fst) := by
+  induction fields generalizing g with
+  | nil => rfl
+  | cons af rest ih =>
+    unfold populate buildColumns at *
+    simp only [List.foldl_cons, List.filter_cons]
+    by_cases h : af.2.any (fun f => f.ty == .range) = true
+    · simp only [h, ↓reduceIte, List.map_cons, List.foldl_cons]
+      exact ih _
+    · simp only [h, Bool.false_eq_true, ↓reduceIte]
+      exact ih _
 
 /-! ## The graph's entry points (`graph.rs`) -/
 
@@ -489,22 +546,22 @@ theorem nodeScan_native_agrees (g : G) (label key : String) (min max : Option Va
   rw [queryIndexNumericNodes_spec, queryNumeric_of_ready _ _ _ _ key hk _ hcol]
   rfl
 
-/-- **After `CREATE INDEX`, a node range scan ≡ label scan + filter on the native route**: the column
-    `create_index` built (one unlimited indexer batch) serves reads, and answers exactly the ids the
-    Filter keeps. -/
-theorem createIndex_nodeScan_agrees (g : G) (hf : g.Fits) (label key : String) (attrs : List String)
+/-- **Once a column is built, a node range scan ≡ label scan + filter on the native route**: the column
+    `buildColumns` built (one unlimited indexer batch, as the RDB load builds it) serves reads, and answers
+    exactly the ids the Filter keeps. -/
+theorem buildColumns_nodeScan_agrees (g : G) (hf : g.Fits) (label key : String) (attrs : List String)
     (hk : key ∈ attrs) (min max : Option Value) (a b : Bool)
     (hwf : ∀ p ∈ collectNodeEntries g label key, p.1.WF ∧ NotBool p.1 ∧ p.2 < W)
     (hmin : ∀ v, min = some v → GoodBound v) (hmax : ∀ v, max = some v → GoodBound v)
     (hsome : min.isSome ∨ max.isSome) (id : Nat) (hid : id < W) :
-    ∃ hit, queryIndexNumericNodes (createIndex g .range .node label attrs) label (.range key min max a b) = some (.ok hit) ∧
+    ∃ hit, queryIndexNumericNodes (buildColumns g .node label attrs) label (.range key min max a b) = some (.ok hit) ∧
       (id ∈ hit ↔ ∃ v, (v, id) ∈ collectNodeEntries g label key ∧ rangeFilter v min max a b) := by
-  obtain ⟨i, hi⟩ := createIndex_fields g .node label attrs
-  have hready := createIndex_ready g hf .node label attrs key hk
-  have hcol : (createIndex g .range .node label attrs).idx.readyNumeric .node label key =
-      some (NumericIndex.fromEntries (collectNodeEntries (createIndex g .range .node label attrs) label key)) := by
+  obtain ⟨i, hi⟩ := buildColumns_fields g .node label attrs
+  have hready := buildColumns_ready g hf .node label attrs key hk
+  have hcol : (buildColumns g .node label attrs).idx.readyNumeric .node label key =
+      some (NumericIndex.fromEntries (collectNodeEntries (buildColumns g .node label attrs) label key)) := by
     rw [hready, hi]; rfl
-  have := nodeScan_native_agrees (createIndex g .range .node label attrs) label key min max a b hcol
+  have := nodeScan_native_agrees (buildColumns g .node label attrs) label key min max a b hcol
   rw [hi] at this
   rw [hi]
   exact this (fun p hp => hwf p hp) hmin hmax hsome id hid

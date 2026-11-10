@@ -56,7 +56,7 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
 | `Rebase.lean`: `Ver`, `tupl`, `entityTuples`, `rawTuples`, `placedBelow`, `IndexColumn.refresh`/`writerRebase`/`indexerCatchUp`, `Written`, `BS`, `EN` (`writerRecord`, `indexerApply`, `publish`, `rebase`, `catchUp`), `overtaken`, `BuildCursor.fromId`, `publishAll`, `columnNames`, `rebaseAll`, `overtakenAny`, `mvccRebase`, `V.rebased` | `falkordb_index.rs:169-244` (`refresh`, `placed_below`), `:326`, `:337`, `:437` (`from_id`), `:716`, `:724`; `versioned.rs:54-81` (`BuildState`, `Written`), `:213`, `:227`, `:280-334`, `:438-565`; `graph_writes.rs:445` (`entity_tuples`); `mvcc_graph.rs:165` (`rebase_onto_indexer_batches`); `graph.rs:3879` (`build_place`) |
 | `Memory.lean`: `NumericIndex.memoryUsage`, `IndexColumn.memoryUsage`, `EN.memoryUsage`, `memoryUsage`, `IndexColumn.batchLen_spec` (`IndexColumn.batchLen` is in `Batch.lean`) | `numeric.rs:296` (`NumericIndex::memory_usage` = `CowBTree::heap_bytes`, `cow_btree/mod.rs:419`), `falkordb_index.rs:405` (`VersionedIndex::memory_usage`), `:382` (`batch_len`), `:582` (`FalkorDbIndex::memory_usage`); `versioned.rs:307`, `:351` (`IndexEntry::memory_usage`) |
 | `Cch.lean`: `Csr` (`row?`, `isWellFormed`, `isSymmetricSimple`), `defNew`, the `unimplemented!()` bodies as always-panicking functions | `cch/mod.rs:57-107` (`Csr`), `:139` (`CchIndexDef::new`), `:193-271` (`Cch::*`), `:314-413` (`VersionedIndex for CchIndex`); `falkordb_index.rs:967-991`; `graph.rs:5225-5275` |
-| `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries` (specifications), `buildInOneBatch`, `createIndex`, `populate`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanOp`, `newVersion`, `runUnit` | `graph_writes.rs:396-450`; `graph.rs:1083`, `:3858`, `:3889`, `:4181`, `:4199`; `node_by_index_scan.rs:302`, `edge_by_index_scan.rs:318` |
+| `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries` (specifications), `buildInOneBatch`, `createIndex`, `buildColumns`, `populate`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanOp`, `newVersion`, `runUnit` | `graph_writes.rs:394-503`; `graph.rs:1083`, `:3858`, `:3889`, `:4181`, `:4199`; `node_by_index_scan.rs:302`, `edge_by_index_scan.rs:318` |
 | `Scan.lean`: `G.nodeMatches`/`relationshipMatches`, `nodeFilteredScan`/`edgeFilteredScan`, `nodeScanOp`/`edgeScanOp`, `redisearchFieldsAll`/`redisearchFields` | `graph.rs:4230` (`node_matches`), `:4244` (`relationship_matches`), `:144`/`:151` (`redisearch_fields`); the `Some(Err(scan_filter))` arms of `node_by_index_scan.rs:~330`, `edge_by_index_scan.rs:~375` |
 | `Unique.lean`: `nativeUniqueQuery`, `roundGo`/`fewestLoop`/`fewest`, `ReadOnce` | `unique.rs:20`, `:48`, `:69` |
 | `Decline.lean`: `Pred`, `describe`, `oneKey`, `unionMembers`, `unsupportedByNativeIndex` | `mod.rs:43` (`unsupported_by_native_index`), `:59` (`describe_predicate`), `:145` (`union_members`) |
@@ -87,9 +87,11 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   exactly what `precedes` the returned cursor; `edgeLoop_spec`: a multi-edge pair is never split),
   `scan_sorted`, `scan_kind` / `kind_place` / `kind_new` (`precedes`'s `unreachable!` never fires),
   `prepareBatch_building` / `prepareBatch_idle`, `indexerApply_building` / `_idle`,
-  `buildInOneBatch_entry` (CREATE INDEX = one unlimited batch: the column is `Ready` and holds
-  `from_entries` of the live pairs), `createIndex_builds`, `createIndex_ready`,
-  `createIndex_nodeScan_agrees`, `addEncoded_spec` / `addEncoded_sorted` (an empty tree is bulk-built).
+  `buildInOneBatch_entry` (the RDB load's build = one unlimited batch: the column is `Ready` and holds
+  `from_entries` of the live pairs), `buildColumns_builds`, `buildColumns_ready`,
+  `buildColumns_nodeScan_agrees`, `addEncoded_spec` / `addEncoded_sorted` (an empty tree is bulk-built).
+  Since the online build (#2355), CREATE INDEX only creates each column `Building` for the background builder:
+  `createIndex_entry`, `createIndex_not_ready` (it serves no reads until its build is over).
 - **#3566, an indexer batch commits as a version of its own** (`Batch.lean`): the fit of a batch built on a
   build version against what was published meanwhile: `fit_fresh` (nothing committed: `Same`),
   `fit_after_other_batch` (`Swap`), `fit_after_writer` (`CatchUp` since #3567; it was `Discarded Writers`), `fit_after_same_batch`
@@ -119,7 +121,9 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   reachable tree satisfies, `Reachable_wf_asserted`).
 - **#3568, the fit chooses Refresh or Insert** (`Batch.lean`, `Rebase.lean`): `indexerFit` reads the published copy's
   `since_last_indexer_step.len()` (`SE.since`, `SE.written`) and `batch_len(&work)` (`IndexColumn.batchLen work`) off the
-  model, and `fit_catchUp_how` / `fit_after_writer` say `CatchUp` is `catchUpBy` of exactly those two; `catchUpBy_refresh_iff`,
+  model, and `fit_catchUp_how` / `fit_after_writer` say `CatchUp` is `catchUpBy` of exactly those two; since the online
+  build (#2355), a batch above the floor has a catch-up limit, past which it is discarded (`Discarded.catchUpTooLarge`):
+  `fit_after_writer_within`, `fit_after_writer_too_large`; `catchUpBy_refresh_iff`,
   `catchUpBy_saturating`; `placedIn_mem` (node column: the set cut by id at both ends, no hypothesis), `placedIn_rel_mem`
   (relationship column, any ends), `placedIn_edge_spec` / `placedIn_node_spec`, `placedIn_none_eq_placedBelow_*`;
   `indexerInsert_mem`, `insert_inv`, `commit_catchUp_insert`; `publish_since_len` (publishing moves the `since` count).
@@ -154,7 +158,7 @@ pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/gra
   and `edgeAttrsSetWith_hit` (update: old entry removed, new present), `nodesDeleted_hit`/`_noadd`,
   `edgesDeleted_hit`/`_noadd` (delete removes every entry, adds none), `labelsRemoved_hit`,
   `labelsAdded_hit`, `newNodeAttrs_hit`.
-- **DDL / MVCC** (`Ddl.lean`): `buildInOneBatch_entry`, `createIndex_builds`, `collect*_spec`,
+- **DDL / MVCC** (`Ddl.lean`): `buildInOneBatch_entry`, `buildColumns_builds`, `createIndex_entry`, `collect*_spec`,
   `populate_builds/skips`, `numeric_dropColumn`, `dropIndex_removes`, `createUnpopulated_creates`,
   `node_edge_independent`; `snapshot_isolated`, `runUnit_spec` (a committed version's index is the
   private copy with its staged changes applied once; a refused unit publishes nothing),

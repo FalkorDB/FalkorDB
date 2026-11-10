@@ -526,6 +526,17 @@ impl NumericIndex {
     pub fn tuples(&self) -> Vec<(u64, u64)> {
         self.tree.range_tuples(0, u64::MAX).collect()
     }
+
+    /// The column's leaf pages, shared with every version that holds them: for a test of when they
+    /// are freed.
+    #[cfg(test)]
+    pub(crate) fn pages(&self) -> Vec<Arc<[u8]>> {
+        self.tree
+            .leaves()
+            .into_iter()
+            .map(|(_, page)| page)
+            .collect()
+    }
 }
 
 #[cfg(test)]

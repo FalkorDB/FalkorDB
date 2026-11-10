@@ -4184,6 +4184,12 @@ impl Graph {
         }
     }
 
+    /// Whether the planner may answer `label.field` from an index of `index_type`.
+    ///
+    /// Under `index-falkordb` a Range lookup is the native column's alone, and the column is part
+    /// of this version: it serves once its build is done. RediSearch's readiness lives in its
+    /// index map, which every version shares, so it says nothing about this version's column, and
+    /// a version without the column must not plan a lookup it cannot answer.
     #[must_use]
     pub fn is_indexed(
         &self,
@@ -4191,6 +4197,10 @@ impl Graph {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
+        #[cfg(feature = "index-falkordb")]
+        if *index_type == IndexType::Range {
+            return self.falkordb_index.is_ready(EntityType::Node, label, field);
+        }
         self.node_indexer.is_label_indexed(label, field, index_type)
     }
 
@@ -4281,6 +4291,7 @@ impl Graph {
             .is_some_and(|value| scan_filter.matches(&value))
     }
 
+    /// The relationship counterpart of [`Self::is_indexed`].
     #[must_use]
     pub fn is_edge_indexed(
         &self,
@@ -4288,6 +4299,12 @@ impl Graph {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
+        #[cfg(feature = "index-falkordb")]
+        if *index_type == IndexType::Range {
+            return self
+                .falkordb_index
+                .is_ready(EntityType::Relationship, label, field);
+        }
         self.edge_indexer.is_label_indexed(label, field, index_type)
     }
 
@@ -4475,13 +4492,73 @@ impl Graph {
         let mut infos = self.node_indexer.index_info();
         for info in &mut infos {
             info.entity_type = String::from("NODE");
+            #[cfg(feature = "index-falkordb")]
+            self.add_native_build(EntityType::Node, info);
         }
         let mut edge_infos = self.edge_indexer.index_info();
         for info in &mut edge_infos {
             info.entity_type = String::from("RELATIONSHIP");
+            #[cfg(feature = "index-falkordb")]
+            self.add_native_build(EntityType::Relationship, info);
         }
         infos.extend(edge_infos);
         infos
+    }
+
+    /// Under `index-falkordb`, `info`'s label is under construction while any of its Range
+    /// attributes' native columns is `Building` in this version: each such column counts as
+    /// pending. The progress shown is the label's build as a whole, out of the label's or type's
+    /// entities, as C shows it: the least any of those columns has read, or what RediSearch has
+    /// populated of another of the label's fields (a fulltext or vector one) if that is less. The
+    /// label's or type's entities are counted once, and only while one of its columns builds.
+    #[cfg(feature = "index-falkordb")]
+    fn add_native_build(
+        &self,
+        entity: EntityType,
+        info: &mut IndexInfo,
+    ) {
+        let mut building: Option<(i32, u64)> = None;
+        for attr in &info.field_order {
+            let range = info
+                .fields
+                .get(attr)
+                .is_some_and(|fields| fields.iter().any(|f| f.ty == IndexType::Range));
+            if range
+                && let Some(read) = self.falkordb_index.building_read(entity, &info.label, attr)
+            {
+                building = Some(
+                    building.map_or((1, read), |(columns, least)| (columns + 1, least.min(read))),
+                );
+            }
+        }
+        let Some((columns, least)) = building else {
+            return;
+        };
+        let total = self.native_build_total(entity, &info.label);
+        let done = least.min(total);
+        // RediSearch reports what it has populated while it has a field pending.
+        info.progress = if info.pending > 0 {
+            done.min(info.progress)
+        } else {
+            done
+        };
+        info.pending += columns;
+        info.total = total;
+    }
+
+    /// The entities of `label`, or of relationship type `label`: what a build's progress is out of.
+    #[cfg(feature = "index-falkordb")]
+    fn native_build_total(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+    ) -> u64 {
+        match entity {
+            EntityType::Node => self.get_label_matrix(label).map_or(0, |lm| lm.nvals()),
+            EntityType::Relationship => self
+                .get_relationship_matrix(label)
+                .map_or(0, |t| t.edge_count()),
+        }
     }
 
     // ── Constraint management ─────────────────────────────────────────

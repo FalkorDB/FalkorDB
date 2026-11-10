@@ -72,6 +72,8 @@ use thiserror::Error;
 
 use crate::graph::graph::{Graph, NodeOpError};
 #[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::online_build;
+#[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
 
 /// MVCC coordinator for concurrent graph access.
@@ -106,17 +108,17 @@ impl MvccGraph {
         e: u64,
         cache_size: usize,
         name: &str,
-    ) -> Self {
+    ) -> Arc<Self> {
         Self::from_graph(Graph::new(n, e, cache_size, 0, name))
     }
 
     /// Create an `MvccGraph` from an already-constructed `Graph`.
     /// Used by the RDB load path.
     #[must_use]
-    pub fn from_graph(graph: Graph) -> Self {
-        Self {
+    pub fn from_graph(graph: Graph) -> Arc<Self> {
+        Arc::new(Self {
             graph: ArcSwap::from_pointee(graph),
-        }
+        })
     }
 
     /// The published version. Takes no lock.
@@ -188,10 +190,11 @@ impl MvccGraph {
     /// A refusal needs no cleanup: nothing was taken, and the refused version
     /// is dropped.
     ///
-    /// Takes `&self`: publishing is a compare-and-swap of the published
+    /// Takes a shared reference: publishing is a compare-and-swap of the published
     /// pointer. The caller holds the host's global lock, which keeps commits
     /// apart and the swap out of the way of the host forking (#452); it needs no
-    /// per-graph lock.
+    /// per-graph lock. It takes the `Arc` the graph lives in so that it can hand each background
+    /// index build it starts a weak handle to it ([`Arc::downgrade`]).
     ///
     /// # Errors
     ///
@@ -200,12 +203,23 @@ impl MvccGraph {
     /// a host publishing without the global lock lets that happen),
     /// [`CommitError::Invalid`] if [`Graph::validate`] refuses it.
     pub fn commit(
-        &self,
+        self: &Arc<Self>,
         mut fork: Graph,
     ) -> Result<Arc<Graph>, CommitError> {
         let published = self.graph.load_full();
         Self::prepare(&published, &mut fork, true)?;
-        self.publish(&published, Arc::new(fork))
+        // The indexes to build, asked of the version this one replaces before it is replaced.
+        #[cfg(feature = "index-falkordb")]
+        let to_build = fork.indexes_to_build_since(&published);
+        let version = self.publish(&published, Arc::new(fork))?;
+        // Each `Building` index this version brings in, new or created again, starts its build: a
+        // job per generation, started only by the commit that brings it in, so a commit made during
+        // the build, an indexer batch's included, starts nothing.
+        #[cfg(feature = "index-falkordb")]
+        for (id, generation) in to_build {
+            online_build::enqueue(Arc::downgrade(self), id, generation);
+        }
+        Ok(version)
     }
 
     /// Commit an indexer batch. `prepared` is a build version of a published one
@@ -220,19 +234,24 @@ impl MvccGraph {
     ///   `prepared`'s copy, or the batch, without them, is inserted into the published copy. The
     ///   result goes into a new build version of the published one, which is published
     ///   ([`Graph::caught_up_onto`]);
+    /// - writers, and catching up would do more than `batch`'s limit allows
+    ///   ([`PreparedBatch::limit_catch_up`]): nothing is published
+    ///   ([`CatchUpTooLarge`](crate::index::falkordb::versioned::Discarded::CatchUpTooLarge)), and
+    ///   the index's next batch starts from its published cursor;
     /// - `batch`'s index was dropped or created again, or another batch committed on the same
     ///   index: nothing is published, and the index's next batch starts from its published cursor.
-    ///   Another batch on the index is a bug in the builder's one chain per index
-    ///   ([`AnotherBatch`](crate::index::falkordb::versioned::Discarded::AnotherBatch)), which the
-    ///   caller reports.
+    ///   Another batch on the index is a bug in the builder's one job per generation
+    ///   ([`AnotherBatch`](crate::index::falkordb::versioned::Discarded::AnotherBatch)), which
+    ///   leaves nothing wrong.
     ///
     /// The commit changes no graph data and keeps the data version, so it does not make a writer's
     /// fork stale ([`Self::is_stale`]).
     ///
     /// The caller holds the host's global lock, as a writer does to publish; it needs no
     /// per-graph lock. The fit is made against the published version this commit loads, and the
-    /// version is published over that one: a batch that writers overtook is caught up, not
-    /// refused.
+    /// version is published over that one: a batch that writers overtook is caught up, or, if that
+    /// would do more than its limit allows, discarded; it is never refused as stale
+    /// ([`CommitError::Stale`]) for being overtaken.
     ///
     /// # Errors
     ///
@@ -240,7 +259,7 @@ impl MvccGraph {
     /// if another version was published while this commit ran (only a host publishing without the
     /// global lock lets that happen). Nothing is published.
     #[cfg(feature = "index-falkordb")]
-    pub fn commit_indexer_batch(
+    pub(crate) fn commit_indexer_batch(
         &self,
         mut prepared: Graph,
         batch: &PreparedBatch,
