@@ -337,14 +337,14 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                                 let runtime = self.runtime;
                                 // Resolved once per scan. No node holds a name the graph has
                                 // never seen.
-                                let nodes: Box<dyn Iterator<Item = NodeId>> = match g
-                                    .get_node_attribute_id(scan_filter.attribute())
-                                {
-                                    Some(attr) => {
-                                        let attr = attr as u16;
+                                let nodes: Box<dyn Iterator<Item = NodeId>> = match scan_filter
+                                    .resolve(|attr| {
+                                        g.get_node_attribute_id(attr).map(|attr| attr as u16)
+                                    }) {
+                                    Some(scan_filter) => {
                                         Box::new(g.get_nodes(&self.node_pattern.labels, 0).filter(
                                             move |&id| {
-                                                runtime.graph().node_matches(id, attr, &scan_filter)
+                                                runtime.graph().node_matches(id, &scan_filter)
                                             },
                                         ))
                                     }
