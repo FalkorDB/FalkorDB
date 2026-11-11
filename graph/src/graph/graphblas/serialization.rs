@@ -57,31 +57,28 @@ pub trait Reader {
     fn read_signed(&mut self) -> Result<i64, String>;
     fn read_double(&mut self) -> Result<f64, String>;
     fn read_buffer(&mut self) -> Result<Vec<u8>, String>;
+
+    /// Bytes left in the payload, when the source knows (a `GRAPH.RESTORE`
+    /// buffer does; a pipe or an RDB stream does not). A count read from the
+    /// payload can be checked against it before it sizes anything.
+    fn remaining(&self) -> Option<usize> {
+        None
+    }
 }
 
-/// Types that can deserialize themselves from a [`Reader`].
-pub trait Decode<const VERSION: u64>: Sized {
-    fn decode(r: &mut dyn Reader) -> Result<Self, String>;
+/// Largest capacity a decoder reserves up front for a count read from the
+/// payload.
+///
+/// Counts are raw u64 values and GRAPH.RESTORE accepts them from a client, so
+/// they can't be trusted to size an allocation. The decode loops stop at the
+/// first missing element anyway, so a real payload only pays for a few extra
+/// reallocations. GRAPH.BULK caps its allocations for the same reason.
+const MAX_DECODE_PREALLOC: usize = 1024;
 
-    /// Decode `count` entities from the reader into `self`.
-    ///
-    /// `attr_limit` is the length of the graph's attribute dictionary: any
-    /// attribute id at or above it names nothing and must be dropped. It rides on
-    /// the trait rather than on an inherent method so the bound cannot be skipped
-    /// — an earlier revision had `AttributeStore` satisfy this signature by
-    /// assuming `usize::MAX`, which silently disabled the check on two of the
-    /// three load paths, including the multi-key one (every graph large enough to
-    /// be split across virtual keys). Implementors that decode no attributes
-    /// ignore it.
-    fn decode_with_count(
-        &mut self,
-        r: &mut dyn Reader,
-        count: u64,
-        attr_limit: usize,
-    ) -> Result<(), String> {
-        let _ = (r, count, attr_limit);
-        unimplemented!()
-    }
+/// Capacity to reserve for `count` elements declared by the payload.
+#[must_use]
+pub fn decode_capacity(count: u64) -> usize {
+    usize::try_from(count).map_or(MAX_DECODE_PREALLOC, |n| n.min(MAX_DECODE_PREALLOC))
 }
 
 /// Index field type bitmask matching C FalkorDB index_field.h.
@@ -169,6 +166,109 @@ pub struct PayloadEntry {
     pub offset: u64,
 }
 
+/// Reject `count` elements of at least `min_bytes` each when the reader knows
+/// fewer bytes than that remain. A no-op for readers that cannot say.
+pub fn check_count_fits(
+    r: &dyn Reader,
+    what: &str,
+    count: u64,
+    min_bytes: usize,
+) -> Result<(), String> {
+    if let Some(left) = r.remaining() {
+        let fits = usize::try_from(count)
+            .ok()
+            .and_then(|c| c.checked_mul(min_bytes))
+            .is_some_and(|need| need <= left);
+        if !fits {
+            return Err(format!(
+                "{what} count {count} exceeds the {left} bytes left in the payload"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Bounds the payload's own header puts on everything else in it: no entity id,
+/// matrix dimension or per-entity count may exceed what the header declares.
+/// Set for the duration of one decode by [`DecodeLimits::scope`] and read by the
+/// GraphBLAS decoders, which sit below the `Reader` trait and so have no header.
+#[derive(Clone, Copy, Debug)]
+pub struct DecodeLimits {
+    /// One past the highest node id (live plus deleted).
+    pub node_bound: u64,
+    /// One past the highest edge id (live plus deleted).
+    pub edge_bound: u64,
+}
+
+thread_local! {
+    static DECODE_LIMITS: std::cell::Cell<Option<DecodeLimits>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Matrices are saved at the node capacity, which runs past the highest id by
+/// the growth slop and the creation chunk. Allowed on top of the id bound.
+///
+/// `NODE_CREATION_BUFFER` is at most 2^30 and the saving server's setting may
+/// differ from this one's, so the allowance covers two chunks of that size: a
+/// capacity is the id bound grown by 25% and rounded up to a chunk.
+const DIM_SLOP: u64 = 1 << 31;
+
+impl DecodeLimits {
+    /// Install `self` until the returned guard drops.
+    #[must_use]
+    pub fn scope(self) -> DecodeLimitsGuard {
+        DecodeLimitsGuard(DECODE_LIMITS.with(|l| l.replace(Some(self))))
+    }
+
+    /// The limits of the decode running on this thread, if any.
+    #[must_use]
+    pub fn current() -> Option<Self> {
+        DECODE_LIMITS.with(std::cell::Cell::get)
+    }
+
+    /// Largest matrix dimension a payload with these limits may carry.
+    #[must_use]
+    pub fn max_dim(&self) -> u64 {
+        self.node_bound
+            .max(self.edge_bound)
+            .saturating_mul(2)
+            .saturating_add(DIM_SLOP)
+    }
+}
+
+pub struct DecodeLimitsGuard(Option<DecodeLimits>);
+
+impl Drop for DecodeLimitsGuard {
+    fn drop(&mut self) {
+        DECODE_LIMITS.with(|l| l.set(self.0));
+    }
+}
+
+/// Types that can deserialize themselves from a [`Reader`].
+pub trait Decode<const VERSION: u64>: Sized {
+    fn decode(r: &mut dyn Reader) -> Result<Self, String>;
+
+    /// Decode `count` entities from the reader into `self`.
+    ///
+    /// `attr_limit` is the length of the graph's attribute dictionary: any
+    /// attribute id at or above it names nothing and must be dropped. It rides on
+    /// the trait rather than on an inherent method so the bound cannot be skipped
+    /// — an earlier revision had `AttributeStore` satisfy this signature by
+    /// assuming `usize::MAX`, which silently disabled the check on two of the
+    /// three load paths, including the multi-key one (every graph large enough to
+    /// be split across virtual keys). Implementors that decode no attributes
+    /// ignore it.
+    fn decode_with_count(
+        &mut self,
+        r: &mut dyn Reader,
+        count: u64,
+        attr_limit: usize,
+    ) -> Result<(), String> {
+        let _ = (r, count, attr_limit);
+        unimplemented!()
+    }
+}
+
 impl Encode<19> for RoaringTreemap {
     fn encode(
         &self,
@@ -254,6 +354,24 @@ impl Decode<19> for RoaringTreemap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A server with the largest `NODE_CREATION_BUFFER` (2^30) saves a one-node
+    /// graph at a 2^30 capacity, and growing past it gives 2^31 (#3643).
+    #[test]
+    fn max_dim_covers_the_largest_creation_chunk_capacity() {
+        let small = DecodeLimits {
+            node_bound: 16_385,
+            edge_bound: 0,
+        };
+        assert!(small.max_dim() >= 1 << 31);
+        // 25% growth from the id bound, rounded up to two 2^30 chunks.
+        let bound = 3u64 << 30;
+        let big = DecodeLimits {
+            node_bound: bound,
+            edge_bound: 0,
+        };
+        assert!(big.max_dim() >= bound + bound / 4 + (2 << 30));
+    }
 
     struct OneBuffer(Option<Vec<u8>>);
 

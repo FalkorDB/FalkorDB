@@ -55,6 +55,7 @@
 #![allow(clippy::doc_markdown)]
 
 use std::{
+    borrow::Cow,
     marker::PhantomData,
     mem::{ManuallyDrop, MaybeUninit},
     os::raw::c_void,
@@ -69,13 +70,13 @@ use parking_lot::Mutex;
 
 use crate::graph::graphblas::{
     lagraph_bindings::{LAGraph_Finalize, LAGraph_Init},
-    serialization::{Decode, Encode, Reader, Writer},
+    serialization::{Decode, DecodeLimits, Encode, Reader, Writer},
 };
 
 /// Size of the `GxB_Container_struct` in bytes.
 const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_struct>();
 
-use super::vector::Vector;
+use super::vector::{Component, Vector};
 use super::{
     GrB_BOOL, GrB_BinaryOp, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R,
     GrB_DESC_RC, GrB_DESC_RCT0, GrB_DESC_RCT0T1, GrB_DESC_RCT1, GrB_DESC_RS, GrB_DESC_RSC,
@@ -97,7 +98,7 @@ use super::{
     GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_build_Scalar,
     GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type,
     GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field, GxB_PLUS_PAIR_UINT64, GxB_Print_Level,
-    GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
+    GxB_SPARSE, GxB_Type_size, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
     GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_kount,
     GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
     GxB_unload_Matrix_into_Container,
@@ -444,11 +445,262 @@ unsafe fn pin_sparse(m: GrB_Matrix) {
     debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 }
 
+/// Frees a `GxB_Container` and whatever vectors it still holds, on every exit
+/// from [`Matrix::decode`] — the early error returns included.
+struct ContainerGuard(super::GxB_Container);
+
+impl Drop for ContainerGuard {
+    fn drop(&mut self) {
+        let info = unsafe { GxB_Container_free(&raw mut self.0) };
+        debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+    }
+}
+
+/// Most a matrix dimension can be: GraphBLAS's `GrB_INDEX_MAX`.
+const MAX_DIM: u64 = 1 << 60;
+
+/// The scalar fields of a matrix header as a payload states them.
+///
+/// Only these are taken from the payload. The rest of the container (arenas,
+/// the reserved "future" words, every pointer) stays as `GxB_Container_new`
+/// made it: a payload has no business setting them, and `header_arena` in
+/// particular picks the allocator GraphBLAS later frees with.
+struct ContainerHeader {
+    nrows: u64,
+    ncols: u64,
+    nvals: u64,
+    format: i32,
+    orientation: i32,
+    iso: bool,
+}
+
+impl ContainerHeader {
+    fn parse(bytes: &[u8]) -> Result<Self, String> {
+        // Offsets are those of `GxB_Container_struct`; the size assertion in
+        // the bindings pins its layout and `container_header_offsets` checks
+        // these against it.
+        fn at<const N: usize>(
+            bytes: &[u8],
+            off: usize,
+        ) -> [u8; N] {
+            bytes[off..off + N].try_into().expect("slice has N bytes")
+        }
+        let h = Self {
+            nrows: u64::from_le_bytes(at(bytes, OFF_NROWS)),
+            ncols: u64::from_le_bytes(at(bytes, OFF_NROWS + 8)),
+            nvals: u64::from_le_bytes(at(bytes, OFF_NROWS + 32)),
+            format: i32::from_le_bytes(at(bytes, OFF_FORMAT)),
+            orientation: i32::from_le_bytes(at(bytes, OFF_FORMAT + 4)),
+            iso: bytes[OFF_ISO] != 0,
+        };
+        // Pinned sparse or hypersparse on both ends (`pin_sparse`); bitmap and
+        // full would allocate nrows * ncols.
+        if h.format != GxB_SPARSE as i32 && h.format != GxB_HYPERSPARSE as i32 {
+            return Err(format!("matrix format {} is not sparse", h.format));
+        }
+        if h.orientation != GrB_Orientation::GrB_ROWMAJOR as i32
+            && h.orientation != GrB_Orientation::GrB_COLMAJOR as i32
+        {
+            return Err(format!("matrix orientation {} is unknown", h.orientation));
+        }
+        let max_dim = DecodeLimits::current().map_or(MAX_DIM, |l| l.max_dim().min(MAX_DIM));
+        if h.nrows > max_dim || h.ncols > max_dim {
+            return Err(format!(
+                "matrix dimensions {}x{} exceed the {max_dim} the graph allows",
+                h.nrows, h.ncols
+            ));
+        }
+        Ok(h)
+    }
+}
+
+const OFF_NROWS: usize = std::mem::offset_of!(super::GxB_Container_struct, nrows);
+const OFF_FORMAT: usize = std::mem::offset_of!(super::GxB_Container_struct, format);
+const OFF_ISO: usize = std::mem::offset_of!(super::GxB_Container_struct, iso);
+
+/// Bytes per entry of an index array (`p`, `h` or `i`): GraphBLAS keeps them
+/// as 32- or 64-bit integers, whichever the matrix's size calls for.
+fn index_width(c: &Component) -> Result<usize, String> {
+    match c.type_name() {
+        b"GrB_UINT32" | b"GrB_INT32" => Ok(4),
+        b"GrB_UINT64" | b"GrB_INT64" => Ok(8),
+        other => Err(format!(
+            "matrix index array has type {}",
+            String::from_utf8_lossy(other)
+        )),
+    }
+}
+
+/// Entry `k` of an index array of `w`-byte entries.
+#[inline(always)]
+fn index_at(
+    bytes: &[u8],
+    w: usize,
+    k: usize,
+) -> u64 {
+    if w == 4 {
+        u64::from(u32::from_le_bytes(
+            bytes[4 * k..4 * k + 4].try_into().expect("4 bytes"),
+        ))
+    } else {
+        u64::from_le_bytes(bytes[8 * k..8 * k + 8].try_into().expect("8 bytes"))
+    }
+}
+
+/// Check that the arrays of a sparse or hypersparse matrix are a matrix: the
+/// pointer array starts at zero, never decreases and ends at `nvals`; the
+/// hyperlist, if there is one, is strictly increasing and inside the
+/// dimension; every row of indices is strictly increasing and inside the other
+/// dimension. Returns the number of non-empty vectors, which the pass over the
+/// pointers counts for free.
+///
+/// `GxB_load_Matrix_from_Container` checks none of that, only that the arrays
+/// are long enough, and everything after it — iterators above all — trusts it:
+/// a pointer or index out of range reads past the arrays and crashes the server.
+/// GraphBLAS has a checker for this (`GxB_Matrix_fprint` at `GxB_SILENT`), but it
+/// runs at 10 to 35 ns an entry, which more than doubled the cost of loading a
+/// graph of a few million edges; a loop over the raw arrays costs next to nothing.
+fn check_structure(
+    header: &ContainerHeader,
+    h: &Component,
+    p: &Component,
+    i: &Component,
+) -> Result<i64, String> {
+    let bad = |what: &str| Err(format!("corrupt matrix structure: {what}"));
+    let (vlen, vdim) = if header.orientation == GrB_Orientation::GrB_COLMAJOR as i32 {
+        (header.nrows, header.ncols)
+    } else {
+        (header.ncols, header.nrows)
+    };
+    let (pw, iw) = (index_width(p)?, index_width(i)?);
+    // The arrays may be allocated past the entries in use, so the counts are
+    // the components' own, held to fit in what was sent.
+    let (plen1, nnz) = (p.n_entries as usize, i.n_entries);
+    if p.n_entries
+        .checked_mul(pw as u64)
+        .is_none_or(|n| n > p.arr_data.len() as u64)
+        || i.n_entries
+            .checked_mul(iw as u64)
+            .is_none_or(|n| n > i.arr_data.len() as u64)
+        || plen1 == 0
+    {
+        return bad("pointer or index array is shorter than it says");
+    }
+    let (pa, ia) = (&p.arr_data[..], &i.arr_data[..]);
+    let nvec = plen1 - 1;
+
+    if header.format == GxB_HYPERSPARSE as i32 {
+        let hw = index_width(h)?;
+        let ha = &h.arr_data[..];
+        if h.n_entries != nvec as u64
+            || nvec as u64 > vdim
+            || h.n_entries
+                .checked_mul(hw as u64)
+                .is_none_or(|n| n > ha.len() as u64)
+        {
+            return bad("hyperlist length does not match the pointer array");
+        }
+        let mut last = None;
+        for k in 0..nvec {
+            let j = index_at(ha, hw, k);
+            if j >= vdim || last.is_some_and(|l| l >= j) {
+                return bad("hyperlist is not strictly increasing within the dimension");
+            }
+            last = Some(j);
+        }
+    } else if nvec as u64 != vdim {
+        return bad("pointer array does not cover the dimension");
+    }
+
+    if index_at(pa, pw, 0) != 0 || index_at(pa, pw, nvec) != header.nvals || header.nvals > nnz {
+        return bad("pointers do not span exactly the entries");
+    }
+    let outcome = match (pw, iw) {
+        (4, 4) => check_rows::<u32, u32>(pa, ia, nvec, vlen, header.nvals),
+        (4, _) => check_rows::<u32, u64>(pa, ia, nvec, vlen, header.nvals),
+        (_, 4) => check_rows::<u64, u32>(pa, ia, nvec, vlen, header.nvals),
+        _ => check_rows::<u64, u64>(pa, ia, nvec, vlen, header.nvals),
+    };
+    outcome.or_else(bad)
+}
+
+/// An unsigned integer an index array is made of.
+trait Index: Copy + Ord + Into<u64> {
+    const WIDTH: usize;
+    fn from_le(bytes: &[u8]) -> Self;
+}
+
+impl Index for u32 {
+    const WIDTH: usize = 4;
+    fn from_le(bytes: &[u8]) -> Self {
+        Self::from_le_bytes(bytes.try_into().expect("4 bytes"))
+    }
+}
+
+impl Index for u64 {
+    const WIDTH: usize = 8;
+    fn from_le(bytes: &[u8]) -> Self {
+        Self::from_le_bytes(bytes.try_into().expect("8 bytes"))
+    }
+}
+
+/// The first `n` entries of an index array, in place when the bytes are aligned
+/// for `T` (they nearly always are), copied when not.
+fn typed<T: Index>(
+    bytes: &[u8],
+    n: usize,
+) -> Cow<'_, [T]> {
+    let bytes = &bytes[..n * T::WIDTH];
+    if cfg!(target_endian = "little") {
+        // SAFETY: every bit pattern is a valid `u32` or `u64`, and `align_to`
+        // hands back only the part of the bytes that is aligned and whole.
+        let (head, body, tail) = unsafe { bytes.align_to::<T>() };
+        if head.is_empty() && tail.is_empty() {
+            return Cow::Borrowed(body);
+        }
+    }
+    Cow::Owned(bytes.chunks_exact(T::WIDTH).map(T::from_le).collect())
+}
+
+/// The pointers run from 0 to `nvals` without decreasing, and each row of
+/// indices they delimit is strictly increasing and below `vlen`. Returns how
+/// many of those rows have entries.
+fn check_rows<P: Index, I: Index>(
+    pa: &[u8],
+    ia: &[u8],
+    nvec: usize,
+    vlen: u64,
+    nvals: u64,
+) -> Result<i64, &'static str> {
+    let ptrs = typed::<P>(pa, nvec + 1);
+    // `nvals` is at most the entries held (checked by the caller), and no
+    // pointer is allowed past it, so every slice below stays inside `idx`.
+    let idx = typed::<I>(ia, usize::try_from(nvals).map_err(|_| "entry count")?);
+    let mut start: u64 = ptrs[0].into();
+    let mut nonempty = 0i64;
+    for &end in &ptrs[1..] {
+        let end: u64 = end.into();
+        if end < start || end > nvals {
+            return Err("pointers decrease or pass the entry count");
+        }
+        let row = &idx[start as usize..end as usize];
+        // Strictly increasing, so only the last can be out of range.
+        if row.last().is_some_and(|&last| last.into() >= vlen)
+            || row.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err("indices are out of range or not strictly increasing");
+        }
+        nonempty += i64::from(end > start);
+        start = end;
+    }
+    Ok(nonempty)
+}
+
 impl<T> Decode<19> for Matrix<T> {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let container_bytes = r.read_buffer()?;
 
-        // Validate container size before copying
+        // Validate container size before reading it
         if container_bytes.len() < CONTAINER_STRUCT_SIZE {
             return Err(format!(
                 "container buffer too small: {} bytes < {} bytes required",
@@ -456,6 +708,7 @@ impl<T> Decode<19> for Matrix<T> {
                 CONTAINER_STRUCT_SIZE
             ));
         }
+        let header = ContainerHeader::parse(&container_bytes)?;
 
         unsafe {
             let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
@@ -465,29 +718,45 @@ impl<T> Decode<19> for Matrix<T> {
                 GrB_Info::GrB_SUCCESS,
                 "GxB_Container_new failed: {info:?}"
             );
-            let container = container.assume_init();
+            let guard = ContainerGuard(container.assume_init());
+            let container = guard.0;
 
-            // Copy struct data into the allocated container
-            std::ptr::copy_nonoverlapping(
-                container_bytes.as_ptr(),
-                container.cast::<u8>(),
-                CONTAINER_STRUCT_SIZE,
-            );
+            (*container).nrows = header.nrows;
+            (*container).ncols = header.ncols;
+            // The payload's own counts are not trusted, and kernels size
+            // workspace by them; `check_structure` counts the real one below.
+            (*container).nrows_nonempty = -1;
+            (*container).ncols_nonempty = -1;
+            (*container).nvals = header.nvals;
+            (*container).format = header.format;
+            (*container).orientation = header.orientation;
+            (*container).iso = header.iso;
+            // A saved matrix is waited, so never jumbled; the structure check
+            // below rejects one that is not sorted.
+            (*container).jumbled = false;
 
-            // Nullify vector/matrix pointers (will be populated below)
-            (*container).x = null_mut();
-            (*container).h = null_mut();
-            (*container).b = null_mut();
-            (*container).i = null_mut();
-            (*container).p = null_mut();
-            (*container).Y = null_mut();
-
-            // Read and load 5 vectors: x, h, p, i, b
-            (*container).x = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
-            (*container).h = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
-            (*container).p = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
-            (*container).i = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
-            (*container).b = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
+            // Read the 5 component vectors, x, h, p, i, b, and check the
+            // structure they spell out before GraphBLAS gets any of them. Each
+            // is stored in the container the moment it is loaded, so the guard
+            // frees it on a later error.
+            let x = Component::read(r)?;
+            let h = Component::read(r)?;
+            let p = Component::read(r)?;
+            let i = Component::read(r)?;
+            let b = Component::read(r)?;
+            let nonempty = check_structure(&header, &h, &p, &i)?;
+            // Leaving it unknown (-1) makes GraphBLAS count it again on first
+            // use: a pass over every vector, per matrix.
+            if header.orientation == GrB_Orientation::GrB_COLMAJOR as i32 {
+                (*container).ncols_nonempty = nonempty;
+            } else {
+                (*container).nrows_nonempty = nonempty;
+            }
+            (*container).x = ManuallyDrop::new(x.load()?).ptr();
+            (*container).h = ManuallyDrop::new(h.load()?).ptr();
+            (*container).p = ManuallyDrop::new(p.load()?).ptr();
+            (*container).i = ManuallyDrop::new(i.load()?).ptr();
+            (*container).b = ManuallyDrop::new(b.load()?).ptr();
 
             // Create matrix and load from container
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
@@ -497,21 +766,58 @@ impl<T> Decode<19> for Matrix<T> {
                 GrB_Info::GrB_SUCCESS,
                 "GrB_Matrix_new failed: {info:?}"
             );
-            let m = m.assume_init();
+            let mut m = m.assume_init();
             pin_sparse(m);
 
+            // `GxB_load_Matrix_from_Container` checks that the arrays are
+            // long enough for what the header says; `check_structure` has
+            // already checked what is in them. A failure is bad input, not a
+            // broken invariant.
             let info = GxB_load_Matrix_from_Container(m, container, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            if info != GrB_Info::GrB_SUCCESS {
+                GrB_Matrix_free(&raw mut m);
+                return Err(format!("GxB_load_Matrix_from_Container failed: {info:?}"));
+            }
+
+            // The container import takes the payload's orientation over the
+            // row-major hint `pin_sparse` set, and row iterators (every reader of
+            // a decoded matrix) refuse a column-major one. Convert it; a row-major
+            // payload, which is every one this engine writes, pays nothing.
+            if header.orientation == GrB_Orientation::GrB_COLMAJOR as i32 {
+                let info = GrB_Matrix_set_INT32(
+                    m,
+                    GrB_Orientation::GrB_ROWMAJOR as i32,
+                    GxB_Option_Field::GrB_STORAGE_ORIENTATION_HINT as _,
+                );
+                if info != GrB_Info::GrB_SUCCESS {
+                    GrB_Matrix_free(&raw mut m);
+                    return Err(format!("matrix could not be stored by row: {info:?}"));
+                }
+            }
+
+            // The element type is whatever the payload's value vector said.
+            // Readers of a `Matrix<T>` take `size_of::<T>()` bytes per entry
+            // straight from the array, so a narrower type would be read past
+            // its end. A wider one is fine, and is what a bool matrix comes
+            // back as when it was saved as UINT64 (a tensor's delta-minus).
+            let mut ty: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
+            let mut size = 0usize;
+            if GxB_Matrix_type(ty.as_mut_ptr(), m) != GrB_Info::GrB_SUCCESS
+                || GxB_Type_size(&raw mut size, ty.assume_init()) != GrB_Info::GrB_SUCCESS
+                || size < std::mem::size_of::<T>()
+            {
+                GrB_Matrix_free(&raw mut m);
+                return Err(format!(
+                    "matrix element size {size} is narrower than the {} expected",
+                    std::mem::size_of::<T>()
+                ));
+            }
 
             // The hyper-hash (Y) was nullified above and is not serialized, so
             // a hypersparse matrix comes back with GxB_WILL_WAIT set. Rebuild
             // it now so `pending()` reflects real pending work (no-op for
             // non-hypersparse matrices).
             let info = GrB_Matrix_wait(m, GrB_WaitMode::GrB_MATERIALIZE as _);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-
-            let mut c = container;
-            let info = GxB_Container_free(&raw mut c);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             Ok(Self {
@@ -2020,10 +2326,211 @@ impl<E: IterExtract> Iterator for Iter<E> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeSet, VecDeque};
 
+    use super::super::serialization::{Decode, DecodeLimits, Encode, Reader, Writer};
     use super::super::test_init::ensure_init;
-    use super::Matrix;
+    use super::{GrB_Orientation, Matrix, OFF_FORMAT};
+
+    /// The buffers a matrix writes, kept in order so a test can edit one and
+    /// replay the stream into [`Matrix::decode`]. A matrix writes only buffers,
+    /// plus three scalars per component vector.
+    #[derive(Clone)]
+    enum Op {
+        Unsigned(u64),
+        Signed(i64),
+        Buffer(Vec<u8>),
+    }
+
+    #[derive(Default)]
+    struct Tape(Vec<Op>);
+
+    impl Writer for Tape {
+        fn write_unsigned(
+            &mut self,
+            val: u64,
+        ) {
+            self.0.push(Op::Unsigned(val));
+        }
+        fn write_signed(
+            &mut self,
+            val: i64,
+        ) {
+            self.0.push(Op::Signed(val));
+        }
+        fn write_double(
+            &mut self,
+            _: f64,
+        ) {
+            unreachable!("a matrix writes no doubles");
+        }
+        fn write_buffer(
+            &mut self,
+            data: &[u8],
+        ) {
+            self.0.push(Op::Buffer(data.to_vec()));
+        }
+    }
+
+    struct Replay(VecDeque<Op>);
+
+    impl Reader for Replay {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            match self.0.pop_front() {
+                Some(Op::Unsigned(v)) => Ok(v),
+                _ => Err("replay: expected unsigned".to_string()),
+            }
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            match self.0.pop_front() {
+                Some(Op::Signed(v)) => Ok(v),
+                _ => Err("replay: expected signed".to_string()),
+            }
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            Err("replay: no doubles".to_string())
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            match self.0.pop_front() {
+                Some(Op::Buffer(v)) => Ok(v),
+                _ => Err("replay: expected buffer".to_string()),
+            }
+        }
+    }
+
+    /// A 64 x 64 matrix of 128 entries, as the stream `encode` writes.
+    fn encoded() -> Vec<Op> {
+        let mut m = Matrix::<u64>::new(64, 64);
+        let (rows, cols): (Vec<u64>, Vec<u64>) =
+            (0..64u64).flat_map(|i| [(i, i), (i, (i + 1) % 64)]).unzip();
+        let vals: Vec<u64> = (0..128).collect();
+        m.build(&rows, &cols, &vals);
+        m.wait();
+        let mut tape = Tape::default();
+        m.encode(&mut tape);
+        tape.0
+    }
+
+    fn decode_u64(ops: Vec<Op>) -> Result<Matrix<u64>, String> {
+        Matrix::<u64>::decode(&mut Replay(ops.into()))
+    }
+
+    /// The component vectors follow the container buffer in the order x, h, p,
+    /// i, b; each is its array, type name, then three scalars. Index of the
+    /// array of component `k`.
+    fn array_of(k: usize) -> usize {
+        1 + 5 * k
+    }
+
+    #[test]
+    fn decode_round_trips() {
+        ensure_init();
+        let m = decode_u64(encoded()).unwrap();
+        assert_eq!((m.nrows(), m.ncols(), m.nvals()), (64, 64, 128));
+        assert_eq!(m.iter(0, u64::MAX).count(), 128);
+    }
+
+    /// `GxB_load_Matrix_from_Container` checks that the arrays are long enough,
+    /// not that what is in them is a valid matrix. An index out of range made
+    /// `Tensor::decode` read off the end of the value array and crash the server.
+    #[test]
+    fn decode_refuses_a_corrupt_structure() {
+        ensure_init();
+        // x, h, p, i, b: the row indices are the fourth vector.
+        for (what, k, byte) in [("index array", 3, 0xFF), ("pointer array", 2, 0xFF)] {
+            let mut ops = encoded();
+            let Op::Buffer(arr) = &mut ops[array_of(k)] else {
+                panic!("not a buffer");
+            };
+            assert!(!arr.is_empty(), "{what} is empty");
+            arr.fill(byte);
+            let err = decode_u64(ops).map(|_| ()).unwrap_err();
+            assert!(
+                err.contains("corrupt matrix") || err.contains("GxB_load_Matrix"),
+                "{what}: {err}"
+            );
+        }
+    }
+
+    /// A payload may declare column-major storage. Row iterators refuse it, and
+    /// `Tensor::decode` iterates every matrix by row, so it is stored row-major.
+    #[test]
+    fn decode_stores_a_column_major_payload_row_major() {
+        ensure_init();
+        let mut ops = encoded();
+        let Op::Buffer(header) = &mut ops[0] else {
+            panic!("not a buffer");
+        };
+        let at = OFF_FORMAT + 4;
+        header[at..at + 4].copy_from_slice(&(GrB_Orientation::GrB_COLMAJOR as i32).to_le_bytes());
+        let m = decode_u64(ops).unwrap();
+        assert_eq!((m.nrows(), m.ncols(), m.nvals()), (64, 64, 128));
+        assert_eq!(m.iter(0, u64::MAX).count(), 128);
+    }
+
+    #[test]
+    fn decode_refuses_a_header_it_cannot_honour() {
+        ensure_init();
+        // A bitmap or full matrix is nrows * ncols of storage.
+        let mut ops = encoded();
+        let Op::Buffer(header) = &mut ops[0] else {
+            panic!("not a buffer");
+        };
+        header[OFF_FORMAT..OFF_FORMAT + 4].copy_from_slice(&8i32.to_le_bytes());
+        let err = decode_u64(ops).map(|_| ()).unwrap_err();
+        assert!(err.contains("not sparse"), "{err}");
+
+        // Dimensions past what the payload's own counts allow.
+        let mut huge = Matrix::<u64>::new(1 << 50, 1 << 50);
+        huge.wait();
+        let mut tape = Tape::default();
+        huge.encode(&mut tape);
+        let _scope = DecodeLimits {
+            node_bound: 10,
+            edge_bound: 10,
+        }
+        .scope();
+        let err = decode_u64(tape.0).map(|_| ()).unwrap_err();
+        assert!(err.contains("exceed"), "{err}");
+    }
+
+    /// A hypersparse matrix keeps a list of the rows that have entries; a list
+    /// out of order or out of range is as unsound as bad indices.
+    #[test]
+    fn decode_checks_a_hypersparse_matrix() {
+        ensure_init();
+        let mut m = Matrix::<u64>::new(1 << 40, 1 << 40);
+        m.build(&[5, 1 << 30, 1 << 39], &[1, 2, 3], &[10, 11, 12]);
+        m.wait();
+        let mut tape = Tape::default();
+        m.encode(&mut tape);
+        let decoded = decode_u64(tape.0.clone()).unwrap();
+        assert_eq!(decoded.nvals(), 3);
+
+        // The hyperlist is the second component: swap its first two rows.
+        let mut bad = tape.0;
+        let Op::Buffer(h) = &mut bad[array_of(1)] else {
+            panic!("not a buffer");
+        };
+        let w = h.len() / 3;
+        let (a, b) = h.split_at_mut(w);
+        a.swap_with_slice(&mut b[..w]);
+        let err = decode_u64(bad).map(|_| ()).unwrap_err();
+        assert!(err.contains("corrupt matrix"), "{err}");
+    }
+
+    /// A reader of `Matrix<u64>` takes eight bytes per entry from the array.
+    #[test]
+    fn decode_refuses_a_narrower_element_type() {
+        ensure_init();
+        let mut m = Matrix::<bool>::new(8, 8);
+        m.set(1, 2, true);
+        m.wait();
+        let mut tape = Tape::default();
+        m.encode(&mut tape);
+        let err = decode_u64(tape.0).map(|_| ()).unwrap_err();
+        assert!(err.contains("narrower"), "{err}");
+    }
 
     /// `grown` must place every entry at its original coordinate, at the new
     /// dims, for every growth shape — including the degenerate no-growth call

@@ -921,7 +921,10 @@ impl Graph {
     ///
     /// Used by the RDB load path to construct a fully-populated graph
     /// without going through the mutation API.
-    #[must_use]
+    ///
+    /// Every id and count arrives from an untrusted payload, so a graph the
+    /// counts do not account for is an `Err`, not a panic or an allocation
+    /// sized by the lie.
     #[allow(clippy::too_many_arguments)]
     pub fn restore(
         name: &str,
@@ -940,7 +943,13 @@ impl Graph {
         attrs_name: AttrNameMap,
         node_attrs: AttributeStore,
         relationship_attrs: AttributeStore,
-    ) -> Self {
+    ) -> Result<Self, String> {
+        // Every id below is read from an untrusted payload (`GRAPH.RESTORE`,
+        // an RDB), and several of them size an allocation, so each is held to
+        // what the counts say before anything is built.
+        let node_bound = Self::id_bound("node", node_count, &deleted_nodes)?;
+        let edge_bound = Self::id_bound("edge", relationship_count, &deleted_relationships)?;
+
         // Rebuild the graph-wide reverse index after RDB load to ensure
         // complete sync with the decoded edges.
         // Two scans rather than one scan into a `Vec` of triples: materialising
@@ -956,10 +965,14 @@ impl Graph {
         // begins at the smallest edge id whose own endpoints need at least `r`.
         // Three scalars, no per-edge state.
         let mut max_edge_id = 0u64;
+        let mut max_endpoint = 0u64;
+        let mut live_edges = 0u64;
         let mut starts = [u64::MAX; 3];
         for tensor in &relationship_matrices {
             for (src, dst, edge_id) in tensor.iter_edges() {
+                live_edges += 1;
                 max_edge_id = max_edge_id.max(edge_id);
+                max_endpoint = max_endpoint.max(src).max(dst);
                 let rank = EndpointIndex::rank_for(src.max(dst));
                 for r in 1..=rank {
                     let slot = &mut starts[usize::from(r) - 1];
@@ -967,11 +980,22 @@ impl Graph {
                 }
             }
         }
-        let len = if relationship_matrices.iter().any(|t| t.edge_count() > 0) {
-            max_edge_id + 1
-        } else {
-            0
-        };
+        // The index below is sized by the highest edge id, so that id has to be
+        // one the counts account for: with the edges present equal to the
+        // declared count, the bound is backed by real edges and listed
+        // deletions, and the index cannot outgrow the payload.
+        if live_edges != relationship_count {
+            return Err(format!(
+                "the payload declares {relationship_count} edges but carries {live_edges}"
+            ));
+        }
+        if live_edges > 0 && (max_edge_id >= edge_bound || max_endpoint >= node_bound) {
+            return Err(format!(
+                "an edge refers to id {max_edge_id} or node {max_endpoint}, beyond the \
+                 {edge_bound} edge and {node_bound} node ids the graph has"
+            ));
+        }
+        let len = if live_edges > 0 { max_edge_id + 1 } else { 0 };
         // A tier nothing reached starts at the end, i.e. stays empty. Clamped
         // monotone so a later tier never begins before an earlier one.
         let mut acc = len;
@@ -994,7 +1018,7 @@ impl Graph {
         let node_cap = node_ids.bound();
         let relationship_cap = relationship_ids.bound();
         let schema_version = (node_labels.len() + relationship_types.len()) as u64;
-        Self {
+        Ok(Self {
             name: name.to_string(),
             node_cap: node_cap.next_multiple_of(chunk).max(64),
             relationship_cap: relationship_cap.next_multiple_of(chunk).max(64),
@@ -1029,7 +1053,27 @@ impl Graph {
             // populate path rebuilds it.
             #[cfg(feature = "index-falkordb")]
             falkordb_index: FalkorDbIndex::new(),
+        })
+    }
+
+    /// One past the highest id of an entity kind with `live` entities and the
+    /// `deleted` ids listed, checking that the deleted ids fit under it.
+    fn id_bound(
+        kind: &str,
+        live: u64,
+        deleted: &RoaringTreemap,
+    ) -> Result<u64, String> {
+        let bound = live
+            .checked_add(deleted.len())
+            .ok_or_else(|| format!("{kind} count {live} is out of range"))?;
+        if let Some(max) = deleted.max()
+            && max >= bound
+        {
+            return Err(format!(
+                "deleted {kind} id {max} is beyond the {bound} {kind} ids the graph has"
+            ));
         }
+        Ok(bound)
     }
 
     /// Rebuild derived matrices after RDB load.
@@ -6162,6 +6206,61 @@ mod restore_tests {
     /// reset `node_cap` to that id rounded up to one chunk, so
     /// `rebuild_derived_matrices` shrank every node matrix on load, and a
     /// tensor shrink is where `me` kept the ids of pairs it cut off.
+    /// `Graph::restore` over one relationship type holding the edges `(src, dst, id)`.
+    fn restore_edges(
+        node_count: u64,
+        edge_count: u64,
+        deleted_nodes: &[u64],
+        edges: &[(u64, u64, u64)],
+    ) -> Result<(), String> {
+        const DIM: u64 = 64;
+        let mut tensor = Tensor::new(DIM, DIM);
+        let rows: Vec<u64> = edges.iter().map(|e| e.0).collect();
+        let cols: Vec<u64> = edges.iter().map(|e| e.1).collect();
+        let ids: Vec<u64> = edges.iter().map(|e| e.2).collect();
+        tensor.set_all_from_slices(&rows, &cols, &ids);
+        tensor.flush();
+        Graph::restore(
+            "restore_untrusted",
+            1,
+            node_count,
+            edge_count,
+            deleted_nodes.iter().copied().collect(),
+            RoaringTreemap::new(),
+            VersionedMatrix::<bool>::new(DIM, DIM),
+            VersionedMatrix::<bool>::new(DIM, 1),
+            VersionedMatrix::<bool>::new(0, 0),
+            vec![],
+            vec![tensor],
+            vec![],
+            vec![Arc::new("R".to_string())],
+            AttrNameMap::default(),
+            AttributeStore::new(),
+            AttributeStore::new(),
+        )
+        .map(|_| ())
+    }
+
+    /// The payload's counts are the contract its ids are held to. An id they do
+    /// not account for used to size the endpoint index (an 8 TB allocation for
+    /// one edge numbered 2^40) or index past a table.
+    #[test]
+    fn restore_refuses_ids_the_counts_do_not_account_for() {
+        ensure_init();
+        assert!(restore_edges(2, 2, &[], &[(0, 1, 0), (1, 0, 1)]).is_ok());
+
+        let err = restore_edges(2, 1, &[], &[(0, 1, 1 << 40)]).unwrap_err();
+        assert!(err.contains("beyond"), "edge id: {err}");
+        let err = restore_edges(2, 1, &[], &[(0, 9, 0)]).unwrap_err();
+        assert!(err.contains("beyond"), "endpoint: {err}");
+        let err = restore_edges(2, 2, &[], &[(0, 1, 0)]).unwrap_err();
+        assert!(err.contains("declares 2 edges"), "edge count: {err}");
+        let err = restore_edges(2, 0, &[99], &[]).unwrap_err();
+        assert!(err.contains("deleted node id 99"), "deleted id: {err}");
+        let err = restore_edges(u64::MAX, 0, &[0], &[]).unwrap_err();
+        assert!(err.contains("out of range"), "overflow: {err}");
+    }
+
     #[test]
     fn restore_never_shrinks_the_saved_matrices() {
         ensure_init();
@@ -6188,7 +6287,8 @@ mod restore_tests {
             AttrNameMap::default(),
             AttributeStore::new(),
             AttributeStore::new(),
-        );
+        )
+        .unwrap();
         g.rebuild_derived_matrices();
 
         assert!(
