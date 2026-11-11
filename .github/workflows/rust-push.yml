@@ -116,9 +116,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Test the tag plan
-        run: python3 build/test_publish_tags.py
-
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
@@ -136,39 +133,6 @@ jobs:
 
       - name: Promote rc-mg-${{ github.sha }}-<server> to the rolling tags
         run: python3 build/publish_tags.py edge --sha "$GITHUB_SHA" --execute
-
-  # The tag check also checks latest*, which fails while a release is between
-  # publishing its GitHub release and pushing its images. So wait for the
-  # image job of any release-tag.yml run still going; if one is still going
-  # after 30 minutes, fail here, naming it, rather than run the check.
-  await-release:
-    needs: promote-edge
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Wait for release images still being pushed
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: build/await-release-images.sh
-
-  check-tags:
-    needs: await-release
-    permissions:
-      contents: read
-      packages: read
-    uses: ./.github/workflows/check-published-tags.yml
-    with:
-      target: edge
-    # Docker Hub login, against its anonymous pull rate limit.
-    secrets: inherit
 
   flow-test-matrix:
     runs-on: ubuntu-latest

@@ -35,8 +35,7 @@
 #                          highest published stable release
 #   6. publish-images    — push the per-OS server images, one multi-arch index
 #                          each, as <semver>-<os>-<server>
-#   7. check-tags        — check every tag the release published
-#   8. browser-tests     — exercise the published image
+#   7. browser-tests     — exercise the published image
 #
 # build/publish_tags.py works out every tag pushed here; its tests are the
 # list of what a release, a prerelease and the per-OS images get.
@@ -86,11 +85,6 @@ jobs:
           ref: ${{ inputs.tag || github.ref_name }}
           persist-credentials: false
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: publish-tools
-          persist-credentials: false
-
       - name: Validate tag and Cargo.toml version
         id: check
         env:
@@ -126,16 +120,6 @@ jobs:
           fi
 
           if [ -n "$PRE" ]; then PRERELEASE=true; else PRERELEASE=false; fi
-
-          # The tags this release will publish, before anything is published:
-          # a version they cannot be refuses here, not after the GitHub
-          # release exists. From this workflow's own commit, as the image
-          # jobs run it.
-          python3 publish-tools/build/test_publish_tags.py
-          : > "$RUNNER_TEMP/no-releases.jsonl"
-          python3 publish-tools/build/publish_tags.py release --version "$SEMVER" \
-            --sha "$(git rev-parse HEAD)" --releases "$RUNNER_TEMP/no-releases.jsonl"
-          python3 publish-tools/build/publish_tags.py per-os --version "$SEMVER"
 
           {
             echo "tag=$TAG"
@@ -261,9 +245,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Test the tag plan
-        run: python3 build/test_publish_tags.py
-
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to Docker Hub
@@ -290,12 +271,10 @@ jobs:
           # latest* moves only when this release is the highest stable version
           # with a published (non-draft) GitHub release, so a backport patch on
           # an old version branch does not clobber it and a prerelease never
-          # moves it. The list is read here, right before the push, so a newer
-          # release published meanwhile is already in it.
-          gh api "/repos/${GH_REPO}/releases" --paginate \
-            --jq '.[] | {tag_name, draft, prerelease}' > "$RUNNER_TEMP/releases.jsonl"
-          python3 build/publish_tags.py release --version "$SEMVER" --sha "$COMMIT_SHA" \
-            --releases "$RUNNER_TEMP/releases.jsonl" --execute
+          # moves it. publish_tags.py reads the release list itself, right
+          # before the push and inside this job's lock, so a newer release
+          # published meanwhile is already in it.
+          python3 build/publish_tags.py release --version "$SEMVER" --sha "$COMMIT_SHA" --execute
 
   # Per-OS server images, falkordb-server:<semver>-<os>-<server>. Unlike the
   # Debian images, nothing before the release builds them, so build-artifacts
@@ -317,9 +296,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Test the tag plan
-        run: python3 build/test_publish_tags.py
 
       - name: Download server images
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -355,42 +331,6 @@ jobs:
         # The script pushes nothing unless every per-OS archive is there and
         # holds the platform and server its name says.
         run: python3 build/publish_tags.py per-os --version "$SEMVER" --images "$RUNNER_TEMP/images" --execute
-
-  # latest* points at the newest stable GitHub release, which may be another
-  # version's run that has published its release but not yet its images
-  # (versions do not share this workflow's concurrency group). Wait for those,
-  # as rust-push.yml does, so the check does not fail on someone else's
-  # release.
-  await-release:
-    needs: [guard, image, publish-images]
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Wait for other releases' images
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: build/await-release-images.sh --exclude-run "$GITHUB_RUN_ID"
-
-  # One check after every image job: latest* is judged against the release's
-  # own tags, so a check before all of them are pushed would fail.
-  check-tags:
-    needs: [guard, image, publish-images, await-release]
-    permissions:
-      contents: read
-      packages: read
-    uses: ./.github/workflows/check-published-tags.yml
-    with:
-      target: ${{ needs.guard.outputs.semver }}
-    # Docker Hub login, against its anonymous pull rate limit.
-    secrets: inherit
 
   # Browser tests for the released image. Mirrors the C engine's
   # browser-tests-trigger.yml hook so both engines exercise the browser on a

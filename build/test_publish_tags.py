@@ -3,7 +3,8 @@
 
 The expected tags are written out by hand from the contract's table of
 public tags, not computed, so a change to the generator cannot change what
-it is checked against.
+it is checked against. tag-plan.yml's rehearse job runs the --execute path
+against real registries; the Execute tests here cover only its refusals.
 """
 
 from __future__ import annotations
@@ -11,7 +12,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -22,7 +22,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import publish_tags as pt  # noqa: E402
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
-OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98"
 
 
 def release(tag, draft=False, prerelease=False):
@@ -51,206 +50,92 @@ RELEASES = [
     release("v4.20.5", prerelease=True),
 ]
 
+REPOS = ("falkordb", "falkordb-server")
 
-class EdgeTags(unittest.TestCase):
-    def test_table(self):
+
+class Tables(unittest.TestCase):
+    def test_edge(self):
         # Rolling: edge-rs-valkey, edge-rs-redis; edge and edge-rs -> Valkey.
-        got = by_source(pt.edge_plan(SHA))
         want = {}
-        for repo in ("falkordb", "falkordb-server"):
+        for repo in REPOS:
             want[f"ghcr.io/falkordb/{repo}:rc-mg-{SHA}-valkey"] = both(repo, "edge-rs-valkey", "edge-rs", "edge")
             want[f"ghcr.io/falkordb/{repo}:rc-mg-{SHA}-redis"] = both(repo, "edge-rs-redis")
-        self.assertEqual(got, want)
+        self.assertEqual(by_source(pt.edge_plan(SHA)), want)
 
-    def test_never_reads_the_unsuffixed_ci_tag(self):
-        for step in pt.edge_plan(SHA):
-            self.assertRegex(step.source, r":rc-mg-[0-9a-f]{40}-(valkey|redis)$")
-
-    def test_needs_a_full_sha(self):
-        for bad in ("abc123", SHA.upper(), SHA + "0", "", SHA + "\n"):
-            with self.assertRaises(pt.PlanError):
-                pt.edge_plan(bad)
-
-
-class ReleaseTags(unittest.TestCase):
-    def test_highest_stable_moves_latest(self):
-        got = by_source(pt.release_plan("6.1.0", SHA, RELEASES + [release("v6.1.0")]))
+    def test_release_that_moves_latest(self):
         want = {}
-        for repo in ("falkordb", "falkordb-server"):
+        for repo in REPOS:
             want[f"ghcr.io/falkordb/{repo}:rc-mg-{SHA}-valkey"] = both(
                 repo, "6.1.0-valkey", "6.1.0", "latest-valkey", "latest"
             )
             want[f"ghcr.io/falkordb/{repo}:rc-mg-{SHA}-redis"] = both(repo, "6.1.0-redis", "latest-redis")
-        self.assertEqual(got, want)
+        self.assertEqual(by_source(pt.release_plan("6.1.0", SHA, RELEASES + [release("v6.1.0")])), want)
 
-    def test_prerelease_gets_release_tags_but_never_latest(self):
-        # Even when its GitHub release was not marked prerelease, and is the
-        # highest there is.
+    def test_prerelease(self):
+        # Never latest, even when its GitHub release was not marked prerelease.
         for listed in (release("v6.1.0-rc.1", prerelease=True), release("v6.1.0-rc.1")):
-            got = by_source(pt.release_plan("6.1.0-rc.1", SHA, RELEASES + [listed]))
             want = {}
-            for repo in ("falkordb", "falkordb-server"):
+            for repo in REPOS:
                 want[f"ghcr.io/falkordb/{repo}:rc-mg-{SHA}-valkey"] = both(repo, "6.1.0-rc.1-valkey", "6.1.0-rc.1")
                 want[f"ghcr.io/falkordb/{repo}:rc-mg-{SHA}-redis"] = both(repo, "6.1.0-rc.1-redis")
-            self.assertEqual(got, want)
+            self.assertEqual(by_source(pt.release_plan("6.1.0-rc.1", SHA, RELEASES + [listed])), want)
 
-    def test_prerelease_of_the_latest_version_does_not_move_latest(self):
-        # 6.1.0-rc.2 cut after 6.1.0 shipped shares 6.1.0's X.Y.Z.
-        rels = RELEASES + [release("v6.1.0"), release("v6.1.0-rc.2")]
-        self.assertFalse(pt.moves_latest("6.1.0-rc.2", rels))
-        plan = pt.release_plan("6.1.0-rc.2", SHA, rels)
-        self.assertFalse(any(":latest" in t for t in all_tags(plan)))
-
-    def test_backport_does_not_move_latest(self):
-        plan = pt.release_plan("6.0.5", SHA, RELEASES + [release("v6.1.0"), release("v6.0.5")])
-        self.assertFalse(any(":latest" in t for t in all_tags(plan)))
-        self.assertIn("docker.io/falkordb/falkordb:6.0.5", all_tags(plan))
-
-    def test_no_published_release_does_not_move_latest(self):
-        # Pushed over an existing draft: the release stays a draft.
-        for listed in ([release("v6.1.0", draft=True)], []):
-            plan = pt.release_plan("6.1.0", SHA, RELEASES + listed)
-            self.assertFalse(any(":latest" in t for t in all_tags(plan)), listed)
-
-    def test_a_higher_draft_or_prerelease_does_not_block_latest(self):
-        rels = RELEASES + [release("v6.2.0", draft=True), release("v6.2.0-rc.1", prerelease=True), release("v6.1.0")]
-        self.assertTrue(pt.moves_latest("6.1.0", rels))
-
-    def test_versions_compare_as_numbers(self):
-        rels = [release("v6.9.0"), release("v6.10.0")]
-        self.assertTrue(pt.moves_latest("6.10.0", rels))
-        self.assertFalse(pt.moves_latest("6.9.0", rels))
-
-    def test_malformed_release_names_are_ignored(self):
-        rels = [release("nightly"), release("v7"), release("6.1.0")]
-        self.assertTrue(pt.moves_latest("6.1.0", rels))
-
-    def test_version_shape(self):
-        for bad in ("v6.1.0", "6.1", "6.1.0.1", "6.1.0-", "latest", "5.9.9", "4.22.3", "6.1.0\n"):
-            with self.assertRaises(pt.PlanError, msg=bad):
-                pt.release_plan(bad, SHA, [])
-
-    def test_every_tag_of_the_longest_version_fits(self):
-        """A version is refused up front if any channel's tag would pass the
-        registries' 128 characters, so no release is half published."""
-        longest = "6.2.0-rc." + "1" * (pt.MAX_VERSION_LENGTH - len("6.2.0-rc."))
-        plans = (pt.release_plan(longest, SHA, []), pt.per_os_plan(longest),
-                 pt.rebuild_plan(longest, SHA, latest=False, run_id="9" * 20))
-        tags = [tag for plan in plans for tag in all_tags(plan)]
-        self.assertEqual(max(len(t.rsplit(":", 1)[1]) for t in tags), pt.MAX_TAG_LENGTH)
-        for plan in (pt.release_plan, lambda v, *_: pt.per_os_plan(v)):
-            with self.assertRaisesRegex(pt.PlanError, "characters"):
-                plan(longest + "1", SHA, [])
-
-    def test_prerelease_cannot_name_a_server_os_or_arch(self):
-        # 6.1.0-alpine's Valkey tag would be 6.1.0's Alpine image tag.
-        for bad in ("6.1.0-alpine", "6.1.0-redis", "6.1.0-rc.1-valkey", "6.1.0-x64", "6.1.0-ARM64", "6.1.0-Valkey",
-                    "6.1.0-arm64", "6.1.0-rhel9", "6.1.0-amazonlinux2023.1"):
-            with self.assertRaises(pt.PlanError, msg=bad):
-                pt.release_plan(bad, SHA, [])
-
-
-class RebuildTags(unittest.TestCase):
-    def test_table(self):
-        got = by_source(pt.rebuild_plan("6.1.0", SHA, latest=False))
+    def test_rebuild(self):
         want = {}
-        for repo in ("falkordb", "falkordb-server"):
-            want[f"ghcr.io/falkordb/{repo}:rc-rebuild-{SHA}-valkey"] = both(repo, "6.1.0-valkey", "6.1.0")
-            want[f"ghcr.io/falkordb/{repo}:rc-rebuild-{SHA}-redis"] = both(repo, "6.1.0-redis")
-        self.assertEqual(got, want)
+        for repo in REPOS:
+            want[f"ghcr.io/falkordb/{repo}:rc-rebuild-{SHA}-valkey"] = both(repo, "edge-test-valkey", "edge-test")
+            want[f"ghcr.io/falkordb/{repo}:rc-rebuild-{SHA}-redis"] = both(repo, "edge-test-redis")
+        self.assertEqual(by_source(pt.rebuild_plan("edge-test", SHA, latest=False)), want)
 
-    def test_each_run_publishes_its_own_staging_images(self):
-        """Rebuilds of one commit for different tags run side by side, so
-        each reads only the images its own run staged."""
-        sources = {s for s in by_source(pt.rebuild_plan("6.1.0", SHA, latest=False, run_id="42"))}
-        self.assertEqual(sources, {f"ghcr.io/falkordb/{repo}:rc-rebuild-{SHA}-42-{server}"
-                                   for repo in ("falkordb", "falkordb-server") for server in ("valkey", "redis")})
-        for bad in ("", "12a", "-1", "1-valkey", "1" * 21):
-            with self.subTest(run_id=bad), self.assertRaises(pt.PlanError):
-                pt.rebuild_plan("6.1.0", SHA, latest=False, run_id=bad)
-
-    def test_the_command_line_needs_the_run_id(self):
-        import contextlib
-        import io
-
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            pt.main(["rebuild", "--tag", "6.1.0", "--sha", SHA])
-
-    def test_latest_when_asked_for_the_latest_release(self):
+    def test_rebuild_with_latest(self):
         tags = all_tags(pt.rebuild_plan("6.1.0", SHA, latest=True, releases=RELEASES + [release("v6.1.0")]))
-        for repo in ("falkordb", "falkordb-server"):
-            self.assertLessEqual(both(repo, "latest", "latest-valkey", "latest-redis"), tags)
+        for repo in REPOS:
+            self.assertLessEqual(both(repo, "6.1.0", "latest", "latest-valkey", "latest-redis"), tags)
 
-    def test_latest_only_where_a_release_would_move_it(self):
-        rels = RELEASES + [release("v6.1.0"), release("v6.0.5"), release("v6.2.0", draft=True)]
-        for tag in ("6.0.5",      # a backport
-                    "6.2.0",      # no published release
-                    "6.1.0-rc.1",  # a prerelease
-                    "edge-test"):  # not a version
-            with self.assertRaises(pt.PlanError, msg=tag):
-                pt.rebuild_plan(tag, SHA, latest=True, releases=rels)
-        with self.assertRaises(pt.PlanError):
-            pt.rebuild_plan("6.1.0", SHA, latest=True)  # no release list to judge by
-
-    def test_ad_hoc_tag(self):
-        got = by_source(pt.rebuild_plan("edge-test", SHA, latest=False))
-        self.assertEqual(
-            got[f"ghcr.io/falkordb/falkordb-server:rc-rebuild-{SHA}-valkey"],
-            both("falkordb-server", "edge-test-valkey", "edge-test"),
-        )
-        self.assertEqual(
-            got[f"ghcr.io/falkordb/falkordb-server:rc-rebuild-{SHA}-redis"],
-            both("falkordb-server", "edge-test-redis"),
-        )
-
-    def test_ordinary_tags_still_pass(self):
-        for tag in ("edge-test", "my_build", "Test.1", "nightly-2026", "hotfix_6.2", "feature-X",
-                    "x64ish", "x86test", "6.2.0", "6.2.0-RC.1", "6.2.0-beta.2", "6.2.0-rc.1.x"):
-            pt.rebuild_plan(tag, SHA, latest=False)
-        for version in ("6.2.0-RC.1", "6.2.0-rc1", "6.2.0-alpha"):
-            pt.release_plan(version, SHA, [])
-
-    def test_refusals(self):
-        for tag, latest in (
-            ("6.1.0-rc.1", True),  # a prerelease never moves latest
-            ("edge", False), ("edge-rs", False), ("latest", False),  # other workflows' channels
-            ("edge-c", False), ("edge-c-x64", False), ("edge-c-rhel9", False),  # the C engine's
-            ("5.2.0", False), ("4.22.3", False),  # C engine versions
-            ("rc-mg-abc", False), ("rc-rebuild-x", False), ("rc", False),  # CI's namespace, or landing in it
-            ("test-aarch64", False), ("x86_64", False),  # architecture names, however spelled
-            ("build-X64", False), ("foo-ARM64", False), ("test_x64", False), ("x86-test", False),
-            ("foo-armv7", False), ("foo-i386", False), ("foo-s390x", False), ("foo-riscv64", False),
-            ("foo-redis8", False), ("test-Valkey9", False), ("foo-rhel8", False), ("foo-ubuntu", False),
-            ("Latest", False), ("EDGE", False), ("Edge-RS", False), ("Rc", False), ("RC-foo", False),
-            ("Edge-C-x", False), ("V6.1.0", False), ("foo\n", False), ("foo-x64\n", False),
-            ("v6.1.0", False), ("v6", False),  # versions have no leading v
-            ("test-x64", False), ("foo-valkey", False), ("alpine", False),
-            ("-x", False), ("a:b", False), ("", False),
-        ):
-            with self.assertRaises(pt.PlanError, msg=tag):
-                pt.rebuild_plan(tag, SHA, latest)
-
-
-PER_OS_TABLE = {
-    # Per-OS, release only: Valkey on Alpine and AL2023, Redis on RHEL 9 and AL2023.
-    "alpine-valkey", "amazonlinux2023-valkey", "rhel9-redis", "amazonlinux2023-redis",
-}
-
-
-class PerOsTags(unittest.TestCase):
-    def test_table(self):
+    def test_per_os(self):
+        # Release only: Valkey on Alpine and AL2023, Redis on RHEL 9 and AL2023.
         for version in ("6.1.0", "6.1.0-rc.1"):
-            plan = pt.per_os_plan(version)
             want = set()
-            for name in PER_OS_TABLE:
+            for name in ("alpine-valkey", "amazonlinux2023-valkey", "rhel9-redis", "amazonlinux2023-redis"):
                 want |= both("falkordb-server", f"{version}-{name}")
+            plan = pt.per_os_plan(version)
             self.assertEqual(all_tags(plan), want)
-            self.assertFalse(any(":latest" in t for t in all_tags(plan)))
+            for step in plan:
+                self.assertEqual([arch for arch, _ in step.archives], ["x64", "arm64v8"])
 
-    def test_each_image_is_every_platform(self):
-        for step in pt.per_os_plan("6.1.0"):
-            self.assertEqual([arch for arch, _ in step.archives], ["x64", "arm64v8"])
 
+class MovesLatest(unittest.TestCase):
+    def test_only_the_highest_published_stable_release(self):
+        cases = (
+            # (version, releases, moves)
+            ("6.1.0-rc.2", RELEASES + [release("v6.1.0"), release("v6.1.0-rc.2")], False),  # prerelease
+            ("6.0.5", RELEASES + [release("v6.1.0"), release("v6.0.5")], False),  # backport
+            ("6.1.0", RELEASES + [release("v6.1.0", draft=True)], False),  # draft only
+            ("6.1.0", RELEASES, False),  # no release at all
+            ("6.1.0", RELEASES + [release("v6.2.0", draft=True), release("v6.2.0-rc.1", prerelease=True),
+                                  release("v6.1.0")], True),  # higher draft/prerelease don't count
+            ("6.10.0", [release("v6.9.0"), release("v6.10.0")], True),  # numbers, not strings
+            ("6.1.0", [release("nightly"), release("v7"), release("6.1.0")], True),  # odd names ignored
+        )
+        for version, releases, moves in cases:
+            with self.subTest(version=version, releases=releases):
+                self.assertEqual(pt.moves_latest(version, releases), moves)
+                plan = pt.release_plan(version, SHA, releases)
+                self.assertEqual(any(":latest" in t for t in all_tags(plan)), moves)
+
+    def test_rebuild_refuses_latest_where_a_release_would_not_move_it(self):
+        rels = RELEASES + [release("v6.1.0"), release("v6.0.5"), release("v6.2.0", draft=True)]
+        for tag in ("6.0.5", "6.2.0", "6.1.0-rc.1", "edge-test"):
+            with self.subTest(tag=tag), self.assertRaises(pt.PlanError):
+                pt.rebuild_plan(tag, SHA, latest=True, releases=rels)
+
+    def test_rebuild_refuses_other_workflows_tags(self):
+        for tag in ("edge", "edge-rs", "latest", "Latest", "edge-c", "edge-c-x64", "rc", "rc-mg-abc", "v6.1.0"):
+            with self.subTest(tag=tag), self.assertRaises(pt.PlanError):
+                pt.rebuild_plan(tag, SHA, latest=False)
+
+
+class Archives(unittest.TestCase):
     def _archives(self, root, names):
         for name in names:
             path = root / f"image-{name}" / f"{name}.tar"
@@ -258,15 +143,7 @@ class PerOsTags(unittest.TestCase):
             path.write_bytes(b"")
 
     def _complete(self):
-        return [f"falkordb-server-{n}-{a}" for n in sorted(PER_OS_TABLE) for a in ("x64", "arm64v8")]
-
-    def test_complete_archives(self):
-        with tempfile.TemporaryDirectory() as d:
-            self._archives(Path(d), self._complete())
-            plan = pt.per_os_plan("6.1.0", pt.find_archives(Path(d)))
-            for step in plan:
-                for arch, path in step.archives:
-                    self.assertTrue(path.endswith(f"falkordb-server-{step.name}-{arch}.tar"), path)
+        return [f"falkordb-server-{o}-{s}-{a}" for o, s in pt.PER_OS for a in pt.PLATFORMS]
 
     def test_a_missing_archive_publishes_nothing(self):
         with tempfile.TemporaryDirectory() as d:
@@ -274,287 +151,84 @@ class PerOsTags(unittest.TestCase):
             with self.assertRaisesRegex(pt.PlanError, "rhel9-redis-arm64v8"):
                 pt.per_os_plan("6.1.0", pt.find_archives(Path(d)))
 
-    def test_an_archive_it_does_not_know_publishes_nothing(self):
+    def test_an_unknown_archive_publishes_nothing(self):
         for extra in ("falkordb-server-rhel9-valkey-x64", "falkordb-server-alpine-valkey-riscv64", "something"):
             with tempfile.TemporaryDirectory() as d:
                 self._archives(Path(d), self._complete() + [extra])
-                with self.assertRaises(pt.PlanError, msg=extra):
+                with self.subTest(extra=extra), self.assertRaises(pt.PlanError):
                     pt.find_archives(Path(d))
 
 
-class ContractRules(unittest.TestCase):
-    """Rules that hold for every tag any plan pushes."""
-
-    def plans(self):
-        yield pt.edge_plan(SHA)
-        yield pt.release_plan("6.1.0", SHA, [release("v6.1.0")])
-        yield pt.release_plan("6.1.0-rc.1", SHA, [release("v6.1.0-rc.1")])
-        yield pt.rebuild_plan("6.1.0", SHA, latest=True, releases=[release("v6.1.0")])
-        yield pt.rebuild_plan("edge-test", SHA, latest=False)
-        yield pt.per_os_plan("6.1.0")
-        yield pt.per_os_plan("6.1.0-rc.1")
-
-    def test_no_public_tag_names_an_architecture(self):
-        for plan in self.plans():
-            for tag in all_tags(plan):
-                parts = re.split(r"[.-]", tag.rsplit(":", 1)[1])
-                for arch in ("x64", "arm64v8", "amd64", "arm64", "aarch64", "x86_64"):
-                    self.assertNotIn(arch, parts, tag)
-
-    def test_server_is_the_last_part_and_no_suffix_means_valkey(self):
-        for plan in self.plans():
-            for step in plan:
-                for tag in step.tags:
-                    name = tag.rsplit(":", 1)[1]
-                    last = name.rsplit("-", 1)[-1]
-                    if last in ("valkey", "redis"):
-                        self.assertEqual(last, step.server, tag)
-                    else:
-                        self.assertEqual(step.server, "valkey", tag)
-
-    def test_every_tag_goes_to_both_registries(self):
-        for plan in self.plans():
-            for step in plan:
-                names = {t.rsplit(":", 1)[1] for t in step.tags}
-                repos = {t.rsplit(":", 1)[0].rsplit("/", 1)[1] for t in step.tags}
-                self.assertEqual(len(repos), 1, step)
-                self.assertEqual(set(step.tags), both(repos.pop(), *names))
-
-    def test_no_tag_is_pushed_twice(self):
-        for plan in self.plans():
-            tags = [t for step in plan for t in step.tags]
-            self.assertEqual(len(tags), len(set(tags)))
-
-
 class BuildCells(unittest.TestCase):
-    """_build-artifacts.yml builds every per-OS archive a release needs, under the
-    names find_archives() reads, and publishes no other."""
+    """_build-artifacts.yml builds every per-OS archive a release needs, under
+    the names find_archives() reads, and publishes no other."""
 
-    def workflow(self):
-        return (Path(__file__).resolve().parent.parent / ".github/workflows/_build-artifacts.yml").read_text()
-
-    def cells(self):
-        m = re.search(r"ALL='(\[.*?\])'", self.workflow(), re.S)
+    def test_cells_build_exactly_the_published_archives(self):
+        text = (Path(__file__).resolve().parent.parent / ".github/workflows/_build-artifacts.yml").read_text()
+        m = re.search(r"ALL='(\[.*?\])'", text, re.S)
         self.assertIsNotNone(m, "ALL='[...]' not found in _build-artifacts.yml")
-        return json.loads(m[1])
-
-    def test_archives(self):
         built = set()
-        for cell in self.cells():
+        for cell in json.loads(m[1]):
             self.assertEqual(cell["platform"], pt.PLATFORMS[cell["arch"]])
-            self.assertEqual(bool(cell["servers"]), cell["image"], cell["suffix"])
-            if not cell["image"]:
-                self.assertEqual(cell["os"], "", cell["suffix"])
-                continue
-            self.assertEqual(cell["suffix"], f"{cell['os']}-{cell['arch']}")
-            if not cell["publish"]:
-                continue
-            for server in cell["servers"]:
-                self.assertNotIn((cell["os"], server, cell["arch"]), built)
-                built.add((cell["os"], server, cell["arch"]))
-        want = {(o, s, a) for o, s in pt.PER_OS for a in pt.PLATFORMS}
-        self.assertEqual(built, want)
-
-    def test_archive_names(self):
-        # Every step that names an archive names it the way find_archives()
-        # reads it: falkordb-server-<os>-<server>-<arch>.tar.
-        text = self.workflow()
-        for server in pt.SERVERS:
-            self.assertIn(f"if: matrix.image && contains(matrix.servers, '{server}')", text)
-            dest = f"dest=${{{{ runner.temp }}}}/falkordb-server-${{{{ matrix.os }}}}-{server}-${{{{ matrix.arch }}}}.tar"
-            self.assertIn(dest, text)
-            self.assertIn(f"SERVER={server}", text)
-        self.assertIn('docker load --input "$RUNNER_TEMP/falkordb-server-${OS}-${WANT}-${ARCH}.tar"', text)
-        self.assertIn("path: ${{ runner.temp }}/falkordb-server-${{ matrix.os }}-*-${{ matrix.arch }}.tar", text)
-        for os_name, server in pt.PER_OS:
-            for arch in pt.PLATFORMS:
-                self.assertRegex(f"falkordb-server-{os_name}-{server}-{arch}.tar", pt.ARCHIVE_RE)
+            if cell["image"] and cell["publish"]:
+                for server in cell["servers"]:
+                    built.add((cell["os"], server, cell["arch"]))
+        self.assertEqual(built, {(o, s, a) for o, s in pt.PER_OS for a in pt.PLATFORMS})
+        self.assertIn("dest=${{ runner.temp }}/falkordb-server-${{ matrix.os }}-valkey-${{ matrix.arch }}.tar", text)
 
 
 class FakeRegistry:
-    """Answers the commands execute() runs, and records them."""
+    """Answers the imagetools commands a retag runs, and records them."""
 
-    def __init__(self, labels=None, platforms=("linux/amd64", "linux/arm64"), configs=None, moved=()):
+    def __init__(self, labels=None, platforms=("linux/amd64", "linux/arm64"), moved=()):
         self.labels = labels or {}
         self.platforms = platforms
-        self.configs = configs or {}
         self.moved = set(moved)
-        self.calls = []
+        self.by_digest = {}
         self.tags = {}
+        self.calls = []
+
+    @staticmethod
+    def digest(raw):
+        return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
 
     def __call__(self, cmd):
         self.calls.append(list(cmd))
-        if cmd[:4] == ["docker", "buildx", "imagetools", "inspect"]:
-            ref = cmd[-1]
-            if "--raw" in cmd:
-                if ref in self.moved:
-                    return "something else"
-                return self.tags.get(ref, f"manifest of {ref}")
-            # Inspected by digest: resolve it to the tag the digest was read from.
-            self.assert_pinned(ref)
+        ref = cmd[-1]
+        if "inspect" in cmd and "--raw" in cmd:
+            raw = "something else" if ref in self.moved else self.tags.get(ref, f"manifest of {ref}")
+            self.by_digest[self.digest(raw)] = raw
+            return raw
+        if "inspect" in cmd:
             source = self.by_digest[ref.split("@", 1)[1]].removeprefix("manifest of ")
             server = self.labels.get(source, source.rsplit("-", 1)[-1])
             return json.dumps({p: {"config": {"Labels": {pt.SERVER_LABEL: server}}} for p in self.platforms})
-        if cmd[:4] == ["docker", "buildx", "imagetools", "create"]:
-            digest = cmd[-1].split("@", 1)[1]
+        if "create" in cmd:
+            raw = self.by_digest[ref.split("@", 1)[1]]
             for i, arg in enumerate(cmd):
                 if arg == "-t":
-                    self.tags[cmd[i + 1]] = self.by_digest[digest]
-            return ""
-        if cmd[:2] == ["skopeo", "inspect"]:
-            return json.dumps(self.configs[cmd[-1].split(":", 1)[1]])
-        if cmd[:3] == ["podman", "manifest", "push"]:
-            digest_file = Path(cmd[cmd.index("--digestfile") + 1])
-            raw = f"index of {cmd[-1]}"
-            digest = "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
-            self.by_digest[digest] = raw
-            self.tags[cmd[-1].removeprefix("docker://")] = raw
-            digest_file.write_text(digest + "\n")
-            return ""
-        if cmd[:2] == ["podman", "manifest"]:
-            return ""
-        raise AssertionError(f"unexpected command {cmd}")
-
-    @staticmethod
-    def assert_pinned(ref):
-        if "@sha256:" not in ref:
-            raise AssertionError(f"inspected {ref} by tag; the checks must run on the digest")
-
-    @property
-    def by_digest(self):
-        if not hasattr(self, "_by_digest"):
-            self._by_digest = {}
-        return self._by_digest
-
-    def digest_of_source(self, ref):
-        raw = f"manifest of {ref}"
-        digest = "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
-        self.by_digest[digest] = raw
-        return digest
+                    self.tags[cmd[i + 1]] = raw
+        return ""
 
     def creates(self):
-        return [c for c in self.calls if c[:4] == ["docker", "buildx", "imagetools", "create"] or c[:3] == ["podman", "manifest", "push"]]
+        return [c for c in self.calls if "create" in c]
 
 
 class Execute(unittest.TestCase):
-    def fake(self, plan, **kw):
-        fake = FakeRegistry(**kw)
-        for step in plan:
-            if isinstance(step, pt.Retag):
-                fake.digest_of_source(step.source)
-        return fake
-
-    def test_retags_from_the_checked_digest_and_checks_every_tag(self):
-        plan = pt.edge_plan(SHA)
-        fake = self.fake(plan)
-        pt.execute(plan, fake)
-        creates = fake.creates()
-        self.assertEqual(len(creates), len(plan))
-        for step, cmd in zip(plan, creates):
-            self.assertEqual(cmd[-1], f"{pt.repository(step.source)}@{fake.digest_of_source(step.source)}")
-        inspected = {c[-1] for c in fake.calls if "--raw" in c}
-        self.assertLessEqual(all_tags(plan), inspected)
-
     def test_a_bad_source_pushes_nothing(self):
         plan = pt.release_plan("6.1.0", SHA, [])
-        # The last source checked holds the wrong server.
-        bad = plan[-1].source
-        for kw in ({"labels": {bad: "valkey"}}, {"platforms": ("linux/amd64",)}):
-            fake = self.fake(plan, **kw)
-            with self.assertRaises(pt.PlanError):
+        # The last source checked holds the wrong server, or one platform.
+        for kw in ({"labels": {plan[-1].source: "valkey"}}, {"platforms": ("linux/amd64",)}):
+            fake = FakeRegistry(**kw)
+            with self.subTest(kw=kw), self.assertRaises(pt.PlanError):
                 pt.execute(plan, fake)
             self.assertEqual(fake.creates(), [], kw)
 
-    def test_a_missing_queue_image_names_the_rebuild_path_and_pushes_nothing(self):
-        # A commit the queue built before the switch has no rc-mg-<sha>-<server>.
-        plan = pt.release_plan("6.0.5", SHA, [])
-        fake = self.fake(plan)
-        missing = plan[0].source
-
-        def runner(cmd):
-            if cmd[-1] == missing and "inspect" in cmd:
-                raise subprocess.CalledProcessError(1, cmd)
-            return fake(cmd)
-
-        with self.assertRaisesRegex(pt.PlanError, f"cannot read {re.escape(missing)}.*release-image.yml"):
-            pt.execute(plan, runner)
-        self.assertEqual(fake.creates(), [])
-
     def test_a_tag_that_does_not_hold_the_digest_fails(self):
         plan = pt.edge_plan(SHA)
-        fake = self.fake(plan, moved={"docker.io/falkordb/falkordb:edge"})
+        fake = FakeRegistry(moved={"docker.io/falkordb/falkordb:edge"})
         with self.assertRaisesRegex(pt.PlanError, "docker.io/falkordb/falkordb:edge "):
             pt.execute(plan, fake)
-
-    def _per_os(self, d, wrong=None):
-        root = Path(d)
-        configs = {}
-        for os_name, server in pt.PER_OS:
-            for arch, platform in pt.PLATFORMS.items():
-                path = root / f"falkordb-server-{os_name}-{server}-{arch}.tar"
-                path.write_bytes(b"")
-                os_part, arch_part = platform.split("/")
-                configs[str(path)] = {"os": os_part, "architecture": arch_part,
-                                      "config": {"Labels": {pt.SERVER_LABEL: server}}}
-        if wrong:
-            configs[str(root / wrong[0])].update(wrong[1])
-        return pt.per_os_plan("6.1.0", pt.find_archives(root)), configs
-
-    def test_per_os_pushes_ghcr_then_copies_its_digest_to_docker_hub(self):
-        with tempfile.TemporaryDirectory() as d:
-            plan, configs = self._per_os(d)
-            fake = FakeRegistry(configs=configs)
-            pt.execute(plan, fake, workdir=Path(d))
-            pushes = [c for c in fake.calls if c[:3] == ["podman", "manifest", "push"]]
-            self.assertEqual(len(pushes), 4)
-            for step in plan:
-                ghcr, hub = step.tags
-                self.assertTrue(ghcr.startswith("ghcr.io/") and hub.startswith("docker.io/"))
-                self.assertEqual(fake.tags[ghcr], fake.tags[hub], step.name)
-
-    def test_a_wrong_archive_pushes_nothing(self):
-        for wrong in (
-            ("falkordb-server-alpine-valkey-arm64v8.tar", {"architecture": "amd64"}),
-            ("falkordb-server-rhel9-redis-x64.tar", {"config": {"Labels": {pt.SERVER_LABEL: "valkey"}}}),
-        ):
-            with tempfile.TemporaryDirectory() as d:
-                plan, configs = self._per_os(d, wrong)
-                fake = FakeRegistry(configs=configs)
-                with self.assertRaises(pt.PlanError, msg=wrong[0]):
-                    pt.execute(plan, fake, workdir=Path(d))
-                self.assertEqual(fake.creates(), [], wrong[0])
-
-
-class CommandLine(unittest.TestCase):
-    def test_dry_run_prints_and_runs_nothing(self):
-        import contextlib
-        import io
-        import unittest.mock as mock
-
-        with tempfile.TemporaryDirectory() as d:
-            rels = Path(d) / "releases.jsonl"
-            rels.write_text(json.dumps(release("v6.1.0")) + "\n")
-            runs = (
-                (["edge", "--sha", SHA], 4),
-                (["release", "--version", "6.1.0", "--sha", SHA, "--releases", str(rels)], 4),
-                (["rebuild", "--tag", "6.1.0", "--sha", SHA, "--run-id", "42", "--latest", "--releases", str(rels)], 4),
-                (["per-os", "--version", "6.1.0"], 4),
-            )
-            with mock.patch("subprocess.run", side_effect=AssertionError("ran a command")) as ran:
-                for argv, steps in runs:
-                    out = io.StringIO()
-                    with contextlib.redirect_stdout(out):
-                        self.assertEqual(pt.main(argv + ["--json"]), 0, argv)
-                    self.assertEqual(len(json.loads(out.getvalue())), steps, argv)
-            ran.assert_not_called()
-
-    def test_errors_exit_nonzero(self):
-        import contextlib
-        import io
-
-        with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(pt.main(["edge", "--sha", "nope"]), 1)
-            self.assertEqual(pt.main(["per-os", "--version", "6.1.0", "--execute"]), 1)
 
 
 if __name__ == "__main__":

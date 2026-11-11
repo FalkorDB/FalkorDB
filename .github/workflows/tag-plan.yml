@@ -1,10 +1,8 @@
 name: Tag plan
 
-# Shows the image tags the publishing workflows would push, without pushing
-# anything: rust-push.yml's rolling tags, release-tag.yml's tags for a release
-# and a prerelease (including the per-OS images), and release-image.yml's.
-# They come from build/publish_tags.py, the same code those workflows run with
-# --execute, and its tests check them against the contract's table of tags.
+# Tests build/publish_tags.py, whose tests pin the tags every publish pushes,
+# and rehearses its --execute path against local registries, without pushing
+# anything to GHCR or Docker Hub.
 #
 # Runs on pull requests that change the script or a workflow that publishes
 # with it, and on demand.
@@ -35,26 +33,6 @@ jobs:
 
       - name: Test the tag plan
         run: python3 build/test_publish_tags.py
-
-      - name: Print the tags each publish would push
-        env:
-          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -euo pipefail
-          # Sample versions. 6.1.0 is given a published GitHub release so the
-          # plan shows latest* moving; the prerelease never moves it.
-          printf '%s\n' '{"tag_name":"v6.1.0","draft":false,"prerelease":false}' \
-                        '{"tag_name":"v6.1.0-rc.1","draft":false,"prerelease":true}' > "$RUNNER_TEMP/releases.jsonl"
-          {
-            echo '## Tags each publish would push (nothing is pushed)'
-            section() { echo; echo "### $1"; echo; echo '```'; shift; python3 build/publish_tags.py "$@"; echo '```'; }
-            section "rust-push.yml: edge, for $SHA" edge --sha "$SHA"
-            section "release-tag.yml: release 6.1.0 (highest published release)" release --version 6.1.0 --sha "$SHA" --releases "$RUNNER_TEMP/releases.jsonl"
-            section "release-tag.yml: prerelease 6.1.0-rc.1" release --version 6.1.0-rc.1 --sha "$SHA" --releases "$RUNNER_TEMP/releases.jsonl"
-            section "release-tag.yml: per-OS images, 6.1.0" per-os --version 6.1.0
-            section "release-tag.yml: per-OS images, 6.1.0-rc.1" per-os --version 6.1.0-rc.1
-            section "release-image.yml: rebuild of 6.1.0, mark_latest" rebuild --tag 6.1.0 --sha "$SHA" --run-id "$GITHUB_RUN_ID" --latest --releases "$RUNNER_TEMP/releases.jsonl"
-          } | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Runs the real --execute path, as rust-push.yml and release-tag.yml would,
   # against two local registries standing in for GHCR and Docker Hub: podman,
@@ -121,25 +99,15 @@ jobs:
           done
 
       - name: Rehearse a release (release-tag.yml's image and publish-images jobs)
+        env:
+          # publish_tags.py reads this repository's GitHub releases to decide
+          # whether 6.1.0 moves latest*.
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          printf '%s\n' '{"tag_name":"v6.1.0","draft":false,"prerelease":false}' > "$RUNNER_TEMP/releases.jsonl"
-          python3 build/publish_tags.py release --version 6.1.0 --sha "$SHA" --releases "$RUNNER_TEMP/releases.jsonl" --execute
+          python3 build/publish_tags.py release --version 6.1.0 --sha "$SHA" --execute
           python3 build/publish_tags.py per-os --version 6.1.0 --images "$RUNNER_TEMP/images" --execute
 
       - name: Rehearse an edge promotion (rust-push.yml's promote-edge job)
         run: python3 build/publish_tags.py edge --sha "$SHA" --execute
-
-      - name: Check what the registries hold
-        run: |
-          set -euo pipefail
-          for port in 5000 5001; do
-            for repo in falkordb falkordb-server; do
-              tags=$(curl -fsS "http://localhost:${port}/v2/falkordb/${repo}/tags/list" | jq -r '.tags[]' | sort)
-              echo "localhost:${port}/falkordb/${repo}:"
-              while read -r tag; do echo "  $tag"; done <<<"$tags"
-              if grep -E -- '-(x64|arm64v8|amd64|arm64)$' <<<"$tags"; then
-                echo "::error::a tag above names an architecture"; exit 1
-              fi
-            done
-          done

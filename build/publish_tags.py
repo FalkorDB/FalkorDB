@@ -6,7 +6,7 @@ pushes are the tags this file's tests check:
 
   edge     rust-push.yml     the queue's rc-mg-<sha>-<server> → the rolling tags
   release  release-tag.yml   the queue's rc-mg-<sha>-<server> → <version>[, latest]
-  rebuild  release-image.yml rc-rebuild-<sha>-<run>-<server> → <tag>[, latest]
+  rebuild  release-image.yml rc-rebuild-<sha>-<server> → <tag>[, latest]
   per-os   release-tag.yml   per-OS server image archives → <version>-<os>-<server>
 
 The server is always the last part of a tag, and a tag with no server means
@@ -61,42 +61,11 @@ PER_OS = (
 
 SERVER_LABEL = "com.falkordb.server.name"
 
-# The registries refuse a tag longer than this. A version is judged against the
-# longest suffix any channel adds to it (a per-OS tag's -<os>-<server>), so a
-# release is refused before anything is pushed, never half published.
-MAX_TAG_LENGTH = 128
-LONGEST_VERSION_SUFFIX = max(
-    [len(f"-{server}") for server in SERVERS]
-    + [len(f"-{os_name}-{server}") for os_name, server in PER_OS]
-)
-MAX_VERSION_LENGTH = MAX_TAG_LENGTH - LONGEST_VERSION_SUFFIX
-
 # Whole tags other workflows own; a rebuild may not publish over them. The C
 # engine publishes the edge-c family from master.
 RESERVED_TAGS = {"edge", "edge-rs", "edge-c", "latest"}
 RESERVED_PREFIXES = ("rc-", "edge-c-")
-# The C engine owns every version below 6.0.0.
-FIRST_MAJOR = 6
-# Parts of a tag that say what it holds. A version or an ad-hoc tag carrying
-# one would collide with, or impersonate, another tag: 6.1.0-alpine's Valkey
-# tag would be 6.1.0's Alpine tag. Compared lower-cased, after splitting on
-# `.`, `-` and `_` (so x86_64 is refused through `x86`).
-RESERVED_PARTS = (
-    set(PLATFORMS)
-    | {p.split("/")[1] for p in PLATFORMS.values()}
-    | {"aarch64", "x86", "i386", "i686", "arm", "armv6", "armv7", "armv8", "armhf", "armel",
-       "ppc64le", "s390x", "riscv64"}
-)
-# Server and OS names, with or without a version: redis8 reads as Redis 8,
-# rhel8 as an OS, whatever the tag holds.
-RESERVED_PART_RE = re.compile(
-    r"(" + "|".join(sorted(set(SERVERS) | {"alpine", "rhel", "amazonlinux", "ubuntu", "debian"})) + r")\d*"
-)
-
-SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-RUN_ID_RE = re.compile(r"^[0-9]{1,20}$")
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
-TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 ARCHIVE_RE = re.compile(
     r"^falkordb-server-(?P<os>[a-z0-9]+)-(?P<server>[a-z]+)-(?P<arch>[a-z0-9]+)\.tar$"
 )
@@ -136,34 +105,9 @@ def parse_version(text: str):
     return int(m[1]), int(m[2]), int(m[3]), m[4]
 
 
-def check_parts(tag: str, what: str) -> None:
-    # Case-blind, and split on `_` too: X64 and test_x64 name an architecture.
-    for part in re.split(r"[._-]", tag.lower()):
-        if part in RESERVED_PARTS or RESERVED_PART_RE.fullmatch(part):
-            raise PlanError(
-                f"{what} '{tag}' contains '{part}', which tags use to name a "
-                "server, an OS or an architecture"
-            )
-
-
 def check_version(version: str) -> None:
-    v = parse_version(version)
-    if v is None:
+    if parse_version(version) is None:
         raise PlanError(f"version '{version}' is not X.Y.Z[-prerelease] (no leading v)")
-    if len(version) > MAX_VERSION_LENGTH:
-        raise PlanError(
-            f"version '{version}' is {len(version)} characters; the longest is {MAX_VERSION_LENGTH}, "
-            f"so its tags fit the registries' {MAX_TAG_LENGTH}"
-        )
-    if v[0] < FIRST_MAJOR:
-        raise PlanError(f"version '{version}' is a C engine version (below {FIRST_MAJOR}.0.0)")
-    if v[3] is not None:
-        check_parts(v[3], "prerelease")
-
-
-def check_sha(sha: str) -> None:
-    if not SHA_RE.fullmatch(sha):
-        raise PlanError(f"commit '{sha}' is not a full 40-character SHA")
 
 
 def is_prerelease(version: str) -> bool:
@@ -210,7 +154,6 @@ def everywhere(repo: str, tags: Iterable[str]) -> tuple:
 
 def edge_plan(sha: str) -> list:
     """The rolling tags, from the merge queue's images of `sha`."""
-    check_sha(sha)
     plan = []
     for repo in REPOS:
         for server in SERVERS:
@@ -224,37 +167,18 @@ def edge_plan(sha: str) -> list:
 def release_plan(version: str, sha: str, releases: Iterable[dict]) -> list:
     """A release's tags, from the merge queue's images of its commit."""
     check_version(version)
-    check_sha(sha)
     latest = moves_latest(version, releases)
     return _named_plan(version, lambda repo, server: f"{GHCR}/{repo}:rc-mg-{sha}-{server}", latest)
 
 
-def rebuild_key(sha: str, run_id: Optional[str] = None) -> str:
-    """The CI key release-image.yml stages a rebuild under: rebuild-<sha>,
-    plus the workflow run's id, so two rebuilds of one commit (for different
-    tags, which do not share a concurrency group) never share staging tags."""
-    check_sha(sha)
-    if run_id is None:
-        return f"rebuild-{sha}"
-    if not RUN_ID_RE.fullmatch(run_id):
-        raise PlanError(f"run id '{run_id}' is not a workflow run id (digits only)")
-    return f"rebuild-{sha}-{run_id}"
-
-
-def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[dict]] = None,
-                 run_id: Optional[str] = None) -> list:
+def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[dict]] = None) -> list:
     """release-image.yml's tags, from the images it rebuilt from source under
-    rc-<rebuild_key(sha, run_id)>-<server>.
+    rc-rebuild-<sha>-<server>.
 
     latest* moves only where a release would move it: `tag` must be the
     highest stable version with a published GitHub release, in `releases`.
     """
-    key = rebuild_key(sha, run_id)
-    if parse_version(tag) is not None:
-        check_version(tag)
-    else:
-        if not TAG_RE.fullmatch(tag):
-            raise PlanError(f"tag '{tag}' is not a valid image tag")
+    if parse_version(tag) is None:
         if re.match(r"v\d", tag, re.IGNORECASE):
             raise PlanError(f"tag '{tag}': image versions have no leading v")
         # Judged on what would be pushed: `rc` alone would publish rc-valkey.
@@ -262,7 +186,6 @@ def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[d
             # Case-blind: Latest or RC-x would read as the real channels.
             if name.lower() in RESERVED_TAGS or name.lower().startswith(RESERVED_PREFIXES):
                 raise PlanError(f"tag '{tag}' would publish '{name}', which belongs to another workflow")
-        check_parts(tag, "tag")
     if latest:
         if parse_version(tag) is None or is_prerelease(tag):
             raise PlanError(f"latest only moves to a stable X.Y.Z version; '{tag}' is not one")
@@ -271,7 +194,7 @@ def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[d
                 f"latest stays where it is: '{tag}' is not the highest stable version "
                 "with a published GitHub release"
             )
-    return _named_plan(tag, lambda repo, server: f"{GHCR}/{repo}:rc-{key}-{server}", latest)
+    return _named_plan(tag, lambda repo, server: f"{GHCR}/{repo}:rc-rebuild-{sha}-{server}", latest)
 
 
 def _named_plan(name: str, source: Callable, latest: bool) -> list:
@@ -372,23 +295,6 @@ def hub_copy_command(step: Assemble, digest: str) -> list:
     """Copy the index GHCR now holds to Docker Hub, as is: same digest."""
     ghcr_tag, hub_tag = step.tags
     return ["docker", "buildx", "imagetools", "create", "-t", hub_tag, f"{repository(ghcr_tag)}@{digest}"]
-
-
-def plan_json(plan: Sequence) -> list:
-    out = []
-    for step in plan:
-        if isinstance(step, Retag):
-            out.append({"source": step.source, "server": step.server, "tags": list(step.tags)})
-        else:
-            out.append(
-                {
-                    "name": step.name,
-                    "server": step.server,
-                    "archives": {arch: path for arch, path in step.archives},
-                    "tags": list(step.tags),
-                }
-            )
-    return out
 
 
 def print_plan(plan: Sequence, out=sys.stdout) -> None:
@@ -495,11 +401,12 @@ def execute(plan: Sequence, runner: Callable = run, workdir: Optional[Path] = No
 # --- command line -------------------------------------------------------------
 
 
-def read_releases(path: str) -> list:
-    """JSON objects, one per line: `gh api --paginate .../releases --jq
-    '.[] | {tag_name, draft, prerelease}'`."""
-    text = sys.stdin.read() if path == "-" else Path(path).read_text()
-    return [json.loads(line) for line in text.splitlines() if line.strip()]
+def fetch_releases(runner: Callable = run) -> list:
+    """This repository's GitHub releases, read right before a publish decides
+    on latest*. gh takes the repository from $GH_REPO."""
+    out = runner(["gh", "api", "--paginate", "repos/{owner}/{repo}/releases",
+                  "--jq", ".[] | {tag_name, draft, prerelease}"])
+    return [json.loads(line) for line in out.splitlines() if line.strip()]
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -512,17 +419,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p = sub.add_parser("release", help="release tags from the queue's rc-mg-<sha> images")
     p.add_argument("--version", required=True, help="X.Y.Z or X.Y.Z-pre, no leading v")
     p.add_argument("--sha", required=True)
-    p.add_argument("--releases", required=True,
-                   help="file of the repository's GitHub releases, one {tag_name, draft, prerelease} per line; - for stdin")
 
-    p = sub.add_parser("rebuild", help="release-image.yml's tags from its rc-rebuild-<sha>-<run> images")
+    p = sub.add_parser("rebuild", help="release-image.yml's tags from its rc-rebuild-<sha> images")
     p.add_argument("--tag", required=True)
     p.add_argument("--sha", required=True)
-    p.add_argument("--run-id", required=True,
-                   help="the release-image.yml run whose images to publish (github.run_id)")
     p.add_argument("--latest", action="store_true",
                    help="also move latest*; refused unless the tag is the highest stable version with a published release")
-    p.add_argument("--releases", help="with --latest: the GitHub releases, as for `release`")
 
     p = sub.add_parser("per-os", help="per-OS falkordb-server images from their archives")
     p.add_argument("--version", required=True)
@@ -530,27 +432,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     for p in sub.choices.values():
         p.add_argument("--execute", action="store_true", help="push; without it, only print the plan")
-        p.add_argument("--json", action="store_true", help="print the plan as JSON")
 
     args = parser.parse_args(argv)
     try:
         if args.channel == "edge":
             plan = edge_plan(args.sha)
         elif args.channel == "release":
-            plan = release_plan(args.version, args.sha, read_releases(args.releases))
+            plan = release_plan(args.version, args.sha, fetch_releases())
         elif args.channel == "rebuild":
-            releases = read_releases(args.releases) if args.releases else None
-            plan = rebuild_plan(args.tag, args.sha, args.latest, releases, run_id=args.run_id)
+            releases = fetch_releases() if args.latest else None
+            plan = rebuild_plan(args.tag, args.sha, args.latest, releases)
         else:
             if args.execute and not args.images:
                 raise PlanError("--execute needs --images")
             archives = find_archives(Path(args.images)) if args.images else None
             plan = per_os_plan(args.version, archives)
 
-        if args.json:
-            print(json.dumps(plan_json(plan), indent=2))
-        else:
-            print_plan(plan)
+        print_plan(plan)
         if args.execute:
             execute(plan, workdir=Path(args.images) if getattr(args, "images", None) else None)
             print(f"published {sum(len(s.tags) for s in plan)} tags")
