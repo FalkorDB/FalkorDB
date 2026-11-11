@@ -283,7 +283,8 @@ jobs:
   native-index:
     # The native index (`index-falkordb`) is off by default, so `lint` and
     # `coverage` never compile it: its unit tests and its lints run only here.
-    # The flow suites under the flag run in ci-pipeline's `nextgen-index-ledger`.
+    # The flow suites under the flag run in ci-pipeline's `nextgen-index-ledger`
+    # and `index-falkordb-flow`.
     runs-on: ubuntu-latest
     timeout-minutes: 40
     container: ${{ needs.check-files.outputs.toolchain_tag }}

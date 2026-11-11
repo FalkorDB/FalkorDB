@@ -617,11 +617,7 @@ impl<'a> Parser<'a> {
                 let nkey = self.parse_ident()?;
                 match_token!(self.lexer, Colon);
                 let label = self.parse_ident()?;
-                if matches!(self.lexer.current()?, Token::Pipe) {
-                    return Err(String::from(
-                        "Multiple relationship types in a single index are only supported for CCH indexes",
-                    ));
-                }
+                self.reject_multiple_index_types()?;
                 match_token!(self.lexer, RBrace);
                 match_token!(self.lexer, Dash);
                 optional_match_token!(self.lexer, GreaterThan);
@@ -723,11 +719,7 @@ impl<'a> Parser<'a> {
                 let nkey = self.parse_ident()?;
                 match_token!(self.lexer, Colon);
                 let label = self.parse_ident()?;
-                if matches!(self.lexer.current()?, Token::Pipe) {
-                    return Err(String::from(
-                        "Multiple relationship types in a single index are only supported for CCH indexes",
-                    ));
-                }
+                self.reject_multiple_index_types()?;
                 match_token!(self.lexer, RBrace);
                 match_token!(self.lexer, Dash);
                 optional_match_token!(self.lexer, GreaterThan);
@@ -781,6 +773,16 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
+    /// Refuses a second relationship type (`:A|B`) in a non-CCH index, with C's message.
+    fn reject_multiple_index_types(&mut self) -> Result<(), String> {
+        if matches!(self.lexer.current()?, Token::Pipe) {
+            return Err(String::from(
+                "Multiple relationship types in a single index are only supported for CCH indexes",
+            ));
+        }
+        Ok(())
+    }
+
     /// Parses the tail shared by `CREATE CCH INDEX` and `DROP CCH INDEX`, after
     /// `parse_index_ops` has consumed the verb and the `CCH` keyword:
     ///
@@ -802,13 +804,8 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, LBrace);
         let nkey = self.parse_ident()?;
         match_token!(self.lexer, Colon);
-        // `:A|B`, `:A|:B` and `:A:B` alike, as in a relationship pattern.
-        // A non-short-circuit `|`, so `|:` is consumed as one separator: `||`
-        // would leave the `:` for `parse_ident`, which rejects it.
-        let mut rel_types = vec![self.parse_ident()?];
-        while optional_match_token!(self.lexer, Pipe) | optional_match_token!(self.lexer, Colon) {
-            rel_types.push(self.parse_ident()?);
-        }
+        // `:A|B` or `:A|:B`, as in a relationship pattern and in C; `:A:B` is a syntax error.
+        let rel_types = self.parse_relationship_types()?;
         match_token!(self.lexer, RBrace);
         match_token!(self.lexer, Dash);
         optional_match_token!(self.lexer, GreaterThan);
@@ -4431,6 +4428,8 @@ mod tests {
 mod cch_index_ddl_tests {
     use super::*;
 
+    const VERBS: [&str; 2] = ["CREATE", "DROP"];
+
     fn parse(query: &str) -> Result<RawQueryIR, String> {
         Parser::new(query).parse()
     }
@@ -4439,349 +4438,183 @@ mod cch_index_ddl_tests {
         attrs.iter().map(|a| a.as_str()).collect()
     }
 
+    /// The spec `query` parses to, checking the variant matches its verb.
+    fn parse_spec(query: &str) -> CchIndexSpec {
+        let verb = query.to_uppercase();
+        match parse(query).unwrap_or_else(|err| panic!("{query}: {err}")) {
+            QueryIR::CreateCchIndex(spec) if verb.starts_with("CREATE") => spec,
+            QueryIR::DropCchIndex(spec) if verb.starts_with("DROP") => spec,
+            other => panic!("{query}: expected the CCH index variant, got {other:?}"),
+        }
+    }
+
+    fn assert_refused(
+        query: &str,
+        needle: &str,
+    ) {
+        let err = parse(query).expect_err(query);
+        assert!(err.contains(needle), "{query}: unexpected error: {err}");
+    }
+
+    /// The types keep parse order and repeats: `CchIndexDef::new` normalises them once they
+    /// are resolved to ids at run time. The keywords parse in any case.
     #[test]
-    fn create_cch_index_single_type() {
-        let ir = parse("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.w)").unwrap();
-        match ir {
-            QueryIR::CreateCchIndex(CchIndexSpec {
-                rel_types,
-                weight_attr,
-            }) => {
-                assert_eq!(names(&rel_types), vec!["ROAD"]);
-                assert_eq!(weight_attr.as_str(), "w");
+    fn cch_index_types_keep_parse_order() {
+        for verb in VERBS {
+            for (types, expected) in [
+                ("ROAD", vec!["ROAD"]),
+                ("ROAD|FERRY", vec!["ROAD", "FERRY"]),
+                ("B|A|B", vec!["B", "A", "B"]),
+                ("A|:B", vec!["A", "B"]),
+            ] {
+                let spec = parse_spec(&format!("{verb} CCH INDEX FOR ()-[e:{types}]->() ON (e.w)"));
+                assert_eq!(names(&spec.rel_types), expected, "{verb} {types}");
+                assert_eq!(spec.weight_attr.as_str(), "w");
             }
-            other => panic!("expected CreateCchIndex, got {other:?}"),
+            let lower = verb.to_lowercase();
+            let spec = parse_spec(&format!("{lower} cch index for ()-[e:road]->() on (e.w)"));
+            assert_eq!(names(&spec.rel_types), vec!["road"], "{lower}");
         }
     }
 
     #[test]
-    fn create_cch_index_multi_type_preserves_parse_order() {
-        // Normalisation (sort + dedup) is `CchIndexDef::new`'s job once the
-        // names are resolved to `TypeId`s at run time; the parser passes the names
-        // through in the order they were written.
-        let ir = parse("CREATE CCH INDEX FOR ()-[e:B|A|B]->() ON (e.w)").unwrap();
-        match ir {
-            QueryIR::CreateCchIndex(CchIndexSpec { rel_types, .. }) => {
-                assert_eq!(names(&rel_types), vec!["B", "A", "B"]);
-            }
-            other => panic!("expected CreateCchIndex, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn drop_cch_index_single_type() {
-        let ir = parse("DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.w)").unwrap();
-        match ir {
-            QueryIR::DropCchIndex(CchIndexSpec {
-                rel_types,
-                weight_attr,
-            }) => {
-                assert_eq!(names(&rel_types), vec!["ROAD"]);
-                assert_eq!(weight_attr.as_str(), "w");
-            }
-            other => panic!("expected DropCchIndex, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn drop_cch_index_multi_type() {
-        let ir = parse("DROP CCH INDEX FOR ()-[e:ROAD|FERRY]->() ON (e.w)").unwrap();
-        match ir {
-            QueryIR::DropCchIndex(CchIndexSpec { rel_types, .. }) => {
-                assert_eq!(names(&rel_types), vec!["ROAD", "FERRY"]);
-            }
-            other => panic!("expected DropCchIndex, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn cch_index_accepts_every_type_separator_a_pattern_does() {
-        for types in ["A|B", "A|:B", "A:B"] {
-            for verb in ["CREATE", "DROP"] {
-                let query = format!("{verb} CCH INDEX FOR ()-[e:{types}]->() ON (e.w)");
-                let rel_types = match parse(&query).unwrap() {
-                    QueryIR::CreateCchIndex(spec) | QueryIR::DropCchIndex(spec) => spec.rel_types,
-                    other => panic!("{query}: expected a CCH index, got {other:?}"),
-                };
-                assert_eq!(names(&rel_types), vec!["A", "B"], "{query}");
+    fn cch_index_refusals() {
+        for verb in VERBS {
+            for (tail, needle) in [
+                // `:A:B` would read as "both A and B"; C's grammar rejects it too.
+                ("FOR ()-[e:A:B]->() ON (e.w)", "Invalid input"),
+                ("FOR (n:N) ON (n.w)", "only supported on relationships"),
+                ("FOR ()-[e:ROAD]->() ON (e.w, e.x)", "exactly one property"),
+                ("FOR ()-[e:ROAD]->() ON (x.w)", "not defined"),
+                ("FOR ()-[e:ROAD]->()", "Invalid input"),
+                (
+                    "FOR (a)-[e:ROAD]->() ON (e.w)",
+                    "only supported on relationships",
+                ),
+            ] {
+                assert_refused(&format!("{verb} CCH INDEX {tail}"), needle);
             }
         }
     }
 
     #[test]
-    fn create_cch_index_case_insensitive_keyword() {
-        let ir = parse("create cch index for ()-[e:road]->() on (e.w)").unwrap();
-        assert!(matches!(ir, QueryIR::CreateCchIndex(_)));
-    }
-
-    #[test]
-    fn create_cch_index_rejects_node_pattern() {
-        let err = parse("CREATE CCH INDEX FOR (n:N) ON (n.w)").unwrap_err();
-        assert!(
-            err.contains("only supported on relationships"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn drop_cch_index_rejects_node_pattern() {
-        let err = parse("DROP CCH INDEX FOR (n:N) ON (n.w)").unwrap_err();
-        assert!(
-            err.contains("only supported on relationships"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn create_cch_index_rejects_multiple_properties() {
-        let err = parse("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.w, e.x)").unwrap_err();
-        assert!(
-            err.contains("exactly one property"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn drop_cch_index_rejects_multiple_properties() {
-        let err = parse("DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.w, e.x)").unwrap_err();
-        assert!(
-            err.contains("exactly one property"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn create_cch_index_requires_on() {
-        assert!(parse("CREATE CCH INDEX FOR ()-[e:ROAD]->()").is_err());
-    }
-
-    #[test]
-    fn create_cch_index_requires_matching_alias() {
-        let err = parse("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (x.w)").unwrap_err();
-        assert!(err.contains("not defined"), "unexpected error: {err}");
-    }
-
-    #[test]
-    fn create_cch_index_requires_empty_endpoints() {
-        // CCH indexes only ever span a plain two-endpoint relationship pattern.
-        assert!(parse("CREATE CCH INDEX FOR (a)-[e:ROAD]->() ON (e.w)").is_err());
-    }
-
-    // ---- other index types must still reject `A|B` -----------------------
-
-    #[test]
-    fn create_plain_index_rejects_multi_type_relation() {
-        let err = parse("CREATE INDEX FOR ()-[e:A|B]->() ON (e.w)").unwrap_err();
-        assert!(
-            err.contains("only supported for CCH indexes"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn drop_plain_index_rejects_multi_type_relation() {
-        let err = parse("DROP INDEX FOR ()-[e:A|B]->() ON (e.w)").unwrap_err();
-        assert!(
-            err.contains("only supported for CCH indexes"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn drop_fulltext_index_rejects_multi_type_relation() {
-        let err = parse("DROP FULLTEXT INDEX FOR ()-[e:A|B]->() ON (e.w)").unwrap_err();
-        assert!(
-            err.contains("only supported for CCH indexes"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn create_vector_index_rejects_multi_type_relation() {
-        let err = parse("CREATE VECTOR INDEX FOR ()-[e:A|B]->() ON (e.w)").unwrap_err();
-        assert!(
-            err.contains("only supported for CCH indexes"),
-            "unexpected error: {err}"
-        );
-    }
-
-    // ---- pre-existing index DDL must keep parsing identically -------------
-
-    #[test]
-    fn create_index_old_style_unaffected() {
-        let ir = parse("CREATE INDEX ON :N(name)").unwrap();
-        match ir {
-            QueryIR::CreateIndex {
-                label,
-                attrs,
-                index_type,
-                entity_type,
-                ..
-            } => {
-                assert_eq!(label.as_str(), "N");
-                assert_eq!(names(&attrs), vec!["name"]);
-                assert_eq!(index_type, IndexType::Range);
-                assert_eq!(entity_type, EntityType::Node);
+    fn other_index_kinds_refuse_multiple_types() {
+        for verb in VERBS {
+            for kind in ["", "FULLTEXT ", "VECTOR "] {
+                assert_refused(
+                    &format!("{verb} {kind}INDEX FOR ()-[e:A|B]->() ON (e.w)"),
+                    "only supported for CCH indexes",
+                );
             }
-            other => panic!("expected CreateIndex, got {other:?}"),
         }
     }
 
     #[test]
-    fn create_index_node_pattern_unaffected() {
-        let ir = parse("CREATE INDEX FOR (n:N) ON (n.name)").unwrap();
-        assert!(matches!(
-            ir,
-            QueryIR::CreateIndex {
-                entity_type: EntityType::Node,
-                ..
+    fn other_index_ddl_unaffected() {
+        for (query, expected_label, expected_type, expected_entity) in [
+            (
+                "CREATE INDEX ON :N(name)",
+                "N",
+                IndexType::Range,
+                EntityType::Node,
+            ),
+            (
+                "CREATE INDEX FOR (n:N) ON (n.name)",
+                "N",
+                IndexType::Range,
+                EntityType::Node,
+            ),
+            (
+                "CREATE INDEX FOR ()-[e:R]->() ON (e.name)",
+                "R",
+                IndexType::Range,
+                EntityType::Relationship,
+            ),
+            (
+                "CREATE FULLTEXT INDEX FOR (n:N) ON (n.name)",
+                "N",
+                IndexType::Fulltext,
+                EntityType::Node,
+            ),
+            (
+                "CREATE VECTOR INDEX FOR ()-[e:R]->() ON (e.name)",
+                "R",
+                IndexType::Vector,
+                EntityType::Relationship,
+            ),
+            (
+                "DROP INDEX FOR (n:N) ON (n.name)",
+                "N",
+                IndexType::Range,
+                EntityType::Node,
+            ),
+        ] {
+            match parse(query).unwrap_or_else(|err| panic!("{query}: {err}")) {
+                QueryIR::CreateIndex {
+                    label,
+                    attrs,
+                    index_type,
+                    entity_type,
+                    ..
+                }
+                | QueryIR::DropIndex {
+                    label,
+                    attrs,
+                    index_type,
+                    entity_type,
+                } => {
+                    assert_eq!(label.as_str(), expected_label, "{query}");
+                    assert_eq!(names(&attrs), vec!["name"], "{query}");
+                    assert_eq!(index_type, expected_type, "{query}");
+                    assert_eq!(entity_type, expected_entity, "{query}");
+                }
+                other => panic!("{query}: expected index DDL, got {other:?}"),
             }
-        ));
-    }
-
-    #[test]
-    fn create_index_single_type_relation_unaffected() {
-        let ir = parse("CREATE INDEX FOR ()-[e:R]->() ON (e.name)").unwrap();
-        match ir {
-            QueryIR::CreateIndex {
-                label, entity_type, ..
-            } => {
-                assert_eq!(label.as_str(), "R");
-                assert_eq!(entity_type, EntityType::Relationship);
-            }
-            other => panic!("expected CreateIndex, got {other:?}"),
         }
     }
 
+    /// `CCH` is a keyword only right after `CREATE`/`DROP`; everywhere else it is a name.
+    /// Each query parses as a query, with the name where the query put it.
     #[test]
-    fn create_fulltext_index_unaffected() {
-        let ir = parse("CREATE FULLTEXT INDEX FOR (n:N) ON (n.name)").unwrap();
-        assert!(matches!(
-            ir,
-            QueryIR::CreateIndex {
-                index_type: IndexType::Fulltext,
-                ..
-            }
-        ));
+    fn cch_stays_an_identifier() {
+        for (query, the_name_in_place) in [
+            ("MATCH (cch) RETURN cch", "MATCH (cch),"),
+            ("MATCH (n) RETURN n.cch", "n.cch"),
+            ("CREATE (:cch {cch: 1})", "(_anon_0:cch)"),
+            ("MATCH (n:CCH) RETURN n", "(n:CCH)"),
+            ("MATCH ()-[r:CCH]->() RETURN r", "[r:CCH]"),
+            ("UNWIND [1, 2] AS cch RETURN cch", "UNWIND cch:"),
+        ] {
+            let ir = parse(query).unwrap_or_else(|err| panic!("{query}: {err}"));
+            assert!(matches!(ir, QueryIR::Query { .. }), "{query}: {ir:?}");
+            assert!(ir.to_string().contains(the_name_in_place), "{query}: {ir}");
+        }
     }
 
+    // No `Runtime` is built here (only the root crate wires one up);
+    // `tests/flow/test_cch_index.py` runs the statements end to end.
+
+    /// The statements survive binding and planning, and plan as writes (so `GRAPH.RO_QUERY`
+    /// refuses them and `GRAPH.QUERY` runs them on a private version).
     #[test]
-    fn create_vector_index_unaffected() {
-        let ir = parse("CREATE VECTOR INDEX FOR ()-[e:R]->() ON (e.name)").unwrap();
-        assert!(matches!(
-            ir,
-            QueryIR::CreateIndex {
-                index_type: IndexType::Vector,
-                entity_type: EntityType::Relationship,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn drop_index_unaffected() {
-        let ir = parse("DROP INDEX FOR (n:N) ON (n.name)").unwrap();
-        assert!(matches!(ir, QueryIR::DropIndex { .. }));
-    }
-
-    // ---- `CCH` must stay usable as an ordinary identifier ------------------
-    //
-    // Adding `CCH` to the lexer's keyword table only attaches a `Keyword::Cch`
-    // tag to the `IdentifierOrKeyword` token; `parse_ident`/`parse_property_name`
-    // (used for variable names, labels, relationship types and property keys
-    // everywhere outside `parse_index_ops`) read the token's `ident` text and
-    // never consult that tag. `match_token!`/`optional_match_token!` with the
-    // `lexer => Keyword` form are the only call sites that look at it, and
-    // CCH's only such call sites are the two right after `CREATE`/`DROP` in
-    // `parse_index_ops`. Same mechanism FULLTEXT/VECTOR already rely on.
-
-    #[test]
-    fn cch_keyword_does_not_break_variable_name() {
-        let ir = parse("MATCH (cch) RETURN cch").unwrap();
-        assert!(ir.to_string().contains("cch"));
-    }
-
-    #[test]
-    fn cch_keyword_does_not_break_property_name() {
-        let ir = parse("MATCH (n) RETURN n.cch").unwrap();
-        assert!(ir.to_string().contains("cch"));
-    }
-
-    #[test]
-    fn cch_keyword_does_not_break_label_and_inline_property() {
-        let ir = parse("CREATE (:cch {cch: 1})").unwrap();
-        assert!(ir.to_string().contains("cch"));
-    }
-
-    #[test]
-    fn cch_keyword_does_not_break_node_label() {
-        assert!(parse("MATCH (n:CCH) RETURN n").is_ok());
-    }
-
-    #[test]
-    fn cch_keyword_does_not_break_relationship_type() {
-        assert!(parse("MATCH ()-[r:CCH]->() RETURN r").is_ok());
-    }
-
-    #[test]
-    fn cch_keyword_does_not_break_unwind_variable() {
-        let ir = parse("UNWIND [1, 2] AS cch RETURN cch").unwrap();
-        assert!(ir.to_string().contains("cch"));
-    }
-
-    // ---- full pipeline: binder + planner --------------------------------
-    //
-    // The runtime arm (`Runtime::build_batch_op`'s `IR::CreateCchIndex |
-    // IR::DropCchIndex` case, returning "CCH index DDL is not yet supported")
-    // is not covered by a test here: building a `Runtime` needs a
-    // `WriteEscalation` impl and an `Arc<AtomicRefCell<Graph>>` that only the
-    // root crate wires up (no unit test anywhere in `graph` constructs a
-    // `Runtime` directly). That arm is proved by the compiler instead -- it
-    // is reachable, exhaustively matched, and type-checks -- and will be
-    // exercised end-to-end by the flow-test port once GRAPH.QUERY can reach
-    // it. `get_plan` below still proves the variant survives binding and
-    // planning, not just parsing.
-
-    /// Proves the new variant survives binding and planning (not just
-    /// parsing): `get_plan` runs the full parse -> bind -> plan -> optimize
-    /// pipeline, where a parser unit test would cover parsing only.
-    #[test]
-    fn create_cch_index_plans() {
+    fn cch_index_ddl_plans_as_a_write() {
         use crate::graph::{graph::Graph, graphblas::test_init};
 
         test_init::ensure_init();
         let g = Graph::new(16, 16, 1, 0, "cch_ddl_plan_test");
 
-        let plan = g
-            .get_plan("CREATE CCH INDEX FOR ()-[e:ROAD|FERRY]->() ON (e.w)")
-            .expect("CCH DDL must parse, bind and plan");
-        let text = format!("{}", plan.plan.root().data());
-        assert_eq!(
-            text, r#"Create CCH Index | :["ROAD", "FERRY"](["w"])"#,
-            "unexpected plan root"
-        );
-    }
-
-    /// Mapping parsed names to `TypeId`s and calling `CchIndexDef::new` (the
-    /// real run-time resolution path) must still sort and dedup, regardless of the
-    /// order the parser produced them in.
-    #[cfg(feature = "index-falkordb")]
-    #[test]
-    fn parsed_rel_types_normalise_through_cch_index_def() {
-        use crate::graph::graph::TypeId;
-        use crate::index::falkordb::cch::CchIndexDef;
-
-        let ir = parse("CREATE CCH INDEX FOR ()-[e:B|A|B]->() ON (e.w)").unwrap();
-        let QueryIR::CreateCchIndex(CchIndexSpec { rel_types, .. }) = ir else {
-            panic!("expected CreateCchIndex");
-        };
-        // Stand-in resolution: alphabetical name -> TypeId, as a real resolver
-        // keyed by schema insertion order would also do deterministically.
-        let ids: Vec<TypeId> = rel_types
-            .iter()
-            .map(|name| TypeId(if name.as_str() == "A" { 0 } else { 1 }))
-            .collect();
-        let def = CchIndexDef::new(ids, 0);
-        assert_eq!(def.rel_types(), &[TypeId(0), TypeId(1)]);
+        for (verb, operator) in [("CREATE", "Create"), ("DROP", "Drop")] {
+            let plan = g
+                .get_plan(&format!(
+                    "{verb} CCH INDEX FOR ()-[e:ROAD|FERRY]->() ON (e.w)"
+                ))
+                .expect("CCH DDL must parse, bind and plan");
+            let root = plan.plan.root();
+            assert_eq!(
+                format!("{}", root.data()),
+                format!(r#"{operator} CCH Index | :["ROAD", "FERRY"](["w"])"#),
+            );
+            assert!(root.data().makes_write_query(), "{verb}");
+        }
     }
 }

@@ -3,8 +3,8 @@
 The CCH index exists only in a module built with `--features index-falkordb`,
 so every class here skips unless `FALKORDB_FEATURES` declares it (see
 `common.py`), and the file is not in `flow_tests_done.txt`, the default build's
-CI matrix: it runs from `flow_tests_index_falkordb.txt`, against a module built
-with the feature. All CCH flow classes share this one file.
+CI matrix: CI runs it from `flow_tests_index_falkordb.txt`, against a module
+built with the feature. All CCH flow classes share this one file.
 
 Effects -- CCH index DDL, which is not replicated yet. See `effects_common.py`
 for the shared fixture.
@@ -18,6 +18,11 @@ from effects_common import _EffectsBase
 #-----------------------------------------------------------------------------
 # 1. CCH DDL is not replicated, so it must never create schema
 #-----------------------------------------------------------------------------
+
+
+NOT_HELD = "no CCH index over these relationship types and weight attribute"
+ALREADY_HELD = ("a CCH index already exists over these relationship types and "
+                "weight attribute")
 
 
 class testEffects_01_CchDdlCreatesNoSchema(_EffectsBase):
@@ -51,12 +56,15 @@ class testEffects_01_CchDdlCreatesNoSchema(_EffectsBase):
         self.env.assertEqual(self._schema_of(self.replica_graph), m)
         return m
 
-    def _refused(self, q, needle):
+    def _refused(self, q, *needles, read_only=False):
+        """`q` fails on the primary with an error containing every needle."""
+        run = (self.master_graph.ro_query if read_only
+               else self.master_graph.query)
         try:
-            self.master_graph.query(q)
+            run(q)
         except ResponseError as e:
-            self.env.assertContains(needle, str(e))
-            self.env.assertContains("first", str(e))
+            for needle in needles:
+                self.env.assertContains(needle, str(e))
             return
         self.env.assertTrue(False, message=f"{q} was not refused")
 
@@ -70,15 +78,15 @@ class testEffects_01_CchDdlCreatesNoSchema(_EffectsBase):
         # an empty graph on the primary, which no effect announces, so the
         # replica has no key to read until the first write below.
         self._refused("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)",
-                      "relationship type 'ROAD' does not exist")
+                      "relationship type 'ROAD' does not exist", "first")
         self.env.assertEqual(self._schema_of(self.master_graph), ([], []))
 
         # A normal write creates the type and the attribute, as an effect.
         self.query_and_sync("CREATE (:N)-[:ROAD {time: 1.0}]->(:N)")
         self._refused("CREATE CCH INDEX FOR ()-[e:ROAD|FERRY]->() ON (e.time)",
-                      "relationship type 'FERRY' does not exist")
+                      "relationship type 'FERRY' does not exist", "first")
         self._refused("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.length)",
-                      "attribute 'length' does not exist")
+                      "attribute 'length' does not exist", "first")
         self.wait_for_replica_offset()
         self.env.assertEqual(self._schema(), (['ROAD'], ['time']))
 
@@ -91,12 +99,7 @@ class testEffects_01_CchDdlCreatesNoSchema(_EffectsBase):
         # index, and is refused like the drop of an index that is not held.
         for q in ("DROP CCH INDEX FOR ()-[e:TRAIN]->() ON (e.time)",
                   "DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.speed)"):
-            try:
-                self.master_graph.query(q)
-                self.env.assertTrue(False, message=f"{q} was not refused")
-            except ResponseError as e:
-                self.env.assertContains("no CCH index over these relationship "
-                                        "types and weight attribute", str(e))
+            self._refused(q, NOT_HELD)
 
         # Later writes apply on the replica: the indexed type and its weight,
         # then a new type and a new attribute.
@@ -121,3 +124,33 @@ class testEffects_01_CchDdlCreatesNoSchema(_EffectsBase):
         if out_of_range is not None:
             self.env.assertEqual(out_of_range, out_of_range_before,
                 message="the replica could not resolve an id")
+
+    def test02_create_drop_and_refusals(self):
+        self.set_effects_config()
+        self.query_and_sync("CREATE (:N)-[:A {w: 1.0}]->(:N)-[:B {w: 2.0}]->(:N)")
+
+        # The types are a set: repeats and order do not make a new index.
+        res = self.query_and_sync("CREATE CCH INDEX FOR ()-[e:A]->() ON (e.w)")
+        self.env.assertEqual(res.indices_created, 1)
+        self._refused("CREATE CCH INDEX FOR ()-[e:A|A]->() ON (e.w)",
+                      ALREADY_HELD)
+        res = self.query_and_sync(
+            "CREATE CCH INDEX FOR ()-[e:A|B]->() ON (e.w)")
+        self.env.assertEqual(res.indices_created, 1)
+        self._refused("CREATE CCH INDEX FOR ()-[e:B|A]->() ON (e.w)",
+                      ALREADY_HELD)
+
+        # CCH DDL is a write: GRAPH.RO_QUERY refuses it.
+        for verb in ("CREATE", "DROP"):
+            self._refused(f"{verb} CCH INDEX FOR ()-[e:A]->() ON (e.w)",
+                          "graph.RO_QUERY is to be executed only on read-only "
+                          "queries", read_only=True)
+
+        # A drop names the same set in any spelling, and frees it for a create.
+        res = self.query_and_sync(
+            "DROP CCH INDEX FOR ()-[e:B|A|B]->() ON (e.w)")
+        self.env.assertEqual(res.indices_deleted, 1)
+        self._refused("DROP CCH INDEX FOR ()-[e:A|B]->() ON (e.w)", NOT_HELD)
+        res = self.query_and_sync(
+            "CREATE CCH INDEX FOR ()-[e:A|B]->() ON (e.w)")
+        self.env.assertEqual(res.indices_created, 1)

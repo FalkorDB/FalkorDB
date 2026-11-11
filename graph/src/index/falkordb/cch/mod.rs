@@ -9,14 +9,12 @@
 //! - `customize.rs` Phase 2: customization (#3209)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
-//! - `ddl.rs`       the runtime side of `CREATE`/`DROP CCH INDEX` (#3213)
 //! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
 //! files are where the `impl` blocks land.
 
 mod customize;
-pub(crate) mod ddl;
 mod input;
 mod nd;
 mod order;
@@ -269,6 +267,34 @@ pub enum CchError {
 impl From<order::OrderError> for CchError {
     fn from(error: order::OrderError) -> Self {
         Self::Ordering(error.to_string())
+    }
+}
+
+impl CchError {
+    /// The query error for a failed `CREATE`/`DROP CCH INDEX`, worded like C's where C has a
+    /// message.
+    ///
+    /// Not the `Display` text: that is the error's own wording, and the C wording differs
+    /// (`AlreadyExists`/`NotFound` say what the index is over, `Internal` drops "internal").
+    #[must_use]
+    pub(crate) fn query_message(&self) -> String {
+        match self {
+            Self::AlreadyExists => String::from(
+                "a CCH index already exists over these relationship types and weight attribute",
+            ),
+            Self::NotFound => {
+                String::from("no CCH index over these relationship types and weight attribute")
+            }
+            Self::UnknownRelType => String::from("CCH index error: unknown relationship type"),
+            Self::UnknownAttribute => String::from("CCH index error: unknown weight attribute"),
+            Self::InvalidWeight => String::from(
+                "CCH index error: edge weights must be >= 0 (+inf marks a closed edge)",
+            ),
+            Self::NeedsRebuild => format!("CCH index error: {self}"),
+            Self::Internal(message) => format!("CCH index error: {message}"),
+            Self::CsrExport(error) => format!("CCH index error: CSR export: {error}"),
+            Self::Ordering(error) => format!("CCH index error: {error}"),
+        }
     }
 }
 

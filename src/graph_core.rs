@@ -600,10 +600,7 @@ pub fn execute_query(
         params_offset,
         ..
     } = session.with_graph(|tg| tg.graph.read().get_plan(query))?;
-    // Single pass over the plan: index DDL (CREATE/DROP INDEX) and a Commit
-    // node both mean this is a write. Writes escalate to writer mode lazily
-    // during execution (see `crate::query_session`), so no further plan
-    // classification is needed here.
+    // Writes escalate to writer mode lazily (see `crate::query_session`).
     let is_write = plan.iter().any(IR::makes_write_query);
     let g = if is_write {
         if !write {

@@ -5306,7 +5306,7 @@ impl Graph {
         &mut self,
         def: CchIndexDef,
     ) -> Result<(), CchError> {
-        // Before anything is built, against every held entry, ready or not.
+        // Checked before the (costly) build; a building entry counts too.
         if self.falkordb_index.cch_entry(&def).is_some() {
             return Err(CchError::AlreadyExists);
         }

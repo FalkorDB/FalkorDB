@@ -18,8 +18,8 @@ The files, and the question each one asks:
   test_effects_ddl.py        index and constraint DDL as effects, including
                              the indexes a query never named
   test_cch_index.py          CCH index DDL, which is not replicated yet
-                             (shared with the other CCH flow classes; not in
-                             the CI matrix, see flow_tests_index_falkordb.txt)
+                             (shared with the other CCH flow classes; run
+                             from flow_tests_index_falkordb.txt)
   test_effects_topology.py   divergence, forced resync, promotion
   test_effects_commands.py   GRAPH.RECORD, and the commands that still
                              replicate verbatim

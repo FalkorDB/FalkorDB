@@ -142,19 +142,19 @@ graph/src/graph/graph.rs	Graph::cch_indexes	5334	NOT COVERED	not modelled yet: t
 graph/src/graph/graph.rs	Graph::cch_index	5341	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
 graph/src/graph/graph.rs	query_index_nodes	4221	NOT COVERED	native Range column (#3740): query_index_numeric_nodes until #3736; wraps query_column, re-target pending
 graph/src/graph/graph.rs	query_index_edges	4239	NOT COVERED	native Range column (#3740): query_index_numeric_edges until #3736; wraps query_column, re-target pending
-graph/src/index/falkordb/cch/mod.rs	Csr::row	97	PROVEN	Cch.Csr.row?: row?_spec (i[p[u]..p[u+1]], none = the panic), row?_isSome_of_wf (a well-formed Csr never panics for u < n)
-graph/src/index/falkordb/cch/mod.rs	Csr::is_well_formed	121	PROVEN	Cch.Csr.isWellFormed: isWellFormed_iff (n+1 offsets from 0, never decreasing, ending at i.len(); every id below n)
-graph/src/index/falkordb/cch/mod.rs	Csr::is_symmetric_simple	142	PROVEN	Cch.Csr.isSymmetricSimple: isSymmetricSimple_iff (well formed, rows strictly increasing, no self-loop, entries mirrored; binary_search by its std contract on a sorted slice), isSymmetricSimple_any_bs
-graph/src/index/falkordb/cch/mod.rs	CchIndexDef::new	217	PROVEN	Cch.defNew: defNew_spec (sorted, duplicate-free, same members), defNew_eq_of_same_members (equal sets are equal indexes)
-graph/src/index/falkordb/cch/mod.rs	Cch::recustomize_scoped	315	PROVEN	Cch.cchRecustomizeScoped: cchRecustomizeScoped_panics (unimplemented!, #3217)
-graph/src/index/falkordb/cch/mod.rs	Cch::query	338	NOT COVERED	not modelled yet: CCH Phase 3, query (#3210, #3324); the stub this row proved panicked is implemented
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::entry	386	PROVEN	Cch.cchEntry: cchEntry_spec (the BTreeMap binding of exactly that definition)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::entry_mut	393	PROVEN	Cch.cchEntry: cchEntry_spec (the slot of exactly that definition, as FalkorDbIndex.setEntry does for columns)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::writer_record	402	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: no IndexId variant dispatches to CCH yet)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::writer_rebase	414	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: a rebase is only onto a Building column, every CCH entry is Ready)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_catch_up	427	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: no IndexId variant dispatches to CCH yet)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_read	460	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_add	472	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!)
+graph/src/index/falkordb/cch/mod.rs	Csr::row	95	PROVEN	Cch.Csr.row?: row?_spec (i[p[u]..p[u+1]], none = the panic), row?_isSome_of_wf (a well-formed Csr never panics for u < n)
+graph/src/index/falkordb/cch/mod.rs	Csr::is_well_formed	119	PROVEN	Cch.Csr.isWellFormed: isWellFormed_iff (n+1 offsets from 0, never decreasing, ending at i.len(); every id below n)
+graph/src/index/falkordb/cch/mod.rs	Csr::is_symmetric_simple	140	PROVEN	Cch.Csr.isSymmetricSimple: isSymmetricSimple_iff (well formed, rows strictly increasing, no self-loop, entries mirrored; binary_search by its std contract on a sorted slice), isSymmetricSimple_any_bs
+graph/src/index/falkordb/cch/mod.rs	CchIndexDef::new	215	PROVEN	Cch.defNew: defNew_spec (sorted, duplicate-free, same members), defNew_eq_of_same_members (equal sets are equal indexes)
+graph/src/index/falkordb/cch/mod.rs	Cch::recustomize_scoped	341	PROVEN	Cch.cchRecustomizeScoped: cchRecustomizeScoped_panics (unimplemented!, #3217)
+graph/src/index/falkordb/cch/mod.rs	Cch::query	364	NOT COVERED	not modelled yet: CCH Phase 3, query (#3210, #3324); the stub this row proved panicked is implemented
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::entry	412	PROVEN	Cch.cchEntry: cchEntry_spec (the BTreeMap binding of exactly that definition)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::entry_mut	419	PROVEN	Cch.cchEntry: cchEntry_spec (the slot of exactly that definition, as FalkorDbIndex.setEntry does for columns)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::writer_record	428	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: no IndexId variant dispatches to CCH yet)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::writer_rebase	440	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: a rebase is only onto a Building column, every CCH entry is Ready)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_catch_up	453	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: no IndexId variant dispatches to CCH yet)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_read	486	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_add	498	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!)
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::indexer_insert	384	PROVEN	Rebase.IndexColumn.indexerInsert: indexerInsert_mem, insert_inv (Inv preserved for the state the batch leaves, given Frame and the batch's content), placedIn_edge_spec/placedIn_node_spec (the published column keeps its tuples; the batch adds those of entities no writer changed; written entities placed in [from, next) add their tuple as published has it) (#3568)
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::batch_len	406	PROVEN	Memory.IndexColumn.batchLen: batchLen_spec (= EncodedTuples::len)
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::memory_usage	429	PROVEN	Memory.IndexColumn.memoryUsage (delegates to NumericIndex::memory_usage = CowBTree::heap_bytes, proved in cow_btree heapBytes_eq for a TreeWF tree (every reachable tree is: Reachable_wf_asserted); the walk is the parameter hb) (#3569)
@@ -166,17 +166,18 @@ graph/src/index/falkordb/versioned.rs	VersionedIndex::batch_len	285	PROVEN	trait
 graph/src/index/falkordb/versioned.rs	VersionedIndex::memory_usage	340	PROVEN	trait signature; the IndexColumn impl: Memory.IndexColumn.memoryUsage; IndexEntry::memory_usage: Memory.EN.memoryUsage_*
 graph/src/index/falkordb/versioned.rs	IndexEntry::memory_usage	385	PROVEN	Memory.EN.memoryUsage: memoryUsage_ready, memoryUsage_building, memoryUsage_building_quiet (the pages, plus the since set's serialized size while Building and non-empty; by_this_version not counted) (#3569)
 graph/src/index/falkordb/versioned.rs	Graph::insert_index	541	PROVEN	Batch.V.insertedOnto: Rebase.insertedOnto_eq_caughtUpOnto, Batch.commit_catchUp_insert (published's copy with the batch inserted, the batch's state and commit count; same entry shape as the refresh catch-up); column: indexerInsert_mem; the path's invariant: Rebase.insert_inv (given Frame) (#3568)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_insert	440	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: no IndexId variant dispatches to CCH yet)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::batch_len	454	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!)
-graph/src/index/falkordb/cch/mod.rs	id_index	58	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
-graph/src/index/falkordb/cch/mod.rs	index_id	66	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
-graph/src/index/falkordb/cch/mod.rs	CchError::from	270	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
-graph/src/index/falkordb/cch/mod.rs	Csr::row_range	109	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
-graph/src/index/falkordb/cch/mod.rs	CchIndexDef::rel_types	233	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/mod.rs	Csr::from_export	168	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/mod.rs	From::from	180	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/mod.rs	From::from	187	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::memory_usage	481	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_insert	466	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: no IndexId variant dispatches to CCH yet)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::batch_len	480	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!)
+graph/src/index/falkordb/cch/mod.rs	id_index	56	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
+graph/src/index/falkordb/cch/mod.rs	index_id	64	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
+graph/src/index/falkordb/cch/mod.rs	CchError::from	268	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
+graph/src/index/falkordb/cch/mod.rs	Csr::row_range	107	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
+graph/src/index/falkordb/cch/mod.rs	CchIndexDef::rel_types	231	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
+graph/src/index/falkordb/cch/mod.rs	Csr::from_export	166	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
+graph/src/index/falkordb/cch/mod.rs	From::from	178	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
+graph/src/index/falkordb/cch/mod.rs	From::from	185	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::memory_usage	507	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
+graph/src/index/falkordb/cch/mod.rs	CchError::query_message	280	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
 graph/src/index/falkordb/cch/order.rs	Rank::new	51	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
 graph/src/index/falkordb/cch/order.rs	Rank::index	60	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
 graph/src/index/falkordb/cch/order.rs	Debug::fmt	67	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
@@ -302,10 +303,6 @@ graph/src/index/falkordb/cch/input/weight_ops.rs	Drop::drop	242	NOT COVERED	not 
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightContext::new	87	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::tensor_weights	343	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::multi_edge_pass	387	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/ddl.rs	create_cch_index	52	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
-graph/src/index/falkordb/cch/ddl.rs	drop_cch_index	95	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
-graph/src/index/falkordb/cch/ddl.rs	CchError::query_message	23	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
-graph/src/index/falkordb/cch/ddl.rs	resolve_cch_index	55	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	302	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; nodeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; edgeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/index/falkordb/range.rs	RangeKind::for_each_stored_key	43	NOT COVERED	native Range column (#3740): trait signature; not modelled yet

@@ -978,8 +978,6 @@ impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetIte
     }
 }
 
-/// Query clause IR - represents each clause type in a Cypher query.
-///
 /// What `CREATE CCH INDEX` and `DROP CCH INDEX` name: the relationship types
 /// and the weight attribute, as written.
 ///
@@ -991,6 +989,8 @@ pub struct CchIndexSpec {
     pub weight_attr: Arc<String>,
 }
 
+/// Query clause IR - represents each clause type in a Cypher query.
+///
 /// A complete query is a sequence of these clauses. The planner converts
 /// this AST into an execution plan.
 #[derive(Debug)]
@@ -1364,13 +1364,10 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::CreateIndex { .. } => iter
-                .next()
-                .map_or(Ok(()), |first| first.inner_validate(iter)),
-            Self::DropIndex { .. } => iter
-                .next()
-                .map_or(Ok(()), |first| first.inner_validate(iter)),
-            Self::CreateCchIndex(_) | Self::DropCchIndex(_) => iter
+            Self::CreateIndex { .. }
+            | Self::DropIndex { .. }
+            | Self::CreateCchIndex(_)
+            | Self::DropCchIndex(_) => iter
                 .next()
                 .map_or(Ok(()), |first| first.inner_validate(iter)),
             Self::Query { clauses, .. } => {
