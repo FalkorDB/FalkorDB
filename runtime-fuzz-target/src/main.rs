@@ -1,12 +1,10 @@
 // Dependency version duplicates are from transitive dependencies.
 #![allow(clippy::multiple_crate_versions)]
 
-use libc::{calloc, free, malloc, realloc};
-
 use graph::{
     graph::{
         graph::{Graph, Plan},
-        graphblas::matrix,
+        graphblas::{GrB_Mode, GrB_init},
         mvcc_graph::MvccGraph,
     },
     runtime::{functions::init_functions, runtime::Runtime},
@@ -30,11 +28,8 @@ impl graph::locks::WriteEscalation for AlwaysWritable {
 }
 
 fn main() {
-    // SAFETY: GraphBLAS allocates with libc, and this binary's global
-    // allocator is `System`, which frees with libc `free` on unix.
     unsafe {
-        matrix::init(Some(malloc), Some(calloc), Some(realloc), Some(free))
-            .expect("GraphBLAS initializes");
+        GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
     }
     init_functions().expect("Failed to init functions");
     fuzz!(|data: &[u8]| {
