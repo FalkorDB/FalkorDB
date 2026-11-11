@@ -308,6 +308,16 @@ valkey_preflight() {
         echo "Error: configuration on stdin (-) is not supported by this image; use a config file or --name value options." >&2
         exit 1
     fi
+    # The server resolves the --dir it is given against a directory an earlier
+    # `dir` setting may have changed; a relative path would be checked in the
+    # wrong place here.
+    case "${FALKORDB_DATA_PATH}" in
+        /*) ;;
+        *)
+            echo "Error: FALKORDB_DATA_PATH (${FALKORDB_DATA_PATH}) must be an absolute path." >&2
+            exit 1
+            ;;
+    esac
     redis_files=""
     newer_files=""
     # yes/no configs are case-insensitive in the server.
