@@ -270,6 +270,38 @@ static void _ClearKeySpaceMetaKeys
 	}
 }
 
+// delete the telemetry stream for each graph in the keyspace
+// used on persistence start so telemetry never lands in an RDB or a replica
+// transfer: the streams are node-local, and the consumer-group cursor Redis
+// replicates for them can push entries-read past entries-added, a state the
+// RDB loader rejects
+// in a fork child (BGSAVE / diskless sync / AOF rewrite) this drops the child's
+// copy only, so the live server keeps its telemetry; on a synchronous save
+// (SAVE / DEBUG RELOAD) the node's telemetry is dropped, acceptable for an
+// ephemeral best-effort stream
+static void _DeleteKeySpaceTelemetryStreams
+(
+	RedisModuleCtx *ctx
+) {
+	KeySpaceGraphIterator it;
+	GraphContext *gc = NULL;
+	Globals_ScanGraphs(&it);
+
+	while((gc = GraphIterator_Next(&it)) != NULL) {
+		RedisModuleString *keyname =
+			(RedisModuleString*)GraphContext_GetTelemetryStreamName(gc);
+		RedisModuleKey *key =
+			RedisModule_OpenKey(ctx, keyname, REDISMODULE_WRITE);
+
+		if(RedisModule_KeyType(key) == REDISMODULE_KEYTYPE_STREAM) {
+			RedisModule_DeleteKey(key);
+		}
+
+		RedisModule_CloseKey(key);
+		GraphContext_DecreaseRefCount(gc);
+	}
+}
+
 static void _FlushDBHandler
 (
 	RedisModuleCtx *ctx,
@@ -342,6 +374,9 @@ static void _PersistenceEventHandler
 
 	if(_IsEventPersistenceStart(eid, subevent)) {
 		_CreateKeySpaceMetaKeys(ctx);
+
+		// keep the node-local telemetry streams out of the snapshot
+		_DeleteKeySpaceTelemetryStreams(ctx);
 	} else if(_IsEventPersistenceEnd(eid, subevent)) {
 		_ClearKeySpaceMetaKeys(ctx, false);
 	}

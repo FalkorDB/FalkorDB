@@ -254,13 +254,14 @@ int CommandDispatch
 		? EXEC_THREAD_MAIN
 		: EXEC_THREAD_READER ;
 
-	// telemetry logs the queries clients issue to the master while CMD_INFO
-	// is on: not the ones a replica serves or receives from its master, nor
-	// the ones replayed from the AOF, which already holds their entries
+	// telemetry is node-local: log the queries this node serves to its own
+	// clients while CMD_INFO is on, so each node's stream reflects what ran on
+	// it. skip commands received from the master (the master's queries,
+	// replicated here) and the AOF/RDB replay, which already holds their entries
 	bool info_enabled = false ;
 	Config_Option_get (Config_CMD_INFO, &info_enabled) ;
 	bool log_query = info_enabled && !is_replicated &&
-		!(flags & (REDISMODULE_CTX_FLAGS_SLAVE | REDISMODULE_CTX_FLAGS_LOADING)) ;
+		!(flags & REDISMODULE_CTX_FLAGS_LOADING) ;
 
 	Command_Handler handler = get_command_handler (cmd) ;
 	if (exec_thread == EXEC_THREAD_MAIN) {

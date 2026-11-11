@@ -119,7 +119,7 @@ def consumeStream(conn, env, stream, drop=True, n_items=1, timeout=30):
 
 class testGraphInfo():
     def __init__(self):
-        self.env, self.db = Env()
+        self.env, self.db = Env(enableDebugCommand=True)
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
@@ -508,34 +508,50 @@ class testGraphInfo():
         logged_queries = consumeStream(self.conn, self.env, stream, n_items=1)
         self.env.assertEquals([q.Query for q in logged_queries], ["RETURN 'on'"])
 
-    def test10_cmd_info_off_before_logged_queries_are_written(self):
-        """queries logged while CMD_INFO is on, and not yet written when it is
-           turned off, are dropped"""
+    def test10_telemetry_stripped_on_reload(self):
+        """telemetry is node-local and is kept out of snapshots: a synchronous
+           save (DEBUG RELOAD) drops the stream, so the divergent consumer-group
+           cursor Redis replicates for it can never corrupt an RDB"""
 
         stream = StreamName(self.graph)
 
-        # the read-only query below needs the graph to exist
-        self.graph.query("RETURN 'create'")
+        # produce a telemetry entry
+        self.graph.query("RETURN 'reload'")
+        logged_queries = consumeStream(self.conn, self.env, stream, drop=False,
+                n_items=1)
+        self.env.assertEquals([q.Query for q in logged_queries], ["RETURN 'reload'"])
+
+        # DEBUG RELOAD saves and loads the RDB in the main process; the stream
+        # is stripped at save, so it is gone afterwards and the reload succeeds
+        self.env.assertEquals(self.conn.execute_command("DEBUG", "RELOAD"), "OK")
+        self.env.assertTrue(self.conn.ping())
+        self.env.assertFalse(self.conn.exists(stream))
+
+    def test11_bgsave_keeps_live_telemetry_but_strips_rdb(self):
+        """a background save strips telemetry in the fork child only: the live
+           server keeps its stream, but the RDB the save produced holds none of
+           it"""
+
+        stream = StreamName(self.graph)
+
+        # produce a telemetry entry
+        self.graph.query("RETURN 'bgsave'")
         self.env.assertTrue(_wait_for(lambda: self.conn.exists(stream)))
-        self.conn.delete(stream)
 
-        try:
-            try:
-                # while writes are paused the cron task keeps the logged
-                # queries instead of writing them
-                self.conn.execute_command("CLIENT", "PAUSE", "30000", "WRITE")
-                self.graph.ro_query("RETURN 'logged while on'")
+        # BGSAVE forks a child that strips its copy of the stream; the live
+        # server is a separate process and keeps the stream intact
+        self.conn.execute_command("BGSAVE")
+        self.env.assertTrue(_wait_for(lambda:
+            self.conn.info("persistence")["rdb_bgsave_in_progress"] == 0))
+        self.env.assertEquals(
+            self.conn.info("persistence")["rdb_last_bgsave_status"], "ok")
+        self.env.assertTrue(self.conn.exists(stream))
 
-                # the cron task runs at least every 3 seconds
-                time.sleep(4)
-                self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no")
-            finally:
-                self.conn.execute_command("CLIENT", "UNPAUSE")
-
-            time.sleep(4)
-            self.env.assertFalse(self.conn.exists(stream))
-        finally:
-            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "yes")
+        # load the RDB the background save produced (NOSAVE, no re-save): it
+        # holds no telemetry, so the stream is absent after loading it
+        self.env.assertEquals(
+            self.conn.execute_command("DEBUG", "RELOAD", "NOSAVE"), "OK")
+        self.env.assertFalse(self.conn.exists(stream))
 
 def _wait_for(condition, timeout=10):
     """poll condition until it holds or timeout seconds pass"""
@@ -576,53 +592,46 @@ class testGraphInfoOffAtLoad():
             self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no")
 
 class testGraphInfoAof():
-    """queries replayed from the AOF are not logged again, the AOF already
-       holds their entries"""
+    """telemetry is node-local and never replicated, so it is not written to
+       the AOF; replaying the AOF restores no telemetry and logs nothing, since
+       the replayed queries run under the loading flag"""
 
     def __init__(self):
         self.env, self.db = Env(useAof=True, enableDebugCommand=True)
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
-    def test01_aof_replay_writes_no_entries(self):
+    def test01_aof_holds_no_telemetry(self):
         stream = StreamName(self.graph)
 
         try:
-            # replicate the writes as GRAPH.QUERY, so loading the AOF replays
-            # the queries themselves
+            # replicate the writes as GRAPH.QUERY, so the AOF holds the queries
+            # themselves (not effects)
             self.db.config_set("EFFECTS_THRESHOLD", 999999)
 
             for _ in range(3):
                 self.graph.query("CREATE ()")
+
+            # the node logs its own telemetry locally
             self.env.assertTrue(_wait_for(lambda: self.conn.exists(stream) and
                 self.conn.xinfo_stream(stream)["entries-added"] == 3))
 
+            # the AOF holds the GRAPH.QUERY commands but none of the node-local
+            # telemetry entries, so replaying it restores no telemetry stream
             self.env.assertEquals(self.conn.execute_command("DEBUG", "LOADAOF"), "OK")
 
-            # the cron task runs at least every 3 seconds
+            # the cron task runs at least every 3 seconds; the replayed queries
+            # ran under the loading flag and were not logged
             time.sleep(4)
-            info = self.conn.xinfo_stream(stream)
-            self.env.assertEquals(info["entries-added"], 3)
-            self.env.assertEquals(info["length"], 3)
+            self.env.assertFalse(self.conn.exists(stream))
         finally:
             self.db.config_set("EFFECTS_THRESHOLD", 0)
 
-def StreamState(conn, stream):
-    """a stream's entry IDs and consumer-group counters, None if it doesn't exist"""
-    if conn.type(stream) != 'stream':
-        return None
-
-    return {
-        "ids"           : [entry[0] for entry in conn.xrange(stream)],
-        "entries-added" : conn.xinfo_stream(stream)["entries-added"],
-        "groups"        : [(g["name"], g["last-delivered-id"], g["entries-read"],
-                            g["lag"]) for g in conn.xinfo_groups(stream)],
-    }
-
 class testGraphInfoReplication():
-    """only the master writes the telemetry stream and its writes replicate,
-       so replicas hold the same stream and consumer-group state stays valid
-       across a failover"""
+    """telemetry streams are node-local: each node logs only the queries it
+       serves, the writes are not replicated, and the streams are stripped from
+       every snapshot so a divergent consumer-group cursor can never corrupt an
+       RDB across a failover"""
 
     def __init__(self):
         # replication timing doesn't play well with Valgrind/sanitizers
@@ -634,11 +643,11 @@ class testGraphInfoReplication():
         self.replica = self.env.getSlaveConnection()
 
     def _roles(self):
-        """the current (master, replica) connections, test03 swaps them
+        """the current (master, replica) connections, test02 swaps them
 
            waits for the replica's link to be up: the first full sync is
            delayed by repl-diskless-sync-delay, and one that lands mid-test
-           would copy the master's stream instead of replicating its writes"""
+           would replace the replica's own stream with the master's snapshot"""
         if self.master.info("replication")["role"] == "master":
             master, replica = self.master, self.replica
         else:
@@ -648,147 +657,99 @@ class testGraphInfoReplication():
             replica.info("replication")["master_link_status"] == "up", timeout=30))
         return master, replica
 
-    def _assert_in_sync(self, master, replica, stream):
-        """the replica's copy of the stream matches the master's"""
-        master.execute_command("WAIT", "1", "10000")
-        _wait_for(lambda: StreamState(replica, stream) == StreamState(master, stream))
-        self.env.assertEquals(StreamState(replica, stream), StreamState(master, stream))
-
     def _port(self, conn):
         """the port of the server conn is connected to"""
         runner = self.env.envRunner
         return runner.port if conn is self.master else runner.slavePort
 
-    def test01_replication_pause_defers_writes(self):
-        """while replication traffic is paused the master keeps its logged
-           queries, and writes them once the pause ends"""
+    def test01_streams_are_node_local(self):
+        """each node logs only the queries it serves: the master its writes,
+           the replica its own reads; neither appears in the other's stream"""
 
-        master, replica = self._roles()
-        graph   = Graph(master, "pause")
-        stream  = StreamName(graph)
-
-        graph.query("CREATE ()")
-        self.env.assertTrue(_wait_for(lambda: master.exists(stream)))
-        self._assert_in_sync(master, replica, stream)
-
-        try:
-            # read-only queries still run during a write pause, and are logged
-            # the pause outlasts the test, so only UNPAUSE ends it
-            master.execute_command("CLIENT", "PAUSE", "30000", "WRITE")
-            graph.ro_query("RETURN 1")
-
-            # the cron task runs at least every 3 seconds; the master survives
-            # the runs that fall inside the pause, and writes nothing in them
-            time.sleep(4)
-            self.env.assertTrue(master.ping())
-            self.env.assertEquals(master.xlen(stream), 1)
-        finally:
-            master.execute_command("CLIENT", "UNPAUSE")
-
-        self.env.assertTrue(_wait_for(lambda: master.xlen(stream) == 2))
-        self._assert_in_sync(master, replica, stream)
-
-    def test02_trim_replicates(self):
-        """the master's trims replicate, replicas drop the same entries"""
-
-        master, replica = self._roles()
-        graph   = Graph(master, "trim")
-        stream  = StreamName(graph)
-
-        max_queries = master.execute_command("GRAPH.CONFIG", "GET", "MAX_INFO_QUERIES")[1]
-        node_size   = master.config_get("stream-node-max-entries")["stream-node-max-entries"]
-
-        try:
-            # one entry per stream node, so the master's approximate trim drops
-            # single entries; the replica keeps the default node size, where an
-            # approximate trim of these few entries would drop none
-            master.config_set("stream-node-max-entries", 1)
-
-            graph.query("CREATE ()")
-            self.env.assertTrue(_wait_for(lambda: master.exists(stream)))
-
-            master.execute_command("GRAPH.CONFIG", "SET", "MAX_INFO_QUERIES", 2)
-            for _ in range(6):
-                graph.query("CREATE ()")
-
-            self.env.assertTrue(_wait_for(lambda:
-                StreamState(master, stream)["entries-added"] == 7))
-            self.env.assertEquals(master.xlen(stream), 2)
-            self._assert_in_sync(master, replica, stream)
-        finally:
-            master.execute_command("GRAPH.CONFIG", "SET", "MAX_INFO_QUERIES", max_queries)
-            master.config_set("stream-node-max-entries", node_size)
-
-    def test03_stream_replicates_and_survives_failover(self):
         master, replica = self._roles()
         master_graph  = Graph(master, GRAPH_ID)
         replica_graph = Graph(replica, GRAPH_ID)
         stream        = StreamName(master_graph)
 
-        # each round runs queries on the master, waits for the master to write
-        # them, then runs a read-only query on the replica, so that anything
-        # the replica wrote would be newer than every master entry
-        def traffic(master_queries, expected_len):
-            for _ in range(master_queries):
-                master_graph.query("CREATE ()")
-            self.env.assertTrue(_wait_for(lambda:
-                master.exists(stream) and master.xlen(stream) == expected_len))
+        # the master serves a write; the replica applies it through replication
+        # but does not log it, it is the master's query not the replica's own
+        master_graph.query("CREATE ()")
+        self.env.assertTrue(_wait_for(lambda:
+            master.exists(stream) and master.xlen(stream) == 1))
 
-            # read-only queries served by the replica are not written to its copy
+        # the replica serves a read-only query of its own
+        replica_graph.ro_query("MATCH (n) RETURN count(n)")
+        self.env.assertTrue(_wait_for(lambda:
+            replica.exists(stream) and replica.xlen(stream) == 1))
+
+        # the streams are independent: the master holds only its write, the
+        # replica only its own read, neither carries the other's query
+        master_q  = consumeStream(master,  self.env, stream, drop=False, n_items=1)
+        replica_q = consumeStream(replica, self.env, stream, drop=False, n_items=1)
+        self.env.assertEquals([q.Query for q in master_q],  ["CREATE ()"])
+        self.env.assertEquals([q.Query for q in replica_q],
+                ["MATCH (n) RETURN count(n)"])
+
+    def test02_survives_failover_and_reload(self):
+        """the consumer-group cursor Redis replicates for the telemetry stream
+           can diverge on a replica; stripping telemetry from snapshots keeps a
+           promoted node able to save, reload and full-sync"""
+
+        master, replica = self._roles()
+        # a dedicated graph, so no earlier test's entries are in the stream
+        master_graph  = Graph(master, "failover")
+        replica_graph = Graph(replica, "failover")
+        stream        = StreamName(master_graph)
+
+        # the master writes its own entries
+        for _ in range(3):
+            master_graph.query("CREATE ()")
+        self.env.assertTrue(_wait_for(lambda:
+            master.exists(stream) and master.xlen(stream) == 3))
+
+        # the replica serves its own read-only queries first, so its node-local
+        # stream exists and diverges from the master's (fewer entries, its own
+        # IDs) before the master's group state replicates onto it
+        for _ in range(2):
             replica_graph.ro_query("MATCH (n) RETURN count(n)")
-            time.sleep(4)  # the cron task runs at least every 3 seconds
-            self._assert_in_sync(master, replica, stream)
+        self.env.assertTrue(_wait_for(lambda:
+            replica.exists(stream) and replica.xlen(stream) == 2))
 
-        # the master writes the entries and they replicate under the same IDs
-        traffic(1, 1)
-
-        # an exporter reads the stream through a consumer group on the master
+        # an exporter reads the master's stream through a consumer group; the
+        # group create and its cursor replicate onto the replica's shorter
+        # stream, pushing its group's entries-read past its own entries-added
         master.execute_command("XGROUP", "CREATE", stream, "exporter", "0")
-        traffic(2, 3)
-        res = master.xreadgroup("exporter", "consumer", {stream: ">"}, count=100)
-        self.env.assertEquals(sum(len(entries) for _, entries in res), 3)
-        self._assert_in_sync(master, replica, stream)
-
-        # one more entry the exporter hasn't read yet
-        traffic(1, 4)
+        master.xreadgroup("exporter", "consumer", {stream: ">"}, count=100)
+        master.execute_command("WAIT", "1", "10000")
 
         #-----------------------------------------------------------------------
         # failover: the replica becomes the master
         #-----------------------------------------------------------------------
 
-        # the replica serves one more query and is promoted straight away,
-        # before its cron task's next run
-        replica_graph.ro_query("MATCH (n) RETURN count(n)")
         replica.execute_command("REPLICAOF", "NO", "ONE")
         master.execute_command("REPLICAOF", "localhost", self._port(replica))
         master, replica = replica, master
         self.env.assertTrue(_wait_for(lambda:
-            replica.info("replication")["master_link_status"] == "up"))
+            replica.info("replication")["master_link_status"] == "up", timeout=30))
 
-        # the queries the new master served as a replica were never logged:
-        # its cron task runs at least every 3 seconds and writes nothing
-        time.sleep(4)
-        self.env.assertEquals(master.xinfo_stream(stream)["entries-added"], 4)
+        # the exporter reads from the promoted node; with the inherited cursor
+        # this can push entries-read past the stream's own entries-added
+        try:
+            master.xreadgroup("exporter", "consumer", {stream: ">"}, count=100)
+        except Exception:
+            pass
 
-        # the exporter's next read delivers the one entry it hasn't seen,
-        # and the group has read exactly what the stream received
-        res = master.xreadgroup("exporter", "consumer", {stream: ">"}, count=100)
-        self.env.assertEquals(sum(len(entries) for _, entries in res), 1)
-
-        state = StreamState(master, stream)
-        _, _, entries_read, lag = state["groups"][0]
-        self.env.assertEquals(entries_read, state["entries-added"])
-        self.env.assertEquals(lag, 0)
-
-        # the new master's snapshot loads
+        # the promoted node saves and reloads: telemetry is stripped at save,
+        # so no inconsistent consumer-group state ever reaches the RDB
         self.env.assertEquals(master.execute_command("DEBUG", "RELOAD"), "OK")
-        self.env.assertEquals(StreamState(master, stream), state)
+        self.env.assertTrue(master.ping())
+        self.env.assertFalse(master.exists(stream))
 
-        # and so does a full sync from it
+        # a full sync from the promoted node loads on the demoted node too
         sync_full = master.info("stats")["sync_full"]
         replica.execute_command("REPLICAOF", "NO", "ONE")
         replica.execute_command("REPLICAOF", "localhost", self._port(master))
         self.env.assertTrue(_wait_for(lambda:
             master.info("stats")["sync_full"] > sync_full and
             replica.info("replication")["master_link_status"] == "up", timeout=30))
-        self._assert_in_sync(master, replica, stream)
+        self.env.assertTrue(replica.ping())

@@ -176,31 +176,23 @@ static void _clearEvent
 
 // add queries to stream
 //
-// each entry is replicated to replicas and the AOF as an XADD carrying the ID
-// the master assigned, so every node holds the same entries under the same IDs
+// entries are added node-locally and are NOT replicated: each node's telemetry
+// stream reflects the queries that actually ran on it. the streams are stripped
+// from every snapshot at persistence start, so the consumer-group cursor Redis
+// replicates for them never reaches an RDB
 static void _stream_queries
 (
-	RedisModuleCtx *ctx,          // redis module context
-	RedisModuleKey *key,          // stream key, opened for writing
-	RedisModuleString *keyname,   // stream key name
-	CircularBuffer queries        // queries to stream
+	RedisModuleCtx *ctx,    // redis module context
+	RedisModuleKey *key,    // stream key, opened for writing
+	CircularBuffer queries  // queries to stream
 ) {
 	LoggedQuery q ;
-	RedisModuleStreamID id ;
 
 	while (CircularBuffer_Read (queries, &q)) {
 		_populateEvent (ctx, &q) ;
 
-		if (RedisModule_StreamAdd (key, REDISMODULE_STREAM_ADD_AUTOID, &id,
-					_event, FLD_COUNT) == REDISMODULE_OK) {
-			RedisModuleString *id_str =
-				RedisModule_CreateStringFromStreamID (ctx, &id) ;
-
-			RedisModule_Replicate (ctx, "XADD", "ssv", keyname, id_str,
-					_event, (size_t) (FLD_COUNT * 2)) ;
-
-			RedisModule_FreeString (ctx, id_str) ;
-		}
+		RedisModule_StreamAdd (key, REDISMODULE_STREAM_ADD_AUTOID, NULL,
+				_event, FLD_COUNT) ;
 
 		// clean up
 		LoggedQuery_Free (&q) ;
@@ -208,27 +200,14 @@ static void _stream_queries
 	}
 }
 
-// cap stream at 'max_len' entries
-//
-// the master trims approximately, dropping whole stream nodes only, and the
-// trim is replicated as the exact length it left: node boundaries can differ
-// on a replica, where an approximate trim would drop a different number of
-// entries
+// cap stream at 'max_len' entries, node-locally and without replication
 static void _trim_stream
 (
-	RedisModuleCtx *ctx,          // redis module context
-	RedisModuleKey *key,          // stream key, opened for writing
-	RedisModuleString *keyname,   // stream key name
-	uint64_t max_len              // max number of entries to keep
+	RedisModuleKey *key,   // stream key, opened for writing
+	uint64_t max_len       // max number of entries to keep
 ) {
-	long long deleted = RedisModule_StreamTrimByLength (key,
-			REDISMODULE_STREAM_TRIM_APPROX, max_len) ;
-
-	// a trim that deleted nothing is not replicated
-	if (deleted > 0) {
-		RedisModule_Replicate (ctx, "XTRIM", "sccl", keyname, "MAXLEN", "=",
-				(long long) RedisModule_ValueLength (key)) ;
-	}
+	RedisModule_StreamTrimByLength (key, REDISMODULE_STREAM_TRIM_APPROX,
+			max_len) ;
 }
 
 // discard queries without streaming them
@@ -309,23 +288,13 @@ bool CronTask_streamFinishedQueries
 	uint64_t max_query_count = 0 ;
 	Config_Option_get (Config_CMD_INFO_MAX_QUERY_COUNT, &max_query_count) ;
 
-	// only the master writes to the telemetry streams, replicas receive the
-	// entries through replication
-	// queries logged on a replica, or while CMD_INFO is off, are discarded
+	// each node writes its own telemetry stream node-locally; the writes are
+	// not replicated, so no replication-pause handling is needed here
+	// queries logged while CMD_INFO is off are discarded
 	bool info_enabled = false ;
 	Config_Option_get (Config_CMD_INFO, &info_enabled) ;
 
-	bool replica = (RedisModule_GetContextFlags (rm_ctx) &
-			REDISMODULE_CTX_FLAGS_SLAVE) ;
-
-	bool write = info_enabled && !replica ;
-
-	// the writes are propagated when the GIL is released, which Redis doesn't
-	// allow while replication traffic is paused (CLIENT PAUSE WRITE, FAILOVER,
-	// SHUTDOWN waiting for replicas): keep the logged queries for a later run
-	if (write && RedisModule_AvoidReplicaTraffic ()) {
-		goto cleanup ;
-	}
+	bool write = info_enabled ;
 
 	// initialize graph iterator
 	KeySpaceGraphIterator it ;
@@ -380,10 +349,10 @@ bool CronTask_streamFinishedQueries
 		if (key_type == REDISMODULE_KEYTYPE_STREAM ||
 			key_type == REDISMODULE_KEYTYPE_EMPTY) {
 			// add queries to stream
-			_stream_queries (rm_ctx, key, keyname, queries) ;
+			_stream_queries (rm_ctx, key, queries) ;
 
 			// cap stream
-			_trim_stream (rm_ctx, key, keyname, max_query_count) ;
+			_trim_stream (key, max_query_count) ;
 		} else {
 			// key holds a different type, drop the queries
 			_discard_queries (queries) ;
