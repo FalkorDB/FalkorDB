@@ -174,8 +174,8 @@ jobs:
       # push_to_dockerhub left at default false — PR RC builds stay on GHCR.
       # create_manifest defaults true (release is multi-arch).
 
-  # Trivy scan of the RC images: master's `security-scan` job (build.yml),
-  # ported. Fails on a HIGH or CRITICAL vulnerability that has a fixed version;
+  # Trivy and Docker Scout scans of the RC images. Fail on a HIGH or CRITICAL
+  # vulnerability that has a fixed version;
   # unfixed ones go in the JSON report but do not gate, since nothing in this
   # repo can clear them.
   #
@@ -277,6 +277,21 @@ jobs:
                    | "| \(.Severity) | \(.VulnerabilityID) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion) | \($t) |"' \
               trivy-report.json
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Scout also detects embedded Go stdlibs that Trivy may attribute only
+      # to their Debian package and miss when Debian has not rebuilt it.
+      - name: Docker Scout - fail on fixable HIGH/CRITICAL vulnerabilities
+        if: ${{ !cancelled() }}
+        uses: docker/scout-action@e7e2a72bf1485d10a58f30696b6c513b261ce4fa # v1.29.0
+        with:
+          command: cves
+          image: registry://${{ env.IMAGE }}
+          dockerhub-user: ${{ secrets.DOCKER_USERNAME }}
+          dockerhub-password: ${{ secrets.DOCKER_PASSWORD }}
+          only-severities: critical,high
+          only-fixed: true
+          exit-code: true
+          write-comment: false
 
   # Build the asan instrumented runtime image (amd64-only). Single cell,
   # no manifest needed (push directly to the bare tag).

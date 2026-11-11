@@ -128,6 +128,19 @@ RUN set -eux; \
     /redis-install/bin/redis-server --version; \
     /redis-install/bin/redis-cli --version
 
+# su-exec v0.3: keep the privilege-drop tool free of gosu's embedded Go stdlib.
+FROM debian:trixie-slim AS su-exec-builder
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gcc libc6-dev make; \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp/su-exec
+ADD --checksum=sha256:ff589a9ed0ef28bac7b4d71a23d049f8bc7de51c9051c91ebf32c0387dd53d72 \
+    https://github.com/ncopa/su-exec/archive/89c016e6e08749d583efdeda04b9f73e1218e253.tar.gz /tmp/su-exec.tar.gz
+RUN tar -xzf /tmp/su-exec.tar.gz --strip-components=1 && \
+    make CFLAGS="-Os -Wall -Werror" LDFLAGS="-s"
+
 # ---------------------------------------------------------------------------
 # Runtime image — debian:trixie-slim, no build tools.
 # ---------------------------------------------------------------------------
@@ -152,8 +165,8 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 # Required at runtime:
 #   ca-certificates, bash, openssl  : run.sh + gen-certs.sh
 #   libssl3                         : redis-server with BUILD_TLS=yes
-#   gosu                            : run.sh drops root to `falkordb`; the
-#                                     browser entrypoint drops to nextjs
+# su-exec (copied below, also available as gosu) drops root to `falkordb`
+# for run.sh and to nextjs for the browser entrypoint.
 #
 # CVE trim: purge python3.13 + force-remove essential packages not needed at
 # runtime (ncurses, perl, login, passwd, util-linux). With no LLVM in this image any more
@@ -161,7 +174,7 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 # old layout required.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3 gosu; \
+    apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3; \
     apt-get upgrade -y; \
     # Create the falkordb user/group, which run.sh runs redis-server as,
     # BEFORE purging `passwd` (which provides groupadd/useradd). uid/gid 999
@@ -180,15 +193,21 @@ RUN set -eux; \
     # util-linux, mount and bsdutils ship the setuid mount/umount/su plus
     # nsenter/unshare, and between them carry most of the image's HIGH
     # findings that Debian has not fixed yet. Nothing here runs them, and no
-    # other installed package depends on them or on their five libraries.
+    # other installed package depends on them or on their libraries, including
+    # libsqlite3-0, which only liblastlog2-2 needed.
     # No `|| true`: if a new dependent appears, fail the build rather than
     # silently ship them — the Trivy gate ignores unfixed findings, so
     # nothing else would notice.
     dpkg --force-remove-essential --purge \
         util-linux mount bsdutils \
-        libmount1 libblkid1 libuuid1 libsmartcols1 liblastlog2-2; \
+        libmount1 libblkid1 libuuid1 libsmartcols1 liblastlog2-2 libsqlite3-0; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/debconf/*
+
+COPY --from=su-exec-builder /tmp/su-exec/su-exec /usr/local/bin/su-exec
+COPY --from=su-exec-builder /tmp/su-exec/LICENSE /usr/local/share/doc/su-exec/LICENSE
+RUN ln -s su-exec /usr/local/bin/gosu && \
+    test "$(gosu falkordb id -u):$(gosu falkordb id -g)" = "999:999"
 
 # Pull only the binaries from the redis-builder stage — no build toolchain,
 # no bundled modules, no jemalloc build artefacts.
@@ -260,14 +279,12 @@ ENV FALKORDB_BROWSER_PATH=/var/lib/falkordb/browser \
 # are copied here, so this stage must provide the userland they expect:
 #   * node(1) from node:26 links against libatomic.so.1 and libstdc++.so.6,
 #     neither of which is in debian:trixie-slim.
-#   * docker-entrypoint.sh drops privileges with su-exec(1), an Alpine tool.
-#     Debian's equivalent is gosu (installed in `server`), symlinked under
-#     the expected name.
+#   * docker-entrypoint.sh drops privileges with su-exec(1), installed in
+#     `server` alongside the gosu compatibility symlink used by run.sh.
 # Without these the browser never starts (see issue #2750).
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends libatomic1 libstdc++6; \
-    ln -sf "$(command -v gosu)" /usr/local/bin/su-exec; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/debconf/*
 
