@@ -112,7 +112,7 @@ fn new_version_isolates_the_falkordb_index() {
         .create_column(EntityType::Node, &label, &attr);
     committed
         .falkordb_index
-        .numeric_mut(EntityType::Node, &label, &attr)
+        .column_mut(EntityType::Node, &label, &attr)
         .unwrap()
         .add(&Value::Int(30), 1);
 
@@ -120,13 +120,13 @@ fn new_version_isolates_the_falkordb_index() {
     let mut writer = committed.new_version();
     writer
         .falkordb_index
-        .numeric_mut(EntityType::Node, &label, &attr)
+        .column_mut(EntityType::Node, &label, &attr)
         .unwrap()
         .add(&Value::Int(40), 2);
 
     let all = |g: &Graph| -> Vec<u64> {
         g.falkordb_index
-            .numeric(EntityType::Node, &label, &attr)
+            .column(EntityType::Node, &label, &attr)
             .unwrap()
             .range(None, None, true, true)
             .collect()
@@ -220,7 +220,7 @@ fn create_index_leaves_the_node_column_to_its_batches() {
         let lo = lo.map(Value::Int);
         let hi = hi.map(Value::Int);
         g.falkordb_index
-            .numeric(EntityType::Node, &label, &attr)
+            .column(EntityType::Node, &label, &attr)
             .unwrap()
             .range(lo.as_ref(), hi.as_ref(), true, true)
             .collect()
@@ -387,7 +387,7 @@ fn range_scan(
     hi: i64,
 ) -> Vec<u64> {
     g.falkordb_index
-        .numeric(EntityType::Node, label, attr)
+        .column(EntityType::Node, label, attr)
         .unwrap()
         .range(Some(&Value::Int(lo)), Some(&Value::Int(hi)), true, true)
         .collect()
@@ -576,7 +576,7 @@ fn edge_writes_maintain_the_index() {
 
     let scan = |g: &Graph, lo: i64, hi: i64| -> Vec<u64> {
         g.falkordb_index
-            .numeric(EntityType::Relationship, &ty, &attr)
+            .column(EntityType::Relationship, &ty, &attr)
             .unwrap()
             .range(Some(&Value::Int(lo)), Some(&Value::Int(hi)), true, true)
             .collect()
@@ -714,7 +714,7 @@ fn contents(
 ) -> Contents {
     let idx = g
         .falkordb_index
-        .numeric(entity, label, attr)
+        .column(entity, label, attr)
         .expect("the column exists");
     let per_value = values
         .iter()
@@ -1400,7 +1400,7 @@ fn dropping_a_building_column_leaves_nothing_behind() {
     assert!(!g.falkordb_index.has_building_columns());
     assert!(
         g.falkordb_index
-            .numeric(EntityType::Node, &label, &attr)
+            .column(EntityType::Node, &label, &attr)
             .is_none()
     );
     assert!(
@@ -1409,7 +1409,7 @@ fn dropping_a_building_column_leaves_nothing_behind() {
     );
     assert!(
         g.falkordb_index
-            .numeric(EntityType::Node, &label, &attr)
+            .column(EntityType::Node, &label, &attr)
             .is_none()
     );
 
@@ -1587,7 +1587,7 @@ fn replica_edge_update_of_type_maintains_the_index() {
 
     let scan = |lo: i64, hi: i64| -> Vec<u64> {
         g.falkordb_index
-            .numeric(EntityType::Relationship, &ty, &attr)
+            .column(EntityType::Relationship, &ty, &attr)
             .unwrap()
             .range(Some(&Value::Int(lo)), Some(&Value::Int(hi)), true, true)
             .collect()
@@ -2649,7 +2649,7 @@ fn check_rules(
         }
         let held: BTreeSet<(KeyKind, u64, u64)> = g
             .falkordb_index
-            .numeric(EntityType::Node, label, attr)
+            .column(EntityType::Node, label, attr)
             .expect("a numeric column")
             .tuples()
             .into_iter()
@@ -3057,7 +3057,7 @@ fn check_column(
     }
     let held: BTreeSet<(KeyKind, u64, u64)> = g
         .falkordb_index
-        .numeric(entity, label, attr)
+        .column(entity, label, attr)
         .expect("a numeric column")
         .tuples()
         .into_iter()
@@ -3732,9 +3732,14 @@ fn a_batch_frees_what_it_did_not_publish_after_the_hosts_lock() {
         move |prepared: &Graph| {
             let column = prepared
                 .falkordb_index
-                .numeric(EntityType::Node, &label, &attr)
+                .column(EntityType::Node, &label, &attr)
                 .expect("the batch's column");
-            *pages.lock() = column.pages().iter().map(Arc::downgrade).collect();
+            *pages.lock() = column
+                .numeric()
+                .pages()
+                .iter()
+                .map(Arc::downgrade)
+                .collect();
         }
     }));
     host.before_publish({
@@ -4436,7 +4441,7 @@ fn contains(
     v: i64,
 ) -> Vec<u64> {
     g.falkordb_index
-        .numeric(EntityType::Node, label, attr)
+        .column(EntityType::Node, label, attr)
         .unwrap()
         .array_contains(&Value::Int(v))
         .collect()

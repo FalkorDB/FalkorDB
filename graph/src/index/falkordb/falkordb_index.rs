@@ -24,7 +24,7 @@ use crate::runtime::value::Value;
 use super::cch::{CchError, CchIndex, CchIndexDef};
 use super::encode::KeyKind;
 use super::graph_writes;
-use super::numeric::{DocIter, EncodedTuples, NumericIndex};
+use super::numeric::{DocIter, EncodedTuples};
 use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
 use super::range::{RangeIndex, Selection, attributes_of};
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
@@ -177,7 +177,7 @@ impl IndexColumn {
     #[must_use]
     pub fn lookup(
         &self,
-        selection: &Selection,
+        selection: Selection,
     ) -> DocIter {
         match self {
             Self::Range(idx) => idx.lookup(selection),
@@ -809,29 +809,6 @@ impl FalkorDbIndex {
         }
     }
 
-    /// The numeric kind of the column for `(entity, label, attr)`, if one exists. For tests of
-    /// numeric columns.
-    #[must_use]
-    pub fn numeric(
-        &self,
-        entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
-    ) -> Option<&NumericIndex> {
-        self.column(entity, label, attr).map(RangeIndex::numeric)
-    }
-
-    /// The numeric kind of the column for `(entity, label, attr)`, to change.
-    pub fn numeric_mut(
-        &mut self,
-        entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
-    ) -> Option<&mut NumericIndex> {
-        self.column_mut(entity, label, attr)
-            .map(RangeIndex::numeric_mut)
-    }
-
     /// Whether a column exists for `(entity, label, attr)` — the write path's staging gate.
     #[must_use]
     pub fn has_column(
@@ -1023,7 +1000,7 @@ impl FalkorDbIndex {
             // Not every entity is indexed yet.
             return Some(Err(ScanFilter::one(first.clone(), selection)));
         }
-        Some(Ok(entry.index.lookup(&selection)))
+        Some(Ok(entry.index.lookup(selection)))
     }
 
     /// A conjunction spanning several attributes: intersect one column per attribute.
@@ -1100,7 +1077,7 @@ impl FalkorDbIndex {
 
         let mut result: Option<FxHashSet<u64>> = None;
         for (_, entry, selection) in columns {
-            let rows = entry.index.lookup(&selection);
+            let rows = entry.index.lookup(selection);
             result = Some(match result {
                 None => rows.collect(),
                 Some(seen) => rows.filter(|doc| seen.contains(doc)).collect(),
@@ -1290,7 +1267,7 @@ mod tests {
         };
         // What the column holds for `v`, whatever its state.
         let holds = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
-            idx.numeric(Node, &label, &attr)
+            idx.column(Node, &label, &attr)
                 .unwrap()
                 .point(&Value::Int(v))
                 .collect()
@@ -1303,7 +1280,7 @@ mod tests {
             )),
         };
         let all = |idx: &FalkorDbIndex| -> Vec<u64> {
-            idx.numeric(Node, &label, &attr)
+            idx.column(Node, &label, &attr)
                 .unwrap()
                 .range(None, None, true, true)
                 .collect()
@@ -1420,17 +1397,17 @@ mod tests {
 
         let mut v1 = FalkorDbIndex::new();
         v1.create_column(Node, &label, &attr);
-        v1.numeric_mut(Node, &label, &attr)
+        v1.column_mut(Node, &label, &attr)
             .unwrap()
             .add(&Value::Int(30), 1);
 
         let mut v2 = v1.clone(); // the O(1) fork
-        v2.numeric_mut(Node, &label, &attr)
+        v2.column_mut(Node, &label, &attr)
             .unwrap()
             .add(&Value::Int(40), 2);
 
         let all = |v: &FalkorDbIndex| -> Vec<u64> {
-            v.numeric(Node, &label, &attr)
+            v.column(Node, &label, &attr)
                 .unwrap()
                 .range(None, None, true, true)
                 .collect()
@@ -1543,7 +1520,7 @@ mod tests {
             let mut idx = FalkorDbIndex::new();
             for &(entity, n) in columns {
                 idx.create_column(entity, &label, &attr);
-                idx.numeric_mut(entity, &label, &attr)
+                idx.column_mut(entity, &label, &attr)
                     .unwrap()
                     .add_encoded(&mut tuples(n, |i| i as i64));
             }
@@ -1594,12 +1571,12 @@ mod tests {
         let (label, attr) = (arc("Person"), arc("age"));
         let mut idx = FalkorDbIndex::new();
         assert!(idx.is_empty());
-        assert!(idx.numeric(Node, &label, &attr).is_none());
+        assert!(idx.column(Node, &label, &attr).is_none());
 
         idx.create_column(Node, &label, &attr);
         assert_eq!(idx.len(), 1);
-        assert!(idx.numeric(Node, &label, &attr).is_some());
-        assert!(idx.numeric(Node, &label, &attr).unwrap().is_empty());
+        assert!(idx.column(Node, &label, &attr).is_some());
+        assert!(idx.column(Node, &label, &attr).unwrap().is_empty());
     }
 
     /// `apply_writes` lands each unit of work's changes in the right column.
@@ -1613,7 +1590,7 @@ mod tests {
         write(&mut idx, &label, &attr, &[(7, 1, false)]);
 
         let ids: Vec<u64> = idx
-            .numeric(Node, &label, &attr)
+            .column(Node, &label, &attr)
             .unwrap()
             .range(None, None, true, true)
             .collect();
@@ -1630,15 +1607,15 @@ mod tests {
         idx.create_column(Relationship, &name, &attr);
         assert_eq!(idx.len(), 2, "one node column + one edge column");
 
-        idx.numeric_mut(Node, &name, &attr)
+        idx.column_mut(Node, &name, &attr)
             .unwrap()
             .add(&Value::Int(1), 10);
-        idx.numeric_mut(Relationship, &name, &attr)
+        idx.column_mut(Relationship, &name, &attr)
             .unwrap()
             .add(&Value::Int(1), 20);
 
         let ids = |e| -> Vec<u64> {
-            idx.numeric(e, &name, &attr)
+            idx.column(e, &name, &attr)
                 .unwrap()
                 .range(None, None, true, true)
                 .collect()
@@ -1652,8 +1629,8 @@ mod tests {
 
         // Dropping the edge column leaves the node column intact.
         idx.drop_column(Relationship, &name, &attr);
-        assert!(idx.numeric(Relationship, &name, &attr).is_none());
-        assert!(idx.numeric(Node, &name, &attr).is_some());
+        assert!(idx.column(Relationship, &name, &attr).is_none());
+        assert!(idx.column(Node, &name, &attr).is_some());
     }
 
     /// Reads route only numeric `Equal`/`Range` leaves to the numeric column, for either entity.
@@ -1663,7 +1640,7 @@ mod tests {
         let (label, attr) = (arc("Person"), arc("age"));
         let mut idx = FalkorDbIndex::new();
         idx.create_column(Node, &label, &attr);
-        idx.numeric_mut(Node, &label, &attr)
+        idx.column_mut(Node, &label, &attr)
             .unwrap()
             .add(&Value::Int(30), 1);
         let key = attr.clone();
@@ -1764,7 +1741,7 @@ mod tests {
         let (label, attr) = (arc("Person"), arc("age"));
         let mut idx = FalkorDbIndex::new();
         idx.create_column(Node, &label, &attr);
-        let column = idx.numeric_mut(Node, &label, &attr).unwrap();
+        let column = idx.column_mut(Node, &label, &attr).unwrap();
         column.add(&Value::Int(30), 1);
         column.add(&Value::Int(40), 2);
         column.add(&Value::Int(50), 3);
@@ -1919,7 +1896,7 @@ mod tests {
             catch_up_limit: None,
         }));
         assert_eq!(
-            idx.numeric(Node, &label, &attr)
+            idx.column(Node, &label, &attr)
                 .unwrap()
                 .point(&Value::Int(1))
                 .collect::<Vec<_>>(),
@@ -1944,10 +1921,10 @@ mod tests {
         idx.create_column(Node, &label, &b);
         // ids 0..9; a = id % 2, b = id
         for id in 0..10u64 {
-            idx.numeric_mut(Node, &label, &a)
+            idx.column_mut(Node, &label, &a)
                 .unwrap()
                 .add(&Value::Int((id % 2) as i64), id);
-            idx.numeric_mut(Node, &label, &b)
+            idx.column_mut(Node, &label, &b)
                 .unwrap()
                 .add(&Value::Int(id as i64), id);
         }
@@ -2002,7 +1979,7 @@ mod tests {
         let (a, b) = (arc("a"), arc("b"));
         let mut idx = FalkorDbIndex::new();
         idx.create_column(Node, &label, &a);
-        idx.numeric_mut(Node, &label, &a)
+        idx.column_mut(Node, &label, &a)
             .unwrap()
             .add(&Value::Int(1), 1);
         idx.create_building(Node, &label, &b);
