@@ -53,7 +53,7 @@ password or ACL settings and mounts, ports, minus any option only Redis has
 is added in step 3 and left out in step 4. The data must be in a named volume
 or a bind mount: a container started with `--rm` and an anonymous volume
 loses its data when stopped. Copy the data directory out of such a container
-(`docker cp falkordb:/var/lib/falkordb/data <dir>`) only after the final save
+(`docker cp falkordb:/var/lib/falkordb/data/. <dir>`) only after the final save
 and AOF rewrite in step 2, and before stopping it. Then create a named
 volume and copy the files into it (for example with
 `docker run --rm -v <dir>:/from -v <volume>:/to alpine cp -a /from/. /to/`),
