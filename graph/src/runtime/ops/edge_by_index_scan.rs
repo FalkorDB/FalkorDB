@@ -368,7 +368,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                         // `NodeByIndexScanOp`.
                         #[cfg(feature = "index-falkordb")]
                         let it: Option<Box<dyn Iterator<Item = EdgeRow>>> = match g
-                            .query_index_numeric_edges(label, &q)
+                            .query_index_edges(label, &q)
                         {
                             Some(Ok(rows)) => Some(Box::new(rows)),
                             // Still building: scan the type for what the column will answer,

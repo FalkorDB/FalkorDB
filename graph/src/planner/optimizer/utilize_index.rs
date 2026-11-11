@@ -742,6 +742,12 @@ fn try_filter_pushdown<T: IndexSubject>(
                             (prev_label, merge_range_queries(prev_q, query))
                         }
                     });
+                    // An array-contains conjunct keeps its filter, as it does on its own (below):
+                    // the index may return false positives for it (a numeric key is shared by
+                    // `1` and `true`), and a conjunction is no reason to trust them.
+                    if is_array_contains(subject, &conjunct) {
+                        remaining.push(conjunct);
+                    }
                 } else {
                     remaining.push(conjunct);
                 }
@@ -770,16 +776,25 @@ fn try_filter_pushdown<T: IndexSubject>(
             // For "value IN property" (array-contains), keep the filter
             // as a post-filter — the index may return false positives
             // for non-indexable array elements.
-            let is_array_contains = matches!(filter.root().data(), ExprIR::In)
-                && !subtree_has_property_of(filter, filter.root().child(0).idx(), subject.alias())
-                && subtree_has_property_of(filter, filter.root().child(1).idx(), subject.alias());
-            if is_array_contains {
+            if is_array_contains(subject, filter) {
                 (label, q, vec![filter.root().clone_as_tree()])
             } else {
                 (label, q, Vec::new())
             }
         }),
     }
+}
+
+/// Whether `filter` is `value IN subject.prop` (array-contains): a predicate the index answers
+/// with possible false positives — a numeric key is shared by `1` and `true`, and an element it
+/// cannot index is not in its array tree at all — so its filter is always kept.
+fn is_array_contains<T: IndexSubject>(
+    subject: &T,
+    filter: &DynTree<ExprIR<Variable>>,
+) -> bool {
+    matches!(filter.root().data(), ExprIR::In)
+        && !subtree_has_property_of(filter, filter.root().child(0).idx(), subject.alias())
+        && subtree_has_property_of(filter, filter.root().child(1).idx(), subject.alias())
 }
 
 /// Whether a filter contains runtime values that might evaluate to

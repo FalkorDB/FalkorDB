@@ -1409,6 +1409,22 @@ class testIndexScanFlow():
 
         g.delete()
 
+    def test_44_array_contains_conjunction_keeps_its_filter(self):
+        # The index answers `v IN n.arr` with possible false positives: a
+        # numeric key is shared by `1` and `true`. Alone, the predicate keeps
+        # its filter; inside a conjunction it must keep it too, or `[true, 2]`
+        # satisfies `1 IN n.v AND 2 IN n.v`.
+        g = self.db.select_graph('array_contains_conjunction')
+        g.create_node_range_index('L', 'v')
+        wait_for_indices_to_sync(g)
+        g.query("CREATE (:L {v: [true, 2]}), (:L {v: [1, 2]})")
+
+        q = "MATCH (n:L) WHERE 1 IN n.v AND 2 IN n.v RETURN n.v"
+        self.env.assertContains('Node By Index Scan', str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[[1, 2]]])
+
+        g.delete()
+
     def test_36_scalar_array_scalar_round_trip(self):
         # A property changing kind — scalar -> array -> scalar — must re-index
         # cleanly each time.
