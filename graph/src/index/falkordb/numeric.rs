@@ -12,6 +12,8 @@ use std::ops::{Index, IndexMut};
 #[cfg(test)]
 use std::sync::Arc;
 
+use rustc_hash::FxHashSet;
+
 use super::data_structures::cow_btree::{CowBTree, RangeIter};
 use super::encode::{self, KeyKind, encode_numeric};
 use super::range::RangeKind;
@@ -48,6 +50,9 @@ pub enum DocIter {
     /// An already-materialised doc set — an intersection, which cannot be produced lazily from
     /// value-ordered streams. Distinct by construction.
     Set(std::collections::hash_set::IntoIter<u64>),
+    /// Several streams chained, each doc yielded once — a union across columns, where a doc may
+    /// satisfy several members.
+    Distinct(DistinctIter),
 }
 
 impl Iterator for DocIter {
@@ -58,6 +63,48 @@ impl Iterator for DocIter {
             Self::One(it) => it.next(),
             Self::Many(it) => it.next(),
             Self::Set(it) => it.next(),
+            Self::Distinct(it) => it.next(),
+        }
+    }
+}
+
+/// Doc streams read one after another, each doc yielded once.
+///
+/// **Lazy**: a stream is read only once the ones before it are exhausted, so a `LIMIT` stops the
+/// union early. The set holds the docs yielded so far, which is what deduplication needs — a doc
+/// matching several members is one row in Cypher — and nothing it has not yielded.
+pub struct DistinctIter {
+    streams: std::vec::IntoIter<DocIter>,
+    current: Option<Box<DocIter>>,
+    seen: FxHashSet<u64>,
+}
+
+impl DistinctIter {
+    /// A union of `streams`, read in order.
+    #[must_use]
+    pub(super) fn new(streams: Vec<DocIter>) -> Self {
+        Self {
+            streams: streams.into_iter(),
+            current: None,
+            seen: FxHashSet::default(),
+        }
+    }
+}
+
+impl Iterator for DistinctIter {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        loop {
+            if let Some(current) = self.current.as_mut() {
+                for doc in current.by_ref() {
+                    if self.seen.insert(doc) {
+                        return Some(doc);
+                    }
+                }
+            }
+            // Current stream exhausted (or not started): move to the next one.
+            self.current = Some(Box::new(self.streams.next()?));
         }
     }
 }
@@ -496,6 +543,26 @@ mod tests {
     use super::super::range::RangeIndex;
     use super::*;
     use crate::index::IndexQuery;
+
+    /// A union across columns reads its streams one after another and yields each doc once,
+    /// holding only what it has yielded: `LIMIT 1` reads one row of the first stream.
+    #[test]
+    fn a_distinct_union_is_lazy_and_dedups() {
+        let set = |ids: &[u64]| {
+            DocIter::Set(
+                ids.iter()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter(),
+            )
+        };
+        let mut u = DistinctIter::new(vec![set(&[1]), set(&[1, 2]), set(&[3])]);
+        assert_eq!(u.next(), Some(1));
+        assert_eq!(u.streams.len(), 2, "the later streams are untouched");
+        let mut rest: Vec<u64> = u.collect();
+        rest.sort_unstable();
+        assert_eq!(rest, vec![2, 3], "1 is not yielded twice");
+    }
 
     fn ids(it: DocIter) -> Vec<u64> {
         it.collect()
