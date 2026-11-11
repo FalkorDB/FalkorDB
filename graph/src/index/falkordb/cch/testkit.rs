@@ -641,7 +641,8 @@ pub(crate) fn real_graph(
             }
         }
     }
-    g.import_relationship_attrs(&weights, &mut IndexDocs::default());
+    g.import_relationship_attrs(&weights, &mut IndexDocs::default())
+        .expect("valid weights");
     (g, attr)
 }
 

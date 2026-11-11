@@ -23,9 +23,25 @@ mod weight_ops;
 
 use crate::graph::graph::Graph;
 use crate::graph::graphblas::matrix::{Descriptor, Matrix};
+use crate::runtime::value::Value;
 
 use super::{CchError, CchIndexDef, CchInput, id_index};
 use weight_ops::{WeightContext, WeightOps};
+
+/// Whether `value`, as an edge's weight attribute, is a weight an index takes: a number that
+/// is `>= 0`, `+inf` (a closed edge) and `-0.0` included. A missing or non-numeric value
+/// weighs [`DEFAULT_WEIGHT`](weight_ops::DEFAULT_WEIGHT), so only a negative number (`-inf`
+/// included) or NaN is refused. The rule the weight operators score by
+/// ([`cch_edge_weight`](weight_ops::cch_edge_weight)) and the write-time check
+/// ([`check_edge_weights`](super::maint::check_edge_weights)) refuses by.
+pub(super) fn is_valid_weight(value: &Value) -> bool {
+    match value {
+        // NaN fails the comparison; `+inf` and `-0.0` pass it.
+        Value::Float(weight) => *weight >= 0.0,
+        Value::Int(integer) => *integer >= 0,
+        _ => true,
+    }
+}
 
 impl CchInput {
     /// Build the hierarchy builder's input from `graph`, over the relationship
