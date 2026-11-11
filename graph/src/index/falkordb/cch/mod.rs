@@ -292,7 +292,6 @@ impl CchError {
             ),
             Self::NeedsRebuild => format!("CCH index error: {self}"),
             Self::Internal(message) => format!("CCH index error: {message}"),
-            Self::CsrExport(error) => format!("CCH index error: CSR export: {error}"),
             Self::Ordering(error) => format!("CCH index error: {error}"),
         }
     }
