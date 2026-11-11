@@ -152,9 +152,10 @@ unsafe extern "C" fn on_fork_child() {
 /// on the NULL.
 ///
 /// When both views are already the same object (Redis, or a valkey-server
-/// without the copy relocation) this is a no-op. `RTLD_DEEPBIND` is
-/// glibc-only, and macOS dylibs must not reference `environ` directly, so the
-/// helper exists only on Linux.
+/// without the copy relocation) this is a no-op. Valkey passes
+/// `RTLD_DEEPBIND` only on glibc and FreeBSD (musl ignores it), and macOS
+/// dylibs must not reference `environ` directly. FalkorDB ships only for
+/// Linux and macOS, so the helper exists only on Linux.
 #[cfg(target_os = "linux")]
 unsafe fn sync_deepbind_environ() {
     unsafe extern "C" {
@@ -190,11 +191,18 @@ unsafe fn sync_deepbind_environ() {
         snapshot.push(std::ptr::null_mut());
         // The snapshot is a point-in-time view: a later `setenv` updates only
         // the executable's copy, so code that scans `environ` directly (e.g.
-        // `std::env::vars()`) will not see it. `getenv`/`std::env::var` go
-        // through libc and are unaffected. libomp only needs it once, at init.
+        // `std::env::vars()`) will not see it. That includes every other
+        // module the server loaded with `RTLD_DEEPBIND`, since they share
+        // libc's `environ`; they saw NULL before, so this is still an
+        // improvement. `getenv`/`std::env::var` go through libc and are
+        // unaffected. libomp only needs it once, at init.
         //
         // SAFETY: `ours` points to libc's `char **environ`; this runs on the
-        // main thread during module load, before any thread reads it. The
+        // main thread during module load. At startup no other thread reads
+        // it. Under a runtime `MODULE LOAD`, a thread of an earlier
+        // DEEPBIND-loaded module could read it concurrently; that is a single
+        // aligned pointer store, so it sees either the old or the new array,
+        // both NULL-terminated. The
         // source array `*live` is only read, never freed or modified here, and
         // the strings it points to are never freed by glibc, so the copied
         // pointers stay valid for the life of the process.

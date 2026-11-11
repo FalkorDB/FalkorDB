@@ -133,7 +133,9 @@ jobs:
           apt-get install -y -qq --no-install-recommends valkey-server valkey-tools \
             libstdc++6 libssl3t64 zlib1g libzstd1 gcc libc6-dev
       # If a later package loses RTLD_DEEPBIND or the copy relocation, an
-      # unfixed engine loads fine too; fail here rather than go quietly green.
+      # unfixed engine loads fine too. The image and package float, so an
+      # Ubuntu update alone could cause that: warn loudly instead of failing
+      # every PR, and still run the smoke test below.
       - name: Check that a module sees a NULL environ under this valkey-server
         run: |
           cc -shared -fPIC -o /tmp/environ-probe.so tests/valkey_environ_probe.c
@@ -144,10 +146,8 @@ jobs:
             echo "The probe module did not run; see the server output above." >&2
             exit 1
           fi
-          echo "$out" | grep -q 'environ-probe: NULL' || {
-            echo "A module sees a live environ here, so this job cannot catch #3493." >&2
-            exit 1
-          }
+          echo "$out" | grep -q 'environ-probe: NULL' ||
+            echo "::warning title=valkey-smoke cannot catch #3493::A module sees a live environ under this valkey-server, so an unfixed engine would pass too. Pin a valkey-server build that copy-relocates environ."
       - name: Load the engine into Valkey
         run: tests/valkey_smoke.sh target/release/libfalkordb.so
   # The flow suites only run under redis-server, which never takes the
@@ -181,7 +181,10 @@ jobs:
           # valkey-server flushes the profile when the smoke test shuts it down.
           LLVM_PROFILE_FILE="$PWD/cov/valkey-%p-%m.profraw" \
             tests/valkey_smoke.sh target/debug/libfalkordb.so
-          ls cov/*.profraw
+          # Fail here on a missing or empty profile, as _flow-artifact.yml does
+          # (#2521), rather than later in llvm-profdata merge.
+          find cov -name '*.profraw' -size +0c | grep -q . ||
+            { ls -la cov >&2; echo "No non-empty .profraw was written." >&2; exit 1; }
       - name: Upload profiles
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
