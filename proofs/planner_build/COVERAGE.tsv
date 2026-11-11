@@ -3,7 +3,7 @@ graph/src/planner/mod.rs	subtree_contains	354	PROVEN	Misc.subtreeContains_iff (B
 graph/src/planner/mod.rs	fmt_var_len_rel	370	PROVEN	Fmt.fmtVarLen, hopsStr_empty (range printed unless exactly *1..1), hopsStr_inf
 graph/src/planner/mod.rs	fmt_rel_with_labels	398	PROVEN	Fmt.fmtRel_eq (= fmt_rel_with_labels_dir(rel, false))
 graph/src/planner/mod.rs	fmt_rel_with_labels_dir	402	PROVEN	Fmt.fmtRelDir, arrows_table, fmtRelDir_anon (anonymous edges print no bracket)
-graph/src/planner/mod.rs	IR::fmt	443	PROVEN	Fmt.irFmt (every variant), fmt_set_remove, fmt_fused (hop/hops), fmt_condTraverse_plain
+graph/src/planner/mod.rs	IR::fmt	443	NOT COVERED	Fmt.irFmt models every variant but CreateCchIndex/DropCchIndex (#3362); fmt_set_remove, fmt_fused (hop/hops), fmt_condTraverse_plain hold for the rest
 graph/src/planner/mod.rs	inline_attrs_to_filter	578	PROVEN	E.inlineAttrsToFilter = and_of of the equalities; inlineAttrsToFilter_eq (and_of = the pre-#3335 f / And(fs) split, an equality is never an AND), inlineAttrsToFilter_none, inlineAttrsToFilter_conj, Rename.inlineAttrs_passes (passes iff every n.k = v is true)
 graph/src/planner/mod.rs	lower_inline_attrs	631	PROVEN	E.lowerInline: lowerInline_fresh, lowerInline_once (at most once per (alias, map)), lowerInline_two_maps (identity, not equality), lowerInline_mem/_mono/_other
 graph/src/planner/mod.rs	strip_node_attrs	656	PROVEN	E.stripNode: stripNode_spec (attrs [], alias/labels/map identity kept), stripNode_self (same node when nothing to strip)
