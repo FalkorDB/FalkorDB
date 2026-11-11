@@ -218,6 +218,8 @@ impl CchIndexDef {
     ) -> Self {
         rel_types.sort_unstable();
         rel_types.dedup();
+        // The definition is kept for the index's life and counted by its length.
+        rel_types.shrink_to_fit();
         Self {
             rel_types,
             weight_attr,
@@ -511,6 +513,8 @@ mod tests {
     fn new_dedups_rel_types() {
         let def = CchIndexDef::new(vec![TypeId(4), TypeId(1), TypeId(4), TypeId(1)], 0);
         assert_eq!(def.rel_types(), &[TypeId(1), TypeId(4)]);
+        // `memory_usage` counts the length, so no capacity is left over.
+        assert_eq!(def.rel_types.capacity(), def.rel_types.len());
     }
 
     #[test]
