@@ -115,7 +115,7 @@ Labelling a PR **`benchmark-cov`** measures the PR, its base and the C engine an
 posts one comparison comment. Nothing is compiled: all three modules come from
 prebuilt images (`rc-pr-<N>`, `edge-rs`, `edge-c`), each measured on its own
 runner in parallel inside one image built from the C engine's. Two readings per
-side — the full 317-query set on allocated bytes, and a 93-query subset with exact
+side — the full query set on allocated bytes, and the `cg=True` subset with exact
 callgrind instruction counts, sharded so it finishes in the same wall-clock as the
 full set.
 
@@ -134,7 +134,7 @@ locally against a real base build.
 | file | purpose |
 |---|---|
 | `src/falkorbench/model.py` | `Query`, `Metric` — the value types |
-| `src/falkorbench/queries.py` | the canonical 317-query set + graph SETUP (10k Person ring, 10k KNOWS, indexes, constraints, UDFs); `cg=True` marks the callgrind subset |
+| `src/falkorbench/queries.py` | the canonical query set + graph SETUP (10k Person ring, 10k KNOWS, indexes, constraints, UDFs); `cg=True` marks the callgrind subset |
 | `src/falkorbench/metrics.py` | CSV parsing, ratios, thresholds, control-row normalisation — shared by compare and report |
 | `src/falkorbench/client.py` | server lifecycle and control plane, over falkordb-py |
 | `src/falkorbench/counters.py` | instruction/cycle backends (rusage / perf / none) + `pmc_tool` |
@@ -158,9 +158,13 @@ clang -O2 -o bench/pmc_tool bench/pmc_tool.c \
 sudo chown root:wheel bench/pmc_tool && sudo chmod u+s bench/pmc_tool
 ```
 
-Without it, instructions/cycles/latency are still measured — those are the
-gating columns. PMU numbers are system-wide and include the `redis-benchmark`
-client; treat values under ~1K/query as noise.
+Without it, instructions, cycles, allocated bytes and wall-clock are still
+measured, and the branch/L1D columns stay empty. With it, those columns are
+filled in **and gated** like the rest (`GATED_BY_DEFAULT` in `metrics.py`; only
+`ms` is left out). PMU numbers are system-wide and include the `redis-benchmark`
+client, so on a busy machine they can fail the gate on their own: treat values
+under ~1K/query as noise, and narrow the gate with `--metrics
+instr,cycles,alloc_bytes,dealloc_bytes` when they do.
 
 `pmc_tool window` opens a counter window, prints `READY`, and waits on stdin; the
 harness runs the measured command itself in that gap and then closes the window.
@@ -177,7 +181,8 @@ system-wide so bracketing in time is all that was needed.
   Always include `RETURN 1` in an isolated batch: it is the fixed per-query
   floor, so if it moves, the whole run's cycle column is load-inflated and every
   other cycle flag in it is void.
-- **Micro-queries need 3 reps per build.** Rows near the ~330k instruction floor
+- **Micro-queries need 3 reps per build.** Rows near the instruction floor (what
+  `RETURN 1` costs: about 175k on Apple Silicon)
   read 1.07x on one shot and ~1.00x over three. The error is *absolute*, so a
   fixed percentage tolerance is simultaneously too strict for expensive queries
   and too lax for cheap ones.
