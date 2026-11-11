@@ -298,6 +298,15 @@ check_redis_file() {
 # them: FALKORDB_REDIS_MIGRATION=1, or rdb-version-check relaxed in the
 # server's own arguments.
 valkey_preflight() {
+    # A lone `-` makes the server read configuration from stdin, which cannot
+    # be replayed here; refuse rather than check the wrong file.
+    # shellcheck disable=SC2086
+    for _tok in ${SERVER_ARGS}; do
+        if [ "$_tok" = "-" ]; then
+            echo "Error: configuration on stdin (-) is not supported by this image; use a config file or --name value options." >&2
+            exit 1
+        fi
+    done
     redis_files=""
     newer_files=""
     # yes/no configs are case-insensitive in the server.
@@ -308,8 +317,8 @@ valkey_preflight() {
         _manifest="${_aof_dir}/${_appendfilename:-appendonly.aof}.manifest"
         if [ -r "$_manifest" ]; then
             _info=$(aof_base_file "$_manifest")
-            _base=$(printf '%s\n' "$_info" | sed -n 1p)
-            _records=$(printf '%s\n' "$_info" | sed -n 2p)
+            _base=$(printf '%s\n' "$_info" | sed '$d')
+            _records=$(printf '%s\n' "$_info" | tail -n 1)
             if [ -n "$_base" ]; then
                 check_redis_file "${_aof_dir}/${_base}"
             fi
@@ -358,9 +367,10 @@ ${redis_files}
 To keep this data, run a Redis image of FalkorDB (a tag ending in -redis) on
 this volume, or migrate the data to Valkey:
   1. Back up the volume: the steps below rewrite these files.
-  2. On the Redis image, run GRAPH.CONFIG SET CMD_INFO no and delete every
-     telemetry{*} key, and any other key Valkey cannot read as Redis saves
-     it: streams, hashes with field expiry, arrays. Then run SAVE, and with
+  2. On the Redis image, run GRAPH.CONFIG SET CMD_INFO no and delete the
+     telemetry{*} keys that are streams (check TYPE first: a graph or string
+     with such a name is yours), and any other key Valkey cannot read as
+     Redis saves it: streams, hashes with field expiry, arrays. Then run SAVE, and with
      AOF on, BGREWRITEAOF, and wait for it to finish.
   3. Start this image with FALKORDB_REDIS_MIGRATION=1. Run SAVE, and with AOF
      on, BGREWRITEAOF, and wait for it to finish.
