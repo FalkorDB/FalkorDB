@@ -36,6 +36,7 @@ typedef struct {
 	atomic_int ref_count;                // reference count
 	RedisModuleBlockedClient *bc;        // blocked client
 	bool replicated_command;             // whether this instance was spawned by a replication command
+	bool log_query;                      // log the query to telemetry once it finishes
 	bool compact;                        // whether this query was issued with the compact flag
 	ExecutorThread thread;               // which thread executes this command
 	long long timeout;                   // the query timeout, if specified
@@ -55,6 +56,7 @@ CommandCtx *CommandCtx_New
 	GraphContext *graph_ctx,        // graph context
 	ExecutorThread thread,          // which thread executes this command
 	bool replicated_command,        // whether this instance was spawned by a replication command
+	bool log_query,                 // log the query to telemetry once it finishes
 	bool compact,                   // whether this query was issued with the compact flag
 	long long timeout,              // the query timeout, if specified
 	bool timeout_rw,                // apply timeout on both read and write queries

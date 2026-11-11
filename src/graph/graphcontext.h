@@ -249,6 +249,15 @@ void GraphContext_FreeTelemetryStreamName
 	RedisModuleCtx *ctx
 ) ;
 
+// delete the graph's telemetry stream key and free its name, idempotently
+// call synchronously when removing the graph from the keyspace, before the
+// (possibly asynchronous) GraphContext_Free, so a save can't persist an
+// orphaned telemetry stream
+void GraphContext_DeleteTelemetryStream
+(
+	GraphContext *gc
+) ;
+
 // rename a graph context
 void GraphContext_Rename
 (

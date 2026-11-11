@@ -121,7 +121,7 @@ void QueryCtx_AdvanceStage
 	// update stage duration
 	_QueryCtx_UpdateStageDuration(ctx);
 
-	if(ctx->stage == QueryStage_REPORTING) {
+	if(ctx->stage == QueryStage_REPORTING && ctx->stats.log) {
 		// done reporting, log query
 		GraphContext_LogQuery (ctx->gc,
 				ctx->stats.received_ts,
@@ -199,6 +199,9 @@ void QueryCtx_SetGlobalExecutionCtx
 
 	// received timestamp (epoch time)
 	ctx->stats.received_ts = cmd_ctx->received_ts;
+
+	// whether to log the query to telemetry
+	ctx->stats.log = cmd_ctx->log_query;
 }
 
 // set the provided AST for access through the QueryCtx

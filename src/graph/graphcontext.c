@@ -1913,6 +1913,44 @@ static void _DeleteTelemetryStream
 	RedisModule_CloseKey(key);
 }
 
+// delete the graph's telemetry stream key and free its name, idempotently
+// called synchronously when the graph is removed from the keyspace, before the
+// (possibly asynchronous, ASYNC_DELETE) GraphContext_Free: otherwise the graph
+// leaves the global registry while its telemetry stream lingers, and a save in
+// that window would persist an orphaned stream the persistence strip no longer
+// sees (it iterates the registry)
+void GraphContext_DeleteTelemetryStream
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT(gc != NULL);
+
+	if(gc->telemetry_stream == NULL) {
+		return;  // already deleted
+	}
+
+	// Redis main thread is 0
+	extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
+	bool main_thread = (pthread_equal(pthread_self(), MAIN_THREAD_ID) != 0);
+	// off the main thread we don't hold the GIL; RedisModule_DeleteKey mutates
+	// the keyspace, so acquire it (same convention as GraphContext_Free)
+	bool should_lock = !main_thread && RedisModule_GetThreadSafeContext != NULL;
+
+	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
+	if(should_lock) {
+		RedisModule_ThreadSafeContextLock(ctx);
+	}
+
+	_DeleteTelemetryStream(ctx, gc);
+	RedisModule_FreeString(ctx, gc->telemetry_stream);
+	gc->telemetry_stream = NULL;
+
+	if(should_lock) {
+		RedisModule_ThreadSafeContextUnlock(ctx);
+	}
+	RedisModule_FreeThreadSafeContext(ctx);
+}
+
 // free all data associated with graph
 void GraphContext_Free
 (

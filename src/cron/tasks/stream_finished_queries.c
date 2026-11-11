@@ -175,10 +175,15 @@ static void _clearEvent
 }
 
 // add queries to stream
+//
+// entries are added node-locally and are NOT replicated: each node's telemetry
+// stream reflects the queries that actually ran on it. the streams are stripped
+// from every snapshot at persistence start, so the consumer-group cursor Redis
+// replicates for them never reaches an RDB
 static void _stream_queries
 (
 	RedisModuleCtx *ctx,    // redis module context
-	RedisModuleKey *key,    // stream key
+	RedisModuleKey *key,    // stream key, opened for writing
 	CircularBuffer queries  // queries to stream
 ) {
 	LoggedQuery q ;
@@ -192,6 +197,28 @@ static void _stream_queries
 		// clean up
 		LoggedQuery_Free (&q) ;
 		_clearEvent (ctx) ;
+	}
+}
+
+// cap stream at 'max_len' entries, node-locally and without replication
+static void _trim_stream
+(
+	RedisModuleKey *key,   // stream key, opened for writing
+	uint64_t max_len       // max number of entries to keep
+) {
+	RedisModule_StreamTrimByLength (key, REDISMODULE_STREAM_TRIM_APPROX,
+			max_len) ;
+}
+
+// discard queries without streaming them
+static void _discard_queries
+(
+	CircularBuffer queries  // queries to discard
+) {
+	LoggedQuery q ;
+
+	while (CircularBuffer_Read (queries, &q)) {
+		LoggedQuery_Free (&q) ;
 	}
 }
 
@@ -261,6 +288,14 @@ bool CronTask_streamFinishedQueries
 	uint64_t max_query_count = 0 ;
 	Config_Option_get (Config_CMD_INFO_MAX_QUERY_COUNT, &max_query_count) ;
 
+	// each node writes its own telemetry stream node-locally; the writes are
+	// not replicated, so no replication-pause handling is needed here
+	// queries logged while CMD_INFO is off are discarded
+	bool info_enabled = false ;
+	Config_Option_get (Config_CMD_INFO, &info_enabled) ;
+
+	bool write = info_enabled ;
+
 	// initialize graph iterator
 	KeySpaceGraphIterator it ;
 	Globals_ScanGraphs (&it) ;
@@ -293,6 +328,12 @@ bool CronTask_streamFinishedQueries
 
 		CircularBuffer queries = QueriesLog_ResetQueries (queries_log) ;
 
+		if (!write) {
+			_discard_queries (queries) ;
+			GraphContext_DecreaseRefCount (gc) ;
+			continue ;
+		}
+
 		//----------------------------------------------------------------------
 		// stream queries
 		//----------------------------------------------------------------------
@@ -301,7 +342,7 @@ bool CronTask_streamFinishedQueries
 			(RedisModuleString*) GraphContext_GetTelemetryStreamName (gc) ;
 
 		RedisModuleKey *key = RedisModule_OpenKey (rm_ctx, keyname,
-			REDISMODULE_WRITE) ;
+				REDISMODULE_WRITE) ;
 
 		// make sure key is of type stream
 		int key_type = RedisModule_KeyType (key) ;
@@ -311,10 +352,10 @@ bool CronTask_streamFinishedQueries
 			_stream_queries (rm_ctx, key, queries) ;
 
 			// cap stream
-			RedisModule_StreamTrimByLength (key,
-					REDISMODULE_STREAM_TRIM_APPROX, max_query_count) ;
+			_trim_stream (key, max_query_count) ;
 		} else {
-			// TODO: decide how to handle this...
+			// key holds a different type, drop the queries
+			_discard_queries (queries) ;
 		}
 
 		// clean up

@@ -122,6 +122,13 @@ static size_t _GraphContextType_FreeEffort
 
 static void _GraphContextType_Free(void *value) {
 	GraphContext *gc = value;
+
+	// delete the telemetry stream synchronously, before the graph leaves the
+	// registry and its data is (possibly asynchronously, ASYNC_DELETE) freed:
+	// otherwise a save in that window would persist an orphaned telemetry
+	// stream the persistence strip no longer sees
+	GraphContext_DeleteTelemetryStream(gc);
+
 	Globals_RemoveGraph(gc);
 	GraphContext_DecreaseRefCount(gc);
 }
