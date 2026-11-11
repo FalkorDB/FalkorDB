@@ -9,7 +9,7 @@
 //! back at the graph for background population; that cycle is exactly what this
 //! avoids. The write path mutates a version's own copy instead.
 
-use std::collections::{BTreeMap, HashMap, btree_map::Entry};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use roaring::RoaringTreemap;
@@ -1169,7 +1169,7 @@ impl FalkorDbIndex {
 /// hierarchy from the graph first, then hand it here; nothing here reads the graph.
 ///
 /// MVCC: an entry holds its hierarchy as `Arc<Cch>`, and `Graph::new_version` clones the `Arc`.
-/// Every write here adds, replaces or removes an entry on the version it is called on only,
+/// Every write here adds or removes an entry on the version it is called on only,
 /// so a reader holding an older version keeps its hierarchy, and rolling a write back is
 /// dropping the new version. Every write is all-or-nothing.
 impl FalkorDbIndex {
@@ -1200,23 +1200,20 @@ impl FalkorDbIndex {
         self.cch_indexes.keys()
     }
 
-    /// Hold `index` in `state`, as a new index: the next generation, like a column's.
-    ///
-    /// # Errors
-    /// [`CchError::AlreadyExists`] if an entry over the same definition is held, in any state.
+    /// Hold `index`, built and `Ready`, as a new index: the next generation, like a
+    /// column's. The caller has checked that no entry over the same definition is held
+    /// ([`Self::cch_entry`]), before building it.
     pub(crate) fn add_cch(
         &mut self,
         index: CchIndex,
-        state: BuildState<()>,
-    ) -> Result<(), CchError> {
-        match self.cch_indexes.entry(index.def.clone()) {
-            Entry::Occupied(_) => Err(CchError::AlreadyExists),
-            Entry::Vacant(slot) => {
-                self.indexes_created += 1;
-                slot.insert(IndexEntry::new(index, state, self.indexes_created));
-                Ok(())
-            }
-        }
+    ) {
+        self.indexes_created += 1;
+        let entry = IndexEntry::new(index, BuildState::Ready, self.indexes_created);
+        let held = self.cch_indexes.insert(entry.index.def.clone(), entry);
+        debug_assert!(
+            held.is_none(),
+            "a CCH index over this definition was already held"
+        );
     }
 
     /// Stop holding the index over `def`.

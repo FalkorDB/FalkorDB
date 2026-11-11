@@ -11,8 +11,8 @@
 //! - [`EditGraph`], [`Edit`] and [`random_edit_batch`], the weight and structure edits the
 //!   maintenance tests replay, over a graph that keeps every parallel edge of a pair;
 //! - [`materialize`], a real `Graph` standing for a weight matrix, built without Cypher, with
-//!   [`Decoys`] that must never win, the index definition over it, and the edge each pair
-//!   answers with; [`real_graph`], the same from a hand-written edge list.
+//!   [`Decoys`] that must never win, and the index definition over it; [`real_graph`], the
+//!   `Graph` of an edge list, which `materialize` builds on.
 
 pub(crate) use crate::testkit::*;
 
@@ -75,6 +75,26 @@ fn csr(
         node_count: n,
         row_offsets,
         neighbors: cols,
+    }
+}
+
+/// Splices one more weight entry, `row -> neighbor` of `weight`, into `input`'s weight CSR at
+/// its sorted place in the row, before an equal neighbor, so it can repeat one. The skeleton
+/// is left as it is: this makes weights [`CchInput::build`] never gives, a self-loop or a
+/// repeated pair.
+pub(super) fn insert_weight_entry(
+    input: &mut CchInput,
+    row: usize,
+    neighbor: u64,
+    weight: f64,
+) {
+    let csr = &mut input.weights.csr;
+    let range = csr.row_range(row);
+    let at = range.start + csr.neighbors[range].partition_point(|&v| v < neighbor);
+    csr.neighbors.insert(at, neighbor);
+    input.weights.values.insert(at, weight);
+    for offset in &mut csr.row_offsets[row + 1..] {
+        *offset += 1;
     }
 }
 
@@ -567,7 +587,7 @@ const W: &str = "w";
 pub(crate) const INDEXED: [&str; 2] = ["T0", "T1"];
 
 /// A relationship type no materialized index covers.
-pub(crate) const UNINDEXED: &str = "U";
+const UNINDEXED: &str = "U";
 
 /// One relationship of a [`real_graph`]: `(src, dst, weight, type)`. A `None` weight writes no
 /// attribute, which an index reads as 1.0.
@@ -577,12 +597,12 @@ pub(crate) type RealEdge = (u64, u64, Option<f64>, &'static str);
 /// parallel and multi-type edges stay distinct relationships), weight attribute `w`. Every
 /// type of [`INDEXED`] exists even with no edge, and the types are created in that order,
 /// then any other in order of appearance; each type is one batch, in `edges`' order.
-/// Returns the graph, the attribute id, and each relationship's id, parallel to `edges`.
+/// Returns the graph and the attribute id.
 pub(crate) fn real_graph(
     n: usize,
     edges: &[RealEdge],
     name: &str,
-) -> (Graph, u16, Vec<u64>) {
+) -> (Graph, u16) {
     test_init::ensure_init();
     let mut g = Graph::new(16, 16, 1, 0, name);
     // A fresh graph's id spaces open their first batch themselves.
@@ -602,7 +622,6 @@ pub(crate) fn real_graph(
             types.push(e.3);
         }
     }
-    let mut ids = vec![u64::MAX; edges.len()];
     let mut weights: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
     for ty in types {
         let mine: Vec<usize> = (0..edges.len()).filter(|&k| edges[k].3 == ty).collect();
@@ -617,14 +636,13 @@ pub(crate) fn real_graph(
         g.create_relationships_bulk(&Arc::new(String::from(ty)), &srcs, &dsts, &rel_ids)
             .expect("creatable");
         for (&k, &id) in mine.iter().zip(&rel_ids) {
-            ids[k] = id;
             if let Some(w) = edges[k].2 {
                 weights.insert(id, vec![(attr, Value::Float(w))]);
             }
         }
     }
     g.import_relationship_attrs(&weights, &mut IndexDocs::default());
-    (g, attr, ids)
+    (g, attr)
 }
 
 /// The index over the [`INDEXED`] types of a [`real_graph`], weighted by its attribute `attr`.
@@ -728,7 +746,7 @@ pub(crate) fn materialize(
             edges.push((u, u, Some(0.0), INDEXED[0]));
         }
     }
-    let (graph, attr, _) = real_graph(n as usize, &edges, name);
+    let (graph, attr) = real_graph(n as usize, &edges, name);
     Materialized {
         def: index_def(&graph, attr),
         graph,

@@ -8,7 +8,7 @@ use crate::graph::graphblas::matrix::Matrix;
 use crate::graph::graphblas::test_init;
 use crate::index::falkordb::cch::testkit::{
     Decoys, Materialized, assert_path_valid, dijkstra, grid, materialize, node_count,
-    random_sparse, to_input,
+    random_sparse, to_input, weights,
 };
 use crate::index::falkordb::cch::{Cch, CchError, CchIndex, CchIndexDef};
 use crate::index::falkordb::versioned::{BuildState, VersionedIndex};
@@ -35,32 +35,63 @@ fn hold(
     def: &CchIndexDef,
 ) -> Arc<Cch> {
     let cch = Arc::new(Cch::build(&to_input(&grid(2, 2))).expect("build"));
-    g.falkordb_index
-        .add_cch(
-            CchIndex {
-                def: def.clone(),
-                cch: Arc::clone(&cch),
-            },
-            BuildState::Ready,
-        )
-        .expect("not held yet");
+    g.falkordb_index.add_cch(CchIndex {
+        def: def.clone(),
+        cch: Arc::clone(&cch),
+    });
     cch
 }
 
-/// `GRAPH.MEMORY USAGE` counts a held hierarchy and its type list, and stops counting it once
-/// dropped.
+/// `GRAPH.MEMORY USAGE` counts each held hierarchy, at least its two weight arrays (one
+/// `f64` per arc and direction), and stops counting it once dropped. Two indexes over the
+/// same graph and as many types count the same, each on its own.
 #[test]
 fn memory_usage_counts_each_held_hierarchy() {
     let mut g = graph("cch_memory");
     let before = g.falkordb_index.memory_usage();
     let a = CchIndexDef::new(vec![TypeId(1), TypeId(2)], 0);
+    let b = CchIndexDef::new(vec![TypeId(3), TypeId(4)], 0);
+
     let cch = hold(&mut g, &a);
-    assert_eq!(
-        g.falkordb_index.memory_usage() - before,
-        cch.memory_usage() + 2 * size_of::<TypeId>()
+    let one = g.falkordb_index.memory_usage() - before;
+    let arc_count = cch.topology().arc_count();
+    assert!(arc_count > 0, "the fixture has arcs to count");
+    assert!(
+        one >= 2 * arc_count * size_of::<f64>(),
+        "{one} bytes cannot hold both weight arrays of {arc_count} arcs"
     );
+    hold(&mut g, &b);
+    assert_eq!(g.falkordb_index.memory_usage() - before, 2 * one);
+
     assert_eq!(g.drop_cch_index(&a), Ok(()));
+    assert_eq!(g.falkordb_index.memory_usage() - before, one);
+    assert_eq!(g.drop_cch_index(&b), Ok(()));
     assert_eq!(g.falkordb_index.memory_usage(), before);
+}
+
+/// A create that fails holds nothing: an unknown relationship type, an unknown weight
+/// attribute, and a negative weight on an indexed relationship each leave the version with
+/// no index and its memory usage as it was.
+#[test]
+fn a_failed_create_holds_nothing() {
+    let m = materialize(
+        &weights(3, &[(0, 1, 2.0), (1, 2, -1.0)]),
+        Decoys::default(),
+        "cch_failed_create",
+    );
+    let mut g = m.graph;
+    let unknown_type = CchIndexDef::new(vec![TypeId(99)], 0);
+    let unknown_attribute = CchIndexDef::new(m.def.rel_types().to_vec(), u16::MAX);
+    let before = g.falkordb_index.memory_usage();
+    for (def, refused) in [
+        (unknown_type, CchError::UnknownRelType),
+        (unknown_attribute, CchError::UnknownAttribute),
+        (m.def, CchError::InvalidWeight),
+    ] {
+        assert_eq!(g.create_cch_index(def), Err(refused));
+        assert_eq!(g.cch_indexes().count(), 0);
+        assert_eq!(g.falkordb_index.memory_usage(), before);
+    }
 }
 
 fn graph(name: &str) -> Graph {

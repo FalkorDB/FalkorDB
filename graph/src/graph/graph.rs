@@ -89,7 +89,6 @@ use crate::index::falkordb::{
     cch::{Cch, CchError, CchIndex, CchIndexDef, CchInput},
     falkordb_index::{BuildCursor, FalkorDbIndex},
     graph_writes,
-    versioned::BuildState,
 };
 use crate::index::index_docs::IndexDocs;
 use crate::{
@@ -5300,7 +5299,9 @@ impl Graph {
     /// # Errors
     /// [`CchError::AlreadyExists`] if an index with the same definition is already held,
     /// [`CchError::UnknownRelType`] / [`CchError::UnknownAttribute`] for an unresolvable
-    /// definition, and whatever [`Cch::build`] reports.
+    /// definition, and whatever [`CchInput::build`] and [`Cch::build`] report:
+    /// [`CchError::InvalidWeight`] for a negative or NaN weight on an indexed relationship,
+    /// otherwise a bug. Nothing is held on error.
     pub fn create_cch_index(
         &mut self,
         def: CchIndexDef,
@@ -5310,13 +5311,11 @@ impl Graph {
             return Err(CchError::AlreadyExists);
         }
         let cch = Cch::build(&CchInput::build(self, &def)?)?;
-        self.falkordb_index.add_cch(
-            CchIndex {
-                def,
-                cch: Arc::new(cch),
-            },
-            BuildState::Ready,
-        )
+        self.falkordb_index.add_cch(CchIndex {
+            def,
+            cch: Arc::new(cch),
+        });
+        Ok(())
     }
 
     /// Stop holding the index for `def` on this version. Earlier versions that still hold
