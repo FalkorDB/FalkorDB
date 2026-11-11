@@ -106,7 +106,7 @@ jobs:
         id: tck
         run: |
           . /data/venv/bin/activate
-          RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s --junitxml=test-results/tck.xml
+          RELEASE=1 TCK_DONE=tck_done.txt TCK_JUNIT_DIR=test-results/tck pytest tests/tck/test_tck.py -s
       # tests/common.py starts the server with --logfile redis-test.log.
       # Counts for the run summary (tests/count_results.py, summed per server by
       # _ci-pipeline.yml's test-counts job). On every outcome but a cancel, so a
@@ -121,7 +121,7 @@ jobs:
           RUN: artifact, amd64
           STATUS: ${{ job.status }}
           NAME: test-counts-artifact
-        run: python3 tests/count_results.py record --server "${FALKORDB_SERVER:-redis}" --run "$RUN" --status "$STATUS" --junit test-results/pytest.xml test-results/tck.xml --logs redis-test.log --out "test-counts/$NAME.json"
+        run: python3 tests/count_results.py record --server "${FALKORDB_SERVER:-redis}" --run "$RUN" --status "$STATUS" --junit test-results/pytest.xml --behave test-results/tck --logs redis-test.log --out "test-counts/$NAME.json"
       - name: Upload test counts
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -308,10 +308,13 @@ jobs:
   # Adds up, per server, the passed, failed and skipped tests every suite cell
   # recorded (tests/count_results.py, `test-counts-*` artifacts), and writes
   # them to the run summary, with the server versions the cells' logs name.
-  # A report, not a gate: each cell's own result gates.
+  # A report, not a gate: each cell's own result gates. continue-on-error, so
+  # a failure here (an artifact download, the summary) can't fail this
+  # workflow and, through ci-gate, a pull request whose tests all passed.
   test-counts:
     needs: [test, flow-release, flow-release-image, flow-coverage, test-image, flow-asan]
     if: ${{ !cancelled() }}
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -410,7 +413,7 @@ jobs:
         id: tck
         run: |
           . /data/venv/bin/activate
-          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s --junitxml=test-results/tck.xml
+          TCK_DONE=tck_done.txt TCK_JUNIT_DIR=test-results/tck pytest tests/tck/test_tck.py -s
       # Capture the GHA service container's stdout/stderr so the run carries
       # the server lifecycle, module RedisModule_Log output, and any
       # ASAN/LSan reports off the runner. The service container is named
@@ -442,7 +445,7 @@ jobs:
           RUN: image, amd64
           STATUS: ${{ job.status }}
           NAME: test-counts-image
-        run: python3 tests/count_results.py record --server "${FALKORDB_SERVER:-redis}" --run "$RUN" --status "$STATUS" --junit test-results/pytest.xml test-results/tck.xml --logs tests/flow/logs --out "test-counts/$NAME.json"
+        run: python3 tests/count_results.py record --server "${FALKORDB_SERVER:-redis}" --run "$RUN" --status "$STATUS" --junit test-results/pytest.xml --behave test-results/tck --logs tests/flow/logs --out "test-counts/$NAME.json"
       - name: Upload test counts
         if: ${{ !cancelled() }}
         continue-on-error: true
