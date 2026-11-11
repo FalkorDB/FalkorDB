@@ -44,11 +44,6 @@ on:
           built; an architecture left out here is built and not tested.
         required: true
         type: string
-      alias_tag:
-        description: "A second tag for the multi-arch manifests (see _build-flavour.yml). Empty for none."
-        required: false
-        type: string
-        default: ""
 
 permissions:
   contents: read
@@ -63,7 +58,6 @@ jobs:
       flavour: release
       server: ${{ inputs.server }}
       tag: rc-${{ inputs.ci_key }}-${{ inputs.server }}
-      alias_tag: ${{ inputs.alias_tag }}
       commit_sha: ${{ inputs.commit_sha }}
       cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
       browser_tag: edge
@@ -260,7 +254,7 @@ jobs:
         if: ${{ success() }}
         env:
           SERVER: ${{ inputs.server }}
-        run: tests/assert_server_log.sh "$SERVER" tests/flow/logs
+        run: python3 tests/count_results.py check --server "$SERVER" tests/flow/logs
       # Counts for the run summary (tests/count_results.py, summed per server by
       # _ci-pipeline.yml's test-counts job). On every outcome but a cancel, so a
       # failing cell still counts, including one whose setup failed before its

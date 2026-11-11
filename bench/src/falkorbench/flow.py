@@ -1,9 +1,8 @@
 """Per-flow-test-file measurement: server instructions/cycles/peak memory.
 
 Runs each flow test file through ./flow.sh (RLTest, --parallelism 1) against a
-given module. RLTest spawns transient servers (redis-server, or valkey-server with
-FALKORDB_SERVER=valkey), and macOS `wait4` rusage does not fold grandchildren,
-so a background thread polls every redis-server / valkey-server pid
+given module. RLTest spawns transient redis-servers, and macOS `wait4` rusage
+does not fold grandchildren, so a background thread polls every redis-server pid
 that appears during the run and keeps its last-seen counters; each row is the
 SUM over the servers that file spawned. Teardown work after the final poll
 (~25 ms) is lost, which is fine for comparisons.
@@ -77,14 +76,8 @@ def require_macos() -> None:
 
 
 def redis_pids() -> set[int]:
-    # The server rewrites its proc title to "redis-server *:PORT" (or
-    # "valkey-server *:PORT", either maybe behind a path), so -x won't match.
-    # Anchored to the program name, so a command line that only mentions a
-    # server (a branch called ...-valkey-server-..., or RLTest's
-    # --oss-redis-path /path/valkey-server argument) is not counted.
-    out = subprocess.run(
-        ["pgrep", "-f", "^([^ ]*/)?(redis|valkey)-server( |$)"], capture_output=True, text=True
-    ).stdout
+    # redis rewrites its proc title to "redis-server *:PORT", so -x won't match.
+    out = subprocess.run(["pgrep", "-f", "redis-server"], capture_output=True, text=True).stdout
     return {int(p) for p in out.split()}
 
 
@@ -147,14 +140,10 @@ def build_env(
     """flow.sh hardcodes the module filename, so a foreign module is symlinked
     under the expected name (this is how the C module gets measured)."""
     # flow.sh starts valkey-server unless told otherwise. These measurements
-    # are compared against the C module, which runs on Redis, so Redis stays the
-    # default here; FALKORDB_SERVER=valkey in the environment measures Valkey.
-    server = os.environ.get("FALKORDB_SERVER") or "redis"
-    if server not in ("redis", "valkey"):
-        raise ValueError(f"FALKORDB_SERVER must be redis or valkey, not {server!r}")
+    # are compared against the C module, which runs on Redis, so pin Redis.
     env = {
         **os.environ,
-        "FALKORDB_SERVER": server,
+        "FALKORDB_SERVER": "redis",
         "VERBOSE": "0",
         "PARALLELISM": "--parallelism 1",
     }

@@ -28,7 +28,7 @@
 #   3. build-artifacts   — build the per-platform .so files, and the rhel9 and
 #                          amazonlinux2023 server images (_build-artifacts.yml)
 #   4. publish-artifacts — require the full set, checksum, upload to the release
-#   5. image             — retag the validated rc-mg-<sha> manifest to semver,
+#   5. image             — retag the validated rc-mg-<sha>-redis manifest to semver,
 #                          and to :latest if this is the highest release
 #   6. publish-images    — push the per-OS server images as <semver>-<os>-<arch>
 #   7. browser-tests     — exercise the published image
@@ -36,7 +36,7 @@
 # workflow_dispatch re-runs all of it for an existing tag; every step is
 # idempotent (existing release reused, assets uploaded with --clobber, retag
 # overwrites). To rebuild the images from source instead of retagging — the
-# rc-mg-<sha> image was swept, or the commit never went through the merge
+# rc-mg-<sha>-redis image was swept, or the commit never went through the merge
 # queue — use release-image.yml.
 
 name: Release (tag)
@@ -212,7 +212,7 @@ jobs:
             --clobber
 
   # Runtime images: retag the multi-arch manifest the merge queue built and
-  # tested for this commit (rc-mg-<sha>) to the release tags on both registries.
+  # tested for this commit (rc-mg-<sha>-redis, the Redis leg's) to the release tags on both registries.
   # No layer rebuild — what CI validated is what ships. That image only exists
   # for a commit that went through the queue, and only for cleanup-rc-images.yml's
   # TTL; otherwise rebuild from source with release-image.yml.
@@ -242,7 +242,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Retag rc-mg-${{ needs.guard.outputs.commit_sha }} → ${{ needs.guard.outputs.semver }} (${{ matrix.repo }})
+      - name: Retag rc-mg-${{ needs.guard.outputs.commit_sha }}-redis → ${{ needs.guard.outputs.semver }} (${{ matrix.repo }})
         env:
           GH_TOKEN:   ${{ secrets.GITHUB_TOKEN }}
           GH_REPO:    ${{ github.repository }}
@@ -251,7 +251,7 @@ jobs:
           REPO:       ${{ matrix.repo }}
         run: |
           set -euo pipefail
-          SRC="ghcr.io/falkordb/${REPO}:rc-mg-${COMMIT_SHA}"
+          SRC="ghcr.io/falkordb/${REPO}:rc-mg-${COMMIT_SHA}-redis"
           TAGS=(-t "ghcr.io/falkordb/${REPO}:${TAG}" -t "falkordb/${REPO}:${TAG}")
           # :latest moves only when this release is the highest semver across all
           # non-draft, non-prerelease releases, so a backport patch on an old

@@ -2,7 +2,7 @@ name: Release image
 
 # Manual escape hatch: build the runtime images FROM SOURCE at a given commit and
 # publish them under a given tag. Releases do not come through here — the
-# release pipeline (release-tag.yml) retags the rc-mg-<sha> image the merge queue
+# release pipeline (release-tag.yml) retags the rc-mg-<sha>-redis image the merge queue
 # already validated. Use this when that image is gone (swept by
 # cleanup-rc-images.yml), when the commit never went through the queue, or to
 # publish an ad-hoc tag.

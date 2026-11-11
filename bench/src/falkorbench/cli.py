@@ -458,9 +458,7 @@ def flow(module, out, baseline, current, names):
     module_path = client_mod.find_module(module, REPO_ROOT)
     env, tmp = flow_mod.build_env(REPO_ROOT, module_path)
     try:
-        click.echo(
-            f"module: {module_path}\nserver: {env['FALKORDB_SERVER']}\n{len(tests)} flow files"
-        )
+        click.echo(f"module: {module_path}\n{len(tests)} flow files")
         rows = []
         for test in tests:
             row = flow_mod.run_one(REPO_ROOT, test, env)

@@ -1,6 +1,5 @@
 import os
 import platform
-import shutil
 import subprocess
 import time
 
@@ -16,9 +15,7 @@ shutdown = False
 
 
 def server_binary() -> str:
-    """The server binary to spawn locally: /usr/local/bin/<server>-server (where
-    the toolchain image installs it), else <server>-server from PATH (e.g.
-    Ubuntu's /usr/bin/valkey-server).
+    """The server binary to spawn locally: /usr/local/bin/<server>-server.
 
     FALKORDB_SERVER picks the server -- `valkey` (default) or `redis` -- as
     it does in flow.sh.
@@ -26,10 +23,7 @@ def server_binary() -> str:
     server = os.environ.get("FALKORDB_SERVER") or "valkey"
     if server not in ("redis", "valkey"):
         raise ValueError(f"FALKORDB_SERVER must be redis or valkey, not {server!r}")
-    pinned = f"/usr/local/bin/{server}-server"
-    if os.path.exists(pinned):
-        return pinned
-    return shutil.which(f"{server}-server") or pinned
+    return f"/usr/local/bin/{server}-server"
 
 
 def start_redis(release=None, moduleEnvs=[]):

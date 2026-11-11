@@ -57,8 +57,8 @@ cargo build        # debug build required first (flow.sh defaults to target/debu
 - `FALKORDB_SERVER=redis` — spawn `redis-server` (from `PATH`) instead of
   the default `valkey-server`; also honored by `tests/common.py`
   (e2e/function tests), which runs `/usr/local/bin/<server>-server`. The
-  toolchain image ships both. CI runs Valkey; the merge queue and PRs
-  labelled `ci-both-servers` also run Redis.
+  toolchain image ships both. CI runs Valkey, and Redis per `redis_leg`
+  in `.github/workflows/_ci-pipeline.yml`.
   Local runs only: with `FALKORDB_TEST_IMAGE` set (flow.sh) or `EXISTING_ENV=1`
   (`tests/common.py`), the tests use the server that image or instance runs,
   and `FALKORDB_SERVER` is ignored.
