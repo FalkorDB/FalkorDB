@@ -318,16 +318,6 @@ impl EWiseAdd for u64 {
     }
 }
 
-/// An `f64` matrix carries path weights, where two weights for the same pair
-/// fold to the cheaper one: `MIN`, the additive operator of the `(min, +)`
-/// semiring.
-#[cfg(feature = "index-falkordb")]
-impl EWiseAdd for f64 {
-    fn add_op() -> GrB_BinaryOp {
-        unsafe { GrB_MIN_FP64 }
-    }
-}
-
 /// Element types a [`Matrix`] can be constructed for.
 ///
 /// `Matrix::<T>::new` is written per element type because it names a GraphBLAS
