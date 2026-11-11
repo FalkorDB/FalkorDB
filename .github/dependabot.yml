@@ -86,9 +86,9 @@ updates:
 #
 # /bench is deliberately absent: bench/Dockerfile is `FROM ${C_IMAGE}`, an
 # entirely ARG-driven base that Dependabot cannot resolve to a registry tag.
-# build/runtime/Dockerfile is included for its pinned node stage; its
-# $BUILD_IMAGE, $BROWSER_TAG, $REDIS_BASE_IMAGE and $VALKEY_BASE_IMAGE stages
-# are skipped for the same reason.
+# build/runtime/Dockerfile is included for its pinned stages (debian, ubuntu,
+# node); its $BUILD_IMAGE and $BROWSER_TAG stages are skipped for the same
+# reason.
 - package-ecosystem: docker
   directories:
     - /build
