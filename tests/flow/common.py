@@ -4,7 +4,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import uuid
 from functools import wraps
@@ -861,69 +860,21 @@ def assert_error_reply(env, conn, *cmd):
 
 def wait_for_replica(primary, replica, timeout=30):
     """Block until `replica` has applied everything `primary` has propagated so
-    far, whichever connection or module thread made the writes. Call it after
-    the writes it should cover.
+    far. Call it after the writes it should cover.
 
-    `WAIT` can't promise that. It waits only up to the offset of the calling
-    connection's last write, so it doesn't cover later writes made through
-    another connection (such as a FalkorDB client's pool) or by a module
-    thread. And when the caller has written nothing, it counts any replica the
-    primary has marked online, which can be before the replica has loaded its
-    initial sync. So read the primary's offset, then wait for the replica's
-    link to be up and its offset to reach it."""
+    WAIT can't promise that: it waits only for the calling connection's own
+    writes, not those of another connection (a FalkorDB client's pool, a
+    loader) or a module thread, and it counts a replica as soon as the primary
+    marks it online, which on Valkey is before the replica has loaded its
+    initial sync. So compare offsets."""
+    target = primary.info("replication")["master_repl_offset"]
     deadline = time.time() + timeout
-
-    def bounded_info(conn):
-        # Bound each INFO, connection handshake included, by the time left in
-        # the budget, so an unresponsive server can't block past the deadline.
-        # A new connection does several reads before INFO's (CLIENT SETINFO,
-        # and AUTH or SELECT when set), each under its own socket timeout, so
-        # socket timeouts alone can't promise that. Run the call on a thread
-        # and stop waiting for it at the deadline. A thread given up on is
-        # abandoned: it is a daemon, and it and its connection may linger
-        # until its socket timeouts expire. A fresh client is used, with
-        # retries off, so the caller's connection and settings are untouched.
-        left = deadline - time.time()
-        if left <= 0:
-            raise redis.exceptions.TimeoutError("wait_for_replica deadline passed")
-        kwargs = dict(conn.connection_pool.connection_kwargs)
-        kwargs.update(socket_timeout=left, socket_connect_timeout=left,
-                      retry=NO_RETRY, retry_on_error=[],
-                      retry_on_timeout=False)
-        pool = redis.ConnectionPool(
-            connection_class=conn.connection_pool.connection_class, **kwargs)
-        result = {}
-
-        def run():
-            client = redis.Redis(connection_pool=pool)
-            try:
-                result["info"] = client.info("replication")
-            except Exception as e:
-                result["error"] = e
-            finally:
-                client.close()
-                pool.disconnect()
-
-        t = threading.Thread(target=run, daemon=True)
-        t.start()
-        t.join(left)
-        if t.is_alive():
-            raise redis.exceptions.TimeoutError("INFO did not reply within the deadline")
-        if "error" in result:
-            raise result["error"]
-        return result["info"]
-
-    target = bounded_info(primary)["master_repl_offset"]
     info = {}
     while time.time() < deadline:
-        try:
-            info = bounded_info(replica)
-        except (redis.exceptions.TimeoutError, redis.exceptions.ConnectionError):
-            info = {}
-        else:
-            if (info.get("master_link_status") == "up"
-                    and info.get("slave_repl_offset", -1) >= target):
-                return
+        info = replica.info("replication")
+        if (info.get("master_link_status") == "up"
+                and info.get("slave_repl_offset", -1) >= target):
+            return
         time.sleep(0.01)
     raise AssertionError(
         f"replica did not reach the primary's offset {target} within {timeout}s "

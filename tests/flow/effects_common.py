@@ -174,24 +174,10 @@ class _EffectsBase():
 
     def wait_for_replica_offset(self, timeout=180):
         """Block until the replica has applied everything the primary has
-        propagated so far.
-
-        WAIT is not usable here. It blocks on the calling client's own `woff`,
-        which Redis only advances when *that* client's command propagated
-        something. Two of the writes these tests care about are issued by
-        threads inside the module — the constraint validation thread's
-        re-announcement, and the post-promotion hook — over contexts this
-        connection knows nothing about, so `self.master`'s `woff` never covers
-        them and WAIT takes its "already acked" fast path. Compare offsets.
-        """
-        target = self.master.info("replication")["master_repl_offset"]
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if self.replica.info("replication").get("slave_repl_offset", -1) >= target:
-                return
-            time.sleep(0.01)
-        raise AssertionError(
-            f"replica did not reach primary offset {target} within {timeout}s")
+        propagated so far (common.wait_for_replica). WAIT can't: the
+        constraint validation thread and the post-promotion hook write over
+        contexts this connection knows nothing about."""
+        wait_for_replica(self.master, self.replica, timeout)
 
     def query_and_sync(self, q, params=None):
         """Write on the primary, then block until the replica has applied it."""
