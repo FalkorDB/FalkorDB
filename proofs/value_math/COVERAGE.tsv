@@ -183,10 +183,12 @@ graph/src/runtime/functions/path.rs	register	25	PROVEN	Procedures pathSigs + pat
 graph/src/runtime/functions/path.rs	nodes	29	PROVEN	Procedures pathNodes: path_split, path_lengths, path_null, path_no_panic
 graph/src/runtime/functions/path.rs	relationships	52	PROVEN	Procedures pathRels: path_split, path_lengths, path_null, path_no_panic
 graph/src/entity_type.rs	fmt	26	PROVEN	Procedures EntityType.fmt: entityType_fmt_inj, entityType_fmt_values (= C spellings, live)
-graph/src/runtime/index_ddl.rs	create_index	37	PROVEN	IndexDdl createIndex/prep: ro_rejects, create_nonmap, create_eval_err, create_opts_err, create_upgrade_err, create_vector_no_opts, create_vector_none (#3094 vector needs options), create_graph_fail, create_ok
-graph/src/runtime/index_ddl.rs	drop_index	90	PROVEN	IndexDdl dropIndex: ro_rejects, drop_ok (dropped += graph count)
-graph/src/runtime/index_ddl.rs	emit_effect	205	PROVEN	IndexDdl emit: emit_off, emit_counts, emit_frame, emit_buffer_created_on_error
-graph/src/runtime/index_ddl.rs	reject_read_only_query	109	NOT COVERED	read-only rejection shared by index and CCH DDL; not modelled separately
-graph/src/runtime/index_ddl.rs	resolve_cch_index	125	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
-graph/src/runtime/index_ddl.rs	create_cch_index	160	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
-graph/src/runtime/index_ddl.rs	drop_cch_index	181	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
+graph/src/runtime/index_ddl.rs	create_index	39	PROVEN	IndexDdl createIndex/prep: ro_rejects, create_nonmap, create_eval_err, create_opts_err, create_upgrade_err, create_vector_no_opts, create_vector_none (#3094 vector needs options), create_graph_fail, create_ok
+graph/src/runtime/index_ddl.rs	drop_index	92	PROVEN	IndexDdl dropIndex: ro_rejects, drop_ok (dropped += graph count)
+graph/src/runtime/index_ddl.rs	emit_effect	243	PROVEN	IndexDdl emit: emit_off, emit_counts, emit_frame, emit_buffer_created_on_error
+graph/src/runtime/index_ddl.rs	reject_read_only_query	111	NOT COVERED	read-only rejection shared by index and CCH DDL; not modelled separately
+graph/src/runtime/index_ddl.rs	resolve_cch_index	152	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
+graph/src/runtime/index_ddl.rs	create_cch_index	170	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
+graph/src/runtime/index_ddl.rs	drop_cch_index	192	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
+graph/src/runtime/index_ddl.rs	resolve_or_create_cch_index	129	NOT COVERED	not modelled yet: CCH DDL replication (#3219)
+graph/src/runtime/index_ddl.rs	emit_cch_effect	215	NOT COVERED	not modelled yet: CCH DDL replication (#3219)
