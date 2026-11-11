@@ -123,6 +123,11 @@ class MovesLatest(unittest.TestCase):
                 plan = pt.release_plan(version, SHA, releases)
                 self.assertEqual(any(":latest" in t for t in all_tags(plan)), moves)
 
+    def test_a_version_cannot_end_in_a_server(self):
+        for version in ("6.1.0-redis", "6.1.0-rc.1-Valkey"):
+            with self.subTest(version=version), self.assertRaises(pt.PlanError):
+                pt.release_plan(version, SHA, [])
+
     def test_rebuild_refuses_latest_where_a_release_would_not_move_it(self):
         rels = RELEASES + [release("v6.1.0"), release("v6.0.5"), release("v6.2.0", draft=True)]
         for tag in ("6.0.5", "6.2.0", "6.1.0-rc.1", "edge-test"):

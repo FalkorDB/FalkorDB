@@ -105,9 +105,18 @@ def parse_version(text: str):
     return int(m[1]), int(m[2]), int(m[3]), m[4]
 
 
+def check_no_server_suffix(name: str, what: str) -> None:
+    """The server is appended to every tag pushed, so a name that already ends
+    in one would publish over that server's channel with the other server's
+    image: 6.1.0-redis's Valkey tag is the 6.1.0 release's Redis tag."""
+    if "-" in name and name.rsplit("-", 1)[1].lower() in SERVERS:
+        raise PlanError(f"{what} '{name}' ends in a server name; the server is added to each tag pushed")
+
+
 def check_version(version: str) -> None:
     if parse_version(version) is None:
         raise PlanError(f"version '{version}' is not X.Y.Z[-prerelease] (no leading v)")
+    check_no_server_suffix(version, "version")
 
 
 def is_prerelease(version: str) -> bool:
@@ -178,11 +187,7 @@ def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[d
     latest* moves only where a release would move it: `tag` must be the
     highest stable version with a published GitHub release, in `releases`.
     """
-    # The server is appended to every tag pushed, so a tag that already ends in
-    # one would publish over that server's channel with the other server's
-    # image: latest-redis's Valkey tag is latest-redis itself.
-    if "-" in tag and tag.rsplit("-", 1)[1].lower() in SERVERS:
-        raise PlanError(f"tag '{tag}' ends in a server name; the server is added to each tag pushed")
+    check_no_server_suffix(tag, "tag")
     if parse_version(tag) is None:
         if re.match(r"v\d", tag, re.IGNORECASE):
             raise PlanError(f"tag '{tag}': image versions have no leading v")
