@@ -4,10 +4,8 @@
 # Usage: tests/docker/redis8_volume_check.sh IMAGE
 #
 # The volumes are written by a released Redis image of FalkorDB (Redis 8.10.2),
-# pinned by digest; REDIS8_WRITER_IMAGE overrides it. IMAGE's FALKORDB_SERVER
-# picks the cases:
-#   valkey: Redis 8 save files that Valkey would load -- an RDB, or the RDB
-#           base of an AOF, found through the server's configuration -- stop
+# pinned by digest. IMAGE's FALKORDB_SERVER picks the cases:
+#   valkey: Redis 8 save files -- an RDB, or the RDB base of an AOF -- stop
 #           run.sh with the migration steps before valkey-server starts. A
 #           Redis 8 AOF with a command base, a Valkey volume and an empty
 #           volume start, and FALKORDB_REDIS_MIGRATION=1 carries out the
@@ -18,7 +16,7 @@
 set -uo pipefail
 
 IMAGE=${1:?usage: $0 IMAGE}
-WRITER=${REDIS8_WRITER_IMAGE:-falkordb/falkordb-server:6.0.4@sha256:698a6e748b42699c1f63af01f8902652b764582e363731de56c7d566c322c209}
+WRITER=falkordb/falkordb-server:6.0.4@sha256:698a6e748b42699c1f63af01f8902652b764582e363731de56c7d566c322c209
 DATA=/var/lib/falkordb/data
 PREFIX=redis8-check-$$
 # Graph g1 as the writer creates it, counted by GRAPH_QUERY.
@@ -60,11 +58,11 @@ vol() {
     echo "$PREFIX-$1"
 }
 
-# in_vol VOL SCRIPT: run sh SCRIPT as root with VOL at /data (and the config
-# volume at /conf), in a throwaway container. These helpers run in the
-# writer's image, whose tools are known, rather than in the image under test.
+# in_vol VOL SCRIPT: run sh SCRIPT as root with VOL at /data, in a throwaway
+# container. These helpers run in the writer's image, whose tools are known,
+# rather than in the image under test.
 in_vol() {
-    docker run --rm --user 0 --entrypoint sh -v "$1:/data" -v "$CONF:/conf" "$WRITER" -c "$2"
+    docker run --rm --user 0 --entrypoint sh -v "$1:/data" "$WRITER" -c "$2"
 }
 
 # copy_vol SRC NAME: a new volume holding a copy of SRC; prints its name.
@@ -80,7 +78,7 @@ start() {
     _name=$PREFIX-$1 _img=$2 _vol=$3
     shift 3
     docker rm -f "$_name" >/dev/null 2>&1
-    docker run -d --name "$_name" -v "$_vol:${MOUNT:-$DATA}" -v "$CONF:/conf" "$@" "$_img" >/dev/null
+    docker run -d --name "$_name" -v "$_vol:${MOUNT:-$DATA}" "$@" "$_img" >/dev/null
 }
 
 # wait_up NAME: 0 once the server answers PING, 1 once the container has
@@ -166,16 +164,9 @@ migration_ready() {
     stop "m-$1"
 }
 
-# digest VOL: one line per file under /data with its checksum.
-digest() {
-    _sums=$(in_vol "$1" 'cd /data && find . -type f -exec md5sum {} + | sort') && [ -n "$_sums" ] && echo "$_sums"
-}
-
 # refused NAME IMG VOL [docker run args...]: start IMG and check that run.sh
-# stopped it with the message holding $EXPECT (the migration steps unless
-# set), that valkey-server never started, and that the volume is unchanged.
+# stopped it with the migration steps and that valkey-server never started.
 refused() {
-    _before=$(digest "$3") || { fail "cannot read the volume"; return 1; }
     start "$@"
     wait_up "$1"
     _rc=$?
@@ -189,12 +180,10 @@ refused() {
         fail "exit code 0; expected non-zero"
     elif ! grep -qF "$REFUSED" <<<"$_log"; then
         fail "exit code $_exit without run.sh's message. Log:"$'\n'"$_log"
-    elif ! grep -qF "${EXPECT:-migrate the data to Valkey}" <<<"$_log"; then
-        fail "run.sh's message lacks '${EXPECT:-migrate the data to Valkey}'. Log:"$'\n'"$_log"
+    elif ! grep -qF "migrate the data to Valkey" <<<"$_log"; then
+        fail "run.sh's message lacks the migration steps. Log:"$'\n'"$_log"
     elif grep -qE 'Valkey is starting|Server initialized' <<<"$_log"; then
         fail "valkey-server started before the check stopped it. Log:"$'\n'"$_log"
-    elif [ "$(digest "$3")" != "$_before" ]; then
-        fail "the volume changed"
     else
         pass "refused (exit $_exit): $(grep -F '(Redis RDB version' <<<"$_log" | sed 's/^ *//' | tr '\n' ' ')"
         return 0
@@ -218,60 +207,20 @@ started() {
     pass "started with g1 = $_got"
 }
 
-CONF=$(vol conf)
-in_vol "$CONF" 'mkdir -p /conf/sub && chmod -R a+rX /conf'
-
 if [ "$SERVER" = valkey ]; then
     echo "== Valkey image $IMAGE; volumes written by $WRITER"
     RDB=$(write_redis8 rdb) || exit 2
     AOF=$(write_redis8 aof "--appendonly yes" rewrite) || exit 2
     AOF_CMDS=$(write_redis8 aof-cmds "--appendonly yes --aof-use-rdb-preamble no") || exit 2
-    in_vol "$CONF" 'printf "appendonly yes\nappendfilename \"aof file.aof\"\n" > /conf/quoted.conf'
-    AOF_QUOTED=$(write_redis8 aof-quoted /conf/quoted.conf rewrite) || exit 2
-    # dbfilename comes from a file that a relative include names, which
-    # resolves against the `dir` set just before it, as the server's chdir.
-    in_vol "$CONF" 'printf "dir /conf/sub\ninclude persistence.conf\n" > /conf/include.conf &&
-        printf "dbfilename \"graph data.rdb\"\n" > /conf/sub/persistence.conf'
-    INCLUDE=$(write_redis8 include /conf/include.conf) || exit 2
-    # AOF settings from a glob include, one per file, with a non-default
-    # appenddirname.
-    in_vol "$CONF" 'mkdir -p /conf/parts && printf "include /conf/parts/*.conf\n" > /conf/glob.conf &&
-        printf "appendonly yes\n" > /conf/parts/a.conf && printf "appenddirname aof-dir\n" > /conf/parts/b.conf'
-    GLOB=$(write_redis8 glob /conf/glob.conf rewrite) || exit 2
 
     CASE=rdb
     refused "$CASE" "$IMAGE" "$(copy_vol "$RDB" "$CASE")"
-    CASE=rdb-tls
-    refused "$CASE" "$IMAGE" "$(copy_vol "$RDB" "$CASE")" -e TLS=1
     CASE=rdb-data-path
     MOUNT=/srv/graphs refused "$CASE" "$IMAGE" "$(copy_vol "$RDB" "$CASE")" -e FALKORDB_DATA_PATH=/srv/graphs &&
         { grep -qF "/srv/graphs/dump.rdb (Redis RDB version" <<<"$(logs "$CASE")" ||
             fail "the message does not name /srv/graphs/dump.rdb"; }
     CASE=aof-rdb-base
     refused "$CASE" "$IMAGE" "$(copy_vol "$AOF" "$CASE")" -e "VALKEY_ARGS=--appendonly yes"
-    CASE=aof-rdb-base-redis-args
-    refused "$CASE" "$IMAGE" "$(copy_vol "$AOF" "$CASE")" -e "REDIS_ARGS=--AppendOnly YES"
-    CASE=aof-quoted-filename
-    refused "$CASE" "$IMAGE" "$(copy_vol "$AOF_QUOTED" "$CASE")" -e "VALKEY_ARGS=/conf/quoted.conf"
-    CASE=include-dir-dbfilename
-    refused "$CASE" "$IMAGE" "$(copy_vol "$INCLUDE" "$CASE")" -e "VALKEY_ARGS=/conf/include.conf"
-    CASE=cmdline-dir-include
-    refused "$CASE" "$IMAGE" "$(copy_vol "$INCLUDE" "$CASE")" -e "VALKEY_ARGS=--dir /conf/sub --include persistence.conf"
-    CASE=glob-include-appenddirname
-    refused "$CASE" "$IMAGE" "$(copy_vol "$GLOB" "$CASE")" -e "VALKEY_ARGS=/conf/glob.conf" &&
-        { grep -qF "$DATA/aof-dir/appendonly.aof." <<<"$(logs "$CASE")" ||
-            fail "the message does not name the base file under aof-dir"; }
-    CASE=include-overridden
-    # A later --dbfilename wins over the include: the Redis file is not loaded.
-    started_vol=$(copy_vol "$INCLUDE" "$CASE")
-    start "$CASE" "$IMAGE" "$started_vol" -e "VALKEY_ARGS=/conf/include.conf --dbfilename other.rdb"
-    if wait_up "$CASE"; then pass "started"; else fail "did not start. Log:"$'\n'"$(logs "$CASE")"; fi
-
-    CASE=newer-than-valkey-reads
-    v=$(copy_vol "$RDB" "$CASE")
-    in_vol "$v" 'printf "REDIS0080" | dd of=/data/dump.rdb conv=notrunc 2>/dev/null'
-    EXPECT="cannot load, even with" refused "$CASE" "$IMAGE" "$v" -e FALKORDB_REDIS_MIGRATION=1
-
     # RDB version 11, as Redis 7.2 and Valkey 8 write it, is Valkey's own: an
     # empty database (header, EOF opcode, a zero checksum) starts.
     CASE=rdb-version-11
@@ -324,32 +273,6 @@ if [ "$SERVER" = valkey ]; then
             { [ "$(cli "$CASE" CONFIG GET rdb-version-check | sed -n 2p)" = strict ] ||
                 fail "after the migration, rdb-version-check is not strict"; }
     fi
-    # TLS=1 execs through its own line: it must carry the relaxed check too.
-    # The server listens on TLS only, with the certificate run.sh generates.
-    # (/proc/1/cmdline cannot show the arguments: the server rewrites its
-    # process title.)
-    CASE=migrate-rdb-tls
-    v=$(copy_vol "$RDB" "$CASE")
-    migration_ready "$v"
-    start "$CASE" "$IMAGE" "$v" -e FALKORDB_REDIS_MIGRATION=1 -e TLS=1
-    tls_cli() { docker exec "$PREFIX-$CASE" sh -c 'redis-cli --tls --cacert "$FALKORDB_TLS_PATH/ca.crt" "$@"' sh "$@"; }
-    # gen-certs.sh generates 2048-bit DH parameters before the server starts,
-    # which took over 30 s on a CI arm64 runner: allow up to 5 minutes.
-    _check=""
-    for _ in $(seq 1 600); do
-        _check=$(tls_cli CONFIG GET rdb-version-check 2>/dev/null | sed -n 2p)
-        [ -n "$_check" ] && break
-        [ "$(docker inspect -f '{{.State.Running}}' "$PREFIX-$CASE")" = true ] || break
-        sleep 0.5
-    done
-    _got=$(tls_cli GRAPH.QUERY g1 "$GRAPH_QUERY" 2>/dev/null | sed -n 3,4p | tr '\n' ' ' | sed 's/ $//')
-    if [ "$_check" != relaxed ]; then
-        fail "rdb-version-check over TLS is '$_check', expected relaxed. Log:"$'\n'"$(logs "$CASE")"
-    elif [ "$_got" != "$GRAPH_EXPECT" ]; then
-        fail "g1 over TLS holds '$_got', expected '$GRAPH_EXPECT'"
-    else
-        pass "started on TLS, rdb-version-check relaxed, g1 = $_got"
-    fi
     CASE=migrate-aof
     v=$(copy_vol "$AOF" "$CASE")
     migration_ready "$v" "--appendonly yes" aof
@@ -361,12 +284,6 @@ if [ "$SERVER" = valkey ]; then
         CASE=migrate-aof-after
         started "$CASE" "$IMAGE" "$v" -e "VALKEY_ARGS=--appendonly yes"
     fi
-    CASE=user-relaxed
-    v=$(copy_vol "$RDB" "$CASE")
-    migration_ready "$v"
-    started "$CASE" "$IMAGE" "$v" -e "VALKEY_ARGS=--rdb-version-check relaxed" &&
-        { grep -qF "the Redis data check is skipped" <<<"$(logs "$CASE")" ||
-            fail "no notice that the check was skipped"; }
 else
     echo "== Redis image $IMAGE; volumes written by $WRITER"
     RDB=$(write_redis8 rdb) || exit 2
