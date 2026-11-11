@@ -127,16 +127,16 @@ The lakefile has no path dependencies. Other projects rely on its results by cit
 
 ## Coverage
 
-`COVERAGE.tsv` has 139 rows: 73 in `versioned_matrix.rs`, 51 in `tensor.rs`, 10 in `mvcc_graph.rs` and 5 in `cow.rs`.
+`COVERAGE.tsv` has 137 rows: 71 in `versioned_matrix.rs`, 51 in `tensor.rs`, 10 in `mvcc_graph.rs` and 5 in `cow.rs`.
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 134 |
 | CONDITIONAL | 1 |
-| NOT COVERED | 4 |
+| NOT COVERED | 2 |
 
 - **CONDITIONAL:** `VersionedMatrix::count_in_rows`, on `LayerCount` (above).
-- **NOT COVERED:** the copy-on-write effective matrix the CCH input reads (`effective`, `VersionedMatrix::effective`, `Effective::to_mut`, `Effective::deref`), not modelled yet.
+- **NOT COVERED:** the effective matrix the CCH input reads (`effective`, `VersionedMatrix::effective`), not modelled yet.
 
 ## What the model does not cover
 

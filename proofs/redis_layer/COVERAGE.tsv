@@ -1,11 +1,11 @@
 file	function	line	bucket	lean_name_or_reason
-src/allocator.rs	alloc	52	PROVEN	Allocator.step (.alloc ok n): null_alloc_uncounted, run_traffic, query_accounting, alloc_passthrough (RedisAlloc = FFI input)
-src/allocator.rs	dealloc	73	PROVEN	Allocator.step (.dealloc n): run_traffic, query_accounting, disabled_frozen (RedisAlloc::dealloc = FFI effect)
-src/allocator.rs	enable_tracking	97	PROVEN	Allocator.step .enable: enable_sets, query_accounting
-src/allocator.rs	disable_tracking	105	PROVEN	Allocator.step .disable: disable_clears, disabled_frozen
-src/allocator.rs	current_thread_usage	114	PROVEN	Allocator.usage: query_accounting, other_thread_invisible, fresh_thread_counts
-src/allocator.rs	net_thread_usage	122	PROVEN	Allocator.net: net_saturates, query_accounting, other_thread_invisible
-src/allocator.rs	reset_counter	127	PROVEN	Allocator.step .reset: reset_zero, query_accounting
+src/allocator.rs	alloc	44	PROVEN	Allocator.step (.alloc ok n): null_alloc_uncounted, run_traffic, query_accounting, alloc_passthrough (RedisAlloc = FFI input)
+src/allocator.rs	dealloc	65	PROVEN	Allocator.step (.dealloc n): run_traffic, query_accounting, disabled_frozen (RedisAlloc::dealloc = FFI effect)
+src/allocator.rs	enable_tracking	89	PROVEN	Allocator.step .enable: enable_sets, query_accounting
+src/allocator.rs	disable_tracking	97	PROVEN	Allocator.step .disable: disable_clears, disabled_frozen
+src/allocator.rs	current_thread_usage	106	PROVEN	Allocator.usage: query_accounting, other_thread_invisible, fresh_thread_counts
+src/allocator.rs	net_thread_usage	114	PROVEN	Allocator.net: net_saturates, query_accounting, other_thread_invisible
+src/allocator.rs	reset_counter	123	PROVEN	Allocator.step .reset: reset_zero, query_accounting
 src/dispatch.rs	must_run_inline	36	AXIOMATISED	Redis ctx flags (RM_GetContextFlags); predicate identical to C cmd_dispatcher.c main_thread; not modelled beyond that
 src/divergence_guard.rs	is_replayed	41	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
 src/divergence_guard.rs	on_failure	53	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
@@ -166,14 +166,14 @@ src/query_session.rs	release_gil	559	AXIOMATISED	RM_ThreadSafeContextLock/Unlock
 src/module_init.rs	pthread_atfork	91	AXIOMATISED	libc pthread_atfork declaration
 src/module_init.rs	on_fork_child	118	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
 src/module_init.rs	graph_init	139	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range; historical pre3328_* (W4-redis-3 / #3268, fixed by #3328)
-src/module_init.rs	info_func	429	PROVEN	ModuleInit.infoSections: info_normal
-src/module_init.rs	on_flush	444	PROVEN	ModuleInit.onFlush: onFlush_id
-src/module_init.rs	on_shutdown	471	PROVEN	ModuleInit.onShutdown: onShutdown_flusher_first, onShutdown_no_teardown_under_a_left_worker, onShutdown_without_native_index
-src/module_init.rs	on_role_change	472	PROVEN	ModuleInit.onRoleChange: onRoleChange_promote, onRoleChange_demote
-src/module_init.rs	enforce_pending_constraints_after_promotion	502	PROVEN	ModuleInit.pendingPerGraph: pending_only_uc
-src/module_init.rs	on_replica_change	570	PROVEN	ModuleInit.onReplicaChange: onReplicaChange_latches
-src/module_init.rs	on_loading	582	PROVEN	ModuleInit.onLoading: onLoading_only_end
-src/module_init.rs	on_keyspace_event	603	PROVEN	ModuleInit.onKeyspace: rename_pair, rename_to_alone, other_event
+src/module_init.rs	info_func	423	PROVEN	ModuleInit.infoSections: info_normal
+src/module_init.rs	on_flush	438	PROVEN	ModuleInit.onFlush: onFlush_id
+src/module_init.rs	on_shutdown	465	PROVEN	ModuleInit.onShutdown: onShutdown_flusher_first, onShutdown_no_teardown_under_a_left_worker, onShutdown_without_native_index
+src/module_init.rs	on_role_change	466	PROVEN	ModuleInit.onRoleChange: onRoleChange_promote, onRoleChange_demote
+src/module_init.rs	enforce_pending_constraints_after_promotion	496	PROVEN	ModuleInit.pendingPerGraph: pending_only_uc
+src/module_init.rs	on_replica_change	564	PROVEN	ModuleInit.onReplicaChange: onReplicaChange_latches
+src/module_init.rs	on_loading	576	PROVEN	ModuleInit.onLoading: onLoading_only_end
+src/module_init.rs	on_keyspace_event	597	PROVEN	ModuleInit.onKeyspace: rename_pair, rename_to_alone, other_event
 src/telemetry.rs	truncate	34	PROVEN	Telemetry.truncate: truncate_short, truncate_len, truncate_prefix
 src/telemetry.rs	truncate_arc	50	PROVEN	Telemetry.truncateArc: truncateArc_eq
 src/telemetry.rs	stream_name	66	PROVEN	Telemetry.streamName: streamName_key_name, streamName_inj, streamName_nul, stream_same_slot, stream_other_slot
