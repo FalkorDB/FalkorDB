@@ -58,11 +58,17 @@ deadline=$(( SECONDS + minutes * 60 ))
 while :; do
   busy=""
   for workflow in release-tag.yml release-image.yml; do
-    # Queued runs count too: a release published from the UI is public
-    # before its run starts. Assigned on its own line, so a failed call fails
-    # the script instead of reading as "no release running".
-    runs=$(gh api "repos/${GH_REPO}/actions/workflows/${workflow}/runs?per_page=20" \
-             --jq '.workflow_runs[] | select(.status != "completed") | .id')
+    # Every unfinished status, queued ones too: a release published from the
+    # UI is public before its run starts. Filtered by status on the server
+    # and paginated, so an old run being re-run (listed by creation date,
+    # pages back) is still found. Assigned on its own line, so a failed call
+    # fails the script instead of reading as "no release running".
+    runs=""
+    for status in queued in_progress waiting requested pending; do
+      page=$(gh api "repos/${GH_REPO}/actions/workflows/${workflow}/runs?status=${status}&per_page=100" \
+               --paginate --jq '.workflow_runs[].id')
+      runs="$runs $page"
+    done
     for run in $runs; do
       [ "$run" = "$exclude" ] && continue
       busy_run "$workflow" "$run"
