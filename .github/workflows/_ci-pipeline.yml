@@ -110,17 +110,21 @@ jobs:
       # tests/common.py starts the server with --logfile redis-test.log.
       # Counts for the run summary (tests/count_results.py, summed per server by
       # _ci-pipeline.yml's test-counts job). On every outcome but a cancel, so a
-      # failing cell still counts. The server is FALKORDB_SERVER's, as flow.sh,
+      # failing cell still counts, including one whose setup failed before its
+      # tests ran. STATUS is the job's, so any failed step marks the cell. The
+      # report never gates: both steps continue on error. The server is FALKORDB_SERVER's, as flow.sh,
       # tests/common.py and the images default it: redis unless set.
       - name: Record test counts
-        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+        if: ${{ !cancelled() }}
+        continue-on-error: true
         env:
           RUN: artifact, amd64
-          STATUS: ${{ (steps.pytest.outcome == 'failure' || steps.tck.outcome == 'failure') && 'failure' || 'success' }}
+          STATUS: ${{ job.status }}
           NAME: test-counts-artifact
         run: python3 tests/count_results.py record --server "${FALKORDB_SERVER:-redis}" --run "$RUN" --status "$STATUS" --junit test-results/pytest.xml test-results/tck.xml --logs redis-test.log --out "test-counts/$NAME.json"
       - name: Upload test counts
-        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+        if: ${{ !cancelled() }}
+        continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: test-counts-artifact
@@ -427,17 +431,21 @@ jobs:
           done
       # Counts for the run summary (tests/count_results.py, summed per server by
       # _ci-pipeline.yml's test-counts job). On every outcome but a cancel, so a
-      # failing cell still counts. The server is FALKORDB_SERVER's, as flow.sh,
+      # failing cell still counts, including one whose setup failed before its
+      # tests ran. STATUS is the job's, so any failed step marks the cell. The
+      # report never gates: both steps continue on error. The server is FALKORDB_SERVER's, as flow.sh,
       # tests/common.py and the images default it: redis unless set.
       - name: Record test counts
-        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+        if: ${{ !cancelled() }}
+        continue-on-error: true
         env:
           RUN: image, amd64
-          STATUS: ${{ (steps.pytest.outcome == 'failure' || steps.tck.outcome == 'failure') && 'failure' || 'success' }}
+          STATUS: ${{ job.status }}
           NAME: test-counts-image
         run: python3 tests/count_results.py record --server "${FALKORDB_SERVER:-redis}" --run "$RUN" --status "$STATUS" --junit test-results/pytest.xml test-results/tck.xml --logs tests/flow/logs --out "test-counts/$NAME.json"
       - name: Upload test counts
-        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+        if: ${{ !cancelled() }}
+        continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: test-counts-image

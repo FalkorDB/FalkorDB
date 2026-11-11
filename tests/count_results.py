@@ -78,7 +78,15 @@ def count_junit(paths):
         if not os.path.exists(path):
             print(f"count_results: {path} does not exist, skipped", file=sys.stderr)
             continue
-        for case in ET.parse(path).getroot().iter("testcase"):
+        try:
+            root = ET.parse(path).getroot()
+        except ET.ParseError as e:
+            # A truncated or empty file (pytest killed mid-run): report it and
+            # count nothing from it, so the caller's --status failure fallback
+            # counts the cell instead of the record crashing.
+            print(f"count_results: {path} is not valid JUnit XML ({e}), skipped", file=sys.stderr)
+            continue
+        for case in root.iter("testcase"):
             counts = suites[suite_of(case)]
             if case.find("skipped") is not None:
                 counts["skipped"] += 1
