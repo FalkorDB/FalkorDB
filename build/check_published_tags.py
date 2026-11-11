@@ -79,11 +79,14 @@ class InspectError(Exception):
 
 
 class Docker:
+    """Runs docker and `docker buildx imagetools` against registries."""
     def __init__(self, keep_images: bool = False, sleep: Callable[[float], None] = time.sleep) -> None:
+        """Create the wrapper; `keep_images` leaves pulled images in place."""
         self.keep_images = keep_images
         self.sleep = sleep
 
     def _docker(self, args: list[str], timeout: int) -> subprocess.CompletedProcess:
+        """Run one docker command with a timeout, returning its output."""
         try:
             return subprocess.run(
                 ["docker", *args], capture_output=True, text=True, timeout=timeout, check=False
@@ -116,6 +119,7 @@ class Docker:
         raise InspectError(error)
 
     def _imagetools(self, ref: str, template: str) -> dict:
+        """Run `imagetools inspect` on a ref with the given Go template."""
         out = self._registry(["buildx", "imagetools", "inspect", ref, "--format", template], 300)
         try:
             return json.loads(out)
@@ -131,12 +135,15 @@ class Docker:
         return self._imagetools(ref, "{{json .Image}}")
 
     def has_image(self, ref: str) -> bool:
+        """Whether the registry has the image."""
         return self._docker(["image", "inspect", ref], 60).returncode == 0
 
     def pull(self, ref: str, platform: str) -> None:
+        """Pull the image for a platform."""
         self._registry(["pull", "--quiet", "--platform", platform, ref], 900)
 
     def run(self, ref: str, platform: str, entrypoint: str, args: list[str]) -> tuple[int, str]:
+        """Run a command in the image's container and return its output."""
         proc = self._docker(
             ["run", "--rm", "--pull", "never", "--network", "none", "--platform", platform,
              "--entrypoint", entrypoint, ref, *args],
@@ -145,6 +152,7 @@ class Docker:
         return proc.returncode, (proc.stdout + proc.stderr).strip()
 
     def remove(self, ref: str) -> None:
+        """Remove a pulled image."""
         if not self.keep_images:
             self._docker(["image", "rm", "--force", ref], 120)
 
@@ -156,6 +164,7 @@ class Docker:
 
 @dataclass(frozen=True)
 class Target:
+    """What is being checked: a channel (edge, latest), a release, or a CI tag."""
     kind: str  # "edge", "ci", "release" or "latest"
     version: str | None = None
     ci_key: str | None = None
@@ -163,6 +172,7 @@ class Target:
 
 @dataclass(frozen=True)
 class Expect:
+    """The server and base OS a tag's name promises."""
     server: str
     os: str
     browser: bool = False
@@ -170,6 +180,7 @@ class Expect:
 
 @dataclass
 class TagSpec:
+    """One tag that must exist, with where it lives and what it must hold."""
     tag: str
     repos: list[str]
     expect: Expect
@@ -181,6 +192,7 @@ class TagSpec:
 
 @dataclass
 class Plan:
+    """Everything one run checks: the tag specs, registries and expectations."""
     title: str
     kind: str  # the Target kind: "edge", "ci", "release" or "latest"
     registries: list[str]  # where this channel publishes: "ghcr.io/falkordb", ...
@@ -204,6 +216,7 @@ class Plan:
 
 
 def parse_target(text: str, data: dict) -> Target:
+    """Turn the command-line target into a Target, refusing mistyped ones."""
     if text in ("edge", "latest"):
         return Target(text)
     if text.startswith("rc-"):
@@ -225,12 +238,14 @@ def parse_target(text: str, data: dict) -> Target:
 
 
 def _fill(text: str, **values: str) -> str:
+    """Substitute `{name}` placeholders in text."""
     for key, value in values.items():
         text = text.replace("{" + key + "}", value)
     return text
 
 
 def _channel_specs(channel: dict, servers: set[str], **values: str) -> list[TagSpec]:
+    """Expand a channel's image entries into TagSpecs for the given servers."""
     specs: list[TagSpec] = []
     by_tag: dict[str, TagSpec] = {}
     for image in channel["images"]:
@@ -272,6 +287,7 @@ def _absent_refs(plan: Plan, public: bool, left_over: set[str], fresh_ci_key: bo
     registries, and there too for a key that cannot predate the switch.
     Every name the plan expects is taken back out."""
     def tags_of(spec: TagSpec) -> list[str]:
+        """Every ref the spec names, one per repo."""
         per_arch = [_fill(spec.per_arch, arch=s) for s in plan.arch_suffixes.values()] if spec.per_arch else []
         return [spec.tag, *per_arch]
 
@@ -282,6 +298,7 @@ def _absent_refs(plan: Plan, public: bool, left_over: set[str], fresh_ci_key: bo
     absent: dict[str, str] = {}
 
     def forbid(name: str, why: str, registries: list[str] | None = None) -> None:
+        """Require that a tag is absent from the registries."""
         for registry in plan.all_registries if registries is None else registries:
             for repo in plan.repos:
                 ref = f"{registry}/{repo}:{name}"
@@ -345,6 +362,7 @@ def make_plan(
         raise ValueError("a public target needs the release latest* points at, or why it is unknown")
 
     def plan_for(title: str, channel: dict, specs: list[TagSpec]) -> Plan:
+        """Build the plan section for a channel's specs."""
         return Plan(
             title=title,
             kind=target.kind,
@@ -443,6 +461,7 @@ def latest_rule(releases: list[dict], candidate: str | None, repo: str) -> tuple
 
 
 def github_releases(repo: str) -> list[dict]:
+    """Read the repository's GitHub releases through `gh`."""
     try:
         proc = subprocess.run(
             ["gh", "api", f"repos/{repo}/releases", "--paginate",
@@ -469,6 +488,7 @@ SECTIONS = (TAGS, IMAGES, RELATIONS)
 
 @dataclass
 class Result:
+    """The outcome of one check."""
     ok: bool
     section: str
     subject: str
@@ -478,6 +498,7 @@ class Result:
 
 @dataclass
 class Manifest:
+    """A registry manifest: its digest, platforms and OCI annotations."""
     digest: str
     is_index: bool
     platforms: dict[str, str]  # "linux/amd64" -> that platform's manifest digest
@@ -500,6 +521,7 @@ class Facts:
 
 
 def parse_os_release(text: str) -> dict[str, str]:
+    """Parse the KEY=VALUE lines of /etc/os-release."""
     values = {}
     for line in text.splitlines():
         key, sep, value = line.strip().partition("=")
@@ -509,16 +531,20 @@ def parse_os_release(text: str) -> dict[str, str]:
 
 
 def describe_os(values: dict[str, str]) -> str:
+    """Describe an os-release in a short human-readable form."""
     keys = ("ID", "VERSION_ID", "VERSION_CODENAME")
     return " ".join(f"{key}={values[key]}" for key in keys if key in values) or "(empty)"
 
 
 def _describe_missing(result: Manifest | Exception) -> str:
+    """Explain why a manifest could not be read."""
     return "not found" if isinstance(result, NotFound) else f"could not inspect: {result}"
 
 
 class Checker:
+    """Runs every check of a Plan against the registries and records the results."""
     def __init__(self, data: dict, docker: Docker, pins: dict[str, str]) -> None:
+        """Create a checker over the tags data, a docker wrapper and server version pins."""
         self.data = data
         self.docker = docker
         self.pins = pins
@@ -533,15 +559,18 @@ class Checker:
     # -- recording ---------------------------------------------------------
 
     def record(self, ok: bool, section: str, subject: str, check: str, detail: str) -> None:
+        """Store one check result."""
         self.results.append(Result(ok, section, subject, check, detail))
 
     @property
     def failures(self) -> list[Result]:
+        """The results that did not pass."""
         return [result for result in self.results if not result.ok]
 
     # -- registry ----------------------------------------------------------
 
     def manifest(self, ref: str) -> Manifest | Exception:
+        """Read and cache the manifest of a ref."""
         if ref not in self._manifests:
             self._manifests[ref] = self._load_manifest(ref)
         return self._manifests[ref]
@@ -565,12 +594,14 @@ class Checker:
         return self._digests[ref]
 
     def _load_digest(self, ref: str) -> str | Exception:
+        """Fetch the digest of a ref."""
         try:
             return self.docker.manifest(ref)["digest"]
         except (NotFound, InspectError) as error:
             return error
 
     def _load_manifest(self, ref: str) -> Manifest | Exception:
+        """Fetch and parse the index or manifest of a ref."""
         try:
             raw = self.docker.manifest(ref)
         except (NotFound, InspectError) as error:
@@ -602,12 +633,14 @@ class Checker:
         return Manifest(raw["digest"], False, {platform: raw["digest"]})
 
     def digest(self, ref: str) -> str | None:
+        """The cached digest of a ref."""
         manifest = self.manifest(ref)
         return manifest.digest if isinstance(manifest, Manifest) else None
 
     # -- the checks ----------------------------------------------------------
 
     def check(self, plan: Plan) -> None:
+        """Run every check of the plan and return whether all passed."""
         self._release_target = plan.kind in ("release", "latest")
         self.prefetch(self._refs(plan), list(plan.absent) + list(plan.frozen))
         for spec in plan.specs:
@@ -622,6 +655,7 @@ class Checker:
 
     @staticmethod
     def _refs(plan: Plan) -> list[str]:
+        """Every ref the plan names."""
         refs = []
         for spec in plan.specs:
             for registry in plan.registries:
@@ -640,6 +674,7 @@ class Checker:
         return refs
 
     def _check_tag(self, plan: Plan, registry: str, repo: str, spec: TagSpec) -> None:
+        """Check one tag on one registry and repo."""
         ref = f"{registry}/{repo}:{spec.tag}"
         manifest = self.manifest(ref)
         if not isinstance(manifest, Manifest):
@@ -680,6 +715,7 @@ class Checker:
             self._check_per_arch(plan, registry, repo, spec, manifest)
 
     def _check_same_digest(self, ref: str, manifest: Manifest, other_ref: str, relation: str) -> None:
+        """Check that two refs hold the same digest."""
         other = self.manifest(other_ref)
         if not isinstance(other, Manifest):
             self.record(False, RELATIONS, ref, relation,
@@ -780,6 +816,7 @@ class Checker:
 
     def _check_latest_in(self, registry: str, repo: str, version: str, specs: list[TagSpec],
                          after_switch: bool | None) -> None:
+        """Check the latest* aliases on one registry against the release they must follow."""
         subject = f"{registry}/{repo}:latest*"
         check = f"points at {version}"
         releases = {spec.follows: self.manifest(f"{registry}/{repo}:{spec.follows}") for spec in specs}
@@ -832,6 +869,7 @@ class Checker:
         return verdicts
 
     def _check_absent(self, plan: Plan) -> None:
+        """Check that tags the data forbids are absent."""
         present = 0
         for ref, why in plan.absent.items():
             result = self.digest_of(ref)
@@ -863,6 +901,7 @@ class Checker:
 
     def _want_content(self, registry: str, repo: str, tag: str, digest: str, platform: str,
                       expect: Expect) -> None:
+        """Check what is inside the image for one platform."""
         expect = replace(expect, browser=bool(self.data["repos"][repo]["browser"]))
         entry = self._content.setdefault((digest, platform), (f"{registry}/{repo}@{digest}", []))
         entry[1].append((registry, f"{repo}:{tag}", expect))
@@ -879,6 +918,7 @@ class Checker:
                 self._judge(f"{_name_tags(names)} [{platform}]", platform, expect, facts)
 
     def _gather(self, ref: str, platform: str) -> Facts:
+        """Pull and inspect the image to collect its facts."""
         facts = Facts()
         try:
             config = self.docker.config(ref)
@@ -919,6 +959,7 @@ class Checker:
         return facts
 
     def _judge(self, subject: str, platform: str, expect: Expect, facts: Facts) -> None:
+        """Compare the gathered facts with what the tag promises."""
         server = expect.server
         pin = self.pins[server]
         product = self.data["servers"][server]["product"]
@@ -1056,10 +1097,12 @@ def _holds(facts: Facts, expected: str) -> str:
 
 
 def _version_key(version: str) -> tuple[int, ...]:
+    """Sort key that orders X.Y.Z versions numerically."""
     return tuple(int(part) for part in version.split("."))
 
 
 def _show(value: str | None) -> str:
+    """Render an optional value for a report line."""
     return "missing" if value is None else repr(value)
 
 
@@ -1097,6 +1140,7 @@ def _name_tags(names: list[tuple[str, str]]) -> str:
 
 
 def report(plan: Plan, checker: Checker, quiet: bool, note: str | None) -> int:
+    """Print the results, and write the step summary when running in CI."""
     print(f"== {plan.title} on {', '.join(plan.registries)}")
     if note:
         print(f"   {note}")
@@ -1131,6 +1175,7 @@ def report(plan: Plan, checker: Checker, quiet: bool, note: str | None) -> int:
 
 
 def _step_summary(lines: list[str]) -> None:
+    """Append lines to the GitHub step summary, when there is one."""
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary:
         return
@@ -1149,12 +1194,15 @@ def _fatal(message: str) -> int:
 
 
 class _Parser(argparse.ArgumentParser):
+    """Argument parser that exits with a usage error."""
     def error(self, message: str):  # type: ignore[override]
+        """Print the message and exit with a usage error."""
         _step_summary(["### Published tags", "", f"**Not checked:** {message}"])
         super().error(message)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Command-line entry point; returns the process exit code."""
     parser = _Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("target", help="edge, latest, a release version (6.1.0, 6.1.0-rc.1), or rc-<ci_key>")
     parser.add_argument("--tags-file", type=Path, default=DEFAULT_TAGS_FILE)
@@ -1186,6 +1234,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Run the checks for the parsed arguments."""
     data = json.loads(args.tags_file.read_text(encoding="utf-8"))
     try:
         target = parse_target(args.target, data)
