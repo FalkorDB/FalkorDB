@@ -17,7 +17,7 @@ use rand::{RngExt, SeedableRng};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
-use super::DEFAULT_WEIGHT;
+use super::weight_ops::DEFAULT_WEIGHT;
 use crate::graph::graph::{Graph, TypeId};
 use crate::graph::graphblas::test_init;
 use crate::index::falkordb::cch::{Cch, CchError, CchIndexDef, CchInput};
@@ -672,7 +672,8 @@ mod blocks {
 
     use rustc_hash::FxHashMap;
 
-    use super::super::{WeightContext, WeightOps, check_weights};
+    use super::super::check_weights;
+    use super::super::weight_ops::{WeightContext, WeightOps};
     use crate::graph::attribute_store::AttributeStore;
     use crate::graph::graphblas::tensor::Tensor;
     use crate::graph::graphblas::test_init;
