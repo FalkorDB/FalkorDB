@@ -253,11 +253,9 @@ impl CchInput {
     ///   its pair, and self-loops included even though they are then dropped.
     /// - [`CchError::Internal`] if a multi-edge pair has no edge in `me`, a
     ///   broken tensor invariant.
-    /// - [`CchError::CsrExport`] if the export refuses a matrix this function
-    ///   set up (a bug), or GraphBLAS runs out of memory converting one.
     ///
     /// # Panics
-    /// If a GraphBLAS call outside the export fails (see `grb!`). Every matrix
+    /// If a GraphBLAS call fails, the export included (see `grb!`). Every matrix
     /// and operator here is built by this function, so that is a bug or an
     /// allocation failure, never something in the graph's data: bad weights
     /// and unknown names are the errors above.
@@ -311,12 +309,11 @@ impl CchInput {
         let mut skeleton = Matrix::<bool>::new(node_count, node_count);
         skeleton.pattern_union(&weights, &weights, Some(Descriptor::T1));
 
-        // Export one matrix at a time: `prepare_csr` makes each a sparse CSR
-        // (expanding an iso one) just before the export that empties it.
-        skeleton.prepare_csr::<u64, u64, ()>()?;
-        let skeleton = skeleton.take_csr::<u64, u64, ()>()?.into();
-        weights.prepare_csr::<u64, u64, f64>()?;
-        let weights = weights.take_csr::<u64, u64, f64>()?.into();
+        // Copy each matrix out as sorted, 64-bit CSR. Each export consumes its
+        // matrix, so the skeleton's GraphBLAS arrays are freed before the
+        // weights are copied.
+        let skeleton = skeleton.into_csr_pattern().into();
+        let weights = weights.into_csr().into();
         let input = Self {
             n: id_index(node_count),
             skeleton,

@@ -33,7 +33,7 @@ use roaring::RoaringTreemap;
 use super::falkordb_index::FalkorDbIndex;
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 use crate::graph::graph::{Graph, TypeId};
-use crate::graph::graphblas::matrix::{CsrExport, CsrExportError};
+use crate::graph::graphblas::matrix::CsrExport;
 use crate::graph::graphblas::tensor::GrB_INDEX_MAX;
 use customize::Metric;
 use order::Topology;
@@ -166,7 +166,7 @@ pub struct WeightCsr {
 impl Csr {
     /// The `Csr` over a GraphBLAS export's pattern arrays, taken as they are (the export
     /// guarantees the invariants above), and the export's values.
-    fn from_export<V>(export: CsrExport<u64, u64, V>) -> (Self, Vec<V>) {
+    fn from_export<V>(export: CsrExport<V>) -> (Self, Vec<V>) {
         let csr = Self {
             node_count: export.row_count(),
             row_offsets: export.row_offsets,
@@ -177,15 +177,15 @@ impl Csr {
 }
 
 /// A pattern export: the skeleton.
-impl From<CsrExport<u64, u64, ()>> for Csr {
-    fn from(export: CsrExport<u64, u64, ()>) -> Self {
+impl From<CsrExport<()>> for Csr {
+    fn from(export: CsrExport<()>) -> Self {
         Self::from_export(export).0
     }
 }
 
 /// A weighted export: pattern and values, unchanged.
-impl From<CsrExport<u64, u64, f64>> for WeightCsr {
-    fn from(export: CsrExport<u64, u64, f64>) -> Self {
+impl From<CsrExport<f64>> for WeightCsr {
+    fn from(export: CsrExport<f64>) -> Self {
         let (csr, values) = Csr::from_export(export);
         Self { csr, values }
     }
@@ -258,10 +258,6 @@ pub enum CchError {
     /// A bug, not bad input. The message says which.
     #[error("internal CCH error: {0}")]
     Internal(&'static str),
-    /// A bug, not bad input: the CSR export refused a matrix the input build set up for it,
-    /// or GraphBLAS could not convert one (out of memory).
-    #[error("internal CCH error: CSR export: {0}")]
-    CsrExport(#[from] CsrExportError),
     /// A bug, not bad input: no elimination order could be produced. The message is the
     /// ordering's own error, the backend's included, as text: the backend is a dependency
     /// of this module, not of its callers.
