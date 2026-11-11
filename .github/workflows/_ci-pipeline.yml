@@ -208,13 +208,31 @@ jobs:
       IMAGE: ghcr.io/falkordb/falkordb:rc-${{ inputs.ci_key }}-${{ matrix.arch }}
     steps:
       - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Action and Trivy pins match master's security-scan job.
+      # Trivy comes from its GitHub release, checked against the release's
+      # checksums file. setup-trivy (which trivy-action calls by default)
+      # downloads through get.trivy.dev, and a DNS outage there failed every
+      # scan, so both trivy-action steps skip it.
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: '0.76.1'
+        run: |
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          dir="$RUNNER_TEMP/trivy-bin"
+          mkdir -p "$dir"
+          cd "$RUNNER_TEMP"
+          curl -sSfL --retry 3 -O "$base/$tarball" -O "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "$tarball" -C "$dir" trivy
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/trivy" --version
+
       - name: Scan (full report)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
@@ -222,7 +240,7 @@ jobs:
           format: json
           output: trivy-report.json
           exit-code: '0'
-          version: 'v0.69.2'
+          skip-setup-trivy: true
 
       - name: Upload report
         if: ${{ !cancelled() }}
@@ -242,7 +260,6 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
           skip-setup-trivy: true
-          version: 'v0.69.2'
 
       # master posts these as a PR comment. That needs `pull-requests: write`
       # and has no pull request to land on in the merge queue; the run summary
@@ -461,6 +478,8 @@ jobs:
         #
         # `test_constraint` is here because under the flag a unique constraint looks up duplicates
         # in the native index, and every class in that file creates or enforces constraints.
+        # `test_memory_usage` is here because only this build counts the native index in
+        # `indices_sz_mb`, and its test checks that size against what CREATE INDEX costs the server.
         shell: bash
         run: |
           set +e
@@ -469,7 +488,7 @@ jobs:
           for t in tests/flow/test_index_create tests/flow/test_index_scans \
                    tests/flow/test_index_updates tests/flow/test_index_delete \
                    tests/flow/test_edge_index_scans tests/flow/test_edge_index_updates \
-                   tests/flow/test_constraint; do
+                   tests/flow/test_constraint tests/flow/test_memory_usage; do
             TEST="$t" ./flow.sh 2>&1 | tee -a /tmp/nextgen_flow.log
             status=${PIPESTATUS[0]}
             echo "SUITE_EXIT $t $status" | tee -a /tmp/nextgen_flow.log

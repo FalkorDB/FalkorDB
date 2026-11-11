@@ -42,7 +42,13 @@ all_types = [
     Type.LIST
 ]
 
-def random_value(type):
+# Nesting cap for random LIST values. Without one the recursion has no bound,
+# and the old `str([...])` form re-quoted every nested level, doubling its
+# backslashes each time: a rare deep draw built a multi-GB query string and the
+# CI runner OOM-killed pytest partway through this file.
+MAX_LIST_DEPTH = 3
+
+def random_value(type, depth=0):
     if type == Type.NULL:
         return "null"
     elif type == Type.BOOL:
@@ -54,9 +60,11 @@ def random_value(type):
     elif type == Type.STRING:
         return f"\"{''.join(choice(string.ascii_letters + string.digits) for _ in range(choice(range(0, 100))))}\""
     elif type == Type.LIST:
-        return str([random_value(choice(all_types)) for _ in range(choice(range(0, 10)))])
+        element_types = all_types if depth < MAX_LIST_DEPTH else [t for t in all_types if t != Type.LIST]
+        elements = [random_value(choice(element_types), depth + 1) for _ in range(choice(range(0, 10)))]
+        return f"[{', '.join(elements)}]"
     elif isinstance(type, Optional):
-        return choice([random_value(type.__args__[0]), None])
+        return choice([random_value(type.__args__[0], depth), None])
     return None
 
 def is_valid_type(actual_type, expected_type):

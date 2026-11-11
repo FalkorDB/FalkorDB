@@ -9,6 +9,7 @@ use rustc_hash::FxHashSet;
 
 use crate::{entity_type::EntityType, runtime::value::Value};
 
+use super::encode::KeyKind;
 use super::falkordb_index::{EqualCandidates, FalkorDbIndex};
 
 /// The native lookups for one member of a unique constraint: one per
@@ -36,11 +37,11 @@ pub(crate) fn native_unique_query<'g>(
 /// each candidate with every member's key, so a set of lookups read once has
 /// been checked for every member, and a member whose lookups are the same as an
 /// earlier member's needs no read. That is the case for a key with a member no
-/// column answers for (a string id, today) beside one most of the label shares
+/// column answers for (a list, say) beside one most of the label shares
 /// (a tenant): every member looks up only the tenant, and reading it once per
 /// member would make a bulk insert quadratic.
 #[derive(Default)]
-pub(crate) struct ReadOnce(RefCell<FxHashSet<Vec<(usize, u64)>>>);
+pub(crate) struct ReadOnce(RefCell<FxHashSet<Vec<(usize, KeyKind, u64)>>>);
 
 impl ReadOnce {
     /// The candidates of `lookups` ([`fewest_candidates`]), or none when an

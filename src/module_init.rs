@@ -23,15 +23,21 @@
 //! can reject loading an incomplete module.
 
 use crate::commands::constraint::{Settling, settle_constraint};
+#[cfg(feature = "index-falkordb")]
+use crate::config::CONFIGURATION_INDEX_BUILD_THREAD_COUNT;
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
     CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, OMP_THREAD_COUNT,
     apply_module_args, get_thread_count, normalize_node_creation_buffer,
 };
+#[cfg(feature = "index-falkordb")]
+use crate::graph_core::RedisBuildHost;
 use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::graph::constraint::ConstraintStatus;
+#[cfg(feature = "index-falkordb")]
+use graph::index::falkordb::online_build;
 use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{
@@ -128,8 +134,7 @@ unsafe extern "C" fn on_fork_child() {
     let registry = crate::graph_core::GRAPH_REGISTRY.lock();
     for graph_arc in registry.values() {
         let tg: &crate::graph_core::ThreadedGraph = unsafe { &*graph_arc.data_ptr() };
-        let g = tg.graph.read();
-        let graph = g.borrow();
+        let graph = tg.graph.read();
         if !graph.is_synced() {
             std::process::abort();
         }
@@ -414,6 +419,15 @@ pub fn graph_init(
         }
     }
 
+    // The native index's background builder: runs the indexer batches of every index left
+    // `Building`, however its `CREATE INDEX` arrived, on workers of its own, so a build never takes
+    // a query thread. Started before any graph exists: a commit made before would start no build.
+    #[cfg(feature = "index-falkordb")]
+    online_build::start(
+        (*CONFIGURATION_INDEX_BUILD_THREAD_COUNT.lock(ctx)).max(1) as usize,
+        Arc::new(RedisBuildHost),
+    );
+
     Status::Ok
 }
 
@@ -458,9 +472,18 @@ unsafe extern "C" fn on_shutdown(
     // thread-safe context, which races with Redis tearing down server state
     // and produces a SIGSEGV under ASAN if left running.
     telemetry::shutdown_flusher_thread();
+    // Stop the index builder before the pool. Its workers get a bounded wait, since one may be
+    // waiting for the GIL this handler holds; one left behind may still read or free a graph
+    // version, so GraphBLAS and RediSearch are then left to the exiting process.
+    #[cfg(feature = "index-falkordb")]
+    let builder_exited = online_build::stop();
+    #[cfg(not(feature = "index-falkordb"))]
+    let builder_exited = true;
     threadpool::shutdown();
-    graph::graph::graphblas::matrix::shutdown();
-    unsafe { RediSearch_CleanupModule() };
+    if builder_exited {
+        graph::graph::graphblas::matrix::shutdown();
+        unsafe { RediSearch_CleanupModule() };
+    }
 }
 
 unsafe extern "C" fn on_role_change(
@@ -511,8 +534,7 @@ fn enforce_pending_constraints_after_promotion() {
             let pending: Vec<Settling> = {
                 let guard = tg.read();
                 let g = guard.graph.read();
-                g.borrow()
-                    .constraints()
+                g.constraints()
                     .iter()
                     .filter(|c| c.status == ConstraintStatus::UnderConstruction)
                     .map(|c| Settling {

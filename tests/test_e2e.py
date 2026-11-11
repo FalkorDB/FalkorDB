@@ -1027,32 +1027,34 @@ def test_string_match_regex():
     res = query("RETURN string.matchRegEx('foo bar', '([a-z]+)\\s+([a-z]+)') AS name")
     assert res.result_set == [[[["foo bar", "foo", "bar"]]]]
 
-@pytest.mark.extra
 def test_string_replace_regex():
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '(?<first>[a-z]+)-(?<last>[a-z]+)', '$first $last') AS name"
-    )
-    assert res.result_set == [["foo bar baz qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '([a-z]+)-([a-z]+)', '$1 $2') AS name"
-    )
-    assert res.result_set == [["foo bar baz qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '([a-z]+)-([a-z]+)', '${1}_${2}') AS name"
-    )
-    assert res.result_set == [["foo_bar baz_qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '(\\w+)-(\\w+)', '${1}_${2}') AS name"
-    )
-    assert res.result_set == [["foo_bar baz_qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('123', '(\\w+)-(\\w+)', '${1}_${2}') AS name"
-    )
-    assert res.result_set == [["123"]]
+    # the replacement is copied literally, as C does: `$` is never a group reference
+    cases = [
+        ("foo-bar baz-qux", "(?<first>[a-z]+)-(?<last>[a-z]+)", "$first $last", "$first $last $first $last"),  # named groups: Rust-only syntax
+        ("foo-bar baz-qux", "([a-z]+)-([a-z]+)", "$1 $2", "$1 $2 $1 $2"),
+        ("foo-bar baz-qux", "([a-z]+)-([a-z]+)", "${1}_${2}", "${1}_${2} ${1}_${2}"),
+        ("foo-bar baz-qux", "(\\w+)-(\\w+)", "${1}_${2}", "${1}_${2} ${1}_${2}"),
+        ("123", "(\\w+)-(\\w+)", "${1}_${2}", "123"),
+        # issue #2929
+        ("price: X", "X", "$5", "price: $5"),
+        ("abc", "b", "$0x", "a$0xc"),
+        ("abc", "b", "[$0]", "a[$0]c"),
+        ("a-b", "(a)-(b)", "$2$1", "$2$1"),
+        ("x", "x", "$$", "$$"),
+        ("a1b2", "[0-9]", "$&", "a$&b$&"),
+    ]
+    for text, pattern, repl, expected in cases:
+        res = query(
+            "RETURN string.replaceRegEx($t, $p, $r) AS name",
+            params={"t": text, "p": pattern, "r": repl},
+        )
+        assert res.result_set == [[expected]], (text, pattern, repl)
+        # bind-time compiled path (literal pattern/replacement)
+        lit = lambda x: "'" + x.replace("\\", "\\\\") + "'"
+        res = query(
+            f"RETURN string.replaceRegEx({lit(text)}, {lit(pattern)}, {lit(repl)}) AS name"
+        )
+        assert res.result_set == [[expected]], (text, pattern, repl)
 
     ## broken regex
     query_exception(
@@ -1859,6 +1861,20 @@ def test_deep_expression_nesting_is_rejected():
     n = 1000
     query_exception(f"RETURN {'(' * n}1{'+1)' * n}", "Query nesting exceeds")
     assert query("RETURN 1").result_set == [[1]]
+
+
+def test_deep_clause_nesting_is_rejected():
+    # SET/REMOVE property chains and nested FOREACH were built outside the
+    # expression parser's depth guard, so a few kilobytes of either overflowed
+    # the stack and took the server down. They must come back as errors.
+    n = 5000
+    for q in [
+        f"MATCH (n) SET n{'.a' * n} = 1",
+        f"MATCH (n) REMOVE n{'.a' * n}",
+        f"{'FOREACH (x IN [1] | ' * n}CREATE (){')' * n}",
+    ]:
+        query_exception(q, "Query nesting exceeds")
+        assert query("RETURN 1").result_set == [[1]]
 
 
 def test_index():

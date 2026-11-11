@@ -28,7 +28,6 @@ use std::{cell::RefCell, sync::Arc};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
 use crate::graph::graph::{DeletedEdge, DeletedNodeLabel};
@@ -498,9 +497,8 @@ impl IndexDocs {
         &mut self,
         g: &mut Graph,
     ) {
-        // This is the query's own private version, which nothing else can borrow, so
-        // graph-then-indexer is safe here — see `Pending::resync_published_indexes`
-        // for the published version, where the order has to be the other way round.
+        // Each call takes its own indexer lock. `Pending::resync_published_indexes`
+        // holds both across its writes instead.
         g.commit_index(&mut self.node_adds, &mut self.node_removes);
         g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
     }
@@ -808,17 +806,28 @@ impl Pending {
         id: NodeId,
         labels: &mut OrderSet<LabelId>,
     ) {
+        let (added, removed) = self.staged_node_labels(id);
+        for &label_id in added {
+            labels.insert(LabelId(label_id as usize));
+        }
+        for &label_id in removed {
+            labels.remove(&LabelId(label_id as usize));
+        }
+    }
+
+    /// The label ids this query staged on `id`: `(added, removed)`, disjoint
+    /// (see [`Self::stage_node_labels`]). For a caller overlaying them on a set
+    /// other than [`Self::update_node_labels`]'s `OrderSet`.
+    #[must_use]
+    pub fn staged_node_labels(
+        &self,
+        id: NodeId,
+    ) -> (&[u64], &[u64]) {
         let raw_id: u64 = id.into();
-        if let Some(set) = self.set_labels.get(&raw_id) {
-            for &label_id in set {
-                labels.insert(LabelId(label_id as usize));
-            }
-        }
-        if let Some(removed) = self.remove_labels.get(&raw_id) {
-            for &label_id in removed {
-                labels.remove(&LabelId(label_id as usize));
-            }
-        }
+        (
+            self.set_labels.get(&raw_id).map_or(&[], Vec::as_slice),
+            self.remove_labels.get(&raw_id).map_or(&[], Vec::as_slice),
+        )
     }
 
     pub fn deleted_node(
@@ -1086,20 +1095,47 @@ impl Pending {
         self.created_nodes.contains(id.into())
     }
 
-    /// Returns pending-created node IDs that have ALL of the given labels.
-    /// When `label_ids` is empty, returns all pending-created nodes.
+    /// The nodes that GAIN a pattern label in this query and carry ALL of
+    /// `label_ids` once the pending changes apply: live (not pending-deleted),
+    /// with every label in the node's effective set
+    /// (`(committed \ remove_labels) ∪ set_labels`, `set_labels` alone for a
+    /// created node), and with at least one of them only staged. A node whose
+    /// pattern labels are all committed (and none pending removal) is left to
+    /// the wrapped scan: re-setting a label it already has changes nothing.
+    ///
+    /// A returned node may also be emitted by an indexed scan, which checks
+    /// secondary labels pending-aware. The caller therefore takes every
+    /// returned node from here only, skipping them in the wrapped scan, so
+    /// each is enumerated exactly once. When `label_ids` is empty, returns all
+    /// pending-created nodes.
     #[must_use]
     pub fn get_pending_nodes_with_labels(
         &self,
         label_ids: &[LabelId],
+        g: &Graph,
     ) -> RoaringTreemap {
         if label_ids.is_empty() {
             return self.created_nodes.clone();
         }
-        let label_ids_u64: Vec<u64> = label_ids.iter().map(|l| usize::from(*l) as u64).collect();
         let mut result = RoaringTreemap::new();
-        for (&node_id, node_labels) in &self.set_labels {
-            if label_ids_u64.iter().all(|lid| node_labels.contains(lid)) {
+        // A node that gains a pattern label must have it staged, so
+        // `set_labels` holds every candidate.
+        for (&node_id, staged) in &self.set_labels {
+            if self.deleted_nodes.contains(node_id) {
+                continue;
+            }
+            let created = self.created_nodes.contains(node_id);
+            let removed = self.remove_labels.get(&node_id);
+            let mut all_committed = !created;
+            let matches = label_ids.iter().all(|&label| {
+                let lid = usize::from(label) as u64;
+                let committed = !created
+                    && !removed.is_some_and(|r| r.contains(&lid))
+                    && g.node_has_label_id(NodeId::from(node_id), label);
+                all_committed &= committed;
+                committed || staged.contains(&lid)
+            });
+            if matches && !all_committed {
                 result.insert(node_id);
             }
         }
@@ -1187,6 +1223,8 @@ impl Pending {
 
     /// Count pending-created relationships whose destination is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
+    /// An edge created and deleted since the last commit is not counted, here or in
+    /// [`Self::pending_deleted_indegree`].
     #[must_use]
     pub fn pending_indegree(
         &self,
@@ -1197,20 +1235,22 @@ impl Pending {
             self.created_rels_by_type
                 .values()
                 .flat_map(|v| v.iter())
-                .filter(|(_, _, to)| *to == node_id)
+                .filter(|(id, _, to)| *to == node_id && !self.is_relationship_deleted(*id))
                 .count()
         } else {
             types
                 .iter()
                 .filter_map(|t| self.created_rels_by_type.get(t))
                 .flat_map(|v| v.iter())
-                .filter(|(_, _, to)| *to == node_id)
+                .filter(|(id, _, to)| *to == node_id && !self.is_relationship_deleted(*id))
                 .count()
         }
     }
 
     /// Count pending-created relationships whose source is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
+    /// An edge created and deleted since the last commit is not counted, here or in
+    /// [`Self::pending_deleted_outdegree`].
     #[must_use]
     pub fn pending_outdegree(
         &self,
@@ -1221,21 +1261,23 @@ impl Pending {
             self.created_rels_by_type
                 .values()
                 .flat_map(|v| v.iter())
-                .filter(|(_, from, _)| *from == node_id)
+                .filter(|(id, from, _)| *from == node_id && !self.is_relationship_deleted(*id))
                 .count()
         } else {
             types
                 .iter()
                 .filter_map(|t| self.created_rels_by_type.get(t))
                 .flat_map(|v| v.iter())
-                .filter(|(_, from, _)| *from == node_id)
+                .filter(|(id, from, _)| *from == node_id && !self.is_relationship_deleted(*id))
                 .count()
         }
     }
 
     /// Count pending-deleted relationships whose destination is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Requires access to the graph to resolve relationship type IDs.
+    /// Only committed edges are counted: an edge created since the last commit
+    /// has no endpoints in the graph yet, and is already left out of
+    /// [`Self::pending_indegree`].
     #[must_use]
     pub fn pending_deleted_indegree(
         &self,
@@ -1246,6 +1288,12 @@ impl Pending {
         self.deleted_relationships
             .iter()
             .filter(|rel_id| {
+                if self
+                    .created_rel_types
+                    .contains_key(&RelationshipId::from(*rel_id))
+                {
+                    return false;
+                }
                 let (_from, to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
                 to == node_id
                     && (types.is_empty()
@@ -1257,7 +1305,9 @@ impl Pending {
 
     /// Count pending-deleted relationships whose source is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Requires access to the graph to resolve relationship type IDs.
+    /// Only committed edges are counted: an edge created since the last commit
+    /// has no endpoints in the graph yet, and is already left out of
+    /// [`Self::pending_outdegree`].
     #[must_use]
     pub fn pending_deleted_outdegree(
         &self,
@@ -1268,6 +1318,12 @@ impl Pending {
         self.deleted_relationships
             .iter()
             .filter(|rel_id| {
+                if self
+                    .created_rel_types
+                    .contains_key(&RelationshipId::from(*rel_id))
+                {
+                    return false;
+                }
                 let (from, _to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
                 from == node_id
                     && (types.is_empty()
@@ -1727,10 +1783,14 @@ impl Pending {
     /// edge's document key comes from there, since committed state no longer has the
     /// edge at all.
     ///
+    /// `committed` is only read: RediSearch's documents live behind the
+    /// indexer, which every version shares, so rewriting them changes no version, and
+    /// a reader of `committed` is never disturbed.
+    ///
     /// Writer mode only, and before the write lock is released.
     pub fn resync_published_indexes(
         &mut self,
-        committed: &AtomicRefCell<Graph>,
+        committed: &Graph,
         private: &Graph,
     ) {
         let (nodes, edges) = std::mem::take(&mut self.published).ids_by_slot();
@@ -1743,7 +1803,7 @@ impl Pending {
         let mut edge_adds: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
         let mut edge_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>> = FxHashMap::default();
         {
-            let g = committed.borrow();
+            let g = committed;
             for (slot, ids) in &nodes {
                 for id in ids {
                     if g.node_has_label_id(NodeId::from(id), LabelId(*slot as usize)) {
@@ -1769,15 +1829,14 @@ impl Pending {
             }
         }
 
-        // Indexer locks *before* the graph borrow — the order `populate_index_batch`
-        // uses, and the only one that keeps this mutable borrow of the published
-        // version from colliding with a populate batch reading it (`AtomicRefCell`
-        // reports that collision by panicking). Concurrent *readers* are excluded
-        // instead by the write lock this query holds.
-        let (node_lock, edge_lock) = committed.borrow().index_locks();
+        // Indexer locks before the graph borrow, the order `populate_index_batch` uses;
+        // they keep its batches out of RediSearch while both kinds are rewritten.
+        // Concurrent readers are kept out of RediSearch by the write lock this query
+        // holds.
+        let (node_lock, edge_lock) = committed.index_locks();
         let node_guard = node_lock.lock();
         let edge_guard = edge_lock.lock();
-        let mut g = committed.borrow_mut();
+        let g = committed;
         g.commit_index_locked(&node_guard, &mut node_adds, &mut node_removes);
         g.commit_edge_index_locked(&edge_guard, &mut edge_adds, &mut edge_removes);
     }
@@ -1932,15 +1991,12 @@ mod label_effect_tests {
     /// A graph whose only labels are `names`, and a `Pending` that has already
     /// taken its schema baseline — so the emitter announces no schema, and the
     /// label records are the whole of what it produces.
-    fn fixture(names: &[&str]) -> (AtomicRefCell<Graph>, Vec<LabelId>, Pending) {
+    fn fixture(names: &[&str]) -> (Graph, Vec<LabelId>, Pending) {
         ensure_init();
-        let g = AtomicRefCell::new(Graph::new(16, 16, 1, 0, "label_effects"));
-        let labels: Vec<LabelId> = {
-            let mut graph = g.borrow_mut();
-            names.iter().map(|n| graph.get_label_id_mut(n)).collect()
-        };
+        let mut g = Graph::new(16, 16, 1, 0, "label_effects");
+        let labels: Vec<LabelId> = names.iter().map(|n| g.get_label_id_mut(n)).collect();
         let mut pending = Pending::new();
-        pending.set_schema_baseline(&g.borrow());
+        pending.set_schema_baseline(&g);
         (g, labels, pending)
     }
 
@@ -1952,10 +2008,10 @@ mod label_effect_tests {
     /// tightly, which is the half that matters here.
     fn records(
         pending: &Pending,
-        g: &AtomicRefCell<Graph>,
+        g: &Graph,
     ) -> Vec<Record> {
         let mut out = Vec::new();
-        for_each_record(pending, &g.borrow(), |r| out.push(r));
+        for_each_record(pending, g, |r| out.push(r));
         out
     }
 
@@ -2226,7 +2282,7 @@ mod native_unique_tests {
     fn a_numeric_duplicate_is_found_by_the_native_lookup() {
         let mut g = graph();
         g.falkordb_index
-            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
         let ids = nodes(
             &mut g,
             &[
@@ -2256,7 +2312,7 @@ mod native_unique_tests {
     fn a_string_duplicate_on_a_numeric_column_is_found_by_the_scan() {
         let mut g = graph();
         g.falkordb_index
-            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
         let ids = nodes(
             &mut g,
             &[
@@ -2309,7 +2365,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["s", "n"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         let ids = nodes(
             &mut g,
@@ -2343,7 +2399,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["tenant", "id"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         // 50 nodes of one tenant, then a duplicate of node 3's key.
         let rows: Vec<[(&str, Value); 2]> = (0..50)
@@ -2399,7 +2455,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["tenant", "id"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         // 50 nodes of tenant 7, a duplicate of the key of node 3, and one node of tenant 8.
         let rows: Vec<[(&str, Value); 2]> = (0..50)
@@ -2446,13 +2502,50 @@ mod native_unique_tests {
         );
     }
 
+    /// While one of a composite key's columns is `Building`, as the background builder leaves a
+    /// new one, the key reads its other column: a building column has not seen every entity, so it
+    /// cannot rule a duplicate out, but a `Ready` one can. Here `tenant`'s column is created after
+    /// the nodes and never built, so it holds none of them.
+    #[test]
+    fn a_composite_key_with_a_building_column_reads_its_ready_one() {
+        let mut g = graph();
+        g.falkordb_index
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
+        let ids = nodes(
+            &mut g,
+            &[
+                &[("tenant", Value::Int(7)), ("id", Value::Int(1))],
+                &[("tenant", Value::Int(7)), ("id", Value::Int(2))],
+                &[("tenant", Value::Int(7)), ("id", Value::Int(1))],
+            ],
+        );
+        g.falkordb_index
+            .create_building(EntityType::Node, &arc("U"), &arc("tenant"));
+        let lookups = native_unique_query(
+            &g.falkordb_index,
+            EntityType::Node,
+            &arc("U"),
+            &[arc("tenant"), arc("id")],
+            &[Value::Int(7), Value::Int(1)],
+        )
+        .expect("id's column answers");
+        assert_eq!(lookups.len(), 1, "the Building column declines");
+        assert_eq!(
+            fewest_candidates(lookups).count(),
+            2,
+            "the two holding id 1"
+        );
+        assert!(check_nodes(&g, &["tenant", "id"], ids[2]).is_err());
+        assert_eq!(check_nodes(&g, &["tenant", "id"], ids[1]), Ok(()));
+    }
+
     /// The same lookup for an edge constraint, where a column's ids are `edge_id`s.
     #[test]
     fn an_edge_duplicate_is_found_by_the_native_lookup() {
         let mut g = graph();
         let ty = arc("R");
         g.falkordb_index
-            .create_numeric(EntityType::Relationship, &ty, &arc("id"));
+            .create_column(EntityType::Relationship, &ty, &arc("id"));
         let ends = g
             .node_id_space()
             .reserve(2, &RoaringTreemap::new())

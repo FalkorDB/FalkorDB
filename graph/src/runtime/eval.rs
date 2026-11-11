@@ -48,6 +48,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use regex::NoExpand;
 use smallvec::SmallVec;
 use thin_vec::{ThinVec, thin_vec};
 
@@ -1074,7 +1075,13 @@ impl<'a> ExprEval<'a> {
                             row.insert(var, value);
                             match self.eval_node(&node.child(1), Some(&row), agg_group_key)? {
                                 Value::Bool(true) => {}
-                                _ => continue,
+                                Value::Bool(false) | Value::Null => continue,
+                                value => {
+                                    return Err(format!(
+                                        "Type mismatch: expected Boolean but was {}",
+                                        value.name()
+                                    ));
+                                }
                             }
                             acc.push(self.eval_node(&node.child(2), Some(&row), agg_group_key)?);
                         }
@@ -1346,7 +1353,7 @@ impl<'a> ExprEval<'a> {
                     Some(Value::Null) => Ok(Value::Null),
                     Some(Value::String(repl)) => Ok(Value::String(Arc::new(
                         rf.regex
-                            .replace_all(text.as_str(), repl.as_str())
+                            .replace_all(text.as_str(), NoExpand(repl.as_str()))
                             .into_owned(),
                     ))),
                     Some(_) => unreachable!(),

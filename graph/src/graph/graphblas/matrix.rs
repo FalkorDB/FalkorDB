@@ -103,6 +103,10 @@ use super::{
     GxB_unload_Matrix_into_Container,
 };
 use super::{
+    GrB_FP64, GrB_Matrix_build_FP64, GrB_Matrix_extractTuples_FP64, GrB_Matrix_select_INT64,
+    GrB_Matrix_setElement_FP64, GrB_OFFDIAG,
+};
+use super::{
     GrB_GT_UINT64, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_select_BOOL, GrB_VALUEEQ_BOOL,
 };
 
@@ -525,6 +529,11 @@ impl<T> Encode<19> for Matrix<T> {
         &self,
         w: &mut dyn Writer,
     ) {
+        // Unloading empties the matrix it is applied to, and a foreground SAVE,
+        // DUMP or GRAPH.COPY encodes the published version while read queries
+        // traverse it lock-free. So unload a private copy — a memcpy of the
+        // arrays — and free it with the container, never touching `self`.
+        let copy = self.dup();
         unsafe {
             let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
             let info = GxB_Container_new(container.as_mut_ptr());
@@ -535,7 +544,7 @@ impl<T> Encode<19> for Matrix<T> {
             );
             let container = container.assume_init();
 
-            let info = GxB_unload_Matrix_into_Container(self.inner(), container, null_mut());
+            let info = GxB_unload_Matrix_into_Container(copy.inner(), container, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             // Write container struct bytes. Its pointer fields are heap
@@ -564,9 +573,7 @@ impl<T> Encode<19> for Matrix<T> {
             ManuallyDrop::new(Vector::<bool>::from((*container).i)).encode(w);
             ManuallyDrop::new(Vector::<bool>::from((*container).b)).encode(w);
 
-            let info = GxB_load_Matrix_from_Container(self.inner(), container, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-
+            // Frees the copy's arrays with the container; `copy` is left empty.
             let mut c = container;
             let info = GxB_Container_free(&raw mut c);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -966,6 +973,30 @@ impl<T> Matrix<T> {
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Remove every entry on the main diagonal (`GrB_select` with
+    /// `GrB_OFFDIAG`, whose thunk 0 names the main diagonal), in place.
+    /// So far only the CCH test kit uses it, to drop a weight matrix's self-loops.
+    #[cfg(test)]
+    pub(crate) fn drop_diagonal(&mut self) {
+        let info = unsafe {
+            GrB_Matrix_select_INT64(
+                self.inner(),
+                null_mut(),
+                null_mut(),
+                GrB_OFFDIAG,
+                self.inner(),
+                0,
+                null_mut(),
+            )
+        };
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GrB_Matrix_select_INT64: {info:?}"
+        );
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
@@ -1373,6 +1404,114 @@ impl Matrix<u64> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
+    }
+}
+
+/// `FP64` matrices, e.g. a weight per node pair. So far only the test kit's oracle uses them:
+/// a test graph is a weight matrix.
+#[cfg(test)]
+impl Matrix<f64> {
+    /// Create a new `FP64` matrix.
+    #[must_use]
+    pub fn new(
+        nrows: u64,
+        ncols: u64,
+    ) -> Self {
+        unsafe {
+            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_FP64, nrows, ncols);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_new failed: {info:?}"
+            );
+            let m = m.assume_init();
+            pin_sparse(m);
+            Self {
+                m: Arc::new(Handle(m)),
+                lock: Arc::new(Mutex::new(())),
+                has_pending: Arc::new(AtomicBool::new(false)),
+                phantom: PhantomData,
+            }
+        }
+    }
+
+    /// Set an `FP64` value at `(i, j)`.
+    ///
+    /// An invalid index (outside the dimensions) or out of memory panics, in
+    /// release too: any error `GrB_Info`, one below 0.
+    pub fn set(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: f64,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_setElement_FP64(self.inner(), value, i, j);
+            assert!((info as i32) >= 0, "GrB_Matrix_setElement_FP64: {info:?}");
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Build from coordinate arrays into this (empty) matrix. A repeated `(row, col)` is a bug
+    /// in the caller, not something to fold: there is no `dup` operator, so GraphBLAS refuses
+    /// it, and this panics, as it does on an index outside the dimensions.
+    ///
+    /// Both checks hold in release: mismatched lengths would read past an array, and a
+    /// refused build would leave the matrix silently empty.
+    pub(crate) fn build(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+        vals: &[f64],
+    ) {
+        assert!(rows.len() == cols.len() && rows.len() == vals.len());
+        let info = unsafe {
+            GrB_Matrix_build_FP64(
+                self.inner(),
+                rows.as_ptr(),
+                cols.as_ptr(),
+                vals.as_ptr(),
+                rows.len() as u64,
+                null_mut(),
+            )
+        };
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GrB_Matrix_build_FP64: {info:?}"
+        );
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Every stored entry as parallel row, column and value arrays (`extractTuples`), in the
+    /// order GraphBLAS stores them: row by row, columns ascending.
+    #[must_use]
+    pub(crate) fn extract_tuples(&self) -> (Vec<u64>, Vec<u64>, Vec<f64>) {
+        self.wait();
+        let mut count = self.nvals();
+        let mut rows = vec![0; count as usize];
+        let mut cols = vec![0; count as usize];
+        let mut vals = vec![0.0; count as usize];
+        let info = unsafe {
+            GrB_Matrix_extractTuples_FP64(
+                rows.as_mut_ptr(),
+                cols.as_mut_ptr(),
+                vals.as_mut_ptr(),
+                &raw mut count,
+                self.inner(),
+            )
+        };
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GrB_Matrix_extractTuples_FP64: {info:?}"
+        );
+        rows.truncate(count as usize);
+        cols.truncate(count as usize);
+        vals.truncate(count as usize);
+        (rows, cols, vals)
     }
 }
 
@@ -2130,6 +2269,57 @@ mod tests {
             );
         }
         // encoding unloads and reloads the matrix; it must be intact
+        assert_eq!(m.get(1, 2), Some(true));
+    }
+
+    /// A foreground SAVE / DUMP / GRAPH.COPY encodes a matrix that read queries
+    /// share (a shallow clone) while they traverse it. The source must stay
+    /// readable for the whole encode, not only after it returns: a Writer
+    /// holding a clone reads the entries from inside `write_buffer`.
+    #[test]
+    fn source_matrix_stays_readable_while_encoding() {
+        struct ReadsSource {
+            reader: Matrix<bool>,
+            seen: usize,
+        }
+        impl super::Writer for ReadsSource {
+            fn write_unsigned(
+                &mut self,
+                _: u64,
+            ) {
+            }
+            fn write_signed(
+                &mut self,
+                _: i64,
+            ) {
+            }
+            fn write_double(
+                &mut self,
+                _: f64,
+            ) {
+            }
+            fn write_buffer(
+                &mut self,
+                _: &[u8],
+            ) {
+                assert_eq!(self.reader.get(1, 2), Some(true));
+                assert_eq!(self.reader.get(5, 6), Some(true));
+                assert_eq!(self.reader.get(3, 3), None);
+                self.seen += 1;
+            }
+        }
+
+        ensure_init();
+        let mut m = Matrix::<bool>::new(8, 8);
+        m.set(1, 2, true);
+        m.set(5, 6, true);
+        m.wait();
+        let mut w = ReadsSource {
+            reader: m.clone(),
+            seen: 0,
+        };
+        super::Encode::encode(&m, &mut w);
+        assert!(w.seen > 0, "the writer never ran");
         assert_eq!(m.get(1, 2), Some(true));
     }
 }

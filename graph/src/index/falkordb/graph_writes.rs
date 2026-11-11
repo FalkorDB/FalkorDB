@@ -34,7 +34,7 @@ use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId, TypeId};
 use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
-use super::falkordb_index::{BuildCursor, IndexColumn};
+use super::falkordb_index::{BuildCursor, IndexColumn, IndexKey};
 use super::numeric::EncodedTuples;
 use super::pending_writes::IndexChanges;
 use super::versioned::IndexId;
@@ -382,17 +382,15 @@ pub fn edges_deleted(
 
 // ---- Index DDL ----
 
-/// CREATE INDEX: build each attribute's column from the live graph, so the index serves reads as
-/// soon as CREATE INDEX returns. Only a Range index has native columns; any other type does
-/// nothing.
+/// CREATE INDEX: create each attribute's column `Building`, its cursor at the start, and leave it to
+/// the background builder ([`online_build`](super::online_build)), which the commit that publishes
+/// the column hands it to. Until its last batch flips it `Ready`, the column serves no reads: the
+/// planner does not use it ([`Graph::is_indexed`]), and `db.indexes()` reports the index under
+/// construction. Only a Range index has native columns; any other type does nothing.
 ///
-/// Each column is created `Building` and filled by one indexer batch with no limit on its size
-/// ([`Graph::indexer_prepare`]), which reaches the end and flips it `Ready`. A batch into an empty
-/// column bulk-builds its tree, so this costs what building the column in one pass does.
-///
-/// Built here on the write thread, with the graph borrowed. It is never built through the
-/// RediSearch populate, which reaches the graph through the `Indexer`'s back-pointer. This index
-/// is part of the graph version, and keeping that reference out is the point.
+/// The column is never built through the RediSearch populate, which reaches the graph through the
+/// `Indexer`'s back-pointer. This index is part of the graph version, and keeping that reference
+/// out is the point.
 pub fn create_index(
     g: &mut Graph,
     index_type: &IndexType,
@@ -402,13 +400,15 @@ pub fn create_index(
 ) {
     if *index_type == IndexType::Range {
         for attr in attrs {
-            build_in_one_batch(g, entity, label, attr);
+            g.falkordb_index.create_building(entity, label, attr);
         }
     }
 }
 
 /// Create column `(entity, label, attr)` `Building`, replacing any column there, and fill it with
-/// one indexer batch with no limit on its size, which reaches the end and flips it `Ready`.
+/// one indexer batch with no limit on its size, which reaches the end and flips it `Ready`. A batch
+/// into an empty column bulk-builds its tree, so this costs what building the column in one pass
+/// does.
 fn build_in_one_batch(
     g: &mut Graph,
     entity: EntityType,
@@ -416,7 +416,8 @@ fn build_in_one_batch(
     attr: &Arc<String>,
 ) {
     g.falkordb_index.create_building(entity, label, attr);
-    g.indexer_prepare(
+    // Applied to `g` itself: a writer's version, published with the writer's changes.
+    let _ = g.indexer_prepare(
         &IndexId::Column(entity, (label.clone(), attr.clone())),
         usize::MAX,
     );
@@ -428,9 +429,66 @@ fn build_in_one_batch(
 // cursor, at their values in a version, and adds them to the column in that same version. See
 // `BuildState`.
 
+/// Append to `out` the tuples `column` (index `(label, attr)` of `entity`) takes for each of `ids`
+/// as `g` has them, for a refresh to put in: none for an entity without the label or type in `g`,
+/// nor for a value the column does not index.
+///
+/// `ids` are already the column's: the entities whose tuple in it changed (`Written`), recorded by
+/// the writes that made `g` (a writer's fork, for its rebase; the published version, for a batch's
+/// catch-up). The label or type is still checked per id, because a removal is recorded too: a
+/// writer that removed the label, deleted the entity, or reused a deleted edge's id for an edge of
+/// another type recorded an entity `g` no longer has under it, though its attribute may still be
+/// set. In a catch-up a later writer can also undo an earlier one, and only `g` settles it. The
+/// tuples coming out need no check, and the refresh reads them itself.
+///
+/// The label or type and the attribute are looked up once per call.
+pub(crate) fn entity_tuples(
+    g: &Graph,
+    entity: EntityType,
+    (label, attr): &IndexKey,
+    ids: &RoaringTreemap,
+    column: &IndexColumn,
+    out: &mut EncodedTuples,
+) {
+    match entity {
+        EntityType::Node => {
+            let (Some(label_id), Some(idx)) =
+                (g.get_label_id(label), g.get_node_attribute_id(attr))
+            else {
+                return;
+            };
+            for id in ids {
+                let node = NodeId::from(id);
+                if g.node_has_label_id(node, label_id)
+                    && let Some(value) = g.get_node_attribute_by_idx(node, idx as u16)
+                {
+                    column.push_encoded(&value, id, out);
+                }
+            }
+        }
+        EntityType::Relationship => {
+            let (Some(type_id), Some(idx)) =
+                (g.get_type_id(label), g.get_relationship_attribute_id(attr))
+            else {
+                return;
+            };
+            for id in ids {
+                let edge = RelationshipId::from(id);
+                if g.edge_has_type_id(edge, type_id)
+                    && let Some(value) = g.get_relationship_attribute_by_idx(edge, idx as u16)
+                {
+                    column.push_encoded(&value, id, out);
+                }
+            }
+        }
+    }
+}
+
 /// Index population after an RDB load: build every column that a population snapshot of
-/// `label` covers, as CREATE INDEX does ([`create_index`]). `fields` maps each attribute to its
-/// index fields, and an attribute has a native column when one of its fields is a Range field.
+/// `label` covers, before the loaded graph is published, in one indexer batch each. `fields` maps
+/// each attribute to its index fields, and an attribute has a native column when one of its fields
+/// is a Range field. Unlike CREATE INDEX ([`create_index`]), the column is `Ready` when this
+/// returns: the RDB holds no record of which indexes were still building.
 pub fn populate(
     g: &mut Graph,
     entity: EntityType,

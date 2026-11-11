@@ -1,0 +1,25 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/graph/id_space.rs	above	236	PROVEN	above: above_spec, above_sFrom, select_above (len - rank(bound-1) = #members >= bound, incl. bound=0)
+graph/src/graph/id_space.rs	reclaim_ids	244	PROVEN	freeOf/reclaimIds: freeOf_spec, reclaimIds_spec, reclaimed_free, reclaimed_sorted (pool - taken - issued, lowest count)
+graph/src/graph/id_space.rs	IdSpace::default	258	PROVEN	IdSpace.new: new_spec, inv_new (Default = new)
+graph/src/graph/id_space.rs	IdSpace::new	266	PROVEN	IdSpace.new: new_spec, inv_new
+graph/src/graph/id_space.rs	IdSpace::restored	280	PROVEN	IdSpace.restored: restored_spec (unconditional: the fields it builds). inv_restored/lifecycle_fresh (Inv holds) need the RDB decoder's contract, free ids all < live + |free set|: undischarged for graph.rs:993 (graph_persist), stated as hypothesis hrec; the row's behaviour is the unconditional spec
+graph/src/graph/id_space.rs	IdSpace::live	296	PROVEN	IdSpace.live field: live_eq (= number of live ids in a reachable state)
+graph/src/graph/id_space.rs	IdSpace::recycled	302	PROVEN	IdSpace.recycled field: create_spec/release_spec state, Inv.binOk
+graph/src/graph/id_space.rs	IdSpace::taken	311	PROVEN	IdSpace.takenSet: takenSet_eq (the field), openBatch_clears, verify_ok_iff
+graph/src/graph/id_space.rs	IdSpace::released	317	PROVEN	IdSpace.releasedSet: releasedSet_eq, released_new/restored/newVersion, openBatch_clears, release_records, create/cancel_keeps_released, Inv.relOk (#3022)
+graph/src/graph/id_space.rs	IdSpace::recycled_count	323	PROVEN	IdSpace.recycledCount (= sLen recycled): release_succeeds bound arithmetic
+graph/src/graph/id_space.rs	IdSpace::is_free	329	PROVEN	IdSpace.isFree (= recycled id): cancel_succeeds (free iff below boundary)
+graph/src/graph/id_space.rs	IdSpace::bound	343	PROVEN	IdSpace.bound: checked_ok_iff, release_succeeds (unchanged by release), roll_inv
+graph/src/graph/id_space.rs	IdSpace::max_id	353	PROVEN	IdSpace.maxId: maxId_spec (bound - 1 cannot underflow when live != 0)
+graph/src/graph/id_space.rs	IdSpace::new_version	367	PROVEN	IdSpace.newVersion: newVersion_spec, openBatch_eq_newVersion, roll_inv, released_newVersion (released not carried, #3022)
+graph/src/graph/id_space.rs	IdSpace::checked	403	PROVEN	IdSpace.checked: checked_ok_iff (checked_add, expected == bound), Inv.checked
+graph/src/graph/id_space.rs	IdSpace::open_batch	447	PROVEN	IdSpace.openBatch: openBatch_spec, openBatch_ok, openBatch_eq_newVersion, roll_inv, openBatch_clears (taken and released emptied, #3022)
+graph/src/graph/id_space.rs	IdSpace::reserve	483	PROVEN	IdSpace.reserve: reserve_spec (exact and unconditional, total: reclaimed prefix ++ fresh run whose u64 end wraps in release), reserve_spec_nowrap, reserve_wraps/reserve_wraps_example (the overflow case: restored(u64::MAX) + 1 id gives none), reserve_length (when the run's end fits in a u64), reserve_alloc_fail (unconditional). Corollaries reserve_fresh/reserve_then_cancel/lifecycle_fresh (ids fresh, then cancellable) take caller-state hypotheses hdense (taken/issued ids at or above eb lie below start; maintained by the batch's own create/cancel) and id != u64::MAX; not needed for the spec
+graph/src/graph/id_space.rs	IdSpace::cancel	529	PROVEN	IdSpace.cancel: cancel_taken, cancel_fresh (unconditional, total). Corollary cancel_succeeds (Ok + Inv kept) takes caller hypotheses id != u64::MAX (cancel does not check it) and id fresh below eb iff recycled; reserve_then_cancel discharges the latter for ids from reserve
+graph/src/graph/id_space.rs	IdSpace::refuse_recycled	550	PROVEN	IdSpace.refuseRecycled: refuseRecycled_ok, refuseRecycled_err
+graph/src/graph/id_space.rs	IdSpace::create	582	PROVEN	IdSpace.create/idLimit: create_spec (all or nothing), create_out_of_range (max >= ID_LIMIT refused, #2911), create_expect_unreachable, create_succeeds, create_preserves
+graph/src/graph/id_space.rs	IdSpace::refuse_undeletable	638	PROVEN	IdSpace.refuseUndeletable: refuseUndeletable_ok, refuseUndeletable_err
+graph/src/graph/id_space.rs	IdSpace::refuse_not_live	679	PROVEN	IdSpace.refuseNotLive: refuseNotLive_ok, refuseNotLive_err, refuseNotLive_live (accepts exactly live ids), refuseNotLive_minus_released, freed_earlier_refused (#3022)
+graph/src/graph/id_space.rs	IdSpace::release	703	CONDITIONAL	IdSpace.release: release_spec, release_refused, release_records describe the model, whose afterRelease subtracts with Nat (saturating at 0); Rust does `self.live -= freed.len()` on u64 (id_space.rs:716: panics in debug, wraps in release). The two agree only under the caller contract freed ⊆ requested (hsub) with Inv, which Rust checks only by debug_assert! (id_space.rs:711) and which no proof discharges for the callers (graph.rs delete paths): undischarged hypothesis. Given it, release_no_underflow (|freed| ≤ live) and release_succeeds hold.
+graph/src/graph/id_space.rs	IdSpace::verify	737	PROVEN	IdSpace.holeCheck/verify: holeCheck_eq, noHole_iff, verify_ok_iff (checked + taken>=eb = [eb, eb+created)), verify_hole, verify_no_underflow

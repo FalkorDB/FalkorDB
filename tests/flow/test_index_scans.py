@@ -1408,3 +1408,80 @@ class testIndexScanFlow():
             self.env.assertEqual(g.query(q).result_set, expected, message=q)
 
         g.delete()
+
+    def test_44_array_contains_conjunction_keeps_its_filter(self):
+        # The index answers `v IN n.arr` with possible false positives: a
+        # numeric key is shared by `1` and `true`. Alone, the predicate keeps
+        # its filter; inside a conjunction it must keep it too, or `[true, 2]`
+        # satisfies `1 IN n.v AND 2 IN n.v`.
+        g = self.db.select_graph('array_contains_conjunction')
+        g.create_node_range_index('L', 'v')
+        wait_for_indices_to_sync(g)
+        g.query("CREATE (:L {v: [true, 2]}), (:L {v: [1, 2]})")
+
+        q = "MATCH (n:L) WHERE 1 IN n.v AND 2 IN n.v RETURN n.v"
+        self.env.assertContains('Node By Index Scan', str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[[1, 2]]])
+
+        g.delete()
+
+    def test_36_scalar_array_scalar_round_trip(self):
+        # A property changing kind — scalar -> array -> scalar — must re-index
+        # cleanly each time.
+        #
+        # Scalars and array elements are held apart (RediSearch keeps a
+        # `numeric:arr` sub-field; the native index keeps a second tree), because
+        # `n.v = 1` must NOT match a node whose `v` is `[1, 2]`, and `1 IN n.v`
+        # must NOT match a node whose `v` is the scalar `1`. Every transition
+        # therefore has to delete from one side and insert into the other. A
+        # remove that routed on the NEW value's kind rather than the OLD one
+        # would leave a tuple stranded on the wrong side, and nothing in the
+        # scalar path re-checks the index's answer.
+        self.graph.create_node_range_index('rt', 'v')
+        wait_for_indices_to_sync(self.graph)
+
+        self.graph.query("CREATE (:rt {v: 1})")
+
+        def eq(x):
+            q = "MATCH (n:rt) WHERE n.v = $x RETURN count(n)"
+            return self.graph.query(q, {'x': x}).result_set[0][0]
+
+        def contains(x):
+            q = "MATCH (n:rt) WHERE $x IN n.v RETURN count(n)"
+            return self.graph.query(q, {'x': x}).result_set[0][0]
+
+        # scalar
+        self.env.assertEqual(eq(1), 1)
+        self.env.assertEqual(contains(1), 0)
+
+        # -> array. The scalar tuple must be gone, not merely shadowed.
+        self.graph.query("MATCH (n:rt) SET n.v = [1, 2]")
+        self.env.assertEqual(eq(1), 0)
+        self.env.assertEqual(contains(1), 1)
+        self.env.assertEqual(contains(2), 1)
+
+        # -> array with one element dropped
+        self.graph.query("MATCH (n:rt) SET n.v = [2]")
+        self.env.assertEqual(contains(1), 0)
+        self.env.assertEqual(contains(2), 1)
+
+        # -> back to a scalar holding a value that was previously an *element*.
+        # The same key crosses back, which is the case a kind-confused remove
+        # gets wrong in both directions at once.
+        self.graph.query("MATCH (n:rt) SET n.v = 2")
+        self.env.assertEqual(eq(2), 1)
+        self.env.assertEqual(contains(2), 0)
+
+        # Both transitions inside a single transaction: the pending layer
+        # collapses multi-SET to (first_old, final_new), so the intermediate
+        # array must never reach the index at all.
+        self.graph.query("MATCH (n:rt) SET n.v = [7, 8] SET n.v = 9")
+        self.env.assertEqual(eq(9), 1)
+        self.env.assertEqual(contains(7), 0)
+        self.env.assertEqual(contains(8), 0)
+
+        # Deleting the entity must clear whichever side currently holds it.
+        self.graph.query("MATCH (n:rt) SET n.v = [4, 5]")
+        self.graph.query("MATCH (n:rt) DELETE n")
+        self.env.assertEqual(contains(4), 0)
+        self.env.assertEqual(eq(9), 0)

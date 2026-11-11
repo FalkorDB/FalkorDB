@@ -2,22 +2,37 @@
 //! and checks the index column it should have changed. The build's tests drive indexer batches
 //! between writes.
 
-use super::{Graph, NodeId, RelationshipId};
+use super::{Graph, NodeId, Plan, RelationshipId};
 use crate::entity_type::EntityType;
+use crate::graph::mvcc_graph::{CommitError, MvccGraph};
 use crate::index::Field;
-use crate::index::falkordb::encode::encode_numeric;
-use crate::index::falkordb::falkordb_index::BuildCursor;
+use crate::index::falkordb::encode::{KeyKind, encode_numeric, for_each_stored_key};
+use crate::index::falkordb::falkordb_index::{BuildCursor, IndexColumn, IndexKey};
 use crate::index::falkordb::graph_writes;
-use crate::index::falkordb::versioned::BuildState;
+use crate::index::falkordb::online_build::{
+    self, BuildHost, Builder, Job, LocalHost, Sizing, Step,
+};
+use crate::index::falkordb::versioned::{
+    BuildState, CatchUp, Discarded, IndexId, IndexerCommit, PreparedBatch, REFRESH_COST,
+    VersionedIndex,
+};
 use crate::index::index_docs::IndexDocs;
-use crate::index::{IndexQuery, IndexType};
+use crate::index::{IndexInfo, IndexQuery, IndexType};
+use crate::locks::WriteEscalation;
+use crate::planner::IR;
+use crate::runtime::functions::init_functions;
 use crate::runtime::orderset::OrderSet;
+use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
+use orx_tree::{Dfs, NodeRef};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::CString;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Weak, mpsc};
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// Run one graph write with its own [`IndexDocs`] and apply its native-index changes straight
 /// away, the way each write call changed the index before they were batched. Tests that check
@@ -94,10 +109,10 @@ fn new_version_isolates_the_falkordb_index() {
     let mut committed = Graph::new(64, 64, 10, 1, "t");
     committed
         .falkordb_index
-        .create_numeric(EntityType::Node, &label, &attr);
+        .create_column(EntityType::Node, &label, &attr);
     committed
         .falkordb_index
-        .numeric_mut(EntityType::Node, &label, &attr)
+        .column_mut(EntityType::Node, &label, &attr)
         .unwrap()
         .add(&Value::Int(30), 1);
 
@@ -105,13 +120,13 @@ fn new_version_isolates_the_falkordb_index() {
     let mut writer = committed.new_version();
     writer
         .falkordb_index
-        .numeric_mut(EntityType::Node, &label, &attr)
+        .column_mut(EntityType::Node, &label, &attr)
         .unwrap()
         .add(&Value::Int(40), 2);
 
     let all = |g: &Graph| -> Vec<u64> {
         g.falkordb_index
-            .numeric(EntityType::Node, &label, &attr)
+            .column(EntityType::Node, &label, &attr)
             .unwrap()
             .range(None, None, true, true)
             .collect()
@@ -121,15 +136,13 @@ fn new_version_isolates_the_falkordb_index() {
     assert_eq!(writer.version, committed.version + 1);
 }
 
-/// CREATE INDEX builds the column from real graph state: three
-/// `:Person {age}` nodes, then a range scan returns the right ids in
-/// `(value, id)` order. The column is built by one indexer batch over every node
-/// (its `get_label_matrix` → `get_node_attribute_by_idx` reads), so it is
-/// `Ready` and serves reads when CREATE INDEX returns. Drives the native half of
-/// `Graph::create_index` directly, bypassing the RediSearch FFI (uninitialised
-/// in a unit test).
+/// CREATE INDEX leaves the column `Building`, its cursor at the start, for the background builder:
+/// the planner does not use it, and a read that reaches it is told to scan. Once indexer batches
+/// have built it from real graph state (three `:Person {age}` nodes), it is `Ready`, the planner
+/// uses it, and a range scan returns the right ids in `(value, id)` order. Drives the native half
+/// of `Graph::create_index` directly, bypassing the RediSearch FFI (uninitialised in a unit test).
 #[test]
-fn create_index_builds_the_column_from_live_nodes() {
+fn create_index_leaves_the_node_column_to_its_batches() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
     let label = Arc::new("Person".to_string());
@@ -162,7 +175,6 @@ fn create_index_builds_the_column_from_live_nodes() {
     }
     applied!(g, |w| g.set_nodes_attributes(&attrs, &mut w)).unwrap();
 
-    // Build the index numeric column from the live nodes.
     graph_writes::create_index(
         &mut g,
         &IndexType::Range,
@@ -171,14 +183,34 @@ fn create_index_builds_the_column_from_live_nodes() {
         std::slice::from_ref(&attr),
     );
     assert_eq!(
-        g.falkordb_index
-            .column_state(EntityType::Node, &label, &attr),
-        Some(BuildState::Ready)
+        cursor(&g, EntityType::Node, &label, &attr),
+        Some(BuildCursor::new(EntityType::Node)),
+        "CREATE INDEX takes no batch"
+    );
+    assert!(
+        !g.is_indexed(&label, &attr, &IndexType::Range),
+        "the planner does not use a Building column"
     );
     assert!(
         matches!(
             g.falkordb_index
-                .query_numeric(EntityType::Node, &label, &eq(&attr, 20)),
+                .query_column(EntityType::Node, &label, &eq(&attr, 20)),
+            Some(Err(_))
+        ),
+        "a read that reaches a Building column scans"
+    );
+
+    assert_eq!(build_to_end(&mut g, 2), 2, "two batches of two nodes");
+    assert_eq!(
+        g.falkordb_index
+            .column_state(EntityType::Node, &label, &attr),
+        Some(BuildState::Ready)
+    );
+    assert!(g.is_indexed(&label, &attr, &IndexType::Range));
+    assert!(
+        matches!(
+            g.falkordb_index
+                .query_column(EntityType::Node, &label, &eq(&attr, 20)),
             Some(Ok(_))
         ),
         "a Ready column serves reads"
@@ -188,7 +220,7 @@ fn create_index_builds_the_column_from_live_nodes() {
         let lo = lo.map(Value::Int);
         let hi = hi.map(Value::Int);
         g.falkordb_index
-            .numeric(EntityType::Node, &label, &attr)
+            .column(EntityType::Node, &label, &attr)
             .unwrap()
             .range(lo.as_ref(), hi.as_ref(), true, true)
             .collect()
@@ -238,11 +270,11 @@ fn rdb_load_populate_builds_each_column() {
     );
 }
 
-/// The edge counterpart: CREATE INDEX on a relationship type builds its column from the live
-/// edges, a multi-edge pair included, in one indexer batch dispatched to the edge column, so it is
-/// `Ready` and serves reads when CREATE INDEX returns, and holds what a one-pass build does.
+/// The edge counterpart: CREATE INDEX on a relationship type leaves its column `Building`, and
+/// indexer batches dispatched to the edge column build it from the live edges, a multi-edge pair
+/// included, into what a one-pass build holds. Until then the planner does not use it.
 #[test]
-fn create_index_builds_the_column_from_live_edges() {
+fn create_index_leaves_the_edge_column_to_its_batches() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
     let ty = Arc::new("R".to_string());
@@ -275,13 +307,21 @@ fn create_index_builds_the_column_from_live_edges() {
         std::slice::from_ref(&attr),
     );
     assert_eq!(
+        cursor(&g, EntityType::Relationship, &ty, &attr),
+        Some(BuildCursor::new(EntityType::Relationship)),
+        "CREATE INDEX takes no batch"
+    );
+    assert!(!g.is_edge_indexed(&ty, &attr, &IndexType::Range));
+    build_to_end(&mut g, 2);
+    assert_eq!(
         g.falkordb_index
             .column_state(EntityType::Relationship, &ty, &attr),
         Some(BuildState::Ready)
     );
+    assert!(g.is_edge_indexed(&ty, &attr, &IndexType::Range));
     assert_eq!(
         g.falkordb_index
-            .query_numeric(EntityType::Relationship, &ty, &eq(&attr, 2))
+            .query_column(EntityType::Relationship, &ty, &eq(&attr, 2))
             .map(|answer| match answer {
                 Ok(rows) => rows.collect::<Vec<u64>>(),
                 Err(_) => panic!("a Ready column answered with a ScanFilter"),
@@ -310,7 +350,7 @@ fn graph_with_index(n: usize) -> (Graph, Arc<String>, Arc<String>, Vec<u64>) {
     let label = Arc::new("Person".to_string());
     let attr = Arc::new("v".to_string());
     g.falkordb_index
-        .create_numeric(EntityType::Node, &label, &attr);
+        .create_column(EntityType::Node, &label, &attr);
     let lid = g.get_label_id_mut("Person");
     let ids: Vec<u64> = reserve_nodes(&mut g, n);
     let mut set = RoaringTreemap::new();
@@ -347,7 +387,7 @@ fn range_scan(
     hi: i64,
 ) -> Vec<u64> {
     g.falkordb_index
-        .numeric(EntityType::Node, label, attr)
+        .column(EntityType::Node, label, attr)
         .unwrap()
         .range(Some(&Value::Int(lo)), Some(&Value::Int(hi)), true, true)
         .collect()
@@ -426,7 +466,7 @@ fn unlabeled_graph_with_index() -> (Graph, Arc<String>, Arc<String>, u64) {
     let label = Arc::new("Person".to_string());
     let attr = Arc::new("v".to_string());
     g.falkordb_index
-        .create_numeric(EntityType::Node, &label, &attr);
+        .create_column(EntityType::Node, &label, &attr);
     let _lid = g.get_label_id_mut("Person"); // register the label matrix
     let ids: Vec<u64> = reserve_nodes(&mut g, 1);
     let mut set = RoaringTreemap::new();
@@ -514,7 +554,7 @@ fn edge_writes_maintain_the_index() {
     let ty = Arc::new("R".to_string());
     let attr = Arc::new("w".to_string());
     g.falkordb_index
-        .create_numeric(EntityType::Relationship, &ty, &attr);
+        .create_column(EntityType::Relationship, &ty, &attr);
     let aid = g.get_or_create_rel_attr_id(&attr);
 
     // Two nodes, a and b, and three a->b edges with w = 10, 20, 30.
@@ -536,7 +576,7 @@ fn edge_writes_maintain_the_index() {
 
     let scan = |g: &Graph, lo: i64, hi: i64| -> Vec<u64> {
         g.falkordb_index
-            .numeric(EntityType::Relationship, &ty, &attr)
+            .column(EntityType::Relationship, &ty, &attr)
             .unwrap()
             .range(Some(&Value::Int(lo)), Some(&Value::Int(hi)), true, true)
             .collect()
@@ -651,28 +691,30 @@ fn cursor(
     label: &Arc<String>,
     attr: &Arc<String>,
 ) -> Option<BuildCursor> {
-    match g
-        .falkordb_index
+    g.falkordb_index
         .column_state(entity, label, attr)
         .expect("the column exists")
-    {
-        BuildState::Building { next } => Some(next),
-        BuildState::Ready => None,
-    }
+        .next()
 }
 
+/// What a column answers, in the shape [`contents`] and [`one_pass`] report: for each value, the
+/// ids holding it as a scalar; every scalar's id in value order; and for each value, the ids whose
+/// list holds it.
+type Contents = (Vec<(i64, Vec<u64>)>, Vec<u64>, Vec<(i64, Vec<u64>)>);
+
 /// Column `(entity, label, attr)` as the ids it answers for each of `values`, plus all its ids in
-/// value order: enough to tell two columns apart over the values a test uses.
+/// value order, plus the ids whose list contains each of `values`: enough to tell two columns
+/// apart over the values a test uses, in both trees.
 fn contents(
     g: &Graph,
     entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
     values: &[i64],
-) -> (Vec<(i64, Vec<u64>)>, Vec<u64>) {
+) -> Contents {
     let idx = g
         .falkordb_index
-        .numeric(entity, label, attr)
+        .column(entity, label, attr)
         .expect("the column exists");
     let per_value = values
         .iter()
@@ -684,31 +726,45 @@ fn contents(
             )
         })
         .collect();
-    (per_value, idx.range(None, None, true, true).collect())
+    let mut in_lists: Vec<(i64, Vec<u64>)> = values
+        .iter()
+        .map(|&v| (v, idx.array_contains(&Value::Int(v)).collect()))
+        .collect();
+    in_lists.iter_mut().for_each(|(_, ids)| ids.sort_unstable());
+    (
+        per_value,
+        idx.range(None, None, true, true).collect(),
+        in_lists,
+    )
 }
 
 /// What column `(entity, label, attr)` must hold for `g` as it stands now, in the shape
 /// [`contents`] reports: worked out from the graph's values here, sharing no code with the
 /// indexer batches. Every live `label` node, or `label`-typed edge, with a numeric `attr`, as its
-/// `(key, id)` tuple, in tuple order.
+/// `(key, id)` tuple, in tuple order; and one `(key, id)` per numeric element of a list `attr`.
 fn one_pass(
     g: &Graph,
     entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
     values: &[i64],
-) -> (Vec<(i64, Vec<u64>)>, Vec<u64>) {
+) -> Contents {
     let mut tuples: Vec<(u64, u64)> = Vec::new();
+    let mut elements: Vec<(u64, u64)> = Vec::new();
+    let mut take = |value: Option<Value>, id: u64| match value {
+        Some(Value::List(items)) => {
+            elements.extend(items.iter().filter_map(encode_numeric).map(|key| (key, id)));
+        }
+        Some(value) => tuples.extend(encode_numeric(&value).map(|key| (key, id))),
+        None => {}
+    };
     match entity {
         EntityType::Node => {
             if let (Some(lm), Some(idx)) =
                 (g.get_label_matrix(label), g.get_node_attribute_id(attr))
             {
                 for (n, _) in lm.iter(0, u64::MAX) {
-                    let value = g.get_node_attribute_by_idx(NodeId::from(n), idx as u16);
-                    if let Some(key) = value.as_ref().and_then(encode_numeric) {
-                        tuples.push((key, n));
-                    }
+                    take(g.get_node_attribute_by_idx(NodeId::from(n), idx as u16), n);
                 }
             }
         }
@@ -718,32 +774,33 @@ fn one_pass(
                 g.get_relationship_attribute_id(attr),
             ) {
                 for (_, _, eid) in t.iter(0, u64::MAX, false) {
-                    let value =
-                        g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx as u16);
-                    if let Some(key) = value.as_ref().and_then(encode_numeric) {
-                        tuples.push((key, eid));
-                    }
+                    take(
+                        g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx as u16),
+                        eid,
+                    );
                 }
             }
         }
     }
-    tuples.sort_unstable();
-    tuples.dedup();
-    let per_value = values
-        .iter()
-        .map(|&v| {
-            let key = encode_numeric(&Value::Int(v)).expect("an integer encodes");
-            (
-                v,
-                tuples
-                    .iter()
-                    .filter(|&&(k, _)| k == key)
-                    .map(|&(_, id)| id)
-                    .collect(),
-            )
-        })
-        .collect();
-    (per_value, tuples.into_iter().map(|(_, id)| id).collect())
+    for found in [&mut tuples, &mut elements] {
+        found.sort_unstable();
+        found.dedup();
+    }
+    let ids_at = |found: &[(u64, u64)], v: i64| -> Vec<u64> {
+        let key = encode_numeric(&Value::Int(v)).expect("an integer encodes");
+        found
+            .iter()
+            .filter(|&&(k, _)| k == key)
+            .map(|&(_, id)| id)
+            .collect()
+    };
+    let per_value = values.iter().map(|&v| (v, ids_at(&tuples, v))).collect();
+    let in_lists = values.iter().map(|&v| (v, ids_at(&elements, v))).collect();
+    (
+        per_value,
+        tuples.into_iter().map(|(_, id)| id).collect(),
+        in_lists,
+    )
 }
 
 /// A build in small batches, with writes landing between the batches both on nodes the batches
@@ -935,7 +992,7 @@ fn an_edge_write_is_placed_by_its_source_then_its_destination() {
     ))
     .unwrap();
     let values = [1, 2, 3, 4, 20, 40];
-    let (per_value, _) = contents(&g, EntityType::Relationship, &ty, &attr, &values);
+    let (per_value, ..) = contents(&g, EntityType::Relationship, &ty, &attr, &values);
     let at = |v: i64| per_value.iter().find(|(x, _)| *x == v).unwrap().1.clone();
     assert_eq!(at(20), vec![eids[1]], "1->0 is behind the cursor");
     assert!(at(40).is_empty(), "2->1 is ahead of the cursor");
@@ -1161,27 +1218,30 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
     for batch in 0.. {
         assert!(batch < 64, "the build stopped making progress");
         for (i, q) in node_queries.iter().enumerate() {
-            if let Some(Err(scan_filter)) = g.query_index_numeric_nodes(&label, q) {
-                let attr = g
-                    .get_node_attribute_id(scan_filter.attribute())
-                    .expect("registered") as u16;
+            if let Some(Err(scan_filter)) = g.query_index_nodes(&label, q) {
+                let scan_filter = scan_filter
+                    .resolve(|attr| g.get_node_attribute_id(attr).map(|attr| attr as u16))
+                    .expect("registered");
                 let ids = g
                     .get_nodes(&labels, 0)
-                    .filter(|&id| g.node_matches(id, attr, &scan_filter))
+                    .filter(|&id| g.node_matches(id, &scan_filter))
                     .map(u64::from)
                     .collect();
                 kept.push((false, i, sorted(ids)));
             }
         }
         for (i, q) in edge_queries.iter().enumerate() {
-            if let Some(Err(scan_filter)) = g.query_index_numeric_edges(&ty, q) {
-                let attr = g
-                    .get_relationship_attribute_id(scan_filter.attribute())
-                    .expect("registered") as u16;
+            if let Some(Err(scan_filter)) = g.query_index_edges(&ty, q) {
+                let scan_filter = scan_filter
+                    .resolve(|attr| {
+                        g.get_relationship_attribute_id(attr)
+                            .map(|attr| attr as u16)
+                    })
+                    .expect("registered");
                 let ids = g
                     .get_all_edges(&ty)
                     .into_iter()
-                    .filter(|&(_, _, edge)| g.relationship_matches(edge, attr, &scan_filter))
+                    .filter(|&(_, _, edge)| g.relationship_matches(edge, &scan_filter))
                     .map(|(_, _, edge)| u64::from(edge))
                     .collect();
                 kept.push((true, i, sorted(ids)));
@@ -1211,12 +1271,12 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
 
     for (edges, i, scanned) in kept {
         let built = if edges {
-            match g.query_index_numeric_edges(&ty, &edge_queries[i]) {
+            match g.query_index_edges(&ty, &edge_queries[i]) {
                 Some(Ok(rows)) => rows.map(|(_, _, edge)| u64::from(edge)).collect(),
                 _ => panic!("edge query {i}: a built column serves it"),
             }
         } else {
-            match g.query_index_numeric_nodes(&label, &node_queries[i]) {
+            match g.query_index_nodes(&label, &node_queries[i]) {
                 Some(Ok(rows)) => rows.map(u64::from).collect(),
                 _ => panic!("node query {i}: a built column serves it"),
             }
@@ -1340,7 +1400,7 @@ fn dropping_a_building_column_leaves_nothing_behind() {
     assert!(!g.falkordb_index.has_building_columns());
     assert!(
         g.falkordb_index
-            .numeric(EntityType::Node, &label, &attr)
+            .column(EntityType::Node, &label, &attr)
             .is_none()
     );
     assert!(
@@ -1349,7 +1409,7 @@ fn dropping_a_building_column_leaves_nothing_behind() {
     );
     assert!(
         g.falkordb_index
-            .numeric(EntityType::Node, &label, &attr)
+            .column(EntityType::Node, &label, &attr)
             .is_none()
     );
 
@@ -1433,7 +1493,7 @@ fn replica_node_rows_maintain_the_index() {
     let label = Arc::new("Person".to_string());
     let attr = Arc::new("v".to_string());
     g.falkordb_index
-        .create_numeric(EntityType::Node, &label, &attr);
+        .create_column(EntityType::Node, &label, &attr);
     let lid = g.get_label_id_mut("Person").0 as u64;
     let aid = g.get_or_create_node_attr_id(&attr);
 
@@ -1496,7 +1556,7 @@ fn replica_edge_update_of_type_maintains_the_index() {
     let ty = Arc::new("R".to_string());
     let attr = Arc::new("w".to_string());
     g.falkordb_index
-        .create_numeric(EntityType::Relationship, &ty, &attr);
+        .create_column(EntityType::Relationship, &ty, &attr);
     let aid = g.get_or_create_rel_attr_id(&attr);
     let nodes = reserve_nodes(&mut g, 2);
     g.create_nodes(&nodes.iter().copied().collect())
@@ -1527,7 +1587,7 @@ fn replica_edge_update_of_type_maintains_the_index() {
 
     let scan = |lo: i64, hi: i64| -> Vec<u64> {
         g.falkordb_index
-            .numeric(EntityType::Relationship, &ty, &attr)
+            .column(EntityType::Relationship, &ty, &attr)
             .unwrap()
             .range(Some(&Value::Int(lo)), Some(&Value::Int(hi)), true, true)
             .collect()
@@ -1573,4 +1633,3173 @@ fn set_then_delete_in_one_batch_leaves_no_entry() {
         vec![ids[1]],
         "the untouched node is all that is left"
     );
+}
+
+// --- Indexer batch commits ---
+
+/// An MVCC graph of `:Person` nodes with `v` = each of `values`, and a `Building` column on
+/// `(:Person, v)`.
+fn mvcc_building(values: &[i64]) -> (Arc<MvccGraph>, Arc<String>, Arc<String>, Vec<u64>) {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, values);
+    create_index_on(&mut g, &label, &attr);
+    (MvccGraph::from_graph(g), label, attr, ids)
+}
+
+/// An indexer batch of at most `budget` entities of index `id`, applied to a new build version of
+/// `mvcc`'s published one, as a builder's job prepares it: the version and the batch.
+fn prepare(
+    mvcc: &MvccGraph,
+    id: &IndexId,
+    budget: usize,
+) -> (Graph, PreparedBatch) {
+    let mut version = mvcc.read().new_build_version();
+    let batch = version
+        .indexer_prepare(id, budget)
+        .expect("the index is Building");
+    (version, batch)
+}
+
+/// What a writer that forked as a reader does as it escalates, as the host's
+/// `QuerySession::check_fork` does: refuse a stale `fork`, and rebase one that is not onto the
+/// indexer batches published since it was made.
+fn escalate(
+    mvcc: &MvccGraph,
+    fork: &mut Graph,
+) -> Result<(), CommitError> {
+    if mvcc.is_stale(fork) {
+        return Err(CommitError::Stale);
+    }
+    mvcc.rebase_onto_indexer_batches(fork);
+    Ok(())
+}
+
+/// One writer's unit of work on `mvcc`: fork, `write` into the fork, commit it.
+fn commit_write(
+    mvcc: &Arc<MvccGraph>,
+    write: impl FnOnce(&mut Graph),
+) {
+    let mut fork = mvcc.fork();
+    write(&mut fork);
+    mvcc.commit(fork).expect("the write commits");
+}
+
+/// With nothing committed since its version was made, an indexer batch publishes that version
+/// itself. The batch changes no data, so the data version stays.
+#[test]
+fn an_indexer_batch_with_nothing_committed_since_publishes_its_version() {
+    let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let data_version = mvcc.read().version;
+
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    let published = mvcc.read();
+    let published = &*published;
+    assert_eq!(published.version, data_version, "the data version stays");
+    assert_eq!(
+        cursor(published, EntityType::Node, &label, &attr),
+        Some(BuildCursor::Node(NodeId::from(ids[2])))
+    );
+    assert_eq!(
+        range_scan(published, &label, &attr, 0, 100),
+        ids[..2].to_vec()
+    );
+}
+
+/// When only another index's batch committed since, an indexer batch puts its column into a new
+/// build version of the published one: both batches' progress is kept.
+#[test]
+fn an_indexer_batch_after_another_columns_batch_swaps_its_column_in() {
+    let (g, label, v, ty, w) = scan_fixture();
+    let mvcc = MvccGraph::from_graph(g);
+    let nodes = IndexId::Column(EntityType::Node, (label.clone(), v.clone()));
+    let edges = IndexId::Column(EntityType::Relationship, (ty.clone(), w.clone()));
+
+    let (node_version, node_batch) = prepare(&mvcc, &nodes, 3);
+    let (edge_version, edge_batch) = prepare(&mvcc, &edges, 2);
+    // What each batch's own version holds in its column, which the commits consume.
+    let columns = [
+        (EntityType::Node, &label, &v, &node_version),
+        (EntityType::Relationship, &ty, &w, &edge_version),
+    ]
+    .map(|(entity, l, a, version)| {
+        (
+            entity,
+            l,
+            a,
+            cursor(version, entity, l, a),
+            contents(version, entity, l, a, &[]),
+        )
+    });
+    assert_eq!(
+        mvcc.commit_indexer_batch(edge_version, &edge_batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert_eq!(
+        mvcc.commit_indexer_batch(node_version, &node_batch),
+        Ok(IndexerCommit::Swap)
+    );
+
+    let published = mvcc.read();
+    let published = &*published;
+    for (entity, l, a, batch_cursor, batch_contents) in columns {
+        assert_eq!(cursor(published, entity, l, a), batch_cursor, "{entity:?}");
+        assert_eq!(
+            contents(published, entity, l, a, &[]),
+            batch_contents,
+            "{entity:?}"
+        );
+        assert!(cursor(published, entity, l, a).is_some(), "{entity:?}");
+    }
+}
+
+/// A reader keeps the published version it loaded across an indexer batch's commit, however the
+/// batch goes in. The commit only reads the published version and publishes a version of its own.
+#[test]
+fn an_indexer_batch_commit_leaves_a_held_published_version_alone() {
+    // Same, and CatchUp after a writer: one column.
+    for overtaken in [false, true] {
+        let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let (prepared, batch) = prepare(&mvcc, &id, 2);
+        if overtaken {
+            commit_write(&mvcc, |g| set_attr(g, ids[0], &attr, Value::Int(15)));
+        }
+        let held = mvcc.read();
+        let reader = &*held;
+        let before = cursor(reader, EntityType::Node, &label, &attr);
+
+        let committed = mvcc.commit_indexer_batch(prepared, &batch);
+        assert!(
+            matches!(
+                (overtaken, &committed),
+                (false, Ok(IndexerCommit::Same)) | (true, Ok(IndexerCommit::CatchUp(_)))
+            ),
+            "{committed:?}"
+        );
+        assert_eq!(cursor(reader, EntityType::Node, &label, &attr), before);
+        assert_ne!(
+            cursor(&mvcc.read(), EntityType::Node, &label, &attr),
+            before,
+            "the batch's progress is published"
+        );
+    }
+
+    // Swap: another column's batch committed first.
+    let (g, label, v, ty, w) = scan_fixture();
+    let mvcc = MvccGraph::from_graph(g);
+    let nodes = IndexId::Column(EntityType::Node, (label.clone(), v.clone()));
+    let edges = IndexId::Column(EntityType::Relationship, (ty, w));
+    let (node_version, node_batch) = prepare(&mvcc, &nodes, 3);
+    let (edge_version, edge_batch) = prepare(&mvcc, &edges, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(edge_version, &edge_batch),
+        Ok(IndexerCommit::Same)
+    );
+    let held = mvcc.read();
+    let reader = &*held;
+    let before = cursor(reader, EntityType::Node, &label, &v);
+    assert_eq!(
+        mvcc.commit_indexer_batch(node_version, &node_batch),
+        Ok(IndexerCommit::Swap)
+    );
+    assert_eq!(cursor(reader, EntityType::Node, &label, &v), before);
+}
+
+/// An indexer batch whose column a writer dropped, or dropped and created again, since its
+/// version was made publishes nothing. A column created again starts its build over: its next
+/// batch reads from the first node.
+#[test]
+fn an_indexer_batch_on_a_dropped_or_recreated_column_publishes_nothing() {
+    for recreate in [false, true] {
+        let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30]);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let (prepared, batch) = prepare(&mvcc, &id, 2);
+        commit_write(&mvcc, |g| {
+            drop_index_on(g, &label, &attr);
+            if recreate {
+                create_index_on(g, &label, &attr);
+            }
+        });
+
+        let before = mvcc.read();
+        assert_eq!(
+            mvcc.commit_indexer_batch(prepared, &batch),
+            Ok(IndexerCommit::Discarded(Discarded::Gone)),
+            "recreate {recreate}"
+        );
+        assert!(Arc::ptr_eq(&mvcc.read(), &before), "nothing published");
+
+        if recreate {
+            let (prepared, batch) = prepare(&mvcc, &id, 2);
+            assert_eq!(
+                mvcc.commit_indexer_batch(prepared, &batch),
+                Ok(IndexerCommit::Same)
+            );
+            assert_eq!(
+                range_scan(&mvcc.read(), &label, &attr, 0, 100),
+                ids[..2].to_vec(),
+                "the build starts over"
+            );
+        }
+    }
+}
+
+/// An indexer batch read before a writer committed catches up with the writer's changes in its
+/// column, and is published with the batch's progress and the writer's values. A change below the
+/// batch's new cursor is in the column; one at or above it is not, since the next batch reads it.
+/// Both ways of catching up, refresh and insert, give that: the writer changes two entities, so a
+/// batch of 2 inserts and one of more than 2 * [`REFRESH_COST`] refreshes.
+#[test]
+fn an_indexer_batch_after_a_writer_catches_up_on_its_changes() {
+    let refreshes = 2 * REFRESH_COST as usize + 1;
+    for (size, how) in [(refreshes, CatchUp::Refresh), (2, CatchUp::Insert)] {
+        let values: Vec<i64> = (1..=size as i64 + 2).map(|i| 10 * i).collect();
+        let (mvcc, label, attr, ids) = mvcc_building(&values);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let (prepared, batch) = prepare(&mvcc, &id, size);
+        commit_write(&mvcc, |g| {
+            set_attr(g, ids[0], &attr, Value::Int(15));
+            set_attr(g, ids[size], &attr, Value::Int(35));
+        });
+        let data_version = mvcc.read().version;
+
+        let committed = mvcc.commit_indexer_batch(prepared, &batch);
+        assert_eq!(
+            committed,
+            Ok(IndexerCommit::CatchUp(how)),
+            "a batch of {size}"
+        );
+        let published = mvcc.read();
+        let published = &*published;
+        assert_eq!(
+            published.version, data_version,
+            "{how:?}: the writer's data"
+        );
+        assert_eq!(
+            cursor(published, EntityType::Node, &label, &attr),
+            Some(BuildCursor::Node(NodeId::from(ids[size]))),
+            "{how:?}: the batch's progress"
+        );
+        assert_eq!(
+            range_scan(published, &label, &attr, 0, i64::MAX),
+            ids[..size].to_vec(),
+            "{how:?}: nothing at or above the cursor"
+        );
+        assert_eq!(
+            range_scan(published, &label, &attr, 15, 15),
+            vec![ids[0]],
+            "{how:?}: the writer's value"
+        );
+        assert!(
+            range_scan(published, &label, &attr, 10, 10).is_empty(),
+            "{how:?}"
+        );
+    }
+}
+
+/// When writers committed after a batch was read, the batch refreshes the entities they changed if
+/// that is cheaper than inserting the batch, counting each entity as [`REFRESH_COST`] tuples, and
+/// inserts the batch otherwise.
+#[test]
+fn a_batch_refreshes_writers_changes_only_when_that_costs_less_than_inserting_it() {
+    let budget = 2 * REFRESH_COST as usize;
+    for (written, how) in [(1, CatchUp::Refresh), (3, CatchUp::Insert)] {
+        let values: Vec<i64> = (0..=budget as i64).collect();
+        let (mvcc, label, attr, ids) = mvcc_building(&values);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let (prepared, batch) = prepare(&mvcc, &id, budget);
+        commit_write(&mvcc, |g| {
+            for &id in &ids[..written] {
+                set_attr(g, id, &attr, Value::Int(1000));
+            }
+        });
+        assert_eq!(
+            mvcc.commit_indexer_batch(prepared, &batch),
+            Ok(IndexerCommit::CatchUp(how)),
+            "{written} written against a batch of {budget}"
+        );
+        assert_eq!(
+            range_scan(&mvcc.read(), &label, &attr, 1000, 1000),
+            ids[..written].to_vec()
+        );
+    }
+}
+
+/// What a build has read ([`BuildState::Building`]) moves with its cursor. Each batch adds its
+/// budget, and when a batch or a writer commits over another commit, the count goes where the
+/// cursor goes: a batch's swap, refresh or insert takes the batch's, and a writer's rebase the
+/// published copy's. An index created again starts over at 0.
+///
+/// [`BuildState::Building`]: crate::index::falkordb::versioned::BuildState::Building
+#[test]
+fn what_a_build_has_read_moves_with_its_cursor() {
+    let (mvcc, label, v, ids) = mvcc_building(&(0..30).collect::<Vec<_>>());
+    let w = Arc::new("w".to_string());
+    commit_write(&mvcc, |g| {
+        for &id in &ids {
+            set_attr(g, id, &w, Value::Int(id as i64));
+        }
+        create_index_on(g, &label, &w);
+    });
+    let on = |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let (vid, wid) = (on(&v), on(&w));
+    let read = |id: &IndexId| mvcc.read().index_build_read(id);
+    assert_eq!((read(&vid), read(&wid)), (Some(0), Some(0)));
+
+    let (prepared, batch) = prepare(&mvcc, &vid, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert_eq!(read(&vid), Some(2), "a batch adds its budget");
+
+    let (prepared, batch) = prepare(&mvcc, &vid, 3);
+    let (other, other_batch) = prepare(&mvcc, &wid, 4);
+    assert_eq!(
+        mvcc.commit_indexer_batch(other, &other_batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert_eq!(
+        mvcc.commit_indexer_batch(prepared, &batch),
+        Ok(IndexerCommit::Swap)
+    );
+    assert_eq!((read(&vid), read(&wid)), (Some(5), Some(4)), "swapped in");
+
+    // One entity written after each batch was read: a batch of more than `REFRESH_COST` tuples
+    // refreshes it, and a batch of 3 inserts itself.
+    let mut expected = 5;
+    for (value, (size, how)) in [
+        (REFRESH_COST as usize + 1, CatchUp::Refresh),
+        (3, CatchUp::Insert),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (prepared, batch) = prepare(&mvcc, &vid, size);
+        commit_write(&mvcc, |g| {
+            set_attr(g, ids[0], &v, Value::Int(-1 - value as i64));
+        });
+        assert_eq!(
+            mvcc.commit_indexer_batch(prepared, &batch),
+            Ok(IndexerCommit::CatchUp(how))
+        );
+        expected += size as u64;
+        assert_eq!(read(&vid), Some(expected), "{how:?}");
+    }
+
+    let mut fork = mvcc.fork();
+    set_attr(&mut fork, ids[1], &v, Value::Int(-2));
+    let (prepared, batch) = prepare(&mvcc, &vid, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert_eq!(escalate(&mvcc, &mut fork), Ok(()));
+    mvcc.commit(fork).expect("the write commits");
+    assert_eq!(read(&vid), Some(expected + 2), "a rebased writer's");
+
+    commit_write(&mvcc, |g| {
+        g.falkordb_index.drop_column(EntityType::Node, &label, &v);
+        g.falkordb_index
+            .create_building(EntityType::Node, &label, &v);
+    });
+    assert_eq!(read(&vid), Some(0), "created again");
+}
+
+/// A batch whose catch-up is limited publishes nothing when the catch-up would do more than the
+/// limit: refresh more entities, or insert more tuples (the batch's, and one for each written
+/// entity it reads again), whichever it chose. At the limit it catches up. A batch that published
+/// nothing leaves the index as it was, still `Building`.
+#[test]
+fn a_batch_publishes_nothing_rather_than_catch_up_past_its_limit() {
+    let budget = 3 * REFRESH_COST as usize;
+    for (written, how, work) in [
+        (2, CatchUp::Refresh, 2),
+        (3, CatchUp::Insert, budget as u64 + 3),
+    ] {
+        for limit in [work, work - 1] {
+            let values: Vec<i64> = (0..2 * budget as i64).collect();
+            let (mvcc, label, attr, ids) = mvcc_building(&values);
+            let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+            let (prepared, mut batch) = prepare(&mvcc, &id, budget);
+            batch.limit_catch_up(limit);
+            commit_write(&mvcc, |g| {
+                for &id in &ids[..written] {
+                    set_attr(g, id, &attr, Value::Int(-1));
+                }
+            });
+            let committed = mvcc.commit_indexer_batch(prepared, &batch);
+            let published = mvcc.read();
+            let what = format!("{written} written, limit {limit}");
+            if limit == work {
+                assert_eq!(committed, Ok(IndexerCommit::CatchUp(how)), "{what}");
+                assert_eq!(
+                    published.index_build_read(&id),
+                    Some(budget as u64),
+                    "{what}"
+                );
+            } else {
+                assert_eq!(
+                    committed,
+                    Ok(IndexerCommit::Discarded(Discarded::CatchUpTooLarge)),
+                    "{what}"
+                );
+                assert_eq!(
+                    cursor(&published, EntityType::Node, &label, &attr),
+                    Some(BuildCursor::new(EntityType::Node)),
+                    "{what}: the index as it was"
+                );
+                assert_eq!(published.index_build_read(&id), Some(0), "{what}");
+            }
+        }
+    }
+}
+
+/// An insert catch-up counts the written entities it reads again, not only the batch's tuples. A
+/// batch reads twenty nodes that have no `v`, so it holds no tuple; a writer then gives all twenty
+/// a `v`. Inserting the batch means adding their twenty tuples, which a limit of 19 refuses and a
+/// limit of 20 lets through.
+#[test]
+fn an_insert_catch_up_counts_the_written_entities_it_reads_again() {
+    let n = 20;
+    let w = Arc::new("w".to_string());
+    let v = Arc::new("v".to_string());
+    for limit in [n as u64 - 1, n as u64] {
+        let (mut g, label, ids) = people_with(&w, &(0..n as i64).collect::<Vec<_>>());
+        create_index_on(&mut g, &label, &v);
+        let mvcc = MvccGraph::from_graph(g);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), v.clone()));
+        let (prepared, mut batch) = prepare(&mvcc, &id, n);
+        batch.limit_catch_up(limit);
+        commit_write(&mvcc, |g| {
+            for &id in &ids {
+                set_attr(g, id, &v, Value::Int(1));
+            }
+        });
+        let committed = mvcc.commit_indexer_batch(prepared, &batch);
+        let published = mvcc.read();
+        if limit < n as u64 {
+            assert_eq!(
+                committed,
+                Ok(IndexerCommit::Discarded(Discarded::CatchUpTooLarge)),
+                "limit {limit}"
+            );
+            assert_eq!(
+                cursor(&published, EntityType::Node, &label, &v),
+                Some(BuildCursor::new(EntityType::Node)),
+                "limit {limit}: the index as it was"
+            );
+        } else {
+            assert_eq!(
+                committed,
+                Ok(IndexerCommit::CatchUp(CatchUp::Insert)),
+                "limit {limit}"
+            );
+            assert_eq!(
+                range_scan(&published, &label, &v, 1, 1),
+                ids,
+                "limit {limit}"
+            );
+        }
+    }
+}
+
+/// A writer whose fork an indexer batch overtook on a `Building` column rebases onto it as it
+/// escalates, and commits over it: the column keeps the batch's progress, and the writer's changes
+/// below its cursor are in it.
+/// A change at or above the cursor is not, since a later batch reads it.
+#[test]
+fn a_writer_overtaken_by_an_indexer_batch_keeps_its_progress() {
+    let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let mut fork = mvcc.fork();
+    set_attr(&mut fork, ids[0], &attr, Value::Int(15));
+    set_attr(&mut fork, ids[3], &attr, Value::Int(45));
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+
+    assert_eq!(escalate(&mvcc, &mut fork), Ok(()));
+    mvcc.commit(fork).expect("the write commits");
+    let published = mvcc.read();
+    let published = &*published;
+    assert_eq!(
+        cursor(published, EntityType::Node, &label, &attr),
+        Some(BuildCursor::Node(NodeId::from(ids[2]))),
+        "the batch's progress"
+    );
+    assert_eq!(
+        range_scan(published, &label, &attr, 0, 100),
+        vec![ids[0], ids[1]],
+        "nothing at or above the cursor"
+    );
+    assert_eq!(
+        range_scan(published, &label, &attr, 15, 15),
+        vec![ids[0]],
+        "the writer's value"
+    );
+}
+
+/// A writer deletes an edge on one side of a batch's new cursor, reuses its id for an edge on the
+/// other side, and commits before or after the batch. The batch reads a->b, so its cursor moves to
+/// a->c. In one case a->b is deleted and its id reused by d->a, above the cursor; in the other,
+/// c->d (above the cursor) is deleted and its id reused by a->a, below it. If the batch commits
+/// first, the writer rebases onto it as it escalates; if the writer commits first, the batch
+/// catches up with it, by refresh or by insert. Each written edge is placed by its endpoints in
+/// the version that holds it, so the column holds exactly the edges below the cursor: nothing, or
+/// a->b and a->a. Built to the end, the column equals a one-pass build of the final data. The
+/// writer changes one edge, so a batch of a->b alone inserts; to refresh, the batch also reads
+/// [`REFRESH_COST`] edges from a to nodes between b and c, which the column then holds too.
+#[test]
+fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
+    // (which edge is deleted, its id's new endpoints, the column after both commits as
+    // (edge, value) pairs)
+    for (deleted, (src, dst), after) in [(0, (3, 0), vec![]), (2, (0, 0), vec![(0, 1), (2, 9)])] {
+        // Batch first; or writer first, the batch catching up by insert, or by refresh when it
+        // reads `extra` more edges.
+        for (writer_first, extra) in [
+            (None, 0),
+            (Some(CatchUp::Insert), 0),
+            (Some(CatchUp::Refresh), REFRESH_COST as usize),
+        ] {
+            ensure_graphblas();
+            let mut g = Graph::new(64, 64, 10, 1, "t");
+            let ty = Arc::new("R".to_string());
+            let attr = Arc::new("w".to_string());
+            let aid = g.get_or_create_rel_attr_id(&attr);
+            let nodes = reserve_nodes(&mut g, 4 + extra);
+            g.create_nodes(&nodes.iter().copied().collect())
+                .expect("freshly reserved ids are creatable");
+            // The `extra` nodes sit between b and c.
+            let (a, b, c, d) = (nodes[0], nodes[1], nodes[2 + extra], nodes[3 + extra]);
+            let abcd = [a, b, c, d];
+            // In batch order: a->b, a->each extra node, a->c, c->d. In `eids`, a->b, a->c and c->d
+            // come first, with w = 1..=3, then the extra edges, with w = 101 and on.
+            let eids: Vec<u64> = g
+                .relationship_id_space()
+                .reserve(3 + extra, &RoaringTreemap::new())
+                .expect("reserved");
+            let srcs: Vec<u64> = [a, a, c].into_iter().chain(vec![a; extra]).collect();
+            let dsts: Vec<u64> = [b, c, d]
+                .into_iter()
+                .chain(nodes[2..2 + extra].iter().copied())
+                .collect();
+            g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+                .expect("freshly reserved ids are creatable");
+            let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
+                pairs
+                    .iter()
+                    .map(|&(eid, w)| (eid, vec![(aid, Value::Int(w))]))
+                    .collect()
+            };
+            let initial: Vec<(u64, i64)> = eids.iter().copied().zip((1..=3).chain(101..)).collect();
+            applied!(g, |w| g
+                .import_relationship_attrs(&with_w(&initial), &mut w));
+            g.falkordb_index
+                .create_building(EntityType::Relationship, &ty, &attr);
+            let mvcc = &mut MvccGraph::from_graph(g);
+            let id = IndexId::Column(EntityType::Relationship, (ty.clone(), attr.clone()));
+            let write = |g: &mut Graph| {
+                let mut w = IndexDocs::default();
+                let mut del = RoaringTreemap::new();
+                del.insert(eids[deleted]);
+                g.delete_relationships(&del, &mut w).unwrap();
+                g.create_relationships_bulk(&ty, &[abcd[src]], &[abcd[dst]], &[eids[deleted]])
+                    .expect("a freed id is creatable");
+                g.import_relationship_attrs(&with_w(&[(eids[deleted], 9)]), &mut w);
+                g.apply_index_writes(&mut w);
+            };
+            let what = format!("edge {deleted} reused, writer first: {writer_first:?}");
+            let values: Vec<i64> = [1, 2, 3, 9]
+                .into_iter()
+                .chain(101..101 + extra as i64)
+                .collect();
+            let column = |mvcc: &MvccGraph| {
+                contents(&mvcc.read(), EntityType::Relationship, &ty, &attr, &values)
+            };
+            // `contents` of a column holding exactly `held`, as (edge, value) pairs, and no lists.
+            let holding = |held: &[(usize, i64)]| {
+                let per_value = values
+                    .iter()
+                    .map(|&v| {
+                        let ids = held.iter().filter(|&&(_, w)| w == v);
+                        (v, ids.map(|&(i, _)| eids[i]).collect())
+                    })
+                    .collect();
+                let mut all: Vec<(i64, u64)> = held.iter().map(|&(i, w)| (w, eids[i])).collect();
+                all.sort_unstable();
+                let no_lists = values.iter().map(|&v| (v, Vec::new())).collect();
+                (
+                    per_value,
+                    all.into_iter().map(|(_, id)| id).collect(),
+                    no_lists,
+                )
+            };
+
+            let (prepared, batch) = prepare(mvcc, &id, 1 + extra);
+            let batch_cursor = cursor(&prepared, EntityType::Relationship, &ty, &attr);
+            if let Some(how) = writer_first {
+                commit_write(mvcc, write);
+                assert_eq!(column(mvcc), holding(&[]), "{what}: no batch yet");
+                let committed = mvcc.commit_indexer_batch(prepared, &batch);
+                assert_eq!(committed, Ok(IndexerCommit::CatchUp(how)), "{what}");
+            } else {
+                let mut fork = mvcc.fork();
+                write(&mut fork);
+                assert_eq!(
+                    mvcc.commit_indexer_batch(prepared, &batch),
+                    Ok(IndexerCommit::Same),
+                    "{what}"
+                );
+                assert_eq!(column(mvcc), holding(&[(0, 1)]), "{what}: the batch's a->b");
+                assert_eq!(escalate(mvcc, &mut fork), Ok(()), "{what}");
+                mvcc.commit(fork).expect("the write commits");
+            }
+            let after: Vec<(usize, i64)> = after
+                .iter()
+                .copied()
+                .chain((0..extra).map(|j| (3 + j, 101 + j as i64)))
+                .collect();
+            assert_eq!(column(mvcc), holding(&after), "{what}: both committed");
+            assert_eq!(
+                cursor(&mvcc.read(), EntityType::Relationship, &ty, &attr),
+                batch_cursor,
+                "{what}: the batch's progress"
+            );
+
+            let mut batches = 0;
+            loop {
+                let mut version = mvcc.read().new_build_version();
+                let Some(batch) = version.indexer_prepare(&id, 1) else {
+                    break;
+                };
+                assert_eq!(
+                    mvcc.commit_indexer_batch(version, &batch),
+                    Ok(IndexerCommit::Same)
+                );
+                batches += 1;
+                assert!(batches < 100, "the build never finishes");
+            }
+            let published = mvcc.read();
+            let g = &*published;
+            assert_eq!(
+                contents(g, EntityType::Relationship, &ty, &attr, &values),
+                one_pass(g, EntityType::Relationship, &ty, &attr, &values),
+                "{what}: built to the end"
+            );
+        }
+    }
+}
+
+/// A writer deletes an edge a batch indexed and reuses its id for an edge of another type with the
+/// same attribute, also below the batch's cursor, committed before the batch or after it. The
+/// column's refresh reads that id in both versions, and only a version where it is the column's
+/// type gives it a tuple: the column ends without the other type's edge. The writer changes one
+/// edge, so a batch of a->b alone catches up by inserting; to refresh, the batch also reads
+/// [`REFRESH_COST`] edges from a to nodes between b and c, which the column then holds too.
+#[test]
+fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_order() {
+    // Batch first; or writer first, the batch catching up by insert, or by refresh when it reads
+    // `extra` more edges.
+    for (writer_first, extra) in [
+        (None, 0),
+        (Some(CatchUp::Insert), 0),
+        (Some(CatchUp::Refresh), REFRESH_COST as usize),
+    ] {
+        ensure_graphblas();
+        let mut g = Graph::new(64, 64, 10, 1, "t");
+        let ty = Arc::new("R".to_string());
+        let other = Arc::new("S".to_string());
+        let attr = Arc::new("w".to_string());
+        let aid = g.get_or_create_rel_attr_id(&attr);
+        let nodes = reserve_nodes(&mut g, 4 + extra);
+        g.create_nodes(&nodes.iter().copied().collect())
+            .expect("freshly reserved ids are creatable");
+        // The `extra` nodes sit between b and c.
+        let (a, b, c, d) = (nodes[0], nodes[1], nodes[2 + extra], nodes[3 + extra]);
+        // In batch order: a->b, a->each extra node, a->c, c->d. In `eids`, a->b, a->c and c->d come
+        // first, with w = 1..=3, then the extra edges, with w = 101 and on.
+        let eids: Vec<u64> = g
+            .relationship_id_space()
+            .reserve(3 + extra, &RoaringTreemap::new())
+            .expect("reserved");
+        let srcs: Vec<u64> = [a, a, c].into_iter().chain(vec![a; extra]).collect();
+        let dsts: Vec<u64> = [b, c, d]
+            .into_iter()
+            .chain(nodes[2..2 + extra].iter().copied())
+            .collect();
+        g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+            .expect("freshly reserved ids are creatable");
+        let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
+            pairs
+                .iter()
+                .map(|&(eid, w)| (eid, vec![(aid, Value::Int(w))]))
+                .collect()
+        };
+        let initial: Vec<(u64, i64)> = eids.iter().copied().zip((1..=3).chain(101..)).collect();
+        applied!(g, |w| g
+            .import_relationship_attrs(&with_w(&initial), &mut w));
+        g.falkordb_index
+            .create_building(EntityType::Relationship, &ty, &attr);
+        let mvcc = &mut MvccGraph::from_graph(g);
+        let id = IndexId::Column(EntityType::Relationship, (ty.clone(), attr.clone()));
+        // a->b, which the batch reads, goes, and its id comes back as an `S` edge a->a with a value,
+        // below the batch's cursor at a->c too.
+        let write = |g: &mut Graph| {
+            let mut w = IndexDocs::default();
+            let mut del = RoaringTreemap::new();
+            del.insert(eids[0]);
+            g.delete_relationships(&del, &mut w).unwrap();
+            g.create_relationships_bulk(&other, &[a], &[a], &[eids[0]])
+                .expect("a freed id is creatable");
+            g.import_relationship_attrs(&with_w(&[(eids[0], 9)]), &mut w);
+            g.apply_index_writes(&mut w);
+        };
+        let what = format!("writer first: {writer_first:?}");
+        let values: Vec<i64> = [1, 2, 3, 9]
+            .into_iter()
+            .chain(101..101 + extra as i64)
+            .collect();
+        let column = |mvcc: &MvccGraph| {
+            contents(&mvcc.read(), EntityType::Relationship, &ty, &attr, &values)
+        };
+
+        let (prepared, batch) = prepare(mvcc, &id, 1 + extra);
+        if let Some(how) = writer_first {
+            commit_write(mvcc, write);
+            assert_eq!(
+                mvcc.commit_indexer_batch(prepared, &batch),
+                Ok(IndexerCommit::CatchUp(how)),
+                "{what}"
+            );
+        } else {
+            let mut fork = mvcc.fork();
+            write(&mut fork);
+            assert_eq!(
+                mvcc.commit_indexer_batch(prepared, &batch),
+                Ok(IndexerCommit::Same),
+                "{what}"
+            );
+            assert_eq!(escalate(mvcc, &mut fork), Ok(()), "{what}");
+            mvcc.commit(fork).expect("the write commits");
+        }
+        // The extra edges, as (value, edge) pairs in value order, and no lists.
+        let extras: Vec<(i64, u64)> = (0..extra).map(|j| (101 + j as i64, eids[3 + j])).collect();
+        let only_extras = (
+            values
+                .iter()
+                .map(|&v| {
+                    let ids = extras.iter().filter(|&&(w, _)| w == v);
+                    (v, ids.map(|&(_, id)| id).collect())
+                })
+                .collect(),
+            extras.iter().map(|&(_, id)| id).collect(),
+            values.iter().map(|&v| (v, Vec::new())).collect(),
+        );
+        assert_eq!(
+            column(mvcc),
+            only_extras,
+            "{what}: no `R` edge below the cursor but the extra ones"
+        );
+
+        let mut batches = 0;
+        loop {
+            let mut version = mvcc.read().new_build_version();
+            let Some(batch) = version.indexer_prepare(&id, 1) else {
+                break;
+            };
+            assert_eq!(
+                mvcc.commit_indexer_batch(version, &batch),
+                Ok(IndexerCommit::Same)
+            );
+            batches += 1;
+            assert!(batches < 100, "the build never finishes");
+        }
+        let published = mvcc.read();
+        let g = &*published;
+        assert_eq!(
+            contents(g, EntityType::Relationship, &ty, &attr, &values),
+            one_pass(g, EntityType::Relationship, &ty, &attr, &values),
+            "{what}: built to the end"
+        );
+    }
+}
+
+/// A final indexer batch, which reaches the end of its column and makes it `Ready`, and a writer
+/// that re-values a node the batch read and creates a node past the batch's last one, commit in
+/// either order. If the writer commits first, the batch catches up with it, by refresh or by
+/// insert; if the batch commits first, the writer rebases onto the `Ready` column as it
+/// escalates. Either way the column ends `Ready` and holds exactly what the final graph does, new
+/// node included. The writer changes two entities, so a batch of 4 nodes inserts and one of more
+/// than 2 * [`REFRESH_COST`] refreshes.
+#[test]
+fn a_writer_creating_past_a_final_batch_is_indexed_in_either_commit_order() {
+    let refreshes = 2 * REFRESH_COST as usize + 1;
+    // Batch first; or writer first, the batch catching up by insert, or by refresh when bigger.
+    for (writer_first, nodes) in [
+        (None, 4),
+        (Some(CatchUp::Insert), 4),
+        (Some(CatchUp::Refresh), refreshes),
+    ] {
+        let what = match writer_first {
+            Some(how) => format!("writer, then batch, {how:?}"),
+            None => "batch, then writer".to_string(),
+        };
+        let initial: Vec<i64> = (1..=nodes as i64).map(|i| 10 * i).collect();
+        let (mvcc, label, attr, ids) = mvcc_building(&initial);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let mut fork = mvcc.fork();
+        set_attr(&mut fork, ids[1], &attr, Value::Int(25));
+        let created = add_person(&mut fork, &attr, 5);
+        assert!(ids.iter().all(|&id| id < created), "{what}: past the batch");
+        let (prepared, batch) = prepare(&mvcc, &id, ids.len() + 1);
+        assert_eq!(
+            cursor(&prepared, EntityType::Node, &label, &attr),
+            None,
+            "{what}: the batch is the last"
+        );
+
+        if let Some(how) = writer_first {
+            assert_eq!(escalate(&mvcc, &mut fork), Ok(()), "{what}");
+            mvcc.commit(fork).expect("the write commits");
+            let committed = mvcc.commit_indexer_batch(prepared, &batch);
+            assert_eq!(committed, Ok(IndexerCommit::CatchUp(how)), "{what}");
+        } else {
+            assert_eq!(
+                mvcc.commit_indexer_batch(prepared, &batch),
+                Ok(IndexerCommit::Same),
+                "{what}"
+            );
+            assert_eq!(escalate(&mvcc, &mut fork), Ok(()), "{what}");
+            mvcc.commit(fork).expect("the write commits");
+        }
+
+        let published = mvcc.read();
+        let g = &*published;
+        assert_eq!(
+            cursor(g, EntityType::Node, &label, &attr),
+            None,
+            "{what}: Ready"
+        );
+        assert_eq!(
+            range_scan(g, &label, &attr, 5, 5),
+            vec![created],
+            "{what}: the new node"
+        );
+        let values: Vec<i64> = initial.iter().copied().chain([5, 25]).collect();
+        assert_eq!(
+            contents(g, EntityType::Node, &label, &attr, &values),
+            one_pass(g, EntityType::Node, &label, &attr, &values),
+            "{what}"
+        );
+    }
+}
+
+/// Two indexer batches read from one version on the same column: the first publishes, the second
+/// finds the first in its way and publishes nothing. One job per generation of a column rules this
+/// out; the commit says so, for the builder to report.
+#[test]
+fn of_two_indexer_batches_on_one_column_only_the_first_publishes() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let (first, first_batch) = prepare(&mvcc, &id, 1);
+    let (second, second_batch) = prepare(&mvcc, &id, 2);
+    let first_cursor = cursor(&first, EntityType::Node, &label, &attr);
+    assert_eq!(
+        mvcc.commit_indexer_batch(first, &first_batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert_eq!(
+        mvcc.commit_indexer_batch(second, &second_batch),
+        Ok(IndexerCommit::Discarded(Discarded::AnotherBatch))
+    );
+    assert_eq!(
+        cursor(&mvcc.read(), EntityType::Node, &label, &attr),
+        first_cursor,
+        "the first batch's progress"
+    );
+}
+
+/// An indexer batch's commit keeps the data version, so a writer's fork made before it is not
+/// stale.
+#[test]
+fn a_fork_made_before_an_indexer_batch_commit_is_not_stale() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let fork = mvcc.fork();
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert!(!mvcc.is_stale(&fork));
+}
+
+/// Delete node `id`, in a unit of work of its own.
+fn delete_node(
+    g: &mut Graph,
+    id: u64,
+) {
+    g.open_id_batches().expect("a consistent space");
+    let mut del = RoaringTreemap::new();
+    del.insert(id);
+    applied!(g, |w| g.delete_nodes(&del, &mut w)).expect("deleted");
+}
+
+/// Move node `id` from `:Person` to `:Other`.
+fn relabel_to_other(
+    g: &mut Graph,
+    id: u64,
+) {
+    let person = g.get_label_id_mut("Person").0 as u64;
+    let other = g.get_label_id_mut("Other").0 as u64;
+    applied!(g, |d| g.remove_nodes_labels(&[id], &[person], &mut d));
+    applied!(g, |d| g.set_nodes_labels_bulk(
+        &[id],
+        &[other],
+        &mut d,
+        false
+    ));
+}
+
+fn attr_named(name: &str) -> Arc<String> {
+    Arc::new(name.to_string())
+}
+
+/// Every order in which `actors` actors each do two things, the first before the second: each
+/// order lists, for each event, the actor whose turn it is.
+fn orders(actors: usize) -> Vec<Vec<usize>> {
+    fn extend(
+        left: &mut [u8],
+        order: &mut Vec<usize>,
+        out: &mut Vec<Vec<usize>>,
+    ) {
+        if left.iter().all(|&n| n == 0) {
+            out.push(order.clone());
+            return;
+        }
+        for actor in 0..left.len() {
+            if left[actor] > 0 {
+                left[actor] -= 1;
+                order.push(actor);
+                extend(left, order, out);
+                order.pop();
+                left[actor] += 1;
+            }
+        }
+    }
+    let mut out = Vec::new();
+    extend(&mut vec![2; actors], &mut Vec::new(), &mut out);
+    out
+}
+
+/// The `:Person` and `:Other` nodes of a version: whether each is a `:Person`, and its `v` and `w`.
+type Model = BTreeMap<u64, (bool, Option<Value>, Option<Value>)>;
+
+fn model_of(g: &Graph) -> Model {
+    let value = |n: u64, attr: &str| {
+        let idx = g.get_node_attribute_id(&attr_named(attr))?;
+        g.get_node_attribute_by_idx(NodeId::from(n), idx as u16)
+    };
+    let mut model = Model::new();
+    for (label, person) in [("Person", true), ("Other", false)] {
+        if let Some(m) = g.get_label_matrix(&attr_named(label)) {
+            for (n, _) in m.iter(0, u64::MAX) {
+                model.insert(n, (person, value(n, "v"), value(n, "w")));
+            }
+        }
+    }
+    model
+}
+
+/// The rules on [`BuildState`], checked on a published version: each column on `attrs` exists and
+/// holds exactly the tuples its state says, from the version's own data. A `Ready` column holds
+/// every live `:Person` node's, a `Building` one those of the nodes below its cursor, and nothing
+/// else.
+fn check_rules(
+    g: &Graph,
+    label: &Arc<String>,
+    attrs: [&Arc<String>; 2],
+    what: &str,
+) {
+    let model = model_of(g);
+    for (i, attr) in attrs.into_iter().enumerate() {
+        let Some(state) = g.falkordb_index.column_state(EntityType::Node, label, attr) else {
+            panic!("{what}: no column on {attr}");
+        };
+        let mut expected = BTreeSet::new();
+        for (&id, (person, v, w)) in &model {
+            let below = match state.next() {
+                None => true,
+                Some(BuildCursor::Node(next)) => id < u64::from(next),
+                Some(_) => unreachable!("a node column"),
+            };
+            if let (true, true, Some(value)) = (*person, below, if i == 0 { v } else { w }) {
+                for_each_stored_key(value, |kind, key| {
+                    expected.insert((kind, key, id));
+                });
+            }
+        }
+        let held: BTreeSet<(KeyKind, u64, u64)> = g
+            .falkordb_index
+            .column(EntityType::Node, label, attr)
+            .expect("a numeric column")
+            .tuples()
+            .into_iter()
+            .collect();
+        assert_eq!(held, expected, "{what}: {attr} ({state:?})");
+    }
+}
+
+/// How far the build of column `(label, attr)` of `g` got: its cursor, `u64::MAX` once `Ready`, or
+/// `None` if there is no such column.
+fn build_progress(
+    g: &Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+) -> Option<u64> {
+    match g
+        .falkordb_index
+        .column_state(EntityType::Node, label, attr)?
+        .next()
+    {
+        None => Some(u64::MAX),
+        Some(BuildCursor::Node(next)) => Some(u64::from(next)),
+        Some(_) => unreachable!("a node column"),
+    }
+}
+
+/// What one writer of [`every_order_of_two_writers_and_two_batches_keeps_both_columns_right`] does
+/// to its fork, given the nodes' ids.
+type OrderedWrite = fn(&mut Graph, &[u64]);
+
+/// Every order of two writers and two indexer batches, each starting (a fork; a batch prepared on
+/// a new build version) and later committing, on two `Building` columns: for pairs of writes the
+/// rules must get right (re-values and deletes in a batch and past its cursor, a create that may
+/// reuse a freed id, a label moved off, the index dropped and created again, a number turning
+/// into a list and back, on nodes some of which hold lists already), with the two batches on
+/// different columns and on the same one, either column. After every commit the published
+/// version keeps the rules on [`BuildState`] ([`check_rules`]): a writer's commit publishes its
+/// own data and a batch's changes none; no commit moves a column's build back, unless its writer
+/// created the column again; and a batch that is published moves its own column on. So do both
+/// columns once built to the end. Counts how the commits went, so an outcome no order reached
+/// fails the test.
+///
+/// It runs twice. Batches of `BATCH` insert once a writer changed their column. With
+/// 3 * [`REFRESH_COST`] more nodes in every batch, more than refreshing the at most 3 entities a
+/// pair of writes changes in a column costs, every batch refreshes.
+#[test]
+fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
+    const NODES: usize = 12;
+    const BATCH: usize = 5;
+    let (v, w) = (attr_named("v"), attr_named("w"));
+    // The writes below name `NODES` nodes, `BATCH` of them in a batch. `pad` more nodes before each
+    // `BATCH` of them only make each batch bigger: a batch of `pad + BATCH` reads the padding and
+    // the same named nodes, so those keep their places by the cursor.
+    let padded = |pad: usize| {
+        let all = pad * NODES.div_ceil(BATCH) + NODES;
+        let (mut g, label, ids) = people_with(&v, &(0..all as i64).collect::<Vec<_>>());
+        for (i, &id) in ids.iter().enumerate() {
+            set_attr(&mut g, id, &w, Value::Int(100 + i as i64));
+        }
+        let named: Vec<u64> = ids
+            .chunks(pad + BATCH)
+            .flat_map(|chunk| chunk[pad..].iter().copied())
+            .collect();
+        // Lists, so batches, rebases and catch-ups carry array tuples too: one in the first batch,
+        // one in the second repeating an element, and one past both.
+        set_attr(&mut g, named[2], &v, ints(&[2, 20]));
+        set_attr(&mut g, named[6], &v, ints(&[6, 60, 6]));
+        set_attr(&mut g, named[10], &w, ints(&[110, 111]));
+        create_index_on(&mut g, &label, &v);
+        create_index_on(&mut g, &label, &w);
+        (g, label, named)
+    };
+
+    let writes: [(&str, OrderedWrite, OrderedWrite); 6] = [
+        (
+            "re-value in the batch, delete past the cursor",
+            |g, ids| set_attr(g, ids[1], &attr_named("v"), Value::Int(51)),
+            |g, ids| delete_node(g, ids[7]),
+        ),
+        (
+            "delete in the batch, create (maybe reusing its id)",
+            |g, ids| delete_node(g, ids[2]),
+            |g, _| {
+                add_person(g, &attr_named("v"), 52);
+            },
+        ),
+        (
+            "label moved off in the batch, re-value past the cursor",
+            |g, ids| relabel_to_other(g, ids[3]),
+            |g, ids| set_attr(g, ids[8], &attr_named("w"), Value::Int(158)),
+        ),
+        (
+            "index dropped and created again, re-value in the batch",
+            |g, _| {
+                let (label, v) = (attr_named("Person"), attr_named("v"));
+                drop_index_on(g, &label, &v);
+                create_index_on(g, &label, &v);
+            },
+            |g, ids| {
+                set_attr(g, ids[0], &attr_named("v"), Value::Int(54));
+                set_attr(g, ids[0], &attr_named("w"), Value::Int(154));
+            },
+        ),
+        (
+            "re-value then delete past the cursor, re-value and move a label off",
+            |g, ids| {
+                set_attr(g, ids[11], &attr_named("w"), Value::Int(161));
+                delete_node(g, ids[11]);
+            },
+            |g, ids| {
+                set_attr(g, ids[4], &attr_named("v"), Value::Int(55));
+                relabel_to_other(g, ids[9]);
+            },
+        ),
+        (
+            "a number becomes a list in the batch; a list becomes a number, another list past it",
+            |g, ids| set_attr(g, ids[1], &attr_named("v"), ints(&[1, 51, 51])),
+            |g, ids| {
+                set_attr(g, ids[6], &attr_named("v"), Value::Int(56));
+                set_attr(g, ids[10], &attr_named("w"), ints(&[111, 112]));
+            },
+        ),
+    ];
+
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let orders = orders(4);
+    for (pad, run) in [
+        (0, CatchUp::Insert),
+        (3 * REFRESH_COST as usize, CatchUp::Refresh),
+    ] {
+        let (template, label, ids) = padded(pad);
+        for (name, first, second) in writes {
+            for batches_on in [[&v, &w], [&v, &v], [&w, &w]] {
+                for order in &orders {
+                    let mvcc = MvccGraph::from_graph(template.new_version());
+                    let mut forks: [Option<(Graph, Arc<Graph>)>; 2] = [None, None];
+                    let mut batches: [Option<(Graph, PreparedBatch)>; 2] = [None, None];
+                    let mut started = [false; 4];
+                    for (event, &actor) in order.iter().enumerate() {
+                        let what = format!(
+                            "{name}; {run:?} run; batches on {}, {}; order {order:?}, event {event}",
+                            batches_on[0], batches_on[1]
+                        );
+                        let before = {
+                            let g = mvcc.read();
+                            let g = &*g;
+                            [build_progress(g, &label, &v), build_progress(g, &label, &w)]
+                        };
+                        let starting = !std::mem::replace(&mut started[actor], true);
+                        match (actor, starting) {
+                            (0 | 1, true) => {
+                                let mut fork = mvcc.fork();
+                                let write = if actor == 0 { first } else { second };
+                                write(&mut fork, &ids);
+                                forks[actor] = Some((fork, mvcc.read()));
+                            }
+                            (0 | 1, false) => {
+                                let (mut fork, base) = forks[actor].take().expect("started");
+                                match escalate(&mvcc, &mut fork) {
+                                    Ok(()) => {
+                                        let over_batches = !Arc::ptr_eq(&mvcc.read(), &base);
+                                        let data = model_of(&fork);
+                                        mvcc.commit(fork)
+                                            .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+                                        *counts
+                                            .entry(if over_batches {
+                                                "writer over batches"
+                                            } else {
+                                                "writer committed"
+                                            })
+                                            .or_default() += 1;
+                                        let published = mvcc.read();
+                                        let published = &*published;
+                                        assert_eq!(model_of(published), data, "{what}: its data");
+                                        let recreated_v =
+                                            actor == 0 && name.starts_with("index dropped");
+                                        for (i, attr) in [&v, &w].into_iter().enumerate() {
+                                            if !(recreated_v && i == 0) {
+                                                assert!(
+                                                    build_progress(published, &label, attr)
+                                                        >= before[i],
+                                                    "{what}: {attr}'s build moved back"
+                                                );
+                                            }
+                                        }
+                                        check_rules(published, &label, [&v, &w], &what);
+                                    }
+                                    Err(CommitError::Stale) => {
+                                        *counts.entry("writer stale").or_default() += 1;
+                                    }
+                                    Err(e) => panic!("{what}: {e:?}"),
+                                }
+                            }
+                            (_, true) => {
+                                let id = IndexId::Column(
+                                    EntityType::Node,
+                                    (label.clone(), batches_on[actor - 2].clone()),
+                                );
+                                let mut prepared = mvcc.read().new_build_version();
+                                let batch = prepared.indexer_prepare(&id, pad + BATCH);
+                                batches[actor - 2] = batch.map(|batch| (prepared, batch));
+                            }
+                            (_, false) => {
+                                let Some((prepared, batch)) = batches[actor - 2].take() else {
+                                    continue;
+                                };
+                                let data = model_of(&mvcc.read());
+                                let how = mvcc
+                                    .commit_indexer_batch(prepared, &batch)
+                                    .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+                                *counts
+                                    .entry(match how {
+                                        IndexerCommit::Same => "batch same",
+                                        IndexerCommit::Swap => "batch swapped",
+                                        IndexerCommit::CatchUp(CatchUp::Refresh) => {
+                                            "batch caught up, refreshing"
+                                        }
+                                        IndexerCommit::CatchUp(CatchUp::Insert) => {
+                                            "batch caught up, inserting"
+                                        }
+                                        IndexerCommit::Discarded(Discarded::Gone) => {
+                                            "batch discarded, gone"
+                                        }
+                                        IndexerCommit::Discarded(Discarded::AnotherBatch) => {
+                                            "batch discarded, another batch"
+                                        }
+                                        IndexerCommit::Discarded(Discarded::CatchUpTooLarge) => {
+                                            unreachable!("no batch here limits its catch-up")
+                                        }
+                                    })
+                                    .or_default() += 1;
+                                if run == CatchUp::Refresh
+                                    && let IndexerCommit::CatchUp(by) = how
+                                {
+                                    assert_eq!(by, CatchUp::Refresh, "{what}");
+                                }
+                                let published = mvcc.read();
+                                let published = &*published;
+                                assert_eq!(model_of(published), data, "{what}: no data changed");
+                                for (i, attr) in [&v, &w].into_iter().enumerate() {
+                                    assert!(
+                                        build_progress(published, &label, attr) >= before[i],
+                                        "{what}: {attr}'s build moved back"
+                                    );
+                                }
+                                if !matches!(how, IndexerCommit::Discarded(_)) {
+                                    let i = usize::from(batches_on[actor - 2].as_str() == "w");
+                                    assert!(
+                                        build_progress(published, &label, batches_on[actor - 2])
+                                            > before[i],
+                                        "{what}: the batch's column did not move on"
+                                    );
+                                }
+                                check_rules(published, &label, [&v, &w], &what);
+                            }
+                        }
+                    }
+                    // Then build both columns to the end.
+                    for attr in [&v, &w] {
+                        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+                        loop {
+                            let mut prepared = mvcc.read().new_build_version();
+                            let Some(batch) = prepared.indexer_prepare(&id, pad + BATCH) else {
+                                break;
+                            };
+                            assert_eq!(
+                                mvcc.commit_indexer_batch(prepared, &batch),
+                                Ok(IndexerCommit::Same)
+                            );
+                        }
+                    }
+                    let what = format!(
+                        "{name}; batches on {}, {}; order {order:?}, built",
+                        batches_on[0], batches_on[1]
+                    );
+                    check_rules(&mvcc.read(), &label, [&v, &w], &what);
+                }
+            }
+        }
+    }
+    for outcome in [
+        "writer committed",
+        "writer over batches",
+        "writer stale",
+        "batch same",
+        "batch swapped",
+        "batch caught up, refreshing",
+        "batch caught up, inserting",
+        "batch discarded, gone",
+        "batch discarded, another batch",
+    ] {
+        assert!(
+            counts.get(outcome).copied().unwrap_or(0) > 0,
+            "no order reached \"{outcome}\": {counts:?}"
+        );
+    }
+}
+
+/// Delete node `id` and its edges, in the order a commit does.
+fn delete_node_with_edges(
+    g: &mut Graph,
+    id: u64,
+) {
+    delete_node(g, id);
+    let del: RoaringTreemap = [id].into_iter().collect();
+    applied!(g, |w| g.delete_implicit_edges(
+        &del,
+        &RoaringTreemap::new(),
+        &mut w
+    ))
+    .expect("deleted");
+}
+
+/// Create `ty` edges from each of `srcs` to the matching `dsts`, with `attr` set to `first`,
+/// `first + 1`, and so on. Returns their ids.
+fn add_edges(
+    g: &mut Graph,
+    ty: &Arc<String>,
+    attr: &Arc<String>,
+    srcs: &[u64],
+    dsts: &[u64],
+    first: i64,
+) -> Vec<u64> {
+    g.open_id_batches().expect("a consistent space");
+    let aid = g.get_or_create_rel_attr_id(attr);
+    let eids: Vec<u64> = g
+        .relationship_id_space()
+        .reserve(srcs.len(), &RoaringTreemap::new())
+        .expect("reserved");
+    g.create_relationships_bulk(ty, srcs, dsts, &eids)
+        .expect("freshly reserved ids are creatable");
+    let values: FxHashMap<u64, Vec<(u16, Value)>> = eids
+        .iter()
+        .zip(first..)
+        .map(|(&eid, w)| (eid, vec![(aid, Value::Int(w))]))
+        .collect();
+    applied!(g, |d| g.import_relationship_attrs(&values, &mut d));
+    eids
+}
+
+/// Set edge `eid`'s `attr` to `value`, through the write path.
+fn set_edge_attr(
+    g: &mut Graph,
+    eid: u64,
+    attr: &Arc<String>,
+    value: Value,
+) {
+    g.open_id_batches().expect("a consistent space");
+    let aid = g.get_or_create_rel_attr_id(attr);
+    let set: FxHashMap<u64, Vec<(u16, Value)>> = [(eid, vec![(aid, value)])].into_iter().collect();
+    applied!(g, |d| g.set_relationships_attributes(&set, &mut d)).expect("set");
+}
+
+/// Check column `key` of `entity` against `g`'s own data, by the rules on [`BuildState`]. A
+/// `Ready` column holds exactly the current tuples of every `label` node (or `label` edge); a
+/// `Building` column holds exactly those of the entities `g` places below its cursor; neither
+/// holds anything else. The check reads `g` entity by entity, not through the build's own scans.
+/// A column `g` does not have passes.
+fn check_column(
+    g: &Graph,
+    entity: EntityType,
+    (label, attr): &IndexKey,
+    what: &str,
+) {
+    let Some(state) = g.falkordb_index.column_state(entity, label, attr) else {
+        return;
+    };
+    let mut entities: Vec<(u64, Option<Value>)> = Vec::new();
+    match entity {
+        EntityType::Node => {
+            let idx = g.get_node_attribute_id(attr);
+            if let Some(m) = g.get_label_matrix(label) {
+                for (n, _) in m.iter(0, u64::MAX) {
+                    let value = idx
+                        .and_then(|idx| g.get_node_attribute_by_idx(NodeId::from(n), idx as u16));
+                    entities.push((n, value));
+                }
+            }
+        }
+        EntityType::Relationship => {
+            let idx = g.get_relationship_attribute_id(attr);
+            if let Some(t) = g.get_relationship_matrix(label) {
+                for (_, _, eid) in t.iter(0, u64::MAX, false) {
+                    let value = idx.and_then(|idx| {
+                        g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx as u16)
+                    });
+                    entities.push((eid, value));
+                }
+            }
+        }
+    }
+    let mut expected = BTreeSet::new();
+    for (id, value) in entities {
+        let below = match state {
+            BuildState::Ready => true,
+            BuildState::Building { next, .. } => g
+                .build_place(entity, id)
+                .is_some_and(|at| at.precedes(next)),
+        };
+        if let (true, Some(value)) = (below, value) {
+            for_each_stored_key(&value, |kind, key| {
+                expected.insert((kind, key, id));
+            });
+        }
+    }
+    let held: BTreeSet<(KeyKind, u64, u64)> = g
+        .falkordb_index
+        .column(entity, label, attr)
+        .expect("a numeric column")
+        .tuples()
+        .into_iter()
+        .collect();
+    assert_eq!(held, expected, "{what}: {label}.{attr} ({state:?})");
+}
+
+/// Writers and indexer batches on real threads, on three columns at once: two node columns and an
+/// edge column.
+///
+/// - One indexer thread per column, as the builder runs one job per generation of a column.
+/// - Three writer threads. Each either forks, writes and escalates, or forks and writes under the
+///   lock. They re-value nodes and edges (to numbers and to lists), create nodes, delete nodes with
+///   their edges, take nodes off the label, add edges, and now and then drop a column and create it
+///   again `Building`.
+///
+/// Until commits publish by atomic swap, `MvccGraph` commits through `&mut self`, so the threads
+/// share it behind a test lock: forks and reads take the read side, escalations and commits the
+/// write side, and a batch is read with no lock held.
+///
+/// After every commit, the published version must keep the rules on [`BuildState`] against its
+/// own data ([`check_column`]), and no column's build may have moved back since the version
+/// published before it, unless the column was dropped and created again. At the end every column
+/// must be `Ready` and equal a one-pass build of the final data. The test runs until every outcome of a commit has been seen, so a run
+/// in which the threads never raced fails.
+#[test]
+fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
+    use parking_lot::{Mutex, RwLock};
+    use rand::rngs::StdRng;
+    use rand::{RngExt, SeedableRng};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    const NODES: i64 = 400;
+    const VALUES: i64 = 10_000;
+    // Each batch takes a size up to this, at random: against what writers changed since the last
+    // batch, a large one refreshes and a small one inserts, so both run on real writes.
+    const MAX_BATCH: usize = 8 * REFRESH_COST as usize;
+    const SEEN: [&str; 9] = [
+        "writer committed",
+        "writer over batches",
+        "writer stale",
+        "writer under the lock",
+        "batch same",
+        "batch swapped",
+        "batch caught up, refreshing",
+        "batch caught up, inserting",
+        "batch discarded, gone",
+    ];
+    let (v, w, x, ty) = (
+        attr_named("v"),
+        attr_named("w"),
+        attr_named("x"),
+        attr_named("R"),
+    );
+    let (mut g, label, ids) = people_with(&v, &(0..NODES).collect::<Vec<_>>());
+    for (i, &id) in (0..).zip(&ids) {
+        let value = if i % 5 == 0 {
+            ints(&[1000 + i, 2000 + i])
+        } else {
+            Value::Int(1000 + i)
+        };
+        set_attr(&mut g, id, &w, value);
+    }
+    add_edges(&mut g, &ty, &x, &ids[..ids.len() - 1], &ids[1..], 0);
+    let columns: Vec<(EntityType, IndexKey)> = vec![
+        (EntityType::Node, (Arc::clone(&label), Arc::clone(&v))),
+        (EntityType::Node, (Arc::clone(&label), Arc::clone(&w))),
+        (EntityType::Relationship, (Arc::clone(&ty), Arc::clone(&x))),
+    ];
+    for (entity, (l, a)) in &columns {
+        g.falkordb_index.create_building(*entity, l, a);
+    }
+    let mvcc = RwLock::new(MvccGraph::from_graph(g));
+
+    let counts: Mutex<BTreeMap<&str, usize>> = Mutex::new(BTreeMap::new());
+    let count = |how: &'static str| *counts.lock().entry(how).or_default() += 1;
+    let seen_all = || {
+        let counts = counts.lock();
+        SEEN.iter()
+            .all(|how| counts.get(how).copied().unwrap_or(0) > 0)
+    };
+    // Check the version a commit published against the rules, and against the version published
+    // just before it: within a column's generation, a build only stays or moves on, and a `Ready`
+    // column stays `Ready`. Both versions are captured while the commit holds the lock; by the
+    // time the check runs, another thread may have published a newer one.
+    let check = |before: &Arc<Graph>, published: &Arc<Graph>, what: &str| {
+        let (before, g) = (&**before, &**published);
+        for name in &columns {
+            check_column(g, name.0, &name.1, what);
+            let (Some(old), Some(new)) = (
+                IndexColumn::entry(&before.falkordb_index, name),
+                IndexColumn::entry(&g.falkordb_index, name),
+            ) else {
+                continue;
+            };
+            let moved_back = match (old.cursor(), new.cursor()) {
+                (Some(old), Some(new)) => new.precedes(old),
+                (None, Some(_)) => true,
+                _ => false,
+            };
+            assert!(
+                old.generation != new.generation || !moved_back,
+                "{what}: {}.{}'s build moved back",
+                (name.1).0,
+                (name.1).1
+            );
+        }
+    };
+    // One random write on `g`, chosen by `op`: re-create a column, delete a node and its edges,
+    // create a node, take a node off `:Person`, add an edge, or re-value an edge or a node, to a
+    // list a quarter of the time. Half the time the node it picks is just past a node column's
+    // cursor, where that column's next batches read.
+    let random_write = |g: &mut Graph, op: u32, rng: &mut StdRng| {
+        let mut people: Vec<u64> = g
+            .get_label_matrix(&label)
+            .map(|m| m.iter(0, u64::MAX).map(|(n, _)| n).collect())
+            .unwrap_or_default();
+        let attr = if rng.random_bool(0.5) { &v } else { &w };
+        if rng.random_bool(0.5)
+            && let Some(BuildState::Building {
+                next: BuildCursor::Node(next),
+                ..
+            }) = g
+                .falkordb_index
+                .column_state(EntityType::Node, &label, attr)
+        {
+            let near: Vec<u64> = people
+                .iter()
+                .copied()
+                .filter(|&id| id >= u64::from(next))
+                .take(MAX_BATCH)
+                .collect();
+            if !near.is_empty() {
+                people = near;
+            }
+        }
+        let edges: Vec<u64> = g
+            .get_relationship_matrix(&ty)
+            .map(|t| t.iter(0, u64::MAX, false).map(|(_, _, e)| e).collect())
+            .unwrap_or_default();
+        let value = rng.random_range(0..VALUES);
+        let new_value = if rng.random_bool(0.25) {
+            ints(&[value, value / 2, value])
+        } else {
+            Value::Int(value)
+        };
+        match op {
+            0..=3 => {
+                let (entity, (l, a)) = &columns[rng.random_range(0..columns.len())];
+                g.falkordb_index.drop_column(*entity, l, a);
+                g.falkordb_index.create_building(*entity, l, a);
+            }
+            4..=11 if !people.is_empty() => {
+                delete_node_with_edges(g, people[rng.random_range(0..people.len())]);
+            }
+            12..=19 => {
+                let id = add_person(g, &v, value);
+                set_attr(g, id, &w, Value::Int(rng.random_range(0..VALUES)));
+            }
+            20..=25 if !people.is_empty() => {
+                relabel_to_other(g, people[rng.random_range(0..people.len())]);
+            }
+            26..=35 if people.len() >= 2 => {
+                let src = people[rng.random_range(0..people.len())];
+                let dst = people[rng.random_range(0..people.len())];
+                add_edges(g, &ty, &x, &[src], &[dst], value);
+            }
+            36..=55 if !edges.is_empty() => {
+                set_edge_attr(g, edges[rng.random_range(0..edges.len())], &x, new_value);
+            }
+            _ if !people.is_empty() => {
+                set_attr(
+                    g,
+                    people[rng.random_range(0..people.len())],
+                    attr,
+                    new_value,
+                );
+            }
+            _ => {}
+        }
+    };
+
+    /// Takes a writer thread off `writers_left` when it ends, a panic included. The batch threads
+    /// run until no writer is left, so a writer that panicked without this would leave them
+    /// spinning, and the test would hang instead of failing.
+    struct WriterLeft<'a>(&'a AtomicUsize);
+    impl Drop for WriterLeft<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::Release);
+        }
+    }
+
+    let writers_left = AtomicUsize::new(3);
+    let started = Instant::now();
+    thread::scope(|scope| {
+        for (seed, (entity, key)) in (100..).zip(&columns) {
+            let (mvcc, count, check, writers_left) = (&mvcc, &count, &check, &writers_left);
+            scope.spawn(move || {
+                let mut rng = StdRng::seed_from_u64(seed);
+                let id = IndexId::Column(*entity, key.clone());
+                loop {
+                    // Read before the batch is: once no writer is left, a column that is not
+                    // `Building` stays that way, so finding no batch then means it is done.
+                    let done = writers_left.load(Ordering::Acquire) == 0;
+                    let mut prepared = mvcc.read().read().new_build_version();
+                    let size = rng.random_range(1..=MAX_BATCH);
+                    let Some(batch) = prepared.indexer_prepare(&id, size) else {
+                        if done {
+                            break;
+                        }
+                        thread::yield_now();
+                        continue;
+                    };
+                    // A full-size batch takes milliseconds to read; one this small takes
+                    // microseconds. The wait lets writers commit between its read and its commit.
+                    thread::sleep(Duration::from_micros(rng.random_range(0..200)));
+                    let (how, before, published) = {
+                        let mvcc = &mut mvcc.write();
+                        let before = mvcc.read();
+                        let how = mvcc
+                            .commit_indexer_batch(prepared, &batch)
+                            .expect("the batch commits");
+                        (how, before, mvcc.read())
+                    };
+                    count(match how {
+                        IndexerCommit::Same => "batch same",
+                        IndexerCommit::Swap => "batch swapped",
+                        IndexerCommit::CatchUp(CatchUp::Refresh) => "batch caught up, refreshing",
+                        IndexerCommit::CatchUp(CatchUp::Insert) => "batch caught up, inserting",
+                        IndexerCommit::Discarded(Discarded::Gone) => "batch discarded, gone",
+                        IndexerCommit::Discarded(Discarded::AnotherBatch) => {
+                            "batch discarded, another batch"
+                        }
+                        IndexerCommit::Discarded(Discarded::CatchUpTooLarge) => {
+                            unreachable!("no batch here limits its catch-up")
+                        }
+                    });
+                    check(
+                        &before,
+                        &published,
+                        &format!("a batch on {}.{} ({how:?})", key.0, key.1),
+                    );
+                }
+            });
+        }
+        for seed in 0..3 {
+            let (mvcc, count, check, writers_left, random_write, seen_all) = (
+                &mvcc,
+                &count,
+                &check,
+                &writers_left,
+                &random_write,
+                &seen_all,
+            );
+            scope.spawn(move || {
+                let _left = WriterLeft(writers_left);
+                let mut rng = StdRng::seed_from_u64(seed);
+                let mut writes = 0;
+                while writes < 150 || (!seen_all() && started.elapsed() < Duration::from_secs(30)) {
+                    writes += 1;
+                    let op = rng.random_range(0..100);
+                    if rng.random_bool(0.3) {
+                        let mvcc = mvcc.write();
+                        let before = mvcc.read();
+                        let mut version = mvcc.fork();
+                        random_write(&mut version, op, &mut rng);
+                        mvcc.commit(version).expect("the writer commits");
+                        let published = mvcc.read();
+                        drop(mvcc);
+                        count("writer under the lock");
+                        check(&before, &published, "a write under the lock");
+                        continue;
+                    }
+                    loop {
+                        let (base, mut fork) = {
+                            let mvcc = mvcc.read();
+                            (mvcc.read(), mvcc.fork())
+                        };
+                        random_write(&mut fork, op, &mut rng);
+                        // A wait like the batches', so batches commit while a fork waits to
+                        // escalate.
+                        thread::sleep(Duration::from_micros(rng.random_range(0..200)));
+                        let mvcc = mvcc.write();
+                        let before = mvcc.read();
+                        let over_batches = !Arc::ptr_eq(&before, &base);
+                        match escalate(&mvcc, &mut fork) {
+                            Ok(()) => {
+                                mvcc.commit(fork).expect("the writer commits");
+                                let published = mvcc.read();
+                                drop(mvcc);
+                                count(if over_batches {
+                                    "writer over batches"
+                                } else {
+                                    "writer committed"
+                                });
+                                check(&before, &published, "an escalated write");
+                                break;
+                            }
+                            Err(CommitError::Stale) => count("writer stale"),
+                            Err(e) => panic!("{e:?}"),
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    let counts = counts.into_inner();
+    for how in SEEN {
+        assert!(
+            counts.get(how).copied().unwrap_or(0) > 0,
+            "never seen: {how}; {counts:?} in {:?}",
+            started.elapsed()
+        );
+    }
+    let published = mvcc.read().read();
+    let g = &*published;
+    for (entity, key) in &columns {
+        check_column(g, *entity, key, "built");
+        assert_eq!(
+            g.falkordb_index.column_state(*entity, &key.0, &key.1),
+            Some(BuildState::Ready),
+            "{}.{} built",
+            key.0,
+            key.1
+        );
+        assert_eq!(
+            contents(g, *entity, &key.0, &key.1, &[]),
+            one_pass(g, *entity, &key.0, &key.1, &[]),
+            "{}.{} against a one-pass build",
+            key.0,
+            key.1
+        );
+    }
+}
+
+// --- The background builder ---
+
+/// A graph as the builder reaches it in these tests, on a [`LocalHost`]: a batch publishes holding
+/// its global lock, and so does every writer here. `before_publish` runs once, holding it, just
+/// before the next batch goes in. `warnings` keeps what the builder reports through the host.
+struct TestHost {
+    mvcc: Arc<MvccGraph>,
+    local: LocalHost,
+    before_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&Arc<MvccGraph>) + Send>>>,
+    after_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&Arc<MvccGraph>) + Send>>>,
+    warnings: parking_lot::Mutex<Vec<String>>,
+}
+
+impl TestHost {
+    fn new(mvcc: Arc<MvccGraph>) -> Arc<Self> {
+        Arc::new(Self {
+            mvcc,
+            local: LocalHost::default(),
+            before_publish: parking_lot::Mutex::new(None),
+            after_publish: parking_lot::Mutex::new(None),
+            warnings: parking_lot::Mutex::new(Vec::new()),
+        })
+    }
+
+    /// One writer's unit of work, holding the global lock as a host's writers do.
+    fn write(
+        &self,
+        write: impl FnOnce(&mut Graph),
+    ) {
+        let _global = self.local.lock();
+        commit_write(&self.mvcc, write);
+    }
+
+    fn before_publish(
+        &self,
+        f: impl FnOnce(&Arc<MvccGraph>) + Send + 'static,
+    ) {
+        *self.before_publish.lock() = Some(Box::new(f));
+    }
+
+    fn after_publish(
+        &self,
+        f: impl FnOnce(&Arc<MvccGraph>) + Send + 'static,
+    ) {
+        *self.after_publish.lock() = Some(Box::new(f));
+    }
+}
+
+/// A builder's host in these tests: it publishes through a [`TestHost`]'s [`LocalHost`], running
+/// the test host's `before_publish` first and its `after_publish` last, both holding the lock, and
+/// keeps the builder's warnings in the test host. Holds the test host weakly, so a builder does not
+/// keep its graph alive.
+struct HostRef(Weak<TestHost>);
+
+impl BuildHost for HostRef {
+    fn publish(
+        &self,
+        f: &mut dyn FnMut(),
+    ) {
+        let Some(host) = self.0.upgrade() else {
+            return;
+        };
+        host.local.publish(&mut || {
+            if let Some(before) = host.before_publish.lock().take() {
+                before(&host.mvcc);
+            }
+            f();
+            if let Some(after) = host.after_publish.lock().take() {
+                after(&host.mvcc);
+            }
+        });
+    }
+
+    fn warn(
+        &self,
+        message: &str,
+    ) {
+        if let Some(host) = self.0.upgrade() {
+            host.warnings.lock().push(message.to_string());
+        }
+    }
+}
+
+fn wait_until(
+    what: &str,
+    mut done: impl FnMut() -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !done() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// The generation of index `id` that `host`'s published version holds `Building`.
+fn generation_of(
+    host: &TestHost,
+    id: &IndexId,
+) -> u64 {
+    building_generation(&host.mvcc.read(), id).expect("the index is Building")
+}
+
+/// The generation of index `id` if `g` holds it `Building`.
+fn building_generation(
+    g: &Graph,
+    id: &IndexId,
+) -> Option<u64> {
+    g.index_generation(id)
+        .filter(|&(_, building)| building)
+        .map(|(generation, _)| generation)
+}
+
+/// A builder with `sizing` that publishes through `host`, never started.
+fn builder_on(
+    host: &Arc<TestHost>,
+    sizing: Sizing,
+) -> Arc<Builder> {
+    Builder::new(sizing, Arc::new(HostRef(Arc::downgrade(host))))
+}
+
+/// A job for the generation of index `id` that `host`'s published version holds `Building`, on a
+/// builder of its own with `sizing`, never started: the test runs its batches itself
+/// ([`Job::step`]).
+fn job_on(
+    host: &Arc<TestHost>,
+    id: &IndexId,
+    sizing: Sizing,
+) -> Job {
+    Job::new(
+        builder_on(host, sizing),
+        Arc::downgrade(&host.mvcc),
+        id.clone(),
+        generation_of(host, id),
+    )
+}
+
+/// A commit hands the builder each index its version brings in `Building`, with its generation:
+/// one created, or one dropped and created again under the same name, which is another generation.
+/// An index already `Building` in the version before, or brought in `Ready`, is not handed over
+/// again.
+#[test]
+fn a_commit_hands_the_builder_each_index_it_brings_in_building() {
+    let (mvcc, label, v, _) = mvcc_building(&[10, 20]);
+    let w = Arc::new("w".to_string());
+    let u = Arc::new("u".to_string());
+    let id = |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let before = mvcc.read();
+    let v_was = building_generation(&before, &id(&v)).expect("v is Building");
+    let mut after = before.new_version();
+    assert!(
+        after.indexes_to_build_since(&before).is_empty(),
+        "v is Building in both"
+    );
+    create_index_on(&mut after, &label, &w);
+    after
+        .falkordb_index
+        .create_column(EntityType::Node, &label, &u);
+    let w_is = building_generation(&after, &id(&w)).expect("w is Building");
+    assert_eq!(
+        after.indexes_to_build_since(&before),
+        [(id(&w), w_is)],
+        "w is new; u came in Ready"
+    );
+    drop_index_on(&mut after, &label, &v);
+    create_index_on(&mut after, &label, &v);
+    let v_is = building_generation(&after, &id(&v)).expect("v is Building again");
+    assert_ne!(v_is, v_was, "v created again is another generation");
+    let mut handed = after.indexes_to_build_since(&before);
+    handed.sort_by_key(|(id, _)| format!("{id:?}"));
+    assert_eq!(
+        handed,
+        [(id(&v), v_is), (id(&w), w_is)],
+        "v was created again"
+    );
+}
+
+/// A job's step reads one batch of its index with no lock held, publishes it, and says whether the
+/// index is still `Building`. Once the last batch made it `Ready`, the job is done.
+#[test]
+fn a_step_publishes_one_batch_and_says_whether_more_remain() {
+    let values = [10, 20, 30, 40, 50];
+    let (mvcc, label, attr, _) = mvcc_building(&values);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let mut job = job_on(&host, &id, Sizing::fixed(2));
+
+    let steps: Vec<Step> = (0..4).map(|_| job.step()).collect();
+    assert_eq!(steps, [Step::More, Step::More, Step::Done, Step::Done]);
+    let g = host.mvcc.read();
+    assert_eq!(cursor(&g, EntityType::Node, &label, &attr), None, "Ready");
+    assert_eq!(
+        contents(&g, EntityType::Node, &label, &attr, &values),
+        one_pass(&g, EntityType::Node, &label, &attr, &values)
+    );
+}
+
+/// A batch that meets another batch's commit on its index publishes nothing
+/// ([`Discarded::AnotherBatch`]), and its job goes on: a bug in the one job per generation, which
+/// only a test makes happen. It reports nothing: the index is still built right. No other test
+/// races two batches on one index.
+#[test]
+fn a_step_that_meets_another_batch_on_its_index_publishes_nothing() {
+    let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let mut job = job_on(&host, &id, Sizing::fixed(1));
+    let other = id.clone();
+    host.before_publish(move |mvcc| {
+        let (prepared, batch) = prepare(mvcc, &other, 1);
+        assert_eq!(
+            mvcc.commit_indexer_batch(prepared, &batch),
+            Ok(IndexerCommit::Same)
+        );
+    });
+    assert_eq!(job.step(), Step::More);
+    assert_eq!(
+        cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
+        Some(BuildCursor::Node(NodeId::from(ids[1]))),
+        "only the other batch published"
+    );
+    let warnings = host.warnings.lock();
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+/// A job whose index was dropped after its batch read it publishes nothing and is cancelled, and so
+/// is one whose index was created again: that is another generation, which a job of its own builds,
+/// from that index's own cursor, to `Done`.
+#[test]
+fn a_job_whose_index_is_dropped_or_created_again_is_cancelled() {
+    for again in [false, true] {
+        let values = [10, 20, 30, 40];
+        let (mvcc, label, attr, _) = mvcc_building(&values);
+        let host = TestHost::new(mvcc);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let mut job = job_on(&host, &id, Sizing::fixed(2));
+        let (l, a) = (label.clone(), attr.clone());
+        host.before_publish(move |mvcc| {
+            commit_write(mvcc, |g| {
+                drop_index_on(g, &l, &a);
+                if again {
+                    create_index_on(g, &l, &a);
+                }
+            });
+        });
+
+        assert_eq!(job.step(), Step::Cancelled, "again: {again}");
+        if !again {
+            assert_eq!(
+                host.mvcc
+                    .read()
+                    .falkordb_index
+                    .column_state(EntityType::Node, &label, &attr),
+                None,
+                "dropped"
+            );
+            continue;
+        }
+        assert_eq!(
+            cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
+            Some(BuildCursor::new(EntityType::Node)),
+            "the new index, untouched by the old one's batch"
+        );
+        assert_eq!(
+            job.step(),
+            Step::Cancelled,
+            "the old generation's job stays cancelled"
+        );
+        assert_eq!(
+            cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
+            Some(BuildCursor::new(EntityType::Node)),
+            "without reading the new index"
+        );
+        let mut job = job_on(&host, &id, Sizing::fixed(2));
+        let mut steps = 1;
+        while job.step() != Step::Done {
+            steps += 1;
+            assert!(steps < 10, "the new index is never built");
+        }
+        let g = host.mvcc.read();
+        assert_eq!(cursor(&g, EntityType::Node, &label, &attr), None);
+        assert_eq!(
+            contents(&g, EntityType::Node, &label, &attr, &values),
+            one_pass(&g, EntityType::Node, &label, &attr, &values)
+        );
+    }
+}
+
+/// The version a batch's commit replaces is freed once the batch is over, with no lock of the
+/// host's held: right after the publish, still holding the lock, it is alive, and once the batch
+/// has returned, nothing holds it. A batch of scattered values copies most of its column, and the
+/// old pages go with that version.
+#[test]
+fn a_batch_frees_the_version_it_replaces_after_the_hosts_lock() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label, attr));
+    let replaced = Arc::downgrade(&host.mvcc.read());
+    let alive_under_lock = Arc::new(AtomicBool::new(false));
+    host.after_publish({
+        let (alive, replaced) = (Arc::clone(&alive_under_lock), replaced.clone());
+        move |mvcc| {
+            assert!(
+                !Weak::ptr_eq(&Arc::downgrade(&mvcc.read()), &replaced),
+                "the batch published nothing"
+            );
+            alive.store(replaced.upgrade().is_some(), Ordering::SeqCst);
+        }
+    });
+    let mut job = job_on(&host, &id, Sizing::fixed(1));
+    assert_eq!(job.step(), Step::More);
+    assert!(
+        alive_under_lock.load(Ordering::SeqCst),
+        "the replaced version was freed under the host's lock"
+    );
+    assert!(
+        replaced.upgrade().is_none(),
+        "the replaced version outlived its batch"
+    );
+}
+
+/// A batch its commit does not publish is freed once the batch is over, with no lock of the host's
+/// held: right after its commit, still holding the lock, the pages the batch copied are alive, and
+/// once the batch has returned, nothing holds them. Here the index is dropped just before the batch
+/// publishes, so the commit discards it, and the column's pages are the batch's alone.
+#[test]
+fn a_batch_frees_what_it_did_not_publish_after_the_hosts_lock() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let pages = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let builder = builder_on(&host, Sizing::fixed(1));
+    *builder.while_reading.lock() = Some(Box::new({
+        let (pages, label, attr) = (Arc::clone(&pages), label.clone(), attr.clone());
+        move |prepared: &Graph| {
+            let column = prepared
+                .falkordb_index
+                .column(EntityType::Node, &label, &attr)
+                .expect("the batch's column");
+            *pages.lock() = column
+                .numeric()
+                .pages()
+                .iter()
+                .map(Arc::downgrade)
+                .collect();
+        }
+    }));
+    host.before_publish({
+        let (label, attr) = (label.clone(), attr.clone());
+        move |mvcc| {
+            commit_write(mvcc, |g| {
+                g.falkordb_index
+                    .drop_column(EntityType::Node, &label, &attr)
+            });
+        }
+    });
+    let alive_under_lock = Arc::new(AtomicBool::new(false));
+    host.after_publish({
+        let (alive, pages) = (Arc::clone(&alive_under_lock), Arc::clone(&pages));
+        move |_| {
+            let pages = pages.lock();
+            alive.store(
+                !pages.is_empty() && pages.iter().all(|page| page.upgrade().is_some()),
+                Ordering::SeqCst,
+            );
+        }
+    });
+    let mut job = Job::new(
+        Arc::clone(&builder),
+        Arc::downgrade(&host.mvcc),
+        id.clone(),
+        generation_of(&host, &id),
+    );
+    assert_eq!(job.step(), Step::Cancelled, "the index was dropped");
+    assert!(
+        alive_under_lock.load(Ordering::SeqCst),
+        "the discarded batch's pages were freed under the host's lock"
+    );
+    assert!(
+        pages.lock().iter().all(|page| page.upgrade().is_none()),
+        "the discarded batch's pages outlived it"
+    );
+}
+
+/// A job holds its graph weakly: it does not keep a deleted graph alive, and once the graph is
+/// gone, the job is cancelled.
+#[test]
+fn a_job_does_not_keep_its_graph_alive() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label, attr));
+    let mut job = job_on(&host, &id, Sizing::fixed(1));
+    let graph = Arc::downgrade(&host.mvcc);
+    drop(host);
+    assert!(graph.upgrade().is_none(), "the job kept its graph alive");
+    assert_eq!(job.step(), Step::Cancelled);
+}
+
+/// A batch whose version is refused, which only a bug makes happen, fails its job: the job is not
+/// run again, and the host is warned once. Only that batch is refused, so a job that ran again
+/// would build the index: it stays `Building` instead, with nothing published, and the planner
+/// does not use it, so reads on it scan.
+#[test]
+fn a_job_whose_batch_is_refused_fails_and_leaves_its_index_building() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let generation = generation_of(&host, &id);
+    let builder = builder_on(&host, Sizing::fixed(1));
+    builder.refuse_publish.store(true, Ordering::SeqCst);
+    let mut job = Job::new(
+        Arc::clone(&builder),
+        Arc::downgrade(&host.mvcc),
+        id.clone(),
+        generation,
+    );
+    assert_eq!(job.step(), Step::Failed);
+    drop(job);
+
+    builder.refuse_publish.store(true, Ordering::SeqCst);
+    builder.start(1);
+    builder.enqueue(Arc::downgrade(&host.mvcc), id.clone(), generation);
+    // A job holds its builder until it ends.
+    wait_until("the job to end", || Arc::strong_count(&builder) == 1);
+    assert_eq!(host.warnings.lock().len(), 2, "one warning per job");
+    let g = host.mvcc.read();
+    assert_eq!(
+        building_generation(&g, &id),
+        Some(generation),
+        "the job ran again after its batch was refused"
+    );
+    assert_eq!(
+        cursor(&g, EntityType::Node, &label, &attr),
+        Some(BuildCursor::new(EntityType::Node)),
+        "nothing published"
+    );
+    assert!(
+        !g.is_indexed(&label, &attr, &IndexType::Range),
+        "the planner uses a column still Building"
+    );
+}
+
+/// A batch that waited for what publishing needs while the builder stopped publishes nothing: it
+/// checks again once it holds it. The Redis shutdown handler stops the builder holding the GIL, so
+/// a batch waiting for the GIL gets it only after the stop, and must then leave the graph alone.
+#[test]
+fn a_batch_that_waited_while_the_builder_stopped_publishes_nothing() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let builder = builder_on(&host, Sizing::fixed(2));
+    let mut job = Job::new(
+        Arc::clone(&builder),
+        Arc::downgrade(&host.mvcc),
+        id.clone(),
+        generation_of(&host, &id),
+    );
+    host.before_publish(move |_| {
+        builder.stop_within(Duration::ZERO);
+    });
+
+    assert_eq!(job.step(), Step::Cancelled);
+    assert_eq!(
+        cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
+        Some(BuildCursor::new(EntityType::Node)),
+        "nothing published"
+    );
+}
+
+/// A stop is for good: a job run by hand after it never reads its graph, and one enqueued on the
+/// builder started again never runs.
+#[test]
+fn a_stopped_builder_runs_nothing() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let builder = builder_on(&host, Sizing::fixed(1));
+    let read = Arc::new(AtomicBool::new(false));
+    *builder.while_reading.lock() = Some(Box::new({
+        let read = Arc::clone(&read);
+        move |_| read.store(true, Ordering::SeqCst)
+    }));
+    builder.start(1);
+    assert!(
+        builder.stop_within(Duration::from_secs(2)),
+        "an idle worker was left behind"
+    );
+    let mut job = Job::new(
+        Arc::clone(&builder),
+        Arc::downgrade(&host.mvcc),
+        id.clone(),
+        generation_of(&host, &id),
+    );
+    assert_eq!(job.step(), Step::Cancelled);
+    builder.start(1);
+    builder.enqueue(
+        Arc::downgrade(&host.mvcc),
+        id.clone(),
+        generation_of(&host, &id),
+    );
+    thread::sleep(Duration::from_millis(100));
+    assert!(
+        !read.load(Ordering::SeqCst),
+        "a stopped builder read a graph"
+    );
+    assert_eq!(
+        cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
+        Some(BuildCursor::new(EntityType::Node)),
+        "a stopped builder published a batch"
+    );
+}
+
+/// A stop waits a bounded time for the pool's workers and says whether they all exited: the Redis
+/// module tears GraphBLAS down only then, as a worker left behind may still read or free a graph
+/// version. A batch held inside its read past the stop's wait leaves its worker behind; once it
+/// lets go, it publishes nothing, being stopped, and its worker exits.
+#[test]
+fn a_stop_that_leaves_a_worker_behind_says_so() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let (holding, held) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let builder = builder_on(&host, Sizing::fixed(2));
+    *builder.while_reading.lock() = Some(Box::new(move |_| {
+        holding.send(()).unwrap();
+        released.recv().unwrap();
+    }));
+    builder.start(1);
+    builder.enqueue(
+        Arc::downgrade(&host.mvcc),
+        id.clone(),
+        generation_of(&host, &id),
+    );
+    held.recv_timeout(Duration::from_secs(10))
+        .expect("a batch reads the graph");
+    assert!(
+        !builder.stop_within(Duration::from_millis(20)),
+        "the stop says every worker exited while a batch was still reading"
+    );
+    release.send(()).unwrap();
+    wait_until("the worker left behind to exit", || {
+        builder.stop_within(Duration::from_millis(20))
+    });
+    assert_eq!(
+        cursor(&host.mvcc.read(), EntityType::Node, &label, &attr),
+        Some(BuildCursor::new(EntityType::Node)),
+        "the stopped batch published"
+    );
+}
+
+/// Under writers, a job's batches shrink to what can commit, and grow back once they can. A batch
+/// larger than the floor that writers committed over publishes nothing, and the next one is half
+/// its size, down to the floor, which always commits; each batch that publishes doubles the limit
+/// back, and batches grow with what the build has read, up to it. The build ends `Ready`, as a
+/// one-pass build of the final data.
+#[test]
+fn a_jobs_batches_shrink_under_writers_and_grow_back() {
+    /// The batches a writer commits during, between the batch's read and its publish.
+    const WRITTEN_OVER: [usize; 3] = [5, 6, 7];
+    let values: Vec<i64> = (0..300).collect();
+    let (mvcc, label, attr, ids) = mvcc_building(&values);
+    let host = TestHost::new(mvcc);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let sizing = Sizing {
+        floor: 2,
+        cap: 1_000,
+        catch_up_max: 1,
+    };
+    let mut job = job_on(&host, &id, sizing);
+    let mut steps = Vec::new();
+    loop {
+        let n = steps.len();
+        if WRITTEN_OVER.contains(&n) {
+            let (attr, written) = (attr.clone(), [ids[n], ids[n + 100]]);
+            host.before_publish(move |mvcc| {
+                commit_write(mvcc, |g| {
+                    for id in written {
+                        set_attr(g, id, &attr, Value::Int(-1));
+                    }
+                });
+            });
+        }
+        let read = host.mvcc.read().index_build_read(&id).unwrap_or(0);
+        let entities = sizing.batch(read, job.limit);
+        let step = job.step();
+        steps.push((entities, step));
+        if step == Step::Done {
+            break;
+        }
+        assert!(steps.len() < 100, "the build never ends");
+    }
+
+    let (more, too_large) = (Step::More, Step::TooLarge);
+    assert_eq!(
+        steps,
+        [
+            (2, more),
+            (2, more),
+            (4, more),
+            (8, more),
+            (16, more),
+            (32, too_large),
+            (16, too_large),
+            (8, too_large),
+            (4, more),
+            (8, more),
+            (16, more),
+            (32, more),
+            (64, more),
+            (128, more),
+            (256, Step::Done),
+        ],
+        "growing as the build reads, halving under writers down to what commits, and back"
+    );
+    let g = host.mvcc.read();
+    assert_eq!(
+        contents(&g, EntityType::Node, &label, &attr, &[]),
+        one_pass(&g, EntityType::Node, &label, &attr, &[]),
+    );
+}
+
+/// The builder end to end, on a pool. It builds an index created before it started, and another
+/// created while it runs, to `Ready` while a writer keeps re-valuing nodes in both, and each ends
+/// as a one-pass build of the final data. The writer is writing before either build starts, and
+/// the first batch to publish catches up on a write made while it read, so the builds run under
+/// writes however the threads are scheduled.
+///
+/// The builder is the test's own, so the test starts its jobs: a commit starts them on the
+/// module's, which no unit test starts ([`online_build::enqueue`]).
+#[test]
+fn the_builder_finishes_its_builds_under_sustained_writes() {
+    let nodes = online_build::SIZING.floor * 3 / 2;
+    let values: Vec<i64> = (0..nodes as i64).collect();
+    let (mvcc, label, v, ids) = mvcc_building(&values);
+    let w = Arc::new("w".to_string());
+    let host = TestHost::new(mvcc);
+    host.write(|g| {
+        for &id in &ids {
+            set_attr(g, id, &w, Value::Int(id as i64));
+        }
+    });
+    let index =
+        |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let builder = builder_on(&host, online_build::SIZING);
+
+    let built = || {
+        let g = host.mvcc.read();
+        cursor(&g, EntityType::Node, &label, &v).is_none()
+            && cursor(&g, EntityType::Node, &label, &w).is_none()
+    };
+    // A write that lands just before the first batch to publish goes in, so that batch catches up
+    // on it however the threads are scheduled.
+    let wrote = Arc::new(AtomicBool::new(false));
+    host.before_publish({
+        let (v, w, written) = (v.clone(), w.clone(), [ids[0], ids[nodes - 1]]);
+        let wrote = Arc::clone(&wrote);
+        move |mvcc| {
+            commit_write(mvcc, |g| {
+                for id in written {
+                    set_attr(g, id, &v, Value::Int(-2));
+                    set_attr(g, id, &w, Value::Int(-2));
+                }
+            });
+            wrote.store(true, Ordering::SeqCst);
+        }
+    });
+    let done = AtomicBool::new(false);
+    let writes = AtomicUsize::new(0);
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut i = 0;
+            while !done.load(Ordering::SeqCst) {
+                let id = ids[(i * 7919) % ids.len()];
+                let value = Value::Int((nodes + i) as i64);
+                host.write(|g| {
+                    set_attr(g, id, &v, value.clone());
+                    set_attr(g, id, &w, value);
+                });
+                writes.fetch_add(1, Ordering::SeqCst);
+                i += 1;
+            }
+        });
+        // Stops the writer however the wait ends: a wait that times out panics, and the scope
+        // would otherwise wait for the writer forever.
+        struct Done<'a>(&'a AtomicBool);
+        impl Drop for Done<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let _done = Done(&done);
+        // The builds start once the writer is writing: on a busy machine a writer spawned after
+        // them may not write before both end.
+        wait_until("the writer's first write", || {
+            writes.load(Ordering::SeqCst) > 0
+        });
+        builder.start(2);
+        builder.enqueue(
+            Arc::downgrade(&host.mvcc),
+            index(&v),
+            generation_of(&host, &index(&v)),
+        );
+        host.write(|g| create_index_on(g, &label, &w));
+        builder.enqueue(
+            Arc::downgrade(&host.mvcc),
+            index(&w),
+            generation_of(&host, &index(&w)),
+        );
+        wait_until("both indexes to be built", built);
+    });
+    builder.stop_within(Duration::from_secs(2));
+
+    assert!(
+        wrote.load(Ordering::SeqCst),
+        "a write committed between the first batch's read and its publish"
+    );
+    let warnings = host.warnings.lock();
+    assert!(warnings.is_empty(), "a batch failed: {warnings:?}");
+    let g = host.mvcc.read();
+    for attr in [&v, &w] {
+        assert_eq!(
+            contents(&g, EntityType::Node, &label, attr, &[]),
+            one_pass(&g, EntityType::Node, &label, attr, &[]),
+            "{attr} against a one-pass build"
+        );
+    }
+}
+
+// --- Reads while a column builds ---
+
+/// The escalation a read query is given: it never writes.
+struct ReadOnly;
+
+impl WriteEscalation for ReadOnly {
+    fn upgrade_to_write(
+        &self,
+        _fork: &mut Graph,
+    ) -> Result<(), String> {
+        Err("a read query does not write".into())
+    }
+}
+
+/// The integers read query `plan` returns on `version`, sorted. `plan` may have been made on
+/// another version, as `execute_query` plans on one `read()` and runs on another.
+fn run_on(
+    plan: &Plan,
+    version: Graph,
+) -> Vec<i64> {
+    let runtime = Runtime::new(
+        Arc::new(version),
+        plan.parameters.clone(),
+        Arc::clone(&plan.plan),
+        false,
+        String::new(),
+        -1,
+        false,
+        None,
+        0,
+        None,
+        &ReadOnly,
+    );
+    let summary = runtime.query().expect("the query runs");
+    let column = runtime.return_names[0].id;
+    let mut ints: Vec<i64> = summary
+        .result
+        .iter()
+        .flat_map(|batch| batch.active_indices().map(move |row| (batch, row)))
+        .map(|(batch, row)| match batch.value_at(column, row) {
+            Some(Value::Int(i)) => i,
+            other => panic!("not an integer: {other:?}"),
+        })
+        .collect();
+    ints.sort_unstable();
+    ints
+}
+
+/// Whether `plan` reads through an index scan.
+fn plans_index_scan(plan: &Plan) -> bool {
+    plan.plan
+        .root()
+        .walk::<Dfs>()
+        .any(|ir| matches!(ir, IR::NodeByIndexScan { .. } | IR::EdgeByIndexScan { .. }))
+}
+
+/// The planner reads readiness from the version's own column. A version without the column, or
+/// with it `Building`, plans no index scan; once the column is `Ready`, it does. RediSearch's
+/// readiness lives in its index map, which every version shares, so it cannot say this: a version
+/// committed before CREATE INDEX would see the index operational and plan a lookup its column
+/// cannot answer.
+#[test]
+fn the_planner_uses_a_column_only_once_this_version_built_it() {
+    let _ = init_functions();
+    let v = Arc::new("v".to_string());
+    let (mut g, label, _) = people_with(&v, &[10, 20, 30]);
+    let query = "MATCH (n:Person) WHERE n.v = 20 RETURN n.v";
+    let planned = |g: &Graph| plans_index_scan(&g.get_plan(query).expect("plans"));
+
+    assert!(!g.is_indexed(&label, &v, &IndexType::Range));
+    assert!(!planned(&g), "no column");
+    create_index_on(&mut g, &label, &v);
+    let before = g.new_version();
+    assert!(!g.is_indexed(&label, &v, &IndexType::Range));
+    assert!(!planned(&g), "Building");
+    build_to_end(&mut g, 2);
+    assert!(g.is_indexed(&label, &v, &IndexType::Range));
+    assert!(planned(&g), "Ready");
+    assert_eq!(run_on(&g.get_plan(query).unwrap(), g.new_version()), [20]);
+    assert!(!planned(&before), "the version before is still Building");
+}
+
+/// A plan made while a column was `Ready` can run on a version where the column is `Building`
+/// again: dropped and created anew between planning and running. The index scan then stands in a
+/// scan of the label or type that keeps only what the column would answer, though filter pushdown
+/// moved the predicate into the index scan. Checked at every cursor of the new column's build, for
+/// a range, an IN list and an equality, on nodes and on edges: these drive the scan operators'
+/// `ScanFilter` arms.
+#[test]
+fn a_plan_made_on_a_ready_column_reads_right_while_it_builds_again() {
+    let _ = init_functions();
+    let (mut g, label, v, ty, w) = scan_fixture();
+    build_to_end(&mut g, usize::MAX);
+    let queries = [
+        (
+            "MATCH (n:Person) WHERE n.v >= 20 AND n.v <= 60 RETURN n.v",
+            vec![20, 30, 50, 60],
+        ),
+        (
+            "MATCH (n:Person) WHERE n.v IN [10, 40, 90] RETURN n.v",
+            vec![10, 90],
+        ),
+        ("MATCH (n:Person) WHERE n.v = 70 RETURN n.v", vec![70]),
+        (
+            "MATCH ()-[r:R]->() WHERE r.w >= 2 AND r.w <= 5 RETURN r.w",
+            vec![2, 3, 4, 5],
+        ),
+        (
+            "MATCH ()-[r:R]->() WHERE r.w IN [0, 7, 9] RETURN r.w",
+            vec![0, 7],
+        ),
+    ];
+    let plans: Vec<Plan> = queries
+        .iter()
+        .map(|(query, _)| g.get_plan(query).expect("plans"))
+        .collect();
+    for (plan, (query, _)) in plans.iter().zip(&queries) {
+        assert!(plans_index_scan(plan), "{query} reads its index");
+    }
+
+    for batches in 0.. {
+        assert!(batches < 1_000, "the build never finishes");
+        let mut building = g.new_version();
+        for (entity, l, a) in [
+            (EntityType::Node, &label, &v),
+            (EntityType::Relationship, &ty, &w),
+        ] {
+            building.falkordb_index.create_building(entity, l, a);
+        }
+        let mut taken = 0;
+        while taken < batches && building.index_next_batch(1) {
+            taken += 1;
+        }
+        for (plan, (query, expected)) in plans.iter().zip(&queries) {
+            assert_eq!(
+                &run_on(plan, building.new_version()),
+                expected,
+                "{query} after {batches} batches"
+            );
+        }
+        if taken < batches {
+            break;
+        }
+    }
+}
+
+/// How far the build of column `(entity, label, attr)` has come, as `(entities read, entities of
+/// the label or type)`, or `None` if the column is `Ready` or does not exist: one column's part of
+/// what `db.indexes()` shows for its label ([`Graph::add_native_build`]). The entities read are
+/// those its batches have read, at most the label's or type's: an entity created or deleted behind
+/// the cursor after a batch passed it does not move the count.
+fn native_build_progress(
+    g: &Graph,
+    entity: EntityType,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+) -> Option<(u64, u64)> {
+    let read = g.falkordb_index.building_read(entity, label, attr)?;
+    let total = g.native_build_total(entity, label);
+    Some((read.min(total), total))
+}
+
+/// `db.indexes()` reports a `Building` column's progress as the entities its batches have read,
+/// counted as their budgets, out of the label's or type's: one batch at a time, nodes (with a
+/// deleted node in the ids) then edges, until both are `Ready`. The edges' first batch finishes the
+/// three-edge pair it stops in, so it reads three and counts two.
+#[test]
+fn a_building_columns_progress_counts_what_its_batches_have_read() {
+    let (mut g, label, v, ty, w) = scan_fixture();
+    let progress = |g: &Graph| {
+        (
+            native_build_progress(&g, EntityType::Node, &label, &v),
+            native_build_progress(&g, EntityType::Relationship, &ty, &w),
+        )
+    };
+    let mut seen = vec![progress(&g)];
+    while g.index_next_batch(2) {
+        seen.push(progress(&g));
+        assert!(seen.len() < 1_000, "the build never finishes");
+    }
+    assert_eq!(
+        seen,
+        [
+            (Some((0, 9)), Some((0, 8))),
+            (Some((2, 9)), Some((0, 8))),
+            (Some((4, 9)), Some((0, 8))),
+            (Some((6, 9)), Some((0, 8))),
+            (Some((8, 9)), Some((0, 8))),
+            (None, Some((0, 8))),
+            (None, Some((2, 8))),
+            (None, Some((4, 8))),
+            (None, Some((6, 8))),
+            (None, None),
+        ]
+    );
+}
+
+/// A column's progress is what its batches have read, so nodes deleted behind its cursor do not
+/// take it back, and it never passes the label's nodes. A batch reads four of six nodes; with two
+/// of those deleted the progress is 4 of 4, and with two more gone, one read and one not, 2 of 2.
+/// Counting the nodes below the cursor would give 2 of 4, then 1 of 2.
+#[test]
+fn a_building_columns_progress_stays_with_what_it_read_up_to_the_labels_entities() {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, &(0..6).collect::<Vec<_>>());
+    create_index_on(&mut g, &label, &attr);
+    assert!(graph_writes::run_indexer_batch(&mut g, 4));
+    let progress = |g: &Graph| native_build_progress(g, EntityType::Node, &label, &attr);
+    assert_eq!(progress(&g), Some((4, 6)));
+    for &id in &ids[1..3] {
+        delete_node_with_edges(&mut g, id);
+    }
+    assert_eq!(progress(&g), Some((4, 4)), "two read nodes deleted");
+    for &id in &ids[3..5] {
+        delete_node_with_edges(&mut g, id);
+    }
+    assert_eq!(progress(&g), Some((2, 2)), "at most the label's");
+}
+
+/// A label whose Range attributes build together shows one build in `db.indexes()`, out of the
+/// label's nodes, as C does: as far as the column that has read the least, each `Building` column
+/// pending. Of six nodes, `v`'s column reads four before `w`'s is created: 0 of 6, two pending.
+/// One more batch on each: `v` is `Ready` and `w` has read four, so 4 of 6, one pending.
+#[test]
+fn a_labels_progress_is_its_slowest_building_column_out_of_its_nodes() {
+    let v = Arc::new("v".to_string());
+    let w = Arc::new("w".to_string());
+    let (mut g, label, ids) = people_with(&v, &(0..6).collect::<Vec<_>>());
+    for &id in &ids {
+        set_attr(&mut g, id, &w, Value::Int(id as i64));
+    }
+    let column =
+        |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let info = |g: &Graph| {
+        let range = |attr: &Arc<String>| {
+            let field = Field::new(CString::new(attr.as_str()).unwrap(), IndexType::Range, None);
+            (attr.clone(), vec![Arc::new(field)])
+        };
+        let mut info = IndexInfo {
+            label: label.clone(),
+            pending: 0,
+            progress: 0,
+            total: 0,
+            fields: HashMap::from([range(&v), range(&w)]),
+            field_order: vec![v.clone(), w.clone()],
+            language: None,
+            stopwords: None,
+            entity_type: String::from("NODE"),
+        };
+        g.add_native_build(EntityType::Node, &mut info);
+        (info.pending, info.progress, info.total)
+    };
+    create_index_on(&mut g, &label, &v);
+    assert!(g.indexer_prepare(&column(&v), 4).is_some());
+    create_index_on(&mut g, &label, &w);
+    assert_eq!(info(&g), (2, 0, 6), "v read 4, w nothing");
+    assert!(g.indexer_prepare(&column(&v), 4).is_some());
+    assert!(g.indexer_prepare(&column(&w), 4).is_some());
+    assert_eq!(info(&g), (1, 4, 6), "v Ready, w read 4");
+    assert!(g.indexer_prepare(&column(&w), 4).is_some());
+    assert_eq!(info(&g), (0, 0, 0), "both Ready: nothing added");
+}
+
+/// A label whose Range column builds while RediSearch populates another of its fields (a fulltext
+/// or vector one) shows the slower of the two builds, and both pending. Once RediSearch has nothing
+/// pending, what it last reported no longer counts.
+#[test]
+fn a_labels_progress_is_the_slower_of_its_column_and_redisearch() {
+    let v = Arc::new("v".to_string());
+    let (mut g, label, _) = people_with(&v, &(0..6).collect::<Vec<_>>());
+    let column = IndexId::Column(EntityType::Node, (label.clone(), v.clone()));
+    // What `db.indexes()` shows for the label, given what RediSearch reports for it.
+    let info = |g: &Graph, pending: i32, progress: u64| {
+        let field = Field::new(CString::new(v.as_str()).unwrap(), IndexType::Range, None);
+        let mut info = IndexInfo {
+            label: label.clone(),
+            pending,
+            progress,
+            total: 6,
+            fields: HashMap::from([(v.clone(), vec![Arc::new(field)])]),
+            field_order: vec![v.clone()],
+            language: None,
+            stopwords: None,
+            entity_type: String::from("NODE"),
+        };
+        g.add_native_build(EntityType::Node, &mut info);
+        (info.pending, info.progress, info.total)
+    };
+    create_index_on(&mut g, &label, &v);
+    assert!(g.indexer_prepare(&column, 4).is_some());
+    assert_eq!(
+        info(&g, 1, 2),
+        (2, 2, 6),
+        "RediSearch at 2, the column at 4"
+    );
+    assert_eq!(
+        info(&g, 1, 5),
+        (2, 4, 6),
+        "RediSearch at 5, the column at 4"
+    );
+    assert_eq!(info(&g, 0, 1), (1, 4, 6), "RediSearch done");
+}
+
+// --- List values: the array tree ---
+
+fn ints(xs: &[i64]) -> Value {
+    Value::List(Arc::new(xs.iter().map(|&x| Value::Int(x)).collect()))
+}
+
+/// `v IN n.attr`, answered from the column's array tree.
+fn contains(
+    g: &Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    v: i64,
+) -> Vec<u64> {
+    g.falkordb_index
+        .column(EntityType::Node, label, attr)
+        .unwrap()
+        .array_contains(&Value::Int(v))
+        .collect()
+}
+
+/// A value changing kind — scalar, list, scalar — through the real SET path, one unit of work
+/// each. Every transition stages a remove from one tree and an add to the other; a remove routed
+/// to the wrong tree would leave a tuple behind that the scalar path never rechecks.
+#[test]
+fn a_value_changing_kind_moves_between_trees() {
+    let (mut g, label, attr, ids) = graph_with_index(1);
+    let n = ids[0];
+
+    set_attr(&mut g, n, &attr, Value::Int(1));
+    assert_eq!(range_scan(&g, &label, &attr, 1, 1), vec![n]);
+    assert!(contains(&g, &label, &attr, 1).is_empty());
+
+    set_attr(&mut g, n, &attr, ints(&[1, 2]));
+    assert!(
+        range_scan(&g, &label, &attr, 1, 1).is_empty(),
+        "the scalar tuple must be gone, not shadowed"
+    );
+    assert_eq!(contains(&g, &label, &attr, 1), vec![n]);
+    assert_eq!(contains(&g, &label, &attr, 2), vec![n]);
+
+    set_attr(&mut g, n, &attr, ints(&[2]));
+    assert!(
+        contains(&g, &label, &attr, 1).is_empty(),
+        "a dropped element"
+    );
+    assert_eq!(contains(&g, &label, &attr, 2), vec![n]);
+
+    set_attr(&mut g, n, &attr, Value::Int(2));
+    assert_eq!(range_scan(&g, &label, &attr, 2, 2), vec![n]);
+    assert!(
+        contains(&g, &label, &attr, 2).is_empty(),
+        "the same key crossing back must leave the array tree"
+    );
+}
+
+/// Both transitions inside ONE unit of work, so they meet in one buffer: `SET n.v = [1, 2]`
+/// then `DELETE n`, on a node whose `v` was the scalar `1`. The buffer holds a scalar remove of
+/// `(1, n)` and array adds then removes of `(1, n)` and `(2, n)` — the same `(key, id)` in both
+/// trees. Collapsing without the kind would let one tree's change decide the other's.
+#[test]
+fn a_kind_change_and_a_delete_in_one_batch_leave_nothing() {
+    let (mut g, label, attr, ids) = graph_with_index(2);
+    set_attr(&mut g, ids[0], &attr, Value::Int(1));
+    set_attr(&mut g, ids[1], &attr, ints(&[1]));
+
+    let aid = g.get_or_create_node_attr_id(&attr);
+    let mut attrs = FxHashMap::default();
+    attrs.insert(ids[0], vec![(aid, ints(&[1, 2]))]);
+    let mut writes = IndexDocs::default();
+    g.set_nodes_attributes(&attrs, &mut writes).unwrap();
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[0]);
+    g.delete_nodes(&del, &mut writes).unwrap();
+    g.apply_index_writes(&mut writes);
+
+    assert!(range_scan(&g, &label, &attr, 0, 10).is_empty());
+    assert_eq!(
+        contains(&g, &label, &attr, 1),
+        vec![ids[1]],
+        "only the untouched list node is left"
+    );
+    assert!(contains(&g, &label, &attr, 2).is_empty());
+}
+
+/// Indexer batches carry the array half, and so does the RDB-load populate, which builds through
+/// the same one-batch path. Writes land between batches behind and ahead of the cursor, changing
+/// values' kind both ways and deleting a list-valued node; the column then matches a one-pass
+/// build of the final graph in both trees. A batch that dropped the array half, or a write
+/// collapsed without its kind, leaves a tuple in the wrong tree or none at all.
+#[test]
+fn batched_build_carries_list_values_under_concurrent_writes() {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, &[1, 0, 0, 0, 4, 0]);
+    // Before the index exists, so the batches are their only way in.
+    set_attr(&mut g, ids[1], &attr, ints(&[1, 2]));
+    set_attr(&mut g, ids[2], &attr, ints(&[2, 3]));
+    set_attr(&mut g, ids[3], &attr, ints(&[3]));
+    set_attr(&mut g, ids[5], &attr, ints(&[4, 5]));
+    create_index_on(&mut g, &label, &attr);
+
+    // The first batch indexes ids[0] (scalar 1) and ids[1] ([1, 2]), and stops at ids[2].
+    assert!(graph_writes::run_indexer_batch(&mut g, 2));
+    assert_eq!(range_scan(&g, &label, &attr, 0, 10), vec![ids[0]]);
+    assert_eq!(contains(&g, &label, &attr, 2), vec![ids[1]]);
+    assert!(
+        matches!(
+            g.falkordb_index.query_column(
+                EntityType::Node,
+                &label,
+                &IndexQuery::ArrayContains {
+                    key: attr.clone(),
+                    value: Value::Int(2),
+                },
+            ),
+            Some(Err(_))
+        ),
+        "a read that reaches a Building column scans, not an unservable predicate"
+    );
+
+    // Behind the cursor: ids[0] goes 1 -> [1, 6] and ids[1] goes [1, 2] -> 2. Ahead of it:
+    // ids[2] is deleted, ids[3] goes [3] -> [7], and ids[5] goes [4, 5] -> 5.
+    set_attr(&mut g, ids[0], &attr, ints(&[1, 6]));
+    set_attr(&mut g, ids[1], &attr, Value::Int(2));
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[2]);
+    applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
+    set_attr(&mut g, ids[3], &attr, ints(&[7]));
+    set_attr(&mut g, ids[5], &attr, Value::Int(5));
+    assert_eq!(range_scan(&g, &label, &attr, 0, 10), vec![ids[1]]);
+    assert_eq!(contains(&g, &label, &attr, 1), vec![ids[0]]);
+    assert!(
+        contains(&g, &label, &attr, 2).is_empty(),
+        "ids[1] is a scalar now, and ids[2] was never reached"
+    );
+
+    build_to_end(&mut g, 2);
+    let values = [1, 2, 3, 4, 5, 6, 7];
+    let want = one_pass(&g, EntityType::Node, &label, &attr, &values);
+    assert_eq!(
+        want.2,
+        vec![
+            (1, vec![ids[0]]),
+            (2, vec![]),
+            (3, vec![]),
+            (4, vec![]),
+            (5, vec![]),
+            (6, vec![ids[0]]),
+            (7, vec![ids[3]]),
+        ],
+        "the oracle itself: only the two lists left"
+    );
+    assert_eq!(contents(&g, EntityType::Node, &label, &attr, &values), want);
+
+    // RDB load: the populate rebuilds the column from scratch, through one batch.
+    let field = Field::new(CString::new(attr.as_str()).unwrap(), IndexType::Range, None);
+    let fields = HashMap::from([(attr.clone(), vec![Arc::new(field)])]);
+    graph_writes::populate(&mut g, EntityType::Node, &label, &fields);
+    assert_eq!(
+        g.falkordb_index
+            .column_state(EntityType::Node, &label, &attr),
+        Some(BuildState::Ready)
+    );
+    assert_eq!(contents(&g, EntityType::Node, &label, &attr, &values), want);
+}
+
+/// For each of `queries` on `:label` nodes, what the scan standing in for a building column keeps
+/// at every cursor of a build in batches of two (`(query, kept)`, ids sorted), and then, with the
+/// column built, what the column answers (ids sorted, by query). The scan has to keep exactly
+/// what the built column answers: the planner drops the predicate it hands an index scan, so
+/// nothing else checks the scan's rows.
+fn building_scans_and_built_answers(
+    g: &mut Graph,
+    label: &Arc<String>,
+    queries: &[IndexQuery<Value>],
+) -> (Vec<(usize, Vec<u64>)>, Vec<Vec<u64>>) {
+    let labels: OrderSet<Arc<String>> = std::iter::once(label.clone()).collect();
+    let mut kept = Vec::new();
+    loop {
+        for (i, q) in queries.iter().enumerate() {
+            if let Some(Err(scan_filter)) = g.query_index_nodes(label, q) {
+                let scan_filter = scan_filter
+                    .resolve(|attr| g.get_node_attribute_id(attr).map(|attr| attr as u16))
+                    .expect("registered");
+                let mut ids: Vec<u64> = g
+                    .get_nodes(&labels, 0)
+                    .filter(|&id| g.node_matches(id, &scan_filter))
+                    .map(u64::from)
+                    .collect();
+                ids.sort_unstable();
+                kept.push((i, ids));
+            }
+        }
+        if !g.falkordb_index.has_building_columns() {
+            break;
+        }
+        graph_writes::run_indexer_batch(g, 2);
+    }
+    let built = queries
+        .iter()
+        .enumerate()
+        .map(|(i, q)| match g.query_index_nodes(label, q) {
+            Some(Ok(rows)) => {
+                let mut ids: Vec<u64> = rows.map(u64::from).collect();
+                ids.sort_unstable();
+                ids
+            }
+            _ => panic!("query {i}: a built column serves it"),
+        })
+        .collect();
+    (kept, built)
+}
+
+/// While a column is building, `v IN n.attr` is answered by a scan, and the scan keeps exactly the
+/// nodes whose list the built column answers with: a list holding the number, never a scalar
+/// equal to it. And `n.attr = v` keeps the scalar, never a list holding `v`. A scan that checked a
+/// list value as one number would keep no list at all, answering `1 IN n.v` with nothing.
+#[test]
+fn a_building_columns_scan_keeps_what_the_array_tree_answers() {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, &[1, 0, 0, 3, 0, 0, 5]);
+    set_attr(&mut g, ids[1], &attr, ints(&[1, 2]));
+    set_attr(&mut g, ids[2], &attr, ints(&[2, 3]));
+    set_attr(&mut g, ids[4], &attr, ints(&[3]));
+    set_attr(
+        &mut g,
+        ids[5],
+        &attr,
+        Value::List(Arc::new(
+            [
+                Value::Int(5),
+                Value::String(Arc::new("x".to_string())),
+                Value::Int(1),
+            ]
+            .into_iter()
+            .collect(),
+        )),
+    );
+    create_index_on(&mut g, &label, &attr);
+    let probe = |v: i64| IndexQuery::ArrayContains {
+        key: attr.clone(),
+        value: Value::Int(v),
+    };
+    let queries = [
+        probe(1),
+        probe(2),
+        probe(3),
+        probe(5),
+        probe(9),
+        eq(&attr, 1),
+        eq(&attr, 3),
+    ];
+
+    let (kept, built) = building_scans_and_built_answers(&mut g, &label, &queries);
+    assert_eq!(
+        built,
+        vec![
+            vec![ids[1], ids[5]],
+            vec![ids[1], ids[2]],
+            vec![ids[2], ids[4]],
+            vec![ids[5]],
+            vec![],
+            vec![ids[0]],
+            vec![ids[3]],
+        ],
+        "the built column itself"
+    );
+    for i in 0..queries.len() {
+        assert!(
+            kept.iter().filter(|(j, _)| *j == i).count() >= 2,
+            "query {i}: scanned at more than one cursor"
+        );
+    }
+    for (i, scanned) in kept {
+        assert_eq!(scanned, built[i], "query {i}");
+    }
+}
+
+/// `query_column` serves `v IN n.attr` from the array tree and `n.attr = v` from the scalar tree,
+/// and declines a probe the encoder cannot represent.
+#[test]
+fn array_contains_is_routed_to_the_array_tree() {
+    let (mut g, label, attr, ids) = graph_with_index(2);
+    set_attr(&mut g, ids[0], &attr, Value::Int(5));
+    set_attr(&mut g, ids[1], &attr, ints(&[5, 6]));
+    let probe = |v: Value| IndexQuery::ArrayContains {
+        key: attr.clone(),
+        value: v,
+    };
+    let rows =
+        |q: &IndexQuery<Value>| match g.falkordb_index.query_column(EntityType::Node, &label, q) {
+            Some(Ok(r)) => Some(r.collect::<Vec<_>>()),
+            Some(Err(_)) => panic!("the column is Ready"),
+            None => None,
+        };
+    assert_eq!(rows(&probe(Value::Int(5))), Some(vec![ids[1]]));
+    assert_eq!(rows(&eq(&attr, 5)), Some(vec![ids[0]]));
+    assert_eq!(
+        rows(&probe(Value::String(Arc::new("x".to_string())))),
+        None,
+        "a non-numeric probe is not this column's to answer"
+    );
+}
+
+// --- Conjunctions while a column is building ---
+
+/// While columns are building, a conjunction is answered by a scan, and the scan keeps exactly
+/// what the built columns answer: on one attribute, the folded window; across attributes, the
+/// entities every attribute's window admits; and with an `= null` member or a null bound,
+/// nothing, as `= null` holds for nothing. A scan that checked only one attribute of a
+/// cross-attribute conjunction would keep rows the other excludes.
+#[test]
+fn a_building_columns_scan_keeps_what_a_conjunction_answers() {
+    let (a, b) = (Arc::new("a".to_string()), Arc::new("b".to_string()));
+    let (mut g, label, ids) = people_with(&a, &[1, 1, 2, 2, 1, 3, 1]);
+    for (i, &id) in ids.iter().enumerate() {
+        set_attr(&mut g, id, &b, Value::Int(10 * (i as i64 + 1)));
+    }
+    create_index_on(&mut g, &label, &a);
+    create_index_on(&mut g, &label, &b);
+    let range = |key: &Arc<String>, min: Option<i64>, max: Option<i64>| IndexQuery::Range {
+        key: key.clone(),
+        min: min.map(Value::Int),
+        max: max.map(Value::Int),
+        include_min: true,
+        include_max: true,
+    };
+    let null = |key: &Arc<String>| IndexQuery::Equal {
+        key: key.clone(),
+        value: Value::Null,
+    };
+    let null_bound = |key: &Arc<String>| IndexQuery::Range {
+        key: key.clone(),
+        min: Some(Value::Null),
+        max: Some(Value::Int(50)),
+        include_min: true,
+        include_max: true,
+    };
+    let queries = [
+        IndexQuery::And(vec![eq(&a, 1), range(&a, Some(1), None)]),
+        IndexQuery::And(vec![eq(&a, 1), range(&b, Some(21), None)]),
+        IndexQuery::And(vec![eq(&a, 1), null(&a)]),
+        IndexQuery::And(vec![null(&a), eq(&b, 10)]),
+        IndexQuery::And(vec![eq(&a, 1), null_bound(&a)]),
+        IndexQuery::And(vec![eq(&a, 1), null_bound(&b)]),
+        IndexQuery::And(vec![range(&a, Some(1), Some(2)), eq(&b, 30)]),
+        IndexQuery::And(vec![
+            IndexQuery::And(vec![eq(&a, 2)]),
+            range(&b, None, Some(40)),
+        ]),
+    ];
+
+    let (kept, built) = building_scans_and_built_answers(&mut g, &label, &queries);
+    assert_eq!(
+        built,
+        vec![
+            vec![ids[0], ids[1], ids[4], ids[6]],
+            vec![ids[4], ids[6]],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![ids[2]],
+            vec![ids[2], ids[3]],
+        ],
+        "the built columns themselves"
+    );
+    for i in 0..queries.len() {
+        assert!(
+            kept.iter().filter(|(j, _)| *j == i).count() >= 2,
+            "query {i}: scanned at more than one cursor"
+        );
+    }
+    for (i, scanned) in kept {
+        assert_eq!(scanned, built[i], "query {i}");
+    }
 }

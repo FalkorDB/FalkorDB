@@ -305,10 +305,11 @@ class testIndexUpdatesFlow(FlowTestsBase):
 class testNativeOnlyFeedFlow(FlowTestsBase):
     # Under `index-falkordb` the native index is the only Range index, so nothing may also feed
     # Range fields to RediSearch: not a write, not the build after CREATE INDEX, not the build
-    # after an RDB load. `indices_sz_mb` in GRAPH.MEMORY USAGE is RediSearch's own memory, which
-    # is what makes those feeds visible from a client. Without the flag RediSearch is the Range
-    # index and all three must reach it; that half also shows the data is big enough for a
-    # whole-MB counter to see.
+    # after an RDB load. `indices_sz_mb` in GRAPH.MEMORY USAGE is what makes those feeds visible
+    # from a client: RediSearch's own memory, plus under the flag the native columns, which cost
+    # several times less than a RediSearch copy of the same entries. Without the flag RediSearch
+    # is the Range index and all three must reach it; that half also shows the data is big enough
+    # for a whole-MB counter to see.
     def __init__(self):
         # enableDebugCommand: the test reloads via DEBUG RELOAD, which redis refuses by default.
         self.env, self.db = Env(enableDebugCommand=True)
@@ -317,7 +318,7 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
         key = 'native_only_feed'
         g = self.db.select_graph(key)
 
-        def redisearch_mb():
+        def indices_mb():
             res = self.env.getConnection().execute_command("GRAPH.MEMORY", "USAGE", key)
             fields = [f.decode() if isinstance(f, bytes) else f for f in res[0::2]]
             return res[2 * fields.index('indices_sz_mb') + 1]
@@ -328,9 +329,9 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
         create_edge_range_index(g, 'RF', 'w', sync=True)
 
         g.query("UNWIND range(1, 50000) AS i CREATE (:NF {v: i})")
-        after_nodes = redisearch_mb()
+        after_nodes = indices_mb()
         g.query("UNWIND range(1, 50000) AS i CREATE ()-[:RF {w: i}]->()")
-        after_writes = redisearch_mb()
+        after_writes = indices_mb()
 
         # The indexes the writes filled, and those a build fills below: each must still be one the
         # planner uses and that answers.
@@ -358,29 +359,30 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
         # The build after CREATE INDEX: the data exists before the indexes.
         g.query("UNWIND range(1, 50000) AS i CREATE (:NB {v: i})")
         g.query("UNWIND range(1, 50000) AS i CREATE ()-[:RB {w: i}]->()")
-        before_build = redisearch_mb()
+        before_build = indices_mb()
         create_node_range_index(g, 'NB', 'v')
         create_edge_range_index(g, 'RB', 'w')
-        if native_only:
-            # RediSearch has nothing to build, so the index is ready as soon as CREATE INDEX
-            # returns. Until the build hands back its ticket the index says UNDER CONSTRUCTION
-            # and the planner does not use it.
-            res = g.ro_query("CALL db.indexes() YIELD label, status "
-                             "WHERE label IN ['NB', 'RB'] RETURN label, status ORDER BY label")
-            self.env.assertEqual(res.result_set, [['NB', 'OPERATIONAL'], ['RB', 'OPERATIONAL']])
-        # A RediSearch build runs in the background; it has to finish before the reading shows it.
-        wait_for_indices_to_sync(g)
-        after_build = redisearch_mb()
+        # The build runs in the background, RediSearch's or, under the flag, the native column's;
+        # it has to finish before the reading shows it.
+        wait_for_indices_to_sync(g, timeout=300)
+        after_build = indices_mb()
 
         # The build after an RDB load.
         self.env.dumpAndReload()
-        after_reload = redisearch_mb()
+        after_reload = indices_mb()
 
         if native_only:
-            self.env.assertEqual(after_nodes, 0)
-            self.env.assertEqual(after_writes, 0)
-            self.env.assertEqual(after_build, 0)
-            self.env.assertEqual(after_reload, 0)
+            # Only the native columns: an entry takes at most 16 bytes in its page and the
+            # branches above it under one more, so 32 is a ceiling with room to spare; the fixed
+            # cost is under 1 MiB, and the reading truncates to whole MiB. A RediSearch copy is
+            # 3.5x to 5x this bound at each step (7, 18, 36 and 36 MiB against 2, 4, 7 and 7).
+            def native_mb(entries):
+                return entries * 32 // (1 << 20) + 1
+
+            self.env.assertLessEqual(after_nodes, native_mb(50000))
+            self.env.assertLessEqual(after_writes, native_mb(100000))
+            self.env.assertLessEqual(after_build, native_mb(200000))
+            self.env.assertLessEqual(after_reload, native_mb(200000))
         else:
             self.env.assertGreater(after_nodes, 0)
             self.env.assertGreater(after_writes, after_nodes)

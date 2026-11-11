@@ -1,0 +1,30 @@
+name = "falkor-pr3437-review"
+defaultTargets = ["Pr3437Review"]
+
+[[lean_lib]]
+name = "Pr3437Review"
+
+# Shared foundations (Value `V F`, float model `F`, i64 helpers): proofs/core.
+[[require]]
+name = "falkor-core"
+path = "../core"
+
+# `VectorEval` dispatch and its soundness theorem `eval_sound`.
+[[require]]
+name = "falkor-columnar"
+path = "../columnar"
+
+# `value_of_type` model (`W.valueOfType`).
+[[require]]
+name = "falkor-value-order"
+path = "../value_order"
+
+# Quantifier counting `evalQuantifier`, outcome `K`.
+[[require]]
+name = "falkor-functions-str-list"
+path = "../functions_str_list"
+
+# `checkedNeg` (`ExprIR::Negate`).
+[[require]]
+name = "falkor-expr-semantics"
+path = "../expr_semantics"

@@ -125,9 +125,8 @@ class testEffects_01_RecordCommand(_EffectsBase):
         self.assert_agree("MATCH (n:Guard) RETURN count(n)", [[1]])
         self.assert_graph_eq()
 
-        # And the rolled-back write released the MVCC write slot: `abandon_write`
-        # owns that, and a leak here would wedge every later write on this graph
-        # rather than fail visibly.
+        # And the rolled-back write left the graph writable: a failed write must
+        # not wedge every later write on this graph rather than fail visibly.
         self.query_and_sync("CREATE (:AfterFailure {v: 1})")
         self.assert_agree("MATCH (n:AfterFailure) RETURN count(n)", [[1]])
 

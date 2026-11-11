@@ -3,9 +3,13 @@
 //! [`data_structures`] is the always-compiled substrate (the CoW B⁺-tree). The
 //! index proper — the numeric key [`encode`]r, the tree-backed index, and the
 //! hooks that turn graph writes into index changes — lives behind the
-//! `index-falkordb` feature, off by default.
+//! `index-falkordb` feature, off by default. So does the [`cch`] shortest-path index, whose
+//! state is a field of the same [`FalkorDbIndex`](falkordb_index::FalkorDbIndex).
 
 pub mod data_structures;
+
+#[cfg(feature = "index-falkordb")]
+pub mod cch;
 
 #[cfg(feature = "index-falkordb")]
 pub mod encode;
@@ -20,7 +24,13 @@ pub mod graph_writes;
 pub mod numeric;
 
 #[cfg(feature = "index-falkordb")]
+pub mod online_build;
+
+#[cfg(feature = "index-falkordb")]
 pub mod pending_writes;
+
+#[cfg(feature = "index-falkordb")]
+pub mod range;
 
 #[cfg(feature = "index-falkordb")]
 pub mod unique;
@@ -133,14 +143,20 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
             }
         }
         Q::Point { key, .. } => format!("a geo predicate on `{key}`"),
-        Q::ArrayContains { key, .. } => format!("an array-contains on `{key}`"),
+        Q::ArrayContains { key, value } => {
+            if encode::encode_numeric(value).is_some() {
+                format!("an array-contains on `{key}`")
+            } else {
+                format!("an array-contains on `{key}` with a non-numeric value")
+            }
+        }
     }
 }
 
-/// Collect the attribute of every member of a union, paired with whether the native union serves
-/// that member kind: an `Equal` or an `IN` list, directly in the union. `NumericIndex::union`
-/// declines a nested combinator, so the members of a nested union or conjunction count by their
-/// attributes but are not served (`top_level` is `false` for them).
+/// Collect the attribute of every member of a union, paired with whether it is a member kind the
+/// native union serves — an `Equal` or an `IN` list — directly in the union. The members of a
+/// nested union or conjunction count by their attributes but not as served (`top_level` is `false`
+/// for them).
 #[cfg(feature = "index-falkordb")]
 fn union_members<'a>(
     children: &'a [crate::index::IndexQuery<crate::runtime::value::Value>],

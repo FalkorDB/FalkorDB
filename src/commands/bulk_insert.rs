@@ -544,7 +544,7 @@ fn process_edge_token(
 ///
 /// `docs` collects the index documents for the whole insert; the caller publishes them once, on
 /// the success path only. RediSearch is not versioned, so anything published into it cannot be
-/// undone by the MVCC rollback that a later failing token triggers — a batch that published as it
+/// undone by dropping the MVCC fork, which a later failing token does — a batch that published as it
 /// went and failed midway would leave documents behind for entities that were never committed
 /// (and whose ids may be handed to different entities later). Bulk only ever adds, so it fills
 /// only `node_adds` and `edge_adds`, plus the native index's changes, which each token applies to
@@ -843,26 +843,19 @@ pub fn graph_bulk_insert(
             .iter()
             .map(redis_module::RedisString::as_slice)
             .collect();
-        let mut tg = graph.write();
-        let Some(g_arc) = tg.graph.write() else {
-            return Err(redis_module::RedisError::String(
-                "ERR another write is in progress, retry the query".to_string(),
-            ));
-        };
+        let tg = graph.write();
+        let mut fork = tg.graph.fork();
         let mut docs = IndexDocs::default();
-        let result = {
-            let mut g = g_arc.borrow_mut();
-            bulk_insert_sync_yield(
-                &mut g,
-                &tokens,
-                node_count,
-                edge_count,
-                node_token_count,
-                rel_token_count,
-                ctx.ctx,
-                &mut docs,
-            )
-        };
+        let result = bulk_insert_sync_yield(
+            &mut fork,
+            &tokens,
+            node_count,
+            edge_count,
+            node_token_count,
+            rel_token_count,
+            ctx.ctx,
+            &mut docs,
+        );
         // The commit joins the token result rather than sitting in the `Ok` arm
         // below. `commit` validates before publishing, and returning its refusal
         // straight to the caller skipped the whole error arm — so a `BEGIN` that
@@ -876,24 +869,23 @@ pub fn graph_bulk_insert(
         // document wants its src and dst (`IndexDocs::edge_removes`), which bulk
         // does not collect. Asking first costs one walk of a roaring
         // bitmap on a path that has just parsed a whole payload, and is the only
-        // ordering where a refusal leaves nothing behind.
-        //
-        // Still published before the swap rather than after it: `g_arc` is the
-        // un-published fork here, and after the swap a concurrent reader can
-        // hold the same graph, where this `borrow_mut` would panic.
+        // ordering where a refusal leaves nothing behind. (`commit` cannot find
+        // this version stale: it was forked under the write lock held here.)
         let result = result.and_then(|()| {
-            g_arc.borrow().validate().map_err(|e| e.to_string())?;
-            g_arc.borrow_mut().commit_index_docs(&mut docs);
-            tg.graph.commit(g_arc).map_err(|e| e.to_string())
+            fork.validate().map_err(|e| e.to_string())?;
+            fork.commit_index_docs(&mut docs);
+            tg.graph
+                .commit(fork)
+                .map(|_published| ())
+                .map_err(|e| e.to_string())
         });
         return match result {
             Ok(()) => {
                 ctx.replicate_verbatim();
-                let reply = format!("{node_count} nodes created, {edge_count} relations created");
+                let reply = format!("{node_count} nodes created, {edge_count} edges created");
                 Ok(RedisValue::SimpleString(reply))
             }
             Err(e) => {
-                tg.graph.rollback();
                 drop(tg);
                 if begin {
                     discard_created_graph(ctx, &key_str);
@@ -950,38 +942,29 @@ pub fn graph_bulk_insert(
             let result: Result<(), String> = 'phase: loop {
                 let session = QuerySession::begin_with(&graph, facts);
                 // Phase 1: build the new version as a reader, GIL-free, into a private
-                // fork. The MVCC write slot is claimed only when phase 2 escalates, so
-                // an inline writer is never refused because this insert is building.
-                let Ok(g_arc) = session.write_version() else {
-                    break 'phase Err(
-                        "ERR another write is in progress, retry the query".to_string()
-                    );
-                };
+                // fork. Forking takes nothing, so an inline writer is never refused
+                // because this insert is building; phase 2's escalation checks whether
+                // one committed meanwhile. Every early exit below drops the fork with
+                // the session — there is nothing else to release.
+                let mut fork = session.write_version();
                 let mut docs = IndexDocs::default();
-                let inserted = {
-                    let mut g = g_arc.borrow_mut();
-                    let tokens: Vec<&[u8]> =
-                        token_data.iter().map(std::vec::Vec::as_slice).collect();
-                    bulk_insert_sync(
-                        &mut g,
-                        &tokens,
-                        node_count,
-                        edge_count,
-                        node_token_count,
-                        rel_token_count,
-                        &mut docs,
-                    )
-                };
+                let tokens: Vec<&[u8]> = token_data.iter().map(std::vec::Vec::as_slice).collect();
+                let inserted = bulk_insert_sync(
+                    &mut fork,
+                    &tokens,
+                    node_count,
+                    edge_count,
+                    node_token_count,
+                    rel_token_count,
+                    &mut docs,
+                );
                 if let Err(e) = inserted {
-                    session.release_slot();
                     break 'phase Err(format!("ERR bulk insert failed: {e}"));
                 }
                 // Phase 2: commit + replicate as a writer, so the commit Arc-swap
                 // happens under the GIL and stays fork-safe (#452). Escalation takes
                 // the global lock before the write lock, never the reverse (#726).
-                if let Err(e) = session.upgrade_to_write() {
-                    // Drop the phase 1 fork (and the slot, if it was claimed).
-                    session.release_slot();
+                if let Err(e) = session.upgrade_to_write(Some(&mut fork)) {
                     // An inline writer committed while phase 1 built: nothing was
                     // published, so build again on top of its version.
                     if session.is_stale() {
@@ -1005,13 +988,12 @@ pub fn graph_bulk_insert(
                 // for the same reason: RediSearch is not MVCC, so a document
                 // published here outlives the fork that `commit` would refuse,
                 // and nothing can take it back.
-                if let Err(e) = g_arc.borrow().validate() {
-                    session.release_slot();
+                if let Err(e) = fork.validate() {
                     break 'phase Err(e.to_string());
                 }
-                g_arc.borrow_mut().commit_index_docs(&mut docs);
+                fork.commit_index_docs(&mut docs);
                 if let Err(e) = session
-                    .with_graph_mut(|tg| tg.graph.commit(g_arc))
+                    .with_graph_mut(|tg| tg.graph.commit(fork))
                     .expect("writer mode after upgrade_to_write")
                 {
                     break 'phase Err(e.to_string());
@@ -1051,8 +1033,7 @@ pub fn graph_bulk_insert(
             };
             match result {
                 Ok(()) => {
-                    let reply =
-                        format!("{node_count} nodes created, {edge_count} relations created");
+                    let reply = format!("{node_count} nodes created, {edge_count} edges created");
                     let c_reply = std::ffi::CString::new(reply).expect("reply has no NUL bytes");
                     raw::reply_with_simple_string(ts_ctx, c_reply.as_ptr());
                 }

@@ -213,6 +213,36 @@ class testAccessDelNode():
         self.env.assertEqual(nodes[2].properties['v'], 'c')
         self.env.assertContains('C', nodes[2].labels)
 
+    def test10_deleted_node_keeps_labels_staged_in_the_same_query(self):
+        # #3245. A deleted node keeps everything it had at the DELETE, and that
+        # includes labels this query set or removed before it. The snapshot used
+        # to read the committed labels, losing the staged ones. C returns no
+        # labels at all for a deleted node; keeping them is Rust's rule.
+        #
+        # `DELETE n` takes the bulk path, `DELETE coalesce(n)` the per-entity one.
+        for target in ("n", "coalesce(n)"):
+            g = self.db.select_graph(f"del_staged_labels_set_{target}")
+            g.query("CREATE (:A {v: 1})")
+            res = g.query(
+                f"MATCH (n:A) SET n:C DELETE {target} RETURN labels(n), n:C, n:A")
+            labels, has_c, has_a = res.result_set[0]
+            self.env.assertEqual(sorted(labels), ['A', 'C'], message=target)
+            self.env.assertEqual([has_c, has_a], [True, True], message=target)
+            self.env.assertEqual(res.nodes_deleted, 1)
+            # Nothing staged on the deleted node leaks into the graph.
+            self.env.assertEqual(
+                g.query("MATCH (n) RETURN count(n)").result_set, [[0]])
+
+            g = self.db.select_graph(f"del_staged_labels_remove_{target}")
+            g.query("CREATE (:A:B {v: 1})")
+            res = g.query(
+                f"MATCH (n:A) REMOVE n:A DELETE {target} RETURN labels(n), n:A, n:B")
+            self.env.assertEqual(res.result_set[0], [['B'], False, True], message=target)
+            self.env.assertEqual(res.nodes_deleted, 1)
+            self.env.assertEqual(
+                g.query("MATCH (n) RETURN count(n)").result_set, [[0]])
+
+
 class testAccessDelEdge():
     def __init__(self):
         GRAPH_ID = "access_del_edge"

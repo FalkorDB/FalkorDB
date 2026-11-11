@@ -1,17 +1,20 @@
-//! The numeric index: a CoW B⁺-tree of `(key, entity_id)` tuples, where `key` is the
-//! [`encode_numeric`] image of the indexed value.
+//! The numeric kind of a Range column: CoW B⁺-trees of `(key, entity_id)` tuples, where `key` is
+//! the [`encode_numeric`] image of the indexed value — one tree for scalar values and one for the
+//! elements of list values ([`KeyKind`]).
 //!
-//! One concrete type, no trait: index kinds are a closed set, dispatched through the
-//! [`IndexColumn`](super::falkordb_index::IndexColumn) enum. MVCC is intrinsic: a query snapshots
-//! the tree in `O(1)` (root-`Arc` clone) and writes are copy-on-write, so readers never see a torn
-//! write. The tree's root lives on the graph version itself — see
+//! The trees are private. The column ([`RangeIndex`](super::range::RangeIndex)) reaches them only
+//! through [`RangeKind`], the contract it holds every kind to. MVCC is intrinsic: a query
+//! snapshots a tree in `O(1)` (root-`Arc` clone) and writes are copy-on-write, so readers never
+//! see a torn write. The trees' roots live on the graph version itself — see
 //! [`FalkorDbIndex`](super::falkordb_index::FalkorDbIndex).
 
+use std::ops::{Index, IndexMut};
+#[cfg(test)]
 use std::sync::Arc;
 
 use super::data_structures::cow_btree::{CowBTree, RangeIter};
-use super::encode::encode_numeric;
-use crate::index::IndexQuery;
+use super::encode::{self, KeyKind, encode_numeric};
+use super::range::RangeKind;
 use crate::runtime::value::Value;
 
 /// Tree fan-out. Fixed at the tuned default for now; a future step can make the
@@ -42,6 +45,9 @@ type TreeIter = RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
 pub enum DocIter {
     One(TreeIter),
     Many(UnionIter),
+    /// An already-materialised doc set — an intersection, which cannot be produced lazily from
+    /// value-ordered streams. Distinct by construction.
+    Set(std::collections::hash_set::IntoIter<u64>),
 }
 
 impl Iterator for DocIter {
@@ -51,6 +57,7 @@ impl Iterator for DocIter {
         match self {
             Self::One(it) => it.next(),
             Self::Many(it) => it.next(),
+            Self::Set(it) => it.next(),
         }
     }
 }
@@ -71,13 +78,25 @@ pub enum KeySet {
 
 impl KeySet {
     /// Keys are deduplicated, so `IN [1,1,2]` yields each entity once. That is sufficient for
-    /// uniqueness overall: a doc appears under one key per column (the encoder rejects lists, so
-    /// an array-valued property is not in this column at all), so distinct keys cannot both hold
-    /// the same doc.
+    /// uniqueness overall: a doc appears under at most one key in the scalar tree, which is the
+    /// only tree an `IN` list or a union reads (a list value's elements live in the array tree), so
+    /// distinct keys cannot both hold the same doc.
     fn distinct(mut keys: Vec<u64>) -> Self {
         keys.sort_unstable();
         keys.dedup();
         Self::Keys(keys)
+    }
+
+    /// The set of `keys`, given in any order and possibly repeated. Spelled one way per size: none
+    /// is [`Empty`](Self::Empty), so a set selecting nothing is recognised as such, and one is a
+    /// [`Point`](Self::Point), so `n.v = x` and `IN [x]` read one cursor rather than a chain of one.
+    #[must_use]
+    pub fn of_keys(keys: Vec<u64>) -> Self {
+        match Self::distinct(keys) {
+            Self::Keys(keys) if keys.is_empty() => Self::Empty,
+            Self::Keys(keys) if keys.len() == 1 => Self::Point(keys[0]),
+            keys => keys,
+        }
     }
 
     /// Whether `key` is one of these.
@@ -91,6 +110,43 @@ impl KeySet {
             Self::Point(k) => *k == key,
             Self::Range(lo, hi) => (*lo..=*hi).contains(&key),
             Self::Keys(keys) => keys.binary_search(&key).is_ok(),
+        }
+    }
+
+    /// The keys in both: two predicates on one scalar under `AND`. Two windows meet in one window
+    /// and a point set keeps the points the other side holds, so the answer stays one lookup of the
+    /// tree rather than an intersection of rows.
+    ///
+    /// `WHERE n.v = 5 AND n.v > 2` needs this: the planner's `merge_range_queries` gives up whenever
+    /// two conjuncts bound the same side, because at plan time the bounds may still be expressions
+    /// it cannot compare. By the time the column sees them they are keys.
+    #[must_use]
+    pub fn and(
+        self,
+        other: Self,
+    ) -> Self {
+        match (self, other) {
+            (Self::Range(a, b), Self::Range(c, d)) => {
+                let (lo, hi) = (a.max(c), b.min(d));
+                if lo <= hi {
+                    Self::Range(lo, hi)
+                } else {
+                    Self::Empty
+                }
+            }
+            (Self::Point(key), other) | (other, Self::Point(key)) => {
+                if other.contains(key) {
+                    Self::Point(key)
+                } else {
+                    Self::Empty
+                }
+            }
+            (Self::Keys(keys), other) | (other, Self::Keys(keys)) => Self::of_keys(
+                keys.into_iter()
+                    .filter(|&key| other.contains(key))
+                    .collect(),
+            ),
+            (Self::Empty, _) | (_, Self::Empty) => Self::Empty,
         }
     }
 }
@@ -128,265 +184,114 @@ impl Iterator for UnionIter {
     }
 }
 
-/// Encoded `(key, doc)` tuples for one column: what everything that moves a column's tuples in
-/// encoded form carries (a unit of work's collapsed adds and removes, an indexer batch).
+/// Encoded `(key, doc)` tuples for one column, kept apart by [`KeyKind`]: what everything that
+/// moves a column's tuples in encoded form carries (a unit of work's collapsed adds and removes,
+/// an indexer batch).
+///
+/// Indexed by the kind (`tuples[KeyKind::Array]`), so a tuple always goes back into the tree it
+/// came from. A flat list would lose which tree each tuple belongs in, and a kind stored on every
+/// tuple would cost 8 more bytes per tuple for what the position already says.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct EncodedTuples {
-    pub scalar: Vec<(u64, u64)>,
+    by_kind: [Vec<(u64, u64)>; KeyKind::ALL.len()],
+}
+
+impl Index<KeyKind> for EncodedTuples {
+    type Output = Vec<(u64, u64)>;
+
+    fn index(
+        &self,
+        kind: KeyKind,
+    ) -> &Self::Output {
+        &self.by_kind[kind as usize]
+    }
+}
+
+impl IndexMut<KeyKind> for EncodedTuples {
+    fn index_mut(
+        &mut self,
+        kind: KeyKind,
+    ) -> &mut Self::Output {
+        &mut self.by_kind[kind as usize]
+    }
 }
 
 impl EncodedTuples {
-    /// Tuples of scalar values.
+    /// Tuples of scalar values only: the shape a column holding no list values produces.
     #[must_use]
     pub fn scalars(scalar: Vec<(u64, u64)>) -> Self {
-        Self { scalar }
+        let mut tuples = Self::default();
+        tuples[KeyKind::Scalar] = scalar;
+        tuples
     }
 
-    /// Whether there are no tuples.
+    /// Whether there are no tuples of either kind.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.scalar.is_empty()
+        self.by_kind.iter().all(Vec::is_empty)
     }
 
-    /// How many tuples there are.
+    /// How many tuples there are, of every kind.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.scalar.len()
+        self.by_kind.iter().map(Vec::len).sum()
     }
 
     /// Empty the tuples, keeping their capacity for reuse.
     pub fn clear(&mut self) {
-        self.scalar.clear();
+        self.by_kind.iter_mut().for_each(Vec::clear);
     }
 
-    /// Sort the tuples ascending and drop duplicates: the **sorted and unique** shape a tree's
-    /// bulk build requires.
+    /// Sort each kind's tuples ascending and drop duplicates: the **sorted and unique** shape a
+    /// tree's bulk build requires.
     pub fn sort_dedup(&mut self) {
-        self.scalar.sort_unstable();
-        self.scalar.dedup();
+        for tuples in &mut self.by_kind {
+            tuples.sort_unstable();
+            tuples.dedup();
+        }
     }
 }
 
-/// A numeric property index over one `(label, attribute)`: entity ids keyed by
-/// the order-preserving encoding of their value, so `n.x <predicate> v` is a
-/// tree range scan. Non-numeric and `NaN` values are not indexed (parity with
-/// the RediSearch NUMERIC field it replaces).
+/// The numeric kind of one `(label, attribute)` column: entity ids keyed by the order-preserving
+/// encoding of their value, so `n.x <predicate> v` is a tree range scan. Non-numeric and `NaN`
+/// values are not indexed (parity with the RediSearch NUMERIC field it replaces).
 ///
 /// `Clone` is `O(1)` — the underlying `CowBTree` clone is a root-`Arc` bump — so
 /// a graph version can fork its index snapshot cheaply (see
 /// [`FalkorDbIndex`](super::falkordb_index::FalkorDbIndex)).
 #[derive(Clone, Default)]
 pub struct NumericIndex {
+    /// Scalar values: at most one tuple per indexed entity.
     tree: Tree,
+    /// Elements of **list**-valued properties: one tuple per distinct numeric element.
+    ///
+    /// A separate tree, not a convenience: see [`KeyKind`]. Sharing one tree would make a node
+    /// with `v = [1, 2]` carry the key for `1`, so `WHERE n.v = 1` would match it.
+    ///
+    /// Read only by `ArrayContains` (`value IN n.prop`): each probe is a point lookup, so a doc is
+    /// reached through one key per probe and cannot be yielded twice. Several probes in a
+    /// conjunction are intersected as a set ([`RangeIndex::lookup`](super::range::RangeIndex::lookup)).
+    array_tree: Tree,
 }
 
 impl NumericIndex {
-    /// An empty index.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    /// The kinds of key this kind's trees hold, one tree each.
+    const TREES: [KeyKind; 2] = [KeyKind::Scalar, KeyKind::Array];
 
-    /// Index `id` under `value`. A no-op for non-numeric / `NaN` values and
-    /// idempotent for an already-present `(value, id)`.
-    pub fn add(
+    /// The tree holding keys of `kind`, to change.
+    fn tree_mut(
         &mut self,
-        value: &Value,
-        id: u64,
-    ) {
-        if let Some(k) = encode_numeric(value) {
-            // The bool reports whether the tuple was newly inserted — for callers keeping an
-            // exact live count. This index derives its counts from the tree, so it is discarded
-            // deliberately rather than ignored.
-            let _newly_inserted = self.tree.insert(k, id);
+        kind: KeyKind,
+    ) -> &mut Tree {
+        match kind {
+            KeyKind::Scalar => &mut self.tree,
+            KeyKind::Array => &mut self.array_tree,
         }
     }
 
-    /// Remove `id` from under `value`. A no-op if it was never indexed.
-    pub fn remove(
-        &mut self,
-        value: &Value,
-        id: u64,
-    ) {
-        if let Some(k) = encode_numeric(value) {
-            let _was_present = self.tree.remove(k, id);
-        }
-    }
-
-    /// Add a batch of `(value, id)` entries, consuming any iterator (the runtime's columnar batch).
-    /// Non-numeric / `NaN` are dropped, and the encoded tuples are sorted here because the tree's
-    /// `insert_batch` needs a sorted slice. Cheaper than repeated [`add`](Self::add).
-    ///
-    /// `scratch` is the caller's encode buffer and its contents are replaced. Taking it rather than
-    /// allocating internally lets a commit that touches many columns allocate once and reuse the
-    /// capacity, instead of a fresh `Vec` per column.
-    pub fn add_batch(
-        &mut self,
-        entries: impl IntoIterator<Item = (Value, u64)>,
-        scratch: &mut Vec<(u64, u64)>,
-    ) {
-        Self::encode_pairs_into(entries, scratch);
-        scratch.sort_unstable();
-        self.tree.insert_batch(scratch);
-    }
-
-    /// Remove a batch of `(value, id)` entries, consuming any iterator — the write path's
-    /// mass-delete / mass-update column. Non-numeric / `NaN` dropped, encoded tuples sorted here.
-    ///
-    /// `scratch` is the caller's encode buffer — see [`add_batch`](Self::add_batch).
-    pub fn remove_batch(
-        &mut self,
-        entries: impl IntoIterator<Item = (Value, u64)>,
-        scratch: &mut Vec<(u64, u64)>,
-    ) {
-        Self::encode_pairs_into(entries, scratch);
-        scratch.sort_unstable();
-        self.tree.remove_batch(scratch);
-    }
-
-    /// Encode `(value, id)` entries to `(key, id)` tree tuples in `out` (cleared first), dropping
-    /// non-numeric / `NaN` values.
-    ///
-    /// Takes the buffer rather than returning one so a caller applying many columns in a row
-    /// allocates once and reuses the capacity, instead of one `Vec` per column per commit.
-    fn encode_pairs_into(
-        entries: impl IntoIterator<Item = (Value, u64)>,
-        out: &mut Vec<(u64, u64)>,
-    ) {
-        out.clear();
-        let entries = entries.into_iter();
-        out.reserve(entries.size_hint().0);
-        out.extend(entries.filter_map(|(v, id)| encode_numeric(&v).map(|k| (k, id))));
-    }
-
-    /// Add already-encoded tuples: the adds a unit of work's staged writes collapsed to, or an
-    /// indexer batch. Tuples are never re-encoded: re-encoding a decoded key would be a second trip
-    /// through a many-to-one map. Into an empty index the tuples are bulk-built, bottom-up from
-    /// the sorted tuples, rather than merged in.
-    pub fn add_encoded(
-        &mut self,
-        tuples: &mut EncodedTuples,
-    ) {
-        tuples.sort_dedup();
-        if self.tree.is_empty() {
-            self.tree = Tree::from_sorted(&tuples.scalar);
-        } else {
-            self.tree.insert_batch(&tuples.scalar);
-        }
-    }
-
-    /// Remove already-encoded tuples: the removes a unit of work's staged writes collapsed to.
-    pub fn remove_encoded(
-        &mut self,
-        tuples: &mut EncodedTuples,
-    ) {
-        tuples.sort_dedup();
-        self.tree.remove_batch(&tuples.scalar);
-    }
-
-    /// Whether the index holds no tuples.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.tree.is_empty()
-    }
-
-    /// Entity ids whose value equals `value`. Empty for a non-numeric value.
-    #[must_use]
-    pub fn point(
-        &self,
-        value: &Value,
-    ) -> DocIter {
-        self.lookup(Self::point_keys(value))
-    }
-
-    /// Entity ids stored under the encoded key `key`.
-    #[must_use]
-    pub fn point_key(
-        &self,
-        key: u64,
-    ) -> DocIter {
-        DocIter::One(self.tree.point(key))
-    }
-
-    /// Entity ids whose value lies in the (optionally half-open) numeric range.
-    /// A `None` bound is unbounded on that side; a non-numeric bound yields no
-    /// matches. Results are in `(value, id)` order.
-    #[must_use]
-    pub fn range(
-        &self,
-        min: Option<&Value>,
-        max: Option<&Value>,
-        include_min: bool,
-        include_max: bool,
-    ) -> DocIter {
-        self.lookup(Self::range_keys(min, max, include_min, include_max))
-    }
-
-    /// Dispatch the numeric predicates. `Equal` → [`point`](Self::point), `Range` →
-    /// [`range`](Self::range), an `IN` list → [`in_list`](Self::in_list), and an `OR` of
-    /// equalities and `IN` lists → [`union`](Self::union). `And` and non-numeric variants return
-    /// `None` — the query router composes or rejects those.
-    #[must_use]
-    pub fn query(
-        &self,
-        q: &IndexQuery<Value>,
-    ) -> Option<DocIter> {
-        Self::keys(q).map(|keys| self.lookup(keys))
-    }
-
-    /// The keys `q` selects, or `None` where [`query`](Self::query) declines it. A column answers
-    /// from these, and a scan standing in for a column still building checks each entity against
-    /// them, so the scan keeps exactly what the column will answer.
-    #[must_use]
-    pub fn keys(q: &IndexQuery<Value>) -> Option<KeySet> {
-        match q {
-            IndexQuery::Equal { value, .. } => Some(Self::point_keys(value)),
-            IndexQuery::Range {
-                min,
-                max,
-                include_min,
-                include_max,
-                ..
-            } => Some(Self::range_keys(
-                min.as_ref(),
-                max.as_ref(),
-                *include_min,
-                *include_max,
-            )),
-            IndexQuery::InList {
-                list: Value::List(items),
-                ..
-            } => Self::in_list(items),
-            IndexQuery::Or(children) => Self::union(children),
-            _ => None,
-        }
-    }
-
-    /// The entity ids under `keys`.
-    #[must_use]
-    pub fn lookup(
-        &self,
-        keys: KeySet,
-    ) -> DocIter {
-        match keys {
-            KeySet::Empty => self.empty(),
-            KeySet::Point(k) => DocIter::One(self.tree.point(k)),
-            KeySet::Range(lo, hi) => DocIter::One(self.tree.range(lo, hi)),
-            // No cursor is built here — see [`UnionIter`]. The tree snapshot is taken now, so
-            // every member is answered from the same version however late its cursor is created.
-            KeySet::Keys(keys) => DocIter::Many(UnionIter {
-                tree: self.tree.clone(),
-                keys: keys.into_iter(),
-                current: None,
-            }),
-        }
-    }
-
-    fn point_keys(value: &Value) -> KeySet {
-        encode_numeric(value).map_or(KeySet::Empty, KeySet::Point)
-    }
-
-    fn range_keys(
+    /// The keys from `min` to `max`, each bound inclusive or not, and `None` unbounded on its side.
+    /// A bound that does not encode selects nothing.
+    pub(super) fn range_keys(
         min: Option<&Value>,
         max: Option<&Value>,
         include_min: bool,
@@ -434,97 +339,214 @@ impl NumericIndex {
         KeySet::Range(lo, hi)
     }
 
-    /// `n.a IN [...]`. The list names one attribute by construction, so only its values are
-    /// checked.
-    ///
-    /// Returns `None` unless **every** value encodes to a numeric key. Serving only the numeric
-    /// subset would silently drop rows: a value the numeric column cannot represent (a string,
-    /// say) may still match entities held by another kind, and answering without them is a wrong
-    /// answer rather than a slower one. Declining hands the whole query back to the caller intact.
-    ///
-    /// An empty list is declined too, rather than answered as "no rows": the scan op drops the
-    /// members it cannot index before the list gets here, so `IN [date(..)]` arrives empty, and
-    /// "no rows" would miss every entity holding that date.
-    fn in_list(items: &[Value]) -> Option<KeySet> {
-        if items.is_empty() {
-            return None;
-        }
-        let keys = items
-            .iter()
-            .map(encode_numeric)
-            .collect::<Option<Vec<u64>>>()?;
-        Some(KeySet::distinct(keys))
-    }
-
-    /// An `OR` of `Equal`s and `IN` lists — `a = 1 OR a IN [2, 3]`.
-    ///
-    /// Unlike an `IN` list, an `OR` can name several attributes, and this index is one column:
-    /// answering `a = 1 OR b = 2` from it would look up both `1` and `2` in `a` and return
-    /// `{a=1} ∪ {a=2}` — wrong rows, not missing ones. So every member must target the same
-    /// attribute, and every value must encode, as in [`in_list`](Self::in_list); otherwise `None`.
-    /// The exception is `a = null`, which holds for nothing, so it adds no key.
-    fn union(children: &[IndexQuery<Value>]) -> Option<KeySet> {
-        if children.is_empty() {
-            return None;
-        }
-        let mut attr: Option<&Arc<String>> = None;
-        let mut keys = Vec::with_capacity(children.len());
-        for child in children {
-            let (key, values) = match child {
-                IndexQuery::Equal { key, value } => (key, std::slice::from_ref(value)),
-                IndexQuery::InList {
-                    key,
-                    list: Value::List(items),
-                } if !items.is_empty() => (key, items.as_slice()),
-                // A range, an empty list, a nested combinator — not this shape.
-                _ => return None,
-            };
-            if *attr.get_or_insert(key) != key {
-                return None;
-            }
-            for value in values.iter().filter(|v| !matches!(v, Value::Null)) {
-                keys.push(encode_numeric(value)?);
-            }
-        }
-        Some(KeySet::distinct(keys))
-    }
-
-    /// An iterator over no entries (`lo > hi` yields nothing).
-    fn empty(&self) -> DocIter {
-        DocIter::One(self.tree.range(1, 0))
-    }
-
-    /// Bulk-build from `(value, id)` pairs in any order. Non-numeric / `NaN`
-    /// values are dropped. Far cheaper than repeated [`add`](Self::add) for
-    /// initial population — one sort + bottom-up page build, no per-item
-    /// traversal. The tree's tests compare it with incremental adds.
+    /// Every `(kind, key, doc)` tuple the index holds, in order: the scalar tree's, then the array
+    /// tree's. For tests that compare a column with what it must hold.
     #[cfg(test)]
     #[must_use]
-    pub fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a Value, u64)>) -> Self {
-        let mut pairs: Vec<(u64, u64)> = entries
+    pub fn tuples(&self) -> Vec<(KeyKind, u64, u64)> {
+        [
+            (KeyKind::Scalar, &self.tree),
+            (KeyKind::Array, &self.array_tree),
+        ]
+        .into_iter()
+        .flat_map(|(kind, tree)| {
+            tree.range_tuples(0, u64::MAX)
+                .map(move |(key, doc)| (kind, key, doc))
+        })
+        .collect()
+    }
+
+    /// The column's leaf pages, shared with every version that holds them: for a test of when they
+    /// are freed.
+    #[cfg(test)]
+    pub(crate) fn pages(&self) -> Vec<Arc<[u8]>> {
+        self.tree
+            .leaves()
             .into_iter()
-            .filter_map(|(v, id)| encode_numeric(v).map(|k| (k, id)))
-            .collect();
-        pairs.sort_unstable();
-        pairs.dedup();
-        Self {
-            tree: Tree::from_sorted(&pairs),
-        }
+            .map(|(_, page)| page)
+            .collect()
     }
 }
 
+impl RangeKind for NumericIndex {
+    type Keys = KeySet;
+
+    /// A scalar is stored under its key in the scalar tree, and a list under each numeric
+    /// element's key in the array tree ([`encode::for_each_stored_key`]).
+    fn for_each_stored_key(
+        &self,
+        value: &Value,
+        emit: impl FnMut(KeyKind, u64),
+    ) {
+        encode::for_each_stored_key(value, emit);
+    }
+
+    /// Tuples are never re-encoded: re-encoding a decoded key would be a second trip through a
+    /// many-to-one map. Into an empty tree the tuples are bulk-built, bottom-up from the sorted
+    /// tuples, rather than merged in.
+    fn add_encoded(
+        &mut self,
+        tuples: &EncodedTuples,
+    ) {
+        for kind in Self::TREES {
+            let tuples = &tuples[kind];
+            if tuples.is_empty() {
+                continue;
+            }
+            let tree = self.tree_mut(kind);
+            if tree.is_empty() {
+                *tree = Tree::from_sorted(tuples);
+            } else {
+                tree.insert_batch(tuples);
+            }
+        }
+    }
+
+    fn remove_encoded(
+        &mut self,
+        tuples: &EncodedTuples,
+    ) {
+        for kind in Self::TREES {
+            if !tuples[kind].is_empty() {
+                self.tree_mut(kind).remove_batch(&tuples[kind]);
+            }
+        }
+    }
+
+    /// Whether the index holds no tuples of either kind.
+    fn is_empty(&self) -> bool {
+        self.tree.is_empty() && self.array_tree.is_empty()
+    }
+
+    /// Heap bytes the two trees hold ([`CowBTree::heap_bytes`]): every page this version reaches,
+    /// whether or not another version shares it. Walks every page.
+    fn memory_usage(&self) -> usize {
+        self.tree.heap_bytes() + self.array_tree.heap_bytes()
+    }
+
+    fn scalars(
+        &self,
+        keys: KeySet,
+    ) -> DocIter {
+        match keys {
+            // `lo > hi` yields nothing.
+            KeySet::Empty => DocIter::One(self.tree.range(1, 0)),
+            KeySet::Point(key) => DocIter::One(self.tree.point(key)),
+            KeySet::Range(lo, hi) => DocIter::One(self.tree.range(lo, hi)),
+            // No cursor is built here — see [`UnionIter`]. The tree snapshot is taken now, so
+            // every member is answered from the same version however late its cursor is created.
+            KeySet::Keys(keys) => DocIter::Many(UnionIter {
+                tree: self.tree.clone(),
+                keys: keys.into_iter(),
+                current: None,
+            }),
+        }
+    }
+
+    /// A point lookup into the array tree, so each matching doc is reached through one key and
+    /// appears once. The scalar tree is deliberately not consulted: `1 IN n.v` must not match a
+    /// node whose `v` is the scalar `1`.
+    ///
+    /// May over-return relative to Cypher: the column holds no type tag, so `1 IN n.v` also
+    /// matches `v = [true]` (the encoder maps `true` to `1.0`). `utilize_index` keeps the original
+    /// filter on this predicate so the runtime rechecks it, which is why the array tree may be
+    /// approximate where the scalar tree may not.
+    fn lists_holding(
+        &self,
+        key: u64,
+    ) -> DocIter {
+        DocIter::One(self.array_tree.point(key))
+    }
+
+    fn is_scalar_in(
+        keys: &KeySet,
+        value: &Value,
+    ) -> bool {
+        stores(value, KeyKind::Scalar, |key| keys.contains(key))
+    }
+
+    fn is_list_holding(
+        key: u64,
+        value: &Value,
+    ) -> bool {
+        stores(value, KeyKind::Array, |stored| stored == key)
+    }
+}
+
+/// Whether `value` is stored under a key of `kind` that `wanted` accepts. Asked of the encoder that
+/// decides what the trees hold ([`encode::for_each_stored_key`]), so a scan making this check keeps
+/// exactly what a lookup returns: `n.v = 1` matches the scalar `1` and not `[1, 2]`, and `1 IN n.v`
+/// matches `[1, 2]` and not the scalar `1`.
+fn stores(
+    value: &Value,
+    kind: KeyKind,
+    wanted: impl Fn(u64) -> bool,
+) -> bool {
+    let mut hit = false;
+    encode::for_each_stored_key(value, |stored_kind, key| {
+        hit |= stored_kind == kind && wanted(key);
+    });
+    hit
+}
+
+/// The numeric kind, tested through the column that routes to it ([`RangeIndex`]): what these
+/// tests exercise is what a query runs.
 #[cfg(test)]
 mod tests {
+    use super::super::range::RangeIndex;
     use super::*;
-    use std::sync::Arc;
+    use crate::index::IndexQuery;
 
     fn ids(it: DocIter) -> Vec<u64> {
         it.collect()
     }
 
+    fn attr() -> Arc<String> {
+        Arc::new("v".to_string())
+    }
+
+    fn eq(value: Value) -> IndexQuery<Value> {
+        IndexQuery::Equal { key: attr(), value }
+    }
+
+    fn range(
+        min: Option<Value>,
+        max: Option<Value>,
+        include_min: bool,
+        include_max: bool,
+    ) -> IndexQuery<Value> {
+        IndexQuery::Range {
+            key: attr(),
+            min,
+            max,
+            include_min,
+            include_max,
+        }
+    }
+
+    /// The rows the column answers `query` with, in the order it yields them.
+    fn rows(
+        idx: &RangeIndex,
+        query: &IndexQuery<Value>,
+    ) -> Vec<u64> {
+        ids(idx.query(query).expect("servable"))
+    }
+
+    /// Every row the column holds a scalar for, in `(value, id)` order.
+    fn all(idx: &RangeIndex) -> Vec<u64> {
+        rows(idx, &range(None, None, true, true))
+    }
+
+    /// A column holding `entries`, bulk-built bottom-up as an indexer batch builds one.
+    fn column(entries: &[(Value, u64)]) -> RangeIndex {
+        let mut idx = RangeIndex::new();
+        idx.add_batch(entries.iter().cloned(), &mut EncodedTuples::default());
+        idx
+    }
+
     /// Values: 10→{1,2}, 20→{3}, -5→{4}, 3.5→{5}.
-    fn sample() -> NumericIndex {
-        let mut idx = NumericIndex::new();
+    fn sample() -> RangeIndex {
+        let mut idx = RangeIndex::new();
         idx.add(&Value::Int(10), 1);
         idx.add(&Value::Int(10), 2);
         idx.add(&Value::Int(20), 3);
@@ -536,64 +558,55 @@ mod tests {
     #[test]
     fn point_matches_all_ids_for_a_value() {
         let idx = sample();
-        assert_eq!(ids(idx.point(&Value::Int(10))), vec![1, 2]); // doc-ascending
-        assert_eq!(ids(idx.point(&Value::Int(20))), vec![3]);
-        assert_eq!(ids(idx.point(&Value::Float(10.0))), vec![1, 2]); // 10 == 10.0
-        assert!(ids(idx.point(&Value::Int(99))).is_empty());
+        assert_eq!(rows(&idx, &eq(Value::Int(10))), vec![1, 2]); // doc-ascending
+        assert_eq!(rows(&idx, &eq(Value::Int(20))), vec![3]);
+        assert_eq!(rows(&idx, &eq(Value::Float(10.0))), vec![1, 2]); // 10 == 10.0
+        assert!(rows(&idx, &eq(Value::Int(99))).is_empty());
     }
 
     #[test]
     fn range_inclusive_exclusive_unbounded() {
         let idx = sample();
-        let i = |x| Value::Int(x);
+        let i = |x| Some(Value::Int(x));
         // inclusive [-5, 20] → ordered by (value, id): -5,3.5,10,10,20
         assert_eq!(
-            ids(idx.range(Some(&i(-5)), Some(&i(20)), true, true)),
+            rows(&idx, &range(i(-5), i(20), true, true)),
             vec![4, 5, 1, 2, 3]
         );
         // (10, 20] — exclusive min drops value 10
-        assert_eq!(
-            ids(idx.range(Some(&i(10)), Some(&i(20)), false, true)),
-            vec![3]
-        );
+        assert_eq!(rows(&idx, &range(i(10), i(20), false, true)), vec![3]);
         // [10, 20) — exclusive max drops value 20
-        assert_eq!(
-            ids(idx.range(Some(&i(10)), Some(&i(20)), true, false)),
-            vec![1, 2]
-        );
+        assert_eq!(rows(&idx, &range(i(10), i(20), true, false)), vec![1, 2]);
         // unbounded below, <= 3.5
         assert_eq!(
-            ids(idx.range(None, Some(&Value::Float(3.5)), true, true)),
+            rows(&idx, &range(None, Some(Value::Float(3.5)), true, true)),
             vec![4, 5]
         );
         // >= 10, unbounded above
-        assert_eq!(
-            ids(idx.range(Some(&i(10)), None, true, true)),
-            vec![1, 2, 3]
-        );
+        assert_eq!(rows(&idx, &range(i(10), None, true, true)), vec![1, 2, 3]);
         // fully unbounded → everything, in order
-        assert_eq!(ids(idx.range(None, None, true, true)), vec![4, 5, 1, 2, 3]);
+        assert_eq!(all(&idx), vec![4, 5, 1, 2, 3]);
     }
 
     #[test]
     fn empty_and_degenerate_ranges() {
         let idx = sample();
-        let i = |x| Value::Int(x);
+        let i = |x| Some(Value::Int(x));
         // min > max
-        assert!(ids(idx.range(Some(&i(20)), Some(&i(10)), true, true)).is_empty());
+        assert!(rows(&idx, &range(i(20), i(10), true, true)).is_empty());
         // (10, 10) — exclusive both sides of one value
-        assert!(ids(idx.range(Some(&i(10)), Some(&i(10)), false, false)).is_empty());
+        assert!(rows(&idx, &range(i(10), i(10), false, false)).is_empty());
     }
 
     #[test]
     fn remove_deletes_one_tuple() {
         let mut idx = sample();
         idx.remove(&Value::Int(10), 1);
-        assert_eq!(ids(idx.point(&Value::Int(10))), vec![2]);
+        assert_eq!(rows(&idx, &eq(Value::Int(10))), vec![2]);
         idx.remove(&Value::Int(10), 2);
-        assert!(ids(idx.point(&Value::Int(10))).is_empty());
+        assert!(rows(&idx, &eq(Value::Int(10))).is_empty());
         // the rest are untouched
-        assert_eq!(ids(idx.point(&Value::Int(20))), vec![3]);
+        assert_eq!(rows(&idx, &eq(Value::Int(20))), vec![3]);
     }
 
     /// A temporal value must not reach the tree. Stored as its raw number it lands among the
@@ -614,21 +627,21 @@ mod tests {
         ];
         let int_id = 99;
 
-        let entries: Vec<(&Value, u64)> = temporals
-            .iter()
+        let entries: Vec<(Value, u64)> = temporals
+            .into_iter()
             .zip(1u64..)
-            .chain(std::iter::once((&Value::Int(5), int_id)))
+            .chain(std::iter::once((Value::Int(5), int_id)))
             .collect();
-        let bulk = NumericIndex::from_entries(entries.iter().map(|&(v, id)| (v, id)));
+        let bulk = column(&entries);
 
-        let mut incremental = NumericIndex::new();
-        for &(v, id) in &entries {
-            incremental.add(v, id);
+        let mut incremental = RangeIndex::new();
+        for (v, id) in &entries {
+            incremental.add(v, *id);
         }
 
         for (how, idx) in [("bulk build", &bulk), ("incremental add", &incremental)] {
             assert_eq!(
-                ids(idx.range(Some(&Value::Int(0)), None, false, true)),
+                rows(idx, &range(Some(Value::Int(0)), None, false, true)),
                 vec![int_id],
                 "{how}: `> 0` must return only the integer, not the temporals"
             );
@@ -637,21 +650,22 @@ mod tests {
 
     #[test]
     fn non_numeric_and_nan_are_not_indexed() {
-        let mut idx = NumericIndex::new();
+        let mut idx = RangeIndex::new();
         idx.add(&Value::String(Arc::new("hi".to_string())), 1); // skipped
         idx.add(&Value::Float(f64::NAN), 2); // skipped
         idx.add(&Value::Int(7), 3);
         assert!(!idx.is_empty());
-        assert_eq!(ids(idx.point(&Value::Int(7))), vec![3]);
-        // a non-numeric bound yields no matches
+        assert_eq!(all(&idx), vec![3]);
+        assert_eq!(rows(&idx, &eq(Value::Int(7))), vec![3]);
+        // A bound of a type no kind holds is declined, not answered "no rows".
         assert!(
-            ids(idx.range(
-                Some(&Value::String(Arc::new("a".to_string()))),
+            idx.query(&range(
+                Some(Value::String(Arc::new("a".to_string()))),
                 None,
                 true,
                 true
             ))
-            .is_empty()
+            .is_none()
         );
     }
 
@@ -664,18 +678,15 @@ mod tests {
             (Value::Int(-5), 4),
             (Value::Float(3.5), 5),
         ];
-        let bulk = NumericIndex::from_entries(entries.iter().map(|(v, id)| (v, *id)));
-        let inc = sample();
-        let all = |ix: &NumericIndex| ids(ix.range(None, None, true, true));
-        assert_eq!(all(&bulk), all(&inc));
+        assert_eq!(all(&column(&entries)), all(&sample()));
     }
 
     #[test]
     fn duplicate_insert_is_idempotent() {
-        let mut idx = NumericIndex::new();
+        let mut idx = RangeIndex::new();
         idx.add(&Value::Int(5), 1);
         idx.add(&Value::Int(5), 1);
-        assert_eq!(ids(idx.point(&Value::Int(5))), vec![1]);
+        assert_eq!(rows(&idx, &eq(Value::Int(5))), vec![1]);
     }
 
     #[test]
@@ -695,8 +706,23 @@ mod tests {
             include_max: true,
         };
         assert_eq!(ids(idx.query(&rg).unwrap()), vec![1, 2, 3]);
-        // composite predicates are the router's job, not a single index's
-        assert!(idx.query(&IndexQuery::And(vec![eq])).is_none());
+        // A conjunction on this column IS answerable — it folds to one window. What a single
+        // column still cannot do is a conjunction spanning two attributes.
+        assert_eq!(ids(idx.query(&IndexQuery::And(vec![eq])).unwrap()), vec![3]);
+        assert!(
+            idx.query(&IndexQuery::And(vec![
+                IndexQuery::Equal {
+                    key: Arc::new("a".to_string()),
+                    value: Value::Int(1),
+                },
+                IndexQuery::Equal {
+                    key: Arc::new("b".to_string()),
+                    value: Value::Int(2),
+                },
+            ]))
+            .is_none(),
+            "two attributes need a cross-column intersection, not this column"
+        );
     }
 
     #[test]
@@ -709,12 +735,11 @@ mod tests {
             (Value::Int(10), 5),
             (Value::String(Arc::new("skip".to_string())), 6), // non-numeric → dropped
         ];
-        let all = |ix: &NumericIndex| ids(ix.range(None, None, true, true));
 
         // add_batch == repeated add
-        let mut batched = NumericIndex::new();
-        batched.add_batch(entries.iter().cloned(), &mut Vec::new());
-        let mut singly = NumericIndex::new();
+        let mut batched = RangeIndex::new();
+        batched.add_batch(entries.iter().cloned(), &mut EncodedTuples::default());
+        let mut singly = RangeIndex::new();
         for (v, id) in &entries {
             singly.add(v, *id);
         }
@@ -726,7 +751,7 @@ mod tests {
             (Value::Int(30), 1),
             (Value::Int(99), 7),
         ];
-        batched.remove_batch(removes.iter().cloned(), &mut Vec::new());
+        batched.remove_batch(removes.iter().cloned(), &mut EncodedTuples::default());
         for (v, id) in &removes {
             singly.remove(v, *id);
         }
@@ -751,15 +776,12 @@ mod tests {
         got
     }
 
-    fn ten_twenty_thirty() -> NumericIndex {
-        NumericIndex::from_entries(
-            [
-                (&Value::Int(10), 0u64),
-                (&Value::Int(20), 1),
-                (&Value::Int(30), 2),
-            ]
-            .into_iter(),
-        )
+    fn ten_twenty_thirty() -> RangeIndex {
+        column(&[
+            (Value::Int(10), 0u64),
+            (Value::Int(20), 1),
+            (Value::Int(30), 2),
+        ])
     }
 
     /// An `IN` list is served natively only when every value is numeric — a mixed list must be
@@ -874,14 +896,12 @@ mod tests {
         );
     }
 
-    /// One `NumericIndex` is one column, so an `OR` spanning two attributes cannot be answered
-    /// here: looking both values up in this column returns `{a=1} ∪ {a=2}` — wrong rows, not
-    /// missing ones. An `IN` list cannot span attributes, but an `OR` can, so the check lives in
-    /// `union` itself and this test reaches `query` directly.
+    /// One column cannot answer an `OR` spanning two attributes: looking both values up in it
+    /// returns `{a=1} ∪ {a=2}` — wrong rows, not missing ones. An `IN` list cannot span
+    /// attributes, but an `OR` can, so the column's union checks it itself.
     #[test]
     fn or_declines_members_targeting_different_attributes() {
-        let idx =
-            NumericIndex::from_entries([(&Value::Int(1), 10u64), (&Value::Int(2), 20)].into_iter());
+        let idx = column(&[(Value::Int(1), 10u64), (Value::Int(2), 20)]);
         let (a, b) = (Arc::new("a".to_string()), Arc::new("b".to_string()));
         let eq = |attr: &Arc<String>, v: i64| IndexQuery::Equal {
             key: attr.clone(),
@@ -917,7 +937,7 @@ mod tests {
     fn union_builds_no_cursor_before_the_first_row() {
         let attr = Arc::new("v".to_string());
         let values: Vec<(Value, u64)> = (0..100u64).map(|i| (Value::Int(i as i64), i)).collect();
-        let idx = NumericIndex::from_entries(values.iter().map(|(v, id)| (v, *id)));
+        let idx = column(&values);
 
         let q = in_list(&attr, (0..100).map(Value::Int));
         let DocIter::Many(mut u) = idx.query(&q).expect("an all-numeric list is servable") else {
@@ -940,7 +960,7 @@ mod tests {
     #[test]
     fn union_pins_one_snapshot_across_lazily_built_cursors() {
         let attr = Arc::new("v".to_string());
-        let mut idx = NumericIndex::new();
+        let mut idx = RangeIndex::new();
         idx.add(&Value::Int(1), 1);
         idx.add(&Value::Int(2), 2);
 
@@ -957,6 +977,380 @@ mod tests {
             rest,
             vec![2],
             "the second member must be answered from the snapshot the union started on"
+        );
+    }
+
+    fn list(xs: impl IntoIterator<Item = Value>) -> Value {
+        Value::List(Arc::new(xs.into_iter().collect()))
+    }
+
+    fn ints(xs: &[i64]) -> Value {
+        list(xs.iter().map(|&x| Value::Int(x)))
+    }
+
+    fn contains(
+        attr: &Arc<String>,
+        v: i64,
+    ) -> IndexQuery<Value> {
+        IndexQuery::ArrayContains {
+            key: attr.clone(),
+            value: Value::Int(v),
+        }
+    }
+
+    /// The reason the array elements live in their own tree.
+    ///
+    /// A node whose `v` is the list `[1, 2]` must NOT be returned by `WHERE n.v = 1` — that is
+    /// false in Cypher — and a node whose `v` is the scalar `1` must NOT be returned by
+    /// `WHERE 1 IN n.v`. One shared tree cannot tell those apart, and `Equal` carries no
+    /// post-filter to clean up after it (its plan is a bare `Node By Index Scan`), so the wrong
+    /// row would reach the caller.
+    #[test]
+    fn a_scalar_and_a_list_element_do_not_share_a_tree() {
+        let attr = Arc::new("v".to_string());
+        let mut idx = RangeIndex::new();
+        idx.add(&Value::Int(1), 10); // scalar 1
+        idx.add(&ints(&[1, 2]), 20); // list [1, 2]
+
+        let eq = IndexQuery::Equal {
+            key: attr.clone(),
+            value: Value::Int(1),
+        };
+        assert_eq!(
+            ids(idx.query(&eq).expect("servable")),
+            vec![10],
+            "`n.v = 1` must match the scalar only, never the list that contains 1"
+        );
+        assert_eq!(
+            ids(idx.query(&contains(&attr, 1)).expect("servable")),
+            vec![20],
+            "`1 IN n.v` must match the list only, never the scalar 1"
+        );
+
+        // A range or an IN list over the scalar tree must not see list elements either.
+        let rng = IndexQuery::Range {
+            key: attr.clone(),
+            min: Some(Value::Int(0)),
+            max: Some(Value::Int(5)),
+            include_min: true,
+            include_max: true,
+        };
+        assert_eq!(ids(idx.query(&rng).expect("servable")), vec![10]);
+        assert_eq!(
+            sorted(
+                idx.query(&in_list(&attr, [Value::Int(1), Value::Int(2)]))
+                    .expect("servable")
+            ),
+            vec![10]
+        );
+    }
+
+    /// Every numeric element is reachable, and a repeated element contributes one tuple: the
+    /// tree stores `(key, doc)` as a set, so a removal must not depend on how many times the
+    /// value happened to list the same number.
+    #[test]
+    fn every_element_is_indexed_once() {
+        let attr = Arc::new("v".to_string());
+        let mut idx = RangeIndex::new();
+        idx.add(&ints(&[1, 1, 2]), 7);
+        assert_eq!(
+            ids(idx.query(&contains(&attr, 1)).expect("servable")),
+            vec![7]
+        );
+        assert_eq!(
+            ids(idx.query(&contains(&attr, 2)).expect("servable")),
+            vec![7]
+        );
+        assert!(ids(idx.query(&contains(&attr, 3)).expect("servable")).is_empty());
+        assert_eq!(idx.numeric().array_tree.len(), 2);
+
+        // Removing the same value takes every element with it, duplicates included.
+        idx.remove(&ints(&[1, 1, 2]), 7);
+        assert!(idx.is_empty(), "both trees must be empty again");
+
+        // The batch paths dedup too: one tuple per distinct element, removable in one go.
+        let mut scratch = EncodedTuples::default();
+        idx.add_batch([(ints(&[3, 3, 4]), 8)], &mut scratch);
+        assert_eq!(idx.numeric().array_tree.len(), 2);
+        idx.remove_batch([(ints(&[3, 3, 4]), 8)], &mut scratch);
+        assert!(idx.is_empty());
+    }
+
+    /// Elements the encoder rejects are skipped one by one rather than rejecting the whole list:
+    /// strings belong to a text kind, and temporals are not indexed at all, exactly as for a
+    /// scalar.
+    #[test]
+    fn a_list_indexes_only_its_numeric_elements() {
+        let attr = Arc::new("v".to_string());
+        let mixed = list([
+            Value::Int(4),
+            Value::String(Arc::new("x".to_string())),
+            Value::Date(0),
+            Value::Float(f64::NAN),
+            ints(&[5]),
+        ]);
+        let mut idx = RangeIndex::new();
+        idx.add(&mixed, 3);
+        assert_eq!(
+            ids(idx.query(&contains(&attr, 4)).expect("servable")),
+            vec![3]
+        );
+        assert!(
+            ids(idx.query(&contains(&attr, 0)).expect("servable")).is_empty(),
+            "a date element's raw number is not a key"
+        );
+        assert!(
+            ids(idx.query(&contains(&attr, 5)).expect("servable")).is_empty(),
+            "a nested list is not looked inside"
+        );
+        assert_eq!(idx.numeric().array_tree.len(), 1);
+        assert!(idx.numeric().tree.is_empty());
+    }
+
+    /// An indexer batch carries both kinds, and each goes into its own tree: bulk-built into an
+    /// empty one, merged into one that already holds tuples. A batch that dropped its array half
+    /// would build a column that answers `IN` with nothing.
+    #[test]
+    fn an_encoded_batch_fills_both_trees() {
+        let attr = Arc::new("v".to_string());
+        let eq = |v: i64| IndexQuery::Equal {
+            key: attr.clone(),
+            value: Value::Int(v),
+        };
+        let mut idx = RangeIndex::new();
+        let mut batch = EncodedTuples::default();
+        idx.push_encoded(&Value::Int(1), 10, &mut batch);
+        idx.push_encoded(&ints(&[1, 2]), 20, &mut batch);
+        idx.add_encoded(&mut batch);
+        assert_eq!(ids(idx.query(&eq(1)).expect("servable")), vec![10]);
+        assert_eq!(
+            ids(idx.query(&contains(&attr, 1)).expect("servable")),
+            vec![20]
+        );
+
+        // Into trees that already hold tuples.
+        let mut more = EncodedTuples::default();
+        idx.push_encoded(&Value::Int(2), 30, &mut more);
+        idx.push_encoded(&ints(&[2]), 40, &mut more);
+        idx.add_encoded(&mut more);
+        assert_eq!(ids(idx.query(&eq(2)).expect("servable")), vec![30]);
+        assert_eq!(
+            sorted(idx.query(&contains(&attr, 2)).expect("servable")),
+            vec![20, 40]
+        );
+
+        // And out again, per kind.
+        idx.remove_encoded(&mut more);
+        assert!(ids(idx.query(&eq(2)).expect("servable")).is_empty());
+        assert_eq!(
+            ids(idx.query(&contains(&attr, 2)).expect("servable")),
+            vec![20]
+        );
+    }
+
+    /// A value changing kind must move its tuples between the two trees, not leave a copy behind.
+    ///
+    /// The dangerous case is the same key crossing over: scalar `1` becoming `[1]` and back. A
+    /// remove that routed on the *new* value's kind instead of the old one would delete from the
+    /// wrong tree, stranding a tuple that no later write can reach — and on the scalar side
+    /// nothing re-checks the index's answer, so the stale tuple becomes a wrong row.
+    #[test]
+    fn a_value_changing_kind_moves_between_trees() {
+        let attr = Arc::new("v".to_string());
+        let eq = |v: i64| IndexQuery::Equal {
+            key: attr.clone(),
+            value: Value::Int(v),
+        };
+
+        let mut idx = RangeIndex::new();
+        idx.add(&Value::Int(1), 1);
+        assert_eq!(ids(idx.query(&eq(1)).unwrap()), vec![1]);
+        assert!(ids(idx.query(&contains(&attr, 1)).unwrap()).is_empty());
+
+        // scalar 1 -> array [1]: the SAME key crosses into the other tree.
+        idx.remove(&Value::Int(1), 1);
+        idx.add(&ints(&[1]), 1);
+        assert!(
+            ids(idx.query(&eq(1)).unwrap()).is_empty(),
+            "the scalar tuple must be gone, not shadowed"
+        );
+        assert_eq!(ids(idx.query(&contains(&attr, 1)).unwrap()), vec![1]);
+
+        // array [1] -> scalar 1: and back again.
+        idx.remove(&ints(&[1]), 1);
+        idx.add(&Value::Int(1), 1);
+        assert_eq!(ids(idx.query(&eq(1)).unwrap()), vec![1]);
+        assert!(ids(idx.query(&contains(&attr, 1)).unwrap()).is_empty());
+
+        // Removing whatever it currently is leaves nothing on either side.
+        idx.remove(&Value::Int(1), 1);
+        assert!(idx.is_empty(), "no tuple stranded in either tree");
+    }
+
+    /// `KeySet::and` keeps a conjunction one lookup: windows meet in a window, a point set keeps
+    /// the points the other side holds, and nothing left is spelled `Empty`.
+    #[test]
+    fn key_sets_intersect_into_one_lookup() {
+        use KeySet::{Empty, Keys, Point, Range};
+        assert_eq!(Range(1, 9).and(Range(5, 20)), Range(5, 9));
+        assert_eq!(
+            Range(1, 4).and(Range(5, 20)),
+            Empty,
+            "windows that do not meet"
+        );
+        assert_eq!(Point(5).and(Range(1, 9)), Point(5));
+        assert_eq!(Range(1, 9).and(Point(10)), Empty);
+        assert_eq!(Keys(vec![1, 5, 9]).and(Range(2, 9)), Keys(vec![5, 9]));
+        assert_eq!(Keys(vec![1, 5]).and(Keys(vec![5, 9])), Point(5));
+        assert_eq!(Keys(vec![1, 5]).and(Range(6, 9)), Empty);
+        assert_eq!(Point(5).and(Keys(vec![1, 5])), Point(5));
+        assert_eq!(Empty.and(Range(0, u64::MAX)), Empty);
+        assert_eq!(KeySet::of_keys(vec![3, 1, 3]), Keys(vec![1, 3]));
+        assert_eq!(
+            KeySet::of_keys(vec![5, 5]),
+            Point(5),
+            "one key is one cursor"
+        );
+        assert_eq!(KeySet::of_keys(Vec::new()), Empty);
+    }
+
+    /// Two bounds on one attribute collapse to a single window rather than needing a doc-stream
+    /// intersection. The planner cannot do this itself — `merge_range_queries` bails whenever two
+    /// conjuncts constrain the same side, because at plan time the bounds may still be
+    /// expressions it cannot compare. Here they are concrete.
+    #[test]
+    fn same_key_conjunctions_fold_to_one_window() {
+        let attr = Arc::new("v".to_string());
+        let idx = column(&[
+            (Value::Int(1), 1u64),
+            (Value::Int(5), 5),
+            (Value::Int(9), 9),
+            (Value::Int(20), 20),
+        ]);
+        let range =
+            |min: Option<i64>, max: Option<i64>, inc_min: bool, inc_max: bool| IndexQuery::Range {
+                key: attr.clone(),
+                min: min.map(Value::Int),
+                max: max.map(Value::Int),
+                include_min: inc_min,
+                include_max: inc_max,
+            };
+        let eq = |v: i64| IndexQuery::Equal {
+            key: attr.clone(),
+            value: Value::Int(v),
+        };
+        let got = |q: IndexQuery<Value>| sorted(idx.query(&q).expect("servable"));
+
+        // Two lower bounds: the tighter one wins.
+        assert_eq!(
+            got(IndexQuery::And(vec![
+                range(Some(1), None, false, true),
+                range(Some(9), None, true, true),
+            ])),
+            vec![9, 20]
+        );
+        // Lower and upper from different conjuncts.
+        assert_eq!(
+            got(IndexQuery::And(vec![
+                range(Some(5), None, true, true),
+                range(None, Some(9), true, true),
+            ])),
+            vec![5, 9]
+        );
+        // `Equal` is a degenerate window, and an equality inside a satisfied range survives.
+        assert_eq!(
+            got(IndexQuery::And(vec![
+                eq(5),
+                range(Some(2), None, true, true)
+            ])),
+            vec![5]
+        );
+        // The same predicate twice — legal Cypher (`WHERE a.p = 1 AND a.p = 1`), which the planner
+        // passes through as written — is one window, not a failure.
+        assert_eq!(got(IndexQuery::And(vec![eq(5), eq(5)])), vec![5]);
+        // `= null` holds for nothing, so a conjunction with it is answered with no rows, as
+        // `= null` alone is, rather than declined.
+        assert!(
+            got(IndexQuery::And(vec![
+                IndexQuery::Equal {
+                    key: attr.clone(),
+                    value: Value::Null,
+                },
+                range(Some(1), None, true, true),
+            ]))
+            .is_empty()
+        );
+        // Likewise a range with a null bound, as that range alone is.
+        assert!(
+            got(IndexQuery::And(vec![
+                IndexQuery::Range {
+                    key: attr.clone(),
+                    min: Some(Value::Null),
+                    max: Some(Value::Int(9)),
+                    include_min: true,
+                    include_max: true,
+                },
+                range(Some(1), None, true, true),
+            ]))
+            .is_empty()
+        );
+        // An equality outside the range yields nothing — answerable, and the answer is no rows.
+        assert!(
+            got(IndexQuery::And(vec![
+                eq(1),
+                range(Some(8), None, true, true)
+            ]))
+            .is_empty()
+        );
+        // Contradictory bounds likewise.
+        assert!(
+            got(IndexQuery::And(vec![
+                range(Some(9), None, true, true),
+                range(None, Some(2), true, true),
+            ]))
+            .is_empty()
+        );
+        // A scalar conjunct and a list conjunct: no value is both, so no rows — answered, not
+        // declined.
+        assert!(got(IndexQuery::And(vec![eq(1), contains(&attr, 1)])).is_empty());
+        // Nesting is flattened — it still constrains one column.
+        assert_eq!(
+            got(IndexQuery::And(vec![
+                IndexQuery::And(vec![range(Some(5), None, true, true)]),
+                range(None, Some(9), true, true),
+            ])),
+            vec![5, 9]
+        );
+    }
+
+    /// A conjunction the column cannot answer whole is declined, rather than answered from a
+    /// subset of the conjuncts — that would return rows the query excludes.
+    #[test]
+    fn unservable_conjunctions_are_declined() {
+        let idx = column(&[(Value::Int(1), 1u64)]);
+        let eq = |attr: &str, v: i64| IndexQuery::Equal {
+            key: Arc::new(attr.to_string()),
+            value: Value::Int(v),
+        };
+        assert!(
+            idx.query(&IndexQuery::And(vec![eq("a", 1), eq("b", 2)]))
+                .is_none(),
+            "two attributes need a cross-column intersection"
+        );
+        assert!(
+            idx.query(&IndexQuery::And(vec![
+                eq("a", 1),
+                IndexQuery::Equal {
+                    key: Arc::new("a".to_string()),
+                    value: Value::String(Arc::new("x".to_string())),
+                },
+            ]))
+            .is_none(),
+            "a conjunct no kind serves makes the whole conjunction unservable"
+        );
+        assert!(
+            idx.query(&IndexQuery::And(vec![])).is_none(),
+            "an empty conjunction names no column"
         );
     }
 }
