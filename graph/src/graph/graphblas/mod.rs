@@ -151,7 +151,8 @@ pub(crate) fn length(count: u64) -> usize {
 /// this shared guard rather than owning its own `Once`.
 #[cfg(test)]
 pub(crate) mod test_init {
-    use std::sync::Once;
+    use std::sync::{Once, mpsc};
+    use std::thread;
 
     static INIT: Once = Once::new();
 
@@ -166,27 +167,35 @@ pub(crate) mod test_init {
             size: usize,
         ) -> *mut std::ffi::c_void;
         fn free(p: *mut std::ffi::c_void);
+        fn omp_get_max_threads() -> i32;
     }
 
     pub fn ensure_init() {
         INIT.call_once(|| {
-            super::matrix::init(Some(malloc), Some(calloc), Some(realloc), Some(free)).unwrap();
             // libtest runs every test on its own freshly spawned thread. With
-            // libomp linked statically (the Linux toolchain image and CI —
+            // libomp linked statically (the Linux toolchain image and CI;
             // macOS resolves it dynamically, which is why this never
             // reproduces there), the OpenMP runtime is torn down when the
-            // first GraphBLAS-using test's thread exits, leaving the
-            // jitifyer's `omp_lock_t` destroyed. The next test to reach a JIT
-            // kernel lookup then segfaults inside `__kmpc_set_lock`, called
-            // from `GB_jitifyer_load` — observed as
-            // `tensor::tests::bulk_remove_and_extract_edge_id_zero` dying
-            // under `GrB_transpose` whenever any other GraphBLAS test ran
-            // first. The shipped module never hits this: redis-server's main
-            // thread outlives every query, so the runtime is never torn down.
-            //
-            // `GxB_JIT_OFF` keeps the lookup from happening at all. Tests then
-            // exercise generic kernels rather than the vendored PreJIT ones —
-            // a correctness-equivalent path, and these are correctness tests.
+            // thread that started it exits. Every later parallel region then
+            // segfaults: a JIT kernel lookup in `__kmpc_set_lock`, or any
+            // kernel that really runs on several threads. The shipped module
+            // never hits this: redis-server's main thread outlives every
+            // query. So GraphBLAS is started here on a thread that never
+            // exits, and the first OpenMP call binds the runtime to it.
+            let (started, wait) = mpsc::channel();
+            thread::spawn(move || {
+                super::matrix::init(Some(malloc), Some(calloc), Some(realloc), Some(free)).unwrap();
+                // SAFETY: a plain query of the OpenMP runtime.
+                unsafe { omp_get_max_threads() };
+                started.send(()).unwrap();
+                loop {
+                    thread::park();
+                }
+            });
+            wait.recv().unwrap();
+            // `GxB_JIT_OFF` keeps tests on generic kernels rather than the
+            // vendored PreJIT ones: a correctness-equivalent path, and these
+            // are correctness tests.
             let info = unsafe {
                 super::GrB_Global_set_INT32(
                     super::GrB_GLOBAL,
