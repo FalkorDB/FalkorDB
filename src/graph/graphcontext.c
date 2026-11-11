@@ -729,6 +729,79 @@ void GraphContext_AcquireWriteLockYieldingGIL
 	}
 }
 
+// acquire gc's write lock for a command that is about to mutate the graph and
+// replicate the change
+//
+// on the Redis main thread: a blocking acquire. the caller already holds the
+// GIL and keeps it throughout, so nothing can change under it
+//
+// on a worker thread: also acquires the GIL, via
+// GraphContext_AcquireWriteLockYieldingGIL. the main thread runs while that
+// waits (and before it, since the caller retrieved gc), so once both locks are
+// held re-check what may have changed - the same checks the query write path
+// makes (_QueryCtx_TryAcquireWriteLock):
+// - a replica-pause window (CLIENT PAUSE WRITE / failover) opened: replicating
+//   inside it trips Redis' propagation assertion when AOF or replicas are on
+// - this instance was demoted to a replica
+// - the graph key was deleted or replaced: replicating an effect for it would
+//   recreate the graph on replicas and on AOF replay (GRAPH.EFFECT creates a
+//   missing graph)
+//
+// returns true holding the write lock, and on a worker thread the GIL (ctx
+// locked). on failure sets *err_msg and returns false holding neither
+bool GraphContext_AcquireWriteLockChecked
+(
+	GraphContext *gc,      // graph to lock
+	RedisModuleCtx *ctx,   // on a worker thread: thread-safe ctx, unlocked
+	const char **err_msg   // [output] reason for failure
+) {
+	ASSERT (gc      != NULL) ;
+	ASSERT (ctx     != NULL) ;
+	ASSERT (err_msg != NULL) ;
+
+	if (pthread_equal (Globals_Get_MainThreadId (), pthread_self ())) {
+		GraphContext_AcquireWriteLock (gc) ;
+		return true ;
+	}
+
+	GraphContext_AcquireWriteLockYieldingGIL (gc, ctx) ;
+
+	if (RedisModule_AvoidReplicaTraffic ()) {
+		*err_msg = EMSG_REPLICA_TRAFFIC_PAUSED ;
+		goto fail ;
+	}
+
+	if (RedisModule_GetContextFlags (ctx) & REDISMODULE_CTX_FLAGS_READONLY) {
+		*err_msg = EMSG_NOT_MASTER ;
+		goto fail ;
+	}
+
+	// open the key by gc's current name: RENAME runs under the GIL and updates
+	// it, so a renamed graph is still found
+	const char *name = GraphContext_GetName (gc) ;
+	RedisModuleString *id = RedisModule_CreateString (ctx, name, strlen (name)) ;
+	RedisModuleKey *key = RedisModule_OpenKey (ctx, id, REDISMODULE_READ) ;
+	RedisModule_FreeString (ctx, id) ;
+
+	bool same_graph =
+		RedisModule_KeyType (key) == REDISMODULE_KEYTYPE_MODULE &&
+		RedisModule_ModuleTypeGetType (key) == GraphContextRedisModuleType_Get () &&
+		RedisModule_ModuleTypeGetValue (key) == gc ;
+	RedisModule_CloseKey (key) ;
+
+	if (!same_graph) {
+		*err_msg = EMSG_GRAPH_DELETED_OR_REPLACED ;
+		goto fail ;
+	}
+
+	return true ;
+
+fail:
+	GraphContext_ReleaseLock (gc) ;
+	RedisModule_ThreadSafeContextUnlock (ctx) ;
+	return false ;
+}
+
 // mark graph key as "dirty" for Redis to pick up on
 void GraphContext_MarkWriter
 (

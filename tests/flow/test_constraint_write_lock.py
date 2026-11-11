@@ -1,8 +1,7 @@
-import math
-import time
 import asyncio
 from common import *
 from constraint_utils import *
+from long_read_utils import *
 from index_utils import wait_for_indices_to_sync
 from falkordb.asyncio import FalkorDB as AsyncFalkorDB
 from redis.asyncio import BlockingConnectionPool
@@ -22,22 +21,17 @@ from redis.asyncio import Redis as AsyncRedis
 
 GRAPH_ID = "constraint_write_lock"
 
-# target duration of one lock-holding read, calibrated per machine: a fixed
-# read size either takes minutes on a slow runner or finishes so fast that a
-# fixed PING bound passes even with the freeze
+# target duration of one lock-holding read
 READ_TARGET_SEC = 3.0
 
-def _long_read(n):
-    # nested UNWINDs keep memory bounded. the predicate MUST depend on both loop
-    # vars, else the planner pushes it below the inner UNWIND and the read
-    # finishes in ~ms holding no lock (see test_19 in test_concurrent_query.py)
-    return (f"UNWIND range(0, {n}) AS a UNWIND range(0, {n}) AS b "
-            f"WITH a, b WHERE a + b < 0 RETURN count(a)")
+CREATE_UNIQUE    = constraint_cmd("CREATE", GRAPH_ID, "UNIQUE",    "NODE", "P", "v")
+CREATE_MANDATORY = constraint_cmd("CREATE", GRAPH_ID, "MANDATORY", "NODE", "P", "v")
+DROP_UNIQUE      = constraint_cmd("DROP",   GRAPH_ID, "UNIQUE",    "NODE", "P", "v")
 
-# shared harness: calibrated long reads + running commands behind them
+# shared harness: runs constraint commands behind calibrated long reads
 class ConstraintBehindLongReads():
     def __init__(self, **env_args):
-        # enough worker threads that 3 reads + the commands never queue on a
+        # enough worker threads that the reads + the commands never queue on a
         # small runner
         self.env, self.db = Env(moduleArgs="THREAD_COUNT 8", **env_args)
 
@@ -48,29 +42,15 @@ class ConstraintBehindLongReads():
         self.port  = self.env.envRunner.port
         self.conn  = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
-        self._calibrate()
+
+        self.graph.query("CREATE ()")  # a read needs an existing graph
+        n, self.read_dur = calibrate_long_read(self.graph, READ_TARGET_SEC)
+        self.long_read = long_read_query(n)
+        self.env.debugPrint(f"long read: n={n} dur={self.read_dur:.2f}s",
+                            force=True)
 
     def setUp(self):
         self.conn.delete(GRAPH_ID)
-
-    # size the long read so a single one takes ~READ_TARGET_SEC on this machine
-    def _calibrate(self):
-        def timed(n):
-            t0 = time.monotonic()
-            self.graph.ro_query(_long_read(n))
-            return time.monotonic() - t0
-
-        self.graph.query("CREATE ()")  # a read needs an existing graph
-        n = 3000
-        dur = timed(n)
-        # cost grows with n^2
-        n = int(n * math.sqrt(READ_TARGET_SEC / max(dur, 0.01)))
-        n = max(1000, min(n, 40000))
-        self.read_n   = n
-        self.read_dur = timed(n)
-        self.conn.delete(GRAPH_ID)
-        self.env.debugPrint(f"long read: n={n} dur={self.read_dur:.2f}s",
-                            force=True)
 
     def _populate(self, unique_index=False, without_v=False):
         self.graph.query("UNWIND range(1, 50000) AS x CREATE (:P {v:x})")
@@ -85,52 +65,31 @@ class ConstraintBehindLongReads():
 
     # keep 3 long reads holding the READ lock, send `cmds` concurrently behind
     # them, optionally run `action` on another connection while they wait, and
-    # (with probe=True) sample PING on its own cadence throughout.
+    # (with probe=True) sample PING throughout.
     #
-    # the flood stops before `action`: the reads already running keep holding
-    # the lock, so the commands are still waiting when the action lands, and no
-    # new read hits a deleted / paused graph.
+    # new reads stop before `action`: the ones in flight keep holding the lock,
+    # so the commands are still waiting when the action lands, and no new read
+    # hits a deleted / paused graph.
     #
     # returns (replies, latencies, worst_ping)
     def _behind_long_reads(self, cmds, action=None, probe=False):
-        long_read = _long_read(self.read_n)
-
         async def run():
             pool = BlockingConnectionPool(max_connections=64, timeout=None,
                     socket_timeout=120, port=self.port, decode_responses=True)
             g = AsyncFalkorDB(connection_pool=pool).select_graph(GRAPH_ID)
-            admin = AsyncRedis(port=self.port, decode_responses=True,
-                               socket_timeout=120)
+            # one client per command, plus one to run `action`
             clients = [AsyncRedis(port=self.port, decode_responses=True,
-                                  socket_timeout=120) for _ in cmds]
-            ping = AsyncRedis(port=self.port, decode_responses=True)
-            await ping.ping()
+                                  socket_timeout=120) for _ in cmds + [None]]
+            admin = clients.pop()
             loop = asyncio.get_running_loop()
 
-            stop_flood = False
-            reads = []
-            async def flood():
-                while not stop_flood:
-                    while sum(1 for r in reads if not r.done()) < 3 and not stop_flood:
-                        reads.append(asyncio.create_task(g.ro_query(long_read)))
-                    await asyncio.sleep(0.01)
-            flood_task = asyncio.create_task(flood())
-            await asyncio.sleep(0.5)  # the reads hold the read lock
+            ping = PingProbe(self.port) if probe else None
+            if ping:
+                await ping.start()
 
-            # sample PING on a fixed cadence in its own task, so a freeze lands
-            # in a recorded sample. a failed PING (server died) counts as inf
-            pings = []
-            stop_ping = False
-            async def ping_probe():
-                while not stop_ping:
-                    t0 = loop.time()
-                    try:
-                        await ping.ping()
-                        pings.append(loop.time() - t0)
-                    except Exception:
-                        pings.append(float('inf'))
-                    await asyncio.sleep(0.01)
-            ping_task = asyncio.create_task(ping_probe()) if probe else None
+            reads = ReadLockHolder(g, self.long_read)
+            reads.start()
+            await asyncio.sleep(0.5)  # the reads hold the read lock
 
             async def send(client, cmd):
                 t0 = loop.time()
@@ -146,51 +105,56 @@ class ConstraintBehindLongReads():
 
             if action is not None:
                 await asyncio.sleep(0.5)  # the commands are waiting
-                stop_flood = True
-                await flood_task
+                await reads.stop()
                 await action(admin)
-
             results = await asyncio.gather(*cmd_tasks)
 
-            # keep probing a little past the replies
-            await asyncio.sleep(0.3)
-            stop_ping = True
-            stop_flood = True
-            if ping_task is not None:
-                await ping_task
-            await flood_task
-            read_results = await asyncio.gather(*reads, return_exceptions=True)
+            await asyncio.sleep(0.3)  # keep probing a little past the replies
+            worst = await ping.stop() if ping else 0.0
+            read_errors = await reads.drain()
 
-            for c in [admin, ping] + clients:
+            for c in clients + [admin]:
                 await c.aclose()
             await pool.aclose()
-            return results, read_results, pings
+            return results, read_errors, worst
 
-        results, read_results, pings = asyncio.run(run())
+        results, read_errors, worst = asyncio.run(run())
 
-        # the reads exist only to hold the read lock; an error means the setup
-        # broke (or the server died), which would make the assertions vacuous
-        read_errors = [r for r in read_results if isinstance(r, Exception)]
+        # the reads exist only to hold the lock; an error means the setup broke
+        # (or the server died), which would make the assertions vacuous
         self.env.assertEqual(read_errors, [], message=str(read_errors[:3]))
 
         replies   = [r for r, _ in results]
         latencies = [l for _, l in results]
-        worst     = max(pings) if pings else 0.0
         self.env.debugPrint(f"replies={replies!r} latencies="
                 f"{[round(l, 2) for l in latencies]} "
                 f"worst_ping={worst*1000:.1f}ms", force=True)
         return replies, latencies, worst
 
-    # the command waited behind the reads, and no PING stalled for a large part
-    # of that wait. with the freeze, the worst PING ~= the command's latency
-    def _assert_stayed_responsive(self, latency, worst_ping):
-        # non-vacuity: the command really waited for the read lock to drain
-        self.env.assertGreater(latency, 0.3 * self.read_dur)
-        self.env.assertLess(worst_ping, 0.5 * latency)
+    # run `cmd` behind the reads: it must reply `expected`, having really
+    # waited for the read lock, and no PING may stall for a large part of that
+    # wait (with the freeze, the worst PING ~= the command's latency)
+    def _assert_waits_without_freezing(self, cmd, expected):
+        replies, latencies, worst = self._behind_long_reads([cmd], probe=True)
+        self.env.assertEqual(replies[0], expected)
+        self.env.assertGreater(latencies[0], 0.3 * self.read_dur)
+        self.env.assertLess(worst, 0.5 * latencies[0])
+
+    # run `cmd` behind the reads with `action` landing while it waits: it must
+    # fail with an error containing `expected_err`
+    def _assert_aborted_by(self, cmd, action, expected_err):
+        replies, _, _ = self._behind_long_reads([cmd], action=action)
+        self.env.assertTrue(isinstance(replies[0], ResponseError))
+        self.env.assertContains(expected_err, str(replies[0]))
 
     def _constraint_count(self):
         res = self.graph.ro_query("CALL db.constraints() YIELD type RETURN count(1)")
         return res.result_set[0][0]
+
+    def _assert_operational(self, ct_type):
+        wait_on_constraint(self.graph, ct_type, 'NODE', 'P', 'v')
+        c = get_constraint(self.graph, ct_type, 'NODE', 'P', 'v')
+        self.env.assertEqual(c.status, 'OPERATIONAL')
 
 class testConstraintWriteLock(ConstraintBehindLongReads):
     def __init__(self):
@@ -198,39 +162,18 @@ class testConstraintWriteLock(ConstraintBehindLongReads):
 
     def test_01_create_unique_stays_responsive(self):
         self._populate(unique_index=True)
-        cmd = ["GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, "UNIQUE", "NODE", "P",
-               "PROPERTIES", "1", "v"]
-        replies, latencies, worst = self._behind_long_reads([cmd], probe=True)
-
-        self.env.assertEqual(replies[0], "PENDING")
-        self._assert_stayed_responsive(latencies[0], worst)
-
-        wait_on_constraint(self.graph, 'UNIQUE', 'NODE', 'P', 'v')
-        c = get_constraint(self.graph, 'UNIQUE', 'NODE', 'P', 'v')
-        self.env.assertEqual(c.status, 'OPERATIONAL')
+        self._assert_waits_without_freezing(CREATE_UNIQUE, "PENDING")
+        self._assert_operational('UNIQUE')
 
     def test_02_create_mandatory_stays_responsive(self):
         self._populate()
-        cmd = ["GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, "MANDATORY", "NODE", "P",
-               "PROPERTIES", "1", "v"]
-        replies, latencies, worst = self._behind_long_reads([cmd], probe=True)
-
-        self.env.assertEqual(replies[0], "PENDING")
-        self._assert_stayed_responsive(latencies[0], worst)
-
-        wait_on_constraint(self.graph, 'MANDATORY', 'NODE', 'P', 'v')
-        c = get_constraint(self.graph, 'MANDATORY', 'NODE', 'P', 'v')
-        self.env.assertEqual(c.status, 'OPERATIONAL')
+        self._assert_waits_without_freezing(CREATE_MANDATORY, "PENDING")
+        self._assert_operational('MANDATORY')
 
     def test_03_drop_stays_responsive(self):
         self._populate(unique_index=True)
         create_unique_node_constraint(self.graph, 'P', 'v', sync=True)
-        cmd = ["GRAPH.CONSTRAINT", "DROP", GRAPH_ID, "UNIQUE", "NODE", "P",
-               "PROPERTIES", "1", "v"]
-        replies, latencies, worst = self._behind_long_reads([cmd], probe=True)
-
-        self.env.assertEqual(replies[0], "OK")
-        self._assert_stayed_responsive(latencies[0], worst)
+        self._assert_waits_without_freezing(DROP_UNIQUE, "OK")
         self.env.assertEqual(self._constraint_count(), 0)
 
     def test_04_duplicate_create_during_wait(self):
@@ -238,19 +181,14 @@ class testConstraintWriteLock(ConstraintBehindLongReads):
         # read-locked precheck. the second must be rejected once it holds the
         # write lock, without disturbing the first
         self._populate(unique_index=True)
-        cmd = ["GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, "UNIQUE", "NODE", "P",
-               "PROPERTIES", "1", "v"]
-        replies, _, _ = self._behind_long_reads([cmd, cmd])
+        replies, _, _ = self._behind_long_reads([CREATE_UNIQUE, CREATE_UNIQUE])
 
-        ok   = [r for r in replies if r == "PENDING"]
-        errs = [r for r in replies if isinstance(r, redis.exceptions.ResponseError)]
-        self.env.assertEqual(len(ok), 1)
+        errs = [r for r in replies if isinstance(r, ResponseError)]
+        self.env.assertEqual(replies.count("PENDING"), 1)
         self.env.assertEqual(len(errs), 1)
         self.env.assertContains("Constraint already exists", str(errs[0]))
 
-        wait_on_constraint(self.graph, 'UNIQUE', 'NODE', 'P', 'v')
-        c = get_constraint(self.graph, 'UNIQUE', 'NODE', 'P', 'v')
-        self.env.assertEqual(c.status, 'OPERATIONAL')
+        self._assert_operational('UNIQUE')
         self.env.assertEqual(self._constraint_count(), 1)
 
         # the graph still accepts writes and enforces the constraint
@@ -258,7 +196,7 @@ class testConstraintWriteLock(ConstraintBehindLongReads):
         try:
             self.graph.query("CREATE (:P {v:-1})")
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except ResponseError as e:
             self.env.assertContains("unique constraint violation", str(e))
 
 # a server of its own with AOF on: a GRAPH.EFFECT replicated at the wrong time
@@ -274,21 +212,18 @@ class testConstraintWriteLockStateChanges(ConstraintBehindLongReads):
         # replicate GRAPH.EFFECT inside it: with AOF on, Redis asserts on
         # propagation during a pause and the server crashes
         self._populate(without_v=True)
-        cmd = ["GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, "MANDATORY", "NODE", "P",
-               "PROPERTIES", "1", "v"]
+
         # long enough to cover the whole wait; lifted right after CREATE replies
         pause_ms = int((3 * self.read_dur + 10) * 1000)
         async def pause(admin):
             await admin.execute_command("CLIENT", "PAUSE", pause_ms, "WRITE")
 
         try:
-            replies, _, _ = self._behind_long_reads([cmd], action=pause)
+            self._assert_aborted_by(CREATE_MANDATORY, pause,
+                                    "replica traffic is currently paused")
         finally:
             self.conn.execute_command("CLIENT", "UNPAUSE")
 
-        self.env.assertTrue(isinstance(replies[0], redis.exceptions.ResponseError))
-        self.env.assertContains("replica traffic is currently paused",
-                                str(replies[0]))
         self.env.assertTrue(self.conn.ping())
         self.env.assertEqual(self._constraint_count(), 0)
 
@@ -298,15 +233,10 @@ class testConstraintWriteLockStateChanges(ConstraintBehindLongReads):
         # replay (or a replica) would bring back an empty graph and apply the
         # constraint to it
         self._populate()
-        cmd = ["GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, "MANDATORY", "NODE", "P",
-               "PROPERTIES", "1", "v"]
         async def delete(admin):
             await admin.delete(GRAPH_ID)
 
-        replies, _, _ = self._behind_long_reads([cmd], action=delete)
-
-        self.env.assertTrue(isinstance(replies[0], redis.exceptions.ResponseError))
-        self.env.assertContains("deleted or replaced", str(replies[0]))
+        self._assert_aborted_by(CREATE_MANDATORY, delete, "deleted or replaced")
         self.env.assertEqual(self.conn.exists(GRAPH_ID), 0)
 
         # replaying the AOF must neither crash nor resurrect the graph

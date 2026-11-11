@@ -15,6 +15,7 @@
 #define EMSG_DIFFERENT_VALUE "Encountered different graph value when opened key %s"
 #define EMSG_REPLICA_TRAFFIC_PAUSED "Write query aborted: replica traffic is currently paused"
 #define EMSG_NOT_MASTER "Write query aborted: this instance is not a master"
+#define EMSG_GRAPH_DELETED_OR_REPLACED "Write aborted: the graph was deleted or replaced"
 #define EMSG_WRITE_LOCK_FAILED "Write query aborted: failed to acquire the graph write lock (error %d)"
 #define EMSG_READ_LOCK_FAILED "Query aborted: failed to acquire the graph read lock"
 #define EMSG_ACCESS_VAR "Attempted to access variable before it has been defined"

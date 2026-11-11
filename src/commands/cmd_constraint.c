@@ -60,73 +60,6 @@
 
 extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
 
-extern RedisModuleType *GraphContextRedisModuleType ;
-
-// acquire the graph write lock for a constraint CREATE / DROP
-//
-// on a worker thread (regular client command) acquire it with
-// GraphContext_AcquireWriteLockYieldingGIL, so a long read holding the read
-// lock can't freeze the server while we wait (#3753). that wait hands the GIL
-// to the main thread between slices, so once we hold the GIL + write lock
-// re-check what the main thread may have changed meanwhile - the same checks
-// the query write path makes before each attempt
-// (_QueryCtx_TryAcquireWriteLock):
-//
-// - a replica-pause window (CLIENT PAUSE WRITE / failover) opened: replicating
-//   GRAPH.EFFECT inside it trips Redis' propagation assertion when AOF or
-//   replicas are on
-// - this instance was demoted to a replica
-// - the graph key was deleted or replaced: GRAPH.EFFECT is applied with
-//   shouldCreate=true, so replicating it would resurrect the graph on replicas
-//   and on AOF replay
-//
-// on the main thread (AOF load / replicated command, sync path) we already
-// hold the GIL and can't yield it: keep the blocking acquire. those commands
-// are exempt from the checks above, like replicated / loading queries
-//
-// returns NULL holding the write lock (and the GIL on a worker thread), or an
-// error message - also holding both, the caller releases them as usual
-static const char *_Constraint_AcquireWriteLock
-(
-	RedisModuleCtx *ctx,  // thread-safe ctx (unlocked) on a worker thread
-	GraphContext *gc,     // graph to lock
-	bool from_thread      // running on a worker thread
-) {
-	if (!from_thread) {
-		GraphContext_AcquireWriteLock (gc) ;
-		return NULL ;
-	}
-
-	GraphContext_AcquireWriteLockYieldingGIL (gc, ctx) ;
-
-	if (RedisModule_AvoidReplicaTraffic ()) {
-		return EMSG_REPLICA_TRAFFIC_PAUSED ;
-	}
-
-	if (RedisModule_GetContextFlags (ctx) & REDISMODULE_CTX_FLAGS_READONLY) {
-		return EMSG_NOT_MASTER ;
-	}
-
-	// re-open the key by gc's current name: a RENAME runs under the GIL and
-	// updates it, so a renamed graph is still found
-	const char *name = GraphContext_GetName (gc) ;
-	RedisModuleString *id = RedisModule_CreateString (ctx, name, strlen (name)) ;
-	RedisModuleKey *key = RedisModule_OpenKey (ctx, id, REDISMODULE_READ) ;
-	RedisModule_FreeString (ctx, id) ;
-
-	bool same_graph =
-		RedisModule_KeyType (key) == REDISMODULE_KEYTYPE_MODULE &&
-		RedisModule_ModuleTypeGetType (key) == GraphContextRedisModuleType &&
-		RedisModule_ModuleTypeGetValue (key) == gc ;
-	RedisModule_CloseKey (key) ;
-
-	if (!same_graph) {
-		return "Constraint aborted: the graph was deleted or replaced" ;
-	}
-
-	return NULL ;
-}
-
 // constraint operation
 typedef enum {
 	CT_CREATE,  // create constraint
@@ -349,12 +282,11 @@ static bool _Constraint_Drop
 
 	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
 
-	// acquire graph write lock
-	const char *lock_err = _Constraint_AcquireWriteLock (ctx, gc, from_thread) ;
-	if (lock_err != NULL) {
-		error_msg = lock_err ;
+	// acquire graph write lock, and the GIL on a worker thread
+	// on failure neither is held
+	if (!GraphContext_AcquireWriteLockChecked (gc, ctx, &error_msg)) {
 		res = false ;
-		goto cleanup ;
+		goto unlocked ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -387,6 +319,7 @@ cleanup:
 		RedisModule_ThreadSafeContextUnlock (ctx) ;
 	}
 
+unlocked:
 	if (res == false) {
 		RedisModule_ReplyWithError (ctx, error_msg) ;
 	}
@@ -573,44 +506,35 @@ static bool _Constraint_Create
 		_Constraint_CreatePrecheck (gc, ct, et, lbl, props, n) ;
 	GraphContext_ReleaseReadLock (gc) ;
 
-	if (precheck_err != NULL) {
-		// reply lock-free: on the async path this is a blocked-client
-		// thread-safe context whose replies are buffered and flushed on
-		// UnblockClient, so no GIL is needed (same as the success reply in
-		// Constraint_Op and the write-locked error paths below); on the sync
-		// AOF/replicated path there is no blocked client and we are already on
-		// the main thread holding the GIL, where taking it again would deadlock
-		RedisModule_ReplyWithError (ctx, precheck_err) ;
-
-		QueryCtx_Free  () ;
-		ErrorCtx_Clear () ;
-		GraphContext_DecreaseRefCount (gc) ;
-		return false ;
-	}
-
-	// nothing was mutated before GraphHub_AddConstraint: a failure before it
-	// must NOT call QueryCtx_Rollback (graph-global reserved-node reset)
-	bool rollback = false ;
 	Constraint c = NULL ;
 
-	const char *lock_err = _Constraint_AcquireWriteLock (ctx, gc, from_thread) ;
-	if (lock_err != NULL) {
-		error_msg = lock_err ;
+	// nothing was mutated so far: the failures below skip the rollback
+	// (QueryCtx_Rollback resets the graph-global reserved-node counter)
+	if (precheck_err != NULL) {
+		error_msg = precheck_err ;
 		res = false ;
-		goto cleanup ;
+		goto unlocked ;
+	}
+
+	// acquire graph write lock, and the GIL on a worker thread
+	// on failure neither is held
+	if (!GraphContext_AcquireWriteLockChecked (gc, ctx, &error_msg)) {
+		res = false ;
+		goto unlocked ;
 	}
 
 	// re-run the precheck now that the write lock makes it authoritative.
 	// a worker thread yielded the GIL while waiting for the write lock, so a
 	// concurrent CREATE / DROP INDEX may have landed since the read-locked
-	// precheck above; this keeps those rejections off the rollback path
+	// precheck above
 	if (from_thread) {
-		const char *recheck_err =
-			_Constraint_CreatePrecheck (gc, ct, et, lbl, props, n) ;
-		if (recheck_err != NULL) {
-			error_msg = recheck_err ;
+		precheck_err = _Constraint_CreatePrecheck (gc, ct, et, lbl, props, n) ;
+		if (precheck_err != NULL) {
+			GraphContext_ReleaseLock (gc) ;
+			RedisModule_ThreadSafeContextUnlock (ctx) ;
+			error_msg = precheck_err ;
 			res = false ;
-			goto cleanup ;
+			goto unlocked ;
 		}
 	}
 
@@ -618,7 +542,6 @@ static bool _Constraint_Create
 	// create constraint via GraphHub
 	//--------------------------------------------------------------------------
 
-	rollback = true ;
 	ConstraintCreateStatus status ;
 	c = GraphHub_AddConstraint (gc, ct, et, lbl, props, n, true, &status,
 			&error_msg) ;
@@ -645,7 +568,7 @@ static bool _Constraint_Create
 cleanup:
 
 	// operation failed perform clean up
-	if (res == false && rollback) {
+	if (res == false) {
 		QueryCtx_Rollback () ;
 	}
 
@@ -655,7 +578,11 @@ cleanup:
 		RedisModule_ThreadSafeContextUnlock (ctx) ;
 	}
 
-	// constraint already exists
+unlocked:
+	// reply lock-free: on the async path this is a blocked-client thread-safe
+	// context whose replies are buffered and flushed on UnblockClient, so no
+	// GIL is needed; on the sync AOF/replicated path we are already on the
+	// main thread holding the GIL, where taking it again would deadlock
 	if (res == false) {
 		// TODO: give additional information to caller
 		RedisModule_ReplyWithError (ctx, error_msg) ;

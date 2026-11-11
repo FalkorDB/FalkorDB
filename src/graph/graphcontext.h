@@ -191,6 +191,21 @@ void GraphContext_AcquireWriteLockYieldingGIL
 	RedisModuleCtx *rm_ctx  // thread-safe context, unlocked on entry
 ) ;
 
+// acquire gc's write lock for a command that is about to mutate the graph and
+// replicate the change. on a worker thread it also acquires the GIL (without
+// pinning it while readers drain) and then re-checks that the instance may
+// still replicate (no replica pause, still a master) and that the graph key
+// still holds gc. on the main thread it's a plain blocking acquire
+//
+// returns true holding the write lock, and on a worker thread the GIL (ctx
+// locked). on failure sets *err_msg and returns false holding neither
+bool GraphContext_AcquireWriteLockChecked
+(
+	GraphContext *gc,      // graph to lock
+	RedisModuleCtx *ctx,   // on a worker thread: thread-safe ctx, unlocked
+	const char **err_msg   // [output] reason for failure
+) ;
+
 // mark graph key as "dirty" for Redis to pick up on
 void GraphContext_MarkWriter
 (
