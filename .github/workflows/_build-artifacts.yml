@@ -230,7 +230,19 @@ jobs:
           set -euo pipefail
           docker load --input "$TAR"
           docker run -d --name smoke "falkordb-server:${SUFFIX}"
-          trap 'rc=$?; if [ "$rc" -ne 0 ]; then docker logs smoke; fi; docker rm -f smoke >/dev/null' EXIT
+          trap 'rc=$?; if [ "$rc" -ne 0 ]; then docker logs smoke; docker logs smoke-args || true; docker logs smoke-fallback || true; fi; docker rm -f smoke smoke-args smoke-fallback >/dev/null' EXIT
+          # run.sh hands the server its own args variable, or the other one when
+          # its own is unset, and never joins the two. smoke-args sets both, to
+          # different configs: the server must show its own setting and not the
+          # other's. smoke-fallback sets only the other server's variable.
+          SERVER=$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "falkordb-server:${SUFFIX}" | sed -n 's/^FALKORDB_SERVER=//p')
+          case "$SERVER" in
+            redis) OTHER=VALKEY_ARGS ;;
+            valkey) OTHER=REDIS_ARGS ;;
+            *) echo "::error::FALKORDB_SERVER is '$SERVER', expected redis or valkey"; exit 1 ;;
+          esac
+          docker run -d --name smoke-args -e "REDIS_ARGS=--maxclients 77" -e "VALKEY_ARGS=--hz 33" "falkordb-server:${SUFFIX}"
+          docker run -d --name smoke-fallback -e "${OTHER}=--hz 44" "falkordb-server:${SUFFIX}"
           # Outputs are captured before matching: `docker exec ... | grep -q`
           # under pipefail reports 141 when grep exits early.
           for i in $(seq 1 30); do
@@ -245,7 +257,26 @@ jobs:
           # PID 1 is redis-server: run.sh and gosu both exec into it.
           UIDS=$(docker exec smoke sh -c 'while read -r k v _; do if [ "$k" = Uid: ]; then echo "$v"; fi; done < /proc/1/status')
           if [ "$UIDS" != "999" ]; then echo "::error::redis-server runs as uid '$UIDS', expected 999"; exit 1; fi
-          echo "OK: falkordb-server:${SUFFIX} loads the module, answers, and runs as falkordb"
+          wait_pong() {
+            for i in $(seq 1 30); do
+              if [ "$(docker exec "$1" redis-cli ping 2>/dev/null || true)" = "PONG" ]; then return 0; fi
+              sleep 1
+            done
+            echo "::error::the server in $1 did not start"; exit 1
+          }
+          config() { docker exec "$1" redis-cli CONFIG GET "$2" | sed -n 2p; }
+          wait_pong smoke-args
+          MAXCLIENTS=$(config smoke-args maxclients)
+          HZ=$(config smoke-args hz)
+          case "$SERVER:$MAXCLIENTS:$HZ" in
+            redis:77:33 | valkey:77:33) echo "::error::${SERVER} got both REDIS_ARGS and VALKEY_ARGS (maxclients $MAXCLIENTS, hz $HZ)"; exit 1 ;;
+            redis:77:* | valkey:*:33) ;;
+            *) echo "::error::${SERVER} did not get its own args variable (maxclients $MAXCLIENTS, hz $HZ)"; exit 1 ;;
+          esac
+          wait_pong smoke-fallback
+          HZ=$(config smoke-fallback hz)
+          if [ "$HZ" != "44" ]; then echo "::error::${SERVER} with only ${OTHER} set got hz '$HZ', expected 44"; exit 1; fi
+          echo "OK: falkordb-server:${SUFFIX} loads the module, answers, runs as falkordb, and takes ${SERVER}'s own args, else the other's, never both"
 
       - name: Upload falkordb-server image (${{ matrix.suffix }})
         if: matrix.image && inputs.export_images
