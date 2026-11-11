@@ -147,43 +147,17 @@ jobs:
     timeout-minutes: 40
     permissions:
       actions: read
+      contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Wait for release images still being pushed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          deadline=$(( SECONDS + 30 * 60 ))
-          while :; do
-            busy=""
-            # Queued runs count too: a release published from the UI is
-            # public before its run starts. Assigned on its own line, so a
-            # failed call fails the job instead of reading as "no release
-            # running".
-            runs=$(gh api "repos/${GH_REPO}/actions/workflows/release-tag.yml/runs?per_page=20" \
-                     --jq '.workflow_runs[] | select(.status != "completed") | .id')
-            for run in $runs; do
-              # An image job not scheduled yet counts as still to come. A tag
-              # on an older version branch runs that branch's release-tag.yml,
-              # whose image job is a matrix: "image (falkordb)" and so on.
-              states=$(gh api "repos/${GH_REPO}/actions/runs/${run}/jobs?per_page=100" --paginate \
-                         --jq '.jobs[] | select(.name == "image" or (.name | startswith("image ("))) | .status')
-              if [ -z "$states" ] || grep -qv '^completed$' <<<"$states"; then
-                busy="$busy https://github.com/${GH_REPO}/actions/runs/${run}"
-              fi
-            done
-            if [ -z "$busy" ]; then
-              echo "No release is pushing images."
-              break
-            fi
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "::error::release-tag.yml is still pushing images after 30 minutes:${busy}. The tag check would fail on latest* until it finishes; re-run this workflow's failed jobs once it has."
-              exit 1
-            fi
-            echo "waiting for release images:${busy}"
-            sleep 30
-          done
+        run: build/await-release-images.sh
 
   check-tags:
     needs: await-release

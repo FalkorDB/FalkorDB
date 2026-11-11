@@ -244,6 +244,15 @@ jobs:
   image:
     needs: [guard, create-release]
     runs-on: ubuntu-latest
+    # Every job that can move latest* shares this lock, across versions and
+    # across release-tag.yml and release-image.yml, so an older release that
+    # read the release list cannot overwrite latest* after a newer one moved
+    # it. The release list is read inside the job, so inside the lock. If a
+    # third publisher queues behind a waiting one, GitHub cancels the waiting
+    # one: a visible, re-runnable failure, where a race would be silent.
+    concurrency:
+      group: publish-latest-images
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -347,10 +356,33 @@ jobs:
         # holds the platform and server its name says.
         run: python3 build/publish_tags.py per-os --version "$SEMVER" --images "$RUNNER_TEMP/images" --execute
 
+  # latest* points at the newest stable GitHub release, which may be another
+  # version's run that has published its release but not yet its images
+  # (versions do not share this workflow's concurrency group). Wait for those,
+  # as rust-push.yml does, so the check does not fail on someone else's
+  # release.
+  await-release:
+    needs: [guard, image, publish-images]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Wait for other releases' images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: build/await-release-images.sh --exclude-run "$GITHUB_RUN_ID"
+
   # One check after every image job: latest* is judged against the release's
   # own tags, so a check before all of them are pushed would fail.
   check-tags:
-    needs: [guard, image, publish-images]
+    needs: [guard, image, publish-images, await-release]
     permissions:
       contents: read
       packages: read

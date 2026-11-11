@@ -143,6 +143,15 @@ jobs:
   publish:
     needs: [prepare, build]
     runs-on: ubuntu-latest
+    # Every job that can move latest* shares this lock, across versions and
+    # across release-tag.yml and release-image.yml, so an older release that
+    # read the release list cannot overwrite latest* after a newer one moved
+    # it. The release list is read inside the job, so inside the lock. If a
+    # third publisher queues behind a waiting one, GitHub cancels the waiting
+    # one: a visible, re-runnable failure, where a race would be silent.
+    concurrency:
+      group: publish-latest-images
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
