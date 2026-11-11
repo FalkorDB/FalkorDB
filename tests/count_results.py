@@ -16,9 +16,7 @@ A record is a JSON list of rows: server, the version its start-up banner names,
 the run (how the cell ran), the suite, and the counts. RLTest output gives the
 counts from its per-test verdict lines (`[PASS]`, `[FAIL]`, `[ERROR]`,
 `[SKIP]`); pytest gives them through `--junitxml`, split by test file into the
-e2e, function, MVCC and concurrency suites; TCK counts its scenarios from
-Behave's own JUnit reports (tests/tck/test_tck.py writes them to
-TCK_JUNIT_DIR), not the one pytest test that runs them all.
+e2e, function, MVCC and concurrency suites, and TCK.
 
 A cell whose test step failed but recorded no failed test (the harness died, a
 class's `__init__` raised, the server crashed between tests) records one failed
@@ -73,22 +71,10 @@ def suite_of(case):
     return "pytest"
 
 
-def junit_files(paths):
-    """The given files, and the .xml files in the given directories."""
-    for path in paths:
-        if os.path.isdir(path):
-            for root, _, names in os.walk(path):
-                yield from (os.path.join(root, n) for n in sorted(names) if n.endswith(".xml"))
-        else:
-            yield path
-
-
-def count_junit(paths, suite=None):
-    """Counts per suite from JUnit XML files: pytest's --junitxml, split by
-    test file, or, with `suite`, every testcase under that one suite (Behave's
-    per-scenario reports, one file per feature, for TCK)."""
+def count_junit(paths):
+    """Counts per suite from pytest --junitxml files."""
     suites = defaultdict(empty)
-    for path in junit_files(paths):
+    for path in paths:
         if not os.path.exists(path):
             print(f"count_results: {path} does not exist, skipped", file=sys.stderr)
             continue
@@ -101,7 +87,7 @@ def count_junit(paths, suite=None):
             print(f"count_results: {path} is not valid JUnit XML ({e}), skipped", file=sys.stderr)
             continue
         for case in root.iter("testcase"):
-            counts = suites[suite or suite_of(case)]
+            counts = suites[suite_of(case)]
             if case.find("skipped") is not None:
                 counts["skipped"] += 1
             elif case.find("failure") is not None or case.find("error") is not None:
@@ -142,9 +128,7 @@ def record(args):
             print(f"count_results: {args.rltest} does not exist", file=sys.stderr)
         suites = {args.suite or "flow": count_rltest(text)}
     else:
-        suites = count_junit(args.junit or [])
-        if args.behave:
-            suites.update(count_junit(args.behave, suite="TCK"))
+        suites = count_junit(args.junit)
 
     if args.status == "failure" and not any(c["failed"] for c in suites.values()):
         # The step failed, but no test did: count the cell itself as a failure,
@@ -224,8 +208,6 @@ def main(argv=None):
     src = rec.add_mutually_exclusive_group(required=True)
     src.add_argument("--rltest", help="RLTest (flow.sh) output")
     src.add_argument("--junit", nargs="+", help="pytest --junitxml files")
-    rec.add_argument("--behave", nargs="+",
-                     help="Behave --junit reports (files or directories), counted as TCK scenarios")
     rec.add_argument("--logs", nargs="*", default=[], help="server log files or directories")
     rec.add_argument("--status", default="success", help="the test step's outcome")
     rec.add_argument("--out", required=True, help="JSON file to write")
