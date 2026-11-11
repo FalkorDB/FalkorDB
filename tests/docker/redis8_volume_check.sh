@@ -231,12 +231,12 @@ if [ "$SERVER" = valkey ]; then
 
     # A Redis 8 AOF whose base holds commands, not an RDB (the empty base made
     # at startup; the graphs are in the incr file): Valkey replays it. The
-    # Redis dump.rdb the writer saved next to it is not loaded with AOF on.
+    # Redis dump.rdb the writer saved on shutdown would stop the check, as any
+    # Redis save file in the data directory does, so it is removed first.
     CASE=aof-command-base
     v=$(copy_vol "$AOF_CMDS" "$CASE")
-    if [ "$(in_vol "$v" 'head -c 6 /data/dump.rdb')" != REDIS0 ]; then
-        fail "the volume has no Redis dump.rdb next to the AOF"
-    fi
+    refused "$CASE-with-dump" "$IMAGE" "$v" -e "VALKEY_ARGS=--appendonly yes"
+    in_vol "$v" 'rm /data/dump.rdb'
     started "$CASE" "$IMAGE" "$v" -e "VALKEY_ARGS=--appendonly yes"
 
     CASE=empty-then-valkey-volume

@@ -19,7 +19,9 @@ Before Valkey starts, the image reads the header of every file in the data
 directory and of the `*.base.rdb` files in the directories under it (an AOF's
 base). If Redis wrote one, the container stops before Valkey starts, prints
 the file names and the link to this page, and leaves the volume as it was. An
-AOF whose base is commands rather than an RDB is replayed by Valkey as it is.
+AOF whose base is commands rather than an RDB is replayed by Valkey as it is,
+but a Redis `dump.rdb` left next to it also stops the container: delete that
+file (Valkey does not load it with AOF on) after backing up the volume.
 
 To keep the data as it is, run a Redis image of FalkorDB on the volume (one
 whose `com.falkordb.server.name` label is `redis`). Otherwise migrate it:
