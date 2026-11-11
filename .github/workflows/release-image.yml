@@ -149,8 +149,10 @@ jobs:
     # it. The release list is read inside the job, so inside the lock. If a
     # third publisher queues behind a waiting one, GitHub cancels the waiting
     # one: a visible, re-runnable failure, where a race would be silent.
+    # A dispatch without mark_latest never touches latest*, so it takes a
+    # group of its own and cannot cancel a publisher waiting on the lock.
     concurrency:
-      group: publish-latest-images
+      group: ${{ inputs.mark_latest && 'publish-latest-images' || format('release-image-publish-{0}', github.run_id) }}
       cancel-in-progress: false
     permissions:
       contents: read
