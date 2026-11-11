@@ -91,10 +91,10 @@ def consumeStream(conn, env, stream, drop=True, n_items=1, timeout=30):
     logged_queries = []
     streams = {stream: '0-0'}
 
-    elapsed = 10
-    while len(logged_queries) < n_items and elapsed > 0:
-        # read messages from the stream
-        messages = conn.xread(streams, block=0)
+    # a finite block, bounded by the deadline, so a missing entry fails the
+    # test promptly instead of hanging on XREAD BLOCK 0 forever
+    while len(logged_queries) < n_items and time.time() < deadline:
+        messages = conn.xread(streams, block=200)
 
         if len(messages) > 0:
             # process each message received
@@ -104,9 +104,6 @@ def consumeStream(conn, env, stream, drop=True, n_items=1, timeout=30):
 
             # update stream last ID
             streams[stream] = stream_messages[-1][0]
-
-        time.sleep(0.2)
-        elapsed -= 0.2
 
     # drop stream
     if drop:

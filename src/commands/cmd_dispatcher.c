@@ -257,7 +257,8 @@ int CommandDispatch
 	// telemetry is node-local: log the queries this node serves to its own
 	// clients while CMD_INFO is on, so each node's stream reflects what ran on
 	// it. skip commands received from the master (the master's queries,
-	// replicated here) and the AOF/RDB replay, which already holds their entries
+	// replicated here) and AOF/RDB replay, so neither recreates this node's
+	// telemetry stream during load
 	bool info_enabled = false ;
 	Config_Option_get (Config_CMD_INFO, &info_enabled) ;
 	bool log_query = info_enabled && !is_replicated &&
