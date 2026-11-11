@@ -10,7 +10,8 @@
 #   image    - build and publish the RC images, run the cells against them in
 #              service containers. This is what ships, so it is what the merge
 #              queue gates on. One leg per server (_image-leg.yml): Valkey
-#              always, Redis per `redis_leg`.
+#              always; Redis always in the merge queue, and on a pull request
+#              per `redis_leg`.
 #
 # Coverage is always the artifact vehicle: the profiles have to land in the
 # workspace, and nothing ships the coverage image. a-sanitizer is image-only
