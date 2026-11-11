@@ -130,7 +130,8 @@ class MovesLatest(unittest.TestCase):
                 pt.rebuild_plan(tag, SHA, latest=True, releases=rels)
 
     def test_rebuild_refuses_other_workflows_tags(self):
-        for tag in ("edge", "edge-rs", "latest", "Latest", "edge-c", "edge-c-x64", "rc", "rc-mg-abc", "v6.1.0"):
+        for tag in ("edge", "edge-rs", "latest", "Latest", "edge-c", "edge-c-x64", "rc", "rc-mg-abc", "v6.1.0",
+                    "latest-redis", "latest-valkey", "edge-rs-redis", "Edge-RS-Valkey", "6.1.0-redis"):
             with self.subTest(tag=tag), self.assertRaises(pt.PlanError):
                 pt.rebuild_plan(tag, SHA, latest=False)
 

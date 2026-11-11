@@ -99,13 +99,18 @@ jobs:
           done
 
       - name: Rehearse a release (release-tag.yml's image and publish-images jobs)
-        env:
-          # publish_tags.py reads this repository's GitHub releases to decide
-          # whether 6.1.0 moves latest*.
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # publish_tags.py reads the GitHub releases through gh. A shim
+          # answers with a fixed list in which 6.1.0 is the highest published
+          # release, so the latest*-moving path runs every time and the live
+          # repository's releases (or a gh outage) can't change the outcome.
+          mkdir -p "$RUNNER_TEMP/shim"
+          printf '%s\n' '#!/bin/sh' \
+            "echo '{\"tag_name\":\"v6.0.4\",\"draft\":false,\"prerelease\":false}'" \
+            "echo '{\"tag_name\":\"v6.1.0\",\"draft\":false,\"prerelease\":false}'" > "$RUNNER_TEMP/shim/gh"
+          chmod +x "$RUNNER_TEMP/shim/gh"
+          export PATH="$RUNNER_TEMP/shim:$PATH"
           python3 build/publish_tags.py release --version 6.1.0 --sha "$SHA" --execute
           python3 build/publish_tags.py per-os --version 6.1.0 --images "$RUNNER_TEMP/images" --execute
 

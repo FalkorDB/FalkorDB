@@ -178,6 +178,11 @@ def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[d
     latest* moves only where a release would move it: `tag` must be the
     highest stable version with a published GitHub release, in `releases`.
     """
+    # The server is appended to every tag pushed, so a tag that already ends in
+    # one would publish over that server's channel with the other server's
+    # image: latest-redis's Valkey tag is latest-redis itself.
+    if "-" in tag and tag.rsplit("-", 1)[1].lower() in SERVERS:
+        raise PlanError(f"tag '{tag}' ends in a server name; the server is added to each tag pushed")
     if parse_version(tag) is None:
         if re.match(r"v\d", tag, re.IGNORECASE):
             raise PlanError(f"tag '{tag}': image versions have no leading v")
