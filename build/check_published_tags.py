@@ -59,7 +59,7 @@ BROWSER_PATH_ENV = "FALKORDB_BROWSER_PATH"
 # `valkey-server --version` prints "Valkey server v=9.1.2 sha=...", and
 # redis-server prints the same with "Redis".
 VERSION_LINE = re.compile(r"^(?P<product>\S+) server v=(?P<version>\S+)", re.MULTILINE)
-RELEASE_VERSION = re.compile(r"^v?(?P<core>\d+\.\d+\.\d+)(?P<pre>-(?:rc|alpha|beta)(?:\.\d+)*)?$")
+RELEASE_VERSION = re.compile(r"^v?(?P<core>\d+\.\d+\.\d+)(?P<pre>-[0-9A-Za-z.-]+)?$")
 PIN_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 CI_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 REGISTRY_WORKERS = 6
@@ -214,7 +214,13 @@ def parse_target(text: str, data: dict) -> Target:
         return Target("ci", ci_key=ci_key)
     match = RELEASE_VERSION.match(text)
     if not match:
-        raise ValueError(f"unknown target {text!r}: want edge, latest, X.Y.Z[-rc.N] or rc-<ci_key>")
+        raise ValueError(f"unknown target {text!r}: want edge, latest, X.Y.Z[-prerelease] or rc-<ci_key>")
+    # release-tag.yml takes any prerelease suffix, so v6.1.0-rc1 and
+    # v6.1.0-preview.1 are real releases; a trailing server or arch suffix is a
+    # mistake for the tag that carries it, not a prerelease.
+    suffixes = [f"-{name}" for name in data["servers"]] + [f"-{s}" for s in data["arch_suffixes"].values()]
+    if any(text.endswith(suffix) for suffix in suffixes):
+        raise ValueError(f"unknown target {text!r}: a release version takes no server or arch suffix")
     return Target("release", version=text.lstrip("v"))
 
 

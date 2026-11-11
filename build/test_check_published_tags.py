@@ -1236,8 +1236,14 @@ class TargetTest(unittest.TestCase):
         self.assertEqual(judge.parse_target("6.1.0-rc.2", DATA), judge.Target("release", version="6.1.0-rc.2"))
         self.assertEqual(judge.parse_target("rc-mg-abc123", DATA), judge.Target("ci", ci_key="mg-abc123"))
 
+    def test_any_prerelease_suffix_the_publisher_accepts_is_a_target(self):
+        for text in ("6.1.0-rc1", "v6.1.0-preview.1", "6.1.0-beta-2"):
+            with self.subTest(text=text):
+                self.assertEqual(judge.parse_target(text, DATA),
+                                 judge.Target("release", version=text.lstrip("v")))
+
     def test_mistyped_targets_are_refused(self):
-        for text in ("6.1.0-valkey", "6.1", "edge-rs", "rc-pr-1-valkey", "rc-pr-1-x64", "rc-", "rc--x"):
+        for text in ("6.1.0-valkey", "6.1.0-rc.1-redis", "6.1.0-rc.1-x64", "6.1", "edge-rs", "rc-pr-1-valkey", "rc-pr-1-x64", "rc-", "rc--x"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 judge.parse_target(text, DATA)
 
