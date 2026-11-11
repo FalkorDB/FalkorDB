@@ -291,8 +291,8 @@ graph/src/index/falkordb/cch/input/weight_ops.rs	assert_sync	32	NOT COVERED	not 
 graph/src/index/falkordb/cch/input/weight_ops.rs	cch_edge_weight	120	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input/weight_ops.rs	cch_inline_weight_op	153	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input/weight_ops.rs	cch_multi_edge_weight_op	182	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/input.rs	CchInput::build	65	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/input.rs	check_weights	137	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
+graph/src/index/falkordb/cch/input.rs	CchInput::build	81	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
+graph/src/index/falkordb/cch/input.rs	check_weights	153	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::get	269	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::new	274	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::inline_pass	357	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
@@ -303,6 +303,11 @@ graph/src/index/falkordb/cch/input/weight_ops.rs	Drop::drop	242	NOT COVERED	not 
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightContext::new	87	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::tensor_weights	343	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::multi_edge_pass	387	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
+graph/src/index/falkordb/cch/input.rs	is_valid_weight	37	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
+graph/src/index/falkordb/cch/maint.rs	check_edge_weights	34	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
+graph/src/index/falkordb/cch/maint.rs	type_name	80	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
+graph/src/index/falkordb/cch/maint.rs	attribute_name	89	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
+graph/src/index/falkordb/cch/maint.rs	index_name	98	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	302	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; nodeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; edgeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/index/falkordb/range.rs	RangeKind::for_each_stored_key	43	NOT COVERED	native Range column (#3740): trait signature; not modelled yet
