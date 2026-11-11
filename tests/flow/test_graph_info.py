@@ -550,6 +550,30 @@ class testGraphInfo():
             self.conn.execute_command("DEBUG", "RELOAD", "NOSAVE"), "OK")
         self.env.assertFalse(self.conn.exists(stream))
 
+    def test12_async_delete_strips_telemetry_synchronously(self):
+        """with ASYNC_DELETE on, removing a graph defers its data free to a
+           worker, but the telemetry stream must be deleted synchronously with
+           the graph key, so a save in that window can't persist an orphaned
+           stream the registry-based strip no longer sees"""
+
+        g      = self.db.select_graph("async_del")
+        stream = StreamName(g)
+
+        try:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "ASYNC_DELETE", "yes")
+
+            # produce a telemetry entry for the graph
+            g.query("CREATE ()")
+            self.env.assertTrue(_wait_for(lambda: self.conn.exists(stream)))
+
+            # delete the graph; the graph-data free is deferred to a worker, but
+            # the telemetry stream is deleted synchronously with the key, so it
+            # is already gone when GRAPH.DELETE returns
+            self.conn.execute_command("GRAPH.DELETE", "async_del")
+            self.env.assertFalse(self.conn.exists(stream))
+        finally:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "ASYNC_DELETE", "no")
+
 def _wait_for(condition, timeout=10):
     """poll condition until it holds or timeout seconds pass"""
     deadline = time.time() + timeout
@@ -688,9 +712,16 @@ class testGraphInfoReplication():
                 ["MATCH (n) RETURN count(n)"])
 
     def test02_survives_failover_and_reload(self):
-        """the consumer-group cursor Redis replicates for the telemetry stream
-           can diverge on a replica; stripping telemetry from snapshots keeps a
-           promoted node able to save, reload and full-sync"""
+        """Redis replicates the telemetry stream's consumer-group cursor onto
+           the replica's own (shorter) stream; stripping telemetry from every
+           snapshot keeps a promoted node able to save, reload and full-sync,
+           whatever state that cursor ends up in.
+
+           note: the exact entries-read > entries-added state that breaks the
+           loader is a timing-dependent replication artifact (Redis 8.10 clamps
+           XGROUP SETID and rejects a lowering XSETID, so it can't be forced),
+           so this asserts the deterministic properties: the group really
+           replicated, and the promoted node survives save/reload/full-sync"""
 
         master, replica = self._roles()
         # a dedicated graph, so no earlier test's entries are in the stream
@@ -713,11 +744,17 @@ class testGraphInfoReplication():
             replica.exists(stream) and replica.xlen(stream) == 2))
 
         # an exporter reads the master's stream through a consumer group; the
-        # group create and its cursor replicate onto the replica's shorter
-        # stream, pushing its group's entries-read past its own entries-added
+        # group and its cursor replicate onto the replica's own (shorter) stream
         master.execute_command("XGROUP", "CREATE", stream, "exporter", "0")
         master.xreadgroup("exporter", "consumer", {stream: ">"}, count=100)
         master.execute_command("WAIT", "1", "10000")
+
+        # the group really did replicate onto the replica's stream, so the
+        # consumer-group state carried across the failover below is actually
+        # present (not a silently-missing group the test would skip over)
+        self.env.assertTrue(_wait_for(lambda:
+            any(grp["name"] == "exporter"
+                for grp in replica.xinfo_groups(stream))))
 
         #-----------------------------------------------------------------------
         # failover: the replica becomes the master
@@ -729,15 +766,14 @@ class testGraphInfoReplication():
         self.env.assertTrue(_wait_for(lambda:
             replica.info("replication")["master_link_status"] == "up", timeout=30))
 
-        # the exporter reads from the promoted node; with the inherited cursor
-        # this can push entries-read past the stream's own entries-added
-        try:
-            master.xreadgroup("exporter", "consumer", {stream: ">"}, count=100)
-        except Exception:
-            pass
+        # the exporter reads from the promoted node, advancing the inherited
+        # group cursor over the node's own entries (the group exists here, as
+        # asserted before the failover, so this must not raise)
+        master.xreadgroup("exporter", "consumer", {stream: ">"}, count=100)
 
-        # the promoted node saves and reloads: telemetry is stripped at save,
-        # so no inconsistent consumer-group state ever reaches the RDB
+        # the promoted node saves and reloads: the telemetry stream and its
+        # replicated consumer-group state are stripped at save, so whatever the
+        # counters are, nothing invalid reaches the RDB and the node loads
         self.env.assertEquals(master.execute_command("DEBUG", "RELOAD"), "OK")
         self.env.assertTrue(master.ping())
         self.env.assertFalse(master.exists(stream))
