@@ -84,6 +84,8 @@ use super::length;
 #[cfg(feature = "index-falkordb")]
 use super::scalar::Scalar;
 use super::vector::Vector;
+#[cfg(feature = "index-falkordb")]
+use super::{GrB_ALL, GrB_IndexUnaryOp, GrB_Matrix_apply_IndexOp_UDT, GrB_Matrix_assign};
 use super::{
     GrB_BOOL, GrB_BinaryOp, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R,
     GrB_DESC_RC, GrB_DESC_RCT0, GrB_DESC_RCT0T1, GrB_DESC_RCT1, GrB_DESC_RS, GrB_DESC_RSC,
@@ -1633,6 +1635,95 @@ impl Matrix<f64> {
         self.copy_csr(GrB_Matrix_export_FP64)
     }
 
+    /// `self = op(a, thunk)`, entry by entry (`GrB_apply` with a user-defined
+    /// thunk), overwriting `self`, which takes `a`'s structure.
+    ///
+    /// # Safety
+    /// `op` is a live index-unary operator from `a`'s element type to `FP64`,
+    /// and `thunk` points to a value of its thunk type, which GraphBLAS copies
+    /// and hands to `op`. Whatever `op` reads through the thunk must stay
+    /// valid for the call.
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) unsafe fn apply_index_op<TA>(
+        &mut self,
+        op: GrB_IndexUnaryOp,
+        a: &Matrix<TA>,
+        thunk: *const c_void,
+    ) {
+        // SAFETY: live matrices; `op` and `thunk` per this function's contract.
+        grb!(unsafe {
+            GrB_Matrix_apply_IndexOp_UDT(
+                self.inner(),
+                null_mut(),
+                null_mut(),
+                op,
+                a.inner(),
+                thunk,
+                null_mut(),
+            )
+        });
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// `self = self ∪ other`, `MIN` where both have an entry (`GrB_eWiseAdd`
+    /// with `GrB_MIN_FP64`, which skips a NaN): every entry of either, the
+    /// smaller value where both hold one. Rebuilds `self`.
+    ///
+    /// # Panics
+    /// If the shapes differ (see `grb!`).
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) fn min_union(
+        &mut self,
+        other: &Self,
+    ) {
+        // SAFETY: live matrices, built-in operator; `self` as both output and
+        // input is an alias GraphBLAS allows.
+        grb!(unsafe {
+            GrB_Matrix_eWiseAdd_BinaryOp(
+                self.inner(),
+                null_mut(),
+                null_mut(),
+                GrB_MIN_FP64,
+                self.inner(),
+                other.inner(),
+                null_mut(),
+            )
+        });
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// `self(i, j) = min(self(i, j), other(i, j))` for every entry of `other`,
+    /// in place: an assign masked by `other`'s structure with a `MIN`
+    /// accumulator, so the entries of `self` that `other` lacks are not
+    /// touched, and an entry of `other` that `self` lacks is inserted.
+    /// Cheaper than an `eWiseAdd`, which rebuilds all of `self`, when `other`
+    /// is small, and cheapest when `other`'s entries are already entries of
+    /// `self` (nothing is inserted), as the multi-edge pairs are in their
+    /// type's weights.
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) fn min_assign(
+        &mut self,
+        other: &Self,
+    ) {
+        let (nrows, ncols) = (self.nrows(), self.ncols());
+        // SAFETY: live matrices, `GrB_ALL` with the dimensions, and built-in
+        // operator and descriptor.
+        grb!(unsafe {
+            GrB_Matrix_assign(
+                self.inner(),
+                other.inner(),
+                GrB_MIN_FP64,
+                other.inner(),
+                GrB_ALL,
+                nrows,
+                GrB_ALL,
+                ncols,
+                GrB_DESC_S,
+            )
+        });
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
     /// Reduce every entry to one scalar, with no scratch matrix. Pending work
     /// is finished first ([`Self::wait`]), so the reduction only reads.
     #[cfg(feature = "index-falkordb")]
@@ -2622,6 +2713,31 @@ mod weight_tests {
         m.wait();
         assert_eq!(m.nvals(), 2);
         assert_eq!((m.get(0, 1), m.get(2, 1)), (Some(0.0), Some(0.0)));
+    }
+
+    /// Only `other`'s entries change, each to the smaller of the two (a NaN
+    /// on `self`'s side is dropped, as `fmin` does); one `self` lacks is
+    /// inserted; the rest of `self` is untouched.
+    #[test]
+    fn min_assign_merges_only_where_other_has_entries() {
+        test_init::ensure_init();
+        let mut m = Matrix::<f64>::new(3, 3);
+        m.set(0, 0, 5.0);
+        m.set(0, 1, 1.0);
+        m.set(1, 1, f64::NAN);
+        m.set(2, 2, 7.0);
+        let mut other = Matrix::<f64>::new(3, 3);
+        other.set(0, 0, 2.0);
+        other.set(0, 1, 3.0);
+        other.set(1, 1, 4.0);
+        other.set(2, 0, 6.0);
+        m.min_assign(&other);
+        m.wait();
+        assert_eq!(m.nvals(), 5);
+        assert_eq!(
+            [(0, 0), (0, 1), (1, 1), (2, 0), (2, 2)].map(|(i, j)| m.get(i, j)),
+            [Some(2.0), Some(1.0), Some(4.0), Some(6.0), Some(7.0)]
+        );
     }
 
     /// `w + wᵀ` as a pattern: every entry `true` (including where `w` holds

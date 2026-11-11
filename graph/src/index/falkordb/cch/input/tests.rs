@@ -113,7 +113,27 @@ impl Builder {
 }
 
 /// Read a built [`CchInput`] back into comparable sets.
+///
+/// Also checks the shape both CSRs promise: the last row offset is the entry
+/// count, and every row's column ids strictly ascend.
 fn decode(input: &CchInput) -> Decoded {
+    for (name, csr) in [
+        ("weights", &input.weights.csr),
+        ("skeleton", &input.skeleton),
+    ] {
+        assert_eq!(
+            csr.row_offsets[csr.node_count],
+            csr.neighbors.len() as u64,
+            "{name}: the last row offset is not the entry count"
+        );
+        for u in 0..csr.node_count {
+            let row = csr.row(u);
+            assert!(
+                row.windows(2).all(|p| p[0] < p[1]),
+                "{name} row {u} is not strictly ascending: {row:?}"
+            );
+        }
+    }
     let mut weights = BTreeMap::new();
     for u in 0..input.weights.csr.node_count {
         for k in input.weights.csr.row_offsets[u]..input.weights.csr.row_offsets[u + 1] {
@@ -128,12 +148,7 @@ fn decode(input: &CchInput) -> Decoded {
     }
     let mut skeleton = BTreeSet::new();
     for u in 0..input.skeleton.node_count {
-        let row = input.skeleton.row(u);
-        assert!(
-            row.windows(2).all(|p| p[0] < p[1]),
-            "skeleton row {u} is not strictly ascending: {row:?}"
-        );
-        for &v in row {
+        for &v in input.skeleton.row(u) {
             #[allow(clippy::cast_possible_truncation)]
             skeleton.insert((u as u64, v));
         }
@@ -210,8 +225,8 @@ fn assert_matches_oracle(
     input
 }
 
-fn f(x: f64) -> Option<Value> {
-    Some(Value::Float(x))
+fn weight(value: f64) -> Option<Value> {
+    Some(Value::Float(value))
 }
 
 #[test]
@@ -225,7 +240,7 @@ fn missing_or_non_numeric_weights_default_to_one() {
             (2, 3, Some(Value::Bool(true))),
             (3, 4, Some(Value::Int(6))),
             // A pair whose cheapest edge is the one with no weight at all.
-            (4, 5, f(9.0)),
+            (4, 5, weight(9.0)),
             (4, 5, None),
         ],
     );
@@ -259,7 +274,7 @@ fn a_graph_with_no_edges_builds_an_empty_input() {
 
     // And a type whose every edge (a multi-edge pair) is deleted: the deltas
     // are not empty, the effective graph is.
-    let ids = b.add("S", &[(0, 1, f(1.0)), (0, 1, f(2.0))]);
+    let ids = b.add("S", &[(0, 1, weight(1.0)), (0, 1, weight(2.0))]);
     b.g.flush_for_bulk();
     let mut docs = IndexDocs::default();
     b.g.delete_relationships(&ids.iter().copied().collect(), &mut docs)
@@ -268,71 +283,58 @@ fn a_graph_with_no_edges_builds_an_empty_input() {
     assert!(input.skeleton.neighbors.is_empty() && input.weights.values.is_empty());
 }
 
+/// A bad weight (negative, NaN, `-inf`, a negative integer) is refused wherever it
+/// sits, not only when it is the cheapest edge of its pair: `GrB_MIN_FP64` drops NaN
+/// (it behaves like `fmin`), so the per-pair minimum alone would hide it. The places:
+/// a single edge; a parallel edge (`me` path); a second relationship type (cross-type
+/// merge); a single self-loop; and the second edge of a multi-edge self-loop, which
+/// only the multi-edge pass scores. A self-loop is dropped from the output, but its
+/// weight is checked per edge, where it is scored: pinned so the choice is deliberate.
 #[test]
-fn bad_weights_are_refused_not_crashed() {
-    for (name, bad) in [
-        ("cch_in_neg", f(-1.0)),
-        ("cch_in_nan", f(f64::NAN)),
-        ("cch_in_neginf", f(f64::NEG_INFINITY)),
-        ("cch_in_negint", Some(Value::Int(-3))),
-    ] {
-        let mut b = Builder::new(name, 4);
-        b.add("R", &[(0, 1, f(1.0)), (1, 2, bad)]);
-        assert_eq!(
-            b.build(&["R"]).err(),
-            Some(CchError::InvalidWeight),
-            "{name}: a bad weight must be refused"
-        );
-    }
-}
-
-/// A bad weight must be refused wherever it sits, not only when it is the cheapest
-/// edge of its pair. The per-pair minimum would otherwise hide it: `GrB_MIN_FP64`
-/// drops NaN (it behaves like `fmin`). So every
-/// case here puts the bad weight on an edge that *loses* the minimum, on a
-/// parallel edge (`me` path) and on a second relationship type (cross-type merge).
-#[test]
-fn a_bad_weight_hidden_behind_a_cheaper_edge_is_still_refused() {
-    for (i, bad) in [f64::NAN, f64::NEG_INFINITY, -5.0].into_iter().enumerate() {
-        let mut parallel = Builder::new(&format!("cch_in_hidden_par_{i}"), 4);
-        parallel.add("R", &[(0, 1, f(2.0)), (0, 1, f(bad))]);
-        assert_eq!(
-            parallel.build(&["R"]).err(),
-            Some(CchError::InvalidWeight),
-            "{bad} on a parallel edge"
-        );
-
-        let mut multi = Builder::new(&format!("cch_in_hidden_type_{i}"), 4);
-        multi.add("R", &[(0, 1, f(2.0))]);
-        multi.add("S", &[(0, 1, f(bad))]);
-        assert_eq!(
-            multi.build(&["R", "S"]).err(),
-            Some(CchError::InvalidWeight),
-            "{bad} on a second relationship type"
-        );
-    }
-}
-
-/// A bad weight on a self-loop is refused too, even though the self-loop itself
-/// is dropped from the output: weights are checked per edge, where they are
-/// scored, and a multi-edge self-loop cannot be told apart there without the
-/// host-side key split. Pinned so the choice is deliberate. On a single
-/// self-loop, and on a multi-edge one, where the bad weight is the dearer of
-/// the two parallel edges and so is scored by the multi-edge pass alone.
-#[test]
-fn a_bad_weight_on_a_self_loop_is_refused() {
-    let mut b = Builder::new("cch_in_bad_selfloop", 4);
-    b.add("R", &[(0, 1, f(1.0)), (2, 2, f(-1.0))]);
-    assert_eq!(b.build(&["R"]).err(), Some(CchError::InvalidWeight));
-
-    for (i, bad) in [f64::NAN, f64::NEG_INFINITY, -1.0].into_iter().enumerate() {
-        let mut b = Builder::new(&format!("cch_in_bad_multi_selfloop_{i}"), 4);
-        b.add("R", &[(0, 1, f(1.0)), (2, 2, f(1.0)), (2, 2, f(bad))]);
-        assert_eq!(
-            b.build(&["R"]).err(),
-            Some(CchError::InvalidWeight),
-            "multi-edge {bad}"
-        );
+fn a_bad_weight_is_refused_wherever_it_sits() {
+    type Place = fn(&mut Builder, Option<Value>) -> &'static [&'static str];
+    let places: [(&str, Place); 5] = [
+        ("single", |b, bad| {
+            b.add("R", &[(0, 1, weight(1.0)), (1, 2, bad)]);
+            &["R"]
+        }),
+        ("parallel", |b, bad| {
+            b.add("R", &[(0, 1, weight(2.0)), (0, 1, bad)]);
+            &["R"]
+        }),
+        ("second_type", |b, bad| {
+            b.add("R", &[(0, 1, weight(2.0))]);
+            b.add("S", &[(0, 1, bad)]);
+            &["R", "S"]
+        }),
+        ("self_loop", |b, bad| {
+            b.add("R", &[(0, 1, weight(1.0)), (2, 2, bad)]);
+            &["R"]
+        }),
+        ("multi_self_loop", |b, bad| {
+            b.add(
+                "R",
+                &[(0, 1, weight(1.0)), (2, 2, weight(1.0)), (2, 2, bad)],
+            );
+            &["R"]
+        }),
+    ];
+    let values = [
+        ("neg", weight(-1.0)),
+        ("nan", weight(f64::NAN)),
+        ("neginf", weight(f64::NEG_INFINITY)),
+        ("negint", Some(Value::Int(-3))),
+    ];
+    for (place, add) in places {
+        for (value, bad) in &values {
+            let mut b = Builder::new(&format!("cch_in_bad_{place}_{value}"), 4);
+            let rel_types = add(&mut b, bad.clone());
+            assert_eq!(
+                b.build(rel_types).err(),
+                Some(CchError::InvalidWeight),
+                "{value} on {place}"
+            );
+        }
     }
 }
 
@@ -372,19 +374,19 @@ fn a_plus_inf_weight_is_a_closed_edge_and_is_kept() {
     b.add(
         "R",
         &[
-            (0, 1, f(inf)), // single, closed
-            (1, 2, f(inf)), // multi, every edge closed
-            (1, 2, f(inf)),
-            (2, 3, f(inf)), // multi, a finite edge wins
-            (2, 3, f(4.0)),
-            (3, 4, f(inf)), // closed here, finite on S
-            (5, 5, f(inf)), // closed self-loop
-            (6, 6, f(inf)), // closed multi-edge self-loop
-            (6, 6, f(inf)),
-            (6, 7, f(-0.0)), // -0.0 weighs 0
+            (0, 1, weight(inf)), // single, closed
+            (1, 2, weight(inf)), // multi, every edge closed
+            (1, 2, weight(inf)),
+            (2, 3, weight(inf)), // multi, a finite edge wins
+            (2, 3, weight(4.0)),
+            (3, 4, weight(inf)), // closed here, finite on S
+            (5, 5, weight(inf)), // closed self-loop
+            (6, 6, weight(inf)), // closed multi-edge self-loop
+            (6, 6, weight(inf)),
+            (6, 7, weight(-0.0)), // -0.0 weighs 0
         ],
     );
-    b.add("S", &[(3, 4, f(2.5)), (4, 5, f(inf))]);
+    b.add("S", &[(3, 4, weight(2.5)), (4, 5, weight(inf))]);
     let input = assert_matches_oracle(&b, &["R", "S"]);
     let (w, _) = decode(&input);
     assert_eq!(w[&(0, 1)], inf);
@@ -402,11 +404,10 @@ fn a_plus_inf_weight_is_a_closed_edge_and_is_kept() {
     assert_eq!(cch.query(2, 4), Some((6.5, vec![2, 3, 4])));
 }
 
-/// The operators are created once and shared: builds on several threads at
-/// once (the first of which may be the one creating them) agree with the
-/// oracle.
+/// Builds on several threads at once, sharing the process-wide operators,
+/// agree with the oracle.
 #[test]
-fn the_weight_operators_are_created_once_and_shared() {
+fn concurrent_builds_match_the_oracle() {
     let graphs: Vec<Builder> = (0..4)
         .map(|k| {
             let mut b = Builder::new(&format!("cch_in_shared_ops_{k}"), 8);
@@ -414,10 +415,10 @@ fn the_weight_operators_are_created_once_and_shared() {
             b.add(
                 "R",
                 &[
-                    (0, 1, f(k as f64)),
-                    (0, 1, f(9.0)),
-                    (1, 2, f(2.0)),
-                    (3, 3, f(1.0)),
+                    (0, 1, weight(k as f64)),
+                    (0, 1, weight(9.0)),
+                    (1, 2, weight(2.0)),
+                    (3, 3, weight(1.0)),
                 ],
             );
             b
@@ -433,69 +434,33 @@ fn the_weight_operators_are_created_once_and_shared() {
     });
 }
 
-/// A tensor wider than `node_cap` sizes the input, so the resize in `build`
-/// cannot cut off its last rows and columns. Writes keep every tensor at
-/// `node_cap`, so the graph is restored directly, without the
-/// `rebuild_derived_matrices` that grows `node_cap` to the decoded matrices.
+/// The definition's bounds: the first relationship type id past the graph's types
+/// is refused, and so is the first attribute id past its property keys; the last
+/// attribute id is accepted (an edge without it weighs the default).
 #[test]
-fn a_tensor_wider_than_node_cap_sizes_the_input() {
-    use crate::graph::attribute_store::{AttrNameMap, AttributeStore};
-    use crate::graph::graphblas::tensor::Tensor;
-    use crate::graph::graphblas::versioned_matrix::VersionedMatrix;
-
-    test_init::ensure_init();
-    const WIDE: u64 = 40_960;
-    let mut tensor = Tensor::new(WIDE, WIDE);
-    tensor.set_all_from_slices(&[0, WIDE - 1], &[WIDE - 1, 0], &[0, 1]);
-    tensor.flush();
-    let mut g = Graph::restore(
-        "cch_in_wide_tensor",
-        1,
-        2,
-        2,
-        RoaringTreemap::new(),
-        RoaringTreemap::new(),
-        VersionedMatrix::<bool>::new(WIDE, WIDE),
-        VersionedMatrix::<bool>::new(WIDE, 1),
-        VersionedMatrix::<bool>::new(0, 0),
-        vec![VersionedMatrix::<bool>::new(WIDE, WIDE)],
-        vec![tensor],
-        vec![Arc::new("L".to_string())],
-        vec![Arc::new("R".to_string())],
-        AttrNameMap::default(),
-        AttributeStore::new(),
-        AttributeStore::new(),
+fn unknown_definitions_are_refused_at_their_bounds() {
+    let mut b = Builder::new("cch_in_bounds", 4);
+    b.add("R", &[(0, 1, weight(2.0))]);
+    let real = b.g.get_type_id("R").unwrap();
+    let type_count = b.g.get_types().len();
+    assert_eq!(
+        CchInput::build(
+            &b.g,
+            &CchIndexDef::new(vec![TypeId(type_count)], b.weight_attr)
+        )
+        .err(),
+        Some(CchError::UnknownRelType),
+        "the type id one past the last"
+    );
+    let count = u16::try_from(b.g.property_key_count()).expect("few property keys");
+    assert_eq!(
+        CchInput::build(&b.g, &CchIndexDef::new(vec![real], count)).err(),
+        Some(CchError::UnknownAttribute),
+        "the attribute id one past the last"
     );
     assert!(
-        g.node_cap() < WIDE,
-        "node_cap {} is not narrower",
-        g.node_cap()
-    );
-    let attr = g.get_or_create_rel_attr_id(&Arc::new(String::from("w")));
-    let def = CchIndexDef::new(vec![g.get_type_id("R").expect("R")], attr);
-
-    let input = CchInput::build(&g, &def).expect("builds");
-    assert_eq!(input.n, WIDE as usize);
-    assert_eq!(
-        decode(&input).0,
-        BTreeMap::from([((0, WIDE - 1), 1.0), ((WIDE - 1, 0), 1.0)]),
-        "the edges past node_cap are kept"
-    );
-}
-
-#[test]
-fn unknown_definitions_are_refused() {
-    let mut b = Builder::new("cch_in_unknown", 4);
-    b.add("R", &[(0, 1, f(1.0))]);
-    let real = b.g.get_type_id("R").unwrap();
-
-    assert_eq!(
-        CchInput::build(&b.g, &CchIndexDef::new(vec![TypeId(99)], b.weight_attr)).err(),
-        Some(CchError::UnknownRelType)
-    );
-    assert_eq!(
-        CchInput::build(&b.g, &CchIndexDef::new(vec![real], 250)).err(),
-        Some(CchError::UnknownAttribute)
+        CchInput::build(&b.g, &CchIndexDef::new(vec![real], count - 1)).is_ok(),
+        "the last attribute id"
     );
 }
 
@@ -594,7 +559,7 @@ fn deletions_against_the_committed_base_use_the_dm_mask() {
         .collect();
     let mut ids = b.add("R", &edges);
     // A few genuine multi-edge pairs on top, so deletions also reach `me`.
-    ids.extend(b.add("R", &[(0, 1, f(0.5)), (7, 14, f(0.25))]));
+    ids.extend(b.add("R", &[(0, 1, weight(0.5)), (7, 14, weight(0.25))]));
     b.g.flush_for_bulk();
 
     let t = |b: &Builder| {
@@ -624,7 +589,7 @@ fn deletions_against_the_committed_base_use_the_dm_mask() {
 
     // Pending additions on top of the pending deletions: the effective matrix
     // then masks `m` and merges `dp` in the same call.
-    b.add("R", &[(2, 3, f(0.75)), (5, 9, f(9.0))]);
+    b.add("R", &[(2, 3, weight(0.75)), (5, 9, weight(9.0))]);
     let ty = b.g.get_type_id("R").unwrap().0;
     let fwd_dp = b.g.relationship_tensors()[ty].fwd_dp().nvals();
     assert!(
@@ -648,9 +613,9 @@ fn deletions_inside_committed_multi_edge_pairs_use_me_dm() {
         // The cheapest of the three is the one that gets deleted below.
         #[allow(clippy::cast_precision_loss)]
         let base = (k % 50) as f64 + 2.0;
-        edges.push((k, k + 1, f(base - 1.0)));
-        edges.push((k, k + 1, f(base)));
-        edges.push((k, k + 1, f(base + 1.0)));
+        edges.push((k, k + 1, weight(base - 1.0)));
+        edges.push((k, k + 1, weight(base)));
+        edges.push((k, k + 1, weight(base + 1.0)));
     }
     let ids = b.add("R", &edges);
     b.g.flush_for_bulk();
@@ -685,7 +650,7 @@ fn deletions_inside_committed_multi_edge_pairs_use_me_dm() {
 
     // A fourth, cheaper edge on two committed multi-edge pairs, pending: new
     // ids in `me.dp` while `me.dm` still hides the deleted ones.
-    b.add("R", &[(0, 1, f(0.5)), (11, 12, f(0.25))]);
+    b.add("R", &[(0, 1, weight(0.5)), (11, 12, weight(0.25))]);
     let ty = b.g.get_type_id("R").unwrap().0;
     let me_dp: u64 = b.g.relationship_tensors()[ty]
         .edge_versioned_all()
@@ -700,17 +665,15 @@ fn deletions_inside_committed_multi_edge_pairs_use_me_dm() {
 }
 
 /// Blocks past [`ME_BLOCK_0`] need node ids at or above 2^30, which only a graph
-/// that size reaches. These tests reach them without one: the key split is a
-/// pure function, and a bare [`Tensor`] at that dimension is hypersparse, so it
-/// costs its entries, not its dimension.
+/// that size reaches. This test reaches them without one: a bare [`Tensor`] at
+/// that dimension is hypersparse, so it costs its entries, not its dimension.
 mod blocks {
     use std::collections::BTreeMap;
 
     use rustc_hash::FxHashMap;
 
-    use super::super::{WeightContext, WeightOps, block_pair_coords, check_weights};
+    use super::super::{WeightContext, WeightOps, check_weights};
     use crate::graph::attribute_store::AttributeStore;
-    use crate::graph::graphblas::matrix::Matrix;
     use crate::graph::graphblas::tensor::Tensor;
     use crate::graph::graphblas::test_init;
     use crate::index::falkordb::cch::MAX_NODES;
@@ -719,26 +682,6 @@ mod blocks {
     /// One block per axis: 2^30, written out rather than derived from
     /// `BLOCK_SHIFT` so a change to the shift cannot move the fixtures with it.
     const B: u64 = 1 << 30;
-
-    /// The edges of a block's key space, with the expected pairs written out by
-    /// hand: the first and last key, and the keys either side of where the
-    /// source half begins.
-    #[test]
-    fn boundary_keys_split_exactly() {
-        let keys = [0, 1, B - 1, B, B * B - 1];
-        let offsets = [(0, 0), (0, 1), (0, B - 1), (1, 0), (B - 1, B - 1)];
-        for block in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-            let base = (block.0 * B, block.1 * B);
-            let (src, dst) = block_pair_coords(block, &keys);
-            let got: Vec<(u64, u64)> = src.into_iter().zip(dst).collect();
-            let want: Vec<(u64, u64)> = offsets
-                .iter()
-                .map(|&(s, d)| (base.0 + s, base.1 + d))
-                .collect();
-            assert_eq!(got, want, "block {block:?}");
-        }
-        assert_eq!(block_pair_coords((1, 1), &[]), (vec![], vec![]));
-    }
 
     /// The weight passes over a real [`Tensor`] whose multi-edge pairs sit in all
     /// four blocks, against `Tensor::iter_edges` folded with `f64::min`. Four of
@@ -784,10 +727,7 @@ mod blocks {
             .map(|&id| (id, vec![(0u16, Value::Float(weights[id as usize]))]))
             .collect();
         attrs.insert_attrs(&rows).expect("weights stored");
-        let ctx = WeightContext {
-            attributes: std::ptr::from_ref(&attrs),
-            attribute: 0,
-        };
+        let ctx = WeightContext::new(&attrs, 0);
 
         let mut t = Tensor::new(n, n);
         t.set_all_from_slices(&srcs, &dsts, &ids);
@@ -803,8 +743,7 @@ mod blocks {
             }
             assert_eq!(want.len(), multi.len() + single.len(), "{layer}: oracle");
 
-            let mut w = Matrix::<f64>::new(n, n);
-            WeightOps::get().accumulate(&mut w, t, &ctx);
+            let w = WeightOps::get().tensor_weights(t, &ctx);
             check_weights(&w).expect("valid weights");
             assert_eq!(w.nvals(), want.len() as u64, "{layer}: arc count");
             for (&(s, d), &min) in &want {
@@ -825,68 +764,5 @@ mod blocks {
             );
         }
         check(&t, "committed (m)");
-    }
-}
-
-/// A tensor narrower than the input's dimension (`n` is the widest tensor in
-/// play) is scored through a resized matrix of the pass's own, in both forms
-/// of the effective matrix: the weights land on their pairs, and the tensor
-/// keeps its shape.
-mod narrow_tensor {
-    use rustc_hash::FxHashMap;
-
-    use super::super::{WeightContext, WeightOps, check_weights};
-    use crate::graph::attribute_store::AttributeStore;
-    use crate::graph::graphblas::matrix::Matrix;
-    use crate::graph::graphblas::tensor::Tensor;
-    use crate::graph::graphblas::test_init;
-    use crate::runtime::value::Value;
-
-    #[test]
-    fn a_narrower_tensor_is_resized_on_a_matrix_of_its_own() {
-        test_init::ensure_init();
-        // Enough edges that `flush` folds them into the committed base.
-        const SMALL: u64 = 1_000;
-        let n = 2 * SMALL;
-        let mut attrs = AttributeStore::new();
-        let rows: FxHashMap<u64, Vec<(u16, Value)>> = (0..SMALL)
-            .map(|id| (id, vec![(0u16, Value::Float(id as f64 + 0.5))]))
-            .collect();
-        attrs.insert_attrs(&rows).expect("weights stored");
-        let ctx = WeightContext {
-            attributes: std::ptr::from_ref(&attrs),
-            attribute: 0,
-        };
-        let check = |t: &Tensor, layer: &str| {
-            let mut w = Matrix::<f64>::new(n, n);
-            WeightOps::get().accumulate(&mut w, t, &ctx);
-            check_weights(&w).expect("valid weights");
-            let edges: Vec<_> = t.iter_edges().collect();
-            assert_eq!(w.nvals(), edges.len() as u64, "{layer}: arc count");
-            for (s, d, id) in edges {
-                assert_eq!(w.get(s, d), Some(id as f64 + 0.5), "{layer}: ({s}, {d})");
-            }
-            let base = t.fwd_m();
-            assert_eq!(
-                (base.nrows(), base.ncols()),
-                (SMALL, SMALL),
-                "{layer}: the tensor's base was resized"
-            );
-        };
-
-        let mut t = Tensor::new(SMALL, SMALL);
-        let srcs: Vec<u64> = (0..SMALL - 1).collect();
-        let dsts: Vec<u64> = (1..SMALL).collect();
-        t.set_all_from_slices(&srcs, &dsts, &srcs);
-        t.wait();
-        let mut t = t.dup();
-        t.flush();
-        assert!(t.fwd_m().nvals() == SMALL - 1 && t.fwd_dp().nvals() == 0);
-        check(&t, "committed (m)");
-
-        t.set_all_from_slices(&[SMALL - 1], &[0], &[SMALL - 1]);
-        t.wait();
-        assert!(t.fwd_dp().nvals() == 1);
-        check(&t, "pending (dp)");
     }
 }

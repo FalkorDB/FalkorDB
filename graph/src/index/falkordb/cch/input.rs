@@ -1,16 +1,9 @@
-//! `Graph` -> [`CchInput`] (#3211).
-//!
-//! The whole job is to turn the graph's relationship tensors into the two CSR
-//! arrays the hierarchy builder consumes: a symmetric self-loop-free skeleton
-//! for Phase 1, and a directed weight matrix for Phase 2. It is done in
-//! GraphBLAS end to end — per relationship type, one `GrB_Matrix_apply` scores
-//! every single-edge pair in parallel and one `GrB_mxv` over a `MIN` semiring
-//! scores every parallel edge and keeps each pair's cheapest, both merging
-//! into one weight matrix through `MIN`; two reductions then check every
-//! weight, and `GxB_unload_Matrix_into_Container` hands back GraphBLAS's own
-//! CSR buffers. Nothing walks the graph edge by edge; the one host loop runs once per
-//! multi-edge pair, after the per-edge minimum is taken in GraphBLAS
-//! ([`pair_weights_from_keys`]).
+//! `Graph` -> [`CchInput`]: the graph's relationship tensors as the two CSR
+//! arrays the hierarchy builder consumes, a symmetric self-loop-free skeleton
+//! for Phase 1 and a directed weight matrix for Phase 2, computed in
+//! GraphBLAS. Per relationship type, one `GrB_Matrix_apply` scores every
+//! forward pair and one `GrB_mxv` per `me` block, over a `MIN` semiring,
+//! scores every parallel edge; the types merge through `MIN`.
 //!
 //! The C original is `CCH_BuildWeightMatrix` / `_get_edge_weight` in
 //! `src/index/cch_index.c`, plus `_build_undirected_skeleton` in
@@ -20,9 +13,9 @@
 //! in the forward matrix and promotes a multi-edge pair to the
 //! [`MULTI_EDGE`](crate::graph::graphblas::tensor::MULTI_EDGE) sentinel, with
 //! its ids living in `me` keyed by
-//! [`compound_key`](crate::graph::graphblas::tensor::compound_key) — so it
-//! takes two passes, merged by `MIN`. The same shape as `algo.MSF`
-//! (`runtime/functions/algo_procedures.rs`), which solved this first.
+//! [`compound_key`](crate::graph::graphblas::tensor::compound_key), so it
+//! takes two passes, merged by `MIN`: the same shape as `algo.MSF`
+//! (`runtime/functions/algo_procedures.rs`).
 
 #[cfg(test)]
 mod tests;
@@ -34,20 +27,20 @@ use std::sync::OnceLock;
 
 use crate::graph::attribute_store::AttributeStore;
 use crate::graph::graph::Graph;
-use crate::graph::graphblas::matrix::{CsrExport, Descriptor, Matrix, grb};
+use crate::graph::graphblas::matrix::{Descriptor, Matrix, grb};
 use crate::graph::graphblas::scalar::Scalar;
 use crate::graph::graphblas::tensor::{MULTI_EDGE, MeBlock, Tensor, compound_key_inverse};
 use crate::graph::graphblas::vector::Vector;
 use crate::graph::graphblas::{
     GrB_ALL, GrB_BOOL, GrB_BinaryOp, GrB_FP64, GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_new,
-    GrB_Info, GrB_MIN_FP64, GrB_MIN_MONOID_FP64, GrB_Matrix_apply_IndexOp_UDT, GrB_Semiring,
-    GrB_Semiring_new, GrB_Type, GrB_Type_new, GrB_UINT64, GrB_Vector, GrB_Vector_assign_UDT,
-    GrB_Vector_free, GrB_Vector_new, GrB_mxv, GxB_BinaryOp_new_IndexOp, GxB_IndexBinaryOp,
-    GxB_IndexBinaryOp_new, GxB_index_binary_function, GxB_index_unary_function,
+    GrB_Info, GrB_MIN_MONOID_FP64, GrB_Semiring, GrB_Semiring_new, GrB_Type, GrB_Type_new,
+    GrB_UINT64, GrB_Vector, GrB_Vector_assign_UDT, GrB_Vector_free, GrB_Vector_new, GrB_mxv,
+    GxB_BinaryOp_new_IndexOp, GxB_IndexBinaryOp, GxB_IndexBinaryOp_new, GxB_index_binary_function,
+    GxB_index_unary_function,
 };
 use crate::runtime::value::Value;
 
-use super::{CchError, CchIndexDef, CchInput, Csr, WeightCsr, id_index};
+use super::{CchError, CchIndexDef, CchInput, id_index};
 
 /// `AttributeStore`'s read path is `Arc` traversal with no interior
 /// mutability (`attribute_store.rs`: `DataBlock::block`), which is what makes
@@ -69,21 +62,20 @@ const DEFAULT_WEIGHT: f64 = 1.0;
 /// What the weight operators write for an edge whose weight is negative
 /// (`-inf` included) or NaN. `+inf` is a weight: a closed edge.
 ///
-/// One value for every bad weight, and the smallest there is, so a single
-/// `MIN` reduction finds any of them: it beats every valid weight in each
-/// `MIN` merge on the way (a pair, a parallel edge, a second type), so it
-/// cannot be hidden behind a cheaper edge, and a NaN is never left for `fmin`
-/// to skip.
+/// One value for every bad weight, and the smallest there is: it wins every
+/// `MIN` merge on the way (a parallel edge, a second type), so it cannot be
+/// hidden behind a cheaper parallel edge, and is still in its type's weights
+/// for [`check_weights`] to find. No edge's weight reaches the merges as NaN,
+/// which `fmin` would skip.
 const INVALID_WEIGHT: f64 = f64::NEG_INFINITY;
 
 /// What the inline operator writes for a [`MULTI_EDGE`] pair, whose real ids
-/// it cannot see: NaN, which every `MIN` merge drops (`GrB_MIN_FP64` is
+/// it cannot see: NaN, which the multi-edge merge drops (`GrB_MIN_FP64` is
 /// `fmin`), so the pair's weight is whatever the multi-edge pass brings, and a
-/// pair that pass missed is left at NaN, which [`CchInput::build`] reports.
+/// pair that pass missed is left at NaN in its type's weights, which
+/// [`check_weights`] reports before the types are merged.
 /// Not `+inf`, the identity of `MIN`: that is a legal weight (a closed edge),
-/// so a pair left at it could not be told from a pair of closed edges. No
-/// edge's weight is NaN when it reaches `weights`: the operators map it to
-/// [`INVALID_WEIGHT`].
+/// so a pair left at it could not be told from a pair of closed edges.
 const UNSCORED: f64 = f64::NAN;
 
 /// Context handed to the GraphBLAS weight operators.
@@ -96,15 +88,32 @@ const UNSCORED: f64 = f64::NAN;
 /// context vector is freed with the pass).
 ///
 /// `#[repr(C)]` plain-old-data so GraphBLAS can memcpy it as a value of the
-/// user-defined type [`WeightOps::context_type`].
+/// user-defined type [`WeightOps::context_type`]. Every byte is a field, the
+/// padding a zeroed one, so the bytes GraphBLAS copies (and may compare) are
+/// all initialized.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct WeightContext {
-    attributes: *const AttributeStore,
-    attribute: u16,
+    store: *const AttributeStore,
+    weight_attribute: u16,
+    padding: [u8; 6],
 }
 
+/// No implicit padding: the fields fill the struct.
+const _: () = assert!(size_of::<WeightContext>() == size_of::<usize>() + 8);
+
 impl WeightContext {
+    const fn new(
+        store: &AttributeStore,
+        weight_attribute: u16,
+    ) -> Self {
+        Self {
+            store: ptr::from_ref(store),
+            weight_attribute,
+            padding: [0; 6],
+        }
+    }
+
     /// The context as GraphBLAS takes a user-defined value: a pointer it
     /// copies the value from, and never writes through.
     fn as_value(&self) -> *mut c_void {
@@ -118,7 +127,7 @@ impl WeightContext {
 /// edge.
 ///
 /// # Safety
-/// `context.attributes` points to a live `AttributeStore` that nobody writes
+/// `context.store` points to a live `AttributeStore` that nobody writes
 /// for the duration of the call, as [`WeightContext`] describes.
 ///
 /// # Panic safety
@@ -131,16 +140,13 @@ unsafe fn cch_edge_weight(
     context: &WeightContext,
     edge_id: u64,
 ) -> f64 {
-    // No null check on `attributes`: the only caller sets it from a live
-    // `&AttributeStore` held for the whole apply, so it cannot be null, and a
-    // null check would not catch the one real risk (a dangling pointer).
-    let weight = match unsafe { (*context.attributes).get_attr_by_idx(edge_id, context.attribute) }
-    {
-        Some(Value::Float(weight)) => weight,
-        #[allow(clippy::cast_precision_loss)]
-        Some(Value::Int(integer)) => integer as f64,
-        _ => DEFAULT_WEIGHT,
-    };
+    let weight =
+        match unsafe { (*context.store).get_attr_by_idx(edge_id, context.weight_attribute) } {
+            Some(Value::Float(weight)) => weight,
+            #[allow(clippy::cast_precision_loss)]
+            Some(Value::Int(integer)) => integer as f64,
+            _ => DEFAULT_WEIGHT,
+        };
     // NaN fails the comparison; `+inf` and `-0.0` pass it.
     if weight >= 0.0 {
         weight
@@ -152,8 +158,9 @@ unsafe fn cch_edge_weight(
 // The operators below take the types they mean, and are cast to GraphBLAS's
 // `void *` function types where they are registered (as LAGraph does in C).
 // The cast is sound: raw pointers to sized types are ABI-compatible, so
-// GraphBLAS calls each one exactly as declared here. GraphBLAS also never
-// passes a null pointer to an operator, so none is checked for.
+// GraphBLAS calls each one exactly as declared here. GraphBLAS may hand them
+// operands staged in byte buffers, so every pointer is read and written
+// unaligned.
 
 /// Index-unary operator over the **inline** forward matrix, where the matrix
 /// *value* is the edge id: `z = weight(x)`, or [`UNSCORED`] for a
@@ -170,10 +177,11 @@ unsafe extern "C" fn cch_inline_weight_op(
     context: *const WeightContext,
 ) {
     unsafe {
-        *z = match *x {
+        let weight = match x.read_unaligned() {
             MULTI_EDGE => UNSCORED,
-            id => cch_edge_weight(&*context, id),
+            id => cch_edge_weight(&context.read_unaligned(), id),
         };
+        z.write_unaligned(weight);
     }
 }
 
@@ -201,7 +209,7 @@ unsafe extern "C" fn cch_multi_edge_weight_op(
     _theta: *const bool,
 ) {
     unsafe {
-        *z = cch_edge_weight(&*context, jx);
+        z.write_unaligned(cch_edge_weight(&context.read_unaligned(), jx));
     }
 }
 
@@ -243,12 +251,16 @@ impl CchInput {
     /// - [`CchError::InvalidWeight`] if any edge of an indexed type carries a
     ///   negative or NaN weight — every edge, not only the cheapest of
     ///   its pair, and self-loops included even though they are then dropped.
+    /// - [`CchError::Internal`] if a multi-edge pair has no edge in `me`, a
+    ///   broken tensor invariant.
+    /// - [`CchError::CsrExport`] if the export refuses a matrix this function
+    ///   set up (a bug), or GraphBLAS runs out of memory converting one.
     ///
     /// # Panics
-    /// If a GraphBLAS call fails (see `grb!`). Every matrix and operator here is
-    /// built by this function, so that is a bug or out of memory, never
-    /// something in the graph's data: bad weights and unknown names are the
-    /// errors above.
+    /// If a GraphBLAS call outside the export fails (see `grb!`). Every matrix
+    /// and operator here is built by this function, so that is a bug or an
+    /// allocation failure, never something in the graph's data: bad weights
+    /// and unknown names are the errors above.
     pub fn build(
         graph: &Graph,
         def: &CchIndexDef,
@@ -259,61 +271,48 @@ impl CchInput {
             .iter()
             .map(|rel_type| tensors.get(rel_type.0).ok_or(CchError::UnknownRelType))
             .collect::<Result<Vec<_>, _>>()?;
-        let attributes = graph.relationship_attrs();
         if usize::from(def.weight_attr) >= graph.property_key_count() {
             return Err(CchError::UnknownAttribute);
         }
 
-        // The hierarchy is sized by the matrix dimension, not the live node
-        // count. Take the largest in play, rows and columns, so a tensor that
-        // has outgrown `node_cap` cannot silently lose its last rows or
-        // columns to the resize below.
-        let node_count = selected
-            .iter()
-            .map(|tensor| tensor.fwd_m().nrows().max(tensor.fwd_m().ncols()))
-            .fold(graph.node_cap(), u64::max);
-
-        let context = WeightContext {
-            attributes: ptr::from_ref(attributes),
-            attribute: def.weight_attr,
-        };
-        let ops = WeightOps::get();
-        let mut weights = Matrix::<f64>::new(node_count, node_count);
+        let node_count = graph.node_cap();
         for tensor in &selected {
-            ops.accumulate(&mut weights, tensor, &context);
+            let forward = tensor.fwd_m();
+            if (forward.nrows(), forward.ncols()) != (node_count, node_count) {
+                return Err(CchError::Internal("a tensor is not node_cap square"));
+            }
         }
-        check_weights(&weights)?;
+
+        let context = WeightContext::new(graph.relationship_attrs(), def.weight_attr);
+        let ops = WeightOps::get();
+        // Each type is checked before the merge, whose `MIN` would hide an
+        // [`UNSCORED`] pair behind another type's edge on the same pair.
+        let mut merged: Option<Matrix<f64>> = None;
+        for tensor in &selected {
+            let type_weights = ops.tensor_weights(tensor, &context);
+            check_weights(&type_weights)?;
+            merged = Some(match merged {
+                None => type_weights,
+                Some(mut weights) => {
+                    weights.min_union(&type_weights);
+                    weights
+                }
+            });
+        }
+        let mut weights = merged.unwrap_or_else(|| Matrix::<f64>::new(node_count, node_count));
 
         // Drop self-loops from the weights, which is what lets the skeleton be
         // derived from this pattern and still be diagonal free. After the
         // check, so a bad weight on a self-loop is refused all the same.
         weights.drop_diagonal();
-        weights.wait();
 
         // Skeleton = pattern(W) ∪ pattern(Wᵀ): a weight of 0.0 is an entry
         // like any other.
         let mut skeleton = Matrix::<bool>::new(node_count, node_count);
         skeleton.pattern_union(&weights, &weights, Some(Descriptor::T1));
-        skeleton.wait();
 
-        // Plain sparse storage has an offset per row, `8 * node_count` bytes,
-        // where hypersparse stores only the non-empty rows. So each matrix is
-        // set up for the export (`prepare_csr`: row-major, 64-bit offsets and
-        // column ids, the input's widths, then sparse) only just before its
-        // own export, which takes its arrays and leaves it empty: one sparse
-        // matrix at a time, and never a matrix next to a copy of itself.
-        //
-        // The contract wants one weight per entry, and the export refuses an
-        // iso matrix (one stored value for all entries). The weight passes
-        // have not been seen to leave `weights` iso, even with every weight equal,
-        // but GraphBLAS may store any all-equal result that way, so
-        // `prepare_csr` for values expands it if it is: a no-op if not.
-        //
-        // Both matrices are owned by this function alone, so neither call can
-        // find a shared handle, and a set-up matrix cannot be refused by the
-        // export: a refusal is a bug, [`CchError::CsrExport`]. A setting
-        // GraphBLAS refuses (out of memory while converting) is reported the
-        // same way.
+        // Export one matrix at a time: `prepare_csr` makes each a sparse CSR
+        // (expanding an iso one) just before the export that empties it.
         skeleton.prepare_csr::<u64, u64, ()>()?;
         let skeleton = skeleton.take_csr::<u64, u64, ()>()?.into();
         weights.prepare_csr::<u64, u64, f64>()?;
@@ -328,55 +327,21 @@ impl CchInput {
     }
 }
 
-/// The skeleton as GraphBLAS exported it: its arrays become the `Csr`'s.
-impl From<CsrExport<u64, u64, ()>> for Csr {
-    fn from(export: CsrExport<u64, u64, ()>) -> Self {
-        Self {
-            node_count: export.row_count(),
-            row_offsets: export.row_offsets,
-            neighbors: export.column_indices,
-        }
-    }
-}
-
-/// The weights as GraphBLAS exported them: pattern and values, unchanged.
-impl From<CsrExport<u64, u64, f64>> for WeightCsr {
-    fn from(export: CsrExport<u64, u64, f64>) -> Self {
-        Self {
-            csr: Csr {
-                node_count: export.row_count(),
-                row_offsets: export.row_offsets,
-                neighbors: export.column_indices,
-            },
-            values: export.values,
-        }
-    }
-}
-
-/// Refuse the build if any edge's weight was bad, with two reductions over
-/// the merged weights and no scratch matrix.
+/// Refuse the build if any weight in one type's `weights` is bad, as
+/// [`INVALID_WEIGHT`] and [`UNSCORED`] describe.
 ///
-/// The operators score a bad weight as [`INVALID_WEIGHT`] (`-inf`), which wins
-/// every `MIN` merge, so one is still in `weights` after the merges, wherever it
-/// sat: the minimum is below 0 exactly when some edge was bad. An edge's NaN
-/// never reaches `weights` (the operators map it too), and `fmin` skips the
-/// [`UNSCORED`] NaN. The sum catches that one: once the minimum passed there
-/// is no `-inf` left, so the sum is NaN exactly when an [`UNSCORED`] NaN is
-/// left on a pair, i.e. the multi-edge pass did not score a pair the forward
-/// matrix marks [`MULTI_EDGE`], a broken tensor invariant rather than bad
-/// data. `+inf` (a closed edge) and an overflowing sum both give `+inf`, never
-/// NaN.
-///
-/// Runs before the self-loops are dropped, so their weights are checked too.
+/// One `PLUS` reduction accepts the valid case: the sum is `>= 0` exactly when
+/// there is neither `-inf` (which gives `-inf`, or NaN next to `+inf`) nor NaN.
+/// Only a failed build pays for a `MIN` reduction, which tells them apart.
 fn check_weights(weights: &Matrix<f64>) -> Result<(), CchError> {
-    // The minimum of an empty matrix is `+inf` and its sum `0`, both accepted.
-    if weights.min_value() < 0.0 {
-        return Err(CchError::InvalidWeight);
+    // The sum of an empty matrix is 0, accepted; a NaN sum fails `>=`.
+    if weights.sum_value() >= 0.0 {
+        Ok(())
+    } else if weights.min_value() < 0.0 {
+        Err(CchError::InvalidWeight)
+    } else {
+        Err(CchError::Internal("a multi-edge pair has no edge in `me`"))
     }
-    if weights.sum_value().is_nan() {
-        return Err(CchError::Internal("a multi-edge pair has no edge in `me`"));
-    }
-    Ok(())
 }
 
 /// The multi-edge pass's `contexts`: a full vector of `length` entries of the
@@ -511,57 +476,35 @@ impl WeightOps {
         }
     }
 
-    /// Merge one relationship type's cheapest weight per node pair into `weights`:
-    /// a bad weight arrives as [`INVALID_WEIGHT`], for [`check_weights`].
-    fn accumulate(
+    /// One relationship type's cheapest weight per node pair, a matrix of the
+    /// tensor's shape: a bad weight arrives as [`INVALID_WEIGHT`], for
+    /// [`check_weights`].
+    fn tensor_weights(
         &self,
-        weights: &mut Matrix<f64>,
         tensor: &Tensor,
         context: &WeightContext,
-    ) {
-        // No emptiness guard: both passes are GraphBLAS calls, which do nothing
-        // on an empty matrix, where `Tensor::edge_count` can walk every
-        // parallel edge on the host when multi-edge deltas are pending.
-        self.inline_pass(weights, tensor, context);
-        if tensor.has_multi_edge() {
-            self.multi_pass(weights, tensor, context);
-        }
+    ) -> Matrix<f64> {
+        let mut weights = self.inline_pass(tensor, context);
+        self.multi_edge_pass(&mut weights, tensor, context);
+        weights
     }
 
     /// Every forward pair: the edge id is the `UINT64` value of the
-    /// effective forward matrix, so one `apply` scores the lot, straight into
-    /// `weights` through the `MIN` accumulator (no scored copy). A multi-edge pair
-    /// is scored [`UNSCORED`], keeping the forward structure whole, and gets
-    /// its weight from [`Self::multi_pass`].
+    /// effective forward matrix, so one `apply` scores the lot into a matrix
+    /// of the same structure. A multi-edge pair is scored [`UNSCORED`] and
+    /// gets its weight from [`Self::multi_edge_pass`].
     fn inline_pass(
         &self,
-        weights: &mut Matrix<f64>,
         tensor: &Tensor,
         context: &WeightContext,
-    ) {
-        let node_count = weights.nrows();
-        let mut effective = tensor.effective_fwd();
-        // The forward matrix is `node_cap` square, as `weights` is, unless a tensor
-        // outgrew it (see `build`): then resize it to `weights`'s shape. `to_mut`
-        // copies only when `effective` is the tensor's base; a merged matrix is
-        // already ours and is resized as is.
-        if effective.nrows() != node_count || effective.ncols() != node_count {
-            effective.to_mut().resize(node_count, node_count);
-        }
-        // SAFETY: live matrices and operators; GraphBLAS copies the context
-        // value and calls `cch_inline_weight_op` with it, under `context`'s
-        // own guarantee.
-        grb!(unsafe {
-            GrB_Matrix_apply_IndexOp_UDT(
-                weights.inner(),
-                null_mut(),
-                GrB_MIN_FP64,
-                self.inline_op,
-                effective.inner(),
-                context.as_value(),
-                null_mut(),
-            )
-        });
+    ) -> Matrix<f64> {
+        let effective = tensor.effective_fwd();
+        let mut weights = Matrix::<f64>::new(effective.nrows(), effective.ncols());
+        // SAFETY: `inline_op` maps `UINT64` to `FP64` with a `WeightContext`
+        // thunk, which GraphBLAS copies and hands to `cch_inline_weight_op`,
+        // under `context`'s own guarantee.
+        unsafe { weights.apply_index_op(self.inline_op, &effective, context.as_value()) };
+        weights
     }
 
     /// Multi-edge pairs: every id lives in its block's `multi_edges[row][id]`
@@ -575,24 +518,24 @@ impl WeightOps {
     /// its entries.
     ///
     /// A pair's ids live in exactly one block (the block is the high bits of
-    /// its two endpoints), so each block's minima go straight into `weights` with
-    /// nothing to merge between blocks — the same per-block loop `algo.MSF`
-    /// runs. Every graph within 2^30 nodes per axis has the one block; a larger
-    /// one has one block per occupied pair of 2^30-wide id ranges.
-    fn multi_pass(
+    /// its two endpoints), so each block's minima go straight into `weights`,
+    /// in place over the [`UNSCORED`] entries the inline pass left, with
+    /// nothing to merge between blocks. Every graph within 2^30 nodes per
+    /// axis has the one block; a larger one has one block per occupied pair of
+    /// 2^30-wide id ranges.
+    fn multi_edge_pass(
         &self,
         weights: &mut Matrix<f64>,
         tensor: &Tensor,
         context: &WeightContext,
     ) {
         for (block, multi_edges) in tensor.edge_versioned_all() {
-            let multi_edges = multi_edges.effective();
             if multi_edges.nvals() == 0 {
                 continue;
             }
-            let column_count = multi_edges.ncols();
+            let multi_edges = multi_edges.effective();
             let pair_minimums = Vector::<f64>::new(multi_edges.nrows());
-            let contexts = ContextVector::new(self.context_type, column_count, context);
+            let contexts = ContextVector::new(self.context_type, multi_edges.ncols(), context);
             // SAFETY: live matrix, vectors and semiring.
             grb!(unsafe {
                 GrB_mxv(
@@ -606,37 +549,22 @@ impl WeightOps {
                 )
             });
             if let Some(pairs) = pair_weights_from_keys(&pair_minimums, block, weights.nrows()) {
-                weights.element_wise_add(None, None, Some(&pairs), None);
+                weights.min_assign(&pairs);
             }
         }
     }
 }
 
-/// Turn one block's `pair_minimums[row] = weight`, with `(block, row) = compound_key(src,
-/// dst)`, into a `node_count x node_count` matrix.
-///
-/// **The one step of this module that is not pure GraphBLAS**, by choice.
-/// The row key packs the low 30 bits of `src` and `dst` side by side, and
-/// [`compound_key_inverse`] turns it back into the pair. What is below is the
-/// host split `algo.MSF` already ships (`runtime/functions/algo_procedures.rs`),
-/// in [`block_pair_coords`]: one `extractTuples`, one iteration per multi-edge
-/// **pair** (not per edge: the per-edge minimum was already taken by the
-/// `MIN` in the `mxv` upstream), then one `GrB_Matrix_build`.
+/// Turn one block's `pair_minimums[row] = weight`, with `(block, row) =
+/// compound_key(src, dst)`, into a `node_count x node_count` matrix: one
+/// `extractTuples`, a host split of each key into its pair with
+/// [`compound_key_inverse`], once per multi-edge **pair** (the per-edge
+/// minimum is already taken), and one `GrB_Matrix_build`. The one host loop
+/// of this module, by choice: see #3211.
 ///
 /// The build has no `dup` operator: the keys are a vector's indices, so each
 /// appears once, and [`compound_key_inverse`] is injective within a block, so
 /// no pair repeats. A repeat would be a bug, and the build refuses it.
-///
-/// A pure-GraphBLAS split does exist: lift each key into a value with a
-/// row-index apply (`GrB_ROWINDEX_INT64`), compute `src` and `dst` from it
-/// with shift/and/or applies, and hand the three vectors to
-/// `GxB_Matrix_build_Vector`, which takes its indices from vector *values*.
-/// It is kept as a host loop over the already reduced vector, so the two
-/// procedures stay alike.
-///
-/// TODO: projecting the graph into one `GrB_Matrix` (pair weights keyed by
-/// `(src, dst)` directly, for this index and `algo.MSF` alike) would remove
-/// the compound-key split, and with it this loop.
 fn pair_weights_from_keys(
     pair_minimums: &Vector<f64>,
     block: MeBlock,
@@ -646,26 +574,11 @@ fn pair_weights_from_keys(
     if keys.is_empty() {
         return None;
     }
-    let (rows, columns) = block_pair_coords(block, &keys);
+    let (rows, columns): (Vec<GrB_Index>, Vec<GrB_Index>) = keys
+        .iter()
+        .map(|&key| compound_key_inverse(block, key))
+        .unzip();
     let mut pair_weights = Matrix::<f64>::new(node_count, node_count);
     pair_weights.build(&rows, &columns, &minimums);
     Some(pair_weights)
-}
-
-/// The host half of [`pair_weights_from_keys`]: the `(src, dst)` of every row
-/// key of one `me` block, as parallel row and column arrays in key order.
-///
-/// Weights are not an input because the split never touches them: the pair at
-/// position `k` of the output owns the weight at position `k` of whatever the
-/// keys came with. Pure, so the blocks past [`ME_BLOCK_0`] — reachable only
-/// above 2^30 nodes on one axis — are testable without a graph that size.
-///
-/// [`ME_BLOCK_0`]: crate::graph::graphblas::tensor::ME_BLOCK_0
-fn block_pair_coords(
-    block: MeBlock,
-    keys: &[GrB_Index],
-) -> (Vec<GrB_Index>, Vec<GrB_Index>) {
-    keys.iter()
-        .map(|&key| compound_key_inverse(block, key))
-        .unzip()
 }

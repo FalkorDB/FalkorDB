@@ -33,7 +33,7 @@ use roaring::RoaringTreemap;
 use super::falkordb_index::FalkorDbIndex;
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 use crate::graph::graph::{Graph, TypeId};
-use crate::graph::graphblas::matrix::CsrExportError;
+use crate::graph::graphblas::matrix::{CsrExport, CsrExportError};
 use crate::graph::graphblas::tensor::GrB_INDEX_MAX;
 use customize::Metric;
 use order::Topology;
@@ -161,6 +161,34 @@ pub struct WeightCsr {
     csr: Csr,
     /// One weight per entry of `csr.neighbors`.
     values: Vec<f64>,
+}
+
+impl Csr {
+    /// The `Csr` over a GraphBLAS export's pattern arrays, taken as they are (the export
+    /// guarantees the invariants above), and the export's values.
+    fn from_export<V>(export: CsrExport<u64, u64, V>) -> (Self, Vec<V>) {
+        let csr = Self {
+            node_count: export.row_count(),
+            row_offsets: export.row_offsets,
+            neighbors: export.column_indices,
+        };
+        (csr, export.values)
+    }
+}
+
+/// A pattern export: the skeleton.
+impl From<CsrExport<u64, u64, ()>> for Csr {
+    fn from(export: CsrExport<u64, u64, ()>) -> Self {
+        Self::from_export(export).0
+    }
+}
+
+/// A weighted export: pattern and values, unchanged.
+impl From<CsrExport<u64, u64, f64>> for WeightCsr {
+    fn from(export: CsrExport<u64, u64, f64>) -> Self {
+        let (csr, values) = Csr::from_export(export);
+        Self { csr, values }
+    }
 }
 
 /// What `Graph` hands the hierarchy builder (built by #3211, consumed by #3208 and #3209).
