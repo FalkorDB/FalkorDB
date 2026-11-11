@@ -6,9 +6,13 @@ so every class here skips unless `FALKORDB_FEATURES` declares it (see
 CI matrix: CI runs it from `flow_tests_index_falkordb.txt`, against a module
 built with the feature. All CCH flow classes share this one file.
 
-Effects -- CCH index DDL, which is not replicated yet. See `effects_common.py`
-for the shared fixture.
+Effects -- CCH index DDL replicates as C's v3 does it: a `CREATE_INDEX` /
+`DROP_INDEX` record carrying `INDEX_FLD_CCH` (0x20), whose schemas are the
+relationship types and whose one field is the weight attribute, after the
+schema a create registers. See `effects_common.py` for the shared fixture.
 """
+
+import struct
 
 from common import *
 
@@ -16,7 +20,7 @@ from effects_common import _EffectsBase
 
 
 #-----------------------------------------------------------------------------
-# 1. CCH DDL is not replicated, so it must never create schema
+# 1. CCH DDL replicates, schema first
 #-----------------------------------------------------------------------------
 
 
@@ -25,18 +29,26 @@ ALREADY_HELD = ("a CCH index already exists over these relationship types and "
                 "weight attribute")
 
 
-class testEffects_01_CchDdlCreatesNoSchema(_EffectsBase):
-    """CREATE CCH INDEX emits no effects yet, so it must not create schema.
+class testEffects_01_CchDdlReplicates(_EffectsBase):
+    """CREATE/DROP CCH INDEX reach the replica as effects.
 
-    A relationship type or attribute it created would exist on the primary
-    only. The next write naming it carries an id no earlier effect announced,
-    the replica refuses it ("relationship type id 0 out of range") and
-    resyncs. So the statement refuses to run until the type and the weight
-    attribute exist, and a replica that never sees CCH DDL still resolves every
-    id the primary uses afterwards.
+    A create registers a missing relationship type or weight attribute, as C
+    does, and announces it ahead of the index record, so the replica resolves
+    every id the record names. The replica builds its own hierarchy; the record
+    carries the definition only, in C's v3 byte layout.
+
+    Neither side lists a CCH index in `db.indexes()` yet, so the replica's
+    index is observed the one way a client can: with writes allowed on the
+    replica, a CREATE of the same index is refused as already held, and after
+    the replicated drop, a DROP is refused as not held. Both probes are refused
+    queries, so they change nothing on the replica.
     """
 
     GRAPH_ID = "effects_cch_ddl"
+
+    # C's v3 payload header: the version byte, then the flags byte, clear
+    # (`_EffectsBuffer_WriteHeader`, src/effects/effects.c).
+    HEADER = b"\x03\x00"
 
     def __init__(self):
         if not INDEX_FALKORDB:
@@ -56,10 +68,11 @@ class testEffects_01_CchDdlCreatesNoSchema(_EffectsBase):
         self.env.assertEqual(self._schema_of(self.replica_graph), m)
         return m
 
-    def _refused(self, q, *needles, read_only=False):
-        """`q` fails on the primary with an error containing every needle."""
-        run = (self.master_graph.ro_query if read_only
-               else self.master_graph.query)
+    def _refused(self, q, *needles, read_only=False, graph=None):
+        """`q` fails (on the primary by default) with an error containing
+        every needle."""
+        graph = graph or self.master_graph
+        run = graph.ro_query if read_only else graph.query
         try:
             run(q)
         except ResponseError as e:
@@ -68,64 +81,183 @@ class testEffects_01_CchDdlCreatesNoSchema(_EffectsBase):
             return
         self.env.assertTrue(False, message=f"{q} was not refused")
 
-    def test01_ddl_over_missing_schema_is_refused_and_writes_still_apply(self):
-        self.set_effects_config()
-        full_before = self.master.info()["sync_full"]
-        failures_before = self.effect_failures()
-        out_of_range_before = self.replica_log_count(b"out of range")
+    def _on_replica(self, q, *needles, key=None):
+        """`q` is refused on the replica with `needles`: a write probe, run with
+        writes briefly allowed there."""
+        graph = Graph(self.replica, key) if key else self.replica_graph
+        self.replica.config_set("replica-read-only", "no")
+        try:
+            self._refused(q, *needles, graph=graph)
+        finally:
+            self.replica.config_set("replica-read-only", "yes")
 
-        # Nothing exists yet: refused, and nothing was created. The query left
-        # an empty graph on the primary, which no effect announces, so the
-        # replica has no key to read until the first write below.
-        self._refused("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)",
-                      "relationship type 'ROAD' does not exist", "first")
-        self.env.assertEqual(self._schema_of(self.master_graph), ([], []))
-
-        # A normal write creates the type and the attribute, as an effect.
-        self.query_and_sync("CREATE (:N)-[:ROAD {time: 1.0}]->(:N)")
-        self._refused("CREATE CCH INDEX FOR ()-[e:ROAD|FERRY]->() ON (e.time)",
-                      "relationship type 'FERRY' does not exist", "first")
-        self._refused("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.length)",
-                      "attribute 'length' does not exist", "first")
-        self.wait_for_replica_offset()
-        self.env.assertEqual(self._schema(), (['ROAD'], ['time']))
-
-        # Over existing schema the index is created.
-        res = self.query_and_sync(
-            "CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
-        self.env.assertEqual(res.indices_created, 1)
-
-        # A DROP naming a type or an attribute that does not exist matches no
-        # index, and is refused like the drop of an index that is not held.
-        for q in ("DROP CCH INDEX FOR ()-[e:TRAIN]->() ON (e.time)",
-                  "DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.speed)"):
-            self._refused(q, NOT_HELD)
-
-        # Later writes apply on the replica: the indexed type and its weight,
-        # then a new type and a new attribute.
-        self.query_and_sync("CREATE (:N)-[:ROAD {time: 2.0}]->(:N)")
-        self.query_and_sync("MATCH ()-[r:ROAD]->() SET r.time = 3.0")
-        self.query_and_sync("CREATE (:N)-[:FERRY {time: 4.0, length: 5}]->(:N)")
-        self.env.assertEqual(self._schema(),
-                             (['ROAD', 'FERRY'], ['time', 'length']))
-        self.assert_agree(
-            "MATCH ()-[r]->() RETURN type(r), r.time, r.length "
-            "ORDER BY type(r), r.time",
-            [['FERRY', 4.0, 5], ['ROAD', 3.0, None], ['ROAD', 3.0, None]])
-        # Not `assert_graph_eq`: it compares index lists, and the CCH index is
-        # on the primary only until CCH DDL is replicated.
-
-        # And none of it was refused: no resync, no refused GRAPH.EFFECT.
+    def _healthy(self, full_before, failures_before):
         self.env.assertEqual(self.master.info()["sync_full"], full_before,
             message="the replica was resynced")
         self.env.assertEqual(self.effect_failures(), failures_before,
             message="the replica refused a GRAPH.EFFECT")
-        out_of_range = self.replica_log_count(b"out of range")
-        if out_of_range is not None:
-            self.env.assertEqual(out_of_range, out_of_range_before,
-                message="the replica could not resolve an id")
 
-    def test02_create_drop_and_refusals(self):
+    @staticmethod
+    def _c_string(s):
+        """C's `EffectsBuffer_WriteString`: `size_t` length counting the NUL,
+        then the bytes and the NUL. The length is in bytes, not characters."""
+        b = s.encode()
+        return struct.pack("<Q", len(b) + 1) + b + b"\0"
+
+    @classmethod
+    def _c_add_type(cls, type_id, name):
+        """C's v3 `ADD_SCHEMA` (9) for a relationship type: opcode, `SchemaType`
+        `SCHEMA_EDGE`, the id as an `int`, the name."""
+        return struct.pack("<IIi", 9, 1, type_id) + cls._c_string(name)
+
+    @classmethod
+    def _c_add_attribute(cls, attr_id, name):
+        """C's v3 `ADD_ATTRIBUTE` (10): opcode, `AttributeID` (u16), name."""
+        return struct.pack("<IH", 10, attr_id) + cls._c_string(name)
+
+    @classmethod
+    def _c_cch_record(cls, create, weight, types):
+        """The record C's v3 encoder writes for a CCH statement
+        (`_encode_ddl_record` over `EffectsV3Grouping_AddCCHIndex`'s
+        announcement): `CREATE_INDEX` (11) or `DROP_INDEX` (12), `SCHEMA_EDGE`,
+        a u16 count and each type as (u32 id, name) ascending by id with
+        repeats kept, field type `INDEX_FLD_CCH` (0x20), one field -- the
+        weight, (u16 id, name) -- and on a create five clear option presence
+        bytes."""
+        weight_id, weight_name = weight
+        out = struct.pack("<IIH", 11 if create else 12, 1, len(types))
+        for type_id, type_name in sorted(types, key=lambda t: t[0]):
+            out += struct.pack("<I", type_id) + cls._c_string(type_name)
+        out += struct.pack("<IHH", 0x20, 1, weight_id) + cls._c_string(weight_name)
+        if create:
+            out += b"\0" * 5
+        return out
+
+    def test01_create_registers_schema_and_replicates_the_index(self):
+        self.set_effects_config()
+        full_before = self.master.info()["sync_full"]
+        failures_before = self.effect_failures()
+        self.start_monitor('GRAPH.EFFECT')
+        self.assert_effect_emitted(count=0)
+
+        # Nothing exists yet: the create registers both types and the
+        # attribute, like C, and the replica gets them with the same ids.
+        res = self.query_and_sync(
+            "CREATE CCH INDEX FOR ()-[e:ROAD|FERRY|ROAD]->() ON (e.time)")
+        self.env.assertEqual(res.indices_created, 1)
+        self.env.assertEqual(self._schema(), (['ROAD', 'FERRY'], ['time']))
+
+        # One payload, every record of it: ADD_SCHEMA x2, ADD_ATTRIBUTE, then
+        # the CCH index record naming ROAD twice, as the statement did.
+        window = self.assert_effect_emitted(count=1)
+        [payload] = self.effect_payloads(window, self.GRAPH_ID)
+        types = [(0, 'ROAD'), (1, 'FERRY'), (0, 'ROAD')]
+        self.env.assertEqual(self.payload_bytes(payload),
+            self.HEADER
+            + self._c_add_type(0, 'ROAD') + self._c_add_type(1, 'FERRY')
+            + self._c_add_attribute(0, 'time')
+            + self._c_cch_record(True, (0, 'time'), types))
+
+        # The replica holds the index.
+        self._on_replica("CREATE CCH INDEX FOR ()-[e:FERRY|ROAD]->() ON (e.time)",
+                         ALREADY_HELD)
+
+        # Later writes over the indexed types still apply.
+        self.query_and_sync("CREATE (:N)-[:ROAD {time: 2.0}]->(:N)")
+        self.query_and_sync("CREATE (:N)-[:FERRY {time: 4.0, length: 5}]->(:N)")
+        self.env.assertEqual(self._schema(),
+                             (['ROAD', 'FERRY'], ['time', 'length']))
+        self.assert_graph_eq()
+        self.assert_effect_emitted(count=2)
+
+        # A drop is the index record alone: it registers nothing.
+        res = self.query_and_sync(
+            "DROP CCH INDEX FOR ()-[e:ROAD|FERRY]->() ON (e.time)")
+        self.env.assertEqual(res.indices_deleted, 1)
+        window = self.assert_effect_emitted(count=1)
+        [payload] = self.effect_payloads(window, self.GRAPH_ID)
+        self.env.assertEqual(self.payload_bytes(payload),
+            self.HEADER + self._c_cch_record(False, (0, 'time'),
+                                             [(0, 'ROAD'), (1, 'FERRY')]))
+        self._on_replica("DROP CCH INDEX FOR ()-[e:ROAD|FERRY]->() ON (e.time)",
+                         NOT_HELD)
+
+        # A DROP naming a type or an attribute that does not exist matches no
+        # index, is refused like the drop of an index that is not held, and
+        # creates nothing.
+        for q in ("DROP CCH INDEX FOR ()-[e:TRAIN]->() ON (e.time)",
+                  "DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.speed)"):
+            self._refused(q, NOT_HELD)
+        self.env.assertEqual(self._schema(),
+                             (['ROAD', 'FERRY'], ['time', 'length']))
+        self.assert_effect_emitted(count=0)
+
+        self._healthy(full_before, failures_before)
+
+    def test02_c_bytes_apply_as_they_are(self):
+        """A payload built from C's v3 layout -- the two-byte header, then the
+        CCH index record -- sent as `GRAPH.EFFECT`, builds and drops the index
+        on the primary and, replicated, on the replica.
+
+        Over schema that already exists, this is the whole payload a C primary
+        emitting v3 sends for the statement (its v3 header and framing are
+        this engine's), so it is what a Rust replica of that primary receives.
+        C emits v2 by default today (`EFFECTS_VERSION_EMIT`); v3 is what it
+        sends once that switch moves."""
+        self.set_effects_config()
+        full_before = self.master.info()["sync_full"]
+        failures_before = self.effect_failures()
+        key = "effects_cch_from_c"
+        g = Graph(self.master, key)
+        # Names whose byte length is not their character count: `道路` is
+        # type 1 and `время` attribute 1.
+        g.query("CREATE (:N)-[:A {w: 1.0}]->(:N)")
+        g.query("CREATE (:N)-[:`道路` {`время`: 2.0}]->(:N)")
+        self.wait_for_replica_offset()
+
+        def effect(record):
+            self.env.assertEqual(
+                self.master.execute_command("GRAPH.EFFECT", key,
+                                            self.HEADER + record), "OK")
+
+        def refused(record, needle):
+            try:
+                self.master.execute_command("GRAPH.EFFECT", key,
+                                            self.HEADER + record)
+                self.env.assertTrue(False, message="a diverged record applied")
+            except ResponseError as e:
+                self.env.assertContains(needle, str(e))
+
+        # `[:道路|A|道路]`, repeats included, as C sends them.
+        types = [(1, '道路'), (0, 'A'), (1, '道路')]
+        weight = (1, 'время')
+        spelled = "()-[e:A|`道路`]->() ON (e.`время`)"
+        effect(self._c_cch_record(True, weight, types))
+        self._refused(f"CREATE CCH INDEX FOR {spelled}", ALREADY_HELD, graph=g)
+        self.wait_for_replica_offset()
+        self._on_replica(f"CREATE CCH INDEX FOR {spelled}", ALREADY_HELD,
+                         key=key)
+
+        # Idempotent, as C's v3 apply is.
+        effect(self._c_cch_record(True, weight, types))
+        effect(self._c_cch_record(False, weight, types))
+        effect(self._c_cch_record(False, weight, types))
+        self._refused(f"DROP CCH INDEX FOR {spelled}", NOT_HELD, graph=g)
+        self.wait_for_replica_offset()
+        self._on_replica(f"DROP CCH INDEX FOR {spelled}", NOT_HELD, key=key)
+
+        # An id that names another type or attribute here is divergence,
+        # refused by name -- on the primary only: a refused GRAPH.EFFECT is
+        # not replicated.
+        refused(self._c_cch_record(True, weight, [(0, '道路')]),
+                "'道路' (id 0), which is 'A' here")
+        refused(self._c_cch_record(True, (0, 'время'), types),
+                "'время' (id 0), which is 'w' here")
+
+        self.wait_for_replica_offset()
+        self._healthy(full_before, failures_before)
+
+    def test03_create_drop_and_refusals(self):
         self.set_effects_config()
         self.query_and_sync("CREATE (:N)-[:A {w: 1.0}]->(:N)-[:B {w: 2.0}]->(:N)")
 
@@ -154,3 +286,11 @@ class testEffects_01_CchDdlCreatesNoSchema(_EffectsBase):
         res = self.query_and_sync(
             "CREATE CCH INDEX FOR ()-[e:A|B]->() ON (e.w)")
         self.env.assertEqual(res.indices_created, 1)
+
+        # The replica followed every step: it holds A and A|B, and not B.
+        # (Every probe must be refused: one that ran would diverge the replica.)
+        for types in ("A", "B|A"):
+            self._on_replica(f"CREATE CCH INDEX FOR ()-[e:{types}]->() ON (e.w)",
+                             ALREADY_HELD)
+        self._on_replica("DROP CCH INDEX FOR ()-[e:B]->() ON (e.w)", NOT_HELD)
+        self.assert_graph_eq()

@@ -91,6 +91,9 @@ pub mod index_field_type {
     pub const INDEX_FLD_GEO: u64 = 0x04;
     pub const INDEX_FLD_STR: u64 = 0x08;
     pub const INDEX_FLD_VECTOR: u64 = 0x10;
+    /// The CCH path index: never a field of an index, so the RDB writes no
+    /// field with it. Only the effects wire carries this bit.
+    pub const INDEX_FLD_CCH: u64 = 0x20;
 }
 
 /// SIValue type tags for binary serialization (matching C FalkorDB format).

@@ -36,7 +36,9 @@ use crate::{
     },
 };
 
-use crate::effects::announce::{AnnouncedConstraint, AnnouncedIndex, SchemaBaseline};
+use crate::effects::announce::{
+    AnnouncedCchIndex, AnnouncedConstraint, AnnouncedIndex, SchemaBaseline,
+};
 
 /// A schema id as the wire carries it: C's `LabelID`/`RelationID`, which is a
 /// signed `int`.
@@ -54,6 +56,29 @@ use crate::effects::announce::{AnnouncedConstraint, AnnouncedIndex, SchemaBaseli
 /// wrote 0 for a 256th property, so it is made loudly here instead.
 fn schema_id(id: usize) -> u32 {
     u32::try_from(id).expect("a schema id must fit four bytes; the dictionary cannot be this large")
+}
+
+/// The schema a query's buffer announces from: what the graph held before the
+/// query registered anything.
+const fn baseline_of(p: &Pending) -> SchemaBaseline {
+    SchemaBaseline {
+        labels: p.schema_label_count,
+        types: p.schema_rel_type_count,
+        attrs: p.schema_node_attr_count,
+    }
+}
+
+/// `name` as a DDL record names an attribute, if this graph has registered it.
+/// One dictionary serves nodes and relationships alike.
+fn attr_ref(
+    g: &Graph,
+    name: &Arc<String>,
+) -> Option<v3::AttrRef<String>> {
+    let id = g.get_relationship_attribute_id(name)?;
+    Some(v3::AttrRef {
+        id: u16::try_from(id).ok()?,
+        name: name.as_str().to_owned(),
+    })
 }
 
 /// Announce every schema and attribute registered since `baseline`.
@@ -128,18 +153,10 @@ pub fn build_constraint_buffer<W: EffectWrite + ?Sized>(
     .map(schema_id)
     .ok_or_else(|| format!("constraint label '{label}' is not registered"))?;
 
-    let names = g.get_node_attribute_names();
     let props: Vec<v3::AttrRef<String>> = properties
         .iter()
         .map(|p| {
-            names
-                .iter()
-                .position(|n| n == p)
-                .map(|i| v3::AttrRef {
-                    id: i as u16,
-                    name: p.as_str().to_owned(),
-                })
-                .ok_or_else(|| format!("constraint property '{p}' is not registered"))
+            attr_ref(g, p).ok_or_else(|| format!("constraint property '{p}' is not registered"))
         })
         .collect::<Result<_, _>>()?;
 
@@ -200,7 +217,7 @@ fn encode_all<W: EffectWrite + ?Sized>(
 }
 
 /// `IndexFieldType` is a bit flag set rather than a discriminant, so this is a
-/// union not a cast. The inverse is `apply::index_type_of`.
+/// union not a cast. The inverse is `v3::index_kind_of`.
 const fn index_field_flags(t: &IndexType) -> u32 {
     match t {
         IndexType::Range => v3::INDEX_FLD_RANGE,
@@ -233,11 +250,7 @@ pub fn build_index_buffer<W: EffectWrite + ?Sized>(
     // Derived here rather than by the caller, for the same reason
     // `build_effects_buffer` derives it: which schema entries still need
     // announcing is this module's business, not the runtime's.
-    let baseline = &SchemaBaseline {
-        labels: p.schema_label_count,
-        types: p.schema_rel_type_count,
-        attrs: p.schema_node_attr_count,
-    };
+    let baseline = &baseline_of(p);
     let label_id = match ix.entity_type {
         EntityType::Node => g.get_label_id(ix.label).map(|l| l.0),
         EntityType::Relationship => g.get_type_id(ix.label).map(|t| t.0),
@@ -245,20 +258,10 @@ pub fn build_index_buffer<W: EffectWrite + ?Sized>(
     .map(schema_id)
     .ok_or_else(|| format!("index label '{}' is not registered", ix.label))?;
 
-    let names = g.get_node_attribute_names();
     let fields: Vec<v3::AttrRef<String>> = ix
         .fields
         .iter()
-        .map(|f| {
-            names
-                .iter()
-                .position(|n| n == f)
-                .map(|i| v3::AttrRef {
-                    id: i as u16,
-                    name: f.as_str().to_owned(),
-                })
-                .ok_or_else(|| format!("index field '{f}' is not registered"))
-        })
+        .map(|f| attr_ref(g, f).ok_or_else(|| format!("index field '{f}' is not registered")))
         .collect::<Result<_, _>>()?;
 
     // Built before anything is written, so a refusal leaves the buffer
@@ -292,6 +295,53 @@ pub fn build_index_buffer<W: EffectWrite + ?Sized>(
     };
 
     encode_all(buf, g, baseline)?;
+    record.encode(buf).map_err(|e| e.to_string())
+}
+
+/// Encode one CCH index DDL statement, schema announcements included.
+///
+/// As C's v3 writes it (`_v3_StageCCH`): an index record carrying
+/// `INDEX_FLD_CCH` — see [`Record::cch_index`]. Its own record, never merged
+/// with an index record over the same type: each statement is built into its
+/// own record here, and C keeps a CCH record out of its index grouping.
+///
+/// `CREATE CCH INDEX` registers a relationship type or weight attribute it does
+/// not find, as C's `cch_index_create` does; those registrations go out first,
+/// so the replica holds every id the record names.
+///
+/// # Errors
+///
+/// A relationship type or weight attribute this graph has not registered,
+/// which would mean the DDL did not run. Nothing is written in that case.
+pub fn build_cch_index_buffer<W: EffectWrite + ?Sized>(
+    p: &Pending,
+    g: &Graph,
+    create: bool,
+    index: &AnnouncedCchIndex<'_>,
+    buf: &mut W,
+) -> Result<(), String> {
+    // Statement order, repeats included, as C stages them; the encoder sorts.
+    let relationship_types: Vec<v3::SchemaRef<String>> = index
+        .relationship_types
+        .iter()
+        .map(|name| {
+            g.get_type_id(name)
+                .map(|type_id| v3::SchemaRef {
+                    id: schema_id(type_id.0),
+                    name: name.as_str().to_owned(),
+                })
+                .ok_or_else(|| format!("CCH index relationship type '{name}' is not registered"))
+        })
+        .collect::<Result<_, _>>()?;
+    let weight_attribute = attr_ref(g, index.weight_attribute).ok_or_else(|| {
+        format!(
+            "CCH index weight attribute '{}' is not registered",
+            index.weight_attribute
+        )
+    })?;
+
+    let record = Record::cch_index(create, relationship_types, weight_attribute);
+    encode_all(buf, g, &baseline_of(p))?;
     record.encode(buf).map_err(|e| e.to_string())
 }
 
@@ -332,15 +382,7 @@ pub fn for_each_record(
     // only meaningful once the replica has agreed on the numbering.
     {
         let graph = g;
-        emit_schema_additions(
-            graph,
-            &SchemaBaseline {
-                labels: p.schema_label_count,
-                types: p.schema_rel_type_count,
-                attrs: p.schema_node_attr_count,
-            },
-            out,
-        );
+        emit_schema_additions(graph, &baseline_of(p), out);
     }
 
     digest_created_nodes(p, out);
@@ -1074,6 +1116,68 @@ mod tests {
             buf,
             v3::new_buffer(),
             "nothing may be written before the ids resolve"
+        );
+    }
+
+    /// C keeps a CCH record out of its index grouping
+    /// (`EffectsV3Grouping_AddIndexField` skips `INDEX_FLD_CCH`): a range index
+    /// and a CCH index over the same relationship type, in one payload, stay
+    /// two records, and neither takes the other's field.
+    #[test]
+    fn a_cch_index_record_is_never_merged_with_an_index_record() {
+        let g = graph();
+        with_attrs(&g, &["w"]);
+        let mut p = Pending::default();
+        {
+            let mut graph = g.borrow_mut();
+            graph.get_type_id_mut("ROAD");
+            p.set_schema_baseline(&graph);
+        }
+        let road = [Arc::new(String::from("ROAD"))];
+        let w = Arc::new(String::from("w"));
+        let mut buf = v3::new_buffer();
+        build_index_buffer(
+            &p,
+            &g.borrow(),
+            true,
+            &AnnouncedIndex {
+                entity_type: EntityType::Relationship,
+                index_type: &IndexType::Range,
+                label: "ROAD",
+                fields: std::slice::from_ref(&w),
+                options: None,
+            },
+            &mut buf,
+        )
+        .unwrap();
+        let cch = AnnouncedCchIndex {
+            relationship_types: &road,
+            weight_attribute: &w,
+        };
+        build_cch_index_buffer(&p, &g.borrow(), true, &cch, &mut buf).unwrap();
+
+        let road = || {
+            vec![v3::SchemaRef {
+                id: 0,
+                name: "ROAD".to_owned(),
+            }]
+        };
+        let w = || v3::AttrRef {
+            id: 0,
+            name: "w".to_owned(),
+        };
+        assert_eq!(
+            read_buffer(&buf).unwrap(),
+            vec![
+                Record::CreateIndex {
+                    schema_type: EntityType::Relationship,
+                    schemas: road(),
+                    field_type: v3::INDEX_FLD_RANGE,
+                    fields: vec![w()],
+                    options: IndexFieldOptions::none_given(None),
+                },
+                Record::cch_index(true, road(), w()),
+            ]
         );
     }
 

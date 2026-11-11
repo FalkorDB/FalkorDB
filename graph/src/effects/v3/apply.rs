@@ -21,7 +21,7 @@
 use super::records::IndexFieldOptions;
 use crate::{
     effects::v3::{
-        AttrRef, DecodeError, Record, SchemaRef, entity_tag, index_type_of, open_payload,
+        AttrRef, DecodeError, IndexKind, Record, SchemaRef, entity_tag, index_kind_of, open_payload,
     },
     entity_type::EntityType,
     graph::{
@@ -421,7 +421,10 @@ fn apply_record(
             // the record existed. Answered rather than unwrapped so a future
             // caller that reaches apply without decoding gets a refusal rather
             // than a silent misclassification.
-            let index_type = index_type_of(field_type).map_err(DecodeError::from)?;
+            let index_type = match index_kind_of(field_type).map_err(DecodeError::from)? {
+                IndexKind::Property(index_type) => index_type,
+                IndexKind::Cch => return apply_cch_index(g, true, schema_type, &schemas, &fields),
+            };
             // Every entity is verified above, including the ones this build
             // then refuses to index: a record that names three types is a
             // record about all three, and checking only the one that fits
@@ -465,11 +468,11 @@ fn apply_record(
             for field in &fields {
                 verify_attribute(g, field.id, &field.name)?;
             }
-            // `Ok` is guaranteed here: the decoder ran this same check before
-            // the record existed. Answered rather than unwrapped so a future
-            // caller that reaches apply without decoding gets a refusal rather
-            // than a silent misclassification.
-            let index_type = index_type_of(field_type).map_err(DecodeError::from)?;
+            // `Ok` is guaranteed here, as for the create.
+            let index_type = match index_kind_of(field_type).map_err(DecodeError::from)? {
+                IndexKind::Property(index_type) => index_type,
+                IndexKind::Cch => return apply_cch_index(g, false, schema_type, &schemas, &fields),
+            };
             let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
             g.drop_index(&index_type, &schema_type, &label, &fields)?;
@@ -842,6 +845,72 @@ fn single_index_label(schemas: Vec<SchemaRef<String>>) -> Result<String, ApplyEr
             count: schemas.len(),
         }),
     }
+}
+
+/// A CCH index record: ONE index over every relationship type it names,
+/// weighted by its one field — C's `_ApplyCreateCCHIndex` /
+/// `_ApplyDropCCHIndex`, refusing what C's `_CCHRelationIDs` refuses. The caller
+/// has already checked every id against its name, so nothing is touched before
+/// the whole record is known to be good.
+fn apply_cch_index(
+    g: &mut Graph,
+    create: bool,
+    schema_type: EntityType,
+    schemas: &[SchemaRef<String>],
+    fields: &[AttrRef<String>],
+) -> Result<(), ApplyError> {
+    if schema_type != EntityType::Relationship {
+        return Err(ApplyError::CchIndexOverLabels);
+    }
+    let [weight_attribute] = fields else {
+        return Err(ApplyError::CchIndexFieldCount {
+            count: fields.len(),
+        });
+    };
+    let relationship_types = schemas.iter().map(|s| TypeId(s.id as usize)).collect();
+    hold_cch_index(g, create, relationship_types, weight_attribute.id)
+}
+
+/// Create or drop the CCH index — the one place the `index-falkordb` feature
+/// decides what a CCH record does.
+///
+/// The hierarchy is built here, from this replica's own edges, synchronously
+/// on the thread applying the buffer, as C's apply does. A create of an index
+/// already held is a no-op and a drop of one not held is tolerated, as in C.
+/// A build the primary completed and this replica cannot (a negative weight
+/// here) is a divergence, and refused.
+#[cfg(feature = "index-falkordb")]
+fn hold_cch_index(
+    g: &mut Graph,
+    create: bool,
+    relationship_types: Vec<TypeId>,
+    weight_attribute: u16,
+) -> Result<(), ApplyError> {
+    use crate::index::falkordb::cch::{CchError, CchIndexDef};
+    let definition = CchIndexDef::new(relationship_types, weight_attribute);
+    let outcome = if create {
+        g.create_cch_index(definition)
+    } else {
+        g.drop_cch_index(&definition)
+    };
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(CchError::AlreadyExists) if create => Ok(()),
+        Err(CchError::NotFound) if !create => Ok(()),
+        Err(error) => Err(ApplyError::Graph(error.query_message())),
+    }
+}
+
+/// Without the feature there is no CCH index to hold, and the record is
+/// refused.
+#[cfg(not(feature = "index-falkordb"))]
+fn hold_cch_index(
+    _g: &mut Graph,
+    create: bool,
+    _relationship_types: Vec<TypeId>,
+    _weight_attribute: u16,
+) -> Result<(), ApplyError> {
+    Err(ApplyError::CchIndexUnsupported { create })
 }
 
 /// C numbers `GraphEntityType` from 1; this keeps the compiler honest.
@@ -1970,24 +2039,31 @@ mod tests {
         use crate::effects::v3::{
             BadFieldType, INDEX_FLD_FULLTEXT, INDEX_FLD_NUMERIC, INDEX_FLD_STR, INDEX_FLD_VECTOR,
         };
-        assert_eq!(index_type_of(INDEX_FLD_RANGE), Ok(IndexType::Range));
-        assert_eq!(index_type_of(INDEX_FLD_FULLTEXT), Ok(IndexType::Fulltext));
-        assert_eq!(index_type_of(INDEX_FLD_VECTOR), Ok(IndexType::Vector));
+        assert_eq!(
+            index_kind_of(INDEX_FLD_RANGE),
+            Ok(IndexKind::Property(IndexType::Range))
+        );
+        assert_eq!(
+            index_kind_of(INDEX_FLD_FULLTEXT),
+            Ok(IndexKind::Property(IndexType::Fulltext))
+        );
+        assert_eq!(
+            index_kind_of(INDEX_FLD_VECTOR),
+            Ok(IndexKind::Property(IndexType::Vector))
+        );
         // A range index is the OR of three scalar kinds, so bit-testing is the
         // only thing that classifies it correctly.
-        assert_eq!(index_type_of(INDEX_FLD_NUMERIC), Ok(IndexType::Range));
+        assert_eq!(
+            index_kind_of(INDEX_FLD_NUMERIC),
+            Ok(IndexKind::Property(IndexType::Range))
+        );
+        // C's CCH bit is a kind of its own.
+        assert_eq!(index_kind_of(0x20), Ok(IndexKind::Cch));
         // A bit with no variant is refused by name rather than falling through
         // to range; the error carries the bit so each layer reports it its own
         // way.
         assert_eq!(
-            index_type_of(0x20),
-            Err(BadFieldType::UnknownBit {
-                field_type: 0x20,
-                bit: 0x20
-            })
-        );
-        assert_eq!(
-            index_type_of(INDEX_FLD_RANGE | 0x40),
+            index_kind_of(INDEX_FLD_RANGE | 0x40),
             Err(BadFieldType::UnknownBit {
                 field_type: INDEX_FLD_RANGE | 0x40,
                 bit: 0x40
@@ -1997,19 +2073,19 @@ mod tests {
         // by equality and asserts otherwise, `index_field_flags` is total — and
         // ranking would build one index where the record named two.
         assert_eq!(
-            index_type_of(INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR),
+            index_kind_of(INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR),
             Err(BadFieldType::MixedKinds {
                 field_type: INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR,
                 bit: INDEX_FLD_VECTOR,
-                kind: IndexType::Vector,
-                first: IndexType::Fulltext,
+                kind: IndexKind::Property(IndexType::Vector),
+                first: IndexKind::Property(IndexType::Fulltext),
             })
         );
         // But several bits of the *same* kind stay ordinary: a range index over
         // numbers and strings alone is 0x0A, and the corpus carries one.
         assert_eq!(
-            index_type_of(INDEX_FLD_NUMERIC | INDEX_FLD_STR),
-            Ok(IndexType::Range)
+            index_kind_of(INDEX_FLD_NUMERIC | INDEX_FLD_STR),
+            Ok(IndexKind::Property(IndexType::Range))
         );
     }
 
@@ -2381,5 +2457,286 @@ mod tests {
         write_delete(&mut buf, &IdList::from([0, 1]), &[]);
         apply_effects(&mut g, &buf).expect("no edge is left on either node");
         assert_eq!(g.node_count(), 0);
+    }
+}
+
+/// A CCH index record (`CREATE_INDEX` / `DROP_INDEX` carrying `INDEX_FLD_CCH`)
+/// on a replica.
+#[cfg(test)]
+mod cch_tests {
+    use super::*;
+    use crate::effects::v3::test_aux::graph;
+    use crate::effects::v3::{INDEX_FLD_CCH, new_buffer, schema_tag};
+    use crate::effects::{EffectEncode, EffectWrite};
+
+    fn time() -> AttrRef<String> {
+        AttrRef {
+            id: 0,
+            name: "time".to_owned(),
+        }
+    }
+
+    fn road() -> SchemaRef<String> {
+        SchemaRef {
+            id: 0,
+            name: "ROAD".to_owned(),
+        }
+    }
+
+    /// `ROAD` (type 0) and `time` (attribute 0), as a primary's `CREATE CCH
+    /// INDEX` over an empty graph announces them.
+    fn schema() -> [Record; 2] {
+        [
+            Record::AddRelType {
+                id: 0,
+                name: "ROAD".to_owned(),
+            },
+            Record::AddAttribute {
+                id: 0,
+                name: "time".to_owned(),
+            },
+        ]
+    }
+
+    fn apply(
+        g: &mut Graph,
+        records: impl IntoIterator<Item = Record>,
+    ) -> Result<(), ApplyError> {
+        let mut buf = new_buffer();
+        for record in records {
+            record.encode(&mut buf).unwrap();
+        }
+        apply_effects(g, &buf)
+    }
+
+    /// A `DROP_INDEX` as a foreign encoder could send it, which this encoder
+    /// refuses to write.
+    fn foreign_drop(
+        schema_type: EntityType,
+        schemas: &[SchemaRef<String>],
+        field_type: u32,
+        fields: &[AttrRef<String>],
+    ) -> Vec<u8> {
+        let mut buf = new_buffer();
+        buf.u32(12);
+        buf.u32(schema_tag(schema_type));
+        buf.u16(u16::try_from(schemas.len()).unwrap());
+        for s in schemas {
+            buf.u32(s.id);
+            buf.string(&s.name);
+        }
+        buf.u32(field_type);
+        buf.u16(u16::try_from(fields.len()).unwrap());
+        for f in fields {
+            buf.u16(f.id);
+            buf.string(&f.name);
+        }
+        buf
+    }
+
+    /// A graph holding `ROAD` and `time`, and nothing else.
+    fn with_schema() -> Graph {
+        let mut g = graph();
+        apply(&mut g, schema()).unwrap();
+        g
+    }
+
+    /// Checked by id and name before anything else, in every build: a diverged
+    /// dictionary is reported as itself, for the relationship type and for the
+    /// weight attribute.
+    #[test]
+    fn a_type_or_attribute_named_differently_here_is_refused() {
+        for (local_type, local_attr, expected) in [
+            ("FERRY", "time", ("relationship type", "ROAD", "FERRY")),
+            ("ROAD", "length", ("attribute", "time", "length")),
+        ] {
+            let mut g = graph();
+            g.get_type_id_mut(local_type);
+            g.add_rel_attribute_name(local_attr);
+            for create in [true, false] {
+                let err = apply(&mut g, [Record::cch_index(create, vec![road()], time())])
+                    .expect_err("must refuse");
+                let ApplyError::NameMismatch {
+                    kind, name, local, ..
+                } = &err
+                else {
+                    panic!("expected a name mismatch, got {err:?}");
+                };
+                assert_eq!(
+                    (*kind, name.as_str(), local.as_str()),
+                    expected,
+                    "create: {create}"
+                );
+            }
+        }
+    }
+
+    /// Every type is checked before the index is touched: the second one is
+    /// missing, so nothing is built over the first.
+    #[test]
+    fn a_relationship_type_missing_here_is_refused() {
+        let mut g = with_schema();
+        let ferry = SchemaRef {
+            id: 1,
+            name: "FERRY".to_owned(),
+        };
+        let err = apply(
+            &mut g,
+            [Record::cch_index(true, vec![road(), ferry], time())],
+        )
+        .expect_err("must refuse");
+        assert!(
+            matches!(
+                &err,
+                ApplyError::Unresolved {
+                    kind: "relationship type",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// C's `_CCHRelationIDs`: a path index spans relationship types and has one
+    /// weight attribute.
+    #[test]
+    fn a_cch_index_over_labels_or_with_other_than_one_field_is_refused() {
+        let mut g = with_schema();
+        g.get_label_id_mut("ROAD");
+        let buf = foreign_drop(EntityType::Node, &[road()], INDEX_FLD_CCH, &[time()]);
+        assert_eq!(
+            apply_effects(&mut g, &buf),
+            Err(ApplyError::CchIndexOverLabels)
+        );
+
+        g.add_rel_attribute_name("length");
+        let length = AttrRef {
+            id: 1,
+            name: "length".to_owned(),
+        };
+        for fields in [vec![], vec![time(), length]] {
+            let buf = foreign_drop(EntityType::Relationship, &[road()], INDEX_FLD_CCH, &fields);
+            assert_eq!(
+                apply_effects(&mut g, &buf),
+                Err(ApplyError::CchIndexFieldCount {
+                    count: fields.len()
+                })
+            );
+        }
+    }
+
+    /// Without the feature there is nothing to hold the index: refused, and
+    /// only once the identity checks pass.
+    #[cfg(not(feature = "index-falkordb"))]
+    #[test]
+    fn a_build_without_the_feature_refuses_both_records() {
+        for create in [true, false] {
+            let mut g = with_schema();
+            let err = apply(&mut g, [Record::cch_index(create, vec![road()], time())])
+                .expect_err("must refuse");
+            assert_eq!(err, ApplyError::CchIndexUnsupported { create });
+        }
+    }
+
+    #[cfg(feature = "index-falkordb")]
+    mod with_the_feature {
+        use super::*;
+        use crate::effects::v3::IdList;
+        use crate::index::falkordb::cch::{CchError, CchIndexDef};
+        use crate::runtime::value::Value;
+
+        fn held(g: &Graph) -> Vec<CchIndexDef> {
+            g.cch_indexes().cloned().collect()
+        }
+
+        fn road_by_time() -> CchIndexDef {
+            CchIndexDef::new(vec![TypeId(0)], 0)
+        }
+
+        #[test]
+        fn a_create_builds_one_index_and_a_drop_removes_it() {
+            let mut g = with_schema();
+            let ferry = SchemaRef {
+                id: 1,
+                name: "FERRY".to_owned(),
+            };
+            let both = || vec![road(), ferry.clone(), road()];
+            g.get_type_id_mut("FERRY");
+            apply(&mut g, [Record::cch_index(true, both(), time())]).unwrap();
+            // One index over both types, not one per type.
+            let definition = CchIndexDef::new(vec![TypeId(0), TypeId(1)], 0);
+            assert_eq!(held(&g), vec![definition.clone()]);
+            assert!(
+                g.cch_index(&definition).is_some(),
+                "the hierarchy was built, not only the definition"
+            );
+
+            apply(&mut g, [Record::cch_index(false, both(), time())]).unwrap();
+            assert_eq!(held(&g), vec![]);
+        }
+
+        /// C leaves an identical index alone and tolerates dropping a missing
+        /// one, so a record applied twice converges.
+        #[test]
+        fn create_and_drop_are_idempotent() {
+            let mut g = with_schema();
+            apply(&mut g, [Record::cch_index(true, vec![road()], time())]).unwrap();
+            // The same set in another spelling is the same index.
+            apply(
+                &mut g,
+                [Record::cch_index(true, vec![road(), road()], time())],
+            )
+            .unwrap();
+            assert_eq!(held(&g), vec![road_by_time()]);
+
+            for _ in 0..2 {
+                apply(&mut g, [Record::cch_index(false, vec![road()], time())]).unwrap();
+            }
+            assert_eq!(held(&g), vec![]);
+        }
+
+        /// The replica builds its own hierarchy from its own edges, and a
+        /// weight it cannot index is a divergence, not a silent skip.
+        #[test]
+        fn the_hierarchy_is_built_from_the_local_edges() {
+            let edge = |weight: f64| {
+                [
+                    Record::CreateNode {
+                        ids: IdList::from([0, 1]),
+                        labels: vec![],
+                        attr_ids: vec![],
+                        rows: vec![],
+                    },
+                    Record::CreateEdge {
+                        ids: IdList::from([0]),
+                        relation_id: 0,
+                        src: IdList::from([0]),
+                        dst: IdList::from([1]),
+                        attr_ids: vec![0],
+                        rows: vec![Value::Float(weight)],
+                    },
+                ]
+            };
+            let create = || Record::cch_index(true, vec![road()], time());
+
+            let mut g = graph();
+            apply(
+                &mut g,
+                schema().into_iter().chain(edge(2.0)).chain([create()]),
+            )
+            .unwrap();
+            assert!(g.cch_index(&road_by_time()).is_some());
+
+            let mut g = graph();
+            let err = apply(
+                &mut g,
+                schema().into_iter().chain(edge(-1.0)).chain([create()]),
+            )
+            .expect_err("a negative weight must refuse");
+            assert_eq!(
+                err,
+                ApplyError::Graph(CchError::InvalidWeight.query_message())
+            );
+        }
     }
 }

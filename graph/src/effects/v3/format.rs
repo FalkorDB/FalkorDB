@@ -5,11 +5,15 @@
 //! to the dispatch, and touching nothing else — the trait's module stays free
 //! of any single version's rules.
 
-use super::emit::{build_constraint_buffer, build_index_buffer, for_each_record};
+use super::emit::{
+    build_cch_index_buffer, build_constraint_buffer, build_index_buffer, for_each_record,
+};
 use super::{
     EFFECTS_VERSION, FLAG_COMPRESSED, apply::ApplyError, apply::apply_effects, open_payload, seal,
 };
-use crate::effects::announce::{AnnouncedConstraint, AnnouncedIndex, SchemaBaseline};
+use crate::effects::announce::{
+    AnnouncedCchIndex, AnnouncedConstraint, AnnouncedIndex, SchemaBaseline,
+};
 use crate::effects::v3;
 use crate::effects::{EffectEncode, EffectWrite};
 use crate::effects::{EffectsFormat, EffectsPayload, ReplicationSink};
@@ -147,6 +151,16 @@ impl EffectsFormat<EFFECTS_VERSION> for EffectsPayload {
         buf: &mut W,
     ) -> Result<(), String> {
         build_index_buffer(pending, graph, create, index, buf)
+    }
+
+    fn build_cch_index<W: EffectWrite + ?Sized>(
+        pending: &Pending,
+        graph: &Graph,
+        create: bool,
+        index: &AnnouncedCchIndex<'_>,
+        buf: &mut W,
+    ) -> Result<(), String> {
+        build_cch_index_buffer(pending, graph, create, index, buf)
     }
 
     fn build_constraint<W: EffectWrite + ?Sized>(
