@@ -176,6 +176,21 @@ int GraphContext_TimeAcquireReadLock
 	int64_t timeout_ms  // max total time to wait, <= 0 to block
 ) ;
 
+// acquire BOTH the GIL and gc's write lock from a worker thread, waiting for
+// the write lock in WRITE_LOCK_POLL_INTERVAL slices and releasing the GIL
+// between them, so a long read holding the read lock can't freeze the server
+//
+// the main thread runs between slices: callers must re-validate any state they
+// rely on (graph key, replica pause, role, schema) after this returns
+//
+// must NOT be called on the Redis main thread. rm_ctx must be UNLOCKED on
+// entry; on return the caller holds the GIL (rm_ctx locked) and the write lock
+void GraphContext_AcquireWriteLockYieldingGIL
+(
+	GraphContext   *gc,     // graph to lock
+	RedisModuleCtx *rm_ctx  // thread-safe context, unlocked on entry
+) ;
+
 // mark graph key as "dirty" for Redis to pick up on
 void GraphContext_MarkWriter
 (

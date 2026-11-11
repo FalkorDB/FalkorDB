@@ -638,6 +638,97 @@ int GraphContext_TimeAcquireReadLock
 	return rc ;
 }
 
+// acquire BOTH the GIL and gc's write lock from a worker thread without pinning
+// the GIL while readers drain
+//
+// a plain `ThreadSafeContextLock + AcquireWriteLock` blocks on the write lock
+// HOLDING the GIL: while an in-flight long read holds the read lock the main
+// thread can't run, freezing the whole server (PING included) until that read
+// drains. instead wait for the write lock in WRITE_LOCK_POLL_INTERVAL ms slices:
+// each attempt parks on the lock for at most that long holding the GIL, then
+// releases the GIL and sleeps 1ms off-CPU so the main thread wins it and serves
+// commands, then retries. a reader flood can't starve the wait: after a couple
+// of slices the writer gate is engaged so new reader-queries park instead of
+// extending it during the hand-offs
+//
+// the main thread runs between slices, so ANY state it owns may change while
+// this waits (the graph key deleted / replaced, a CLIENT PAUSE window opened,
+// a demotion to replica, schema / index / constraint changes): callers must
+// re-validate whatever they rely on AFTER this returns
+//
+// MUST run off the Redis main thread: it acquires the GIL, which the main
+// thread already holds - re-acquiring it there would deadlock (asserted)
+//
+// rm_ctx must be UNLOCKED on entry; on return the caller holds BOTH the GIL
+// (rm_ctx locked) and gc's write lock, to be released with
+// GraphContext_ReleaseLock + RedisModule_ThreadSafeContextUnlock
+void GraphContext_AcquireWriteLockYieldingGIL
+(
+	GraphContext   *gc,     // graph to lock
+	RedisModuleCtx *rm_ctx  // thread-safe context, unlocked on entry
+) {
+	ASSERT (gc     != NULL) ;
+	ASSERT (rm_ctx != NULL) ;
+	// acquiring the GIL on the main thread (which already holds it) would deadlock
+	ASSERT (pthread_equal (Globals_Get_MainThreadId (), pthread_self ()) == 0) ;
+
+	int64_t poll_interval ;
+	Config_Option_get (Config_WRITE_LOCK_POLL_INTERVAL, &poll_interval) ;
+
+	// legacy / disabled: single blocking acquire holding the GIL (the server
+	// may stall until readers drain)
+	if (poll_interval <= 0) {
+		RedisModule_ThreadSafeContextLock (rm_ctx) ;
+		GraphContext_AcquireWriteLock (gc) ;
+		return ;
+	}
+
+	const struct timespec yield = { 0, 1000000 } ;  // 1ms GIL hand-off
+	const int GATE_THRESHOLD = 2 ;  // slices to tolerate before gating
+	int  slices       = 0 ;
+	bool gate_engaged = false ;
+
+	while (true) {
+		// hold the GIL for a single bounded attempt on the write lock
+		RedisModule_ThreadSafeContextLock (rm_ctx) ;
+		int rc = GraphContext_TimeAcquireWriteLock (gc, poll_interval) ;
+		if (rc == 0) {
+			// success: return holding BOTH the GIL and the write lock
+			if (gate_engaged) {
+				GraphContext_WriterGateLeave (gc) ;
+			}
+			return ;
+		}
+
+		// couldn't get it this slice: drop the GIL so the main thread runs
+		RedisModule_ThreadSafeContextUnlock (rm_ctx) ;
+
+		if (rc != ETIMEDOUT) {
+			// an unexpected lock error (should never happen for a valid rwlock).
+			// do NOT spin on it forever, and do NOT leave the gate engaged - that
+			// would block every reader on this graph indefinitely. release the
+			// gate, then fall back to a single blocking acquire so we still
+			// return holding the GIL + write lock
+			if (gate_engaged) {
+				GraphContext_WriterGateLeave (gc) ;
+			}
+			RedisModule_ThreadSafeContextLock (rm_ctx) ;
+			GraphContext_AcquireWriteLock (gc) ;
+			return ;
+		}
+
+		// timed out this slice - once pushed back far enough, close the gate so
+		// new readers stop extending the wait during our hand-offs
+		if (!gate_engaged && ++slices >= GATE_THRESHOLD) {
+			GraphContext_WriterGateEnter (gc) ;
+			gate_engaged = true ;
+		}
+
+		// sleep off-CPU so the main thread wins the GIL between slices
+		nanosleep (&yield, NULL) ;
+	}
+}
+
 // mark graph key as "dirty" for Redis to pick up on
 void GraphContext_MarkWriter
 (
