@@ -86,15 +86,34 @@ use crate::graph::{
 };
 
 /// The effective matrix of a base and its two delta layers, `(m ∖ dm) ∪ dp`,
-/// as [`effective`] returns it: the base itself, `Borrowed`, when neither
-/// delta holds anything; a new matrix, `Owned`, otherwise. Read it through
+/// as [`effective`] returns it: the base itself, borrowed, when neither delta
+/// holds anything; a new matrix of its own otherwise. Read it through
 /// `Deref`, which never copies.
 ///
-/// `Matrix`'s `Clone` is shallow (a clone shares the GraphBLAS handle), so
-/// `to_mut` or `into_owned` on a borrowed base would share the base, not
-/// copy it: a matrix of one's own is a `dup()`.
+/// Read-only on purpose. `Matrix`'s `Clone` is shallow (a clone shares the
+/// GraphBLAS handle), so a `Cow`'s `to_mut` or `into_owned` on a borrowed
+/// base would hand out the shared base itself, and a write through it would
+/// change every version that holds it. A matrix of one's own is a `dup()`.
 #[cfg(feature = "index-falkordb")]
-pub(crate) type Effective<'a, T> = borrow::Cow<'a, Matrix<T>>;
+pub(crate) struct Effective<'a, T>(borrow::Cow<'a, Matrix<T>>);
+
+#[cfg(feature = "index-falkordb")]
+impl<T> Effective<'_, T> {
+    /// Whether this is the base itself, not a merged copy.
+    #[cfg(test)]
+    pub(crate) fn is_borrowed(&self) -> bool {
+        matches!(self.0, borrow::Cow::Borrowed(_))
+    }
+}
+
+#[cfg(feature = "index-falkordb")]
+impl<T> Deref for Effective<'_, T> {
+    type Target = Matrix<T>;
+
+    fn deref(&self) -> &Matrix<T> {
+        &self.0
+    }
+}
 
 /// `(m ∖ dm) ∪ dp` in one GraphBLAS call: `eff<¬dm> = m ⊕ dp` (into a new matrix), with
 /// `⊕` from the element type ([`EWiseAdd`]), so on a `u64` layer a pending
@@ -116,7 +135,7 @@ pub(super) fn effective<'a, T: EWiseAdd + MatrixType>(
 ) -> Effective<'a, T> {
     let (has_dp, has_dm) = (dp.nvals() != 0, dm.nvals() != 0);
     if !has_dp && !has_dm {
-        return Effective::Borrowed(m);
+        return Effective(borrow::Cow::Borrowed(m));
     }
     let mut eff = T::new_matrix(m.nrows(), m.ncols());
     let (mask, desc) = if has_dm {
@@ -126,7 +145,7 @@ pub(super) fn effective<'a, T: EWiseAdd + MatrixType>(
     };
     eff.element_wise_add(mask, Some(m), Some(dp), desc);
     eff.wait();
-    Effective::Owned(eff)
+    Effective(borrow::Cow::Owned(eff))
 }
 
 /// A delta layer is folded into the base once its size justifies a base
@@ -1589,7 +1608,7 @@ mod tests {
     use super::super::matrix::{Dup, Matrix};
     use super::super::test_init::ensure_init;
     #[cfg(feature = "index-falkordb")]
-    use super::{Effective, effective};
+    use super::effective;
     use super::{
         MIN_FOLD_DELTA, READ_FOLD_K, VersionedMatrix, WRITE_FOLD_K, should_fold, should_fold_read,
     };
@@ -1617,7 +1636,7 @@ mod tests {
             }
             dp.wait();
             let eff = effective(&m, &dp, &dm);
-            assert!(matches!(eff, Effective::Owned(_)));
+            assert!(!eff.is_borrowed());
             assert_eq!(eff.get(0, 1), None, "deleted pair visible, dp: {with_dp}");
             assert_eq!(eff.get(2, 3), Some(20));
             assert_eq!(eff.get(1, 2), with_dp.then_some(30));

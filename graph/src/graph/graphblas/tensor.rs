@@ -1895,10 +1895,9 @@ mod tests {
         let mut t = t.dup();
         t.flush();
         assert!(t.fwd_m().nvals() == N && t.fwd_dp().nvals() == 0);
-        match t.effective_fwd() {
-            Effective::Borrowed(m) => assert_eq!(m.inner(), t.fwd_m().inner()),
-            Effective::Owned(_) => panic!("no deltas, yet a copy"),
-        }
+        let eff = t.effective_fwd();
+        assert!(eff.is_borrowed(), "no deltas, yet a copy");
+        assert_eq!(eff.inner(), t.fwd_m().inner());
 
         // Pending: delete ten committed edges, add ten new pairs and a second
         // edge on one committed pair (which promotes it to MULTI_EDGE).
@@ -1913,7 +1912,7 @@ mod tests {
         assert!(t.fwd_dp().nvals() > 0 && t.fwd_dm().nvals() > 0);
 
         let eff = t.effective_fwd();
-        assert!(matches!(eff, Effective::Owned(_)));
+        assert!(!eff.is_borrowed());
         let mut want: FxHashMap<(u64, u64), Vec<u64>> = FxHashMap::default();
         for (s, d, id) in t.iter_edges() {
             want.entry((s, d)).or_default().push(id);
