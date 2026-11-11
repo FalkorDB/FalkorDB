@@ -177,16 +177,18 @@ unsafe fn sync_deepbind_environ() {
         // Install an owned, leaked snapshot rather than aliasing `*live`: the
         // live array is typically the one glibc's `setenv` allocated, so a
         // later `setenv` (e.g. libomp registering itself) may `realloc` it and
-        // leave `*ours` dangling. glibc never frees the strings themselves, so
-        // copying the pointer array is enough to keep the snapshot valid.
+        // leave `*ours` dangling. Copy the strings too: a `putenv` caller owns
+        // its buffer and may free it after `unsetenv`, so borrowing it could
+        // leave the snapshot pointing at freed memory.
         let src = *live;
         let mut len = 0;
         while !src.is_null() && !(*src.add(len)).is_null() {
             len += 1;
         }
         let mut snapshot: Vec<*mut libc::c_char> = Vec::with_capacity(len + 1);
-        if len > 0 {
-            snapshot.extend_from_slice(std::slice::from_raw_parts(src, len));
+        for i in 0..len {
+            let entry = std::ffi::CStr::from_ptr(*src.add(i));
+            snapshot.push(entry.to_owned().into_raw());
         }
         snapshot.push(std::ptr::null_mut());
         // The snapshot is a point-in-time view: a later `setenv` updates only
@@ -202,10 +204,10 @@ unsafe fn sync_deepbind_environ() {
         // it. Under a runtime `MODULE LOAD`, a thread of an earlier
         // DEEPBIND-loaded module could read it concurrently; that is a single
         // aligned pointer store, so it sees either the old or the new array,
-        // both NULL-terminated. The
-        // source array `*live` is only read, never freed or modified here, and
-        // the strings it points to are never freed by glibc, so the copied
-        // pointers stay valid for the life of the process.
+        // both NULL-terminated. `*live` and its strings are only read here.
+        // The snapshot owns both the pointer array and every string, all
+        // leaked, so it stays valid for the life of the process whatever a
+        // later `setenv`, `putenv` or `unsetenv` does to the live environment.
         *ours = Box::leak(snapshot.into_boxed_slice()).as_mut_ptr();
     }
 }
