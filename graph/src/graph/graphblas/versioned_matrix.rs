@@ -92,11 +92,8 @@ use crate::graph::{
 /// `Borrowed` base once and is free on an `Owned` matrix. There is no
 /// `DerefMut`, so a copy is never implicit.
 ///
-/// Why not an existing `Cow`: the repo's `graph::cow::Cow` decides whether to
-/// copy from a flag set at a version boundary, not from a reference count, so
-/// a handle cloned mid-version would see the writer's in-place changes; and
-/// `std::borrow::Cow` needs `ToOwned`, which `Matrix` can only get through its
-/// `Clone`, a shallow clone that shares the GraphBLAS handle.
+/// Not `std::borrow::Cow`: `Matrix`'s `Clone` is shallow (it shares the
+/// GraphBLAS handle), so `ToOwned` would not copy.
 #[cfg(feature = "index-falkordb")]
 pub(crate) enum Effective<'a, T> {
     /// The base layer itself, shared with every snapshot that holds it.
@@ -138,7 +135,7 @@ impl<T> Deref for Effective<'_, T> {
     }
 }
 
-/// `(m ∖ dm) ∪ dp` in one GraphBLAS call: `eff<¬dm, replace> = m ⊕ dp`, with
+/// `(m ∖ dm) ∪ dp` in one GraphBLAS call: `eff<¬dm> = m ⊕ dp` (into a new matrix), with
 /// `⊕` from the element type ([`EWiseAdd`]), so on a `u64` layer a pending
 /// value in `dp` shadows the committed one; `dp ∩ dm = ∅`, so the mask never
 /// drops a pending addition. The mask is structural: a pair is deleted by
@@ -162,7 +159,7 @@ pub(super) fn effective<'a, T: EWiseAdd + MatrixType>(
     }
     let mut eff = T::new_matrix(m.nrows(), m.ncols());
     let (mask, desc) = if has_dm {
-        (Some(dm), Some(matrix::Descriptor::RSC))
+        (Some(dm), Some(matrix::Descriptor::SC))
     } else {
         (None, None)
     };

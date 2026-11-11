@@ -16,13 +16,13 @@ use std::{
 
 use thiserror::Error;
 
+use super::length;
 #[cfg(doc)]
 use super::matrix::Matrix;
 use super::matrix::grb;
 use super::{
     GrB_Desc_Value, GrB_FP64, GrB_INT32, GrB_INT64, GrB_Index, GrB_Info, GrB_Matrix,
-    GrB_Orientation, GrB_Type, GrB_UINT32, GrB_UINT64, GrB_Vector, GrB_Vector_extractTuples_FP64,
-    GrB_Vector_extractTuples_UINT32, GrB_Vector_extractTuples_UINT64, GxB_Container,
+    GrB_Orientation, GrB_Type, GrB_UINT32, GrB_UINT64, GrB_Vector, GxB_Container,
     GxB_Container_free, GxB_Container_new, GxB_SPARSE, GxB_Vector_load, GxB_Vector_unload,
     GxB_load_Matrix_from_Container, GxB_unload_Matrix_into_Container,
 };
@@ -38,7 +38,7 @@ use super::{
 /// The widths are GraphBLAS's own, `P` for the offsets and `I` for the column
 /// indices (`u32` or `u64` each), which the caller asks the matrix for before
 /// exporting.
-pub struct CsrExport<P = u64, I = u32, V = ()> {
+pub struct CsrExport<P, I, V> {
     /// One offset into `column_indices` (and `values`, when non-empty) per
     /// row, plus one.
     pub row_offsets: Vec<P>,
@@ -106,35 +106,15 @@ pub enum CsrExportError {
     /// entries or more (offsets) or more than `2^31` columns (column indices).
     #[error("{0} are not of the requested type")]
     Array(CsrArray),
+    /// GraphBLAS does not own the array outright (it is read-only, or was lent
+    /// to GraphBLAS), so it cannot be handed over.
+    #[error("{0} are not GraphBLAS's own to hand over")]
+    NotOwned(CsrArray),
     /// [`Matrix::prepare_csr`] only: GraphBLAS refused one of the storage
     /// settings, with this `GrB_Info` (a conversion allocates in proportion to
     /// the matrix, so it can run out of memory).
     #[error("GraphBLAS refused a storage setting: {0:?}")]
     Setting(GrB_Info),
-}
-
-impl CsrExportError {
-    /// A fixed description, for error types that carry a `&'static str`.
-    #[must_use]
-    pub(crate) const fn reason(self) -> &'static str {
-        match self {
-            Self::SharedHandle => "CSR export: another handle shares the matrix",
-            Self::WrongValueType => "CSR export: the matrix does not hold the requested value type",
-            Self::NotCsr => "CSR export: the matrix is not stored as sorted row-major sparse",
-            Self::IsoValues => "CSR export: the values are stored iso",
-            Self::Array(_) => "CSR export: an array is not of the requested type",
-            Self::Setting(_) => "CSR export: GraphBLAS refused a storage setting",
-        }
-    }
-}
-
-/// A GraphBLAS count (`GrB_Index`, or a byte size) as a length.
-///
-/// # Panics
-/// If it does not fit a `usize`, which only a target narrower than 64 bits
-/// allows: GraphBLAS counts what this process holds in memory.
-pub(crate) fn length(count: u64) -> usize {
-    usize::try_from(count).expect("a GraphBLAS count fits a usize")
 }
 
 /// Only this module implements [`GrbElem`], and so [`CsrIndex`] and
@@ -149,31 +129,14 @@ mod sealed {
 
 /// A Rust type a GraphBLAS array is read as bit for bit, with no conversion:
 /// `u32`, `u64`, `f64`, and `()` for no array. Public only because it bounds
-/// the CSR export's type parameters, and sealed: the export sizes, reads and
-/// frees GraphBLAS's arrays as `Vec<Self>` on the strength of these answers.
-///
-/// Every implementation keeps two promises:
-/// - [`Self::holds`] is `true` only for a GraphBLAS type whose values have
-///   exactly `size_of::<Self>()` bytes and alignment at most
-///   `align_of::<Self>()`, and every bit pattern of which is a valid `Self`;
-/// - [`Self::extract`] writes at most `*count` valid values of `Self` to
-///   `out` and leaves in `*count` how many it wrote.
+/// the CSR export's type parameters, and sealed: the export adopts GraphBLAS's
+/// arrays as `Vec<Self>` on the strength of [`Self::holds`], which is `true`
+/// only for a GraphBLAS type whose values have exactly `size_of::<Self>()`
+/// bytes and every bit pattern of which is a valid `Self`.
 pub trait GrbElem: Copy + sealed::Sealed {
     /// Whether an array GraphBLAS reports as `element_type` holds exactly this
     /// type's bits.
     fn holds(element_type: GrB_Type) -> bool;
-
-    /// `GrB_Vector_extractTuples_<T>` with no indices: up to `*count` values
-    /// of `vector`, written (and cast, if `vector` is another type) into `out`.
-    ///
-    /// # Safety
-    /// `out` has room for `*count` values, and `vector` is a live vector.
-    #[doc(hidden)]
-    unsafe fn extract(
-        vector: GrB_Vector,
-        out: *mut Self,
-        count: *mut GrB_Index,
-    ) -> GrB_Info;
 }
 
 impl GrbElem for u64 {
@@ -182,14 +145,6 @@ impl GrbElem for u64 {
     fn holds(element_type: GrB_Type) -> bool {
         // SAFETY: reads of the type globals `GrB_init` set.
         unsafe { element_type == GrB_UINT64 || element_type == GrB_INT64 }
-    }
-
-    unsafe fn extract(
-        vector: GrB_Vector,
-        out: *mut Self,
-        count: *mut GrB_Index,
-    ) -> GrB_Info {
-        unsafe { GrB_Vector_extractTuples_UINT64(null_mut(), out, count, vector) }
     }
 }
 
@@ -201,28 +156,12 @@ impl GrbElem for u32 {
         // SAFETY: reads of the type globals `GrB_init` set.
         unsafe { element_type == GrB_UINT32 || element_type == GrB_INT32 }
     }
-
-    unsafe fn extract(
-        vector: GrB_Vector,
-        out: *mut Self,
-        count: *mut GrB_Index,
-    ) -> GrB_Info {
-        unsafe { GrB_Vector_extractTuples_UINT32(null_mut(), out, count, vector) }
-    }
 }
 
 impl GrbElem for f64 {
     fn holds(element_type: GrB_Type) -> bool {
         // SAFETY: a read of the type global `GrB_init` set.
         unsafe { element_type == GrB_FP64 }
-    }
-
-    unsafe fn extract(
-        vector: GrB_Vector,
-        out: *mut Self,
-        count: *mut GrB_Index,
-    ) -> GrB_Info {
-        unsafe { GrB_Vector_extractTuples_FP64(null_mut(), out, count, vector) }
     }
 }
 
@@ -231,15 +170,6 @@ impl GrbElem for f64 {
 impl GrbElem for () {
     fn holds(_: GrB_Type) -> bool {
         false
-    }
-
-    unsafe fn extract(
-        _: GrB_Vector,
-        _: *mut Self,
-        count: *mut GrB_Index,
-    ) -> GrB_Info {
-        unsafe { *count = 0 };
-        GrB_Info::GrB_SUCCESS
     }
 }
 
@@ -366,71 +296,62 @@ impl Unloaded {
         }
     }
 
-    /// The soundness check [`Self::into_vec`] relies on: the array is of
-    /// type `T` (read bit for bit, never cast) and holds at least `len`
-    /// entries. The export refuses an array that does not fit.
-    fn fits<T: GrbElem>(
+    /// Whether the first `len` entries can become a `Vec<T>`, and if not,
+    /// why: the array must be of type `T` (read bit for bit, never cast), hold
+    /// at least `len` entries, and be GraphBLAS's own (the default handling:
+    /// not read-only, no arena) in a whole number of aligned `T`s.
+    fn check<T: GrbElem>(
         &self,
         len: usize,
-    ) -> bool {
-        len == 0 || (T::holds(self.element_type) && length(self.length) >= len)
+        array: CsrArray,
+    ) -> Result<(), CsrExportError> {
+        if len == 0 {
+            return Ok(());
+        }
+        if !T::holds(self.element_type) || length(self.length) < len {
+            return Err(CsrExportError::Array(array));
+        }
+        let byte_size = length(self.byte_size);
+        let owned = !self.array.is_null()
+            && self.handling == GrB_Desc_Value::GrB_DEFAULT as c_int
+            && byte_size.is_multiple_of(size_of::<T>())
+            && len <= byte_size / size_of::<T>()
+            && self.array.cast::<T>().is_aligned();
+        if owned {
+            Ok(())
+        } else {
+            Err(CsrExportError::NotOwned(array))
+        }
     }
 
-    /// The first `len` entries as a `Vec<T>`, which [`Self::fits`] allows.
-    ///
-    /// An array GraphBLAS owns outright (the default handling: not read-only,
-    /// no arena) in a whole number of aligned `T`s becomes the `Vec`, in O(1):
-    /// GraphBLAS no longer refers to it, and the global allocator frees it,
-    /// which [`init`](super::matrix::init)'s contract allows. Any other array
-    /// goes back to its vector, for GraphBLAS to free with the container, and
-    /// GraphBLAS copies its entries into the `Vec` (`extractTuples`).
+    /// The first `len` entries as a `Vec<T>`, in O(1): the array itself, which
+    /// GraphBLAS no longer refers to and the global allocator frees, as
+    /// [`init`](super::matrix::init)'s contract allows. [`Self::check`] has
+    /// passed. An empty array goes back to its vector, for GraphBLAS to free.
     fn into_vec<T: GrbElem>(
         self,
         len: usize,
     ) -> Vec<T> {
-        let byte_size = length(self.byte_size);
-        if !self.array.is_null()
-            && self.handling == GrB_Desc_Value::GrB_DEFAULT as c_int
-            && byte_size.is_multiple_of(size_of::<T>())
-            && self.array.cast::<T>().is_aligned()
-        {
-            // SAFETY: `array` holds at least `len` initialized `T`s (`fits`)
-            // in a block of exactly `byte_size` bytes, which GraphBLAS's
-            // allocator returned and has just given up (the default handling:
-            // it is not a borrowed, read-only array). The global allocator
-            // frees that block, under `Vec`'s layout of `byte_size` bytes, as
-            // GraphBLAS would (the contract of `init`).
-            return unsafe {
-                Vec::from_raw_parts(self.array.cast::<T>(), len, byte_size / size_of::<T>())
-            };
-        }
-        let (vector, available) = (self.vector, self.length);
-        self.reload();
         if len == 0 {
+            self.reload();
             return Vec::new();
         }
-        let mut out = Vec::<T>::with_capacity(length(available));
-        let mut written = available;
-        // SAFETY: `out` has room for `available` values, the length of
-        // `vector`, which holds the array again; `extract` sets `written` to
-        // how many it initialized, and `fits` checked that is at least `len`.
-        unsafe {
-            grb!(T::extract(vector, out.as_mut_ptr(), &raw mut written));
-            out.set_len(length(written));
-        }
-        out.truncate(len);
-        out
+        let capacity = length(self.byte_size) / size_of::<T>();
+        // SAFETY: `check` passed: `array` holds at least `len` initialized
+        // `T`s in a block of exactly `capacity` aligned `T`s, which GraphBLAS's
+        // allocator returned and has just given up. The global allocator frees
+        // that block as GraphBLAS would (the contract of `init`).
+        unsafe { Vec::from_raw_parts(self.array.cast::<T>(), len, capacity) }
     }
 }
 
 /// Take `matrix` out as CSR: unload it into a `GxB_Container` and hand its `p`,
-/// `i` and (unless `V` is `()`) `x` arrays over as the export's `Vec`s,
-/// adopting them where GraphBLAS owns them outright ([`Unloaded::into_vec`]).
+/// `i` and (unless `V` is `()`) `x` arrays over as the export's `Vec`s
+/// ([`Unloaded::into_vec`]).
 ///
 /// The storage is checked here, on the unloaded container: sparse and
-/// row-major ([`CsrExportError::NotCsr`]), not iso when `V`
-/// carries values ([`CsrExportError::IsoValues`]), and each array of its
-/// type and long enough ([`Unloaded::fits`], [`CsrExportError::Array`]).
+/// row-major ([`CsrExportError::NotCsr`]), not iso when `V` carries values
+/// ([`CsrExportError::IsoValues`]), and each array ([`Unloaded::check`]).
 ///
 /// On success `matrix` is left as the unload leaves it: a valid `0 x 0`
 /// matrix with no entries and its settings. On a refusal it is loaded back
@@ -444,7 +365,7 @@ pub(super) unsafe fn take_out_csr<P: CsrIndex, I: CsrIndex, V: CsrValue>(
     matrix: GrB_Matrix
 ) -> Result<CsrExport<P, I, V>, CsrExportError> {
     // Whatever the container still holds when it drops (an iso pattern value,
-    // an array copied rather than adopted) is GraphBLAS's to free.
+    // an empty array) is GraphBLAS's to free.
     let container = Container::new();
     // SAFETY: `matrix` is live and nobody else can reach it (the caller's
     // contract); the container is new and ours.
@@ -464,8 +385,12 @@ pub(super) unsafe fn take_out_csr<P: CsrIndex, I: CsrIndex, V: CsrValue>(
     };
 
     // Materialized (the caller's contract), so every row is sorted: a
-    // jumbled container is a bug in this module, not a matrix to refuse.
-    assert!(!fields.jumbled, "a materialized matrix is never jumbled");
+    // jumbled container is a bug, not a matrix to refuse. The matrix gets its
+    // entries back before the panic.
+    if fields.jumbled {
+        let _ = refuse(Vec::new(), CsrExportError::NotCsr);
+        panic!("a materialized matrix is never jumbled");
+    }
     if fields.format != GxB_SPARSE as i32
         || fields.orientation != GrB_Orientation::GrB_ROWMAJOR as i32
     {
@@ -487,24 +412,17 @@ pub(super) unsafe fn take_out_csr<P: CsrIndex, I: CsrIndex, V: CsrValue>(
             V::HAS_VALUES.then(|| Unloaded::unload(fields.x)),
         )
     };
-    let misfit = if !row_offsets.fits::<P>(offset_count) {
-        Some(CsrArray::RowOffsets)
-    } else if !column_indices.fits::<I>(entry_count) {
-        Some(CsrArray::ColumnIndices)
-    } else if values
-        .as_ref()
-        .is_some_and(|values| !values.fits::<V>(entry_count))
-    {
-        Some(CsrArray::Values)
-    } else {
-        None
-    };
-    if let Some(array) = misfit {
+    let checked = row_offsets
+        .check::<P>(offset_count, CsrArray::RowOffsets)
+        .and_then(|()| column_indices.check::<I>(entry_count, CsrArray::ColumnIndices))
+        .and_then(|()| {
+            values.as_ref().map_or(Ok(()), |values| {
+                values.check::<V>(entry_count, CsrArray::Values)
+            })
+        });
+    if let Err(error) = checked {
         let unloaded = [Some(row_offsets), Some(column_indices), values];
-        return refuse(
-            unloaded.into_iter().flatten().collect(),
-            CsrExportError::Array(array),
-        );
+        return refuse(unloaded.into_iter().flatten().collect(), error);
     }
 
     // Checked: the arrays leave the container for good.
@@ -520,8 +438,8 @@ mod tests {
     use super::{CsrArray, CsrExport, CsrExportError, CsrIndex, Unloaded};
     use crate::graph::graphblas::matrix::{Matrix, grb};
     use crate::graph::graphblas::{
-        GrB_Matrix_get_INT32, GrB_Matrix_set_INT32, GrB_Orientation, GxB_HYPERSPARSE,
-        GxB_Option_Field, test_init,
+        GrB_Matrix_get_INT32, GrB_Matrix_set_INT32, GrB_Orientation, GxB_BITMAP, GxB_FULL,
+        GxB_HYPERSPARSE, GxB_Option_Field, test_init,
     };
 
     /// What a caller does before exporting: store `m` as plain CSR with the
@@ -778,6 +696,75 @@ mod tests {
         assert_eq!(removed_then_exported::<u64>(32), expected);
     }
 
+    /// Bitmap and full storage are refused like hypersparse, and the matrix
+    /// keeps its entries.
+    #[test]
+    fn bitmap_and_full_storage_are_refused() {
+        test_init::ensure_init();
+        for sparsity in [GxB_BITMAP, GxB_FULL] {
+            let mut m = Matrix::<f64>::new(2, 2);
+            for (i, j, w) in [(0, 0, 1.0), (0, 1, 2.0), (1, 0, 3.0), (1, 1, 4.0)] {
+                m.set(i, j, w);
+            }
+            csr_ready(&mut m);
+            set_field(&m, GxB_Option_Field::GxB_SPARSITY_CONTROL, sparsity as i32);
+            assert_eq!(
+                m.take_csr::<u64, u32, f64>().err(),
+                Some(CsrExportError::NotCsr),
+                "sparsity {sparsity}"
+            );
+            assert_eq!(m.nvals(), 4);
+        }
+    }
+
+    /// Past `2^31` columns GraphBLAS keeps 64-bit column indices whatever the
+    /// hint, and the 32-bit export is refused rather than narrowed.
+    #[test]
+    fn more_than_two_to_the_31_columns_refuse_32_bit_column_indices() {
+        test_init::ensure_init();
+        let wide = (1 << 31) + 1;
+        let mut m = Matrix::<f64>::new(3, wide);
+        m.set(0, wide - 1, 1.5);
+        m.set(2, 7, 2.5);
+        m.prepare_csr::<u64, u32, f64>()
+            .expect("an unshared matrix is set up");
+        assert_eq!(
+            m.take_csr::<u64, u32, f64>().err(),
+            Some(CsrExportError::Array(CsrArray::ColumnIndices))
+        );
+        let csr = m.take_csr::<u64, u64, f64>().expect("64-bit exports");
+        assert_eq!(csr.column_indices, vec![wide - 1, 7]);
+    }
+
+    /// A write after `prepare_csr` can undo it (GraphBLAS v10.5 picks the
+    /// integer widths again when it finishes the write), and the export then
+    /// refuses rather than hand over arrays of another width. Either way,
+    /// preparing again exports every write, rows sorted.
+    #[test]
+    fn a_write_after_prepare_csr_needs_another_prepare() {
+        test_init::ensure_init();
+        let mut m = Matrix::<f64>::new(3, 3);
+        m.set(1, 2, 1.0);
+        m.wait();
+        m.prepare_csr::<u64, u32, f64>()
+            .expect("an unshared matrix is set up");
+        m.set(1, 0, 2.0);
+        m.set(0, 1, 3.0);
+        m.remove(1, 2);
+        let csr = match m.take_csr::<u64, u32, f64>() {
+            Ok(csr) => csr,
+            Err(refused) => {
+                assert_eq!(refused, CsrExportError::Array(CsrArray::RowOffsets));
+                m.prepare_csr::<u64, u32, f64>()
+                    .expect("an unshared matrix is set up");
+                m.take_csr::<u64, u32, f64>().expect("exports")
+            }
+        };
+        assert_eq!(csr.row_offsets, vec![0, 1, 2, 2]);
+        assert_eq!(csr.column_indices, vec![1, 0]);
+        assert_eq!(csr.values, vec![3.0, 2.0]);
+    }
+
     /// Asking a `u64` matrix for FP64 values is refused, before the matrix is
     /// unloaded, rather than cast.
     #[test]
@@ -797,10 +784,10 @@ mod tests {
     }
 
     /// An array GraphBLAS does not own outright (here a read-only one, which
-    /// Rust lent it) is not adopted: GraphBLAS copies it into the `Vec`, and it
-    /// goes back to its vector, still the lender's.
+    /// Rust lent it) is refused, not adopted, and goes back to its vector,
+    /// still the lender's. The type and length are checked first.
     #[test]
-    fn a_borrowed_array_is_copied_not_adopted() {
+    fn a_borrowed_array_is_refused_not_adopted() {
         use crate::graph::graphblas::{
             GrB_UINT64, GrB_Vector, GrB_Vector_free, GrB_Vector_new, GrB_Vector_nvals,
             GxB_Option_Field, GxB_Vector_load,
@@ -823,10 +810,21 @@ mod tests {
                 null_mut(),
             ));
             let a = Unloaded::unload(v);
-            assert!(a.fits::<u64>(7) && !a.fits::<u32>(7) && !a.fits::<u64>(11));
-            let out = a.into_vec::<u64>(7);
-            assert_eq!(out, (10..17).collect::<Vec<u64>>());
-            assert_ne!(out.as_ptr(), lent.as_ptr(), "copied, not adopted");
+            let values = CsrArray::Values;
+            assert_eq!(
+                a.check::<u32>(7, values),
+                Err(CsrExportError::Array(values))
+            );
+            assert_eq!(
+                a.check::<u64>(11, values),
+                Err(CsrExportError::Array(values))
+            );
+            assert_eq!(
+                a.check::<u64>(7, values),
+                Err(CsrExportError::NotOwned(values))
+            );
+            assert_eq!(a.check::<u64>(0, values), Ok(()));
+            a.reload();
             let mut nvals = 0;
             grb!(GrB_Vector_nvals(&raw mut nvals, v));
             assert_eq!(nvals, 10, "the vector holds its array again");

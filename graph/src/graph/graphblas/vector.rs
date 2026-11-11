@@ -49,7 +49,7 @@ use crate::graph::graphblas::{
 };
 
 #[cfg(feature = "index-falkordb")]
-use super::csr::length;
+use super::length;
 #[cfg(feature = "index-falkordb")]
 use super::matrix::grb;
 use super::serialization::{Decode, Encode, Reader, Writer};
