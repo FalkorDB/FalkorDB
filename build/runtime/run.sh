@@ -298,15 +298,16 @@ check_redis_file() {
 # them: FALKORDB_REDIS_MIGRATION=1, or rdb-version-check relaxed in the
 # server's own arguments.
 valkey_preflight() {
-    # A lone `-` makes the server read configuration from stdin, which cannot
-    # be replayed here; refuse rather than check the wrong file.
+    # A lone `-` as the first argument makes the server read configuration
+    # from stdin, which cannot be replayed here; refuse rather than check the
+    # wrong file. Later `-` tokens are option values (--dbfilename -), and
+    # run.sh appends its own arguments, so only the leading token counts.
     # shellcheck disable=SC2086
-    for _tok in ${SERVER_ARGS}; do
-        if [ "$_tok" = "-" ]; then
-            echo "Error: configuration on stdin (-) is not supported by this image; use a config file or --name value options." >&2
-            exit 1
-        fi
-    done
+    set -- ${SERVER_ARGS}
+    if [ "${1:-}" = "-" ]; then
+        echo "Error: configuration on stdin (-) is not supported by this image; use a config file or --name value options." >&2
+        exit 1
+    fi
     redis_files=""
     newer_files=""
     # yes/no configs are case-insensitive in the server.
