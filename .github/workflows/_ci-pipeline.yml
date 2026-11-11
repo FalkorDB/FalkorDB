@@ -109,17 +109,37 @@ jobs:
           path: target/release
       - run: chmod +x target/release/libfalkordb.so
       - name: Run tests
+        id: pytest
         run: |
           . /data/venv/bin/activate
-          RELEASE=1 pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+          RELEASE=1 pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv --junitxml=test-results/pytest.xml
       - name: Run TCK tests
+        id: tck
         run: |
           . /data/venv/bin/activate
-          RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+          RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s --junitxml=test-results/tck.xml
       # tests/common.py starts the server with --logfile redis-test.log.
       - name: Check the server this job ran (valkey)
         if: ${{ success() }}
         run: tests/assert_server_log.sh valkey redis-test.log
+      # Counts for the run summary (tests/count_results.py, summed per server by
+      # _ci-pipeline.yml's test-counts job). On every outcome but a cancel, so a
+      # failing cell still counts.
+      - name: Record test counts
+        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+        env:
+          SERVER: valkey
+          RUN: artifact, amd64
+          STATUS: ${{ (steps.pytest.outcome == 'failure' || steps.tck.outcome == 'failure') && 'failure' || 'success' }}
+          NAME: test-counts-artifact-valkey
+        run: python3 tests/count_results.py record --server "$SERVER" --run "$RUN" --status "$STATUS" --junit test-results/pytest.xml test-results/tck.xml --logs redis-test.log --out "test-counts/$NAME.json"
+      - name: Upload test counts
+        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-counts-artifact-valkey
+          path: test-counts/
+          retention-days: 7
   # Valkey dlopen()s modules with RTLD_DEEPBIND, which Redis does not, so a
   # module that loads fine under redis-server can crash valkey-server on load
   # (#3493). The crash needs a valkey-server that copy-relocates `environ`:
@@ -368,6 +388,32 @@ jobs:
           check valkey "$valkey_required" "$VALKEY_RESULT"
           check redis "$redis_required" "$REDIS_RESULT"
           exit $status
+
+  # Adds up, per server, the passed, failed and skipped tests every suite cell
+  # recorded (tests/count_results.py, `test-counts-*` artifacts), and writes
+  # them to the run summary, with the server versions the cells' logs name.
+  # A report, not a gate: each cell's own result, and server-legs, gate.
+  test-counts:
+    needs: [test, flow-release, flow-coverage, image-valkey, image-redis, flow-asan]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tests/count_results.py
+          sparse-checkout-cone-mode: false
+      - name: Download the recorded counts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: test-counts-*
+          path: test-counts
+          merge-multiple: true
+      - name: Summarise per server
+        run: |
+          mkdir -p test-counts
+          python3 tests/count_results.py summary test-counts | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Build the asan instrumented runtime image (amd64-only). Single cell,
   # no manifest needed (push directly to the bare tag).

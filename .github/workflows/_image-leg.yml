@@ -230,13 +230,15 @@ jobs:
           persist-credentials: false
       # The Rust unit tests run once, in build-engine (_ci-pipeline.yml).
       - name: Run pytest tests against the RC image
+        id: pytest
         run: |
           . /data/venv/bin/activate
-          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv --junitxml=test-results/pytest.xml
       - name: Run TCK tests against the RC image
+        id: tck
         run: |
           . /data/venv/bin/activate
-          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s --junitxml=test-results/tck.xml
       # Capture the GHA service container's stdout/stderr so the run carries
       # the server lifecycle, module RedisModule_Log output, and any
       # ASAN/LSan reports off the runner. The service container is named
@@ -259,6 +261,24 @@ jobs:
         env:
           SERVER: ${{ inputs.server }}
         run: tests/assert_server_log.sh "$SERVER" tests/flow/logs
+      # Counts for the run summary (tests/count_results.py, summed per server by
+      # _ci-pipeline.yml's test-counts job). On every outcome but a cancel, so a
+      # failing cell still counts.
+      - name: Record test counts
+        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+        env:
+          SERVER: ${{ inputs.server }}
+          RUN: image, amd64
+          STATUS: ${{ (steps.pytest.outcome == 'failure' || steps.tck.outcome == 'failure') && 'failure' || 'success' }}
+          NAME: test-counts-image-${{ inputs.server }}
+        run: python3 tests/count_results.py record --server "$SERVER" --run "$RUN" --status "$STATUS" --junit test-results/pytest.xml test-results/tck.xml --logs tests/flow/logs --out "test-counts/$NAME.json"
+      - name: Upload test counts
+        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-counts-image-${{ inputs.server }}
+          path: test-counts/
+          retention-days: 7
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
