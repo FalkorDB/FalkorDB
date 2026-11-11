@@ -185,6 +185,11 @@ jobs:
             name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
             docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
           done
+      - name: Check the server this cell ran (${{ inputs.server }})
+        if: ${{ success() }}
+        env:
+          SERVER: ${{ inputs.server }}
+        run: tests/assert_server_log.sh "$SERVER" tests/flow/logs
       # Counts for the run summary (tests/count_results.py, summed per server by
       # _ci-pipeline.yml's test-counts job). On every outcome but a cancel, so a
       # failing cell still counts, including one whose setup failed before its
@@ -208,11 +213,6 @@ jobs:
           name: test-counts-${{ inputs.flavour }}-${{ inputs.server }}-svc-${{ strategy.job-index }}
           path: test-counts/
           retention-days: 7
-      - name: Check the server this cell ran (${{ inputs.server }})
-        if: ${{ success() }}
-        env:
-          SERVER: ${{ inputs.server }}
-        run: tests/assert_server_log.sh "$SERVER" tests/flow/logs
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
