@@ -33,6 +33,7 @@ use roaring::RoaringTreemap;
 use super::falkordb_index::FalkorDbIndex;
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 use crate::graph::graph::{Graph, TypeId};
+use crate::graph::graphblas::matrix::CsrExport;
 use crate::graph::graphblas::tensor::GrB_INDEX_MAX;
 use customize::Metric;
 use order::Topology;
@@ -162,6 +163,34 @@ pub struct WeightCsr {
     values: Vec<f64>,
 }
 
+impl Csr {
+    /// The `Csr` over a GraphBLAS export's pattern arrays, taken as they are (the export
+    /// guarantees the invariants above), and the export's values.
+    fn from_export<V>(export: CsrExport<V>) -> (Self, Vec<V>) {
+        let csr = Self {
+            node_count: export.row_count(),
+            row_offsets: export.row_offsets,
+            neighbors: export.column_indices,
+        };
+        (csr, export.values)
+    }
+}
+
+/// A pattern export: the skeleton.
+impl From<CsrExport<()>> for Csr {
+    fn from(export: CsrExport<()>) -> Self {
+        Self::from_export(export).0
+    }
+}
+
+/// A weighted export: pattern and values, unchanged.
+impl From<CsrExport<f64>> for WeightCsr {
+    fn from(export: CsrExport<f64>) -> Self {
+        let (csr, values) = Csr::from_export(export);
+        Self { csr, values }
+    }
+}
+
 /// What `Graph` hands the hierarchy builder (built by #3211, consumed by #3208 and #3209).
 pub struct CchInput {
     n: usize,
@@ -199,7 +228,6 @@ impl CchIndexDef {
     }
 
     /// Sorted, duplicate-free — normalised by [`Self::new`], which is the only constructor.
-    #[cfg(test)] // only the tests read it until the input build (#3211) does
     #[must_use]
     pub(crate) fn rel_types(&self) -> &[TypeId] {
         &self.rel_types
