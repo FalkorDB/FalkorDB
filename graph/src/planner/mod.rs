@@ -570,6 +570,21 @@ pub(super) fn inline_attrs_to_filter(
     }
 }
 
+/// Whether two relationship patterns of one component can bind the same
+/// physical edge: both are fixed-length and their type sets overlap (an empty
+/// set matches every type).
+fn may_share_edge(
+    a: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    b: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+) -> bool {
+    let fixed = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+        r.min_hops.is_none() && r.all_shortest_paths == AllShortestPaths::No
+    };
+    fixed(a)
+        && fixed(b)
+        && (a.types.is_empty() || b.types.is_empty() || a.types.iter().any(|t| b.types.contains(t)))
+}
+
 /// Lowers a MATCH pattern element's inline attributes to a predicate, at most
 /// once per (alias, attrs map) pair.
 ///
@@ -2008,20 +2023,39 @@ impl Planner {
                         .iter()
                         .any(|p| p.vars.iter().any(|v| v.id == rel.alias.id))
             };
-            // Collect edge alias IDs for relationship uniqueness checking.
-            // Only named (non-anonymous) edges participate in uniqueness constraints;
-            // anonymous edges (`_anon*`) are excluded so the same physical edge
-            // can be traversed by different anonymous bindings (matches FalkorDB C).
-            let sibling_edges: Vec<u32> = relationships
+            // Collect edge alias IDs for relationship uniqueness checking. A
+            // named edge always takes part. An anonymous edge takes part when
+            // another fixed-length edge of this component can bind the same
+            // physical edge (their type sets overlap), so the result does not
+            // depend on whether the edges were named. A lone anonymous edge, or
+            // anonymous edges of disjoint types, stay out: nothing can collide
+            // and they keep the collapsed fast paths.
+            let component_siblings: Vec<u32> = relationships
                 .iter()
                 .filter(|r| {
                     !r.alias
                         .name
                         .as_ref()
                         .is_some_and(|n| n.starts_with("_anon"))
+                        || relationships
+                            .iter()
+                            .any(|o| o.alias.id != r.alias.id && may_share_edge(r, o))
                 })
                 .map(|r| r.alias.id)
                 .collect();
+            // An edge outside that set (anonymous, types disjoint from every
+            // other edge) can collide with none of them, so it checks none. It
+            // must not compare ids against the set either: an operator that
+            // binds no real id for its anonymous edge leaves a placeholder
+            // there, which would reject a real edge that happens to have it.
+            let siblings_of = |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                if component_siblings.contains(&rel.alias.id) {
+                    component_siblings.clone()
+                } else {
+                    Vec::new()
+                }
+            };
+            let sibling_edges = siblings_of(relationship);
             // Inline attrs are lowered to Filters below; the operator embeds the
             // stripped pattern so the predicate has one representation only.
             // A var-length walk is the exception for its edge's own attrs: it
@@ -2196,6 +2230,7 @@ impl Planner {
             // Chain remaining relationships in the component, each one
             // stacking on top of the previous result using the same logic.
             for relationship in iter {
+                let sibling_edges = siblings_of(relationship);
                 // As above: a walk keeps its edge's own attrs on the pattern.
                 let is_walk = relationship.all_shortest_paths != AllShortestPaths::No
                     || relationship.min_hops.is_some();

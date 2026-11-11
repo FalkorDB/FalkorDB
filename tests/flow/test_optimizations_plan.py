@@ -100,7 +100,8 @@ class testOptimizationsPlan(FlowTestsBase):
     def test07_count_unreferenced_edge(self):
         query = """MATCH ()-[:know]->(b) RETURN COUNT(b)"""
         # This count in this query cannot be reduced, as the traversal op doesn't store
-        # data about non-referenced edges.
+        # data about non-referenced edges. Each of the 12 pairs holds two parallel
+        # `know` edges (see populate_graph) and a match is one edge, so the count is 24.
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
         # Verify that the optimization was not applied.
@@ -108,7 +109,7 @@ class testOptimizationsPlan(FlowTestsBase):
         self.env.assertContains("Aggregate", executionPlan)
         self.env.assertContains("All Node Scan", executionPlan)
         self.env.assertContains("Conditional Traverse", executionPlan)
-        expected = [[12]]
+        expected = [[24]]
         self.env.assertEqual(resultset, expected)
 
     def test08_non_labeled_node_count(self):
@@ -151,8 +152,10 @@ class testOptimizationsPlan(FlowTestsBase):
         self.env.assertContains("Value Hash Join", executionPlan)
         self.env.assertNotContains("Cartesian Product", executionPlan)
 
+        # Every pair holds two parallel `know` edges and one `works_with` edge, and a match is
+        # one edge: p1 has 2 ways to reach Roi and p2 has 3 to reach Alon, so 6 rows per name.
         resultset = self.graph.query(query).result_set
-        expected = [['Ailon'], ['Boaz']]
+        expected = [['Ailon']] * 6 + [['Boaz']] * 6
         self.env.assertEqual(resultset, expected)
 
         # Issue a query that joins two streams on a function call.
@@ -182,8 +185,10 @@ class testOptimizationsPlan(FlowTestsBase):
         self.env.assertContains("Value Hash Join", executionPlan)
         self.env.assertNotContains("Cartesian Product", executionPlan)
 
+        # Every pair holds two parallel `know` edges and one `works_with` edge, and a match is
+        # one edge: p1 has 2 ways to reach Roi and p2 has 3 to reach Alon, so 6 rows per name.
         resultset = self.graph.query(query).result_set
-        expected = [['Ailon'], ['Boaz']]
+        expected = [['Ailon']] * 6 + [['Boaz']] * 6
         self.env.assertEqual(resultset, expected)
 
         # Issue a query that joins four streams that all resolve the same entity.
@@ -236,10 +241,11 @@ class testOptimizationsPlan(FlowTestsBase):
         self.env.assertNotContains("Distinct", executionPlan)
 
         resultset = self.graph.query(query).result_set
-        expected = [['Ailon', 3],
-                    ['Alon', 3],
-                    ['Boaz', 3],
-                    ['Roi', 3]]
+        # Each person knows 3 others, over two parallel `know` edges each.
+        expected = [['Ailon', 6],
+                    ['Alon', 6],
+                    ['Boaz', 6],
+                    ['Roi', 6]]
         self.env.assertEqual(resultset, expected)
 
 
@@ -328,9 +334,8 @@ class testOptimizationsPlan(FlowTestsBase):
         executionPlan = str(self.graph.explain(query))
         self.env.assertContains("Expand Into", executionPlan)
         resultset = self.graph.query(query).result_set
-        expected = [[0, 1],
-                    [0, 2],
-                    [0, 3]]
+        # The pair 0 -> 1 holds three edges, so it alone yields 3 * 3 rows.
+        expected = [[0, 1]] * 3
         self.env.assertEqual(resultset, expected)
 
     # Variables bound in one scope should not be used to introduce ExpandInto ops in later scopes.
@@ -339,9 +344,10 @@ class testOptimizationsPlan(FlowTestsBase):
         executionPlan = str(self.graph.explain(query))
         self.env.assertNotContains("Expand Into", executionPlan)
         resultset = self.graph.query(query).result_set
-        expected = [[14, 0, 1],
-                    [14, 0, 2],
-                    [14, 0, 3]]
+        # The count is of edges, parallel ones included, and so are the rows of
+        # the second MATCH: the pair 0 -> 1 holds three edges.
+        edge_count = self.graph.query("MATCH ()-[r]->() RETURN COUNT(r)").result_set[0][0]
+        expected = [[edge_count, 0, 1]] * 3
         self.env.assertEqual(resultset, expected)
 
     # Test limit propagation, execution-plan operations such as

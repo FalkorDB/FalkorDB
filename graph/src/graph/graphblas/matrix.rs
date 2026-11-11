@@ -83,24 +83,25 @@ use super::{
     GrB_DESC_RST1, GrB_DESC_RT0, GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC,
     GrB_DESC_SCT0, GrB_DESC_SCT0T1, GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1,
     GrB_DESC_T0, GrB_DESC_T0T1, GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32,
-    GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_assign_BOOL, GrB_Matrix_build_BOOL,
-    GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp,
-    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
-    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
-    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
-    GrB_Matrix_resize, GrB_Matrix_select_UINT64, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
-    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
-    GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
-    GrB_VALUEEQ_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_mxv, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free,
-    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_build_Scalar,
-    GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type,
-    GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field, GxB_PLUS_PAIR_UINT64, GxB_Print_Level,
-    GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
-    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_kount,
-    GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
-    GxB_unload_Matrix_into_Container,
+    GrB_Info, GrB_MINUS_UINT64, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_apply_BinaryOp2nd_UINT64,
+    GrB_Matrix_assign_BOOL, GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear,
+    GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseMult_Semiring,
+    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
+    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
+    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_select_UINT64, GrB_Matrix_set_INT32,
+    GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode,
+    GrB_Orientation, GrB_PLUS_UINT64, GrB_SECOND_UINT64, GrB_Scalar, GrB_Scalar_free,
+    GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64, GrB_VALUEEQ_UINT64,
+    GrB_VALUEGT_UINT64, GrB_VALUENE_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_mxv,
+    GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free,
+    GxB_Container_new, GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator,
+    GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control,
+    GxB_Matrix_build_Scalar, GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage,
+    GxB_Matrix_type, GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field, GxB_PLUS_FIRST_UINT64,
+    GxB_PLUS_PAIR_UINT64, GxB_PLUS_TIMES_UINT64, GxB_Print_Level, GxB_SPARSE, GxB_init,
+    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_rowIterator_getRowIndex, GxB_rowIterator_kount, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 use super::{
     GrB_FP64, GrB_Matrix_build_FP64, GrB_Matrix_extractTuples_FP64, GrB_Matrix_select_INT64,
@@ -1097,6 +1098,33 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    /// The pattern of `self` outside the pattern of `mask`, as a `bool` matrix;
+    /// `None` when `self` is empty. `O(nvals)`, so callers cache it.
+    #[must_use]
+    pub fn pattern_outside<TM>(
+        &self,
+        mask: &Matrix<TM>,
+    ) -> Option<Matrix<bool>> {
+        self.wait();
+        if self.nvals() == 0 {
+            return None;
+        }
+        let out = Matrix::<bool>::new(self.nrows(), self.ncols());
+        unsafe {
+            let info = GrB_Matrix_apply(
+                out.inner(),
+                mask.inner(),
+                GxB_ANY_BOOL,
+                GxB_ONE_BOOL,
+                self.inner(),
+                GrB_DESC_SC,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        out.has_pending.store(true, Ordering::Relaxed);
+        Some(out)
+    }
+
     /// `self = self * b` over the `ANY_PAIR_BOOL` semiring. Accepts a matrix
     /// of any element type: `PAIR` only inspects the sparsity pattern, so the
     /// values of `b` (e.g. inline edge ids in a UINT64 relationship matrix)
@@ -1377,6 +1405,221 @@ impl Matrix<u64> {
         max_row: u64,
     ) -> Iter<Uint64Extract> {
         Iter::new(self, min_row, max_row)
+    }
+
+    /// `self * b` over `PLUS_FIRST`: each entry of `self` is a number of
+    /// partial paths ending at a node, and the product adds it to every node
+    /// reachable over one edge of `b`. So an entry of the result is the exact
+    /// number of paths, where [`Matrix::lmxm`] over `ANY_PAIR` only records that
+    /// one exists. `b` may be of any element type; only its pattern is read, one
+    /// edge per entry. `first_hop` says every entry of `self` is 1, which lets
+    /// `PAIR` stand in for `FIRST`. Parallel edges are not in `b`'s pattern: see
+    /// [`Self::add_counted_product`].
+    fn count_product<TB>(
+        &self,
+        b: &Matrix<TB>,
+        excess: Option<&Self>,
+    ) -> Self {
+        let next = Self::new(self.nrows(), b.ncols());
+        unsafe {
+            let info = GrB_mxm(
+                next.inner(),
+                null_mut(),
+                null_mut(),
+                GxB_PLUS_PAIR_UINT64,
+                self.inner(),
+                b.inner(),
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        next.has_pending.store(true, Ordering::Relaxed);
+        next.add_excess_product(excess, b);
+        next
+    }
+
+    /// `self += excess * b` over `PLUS_FIRST`, for the entries of the frontier
+    /// that stand for more than one path. The `PAIR` product treats every entry
+    /// as one path; `excess` holds the rest, and is nearly always empty, which
+    /// keeps the value-reading (non-prebuilt) kernel off the common case.
+    fn add_excess_product<TB>(
+        &self,
+        excess: Option<&Self>,
+        b: &Matrix<TB>,
+    ) {
+        let Some(excess) = excess else {
+            return;
+        };
+        unsafe {
+            let info = GrB_mxm(
+                self.inner(),
+                null_mut(),
+                GrB_PLUS_UINT64,
+                GxB_PLUS_FIRST_UINT64,
+                excess.inner(),
+                b.inner(),
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// For each entry of `self` above 1, the paths beyond the first; `None`
+    /// when there is none.
+    fn excess_paths(&self) -> Option<Self> {
+        let excess = Self::new(self.nrows(), self.ncols());
+        unsafe {
+            let info = GrB_Matrix_select_UINT64(
+                excess.inner(),
+                null_mut(),
+                null_mut(),
+                GrB_VALUEGT_UINT64,
+                self.inner(),
+                1,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        if excess.nvals() == 0 {
+            return None;
+        }
+        unsafe {
+            let info = GrB_Matrix_apply_BinaryOp2nd_UINT64(
+                excess.inner(),
+                null_mut(),
+                null_mut(),
+                GrB_MINUS_UINT64,
+                excess.inner(),
+                1,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        excess.has_pending.store(true, Ordering::Relaxed);
+        Some(excess)
+    }
+
+    /// `self = self * m`, counting paths, for a matrix with no pending layers.
+    pub fn count_lmxm<TB>(
+        &mut self,
+        m: &Matrix<TB>,
+        first_hop: bool,
+    ) {
+        let excess = if first_hop { None } else { self.excess_paths() };
+        *self = self.count_product(m, excess.as_ref());
+    }
+
+    /// `self = self * (m + dp - dm)` counting paths, over the layers of one
+    /// versioned matrix without merging them. The effective pattern is
+    /// `(m - dm) + (dp - m)`, as `dm` is inside `m` and `dp` may shadow entries
+    /// of `m`, so the product is `self*m - self*dm + self*added`, where `added`
+    /// is `dp - m` from [`Self::pattern_outside`].
+    pub fn count_lmxm_layers<TV>(
+        &mut self,
+        m: &Matrix<TV>,
+        added: Option<&Matrix<bool>>,
+        dm: &Matrix<bool>,
+        first_hop: bool,
+    ) {
+        // The delta layer arrives raw from a shared snapshot and may hold
+        // pending work; a GrB op would finish it internally (a mutation),
+        // racing other readers. Materialize through the mutex-guarded wait.
+        dm.wait();
+        // The first hop starts every row at one path.
+        let excess = if first_hop { None } else { self.excess_paths() };
+        let excess = excess.as_ref();
+        let mut acc = self.count_product(m, excess);
+        if dm.nvals() > 0 {
+            let deleted = self.count_product(dm, excess);
+            unsafe {
+                let info = GrB_Matrix_eWiseAdd_BinaryOp(
+                    acc.inner(),
+                    null_mut(),
+                    null_mut(),
+                    GrB_MINUS_UINT64,
+                    acc.inner(),
+                    deleted.inner(),
+                    null_mut(),
+                );
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                // A pair whose every path was deleted subtracts to an explicit 0.
+                let info = GrB_Matrix_select_UINT64(
+                    acc.inner(),
+                    null_mut(),
+                    null_mut(),
+                    GrB_VALUENE_UINT64,
+                    acc.inner(),
+                    0,
+                    null_mut(),
+                );
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            }
+            acc.has_pending.store(true, Ordering::Relaxed);
+        }
+        if let Some(added) = added {
+            // Accumulate in place: a separate product added afterwards costs an
+            // unjumble of both.
+            unsafe {
+                let info = GrB_mxm(
+                    acc.inner(),
+                    null_mut(),
+                    GrB_PLUS_UINT64,
+                    GxB_PLUS_PAIR_UINT64,
+                    self.inner(),
+                    added.inner(),
+                    null_mut(),
+                );
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            }
+            acc.add_excess_product(excess, added);
+            acc.has_pending.store(true, Ordering::Relaxed);
+        }
+        *self = acc;
+    }
+
+    /// `self += prev * extra` over `PLUS_TIMES`, where `extra` holds, for each
+    /// pair with parallel edges, the number of edges beyond the first. Adds the
+    /// paths that [`Self::count_lmxm`] leaves out because `b` stores a pair once.
+    pub fn add_counted_product(
+        &mut self,
+        prev: &Self,
+        extra: &Self,
+    ) {
+        unsafe {
+            let info = GrB_mxm(
+                self.inner(),
+                null_mut(),
+                GrB_PLUS_UINT64,
+                GxB_PLUS_TIMES_UINT64,
+                prev.inner(),
+                extra.inner(),
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// `self += other`, entrywise over `PLUS`, an entry present in only one
+    /// operand kept as is.
+    pub fn add_counts(
+        &mut self,
+        other: &Self,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_eWiseAdd_BinaryOp(
+                self.inner(),
+                null_mut(),
+                null_mut(),
+                GrB_PLUS_UINT64,
+                self.inner(),
+                other.inner(),
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 
     /// Bulk-insert UINT64 entries from (row, col, val) arrays. Matrix must be empty and UINT64 typed.
@@ -2110,6 +2353,54 @@ mod tests {
         };
         assert_eq!(reach(&[1]), Some(true), "y→z is live");
         assert_eq!(reach(&[1, 2]), None, "both paths deleted");
+    }
+
+    /// The weighted delta product: `f * (m + dp - dm)` counting paths. Frontier
+    /// row 0 holds node 1 with 2 partial paths and node 2 with 1, base edges are
+    /// 1→3, 2→3 and 1→4, so before any delta 3 is reached 2 + 1 = 3 times and 4
+    /// twice.
+    #[test]
+    fn count_lmxm_layers_weights_deleted_and_added_edges() {
+        ensure_init();
+        let n = 8;
+        let mut m = Matrix::<bool>::new(n, n);
+        m.build(&[1, 2, 1], &[3, 3, 4]);
+        m.wait();
+        let paths = |dp: &[(u64, u64)], deleted: &[(u64, u64)]| {
+            let layer = |edges: &[(u64, u64)]| {
+                let mut l = Matrix::<bool>::new(n, n);
+                let (r, c): (Vec<u64>, Vec<u64>) = edges.iter().copied().unzip();
+                l.build(&r, &c);
+                l.wait();
+                l
+            };
+            let (dp, dm) = (layer(dp), layer(deleted));
+            let added = dp.pattern_outside(&m);
+            let mut f = Matrix::<u64>::new(n, n);
+            f.build(&[0, 0], &[1, 2], &[2, 1]);
+            f.wait();
+            f.count_lmxm_layers(&m, added.as_ref(), &dm, false);
+            f.wait();
+            (f.get(0, 3), f.get(0, 4))
+        };
+        assert_eq!(paths(&[], &[]), (Some(3), Some(2)), "no delta");
+        // Deleting one of the two edges into 3 removes that edge's weight only.
+        assert_eq!(paths(&[], &[(1, 3)]), (Some(1), Some(2)), "1→3 deleted");
+        assert_eq!(paths(&[], &[(2, 3)]), (Some(2), Some(2)), "2→3 deleted");
+        // Deleting every edge into 3 leaves no entry, not an explicit 0.
+        assert_eq!(
+            paths(&[], &[(1, 3), (2, 3)]),
+            (None, Some(2)),
+            "all deleted"
+        );
+        // A delta-plus entry that shadows a base edge adds nothing, and a new one
+        // adds its weight.
+        assert_eq!(paths(&[(1, 3)], &[]), (Some(3), Some(2)), "shadowing entry");
+        assert_eq!(
+            paths(&[(1, 3), (2, 4)], &[]),
+            (Some(3), Some(3)),
+            "new edge 2→4"
+        );
     }
 
     #[test]

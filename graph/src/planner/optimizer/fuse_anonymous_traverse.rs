@@ -91,7 +91,7 @@ fn can_fuse(
             emit_relationship: p_emit,
             sibling_edges: p_sib,
             transposed: p_trans,
-            chain: _p_chain,
+            chain: p_chain,
             optional: p_opt,
             bind_relationship: true,
             ..
@@ -132,8 +132,18 @@ fn can_fuse(
     if *p_emit || *c_emit {
         return false;
     }
-    // Sibling edge uniqueness needs per-edge inspection — skip.
-    if !p_sib.is_empty() || !c_sib.is_empty() {
+    // Sibling edge uniqueness needs per-edge inspection, except between exactly
+    // these two hops: over a directed pair they can share an edge only at a
+    // self-loop, which the fused operator subtracts from its path count. With
+    // a longer chain an edge can recur elsewhere, so that stays unfused.
+    let only_this_pair = |sib: &[u32]| {
+        sib.iter()
+            .all(|&id| id == p_rel.alias.id || id == c_rel.alias.id)
+    };
+    if !only_this_pair(p_sib) || !only_this_pair(c_sib) {
+        return false;
+    }
+    if (!p_sib.is_empty() || !c_sib.is_empty()) && (!p_chain.is_empty() || !c_chain.is_empty()) {
         return false;
     }
     // No bidirectional or variable-length hops.
@@ -170,7 +180,6 @@ fn can_fuse(
     // The child's `from` and parent's `to` are external to the fused chain.
     // Already-fused chain entries on the child stay storage-direction by
     // construction (the pass only ever inserts non-transposed hops).
-    let _ = c_chain;
 
     // The intermediate disappears from the binding set on fusion, so nothing
     // anywhere may still read it.

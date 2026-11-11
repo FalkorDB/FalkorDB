@@ -706,10 +706,13 @@ impl<'a> Runtime<'a> {
                 }
                 // These operators pass rows through 1:1 or 1:N — limit still
                 // provides a useful early-stop hint through them.
-                IR::Project { .. }
-                | IR::Skip(_)
-                | IR::CondTraverse { .. }
-                | IR::ExpandInto { .. } => {}
+                IR::Project { .. } | IR::Skip(_) => {}
+                IR::CondTraverse { sibling_edges, .. } | IR::ExpandInto { sibling_edges, .. }
+                    if sibling_edges.is_empty() => {}
+                // A traverse that must differ from the edges of the pattern
+                // drops the rows whose only edges another hop already uses, so
+                // a cap on the rows beneath it could end the query before
+                // enough of them survive: a barrier.
                 // Everything else is a barrier.
                 _ => {
                     return None;

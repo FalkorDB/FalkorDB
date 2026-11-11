@@ -29,6 +29,8 @@
 //!   cloning the parent env per result).
 
 use std::collections::VecDeque;
+
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use crate::graph::graph::{LabelId, NodeId, RelationshipId};
@@ -44,7 +46,7 @@ use crate::runtime::{
     value::Value,
 };
 use itertools::Either;
-use orx_tree::{Dyn, NodeIdx};
+use orx_tree::{Bfs, Dyn, NodeIdx, NodeRef};
 
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
@@ -69,6 +71,10 @@ enum TraversalMatrix {
     /// even when `F` held one row; the per-type products are only as large as
     /// the frontier. Shallow clones, like `U64`.
     Union(Vec<Tensor>),
+    /// Several relationship types walked backward: the transposed pair-level
+    /// adjacency of each (`dst -> src`), so the frontier follows incoming
+    /// edges. Kept apart like `Union`.
+    BoolUnion(Vec<VersionedMatrix<bool>>),
 }
 
 impl TraversalMatrix {
@@ -79,37 +85,138 @@ impl TraversalMatrix {
             // Every relationship tensor is sized to the node capacity, so any
             // one of them has the shared column count.
             Self::Union(ts) => ts.first().map_or(0, |t| t.fwd_m().ncols()),
+            Self::BoolUnion(vs) => vs.first().map_or(0, VersionedMatrix::ncols),
         }
     }
 
-    /// `f = f * self` (delta-aware, structural). See [`Matrix::delta_lmxm`].
-    fn delta_lmxm_into(
+    /// The part of each layer set's pending additions that is new, in the order
+    /// [`Self::count_lmxm_into`] consumes them (one per type). Built once per
+    /// operator, since it costs a pass over the pending additions.
+    fn added_layers(&self) -> Vec<Option<Matrix<bool>>> {
+        match self {
+            // A `bool` matrix keeps `dp` disjoint from `m`, so `dp` is the part
+            // that is new.
+            Self::Bool(vm) => {
+                vm.dp().wait();
+                vec![(vm.dp().nvals() > 0).then(|| vm.dp().clone())]
+            }
+            Self::U64(t) => vec![t.added_layer()],
+            Self::Union(ts) => ts.iter().map(Tensor::added_layer).collect(),
+            Self::BoolUnion(vs) => vs
+                .iter()
+                .map(|vm| {
+                    vm.dp().wait();
+                    (vm.dp().nvals() > 0).then(|| vm.dp().clone())
+                })
+                .collect(),
+        }
+    }
+
+    /// `f = f * self`, counting paths (delta-aware). See
+    /// [`Matrix::count_lmxm_layers`]. Each pair counts once here; the surplus of
+    /// parallel edges is added by the caller from [`parallel_surplus`]. `added`
+    /// comes from [`Self::added_layers`].
+    fn count_lmxm_into(
         &self,
-        f: &mut Matrix<bool>,
+        f: &mut Matrix<u64>,
+        added: &[Option<Matrix<bool>>],
+        first_hop: bool,
     ) {
         match self {
-            Self::Bool(vm) => f.delta_lmxm(vm.m(), vm.dp(), vm.dm()),
-            Self::U64(t) => f.delta_lmxm(t.fwd_m(), t.fwd_dp(), t.fwd_dm()),
+            Self::Bool(vm) => f.count_lmxm_layers(vm.m(), added[0].as_ref(), vm.dm(), first_hop),
+            Self::U64(t) => Self::count_tensor(f, t, added[0].as_ref(), first_hop),
+            Self::BoolUnion(vs) => {
+                let Some((first, rest)) = vs.split_first() else {
+                    return;
+                };
+                let frontier = (!rest.is_empty()).then(|| f.dup());
+                f.count_lmxm_layers(first.m(), added[0].as_ref(), first.dm(), first_hop);
+                if let Some(frontier) = frontier {
+                    for (vm, added) in rest.iter().zip(&added[1..]) {
+                        let mut ft = frontier.dup();
+                        ft.count_lmxm_layers(vm.m(), added.as_ref(), vm.dm(), first_hop);
+                        f.add_counts(&ft);
+                    }
+                }
+            }
             Self::Union(ts) => {
                 // `f` is the frontier: keep a copy as the left operand of the
-                // remaining products, then OR them into the first one. Union
-                // of patterns, so a pair joined by several types appears once
-                // — exactly what the materialized union produced.
+                // remaining products, then add them to the first one. A pair
+                // joined by several types counts once per type.
                 let Some((first, rest)) = ts.split_first() else {
                     return;
                 };
                 let frontier = (!rest.is_empty()).then(|| f.dup());
-                f.delta_lmxm(first.fwd_m(), first.fwd_dp(), first.fwd_dm());
+                Self::count_tensor(f, first, added[0].as_ref(), first_hop);
                 if let Some(frontier) = frontier {
-                    for t in rest {
+                    for (t, added) in rest.iter().zip(&added[1..]) {
                         let mut ft = frontier.dup();
-                        ft.delta_lmxm(t.fwd_m(), t.fwd_dp(), t.fwd_dm());
-                        f.element_wise_add(None, None, Some(&ft), None);
+                        Self::count_tensor(&mut ft, t, added.as_ref(), first_hop);
+                        f.add_counts(&ft);
                     }
                 }
             }
         }
     }
+
+    /// `f = f * t`, counting paths: against the merged pattern when the tensor
+    /// has one, else layer by layer.
+    fn count_tensor(
+        f: &mut Matrix<u64>,
+        t: &Tensor,
+        added: Option<&Matrix<bool>>,
+        first_hop: bool,
+    ) {
+        match t.merged_layer() {
+            Some(merged) => f.count_lmxm(&merged, first_hop),
+            None => f.count_lmxm_layers(t.fwd_m(), added, t.fwd_dm(), first_hop),
+        }
+    }
+}
+
+/// The matrix an untyped hop multiplies by. The adjacency matrix holds a pair
+/// once however many edges join it, so it is exact only while the graph has
+/// fewer edges than pairs to count; otherwise the per-type tensors are used, so
+/// a pair joined by several types or by parallel edges is counted per edge.
+fn untyped_traversal_matrix(g: &crate::graph::graph::Graph) -> TraversalMatrix {
+    let tensors = g.relationship_tensors();
+    if g.relationship_count() <= g.adjacency_matrix().nvals() || tensors.is_empty() {
+        TraversalMatrix::Bool(g.adjacency_matrix().clone())
+    } else if tensors.len() == 1 {
+        TraversalMatrix::U64(tensors[0].clone())
+    } else {
+        TraversalMatrix::Union(tensors.to_vec())
+    }
+}
+
+/// For each type a hop matches (all of them when `types` is empty), the pairs
+/// with parallel edges and the edges each holds beyond the first. Empty when no
+/// pair has any. Kept per type, each a cached matrix shared by every query: a
+/// sum would be rebuilt per query, a pass over every parallel pair that a
+/// point query must not pay.
+fn parallel_surplus(
+    g: &crate::graph::graph::Graph,
+    types: &[Arc<String>],
+    back: bool,
+) -> Vec<Matrix<u64>> {
+    let tensors: Vec<&Tensor> = if types.is_empty() {
+        g.relationship_tensors().iter().collect()
+    } else {
+        types
+            .iter()
+            .filter_map(|t| g.get_relationship_matrix(t))
+            .collect()
+    };
+    tensors
+        .into_iter()
+        .filter_map(|t| {
+            if back {
+                t.parallel_edge_surplus_t_cached()
+            } else {
+                t.parallel_edge_surplus_cached()
+            }
+        })
+        .collect()
 }
 
 /// Lazily resolved state — built on first `expand_row`, after any sibling
@@ -134,6 +241,32 @@ struct CtState {
     rev_src_label_ids: Vec<LabelId>,
     rev_dst_label_ids: Vec<LabelId>,
     edge_type_indices: Vec<usize>,
+    /// True when some requested relationship type holds a (src, dst) pair with
+    /// more than one edge. Collapsing to one row per pair then changes the row
+    /// count, so `emit_relationship: false` is only honoured when this is false.
+    multi_edge: bool,
+    /// Edges per pair, for the pairs of the requested types that hold more than
+    /// one. Lets a traverse that needs no edge id emit the right number of rows
+    /// without reading the tensor per pair. Built on first use, only by a
+    /// traverse that needs no edge id and only when `multi_edge`; empty before.
+    multi_counts: Arc<FxHashMap<(u64, u64), u32>>,
+    multi_counts_built: bool,
+    /// Parallel edges beyond the first per pair, for the first hop of the
+    /// batched path; `None` when it has none. Built with `batched_matrix`.
+    batched_surplus: Vec<Matrix<u64>>,
+    /// Whether `batched_matrix` walks the backward adjacency; see
+    /// `CondTraverseOp::walks_backward`.
+    batched_back: bool,
+    /// New pending additions of each type of the first hop, parallel to its
+    /// layers; see `TraversalMatrix::added_layers`.
+    batched_added: Vec<Option<Matrix<bool>>>,
+    /// The same for each fused chain hop.
+    chain_added: Vec<Vec<Option<Matrix<bool>>>>,
+    /// The same for each fused chain hop, parallel to `chain_matrices`.
+    chain_surplus: Vec<Vec<Matrix<u64>>>,
+    /// Indices of the relationship types of `chain[0]`, for the self-loop
+    /// correction of a two-hop chain; empty `Vec` for all types.
+    chain_type_indices: Vec<usize>,
     /// True when one of the requested labels was unknown at state-build
     /// time.  We still drain the child (for side effects) but produce no
     /// output rows, since `unwrap_or_default()` would otherwise turn an
@@ -206,20 +339,16 @@ pub struct CondTraverseOp<'a> {
     /// by this CT may be created by a sibling Commit earlier in the same
     /// query, so capturing them at construction would miss them.
     state: std::cell::RefCell<Option<CtState>>,
-    /// For bidirectional anonymous-edge CTs, tracks (source, dest) pairs
-    /// already emitted to deduplicate rows that reach the same pair via
-    /// different intermediate nodes — matching C FalkorDB's matrix-multiply
-    /// semantics.
-    bidir_dedup: Option<std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
-    /// When the child is also an anonymous bidir CT, stores the child's
-    /// from-alias so the dedup key uses the original scan source (not the
-    /// intermediate node).  When None, dedup uses this CT's own from-alias.
-    dedup_source_alias: Option<Variable>,
     /// Structural eligibility for the batched F·A path. Computed once at
     /// construction. Variants like emit_relationship, bidir, sibling-edge
     /// uniqueness, and non-empty inline attribute predicates fall back to
     /// the per-row `expand_row` path.
     batched_eligible: bool,
+    /// Endpoints of the sibling edges this one must differ from, when that can
+    /// be decided by comparing nodes instead of edge ids; see
+    /// [`node_comparable_siblings`]. Used only while the relation has no
+    /// parallel edges.
+    node_unique: Option<Vec<SiblingEnds>>,
 }
 
 /// The union of several relationship types' `(src, dst)` pairs, streamed.
@@ -360,6 +489,114 @@ fn build_transposed_union_iter(
     Some(UnionIter::new(iters))
 }
 
+/// Endpoint aliases of a sibling relationship, and whether its operator runs
+/// against the edge direction.
+struct SiblingEnds {
+    from: u32,
+    to: u32,
+    transposed: bool,
+}
+
+/// The sibling edges of `rp`, when uniqueness among them can be checked by
+/// comparing the nodes they join rather than the edge ids they bind.
+///
+/// That holds when the relation has no parallel edges and every edge of the
+/// component (this one included) is the same single type, directed, a plain
+/// unread traverse: one pair of nodes is then one edge. The decision is made
+/// from the whole component, so each of its operators takes the same branch
+/// and none is left comparing ids against an edge another left unbound.
+fn node_comparable_siblings(
+    runtime: &Runtime,
+    rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    sibling_edges: &[u32],
+) -> Option<Vec<SiblingEnds>> {
+    if sibling_edges.len() < 2 || rp.types.len() != 1 {
+        return None;
+    }
+    let mut ends = Vec::new();
+    let mut found = 0;
+    for idx in runtime.plan.root().indices::<Bfs>() {
+        let (relationship, emit, chain, optional, transposed) = match runtime.plan.node(idx).data()
+        {
+            IR::CondTraverse {
+                relationship,
+                emit_relationship,
+                bind_relationship,
+                chain,
+                optional,
+                transposed,
+                ..
+            } => (
+                relationship,
+                *emit_relationship || *bind_relationship,
+                chain,
+                *optional,
+                *transposed,
+            ),
+            IR::ExpandInto { relationship, .. }
+                if sibling_edges.contains(&relationship.alias.id)
+                    && relationship.alias.scope_id == rp.alias.scope_id =>
+            {
+                return None;
+            }
+            _ => continue,
+        };
+        if !sibling_edges.contains(&relationship.alias.id)
+            || relationship.alias.scope_id != rp.alias.scope_id
+        {
+            continue;
+        }
+        if emit
+            || optional
+            || !chain.is_empty()
+            || relationship.bidirectional
+            || relationship.min_hops.is_some()
+            || relationship.types != rp.types
+        {
+            return None;
+        }
+        found += 1;
+        if relationship.alias.id != rp.alias.id {
+            ends.push(SiblingEnds {
+                from: relationship.from.alias.id,
+                to: relationship.to.alias.id,
+                transposed,
+            });
+        }
+    }
+    // Every sibling must be one of these operators, or it is checked by ids.
+    (found == sibling_edges.len()).then_some(ends)
+}
+
+/// The node bound to `alias` on this row, if it is bound to one.
+fn bound_node(
+    batch: &Batch<'_>,
+    alias: u32,
+    row_idx: usize,
+) -> Option<NodeId> {
+    if !batch.is_bound_at(alias, row_idx) {
+        return None;
+    }
+    match batch.value_at(alias, row_idx) {
+        Some(Value::Node(n)) => Some(n),
+        _ => None,
+    }
+}
+
+/// The `(source, destination)` of every already-bound sibling edge on this row,
+/// in edge direction.
+fn sibling_edge_pairs<'s>(
+    siblings: &'s [SiblingEnds],
+    batch: &'s Batch<'_>,
+    row_idx: usize,
+) -> impl Iterator<Item = (NodeId, NodeId)> + 's {
+    siblings.iter().filter_map(move |s| {
+        let f = bound_node(batch, s.from, row_idx)?;
+        let t = bound_node(batch, s.to, row_idx)?;
+        Some(if s.transposed { (t, f) } else { (f, t) })
+    })
+}
+
 impl<'a> CondTraverseOp<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -377,45 +614,6 @@ impl<'a> CondTraverseOp<'a> {
     ) -> Self {
         let rp = relationship_pattern;
 
-        // When this CT and its child CT are both anonymous bidirectional
-        // edges, enable cross-row (from, to) deduplication to replicate
-        // C FalkorDB's matrix-multiply semantics.  Use the child's
-        // from-alias as the dedup source so we deduplicate by
-        // (original_scan_source, final_destination).
-        //
-        // Only enable when the intermediate node (this CT's from-alias,
-        // which is the child CT's to-alias) is anonymous.  If the
-        // intermediate is a user-named variable it may be referenced by
-        // downstream operators (e.g. ExpandInto), so collapsing rows
-        // with different intermediate values would lose valid results.
-        let intermediate_is_anon = rp
-            .from
-            .alias
-            .name
-            .as_ref()
-            .is_some_and(|n| n.starts_with("_anon"));
-        let (bidir_dedup, dedup_source_alias) =
-            if !emit_relationship && rp.bidirectional && intermediate_is_anon {
-                if let BatchOp::CondTraverse(ref child_ct) = *child {
-                    if !child_ct.emit_relationship && child_ct.relationship_pattern.bidirectional {
-                        (
-                            Some(std::cell::RefCell::new(std::collections::HashSet::<(
-                                u64,
-                                u64,
-                            )>::new(
-                            ))),
-                            Some(child_ct.relationship_pattern.from.alias.clone()),
-                        )
-                    } else {
-                        (None, None)
-                    }
-                } else {
-                    (None, None)
-                }
-            } else {
-                (None, None)
-            };
-
         // For fused chains the batched path is the ONLY correct path —
         // expand_row only handles single-hop.
         //
@@ -428,10 +626,21 @@ impl<'a> CondTraverseOp<'a> {
         // sets it for an edge that carries one, because expand_batch binds one
         // representative edge per (src, dst) pair and the Filter above has to
         // see every parallel edge to test them apart.
+        let node_unique = (!emit_relationship
+            && !bind_relationship
+            && !optional
+            && chain.is_empty()
+            && !rp.bidirectional)
+            .then(|| node_comparable_siblings(runtime, rp, sibling_edges))
+            .flatten();
         let batched_eligible = !emit_relationship
             && !rp.bidirectional
-            && bidir_dedup.is_none()
-            && sibling_edges.is_empty()
+            && (sibling_edges.is_empty()
+                || node_unique.is_some()
+                || (chain.len() == 1
+                    && sibling_edges
+                        .iter()
+                        .all(|&id| id == rp.alias.id || id == chain[0].alias.id)))
             && chain.iter().all(|hop| !hop.bidirectional);
 
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
@@ -468,9 +677,8 @@ impl<'a> CondTraverseOp<'a> {
             record_cap,
             produced: 0,
             state: std::cell::RefCell::new(None),
-            bidir_dedup,
-            dedup_source_alias,
             batched_eligible,
+            node_unique,
         }
     }
 
@@ -564,6 +772,10 @@ impl<'a> CondTraverseOp<'a> {
                 .collect()
         };
 
+        let multi_edge = edge_type_indices
+            .iter()
+            .any(|&tidx| g.relationship_tensors()[tidx].has_multi_edge());
+
         CtState {
             fwd_iter: std::cell::RefCell::new(fwd_iter),
             rev_iter: rev_iter.map(std::cell::RefCell::new),
@@ -574,11 +786,66 @@ impl<'a> CondTraverseOp<'a> {
             rev_src_label_ids,
             rev_dst_label_ids,
             edge_type_indices,
+            multi_edge,
+            multi_counts: Arc::new(FxHashMap::default()),
+            multi_counts_built: false,
+            batched_surplus: Vec::new(),
+            batched_back: false,
+            batched_added: Vec::new(),
+            chain_added: Vec::new(),
+            chain_surplus: Vec::new(),
+            chain_type_indices: Vec::new(),
             no_match,
             batched_matrix: None,
             chain_matrices: Vec::new(),
             chain_dst_label_ids: Vec::new(),
         }
+    }
+
+    /// How many self-loops at `v` both hops of a two-hop chain can bind: edges
+    /// at `(v, v)` of a type matched by the entry hop and by the chain hop. The
+    /// path `v -> v -> v` over such an edge uses it twice, which relationship
+    /// uniqueness forbids and the path count includes. Any other repeat of an
+    /// edge needs a chain of three hops or more, or a hop that is not directed.
+    fn shared_self_loops(
+        g: &crate::graph::graph::Graph,
+        state: &CtState,
+        v: NodeId,
+    ) -> u64 {
+        let v = u64::from(v);
+        let tensors = g.relationship_tensors();
+        // An edge has exactly one type, so the edges both hops can bind are the
+        // self-loops of the types they share.
+        state
+            .edge_type_indices
+            .iter()
+            .filter(|t| state.chain_type_indices.contains(t))
+            .map(|&t| tensors[t].get(v, v).count() as u64)
+            .sum()
+    }
+
+    /// Whether the batched path should walk the backward adjacency for this
+    /// input: a traverse the planner transposed (`rel.from` is the node it
+    /// starts from, the edge is stored `to -> from`) whose start is bound and
+    /// whose end is not. The frontier then follows incoming edges, which is
+    /// `F * A^T` over the maintained transpose. Anything else keeps the
+    /// forward product (and, for a transposed traverse, the per-row path when
+    /// its start is not the pattern's `to`).
+    fn walks_backward(
+        &self,
+        batch: &Batch<'a>,
+        active_subset: &[usize],
+    ) -> bool {
+        let rp = self.relationship_pattern;
+        let Some(&row) = active_subset.first() else {
+            return false;
+        };
+        self.transposed
+            && self.chain.is_empty()
+            && !self.optional
+            && rp.from.alias != rp.to.alias
+            && batch.is_bound_at(rp.from.alias.id, row)
+            && !batch.is_bound_at(rp.to.alias.id, row)
     }
 
     /// Batched F·A traversal — mirrors C FalkorDB's `_traverse` in
@@ -592,6 +859,56 @@ impl<'a> CondTraverseOp<'a> {
     /// ops. State-level eligibility (matrix existence) is checked here and
     /// returns `false` to signal "fall back to slow path for this batch".
     fn expand_batch(
+        &self,
+        batch: &Batch<'a>,
+        active_subset: &[usize],
+        out_pending: &mut VecDeque<Batch<'a>>,
+    ) -> bool {
+        // Under a small record cap (`LIMIT 10`) the product over a whole input
+        // batch is mostly wasted: run it over a few rows at a time and stop once
+        // enough rows are out. Only when every row has its source bound to a
+        // node, so no slice can fall back to the per-row path after another
+        // has emitted.
+        const SLICE: usize = 64;
+        let rp = self.relationship_pattern;
+        let seed_alias = if self.walks_backward(batch, active_subset) {
+            &rp.from.alias
+        } else if self.transposed {
+            &rp.to.alias
+        } else {
+            &rp.from.alias
+        };
+        let cap_left = self.record_cap.map(|c| c.saturating_sub(self.produced));
+        if let Some(cap) = cap_left
+            && cap <= 256
+            && !self.optional
+            && active_subset.len() > SLICE
+            && active_subset
+                .iter()
+                .all(|&r| bound_node(batch, seed_alias.id, r).is_some())
+        {
+            let mut emitted = 0usize;
+            for rows in active_subset.chunks(SLICE) {
+                let before = out_pending.len();
+                if !self.expand_batch_rows(batch, rows, out_pending) {
+                    return false;
+                }
+                emitted += out_pending
+                    .iter()
+                    .skip(before)
+                    .map(Batch::active_len)
+                    .sum::<usize>();
+                if emitted >= cap {
+                    break;
+                }
+            }
+            return true;
+        }
+        self.expand_batch_rows(batch, active_subset, out_pending)
+    }
+
+    /// [`Self::expand_batch`] over `active_subset` as one product.
+    fn expand_batch_rows(
         &self,
         batch: &Batch<'a>,
         active_subset: &[usize],
@@ -616,11 +933,37 @@ impl<'a> CondTraverseOp<'a> {
             return true;
         }
 
+        let node_mode = self.node_unique.as_deref();
+        let back = self.walks_backward(batch, active_subset);
+        if state.batched_matrix.is_some() && state.batched_back != back {
+            // The matrix was built for the other direction.
+            return false;
+        }
+
         let g = runtime.graph();
 
         if state.batched_matrix.is_none() {
-            let m = if rp.types.is_empty() {
-                TraversalMatrix::Bool(g.adjacency_matrix().clone())
+            state.batched_back = back;
+            let m = if back {
+                let tensors: Vec<&Tensor> = if rp.types.is_empty() {
+                    g.relationship_tensors().iter().collect()
+                } else {
+                    let found: Vec<&Tensor> = rp
+                        .types
+                        .iter()
+                        .filter_map(|t| g.get_relationship_matrix(t))
+                        .collect();
+                    found
+                };
+                // Unknown types match nothing, as in the forward union; the
+                // traverse matches nothing only when every type is unknown.
+                if tensors.is_empty() {
+                    state.no_match = true;
+                    return true;
+                }
+                TraversalMatrix::BoolUnion(tensors.iter().map(|t| t.matrix_t().clone()).collect())
+            } else if rp.types.is_empty() {
+                untyped_traversal_matrix(&g)
             } else if rp.types.len() == 1 {
                 if let Some(t) = g.get_relationship_matrix(&rp.types[0]) {
                     TraversalMatrix::U64(t.clone())
@@ -642,7 +985,9 @@ impl<'a> CondTraverseOp<'a> {
                     return true;
                 }
             };
+            state.batched_added = m.added_layers();
             state.batched_matrix = Some(m);
+            state.batched_surplus = parallel_surplus(&g, &rp.types, back);
 
             // Build per-hop matrices and label-id vectors for the fused chain.
             // If any hop's relationship type is unknown, mark no_match — that
@@ -650,7 +995,7 @@ impl<'a> CondTraverseOp<'a> {
             // either.
             for hop in self.chain {
                 let hm = if hop.types.is_empty() {
-                    TraversalMatrix::Bool(g.adjacency_matrix().clone())
+                    untyped_traversal_matrix(&g)
                 } else if hop.types.len() == 1 {
                     if let Some(t) = g.get_relationship_matrix(&hop.types[0]) {
                         TraversalMatrix::U64(t.clone())
@@ -672,7 +1017,11 @@ impl<'a> CondTraverseOp<'a> {
                         return true;
                     }
                 };
+                state.chain_added.push(hm.added_layers());
                 state.chain_matrices.push(hm);
+                state
+                    .chain_surplus
+                    .push(parallel_surplus(&g, &hop.types, false));
                 let Some(dst_labels) = g.resolve_label_ids(&hop.to.labels) else {
                     state.no_match = true;
                     if self.optional {
@@ -683,11 +1032,32 @@ impl<'a> CondTraverseOp<'a> {
                 state.chain_dst_label_ids.push(dst_labels);
             }
         }
+        if state.chain_type_indices.is_empty()
+            && let Some(hop) = self.chain.first()
+        {
+            state.chain_type_indices = if hop.types.is_empty() {
+                (0..g.relationship_tensors().len()).collect()
+            } else {
+                hop.types
+                    .iter()
+                    .filter_map(|t| g.get_type_id(t).map(|tid| tid.0))
+                    .collect()
+            };
+        }
         let m_merged = state.batched_matrix.as_ref().unwrap();
         let ncols = m_merged.ncols();
 
         let transposed = self.transposed;
         let nrows = active_subset.len() as u64;
+        // The matrix-source and matrix-destination ends of the pattern. A
+        // backward walk starts at `rel.from` (the matrix destination) and ends
+        // at `rel.to`; every other batched traversal starts at the matrix
+        // source.
+        let (seed_labels, end_labels) = if back {
+            (&state.fwd_dst_label_ids, &state.fwd_src_label_ids)
+        } else {
+            (&state.fwd_src_label_ids, &state.fwd_dst_label_ids)
+        };
 
         // Collect (row_i, src_id) for rows where the from-alias is bound to
         // a Node and (post-label-filter) the src has all required labels.
@@ -695,7 +1065,7 @@ impl<'a> CondTraverseOp<'a> {
         // 311 early return). Rows where from is unbound trigger fall-back.
         let mut row_idx_buf: Vec<u64> = Vec::with_capacity(active_subset.len());
         let mut col_idx_buf: Vec<u64> = Vec::with_capacity(active_subset.len());
-        let from_alias = if transposed {
+        let from_alias = if transposed && !back {
             &rp.to.alias
         } else {
             &rp.from.alias
@@ -719,8 +1089,7 @@ impl<'a> CondTraverseOp<'a> {
                 return false;
             };
             // Pre-filter src by label (= L_src * F in C's algebra).
-            if !state
-                .fwd_src_label_ids
+            if !seed_labels
                 .iter()
                 .all(|&lid| g.node_has_label_id(src_id, lid))
             {
@@ -739,11 +1108,28 @@ impl<'a> CondTraverseOp<'a> {
             return true;
         }
 
-        let mut f = Matrix::<bool>::new(nrows, ncols);
-        f.build(&row_idx_buf, &col_idx_buf);
-        m_merged.delta_lmxm_into(&mut f);
-        for hop_m in &state.chain_matrices {
-            hop_m.delta_lmxm_into(&mut f);
+        // Path counts, not reachability: `f[i, v]` is the number of paths from
+        // row `i`'s source to `v`. A pair stores its edge once, so the product
+        // is short by the surplus of any pair with parallel edges, which a
+        // second product over `PLUS_TIMES` adds back.
+        let ones = vec![1u64; row_idx_buf.len()];
+        let mut f = Matrix::<u64>::new(nrows, ncols);
+        f.build(&row_idx_buf, &col_idx_buf, &ones);
+        let first = (m_merged, &state.batched_surplus, &state.batched_added);
+        let rest = state
+            .chain_matrices
+            .iter()
+            .zip(&state.chain_surplus)
+            .zip(&state.chain_added)
+            .map(|((m, s), a)| (m, s, a));
+        for (hop, (hop_m, surplus, added)) in std::iter::once(first).chain(rest).enumerate() {
+            let prev = (!surplus.is_empty()).then(|| f.dup());
+            hop_m.count_lmxm_into(&mut f, added, hop == 0);
+            if let Some(prev) = prev {
+                for surplus in surplus {
+                    f.add_counted_product(&prev, surplus);
+                }
+            }
         }
 
         // Flush pending mxm work before attaching the row iterator.
@@ -752,7 +1138,7 @@ impl<'a> CondTraverseOp<'a> {
         // refuses to fuse when transposed differs), so `transposed` applies
         // only to the first hop and the final destination alias comes from
         // the last hop in `self.chain`.
-        let from_alias = if transposed {
+        let from_alias = if transposed && !back {
             &rp.to.alias
         } else {
             &rp.from.alias
@@ -762,10 +1148,12 @@ impl<'a> CondTraverseOp<'a> {
                 &last_hop.to.alias,
                 state.chain_dst_label_ids.last().unwrap().as_slice(),
             )
+        } else if back {
+            (&rp.to.alias, end_labels.as_slice())
         } else if transposed {
-            (&rp.from.alias, state.fwd_dst_label_ids.as_slice())
+            (&rp.from.alias, end_labels.as_slice())
         } else {
-            (&rp.to.alias, state.fwd_dst_label_ids.as_slice())
+            (&rp.to.alias, end_labels.as_slice())
         };
         let chain_is_empty = self.chain.is_empty();
         // A chain-less traverse binds the edge column, and getting a value for
@@ -783,7 +1171,23 @@ impl<'a> CondTraverseOp<'a> {
             Vec::new()
         };
 
-        for (row_i, dest_raw) in f.iter(0, u64::MAX) {
+        // A two-hop chain over overlapping types is fused only when a hop pair
+        // can reuse an edge solely at a self-loop; see `shared_self_loops`.
+        let chain_overlap = self.chain.len() == 1
+            && (rp.types.is_empty()
+                || self.chain[0].types.is_empty()
+                || rp.types.iter().any(|t| self.chain[0].types.contains(t)));
+        let mut sibling_row = u64::MAX;
+        let mut sibling_seed: Option<NodeId> = None;
+        let mut sibling_pairs: Vec<(NodeId, NodeId)> = Vec::new();
+        // Rows the record cap still allows, so an entry that fans out into a
+        // huge multiplicity is not materialized past it.
+        let cap_left = self.record_cap.map(|c| c.saturating_sub(self.produced));
+        let mut emitted = 0usize;
+        for (row_i, dest_raw, count) in f.iter(0, u64::MAX) {
+            if cap_left.is_some_and(|left| emitted + out_indices.len() >= left) {
+                break;
+            }
             let dest_id = NodeId::from(dest_raw);
             // Post-filter final-hop dst label (= F * A * R_dst in C's algebra).
             if !dst_label_ids
@@ -802,68 +1206,131 @@ impl<'a> CondTraverseOp<'a> {
                 continue;
             }
 
+            // Edges joining the same pair of nodes: a sibling bound to one of
+            // them leaves one fewer for this edge, and a pair of single edges
+            // is none. The siblings' nodes are read once per input row.
+            let mut shared = 0u64;
+            if let Some(siblings) = node_mode {
+                if sibling_row != row_i {
+                    sibling_row = row_i;
+                    sibling_seed = bound_node(batch, from_alias.id, row_idx);
+                    sibling_pairs.clear();
+                    sibling_pairs.extend(sibling_edge_pairs(siblings, batch, row_idx));
+                }
+                if let Some(seed) = sibling_seed {
+                    shared = sibling_pairs
+                        .iter()
+                        .filter(|&&pair| {
+                            pair == if back {
+                                (dest_id, seed)
+                            } else {
+                                (seed, dest_id)
+                            }
+                        })
+                        .count() as u64;
+                }
+            }
+
+            // `count` is the number of paths from this row's source to `dest_id`;
+            // each is one output row. A chain-less hop knows which edge each
+            // row is; a fused chain binds none.
+            let mut count = count.saturating_sub(shared);
+            if chain_overlap
+                && let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx)
+                && src_id == dest_id
+            {
+                // Both hops can use the same self-loop at this node; one edge
+                // may be matched only once per pattern.
+                count -= Self::shared_self_loops(&g, state, src_id);
+            }
+            if count == 0 {
+                continue;
+            }
+
             if bind_edge {
-                // Look up one representative edge id (mirrors expand_row's
-                // anonymous-edge fast path). Needed whenever the alias is read
-                // downstream — including by PathBuilder, which reads it even
-                // when emit_relationship is false, so `emit_relationship`
-                // alone cannot decide this. Storage matrix orientation:
-                // src=F's seed (matrix-src), dst=F*A result (matrix-dst),
-                // regardless of self.transposed (which only affects
-                // alias→storage mapping, not the underlying matrix orientation:
-                // every `TraversalMatrix` variant multiplies by forward
-                // layers).
+                // Needed whenever the alias is read downstream — including by
+                // PathBuilder, which reads it even when emit_relationship is
+                // false, so `emit_relationship` alone cannot decide this.
+                // Storage matrix orientation: src=F's seed (matrix-src),
+                // dst=F*A result (matrix-dst), regardless of self.transposed
+                // (which only affects alias→storage mapping, not the
+                // underlying matrix orientation: every `TraversalMatrix`
+                // variant multiplies by forward layers).
                 let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx) else {
                     continue;
                 };
-                let mat_src = u64::from(src_id);
-                let mat_dst = u64::from(dest_id);
-                let mut found_id: Option<RelationshipId> = None;
+                let (mat_src, mat_dst) = if back {
+                    (u64::from(dest_id), u64::from(src_id))
+                } else {
+                    (u64::from(src_id), u64::from(dest_id))
+                };
+                let before = out_indices.len();
                 for &tidx in &state.edge_type_indices {
-                    if let Some(raw_id) =
-                        g.relationship_tensors()[tidx].get(mat_src, mat_dst).next()
-                    {
-                        found_id = Some(RelationshipId::from(raw_id));
+                    for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
+                        // The cap may fall inside one pair's parallel edges.
+                        if cap_left.is_some_and(|left| emitted + out_indices.len() >= left) {
+                            break;
+                        }
+                        out_indices.push(row_idx);
+                        out_dest_ids.push(dest_id);
+                        out_edge_ids.push(RelationshipId::from(raw_id));
+                        // One path, one edge: stop at the representative.
+                        if count == 1 {
+                            break;
+                        }
+                    }
+                    if count == 1 && out_indices.len() > before {
                         break;
                     }
                 }
-                if let Some(edge_id) = found_id {
-                    out_indices.push(row_idx);
-                    out_dest_ids.push(dest_id);
-                    out_edge_ids.push(edge_id);
-                    if self.optional {
-                        matched[row_i as usize] = true;
-                    }
+                if self.optional && out_indices.len() > before {
+                    matched[row_i as usize] = true;
                 }
             } else {
                 // No edge column to fill: either a fused chain, whose per-hop
                 // edges are anonymous & unreferenced by construction (the
                 // fusion pass enforces it) and whose intermediate node aliases
                 // are not exposed, or a single hop whose alias nothing reads.
-                // Dropping the lookup also drops its `found_id` guard, which
-                // never fired: `f` is built from these same tensors, so every
-                // pair it yields has at least one edge in one of them.
-                out_indices.push(row_idx);
-                out_dest_ids.push(dest_id);
+                // `f` is built from these same tensors, so every pair it
+                // yields has at least one edge in one of them.
+                let mut left = count as usize;
+                if let Some(cap) = cap_left {
+                    left = left.min(cap.saturating_sub(emitted + out_indices.len()));
+                }
+                while left > 0 {
+                    // A batch holds at most `BATCH_SIZE` rows: its selection
+                    // vector indexes them with a `u16`.
+                    let n = left.min(BATCH_SIZE - out_indices.len());
+                    out_indices.extend(std::iter::repeat_n(row_idx, n));
+                    out_dest_ids.extend(std::iter::repeat_n(dest_id, n));
+                    left -= n;
+                    if out_indices.len() >= BATCH_SIZE {
+                        let out_batch = Self::take_batch(
+                            batch,
+                            &mut out_indices,
+                            &mut out_dest_ids,
+                            None,
+                            to_alias.id,
+                        );
+                        emitted += out_batch.active_len();
+                        out_pending.push_back(out_batch);
+                    }
+                }
                 if self.optional {
                     matched[row_i as usize] = true;
                 }
             }
 
-            if out_indices.len() >= BATCH_SIZE {
-                let mut out_batch = batch.gather(&out_indices);
-                if bind_edge {
-                    out_batch.set_column(
-                        rp.alias.id,
-                        Column::RelIds(std::mem::take(&mut out_edge_ids)),
-                    );
-                }
-                out_batch.set_column(
+            while out_indices.len() >= BATCH_SIZE {
+                let out_batch = Self::take_batch(
+                    batch,
+                    &mut out_indices,
+                    &mut out_dest_ids,
+                    bind_edge.then_some((rp.alias.id, &mut out_edge_ids)),
                     to_alias.id,
-                    Column::NodeIds(std::mem::take(&mut out_dest_ids)),
                 );
+                emitted += out_batch.active_len();
                 out_pending.push_back(out_batch);
-                out_indices.clear();
             }
         }
 
@@ -892,6 +1359,26 @@ impl<'a> CondTraverseOp<'a> {
         true
     }
 
+    /// Moves the first `BATCH_SIZE` rows buffered by `expand_batch` out as a
+    /// batch: the input rows gathered at `indices`, with the destination (and
+    /// the edge, when bound) columns.
+    fn take_batch(
+        batch: &Batch<'a>,
+        indices: &mut Vec<usize>,
+        dest_ids: &mut Vec<NodeId>,
+        edge_ids: Option<(u32, &mut Vec<RelationshipId>)>,
+        to_alias: u32,
+    ) -> Batch<'a> {
+        let n = indices.len().min(BATCH_SIZE);
+        let mut out = batch.gather(&indices[..n]);
+        indices.drain(..n);
+        if let Some((alias, ids)) = edge_ids {
+            out.set_column(alias, Column::RelIds(ids.drain(..n).collect()));
+        }
+        out.set_column(to_alias, Column::NodeIds(dest_ids.drain(..n).collect()));
+        out
+    }
+
     /// Enumerate the single-hop results for `batch[row_idx]`, pushing each as a
     /// `(from, to, edge)` triple (already mapped onto the pattern's endpoints)
     /// into `out`. Callers pass the op's fields explicitly so this can run inside
@@ -902,10 +1389,10 @@ impl<'a> CondTraverseOp<'a> {
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
         emit_relationship: bool,
         sibling_edges: &[u32],
+        need_edge_id: bool,
+        node_unique: Option<&[SiblingEnds]>,
         transposed: bool,
         state_cell: &std::cell::RefCell<Option<CtState>>,
-        bidir_dedup: Option<&std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
-        dedup_source_alias: Option<&Variable>,
         batch: &Batch<'a>,
         row_idx: usize,
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
@@ -947,6 +1434,30 @@ impl<'a> CondTraverseOp<'a> {
             return Ok(());
         }
         let g = runtime.graph();
+        // Collapsing parallel edges to one row per pair is only exact when the
+        // relation has none.
+        // A pair joined by edges of different types holds several edges too,
+        // although no single tensor stores a parallel one.
+        let emit_relationship =
+            emit_relationship || state.multi_edge || state.edge_type_indices.len() > 1;
+        if !need_edge_id && state.multi_edge && !state.multi_counts_built {
+            let mut counts: FxHashMap<(u64, u64), u32> = FxHashMap::default();
+            for &tidx in &state.edge_type_indices {
+                for (src, dst, _) in g.relationship_tensors()[tidx].iter_multi_edges() {
+                    *counts.entry((src, dst)).or_default() += 1;
+                }
+            }
+            state.multi_counts = Arc::new(counts);
+            state.multi_counts_built = true;
+        }
+        let id_free = (!need_edge_id).then(|| Arc::clone(&state.multi_counts));
+        // Siblings compared by node (the caller filters the results) need no id
+        // check here.
+        let sibling_edges = if node_unique.is_some() {
+            &[]
+        } else {
+            sibling_edges
+        };
 
         // Map from_id/to_id to the matrix's src/dst dimensions.
         let (fwd_src_id, fwd_dst_id) = if transposed {
@@ -965,9 +1476,7 @@ impl<'a> CondTraverseOp<'a> {
         // (quadratic across input rows). Build the shared transposed
         // iterator once, lazily.
         let need_bwd_fwd = fwd_src_id.is_none() && fwd_dst_id.is_some();
-        let start;
         if state.union.is_some() {
-            start = out.len();
             Self::expand_union_row(
                 state,
                 &g,
@@ -982,6 +1491,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
+                id_free.as_deref(),
             );
         } else {
             let need_bwd_rev =
@@ -994,7 +1504,6 @@ impl<'a> CondTraverseOp<'a> {
 
             // Reuse the persistent forward iterator: seek the row range
             // instead of allocating a fresh GxB_Iterator per input row.
-            start = out.len();
             {
                 let mut fwd_borrow;
                 let mut bwd_borrow;
@@ -1030,6 +1539,7 @@ impl<'a> CondTraverseOp<'a> {
                     out,
                     emit_relationship,
                     sibling_edges,
+                    id_free.as_deref(),
                     &state.edge_type_indices,
                     &state.fwd_src_label_ids,
                     &state.fwd_dst_label_ids,
@@ -1074,36 +1584,11 @@ impl<'a> CondTraverseOp<'a> {
                     out,
                     emit_relationship,
                     sibling_edges,
+                    id_free.as_deref(),
                     &state.edge_type_indices,
                     &state.rev_src_label_ids,
                     &state.rev_dst_label_ids,
                 );
-            }
-        }
-
-        // When both this CT and its child are anonymous bidirectional,
-        // deduplicate output rows by (scan_source, final_dest) across
-        // expand_row calls — matching C FalkorDB's matrix-multiply semantics.
-        if let Some(dedup) = bidir_dedup {
-            let source_alias = dedup_source_alias.unwrap();
-            // The scan source is a parent-carried column, constant for every
-            // result of this row, so read it once.
-            let src_key = match batch.value_at(source_alias.id, row_idx) {
-                Some(Value::Node(id)) => Some(u64::from(id)),
-                _ => None,
-            };
-            let mut seen = dedup.borrow_mut();
-            let mut i = start;
-            while i < out.len() {
-                // `out[i].1` is the `to` endpoint bound on the produced row.
-                let key = src_key.map(|s| (s, u64::from(out[i].1)));
-                if let Some(k) = key
-                    && !seen.insert(k)
-                {
-                    out.swap_remove(i);
-                    continue;
-                }
-                i += 1;
             }
         }
 
@@ -1132,6 +1617,7 @@ impl<'a> CondTraverseOp<'a> {
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
         emit_relationship: bool,
         sibling_edges: &[u32],
+        id_free: Option<&FxHashMap<(u64, u64), u32>>,
     ) {
         let iters = state.union.as_deref_mut().expect("multi-type state");
         let need_bwd_rev = iters.rev.is_some() && rev_src_id.is_none() && rev_dst_id.is_some();
@@ -1179,6 +1665,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
+                id_free,
                 &state.edge_type_indices,
                 &state.fwd_src_label_ids,
                 &state.fwd_dst_label_ids,
@@ -1223,6 +1710,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
+                id_free,
                 &state.edge_type_indices,
                 &state.rev_src_label_ids,
                 &state.rev_dst_label_ids,
@@ -1244,6 +1732,7 @@ impl<'a> CondTraverseOp<'a> {
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
         emit_relationship: bool,
         sibling_edges: &[u32],
+        id_free: Option<&FxHashMap<(u64, u64), u32>>,
         edge_type_indices: &[usize],
         src_label_ids: &[LabelId],
         dst_label_ids: &[LabelId],
@@ -1280,6 +1769,13 @@ impl<'a> CondTraverseOp<'a> {
             let mat_src = u64::from(src);
             let mat_dst = u64::from(dst);
             if !emit_relationship {
+                if id_free.is_some() {
+                    // Nothing reads the edge and nothing compares ids: the pair
+                    // is the match, so skip the tensor lookup for a
+                    // representative.
+                    out.push((from_node, to_node, RelationshipId::from(0u64)));
+                    continue;
+                }
                 let mut found_id: Option<RelationshipId> = None;
                 let env = BatchRow::new(batch, row_idx);
                 'outer: for &tidx in edge_type_indices {
@@ -1300,6 +1796,15 @@ impl<'a> CondTraverseOp<'a> {
             }
 
             // Scan edges
+            if let Some(counts) = id_free {
+                // No id is read or compared: a pair holds one edge unless it is
+                // in `counts`, and each edge is one row.
+                let edges = counts.get(&(mat_src, mat_dst)).copied().unwrap_or(1);
+                for _ in 0..edges {
+                    out.push((from_node, to_node, RelationshipId::from(0u64)));
+                }
+                continue;
+            }
             let env = BatchRow::new(batch, row_idx);
             for &tidx in edge_type_indices {
                 for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
@@ -1395,10 +1900,10 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         let rp = self.relationship_pattern;
         let emit_relationship = self.emit_relationship;
         let sibling_edges = self.sibling_edges;
+        let node_unique = self.node_unique.as_deref();
+        let need_edge_id = node_unique.is_none();
         let transposed = self.transposed;
         let state_cell = &self.state;
-        let bidir_dedup = self.bidir_dedup.as_ref();
-        let dedup_source_alias = self.dedup_source_alias.as_ref();
         let record_cap = self.record_cap;
         let optional = self.optional;
         let unmatched_cell = &self.optional_unmatched;
@@ -1422,14 +1927,39 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     rp,
                     emit_relationship,
                     sibling_edges,
+                    need_edge_id,
+                    node_unique,
                     transposed,
                     state_cell,
-                    bidir_dedup,
-                    dedup_source_alias,
                     batch,
                     row_idx,
                     &mut expanded,
                 )?;
+                if let Some(siblings) = node_unique {
+                    // As in the batched path: each sibling bound to a pair of
+                    // nodes takes one of the edges that join them.
+                    let pairs: Vec<(NodeId, NodeId)> =
+                        sibling_edge_pairs(siblings, batch, row_idx).collect();
+                    if !pairs.is_empty() {
+                        let mut taken: Vec<((NodeId, NodeId), usize)> = Vec::new();
+                        expanded.retain(|&(from, to, _)| {
+                            let own = if transposed { (to, from) } else { (from, to) };
+                            let shared = pairs.iter().filter(|&&p| p == own).count();
+                            if shared == 0 {
+                                return true;
+                            }
+                            let n = match taken.iter_mut().find(|(p, _)| *p == own) {
+                                Some((_, n)) => n,
+                                None => {
+                                    taken.push((own, 0));
+                                    &mut taken.last_mut().unwrap().1
+                                }
+                            };
+                            *n += 1;
+                            *n > shared
+                        });
+                    }
+                }
                 if expanded.is_empty() {
                     // Optional traverse: remember the unexpanded row so it can
                     // be null-padded once the seeded batch is exhausted.
@@ -1462,11 +1992,6 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     // child batch and decide fast vs. per-row path for it.
                     match self.child.next() {
                         Some(Ok(b)) => {
-                            // Reset bidirectional dedup for each new input batch
-                            // so Apply/Optional scopes see fresh state.
-                            if let Some(ref dedup) = self.bidir_dedup {
-                                dedup.borrow_mut().clear();
-                            }
                             // Try the batched mxm path on the whole batch. When it
                             // fully handles the batch (`true`) its output is
                             // queued on `pending_batches` and the emitter is left

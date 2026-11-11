@@ -353,3 +353,271 @@ class testRelationPattern(FlowTestsBase):
         self.env.assertEqual(e12.src_node, 1)
         self.env.assertEqual(e12.dest_node, 2)
         self.env.assertEqual(e12.relation, 'R')
+
+    # Relationship uniqueness and multigraph cardinality must not depend on
+    # whether the relationship (or the middle node) is named.
+    def test14_relationship_uniqueness_ignores_naming(self):
+        # 3-cycle: 3 edges * 2 endpoints * 1 remaining incident edge = 6
+        g = self.db.select_graph("rel_uniqueness_cycle")
+        g.query("CREATE (a:N), (b:N), (c:N), (a)-[:R]->(b), (b)-[:R]->(c), (c)-[:R]->(a)")
+        for pattern in ["(x)-[r1]-()-[r2]-(z)",
+                        "(x)-[r1]-(m)-[r2]-(z)",
+                        "(x)-[]-()-[]-(z)",
+                        "(x)-[]-(m)-[]-(z)",
+                        "(x)-[:R]-()-[:R]-(z)"]:
+            res = g.query(f"MATCH {pattern} RETURN count(*)")
+            self.env.assertEqual(res.result_set, [[6]])
+
+        # converging pattern: Alice->Bob<-Charlie, 2 distinct edges
+        g = self.db.select_graph("rel_uniqueness_converge")
+        g.query("CREATE (:P {n:'A'})-[:F]->(:P {n:'B'})<-[:F]-(:P {n:'C'})")
+        for pattern in ["(p1:P)-[:F]->(p2:P)<-[:F]-(p3:P)",
+                        "(p1:P)-[e1:F]->(p2:P)<-[e2:F]-(p3:P)"]:
+            res = g.query(f"MATCH {pattern} RETURN count(p1)")
+            self.env.assertEqual(res.result_set, [[2]])
+
+        # multigraph: parallel edges keep their multiplicity
+        g = self.db.select_graph("rel_uniqueness_multigraph")
+        g.query("CREATE (a:V {id:1}), (b:V {id:2}), (c:V {id:3}), "
+                "(a)-[:R {eid:1}]->(b), (a)-[:R {eid:2}]->(b), "
+                "(b)-[:R {eid:3}]->(c), (b)-[:R {eid:4}]->(c), "
+                "(c)-[:R {eid:5}]->(a), (a)-[:R {eid:6}]->(a)")
+        expected = [[2, 2], [3, 4]]
+        for pattern in ["(a:V {id:1})-[:R*2]->(b:V)",
+                        "(a:V {id:1})-[r1:R]->(v:V)-[r2:R]->(b:V)",
+                        "(a:V {id:1})-[:R]->(v:V)-[:R]->(b:V)",
+                        "(a:V {id:1})-[:R]->()-[:R]->(b:V)"]:
+            res = g.query(f"MATCH {pattern} RETURN b.id AS dst, count(*) AS n ORDER BY dst")
+            self.env.assertEqual(res.result_set, expected)
+        for pattern in ["(a:V)-[:R]->(b:V)", "(a:V)-[r:R]->(b:V)"]:
+            res = g.query(f"MATCH {pattern} RETURN count(*)")
+            self.env.assertEqual(res.result_set, [[6]])
+
+    # A fused anonymous chain counts paths, not (src, dst) pairs.
+    def test15_fused_chain_counts_paths(self):
+        # diamond: two paths a -> c through distinct anonymous middle nodes
+        g = self.db.select_graph("fused_chain_diamond")
+        g.query("CREATE (a:A), (b1:B), (b2:B), (c:C), "
+                "(a)-[:R]->(b1), (a)-[:R]->(b2), (b1)-[:R]->(c), (b2)-[:R]->(c)")
+        for pattern in ["(a:A)-[:R]->()-[:R]->(c:C)", "(a:A)-[:R]->(m)-[:R]->(c:C)"]:
+            res = g.query(f"MATCH {pattern} RETURN count(*)")
+            self.env.assertEqual(res.result_set, [[2]])
+        # the anonymous form runs as one fused traverse
+        plan = str(g.explain("MATCH (a:A)-[:R]->()-[:R]->(c:C) RETURN count(*)"))
+        self.env.assertContains("fused hop", plan)
+
+        # self-loops: two on `a` and an edge a -> b. Distinct edge pairs:
+        # (s1,s2), (s2,s1) to a, and (s1,e), (s2,e) to b.
+        g = self.db.select_graph("fused_chain_self_loops")
+        g.query("CREATE (a:A), (b:B), (a)-[:R]->(a), (a)-[:R]->(a), (a)-[:R]->(b)")
+        for pattern in ["(a:A)-[:R]->()-[:R]->(c)",
+                        "(a:A)-[r1:R]->(m)-[r2:R]->(c)",
+                        "(a:A)-[]->()-[]->(c)"]:
+            res = g.query(f"MATCH {pattern} RETURN count(*)")
+            self.env.assertEqual(res.result_set, [[4]])
+
+    # A pair joined by several edges of different types is several matches.
+    def test16_multi_type_pair(self):
+        g = self.db.select_graph("multi_type_pair")
+        g.query("CREATE (a:A)-[:R]->(b:B), (a)-[:S]->(b), (a)-[:R]->(b)")
+        for pattern, expected in [("(a:A)-[:R|S]->(b)", 3),
+                                  ("(a:A)-[]->(b)", 3),
+                                  ("(a:A)-[:R]->(b)", 2),
+                                  # 3 edges, each paired with another one
+                                  ("(a:A)-[]->()<-[]-(c)", 6)]:
+            res = g.query(f"MATCH {pattern} RETURN count(*)")
+            self.env.assertEqual(res.result_set, [[expected]])
+
+    # Uniqueness among same-type anonymous edges holds on every path: batched
+    # (compared by node), per-row, and with parallel edges (compared by id).
+    def test17_converging_edges_are_distinct(self):
+        g = self.db.select_graph("converging_distinct")
+        g.query("CREATE (a:A)-[:R]->(m:M)<-[:R]-(c:A), (a)-[:R]->(a), (m)-[:R]->(m)")
+        for query, expected in [
+            ("MATCH (a)-[:R]->(m)<-[:R]-(c) RETURN count(*)", 6),
+            ("MATCH (a)-[r1:R]->(m)<-[r2:R]-(c) RETURN count(*)", 6),
+            ("MATCH (a)-[:R]->(m)-[:R]->(c) RETURN count(*)", 3),
+            ("MATCH (a)-[:R]->(m)<-[:R]-(c)-[:R]->(d) RETURN count(*)", 2),
+            ("MATCH (a)<-[:R]-(m)-[:R]->(c) RETURN count(*)", 2),
+        ]:
+            self.env.assertEqual(g.query(query).result_set, [[expected]])
+        # a parallel edge makes the same node pair two different edges
+        g.query("MATCH (a:A)-[:R]->(m:M) CREATE (a)-[:R]->(m)")
+        res = g.query("MATCH (a)-[:R]->(m)<-[:R]-(c) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[20]])
+
+    # A pair joined by edges of different types holds several edges although
+    # no single type has a parallel one; every traverse path counts them all.
+    def test18_cross_type_pair_without_parallel_edges(self):
+        g = self.db.select_graph("cross_type_pair")
+        g.query("CREATE (a:A)-[:R]->(b:B), (a)-[:S]->(b)")
+        for query in [
+            "MATCH (a:A)-[:R|S]->(b:B) RETURN count(*)",
+            "MATCH (a:A)-[]->(b:B) RETURN count(*)",
+            "MATCH (a:A)-[:R|S]-(b:B) RETURN count(*)",
+            "MATCH (a:A)-[]-(b:B) RETURN count(*)",
+            "MATCH (a:A)-[r:R|S]->(b:B) RETURN count(*)",
+            "OPTIONAL MATCH (a:A)-[:R|S]-(b:B) RETURN count(*)",
+            "MATCH (a:A), (b:B) WITH a, b MATCH (a)-[:R|S]->(b) RETURN count(*)",
+            "MATCH (a:A), (b:B) WITH a, b MATCH (a)-[]->(b) RETURN count(*)",
+        ]:
+            self.env.assertEqual(g.query(query).result_set, [[2]], depth=1)
+
+    # One input entry fanning out into more rows than a batch (or a u16 row
+    # index) holds is split, and stops at the record cap.
+    def test19_fused_multiplicity_is_batched(self):
+        g = self.db.select_graph("fused_multiplicity")
+        # the big entry sits between two that pass, whichever way the scan runs
+        g.query("CREATE (:A {v: 2})-[:R]->(:M)-[:S]->(:C {v: 2}), "
+                "(a:A {v: 1})-[:R]->(m:M)-[:S]->(c:C {v: 2}), "
+                "(:A {v: 2})-[:R]->(:M)-[:S]->(:C {v: 2})")
+        g.query("UNWIND range(1, 256) AS i MATCH (a:A {v: 1}), (m:M)<-[:R]-(a), (c:C)<-[:S]-(m) "
+                "CREATE (a)-[:R]->(m), (m)-[:S]->(c)")
+        base = "MATCH (a:A)-[:R]->()-[:S]->(c:C) "
+        self.env.assertEqual(g.query(base + "RETURN count(*)").result_set, [[257 * 257 + 2]])
+        # a filter over rows of one oversized entry must keep each row's own values
+        res = g.query(base + "WHERE a.v + c.v >= 3 RETURN a.v, count(*) ORDER BY a.v")
+        self.env.assertEqual(res.result_set, [[1, 257 * 257], [2, 2]])
+        res = g.query(base + "WHERE a.v + c.v = 99 RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[0]])
+        res = g.query(base + "RETURN c.v LIMIT 5")
+        self.env.assertEqual(res.result_set, [[2]] * 5)
+
+    # A traverse drops the rows whose edges the pattern already used, so a LIMIT
+    # above it cannot cap the traverse beneath it: the first row of the lower
+    # traverse is a->b, which the converging pattern has no match for.
+    def test20_limit_does_not_cap_a_row_dropping_traverse(self):
+        g = self.db.select_graph("limit_through_traverse")
+        g.query("CREATE (a:P)-[:R]->(b:P), (c:P)-[:R]->(m:P), (d:P)-[:R]->(m), (m)-[:S]->(z:P)")
+        for query in [
+            "MATCH (x)-[:R]->(y)<-[:R]-(z) RETURN 1 LIMIT 1",
+            "MATCH (x)-[r1:R]->(y)<-[r2:R]-(z) RETURN 1 LIMIT 1",
+        ]:
+            self.env.assertEqual(g.query(query).result_set, [[1]], depth=1)
+
+    # The parallel-edge counts and pending-delta structures a traversal reuses
+    # must follow writes: the fused count, the unfused named count and the
+    # edge total agree after every kind of change.
+    def test18_counts_follow_writes(self):
+        g = self.db.select_graph("counts_follow_writes")
+        g.query("UNWIND range(0, 9) AS i CREATE (:W {i: i})")
+        g.query("MATCH (a:W), (b:W) WHERE b.i = (a.i + 1) % 10 CREATE (a)-[:R]->(b)")
+
+        def check():
+            fused = g.query("MATCH (a:W)-[:R]->()-[:R]->(c) RETURN count(*)").result_set[0][0]
+            named = g.query("MATCH (a:W)-[r1:R]->(m)-[r2:R]->(c) RETURN count(r1) + 0 * count(r2)").result_set[0][0]
+            single = g.query("MATCH (a:W)-[:R]->(b) RETURN count(*)").result_set[0][0]
+            total = g.query("MATCH ()-[r:R]->() RETURN count(r)").result_set[0][0]
+            self.env.assertEqual(fused, named)
+            self.env.assertEqual(single, total)
+            return fused, total
+
+        self.env.assertEqual(check(), (10, 10))
+        # a second edge on a committed pair promotes it to a multi-edge pair
+        g.query("MATCH (a:W {i: 0}), (b:W {i: 1}) CREATE (a)-[:R]->(b)")
+        # out(0) and in(1) are now 2: 8 single-edge middles + 2 + 2
+        self.env.assertEqual(check(), (12, 11))
+        # more parallel edges, and an edge into a node that has none
+        g.query("MATCH (a:W {i: 0}), (b:W {i: 1}) CREATE (a)-[:R]->(b), (a)-[:R]->(b)")
+        g.query("MATCH (a:W {i: 5}), (b:W {i: 5}) CREATE (a)-[:R]->(b)")
+        fused, total = check()
+        self.env.assertEqual(total, 14)
+        # deleting one of the parallel edges and a single-edge pair
+        g.query("MATCH (a:W {i: 0})-[r:R]->(b:W {i: 1}) WITH r LIMIT 1 DELETE r")
+        g.query("MATCH (a:W {i: 7})-[r:R]->(b:W {i: 8}) DELETE r")
+        fused, total = check()
+        self.env.assertEqual(total, 12)
+
+    # A LIMIT must still return rows when the first sources have no match and
+    # when a later traverse drops what an earlier one produced (a label check, a
+    # uniqueness check): no cap may be pushed below an operator that can drop.
+    def test20_limit_under_dropping_traverses(self):
+        g = self.db.select_graph("limit_dropping")
+        # 300 isolated sources first, then chains whose only D is far away
+        g.query("UNWIND range(1, 300) AS i CREATE (:S {id: i})")
+        g.query("UNWIND range(1, 300) AS i CREATE (:S {id: 1000 + i})-[:E]->(:X {id: i})")
+        g.query("MATCH (x:X {id: 300}) CREATE (x)-[:E]->(:D {id: 99})")
+        for q in ["MATCH (s:S)-[]-()-[]-(d:D) RETURN d.id LIMIT 1",
+                  "MATCH (s:S)-[:E]->()-[:E]->(d:D) RETURN d.id LIMIT 1",
+                  "MATCH (s:S)-[:E]->(x)-[:E]->(d:D) RETURN d.id LIMIT 1"]:
+            self.env.assertEqual(g.query(q).result_set, [[99]])
+        # converging edges: the first rows reuse one edge and are dropped
+        g2 = self.db.select_graph("limit_dropping_converge")
+        g2.query("CREATE (a:A)-[:R]->(m:M)<-[:R]-(c:A)")
+        res = g2.query("MATCH (x)-[:R]->(y)<-[:R]-(z) RETURN 1 LIMIT 1")
+        self.env.assertEqual(len(res.result_set), 1)
+        # a fused chain under a small LIMIT returns exactly that many rows
+        g3 = self.db.select_graph("limit_fused")
+        g3.query("UNWIND range(1, 500) AS i CREATE (:N {id: i})")
+        g3.query("MATCH (a:N), (b:N) WHERE b.id = a.id % 500 + 1 CREATE (a)-[:R]->(b)")
+        for lim in (1, 10, 100):
+            res = g3.query(f"MATCH (a:N)-[:R]->()-[:R]->(c) RETURN c.id LIMIT {lim}")
+            self.env.assertEqual(len(res.result_set), lim)
+
+    # An anonymous edge whose type no other edge of the pattern can bind checks
+    # no uniqueness. Edge id 0 here is the U edge; the two T edges, compared by
+    # node, bind no real id, and the U traverse used to reject its edge as
+    # "already used" against their placeholder 0.
+    def test21_disjoint_type_edge_is_not_compared_to_the_others(self):
+        g = self.db.select_graph("disjoint_type_edge")
+        g.query("CREATE (a:A {id: 1}), (b:B {id: 2}), (c:C {id: 3})")
+        g.query("MATCH (b:B), (c:C) CREATE (b)-[:U]->(c)")
+        g.query("MATCH (a:A), (b:B) CREATE (b)-[:T]->(a), (a)-[:T]->(b), (a)-[:T]->(b), (a)-[:T]->(b)")
+        res = g.query("MATCH (n0:B)<-[:T]-(n1)<-[:T]-(n2)-[:U]->(n3) RETURN n3.id, count(*)")
+        self.env.assertEqual(res.result_set, [[3, 3]])
+        res = g.query("MATCH (n0:B)<-[r:T]-(n1)<-[s:T]-(n2)-[:U]->(n3) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[3]])
+
+    # A traverse the planner transposed (it starts at the pattern's `to`) runs
+    # as one product over the backward adjacency: parallel edges, several types
+    # (one of them unknown), labels at both ends, and writes after the load.
+    def test22_backward_batched_traverse(self):
+        g = self.db.select_graph("backward_batched")
+        g.query("UNWIND range(0, 5) AS i CREATE (:L {id: i})")
+        g.query("MATCH (a:L), (b:L) WHERE b.id = (a.id + 1) % 6 CREATE (a)-[:R]->(b), (a)-[:R]->(b)")
+        g.query("MATCH (a:L {id: 0}), (b:L {id: 3}) CREATE (a)-[:S]->(b)")
+        g.query("MATCH (a:L {id: 2}) CREATE (a)-[:R]->(a)")
+        # brute force the expected counts from the edge list itself
+        edges = [(i, (i + 1) % 6, "R") for i in range(6)] * 2 + [(0, 3, "S"), (2, 2, "R")]
+
+        def paths(types):
+            n = 0
+            for i, (s1, d1, t1) in enumerate(edges):
+                for j, (s2, d2, t2) in enumerate(edges):
+                    if i != j and d1 == d2 and t1 in types and t2 in types:
+                        n += 1
+            return n
+        for pat, types in [("(a:L)-[:R]->(m)<-[:R]-(b)", {"R"}),
+                           ("(a:L)-[:R|S]->(m)<-[:R|S]-(b)", {"R", "S"}),
+                           ("(a:L)-[:R|NOPE]->(m)<-[:R|NOPE]-(b)", {"R"}),
+                           ("(a:L)-[]->(m)<-[]-(b)", {"R", "S"})]:
+            for where in ["", " WHERE a.id < 3", " WHERE b.id = 2"]:
+                res = g.query(f"MATCH {pat}{where} RETURN count(*)")
+                want = 0
+                for i, (s1, d1, t1) in enumerate(edges):
+                    for j, (s2, d2, t2) in enumerate(edges):
+                        if i == j or d1 != d2 or t1 not in types or t2 not in types:
+                            continue
+                        if where == " WHERE a.id < 3" and not s1 < 3:
+                            continue
+                        if where == " WHERE b.id = 2" and s2 != 2:
+                            continue
+                        want += 1
+                self.env.assertEqual(res.result_set, [[want]])
+        # an edge added after the first run is seen by the cached structures
+        g.query("MATCH (a:L {id: 1}), (b:L {id: 3}) CREATE (a)-[:R]->(b), (a)-[:R]->(b)")
+        edges += [(1, 3, "R")] * 2
+        res = g.query("MATCH (a:L)-[:R]->(m)<-[:R]-(b) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[paths({"R"})]])
+
+    # Undirected anonymous hops over disjoint types are not deduplicated by
+    # (source, destination): each pair of edges is its own path.
+    def test23_undirected_disjoint_types_count_every_edge_pair(self):
+        g = self.db.select_graph("undirected_disjoint")
+        g.query("CREATE (n0:P {id: 0}), (n1:P {id: 1}), (n2:P {id: 2}), "
+                "(n2)-[:T]->(n0), (n2)-[:T]->(n0), (n0)-[:R]->(n0), (n0)-[:R]->(n1)")
+        res = g.query("MATCH (a:P {id: 2})-[:T]-()-[:R]-(b) RETURN a.id, b.id ORDER BY b.id")
+        # via n0: 2 T edges x (the R self-loop, and the R to n1)
+        self.env.assertEqual(sorted(res.result_set), sorted([[2, 0]] * 2 + [[2, 1]] * 2))
+        res = g.query("MATCH (a:P {id: 2})-[:T]-(m)-[:R]-(b) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[4]])
