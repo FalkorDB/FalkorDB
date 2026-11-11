@@ -69,6 +69,8 @@
 //! position), producing the effective state — sorted by `(row, col)` —
 //! without materializing a merged matrix or issuing per-entry point lookups.
 
+#[cfg(feature = "index-falkordb")]
+use std::borrow;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -85,55 +87,14 @@ use crate::graph::{
 
 /// The effective matrix of a base and its two delta layers, `(m ∖ dm) ∪ dp`,
 /// as [`effective`] returns it: the base itself, `Borrowed`, when neither
-/// delta holds anything; a new matrix, `Owned`, otherwise.
+/// delta holds anything; a new matrix, `Owned`, otherwise. Read it through
+/// `Deref`, which never copies.
 ///
-/// Copy on write. Reading (it derefs to `&Matrix`) never copies. Writing goes
-/// through [`Self::to_mut`], the one way to a `&mut Matrix`: it deep-copies a
-/// `Borrowed` base once and is free on an `Owned` matrix. There is no
-/// `DerefMut`, so a copy is never implicit.
-///
-/// Not `std::borrow::Cow`: `Matrix`'s `Clone` is shallow (it shares the
-/// GraphBLAS handle), so `ToOwned` would not copy.
+/// `Matrix`'s `Clone` is shallow (a clone shares the GraphBLAS handle), so
+/// `to_mut` or `into_owned` on a borrowed base would share the base, not
+/// copy it: a matrix of one's own is a `dup()`.
 #[cfg(feature = "index-falkordb")]
-pub(crate) enum Effective<'a, T> {
-    /// The base layer itself, shared with every snapshot that holds it.
-    Borrowed(&'a Matrix<T>),
-    /// A matrix no layer or snapshot shares: the merge, or a copy of the base.
-    Owned(Matrix<T>),
-}
-
-#[cfg(feature = "index-falkordb")]
-impl<T> Effective<'_, T> {
-    /// A mutable reference to a matrix this value owns, copying first if it
-    /// does not own one: a `Borrowed` base is deep-copied (`GrB_Matrix_dup`,
-    /// `O(nvals)` time and memory) and the value becomes `Owned`; an `Owned`
-    /// matrix is returned as it is. Writes through the result never reach the
-    /// layers or any snapshot.
-    ///
-    /// The copy cannot be a `clone()`: a cloned `Matrix` shares its handle,
-    /// so writing through it would write into the base.
-    pub(crate) fn to_mut(&mut self) -> &mut Matrix<T> {
-        if let Self::Borrowed(base) = *self {
-            *self = Self::Owned(base.dup());
-        }
-        match self {
-            Self::Owned(m) => m,
-            Self::Borrowed(_) => unreachable!("replaced by its copy above"),
-        }
-    }
-}
-
-#[cfg(feature = "index-falkordb")]
-impl<T> Deref for Effective<'_, T> {
-    type Target = Matrix<T>;
-
-    fn deref(&self) -> &Matrix<T> {
-        match self {
-            Self::Borrowed(m) => m,
-            Self::Owned(m) => m,
-        }
-    }
-}
+pub(crate) type Effective<'a, T> = borrow::Cow<'a, Matrix<T>>;
 
 /// `(m ∖ dm) ∪ dp` in one GraphBLAS call: `eff<¬dm> = m ⊕ dp` (into a new matrix), with
 /// `⊕` from the element type ([`EWiseAdd`]), so on a `u64` layer a pending
@@ -778,8 +739,7 @@ impl<T> VersionedMatrix<T> {
     }
 
     /// The matrix a reader sees, `(m ∖ dm) ∪ dp`, as one GraphBLAS matrix
-    /// (see [`Effective`]): no copy when both deltas are empty. Writable
-    /// through [`Effective::to_mut`], which copies only a borrowed base.
+    /// (see [`Effective`]): no copy when both deltas are empty.
     #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub(crate) fn effective(&self) -> Effective<'_, T>
