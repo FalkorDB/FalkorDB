@@ -28,7 +28,7 @@ graph/src/planner/binder.rs	Binder::fresh_var	2262	PROVEN	freshVar: fresh_not_us
 graph/src/planner/binder.rs	Binder::ensure_type	2278	PROVEN	ensureType_table, ensureType_accepts_any_binding
 graph/src/planner/binder.rs	Binder::validate_boolean_operands	2299	PROVEN	Types.validate_logical, validate_nonlogical
 graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2303	PROVEN	Types.validate (recursive), validate_logical/nonlogical
-graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2325	PROVEN	Types.mayBool_sound_except; getElement_rejected (CONFIRMED bug binder.rs:2347), negate_rejected, arith_accepted; Paren arm is unreachable! since #3335 (bound trees have none: BindExpr.bind_paren, TK has no paren)
+graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2325	PROVEN	Types.mayBool_sound_except; getElement_rejected (CONFIRMED bug binder.rs:2354), negate_rejected, arith_accepted; Paren arm is unreachable! since #3335 (bound trees have none: BindExpr.bind_paren, TK has no paren)
 graph/src/planner/binder.rs	Binder::expr_may_return_entity	2394	PROVEN	Types.mayEntity_eq (= reference canEnt); Paren arm unreachable! since #3335 (TK has no paren)
 graph/src/planner/binder.rs	expr_tree_to_value	2467	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
 graph/src/planner/binder.rs	expr_tree_to_value::node_to_value	2469	PROVEN	Fold.nodeToValue_sound (folded value = runtime value), nodeToValue_complete
@@ -39,7 +39,7 @@ graph/src/planner/binder.rs	replace_agg_subtrees	2616	PROVEN	AggEq.replaceAgg_id
 graph/src/planner/binder.rs	raw_exprs_structurally_equal	2646	PROVEN	AggEq.structEq: nodesEq_refl, nodesEq_symm, order_by_wrong_aggregate (CONFIRMED bug), order_by_int_distinguished
 graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	2650	PROVEN	AggEq.isAggPlaceholder_iff
 graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	2654	PROVEN	AggEq.eqS/strip (placeholder filter at every level), eqS_refl, eqS_symm
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2684	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, const_kinds_conflated (bug cause: the `_ =>` discriminant fallback, binder.rs:2695)
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2684	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, const_kinds_conflated (bug cause: the `_ =>` discriminant fallback, binder.rs:2698)
 graph/src/planner/binder.rs	sorted_scope_vars	2705	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
 graph/src/planner/binder.rs	merge_scope_vars	2713	PROVEN	mergeSV_ge, mergeSV_covers
 graph/src/planner/mod.rs	Planner::fresh_var	871	PROVEN	mint_fresh_iff (planner mints len, len+1, ...)

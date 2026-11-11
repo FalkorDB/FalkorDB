@@ -135,13 +135,14 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 90 rows: 48 in `planner/mod.rs`, 41 in `parser/ast.rs` and 1 in `planner/hop_order.rs`.
+`COVERAGE.tsv` has 91 rows: 49 in `planner/mod.rs`, 41 in `parser/ast.rs` and 1 in `planner/hop_order.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 90 |
+| PROVEN | 89 |
+| NOT COVERED | 2 |
 
-Every function listed is PROVEN. For the functions involved in the open bugs, the theorems include the counterexamples.
+The two NOT COVERED rows are in `planner/mod.rs`: `IR::makes_write_query` (not modelled) and `IR::fmt`, whose model has no CCH DDL variants. Every other function listed is PROVEN. For the functions involved in the open bugs, the theorems include the counterexamples.
 
 ## What the model does not cover
 
