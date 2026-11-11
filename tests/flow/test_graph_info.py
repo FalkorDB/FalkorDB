@@ -74,24 +74,27 @@ class LoggedQuery:
 def StreamName(graph):
     return f"telemetry{{{graph.name}}}"
 
-def consumeStream(conn, env, stream, drop=True, n_items=1):
+def consumeStream(conn, env, stream, drop=True, n_items=1, timeout=30):
     # wait for telemetry stream to be created
     t = 'none' # type of stream_key
+    deadline = time.time() + timeout
 
-    while t == 'none':
+    while t == 'none' and time.time() < deadline:
         time.sleep(0.2)
         t = conn.type(stream)
 
     env.assertEquals(t, "stream")
+    if t != "stream":
+        return []
 
     # convert stream events to LoggedQueries
     logged_queries = []
     streams = {stream: '0-0'}
 
-    elapsed = 10
-    while len(logged_queries) < n_items and elapsed > 0:
-        # read messages from the stream
-        messages = conn.xread(streams, block=0)
+    # a finite block, bounded by the deadline, so a missing entry fails the
+    # test promptly instead of hanging on XREAD BLOCK 0 forever
+    while len(logged_queries) < n_items and time.time() < deadline:
+        messages = conn.xread(streams, block=200)
 
         if len(messages) > 0:
             # process each message received
@@ -101,9 +104,6 @@ def consumeStream(conn, env, stream, drop=True, n_items=1):
 
             # update stream last ID
             streams[stream] = stream_messages[-1][0]
-
-        time.sleep(0.2)
-        elapsed -= 0.2
 
     # drop stream
     if drop:
@@ -116,7 +116,7 @@ def consumeStream(conn, env, stream, drop=True, n_items=1):
 
 class testGraphInfo():
     def __init__(self):
-        self.env, self.db = Env()
+        self.env, self.db = Env(enableDebugCommand=True)
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
@@ -461,89 +461,328 @@ class testGraphInfo():
         for t in threads:
             t.join()
 
-#class testGraphInfoReplication():
-#    def __init__(self):
-#        self.env, self.db = Env(env='oss', useSlaves=True)
-#
-#        # skip test if we're running under Sanitizer
-#        if SANITIZER:
-#            self.env.skip()
-#
-#        self.env.flush()  # clean slate
-#
-#        self.master  = self.env.getConnection()
-#        self.replica = self.env.getSlaveConnection()
-#        self.master_graph  = Graph(self.master, GRAPH_ID)
-#        self.replica_graph = Graph(self.replica, GRAPH_ID)
-#
-#        self.master_host = self.master.connection_pool.connection_kwargs['host']
-#        self.master_port = self.master.connection_pool.connection_kwargs['port']
-#        self.replica_host  = self.replica.connection_pool.connection_kwargs['host']
-#        self.replica_port  = self.replica.connection_pool.connection_kwargs['port']
-#
-#    def test01_stream_replication(self):
-#        """validate telemetry stream writer in the event of a failover
-#           only the master should be writing data to the telemetry stream
-#           and stream right should be replicated"""
-#
-#        # test flow:
-#        # 1. write to replica, expect no telemetry
-#        # 2. write to master, expect telemetry on both master & replica
-#        # 3. failover
-#        # 4. write to new replica, expect no telemetry
-#        # 5. write to new master, expect telemetry on both master & replica
-#
-#        performed_failover = False
-#        self.master_graph  = Graph(self.master, "start")
-#        self.replica_graph = Graph(self.replica, "start")
-#
-#        for i in range(2):
-#            # alow writes on replica
-#            self.replica.config_set("replica-read-only", "no")
-#
-#            # write some queries directly on the replica
-#            # assert that a telemetry stream is NOT created
-#            for _ in range(0, 20):
-#                self.replica_graph.query("CREATE ()")
-#
-#            # wait a bit before checking if a telemetry stream been created
-#            time.sleep(4)
-#
-#            # telemetry key shouldn't exists
-#            self.env.assertFalse(self.replica.exists(StreamName(self.replica_graph)))
-#
-#            # write some queries to the master and validate that a telemetry stream
-#            # is created
-#            for _ in range(20):
-#                self.master_graph.query("CREATE ()")
-#
-#            # ensure replication is caught up
-#            self.master.wait(1, 2000)
-#
-#            # read stream from master
-#            logged_queries = consumeStream(self.master, self.env, StreamName(self.master_graph), drop=False, n_items=20)
-#            self.env.assertEquals(len(logged_queries), 20)
-#
-#            # ensure stream replicated to replica
-#            logged_queries = consumeStream(self.replica, self.env, StreamName(self.replica_graph), drop=False, n_items=20)
-#            self.env.assertEquals(len(logged_queries), 20)
-#
-#            if performed_failover:
-#                return
-#
-#            # Trigger failover
-#            # make replica become master
-#            self.replica.execute_command("REPLICAOF", "NO", "ONE")
-#
-#            # make old master a replica of new master
-#            self.master.execute_command("REPLICAOF", self.replica_host, self.replica_port)
-#
-#            performed_failover = True
-#
-#            # reset variables
-#            t = self.master
-#            self.master  = self.replica
-#            self.replica = t
-#            self.master_graph  = Graph(self.master, "after_failover")
-#            self.replica_graph = Graph(self.replica, "after_failover")
-#
+    def test08_cmd_info_off_at_runtime(self):
+        """turning CMD_INFO off at runtime stops telemetry writes"""
+
+        stream = StreamName(self.graph)
+
+        try:
+            # the cron task holds the GIL for its whole run, so once this
+            # returns every later run sees CMD_INFO off
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no")
+            self.conn.delete(stream)
+
+            for _ in range(3):
+                self.graph.query("RETURN 'off'")
+
+            # the cron task runs at least every 3 seconds
+            time.sleep(4)
+            self.env.assertFalse(self.conn.exists(stream))
+        finally:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "yes")
+
+        # back on: new queries are written, the ones issued while off are not
+        self.graph.query("RETURN 'on'")
+        logged_queries = consumeStream(self.conn, self.env, stream, n_items=1)
+        self.env.assertEquals([q.Query for q in logged_queries], ["RETURN 'on'"])
+
+    def test09_cmd_info_back_on_before_cron_runs(self):
+        """a query issued while CMD_INFO is off is not written, even when
+           CMD_INFO is turned back on before the cron task's next run"""
+
+        stream = StreamName(self.graph)
+        self.conn.delete(stream)
+
+        # no wait between the toggles: the cron task, which runs every 250ms
+        # to 3 seconds, most likely sees CMD_INFO on
+        try:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no")
+            self.graph.query("RETURN 'off'")
+        finally:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "yes")
+
+        self.graph.query("RETURN 'on'")
+        logged_queries = consumeStream(self.conn, self.env, stream, n_items=1)
+        self.env.assertEquals([q.Query for q in logged_queries], ["RETURN 'on'"])
+
+    def test10_telemetry_stripped_on_reload(self):
+        """telemetry is node-local and is kept out of snapshots: a synchronous
+           save (DEBUG RELOAD) drops the stream, so the divergent consumer-group
+           cursor Redis replicates for it can never corrupt an RDB"""
+
+        stream = StreamName(self.graph)
+
+        # produce a telemetry entry
+        self.graph.query("RETURN 'reload'")
+        logged_queries = consumeStream(self.conn, self.env, stream, drop=False,
+                n_items=1)
+        self.env.assertEquals([q.Query for q in logged_queries], ["RETURN 'reload'"])
+
+        # DEBUG RELOAD saves and loads the RDB in the main process; the stream
+        # is stripped at save, so it is gone afterwards and the reload succeeds
+        self.env.assertEquals(self.conn.execute_command("DEBUG", "RELOAD"), "OK")
+        self.env.assertTrue(self.conn.ping())
+        self.env.assertFalse(self.conn.exists(stream))
+
+    def test11_bgsave_keeps_live_telemetry_but_strips_rdb(self):
+        """a background save strips telemetry in the fork child only: the live
+           server keeps its stream, but the RDB the save produced holds none of
+           it"""
+
+        stream = StreamName(self.graph)
+
+        # produce a telemetry entry
+        self.graph.query("RETURN 'bgsave'")
+        self.env.assertTrue(_wait_for(lambda: self.conn.exists(stream)))
+
+        # BGSAVE forks a child that strips its copy of the stream; the live
+        # server is a separate process and keeps the stream intact
+        self.conn.execute_command("BGSAVE")
+        self.env.assertTrue(_wait_for(lambda:
+            self.conn.info("persistence")["rdb_bgsave_in_progress"] == 0))
+        self.env.assertEquals(
+            self.conn.info("persistence")["rdb_last_bgsave_status"], "ok")
+        self.env.assertTrue(self.conn.exists(stream))
+
+        # load the RDB the background save produced (NOSAVE, no re-save): it
+        # holds no telemetry, so the stream is absent after loading it
+        self.env.assertEquals(
+            self.conn.execute_command("DEBUG", "RELOAD", "NOSAVE"), "OK")
+        self.env.assertFalse(self.conn.exists(stream))
+
+    def test12_async_delete_strips_telemetry_synchronously(self):
+        """with ASYNC_DELETE on, removing a graph defers its data free to a
+           worker, but the telemetry stream must be deleted synchronously with
+           the graph key, so a save in that window can't persist an orphaned
+           stream the registry-based strip no longer sees"""
+
+        g      = self.db.select_graph("async_del")
+        stream = StreamName(g)
+
+        try:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "ASYNC_DELETE", "yes")
+
+            # produce a telemetry entry for the graph
+            g.query("CREATE ()")
+            self.env.assertTrue(_wait_for(lambda: self.conn.exists(stream)))
+
+            # delete the graph; the graph-data free is deferred to a worker, but
+            # the telemetry stream is deleted synchronously with the key, so it
+            # is already gone when GRAPH.DELETE returns
+            self.conn.execute_command("GRAPH.DELETE", "async_del")
+            self.env.assertFalse(self.conn.exists(stream))
+        finally:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "ASYNC_DELETE", "no")
+
+def _wait_for(condition, timeout=10):
+    """poll condition until it holds or timeout seconds pass"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if condition():
+            return True
+        time.sleep(0.1)
+    return False
+
+class testGraphInfoOffAtLoad():
+    """CMD_INFO off at module load, turned on at runtime"""
+
+    def __init__(self):
+        self.env, self.db = Env(moduleArgs='CMD_INFO no')
+        self.conn = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+    def test01_turned_on_at_runtime(self):
+        """queries issued before CMD_INFO is turned on are not written"""
+
+        stream = StreamName(self.graph)
+
+        for _ in range(3):
+            self.graph.query("RETURN 'off'")
+
+        # the cron task runs at least every 3 seconds
+        time.sleep(4)
+        self.env.assertFalse(self.conn.exists(stream))
+
+        try:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "yes")
+
+            self.graph.query("RETURN 'on'")
+            logged_queries = consumeStream(self.conn, self.env, stream, n_items=1)
+            self.env.assertEquals([q.Query for q in logged_queries], ["RETURN 'on'"])
+        finally:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no")
+
+class testGraphInfoAof():
+    """telemetry is node-local and never replicated, so it is not written to
+       the AOF; replaying the AOF restores no telemetry and logs nothing, since
+       the replayed queries run under the loading flag"""
+
+    def __init__(self):
+        self.env, self.db = Env(useAof=True, enableDebugCommand=True)
+        self.conn = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+    def test01_aof_holds_no_telemetry(self):
+        stream = StreamName(self.graph)
+
+        try:
+            # replicate the writes as GRAPH.QUERY, so the AOF holds the queries
+            # themselves (not effects)
+            self.db.config_set("EFFECTS_THRESHOLD", 999999)
+
+            for _ in range(3):
+                self.graph.query("CREATE ()")
+
+            # the node logs its own telemetry locally
+            self.env.assertTrue(_wait_for(lambda: self.conn.exists(stream) and
+                self.conn.xinfo_stream(stream)["entries-added"] == 3))
+
+            # the AOF holds the GRAPH.QUERY commands but none of the node-local
+            # telemetry entries, so replaying it restores no telemetry stream
+            self.env.assertEquals(self.conn.execute_command("DEBUG", "LOADAOF"), "OK")
+
+            # the cron task runs at least every 3 seconds; the replayed queries
+            # ran under the loading flag and were not logged
+            time.sleep(4)
+            self.env.assertFalse(self.conn.exists(stream))
+        finally:
+            self.db.config_set("EFFECTS_THRESHOLD", 0)
+
+class testGraphInfoReplication():
+    """telemetry streams are node-local: each node logs only the queries it
+       serves, the writes are not replicated, and the streams are stripped from
+       every snapshot so a divergent consumer-group cursor can never corrupt an
+       RDB across a failover"""
+
+    def __init__(self):
+        # replication timing doesn't play well with Valgrind/sanitizers
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env(env='oss', useSlaves=True, enableDebugCommand=True)
+        self.master  = self.env.getConnection()
+        self.replica = self.env.getSlaveConnection()
+
+    def _roles(self):
+        """the current (master, replica) connections, test02 swaps them
+
+           waits for the replica's link to be up: the first full sync is
+           delayed by repl-diskless-sync-delay, and one that lands mid-test
+           would replace the replica's own stream with the master's snapshot"""
+        if self.master.info("replication")["role"] == "master":
+            master, replica = self.master, self.replica
+        else:
+            master, replica = self.replica, self.master
+
+        self.env.assertTrue(_wait_for(lambda:
+            replica.info("replication")["master_link_status"] == "up", timeout=30))
+        return master, replica
+
+    def _port(self, conn):
+        """the port of the server conn is connected to"""
+        runner = self.env.envRunner
+        return runner.port if conn is self.master else runner.slavePort
+
+    def test01_streams_are_node_local(self):
+        """each node logs only the queries it serves: the master its writes,
+           the replica its own reads; neither appears in the other's stream"""
+
+        master, replica = self._roles()
+        master_graph  = Graph(master, GRAPH_ID)
+        replica_graph = Graph(replica, GRAPH_ID)
+        stream        = StreamName(master_graph)
+
+        # the master serves a write; the replica applies it through replication
+        # but does not log it, it is the master's query not the replica's own
+        master_graph.query("CREATE ()")
+        self.env.assertTrue(_wait_for(lambda:
+            master.exists(stream) and master.xlen(stream) == 1))
+
+        # the replica serves a read-only query of its own
+        replica_graph.ro_query("MATCH (n) RETURN count(n)")
+        self.env.assertTrue(_wait_for(lambda:
+            replica.exists(stream) and replica.xlen(stream) == 1))
+
+        # the streams are independent: the master holds only its write, the
+        # replica only its own read, neither carries the other's query
+        master_q  = consumeStream(master,  self.env, stream, drop=False, n_items=1)
+        replica_q = consumeStream(replica, self.env, stream, drop=False, n_items=1)
+        self.env.assertEquals([q.Query for q in master_q],  ["CREATE ()"])
+        self.env.assertEquals([q.Query for q in replica_q],
+                ["MATCH (n) RETURN count(n)"])
+
+    def test02_survives_failover_and_reload(self):
+        """Redis replicates the telemetry stream's consumer-group cursor onto
+           the replica's own (shorter) stream; stripping telemetry from every
+           snapshot keeps a promoted node able to save, reload and full-sync,
+           whatever state that cursor ends up in.
+
+           note: the exact entries-read > entries-added state that breaks the
+           loader is a timing-dependent replication artifact (Redis 8.10 clamps
+           XGROUP SETID and rejects a lowering XSETID, so it can't be forced),
+           so this asserts the deterministic properties: the group really
+           replicated, and the promoted node survives save/reload/full-sync"""
+
+        master, replica = self._roles()
+        # a dedicated graph, so no earlier test's entries are in the stream
+        master_graph  = Graph(master, "failover")
+        replica_graph = Graph(replica, "failover")
+        stream        = StreamName(master_graph)
+
+        # the master writes its own entries
+        for _ in range(3):
+            master_graph.query("CREATE ()")
+        self.env.assertTrue(_wait_for(lambda:
+            master.exists(stream) and master.xlen(stream) == 3))
+
+        # the replica serves its own read-only queries first, so its node-local
+        # stream exists and diverges from the master's (fewer entries, its own
+        # IDs) before the master's group state replicates onto it
+        for _ in range(2):
+            replica_graph.ro_query("MATCH (n) RETURN count(n)")
+        self.env.assertTrue(_wait_for(lambda:
+            replica.exists(stream) and replica.xlen(stream) == 2))
+
+        # an exporter reads the master's stream through a consumer group; the
+        # group and its cursor replicate onto the replica's own (shorter) stream
+        master.execute_command("XGROUP", "CREATE", stream, "exporter", "0")
+        master.xreadgroup("exporter", "consumer", {stream: ">"}, count=100)
+        master.execute_command("WAIT", "1", "10000")
+
+        # the group really did replicate onto the replica's stream, so the
+        # consumer-group state carried across the failover below is actually
+        # present (not a silently-missing group the test would skip over)
+        self.env.assertTrue(_wait_for(lambda:
+            any(grp["name"] == "exporter"
+                for grp in replica.xinfo_groups(stream))))
+
+        #-----------------------------------------------------------------------
+        # failover: the replica becomes the master
+        #-----------------------------------------------------------------------
+
+        replica.execute_command("REPLICAOF", "NO", "ONE")
+        master.execute_command("REPLICAOF", "localhost", self._port(replica))
+        master, replica = replica, master
+        self.env.assertTrue(_wait_for(lambda:
+            replica.info("replication")["master_link_status"] == "up", timeout=30))
+
+        # the exporter reads from the promoted node, advancing the inherited
+        # group cursor over the node's own entries (the group exists here, as
+        # asserted before the failover, so this must not raise)
+        master.xreadgroup("exporter", "consumer", {stream: ">"}, count=100)
+
+        # the promoted node saves and reloads: the telemetry stream and its
+        # replicated consumer-group state are stripped at save, so whatever the
+        # counters are, nothing invalid reaches the RDB and the node loads
+        self.env.assertEquals(master.execute_command("DEBUG", "RELOAD"), "OK")
+        self.env.assertTrue(master.ping())
+        self.env.assertFalse(master.exists(stream))
+
+        # a full sync from the promoted node loads on the demoted node too
+        sync_full = master.info("stats")["sync_full"]
+        replica.execute_command("REPLICAOF", "NO", "ONE")
+        replica.execute_command("REPLICAOF", "localhost", self._port(master))
+        self.env.assertTrue(_wait_for(lambda:
+            master.info("stats")["sync_full"] > sync_full and
+            replica.info("replication")["master_link_status"] == "up", timeout=30))
+        self.env.assertTrue(replica.ping())

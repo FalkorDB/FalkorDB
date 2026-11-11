@@ -236,9 +236,18 @@ static void _DeleteGraphMetaKeys
 	//		key_count, GraphContext_GetName (gc)) ;
 }
 
-// create the meta keys for each graph in the keyspace
-// used on RDB start event
-static void _CreateKeySpaceMetaKeys
+// prepare the keyspace for persistence, in a single pass over the graphs
+// used on persistence start, for each graph:
+// - create its meta (virtual) keys, so the graph is split across them
+// - delete its node-local telemetry stream, keeping it out of the snapshot
+//
+// telemetry streams are node-local, and the consumer-group cursor Redis
+// replicates for them can push entries-read past entries-added, a state the
+// RDB loader rejects. in a fork child (BGSAVE / diskless sync / AOF rewrite)
+// this drops the child's copy only, so the live server keeps its telemetry;
+// on a synchronous save (SAVE / DEBUG RELOAD) the node's telemetry is dropped,
+// acceptable for an ephemeral best-effort stream
+static void _PrepareKeySpaceForPersistence
 (
 	RedisModuleCtx *ctx
 ) {
@@ -247,7 +256,22 @@ static void _CreateKeySpaceMetaKeys
 	Globals_ScanGraphs(&it);
 
 	while((gc = GraphIterator_Next(&it)) != NULL) {
+		// create the graph's meta keys
 		_CreateGraphMetaKeys(ctx, gc);
+
+		// strip the graph's telemetry stream from the snapshot
+		// the KeyType guard keeps us from touching a graph key that happens to
+		// share the telemetry name (a graph key is a module type, not a stream)
+		RedisModuleString *keyname =
+			(RedisModuleString*)GraphContext_GetTelemetryStreamName(gc);
+		RedisModuleKey *key =
+			RedisModule_OpenKey(ctx, keyname, REDISMODULE_WRITE);
+
+		if(RedisModule_KeyType(key) == REDISMODULE_KEYTYPE_STREAM) {
+			RedisModule_DeleteKey(key);
+		}
+
+		RedisModule_CloseKey(key);
 		GraphContext_DecreaseRefCount(gc);
 	}
 }
@@ -341,7 +365,8 @@ static void _PersistenceEventHandler
 	}
 
 	if(_IsEventPersistenceStart(eid, subevent)) {
-		_CreateKeySpaceMetaKeys(ctx);
+		// create meta keys and strip telemetry streams in one pass
+		_PrepareKeySpaceForPersistence(ctx);
 	} else if(_IsEventPersistenceEnd(eid, subevent)) {
 		_ClearKeySpaceMetaKeys(ctx, false);
 	}

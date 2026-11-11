@@ -76,6 +76,7 @@ typedef struct {
 	double durations[3];   // stage durations
 	bool parameterized;    // uses parameters
 	bool utilized_cache;   // utilized cache
+	bool log;              // log the query to telemetry once it finishes
 } QueryStats;
 
 typedef struct QueryCtx {

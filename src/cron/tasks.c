@@ -62,26 +62,25 @@ void CronTask_AddStreamFinishedQueries() {
 	// add query logging task
 	//--------------------------------------------------------------------------
 
-	// make sure info tracking is enabled
-	bool info_enabled = false;
-	if(Config_Option_get(Config_CMD_INFO, &info_enabled) && info_enabled) {
-		RecurringTaskCtx *re_ctx = rm_malloc(sizeof(RecurringTaskCtx));
-		re_ctx->new          = CronTask_newStreamFinishedQueries;
-		re_ctx->task         = CronTask_streamFinishedQueries;
-		re_ctx->free		 = rm_free;
-		re_ctx->when         = 10;   // 10ms from now
-		re_ctx->min_interval = 250;  // 250ms
-		re_ctx->max_interval = 3000; // 3s
+	// added once, at module load, whatever CMD_INFO is set to:
+	// the task reads CMD_INFO on every run and discards the logged queries
+	// while it is off
+	RecurringTaskCtx *re_ctx = rm_malloc(sizeof(RecurringTaskCtx));
+	re_ctx->new          = CronTask_newStreamFinishedQueries;
+	re_ctx->task         = CronTask_streamFinishedQueries;
+	re_ctx->free		 = rm_free;
+	re_ctx->when         = 10;   // 10ms from now
+	re_ctx->min_interval = 250;  // 250ms
+	re_ctx->max_interval = 3000; // 3s
 
-		// create task context
-		StreamFinishedQueryCtx *ctx = rm_malloc(sizeof(StreamFinishedQueryCtx));
-		ctx->graph_idx = 0;
-		
-		re_ctx->ctx = ctx;
+	// create task context
+	StreamFinishedQueryCtx *ctx = rm_malloc(sizeof(StreamFinishedQueryCtx));
+	ctx->graph_idx = 0;
 
-		// add recurring task
-		Cron_AddTask(0, CronTask_RecurringTask, CronTask_RecurringTaskFree, (void*)re_ctx);
-	}
+	re_ctx->ctx = ctx;
+
+	// add recurring task
+	Cron_AddTask(0, CronTask_RecurringTask, CronTask_RecurringTaskFree, (void*)re_ctx);
 }
 
 // add recurring tasks
