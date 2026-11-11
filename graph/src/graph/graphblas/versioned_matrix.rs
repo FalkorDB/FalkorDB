@@ -69,6 +69,8 @@
 //! position), producing the effective state — sorted by `(row, col)` —
 //! without materializing a merged matrix or issuing per-entry point lookups.
 
+#[cfg(feature = "index-falkordb")]
+use std::borrow;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -84,42 +86,23 @@ use crate::graph::{
 };
 
 /// The effective matrix of a base and its two delta layers, `(m ∖ dm) ∪ dp`,
-/// as [`effective`] returns it: the base itself, `Borrowed`, when neither
-/// delta holds anything; a new matrix, `Owned`, otherwise.
+/// as [`effective`] returns it: the base itself, borrowed, when neither delta
+/// holds anything; a new matrix of its own otherwise. Read it through
+/// `Deref`, which never copies.
 ///
-/// Copy on write. Reading (it derefs to `&Matrix`) never copies. Writing goes
-/// through [`Self::to_mut`], the one way to a `&mut Matrix`: it deep-copies a
-/// `Borrowed` base once and is free on an `Owned` matrix. There is no
-/// `DerefMut`, so a copy is never implicit.
-///
-/// Not `std::borrow::Cow`: `Matrix`'s `Clone` is shallow (it shares the
-/// GraphBLAS handle), so `ToOwned` would not copy.
+/// Read-only on purpose. `Matrix`'s `Clone` is shallow (a clone shares the
+/// GraphBLAS handle), so a `Cow`'s `to_mut` or `into_owned` on a borrowed
+/// base would hand out the shared base itself, and a write through it would
+/// change every version that holds it. A matrix of one's own is a `dup()`.
 #[cfg(feature = "index-falkordb")]
-pub(crate) enum Effective<'a, T> {
-    /// The base layer itself, shared with every snapshot that holds it.
-    Borrowed(&'a Matrix<T>),
-    /// A matrix no layer or snapshot shares: the merge, or a copy of the base.
-    Owned(Matrix<T>),
-}
+pub(crate) struct Effective<'a, T>(borrow::Cow<'a, Matrix<T>>);
 
 #[cfg(feature = "index-falkordb")]
 impl<T> Effective<'_, T> {
-    /// A mutable reference to a matrix this value owns, copying first if it
-    /// does not own one: a `Borrowed` base is deep-copied (`GrB_Matrix_dup`,
-    /// `O(nvals)` time and memory) and the value becomes `Owned`; an `Owned`
-    /// matrix is returned as it is. Writes through the result never reach the
-    /// layers or any snapshot.
-    ///
-    /// The copy cannot be a `clone()`: a cloned `Matrix` shares its handle,
-    /// so writing through it would write into the base.
-    pub(crate) fn to_mut(&mut self) -> &mut Matrix<T> {
-        if let Self::Borrowed(base) = *self {
-            *self = Self::Owned(base.dup());
-        }
-        match self {
-            Self::Owned(m) => m,
-            Self::Borrowed(_) => unreachable!("replaced by its copy above"),
-        }
+    /// Whether this is the base itself, not a merged copy.
+    #[cfg(test)]
+    pub(crate) fn is_borrowed(&self) -> bool {
+        matches!(self.0, borrow::Cow::Borrowed(_))
     }
 }
 
@@ -128,10 +111,7 @@ impl<T> Deref for Effective<'_, T> {
     type Target = Matrix<T>;
 
     fn deref(&self) -> &Matrix<T> {
-        match self {
-            Self::Borrowed(m) => m,
-            Self::Owned(m) => m,
-        }
+        &self.0
     }
 }
 
@@ -155,7 +135,7 @@ pub(super) fn effective<'a, T: EWiseAdd + MatrixType>(
 ) -> Effective<'a, T> {
     let (has_dp, has_dm) = (dp.nvals() != 0, dm.nvals() != 0);
     if !has_dp && !has_dm {
-        return Effective::Borrowed(m);
+        return Effective(borrow::Cow::Borrowed(m));
     }
     let mut eff = T::new_matrix(m.nrows(), m.ncols());
     let (mask, desc) = if has_dm {
@@ -165,7 +145,7 @@ pub(super) fn effective<'a, T: EWiseAdd + MatrixType>(
     };
     eff.element_wise_add(mask, Some(m), Some(dp), desc);
     eff.wait();
-    Effective::Owned(eff)
+    Effective(borrow::Cow::Owned(eff))
 }
 
 /// A delta layer is folded into the base once its size justifies a base
@@ -778,8 +758,7 @@ impl<T> VersionedMatrix<T> {
     }
 
     /// The matrix a reader sees, `(m ∖ dm) ∪ dp`, as one GraphBLAS matrix
-    /// (see [`Effective`]): no copy when both deltas are empty. Writable
-    /// through [`Effective::to_mut`], which copies only a borrowed base.
+    /// (see [`Effective`]): no copy when both deltas are empty.
     #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub(crate) fn effective(&self) -> Effective<'_, T>
@@ -1629,7 +1608,7 @@ mod tests {
     use super::super::matrix::{Dup, Matrix};
     use super::super::test_init::ensure_init;
     #[cfg(feature = "index-falkordb")]
-    use super::{Effective, effective};
+    use super::effective;
     use super::{
         MIN_FOLD_DELTA, READ_FOLD_K, VersionedMatrix, WRITE_FOLD_K, should_fold, should_fold_read,
     };
@@ -1657,7 +1636,7 @@ mod tests {
             }
             dp.wait();
             let eff = effective(&m, &dp, &dm);
-            assert!(matches!(eff, Effective::Owned(_)));
+            assert!(!eff.is_borrowed());
             assert_eq!(eff.get(0, 1), None, "deleted pair visible, dp: {with_dp}");
             assert_eq!(eff.get(2, 3), Some(20));
             assert_eq!(eff.get(1, 2), with_dp.then_some(30));

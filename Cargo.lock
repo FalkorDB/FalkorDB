@@ -1376,7 +1376,6 @@ version = "0.1.0"
 dependencies = [
  "afl",
  "graph",
- "libc",
 ]
 
 [[package]]

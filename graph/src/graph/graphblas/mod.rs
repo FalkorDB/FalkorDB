@@ -170,12 +170,7 @@ pub(crate) mod test_init {
 
     pub fn ensure_init() {
         INIT.call_once(|| {
-            // SAFETY: GraphBLAS allocates with libc malloc/free, and the test
-            // binary's global allocator is `System`, whose `dealloc` is
-            // `free(ptr)` on unix.
-            unsafe {
-                super::matrix::init(Some(malloc), Some(calloc), Some(realloc), Some(free)).unwrap();
-            }
+            super::matrix::init(Some(malloc), Some(calloc), Some(realloc), Some(free)).unwrap();
             // libtest runs every test on its own freshly spawned thread. With
             // libomp linked statically (the Linux toolchain image and CI —
             // macOS resolves it dynamically, which is why this never

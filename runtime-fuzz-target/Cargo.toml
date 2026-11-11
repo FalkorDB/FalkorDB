@@ -11,7 +11,6 @@ categories = ["data-structures", "database"]
 
 [dependencies]
 afl = "*"
-libc = "0.2.186"
 
 [dependencies.graph]
 path = "../graph"
