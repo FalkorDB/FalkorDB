@@ -180,17 +180,7 @@ unsafe fn sync_deepbind_environ() {
         // leave `*ours` dangling. Copy the strings too: a `putenv` caller owns
         // its buffer and may free it after `unsetenv`, so borrowing it could
         // leave the snapshot pointing at freed memory.
-        let src = *live;
-        let mut len = 0;
-        while !src.is_null() && !(*src.add(len)).is_null() {
-            len += 1;
-        }
-        let mut snapshot: Vec<*mut libc::c_char> = Vec::with_capacity(len + 1);
-        for i in 0..len {
-            let entry = std::ffi::CStr::from_ptr(*src.add(i));
-            snapshot.push(entry.to_owned().into_raw());
-        }
-        snapshot.push(std::ptr::null_mut());
+        let snapshot = graph::env_snapshot::leak_deep_copy(*live);
         // The snapshot is a point-in-time view: a later `setenv` updates only
         // the executable's copy, so code that scans `environ` directly (e.g.
         // `std::env::vars()`) will not see it. That includes every other
@@ -208,7 +198,7 @@ unsafe fn sync_deepbind_environ() {
         // The snapshot owns both the pointer array and every string, all
         // leaked, so it stays valid for the life of the process whatever a
         // later `setenv`, `putenv` or `unsetenv` does to the live environment.
-        *ours = Box::leak(snapshot.into_boxed_slice()).as_mut_ptr();
+        *ours = snapshot;
     }
 }
 
