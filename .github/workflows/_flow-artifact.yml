@@ -99,11 +99,16 @@ jobs:
           path: ${{ inputs.artifact_path }}
       - run: chmod +x ${{ inputs.artifact_path }}/libfalkordb.so
       - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
+        id: flow
+        # bash, for pipefail: the tee keeps RLTest's output for the counts
+        # below without hiding flow.sh's exit status.
+        shell: bash
         env:
           TEST_FILE: ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
-          TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
+          mkdir -p test-results
+          TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh 2>&1 | tee test-results/flow.log
       - name: Collect coverage (profraw -> lcov)
         if: ${{ !cancelled() && inputs.collect_coverage }}
         env:
@@ -131,6 +136,24 @@ jobs:
           files: ./codecov.txt
           flags: flow-${{ inputs.flavour }}
           disable_search: true
+      # Counts for the run summary (tests/count_results.py, summed per server by
+      # _ci-pipeline.yml's test-counts job). On every outcome but a cancel, so a
+      # failing cell still counts. The server is FALKORDB_SERVER's, as flow.sh,
+      # tests/common.py and the images default it: redis unless set.
+      - name: Record test counts
+        if: ${{ !cancelled() && steps.flow.outcome != 'skipped' }}
+        env:
+          RUN: ${{ inputs.flavour }} flow (artifact, ${{ matrix.arch }})
+          STATUS: ${{ steps.flow.outcome }}
+          NAME: test-counts-${{ inputs.flavour }}-artifact-${{ strategy.job-index }}
+        run: python3 tests/count_results.py record --server "${FALKORDB_SERVER:-redis}" --run "$RUN" --status "$STATUS" --rltest test-results/flow.log --logs tests/flow/logs --out "test-counts/$NAME.json"
+      - name: Upload test counts
+        if: ${{ !cancelled() && steps.flow.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-counts-${{ inputs.flavour }}-artifact-${{ strategy.job-index }}
+          path: test-counts/
+          retention-days: 7
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
