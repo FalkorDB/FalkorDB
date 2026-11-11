@@ -60,7 +60,7 @@ use std::{
     os::raw::c_void,
     ptr::null_mut,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -79,6 +79,8 @@ const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_st
 use super::csr::take_out_csr;
 #[cfg(feature = "index-falkordb")]
 pub use super::csr::{CsrArray, CsrExport, CsrExportError, CsrIndex, CsrValue, GrbElem};
+#[cfg(any(test, feature = "index-falkordb"))]
+use super::length;
 #[cfg(feature = "index-falkordb")]
 use super::scalar::Scalar;
 use super::vector::Vector;
@@ -102,32 +104,23 @@ use super::{
     GrB_SECOND_UINT64, GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL,
     GrB_Type, GrB_UINT64, GrB_VALUEEQ_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_mxv,
     GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free,
-    GxB_Container_new, GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator,
-    GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control,
-    GxB_Matrix_build_Scalar, GxB_Matrix_eWiseUnion, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
-    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field,
-    GxB_PLUS_PAIR_UINT64, GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container,
-    GxB_rowIterator_attach, GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex,
-    GxB_rowIterator_kount, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
-    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
+    GxB_Container_new, GxB_Global_Option_get_FUNCTION, GxB_Global_Option_set_INT32,
+    GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new,
+    GxB_JIT_Control, GxB_Matrix_build_Scalar, GxB_Matrix_eWiseUnion, GxB_Matrix_fprint,
+    GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS,
+    GxB_ONE_BOOL, GxB_Option_Field, GxB_PLUS_PAIR_UINT64, GxB_Print_Level, GxB_SPARSE, GxB_init,
+    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_rowIterator_getRowIndex, GxB_rowIterator_kount, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 use super::{
     GrB_GT_UINT64, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_select_BOOL, GrB_VALUEEQ_BOOL,
 };
 
-/// Check a `GrB_Info` and panic with the call's text on anything but success.
-/// For calls on data the caller built itself, where a failure is a bug rather
-/// than bad input.
-///
-/// This is the crate's convention for GraphBLAS calls, made explicit: an
-/// unexpected `GrB_Info` is never turned into a `Result` (only module-load
-/// `init` returns one). The wrapper's methods `debug_assert` theirs and a few
-/// assert in release; this always asserts, because a failed call here would
-/// otherwise leave a half-built matrix behind. In the module a panic ends the
-/// server through the panic hook. What can fail here is a bug or out of
-/// memory, never user data: and in the module GraphBLAS allocates through
-/// `RedisModule_Alloc`, which handles out of memory itself before GraphBLAS
-/// sees it.
+/// Check a `GrB_Info` and panic with the call's text on anything but success,
+/// in release too: for calls on data the caller built, where a failure is a
+/// bug, never bad input. (In the module, out of memory aborts in
+/// `RedisModule_Alloc` before GraphBLAS sees it.)
 #[cfg(feature = "index-falkordb")]
 macro_rules! grb {
     ($call:expr) => {{
@@ -143,6 +136,28 @@ macro_rules! grb {
 #[cfg(feature = "index-falkordb")]
 pub(crate) use grb;
 
+/// The malloc and free [`init`] gave GraphBLAS, as addresses.
+#[cfg(feature = "index-falkordb")]
+static INIT_ALLOCATOR: OnceLock<(usize, usize)> = OnceLock::new();
+
+/// Whether GraphBLAS allocates through the malloc and free [`init`] was given:
+/// the condition its contract puts on adopting GraphBLAS's arrays as `Vec`s.
+/// `false` when GraphBLAS was started another way (`GrB_init`).
+#[cfg(feature = "index-falkordb")]
+pub(crate) fn allocator_from_init() -> bool {
+    let Some(&(malloc, free)) = INIT_ALLOCATOR.get() else {
+        return false;
+    };
+    let installed = |field: GxB_Option_Field| {
+        let mut function: *mut c_void = null_mut();
+        // SAFETY: a read of a global setting into a local.
+        grb!(unsafe { GxB_Global_Option_get_FUNCTION(field as _, &raw mut function) });
+        function as usize
+    };
+    installed(GxB_Option_Field::GxB_MALLOC_FUNCTION) == malloc
+        && installed(GxB_Option_Field::GxB_FREE_FUNCTION) == free
+}
+
 /// Initializes the GraphBLAS library in non-blocking mode.
 ///
 /// Custom allocators can be provided to integrate with Redis memory management.
@@ -156,23 +171,12 @@ pub(crate) use grb;
 /// the whole server process.
 ///
 /// # Safety
-/// Rust's `#[global_allocator]` must free what the given malloc, calloc and
-/// realloc return: the CSR export ([`Matrix::take_csr`]) hands GraphBLAS's own
-/// arrays over as `Vec`s, which the global allocator then frees or
-/// reallocates, and GraphBLAS may have allocated any of them through any of
-/// the three. For every block they return, the global allocator's `dealloc` and `realloc`
-/// must accept that pointer under a layout whose size is the block's
-/// requested size and whose alignment is at most 8, and free it as the given
-/// free would. That holds for the two pairs this crate runs with, because
-/// their `dealloc` ignores the layout:
-/// - in the module, `RedisModule_Alloc`/`Calloc`/`Realloc`/`Free`, and a
-///   global allocator over `redis_module::alloc::RedisAlloc` (`dealloc` is
-///   `RedisModule_Free(ptr)`);
-/// - in tests on unix, libc `malloc`/`calloc`/`realloc`/`free`, and
-///   `std::alloc::System` (`dealloc` is `free(ptr)`).
-///
-/// GraphBLAS calls no calloc (it uses malloc and a memset), and with realloc
-/// `None` it uses malloc, `memcpy` and free instead.
+/// Rust's `#[global_allocator]` must free, as the given `free` would, every
+/// block the given allocation functions return, under a layout of the block's
+/// requested size and alignment at most 8: the CSR export
+/// ([`Matrix::take_csr`]) hands GraphBLAS's own arrays over as `Vec`s. Both
+/// pairs this crate uses qualify, since their `dealloc` ignores the layout:
+/// `RedisModule_*` with `RedisAlloc` in the module, libc with `System` in tests.
 #[allow(clippy::similar_names)]
 pub unsafe fn init(
     user_malloc_function: Option<unsafe extern "C" fn(arg1: usize) -> *mut c_void>,
@@ -193,6 +197,11 @@ pub unsafe fn init(
         if info != GrB_Info::GrB_SUCCESS {
             return Err(format!("GraphBLAS GxB_init failed: {info:?}"));
         }
+        #[cfg(feature = "index-falkordb")]
+        let _ = INIT_ALLOCATOR.set((
+            user_malloc_function.map_or(0, |function| function as usize),
+            user_free_function.map_or(0, |function| function as usize),
+        ));
 
         // Pick GraphBLAS JIT control level:
         //
@@ -1290,107 +1299,78 @@ impl<T> Matrix<T> {
     }
 
     /// Store the matrix as [`Self::take_csr::<P, I, V>`] exports it:
-    /// row-major, offsets as wide as `P` and column indices as wide as `I`
-    /// (each `u32` or `u64`), sparse, and, when `V` carries values, one value
-    /// per entry rather than iso. GraphBLAS converts the matrix now if it is
-    /// stored another way. The widths are set before the format, so a
-    /// hypersparse matrix gets its per-row offsets at their final width.
-    ///
-    /// The widths are hints: a 32-bit one cannot hold from `2^32` entries
-    /// (offsets) or above `2^31` columns (column indices), and GraphBLAS then
-    /// keeps 64 bits; the export refuses that matrix rather than widen.
-    /// Sparse stays pinned (`GxB_SPARSITY_CONTROL`), but the iso expansion is a
-    /// one-off conversion, so call this after the last write.
+    /// row-major, offsets as wide as `P` and column indices as wide as `I`,
+    /// sparse, and, when `V` carries values, not iso. GraphBLAS converts the
+    /// matrix now if it is stored another way. The widths are set before the
+    /// format, so a hypersparse matrix gets its offsets at their final width.
+    /// A 32-bit width is a hint GraphBLAS may not follow
+    /// ([`CsrExportError::Array`]). Call this after the last write: GraphBLAS
+    /// v10.5 does not keep a matrix's own width hints when it finishes later
+    /// writes (its `GB_wait` picks the widths from the global settings, a
+    /// GraphBLAS bug), and the iso expansion is a one-off conversion.
     ///
     /// # Errors
-    /// [`CsrExportError::SharedHandle`] if a clone shares this handle: it could
-    /// be reading while the storage converts under it, and `&mut self` alone
-    /// does not rule a clone out. Nothing is set then.
-    /// [`CsrExportError::Setting`] with the first `GrB_Info` that is not
-    /// `GrB_SUCCESS`, the remaining fields left unset: a conversion allocates
-    /// in proportion to the matrix, so it can run out of memory.
+    /// [`CsrExportError::SharedHandle`] if a clone shares this handle, before
+    /// anything is set. [`CsrExportError::Setting`] with the first `GrB_Info`
+    /// that is not `GrB_SUCCESS` (a conversion can run out of memory); the
+    /// matrix is then valid but may have lost its entries.
     #[cfg(feature = "index-falkordb")]
     pub fn prepare_csr<P: CsrIndex, I: CsrIndex, V: CsrValue>(
         &mut self
     ) -> Result<(), CsrExportError> {
-        // `get_mut`, as in `take_csr`: a handle found unshared really is ours.
-        if Arc::get_mut(&mut self.m).is_none() {
+        if !self.is_unshared() {
             return Err(CsrExportError::SharedHandle);
         }
         // mitigation for a GraphBLAS bug.
         // TODO: remove once GraphBLAS is updated
         self.wait();
-        let fields = [
-            Some((
-                GrB_Orientation::GrB_ROWMAJOR as i32,
-                GxB_Option_Field::GrB_STORAGE_ORIENTATION_HINT,
-            )),
-            Some((P::BITS, GxB_Option_Field::GxB_OFFSET_INTEGER_HINT)),
-            Some((I::BITS, GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT)),
-            Some((GxB_SPARSE as i32, GxB_Option_Field::GxB_SPARSITY_CONTROL)),
-            V::HAS_VALUES.then_some((0, GxB_Option_Field::GxB_ISO)),
-        ];
-        for (value, field) in fields.into_iter().flatten() {
-            let info = self.set_i32(value, field);
-            if info != GrB_Info::GrB_SUCCESS {
-                return Err(CsrExportError::Setting(info));
+        let _guard = self.lock.lock();
+        let set = |value: i32, field: GxB_Option_Field| {
+            // SAFETY: this wrapper's live handle, unshared and under its lock.
+            match unsafe { GrB_Matrix_set_INT32(self.inner(), value, field as _) } {
+                GrB_Info::GrB_SUCCESS => Ok(()),
+                info => Err(CsrExportError::Setting(info)),
             }
-        }
-        Ok(())
+        };
+        let result = set(
+            GrB_Orientation::GrB_ROWMAJOR as i32,
+            GxB_Option_Field::GrB_STORAGE_ORIENTATION_HINT,
+        )
+        .and_then(|()| set(P::BITS, GxB_Option_Field::GxB_OFFSET_INTEGER_HINT))
+        .and_then(|()| set(I::BITS, GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT))
+        .and_then(|()| set(GxB_SPARSE as i32, GxB_Option_Field::GxB_SPARSITY_CONTROL))
+        .and_then(|()| {
+            if V::HAS_VALUES {
+                set(0, GxB_Option_Field::GxB_ISO)
+            } else {
+                Ok(())
+            }
+        });
+        // A conversion can leave work pending (a transpose leaves the rows
+        // unsorted), so the next `wait()` must not skip.
+        self.has_pending.store(true, Ordering::Release);
+        result
     }
 
-    /// `GrB_Matrix_set_INT32` under the wrapper's lock (setting a field can
-    /// convert the matrix, which must not race `wait()` or `dup()`).
+    /// Whether no clone shares this handle. `Arc::get_mut`, not
+    /// `strong_count`: its Acquire load synchronizes with the Release
+    /// decrement of a clone dropped on another thread, so a handle found
+    /// unshared really is ours alone.
     #[cfg(feature = "index-falkordb")]
-    fn set_i32(
-        &mut self,
-        value: i32,
-        field: GxB_Option_Field,
-    ) -> GrB_Info {
-        let _guard = self.lock.lock();
-        unsafe { GrB_Matrix_set_INT32(self.inner(), value, field as _) }
+    fn is_unshared(&mut self) -> bool {
+        Arc::get_mut(&mut self.m).is_some()
     }
 
     /// Row-major CSR export of this matrix's pattern and, unless `V` is `()`,
-    /// its values (`f64` for `FP64`), which empties the matrix.
+    /// its values, which empties the matrix: GraphBLAS's own `p`/`i`/`x`
+    /// arrays become the export's `Vec`s in O(1), as [`init`]'s contract
+    /// allows. Nothing is converted, cast or copied.
     ///
-    /// GraphBLAS already stores a sparse row-major matrix as CSR, so this is a
-    /// handover of SuiteSparse's own buffers rather than a conversion: the
-    /// matrix is unloaded into a `GxB_Container`, whose `p`/`i`/`x` arrays
-    /// become the export's `Vec`s. No entry is visited by Rust code, and no
-    /// array is cast or re-indexed. The `Vec`s *are* GraphBLAS's arrays,
-    /// adopted in O(1), as [`init`]'s contract allows; an array GraphBLAS does
-    /// not own outright is copied instead, by GraphBLAS.
-    ///
-    /// # Preconditions
-    /// The caller sets the matrix up, with [`Self::prepare_csr::<P, I, V>`];
-    /// the export changes no setting and refuses anything else:
-    /// - stored sparse and row-major;
-    /// - offsets of type `P` and column indices of type `I`, each `u32` or
-    ///   `u64` (a 32-bit hint cannot hold from `2^32` entries or above `2^31`
-    ///   columns, and the export then refuses rather than widens);
-    /// - for values (`V` not `()`): of type `V`, and not iso;
-    /// - no other `Matrix` (or iterator) sharing this handle.
-    ///
-    /// The handle and the value type are checked first. The storage is
-    /// checked on what GraphBLAS unloads, the container's format and
-    /// orientation and the type of each array, and a refused matrix is
-    /// loaded back as it was.
-    ///
-    /// What it does to `self`: materializes pending work, as [`Self::wait`]
-    /// does, then, on success, gives the entries away: the matrix is left
-    /// `0 x 0` with no entries, as GraphBLAS's unload leaves it, keeping its
-    /// settings. It is still a valid matrix ([`Self::resize`] makes it usable
-    /// again), but a caller that needs the entries afterwards reads them from
-    /// the export. A refused matrix keeps its entries, dimensions and
-    /// settings.
-    ///
-    /// # Concurrency
-    /// From the unload on the underlying `GrB_Matrix` is **empty**, so nobody
-    /// else may be able to see it. `&mut self` means no other thread holds
-    /// this wrapper, so none can `clone()` it mid-export (cloning takes no
-    /// lock); a handle an earlier clone still shares is refused. The export
-    /// also takes the lock `wait()` and `dup()` take.
+    /// The caller sets the matrix up with [`Self::prepare_csr::<P, I, V>`]; the
+    /// export changes no setting and refuses a matrix stored any other way, a
+    /// shared handle, or an array GraphBLAS does not own outright. A refused
+    /// matrix is left as it was. On success the matrix is a valid `0 x 0`
+    /// matrix with no entries, keeping its settings.
     ///
     /// # Errors
     /// [`CsrExportError`] naming the first precondition the matrix fails.
@@ -1398,17 +1378,16 @@ impl<T> Matrix<T> {
     pub fn take_csr<P: CsrIndex, I: CsrIndex, V: CsrValue>(
         &mut self
     ) -> Result<CsrExport<P, I, V>, CsrExportError> {
-        // Serialize against `wait()` and `dup()`: materializing and
-        // round-tripping through the container both mutate the GrB object even
-        // though the entries do not change.
-        let _guard = self.lock.lock();
-        // `get_mut`, not `strong_count`: its Acquire load synchronizes with
-        // the Release decrement of a clone dropped on another thread, so a
-        // handle found unshared really is ours alone. `strong_count` is a
-        // Relaxed load and orders nothing.
-        if Arc::get_mut(&mut self.m).is_none() {
+        if !self.is_unshared() {
             return Err(CsrExportError::SharedHandle);
         }
+        // Serialize against `wait()` and `dup()`: materializing and
+        // round-tripping through the container both mutate the GrB object.
+        let _guard = self.lock.lock();
+        assert!(
+            allocator_from_init(),
+            "GraphBLAS was not started by `matrix::init`, so its arrays cannot become `Vec`s"
+        );
         let m = self.inner();
 
         if V::HAS_VALUES {
@@ -1420,20 +1399,21 @@ impl<T> Matrix<T> {
             }
         }
 
-        // MATERIALIZE flushes pending tuples and zombies and unjumbles each
-        // row — which is what makes the exported column indices ascending
-        // within a row. It changes no setting, and it is a real flush, so
-        // later `wait()` calls can take their cheap path.
+        // MATERIALIZE flushes pending tuples and zombies and sorts each row,
+        // which is what makes the exported column indices ascending.
         // SAFETY: `m` is this wrapper's live handle, and the lock is held.
         grb!(unsafe { GrB_Matrix_wait(m, GrB_WaitMode::GrB_MATERIALIZE as _) });
-        self.has_pending.store(false, Ordering::Release);
 
         // The storage is the caller's choice: `take_out_csr` checks it on the
         // unloaded container, and never sets it.
         // SAFETY: `m` is this wrapper's live handle, materialized and of value
         // type `V` (checked above), and the lock and the unshared handle keep
         // everyone else off it.
-        unsafe { take_out_csr(m) }
+        let exported = unsafe { take_out_csr(m) };
+        // Materialized: refused it holds its entries, sorted; exported it is
+        // empty. Only after the export, so a panic in it leaves the flag set.
+        self.has_pending.store(false, Ordering::Release);
+        exported
     }
 }
 
@@ -1700,9 +1680,9 @@ impl Matrix<f64> {
     pub(crate) fn extract_tuples(&self) -> (Vec<u64>, Vec<u64>, Vec<f64>) {
         self.wait();
         let mut count = self.nvals();
-        let mut rows = vec![0; count as usize];
-        let mut cols = vec![0; count as usize];
-        let mut vals = vec![0.0; count as usize];
+        let mut rows = vec![0; length(count)];
+        let mut cols = vec![0; length(count)];
+        let mut vals = vec![0.0; length(count)];
         let info = unsafe {
             GrB_Matrix_extractTuples_FP64(
                 rows.as_mut_ptr(),
@@ -1717,9 +1697,9 @@ impl Matrix<f64> {
             GrB_Info::GrB_SUCCESS,
             "GrB_Matrix_extractTuples_FP64: {info:?}"
         );
-        rows.truncate(count as usize);
-        cols.truncate(count as usize);
-        vals.truncate(count as usize);
+        rows.truncate(length(count));
+        cols.truncate(length(count));
+        vals.truncate(length(count));
         (rows, cols, vals)
     }
 
@@ -1741,32 +1721,26 @@ impl Matrix<f64> {
         self.reduce_fp64(unsafe { GrB_PLUS_MONOID_FP64 })
     }
 
-    /// Reduce every entry to one scalar. Allocates nothing: the reduction
-    /// reads the matrix where it is. Pending work is finished first, a
-    /// mutation of the GrB object, so this takes the lock `wait()` takes.
+    /// Reduce every entry to one scalar, with no scratch matrix. Pending work
+    /// is finished first ([`Self::wait`]), so the reduction only reads.
     #[cfg(feature = "index-falkordb")]
     fn reduce_fp64(
         &self,
         monoid: GrB_Monoid,
     ) -> f64 {
-        let _guard = self.lock.lock();
+        self.wait();
         let mut out = 0.0;
-        unsafe {
-            grb!(GrB_Matrix_reduce_FP64(
-                &raw mut out,
-                null_mut(),
-                monoid,
-                self.inner(),
-                null_mut()
-            ));
-        }
+        // SAFETY: this wrapper's live handle, with no pending work to finish.
+        grb!(unsafe {
+            GrB_Matrix_reduce_FP64(&raw mut out, null_mut(), monoid, self.inner(), null_mut())
+        });
         out
     }
 
     /// Value at `(i, j)`, or `None` when the entry is absent.
     ///
     /// An invalid index (outside the dimensions) or out of memory panics: any
-    /// error `GrB_Info`, one below 0. Only the tests call it.
+    /// error `GrB_Info`, one below 0.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn get(

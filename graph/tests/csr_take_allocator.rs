@@ -12,7 +12,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use graph::graph::graphblas::matrix::{self, Matrix};
+use graph::graph::graphblas::matrix::{self, CsrIndex, Matrix};
 
 /// A fixed-size, allocation-free log of addresses, appended to from inside
 /// the allocators while [`RECORDING`] is set.
@@ -154,18 +154,67 @@ unsafe extern "C" fn logging_free(p: *mut c_void) {
     unsafe { free(p) }
 }
 
-/// A CSR-ready `n x n` FP64 matrix with distinct values, so it is not iso:
-/// sparse, row-major, 32-bit offsets and column indices.
-fn weights(n: u64) -> Matrix<f64> {
+/// A CSR-ready `n x n` FP64 matrix, offsets `P` and column indices `I`, with
+/// `per_row` distinct values in each row, so it is not iso.
+fn weights<P: CsrIndex, I: CsrIndex>(
+    n: u64,
+    per_row: u64,
+) -> Matrix<f64> {
     let mut m = Matrix::<f64>::new(n, n);
     for r in 0..n {
-        for k in 1..4 {
+        for k in 1..=per_row {
             m.set(r, (r * 7 + k * 13) % n, (r * 4 + k) as f64);
         }
     }
-    m.prepare_csr::<u32, u32, f64>()
+    m.prepare_csr::<P, I, f64>()
         .expect("an unshared matrix is set up");
     m
+}
+
+/// Export `m` and check each non-empty array is the matrix's own GraphBLAS
+/// block, left alone by GraphBLAS, and freed exactly once, by Rust.
+fn check_adoption<P: CsrIndex, I: CsrIndex>(mut m: Matrix<f64>) {
+    let rows = m.nrows();
+    let before = RUST_ALLOC_BYTES.load(Ordering::SeqCst);
+    let grb_mark = GRB_ALLOC.len();
+    let csr = m.take_csr::<P, I, f64>().expect("exports");
+    let during = RUST_ALLOC_BYTES.load(Ordering::SeqCst) - before;
+    assert_eq!(csr.row_count() as u64, rows);
+    assert_eq!(csr.column_indices.len(), csr.values.len());
+    let arrays: Vec<*const c_void> = [
+        (
+            csr.row_offsets.as_ptr().cast::<c_void>(),
+            csr.row_offsets.len(),
+        ),
+        (csr.column_indices.as_ptr().cast(), csr.column_indices.len()),
+        (csr.values.as_ptr().cast(), csr.values.len()),
+    ]
+    .into_iter()
+    .filter(|&(_, len)| len > 0)
+    .map(|(p, _)| p)
+    .collect();
+    assert!(during < 1024, "the export allocated {during} bytes in Rust");
+    for &p in &arrays {
+        assert!(grb_live(p), "each array is a block GraphBLAS allocated");
+        assert_eq!(
+            GRB_ALLOC.count_from(grb_mark, p),
+            0,
+            "the matrix's own array, not a copy GraphBLAS made during the export"
+        );
+    }
+    // The arrays stay live until `csr` drops, so no other block can take
+    // their addresses in between: every free logged from here is theirs.
+    watch_frees();
+    drop(m);
+    for &p in &arrays {
+        assert_eq!(GRB_FREE.count(p), 0, "GraphBLAS freed an adopted array");
+        assert_eq!(RUST_FREE.count(p), 0, "freed while still exported");
+    }
+    drop(csr);
+    for &p in &arrays {
+        assert_eq!(GRB_FREE.count(p), 0, "GraphBLAS freed an adopted array");
+        assert_eq!(RUST_FREE.count(p), 1, "Rust frees each array exactly once");
+    }
 }
 
 /// Whether `p` is a block GraphBLAS allocated and has not freed since
@@ -212,40 +261,16 @@ fn adopted_arrays_come_from_graphblas_and_rust_frees_them_once() {
     .unwrap();
     const N: u64 = 2000;
 
+    // Each round restarts the logs: an address Rust freed in an earlier
+    // round can come back from GraphBLAS's malloc.
     start();
-    let mut m = weights(N);
-    let before = RUST_ALLOC_BYTES.load(Ordering::SeqCst);
-    let grb_mark = GRB_ALLOC.len();
-    let csr = m.take_csr::<u32, u32, f64>().expect("exports");
-    let during = RUST_ALLOC_BYTES.load(Ordering::SeqCst) - before;
-    assert_eq!(csr.row_offsets.len(), N as usize + 1);
-    assert_eq!(csr.column_indices.len(), csr.values.len());
-    let arrays = [
-        csr.row_offsets.as_ptr().cast::<c_void>(),
-        csr.column_indices.as_ptr().cast(),
-        csr.values.as_ptr().cast(),
-    ];
-    assert!(during < 1024, "the export allocated {during} bytes in Rust");
-    for p in arrays {
-        assert!(grb_live(p), "each array is a block GraphBLAS allocated");
-        assert_eq!(
-            GRB_ALLOC.count_from(grb_mark, p),
-            0,
-            "the matrix's own array, not a copy GraphBLAS made during the export"
-        );
-    }
-    // The arrays stay live until `csr` drops, so no other block can take
-    // their addresses in between: every free logged from here is theirs.
-    watch_frees();
-    drop(m);
-    for p in arrays {
-        assert_eq!(GRB_FREE.count(p), 0, "GraphBLAS freed an adopted array");
-        assert_eq!(RUST_FREE.count(p), 0, "freed while still exported");
-    }
-    drop(csr);
+    check_adoption::<u32, u32>(weights::<u32, u32>(N, 3));
+    // The widths `CchInput::build` exports.
+    start();
+    check_adoption::<u64, u64>(weights::<u64, u64>(N, 3));
+    // No entries: only the offsets are adopted; the empty arrays stay with
+    // GraphBLAS.
+    start();
+    check_adoption::<u64, u64>(weights::<u64, u64>(N, 0));
     stop();
-    for p in arrays {
-        assert_eq!(GRB_FREE.count(p), 0, "GraphBLAS freed an adopted array");
-        assert_eq!(RUST_FREE.count(p), 1, "Rust frees each array exactly once");
-    }
 }
