@@ -52,13 +52,21 @@ With a password, pass `-e REDISCLI_AUTH=<password>` to each `docker exec`
    This covers database 0, where FalkorDB keeps its keys; repeat with
    `redis-cli -n <db>` for any other database you use. If you keep other data
    next to your graphs, also delete or convert other streams, hashes with
-   field expiry, and keys of a type only Redis has, such as arrays. Then save,
-   and with AOF on, rewrite the AOF and wait until `aof_rewrite_in_progress`
-   and `aof_rewrite_scheduled` are `0` and `aof_last_bgrewrite_status` is `ok`:
+   field expiry, and keys of a type only Redis has, such as arrays. Then save:
 
    ```sh
    docker exec falkordb redis-cli SAVE
-   docker exec falkordb redis-cli BGREWRITEAOF   # AOF only
+   ```
+
+   With AOF on, also rewrite the AOF. `BGREWRITEAOF` is asynchronous, and a
+   rewrite already running may still hold the streams you deleted. Check
+   `INFO persistence` until `aof_rewrite_in_progress` and
+   `aof_rewrite_scheduled` are `0`, run `BGREWRITEAOF`, and check again until
+   both are `0` and `aof_last_bgrewrite_status` is `ok`. Only then stop the
+   container:
+
+   ```sh
+   docker exec falkordb redis-cli BGREWRITEAOF
    docker exec falkordb redis-cli INFO persistence | grep -E 'aof_rewrite_(scheduled|in_progress)|aof_last_bgrewrite_status'
    docker stop falkordb && docker rm falkordb
    ```
@@ -75,7 +83,8 @@ With a password, pass `-e REDISCLI_AUTH=<password>` to each `docker exec`
    Check that your graphs are there (`GRAPH.LIST`, and a query), then save
    them in Valkey's format with `SAVE` (and `BGREWRITEAOF` with AOF on, as in
    step 2). If Valkey stops with `Can't handle foreign type or opcode`, a key
-   it cannot read is still in the files: go back to step 2.
+   it cannot read is still in the files: remove that container and run step 2
+   again on the Redis image.
 
 4. **Start the Valkey image again without the variable.** `docker restart`
    would keep it, so remove the container and run it again without
