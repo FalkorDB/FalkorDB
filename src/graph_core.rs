@@ -198,9 +198,10 @@ pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
 /// Re-key a registry entry when a Redis RENAME moves a graph to a new key.
 ///
 /// `graph_free` only runs for the *overwritten destination* value, so without
-/// this the old name keeps a stale entry: the next `register_graph` under
-/// that name (e.g. a concurrent write query re-creating the key) displaces
-/// it and trips the invariant assert above.
+/// this the old name keeps a stale entry, so the registry would list a graph
+/// no key holds until the next `register_graph` under that name (e.g. a
+/// concurrent write query re-creating the key) displaces it (see
+/// `register_graph`).
 pub fn rename_graph(
     old_name: &str,
     new_name: &str,
