@@ -114,7 +114,7 @@ redis_rdb_version() {
 
 valkey_preflight() {
     redis_files=""
-    for _f in "${FALKORDB_DATA_PATH}"/* "${FALKORDB_DATA_PATH}"/*/*.base.rdb; do
+    for _f in "${FALKORDB_DATA_PATH}"/* "${FALKORDB_DATA_PATH}"/.[!.]* "${FALKORDB_DATA_PATH}"/*/*.base.rdb; do
         [ -f "$_f" ] || continue
         _version=$(redis_rdb_version "$_f")
         if [ -n "$_version" ] && [ "$_version" -ge 12 ]; then
