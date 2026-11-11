@@ -576,11 +576,10 @@ impl<'a> Parser<'a> {
     #[allow(clippy::cognitive_complexity)]
     fn parse_index_ops(&mut self) -> Result<Option<RawQueryIR>, String> {
         if optional_match_token!(self.lexer => Create) {
-            if optional_match_token!(self.lexer => Cch) {
-                return Ok(Some(QueryIR::CreateCchIndex(self.parse_cch_index_spec()?)));
-            }
-            let fulltext = optional_match_token!(self.lexer => Fulltext);
-            let vector = !fulltext && optional_match_token!(self.lexer => Vector);
+            // `CCH` makes this DDL only when `INDEX` follows: `CREATE cch=()-->()` names a path.
+            let cch = optional_match_token!(self.lexer => Cch);
+            let fulltext = !cch && optional_match_token!(self.lexer => Fulltext);
+            let vector = !cch && !fulltext && optional_match_token!(self.lexer => Vector);
             let index = optional_match_token!(self.lexer => Index);
             if !index {
                 if self.lexer.current_str().eq_ignore_ascii_case("constraint") {
@@ -589,6 +588,9 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 return Ok(None);
+            }
+            if cch {
+                return Ok(Some(QueryIR::CreateCchIndex(self.parse_cch_index_spec()?)));
             }
             if !fulltext && !vector && optional_match_token!(self.lexer => On) {
                 match_token!(self.lexer, Colon);
@@ -679,11 +681,10 @@ impl<'a> Parser<'a> {
             }));
         }
         if optional_match_token!(self.lexer => Drop) {
-            if optional_match_token!(self.lexer => Cch) {
-                return Ok(Some(QueryIR::DropCchIndex(self.parse_cch_index_spec()?)));
-            }
-            let fulltext = optional_match_token!(self.lexer => Fulltext);
-            let vector = !fulltext && optional_match_token!(self.lexer => Vector);
+            // `CCH` makes this DDL only when `INDEX` follows: `CREATE cch=()-->()` names a path.
+            let cch = optional_match_token!(self.lexer => Cch);
+            let fulltext = !cch && optional_match_token!(self.lexer => Fulltext);
+            let vector = !cch && !fulltext && optional_match_token!(self.lexer => Vector);
             let index = optional_match_token!(self.lexer => Index);
             if !index {
                 if self.lexer.current_str().eq_ignore_ascii_case("constraint") {
@@ -692,6 +693,9 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 return Ok(None);
+            }
+            if cch {
+                return Ok(Some(QueryIR::DropCchIndex(self.parse_cch_index_spec()?)));
             }
             if !fulltext && !vector && optional_match_token!(self.lexer => On) {
                 match_token!(self.lexer, Colon);
@@ -784,17 +788,16 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses the tail shared by `CREATE CCH INDEX` and `DROP CCH INDEX`, after
-    /// `parse_index_ops` has consumed the verb and the `CCH` keyword:
+    /// `parse_index_ops` has consumed the verb and `CCH INDEX`:
     ///
     /// ```text
-    /// INDEX FOR ()-[e:A|B|...]->() ON (e.weight)
+    /// FOR ()-[e:A|B|...]->() ON (e.weight)
     /// ```
     ///
     /// A CCH path index is relationship-only and spans one or more types, so
     /// this does not share the node/single-label parsing used by every other
     /// index type. The relationship types keep parse order and may repeat.
     fn parse_cch_index_spec(&mut self) -> Result<CchIndexSpec, String> {
-        match_token!(self.lexer => Index);
         match_token!(self.lexer => For);
         match_token!(self.lexer, LParen);
         if !optional_match_token!(self.lexer, RParen) {
@@ -4573,8 +4576,9 @@ mod cch_index_ddl_tests {
         }
     }
 
-    /// `CCH` is a keyword only right after `CREATE`/`DROP`; everywhere else it is a name.
-    /// Each query parses as a query, with the name where the query put it.
+    /// `CCH` is a keyword only in `CREATE CCH INDEX`/`DROP CCH INDEX`; everywhere else it is a
+    /// name, a path named `cch` right after `CREATE` included. Each query parses as a query,
+    /// with the name where the query put it.
     #[test]
     fn cch_stays_an_identifier() {
         for (query, the_name_in_place) in [
@@ -4584,6 +4588,14 @@ mod cch_index_ddl_tests {
             ("MATCH (n:CCH) RETURN n", "(n:CCH)"),
             ("MATCH ()-[r:CCH]->() RETURN r", "[r:CCH]"),
             ("UNWIND [1, 2] AS cch RETURN cch", "UNWIND cch:"),
+            (
+                "CREATE cch=()-[:ROAD]->() RETURN cch",
+                "(_anon_0)-[_anon_1:ROAD]->(_anon_2), cch,",
+            ),
+            (
+                "CREATE cch=(:A)-[:ROAD]->(:B), (c:C) RETURN cch, c",
+                "(_anon_0)-[_anon_1:ROAD]->(_anon_2), cch,",
+            ),
         ] {
             let ir = parse(query).unwrap_or_else(|err| panic!("{query}: {err}"));
             assert!(matches!(ir, QueryIR::Query { .. }), "{query}: {ir:?}");
