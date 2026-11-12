@@ -82,6 +82,55 @@ impl CchInput {
         graph: &Graph,
         def: &CchIndexDef,
     ) -> Result<Self, CchError> {
+        let (node_count, mut weights) = Self::scored_weights(graph, def)?;
+
+        // Drop self-loops from the weights, which is what lets the skeleton be
+        // derived from this pattern and still be diagonal free. After the
+        // check, so a bad weight on a self-loop is refused all the same.
+        weights.drop_diagonal();
+
+        // Skeleton = pattern(W) ∪ pattern(Wᵀ): a weight of 0.0 is an entry
+        // like any other.
+        let mut skeleton = Matrix::<bool>::new(node_count, node_count);
+        skeleton.pattern_union(&weights, &weights, Some(Descriptor::T1));
+
+        // Copy each matrix out as sorted, 64-bit CSR. Each export consumes its
+        // matrix, so the skeleton's GraphBLAS arrays are freed before the
+        // weights are copied.
+        let skeleton = skeleton.into_csr_pattern().into();
+        let weights = weights.into_csr().into();
+        let input = Self {
+            n: id_index(node_count),
+            skeleton,
+            weights,
+        };
+        debug_assert!(input.skeleton.is_symmetric_simple());
+        Ok(input)
+    }
+
+    /// What `CREATE CCH INDEX` checks before it returns, while the hierarchy itself is built in
+    /// the background: the definition resolves and every edge of an indexed type has a valid
+    /// weight. The first half of [`Self::build`], its weight passes and their reductions (about
+    /// 5 ms on California), without the skeleton and the export. Once it passes, the write-time
+    /// check ([`check_edge_weights`](super::maint::check_edge_weights)) keeps every later
+    /// version valid, so the build cannot fail on the graph's data.
+    ///
+    /// # Errors
+    /// As [`Self::build`]: [`CchError::UnknownRelType`], [`CchError::UnknownAttribute`],
+    /// [`CchError::InvalidWeight`], and [`CchError::Internal`] for a broken tensor.
+    pub(crate) fn validate(
+        graph: &Graph,
+        def: &CchIndexDef,
+    ) -> Result<(), CchError> {
+        Self::scored_weights(graph, def).map(drop)
+    }
+
+    /// The node count and the weight matrix: one entry per directed pair, the cheapest weight
+    /// over the pair's edges of every indexed type, self-loops still in. Refuses a bad weight.
+    fn scored_weights(
+        graph: &Graph,
+        def: &CchIndexDef,
+    ) -> Result<(u64, Matrix<f64>), CchError> {
         let tensors = graph.relationship_tensors();
         let selected = def
             .rel_types()
@@ -116,30 +165,8 @@ impl CchInput {
                 }
             });
         }
-        let mut weights = merged.unwrap_or_else(|| Matrix::<f64>::new(node_count, node_count));
-
-        // Drop self-loops from the weights, which is what lets the skeleton be
-        // derived from this pattern and still be diagonal free. After the
-        // check, so a bad weight on a self-loop is refused all the same.
-        weights.drop_diagonal();
-
-        // Skeleton = pattern(W) ∪ pattern(Wᵀ): a weight of 0.0 is an entry
-        // like any other.
-        let mut skeleton = Matrix::<bool>::new(node_count, node_count);
-        skeleton.pattern_union(&weights, &weights, Some(Descriptor::T1));
-
-        // Copy each matrix out as sorted, 64-bit CSR. Each export consumes its
-        // matrix, so the skeleton's GraphBLAS arrays are freed before the
-        // weights are copied.
-        let skeleton = skeleton.into_csr_pattern().into();
-        let weights = weights.into_csr().into();
-        let input = Self {
-            n: id_index(node_count),
-            skeleton,
-            weights,
-        };
-        debug_assert!(input.skeleton.is_symmetric_simple());
-        Ok(input)
+        let weights = merged.unwrap_or_else(|| Matrix::<f64>::new(node_count, node_count));
+        Ok((node_count, weights))
     }
 }
 

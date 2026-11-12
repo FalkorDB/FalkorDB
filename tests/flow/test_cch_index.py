@@ -391,3 +391,74 @@ class testCchWeightConstraint():
         except ResponseError as e:
             self.env.assertContains("edge weights must be >= 0 (+inf marks a closed edge)",
                                     str(e))
+
+
+#-----------------------------------------------------------------------------
+# 3. The hierarchy is built in the background
+#-----------------------------------------------------------------------------
+
+
+class testCchBackgroundBuild():
+    """CREATE CCH INDEX checks the weights and returns; the index builder builds
+    the hierarchy afterwards, off the GIL, as it builds a column. Nothing lists a
+    CCH index's state yet (db.indexes does from the procedure's PR on), so the
+    build is observed through GRAPH.MEMORY USAGE, which counts a hierarchy once
+    it is adopted."""
+
+    GRAPH = "cch_background_build"
+
+    def __init__(self):
+        if not INDEX_FALKORDB:
+            Environment.skip(None)
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.graph = self.db.select_graph(self.GRAPH)
+        # A 100 x 100 grid: its hierarchy takes a few MiB, enough to show in whole MiB.
+        side = 100
+        params = {'n': side * side, 'side': side}
+        self.graph.query("UNWIND range(0, $n - 1) AS x CREATE (:J)", params)
+        self.graph.query("""UNWIND range(0, $n - 1) AS x
+                            MATCH (a) WHERE id(a) = x
+                            MATCH (b) WHERE id(b) = x + 1 AND x % $side <> $side - 1
+                            CREATE (a)-[:ROAD {time: 1.0}]->(b)""", params)
+        self.graph.query("""UNWIND range(0, $n - $side - 1) AS x
+                            MATCH (a) WHERE id(a) = x
+                            MATCH (b) WHERE id(b) = x + $side
+                            CREATE (a)-[:ROAD {time: 1.0}]->(b)""", params)
+
+    def _indices_mb(self):
+        res = self.con.execute_command("GRAPH.MEMORY", "USAGE", self.GRAPH)
+        return dict(zip(res[0::2], res[1::2]))['indices_sz_mb']
+
+    def _wait_for_memory(self, done, timeout=30):
+        deadline = time.time() + timeout
+        while not done(self._indices_mb()):
+            if time.time() > deadline:
+                raise AssertionError("the CCH build did not finish in time")
+            time.sleep(0.05)
+
+    def test01_built_after_create_returns_and_released_by_drop(self):
+        self.env.assertEqual(self._indices_mb(), 0)
+        res = self.graph.query("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        self.env.assertEqual(res.indices_created, 1)
+        # The builder adopts the hierarchy shortly after.
+        self._wait_for_memory(lambda mb: mb > 0)
+        # Held: a second CREATE is refused whatever the build's state.
+        try:
+            self.graph.query("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+            self.env.assertTrue(False, message="a second CREATE was not refused")
+        except ResponseError as e:
+            self.env.assertContains("already exists", str(e))
+        self.graph.query("DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        self.env.assertEqual(self._indices_mb(), 0)
+
+    def test02_drop_and_create_again_right_away(self):
+        # A drop, and a create again, while the first build may still run: the
+        # first build is discarded and the second one is the index adopted.
+        self.graph.query("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        self.graph.query("DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        self.graph.query("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        self._wait_for_memory(lambda mb: mb > 0)
+        self.graph.query("DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        self.env.assertEqual(self._indices_mb(), 0)
+        self.env.assertTrue(self.con.ping())

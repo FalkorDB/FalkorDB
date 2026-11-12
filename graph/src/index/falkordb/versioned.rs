@@ -1,8 +1,9 @@
 //! What every native index carries, whatever its kind: its build state, and the two sides that
 //! change it, writers and indexer batches.
 //!
-//! A kind (today only the tuple column, [`IndexColumn`]) implements [`VersionedIndex`]: how it
-//! records a writer's changes, and how it reads and adds an indexer batch. The lifecycle around
+//! A kind (the tuple column, [`IndexColumn`], and the CCH hierarchy, [`CchIndex`]) implements
+//! [`VersionedIndex`]: how it records a writer's changes, and how it reads and adds an indexer
+//! batch. The lifecycle around
 //! those operations is written once here, over [`IndexEntry<K>`], and never names a kind.
 
 use std::fmt;
@@ -13,6 +14,7 @@ use roaring::RoaringTreemap;
 use crate::entity_type::EntityType;
 use crate::graph::graph::Graph;
 
+use super::cch::{CchIndex, CchIndexDef};
 use super::falkordb_index::{FalkorDbIndex, IndexColumn, IndexKey};
 
 /// Build state of a versioned index, generic over its kind's cursor.
@@ -97,6 +99,8 @@ pub(crate) struct Written {
 pub(crate) enum IndexId {
     /// A tuple column: `(label, attr)` of a node label or a relationship type.
     Column(EntityType, IndexKey),
+    /// A CCH shortest-path index, by its whole definition.
+    Cch(CchIndexDef),
 }
 
 /// One versioned index: the kind's own structure plus its build state.
@@ -144,6 +148,7 @@ pub(crate) struct PreparedBatch(Prepared);
 /// [`PreparedBatch`] by kind.
 enum Prepared {
     Column(IndexerBatch<IndexColumn>),
+    Cch(IndexerBatch<CchIndex>),
 }
 
 impl PreparedBatch {
@@ -155,6 +160,9 @@ impl PreparedBatch {
     ) {
         match &mut self.0 {
             Prepared::Column(batch) => batch.catch_up_limit = Some(limit),
+            // A hierarchy is one batch: there is no smaller one to retry with, so its catch-up
+            // is never limited.
+            Prepared::Cch(_) => {}
         }
     }
 }
@@ -484,6 +492,9 @@ impl Graph {
             IndexId::Column(entity, key) => self
                 .prepare_batch::<IndexColumn>((*entity, key.clone()), budget)
                 .map(|batch| PreparedBatch(Prepared::Column(batch))),
+            IndexId::Cch(def) => self
+                .prepare_batch::<CchIndex>(def.clone(), budget)
+                .map(|batch| PreparedBatch(Prepared::Cch(batch))),
         }
     }
 
@@ -496,21 +507,44 @@ impl Graph {
     /// - otherwise, nothing committed since: [`IndexerCommit::Same`];
     /// - otherwise only other indexes' batches did: [`IndexerCommit::Swap`].
     ///
-    /// Columns are the only kind of index, so this reads the batch's column entry directly. A
-    /// second kind adds a variant to [`Prepared`], and the `let` below becomes a `match` on it,
-    /// each arm asking these same questions of its kind's entry ([`VersionedIndex::entry`]). Once
-    /// the arms differ only in the kind, move their body into one function generic over
-    /// [`VersionedIndex`].
+    /// A column's catch-up is the cheaper of [`CatchUp::Refresh`] and [`CatchUp::Insert`]. A CCH
+    /// batch is a whole hierarchy, which cannot have a batch inserted into it, so its catch-up is
+    /// always [`CatchUp::Refresh`] of the batch's copy, with no limit.
     pub(crate) fn indexer_fit(
         &self,
         published: &Self,
         batch: &PreparedBatch,
     ) -> IndexerCommit {
-        let Prepared::Column(column) = &batch.0;
-        let Some(ours) = IndexColumn::entry(&self.falkordb_index, &column.name) else {
+        match &batch.0 {
+            Prepared::Column(column) => self.fit::<IndexColumn>(published, column, |written| {
+                let batch_len = IndexColumn::batch_len(&column.work);
+                let how = catch_up_by(written, batch_len);
+                // An insert adds the tuples of the entities no writer changed, and reads again
+                // every written entity in the batch's range. Capping that at the batch's `read`,
+                // its budget, lets nothing past the limit: only a budget above the limit is given
+                // one (SIZING).
+                let work = match how {
+                    CatchUp::Refresh => written,
+                    CatchUp::Insert => batch_len as u64 + written.min(column.read),
+                };
+                (column.catch_up_limit.is_none_or(|limit| work <= limit)).then_some(how)
+            }),
+            Prepared::Cch(cch) => self.fit::<CchIndex>(published, cch, |_| Some(CatchUp::Refresh)),
+        }
+    }
+
+    /// [`Self::indexer_fit`] for one kind. `catch_up` chooses how to catch up on `written`
+    /// entities, or `None` if that is more than the batch may do.
+    fn fit<K: VersionedIndex>(
+        &self,
+        published: &Self,
+        batch: &IndexerBatch<K>,
+        catch_up: impl FnOnce(u64) -> Option<CatchUp>,
+    ) -> IndexerCommit {
+        let Some(ours) = K::entry(&self.falkordb_index, &batch.name) else {
             return IndexerCommit::Discarded(Discarded::Gone);
         };
-        let theirs = IndexColumn::entry(&published.falkordb_index, &column.name);
+        let theirs = K::entry(&published.falkordb_index, &batch.name);
         if let Some(why) = ours.discarded_against(theirs) {
             return IndexerCommit::Discarded(why);
         }
@@ -519,19 +553,10 @@ impl Graph {
                 BuildState::Building { written, .. } => written.since_last_indexer_step.len(),
                 BuildState::Ready => 0,
             });
-            let batch_len = IndexColumn::batch_len(&column.work);
-            let how = catch_up_by(written, batch_len);
-            // An insert adds the tuples of the entities no writer changed, and reads again every
-            // written entity in the batch's range. Capping that at the batch's `read`, its budget,
-            // lets nothing past the limit: only a budget above the limit is given one (SIZING).
-            let work = match how {
-                CatchUp::Refresh => written,
-                CatchUp::Insert => batch_len as u64 + written.min(column.read),
-            };
-            if column.catch_up_limit.is_some_and(|limit| work > limit) {
-                return IndexerCommit::Discarded(Discarded::CatchUpTooLarge);
-            }
-            return IndexerCommit::CatchUp(how);
+            return catch_up(written).map_or(
+                IndexerCommit::Discarded(Discarded::CatchUpTooLarge),
+                IndexerCommit::CatchUp,
+            );
         }
         // No writer committed, so only batches can have changed an index since, and none did if
         // none was published.
@@ -556,6 +581,7 @@ impl Graph {
         let mut version = published.new_build_version();
         match &batch.0 {
             Prepared::Column(batch) => version.take_index::<IndexColumn>(self, &batch.name),
+            Prepared::Cch(batch) => version.take_index::<CchIndex>(self, &batch.name),
         }
         version
     }
@@ -580,6 +606,12 @@ impl Graph {
             }
             (Prepared::Column(batch), CatchUp::Insert) => {
                 version.insert_index::<IndexColumn>(self, published, &batch.name, &batch.work);
+            }
+            (Prepared::Cch(batch), CatchUp::Refresh) => {
+                version.catch_up_index::<CchIndex>(self, published, &batch.name);
+            }
+            (Prepared::Cch(_), CatchUp::Insert) => {
+                unreachable!("a CCH batch is caught up by refreshing it, never inserted")
             }
         }
         version
@@ -668,6 +700,9 @@ impl Graph {
         for name in self.falkordb_index.column_names() {
             self.rebase_index::<IndexColumn>(published, &name);
         }
+        for def in self.falkordb_index.cch_defs().cloned().collect::<Vec<_>>() {
+            self.rebase_index::<CchIndex>(published, &def);
+        }
     }
 
     /// Whether [`Self::rebase_onto_indexer_batches`] has anything to do: whether an indexer batch
@@ -680,11 +715,15 @@ impl Graph {
         published
             .falkordb_index
             .batch_published_since(&self.falkordb_index)
-            && self
+            && (self
                 .falkordb_index
                 .column_names()
                 .iter()
                 .any(|name| self.overtaken::<IndexColumn>(published, name))
+                || self
+                    .falkordb_index
+                    .cch_defs()
+                    .any(|def| self.overtaken::<CchIndex>(published, def)))
     }
 
     /// Whether an indexer batch moved on, in `published`, index `name`, still `Building` here: the
@@ -787,6 +826,10 @@ impl Graph {
             IndexId::Column(entity, (label, attr)) => {
                 self.falkordb_index.building_read(*entity, label, attr)
             }
+            // One batch builds a hierarchy: nothing is read before it.
+            IndexId::Cch(def) => CchIndex::entry(&self.falkordb_index, def)
+                .filter(|entry| entry.is_building())
+                .map(|_| 0),
         }
     }
 
@@ -802,6 +845,8 @@ impl Graph {
                 IndexColumn::entry(&self.falkordb_index, &(*entity, key.clone()))
                     .map(|entry| (entry.generation, entry.is_building()))
             }
+            IndexId::Cch(def) => CchIndex::entry(&self.falkordb_index, def)
+                .map(|entry| (entry.generation, entry.is_building())),
         }
     }
 
@@ -813,17 +858,22 @@ impl Graph {
         &self,
         older: &Self,
     ) -> Vec<(IndexId, u64)> {
-        if !self.falkordb_index.has_building_columns() {
+        if !self.falkordb_index.has_building_indexes() {
             return Vec::new();
         }
-        self.falkordb_index
+        let columns = self
+            .falkordb_index
             .column_names()
             .into_iter()
             .filter_map(|name| {
                 let generation = self.building_since::<IndexColumn>(older, &name)?;
                 Some((IndexId::Column(name.0, name.1), generation))
-            })
-            .collect()
+            });
+        let hierarchies = self.falkordb_index.cch_defs().filter_map(|def| {
+            let generation = self.building_since::<CchIndex>(older, def)?;
+            Some((IndexId::Cch(def.clone()), generation))
+        });
+        columns.chain(hierarchies).collect()
     }
 
     /// [`Self::indexes_to_build_since`] for one index: its generation if it is `Building` here,
