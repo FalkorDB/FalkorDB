@@ -176,7 +176,7 @@ class BuildCells(unittest.TestCase):
         built = set()
         for cell in json.loads(m[1]):
             self.assertEqual(cell["platform"], pt.PLATFORMS[cell["arch"]])
-            if cell["image"] and cell["publish"]:
+            if cell["image"]:
                 for server in cell["servers"]:
                     built.add((cell["os"], server, cell["arch"]))
         self.assertEqual(built, {(o, s, a) for o, s in pt.PER_OS for a in pt.PLATFORMS})

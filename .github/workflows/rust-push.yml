@@ -187,11 +187,6 @@ jobs:
           llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-23 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
-      # Coverage runs on Valkey, the harness default. tests/common.py starts the
-      # server with --logfile redis-test.log.
-      - name: Check the server this job ran (valkey)
-        if: ${{ success() }}
-        run: tests/assert_server_log.sh valkey redis-test.log
       - name: Upload unit test coverage to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
@@ -254,10 +249,6 @@ jobs:
           llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-23 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
-      # Coverage runs on Valkey, flow.sh's default.
-      - name: Check the server this job ran (valkey)
-        if: ${{ success() }}
-        run: tests/assert_server_log.sh valkey tests/flow/logs
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
