@@ -600,16 +600,8 @@ pub fn execute_query(
         params_offset,
         ..
     } = session.with_graph(|tg| tg.graph.read().get_plan(query))?;
-    // Single pass over the plan: index DDL (CREATE/DROP INDEX) and a Commit
-    // node both mean this is a write. Writes escalate to writer mode lazily
-    // during execution (see `crate::query_session`), so no further plan
-    // classification is needed here.
-    let is_write = plan.iter().any(|n| {
-        matches!(
-            n,
-            IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
-        )
-    });
+    // Writes escalate to writer mode lazily (see `crate::query_session`).
+    let is_write = plan.iter().any(IR::makes_write_query);
     let g = if is_write {
         if !write {
             return Err(String::from(
@@ -681,12 +673,7 @@ pub fn execute_profile(
     // Detect writes (mirrors `execute_query`). A write is NOT executed here — it
     // must go through the serialized write queue to get the locking protocol and
     // effects replication.
-    let is_write = plan.iter().any(|n| {
-        matches!(
-            n,
-            IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
-        )
-    });
+    let is_write = plan.iter().any(IR::makes_write_query);
     if is_write {
         return Ok(ProfileDetect::Write);
     }
@@ -794,10 +781,7 @@ fn try_query_write(
         ..
     } = session.with_graph(|tg| tg.graph.read().get_plan(query))?;
     let cached = first_cached;
-    debug_assert!(plan.iter().any(|n| matches!(
-        n,
-        IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
-    )));
+    debug_assert!(plan.iter().any(IR::makes_write_query));
 
     let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
 

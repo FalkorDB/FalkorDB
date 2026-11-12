@@ -1,4 +1,5 @@
-//! Index DDL — `CREATE INDEX` and `DROP INDEX`.
+//! Index DDL — `CREATE INDEX` and `DROP INDEX`, and with the `index-falkordb`
+//! feature `CREATE CCH INDEX` and `DROP CCH INDEX`.
 //!
 //! Not an operator, which is why this sits beside `runtime` rather than under
 //! `ops`: DDL is an immediate side effect with no rows to pull, so there is
@@ -24,6 +25,12 @@ use crate::{
         value::Value,
     },
 };
+#[cfg(feature = "index-falkordb")]
+use crate::{
+    graph::graph::Graph,
+    index::falkordb::cch::{CchError, CchIndexDef},
+    parser::ast::CchIndexSpec,
+};
 use orx_tree::NodeRef;
 
 /// `CREATE INDEX`, with its `OPTIONS {...}` map if it carried one.
@@ -35,11 +42,7 @@ pub(crate) fn create_index<'a>(
     entity_type: &EntityType,
     options: Option<&QueryExpr<Variable>>,
 ) -> Result<BatchOp<'a>, String> {
-    if !runtime.write {
-        return Err(String::from(
-            "graph.RO_QUERY is to be executed only on read-only queries",
-        ));
-    }
+    reject_read_only_query(runtime)?;
     // The evaluated map is kept, not just the parsed options: it is what goes on
     // the wire for v3, and this is the only place it exists. A plan scan cannot
     // rebuild it — the expression has to be evaluated to know what it says.
@@ -91,11 +94,7 @@ pub(crate) fn drop_index<'a>(
     index_type: &IndexType,
     entity_type: &EntityType,
 ) -> Result<BatchOp<'a>, String> {
-    if !runtime.write {
-        return Err(String::from(
-            "graph.RO_QUERY is to be executed only on read-only queries",
-        ));
-    }
+    reject_read_only_query(runtime)?;
     // See `create_index`: DDL runs in writer mode.
     runtime.upgrade_to_write()?;
     let dropped = runtime
@@ -103,6 +102,98 @@ pub(crate) fn drop_index<'a>(
         .drop_index(index_type, entity_type, label, attrs)?;
     runtime.stats.borrow_mut().indexes_dropped += dropped;
     emit_effect(runtime, false, label, attrs, index_type, entity_type, None)?;
+    Ok(BatchOp::Once(None))
+}
+
+/// Index DDL is a write: refuse it in a `GRAPH.RO_QUERY`, with C's message.
+fn reject_read_only_query(runtime: &Runtime<'_>) -> Result<(), String> {
+    if runtime.write {
+        Ok(())
+    } else {
+        Err(String::from(
+            "graph.RO_QUERY is to be executed only on read-only queries",
+        ))
+    }
+}
+
+/// The CCH index definition `spec` names, resolving names to ids without creating any.
+///
+/// # Errors
+/// `CREATE CCH INDEX`'s message for the first relationship type or weight attribute that does
+/// not exist.
+#[cfg(feature = "index-falkordb")]
+fn resolve_cch_index(
+    graph: &Graph,
+    spec: &CchIndexSpec,
+) -> Result<CchIndexDef, String> {
+    let rel_types = spec
+        .rel_types
+        .iter()
+        .map(|name| {
+            graph.get_type_id(name).ok_or_else(|| {
+                format!(
+                    "CCH index error: relationship type '{name}' does not exist; create it \
+                     first (create a relationship of that type), then create the index"
+                )
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    let weight_attr = graph
+        .get_relationship_attribute_id(&spec.weight_attr)
+        .map(|id| id as u16)
+        .ok_or_else(|| {
+            format!(
+                "CCH index error: attribute '{}' does not exist; create it \
+                 first (set it on a relationship), then create the index",
+                spec.weight_attr
+            )
+        })?;
+    Ok(CchIndexDef::new(rel_types, weight_attr))
+}
+
+/// `CREATE CCH INDEX`.
+///
+/// Unlike `CREATE INDEX` (and C), the relationship types and the weight attribute must already
+/// exist: CCH DDL emits no effects yet, so schema created here would never reach a replica.
+/// Replication: #3219.
+#[cfg(feature = "index-falkordb")]
+pub(crate) fn create_cch_index<'a>(
+    runtime: &'a Runtime<'a>,
+    spec: &CchIndexSpec,
+) -> Result<BatchOp<'a>, String> {
+    reject_read_only_query(runtime)?;
+    // See `create_index`: DDL runs in writer mode.
+    runtime.upgrade_to_write()?;
+    {
+        let mut graph = runtime.graph_mut();
+        let definition = resolve_cch_index(&graph, spec)?;
+        graph
+            .create_cch_index(definition)
+            .map_err(|error| error.query_message())?;
+    }
+    // Not replicated yet (#3219), nor saved in the RDB.
+    runtime.stats.borrow_mut().indexes_created += 1;
+    Ok(BatchOp::Once(None))
+}
+
+/// `DROP CCH INDEX`. Resolves only: everything must already exist to match a held index.
+#[cfg(feature = "index-falkordb")]
+pub(crate) fn drop_cch_index<'a>(
+    runtime: &'a Runtime<'a>,
+    spec: &CchIndexSpec,
+) -> Result<BatchOp<'a>, String> {
+    reject_read_only_query(runtime)?;
+    runtime.upgrade_to_write()?;
+    {
+        let mut graph = runtime.graph_mut();
+        let definition =
+            resolve_cch_index(&graph, spec).map_err(|_| CchError::NotFound.query_message())?;
+        graph
+            .drop_cch_index(&definition)
+            .map_err(|error| error.query_message())?;
+    }
+    // Not replicated yet either; see `create_cch_index`.
+    runtime.stats.borrow_mut().indexes_dropped += 1;
     Ok(BatchOp::Once(None))
 }
 

@@ -5302,11 +5302,11 @@ impl Graph {
     /// definition, and whatever [`CchInput::build`] and [`Cch::build`] report:
     /// [`CchError::InvalidWeight`] for a negative or NaN weight on an indexed relationship,
     /// otherwise a bug. Nothing is held on error.
-    pub fn create_cch_index(
+    pub(crate) fn create_cch_index(
         &mut self,
         def: CchIndexDef,
     ) -> Result<(), CchError> {
-        // Before anything is built, against every held entry, ready or not.
+        // Checked before the (costly) build; a building entry counts too.
         if self.falkordb_index.cch_entry(&def).is_some() {
             return Err(CchError::AlreadyExists);
         }
@@ -5323,7 +5323,7 @@ impl Graph {
     ///
     /// # Errors
     /// [`CchError::NotFound`] if no index with this definition is held.
-    pub fn drop_cch_index(
+    pub(crate) fn drop_cch_index(
         &mut self,
         def: &CchIndexDef,
     ) -> Result<(), CchError> {

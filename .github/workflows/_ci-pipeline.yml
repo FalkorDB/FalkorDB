@@ -591,3 +591,42 @@ jobs:
           name: nextgen-index-flow-log
           path: /tmp/nextgen_flow.log
           retention-days: 7
+
+  # The flow tests that need the feature (flow_tests_index_falkordb.txt, which the default
+  # matrix skips), against the same native-index artifact the ledger uses: no second build.
+  index-falkordb-flow:
+    needs: [build-engine-nextgen]
+    if: ${{ !cancelled() && needs.build-engine-nextgen.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: ${{ inputs.build_image }}
+    permissions:
+      contents: read
+    env:
+      # Where the artifact is unpacked, so flow.sh loads it (see `_flow-artifact.yml`).
+      TARGET_DIR: target/release
+      # Declares the build, so the feature's classes run instead of skipping (tests/flow/common.py).
+      FALKORDB_FEATURES: index-falkordb
+      TESTS_FILE: flow_tests_index_falkordb.txt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # flow.sh is test code from the pull request. Do not leave the token in .git/config.
+          persist-credentials: false
+      - name: Download the native-index binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: nextgen-binary
+          path: target/release
+      - run: chmod +x target/release/libfalkordb.so
+      - name: Run the index-falkordb flow tests
+        run: |
+          . /data/venv/bin/activate
+          ./flow.sh
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: index-falkordb-flow-logs
+          path: tests/flow/logs/
+          if-no-files-found: ignore

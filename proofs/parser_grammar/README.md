@@ -153,13 +153,14 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 112 rows: 74 in `parser/cypher.rs` and 38 in `parser/ast.rs`.
+`COVERAGE.tsv` has 117 rows: 79 in `parser/cypher.rs` and 38 in `parser/ast.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 112 |
+| PROVEN | 113 |
+| NOT COVERED | 4 |
 
-Every function listed is PROVEN. For the functions involved in open bugs (for example `parse_shortest_path_expr`), the row cites both the soundness theorem and the counterexample.
+The four NOT COVERED rows are the CCH index DDL (#3362): the Lean grammar has no `CREATE`/`DROP CCH INDEX`, so `parse` and `parse_index_ops`, which now accept it, are not covered until it does, and neither are the two CCH helpers. Every other function listed is PROVEN. For the functions involved in open bugs (for example `parse_shortest_path_expr`), the row cites both the soundness theorem and the counterexample.
 
 ## What the model does not cover
 

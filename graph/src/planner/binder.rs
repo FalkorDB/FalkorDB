@@ -459,6 +459,8 @@ impl Binder {
                 index_type,
                 entity_type,
             }),
+            QueryIR::CreateCchIndex(spec) => Ok(QueryIR::CreateCchIndex(spec)),
+            QueryIR::DropCchIndex(spec) => Ok(QueryIR::DropCchIndex(spec)),
             QueryIR::Delete { exprs, detach } => {
                 let exprs = exprs
                     .iter()

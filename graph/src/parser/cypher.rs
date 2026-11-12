@@ -100,8 +100,8 @@ use crate::entity_type::EntityType;
 use crate::identifier_limits::{is_identifier_too_long, validate_identifier_len};
 use crate::index::indexer::IndexType;
 use crate::parser::ast::{
-    AllShortestPaths, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
-    QueryRelationship, RawQueryIR, ReduceVars, SetItem, ShortestPathInfo,
+    AllShortestPaths, CchIndexSpec, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR,
+    QueryNode, QueryPath, QueryRelationship, RawQueryIR, ReduceVars, SetItem, ShortestPathInfo,
 };
 use crate::parser::lexer::{Keyword, Lexer, Token};
 use crate::runtime::orderset::OrderSet;
@@ -576,8 +576,10 @@ impl<'a> Parser<'a> {
     #[allow(clippy::cognitive_complexity)]
     fn parse_index_ops(&mut self) -> Result<Option<RawQueryIR>, String> {
         if optional_match_token!(self.lexer => Create) {
-            let fulltext = optional_match_token!(self.lexer => Fulltext);
-            let vector = !fulltext && optional_match_token!(self.lexer => Vector);
+            // `CCH` makes this DDL only when `INDEX` follows: `CREATE cch=()-->()` names a path.
+            let cch = optional_match_token!(self.lexer => Cch);
+            let fulltext = !cch && optional_match_token!(self.lexer => Fulltext);
+            let vector = !cch && !fulltext && optional_match_token!(self.lexer => Vector);
             let index = optional_match_token!(self.lexer => Index);
             if !index {
                 if self.lexer.current_str().eq_ignore_ascii_case("constraint") {
@@ -586,6 +588,9 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 return Ok(None);
+            }
+            if cch {
+                return Ok(Some(QueryIR::CreateCchIndex(self.parse_cch_index_spec()?)));
             }
             if !fulltext && !vector && optional_match_token!(self.lexer => On) {
                 match_token!(self.lexer, Colon);
@@ -614,6 +619,7 @@ impl<'a> Parser<'a> {
                 let nkey = self.parse_ident()?;
                 match_token!(self.lexer, Colon);
                 let label = self.parse_ident()?;
+                self.reject_multiple_index_types()?;
                 match_token!(self.lexer, RBrace);
                 match_token!(self.lexer, Dash);
                 optional_match_token!(self.lexer, GreaterThan);
@@ -675,8 +681,10 @@ impl<'a> Parser<'a> {
             }));
         }
         if optional_match_token!(self.lexer => Drop) {
-            let fulltext = optional_match_token!(self.lexer => Fulltext);
-            let vector = !fulltext && optional_match_token!(self.lexer => Vector);
+            // `CCH` makes this DDL only when `INDEX` follows: `CREATE cch=()-->()` names a path.
+            let cch = optional_match_token!(self.lexer => Cch);
+            let fulltext = !cch && optional_match_token!(self.lexer => Fulltext);
+            let vector = !cch && !fulltext && optional_match_token!(self.lexer => Vector);
             let index = optional_match_token!(self.lexer => Index);
             if !index {
                 if self.lexer.current_str().eq_ignore_ascii_case("constraint") {
@@ -685,6 +693,9 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 return Ok(None);
+            }
+            if cch {
+                return Ok(Some(QueryIR::DropCchIndex(self.parse_cch_index_spec()?)));
             }
             if !fulltext && !vector && optional_match_token!(self.lexer => On) {
                 match_token!(self.lexer, Colon);
@@ -712,6 +723,7 @@ impl<'a> Parser<'a> {
                 let nkey = self.parse_ident()?;
                 match_token!(self.lexer, Colon);
                 let label = self.parse_ident()?;
+                self.reject_multiple_index_types()?;
                 match_token!(self.lexer, RBrace);
                 match_token!(self.lexer, Dash);
                 optional_match_token!(self.lexer, GreaterThan);
@@ -763,6 +775,65 @@ impl<'a> Parser<'a> {
             }));
         }
         Ok(None)
+    }
+
+    /// Refuses a second relationship type (`:A|B`) in a non-CCH index, with C's message.
+    fn reject_multiple_index_types(&mut self) -> Result<(), String> {
+        if matches!(self.lexer.current()?, Token::Pipe) {
+            return Err(String::from(
+                "Multiple relationship types in a single index are only supported for CCH indexes",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Parses the tail shared by `CREATE CCH INDEX` and `DROP CCH INDEX`, after
+    /// `parse_index_ops` has consumed the verb and `CCH INDEX`:
+    ///
+    /// ```text
+    /// FOR ()-[e:A|B|...]->() ON (e.weight)
+    /// ```
+    ///
+    /// A CCH path index is relationship-only and spans one or more types, so
+    /// this does not share the node/single-label parsing used by every other
+    /// index type. The relationship types keep parse order and may repeat.
+    fn parse_cch_index_spec(&mut self) -> Result<CchIndexSpec, String> {
+        match_token!(self.lexer => For);
+        match_token!(self.lexer, LParen);
+        if !optional_match_token!(self.lexer, RParen) {
+            return Err(String::from("CCH index is only supported on relationships"));
+        }
+        match_token!(self.lexer, Dash);
+        match_token!(self.lexer, LBrace);
+        let nkey = self.parse_ident()?;
+        match_token!(self.lexer, Colon);
+        // `:A|B` or `:A|:B`, as in a relationship pattern and in C; `:A:B` is a syntax error.
+        let rel_types = self.parse_relationship_types()?;
+        match_token!(self.lexer, RBrace);
+        match_token!(self.lexer, Dash);
+        optional_match_token!(self.lexer, GreaterThan);
+        match_token!(self.lexer, LParen);
+        match_token!(self.lexer, RParen);
+
+        match_token!(self.lexer => On);
+        match_token!(self.lexer, LParen);
+        let key = self.parse_ident()?;
+        self.match_dot_property_separator()?;
+        if nkey.as_str() != key.as_str() {
+            return Err(self.lexer.format_error(&format!("'{key}' not defined")));
+        }
+        let weight_attr = self.parse_property_name()?;
+        if optional_match_token!(self.lexer, Comma) {
+            return Err(String::from(
+                "CCH index requires exactly one property, the edge weight",
+            ));
+        }
+        match_token!(self.lexer, RParen);
+
+        Ok(CchIndexSpec {
+            rel_types,
+            weight_attr,
+        })
     }
 
     /// Parses a complete query, handling UNION if present.
@@ -4352,6 +4423,210 @@ mod tests {
             "MATCH (a), (b) RETURN shortestPath((a)-[:A|:B*]->(b))",
         ] {
             assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod cch_index_ddl_tests {
+    use super::*;
+
+    const VERBS: [&str; 2] = ["CREATE", "DROP"];
+
+    fn parse(query: &str) -> Result<RawQueryIR, String> {
+        Parser::new(query).parse()
+    }
+
+    fn names(attrs: &[Arc<String>]) -> Vec<&str> {
+        attrs.iter().map(|a| a.as_str()).collect()
+    }
+
+    /// The spec `query` parses to, checking the variant matches its verb.
+    fn parse_spec(query: &str) -> CchIndexSpec {
+        let verb = query.to_uppercase();
+        match parse(query).unwrap_or_else(|err| panic!("{query}: {err}")) {
+            QueryIR::CreateCchIndex(spec) if verb.starts_with("CREATE") => spec,
+            QueryIR::DropCchIndex(spec) if verb.starts_with("DROP") => spec,
+            other => panic!("{query}: expected the CCH index variant, got {other:?}"),
+        }
+    }
+
+    fn assert_refused(
+        query: &str,
+        needle: &str,
+    ) {
+        let err = parse(query).expect_err(query);
+        assert!(err.contains(needle), "{query}: unexpected error: {err}");
+    }
+
+    /// The types keep parse order and repeats: `CchIndexDef::new` normalises them once they
+    /// are resolved to ids at run time. The keywords parse in any case.
+    #[test]
+    fn cch_index_types_keep_parse_order() {
+        for verb in VERBS {
+            for (types, expected) in [
+                ("ROAD", vec!["ROAD"]),
+                ("ROAD|FERRY", vec!["ROAD", "FERRY"]),
+                ("B|A|B", vec!["B", "A", "B"]),
+                ("A|:B", vec!["A", "B"]),
+            ] {
+                let spec = parse_spec(&format!("{verb} CCH INDEX FOR ()-[e:{types}]->() ON (e.w)"));
+                assert_eq!(names(&spec.rel_types), expected, "{verb} {types}");
+                assert_eq!(spec.weight_attr.as_str(), "w");
+            }
+            let lower = verb.to_lowercase();
+            let spec = parse_spec(&format!("{lower} cch index for ()-[e:road]->() on (e.w)"));
+            assert_eq!(names(&spec.rel_types), vec!["road"], "{lower}");
+        }
+    }
+
+    #[test]
+    fn cch_index_refusals() {
+        for verb in VERBS {
+            for (tail, needle) in [
+                // `:A:B` would read as "both A and B"; C's grammar rejects it too.
+                ("FOR ()-[e:A:B]->() ON (e.w)", "Invalid input"),
+                ("FOR (n:N) ON (n.w)", "only supported on relationships"),
+                ("FOR ()-[e:ROAD]->() ON (e.w, e.x)", "exactly one property"),
+                ("FOR ()-[e:ROAD]->() ON (x.w)", "not defined"),
+                ("FOR ()-[e:ROAD]->()", "Invalid input"),
+                (
+                    "FOR (a)-[e:ROAD]->() ON (e.w)",
+                    "only supported on relationships",
+                ),
+            ] {
+                assert_refused(&format!("{verb} CCH INDEX {tail}"), needle);
+            }
+        }
+    }
+
+    #[test]
+    fn other_index_kinds_refuse_multiple_types() {
+        for verb in VERBS {
+            for kind in ["", "FULLTEXT ", "VECTOR "] {
+                assert_refused(
+                    &format!("{verb} {kind}INDEX FOR ()-[e:A|B]->() ON (e.w)"),
+                    "only supported for CCH indexes",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn other_index_ddl_unaffected() {
+        for (query, expected_label, expected_type, expected_entity) in [
+            (
+                "CREATE INDEX ON :N(name)",
+                "N",
+                IndexType::Range,
+                EntityType::Node,
+            ),
+            (
+                "CREATE INDEX FOR (n:N) ON (n.name)",
+                "N",
+                IndexType::Range,
+                EntityType::Node,
+            ),
+            (
+                "CREATE INDEX FOR ()-[e:R]->() ON (e.name)",
+                "R",
+                IndexType::Range,
+                EntityType::Relationship,
+            ),
+            (
+                "CREATE FULLTEXT INDEX FOR (n:N) ON (n.name)",
+                "N",
+                IndexType::Fulltext,
+                EntityType::Node,
+            ),
+            (
+                "CREATE VECTOR INDEX FOR ()-[e:R]->() ON (e.name)",
+                "R",
+                IndexType::Vector,
+                EntityType::Relationship,
+            ),
+            (
+                "DROP INDEX FOR (n:N) ON (n.name)",
+                "N",
+                IndexType::Range,
+                EntityType::Node,
+            ),
+        ] {
+            match parse(query).unwrap_or_else(|err| panic!("{query}: {err}")) {
+                QueryIR::CreateIndex {
+                    label,
+                    attrs,
+                    index_type,
+                    entity_type,
+                    ..
+                }
+                | QueryIR::DropIndex {
+                    label,
+                    attrs,
+                    index_type,
+                    entity_type,
+                } => {
+                    assert_eq!(label.as_str(), expected_label, "{query}");
+                    assert_eq!(names(&attrs), vec!["name"], "{query}");
+                    assert_eq!(index_type, expected_type, "{query}");
+                    assert_eq!(entity_type, expected_entity, "{query}");
+                }
+                other => panic!("{query}: expected index DDL, got {other:?}"),
+            }
+        }
+    }
+
+    /// `CCH` is a keyword only in `CREATE CCH INDEX`/`DROP CCH INDEX`; everywhere else it is a
+    /// name, a path named `cch` right after `CREATE` included. Each query parses as a query,
+    /// with the name where the query put it.
+    #[test]
+    fn cch_stays_an_identifier() {
+        for (query, the_name_in_place) in [
+            ("MATCH (cch) RETURN cch", "MATCH (cch),"),
+            ("MATCH (n) RETURN n.cch", "n.cch"),
+            ("CREATE (:cch {cch: 1})", "(_anon_0:cch)"),
+            ("MATCH (n:CCH) RETURN n", "(n:CCH)"),
+            ("MATCH ()-[r:CCH]->() RETURN r", "[r:CCH]"),
+            ("UNWIND [1, 2] AS cch RETURN cch", "UNWIND cch:"),
+            (
+                "CREATE cch=()-[:ROAD]->() RETURN cch",
+                "(_anon_0)-[_anon_1:ROAD]->(_anon_2), cch,",
+            ),
+            (
+                "CREATE cch=(:A)-[:ROAD]->(:B), (c:C) RETURN cch, c",
+                "(_anon_0)-[_anon_1:ROAD]->(_anon_2), cch,",
+            ),
+        ] {
+            let ir = parse(query).unwrap_or_else(|err| panic!("{query}: {err}"));
+            assert!(matches!(ir, QueryIR::Query { .. }), "{query}: {ir:?}");
+            assert!(ir.to_string().contains(the_name_in_place), "{query}: {ir}");
+        }
+    }
+
+    // No `Runtime` is built here (only the root crate wires one up);
+    // `tests/flow/test_cch_index.py` runs the statements end to end.
+
+    /// The statements survive binding and planning, and plan as writes (so `GRAPH.RO_QUERY`
+    /// refuses them and `GRAPH.QUERY` runs them on a private version).
+    #[test]
+    fn cch_index_ddl_plans_as_a_write() {
+        use crate::graph::{graph::Graph, graphblas::test_init};
+
+        test_init::ensure_init();
+        let g = Graph::new(16, 16, 1, 0, "cch_ddl_plan_test");
+
+        for (verb, operator) in [("CREATE", "Create"), ("DROP", "Drop")] {
+            let plan = g
+                .get_plan(&format!(
+                    "{verb} CCH INDEX FOR ()-[e:ROAD|FERRY]->() ON (e.w)"
+                ))
+                .expect("CCH DDL must parse, bind and plan");
+            let root = plan.plan.root();
+            assert_eq!(
+                format!("{}", root.data()),
+                format!(r#"{operator} CCH Index | :["ROAD", "FERRY"](["w"])"#),
+            );
+            assert!(root.data().makes_write_query(), "{verb}");
         }
     }
 }

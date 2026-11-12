@@ -212,7 +212,7 @@ pub struct CchIndexDef {
 impl CchIndexDef {
     /// Sorts and deduplicates `rel_types`, so equal sets are equal indexes.
     #[must_use]
-    pub fn new(
+    pub(crate) fn new(
         mut rel_types: Vec<TypeId>,
         weight_attr: u16,
     ) -> Self {
@@ -267,6 +267,33 @@ pub enum CchError {
 impl From<order::OrderError> for CchError {
     fn from(error: order::OrderError) -> Self {
         Self::Ordering(error.to_string())
+    }
+}
+
+impl CchError {
+    /// The query error for a failed `CREATE`/`DROP CCH INDEX`, worded like C's where C has a
+    /// message.
+    ///
+    /// Not the `Display` text: that is the error's own wording, and the C wording differs
+    /// (`AlreadyExists`/`NotFound` say what the index is over, `Internal` drops "internal").
+    #[must_use]
+    pub(crate) fn query_message(&self) -> String {
+        match self {
+            Self::AlreadyExists => String::from(
+                "a CCH index already exists over these relationship types and weight attribute",
+            ),
+            Self::NotFound => {
+                String::from("no CCH index over these relationship types and weight attribute")
+            }
+            Self::UnknownRelType => String::from("CCH index error: unknown relationship type"),
+            Self::UnknownAttribute => String::from("CCH index error: unknown weight attribute"),
+            Self::InvalidWeight => String::from(
+                "CCH index error: edge weights must be >= 0 (+inf marks a closed edge)",
+            ),
+            Self::NeedsRebuild => format!("CCH index error: {self}"),
+            Self::Internal(message) => format!("CCH index error: {message}"),
+            Self::Ordering(error) => format!("CCH index error: {error}"),
+        }
     }
 }
 

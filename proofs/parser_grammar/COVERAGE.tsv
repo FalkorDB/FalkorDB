@@ -2,77 +2,77 @@ file	function	line	bucket	lean_name_or_reason
 graph/src/parser/cypher.rs	is_param_value_error	155	PROVEN	C.Params isParamValueError_spec
 graph/src/parser/cypher.rs	is_too_deep	165	PROVEN	C.Params isTooDeep_tooDeep (every too_deep message is recognised)
 graph/src/parser/cypher.rs	ExpressionListType::is_end_token	176	PROVEN	C.Params ELT.isEnd_spec; exprList/argsP use it
-graph/src/parser/cypher.rs	Parser::new	277	PROVEN	C.Params newState_spec (counter starts at 0); Model parseExpr initial frame
-graph/src/parser/cypher.rs	Parser::too_deep	290	PROVEN	C.Params tooDeep / isTooDeep_tooDeep
-graph/src/parser/cypher.rs	Parser::check_depth	303	PROVEN	proofs/lexer guarded_height_le (abstracted here)
-graph/src/parser/cypher.rs	Parser::with_child_height	318	PROVEN	C.Params withChildHeight_spec (outer tally restored, inner starts at 0)
-graph/src/parser/cypher.rs	Parser::tree_height	330	PROVEN	C.Params thLoop/treeHeight_spec (iterative walk = recursive height)
-graph/src/parser/cypher.rs	Parser::nested	344	PROVEN	proofs/lexer nested_depth_bound
-graph/src/parser/cypher.rs	Parser::save_state	357	PROVEN	C.Params save_state_spec
-graph/src/parser/cypher.rs	Parser::restore_state	364	PROVEN	C.Params restore_state_spec
-graph/src/parser/cypher.rs	Parser::parse_parameters	376	PROVEN	C.Params paramsP/paramPairs: np_paramsP, params_stop_at_query, hmInsert_lookup
-graph/src/parser/cypher.rs	Parser::parse_param_value	425	PROVEN	C.Params paramValueP: paramValue_fast, np_paramValueP
-graph/src/parser/cypher.rs	Parser::parse_literal	445	PROVEN	C.Params litP: lit_sound (GLit), lit_min_neg/lit_min_pos, np_lit; proofs/lexer int_literal_correct
-graph/src/parser/cypher.rs	Parser::parse_unsigned_literal	471	PROVEN	C.Params ulitP: lit_sound (GULit), np_lit
-graph/src/parser/cypher.rs	Parser::parse_literal_list	499	PROVEN	C.Params listLitV/listItems: lit_sound (GLItems)
-graph/src/parser/cypher.rs	Parser::parse_literal_map	514	PROVEN	C.Params mapLitV/mapItems: lit_sound (GMItems), omInsert_replaces
-graph/src/parser/cypher.rs	Parser::expect_end_of_input	532	PROVEN	C.ClausesG3 endP_sound (GSemis), np_endP
-graph/src/parser/cypher.rs	Parser::parse	551	PROVEN	C.Index parseP_sound (GCypher), parse_no_panic
-graph/src/parser/cypher.rs	Parser::parse_index_ops	567	PROVEN	C.Index indexOps/idxBody: idxBody_sound (GIdx), np_indexOps
-graph/src/parser/cypher.rs	Parser::parse_query	771	PROVEN	C.ClausesG3 queryP_sound (GQuery), C.ClausesNP queryP_no_panic; union_mix_rejected
-graph/src/parser/cypher.rs	Parser::parse_single_query	796	PROVEN	C.ClausesG3 sound_mut (GSingle/GSegs/GReads/GWrites), np_mut; match_after_create_rejected
-graph/src/parser/cypher.rs	Parser::parse_reading_clasue	929	PROVEN	C.ClausesG2 readingP_sound (GReading, no MATCH MATCH since #3060), C.ClausesNP readingP_np (unreachable! not reached); match_match_refused, reading_match_at_adv, load_csv_with_from_refused, no_load_with_from
-graph/src/parser/cypher.rs	Parser::parse_writing_clause	982	PROVEN	C.ClausesG3 writing_arm (GWriting), np_mut (unreachable! not reached)
-graph/src/parser/cypher.rs	Parser::parse_call_clause	1031	PROVEN	C.ClausesG3 GCall in sound_mut; C.ClausesG2 callProcP_sound; np_callProcP; call_implicit_accepted
-graph/src/parser/cypher.rs	Parser::body_has_return	1105	PROVEN	C.IR bodyHasReturn_query, bodyHasReturn_union
-graph/src/parser/cypher.rs	Parser::parse_dotted_ident	1115	PROVEN	C.ClausesG2 dottedP_sound (GDotted); Model dotted_np
-graph/src/parser/cypher.rs	Parser::parse_match_clause	1126	PROVEN	C.ClausesG2 matchP_sound, np_matchP
-graph/src/parser/cypher.rs	Parser::parse_unwind_clause	1137	PROVEN	C.ClausesG unwindP_sound (GUnwind), np_unwindP
-graph/src/parser/cypher.rs	Parser::parse_create_clause	1147	PROVEN	C.ClausesG2 createP_sound, np_createP
-graph/src/parser/cypher.rs	Parser::parse_merge_clause	1151	PROVEN	C.ClausesG2 mergeP_sound (GMergeActions), np_mergeP
-graph/src/parser/cypher.rs	Parser::parse_delete_clause	1178	PROVEN	C.ClausesG2 deleteP_sound (GExprs1/GDelMore), np_deleteP; delete_detach_folded
-graph/src/parser/cypher.rs	Parser::parse_where	1214	PROVEN	C.ClausesG whereP_sound (GWhere), np_whereP
-graph/src/parser/cypher.rs	Parser::parse_orderby_skip_limit	1233	PROVEN	C.ClausesG oslP_sound (GOsl/GCount), np_oslP
-graph/src/parser/cypher.rs	Parser::parse_with_clause	1293	PROVEN	C.ClausesG withP_sound (GProj+GWhere), np_withP
-graph/src/parser/cypher.rs	Parser::parse_return_clause	1323	PROVEN	C.ClausesG returnP_sound (GProj), np_returnP
-graph/src/parser/cypher.rs	Parser::add_pattern_node	1359	PROVEN	C.Fmt addPatNode_spec; anon_name_collides (bug)
-graph/src/parser/cypher.rs	Parser::parse_pattern	1400	PROVEN	C.PatternG2 patternP_sound (GPat/GPart/GChainA/GChainN/GAsp), np_patternP; C.Pattern aspRel_same_alias (#3112 is_incoming); C.PatternG2 relOk_of / GExt.rust = GExt.g4 (#3289: a repeated relationship alias fails in every clause); PatternBugs create_named_path_dup_rel_rejected, merge_dup_rel_rejected, create_anon_path_dup_rel_rejected (W4-parse-2/3 fixed by #3289), anon_name_collides (bug W4-parse-1)
-graph/src/parser/cypher.rs	Parser::parse_case_expression	1589	PROVEN	C.ExprC caseP_sound (GCase/GAlts), np_caseP
-graph/src/parser/cypher.rs	Parser::parse_quantifier_expr	1621	PROVEN	C.ExprC quantP_sound (GQuant), quantP_np (unreachable! guarded)
-graph/src/parser/cypher.rs	Parser::parse_reduce_expr	1680	PROVEN	C.ExprC reduceP_sound (GReduce), np_reduceP
-graph/src/parser/cypher.rs	Parser::parse_shortest_path_expr	1758	PROVEN	C.ExprC5 shortestP_sound (GShortest), C.ExprC4 np_shortestP; C.ExprC2 skipP_eof; skipFilter_eof_diverges (bug)
-graph/src/parser/cypher.rs	Parser::parse_primary_expr	1940	PROVEN	C.PrimaryG primaryC_sound (GAtom, all tokens), C.Primary primaryC_np; Model primary/bounded_agree
-graph/src/parser/cypher.rs	Parser::parse_list_operator_expression	2134	PROVEN	listOp (#3041: a bound that fails to parse is an error), listOp_ok, slice_bound_error_reported, slice_bounds_omitted, listOp_from_err, listOp_to_err, bounded_agree (no slice exception left) (#3036 fixed)
-graph/src/parser/cypher.rs	Parser::parse_property_lookup	2165	PROVEN	postLoop (.dot arm), postfix_tightest; C.ClausesG2 dotChain_sound
-graph/src/parser/cypher.rs	Parser::parse_expr	2182	PROVEN	parseExpr, parseExpr_no_panic
-graph/src/parser/cypher.rs	Parser::parse_expr_inner	2193	PROVEN	step/loop (notFrames, level-5 re-entry after IS NULL), parseExpr_no_panic, binary_pairs_agree, bounded_agree, not_not_kept, not_run_folds, is_null_then_predicate, precedence theorems
-graph/src/parser/cypher.rs	Parser::match_dot_property_separator	2661	PROVEN	C.Fmt dotSep_spec; C.Index idxMore_sound
-graph/src/parser/cypher.rs	Parser::parse_ident	2680	PROVEN	C.Core ident_tryIdent, ident_ok; Model parseIdent_np
-graph/src/parser/cypher.rs	Parser::try_parse_ident	2699	PROVEN	C.Core ident_tryIdent, tryIdent_ok
-graph/src/parser/cypher.rs	Parser::parse_property_name	2711	PROVEN	C.Fmt propName_spec (= parse_ident)
-graph/src/parser/cypher.rs	Parser::parse_named_exprs	2725	PROVEN	C.ClausesG namedExprs_sound (GProjItems), np_namedExprs; lexer next_pos_ge (slice ordered)
-graph/src/parser/cypher.rs	Parser::parse_expression_list	2761	PROVEN	Model exprList/exprItems; C.ClausesG2 exprListR_sound/exprItemsR_sound/exprList1_sound, C.PrimaryG argsP_sound/argItemsP_sound (no trailing comma, #3060); call_trailing_comma_refused, C.call_trailing_comma_refused
-graph/src/parser/cypher.rs	Parser::without_pattern_comprehensions	2790	PROVEN	C.ExprC2 withoutPC_spec (flag restored)
-graph/src/parser/cypher.rs	Parser::reject_forbidden_pattern_comprehension	2801	PROVEN	C.ExprC2 rejectForbidden_spec
-graph/src/parser/cypher.rs	Parser::parse_list_literal_or_comprehension	2816	PROVEN	C.ExprC3 listLitP_sound (GBracket; merged #3104 model with gate + memo, any memo answer), C.ExprC4 np_listLitP; C.ListGate listLitP_eq_ungated (= pre-#3104 parse, CONDITIONAL on Oracle.Bal + MemoSound; Oracle.Bal no longer refuted since #3041: fragment bounded_bal), memoRun_nodup, failed_attempts_linear; Model listLit_ok
-graph/src/parser/cypher.rs	Parser::list_has_top_level_pipe	2893	PROVEN	C.ExprC2 pipeScan; C.ListGate pipeScan_exact/pipeScan_exact0 (= kind-matched bracket stack on well-bracketed input), pipeScan_mismatch, patCompP_pipe
-graph/src/parser/cypher.rs	Parser::parse_list_comprehension	2916	PROVEN	C.ExprC listCompP_sound (GListComp), np_listCompP
-graph/src/parser/cypher.rs	Parser::parse_pattern_comprehension	2959	PROVEN	C.ExprC3 patCompP_sound (GPatComp/GPcChain), C.ExprC4 np_patCompP
-graph/src/parser/cypher.rs	Parser::parse_inline_properties	3016	PROVEN	C.ExprC2 inlineErr_spec; C.PatternG propsP_sound
-graph/src/parser/cypher.rs	Parser::parse_node_pattern	3032	PROVEN	C.PatternG nodeP_sound (GNode), np_nodeP
-graph/src/parser/cypher.rs	Parser::parse_relationship_pattern	3067	PROVEN	C.PatternG relP_sound (GRel/GDetail/GTypes/GRange), np_relP; PatternBugs type_colon_refused (W4-parse-4 fixed by #3300)
-graph/src/parser/cypher.rs	Parser::parse_labels	3207	PROVEN	C.PatternG labelsP_sound (GLabels); Model labels_np
-graph/src/parser/cypher.rs	Parser::parse_map	3216	PROVEN	parseMap/mapBody, parseMap_ok (oracle o.pmap at clause level)
-graph/src/parser/cypher.rs	Parser::parse_map_projection	3248	PROVEN	mapProj/mapProjBody/mapProjItem, mapProj_ok
-graph/src/parser/cypher.rs	Parser::parse_orderby	3306	PROVEN	C.ClausesG orderItems_sound (GSortItems), np_orderbyP
-graph/src/parser/cypher.rs	Parser::parse_set_clause	3324	PROVEN	C.ClausesG2 setP_sound (GSetItems/GSetMore), np_setP
-graph/src/parser/cypher.rs	Parser::parse_set_items	3336	PROVEN	C.ClausesG2 setItems_sound (GSetItem/GTarget: nested target only after `(`), np_setItems; Clauses.setTarget: set_bracket_paren_refused, setTarget_only_paren; Clauses.set_paren_needs_dot; C.set_bracket_target_refused, C.set_paren_target_refused (W4-parse-4 fixed by #3300: `expect_property_after_paren`)
-graph/src/parser/cypher.rs	Parser::reject_unparenthesized_target	3395	PROVEN	Clauses.rejectUnparen / C.rejectUnparenP (Ok iff root is Paren): setTarget_only_paren, targetP_sound (GTarget.paren needs `(`), np_targetP
-graph/src/parser/cypher.rs	Parser::parse_remove_clause	3420	PROVEN	C.ClausesG2 removeP_sound (GRemoveMore), np_removeP
-graph/src/parser/cypher.rs	Parser::parse_remove_items	3432	PROVEN	C.ClausesG2 removeItems_sound (GRemoveItem), np_removeItems; C.set_bracket_target_refused (REMOVE [n).x refused)
-graph/src/parser/cypher.rs	Parser::parse_foreach_clause	3469	PROVEN	C.ClausesG3 GForeach/GBody in sound_mut, np_mut
-graph/src/parser/cypher.rs	Parser::reject_aggregate	3551	PROVEN	C.ExprC2 rejectAggregate_spec
-graph/src/parser/cypher.rs	Parser::find_aggregate_name	3563	PROVEN	C.Core find_aggregate_name_spec (aggName ↔ HasAgg)
+graph/src/parser/cypher.rs	Parser::new	281	PROVEN	C.Params newState_spec (counter starts at 0); Model parseExpr initial frame
+graph/src/parser/cypher.rs	Parser::too_deep	295	PROVEN	C.Params tooDeep / isTooDeep_tooDeep
+graph/src/parser/cypher.rs	Parser::check_depth	308	PROVEN	proofs/lexer guarded_height_le (abstracted here)
+graph/src/parser/cypher.rs	Parser::with_child_height	323	PROVEN	C.Params withChildHeight_spec (outer tally restored, inner starts at 0)
+graph/src/parser/cypher.rs	Parser::tree_height	335	PROVEN	C.Params thLoop/treeHeight_spec (iterative walk = recursive height)
+graph/src/parser/cypher.rs	Parser::nested	349	PROVEN	proofs/lexer nested_depth_bound
+graph/src/parser/cypher.rs	Parser::save_state	362	PROVEN	C.Params save_state_spec
+graph/src/parser/cypher.rs	Parser::restore_state	369	PROVEN	C.Params restore_state_spec
+graph/src/parser/cypher.rs	Parser::parse_parameters	381	PROVEN	C.Params paramsP/paramPairs: np_paramsP, params_stop_at_query, hmInsert_lookup
+graph/src/parser/cypher.rs	Parser::parse_param_value	430	PROVEN	C.Params paramValueP: paramValue_fast, np_paramValueP
+graph/src/parser/cypher.rs	Parser::parse_literal	455	PROVEN	C.Params litP: lit_sound (GLit), lit_min_neg/lit_min_pos, np_lit; proofs/lexer int_literal_correct
+graph/src/parser/cypher.rs	Parser::parse_unsigned_literal	481	PROVEN	C.Params ulitP: lit_sound (GULit), np_lit
+graph/src/parser/cypher.rs	Parser::parse_literal_list	509	PROVEN	C.Params listLitV/listItems: lit_sound (GLItems)
+graph/src/parser/cypher.rs	Parser::parse_literal_map	524	PROVEN	C.Params mapLitV/mapItems: lit_sound (GMItems), omInsert_replaces
+graph/src/parser/cypher.rs	Parser::expect_end_of_input	542	PROVEN	C.ClausesG3 endP_sound (GSemis), np_endP
+graph/src/parser/cypher.rs	Parser::parse	561	NOT COVERED	not modelled yet: the Lean grammar (C.Index idxBody) has no CREATE/DROP CCH INDEX (#3213, #3362); without CCH: C.Index parseP_sound (GCypher), parse_no_panic
+graph/src/parser/cypher.rs	Parser::parse_index_ops	577	NOT COVERED	not modelled yet: the Lean grammar (C.Index idxBody) has no CREATE/DROP CCH INDEX (#3213, #3362); without CCH: C.Index indexOps/idxBody: idxBody_sound (GIdx), np_indexOps
+graph/src/parser/cypher.rs	Parser::parse_query	852	PROVEN	C.ClausesG3 queryP_sound (GQuery), C.ClausesNP queryP_no_panic; union_mix_rejected
+graph/src/parser/cypher.rs	Parser::parse_single_query	877	PROVEN	C.ClausesG3 sound_mut (GSingle/GSegs/GReads/GWrites), np_mut; match_after_create_rejected
+graph/src/parser/cypher.rs	Parser::parse_reading_clasue	1010	PROVEN	C.ClausesG2 readingP_sound (GReading, no MATCH MATCH since #3060), C.ClausesNP readingP_np (unreachable! not reached); match_match_refused, reading_match_at_adv, load_csv_with_from_refused, no_load_with_from
+graph/src/parser/cypher.rs	Parser::parse_writing_clause	1063	PROVEN	C.ClausesG3 writing_arm (GWriting), np_mut (unreachable! not reached)
+graph/src/parser/cypher.rs	Parser::parse_call_clause	1112	PROVEN	C.ClausesG3 GCall in sound_mut; C.ClausesG2 callProcP_sound; np_callProcP; call_implicit_accepted
+graph/src/parser/cypher.rs	Parser::body_has_return	1186	PROVEN	C.IR bodyHasReturn_query, bodyHasReturn_union
+graph/src/parser/cypher.rs	Parser::parse_dotted_ident	1196	PROVEN	C.ClausesG2 dottedP_sound (GDotted); Model dotted_np
+graph/src/parser/cypher.rs	Parser::parse_match_clause	1207	PROVEN	C.ClausesG2 matchP_sound, np_matchP
+graph/src/parser/cypher.rs	Parser::parse_unwind_clause	1218	PROVEN	C.ClausesG unwindP_sound (GUnwind), np_unwindP
+graph/src/parser/cypher.rs	Parser::parse_create_clause	1228	PROVEN	C.ClausesG2 createP_sound, np_createP
+graph/src/parser/cypher.rs	Parser::parse_merge_clause	1232	PROVEN	C.ClausesG2 mergeP_sound (GMergeActions), np_mergeP
+graph/src/parser/cypher.rs	Parser::parse_delete_clause	1259	PROVEN	C.ClausesG2 deleteP_sound (GExprs1/GDelMore), np_deleteP; delete_detach_folded
+graph/src/parser/cypher.rs	Parser::parse_where	1295	PROVEN	C.ClausesG whereP_sound (GWhere), np_whereP
+graph/src/parser/cypher.rs	Parser::parse_orderby_skip_limit	1314	PROVEN	C.ClausesG oslP_sound (GOsl/GCount), np_oslP
+graph/src/parser/cypher.rs	Parser::parse_with_clause	1374	PROVEN	C.ClausesG withP_sound (GProj+GWhere), np_withP
+graph/src/parser/cypher.rs	Parser::parse_return_clause	1404	PROVEN	C.ClausesG returnP_sound (GProj), np_returnP
+graph/src/parser/cypher.rs	Parser::add_pattern_node	1440	PROVEN	C.Fmt addPatNode_spec; anon_name_collides (bug)
+graph/src/parser/cypher.rs	Parser::parse_pattern	1481	PROVEN	C.PatternG2 patternP_sound (GPat/GPart/GChainA/GChainN/GAsp), np_patternP; C.Pattern aspRel_same_alias (#3112 is_incoming); C.PatternG2 relOk_of / GExt.rust = GExt.g4 (#3289: a repeated relationship alias fails in every clause); PatternBugs create_named_path_dup_rel_rejected, merge_dup_rel_rejected, create_anon_path_dup_rel_rejected (W4-parse-2/3 fixed by #3289), anon_name_collides (bug W4-parse-1)
+graph/src/parser/cypher.rs	Parser::parse_case_expression	1670	PROVEN	C.ExprC caseP_sound (GCase/GAlts), np_caseP
+graph/src/parser/cypher.rs	Parser::parse_quantifier_expr	1702	PROVEN	C.ExprC quantP_sound (GQuant), quantP_np (unreachable! guarded)
+graph/src/parser/cypher.rs	Parser::parse_reduce_expr	1761	PROVEN	C.ExprC reduceP_sound (GReduce), np_reduceP
+graph/src/parser/cypher.rs	Parser::parse_shortest_path_expr	1839	PROVEN	C.ExprC5 shortestP_sound (GShortest), C.ExprC4 np_shortestP; C.ExprC2 skipP_eof; skipFilter_eof_diverges (bug)
+graph/src/parser/cypher.rs	Parser::parse_primary_expr	2021	PROVEN	C.PrimaryG primaryC_sound (GAtom, all tokens), C.Primary primaryC_np; Model primary/bounded_agree
+graph/src/parser/cypher.rs	Parser::parse_list_operator_expression	2215	PROVEN	listOp (#3041: a bound that fails to parse is an error), listOp_ok, slice_bound_error_reported, slice_bounds_omitted, listOp_from_err, listOp_to_err, bounded_agree (no slice exception left) (#3036 fixed)
+graph/src/parser/cypher.rs	Parser::parse_property_lookup	2246	PROVEN	postLoop (.dot arm), postfix_tightest; C.ClausesG2 dotChain_sound
+graph/src/parser/cypher.rs	Parser::parse_expr	2263	PROVEN	parseExpr, parseExpr_no_panic
+graph/src/parser/cypher.rs	Parser::parse_expr_inner	2274	PROVEN	step/loop (notFrames, level-5 re-entry after IS NULL), parseExpr_no_panic, binary_pairs_agree, bounded_agree, not_not_kept, not_run_folds, is_null_then_predicate, precedence theorems
+graph/src/parser/cypher.rs	Parser::match_dot_property_separator	2764	PROVEN	C.Fmt dotSep_spec; C.Index idxMore_sound
+graph/src/parser/cypher.rs	Parser::parse_ident	2783	PROVEN	C.Core ident_tryIdent, ident_ok; Model parseIdent_np
+graph/src/parser/cypher.rs	Parser::try_parse_ident	2802	PROVEN	C.Core ident_tryIdent, tryIdent_ok
+graph/src/parser/cypher.rs	Parser::parse_property_name	2814	PROVEN	C.Fmt propName_spec (= parse_ident)
+graph/src/parser/cypher.rs	Parser::parse_named_exprs	2828	PROVEN	C.ClausesG namedExprs_sound (GProjItems), np_namedExprs; lexer next_pos_ge (slice ordered)
+graph/src/parser/cypher.rs	Parser::parse_expression_list	2864	PROVEN	Model exprList/exprItems; C.ClausesG2 exprListR_sound/exprItemsR_sound/exprList1_sound, C.PrimaryG argsP_sound/argItemsP_sound (no trailing comma, #3060); call_trailing_comma_refused, C.call_trailing_comma_refused
+graph/src/parser/cypher.rs	Parser::without_pattern_comprehensions	2893	PROVEN	C.ExprC2 withoutPC_spec (flag restored)
+graph/src/parser/cypher.rs	Parser::reject_forbidden_pattern_comprehension	2904	PROVEN	C.ExprC2 rejectForbidden_spec
+graph/src/parser/cypher.rs	Parser::parse_list_literal_or_comprehension	2919	PROVEN	C.ExprC3 listLitP_sound (GBracket; merged #3104 model with gate + memo, any memo answer), C.ExprC4 np_listLitP; C.ListGate listLitP_eq_ungated (= pre-#3104 parse, CONDITIONAL on Oracle.Bal + MemoSound; Oracle.Bal no longer refuted since #3041: fragment bounded_bal), memoRun_nodup, failed_attempts_linear; Model listLit_ok
+graph/src/parser/cypher.rs	Parser::list_has_top_level_pipe	2996	PROVEN	C.ExprC2 pipeScan; C.ListGate pipeScan_exact/pipeScan_exact0 (= kind-matched bracket stack on well-bracketed input), pipeScan_mismatch, patCompP_pipe
+graph/src/parser/cypher.rs	Parser::parse_list_comprehension	3019	PROVEN	C.ExprC listCompP_sound (GListComp), np_listCompP
+graph/src/parser/cypher.rs	Parser::parse_pattern_comprehension	3062	PROVEN	C.ExprC3 patCompP_sound (GPatComp/GPcChain), C.ExprC4 np_patCompP
+graph/src/parser/cypher.rs	Parser::parse_inline_properties	3119	PROVEN	C.ExprC2 inlineErr_spec; C.PatternG propsP_sound
+graph/src/parser/cypher.rs	Parser::parse_node_pattern	3135	PROVEN	C.PatternG nodeP_sound (GNode), np_nodeP
+graph/src/parser/cypher.rs	Parser::parse_relationship_pattern	3170	PROVEN	C.PatternG relP_sound (GRel/GDetail/GTypes/GRange), np_relP; PatternBugs type_colon_refused (W4-parse-4 fixed by #3300)
+graph/src/parser/cypher.rs	Parser::parse_labels	3310	PROVEN	C.PatternG labelsP_sound (GLabels); Model labels_np
+graph/src/parser/cypher.rs	Parser::parse_map	3319	PROVEN	parseMap/mapBody, parseMap_ok (oracle o.pmap at clause level)
+graph/src/parser/cypher.rs	Parser::parse_map_projection	3351	PROVEN	mapProj/mapProjBody/mapProjItem, mapProj_ok
+graph/src/parser/cypher.rs	Parser::parse_orderby	3409	PROVEN	C.ClausesG orderItems_sound (GSortItems), np_orderbyP
+graph/src/parser/cypher.rs	Parser::parse_set_clause	3427	PROVEN	C.ClausesG2 setP_sound (GSetItems/GSetMore), np_setP
+graph/src/parser/cypher.rs	Parser::parse_set_items	3439	PROVEN	C.ClausesG2 setItems_sound (GSetItem/GTarget: nested target only after `(`), np_setItems; Clauses.setTarget: set_bracket_paren_refused, setTarget_only_paren; Clauses.set_paren_needs_dot; C.set_bracket_target_refused, C.set_paren_target_refused (W4-parse-4 fixed by #3300: `expect_property_after_paren`)
+graph/src/parser/cypher.rs	Parser::reject_unparenthesized_target	3519	PROVEN	Clauses.rejectUnparen / C.rejectUnparenP (Ok iff root is Paren): setTarget_only_paren, targetP_sound (GTarget.paren needs `(`), np_targetP
+graph/src/parser/cypher.rs	Parser::parse_remove_clause	3544	PROVEN	C.ClausesG2 removeP_sound (GRemoveMore), np_removeP
+graph/src/parser/cypher.rs	Parser::parse_remove_items	3556	PROVEN	C.ClausesG2 removeItems_sound (GRemoveItem), np_removeItems; C.set_bracket_target_refused (REMOVE [n).x refused)
+graph/src/parser/cypher.rs	Parser::parse_foreach_clause	3583	PROVEN	C.ClausesG3 GForeach/GBody in sound_mut, np_mut
+graph/src/parser/cypher.rs	Parser::reject_aggregate	3667	PROVEN	C.ExprC2 rejectAggregate_spec
+graph/src/parser/cypher.rs	Parser::find_aggregate_name	3679	PROVEN	C.Core find_aggregate_name_spec (aggName ↔ HasAgg)
 graph/src/parser/ast.rs	Variable::fmt	100	PROVEN	C.Graph Var.fmt_anon, Var.fmt_named
 graph/src/parser/ast.rs	Variable::eq	113	PROVEN	C.Graph Var.eq_spec (by id only)
 graph/src/parser/ast.rs	Variable::hash	124	PROVEN	C.Graph Var.hash_eq (equal variables hash alike)
@@ -105,12 +105,14 @@ graph/src/parser/ast.rs	QueryGraph::filter_visited	850	PROVEN	C.Components filte
 graph/src/parser/ast.rs	QueryGraph::connected_components	878	PROVEN	C.Components connectedComponents_spec (disjoint, from the graph, covering up to shared ids)
 graph/src/parser/ast.rs	QueryGraph::dfs	899	PROVEN	C.Components dfs_step/dfsRels_step (Step invariant)
 graph/src/parser/ast.rs	SetItem::fmt	952	PROVEN	C.Fmt fmtSetItem_attr
-graph/src/parser/ast.rs	QueryIR::fmt	1097	PROVEN	C.Fmt fmtIR_return
-graph/src/parser/ast.rs	QueryIR::validate	1206	PROVEN	C.IR validate; vClause_simple; match_last_after_call_rejected (#3297)
-graph/src/parser/ast.rs	QueryIR::inner_validate	1212	PROVEN	C.IR vClause/vNext/vAll/vUnion; with_last_rejected (#3291); vCall_np, match_last_rejected, call_validates_rest, call_transparent, match_last_after_call_rejected (#3297 fixes W4-plan-4)
-graph/src/parser/ast.rs	validate_set_items	1390	PROVEN	C.IR vSetItems_np
-graph/src/parser/ast.rs	validate_inlined_properties	1409	PROVEN	C.IR vInlined (used in vClause_simple)
-graph/src/parser/ast.rs	QueryIR::return_column_names	1431	PROVEN	C.IR returnCols_last_return, colsL_append_return
-graph/src/parser/cypher.rs	Parser::add_pattern_relationship	1378	PROVEN	C.PatternG2 relOk_of (chainA_sound/chainN_sound/aspLoop_sound: a repeated alias fails, so every accepted relationship is fresh, in every clause; #3289), PatternBugs create_named_path_dup_rel_rejected, merge_dup_rel_rejected; C.ExprC2 pcChain (the pattern-comprehension caller keeps the first repeat as the `repeated` flag) with PatComp GPcChain, ClauseBugs pattern_comprehension_repeated_rel_refused
-graph/src/parser/cypher.rs	Parser::parse_relationship_types	3057	PROVEN	C.Pattern typesP / C.ExprC2 spTypes (`:` alone no longer continues, #3300): C.PatternG typesP_sound, typesP_colon_refused, C.ExprC5 spTypes_sound, np_typesP, cn_typesP; PatternBugs type_colon_refused
-graph/src/parser/cypher.rs	Parser::expect_property_after_paren	3409	PROVEN	C.Clauses expectDotP (inside targetP): C.ClausesG2 targetP_sound (GTarget.paren needs `.` after the `)`), Clauses.set_paren_needs_dot, ClauseBugs set_paren_target_refused (#3300)
+graph/src/parser/ast.rs	QueryIR::fmt	1116	PROVEN	C.Fmt fmtIR_return
+graph/src/parser/ast.rs	QueryIR::validate	1237	PROVEN	C.IR validate; vClause_simple; match_last_after_call_rejected (#3297)
+graph/src/parser/ast.rs	QueryIR::inner_validate	1243	PROVEN	C.IR vClause/vNext/vAll/vUnion; with_last_rejected (#3291); vCall_np, match_last_rejected, call_validates_rest, call_transparent, match_last_after_call_rejected (#3297 fixes W4-plan-4)
+graph/src/parser/ast.rs	validate_set_items	1418	PROVEN	C.IR vSetItems_np
+graph/src/parser/ast.rs	validate_inlined_properties	1437	PROVEN	C.IR vInlined (used in vClause_simple)
+graph/src/parser/ast.rs	QueryIR::return_column_names	1459	PROVEN	C.IR returnCols_last_return, colsL_append_return
+graph/src/parser/cypher.rs	Parser::add_pattern_relationship	1459	PROVEN	C.PatternG2 relOk_of (chainA_sound/chainN_sound/aspLoop_sound: a repeated alias fails, so every accepted relationship is fresh, in every clause; #3289), PatternBugs create_named_path_dup_rel_rejected, merge_dup_rel_rejected; C.ExprC2 pcChain (the pattern-comprehension caller keeps the first repeat as the `repeated` flag) with PatComp GPcChain, ClauseBugs pattern_comprehension_repeated_rel_refused
+graph/src/parser/cypher.rs	Parser::parse_relationship_types	3160	PROVEN	C.Pattern typesP / C.ExprC2 spTypes (`:` alone no longer continues, #3300): C.PatternG typesP_sound, typesP_colon_refused, C.ExprC5 spTypes_sound, np_typesP, cn_typesP; PatternBugs type_colon_refused
+graph/src/parser/cypher.rs	Parser::expect_property_after_paren	3533	PROVEN	C.Clauses expectDotP (inside targetP): C.ClausesG2 targetP_sound (GTarget.paren needs `.` after the `)`), Clauses.set_paren_needs_dot, ClauseBugs set_paren_target_refused (#3300)
+graph/src/parser/cypher.rs	Parser::parse_cch_index_spec	800	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
+graph/src/parser/cypher.rs	Parser::reject_multiple_index_types	781	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)

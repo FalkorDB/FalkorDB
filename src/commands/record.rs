@@ -64,12 +64,7 @@ fn record_mut(
     } = session
         .with_graph(|tg| tg.graph.read().get_plan(query))
         .map_err(RedisError::String)?;
-    let is_write = plan.iter().any(|n| {
-        matches!(
-            n,
-            IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
-        )
-    });
+    let is_write = plan.iter().any(IR::makes_write_query);
     // Writes build a private version instead of mutating the published one in
     // place (checked against the published graph when the query escalates);
     // reads run on the committed snapshot.
