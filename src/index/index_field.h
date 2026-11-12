@@ -26,6 +26,13 @@ typedef enum {
 	INDEX_FLD_GEO      = 0x04,  // geo field
 	INDEX_FLD_STR      = 0x08,  // string field
 	INDEX_FLD_VECTOR   = 0x10,  // vector field
+
+	// the CCH path index. Deliberately NOT part of INDEX_FLD_ANY below, which
+	// means "any field an Index holds": a path index is its own object and
+	// never a field of one. It is a bit in this enum because this enum is the
+	// set of index kinds the effects wire carries, and the other engine's bits
+	// are generated from these numbers.
+	INDEX_FLD_CCH      = 0x20,  // CCH path index
 } IndexFieldType;
 
 

@@ -259,9 +259,14 @@ void SIValue_HashUpdate(SIValue v, XXH64_state_t *state);
 XXH64_hash_t SIValue_HashCode(SIValue v);
 
 // reads SIValue off of binary stream
-SIValue SIValue_FromBinary
+//
+// returns false if the stream is truncated or malformed; 'out' is always set to
+// a value that is safe to free, so a caller that already owns it on the failure
+// path can free it unconditionally
+bool SIValue_FromBinary
 (
-	FILE *stream  // stream to read value from
+	FILE *stream,  // stream to read value from
+	SIValue *out   // [output] value read
 );
 
 // compute SIValue memory usage
