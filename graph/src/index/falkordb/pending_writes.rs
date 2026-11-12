@@ -14,54 +14,22 @@ use std::sync::Arc;
 
 use crate::{entity_type::EntityType, runtime::value::Value};
 
-use super::encode::{KeyKind, StoredKey};
+use super::encode::{ColumnKey, KeyKind};
 use super::falkordb_index::{FalkorDbIndex, IndexKey};
 use super::numeric::EncodedTuples;
 
 /// Per column, its staged changes in the order they were made.
-pub(crate) type ColumnWrites = HashMap<IndexKey, ColumnLog>;
+pub(crate) type ColumnWrites = HashMap<IndexKey, Vec<IndexWrite>>;
 
-/// One column's staged changes, in the order they were made, and the strings its tag changes
-/// name.
-///
-/// A tag change is staged by its string, the tag trees' key ([`last_write_wins`] hands the strings
-/// on). Each distinct string gets one slot here, and a tag change's `key` is its slot, so a change
-/// of the same string collapses with the others of it and [`IndexWrite`] stays 24 bytes.
-#[derive(Default)]
-pub(crate) struct ColumnLog {
-    pub(crate) writes: Vec<IndexWrite>,
-    /// The string of each slot.
-    pub(crate) strings: Vec<Arc<String>>,
-    /// The slot of each string.
-    slots: HashMap<Arc<String>, u64>,
-}
-
-impl ColumnLog {
-    /// The slot of `s`, giving it one if it has none.
-    fn slot(
-        &mut self,
-        s: &Arc<String>,
-    ) -> u64 {
-        if let Some(&slot) = self.slots.get(s) {
-            return slot;
-        }
-        let slot = self.strings.len() as u64;
-        self.strings.push(s.clone());
-        self.slots.insert(s.clone(), slot);
-        slot
-    }
-}
-
-/// One staged change to one column: an encoded `(key, id)` tuple going in or coming out of the
-/// column's tree for `kind`. For a tag kind, `key` is the string's slot in the column's
-/// [`ColumnLog`] (or, before it is staged, in its [`IndexChanges`]).
+/// One staged change to one column: the tuple `(key, id)` going in or coming out of the column's
+/// tree for `kind`.
 ///
 /// `kind` is part of the tuple's identity. A scalar `1` and a list element `1` on the same entity
 /// are different tuples in different trees, so a value that changes kind within one unit of work
 /// stages a remove from one tree and an add to the other, and neither may cancel the other.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct IndexWrite {
-    pub(crate) key: u64,
+    pub(crate) key: ColumnKey,
     pub(crate) id: u64,
     pub(crate) kind: KeyKind,
     pub(crate) add: bool,
@@ -73,8 +41,6 @@ pub(crate) struct IndexWrite {
 pub struct IndexChanges {
     entity: EntityType,
     changes: Vec<(IndexKey, IndexWrite)>,
-    /// The strings the tag changes name, a tag change's `key` its index here.
-    strings: Vec<Arc<String>>,
 }
 
 impl IndexChanges {
@@ -84,7 +50,6 @@ impl IndexChanges {
         Self {
             entity,
             changes: Vec::new(),
-            strings: Vec::new(),
         }
     }
 
@@ -120,7 +85,7 @@ impl IndexChanges {
         self.push(index, label, attr, value, id, true);
     }
 
-    /// Encoded now, so a change holds 18 bytes of payload and no `Value`. A list value stages one
+    /// Encoded now, so a change holds its key and no `Value`. A list value stages one
     /// change per numeric element, each into the column's array tree.
     fn push(
         &mut self,
@@ -131,15 +96,8 @@ impl IndexChanges {
         id: u64,
         add: bool,
     ) {
-        let (changes, strings) = (&mut self.changes, &mut self.strings);
+        let changes = &mut self.changes;
         index.for_each_stored_key(self.entity, label, attr, value, |kind, key| {
-            let key = match key {
-                StoredKey::Encoded(key) => key,
-                StoredKey::Tag(s) => {
-                    strings.push(s.clone());
-                    strings.len() as u64 - 1
-                }
-            };
             changes.push((
                 (label.clone(), attr.clone()),
                 IndexWrite { key, id, kind, add },
@@ -174,7 +132,7 @@ impl PendingIndexWrites {
     pub(crate) fn drain(
         &mut self,
         entity: EntityType,
-    ) -> impl Iterator<Item = (IndexKey, ColumnLog)> + '_ {
+    ) -> impl Iterator<Item = (IndexKey, Vec<IndexWrite>)> + '_ {
         match entity {
             EntityType::Node => self.nodes.drain(),
             EntityType::Relationship => self.edges.drain(),
@@ -196,12 +154,8 @@ impl PendingIndexWrites {
             EntityType::Node => &mut self.nodes,
             EntityType::Relationship => &mut self.edges,
         };
-        for (key, mut write) in changes.changes {
-            let log = columns.entry(key).or_default();
-            if write.kind.is_tag() {
-                write.key = log.slot(&changes.strings[write.key as usize]);
-            }
-            log.writes.push(write);
+        for (key, write) in changes.changes {
+            columns.entry(key).or_default().push(write);
         }
     }
 }
@@ -217,30 +171,24 @@ impl PendingIndexWrites {
 ///
 /// The sort is stable, so equal tuples keep the order they were staged in and the last of each
 /// run is the latest change.
-///
-/// A tag change's `key` is a slot in `strings`, and its tuple goes out by string.
 pub(crate) fn last_write_wins(
     log: &mut [IndexWrite],
-    strings: &[Arc<String>],
     removes: &mut EncodedTuples,
     adds: &mut EncodedTuples,
 ) {
     removes.clear();
     adds.clear();
-    let tuple = |w: &IndexWrite| (w.kind, w.key, w.id);
-    log.sort_by_key(tuple);
+    fn tuple(w: &IndexWrite) -> (KeyKind, &ColumnKey, u64) {
+        (w.kind, &w.key, w.id)
+    }
+    log.sort_by(|a, b| tuple(a).cmp(&tuple(b)));
     for (i, w) in log.iter().enumerate() {
         let superseded = log.get(i + 1).is_some_and(|next| tuple(next) == tuple(w));
         if superseded {
             continue;
         }
         let side = if w.add { &mut *adds } else { &mut *removes };
-        if w.kind.is_tag() {
-            side.tags_mut(w.kind)
-                .push((strings[w.key as usize].clone(), w.id));
-        } else {
-            side[w.kind].push((w.key, w.id));
-        }
+        side.push(w.kind, w.key.clone(), w.id);
     }
 }
 
@@ -255,7 +203,7 @@ mod tests {
         add: bool,
     ) -> IndexWrite {
         IndexWrite {
-            key,
+            key: ColumnKey::Encoded(key),
             id,
             kind: KeyKind::Scalar,
             add,
@@ -283,7 +231,7 @@ mod tests {
         let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
         // SET n.v = 5 then DELETE n: add then remove of (5, n). The remove must win.
         let mut log = vec![w(1, 7, false), w(5, 7, true), w(5, 7, false)];
-        last_write_wins(&mut log, &[], &mut removes, &mut adds);
+        last_write_wins(&mut log, &mut removes, &mut adds);
         assert_eq!(removes, scalars(&[(1, 7), (5, 7)]));
         assert!(
             adds.is_empty(),
@@ -292,7 +240,7 @@ mod tests {
 
         // v0 -> v1 -> v0: remove then add of (1, 7). The add must win.
         let mut log = vec![w(1, 7, false), w(2, 7, true), w(2, 7, false), w(1, 7, true)];
-        last_write_wins(&mut log, &[], &mut removes, &mut adds);
+        last_write_wins(&mut log, &mut removes, &mut adds);
         assert_eq!(removes, scalars(&[(2, 7)]));
         assert_eq!(adds, scalars(&[(1, 7)]));
     }
@@ -311,7 +259,7 @@ mod tests {
             }
             log.push(w(100 + round, 8, true));
         }
-        last_write_wins(&mut log, &[], &mut removes, &mut adds);
+        last_write_wins(&mut log, &mut removes, &mut adds);
         // Round 39 is the last: tuple t ends added when 39 + t is even.
         let ends = |added: bool| -> Vec<(u64, u64)> {
             (0..10)
@@ -329,7 +277,7 @@ mod tests {
     fn untouched_tuples_pass_through_sorted() {
         let (mut removes, mut adds) = (scalars(&[(9, 9)]), scalars(&[(9, 9)]));
         let mut log = vec![w(3, 1, true), w(1, 2, false), w(2, 1, true)];
-        last_write_wins(&mut log, &[], &mut removes, &mut adds);
+        last_write_wins(&mut log, &mut removes, &mut adds);
         assert_eq!(removes, scalars(&[(1, 2)]), "cleared first, then filled");
         assert_eq!(adds, scalars(&[(2, 1), (3, 1)]));
     }
@@ -343,7 +291,7 @@ mod tests {
     fn a_change_of_kind_keeps_both_trees_changes() {
         let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
         let mut log = vec![w(1, 7, false), arr(1, 7, true), arr(2, 7, true)];
-        last_write_wins(&mut log, &[], &mut removes, &mut adds);
+        last_write_wins(&mut log, &mut removes, &mut adds);
         assert_eq!(
             removes[KeyKind::Scalar],
             vec![(1, 7)],
@@ -359,15 +307,45 @@ mod tests {
 
         // And back: `SET n.v = 1` on `[1, 2]`.
         let mut log = vec![arr(1, 7, false), arr(2, 7, false), w(1, 7, true)];
-        last_write_wins(&mut log, &[], &mut removes, &mut adds);
+        last_write_wins(&mut log, &mut removes, &mut adds);
         assert_eq!(removes[KeyKind::Array], vec![(1, 7), (2, 7)]);
         assert_eq!(adds[KeyKind::Scalar], vec![(1, 7)]);
         assert!(removes[KeyKind::Scalar].is_empty() && adds[KeyKind::Array].is_empty());
     }
 
-    /// The kind rides in what used to be padding: a staged change is no bigger than before.
+    /// A change to the tag tree.
+    fn tag(
+        s: &str,
+        id: u64,
+        add: bool,
+    ) -> IndexWrite {
+        IndexWrite {
+            key: ColumnKey::Tag(Arc::new(s.to_string())),
+            id,
+            kind: KeyKind::Tag,
+            add,
+        }
+    }
+
+    /// A tag tuple is the string, not the `Arc` that carries it: changes to the same string from
+    /// different values collapse.
     #[test]
-    fn a_staged_change_did_not_grow() {
-        assert_eq!(std::mem::size_of::<IndexWrite>(), 24);
+    fn the_last_change_to_a_string_wins() {
+        let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
+        let mut log = vec![tag("b", 7, true), tag("a", 7, false), tag("b", 7, false)];
+        last_write_wins(&mut log, &mut removes, &mut adds);
+        let tuples = |v: &[(&str, u64)]| -> Vec<(Arc<String>, u64)> {
+            v.iter()
+                .map(|&(s, d)| (Arc::new(s.to_string()), d))
+                .collect()
+        };
+        assert_eq!(removes.tags(KeyKind::Tag), &tuples(&[("a", 7), ("b", 7)]));
+        assert!(adds.is_empty());
+    }
+
+    /// A staged change is a 16-byte key, the id, the kind and the side.
+    #[test]
+    fn a_staged_change_is_32_bytes() {
+        assert_eq!(std::mem::size_of::<IndexWrite>(), 32);
     }
 }

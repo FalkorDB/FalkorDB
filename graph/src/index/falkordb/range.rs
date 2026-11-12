@@ -22,7 +22,7 @@ use std::{iter, slice};
 
 use rustc_hash::FxHashSet;
 
-use super::encode::{ColumnKey, KeyKind, StoredKey, encode_numeric};
+use super::encode::{ColumnKey, KeyKind, encode_numeric};
 use super::numeric::{DistinctIter, DocIter, EncodedTuples, KeySet, NumericIndex};
 use super::tag::{StrSel, TagIndex};
 use crate::index::IndexQuery;
@@ -45,12 +45,12 @@ pub trait RangeKind {
     type Element;
 
     /// Call `emit` with each tuple `value` is stored under in this kind, as the tree it goes in and
-    /// its key ([`StoredKey`]: a string is carried as itself, never numbered here). Nothing when
+    /// its key (a string is carried as itself, never numbered here). Nothing when
     /// the kind holds no part of `value`.
-    fn for_each_stored_key<'v>(
+    fn for_each_stored_key(
         &self,
-        value: &'v Value,
-        emit: impl FnMut(KeyKind, StoredKey<'v>),
+        value: &Value,
+        emit: impl FnMut(KeyKind, ColumnKey),
     );
 
     /// Add this kind's share of `tuples`, which are sorted and unique
@@ -597,12 +597,12 @@ impl RangeIndex {
 
     /// Call `emit` with each key a stored `value` takes in this column, and its [`KeyKind`]: a
     /// scalar lands in at most one kind, and a list's elements in the kinds' array trees. A string
-    /// is passed as itself ([`StoredKey::Tag`]): it is numbered only by the column copy its tuple
+    /// is passed as itself ([`ColumnKey::Tag`]): it is numbered only by the column copy its tuple
     /// goes into ([`add_encoded`](Self::add_encoded)).
-    pub fn for_each_stored_key<'v>(
+    pub fn for_each_stored_key(
         &self,
-        value: &'v Value,
-        mut emit: impl FnMut(KeyKind, StoredKey<'v>),
+        value: &Value,
+        mut emit: impl FnMut(KeyKind, ColumnKey),
     ) {
         let Self { numeric, tag } = self;
         numeric.for_each_stored_key(value, &mut emit);
@@ -617,10 +617,7 @@ impl RangeIndex {
         id: u64,
         out: &mut EncodedTuples,
     ) {
-        self.for_each_stored_key(value, |kind, key| match key {
-            StoredKey::Encoded(key) => out[kind].push((key, id)),
-            StoredKey::Tag(s) => out.tags_mut(kind).push((s.clone(), id)),
-        });
+        self.for_each_stored_key(value, |kind, key| out.push(kind, key, id));
     }
 
     /// Index `id` under `value`.

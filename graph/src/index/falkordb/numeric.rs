@@ -15,7 +15,7 @@ use rustc_hash::FxHashSet;
 
 use super::data_structures::cow_btree::StrRanges;
 use super::data_structures::cow_btree::{CowBTree, RangeIter};
-use super::encode::{self, KeyKind, StoredKey, encode_numeric};
+use super::encode::{self, ColumnKey, KeyKind, encode_numeric};
 use super::range::RangeKind;
 use crate::runtime::value::Value;
 
@@ -290,12 +290,17 @@ impl EncodedTuples {
         &self.tags[Self::tag_slot(kind)]
     }
 
-    /// The `(string, doc)` tuples of tag kind `kind`, to change.
-    pub fn tags_mut(
+    /// Add the tuple `(key, doc)` to the tuples of `kind`.
+    pub fn push(
         &mut self,
         kind: KeyKind,
-    ) -> &mut Vec<(Arc<String>, u64)> {
-        &mut self.tags[Self::tag_slot(kind)]
+        key: ColumnKey,
+        doc: u64,
+    ) {
+        match key {
+            ColumnKey::Encoded(key) => self[kind].push((key, doc)),
+            ColumnKey::Tag(s) => self.tags[Self::tag_slot(kind)].push((s, doc)),
+        }
     }
 
     fn tag_slot(kind: KeyKind) -> usize {
@@ -474,12 +479,12 @@ impl RangeKind for NumericIndex {
 
     /// A scalar is stored under its key in the scalar tree, and a list under each numeric
     /// element's key in the array tree ([`encode::for_each_stored_key`]).
-    fn for_each_stored_key<'v>(
+    fn for_each_stored_key(
         &self,
-        value: &'v Value,
-        mut emit: impl FnMut(KeyKind, StoredKey<'v>),
+        value: &Value,
+        mut emit: impl FnMut(KeyKind, ColumnKey),
     ) {
-        encode::for_each_stored_key(value, |kind, key| emit(kind, StoredKey::Encoded(key)));
+        encode::for_each_stored_key(value, |kind, key| emit(kind, ColumnKey::Encoded(key)));
     }
 
     /// Tuples are never re-encoded: re-encoding a decoded key would be a second trip through a

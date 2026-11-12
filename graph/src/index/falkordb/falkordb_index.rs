@@ -22,10 +22,10 @@ use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
 use super::cch::{CchError, CchIndex, CchIndexDef};
-use super::encode::{ColumnKey, KeyKind, StoredKey};
+use super::encode::{ColumnKey, KeyKind};
 use super::graph_writes;
 use super::numeric::{DistinctIter, DocIter, EncodedTuples};
-use super::pending_writes::{ColumnLog, PendingIndexWrites, last_write_wins};
+use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
 use super::range::{RangeIndex, Selection, attributes_of};
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 
@@ -107,10 +107,10 @@ impl IndexColumn {
 
     /// Call `emit` with each key a stored `value` takes in *this* column, and its [`KeyKind`].
     /// Nothing when no kind indexes it; one key per indexed element, of an array kind, for a list.
-    pub fn for_each_stored_key<'v>(
+    pub fn for_each_stored_key(
         &self,
-        value: &'v Value,
-        emit: impl FnMut(KeyKind, StoredKey<'v>),
+        value: &Value,
+        emit: impl FnMut(KeyKind, ColumnKey),
     ) {
         match self {
             Self::Range(idx) => idx.for_each_stored_key(value, emit),
@@ -316,7 +316,7 @@ impl EqualCandidates<'_> {
 /// reads the label's entities in build order ([`BuildCursor`]) into encoded tuples.
 impl VersionedIndex for IndexColumn {
     type Cursor = BuildCursor;
-    type Changes = ColumnLog;
+    type Changes = Vec<IndexWrite>;
     type Batch = EncodedTuples;
     type Name = (EntityType, IndexKey);
     /// One pair of remove and add buffers for a whole unit of work, reused column to column.
@@ -345,22 +345,19 @@ impl VersionedIndex for IndexColumn {
     fn writer_record(
         &mut self,
         state: &mut BuildState<BuildCursor>,
-        mut log: ColumnLog,
+        mut log: Vec<IndexWrite>,
         place: impl Fn(u64) -> Option<BuildCursor>,
         (removes, adds): &mut (EncodedTuples, EncodedTuples),
     ) {
         if let BuildState::Building { next, written, .. } = state {
-            written
-                .by_this_version
-                .extend(log.writes.iter().map(|w| w.id));
+            written.by_this_version.extend(log.iter().map(|w| w.id));
             let next = *next;
             // A batch reads an entity at or above the cursor when it reaches it, so its
             // additions go. They go before the collapse, so one cannot cancel an earlier
             // removal of the same tuple.
-            log.writes
-                .retain(|w| !w.add || place(w.id).is_some_and(|at| at.precedes(next)));
+            log.retain(|w| !w.add || place(w.id).is_some_and(|at| at.precedes(next)));
         }
-        last_write_wins(&mut log.writes, &log.strings, removes, adds);
+        last_write_wins(&mut log, removes, adds);
         self.remove_encoded(removes);
         self.add_encoded(adds);
     }
@@ -918,13 +915,13 @@ impl FalkorDbIndex {
     /// Call `emit` with each key `value` takes in column `(entity, label, attr)` and its
     /// [`KeyKind`]; nothing when there is no such column or it does not index `value`. The write
     /// path's staging gate.
-    pub fn for_each_stored_key<'v>(
+    pub fn for_each_stored_key(
         &self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
-        value: &'v Value,
-        emit: impl FnMut(KeyKind, StoredKey<'v>),
+        value: &Value,
+        emit: impl FnMut(KeyKind, ColumnKey),
     ) {
         if let Some(entry) = self.entry(entity, label, attr) {
             entry.index.for_each_stored_key(value, emit);
@@ -965,7 +962,7 @@ impl FalkorDbIndex {
     fn apply_writes(
         &mut self,
         entity: EntityType,
-        writes: impl IntoIterator<Item = (IndexKey, ColumnLog)>,
+        writes: impl IntoIterator<Item = (IndexKey, Vec<IndexWrite>)>,
         place: &impl Fn(EntityType, u64) -> Option<BuildCursor>,
     ) {
         let columns = self.columns_mut(entity);

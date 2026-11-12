@@ -18,14 +18,14 @@
 //! The trees are copy-on-write like the numeric ones: `Clone` is a root clone, a version's fork
 //! copies only the path to what it changes, and a reader reads its own version with no lock.
 //! Tuples moving between versions — a unit of work's staged changes, an indexer batch read on one
-//! version and added to another — carry the string ([`StoredKey::Tag`],
+//! version and added to another — carry the string ([`ColumnKey::Tag`],
 //! [`EncodedTuples::tags`]), the same key every version stores.
 
 use std::ops::Bound;
 use std::sync::Arc;
 
 use super::data_structures::cow_btree::{StrBounds, StrRanges, StrTree};
-use super::encode::{KeyKind, StoredKey};
+use super::encode::{ColumnKey, KeyKind};
 use super::numeric::{DocIter, EncodedTuples};
 use super::range::RangeKind;
 use crate::runtime::value::Value;
@@ -277,17 +277,17 @@ impl RangeKind for TagIndex {
     /// A string goes in the tag tree, and a list's string elements in the tag array tree, each
     /// keyed on the string itself. Not deduplicated, as
     /// [`for_each_stored_key`](super::encode::for_each_stored_key) is not.
-    fn for_each_stored_key<'v>(
+    fn for_each_stored_key(
         &self,
-        value: &'v Value,
-        mut emit: impl FnMut(KeyKind, StoredKey<'v>),
+        value: &Value,
+        mut emit: impl FnMut(KeyKind, ColumnKey),
     ) {
         match value {
-            Value::String(s) => emit(KeyKind::Tag, StoredKey::Tag(s)),
+            Value::String(s) => emit(KeyKind::Tag, ColumnKey::Tag(s.clone())),
             Value::List(items) => {
                 for item in items.iter() {
                     if let Value::String(s) = item {
-                        emit(KeyKind::TagArray, StoredKey::Tag(s));
+                        emit(KeyKind::TagArray, ColumnKey::Tag(s.clone()));
                     }
                 }
             }
