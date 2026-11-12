@@ -1118,9 +1118,9 @@ pub fn query_mut(
             if enforce_mem {
                 if track_mem {
                     let (allocated, deallocated) = current_thread_usage();
-                    ctx.log(
-                        redis_module::logging::RedisLogLevel::Notice,
-                        &format!(
+                    crate::log::context_notice(
+                        &ctx,
+                        format!(
                             "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
                             allocated as isize - deallocated as isize
                         ),
@@ -1577,7 +1577,7 @@ fn commit_and_replicate(
     // nothing to recover it. Loud rather than silent: this is how the
     // first-full-sync window went unnoticed.
     let Some(buf) = wq.effects_buffer else {
-        redis_module::logging::log_warning(format!(
+        crate::log::warning(format!(
             "graph '{key_name}' was modified but produced no effects payload; \
              the change will not reach replicas or the AOF"
         ));

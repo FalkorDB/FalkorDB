@@ -51,7 +51,7 @@ use graph::{
 use redis_module::{
     Context, ContextFlags, InfoContext, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc,
     RedisModule_Free, RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx,
-    RedisModuleEvent, Status, basic_info_command_handler, logging::log_warning, raw,
+    RedisModuleEvent, Status, basic_info_command_handler, raw,
 };
 use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc};
 
@@ -218,7 +218,7 @@ pub fn graph_init(
             std::backtrace::Backtrace::force_capture()
         )
         .replace('\0', " ");
-        log_warning(msg);
+        crate::log::warning(msg);
         std::process::exit(1);
     }));
 
@@ -229,7 +229,7 @@ pub fn graph_init(
         .map(redis_module::RedisString::to_string_lossy)
         .collect();
     if let Err(err) = apply_module_args(ctx, &args) {
-        ctx.log_warning(&err);
+        crate::log::context_warning(ctx, err);
         return Status::Err;
     }
     unsafe {
@@ -251,9 +251,9 @@ pub fn graph_init(
 
         let result = RediSearch_Init(ctx.ctx.cast(), REDISEARCH_INIT_LIBRARY as c_int);
         if result == REDISMODULE_OK as c_int {
-            ctx.log_notice("RediSearch initialized successfully.");
+            crate::log::context_notice(ctx, "RediSearch initialized successfully.");
         } else {
-            ctx.log_notice("Failed initializing RediSearch.");
+            crate::log::context_notice(ctx, "Failed initializing RediSearch.");
             return Status::Err;
         }
 
@@ -268,7 +268,7 @@ pub fn graph_init(
         // FalkorDB compares absolute fulltext scores against the legacy TFIDF
         // magnitudes, so opt back in (non-fatal). Mirrors FalkorDB/FalkorDB#2021.
         if RediSearch_SetDefaultScorer(c"TFIDF".as_ptr()) != REDISMODULE_OK as c_int {
-            ctx.log_warning("Failed to set RediSearch default scorer to TFIDF");
+            crate::log::context_warning(ctx, "Failed to set RediSearch default scorer to TFIDF");
         }
         // Must run after the `KMP_*` `set_var` calls above and before
         // GraphBLAS starts libomp, which reads `environ` once at init.
@@ -280,7 +280,10 @@ pub fn graph_init(
             RedisModule_Realloc,
             RedisModule_Free,
         ) {
-            ctx.log_warning(&format!("Failed to initialize GraphBLAS/LAGraph: {err}"));
+            crate::log::context_warning(
+                ctx,
+                format!("Failed to initialize GraphBLAS/LAGraph: {err}"),
+            );
             return Status::Err;
         }
 
@@ -358,7 +361,10 @@ pub fn graph_init(
         let tf = tf_guard.as_str();
         let path = std::path::Path::new(tf);
         if !path.is_dir() {
-            ctx.log_warning(&format!("TEMP_FOLDER '{tf}' is not a valid directory"));
+            crate::log::context_warning(
+                ctx,
+                format!("TEMP_FOLDER '{tf}' is not a valid directory"),
+            );
             return Status::Err;
         }
         // Check write access by attempting to create a temp file.
@@ -366,7 +372,7 @@ pub fn graph_init(
         if std::fs::File::create(&test_path).is_ok() {
             let _ = std::fs::remove_file(&test_path);
         } else {
-            ctx.log_warning(&format!("TEMP_FOLDER '{tf}' is not writable"));
+            crate::log::context_warning(ctx, format!("TEMP_FOLDER '{tf}' is not writable"));
             return Status::Err;
         }
     }
@@ -402,7 +408,8 @@ pub fn graph_init(
         // RediSearch_SetNumWorkerThreads returns REDISEARCH_OK (0) on success.
         unsafe {
             if RediSearch_SetNumWorkerThreads(index_workers) != 0 {
-                ctx.log_warning(
+                crate::log::context_warning(
+                    ctx,
                     "Failed to set RediSearch worker thread count; \
                      RediSearch keeps its previous (disabled) worker pool. \
                      Reporting INDEX_WORKER_THREADS as 0 to match what is in effect.",
