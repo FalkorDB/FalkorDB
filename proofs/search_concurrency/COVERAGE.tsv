@@ -114,9 +114,9 @@ graph/src/index/indexer.rs	release_population_ticket	686	PROVEN	Tickets.dec_inv
 graph/src/index/indexer.rs	is_ticket_current	698	PROVEN	Tickets.batch stale branch (inv_batch, main_lost_order_complete, fixed_trace_complete)
 graph/src/index/indexer.rs	ticket_pending_changes	710	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
 graph/src/index/indexer.rs	enabled	720	PROVEN	Tickets.operational_iff
-graph/src/graph/graph.rs	populate_index_batch	598	PROVEN	Tickets.batch; inv_batch, main_operational_complete
-graph/src/graph/graph.rs	vector_query_nodes	4472	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
-graph/src/graph/graph.rs	vector_query_edges	4532	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
+graph/src/graph/graph.rs	populate_index_batch	601	PROVEN	Tickets.batch; inv_batch, main_operational_complete
+graph/src/graph/graph.rs	vector_query_nodes	4475	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
+graph/src/graph/graph.rs	vector_query_edges	4535	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
 graph/src/runtime/runtime.rs	map_to_index_options	2030	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)
 graph/src/runtime/ops/commit.rs	next	69	MODELLED	lock path only (#3226): Locks.writerOpenScanProg (escalate at :93, commit_deferred_indexes → Indexer::commit → RediSearch_IndexAddDocument with the scan's spec read lock still held); properties noReacquire / LockOrdered refuted by bug3226_open_scan_upgrade, bug3226_open_scan_unordered (OPEN); scan-closed paths: spec_programs_ordered
