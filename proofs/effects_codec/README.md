@@ -119,18 +119,20 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 141 rows, covering `graph/src/effects/**`:
+`COVERAGE.tsv` has 145 rows, covering `graph/src/effects/**`:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 116 |
+| PROVEN | 113 |
 | CONDITIONAL | 2 |
+| MODELLED | 3 |
 | AXIOMATISED | 1 |
-| NOT COVERED | 22 |
+| NOT COVERED | 26 |
 
 - **CONDITIONAL:** `Payload::records` and `Records::next` rest on `records_concat`, which assumes the `IdCodec` round trip. That round trip is proven in `id_list` but not linked here.
 - **AXIOMATISED:** `ReplicationSink::replicate` is implemented in `src/` by `RedisModule_Replicate` (Redis FFI). `format.rs`'s `replicate` is proven up to the sink (`fmtReplicate_transparent`).
-- **NOT COVERED:** all 22 are test-only: `v3/staging.rs` and `v3/test_aux.rs` are `#[cfg(test)]` modules and are not compiled into the engine.
+- **MODELLED:** `read_record`, `index_kind_of` and `IndexFieldBit::index_kind`: the CCH index bit (`INDEX_FLD_CCH`, 0x20, #3764) is accepted by the Rust but not modelled yet; the five property bits are proven as before.
+- **NOT COVERED:** 22 are test-only: `v3/staging.rs` and `v3/test_aux.rs` are `#[cfg(test)]` modules and are not compiled into the engine. The other 4 are the CCH index record's builders (`Record::cch_index`, `EffectsFormat::build_cch_index`, `build_cch_index`, `EffectsBuffer::build_cch_index`), not modelled yet (#3764).
 
 ## What the model does not cover
 

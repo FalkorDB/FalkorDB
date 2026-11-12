@@ -457,7 +457,7 @@ fn check_index_record<T>(
     field_type: u32,
     schemas: &[SchemaRef<T>],
 ) -> Result<(), EncodeError> {
-    index_type_of(field_type)?;
+    index_kind_of(field_type)?;
     if schemas.is_empty() {
         return Err(EncodeError::EmptyIndexSchemaList);
     }
@@ -607,6 +607,38 @@ pub enum Record {
     },
 }
 
+impl Record {
+    /// `CREATE`/`DROP CCH INDEX` as C's v3 writes it (`_v3_StageCCH`): not an
+    /// opcode of its own but an index record carrying [`INDEX_FLD_CCH`], whose
+    /// schemas are the relationship types and whose one field is the weight
+    /// attribute. A create states an options block with nothing in it.
+    #[must_use]
+    pub fn cch_index(
+        create: bool,
+        relationship_types: Vec<SchemaRef<String>>,
+        weight_attribute: AttrRef<String>,
+    ) -> Self {
+        let schema_type = EntityType::Relationship;
+        let fields = vec![weight_attribute];
+        if create {
+            Self::CreateIndex {
+                schema_type,
+                schemas: relationship_types,
+                field_type: INDEX_FLD_CCH,
+                fields,
+                options: IndexFieldOptions::none_given(None),
+            }
+        } else {
+            Self::DropIndex {
+                schema_type,
+                schemas: relationship_types,
+                field_type: INDEX_FLD_CCH,
+                fields,
+            }
+        }
+    }
+}
+
 /// Read one record, whatever its opcode.
 pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
     let opcode = Opcode::try_from(r.u32()?)?;
@@ -749,12 +781,12 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             let field_type = r.u32()?;
             // Before the options block, because that block is what an unknown
             // bit desynchronises — and before the drop path too, which has no
-            // options to desynchronise but would otherwise hand `index_type_of`
+            // options to desynchronise but would otherwise hand `index_kind_of`
             // a type it can only mistake for a range index.
             // The classifier is the validator: a `field_type` this layer accepts
-            // is exactly one `index_type_of` can name a kind for. The kind
+            // is exactly one `index_kind_of` can name a kind for. The kind
             // itself is the apply layer's business, so it is discarded here.
-            index_type_of(field_type)?;
+            index_kind_of(field_type)?;
             let fields = IndexFields::decode(r)?.0;
             // A drop stops here — zero option bytes, not an empty block — and
             // the variant it becomes has no field for any.
@@ -2157,10 +2189,12 @@ mod tests {
         assert_eq!(INDEX_FLD_RANGE, 0x0E);
         assert_eq!(INDEX_FLD_FULLTEXT, 0x01);
         assert_eq!(INDEX_FLD_VECTOR, 0x10);
+        // C's `index_field.h`: `INDEX_FLD_CCH = 0x20`.
+        assert_eq!(INDEX_FLD_CCH, 0x20);
         // No mask to pin any more — `IndexFieldBit::try_from` is the known set
         // — but a variant declared without a discriminant silently takes the
         // previous plus one, which for a bit set can never be isolated from a
-        // `field_type`. `Cch` after `Vector = 0x10` would be `0x11`, and compile.
+        // `field_type`. A variant after `Cch = 0x20` would be `0x21`, and compile.
         for v in 0_u32..=0xFF {
             if let Ok(bit) = IndexFieldBit::try_from(v) {
                 assert!(
@@ -2188,8 +2222,8 @@ mod tests {
         );
     }
 
-    /// The next free `field_type` bit — where C's CCH index type will land.
-    const FUTURE_INDEX_BIT: u32 = 0x20;
+    /// The next free `field_type` bit, which no index type claims.
+    const FUTURE_INDEX_BIT: u32 = 0x40;
 
     /// An index record as a *foreign* encoder would send it. Hand-written
     /// because `Record::encode` refuses these. Everything but `field_type` is
@@ -2264,7 +2298,7 @@ mod tests {
     fn an_unknown_index_field_type_bit_is_refused_not_ignored() {
         assert!(
             IndexFieldBit::try_from(FUTURE_INDEX_BIT).is_err(),
-            "0x20 is no longer unknown — this test needs a new bit"
+            "0x40 is no longer unknown — this test needs a new bit"
         );
 
         for opcode in [Opcode::CreateIndex, Opcode::DropIndex] {
@@ -2288,7 +2322,7 @@ mod tests {
     #[test]
     fn a_drop_index_refuses_an_unknown_bit_though_it_has_no_options_block() {
         // A drop carries no options, so nothing desynchronises — it is refused
-        // anyway, because `index_type_of` would otherwise call the unknown type
+        // anyway, because `index_kind_of` would otherwise call the unknown type
         // a range index and drop the wrong one. Notices if the guard ever moves
         // into the options block.
         let buf = foreign_index_buffer(Opcode::DropIndex, FUTURE_INDEX_BIT);
@@ -3388,6 +3422,158 @@ mod tests {
         let Record::DropConstraint { .. } = &read_buffer(&dropped).unwrap()[0] else {
             panic!("expected a drop-constraint record");
         };
+    }
+
+    // ── CCH ──
+
+    /// `CREATE CCH INDEX FOR ()-[e:ROAD|道路|ROAD]->() ON (e.время)` as the
+    /// statement names it: `ROAD` is type 70000, `道路` type 4 and `время`
+    /// attribute 300 — ids past one byte, and names whose byte length is not
+    /// their character count.
+    fn cch_record(create: bool) -> Record {
+        let road = SchemaRef {
+            id: 70_000,
+            name: "ROAD".to_owned(),
+        };
+        let relationship_types = vec![
+            road.clone(),
+            SchemaRef {
+                id: 4,
+                name: "道路".to_owned(),
+            },
+            road,
+        ];
+        let weight_attribute = AttrRef {
+            id: 300,
+            name: "время".to_owned(),
+        };
+        Record::cch_index(create, relationship_types, weight_attribute)
+    }
+
+    /// C's `EffectsBuffer_WriteString`: a `size_t` length counting the NUL, then
+    /// the bytes and the NUL.
+    fn c_string(
+        out: &mut Vec<u8>,
+        s: &str,
+    ) {
+        out.extend_from_slice(&(s.len() as u64 + 1).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+        out.push(0);
+    }
+
+    /// The bytes Dvir's C v3 encoder writes for [`cch_record`], put together
+    /// from its layout (`_encode_record`, `_encode_ddl_record`,
+    /// `_write_schema_refs`, `_write_attr_refs`, `_write_index_options` in
+    /// `src/effects/effects_v3_encode.c`) and `EffectsV3Grouping_AddCCHIndex`,
+    /// not by this encoder: `u32` opcode · `u32` `SCHEMA_EDGE` · `u16` count ·
+    /// (`u32` id · name) per type, ascending by id and repeats kept · `u32`
+    /// `INDEX_FLD_CCH` · `u16` 1 · `u16` weight id · name · on a create the
+    /// five clear presence bytes of a non-vector options block.
+    fn c_cch_bytes(create: bool) -> Vec<u8> {
+        let mut c = Vec::new();
+        c.extend_from_slice(&(if create { 11_u32 } else { 12 }).to_le_bytes());
+        c.extend_from_slice(&1_u32.to_le_bytes()); // SCHEMA_EDGE
+        c.extend_from_slice(&3_u16.to_le_bytes());
+        for (id, name) in [(4_u32, "道路"), (70_000, "ROAD"), (70_000, "ROAD")] {
+            c.extend_from_slice(&id.to_le_bytes());
+            c_string(&mut c, name);
+        }
+        c.extend_from_slice(&0x20_u32.to_le_bytes()); // INDEX_FLD_CCH
+        c.extend_from_slice(&1_u16.to_le_bytes());
+        c.extend_from_slice(&300_u16.to_le_bytes());
+        c_string(&mut c, "время");
+        if create {
+            // language, stopwords, weight, nostem, phonetic: none stated
+            c.extend_from_slice(&[0; 5]);
+        }
+        c
+    }
+
+    #[test]
+    fn a_cch_index_is_cs_v3_index_record() {
+        for create in [true, false] {
+            let mut buf = Vec::new();
+            cch_record(create).encode(&mut buf).unwrap();
+            assert_eq!(buf, c_cch_bytes(create), "create = {create}");
+        }
+        // Pinned as hex too, so a change to the helper above cannot move both
+        // sides at once.
+        let mut buf = Vec::new();
+        cch_record(false).encode(&mut buf).unwrap();
+        assert_eq!(
+            format!("{buf:02x?}"),
+            concat!(
+                "[0c, 00, 00, 00, ", // DROP_INDEX
+                "01, 00, 00, 00, ",  // SCHEMA_EDGE
+                "03, 00, ",          // three types
+                "04, 00, 00, 00, ",  // 道路, id 4
+                "07, 00, 00, 00, 00, 00, 00, 00, e9, 81, 93, e8, b7, af, 00, ",
+                "70, 11, 01, 00, ", // ROAD, id 70000
+                "05, 00, 00, 00, 00, 00, 00, 00, 52, 4f, 41, 44, 00, ",
+                "70, 11, 01, 00, ", // ROAD again
+                "05, 00, 00, 00, 00, 00, 00, 00, 52, 4f, 41, 44, 00, ",
+                "20, 00, 00, 00, ", // INDEX_FLD_CCH
+                "01, 00, ",         // one field
+                "2c, 01, ",         // время, id 300
+                "0b, 00, 00, 00, 00, 00, 00, 00, ",
+                "d0, b2, d1, 80, d0, b5, d0, bc, d1, 8f, 00]"
+            )
+        );
+    }
+
+    #[test]
+    fn a_cch_index_record_round_trips() {
+        let mut buf = new_buffer();
+        for create in [true, false] {
+            cch_record(create).encode(&mut buf).unwrap();
+        }
+        let records = read_buffer(&buf).unwrap();
+        let mut again = new_buffer();
+        for record in &records {
+            record.encode(&mut again).unwrap();
+        }
+        assert_eq!(again, buf, "encode(decode(x)) must equal x");
+        let [
+            Record::CreateIndex {
+                field_type: INDEX_FLD_CCH,
+                schemas,
+                ..
+            },
+            Record::DropIndex {
+                field_type: INDEX_FLD_CCH,
+                ..
+            },
+        ] = records.as_slice()
+        else {
+            panic!("expected a CCH create and drop, got {records:?}");
+        };
+        assert_eq!(
+            schemas.iter().map(|s| s.id).collect::<Vec<_>>(),
+            [4, 70_000, 70_000],
+            "sorted by id, the repeat kept"
+        );
+    }
+
+    #[test]
+    fn the_cch_bit_mixes_with_no_other() {
+        assert_eq!(index_kind_of(INDEX_FLD_CCH), Ok(IndexKind::Cch));
+        for other in [INDEX_FLD_FULLTEXT, INDEX_FLD_NUMERIC, INDEX_FLD_VECTOR] {
+            assert!(
+                matches!(
+                    index_kind_of(INDEX_FLD_CCH | other),
+                    Err(BadFieldType::MixedKinds { .. })
+                ),
+                "{other:#x}"
+            );
+            let buf = foreign_index_buffer(Opcode::DropIndex, INDEX_FLD_CCH | other);
+            assert!(
+                matches!(
+                    read_buffer(&buf),
+                    Err(DecodeError::BadFieldType(BadFieldType::MixedKinds { .. }))
+                ),
+                "{other:#x}"
+            );
+        }
     }
 
     #[test]

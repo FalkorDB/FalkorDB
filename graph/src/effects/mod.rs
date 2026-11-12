@@ -38,7 +38,7 @@ pub use writer::EffectWrite;
 use std::fmt::Write as _;
 
 use crate::graph::graph::Graph;
-use announce::{AnnouncedConstraint, AnnouncedIndex, SchemaBaseline};
+use announce::{AnnouncedCchIndex, AnnouncedConstraint, AnnouncedIndex, SchemaBaseline};
 use error::ApplyError;
 
 use crate::runtime::pending::Pending;
@@ -180,6 +180,21 @@ pub(crate) trait EffectsFormat<const VERSION: u8> {
         graph: &Graph,
         create: bool,
         index: &AnnouncedIndex<'_>,
+        buf: &mut W,
+    ) -> Result<(), String>;
+
+    /// Append one CCH index DDL statement, schema announcements first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the statement names a relationship type or weight
+    /// attribute this graph has not registered, which would mean the DDL did
+    /// not run.
+    fn build_cch_index<W: EffectWrite + ?Sized>(
+        pending: &Pending,
+        graph: &Graph,
+        create: bool,
+        index: &AnnouncedCchIndex<'_>,
         buf: &mut W,
     ) -> Result<(), String>;
 
@@ -501,6 +516,23 @@ impl EffectsBuffer {
         index: &AnnouncedIndex<'_>,
     ) -> Result<(), String> {
         <EffectsPayload as EffectsFormat<WIRE_VERSION>>::build_index(
+            pending, graph, create, index, self,
+        )
+    }
+
+    /// Append one CCH index DDL statement.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the format reports — see [`EffectsFormat::build_cch_index`].
+    pub fn build_cch_index(
+        &mut self,
+        pending: &Pending,
+        graph: &Graph,
+        create: bool,
+        index: &AnnouncedCchIndex<'_>,
+    ) -> Result<(), String> {
+        <EffectsPayload as EffectsFormat<WIRE_VERSION>>::build_cch_index(
             pending, graph, create, index, self,
         )
     }

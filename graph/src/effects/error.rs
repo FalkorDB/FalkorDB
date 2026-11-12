@@ -305,6 +305,31 @@ pub enum ApplyError {
     )]
     MultiSchemaIndexUnsupported { count: usize },
 
+    /// A CCH index record whose schemas are node labels: a path index spans
+    /// relationship types. C's `_CCHRelationIDs` refuses it too.
+    #[error(
+        "effects buffer names a CCH index over node labels; a CCH index spans \
+         relationship types. The buffer was not applied."
+    )]
+    CchIndexOverLabels,
+
+    /// A CCH index record with other than one field: its one field is the
+    /// weight attribute. C's `_CCHRelationIDs` refuses it too.
+    #[error(
+        "effects buffer names a CCH index with {count} fields; it has exactly one, \
+         the weight attribute. The buffer was not applied."
+    )]
+    CchIndexFieldCount { count: usize },
+
+    /// A CCH index record reached a build without the `index-falkordb`
+    /// feature, which has no CCH index to hold.
+    #[error(
+        "effects buffer {} a CCH index, which this build (without the index-falkordb \
+         feature) cannot hold. The buffer was not applied.",
+        if *.create { "creates" } else { "drops" }
+    )]
+    CchIndexUnsupported { create: bool },
+
     /// A create names an id that is neither in this replica's recycle bin nor
     /// past the first id it has never allocated — so it is already live here.
     /// `kind` says which entity: nodes and relationships are checked the same

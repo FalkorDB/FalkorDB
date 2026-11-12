@@ -14,6 +14,14 @@
 use std::sync::Arc;
 
 use crate::parser::ast::{QueryExpr, Variable};
+#[cfg(feature = "index-falkordb")]
+use crate::{
+    effects::announce::AnnouncedCchIndex,
+    graph::attribute_store::{ATTRIBUTE_ID_NONE, MAX_ATTRIBUTES},
+    graph::graph::Graph,
+    index::falkordb::cch::{CchError, CchIndexDef},
+    parser::ast::CchIndexSpec,
+};
 use crate::{
     effects::{EffectsBuffer, announce::AnnouncedIndex},
     entity_type::EntityType,
@@ -24,12 +32,6 @@ use crate::{
         runtime::{Runtime, map_to_index_options},
         value::Value,
     },
-};
-#[cfg(feature = "index-falkordb")]
-use crate::{
-    graph::graph::Graph,
-    index::falkordb::cch::{CchError, CchIndexDef},
-    parser::ast::CchIndexSpec,
 };
 use orx_tree::NodeRef;
 
@@ -116,63 +118,93 @@ fn reject_read_only_query(runtime: &Runtime<'_>) -> Result<(), String> {
     }
 }
 
-/// The CCH index definition `spec` names, resolving names to ids without creating any.
+/// Refuse a CCH statement naming more relationship types than its index record can carry.
+///
+/// The record keeps every reference as written, repeats included, behind a `u16` count (C's
+/// layout), so `:ROAD|ROAD|…` 65,536 times cannot be replicated even though it defines a
+/// one-type index. Checked first and whether or not this query builds effects, so a
+/// statement is accepted or refused the same way with or without AOF and replicas, and
+/// before anything is registered.
+#[cfg(feature = "index-falkordb")]
+fn check_type_reference_count(spec: &CchIndexSpec) -> Result<(), String> {
+    let count = spec.rel_types.len();
+    if count > usize::from(u16::MAX) {
+        return Err(format!(
+            "CCH index error: a statement names at most {} relationship types, repeats \
+             included, but this one names {count}",
+            u16::MAX
+        ));
+    }
+    Ok(())
+}
+
+/// The CCH index definition `spec` names, registering any relationship type or
+/// weight attribute it does not find — as C's `cch_index_create` does, and as
+/// `CREATE INDEX` does. The registrations reach a replica as `ADD_SCHEMA` /
+/// `ADD_ATTRIBUTE` ahead of the index record ([`emit_cch_effect`]).
 ///
 /// # Errors
-/// `CREATE CCH INDEX`'s message for the first relationship type or weight attribute that does
-/// not exist.
+/// The attribute dictionary is full, so the weight attribute cannot be registered.
 #[cfg(feature = "index-falkordb")]
-fn resolve_cch_index(
-    graph: &Graph,
+fn resolve_or_create_cch_index(
+    graph: &mut Graph,
     spec: &CchIndexSpec,
 ) -> Result<CchIndexDef, String> {
     let rel_types = spec
         .rel_types
         .iter()
-        .map(|name| {
-            graph.get_type_id(name).ok_or_else(|| {
-                format!(
-                    "CCH index error: relationship type '{name}' does not exist; create it \
-                     first (create a relationship of that type), then create the index"
-                )
-            })
-        })
-        .collect::<Result<_, _>>()?;
-    let weight_attr = graph
-        .get_relationship_attribute_id(&spec.weight_attr)
-        .map(|id| id as u16)
-        .ok_or_else(|| {
-            format!(
-                "CCH index error: attribute '{}' does not exist; create it \
-                 first (set it on a relationship), then create the index",
-                spec.weight_attr
-            )
-        })?;
+        .map(|name| graph.get_type_id_mut(name))
+        .collect();
+    let weight_attr = graph.get_or_create_rel_attr_id(&spec.weight_attr);
+    if weight_attr == ATTRIBUTE_ID_NONE {
+        return Err(format!(
+            "CCH index error: the attribute dictionary is full ({MAX_ATTRIBUTES} names), so \
+             weight attribute '{}' cannot be registered",
+            spec.weight_attr
+        ));
+    }
     Ok(CchIndexDef::new(rel_types, weight_attr))
 }
 
-/// `CREATE CCH INDEX`.
-///
-/// Unlike `CREATE INDEX` (and C), the relationship types and the weight attribute must already
-/// exist: CCH DDL emits no effects yet, so schema created here would never reach a replica.
-/// Replication: #3219.
+/// The CCH index definition `spec` names, or `None` if a relationship type or the
+/// weight attribute does not exist: then no index can match it.
+#[cfg(feature = "index-falkordb")]
+fn resolve_cch_index(
+    graph: &Graph,
+    spec: &CchIndexSpec,
+) -> Option<CchIndexDef> {
+    let rel_types = spec
+        .rel_types
+        .iter()
+        .map(|name| graph.get_type_id(name))
+        .collect::<Option<_>>()?;
+    let weight_attr = graph
+        .get_relationship_attribute_id(&spec.weight_attr)
+        .and_then(|id| u16::try_from(id).ok())?;
+    Some(CchIndexDef::new(rel_types, weight_attr))
+}
+
+/// `CREATE CCH INDEX`. Creates a missing relationship type or weight attribute,
+/// like C; replicated as those schema records, then the index record.
 #[cfg(feature = "index-falkordb")]
 pub(crate) fn create_cch_index<'a>(
     runtime: &'a Runtime<'a>,
     spec: &CchIndexSpec,
 ) -> Result<BatchOp<'a>, String> {
     reject_read_only_query(runtime)?;
+    check_type_reference_count(spec)?;
     // See `create_index`: DDL runs in writer mode.
     runtime.upgrade_to_write()?;
     {
         let mut graph = runtime.graph_mut();
-        let definition = resolve_cch_index(&graph, spec)?;
+        let definition = resolve_or_create_cch_index(&mut graph, spec)?;
         graph
             .create_cch_index(definition)
             .map_err(|error| error.query_message())?;
     }
-    // Not replicated yet (#3219), nor saved in the RDB.
+    // Not saved in the RDB yet.
     runtime.stats.borrow_mut().indexes_created += 1;
+    emit_cch_effect(runtime, true, spec)?;
     Ok(BatchOp::Once(None))
 }
 
@@ -183,18 +215,46 @@ pub(crate) fn drop_cch_index<'a>(
     spec: &CchIndexSpec,
 ) -> Result<BatchOp<'a>, String> {
     reject_read_only_query(runtime)?;
+    check_type_reference_count(spec)?;
     runtime.upgrade_to_write()?;
     {
         let mut graph = runtime.graph_mut();
         let definition =
-            resolve_cch_index(&graph, spec).map_err(|_| CchError::NotFound.query_message())?;
+            resolve_cch_index(&graph, spec).ok_or_else(|| CchError::NotFound.query_message())?;
         graph
             .drop_cch_index(&definition)
             .map_err(|error| error.query_message())?;
     }
-    // Not replicated yet either; see `create_cch_index`.
     runtime.stats.borrow_mut().indexes_dropped += 1;
+    emit_cch_effect(runtime, false, spec)?;
     Ok(BatchOp::Once(None))
+}
+
+/// Append this CCH statement to the query's effects buffer, after the schema it
+/// registered. The C counterpart is `EffectsBuffer_AddCreateCCHEffect` /
+/// `EffectsBuffer_AddDropCCHEffect` in `cch_index_create` / `cch_index_drop`.
+#[cfg(feature = "index-falkordb")]
+fn emit_cch_effect(
+    runtime: &Runtime<'_>,
+    create: bool,
+    spec: &CchIndexSpec,
+) -> Result<(), String> {
+    if !runtime.build_effects.get() {
+        return Ok(());
+    }
+    let mut buf_ref = runtime.effects_buffer.borrow_mut();
+    let buf = buf_ref.get_or_insert_with(EffectsBuffer::new);
+    buf.build_cch_index(
+        &runtime.pending.borrow(),
+        &runtime.graph(),
+        create,
+        &AnnouncedCchIndex {
+            relationship_types: &spec.rel_types,
+            weight_attribute: &spec.weight_attr,
+        },
+    )?;
+    runtime.effects_count.set(runtime.effects_count.get() + 1);
+    Ok(())
 }
 
 /// Append this statement to the query's effects buffer.
@@ -231,3 +291,6 @@ fn emit_effect(
     runtime.effects_count.set(runtime.effects_count.get() + 1);
     Ok(())
 }
+
+#[cfg(all(test, feature = "index-falkordb"))]
+mod cch_effects_tests;

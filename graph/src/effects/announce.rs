@@ -74,3 +74,10 @@ pub struct AnnouncedIndex<'a> {
     pub fields: &'a [Arc<String>],
     pub options: Option<&'a Value>,
 }
+
+/// One `CREATE`/`DROP CCH INDEX` statement: the relationship types and the
+/// weight attribute it names, by name, the types as the statement spelled them.
+pub struct AnnouncedCchIndex<'a> {
+    pub relationship_types: &'a [Arc<String>],
+    pub weight_attribute: &'a Arc<String>,
+}

@@ -275,23 +275,37 @@ pub enum IndexFieldBit {
     Geo = index_field_type::INDEX_FLD_GEO as u32,
     Str = index_field_type::INDEX_FLD_STR as u32,
     Vector = index_field_type::INDEX_FLD_VECTOR as u32,
+    /// C's CCH path index: the record's schemas are the relationship types it
+    /// spans and its one field is the weight attribute. A kind of its own, so
+    /// it never shares a `field_type` with another bit.
+    Cch = index_field_type::INDEX_FLD_CCH as u32,
+}
+
+/// The kind of index a `field_type` names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexKind {
+    /// Range, fulltext or vector fields on each schema the record names.
+    Property(IndexType),
+    /// One CCH path index over every relationship type the record names.
+    Cch,
 }
 
 impl IndexFieldBit {
     /// What kind of index this bit means — the one decision a new index type
     /// has to make, and where adding a variant fails to compile.
     ///
-    /// Returns an `IndexType` rather than matching with unit arms so there is no
-    /// do-nothing arm to add: `Self::Cch => {}` would compile and leave the
+    /// Returns an `IndexKind` rather than matching with unit arms so there is no
+    /// do-nothing arm to add: `Self::New => {}` would compile and leave the
     /// classification silently wrong.
     #[must_use]
-    pub const fn index_type(self) -> IndexType {
+    pub const fn index_kind(self) -> IndexKind {
         match self {
-            Self::Fulltext => IndexType::Fulltext,
-            Self::Vector => IndexType::Vector,
+            Self::Fulltext => IndexKind::Property(IndexType::Fulltext),
+            Self::Vector => IndexKind::Property(IndexType::Vector),
             // A range index is the union of the three scalar kinds; none of
             // them names a kind the others do not.
-            Self::Numeric | Self::Geo | Self::Str => IndexType::Range,
+            Self::Numeric | Self::Geo | Self::Str => IndexKind::Property(IndexType::Range),
+            Self::Cch => IndexKind::Cch,
         }
     }
 }
@@ -318,8 +332,8 @@ pub enum BadFieldType {
     MixedKinds {
         field_type: u32,
         bit: u32,
-        kind: IndexType,
-        first: IndexType,
+        kind: IndexKind,
+        first: IndexKind,
     },
 }
 
@@ -351,19 +365,20 @@ fn field_type_bits(field_type: u32) -> impl Iterator<Item = u32> {
 /// and `0x0A` is a range index over numbers and strings. Different kinds are
 /// refused, not ranked: nothing can produce the case (C picks by equality and
 /// asserts otherwise in `GraphHub_AddIndex`; `emit::index_field_flags` is total),
-/// and ranking would build one index where the record named two.
+/// and ranking would build one index where the record named two. The CCH bit
+/// is a kind of its own, so it mixes with nothing — C's `_CanonicalIndexType`.
 ///
 /// An empty `field_type` is a range index, as it always was.
 ///
 /// # Errors
 ///
 /// [`BadFieldType`], which both wire error types wrap transparently.
-pub fn index_type_of(field_type: u32) -> Result<IndexType, BadFieldType> {
-    let mut first: Option<IndexType> = None;
+pub fn index_kind_of(field_type: u32) -> Result<IndexKind, BadFieldType> {
+    let mut first: Option<IndexKind> = None;
     for bit in field_type_bits(field_type) {
         let kind = IndexFieldBit::try_from(bit)
             .map_err(|_| BadFieldType::UnknownBit { field_type, bit })?
-            .index_type();
+            .index_kind();
         match first {
             None => first = Some(kind),
             Some(first) if first != kind => {
@@ -377,7 +392,7 @@ pub fn index_type_of(field_type: u32) -> Result<IndexType, BadFieldType> {
             Some(_) => {}
         }
     }
-    Ok(first.unwrap_or(IndexType::Range))
+    Ok(first.unwrap_or(IndexKind::Property(IndexType::Range)))
 }
 
 pub const INDEX_FLD_FULLTEXT: u32 = IndexFieldBit::Fulltext as u32;
@@ -385,6 +400,7 @@ pub const INDEX_FLD_NUMERIC: u32 = IndexFieldBit::Numeric as u32;
 pub const INDEX_FLD_GEO: u32 = IndexFieldBit::Geo as u32;
 pub const INDEX_FLD_STR: u32 = IndexFieldBit::Str as u32;
 pub const INDEX_FLD_VECTOR: u32 = IndexFieldBit::Vector as u32;
+pub const INDEX_FLD_CCH: u32 = IndexFieldBit::Cch as u32;
 
 pub const INDEX_FLD_UNKNOWN: u32 = 0x00;
 /// `INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR` = `0x0E`.
@@ -506,6 +522,7 @@ mod tests {
             ("INDEX_FLD_GEO", index_field_type::INDEX_FLD_GEO),
             ("INDEX_FLD_STR", index_field_type::INDEX_FLD_STR),
             ("INDEX_FLD_VECTOR", index_field_type::INDEX_FLD_VECTOR),
+            ("INDEX_FLD_CCH", index_field_type::INDEX_FLD_CCH),
         ] {
             assert!(
                 value <= u64::from(u32::MAX),
