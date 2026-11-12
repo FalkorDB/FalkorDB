@@ -877,8 +877,9 @@ fn apply_cch_index(
 /// The hierarchy is built here, from this replica's own edges, synchronously
 /// on the thread applying the buffer, as C's apply does. A create of an index
 /// already held is a no-op and a drop of one not held is tolerated, as in C.
-/// A build the primary completed and this replica cannot (a negative weight
-/// here) is a divergence, and refused.
+/// The replica's own index builder builds the hierarchy from its own edges, as
+/// the primary's does. A create the primary accepted and this replica refuses (a
+/// negative weight here) is a divergence, and refused.
 #[cfg(feature = "index-falkordb")]
 fn hold_cch_index(
     g: &mut Graph,
@@ -2666,10 +2667,13 @@ mod cch_tests {
             // One index over both types, not one per type.
             let definition = CchIndexDef::new(vec![TypeId(0), TypeId(1)], 0);
             assert_eq!(held(&g), vec![definition.clone()]);
+            // Held for the replica's own builder, which builds it from the replica's edges.
             assert!(
-                g.cch_index(&definition).is_some(),
-                "the hierarchy was built, not only the definition"
+                g.cch_index(&definition).is_none(),
+                "built in the background"
             );
+            assert!(g.build_held_cch_index(&definition));
+            assert!(g.cch_index(&definition).is_some());
 
             apply(&mut g, [Record::cch_index(false, both(), time())]).unwrap();
             assert_eq!(held(&g), vec![]);
@@ -2725,6 +2729,7 @@ mod cch_tests {
                 schema().into_iter().chain(edge(2.0)).chain([create()]),
             )
             .unwrap();
+            assert!(g.build_held_cch_index(&road_by_time()));
             assert!(g.cch_index(&road_by_time()).is_some());
 
             let mut g = graph();

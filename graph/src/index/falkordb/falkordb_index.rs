@@ -582,9 +582,9 @@ pub struct FalkorDbIndex {
     /// was published. Writers may have been: the data version tells.
     batches_published: u64,
     /// CCH shortest-path indexes, one [`IndexEntry`] per definition, keyed by the whole
-    /// [`CchIndexDef`](super::cch::CchIndexDef) (the kind's [`VersionedIndex::Name`]). Every
-    /// entry is built synchronously and held `Ready` until the background build, so readers
-    /// still check the state.
+    /// [`CchIndexDef`](super::cch::CchIndexDef) (the kind's [`VersionedIndex::Name`]). A created
+    /// entry is `Building` until the index builder adopts its hierarchy, so readers check the
+    /// state.
     ///
     /// A `BTreeMap`, not a `HashMap`: it iterates in definition order, the same in every
     /// process, so whatever lists the indexes (a save, a listing) is deterministic. Found by
@@ -864,6 +864,7 @@ impl FalkorDbIndex {
             .values_mut()
             .chain(self.edge_columns.values_mut())
             .for_each(IndexEntry::publish);
+        self.cch_indexes.values_mut().for_each(IndexEntry::publish);
     }
 
     /// Every column, by kind and key.
@@ -1154,6 +1155,14 @@ impl FalkorDbIndex {
             .any(IndexEntry::is_building)
     }
 
+    /// Whether any index, a column or a CCH hierarchy, is still `Building`: what every writer's
+    /// commit asks before it looks for builds to start. The CCH map is empty on almost every
+    /// graph, so this costs what [`Self::has_building_columns`] does.
+    #[must_use]
+    pub(crate) fn has_building_indexes(&self) -> bool {
+        self.has_building_columns() || self.cch_indexes.values().any(IndexEntry::is_building)
+    }
+
     /// The build state of column `(entity, label, attr)`, if it exists.
     #[cfg(test)]
     #[must_use]
@@ -1168,8 +1177,10 @@ impl FalkorDbIndex {
     }
 }
 
-/// CCH shortest-path indexes, held next to the columns. `Graph`'s CCH methods build a
-/// hierarchy from the graph first, then hand it here; nothing here reads the graph.
+/// CCH shortest-path indexes, held next to the columns. A new index is held `Building`, and the
+/// index builder builds its hierarchy in the background ([`CchIndex`]'s
+/// [`VersionedIndex`](super::versioned::VersionedIndex) impl); an RDB load hands one built
+/// already. Nothing here reads the graph.
 ///
 /// MVCC: an entry holds its hierarchy as `Arc<Cch>`, and `Graph::new_version` clones the `Arc`.
 /// Every write here adds or removes an entry on the version it is called on only,
@@ -1186,16 +1197,17 @@ impl FalkorDbIndex {
         CchIndex::entry(self, def)
     }
 
-    /// The index held over exactly `def`, if it is ready to answer: an entry that is still
-    /// building is not returned.
+    /// The index held over exactly `def`, if it is ready to answer: an entry still building, or
+    /// whose build failed, is not returned.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn cch_index(
         &self,
         def: &CchIndexDef,
     ) -> Option<&CchIndex> {
         self.cch_entry(def)
-            .filter(|idx| !idx.is_building())
-            .map(|idx| &idx.index)
+            .filter(|entry| !entry.is_building() && entry.index.cch().is_some())
+            .map(|entry| &entry.index)
     }
 
     /// Every held CCH definition, ready or not, in definition order.
@@ -1206,12 +1218,32 @@ impl FalkorDbIndex {
     /// Hold `index`, built and `Ready`, as a new index: the next generation, like a
     /// column's. The caller has checked that no entry over the same definition is held
     /// ([`Self::cch_entry`]), before building it.
+    #[cfg(test)]
     pub(crate) fn add_cch(
         &mut self,
         index: CchIndex,
     ) {
+        self.hold_cch(index, BuildState::Ready);
+    }
+
+    /// Hold a new index over `def`, `Building`, the next generation: the commit of this version
+    /// starts its build ([`MvccGraph::commit`](crate::graph::mvcc_graph::MvccGraph::commit)).
+    /// The caller has checked that no entry over `def` is held ([`Self::cch_entry`]).
+    pub(crate) fn add_cch_building(
+        &mut self,
+        def: CchIndexDef,
+    ) {
+        self.hold_cch(CchIndex::pending(def), BuildState::building(()));
+    }
+
+    /// [`Self::add_cch`] and [`Self::add_cch_building`].
+    fn hold_cch(
+        &mut self,
+        index: CchIndex,
+        state: BuildState<()>,
+    ) {
         self.indexes_created += 1;
-        let entry = IndexEntry::new(index, BuildState::Ready, self.indexes_created);
+        let entry = IndexEntry::new(index, state, self.indexes_created);
         let held = self.cch_indexes.insert(entry.index.def.clone(), entry);
         debug_assert!(
             held.is_none(),

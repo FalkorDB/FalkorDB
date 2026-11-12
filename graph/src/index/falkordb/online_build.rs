@@ -484,6 +484,13 @@ pub fn stop() -> bool {
         .is_none_or(|builder| builder.stop_within(STOP_WAIT))
 }
 
+/// Whether the builder has been stopped ([`stop`]): for a batch whose read takes long (a CCH
+/// hierarchy), to give up between its steps instead of outliving the stop's wait. `false` before
+/// the builder starts.
+pub(crate) fn stopping() -> bool {
+    BUILDER.get().is_some_and(|builder| builder.stopped())
+}
+
 /// Start the build of generation `generation` of index `id` of `graph` ([`Builder::enqueue`]).
 /// Before the builder starts, nothing: the module starts it before any graph exists, and no unit
 /// test starts it. Tests share a process, so its jobs would build other tests' indexes while they

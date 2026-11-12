@@ -3410,8 +3410,8 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
 /// A graph as the builder reaches it in these tests, on a [`LocalHost`]: a batch publishes holding
 /// its global lock, and so does every writer here. `before_publish` runs once, holding it, just
 /// before the next batch goes in. `warnings` keeps what the builder reports through the host.
-struct TestHost {
-    mvcc: Arc<MvccGraph>,
+pub(super) struct TestHost {
+    pub(super) mvcc: Arc<MvccGraph>,
     local: LocalHost,
     before_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&Arc<MvccGraph>) + Send>>>,
     after_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&Arc<MvccGraph>) + Send>>>,
@@ -3419,7 +3419,7 @@ struct TestHost {
 }
 
 impl TestHost {
-    fn new(mvcc: Arc<MvccGraph>) -> Arc<Self> {
+    pub(super) fn new(mvcc: Arc<MvccGraph>) -> Arc<Self> {
         Arc::new(Self {
             mvcc,
             local: LocalHost::default(),
@@ -3430,7 +3430,7 @@ impl TestHost {
     }
 
     /// One writer's unit of work, holding the global lock as a host's writers do.
-    fn write(
+    pub(super) fn write(
         &self,
         write: impl FnOnce(&mut Graph),
     ) {
@@ -3518,7 +3518,7 @@ fn building_generation(
 }
 
 /// A builder with `sizing` that publishes through `host`, never started.
-fn builder_on(
+pub(super) fn builder_on(
     host: &Arc<TestHost>,
     sizing: Sizing,
 ) -> Arc<Builder> {
@@ -3528,7 +3528,7 @@ fn builder_on(
 /// A job for the generation of index `id` that `host`'s published version holds `Building`, on a
 /// builder of its own with `sizing`, never started: the test runs its batches itself
 /// ([`Job::step`]).
-fn job_on(
+pub(super) fn job_on(
     host: &Arc<TestHost>,
     id: &IndexId,
     sizing: Sizing,

@@ -165,7 +165,7 @@ fn create_registers_missing_schema_and_announces_it_first() {
         ]
     );
     let index = CchIndexDef::new(vec![TypeId(0), TypeId(1)], 0);
-    assert!(primary.0.cch_index(&index).is_some());
+    assert!(primary.0.cch_indexes().any(|held| *held == index));
 }
 
 /// Over existing schema only the index record goes out, and a drop names the

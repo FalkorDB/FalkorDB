@@ -30,6 +30,7 @@ use std::sync::Arc;
 use roaring::RoaringTreemap;
 
 use super::falkordb_index::FalkorDbIndex;
+use super::online_build;
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 use crate::graph::graph::{Graph, TypeId};
 use crate::graph::graphblas::matrix::CsrExport;
@@ -264,6 +265,10 @@ pub enum CchError {
     /// of this module, not of its callers.
     #[error("internal CCH error: {0}")]
     Ordering(String),
+    /// The build gave up because the index builder is stopping (the server is shutting down).
+    /// Never adopted: a batch given up is not published.
+    #[error("the CCH build was cancelled: the index builder is stopping")]
+    Cancelled,
 }
 
 impl From<order::OrderError> for CchError {
@@ -295,6 +300,7 @@ impl CchError {
             Self::NeedsRebuild => format!("CCH index error: {self}"),
             Self::Internal(message) => format!("CCH index error: {message}"),
             Self::Ordering(error) => format!("CCH index error: {error}"),
+            Self::Cancelled => format!("CCH index error: {self}"),
         }
     }
 }
@@ -386,27 +392,94 @@ pub enum Recustomized {
     NeedsRebuild,
 }
 
+/// What a CCH index holds: nothing yet while its build runs, the built hierarchy, or why its
+/// build failed.
+#[derive(Clone)]
+pub(crate) enum Hierarchy {
+    /// The build has not been adopted yet: the entry is `Building`.
+    Pending,
+    /// The hierarchy the build produced, shared by every version that holds this entry.
+    Built(Arc<Cch>),
+    /// The build failed for this reason (`GraphTooLarge`-like resource limits, the ordering
+    /// backend, a bug: never the graph's data, which `CREATE` checked and every write since
+    /// keeps valid). The entry is `Ready` in the builder's sense, so no job runs for it; it
+    /// stays failed until it is dropped and created again. Only the definition is saved, so an
+    /// RDB load builds it again.
+    Failed(Arc<str>),
+}
+
 /// One CCH index as held by `Graph`: the kind of an [`IndexEntry`] in
 /// `FalkorDbIndex::cch_indexes`, which adds its build state. `new_version` clones the `Arc`.
 #[derive(Clone)]
-pub struct CchIndex {
+pub(crate) struct CchIndex {
     pub def: CchIndexDef,
-    pub(crate) cch: Arc<Cch>,
+    pub(crate) hierarchy: Hierarchy,
 }
 
-/// CCH as a kind of versioned index. An entry is found by its whole definition, and until the
-/// background build every entry is built synchronously and held [`BuildState::Ready`].
+impl CchIndex {
+    /// An index whose build has not been adopted yet, for a `Building` entry.
+    #[must_use]
+    pub(crate) const fn pending(def: CchIndexDef) -> Self {
+        Self {
+            def,
+            hierarchy: Hierarchy::Pending,
+        }
+    }
+
+    /// An index over a hierarchy built already, for a `Ready` entry.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) const fn built(
+        def: CchIndexDef,
+        cch: Arc<Cch>,
+    ) -> Self {
+        Self {
+            def,
+            hierarchy: Hierarchy::Built(cch),
+        }
+    }
+
+    /// The hierarchy, if the build produced one.
+    #[must_use]
+    pub(crate) const fn cch(&self) -> Option<&Arc<Cch>> {
+        match &self.hierarchy {
+            Hierarchy::Built(cch) => Some(cch),
+            Hierarchy::Pending | Hierarchy::Failed(_) => None,
+        }
+    }
+
+    /// Why the build failed, if it did.
+    #[must_use]
+    pub(crate) fn failure(&self) -> Option<&str> {
+        match &self.hierarchy {
+            Hierarchy::Failed(reason) => Some(reason),
+            Hierarchy::Pending | Hierarchy::Built(_) => None,
+        }
+    }
+}
+
+/// CCH as a kind of versioned index, built in the background by the index builder
+/// ([`online_build`](super::online_build)) like a column. An entry is found by its whole
+/// definition.
 ///
-/// - `Cursor = ()`: a hierarchy is not built in resumable pieces; one indexer turn builds it
+/// - `Cursor = ()`: a hierarchy is not built in resumable pieces; one indexer batch builds it
 ///   whole, so there is no place to resume from.
-/// - `Batch = Arc<Cch>`: what that turn builds off the lock, the hierarchy to adopt.
-/// - `Changes = CchDirty`: what a unit of work's writes touched, as its graph write methods
-///   stage it; an index keeps what [`CchDirty`] says touches its definition.
+/// - `Batch = Result<Arc<Cch>, CchError>`: what that batch builds off the lock, the hierarchy
+///   to adopt, or why it could not (the trait's read has no other error channel). Either way
+///   the batch ends the build: a failure is adopted as [`Hierarchy::Failed`].
+/// - `Changes = CchDirty`: what a unit of work's writes touched. Nothing stages it yet: a write
+///   does not reach a CCH index until #3214.
 /// - `Scratch = ()`: nothing is reused from one index to the next.
+///
+/// **Writes during a build are not reconciled yet.** The build reads the version the builder
+/// took, and its commit adopts the hierarchy as read, whatever writers committed meanwhile
+/// ([`Self::indexer_catch_up`] and [`Self::writer_rebase`] do nothing). That is the contract a
+/// `Ready` index already has here: no write maintains it until #3214, which also brings the
+/// catch-up.
 impl VersionedIndex for CchIndex {
     type Cursor = ();
     type Changes = CchDirty;
-    type Batch = Arc<Cch>;
+    type Batch = Result<Arc<Cch>, CchError>;
     type Name = CchIndexDef;
     type Scratch = ();
 
@@ -424,8 +497,7 @@ impl VersionedIndex for CchIndex {
         index.cch_indexes.get_mut(def)
     }
 
-    /// Never called: `IndexId` has no CCH variant until the background build, so no writer
-    /// dispatches here.
+    /// Never called: no write stages a change for a CCH index until #3214.
     fn writer_record(
         &mut self,
         _state: &mut BuildState<()>,
@@ -433,11 +505,11 @@ impl VersionedIndex for CchIndex {
         _place: impl Fn(u64) -> Option<()>,
         _scratch: &mut (),
     ) {
-        unreachable!("CCH is not dispatched through IndexId until the background build")
+        unreachable!("no write stages a change for a CCH index yet (#3214)")
     }
 
-    /// Never called: a writer is rebased only onto batches on a `Building` column, and every
-    /// CCH entry is held `Ready`.
+    /// Nothing to re-apply: the writer's fork wrote nothing into the index (no write reaches
+    /// one yet), so it takes the published copy, the adopted hierarchy, as it is.
     fn writer_rebase(
         &mut self,
         _state: &BuildState<()>,
@@ -446,11 +518,10 @@ impl VersionedIndex for CchIndex {
         _published: &Graph,
         _fork: &Graph,
     ) {
-        unreachable!("CCH is not dispatched through IndexId until the background build")
     }
 
-    /// Never called: `IndexId` has no CCH variant until the background build, so no indexer
-    /// batch commits on one.
+    /// Nothing is caught up: the hierarchy is adopted as the build read it, without the writes
+    /// committed while it ran. See the impl's doc.
     fn indexer_catch_up(
         &mut self,
         _state: &BuildState<()>,
@@ -459,55 +530,87 @@ impl VersionedIndex for CchIndex {
         _batch_version: &Graph,
         _published: &Graph,
     ) {
-        unreachable!("CCH is not dispatched through IndexId until the background build")
     }
 
-    /// Never called: `IndexId` has no CCH variant until the background build, so no indexer
-    /// batch commits on one.
+    /// Never called: the CCH arm of [`Graph::indexer_fit`] never chooses
+    /// [`CatchUp::Insert`](super::versioned::CatchUp::Insert): a batch cannot be inserted into a
+    /// hierarchy.
     fn indexer_insert(
         &mut self,
         _def: &CchIndexDef,
-        _batch: &Arc<Cch>,
+        _batch: &Self::Batch,
         _written: &RoaringTreemap,
         _from: (),
         _next: Option<()>,
         _published: &Graph,
     ) {
-        unreachable!("CCH is not dispatched through IndexId until the background build")
+        unreachable!("a CCH batch is never inserted")
     }
 
-    /// Never called: `IndexId` has no CCH variant until the background build, so no indexer
-    /// batch commits on one.
-    fn batch_len(_batch: &Arc<Cch>) -> usize {
-        unreachable!("CCH is not dispatched through IndexId until the background build")
+    /// Never called, as [`Self::indexer_insert`]: only the insert weighs a batch's length.
+    fn batch_len(_batch: &Self::Batch) -> usize {
+        unreachable!("a CCH batch is never inserted")
     }
 
-    /// Never called: `IndexId` has no CCH variant until the background build, so no indexer
-    /// batch is read for one.
+    /// The whole build, off the lock, on `version`, the builder's own copy of a published
+    /// version: the input, Phase 1 and Phase 2. One batch, so the next is always `None`, and
+    /// applying it ends the build, failed or not ([`Self::indexer_add`]). The budget is
+    /// meaningless for a hierarchy and ignored.
+    ///
+    /// Between the input, the ordering and the customization it gives up if the builder is
+    /// stopping ([`online_build::stopping`](super::online_build::stopping)): the ordering
+    /// cannot be interrupted, and a build outlives the stop's wait. A batch given up is never
+    /// published, so its error is never adopted.
     fn indexer_read(
         &self,
-        _version: &Graph,
-        _def: &CchIndexDef,
+        version: &Graph,
+        def: &CchIndexDef,
         _from: (),
         _budget: usize,
-    ) -> (Arc<Cch>, Option<()>) {
-        unreachable!("CCH is not dispatched through IndexId until the background build")
+    ) -> (Self::Batch, Option<()>) {
+        (build_off_the_lock(version, def).map(Arc::new), None)
     }
 
-    /// Never called: `IndexId` has no CCH variant until the background build, so no indexer
-    /// batch is added to one.
+    /// Adopt what the batch built: the hierarchy, or, for an error, its reason as
+    /// [`Hierarchy::Failed`].
     fn indexer_add(
         &mut self,
-        _batch: &mut Arc<Cch>,
+        batch: &mut Self::Batch,
     ) {
-        unreachable!("CCH is not dispatched through IndexId until the background build")
+        self.hierarchy = match batch {
+            Ok(cch) => Hierarchy::Built(Arc::clone(cch)),
+            Err(cause) => Hierarchy::Failed(Arc::from(cause.to_string())),
+        };
     }
 
-    /// The hierarchy ([`Cch::memory_usage`]) and the definition's type list. A `Topology`
-    /// shared with another version is counted here too, as every index counts a shared page.
+    /// The hierarchy ([`Cch::memory_usage`]) if built, the reason if the build failed, and the
+    /// definition's type list. A `Topology` shared with another version is counted here too, as
+    /// every index counts a shared page. A build in flight belongs to no version and is not
+    /// counted, as a column's batch is not.
     fn memory_usage(&self) -> usize {
-        self.cch.memory_usage() + size_of_val(self.def.rel_types())
+        self.cch().map_or(0, |cch| cch.memory_usage())
+            + self.failure().map_or(0, str::len)
+            + size_of_val(self.def.rel_types())
     }
+}
+
+/// [`CchIndex::indexer_read`]'s build: input, ordering, customization, with a check for the
+/// builder's stop before each step that takes long.
+fn build_off_the_lock(
+    version: &Graph,
+    def: &CchIndexDef,
+) -> Result<Cch, CchError> {
+    let stopping = || {
+        if online_build::stopping() {
+            Err(CchError::Cancelled)
+        } else {
+            Ok(())
+        }
+    };
+    stopping()?;
+    let input = CchInput::build(version, def)?;
+    stopping()?;
+    Cch::build(&input)
 }
 
 /// What a unit of work's writes touched that the graph's CCH indexes might care about. The
@@ -623,10 +726,7 @@ mod tests {
         g.falkordb_index.cch_indexes.insert(
             def.clone(),
             IndexEntry::new(
-                CchIndex {
-                    def: def.clone(),
-                    cch: Arc::clone(&cch),
-                },
+                CchIndex::built(def.clone(), Arc::clone(&cch)),
                 BuildState::Ready,
                 // Any generation: nothing here compares it.
                 1,
@@ -638,7 +738,7 @@ mod tests {
         let held = CchIndex::entry(&next.falkordb_index, &def).expect("found by its definition");
         assert_eq!(held.state, BuildState::Ready);
         assert!(
-            Arc::ptr_eq(&held.index.cch, &cch),
+            Arc::ptr_eq(held.index.cch().expect("built"), &cch),
             "new_version must share the hierarchy, not copy it"
         );
     }

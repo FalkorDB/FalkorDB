@@ -83,10 +83,13 @@ use thiserror::Error;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::falkordb_index::ScanFilter;
 #[cfg(all(test, feature = "index-falkordb"))]
-use crate::index::falkordb::versioned::IndexId;
+use crate::index::falkordb::{
+    cch::{Cch, CchIndex},
+    versioned::IndexId,
+};
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
-    cch::{Cch, CchError, CchIndex, CchIndexDef, CchInput, maint::check_edge_weights},
+    cch::{CchError, CchIndexDef, CchInput, maint::check_edge_weights},
     falkordb_index::{BuildCursor, FalkorDbIndex},
     graph_writes,
 };
@@ -5323,28 +5326,49 @@ impl Graph {
 /// index.
 #[cfg(feature = "index-falkordb")]
 impl Graph {
-    /// Build a CCH index for `def` and hold it on this version of the graph. Synchronous:
-    /// unlike the RediSearch indexes there is no background population pass.
+    /// Hold a CCH index for `def` on this version of the graph, `Building`: the commit of this
+    /// version hands it to the index builder, which builds the hierarchy in the background, as
+    /// it builds a column. What `CREATE CCH INDEX` and a replicated create do.
+    ///
+    /// Before it returns it checks what the build would refuse in the graph's data, so the
+    /// build cannot fail on it ([`CchInput::validate`], about 5 ms on California): every edge of
+    /// an indexed type has a valid weight. From then on the write-time check
+    /// ([`check_edge_weights`]) keeps it so.
     ///
     /// # Errors
-    /// [`CchError::AlreadyExists`] if an index with the same definition is already held,
-    /// [`CchError::UnknownRelType`] / [`CchError::UnknownAttribute`] for an unresolvable
-    /// definition, and whatever [`CchInput::build`] and [`Cch::build`] report:
-    /// [`CchError::InvalidWeight`] for a negative or NaN weight on an indexed relationship,
-    /// otherwise a bug. Nothing is held on error.
+    /// [`CchError::AlreadyExists`] if an index with the same definition is already held, in any
+    /// state, [`CchError::UnknownRelType`] / [`CchError::UnknownAttribute`] for an unresolvable
+    /// definition, and [`CchError::InvalidWeight`] for a negative or NaN weight on an indexed
+    /// relationship. Nothing is held on error.
     pub(crate) fn create_cch_index(
         &mut self,
         def: CchIndexDef,
     ) -> Result<(), CchError> {
-        // Checked before the (costly) build; a building entry counts too.
+        if self.falkordb_index.cch_entry(&def).is_some() {
+            return Err(CchError::AlreadyExists);
+        }
+        CchInput::validate(self, &def)?;
+        self.falkordb_index.add_cch_building(def);
+        Ok(())
+    }
+
+    /// Build a CCH index for `def` now, on this version, and hold it `Ready`: the synchronous
+    /// build an RDB load uses, as a column is built in one batch there, and the tests'.
+    ///
+    /// # Errors
+    /// As [`Self::create_cch_index`], and whatever [`CchInput::build`] and [`Cch::build`]
+    /// report beyond it, which is a bug or a resource limit. Nothing is held on error.
+    #[cfg(test)]
+    pub(crate) fn build_cch_index_now(
+        &mut self,
+        def: CchIndexDef,
+    ) -> Result<(), CchError> {
         if self.falkordb_index.cch_entry(&def).is_some() {
             return Err(CchError::AlreadyExists);
         }
         let cch = Cch::build(&CchInput::build(self, &def)?)?;
-        self.falkordb_index.add_cch(CchIndex {
-            def,
-            cch: Arc::new(cch),
-        });
+        self.falkordb_index
+            .add_cch(CchIndex::built(def, Arc::new(cch)));
         Ok(())
     }
 
@@ -5360,15 +5384,28 @@ impl Graph {
         self.falkordb_index.drop_cch(def)
     }
 
+    /// Run the build of the `Building` index over `def` on this version, as the index builder's
+    /// one batch for it does, and adopt it: for tests, which run no builder. Whether there was
+    /// such an index to build.
+    #[cfg(test)]
+    pub(crate) fn build_held_cch_index(
+        &mut self,
+        def: &CchIndexDef,
+    ) -> bool {
+        self.indexer_prepare(&IndexId::Cch(def.clone()), usize::MAX)
+            .is_some()
+    }
+
     /// Every CCH index definition held by this version, ready or not, in definition order.
     pub fn cch_indexes(&self) -> impl Iterator<Item = &CchIndexDef> {
         self.falkordb_index.cch_defs()
     }
 
-    /// The index held for exactly `def`, if it is ready to answer: a building index is not
-    /// returned.
+    /// The index held for exactly `def`, if it is ready to answer: an index still building, or
+    /// whose build failed, is not returned.
+    #[cfg(test)]
     #[must_use]
-    pub fn cch_index(
+    pub(crate) fn cch_index(
         &self,
         def: &CchIndexDef,
     ) -> Option<&CchIndex> {

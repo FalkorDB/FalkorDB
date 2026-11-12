@@ -245,7 +245,7 @@ mod tests {
                 .collect();
             let attribute = g.get_or_create_rel_attr_id(&Arc::new(String::from(attribute)));
             let def = CchIndexDef::new(ids, attribute);
-            g.create_cch_index(def.clone()).expect("create");
+            g.build_cch_index_now(def.clone()).expect("create");
             self.mvcc.commit(g).expect("the version validates");
             def
         }
@@ -258,7 +258,7 @@ mod tests {
         ) {
             let mut g = self.mvcc.fork();
             g.drop_cch_index(def).expect("held");
-            g.create_cch_index(def.clone())
+            g.build_cch_index_now(def.clone())
                 .expect("the stored weights are indexable");
             self.mvcc.commit(g).expect("the version validates");
         }
@@ -267,7 +267,13 @@ mod tests {
             &self,
             def: &CchIndexDef,
         ) -> Arc<Cch> {
-            Arc::clone(&self.committed().cch_index(def).expect("held").cch)
+            Arc::clone(
+                self.committed()
+                    .cch_index(def)
+                    .expect("held")
+                    .cch()
+                    .expect("built"),
+            )
         }
     }
 
