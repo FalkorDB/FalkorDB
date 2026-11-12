@@ -78,7 +78,7 @@ RUN printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
     apt install -y --no-install-recommends \
         ca-certificates libssl3 openssl && \
     apt install -y lsb-release gnupg wget && \
-    printf 'inet4_only = on\ntries = 5\nwaitretry = 5\nretry_connrefused = on\n' >> /etc/wgetrc && \
+    printf 'inet4_only = on\ntries = 5\nwaitretry = 5\nretry_connrefused = on\nretry_on_http_error = 429,500,502,503,504\n' >> /etc/wgetrc && \
     wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
     ./llvm.sh "${CLANG_MAJOR}" && \
