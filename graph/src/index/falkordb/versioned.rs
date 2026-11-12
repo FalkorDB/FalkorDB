@@ -241,6 +241,16 @@ pub(crate) enum Discarded {
     CatchUpTooLarge,
 }
 
+/// Whether a kind could take writers' changes into its copy of an index
+/// ([`VersionedIndex::indexer_catch_up`], [`VersionedIndex::writer_rebase`]), or needs its build
+/// to start again from `C`, the cursor a new build starts at: a CCH hierarchy cannot take an edge
+/// between nodes it does not join. A column always takes them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Absorbed<C> {
+    Yes,
+    Restart(C),
+}
+
 /// What a kind of index does on each side of its lifecycle. The state those operations move is
 /// [`IndexEntry<K>`]'s, the same for every kind: `self` is the kind's data alone, so each operation
 /// is handed the state.
@@ -289,6 +299,8 @@ pub(crate) trait VersionedIndex: Clone + Sized {
     /// on after the writer's fork was made. Re-apply `written`, the entities the fork changed in
     /// it: their tuples as `published` has them come out, and as `fork` has them go in, while
     /// `state` is `Building` only for an entity `fork` places below the cursor.
+    /// [`Absorbed::Restart`]: the index cannot take them, and is built again under a new
+    /// generation, which the writer's commit hands to the builder.
     fn writer_rebase(
         &mut self,
         state: &BuildState<Self::Cursor>,
@@ -296,13 +308,14 @@ pub(crate) trait VersionedIndex: Clone + Sized {
         written: &RoaringTreemap,
         published: &Graph,
         fork: &Graph,
-    );
+    ) -> Absorbed<Self::Cursor>;
 
     /// Indexer side, under the lock: this is the batch's copy of index `name`, read on
     /// `batch_version`, and writers committed since. Catch it up on `written`, the entities they
     /// changed in it: their tuples as `batch_version` has them come out, and as `published` has
     /// them go in, while `state` is `Building` only for an entity `published` places below the
-    /// cursor.
+    /// cursor. [`Absorbed::Restart`]: the index cannot take them, and its build goes on, from
+    /// the cursor given, under the same generation, so the same job reads it again.
     fn indexer_catch_up(
         &mut self,
         state: &BuildState<Self::Cursor>,
@@ -310,7 +323,7 @@ pub(crate) trait VersionedIndex: Clone + Sized {
         written: &RoaringTreemap,
         batch_version: &Graph,
         published: &Graph,
-    );
+    ) -> Absorbed<Self::Cursor>;
 
     /// Indexer side, under the lock: catch up by inserting ([`CatchUp::Insert`]). `self` is
     /// `published`'s copy of index `name`, with its cursor at `from`. `batch` was read from `from`
@@ -679,9 +692,14 @@ impl Graph {
             BuildState::Ready => &none,
         };
         let mut caught = ours.clone();
-        caught
-            .index
-            .indexer_catch_up(&caught.state, name, written, batch_version, published);
+        if let Absorbed::Restart(from) =
+            caught
+                .index
+                .indexer_catch_up(&caught.state, name, written, batch_version, published)
+        {
+            // The next read is at or after `published`, so nothing written before it is owed.
+            caught.state = BuildState::building(from);
+        }
         if let Some(slot) = K::entry_mut(&mut self.falkordb_index, name) {
             *slot = caught;
         }
@@ -766,9 +784,20 @@ impl Graph {
         };
         let written = written.by_this_version.clone();
         let mut rebased = theirs.clone();
-        rebased
-            .index
-            .writer_rebase(&rebased.state, name, &written, published, self);
+        if let Absorbed::Restart(from) =
+            rebased
+                .index
+                .writer_rebase(&rebased.state, name, &written, published, self)
+        {
+            // Another build, which the fork's commit hands to the builder: a new generation, with
+            // nothing owed, since it reads the version the fork publishes or a later one.
+            rebased.state = BuildState::building(from);
+            rebased.generation = self.falkordb_index.next_generation();
+            if let Some(slot) = K::entry_mut(&mut self.falkordb_index, name) {
+                *slot = rebased;
+            }
+            return;
+        }
         if let BuildState::Building {
             written: theirs, ..
         } = &mut rebased.state
