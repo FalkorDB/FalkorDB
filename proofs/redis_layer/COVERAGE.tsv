@@ -95,50 +95,50 @@ src/reply.rs	reply_stats	541	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (an
 src/reply.rs	reply_result	630	PROVEN	Resp.resultCalls: compact_reply, verbose_reply, noreturn_reply
 src/reply.rs	reply_verbose	679	PROVEN	Resp.resultCalls false: verbose_reply
 src/reply.rs	reply_compact	687	PROVEN	Resp.resultCalls true: compact_reply + Compact.decReply_enc; bytes_of_emits (RESP2 bytes)
-src/graph_core.rs	up_to_nul	89	PROVEN	Telemetry.upToNul / GraphCore.upToNulC: upToNul_idem, upToNulC_split, streamName_key_name
-src/graph_core.rs	c_graph_name	106	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key)); GraphCore.Lossy (from_utf8_lossy kept as a core-library hypothesis structure; KeyName.lossy is a separate concrete model, not bridged to it) — #2653: bug2653_nonutf8_key_mangled
-src/graph_core.rs	c_graph_key	121	PROVEN	GraphCore.cGraphKey: upToNulB_nonul, cGraphName_key
-src/graph_core.rs	register_graph	142	PROVEN	GraphCore.register: register_registered, register_get; MultiDb.query (registry keyed by name only, keyspace by (db,key)) — #2782 open: bug2782_same_name_other_db_aborts refutes KeyspaceRegistered/WritesSucceed
-src/graph_core.rs	graph_is_registered	190	PROVEN	GraphCore.isRegistered: free_unregisters, free_keeps_others; MultiDb.existing_ok (under KeyspaceRegistered), bug2782_invariant_broken: OPEN BUG #2782 refutes KeyspaceRegistered on main (kept PROVEN, bug named)
-src/graph_core.rs	rename_graph	204	PROVEN	GraphCore.rename: rename_moves, rename_absent
-src/graph_core.rs	WriteQueryOk::new	257	PROVEN	GraphCore.modified: modified_zero, modified_replicates_or_warns
-src/graph_core.rs	ffi::sanitise_error	316	PROVEN	GraphCore.sanitise: sanitise_nonul, sanitise_len, sanitise_id
-src/graph_core.rs	ffi::block_client	331	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::unblock_client	342	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::get_thread_safe_context	351	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::free_thread_safe_context	362	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::reply_error	371	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::signal_modified_key	388	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::yield_ctx	410	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::measure_time_start	427	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::measure_time_end	437	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::hold_string	454	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::free_string	465	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::trim_string_allocation	480	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ffi::replicate_argv	495	AXIOMATISED	one RedisModule_* call (Redis module API contract)
-src/graph_core.rs	ThreadedGraph::new	551	PROVEN	GraphCore.TG.new: TG.new_idle (unbounded write channel, #3014)
-src/graph_core.rs	ThreadedGraph::from_mvcc	567	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle (unbounded write channel, #3014)
-src/graph_core.rs	execute_query	585	PROVEN	RoQuery.ro_never_writes, GraphCore.executeQuery/admissionKept: ro_write_rejected, read_releases_admission (#3014)
-src/graph_core.rs	execute_profile	663	PROVEN	GraphCore.profileDetect/admissionKept: profileDetect_write, read_releases_admission (#3014)
-src/graph_core.rs	execute_query_write	720	PROVEN	GraphCore.executeWrite (#3290 retry loop): executeWrite_first, stale_run_silent
-src/graph_core.rs	try_query_write	766	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon): reply_after_commit, failed_no_commit, stale_run_silent
-src/graph_core.rs	WriteAttempt::from	759	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
-src/graph_core.rs	reply_profile	862	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
-src/graph_core.rs	BlockedClient::new	899	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	BlockedClient::drop	907	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	compute_effective_timeout	925	PROVEN	Args.rustTimeout: rustTimeout_write_pq, rustTimeout_rw_uniform (#2998 fixed by #3000 2e8172d76), rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
-src/graph_core.rs	reply_invalid_graph_version	964	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
-src/graph_core.rs	admit	978	PROVEN	GraphCore.admitQ: admit_bounded, capped (QueueSlot::try_acquire; never waits)
-src/graph_core.rs	query_mut	989	PROVEN	GraphCore.dispatch/admitQ (#3014): stale_version, inline_uncapped, capped, admit_bounded
-src/graph_core.rs	query_sync	1193	PROVEN	GraphCore.syncOutcome: sync_err, sync_write_logs
-src/graph_core.rs	profile_mut	1322	PROVEN	GraphCore.profileOutcome/dispatch (admitQ, #3014): profile_write_runs_as_write, profile_read_replied, capped
-src/graph_core.rs	profile_sync	1423	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
-src/graph_core.rs	finish_write	1490	PROVEN	GraphCore.writeSteps (commit if escalated, else nothing: the version drops with the runtime, #3657): reply_after_commit, unescalated_silent
-src/graph_core.rs	abandon_write	1515	PROVEN	GraphCore.abandonSteps (resync only if version_is_current, nothing to release, #3657): failed_no_commit, stale_run_silent
-src/graph_core.rs	commit_and_replicate	1531	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; replicated key bytes = utf8(lossy(key)): KeyName.bug2653_nonutf8_key_mangled (#2653)
-src/graph_core.rs	process_write_queued_query	1609	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit); slot dropped on dequeue: SearchConcurrency Pool.paths_release_once
-src/graph_core.rs	CtxSink::replicate	1758	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
-src/graph_core.rs	graph_free	1771	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
+src/graph_core.rs	up_to_nul	88	PROVEN	Telemetry.upToNul / GraphCore.upToNulC: upToNul_idem, upToNulC_split, streamName_key_name
+src/graph_core.rs	c_graph_name	105	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key)); GraphCore.Lossy (from_utf8_lossy kept as a core-library hypothesis structure; KeyName.lossy is a separate concrete model, not bridged to it) — #2653: bug2653_nonutf8_key_mangled
+src/graph_core.rs	c_graph_key	120	PROVEN	GraphCore.cGraphKey: upToNulB_nonul, cGraphName_key
+src/graph_core.rs	register_graph	141	PROVEN	GraphCore.register: register_registered, register_get; MultiDb.query (registry keyed by name only, keyspace by (db,key)) — #2782 open: bug2782_same_name_other_db_aborts refutes KeyspaceRegistered/WritesSucceed
+src/graph_core.rs	graph_is_registered	189	PROVEN	GraphCore.isRegistered: free_unregisters, free_keeps_others; MultiDb.existing_ok (under KeyspaceRegistered), bug2782_invariant_broken: OPEN BUG #2782 refutes KeyspaceRegistered on main (kept PROVEN, bug named)
+src/graph_core.rs	rename_graph	203	PROVEN	GraphCore.rename: rename_moves, rename_absent
+src/graph_core.rs	WriteQueryOk::new	256	PROVEN	GraphCore.modified: modified_zero, modified_replicates_or_warns
+src/graph_core.rs	ffi::sanitise_error	315	PROVEN	GraphCore.sanitise: sanitise_nonul, sanitise_len, sanitise_id
+src/graph_core.rs	ffi::block_client	330	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::unblock_client	341	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::get_thread_safe_context	350	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::free_thread_safe_context	361	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::reply_error	370	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::signal_modified_key	387	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::yield_ctx	409	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::measure_time_start	426	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::measure_time_end	436	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::hold_string	453	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::free_string	464	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::trim_string_allocation	479	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::replicate_argv	494	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ThreadedGraph::new	550	PROVEN	GraphCore.TG.new: TG.new_idle (unbounded write channel, #3014)
+src/graph_core.rs	ThreadedGraph::from_mvcc	566	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle (unbounded write channel, #3014)
+src/graph_core.rs	execute_query	584	PROVEN	RoQuery.ro_never_writes, GraphCore.executeQuery/admissionKept: ro_write_rejected, read_releases_admission (#3014)
+src/graph_core.rs	execute_profile	662	PROVEN	GraphCore.profileDetect/admissionKept: profileDetect_write, read_releases_admission (#3014)
+src/graph_core.rs	execute_query_write	719	PROVEN	GraphCore.executeWrite (#3290 retry loop): executeWrite_first, stale_run_silent
+src/graph_core.rs	try_query_write	765	PROVEN	GraphCore.writeSteps/abandonSteps (#3657 infallible write_version, Stale on abandon): reply_after_commit, failed_no_commit, stale_run_silent
+src/graph_core.rs	WriteAttempt::from	758	PROVEN	GraphCore.Attempt.ofString: ofString_not_stale
+src/graph_core.rs	reply_profile	861	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
+src/graph_core.rs	BlockedClient::new	898	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	BlockedClient::drop	906	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	compute_effective_timeout	924	PROVEN	Args.rustTimeout: rustTimeout_write_pq, rustTimeout_rw_uniform (#2998 fixed by #3000 2e8172d76), rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
+src/graph_core.rs	reply_invalid_graph_version	963	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
+src/graph_core.rs	admit	977	PROVEN	GraphCore.admitQ: admit_bounded, capped (QueueSlot::try_acquire; never waits)
+src/graph_core.rs	query_mut	988	PROVEN	GraphCore.dispatch/admitQ (#3014): stale_version, inline_uncapped, capped, admit_bounded
+src/graph_core.rs	query_sync	1192	PROVEN	GraphCore.syncOutcome: sync_err, sync_write_logs
+src/graph_core.rs	profile_mut	1321	PROVEN	GraphCore.profileOutcome/dispatch (admitQ, #3014): profile_write_runs_as_write, profile_read_replied, capped
+src/graph_core.rs	profile_sync	1422	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
+src/graph_core.rs	finish_write	1489	PROVEN	GraphCore.writeSteps (commit if escalated, else nothing: the version drops with the runtime, #3657): reply_after_commit, unescalated_silent
+src/graph_core.rs	abandon_write	1514	PROVEN	GraphCore.abandonSteps (resync only if version_is_current, nothing to release, #3657): failed_no_commit, stale_run_silent
+src/graph_core.rs	commit_and_replicate	1543	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; replicated key bytes = utf8(lossy(key)): KeyName.bug2653_nonutf8_key_mangled (#2653)
+src/graph_core.rs	process_write_queued_query	1627	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit); slot dropped on dequeue: SearchConcurrency Pool.paths_release_once
+src/graph_core.rs	CtxSink::replicate	1776	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
+src/graph_core.rs	graph_free	1789	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
 src/query_session.rs	QuerySession::begin	157	PROVEN	QuerySession.begin: escalate_order
 src/query_session.rs	QuerySession::begin_with	164	PROVEN	QuerySession.begin (facts parameter): upgrade_unregistered, reauth_replay
 src/query_session.rs	QuerySession::begin_writer	179	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order
@@ -225,28 +225,28 @@ src/config.rs	validate_temp_folder	205	PROVEN	LoadArgs.validateTempFolder (FS = 
 src/config.rs	validate_load_only	223	PROVEN	LoadArgs.validateLoadOnly: step_agree, fixed3328_counterexamples, rust_only_names
 src/config.rs	apply_load_arg	252	PROVEN	LoadArgs.applyLoadArg/applied: ok_applies_each_pair, error_applies_nothing
 src/config.rs	apply_module_args	296	PROVEN	LoadArgs.applyModuleArgs: rust_c_same_accept, error_applies_nothing, ok_applies_each_pair, fixed3328_counterexamples, both_refuse; DIVERGENCES leading_space_divergence (confirmed live), rust_only_names
-src/commands/bulk_insert.rs	read_cstring	31	PROVEN	Bulk.cstr: cstr_enc, cstr_len
-src/commands/bulk_insert.rs	read_u32_ne	47	PROVEN	Bulk.readNe (w = 4; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w)
-src/commands/bulk_insert.rs	read_u64_ne	59	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
-src/commands/bulk_insert.rs	read_i64_ne	71	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
-src/commands/bulk_insert.rs	read_f64_ne	83	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
-src/commands/bulk_insert.rs	read_property	95	PROVEN	Bulk.go/attach: total (Lean termination proof), readProperty_enc (values within MAX_VALUE_NESTING), deep_refused (#3339 depth cap), enc_len_pos
-src/commands/bulk_insert.rs	PropColumns::new	197	PROVEN	Bulk.PropColumns.new/buildCols/slotOf (HashMap entry/or_insert(len) = insertion index): new_spec (col i = (ids[i], index among distinct attrs); filled = one false per slot), slot_inj (shared slot iff same attr; slot < filled.len, no index panic)
-src/commands/bulk_insert.rs	PropColumns::is_empty	212	PROVEN	Bulk.PropColumns.isEmpty: new_isEmpty (empty iff the header names no property)
-src/commands/bulk_insert.rs	PropColumns::read_record	218	PROVEN	Bulk.PropColumns.readRecord/recLoop: readRecord_enc (any prior filled: fill(false) reset; reads keepFirst [] (ids.zip vs), leaves the bytes after the record), keepFirst_nodup, keepFirst_find (first non-null in header order), keepFirst_sublist, readRecord_plain/keepFirst_plain_of_nodup, keepFirst_plainRead (#3026)
-src/commands/bulk_insert.rs	parse_header	242	PROVEN	Bulk.resolve: duplicate_header_ids (a repeated column resolves to one id; since #3063 import keeps the first column — pending_commit Content.normResolved_get); header byte parse via cstr
-src/commands/bulk_insert.rs	discard_created_graph	283	PROVEN	Commands.discardOps: discardOps_stream_first, bulk_begin_failure_discards
-src/commands/bulk_insert.rs	HeldArgs::hold	324	AXIOMATISED	RM_HoldString + RM_TrimStringAllocation
-src/commands/bulk_insert.rs	HeldArgs::replicate	351	PROVEN	Commands.heldReplicate: heldReplicate_verbatim
-src/commands/bulk_insert.rs	HeldArgs::drop	367	AXIOMATISED	RM_FreeString under hold_gil
-src/commands/bulk_insert.rs	maybe_yield	386	PROVEN	Commands.maybeYield: maybeYield_null
-src/commands/bulk_insert.rs	process_node_token	392	PROVEN	Bulk.records/readN: records_enc (imports exactly the encoded records); per-record values via PropColumns.readRecord (readRecord_enc, #3026); slot_len_truncates (set_span cast; unreachable from BULK since #3063: pending_commit Content.normResolved_fits)
-src/commands/bulk_insert.rs	process_edge_token	471	PROVEN	Commands.edgeRecords: edgeRecords_bound (+ Bulk.records/readN shared record loop); per-record values via PropColumns.readRecord (readRecord_enc, #3026)
-src/commands/bulk_insert.rs	bulk_insert_sync	552	PROVEN	Commands.processTokens false: sync_is_yield_without_yields
-src/commands/bulk_insert.rs	bulk_insert_sync_yield	596	PROVEN	Commands.processTokens true: sync_is_yield_without_yields
-src/commands/bulk_insert.rs	parse_count	647	PROVEN	Bulk.parseCount: parseCount_rejects (decide)
-src/commands/bulk_insert.rs	max_records	683	PROVEN	Bulk.ceiling_sound (never rejects honest payloads)
-src/commands/bulk_insert.rs	graph_bulk_insert	697	PROVEN	Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publishOps_nonempty, publishOps_no_indexer; bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_reply_c (reply wording = C since #3301; rfl between two copies of the text, a record not a regression guard); Bulk.ceiling_sound
+src/commands/bulk_insert.rs	read_cstring	34	PROVEN	Bulk.cstr: cstr_enc, cstr_len
+src/commands/bulk_insert.rs	read_u32_ne	50	PROVEN	Bulk.readNe (w = 4; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w)
+src/commands/bulk_insert.rs	read_u64_ne	62	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
+src/commands/bulk_insert.rs	read_i64_ne	74	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
+src/commands/bulk_insert.rs	read_f64_ne	86	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
+src/commands/bulk_insert.rs	read_property	98	PROVEN	Bulk.go/attach: total (Lean termination proof), readProperty_enc (values within MAX_VALUE_NESTING), deep_refused (#3339 depth cap), enc_len_pos
+src/commands/bulk_insert.rs	PropColumns::new	200	PROVEN	Bulk.PropColumns.new/buildCols/slotOf (HashMap entry/or_insert(len) = insertion index): new_spec (col i = (ids[i], index among distinct attrs); filled = one false per slot), slot_inj (shared slot iff same attr; slot < filled.len, no index panic)
+src/commands/bulk_insert.rs	PropColumns::is_empty	215	PROVEN	Bulk.PropColumns.isEmpty: new_isEmpty (empty iff the header names no property)
+src/commands/bulk_insert.rs	PropColumns::read_record	221	PROVEN	Bulk.PropColumns.readRecord/recLoop: readRecord_enc (any prior filled: fill(false) reset; reads keepFirst [] (ids.zip vs), leaves the bytes after the record), keepFirst_nodup, keepFirst_find (first non-null in header order), keepFirst_sublist, readRecord_plain/keepFirst_plain_of_nodup, keepFirst_plainRead (#3026)
+src/commands/bulk_insert.rs	parse_header	245	PROVEN	Bulk.resolve: duplicate_header_ids (a repeated column resolves to one id; since #3063 import keeps the first column — pending_commit Content.normResolved_get); header byte parse via cstr
+src/commands/bulk_insert.rs	discard_created_graph	286	PROVEN	Commands.discardOps: discardOps_stream_first, bulk_begin_failure_discards
+src/commands/bulk_insert.rs	HeldArgs::hold	327	AXIOMATISED	RM_HoldString + RM_TrimStringAllocation
+src/commands/bulk_insert.rs	HeldArgs::replicate	354	PROVEN	Commands.heldReplicate: heldReplicate_verbatim
+src/commands/bulk_insert.rs	HeldArgs::drop	370	AXIOMATISED	RM_FreeString under hold_gil
+src/commands/bulk_insert.rs	maybe_yield	389	PROVEN	Commands.maybeYield: maybeYield_null
+src/commands/bulk_insert.rs	process_node_token	395	PROVEN	Bulk.records/readN: records_enc (imports exactly the encoded records); per-record values via PropColumns.readRecord (readRecord_enc, #3026); slot_len_truncates (set_span cast; unreachable from BULK since #3063: pending_commit Content.normResolved_fits)
+src/commands/bulk_insert.rs	process_edge_token	474	PROVEN	Commands.edgeRecords: edgeRecords_bound (+ Bulk.records/readN shared record loop); per-record values via PropColumns.readRecord (readRecord_enc, #3026)
+src/commands/bulk_insert.rs	bulk_insert_sync	555	PROVEN	Commands.processTokens false: sync_is_yield_without_yields
+src/commands/bulk_insert.rs	bulk_insert_sync_yield	599	PROVEN	Commands.processTokens true: sync_is_yield_without_yields
+src/commands/bulk_insert.rs	parse_count	650	PROVEN	Bulk.parseCount: parseCount_rejects (decide)
+src/commands/bulk_insert.rs	max_records	686	PROVEN	Bulk.ceiling_sound (never rejects honest payloads)
+src/commands/bulk_insert.rs	graph_bulk_insert	700	PROVEN	Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publishOps_nonempty, publishOps_no_indexer; bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_reply_c (reply wording = C since #3301; rfl between two copies of the text, a record not a regression guard); Bulk.ceiling_sound
 src/commands/config_cmd.rs	config_get_one	57	PROVEN	Commands.getNames/getOne/ompGet: get_covers_documented, get_extra, ompGet_pos, getOne_unknown_text
 src/commands/config_cmd.rs	validate_config_set	114	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names); historical pre3021_* (fixed by #3021)
 src/commands/config_cmd.rs	validate_timeout_cross_constraints	206	PROVEN	Config.cross = load + check_timeout_constraints (LoadArgs.cross_eq): rustSet_inv, rustSet_timeout_deprecated, c_breaks_inv
@@ -294,6 +294,7 @@ src/commands/udf.rs	udf_delete	141	PROVEN	Commands.udfCmd DELETE: udf_delete_one
 src/commands/udf.rs	udf_flush	170	PROVEN	Commands.udfCmd FLUSH: udf_flush_noargs
 src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filters, udf_list_withcode_anywhere
 # Online index build (#2355): fns the background builder added, not modelled yet.
-src/graph_core.rs	RedisBuildHost::publish	1592	NOT COVERED	online index build (#2355): not modelled yet
-src/graph_core.rs	RedisBuildHost::warn	1601	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::publish	1610	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	RedisBuildHost::warn	1619	NOT COVERED	online index build (#2355): not modelled yet
+src/graph_core.rs	log_cch_warnings	1527	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363); logs what the CCH flush warned about
 graph/src/env_snapshot.rs	leak_deep_copy	22	NOT COVERED	Not modelled. Deep-copies a NULL-terminated char** (array and strings) and leaks it; unit-tested in env_snapshot::tests (NULL, empty, order, source freed after copy)

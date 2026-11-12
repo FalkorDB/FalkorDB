@@ -45,10 +45,10 @@ graph/src/graph/graph.rs	delete_relationships	3019	NOT COVERED	tensor (proofs/ve
 graph/src/graph/graph.rs	delete_implicit_edges	3159	NOT COVERED	tensor (proofs/versioned_matrix)
 graph/src/graph/graph.rs	get_or_create_node_attr_id	1984	NOT COVERED	name interning
 graph/src/graph/graph.rs	get_or_create_rel_attr_id	2063	NOT COVERED	name interning
-graph/src/graph/graph.rs	commit_index	4033	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index	4056	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index_locked	4068	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_index_kind	4149	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_index	4052	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index	4075	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index_locked	4087	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_index_kind	4168	NOT COVERED	RediSearch index boundary
 graph/src/graph/attribute_store.rs	into_iter	148	PROVEN	NameMap.accessors (into_iter = vec)
 graph/src/graph/attribute_store.rs	len	155	PROVEN	NameMap.accessors
 graph/src/graph/attribute_store.rs	is_empty	160	PROVEN	NameMap.accessors
