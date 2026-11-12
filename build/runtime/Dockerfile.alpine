@@ -11,11 +11,10 @@
 #             built from source on this OS, plus that same .so. The
 #             counterpart of the Debian image's `server` target; no browser.
 # The musl-specific packages (bsd-compat-headers, the static clang archives,
-# ncurses-dev, libffi-dev) and the -crt-static switch come from the C repo's
+# ncurses-dev, libffi-dev) come from the C repo's
 # build/docker/builder/Dockerfile.alpine; each one is explained where it is
 # installed.
 
-ARG ALPINE=alpine:3.24.4
 # Consumed (unused) so the shared _build-artifacts.yml can pass --build-arg
 # BUILD_IMAGE uniformly without a "not consumed" warning; self-contained OSes
 # don't use a toolchain base image.
@@ -26,10 +25,13 @@ ARG SERVER=valkey
 ARG REDIS_VERSION=8.10.2
 ARG VALKEY_VERSION=9.1.2
 
+# The one Alpine pin: a literal FROM, so Dependabot can bump it.
+FROM alpine:3.24.4 AS alpine-base
+
 # ---------------------------------------------------------------------------
 # Toolchain + dependency build.
 # ---------------------------------------------------------------------------
-FROM ${ALPINE} AS builder
+FROM alpine-base AS builder
 
 ARG LLVM_MAJOR=22
 
@@ -82,14 +84,8 @@ RUN LLVMORG_VERSION=$(clang --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head
 # matches what is published here. CC/CXX/LIBOMP_PREFIX are ENV, not per-RUN,
 # because they are cache-key inputs.
 #
-# RUST_DYN_CRT=1 is read by RediSearch's build.sh, which then adds
-# `-C target-feature=-crt-static` to the RUSTFLAGS of its own Rust build
-# (native-deps hands build.sh an environment with RUSTFLAGS removed). Rust's
-# musl targets otherwise link the C runtime statically, and redisearch_rs's
-# build scripts do not build that way. It is set here rather than in
-# native-deps' RediSearch recipe because any recipe change moves the cache key
-# of all three deps, rebuilding every existing cache once; without it the
-# build fails outright rather than producing a different archive.
+# RUST_DYN_CRT=1 makes RediSearch's build.sh build its Rust with -crt-static
+# (see .cargo/config.toml), which native-deps' cleared RUSTFLAGS would drop.
 #
 # The sources and RediSearch's in-tree build output are removed in the same
 # RUN: only the native-deps cache (~/.cache/falkordb/native-deps) is needed
@@ -112,26 +108,25 @@ RUN cd /data && \
 
 # Build the cdylib from the repo source. graph/build.rs calls native_deps::ensure(),
 # which recomputes the same keys and hits the entries published above.
-# .cargo/config.toml turns off crt-static for musl; without that, cargo drops
-# the cdylib crate type and there is no libfalkordb.so to copy.
 #
 # musl's ldd has no -r. It resolves every symbol anyway, reports a missing
 # library ("Error loading shared library") or symbol ("Error relocating"), and
-# exits 127 -- so the listing below is informational and the grep decides.
+# exits 127 -- so its output is captured once and the greps decide.
 WORKDIR /src
 COPY . .
 RUN cargo build --release && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so && \
     rm -rf target && \
     echo "=== verify single-.so contract on libfalkordb.so ===" && \
-    { ldd /out/falkordb.so || true; } && \
-    deps="$(ldd /out/falkordb.so 2>&1 | awk '{print $1}' | sort -u)" && \
+    ldd_out="$(ldd /out/falkordb.so 2>&1 || true)" && \
+    echo "$ldd_out" && \
+    deps="$(echo "$ldd_out" | awk '{print $1}' | sort -u)" && \
     if echo "$deps" | grep -E '^(libomp|libgomp|libgraphblas|liblagraph|liblagraphx|libredisearch|libVectorSimilarity)'; then \
         echo "FAIL: libfalkordb.so has forbidden dynamic dependency"; exit 1; \
     fi && \
     undef="$(nm -D --undefined-only /out/falkordb.so 2>/dev/null | grep -E 'omp_|GOMP_|__kmpc_' || true)" && \
     if [ -n "$undef" ]; then echo "FAIL: OpenMP symbols undefined in .so:"; echo "$undef"; exit 1; fi && \
-    unresolved="$(ldd /out/falkordb.so 2>&1 | grep -E 'Error (loading|relocating)|not found' || true)" && \
+    unresolved="$(echo "$ldd_out" | grep -E 'Error (loading|relocating)|not found' || true)" && \
     if [ -n "$unresolved" ]; then echo "FAIL: libraries or symbols this OS cannot resolve (the module would not load):"; echo "$unresolved"; exit 1; fi && \
     echo "OK: libfalkordb.so is self-contained ($(du -h /out/falkordb.so | cut -f1))"
 
@@ -145,7 +140,7 @@ COPY --from=builder /out/falkordb.so /falkordb.so
 # The server, built on this OS so it runs against the image's own musl and
 # OpenSSL, by the same script as every other image.
 # ---------------------------------------------------------------------------
-FROM ${ALPINE} AS server-builder-base
+FROM alpine-base AS server-builder-base
 # bsd-compat-headers: <sys/cdefs.h>, which Redis includes and musl lacks.
 RUN apk add --no-cache git ca-certificates make gcc g++ musl-dev linux-headers \
       bsd-compat-headers openssl-dev pkgconf binutils
@@ -163,7 +158,7 @@ RUN build-server valkey "${VALKEY_VERSION}" /server-install
 # Server image. Mirrors build/runtime/Dockerfile's `server` stage -- same
 # paths, user, entrypoint and environment -- on Alpine.
 # ---------------------------------------------------------------------------
-FROM ${ALPINE} AS server-base
+FROM alpine-base AS server-base
 
 ENV FALKORDB_HOME=/var/lib/falkordb \
     FALKORDB_DATA_PATH=/var/lib/falkordb/data \
