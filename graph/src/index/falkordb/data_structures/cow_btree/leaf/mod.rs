@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::page::{Page, PageCombined, PageInsert, Tuple};
+use super::page::{Combined, Page, PageInsert, Tuple};
 use super::{FIELD, doc_le_bytes, read_u64, read_width};
 
 mod aos;
@@ -588,17 +588,17 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Page for Leaf<LEAF_MAX, DOC_
     fn combine(
         &self,
         right: &Self,
-    ) -> PageCombined<Self> {
+    ) -> Combined<Self, Self::Key> {
         if let (Self::Aos(left_aos), Self::Aos(right_aos)) = (self, right) {
             return aos_combine::<LEAF_MAX, DOC_BYTES>(left_aos, right_aos);
         }
         let mut pairs = self.to_pairs();
         pairs.extend(right.to_pairs());
         if pairs.len() <= LEAF_MAX {
-            PageCombined::One(Self::from_pairs(&pairs))
+            Combined::One(Self::from_pairs(&pairs))
         } else {
             let mid = pairs.len() / 2;
-            PageCombined::Two(
+            Combined::Two(
                 Self::from_pairs(&pairs[..mid]),
                 pairs[mid],
                 Self::from_pairs(&pairs[mid..]),
@@ -633,13 +633,13 @@ const fn assert_leaf_params<const LEAF_MAX: usize, const DOC_BYTES: usize>() {
 fn aos_combine<const LEAF_MAX: usize, const DOC_BYTES: usize>(
     left: &AosLeaf<DOC_BYTES>,
     right: &AosLeaf<DOC_BYTES>,
-) -> PageCombined<Leaf<LEAF_MAX, DOC_BYTES>> {
+) -> Combined<Leaf<LEAF_MAX, DOC_BYTES>, u64> {
     let mut buf = Vec::with_capacity(left.0.len() + right.0.len());
     buf.extend_from_slice(&left.0);
     buf.extend_from_slice(&right.0);
     let leaf = |bytes: Vec<u8>| Leaf::Aos(AosLeaf(bytes.into()));
     if buf.len() / (FIELD + DOC_BYTES) <= LEAF_MAX {
-        PageCombined::One(leaf(buf))
+        Combined::One(leaf(buf))
     } else {
         let split = buf.len() / (FIELD + DOC_BYTES) / 2 * (FIELD + DOC_BYTES);
         let mid_sep = (
@@ -647,6 +647,6 @@ fn aos_combine<const LEAF_MAX: usize, const DOC_BYTES: usize>(
             read_width(&buf, split + FIELD, DOC_BYTES),
         );
         let right_buf = buf.split_off(split);
-        PageCombined::Two(leaf(buf), mid_sep, leaf(right_buf))
+        Combined::Two(leaf(buf), mid_sep, leaf(right_buf))
     }
 }

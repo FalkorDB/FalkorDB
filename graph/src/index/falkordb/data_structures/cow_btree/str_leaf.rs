@@ -2,12 +2,12 @@
 //!
 //! ```text
 //! leaf    := groups:varint restarts:varint offset:u32le{restarts} group*
-//! group   := shared:varint suffix_len:varint suffix:[u8] docs:varint first_doc:varint delta:varint*
+//! group   := shared:varint suffix_len:varint suffix:[u8] docs:varint delta:varint{docs}
 //! ```
 //!
 //! A *group* is one distinct string and the docs that hold it, in order. A string is stored as the
 //! bytes it does not share with the string before it, so a run of similar strings costs little;
-//! its docs are varint deltas. Every [`RESTART_EVERY`]th string is stored whole and its offset kept
+//! its docs are varint deltas, the first from 0. Every [`RESTART_EVERY`]th string is stored whole and its offset kept
 //! in the header, so a seek binary-searches those and decodes at most that many strings.
 //!
 //! Strings sort by their bytes, which for UTF-8 is codepoint order, the order Cypher compares
@@ -18,7 +18,7 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-use super::page::{Page, PageCombined, PageInsert, Tuple};
+use super::page::{Combined, Page, PageInsert, Tuple};
 
 /// Most tuples one page holds.
 pub const LEAF_MAX: usize = 256;
@@ -45,9 +45,14 @@ struct Group {
 }
 
 impl Group {
+    /// Most bytes a group takes besides its string and docs: three varints.
+    const KEY_BYTES: usize = 3 * 10;
+    /// Most bytes one doc takes: a varint.
+    const DOC_BYTES: usize = 10;
+
     /// Bytes this group encodes to at most, before its key shares a prefix with the previous one.
     fn max_bytes(&self) -> usize {
-        3 * 10 + self.key.len() + 10 * self.docs.len()
+        Self::KEY_BYTES + self.key.len() + Self::DOC_BYTES * self.docs.len()
     }
 }
 
@@ -158,8 +163,8 @@ fn encode(groups: &[Group]) -> StrLeaf {
         data.extend_from_slice(&g.key[shared..]);
         put_varint(&mut data, g.docs.len() as u64);
         let mut last = 0;
-        for (j, &d) in g.docs.iter().enumerate() {
-            put_varint(&mut data, if j == 0 { d } else { d - last });
+        for &d in &g.docs {
+            put_varint(&mut data, d - last);
             last = d;
         }
         len += g.docs.len();
@@ -192,9 +197,8 @@ fn decode(blob: &[u8]) -> Vec<Group> {
         let nd = get_varint(blob, &mut pos) as usize;
         let mut docs = Vec::with_capacity(nd);
         let mut last = 0;
-        for i in 0..nd {
-            let v = get_varint(blob, &mut pos);
-            last = if i == 0 { v } else { last + v };
+        for _ in 0..nd {
+            last += get_varint(blob, &mut pos);
             docs.push(last);
         }
         groups.push(Group {
@@ -215,19 +219,21 @@ fn pack(groups: Vec<Group>) -> Vec<StrLeaf> {
     for g in groups {
         let mut docs = &g.docs[..];
         while !docs.is_empty() {
-            let key_cost = 30 + g.key.len();
-            if tuples > 0 && (tuples == LEAF_MAX || bytes + key_cost + 10 > LEAF_BYTES) {
+            let key_cost = Group::KEY_BYTES + g.key.len();
+            if tuples > 0
+                && (tuples == LEAF_MAX || bytes + key_cost + Group::DOC_BYTES > LEAF_BYTES)
+            {
                 chunks.push(std::mem::take(&mut cur));
                 (tuples, bytes) = (0, 0);
             }
-            let by_bytes = LEAF_BYTES.saturating_sub(bytes + key_cost) / 10;
+            let by_bytes = LEAF_BYTES.saturating_sub(bytes + key_cost) / Group::DOC_BYTES;
             let n = docs.len().min(LEAF_MAX - tuples).min(by_bytes.max(1));
             cur.push(Group {
                 key: g.key.clone(),
                 docs: docs[..n].to_vec(),
             });
             tuples += n;
-            bytes += key_cost + 10 * n;
+            bytes += key_cost + Group::DOC_BYTES * n;
             docs = &docs[n..];
         }
     }
@@ -394,9 +400,20 @@ fn as_key(bytes: &[u8]) -> Arc<String> {
 }
 
 impl StrLeaf {
-    /// Whether `groups` fit one page.
-    fn fits(page: &Self) -> bool {
-        page.len <= LEAF_MAX && page.blob.len() <= LEAF_BYTES
+    /// Whether the page is within both limits.
+    fn fits(&self) -> bool {
+        self.len <= LEAF_MAX && self.blob.len() <= LEAF_BYTES
+    }
+
+    /// Whether the page holds `(key, doc)`.
+    fn holds(
+        &self,
+        key: &Arc<String>,
+        doc: u64,
+    ) -> bool {
+        decode(&self.blob)
+            .iter()
+            .any(|g| g.key == key.as_bytes() && g.docs.binary_search(&doc).is_ok())
     }
 
     /// Every tuple, in order. For tests.
@@ -450,23 +467,10 @@ impl Page for StrLeaf {
         key: &Arc<String>,
         doc: u64,
     ) -> Option<PageInsert<Self>> {
-        let groups = decode(&self.blob);
-        let held = groups
-            .iter()
-            .find(|g| g.key == key.as_bytes())
-            .is_some_and(|g| g.docs.binary_search(&doc).is_ok());
-        if held {
+        if self.holds(key, doc) {
             return None;
         }
-        let mut pages = pack(merge_groups(
-            groups,
-            vec![Group {
-                key: key.as_bytes().to_vec(),
-                docs: vec![doc],
-            }],
-            true,
-        ))
-        .into_iter();
+        let mut pages = self.merge_batch(&[(key.clone(), doc)]).into_iter();
         let left = pages.next().expect("a page holding a tuple");
         let rights: Vec<_> = pages.map(|p| (p.min(), p)).collect();
         Some(if rights.is_empty() {
@@ -481,22 +485,10 @@ impl Page for StrLeaf {
         key: &Arc<String>,
         doc: u64,
     ) -> Option<(Self, bool)> {
-        let groups = decode(&self.blob);
-        let held = groups
-            .iter()
-            .find(|g| g.key == key.as_bytes())
-            .is_some_and(|g| g.docs.binary_search(&doc).is_ok());
-        if !held {
+        if !self.holds(key, doc) {
             return None;
         }
-        let page = encode(&merge_groups(
-            groups,
-            vec![Group {
-                key: key.as_bytes().to_vec(),
-                docs: vec![doc],
-            }],
-            false,
-        ));
+        let page = self.remove_batch(&[(key.clone(), doc)]);
         let underfull = page.is_underfull();
         Some((page, underfull))
     }
@@ -523,16 +515,16 @@ impl Page for StrLeaf {
     fn combine(
         &self,
         right: &Self,
-    ) -> PageCombined<Self> {
+    ) -> Combined<Self, Self::Key> {
         let both = concat_groups(decode(&self.blob), decode(&right.blob));
         let one = encode(&both);
-        if Self::fits(&one) {
-            return PageCombined::One(one);
+        if one.fits() {
+            return Combined::One(one);
         }
         let total = one.len;
         let (l, r) = split_groups(both, total / 2);
         let right = encode(&r);
-        PageCombined::Two(encode(&l), right.min(), right)
+        Combined::Two(encode(&l), right.min(), right)
     }
 
     fn heap_bytes(&self) -> usize {

@@ -17,29 +17,29 @@ namespace CowBTree
 
 /-! ## Model -/
 
-/-- `Node::is_underfull` (`node.rs:522`), reporting through `Branch::is_underfull` (`node.rs:205`). Its
+/-- `Node::is_underfull` (`node.rs:510`), reporting through `Branch::is_underfull` (`node.rs:198`). Its
     leaf arm is `Page::is_underfull`, for the `u64` page `count < LEAF_MAX / 2` (`leaf/mod.rs:532-534`,
     `Page.lean`). -/
 def isUnderfull (c : Cfg) : Node → Bool
   | .leaf es => decide (es.length < c.L / 2)
   | .branch _ cs => decide (cs.length < c.B / 2)
 
-/-- `Branch::is_underfull` (`node.rs:205`): `children.len() < BRANCH_MAX / 2`. -/
+/-- `Branch::is_underfull` (`node.rs:198`): `children.len() < BRANCH_MAX / 2`. -/
 def branchUnderfull (c : Cfg) (cs : List Node) : Bool := decide (cs.length < c.B / 2)
 
-/-- `Node::is_empty_node` (`node.rs:531`): a leaf with `count() == 0`. -/
+/-- `Node::is_empty_node` (`node.rs:519`): a leaf with `count() == 0`. -/
 def isEmptyNode : Node → Bool
   | .leaf es => es.isEmpty
   | .branch _ _ => false
 
-/-- `combine_with_sibling` (`node.rs:107-134`): pair child `ci` with its right neighbour (its left one
+/-- `combine_with_sibling` (`node.rs:100-127`): pair child `ci` with its right neighbour (its left one
     when it is the last), combine, and return the new `(seps, children)` and the index to examine next. -/
 def cws (c : Cfg) (seps : List E) (cs : List Node) (ci : Nat) : List E × List Node × Nat :=
-  let li := if ci + 1 < cs.length then ci else ci - 1          -- lines 113-117
+  let li := if ci + 1 < cs.length then ci else ci - 1          -- lines 106-110
   let ri := if ci + 1 < cs.length then ci + 1 else ci
   match combine c (cs.getD li default) (seps.getD li 0) (cs.getD ri default) with
-  | .one m => (delAt seps li, delAt (setAt cs li m) ri, li)       -- lines 119-124
-  | .two l s r => (setAt seps li s, setAt (setAt cs li l) ri r, ri) -- lines 126-131
+  | .one m => (delAt seps li, delAt (setAt cs li m) ri, li)       -- lines 112-117
+  | .two l s r => (setAt seps li s, setAt (setAt cs li l) ri r, ri) -- lines 119-124
 
 /-- The `.two` arm of `combine` always hands back a right node that is *not* under-full. -/
 theorem combine_two_not_uf (c : Cfg) (a b : Node) (sep : E) :
@@ -96,13 +96,13 @@ theorem cws_measure (c : Cfg) (seps : List E) (cs : List Node) (i : Nat) (h1 : 1
       simp only [Bool.false_eq_true, and_false, ↓reduceIte]
       omega
 
-/-- `strip_empty` (`node.rs:174-189`): drop every empty child, and with it the near separator
+/-- `strip_empty` (`node.rs:167-182`): drop every empty child, and with it the near separator
     (`seps[i]`, or the trailing one for the last child). -/
 def stripEmpty (seps : List E) (cs : List Node) (i : Nat) : List E × List Node :=
   if hi : i < cs.length then
-    if isEmptyNode (cs.getD i default) then                                       -- line 166
-      stripEmpty (if seps.isEmpty then seps else delAt seps (min i (seps.length - 1)))  -- lines 167-169
-        (delAt cs i) i                                                            -- line 170
+    if isEmptyNode (cs.getD i default) then                                       -- line 159
+      stripEmpty (if seps.isEmpty then seps else delAt seps (min i (seps.length - 1)))  -- lines 160-162
+        (delAt cs i) i                                                            -- line 163
     else stripEmpty seps cs (i + 1)
   else (seps, cs)
 termination_by cs.length - i
@@ -227,7 +227,7 @@ theorem subtract_eq : ∀ (es bs : List E), Sorted es → SortedLe bs →
 
 /-! ## `Branch::rebalance` is one `combine_with_sibling` step -/
 
-/-- The #2278 refactor of `Branch::rebalance` (`node.rs:212-226`) into `combine_with_sibling` keeps it
+/-- The #2278 refactor of `Branch::rebalance` (`node.rs:205-219`) into `combine_with_sibling` keeps it
     the same function: the old model `rebalance` is the new code's first two components. -/
 theorem rebalance_eq_cws (c : Cfg) (seps : List E) (cs : List Node) (ci : Nat) :
     rebalance c seps cs ci = if cs.length < 2 then (seps, cs) else ((cws c seps cs ci).1, (cws c seps cs ci).2.1) := by

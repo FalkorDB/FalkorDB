@@ -64,7 +64,7 @@ pub trait Page: Clone + Sized {
     fn combine(
         &self,
         right: &Self,
-    ) -> PageCombined<Self>;
+    ) -> Combined<Self, Self::Key>;
 
     /// Heap bytes the page holds.
     fn heap_bytes(&self) -> usize;
@@ -80,8 +80,22 @@ pub enum PageInsert<P: Page> {
     },
 }
 
-/// Two sibling pages after [`Page::combine`].
-pub enum PageCombined<P: Page> {
-    One(P),
-    Two(P, Tuple<P::Key>, P),
+/// Two siblings, pages or nodes, after they are combined: one, or two rebalanced ones and the
+/// separator between them (the second's first tuple).
+pub enum Combined<T, K> {
+    One(T),
+    Two(T, Tuple<K>, T),
+}
+
+impl<T, K> Combined<T, K> {
+    /// The same outcome, each sibling wrapped by `f`.
+    pub fn map<U>(
+        self,
+        f: impl Fn(T) -> U,
+    ) -> Combined<U, K> {
+        match self {
+            Self::One(one) => Combined::One(f(one)),
+            Self::Two(left, sep, right) => Combined::Two(f(left), sep, f(right)),
+        }
+    }
 }

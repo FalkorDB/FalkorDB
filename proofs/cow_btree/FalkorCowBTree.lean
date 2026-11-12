@@ -27,20 +27,20 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
 ## Lean ↔ Rust
 | Lean | Rust |
 | --- | --- |
-| `insert`, `insertOne`, `insertFlag`, `insertRet` | `mod.rs:220`, `node.rs:312-376` |
-| `insertR`, `insertOneR`, `insEach` (`Page.lean`: the code since #3742, = `insert` / `insertOne` by `insertR_eq` / `insertOneR_eq`) | `mod.rs:220-238`, `node.rs:312-376`, `leaf/mod.rs:536-549` |
+| `insert`, `insertOne`, `insertFlag`, `insertRet` | `mod.rs:220`, `node.rs:305-369` |
+| `insertR`, `insertOneR`, `insEach` (`Page.lean`: the code since #3742, = `insert` / `insertOne` by `insertR_eq` / `insertOneR_eq`) | `mod.rs:220-238`, `node.rs:305-369`, `leaf/mod.rs:536-549` |
 | the `u64` page (`<Leaf as Page>`, `Page.lean` table) | `leaf/mod.rs:508-614`, `page.rs` |
-| `remove`, `removeOne`, `collapse`, `removeRet` | `mod.rs:260-279`, `node.rs:431-450` |
-| `rebalance`, `cws`, `combine` | `node.rs:212`, `:107` (`combine_with_sibling`), `:381` (+ `aos_combine` `leaf/mod.rs:633`) |
-| `removeBatchTree`, `removeBatch`, `subtract`, `stripEmpty` (`BatchWF.lean`, `Batch.lean`) | `mod.rs:286`, `node.rs:458-501`, `:174` |
-| `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`) | `node.rs:149-169` (`merge_underfull`), `:509-520` (`merge_underfull_below`) |
-| `isUnderfull`, `branchUnderfull`, `isEmptyNode` | `node.rs:522`, `:205`, `:531` |
-| `route`, `applyBatch`, `insertBatch` | `node.rs:275-295` (old `:194-206`), `:250`, `mod.rs:241` |
-| `packBranches`, `buildRoot`, `fromSorted`, `mergeWalk`, `mergeBatch`, `chunks` | `node.rs:52`, `:86`, `mod.rs:199`, `leaf/mod.rs:51`/`:98`, `:472` |
+| `remove`, `removeOne`, `collapse`, `removeRet` | `mod.rs:260-279`, `node.rs:419-438` |
+| `rebalance`, `cws`, `combine` | `node.rs:205`, `:100` (`combine_with_sibling`), `:374` (+ `aos_combine` `leaf/mod.rs:633`) |
+| `removeBatchTree`, `removeBatch`, `subtract`, `stripEmpty` (`BatchWF.lean`, `Batch.lean`) | `mod.rs:286`, `node.rs:446-489`, `:167` |
+| `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`) | `node.rs:142-162` (`merge_underfull`), `:497-508` (`merge_underfull_below`) |
+| `isUnderfull`, `branchUnderfull`, `isEmptyNode` | `node.rs:510`, `:198`, `:519` |
+| `route`, `applyBatch`, `insertBatch` | `node.rs:268-288` (old `:194-206`), `:243`, `mod.rs:241` |
+| `packBranches`, `buildRoot`, `fromSorted`, `mergeWalk`, `mergeBatch`, `chunks` | `node.rs:45`, `:79`, `mod.rs:199`, `leaf/mod.rs:51`/`:98`, `:472` |
 | `Cursor.new`/`seek`, `descendLeft`, `advanceLeaf`, `wholeOf` | `cursor.rs:82-116`, `:140`, `:160`, `:129` |
 | `Cursor.next`, `Cursor.nextWith`, `Extract`, `DocExtract`, `TupleExtract` | `cursor.rs:181-207`, `:16-53` |
 | `range`, `rangeWith` | `mod.rs:366` (`range`), `:376` (`point`), `:460` (`range_tuples`) |
-| `firstDocGo`, `firstDoc`, `containsKey`, `minOpt` | `mod.rs:409-452`, `:395`, `node.rs:236` |
+| `firstDocGo`, `firstDoc`, `containsKey`, `minOpt` | `mod.rs:409-452`, `:395`, `node.rs:229` |
 | `heapWalk`, `heapBytes`, `Mem` | `mod.rs:314-334` |
 | `constAssert`, `isReadWidth`, `Cfg.ofAssert` (`Assert.lean`) | the const asserts `mod.rs:162-167`, `:180-189`, `:200-209`; `is_read_width` `mod.rs:94` |
 

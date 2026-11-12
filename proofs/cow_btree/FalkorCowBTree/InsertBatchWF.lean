@@ -15,10 +15,10 @@ the content specs of `insert_spec`, `remove_spec`, `range_spec`, … apply to it
   strictly sorted, holds exactly the union, and is no longer than both together.
 * `chunks_spec'` — `<[T]>::chunks(n)`: non-empty pieces of at most `n`, concatenating to the input.
 * `MinChain` — a list of well-formed sibling fragments whose separators are their minima (what
-  `pack_branches` computes, `node.rs:76`). `reseparate`: any separator chain can be re-separated by
+  `pack_branches` computes, `node.rs:69`). `reseparate`: any separator chain can be re-separated by
   minima. `packBranches_chain`: `pack_branches` turns a `MinChain` of `>= 2` nodes into a shorter
   `MinChain` one level up. `buildRoot_wf`: `build_root` ends in one well-formed node.
-* `applyBatch_chain` — `Node::apply_batch` (`node.rs:250`) returns a `MinChain` of fragments holding the
+* `applyBatch_chain` — `Node::apply_batch` (`node.rs:243`) returns a `MinChain` of fragments holding the
   sorted union of the subtree and its batch slice.
 * `insertBatch_wf`, `fromSorted_wf` (headlines), `Reachable_wf`.
 -/
@@ -257,7 +257,7 @@ theorem chunks_spec' (n : Nat) (hn : 0 < n) : ∀ (l : List E),
 /-- `Node::min` as `pack_branches` uses it (`getD 0` is the panic on an empty page). -/
 def minE (h : Nat) (n : Node) : E := (minOpt h n).getD 0
 
-/-- Well-formed sibling fragments, separated by their minima (`pack_branches`, `node.rs:76`). -/
+/-- Well-formed sibling fragments, separated by their minima (`pack_branches`, `node.rs:69`). -/
 def MinChain (c : Cfg) (h : Nat) (lo : Nat) (ns : List Node) (hi : Nat) : Prop :=
   COK (fun a b n => WFb c false h n a b) lo (ns.tail.map (minE h)) ns hi
 
@@ -391,7 +391,7 @@ theorem minE_packBranches (c : Cfg) (h : Nat) (x : Node) (xs : List Node) (b : N
   cases he'
   rfl
 
-/-- **`pack_branches` (`node.rs:61-94`)**: a `MinChain` of two or more fragments becomes a strictly
+/-- **`pack_branches` (`node.rs:54-87`)**: a `MinChain` of two or more fragments becomes a strictly
     shorter `MinChain` one level up, every branch with `2 ..= BRANCH_MAX` children, same entries. -/
 theorem packBranches_chain (c : Cfg) (h : Nat) : ∀ (ns : List Node) (lo hi : Nat), 2 ≤ ns.length →
     MinChain c h lo ns hi →
@@ -463,7 +463,7 @@ theorem packBranches_chain (c : Cfg) (h : Nat) : ∀ (ns : List Node) (lo hi : N
       · simp only [List.length_cons, List.length_drop] at r2 ⊢; omega
       · rw [List.map_cons, List.flatten_cons, r3, hflat]; rfl
 
-/-- **`build_root` (`node.rs:86-93`)** on a `MinChain`: one well-formed node with the same entries
+/-- **`build_root` (`node.rs:79-86`)** on a `MinChain`: one well-formed node with the same entries
     (`fuel` = the fragment count is enough: each `pack_branches` round shrinks the list). -/
 theorem buildRoot_wf (c : Cfg) : ∀ (fuel h : Nat) (frags : List Node) (lo hi : Nat), frags ≠ [] →
     frags.length ≤ fuel + 1 → MinChain c h lo frags hi →
@@ -503,7 +503,7 @@ theorem length_le_flatMap {α β} (f : α → List β) : ∀ (l : List α), (∀
       | cons _ _ => simp
     simp only [List.flatMap_cons, List.length_append, List.length_cons]; omega
 
-/-- **The routing sweep of `apply_batch` (`node.rs:275-295`) keeps a separator chain**: each touched
+/-- **The routing sweep of `apply_batch` (`node.rs:268-288`) keeps a separator chain**: each touched
     child is replaced by its fragments, each untouched child kept. -/
 theorem route_chain {P : Nat → Nat → Node → Prop} (f : Node → List E) (g : Node → List E → List Node)
     (hg : ∀ a b n sl, P a b n → SortedLe sl → sl ≠ [] → (∀ e ∈ sl, a ≤ e ∧ e < b) →
@@ -575,7 +575,7 @@ theorem route_chain {P : Nat → Nat → Node → Prop} (f : Node → List E) (g
         · exact Or.inl (Or.inr h)
         · exact Or.inr (Or.inr h)
 
-/-- **`Node::apply_batch` (`node.rs:250-303`)**: on a well-formed subtree (the root leaf may be empty)
+/-- **`Node::apply_batch` (`node.rs:243-296`)**: on a well-formed subtree (the root leaf may be empty)
     and a non-empty sorted batch within its bounds, the fragments form a `MinChain` over the same
     bounds holding exactly the union of the subtree and the batch. -/
 theorem applyBatch_chain (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi : Nat) (batch : List E),

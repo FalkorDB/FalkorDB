@@ -53,8 +53,8 @@ pub fn encode_numeric(value: &Value) -> Option<u64> {
 ///
 /// A Cypher property is not typed, so one Range column holds whatever the entities put in it:
 /// numbers ([`Scalar`](Self::Scalar), [`Array`](Self::Array)) and strings ([`Tag`](Self::Tag),
-/// [`TagArray`](Self::TagArray)), each in the tree that can order it. Every tree's keys are `u64`, so a column's tuples move between threads and versions as
-/// plain `(key, doc)` pairs whatever their kind.
+/// [`TagArray`](Self::TagArray)), each in the tree that can order it: a number keyed by its `u64`
+/// encoding, a string by itself ([`ColumnKey`]).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum KeyKind {
     /// A numeric scalar value: at most one key per entity, its [`encode_numeric`] image.

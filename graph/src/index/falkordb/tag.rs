@@ -21,7 +21,8 @@
 //! version and added to another — carry the string ([`ColumnKey::Tag`],
 //! [`EncodedTuples::tags`]), the same key every version stores.
 
-use std::ops::Bound;
+use std::cmp::{self, Ordering};
+use std::ops::{Bound, RangeBounds};
 use std::sync::Arc;
 
 use super::data_structures::cow_btree::{StrBounds, StrRanges, StrTree};
@@ -30,7 +31,7 @@ use super::numeric::{DocIter, EncodedTuples};
 use super::range::RangeKind;
 use crate::runtime::value::Value;
 
-/// Which strings a tag predicate selects: a set of them, or a lexicographic window.
+/// Which strings a tag predicate selects: a set of them, or the strings between two bounds.
 ///
 /// A built column reads it as key ranges of its trees ([`ranges`](Self::ranges)); a column still
 /// building answers with a scan, which matches it against each value ([`contains`](Self::contains)).
@@ -38,13 +39,8 @@ use crate::runtime::value::Value;
 pub enum StrSel {
     /// These strings, sorted and distinct.
     Set(Vec<Arc<String>>),
-    /// Every string in a lexicographic window; `None` leaves that side open.
-    Window {
-        min: Option<Arc<String>>,
-        max: Option<Arc<String>>,
-        include_min: bool,
-        include_max: bool,
-    },
+    /// Every string between these bounds, in byte (codepoint) order.
+    Window(StrBounds),
 }
 
 impl StrSel {
@@ -62,11 +58,30 @@ impl StrSel {
         Self::Set(Vec::new())
     }
 
+    /// The strings from `min` to `max`, each end included or not; `None` leaves that side open.
+    #[must_use]
+    pub fn window(
+        min: Option<Arc<String>>,
+        max: Option<Arc<String>>,
+        include_min: bool,
+        include_max: bool,
+    ) -> Self {
+        let bound = |v: Option<Arc<String>>, inclusive: bool| match v {
+            None => Bound::Unbounded,
+            Some(v) if inclusive => Bound::Included(v),
+            Some(v) => Bound::Excluded(v),
+        };
+        Self::Window((bound(min, include_min), bound(max, include_max)))
+    }
+
     /// Whether this selects no string by construction: an empty set, or a window no string lies
     /// in.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        matches!(self, Self::Set(strings) if strings.is_empty()) || self.is_empty_window()
+        match self {
+            Self::Set(strings) => strings.is_empty(),
+            Self::Window(window) => is_empty_window(window),
+        }
     }
 
     /// The key ranges of the strings this selects, in order and disjoint: a point per string of a
@@ -78,20 +93,8 @@ impl StrSel {
                 .iter()
                 .map(|s| (Bound::Included(s.clone()), Bound::Included(s.clone())))
                 .collect(),
-            Self::Window { .. } if self.is_empty_window() => Vec::new(),
-            Self::Window {
-                min,
-                max,
-                include_min,
-                include_max,
-            } => {
-                let bound = |v: &Option<Arc<String>>, inclusive: bool| match v {
-                    None => Bound::Unbounded,
-                    Some(v) if inclusive => Bound::Included(v.clone()),
-                    Some(v) => Bound::Excluded(v.clone()),
-                };
-                vec![(bound(min, *include_min), bound(max, *include_max))]
-            }
+            Self::Window(window) if is_empty_window(window) => Vec::new(),
+            Self::Window(window) => vec![window.clone()],
         }
     }
 
@@ -103,35 +106,7 @@ impl StrSel {
     ) -> bool {
         match self {
             Self::Set(strings) => strings.binary_search(s).is_ok(),
-            Self::Window {
-                min,
-                max,
-                include_min,
-                include_max,
-            } => {
-                let above = min
-                    .as_ref()
-                    .is_none_or(|m| if *include_min { s >= m } else { s > m });
-                let below = max
-                    .as_ref()
-                    .is_none_or(|m| if *include_max { s <= m } else { s < m });
-                above && below
-            }
-        }
-    }
-
-    /// Whether this is a window no string lies in. An inverted window is not a valid
-    /// `BTreeMap::range` argument — it panics rather than yielding nothing — so it is answered
-    /// before one is built.
-    fn is_empty_window(&self) -> bool {
-        match self {
-            Self::Window {
-                min: Some(lo),
-                max: Some(hi),
-                include_min,
-                include_max,
-            } => lo > hi || (lo == hi && !(*include_min && *include_max)),
-            _ => false,
+            Self::Window(window) => window.contains(s),
         }
     }
 
@@ -145,43 +120,52 @@ impl StrSel {
             (Self::Set(a), b) | (b, Self::Set(a)) => {
                 Self::Set(a.into_iter().filter(|s| b.contains(s)).collect())
             }
-            (
-                Self::Window {
-                    min: amin,
-                    max: amax,
-                    include_min: ainc_min,
-                    include_max: ainc_max,
-                },
-                Self::Window {
-                    min: bmin,
-                    max: bmax,
-                    include_min: binc_min,
-                    include_max: binc_max,
-                },
-            ) => {
-                // The tighter of two bounds; on a tie the exclusive one is tighter.
-                let (min, include_min) = match (amin, bmin) {
-                    (None, b) => (b, binc_min),
-                    (a, None) => (a, ainc_min),
-                    (Some(a), Some(b)) if a == b => (Some(a), ainc_min && binc_min),
-                    (Some(a), Some(b)) if a > b => (Some(a), ainc_min),
-                    (_, b) => (b, binc_min),
-                };
-                let (max, include_max) = match (amax, bmax) {
-                    (None, b) => (b, binc_max),
-                    (a, None) => (a, ainc_max),
-                    (Some(a), Some(b)) if a == b => (Some(a), ainc_max && binc_max),
-                    (Some(a), Some(b)) if a < b => (Some(a), ainc_max),
-                    (_, b) => (b, binc_max),
-                };
-                Self::Window {
-                    min,
-                    max,
-                    include_min,
-                    include_max,
-                }
+            (Self::Window((alo, ahi)), Self::Window((blo, bhi))) => {
+                Self::Window((cmp::max_by(alo, blo, cmp_lo), cmp::min_by(ahi, bhi, cmp_hi)))
             }
         }
+    }
+}
+
+/// Whether no string lies in `window`. An inverted window is not a valid range for a cursor, so
+/// it is answered before one is built.
+fn is_empty_window((lo, hi): &StrBounds) -> bool {
+    match (lo, hi) {
+        (Bound::Included(lo), Bound::Included(hi)) => lo > hi,
+        (Bound::Included(lo) | Bound::Excluded(lo), Bound::Included(hi) | Bound::Excluded(hi)) => {
+            lo >= hi
+        }
+        _ => false,
+    }
+}
+
+/// Lower ends in the order they start: from the very start, then at a key, then just past it.
+fn cmp_lo(
+    a: &Bound<Arc<String>>,
+    b: &Bound<Arc<String>>,
+) -> Ordering {
+    match (a, b) {
+        (Bound::Unbounded, Bound::Unbounded) => Ordering::Equal,
+        (Bound::Unbounded, _) => Ordering::Less,
+        (_, Bound::Unbounded) => Ordering::Greater,
+        (Bound::Included(x) | Bound::Excluded(x), Bound::Included(y) | Bound::Excluded(y)) => x
+            .cmp(y)
+            .then(matches!(a, Bound::Excluded(_)).cmp(&matches!(b, Bound::Excluded(_)))),
+    }
+}
+
+/// Upper ends in the order they end: just before a key, then at it, then at the very end.
+fn cmp_hi(
+    a: &Bound<Arc<String>>,
+    b: &Bound<Arc<String>>,
+) -> Ordering {
+    match (a, b) {
+        (Bound::Unbounded, Bound::Unbounded) => Ordering::Equal,
+        (Bound::Unbounded, _) => Ordering::Greater,
+        (_, Bound::Unbounded) => Ordering::Less,
+        (Bound::Included(x) | Bound::Excluded(x), Bound::Included(y) | Bound::Excluded(y)) => x
+            .cmp(y)
+            .then(matches!(a, Bound::Included(_)).cmp(&matches!(b, Bound::Included(_)))),
     }
 }
 
@@ -499,12 +483,7 @@ mod tests {
     /// A window and a set select by value, so a scan can match a string no batch has added yet.
     #[test]
     fn a_selection_matches_by_value_and_intersects() {
-        let window = |min: &str, max: &str| StrSel::Window {
-            min: Some(s(min)),
-            max: Some(s(max)),
-            include_min: true,
-            include_max: false,
-        };
+        let window = |min: &str, max: &str| StrSel::window(Some(s(min)), Some(s(max)), true, false);
         assert!(window("a", "b").contains(&s("apple")));
         assert!(!window("a", "b").contains(&s("b")));
         let both = window("a", "c").intersect(window("b", "d"));
@@ -514,6 +493,12 @@ mod tests {
         assert_eq!(set.intersect(window("b", "c")), StrSel::Set(vec![s("bob")]));
         assert!(StrSel::none().is_empty() && window("b", "a").is_empty());
         assert!(!window("a", "b").is_empty());
+        // On a tie the exclusive end is the tighter one, on either side.
+        let open = StrSel::window(Some(s("a")), Some(s("c")), false, true);
+        assert_eq!(
+            window("a", "c").intersect(open),
+            StrSel::window(Some(s("a")), Some(s("c")), false, false)
+        );
     }
 
     /// A string whose last tuple goes leaves nothing behind: no entry, no empty cursor in a

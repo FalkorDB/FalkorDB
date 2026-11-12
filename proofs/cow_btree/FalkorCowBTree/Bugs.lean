@@ -16,11 +16,11 @@ child, and the sweep simply ended — the entry was lost. The old sweep and its 
 /-! ## Bug 2 (historical, FIXED by #2897, 7b60f28db): with `BRANCH_MAX = 3` remove broke the tree
 
 Before #2897 (the revision before 7b60f28db) the const assert only demanded `BRANCH_MAX >= 3`. The
-underflow flag of a branch is `children < BRANCH_MAX / 2 = 1` (`Branch::is_underfull`, `node.rs:205`): a
+underflow flag of a branch is `children < BRANCH_MAX / 2 = 1` (`Branch::is_underfull`, `node.rs:198`): a
 branch merged down to ONE child is not reported, so its parent never repairs it. Its lone child then cannot
-rebalance (the `children.len() < 2` guard of `Branch::rebalance`, `node.rs:220`) and drains to an empty
+rebalance (the `children.len() < 2` guard of `Branch::rebalance`, `node.rs:213`) and drains to an empty
 non-root leaf. `is_empty()` then lies, and a later `insert_batch` hits `Node::min` on the empty leaf
-(out-of-bounds panic, `leaf.key(0)`, `node.rs:240`) or the single-child `debug_assert` (`node.rs:67`).
+(out-of-bounds panic, `leaf.key(0)`, `node.rs:233`) or the single-child `debug_assert` (`node.rs:60`).
 The `pre2897_b3_*` counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412)
 replayed it on `CowBTree::<2, 3>`, which no longer compiles (`Assert.lean`: `constAssert_rejects_B3`, and
 `remove_spec_asserted` for every configuration the assert admits). -/

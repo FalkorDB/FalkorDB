@@ -19,12 +19,12 @@ pub type StrBounds = (Bound<Arc<String>>, Bound<Arc<String>>);
 struct PagePos {
     pos: usize,
     groups_left: usize,
+    /// The current group's docs not yet read.
     docs_left: usize,
+    /// The last doc read; a group's first doc is a delta from 0.
     prev_doc: u64,
     /// The current group's string.
     key: Vec<u8>,
-    /// The current group's first doc, not yet yielded.
-    pending: Option<u64>,
 }
 
 /// The docs of the tuples whose string lies between two bounds, lazily, over the snapshot the
@@ -115,8 +115,7 @@ impl<const BRANCH_MAX: usize> StrRange<BRANCH_MAX> {
         &mut self,
         before_lo: impl Fn(&[u8]) -> bool,
     ) {
-        let page = self.page.clone().expect("a cursor in a page");
-        let blob = &page.blob;
+        let blob = &self.page.as_ref().expect("a cursor in a page").blob;
         let h = header(blob);
         // The restarts whose string comes before `lo` are a prefix of them.
         let (mut lo, mut hi) = (0, h.restarts);
@@ -160,42 +159,33 @@ impl<const BRANCH_MAX: usize> StrRange<BRANCH_MAX> {
         false
     }
 
-    /// Read the next group's header and first doc, moving to the next page if this one is spent.
+    /// Read the next group's string and doc count, moving to the next page if this one is spent.
     fn load_group(&mut self) -> bool {
-        loop {
-            if self.at.groups_left > 0 {
-                let page = self.page.clone().expect("a cursor in a page");
-                let blob = &page.blob;
-                let at = &mut self.at;
-                let shared = get_varint(blob, &mut at.pos) as usize;
-                let suffix = get_varint(blob, &mut at.pos) as usize;
-                at.key.truncate(shared);
-                at.key.extend_from_slice(&blob[at.pos..at.pos + suffix]);
-                at.pos += suffix;
-                let docs = get_varint(blob, &mut at.pos) as usize;
-                let first = get_varint(blob, &mut at.pos);
-                at.prev_doc = first;
-                at.docs_left = docs - 1;
-                at.pending = Some(first);
-                at.groups_left -= 1;
-                return true;
-            }
+        while self.at.groups_left == 0 {
             if !self.next_page() {
                 return false;
             }
         }
+        let blob = &self.page.as_ref().expect("a cursor in a page").blob;
+        let at = &mut self.at;
+        let shared = get_varint(blob, &mut at.pos) as usize;
+        let suffix = get_varint(blob, &mut at.pos) as usize;
+        at.key.truncate(shared);
+        at.key.extend_from_slice(&blob[at.pos..at.pos + suffix]);
+        at.pos += suffix;
+        at.docs_left = get_varint(blob, &mut at.pos) as usize;
+        at.prev_doc = 0;
+        at.groups_left -= 1;
+        true
     }
 
     /// Skip the rest of the current group and load the next one.
     fn skip_group(&mut self) -> bool {
-        if self.at.docs_left > 0 {
-            let page = self.page.clone().expect("a cursor in a page");
-            for _ in 0..self.at.docs_left {
-                get_varint(&page.blob, &mut self.at.pos);
-            }
-            self.at.docs_left = 0;
+        let blob = &self.page.as_ref().expect("a cursor in a page").blob;
+        for _ in 0..self.at.docs_left {
+            get_varint(blob, &mut self.at.pos);
         }
-        self.at.pending = None;
+        self.at.docs_left = 0;
         self.load_group()
     }
 
@@ -213,23 +203,16 @@ impl<const BRANCH_MAX: usize> Iterator for StrRange<BRANCH_MAX> {
     type Item = u64;
 
     fn next(&mut self) -> Option<u64> {
-        if self.done {
-            return None;
+        while !self.done {
+            if self.at.docs_left > 0 {
+                let page = self.page.as_ref().expect("a cursor in a page");
+                self.at.prev_doc += get_varint(&page.blob, &mut self.at.pos);
+                self.at.docs_left -= 1;
+                return Some(self.at.prev_doc);
+            }
+            self.done = !self.load_group() || self.past_hi();
         }
-        if let Some(d) = self.at.pending.take() {
-            return Some(d);
-        }
-        if self.at.docs_left > 0 {
-            let page = self.page.as_ref().expect("a cursor in a page");
-            self.at.prev_doc += get_varint(&page.blob, &mut self.at.pos);
-            self.at.docs_left -= 1;
-            return Some(self.at.prev_doc);
-        }
-        if !self.load_group() || self.past_hi() {
-            self.done = true;
-            return None;
-        }
-        self.at.pending.take()
+        None
     }
 }
 

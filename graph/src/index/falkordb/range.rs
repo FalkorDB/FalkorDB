@@ -197,25 +197,14 @@ impl Scalars {
     }
 }
 
-/// A list element a probe asks for, in the kind that holds it: `x IN n.v`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Element {
-    /// A number, by its key in the numeric array tree.
-    Numeric(u64),
-    /// A string, its own key in the tag array tree.
-    Tag(Arc<String>),
-}
-
-impl Element {
-    /// Whether `value` is a list holding this element.
-    fn is_held_by(
-        &self,
-        value: &Value,
-    ) -> bool {
-        match self {
-            Self::Numeric(key) => NumericIndex::is_list_holding(key, value),
-            Self::Tag(s) => TagIndex::is_list_holding(s, value),
-        }
+/// Whether `value` is a list holding the element whose array-tree key is `element`.
+fn is_held_by(
+    element: &ColumnKey,
+    value: &Value,
+) -> bool {
+    match element {
+        ColumnKey::Encoded(key) => NumericIndex::is_list_holding(key, value),
+        ColumnKey::Tag(s) => TagIndex::is_list_holding(s, value),
     }
 }
 
@@ -231,8 +220,12 @@ impl Element {
 pub enum Selection {
     /// Scalar values, per kind: `=`, a range, `IN`, and conjunctions and unions of them.
     Scalars(Scalars),
-    /// List values holding `first` and each of `rest`: `x IN n.v`, and conjunctions of it.
-    ListsHolding { first: Element, rest: Vec<Element> },
+    /// List values holding `first` and each of `rest`, by their array-tree keys: `x IN n.v`, and
+    /// conjunctions of it.
+    ListsHolding {
+        first: ColumnKey,
+        rest: Vec<ColumnKey>,
+    },
 }
 
 impl Selection {
@@ -259,7 +252,7 @@ impl Selection {
             Self::Scalars(scalars) => scalars.contains(value),
             Self::ListsHolding { first, rest } => iter::once(first)
                 .chain(rest)
-                .all(|element| element.is_held_by(value)),
+                .all(|element| is_held_by(element, value)),
         }
     }
 
@@ -351,12 +344,12 @@ impl Selection {
             _ => None,
         };
         Some(Self::Scalars(match kind {
-            Some(Kind::Tag(_)) => Scalars::tag(StrSel::Window {
-                min: as_str(min),
-                max: as_str(max),
+            Some(Kind::Tag(_)) => Scalars::tag(StrSel::window(
+                as_str(min),
+                as_str(max),
                 include_min,
                 include_max,
-            }),
+            )),
             Some(Kind::Numeric) | None => {
                 Scalars::numeric(NumericIndex::range_keys(min, max, include_min, include_max))
             }
@@ -371,10 +364,10 @@ impl Selection {
     fn lists_holding(value: &Value) -> Option<Self> {
         let first = match Kind::of(value)? {
             Kind::Numeric => match encode_numeric(value) {
-                Some(key) => Element::Numeric(key),
+                Some(key) => ColumnKey::Encoded(key),
                 None => return Some(Self::empty()),
             },
-            Kind::Tag(s) => Element::Tag(s.clone()),
+            Kind::Tag(s) => ColumnKey::Tag(s.clone()),
         };
         Some(Self::ListsHolding {
             first,
@@ -786,11 +779,11 @@ impl RangeIndex {
     /// The lists holding `element`, in the kind that holds it.
     fn lists_holding(
         &self,
-        element: &Element,
+        element: &ColumnKey,
     ) -> DocIter {
         match element {
-            Element::Numeric(key) => self.numeric.lists_holding(key),
-            Element::Tag(s) => self.tag.lists_holding(s),
+            ColumnKey::Encoded(key) => self.numeric.lists_holding(key),
+            ColumnKey::Tag(s) => self.tag.lists_holding(s),
         }
     }
 

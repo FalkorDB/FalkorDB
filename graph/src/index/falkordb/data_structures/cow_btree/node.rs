@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use super::page::{Page, PageCombined, PageInsert, Tuple};
+use super::page::{Combined, Page, PageInsert, Tuple};
 
 /// A tree node: either a leaf (a byte blob of sorted tuples) or an internal branch.
 ///
@@ -31,13 +31,6 @@ pub(super) struct Branch<P: Page, const BRANCH_MAX: usize> {
 /// more (a key longer than a page's byte budget gets a page of its own).
 pub(super) struct Split<P: Page, const BRANCH_MAX: usize> {
     pub(super) rights: Vec<(Tuple<P::Key>, Node<P, BRANCH_MAX>)>,
-}
-
-/// Outcome of combining two siblings: a single merged node, or two re-balanced nodes plus their new
-/// separator.
-enum Combined<P: Page, const BRANCH_MAX: usize> {
-    One(Node<P, BRANCH_MAX>),
-    Two(Node<P, BRANCH_MAX>, Tuple<P::Key>, Node<P, BRANCH_MAX>),
 }
 
 // ---- bottom-up builders (used by bulk build and batched insert) ------------------------------
@@ -382,16 +375,11 @@ impl<P: Page, const BRANCH_MAX: usize> Node<P, BRANCH_MAX> {
         &self,
         sep: Tuple<P::Key>,
         right: &Self,
-    ) -> Combined<P, BRANCH_MAX> {
+    ) -> Combined<Self, P::Key> {
         match (self, right) {
             // The page owns the join (two AoS leaves are a byte concat; see [`Page::combine`]).
             (Self::Leaf(left_leaf), Self::Leaf(right_leaf)) => {
-                match left_leaf.combine(right_leaf) {
-                    PageCombined::One(leaf) => Combined::One(Self::Leaf(leaf)),
-                    PageCombined::Two(left, sep, right) => {
-                        Combined::Two(Self::Leaf(left), sep, Self::Leaf(right))
-                    }
-                }
+                left_leaf.combine(right_leaf).map(Self::Leaf)
             }
             (Self::Branch(left_branch), Self::Branch(right_branch)) => {
                 let mut children = left_branch.children.clone();
