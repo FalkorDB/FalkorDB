@@ -82,16 +82,16 @@ use thiserror::Error;
 
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::falkordb_index::ScanFilter;
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::{
+    cch::{self, CchError, CchIndexDef, CchInput, maint::check_edge_weights},
+    falkordb_index::{BuildCursor, FalkorDbIndex},
+    graph_writes,
+};
 #[cfg(all(test, feature = "index-falkordb"))]
 use crate::index::falkordb::{
     cch::{Cch, CchIndex},
     versioned::IndexId,
-};
-#[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::{
-    cch::{CchError, CchIndexDef, CchInput, maint::check_edge_weights},
-    falkordb_index::{BuildCursor, FalkorDbIndex},
-    graph_writes,
 };
 use crate::index::index_docs::IndexDocs;
 use crate::{
@@ -2332,8 +2332,12 @@ impl Graph {
         // After the release, so a refused delete leaves the index untouched too, and before
         // the teardown below, while the labels and attributes are still readable.
         #[cfg(feature = "index-falkordb")]
-        docs.native
-            .extend(graph_writes::nodes_deleted(self, deleted_nodes));
+        {
+            // CCH: nothing for the nodes themselves; the edges a deletion cascades to are
+            // recorded by `delete_implicit_edges`.
+            docs.native
+                .extend(graph_writes::nodes_deleted(self, deleted_nodes));
+        }
 
         // Every removal below is a per-entity tombstone, and every lookup below
         // is a row seek. Nothing here touches an entry that does not belong to a
@@ -2723,6 +2727,7 @@ impl Graph {
         srcs: &[u64],
         dsts: &[u64],
         rel_ids: &[u64],
+        docs: &mut IndexDocs,
     ) -> Result<(), NodeOpError> {
         // The three slices are read positionally below — `set_all_from_slices`,
         // the endpoint index and the type matrix each walk all of `rel_ids`,
@@ -2773,6 +2778,19 @@ impl Graph {
             .iter()
             .position(|t| t.as_str() == type_name.as_str())
             .unwrap();
+        #[cfg(feature = "index-falkordb")]
+        cch::maint::edges_created(
+            self,
+            &mut docs.cch,
+            TypeId(type_idx),
+            rel_ids
+                .iter()
+                .zip(srcs)
+                .zip(dsts)
+                .map(|((&id, &src), &dst)| (id, src, dst)),
+        );
+        #[cfg(not(feature = "index-falkordb"))]
+        let _ = docs;
 
         self.resize();
 
@@ -2899,8 +2917,11 @@ impl Graph {
         let index_add_edge_docs = &mut docs.edge_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
-        docs.native
-            .extend(graph_writes::edge_attrs_set(self, attrs));
+        {
+            docs.native
+                .extend(graph_writes::edge_attrs_set(self, attrs));
+            cch::maint::edge_attrs_set(self, &mut docs.cch, attrs, None);
+        }
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
         self.track_edge_index_updates(attrs, index_add_edge_docs);
         Ok((nremoved, nset))
@@ -2931,8 +2952,11 @@ impl Graph {
         let index_add_edge_docs = &mut docs.edge_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
-        docs.native
-            .extend(graph_writes::edge_attrs_set_of_type(self, type_id, attrs));
+        {
+            docs.native
+                .extend(graph_writes::edge_attrs_set_of_type(self, type_id, attrs));
+            cch::maint::edge_attrs_set(self, &mut docs.cch, attrs, Some(type_id));
+        }
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
         self.track_edge_index_updates_of_type(type_id, attrs, index_add_edge_docs);
         Ok((nremoved, nset))
@@ -3036,8 +3060,13 @@ impl Graph {
         // After the release, so a refused delete leaves the index untouched too, and before
         // the teardown below, while the attributes and types are still readable.
         #[cfg(feature = "index-falkordb")]
-        docs.native
-            .extend(graph_writes::edges_deleted(self, &resolved));
+        {
+            docs.native
+                .extend(graph_writes::edges_deleted(self, &resolved));
+            for (t, edges) in by_type.iter().enumerate() {
+                cch::maint::edges_deleted(self, &mut docs.cch, TypeId(t), edges.iter().copied());
+            }
+        }
 
         self.relationship_attrs.remove_all(&resolved);
 
@@ -3219,8 +3248,16 @@ impl Graph {
             }
             // Before the type matrix and attributes are torn down below.
             #[cfg(feature = "index-falkordb")]
-            docs.native
-                .extend(graph_writes::edges_deleted(self, del_keys.iter()));
+            {
+                docs.native
+                    .extend(graph_writes::edges_deleted(self, del_keys.iter()));
+                cch::maint::edges_deleted(
+                    self,
+                    &mut docs.cch,
+                    TypeId(type_idx),
+                    rels.iter().copied(),
+                );
+            }
             self.relationship_type_matrix.remove_mask(&type_mask);
             self.relationship_attrs.remove_all(&del_keys);
 
@@ -3940,6 +3977,33 @@ impl Graph {
         }
         #[cfg(not(feature = "index-falkordb"))]
         let _ = docs;
+    }
+
+    /// Bring the CCH indexes a unit of work's writes touched (`docs.cch`) up to date on this
+    /// version, which must be the private version the writes went into, once all of them are in.
+    /// A no-op without the `index-falkordb` feature, which has no CCH index, and when nothing
+    /// was staged.
+    ///
+    /// # Errors
+    /// A changed index could not be updated (a resource, a bug). The owner fails the unit, and
+    /// its rollback drops this version with whatever was updated.
+    pub fn apply_cch_writes(
+        &mut self,
+        docs: &mut IndexDocs,
+    ) -> Result<(), String> {
+        #[cfg(feature = "index-falkordb")]
+        {
+            if docs.cch.is_empty() {
+                return Ok(());
+            }
+            let dirty = std::mem::take(&mut docs.cch);
+            cch::maint::flush(self, &dirty).map_err(|e| e.to_string())
+        }
+        #[cfg(not(feature = "index-falkordb"))]
+        {
+            let _ = docs;
+            Ok(())
+        }
     }
 
     /// Commit a unit of work's index changes into this version: the native index's staged changes,
@@ -5805,8 +5869,14 @@ mod reservation_tests {
             .reserve(3, &RoaringTreemap::new())
             .expect("reserved");
         assert_eq!(ids, vec![0, 1, 2]);
-        g.create_relationships_bulk(&type_name, &[0, 1, 2], &[1, 2, 3], &ids)
-            .expect("the allocator's own ids must be creatable");
+        g.create_relationships_bulk(
+            &type_name,
+            &[0, 1, 2],
+            &[1, 2, 3],
+            &ids,
+            &mut IndexDocs::default(),
+        )
+        .expect("the allocator's own ids must be creatable");
 
         let mut docs = IndexDocs::default();
         let doomed: RoaringTreemap = std::iter::once(1).collect();
@@ -5840,7 +5910,13 @@ mod reservation_tests {
         let type_name = Arc::new("R".to_owned());
 
         let duplicated = g
-            .create_relationships_bulk(&type_name, &[0, 0], &[1, 1], &[0, 0])
+            .create_relationships_bulk(
+                &type_name,
+                &[0, 0],
+                &[1, 1],
+                &[0, 0],
+                &mut IndexDocs::default(),
+            )
             .expect_err("an id names one edge");
         assert!(
             duplicated.to_string().contains("only 1 are distinct"),
@@ -5848,14 +5924,26 @@ mod reservation_tests {
         );
 
         let ragged = g
-            .create_relationships_bulk(&type_name, &[0], &[1, 2], &[0, 1])
+            .create_relationships_bulk(
+                &type_name,
+                &[0],
+                &[1, 2],
+                &[0, 1],
+                &mut IndexDocs::default(),
+            )
             .expect_err("two ids cannot share one source");
         assert!(ragged.to_string().contains("1 sources"), "{ragged}");
 
         // Refused before anything moved, so the space is still untouched and an
         // honest create of the same ids still works.
-        g.create_relationships_bulk(&type_name, &[0, 1], &[1, 2], &[0, 1])
-            .expect("the well-formed call is unaffected");
+        g.create_relationships_bulk(
+            &type_name,
+            &[0, 1],
+            &[1, 2],
+            &[0, 1],
+            &mut IndexDocs::default(),
+        )
+        .expect("the well-formed call is unaffected");
         assert_eq!(g.relationship_count(), 2);
     }
 
@@ -5916,6 +6004,7 @@ mod adjacency_cascade_tests {
                 &[src],
                 &[dst],
                 &[rel_id],
+                &mut IndexDocs::default(),
             )
             .unwrap();
         }
@@ -6062,8 +6151,14 @@ mod relationship_liveness_tests {
             .reserve(pairs.len(), &RoaringTreemap::new())
             .expect("reserved");
         let (src, dst): (Vec<u64>, Vec<u64>) = pairs.iter().copied().unzip();
-        g.create_relationships_bulk(&Arc::new(ty.to_owned()), &src, &dst, &ids)
-            .expect("created");
+        g.create_relationships_bulk(
+            &Arc::new(ty.to_owned()),
+            &src,
+            &dst,
+            &ids,
+            &mut IndexDocs::default(),
+        )
+        .expect("created");
     }
 
     fn first(

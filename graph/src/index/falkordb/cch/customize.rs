@@ -604,7 +604,7 @@ impl Cch {
 
     /// A copy for a new graph version: the [`Topology`] is shared by `Arc`, and the metric
     /// through [`WeightArr::new_version`], which copies a chunk only when the copy writes
-    /// it. Recustomizing the copy in place ([`Self::recustomize_scoped`]) leaves this one
+    /// it. Recustomizing the copy in place ([`Self::recustomize_seeded`]) leaves this one
     /// untouched, and costs the chunks it writes, not the metric.
     #[must_use]
     pub fn new_version(&self) -> Self {
@@ -640,6 +640,26 @@ impl Cch {
     pub fn memory_usage(&self) -> usize {
         // `size_of::<Self>()` already covers `Metric`'s four inline headers
         size_of::<Self>() + self.topology.memory_usage() + self.metric.memory_usage()
+    }
+
+    /// Whether the hierarchy has an arc between nodes `u` and `v` (`u != v`, both below
+    /// [`Self::node_count`]): whether an edge between them can be absorbed by recustomizing.
+    /// Two rank reads and a binary search in one rank's upward row.
+    #[must_use]
+    pub fn joins(
+        &self,
+        u: u64,
+        v: u64,
+    ) -> bool {
+        let n = self.topology.node_count() as u64;
+        if u == v || u >= n || v >= n {
+            return false;
+        }
+        let (ru, rv) = (
+            self.topology.rank_of(u.into()),
+            self.topology.rank_of(v.into()),
+        );
+        self.topology.arc_slot(ru.min(rv), ru.max(rv)).is_some()
     }
 
     pub(crate) fn topology(&self) -> &Topology {

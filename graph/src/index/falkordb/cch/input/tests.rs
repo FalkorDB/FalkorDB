@@ -75,7 +75,7 @@ impl Builder {
         let srcs: Vec<u64> = edges.iter().map(|e| e.0).collect();
         let dsts: Vec<u64> = edges.iter().map(|e| e.1).collect();
         self.g
-            .create_relationships_bulk(&name, &srcs, &dsts, &ids)
+            .create_relationships_bulk(&name, &srcs, &dsts, &ids, &mut IndexDocs::default())
             .expect("creatable");
 
         let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();

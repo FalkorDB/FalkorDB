@@ -633,8 +633,14 @@ pub(crate) fn real_graph(
             .expect("reserved");
         let srcs: Vec<u64> = mine.iter().map(|&k| edges[k].0).collect();
         let dsts: Vec<u64> = mine.iter().map(|&k| edges[k].1).collect();
-        g.create_relationships_bulk(&Arc::new(String::from(ty)), &srcs, &dsts, &rel_ids)
-            .expect("creatable");
+        g.create_relationships_bulk(
+            &Arc::new(String::from(ty)),
+            &srcs,
+            &dsts,
+            &rel_ids,
+            &mut IndexDocs::default(),
+        )
+        .expect("creatable");
         for (&k, &id) in mine.iter().zip(&rel_ids) {
             if let Some(w) = edges[k].2 {
                 weights.insert(id, vec![(attr, Value::Float(w))]);

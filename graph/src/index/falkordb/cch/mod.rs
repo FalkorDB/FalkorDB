@@ -10,7 +10,7 @@
 //! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
-//! - `maint.rs`     keeping indexes correct under writes (#3214): the write-time weight check
+//! - `maint.rs`     keeping the indexes correct after writes (#3214), and the write-time weight check
 //! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
@@ -25,6 +25,8 @@ mod partial;
 mod query;
 #[cfg(test)]
 pub(crate) mod testkit;
+
+pub(crate) use maint::CchDirty;
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -346,18 +348,17 @@ impl Cch {
     }
 }
 
-/// What [`Cch::recustomize_scoped`] did.
+/// What [`Cch::recustomize_seeded`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Recustomized {
     /// Only the affected cone was recomputed; `arcs` is how many arcs that was.
     Scoped { arcs: usize },
-    /// Enough arcs changed (more than `n / 8`) that a full customization ran instead.
-    Full,
-    /// A changed pair has no arc in the hierarchy (a new adjacency), names a node the
-    /// hierarchy does not have, or `weights` is shaped for a different node count.
-    /// Recustomizing cannot represent it: the structure has to be rebuilt. **Nothing was
-    /// written.** On the `Full` path this is also what [`Cch::customized`]'s
-    /// [`CchError::NeedsRebuild`] becomes, so the two paths answer alike.
+    /// More than `n / 8` arcs changed, so a full customization is due, and it needs the
+    /// complete [`WeightCsr`] this path never builds. **Nothing was written.**
+    NeedsFull,
+    /// A changed pair has no arc in the hierarchy (a new adjacency) or names a node the
+    /// hierarchy does not have. Recustomizing cannot represent it: the structure has to be
+    /// rebuilt. **Nothing was written.**
     NeedsRebuild,
 }
 
@@ -436,8 +437,9 @@ impl CchIndex {
 /// - `Batch = Result<Arc<Cch>, CchError>`: what that batch builds off the lock, the hierarchy
 ///   to adopt, or why it could not (the trait's read has no other error channel). Either way
 ///   the batch ends the build: a failure is adopted as [`Hierarchy::Failed`].
-/// - `Changes = CchDirty`: what a unit of work's writes touched. Nothing stages it yet: a write
-///   does not reach a CCH index until #3214.
+/// - `Changes = RoaringTreemap`: the ids of the edges a unit of work wrote in the index's
+///   types, which a `Building` entry keeps for its build's commit
+///   ([`maint`]'s flush hands them over; a built entry is updated by the flush itself).
 /// - `Scratch = ()`: nothing is reused from one index to the next.
 ///
 /// **Writes during a build are not reconciled yet.** The build reads the version the builder
@@ -447,7 +449,7 @@ impl CchIndex {
 /// catch-up.
 impl VersionedIndex for CchIndex {
     type Cursor = ();
-    type Changes = CchDirty;
+    type Changes = RoaringTreemap;
     type Batch = Result<Arc<Cch>, CchError>;
     type Name = CchIndexDef;
     type Scratch = ();
@@ -466,15 +468,20 @@ impl VersionedIndex for CchIndex {
         index.cch_indexes.get_mut(def)
     }
 
-    /// Never called: no write stages a change for a CCH index until #3214.
+    /// A `Building` entry keeps the ids of the edges written, for its build's commit: nothing is
+    /// below its cursor, so nothing is applied now. A built entry is not updated here: its
+    /// update reads the graph (the seeds of the recomputed arcs), which this hook is not given,
+    /// so [`maint`]'s flush does it and calls this for `Building` entries only.
     fn writer_record(
         &mut self,
-        _state: &mut BuildState<()>,
-        _changes: CchDirty,
+        state: &mut BuildState<()>,
+        changes: RoaringTreemap,
         _place: impl Fn(u64) -> Option<()>,
         _scratch: &mut (),
     ) {
-        unreachable!("no write stages a change for a CCH index yet (#3214)")
+        if let BuildState::Building { written, .. } = state {
+            written.by_this_version |= changes;
+        }
     }
 
     /// Nothing to re-apply: the writer's fork wrote nothing into the index (no write reaches
@@ -581,19 +588,6 @@ fn build_off_the_lock(
     let input = CchInput::build(version, def)?;
     stopping()?;
     Cch::build_checked(&input, stopping)
-}
-
-/// What a unit of work's writes touched that the graph's CCH indexes might care about. The
-/// graph's write methods stage it in the unit's
-/// [`IndexDocs::cch`](crate::index::index_docs::IndexDocs::cch), next to the native index's
-/// staged tuples, and the owner of the unit flushes it into rebuilt indexes once the unit's
-/// writes are in (#3214).
-///
-/// Empty for every graph with no CCH index, so the maintenance hook costs one
-/// `is_empty()` check on the existing write path.
-#[derive(Clone, Default)]
-pub struct CchDirty {
-    // filled in by the maintenance change (#3214): touched rel types and weight attributes, created/deleted nodes
 }
 
 #[cfg(test)]

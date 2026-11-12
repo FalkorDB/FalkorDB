@@ -251,6 +251,7 @@ fn a_created_index_answers_like_dijkstra_on_the_real_graph() {
 mod background_build {
     use std::sync::Arc;
 
+    use roaring::RoaringTreemap;
     use rustc_hash::FxHashMap;
 
     use super::super::falkordb_index_tests::{TestHost, builder_on, job_on};
@@ -260,7 +261,7 @@ mod background_build {
     use crate::index::falkordb::cch::testkit::{INDEXED, RealEdge, index_def, real_graph, weights};
     use crate::index::falkordb::cch::{CchIndexDef, Hierarchy};
     use crate::index::falkordb::online_build::{Job, Sizing, Step};
-    use crate::index::falkordb::versioned::IndexId;
+    use crate::index::falkordb::versioned::{BuildState, IndexId};
     use crate::index::index_docs::IndexDocs;
     use crate::runtime::value::Value;
 
@@ -278,10 +279,10 @@ mod background_build {
         weights(3, &[(0, 1, first), (1, 2, 1.0), (0, 2, 5.0), (2, 0, 7.0)])
     }
 
-    /// [`EDGES`] in a graph behind a test host, with no index yet, the index over them, and its
-    /// weight attribute.
+    /// [`EDGES`] in a graph behind a test host, node 3 with no edge, with no index yet, the
+    /// index over them, and its weight attribute.
     fn host(name: &str) -> (Arc<TestHost>, CchIndexDef, u16) {
-        let (graph, attr) = real_graph(3, &EDGES, name);
+        let (graph, attr) = real_graph(4, &EDGES, name);
         let def = index_def(&graph, attr);
         (TestHost::new(MvccGraph::from_graph(graph)), def, attr)
     }
@@ -361,6 +362,78 @@ mod background_build {
         let mut loaded = before.new_version();
         loaded.build_cch_index_now(def).expect("build");
         assert!(loaded.indexes_to_build_since(&before).is_empty());
+    }
+
+    /// A write the built hierarchy cannot take (an edge between nodes it does not join) is not
+    /// built in the write path: the entry goes back to `Building` under a new generation, the
+    /// commit hands it to the builder, and the builder's batch adopts a hierarchy with the edge.
+    #[test]
+    fn a_structural_write_hands_the_rebuild_to_the_builder() {
+        let (host, def, attr) = host("cch_bg_structural");
+        host.write(|g| g.build_cch_index_now(def.clone()).expect("build"));
+        let before = host.mvcc.read();
+        let generation = before
+            .falkordb_index
+            .cch_entry(&def)
+            .expect("held")
+            .generation;
+        host.write(|g| {
+            let mut docs = IndexDocs::default();
+            let ids = g
+                .relationship_id_space()
+                .reserve(1, &RoaringTreemap::new())
+                .expect("reserved");
+            g.create_relationships_bulk(
+                &Arc::new(String::from(INDEXED[0])),
+                &[0],
+                &[3],
+                &ids,
+                &mut docs,
+            )
+            .expect("creatable");
+            let weights = FxHashMap::from_iter([(ids[0], vec![(attr, Value::Float(0.5))])]);
+            g.set_relationships_attributes(&weights, &mut docs)
+                .expect("valid");
+            g.apply_cch_writes(&mut docs).expect("flushed");
+        });
+        let published = host.mvcc.read();
+        let entry = published.falkordb_index.cch_entry(&def).expect("held");
+        assert!(entry.is_building(), "no rebuild in the write");
+        assert_ne!(entry.generation, generation);
+        assert!(
+            before.cch_index(&def).is_some(),
+            "the version before keeps its hierarchy"
+        );
+        assert_eq!(job(&host, &def).step(), Step::Done);
+        let adopted = host.mvcc.read();
+        let cch = adopted
+            .cch_index(&def)
+            .expect("built")
+            .cch()
+            .expect("built");
+        assert_eq!(cch.query(0, 3).map(|(weight, _)| weight), Some(0.5));
+    }
+
+    /// A write while the index is `Building` records the ids of the edges it wrote in the
+    /// index's written set, which its commit publishes for the build's commit to catch up on.
+    #[test]
+    fn a_write_while_building_records_its_edge_ids() {
+        let (host, def, attr) = host("cch_bg_records");
+        create(&host, &def);
+        host.write(|g| {
+            let mut docs = IndexDocs::default();
+            let weights = FxHashMap::from_iter([(1, vec![(attr, Value::Float(3.0))])]);
+            g.set_relationships_attributes(&weights, &mut docs)
+                .expect("valid");
+            g.apply_cch_writes(&mut docs).expect("flushed");
+        });
+        let published = host.mvcc.read();
+        let entry = published.falkordb_index.cch_entry(&def).expect("held");
+        let BuildState::Building { written, .. } = &entry.state else {
+            panic!("still building");
+        };
+        assert!(written.since_last_indexer_step.contains(1));
+        assert!(written.by_this_version.is_empty(), "published");
     }
 
     /// A create holds the index `Building` with no hierarchy, and its commit leaves it so: the
