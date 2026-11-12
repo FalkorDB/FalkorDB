@@ -17,21 +17,21 @@ graph/src/effects/v3/emit.rs	gather_rows	963	PROVEN	gatherRows: specsOf_group, c
 graph/src/effects/v3/emit.rs	wire_index_options	2191	PROVEN	faithful: proofs/effects_emit_apply wireIndexOptions_spec
 graph/src/effects/v3/apply.rs	ApplyError::from	44	PROVEN	faithful: proofs/effects_emit_apply ofString_spec
 graph/src/effects/v3/apply.rs	apply_effects	54	PROVEN	applyPayload (records, then Batch.verify = g.validate()): emit_apply, stream_simulation; faithful: proofs/effects_emit_apply applyEffects_ok, applyEffects_validate_refused
-graph/src/effects/v3/apply.rs	ApplyError::from	103	PROVEN	From<NodeOpError> (replaces node_op, #2846): okCreate/okDelete refusals surface as ApplyError; faithful: proofs/effects_emit_apply fromNodeOp_spec, idSpaceErrorMap_internal
-graph/src/effects/v3/apply.rs	id_space_error_map	117	PROVEN	faithful: proofs/effects_emit_apply idSpaceErrorMap_injective (divergences), idSpaceErrorMap_internal
-graph/src/effects/v3/apply.rs	apply_record	160	MODELLED	applyRec: ADD_SCHEMA arm = apply_add_schema (applyRec_addLabel_refines); ADD_ATTRIBUTE arm = apply.rs:171 with the 65,535-name cap and AttributeLimitReached refusal (internCap, applyRec_addAttribute_refines, applyRec_addAttribute_full_refused, applyRec_addAttribute_room; emit_apply needs PendingWF.attrsInCap, the master's own AttrNameMap::insert cap); node arms faithful in proofs/effects_emit_apply wf_createOne/wf_deleteNode, checked arms (#3022) apply_wf; DELETE_NODE's require_live = okDelete, NodeHasRelationships vacuous edge-free; emit_apply; okCreate's nodupB ids = the #3298 repeated-id refusal (apply.rs:222; was stricter than the Rust before #3298, now exact) — the CCH index arm (CREATE_INDEX/DROP_INDEX with INDEX_FLD_CCH, #3219) is not modelled yet
-graph/src/effects/v3/apply.rs	apply_add_schema	535	PROVEN	applyRec_addLabel_refines (labels and types; FalkorFaithful.applyAddSchemaF, verifyIdF; no capacity). The attribute path is inline in apply_record (apply.rs:171), not here: its cap and refusal are modelled (internCap, applyRec_addAttribute_refines/_full_refused/_room, internCap_refines)
-graph/src/effects/v3/apply.rs	verify_id	555	PROVEN	applyRec_addLabel_refines (FalkorFaithful.verifyIdF)
-graph/src/effects/v3/apply.rs	verify_schema	578	PROVEN	okCreate label bound; faithful: proofs/effects_emit_apply verifySchema_ok
-graph/src/effects/v3/apply.rs	verify_attribute	598	PROVEN	okCreate attr bound; faithful: proofs/effects_emit_apply verifyAttribute_ok
-graph/src/effects/v3/apply.rs	resolved	610	PROVEN	faithful: proofs/effects_emit_apply resolved_ok
-graph/src/effects/v3/apply.rs	resolve_type	632	PROVEN	faithful: proofs/effects_emit_apply checkedTypeId_ok
-graph/src/effects/v3/apply.rs	checked_type_id	677	PROVEN	faithful: proofs/effects_emit_apply checkedTypeId_ok
-graph/src/effects/v3/apply.rs	checked_label_ids	693	PROVEN	okCreate labels.all (< len); faithful: proofs/effects_emit_apply checkedLabelIds_ok
-graph/src/effects/v3/apply.rs	check_attr_shape	723	PROVEN	okCreate rows = ids*attrs; faithful: proofs/effects_emit_apply checkAttrShape_ok
-graph/src/effects/v3/apply.rs	attr_map	767	PROVEN	faithful: proofs/effects_emit_apply attrMap_row
-graph/src/effects/v3/apply.rs	index_options	810	PROVEN	faithful: proofs/effects_emit_apply indexOptions_spec
-graph/src/effects/v3/apply.rs	single_index_label	841	PROVEN	faithful: proofs/effects_emit_apply singleIndexLabel_ok
+graph/src/effects/v3/apply.rs	ApplyError::from	110	PROVEN	From<NodeOpError> (replaces node_op, #2846): okCreate/okDelete refusals surface as ApplyError; faithful: proofs/effects_emit_apply fromNodeOp_spec, idSpaceErrorMap_internal
+graph/src/effects/v3/apply.rs	id_space_error_map	124	PROVEN	faithful: proofs/effects_emit_apply idSpaceErrorMap_injective (divergences), idSpaceErrorMap_internal
+graph/src/effects/v3/apply.rs	apply_record	167	MODELLED	applyRec: ADD_SCHEMA arm = apply_add_schema (applyRec_addLabel_refines); ADD_ATTRIBUTE arm = apply.rs:171 with the 65,535-name cap and AttributeLimitReached refusal (internCap, applyRec_addAttribute_refines, applyRec_addAttribute_full_refused, applyRec_addAttribute_room; emit_apply needs PendingWF.attrsInCap, the master's own AttrNameMap::insert cap); node arms faithful in proofs/effects_emit_apply wf_createOne/wf_deleteNode, checked arms (#3022) apply_wf; DELETE_NODE's require_live = okDelete, NodeHasRelationships vacuous edge-free; emit_apply; okCreate's nodupB ids = the #3298 repeated-id refusal (apply.rs:222; was stricter than the Rust before #3298, now exact) — the CCH index arm (CREATE_INDEX/DROP_INDEX with INDEX_FLD_CCH, #3219) is not modelled yet
+graph/src/effects/v3/apply.rs	apply_add_schema	543	PROVEN	applyRec_addLabel_refines (labels and types; FalkorFaithful.applyAddSchemaF, verifyIdF; no capacity). The attribute path is inline in apply_record (apply.rs:171), not here: its cap and refusal are modelled (internCap, applyRec_addAttribute_refines/_full_refused/_room, internCap_refines)
+graph/src/effects/v3/apply.rs	verify_id	563	PROVEN	applyRec_addLabel_refines (FalkorFaithful.verifyIdF)
+graph/src/effects/v3/apply.rs	verify_schema	586	PROVEN	okCreate label bound; faithful: proofs/effects_emit_apply verifySchema_ok
+graph/src/effects/v3/apply.rs	verify_attribute	606	PROVEN	okCreate attr bound; faithful: proofs/effects_emit_apply verifyAttribute_ok
+graph/src/effects/v3/apply.rs	resolved	618	PROVEN	faithful: proofs/effects_emit_apply resolved_ok
+graph/src/effects/v3/apply.rs	resolve_type	640	PROVEN	faithful: proofs/effects_emit_apply checkedTypeId_ok
+graph/src/effects/v3/apply.rs	checked_type_id	685	PROVEN	faithful: proofs/effects_emit_apply checkedTypeId_ok
+graph/src/effects/v3/apply.rs	checked_label_ids	701	PROVEN	okCreate labels.all (< len); faithful: proofs/effects_emit_apply checkedLabelIds_ok
+graph/src/effects/v3/apply.rs	check_attr_shape	731	PROVEN	okCreate rows = ids*attrs; faithful: proofs/effects_emit_apply checkAttrShape_ok
+graph/src/effects/v3/apply.rs	attr_map	775	PROVEN	faithful: proofs/effects_emit_apply attrMap_row
+graph/src/effects/v3/apply.rs	index_options	818	PROVEN	faithful: proofs/effects_emit_apply indexOptions_spec
+graph/src/effects/v3/apply.rs	single_index_label	849	PROVEN	faithful: proofs/effects_emit_apply singleIndexLabel_ok
 graph/src/effects/v3/format.rs	EffectsPayload::new_buffer	24	PROVEN	faithful: proofs/effects_codec fmtIsEmpty_iff
 graph/src/effects/v3/format.rs	EffectsPayload::is_empty	29	PROVEN	faithful: proofs/effects_codec fmtIsEmpty_iff
 graph/src/effects/v3/format.rs	EffectsPayload::replicate	34	PROVEN	faithful: proofs/effects_codec fmtReplicate_transparent (sealed payload opens to the records)
