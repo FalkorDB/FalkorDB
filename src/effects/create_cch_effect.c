@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_internal.h"
+#include "writers/effects_writer.h"
 #include "../util/arr.h"
 #include "../schema/schema.h"
 #include "../index/cch_index.h"
@@ -21,28 +22,12 @@ void EffectsBuffer_AddCreateCCHEffect
 	AttributeID       weight_attr, // weight attribute id
 	const char       *weight_name  // weight attribute name
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    effect type
-	//    weight attribute id
-	//    weight attribute name
-	//    relationship-type count
-	//    per relationship type: id, name
-	//--------------------------------------------------------------------------
-
-	EffectType eff_t = EFFECT_CREATE_CCH ;
-	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
-
-	EffectsBuffer_WriteBytes (&weight_attr, sizeof (weight_attr), buff) ;
-	EffectsBuffer_WriteString (weight_name, buff) ;
-
-	EffectsBuffer_WriteBytes (&rel_count, sizeof (rel_count), buff) ;
-	for (uint i = 0 ; i < rel_count ; i++) {
-		EffectsBuffer_WriteBytes (&rel_ids [i], sizeof (rel_ids [i]), buff) ;
-		EffectsBuffer_WriteString (rel_names [i], buff) ;
-	}
-
-	EffectsBuffer_IncEffectCount (buff) ;
+	// forwards to the version's writer; see writers/effects_writer.h
+	//
+	// v2 writes the bytes this file used to write itself; v3 stages the
+	// statement as an index record carrying INDEX_FLD_CCH
+	EffectsBuffer_Writer (buff)->CreateCCH (buff, rel_ids, rel_names, rel_count,
+			weight_attr, weight_name) ;
 }
 
 // process CreateCCH effect: rebuild the definition-only CCH path index on this
