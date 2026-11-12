@@ -32,6 +32,10 @@ typedef struct {
 	ExecutionCtx *exec_ctx;   // execution context
 	CommandCtx *command_ctx;  // command context
 	CronTaskHandle timeout;   // timeout cron task
+	bool enforce_timeout;     // whether a query-execution timeout applies; for a
+	                          // gate-parking reader the timeout is armed only once
+	                          // the read lock is held (see _ExecuteQuery), so the
+	                          // park at the writer gate is not charged against it
 } GraphQueryCtx;
 
 static GraphQueryCtx *GraphQueryCtx_New
@@ -41,7 +45,8 @@ static GraphQueryCtx *GraphQueryCtx_New
 	ExecutionCtx *exec_ctx,
 	CommandCtx *command_ctx,
 	QueryExecutionTypeFlag flags,
-	CronTaskHandle timeout
+	CronTaskHandle timeout,
+	bool enforce_timeout
 ) {
 	GraphQueryCtx *ctx = rm_malloc(sizeof(GraphQueryCtx));
 
@@ -52,6 +57,7 @@ static GraphQueryCtx *GraphQueryCtx_New
 	ctx->query_ctx->flags = flags;
 	ctx->command_ctx      = command_ctx;
 	ctx->timeout          = timeout;
+	ctx->enforce_timeout  = enforce_timeout;
 
 	return ctx;
 }
@@ -229,31 +235,37 @@ static void _ExecuteQuery
 	// reader-pool queries acquire it through the writer gate: they wait out any
 	// writer on this graph that is acquiring the write lock (so they can't slip
 	// in during the writer's GIL hand-off and starve it), then take the read
-	// lock - the whole wait bounded by the query's own timeout so neither the
-	// gate nor writer-preference can block them past their deadline. if that
-	// budget is exhausted the query times out, exactly like a timeout during
-	// execution. writers (EXEC_THREAD_WRITER) and main-thread reads
-	// (EXEC_THREAD_MAIN, which hold the GIL) acquire blocking
-	bool have_read_lock = true ;
+	// lock. this gate wait is pure queue time: it is accounted as WAITING and is
+	// NOT bounded by the query timeout - a reader parks for as long as needed and
+	// is never timed out while merely waiting for a lock it doesn't hold (the same
+	// courtesy a queued writer already gets). writers (EXEC_THREAD_WRITER) and
+	// main-thread reads (EXEC_THREAD_MAIN, which hold the GIL) acquire blocking
+	bool acquired = true ;
 	if (command_ctx->thread == EXEC_THREAD_READER) {
-		have_read_lock = QueryCtx_TimeAcquireReadLock (command_ctx->timeout) ;
+		// a reader held behind a writer parks at the writer gate. that is
+		// queue/wait time, not execution time, and it must NOT consume the query
+		// timeout - a reader shouldn't be penalized for waiting on a lock it does
+		// not yet hold. this mirrors how a queued writer is ResetStage'd back to
+		// WAITING while it waits its turn. so: account the park as WAITING, park
+		// for as long as needed (bounded in practice by the writer completing),
+		// then resume EXECUTING and only now arm the execution timeout - so the
+		// timeout bounds the execution, never the gate wait.
+		QueryCtx_ResetStage (query_ctx) ;          // EXECUTING -> WAITING (park = wait time)
+		acquired = QueryCtx_TimeAcquireReadLock (0) ;  // 0 => block, park as long as needed
+		QueryCtx_AdvanceStage (query_ctx) ;        // WAITING -> EXECUTING
+		if (acquired && gq_ctx->enforce_timeout) {
+			gq_ctx->timeout = Query_SetTimeOut (command_ctx->timeout, plan) ;
+		}
 	} else {
 		QueryCtx_AcquireReadLock () ;
 	}
 
-	if (!have_read_lock) {
-		// couldn't acquire the read lock within the query timeout; report it
-		// like any other query timeout and skip execution.
-		//
-		// cancel the query-timeout cron task armed before execution: skipping
-		// the execution block skips abort_and_check_timeout, so otherwise the
-		// task fires later on the already-freed plan (SIGSEGV in
-		// ExecutionPlan_Drain via Cron_Run)
-		if (gq_ctx->timeout != 0) {
-			Cron_AbortTask (gq_ctx->timeout) ;
-		}
-		ErrorCtx_SetError (EMSG_QUERY_TIMEOUT) ;
-		query_ctx->status = QueryExecutionStatus_TIMEDOUT ;
+	if (!acquired) {
+		// the gate park is unbounded, so a false return is a genuine read-lock
+		// acquisition error (not a timeout) - report it and skip execution rather
+		// than touch the graph without holding the read lock
+		ErrorCtx_SetError (EMSG_READ_LOCK_FAILED) ;
+		query_ctx->status = QueryExecutionStatus_FAILURE ;
 	} else {
 
 		if(exec_type == EXECUTION_TYPE_QUERY) {  // query operation
@@ -296,9 +308,9 @@ static void _ExecuteQuery
 		// only a write has anything to undo. a read reserves no nodes and writes
 		// no undo log, yet QueryCtx_Rollback() unconditionally calls
 		// Graph_ResetReservedNode(), zeroing the GRAPH-GLOBAL reserved-node
-		// counter - so rolling back a read (one that timed out at the writer
-		// gate, or errored mid-execution) would wipe a concurrent CREATE's
-		// reservation and underflow its commit. skip the rollback for reads
+		// counter - so rolling back a read (one that timed out or errored
+		// mid-execution) would wipe a concurrent CREATE's reservation and
+		// underflow its commit. skip the rollback for reads
 		if (!readonly) {
 			QueryCtx_Rollback () ;
 			// the mutations were undone; discard any pending CCH maintenance
@@ -403,21 +415,43 @@ static bool _DelegateQuery
 	// delegate query to the current graph writer thread
 	//--------------------------------------------------------------------------
 
-	// clear this thread data
-	ErrorCtx_Clear();
-	QueryCtx_RemoveFromTLS();
+	// capture the CommandCtx before the query is enqueued: the instant the
+	// query is queued the writer thread owns gq_ctx and may dequeue, execute
+	// and free it, so gq_ctx must not be dereferenced afterwards
+	CommandCtx *command_ctx = gq_ctx->command_ctx;
 
-	// untrack the CommandCtx
-	Globals_UntrackCommandCtx(gq_ctx->command_ctx);
-
-	// update execution thread to writer
-	gq_ctx->command_ctx->thread = EXEC_THREAD_WRITER;
-
-	// reset query stage from executing back to waiting
+	// mark the query as writer-bound and regress its stage from executing back
+	// to waiting *before* enqueuing: once queued another thread can dequeue and
+	// run it immediately, and _ExecuteQuery only re-establishes TLS / command
+	// tracking when it observes EXEC_THREAD_WRITER and advances a WAITING stage
+	command_ctx->thread = EXEC_THREAD_WRITER;
 	QueryCtx_ResetStage(gq_ctx->query_ctx);
 
-	// queue query
-	return GraphContext_EnqueueWriteQuery(gc, gq_ctx);
+	// queue query - this is the only operation here that can fail
+	if (!GraphContext_EnqueueWriteQuery(gc, gq_ctx)) {
+		// the write queue is full: delegation failed and this thread still owns
+		// gq_ctx. tear NOTHING down - restore only the thread/stage we mutated
+		// above - so the caller's cleanup path reports the error through this
+		// thread's still-present QueryCtx and untracks its still-tracked CommandCtx
+		command_ctx->thread = EXEC_THREAD_READER;
+		QueryCtx_AdvanceStage(gq_ctx->query_ctx);  // waiting -> executing
+		return false;
+	}
+
+	// delegation succeeded: hand off to the writer thread. tear down this thread's
+	// state ONLY here, on success, and AFTER the enqueue - NEVER before it:
+	//   - removing the QueryCtx/tracking before the enqueue would leave the
+	//     queue-full failure path above (which jumps to cleanup) reporting through
+	//     a missing QueryCtx -> the exact NULL-deref crash this fix exists to stop.
+	//   - do NOT untrack before the enqueue either: that was tried to close a
+	//     GRAPH.INFO use-after-free window, but it regressed the queue-full crash
+	//     under sustained saturation. the untrack stays here, after a successful
+	//     enqueue, and uses the captured command_ctx (gq_ctx may already be freed).
+	ErrorCtx_Clear();
+	Globals_UntrackCommandCtx(command_ctx);
+	QueryCtx_RemoveFromTLS();
+
+	return true;
 }
 
 // process all queued write queries
@@ -603,7 +637,17 @@ void _query
 						   !index_op                             &&
 						   (readonly || command_ctx->timeout_rw) &&
 						   !command_ctx->replicated_command ;
-	if (enforce_timeout) {
+	// only a pooled READER parks at the writer gate; for it, defer arming the
+	// timeout to _ExecuteQuery (after the read lock is held) so the gate park isn't
+	// charged against the budget. everyone else arms now.
+	//
+	// gate on `readonly`, NOT on command_ctx->thread: at dispatch a write is also
+	// EXEC_THREAD_READER (cmd_dispatcher) and only becomes EXEC_THREAD_WRITER later
+	// in _DelegateQuery - so keying off the thread here would wrongly defer writes,
+	// which then never hit the reader-only deferred-arm path and would run with NO
+	// execution timeout at all.
+	bool defer_for_gate = readonly && command_ctx->thread == EXEC_THREAD_READER ;
+	if (enforce_timeout && !defer_for_gate) {
 		timeout_task = Query_SetTimeOut (command_ctx->timeout, exec_ctx->plan) ;
 	}
 
@@ -616,7 +660,8 @@ void _query
 		flags |= QueryExecutionTypeFlag_PROFILE ;
 	}
 	GraphQueryCtx *gq_ctx =
-		GraphQueryCtx_New (gc, ctx, exec_ctx, command_ctx, flags, timeout_task) ;
+		GraphQueryCtx_New (gc, ctx, exec_ctx, command_ctx, flags, timeout_task,
+				enforce_timeout) ;
 
 	// if 'thread' is redis main thread, continue running
 	// if readonly is true we're executing on a worker thread from
@@ -632,7 +677,14 @@ void _query
 		// thread failed getting exclusive write access to graph
 		// delegate query to current writer
 		if (!_DelegateQuery (gc, gq_ctx)) {
+			// the write queue is full; delegation failed and left this thread's
+			// TLS QueryCtx / CommandCtx tracking intact, so the shared cleanup
+			// below can safely report the error back to the client
 			ErrorCtx_SetError (EMSG_WRITE_QUEUE_FULL) ;
+
+			// the query was never enqueued - free the container here (exec_ctx
+			// is released by the cleanup path)
+			GraphQueryCtx_Free (gq_ctx) ;
 
 			// counter to GraphContext_IncreaseRefCount just above
 			GraphContext_DecreaseRefCount (gc) ;

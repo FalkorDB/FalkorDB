@@ -22,6 +22,7 @@ CommandCtx *CommandCtx_New
 	GraphContext *graph_ctx,        // graph context
 	ExecutorThread thread,          // which thread executes this command
 	bool replicated_command,        // whether this instance was spawned by a replication command
+	bool log_query,                 // log the query to telemetry once it finishes
 	bool compact,                   // whether this query was issued with the compact flag
 	long long timeout,              // the query timeout, if specified
 	bool timeout_rw,                // apply timeout on both read and write queries
@@ -39,6 +40,7 @@ CommandCtx *CommandCtx_New
 	context->thread             = thread;
 	context->compact            = compact;
 	context->timeout            = timeout;
+	context->log_query          = log_query;
 	context->ref_count          = ATOMIC_VAR_INIT(1);
 	context->graph_ctx          = graph_ctx;
 	context->timeout_rw         = timeout_rw;
@@ -189,7 +191,14 @@ void CommandCtx_Free
 ) {
 	// decrement reference count
 	int prev_ref = atomic_fetch_sub (&cmd_ctx->ref_count, 1) ;
-	ASSERT (prev_ref < 3) ;
+	// a valid decrement always observes a positive reference count; a
+	// non-positive value means a double free / use-after-free. there is no small
+	// fixed upper bound to assert against: during write delegation one command
+	// briefly occupies BOTH the reader and the writer tracking slots (so a single
+	// Globals_GetCommandCtxs snapshots it twice), and any number of concurrent
+	// GRAPH.INFO callers can each hold a snapshot reference, so the live count is
+	// bounded only by the thread count
+	ASSERT (prev_ref >= 1) ;
 
 	if (prev_ref == 1) {
 		// reference count is zero, free command context

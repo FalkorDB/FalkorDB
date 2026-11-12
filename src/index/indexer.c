@@ -5,8 +5,12 @@
  */
 
 #include "indexer.h"
+#include "../globals.h"
 #include "../redismodule.h"
 #include "../util/rmalloc.h"
+#include "../configuration/config.h"
+#include <time.h>
+#include <errno.h>
 #include <assert.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -137,6 +141,95 @@ static void _Indexer_ClearTasks(void) {
 	INDEXER_UNLOCK_QUEUE () ;
 }
 
+// acquire gc's WRITE lock from the indexer thread while keeping the server
+// responsive.
+//
+// the indexer finishes an index build by flipping it active under both the GIL
+// and the graph write lock. a plain "lock the GIL, then block on the write lock"
+// pins the GIL for as long as an in-flight long read holds the read lock,
+// freezing the whole server until that read drains. instead we wait for the
+// write lock in WRITE_LOCK_POLL_INTERVAL ms slices: each attempt parks on the
+// lock for at most that long holding the GIL, then releases the GIL and sleeps
+// 1ms off-CPU so the main thread wins it and serves commands, then retries. a
+// reader flood can't starve the wait: after a couple of slices the writer gate
+// is engaged so new reader-queries park instead of extending it during the
+// hand-offs. this reuses the same GraphContext_TimeAcquireWriteLock primitive and
+// writer gate as QueryCtx_AcquireWriteLock rather than duplicating a lock API.
+//
+// MUST run off the Redis main thread: it acquires the GIL, which the main thread
+// already holds - re-acquiring it there would deadlock. the indexer always runs
+// on its own worker thread, so this holds (asserted below).
+//
+// rm_ctx must be UNLOCKED on entry; on return the caller holds BOTH the GIL
+// (rm_ctx locked) and gc's write lock, to be released with
+// GraphContext_ReleaseLock + RedisModule_ThreadSafeContextUnlock.
+static void _indexer_acquire_write_lock
+(
+	GraphContext   *gc,     // graph to lock
+	RedisModuleCtx *rm_ctx  // indexer-owned thread-safe context, unlocked on entry
+) {
+	ASSERT (gc     != NULL) ;
+	ASSERT (rm_ctx != NULL) ;
+	// acquiring the GIL on the main thread (which already holds it) would deadlock
+	ASSERT (pthread_equal (Globals_Get_MainThreadId (), pthread_self ()) == 0) ;
+
+	int64_t poll_interval ;
+	Config_Option_get (Config_WRITE_LOCK_POLL_INTERVAL, &poll_interval) ;
+
+	// legacy / disabled: single blocking acquire holding the GIL - the exact
+	// behavior prior to this change (the server may stall until readers drain)
+	if (poll_interval <= 0) {
+		RedisModule_ThreadSafeContextLock (rm_ctx) ;
+		GraphContext_AcquireWriteLock (gc) ;
+		return ;
+	}
+
+	const struct timespec yield = { 0, 1000000 } ;  // 1ms GIL hand-off
+	const int GATE_THRESHOLD = 2 ;  // slices to tolerate before gating
+	int  slices       = 0 ;
+	bool gate_engaged = false ;
+
+	while (true) {
+		// hold the GIL for a single bounded attempt on the write lock
+		RedisModule_ThreadSafeContextLock (rm_ctx) ;
+		int rc = GraphContext_TimeAcquireWriteLock (gc, poll_interval) ;
+		if (rc == 0) {
+			// success: return holding BOTH the GIL and the write lock
+			if (gate_engaged) {
+				GraphContext_WriterGateLeave (gc) ;
+			}
+			return ;
+		}
+
+		// couldn't get it this slice: drop the GIL so the main thread runs
+		RedisModule_ThreadSafeContextUnlock (rm_ctx) ;
+
+		if (rc != ETIMEDOUT) {
+			// an unexpected lock error (should never happen for a valid rwlock).
+			// do NOT spin on it forever, and do NOT leave the gate engaged - that
+			// would block every reader on this graph indefinitely. release the
+			// gate, then fall back to a single blocking acquire so the index build
+			// still completes and we still return holding the GIL + write lock.
+			if (gate_engaged) {
+				GraphContext_WriterGateLeave (gc) ;
+			}
+			RedisModule_ThreadSafeContextLock (rm_ctx) ;
+			GraphContext_AcquireWriteLock (gc) ;
+			return ;
+		}
+
+		// timed out this slice - once pushed back far enough, close the gate so
+		// new readers stop extending the wait during our hand-offs
+		if (!gate_engaged && ++slices >= GATE_THRESHOLD) {
+			GraphContext_WriterGateEnter (gc) ;
+			gate_engaged = true ;
+		}
+
+		// sleep off-CPU so the main thread wins the GIL between slices
+		nanosleep (&yield, NULL) ;
+	}
+}
+
 // index populate task handler
 static void _indexer_idx_populate
 (
@@ -145,19 +238,35 @@ static void _indexer_idx_populate
 	Index idx = ctx->idx;
 	GraphContext *gc = ctx->gc;
 
-	// populate index
+	// populate index - runs lock-free, this is the heavy part
 	Index_Populate (idx, gc) ;
 
-	// we're required to hold both GIL and write lock
-	// as Schema_ActivateIndex might drop an index
+	// we're required to hold both the GIL and the write lock, as
+	// Schema_ActivateIndex might drop an index.
+	//
+	// acquire them responsively: a plain blocking acquire would pin the GIL while
+	// an in-flight long read holds the read lock, freezing the whole server until
+	// that read drains. instead we wait for the write lock in slices, yielding the
+	// GIL between attempts so the server stays responsive the whole time. on
+	// return we hold BOTH the GIL and the write lock.
 	RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext(NULL);
-	RedisModule_ThreadSafeContextLock(rm_ctx);
-	GraphContext_AcquireWriteLock (gc) ;
+	_indexer_acquire_write_lock (gc, rm_ctx) ;
 
 	// index populated, try to enable
 	Index_Enable(idx);
 
-	if(Index_Enabled(idx)) {
+	// only activate if this index is still the schema's pending index.
+	//
+	// _indexer_acquire_write_lock yields the GIL while it waits, so a concurrent
+	// DROP/CREATE INDEX on the main thread may have mutated this schema's index
+	// while we were blocked. the index object itself can't be freed under us - all
+	// Index_Free calls are serialized on this single indexer thread, which is busy
+	// here - but the schema's pending slot may have been disconnected (field count
+	// reached 0) or had a newer change queued behind us. pending_changes (bumped by
+	// every such change before it reschedules work) keeps Index_Enabled false in
+	// that case; the identity check additionally guards against activating an index
+	// that is no longer the schema's pending one.
+	if(Index_Enabled(idx) && PENDING_IDX(ctx->s) == idx) {
 		Schema_ActivateIndex(ctx->s);
 	}
 

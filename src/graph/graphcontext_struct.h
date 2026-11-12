@@ -22,13 +22,28 @@ typedef struct GraphContext {
 	bool writelocked;                      // true if the read-write lock was
 										   // acquired by a writer
 
-	// writer gate: while a writer on this graph is waiting for the write lock,
-	// new reader-queries park here instead of taking the read lock, so they
-	// can't slip in during the writer's GIL hand-off and starve it. per-graph,
-	// so writers / readers on other graphs are unaffected
-	pthread_mutex_t writer_gate_mutex;     // guards writer_waiting
-	pthread_cond_t  writer_gate_cond;      // signaled when writer_waiting clears
-	bool            writer_waiting;        // a writer is acquiring the write lock
+	// writer gate (anti-starvation): engaged LAZILY - set only once a writer on
+	// this graph has been pushed back GATE_THRESHOLD write-lock acquire slices
+	// (the signature of a sustained read flood), or immediately in legacy mode.
+	// while engaged, new reader-queries park here instead of taking the read
+	// lock, so they can't slip in during the writer's GIL hand-offs and starve
+	// it. per-graph, so writers / readers on other graphs are unaffected
+	pthread_mutex_t writer_gate_mutex;     // guards the gate condvar wait/signal
+	pthread_cond_t  writer_gate_cond;      // signaled when the gate clears
+	atomic_uint     writer_gate_waiters;   // number of writers that have engaged the
+	                                       // gate (done lazily, after a couple of
+	                                       // slices still waiting for this graph's
+	                                       // write lock). > 0 means the gate is
+	                                       // engaged: new reader-queries park
+	                                       // instead of taking the read lock. atomic
+	                                       // so readers fast-path past the gate
+	                                       // (== 0) without the mutex; mutated only
+	                                       // under writer_gate_mutex so the condvar
+	                                       // predicate is safe. a count (not a bool)
+	                                       // lets overlapping writers - a query writer
+	                                       // and the indexer, or two query writers -
+	                                       // avoid clearing each other's gate: it
+	                                       // clears only when the last waiter leaves
 
 	int ref_count;                         // number of active references
 	char **attributes;                     // graph's attributes, attribute id
