@@ -380,6 +380,10 @@ class testProcedures(FlowTestsBase):
             ["READ", "dbms.functions"],
             ["READ", "dbms.procedures"],
         ]
+        if INDEX_FALKORDB:
+            # The CCH index's procedure exists only with index-falkordb.
+            at = expected_result.index(["READ", "db.constraints"]) + 1
+            expected_result.insert(at, ["READ", "db.idx.cch.query"])
         self.env.assertEqual(actual_resultset, expected_result)
 
     def test12_list_functions(self):

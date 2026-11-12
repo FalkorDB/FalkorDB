@@ -15,6 +15,7 @@
 //!  db.meta.stats()                          {labels, relTypes, nodeCount,.. } graph statistics
 //!  db.idx.fulltext.createNodeIndex(map)     (none)                          write procedure
 //!  db.idx.fulltext.queryNodes(label, query) {node, score}                   not yet supported
+//!  db.idx.cch.query(map)                    {pathWeight, path}              CCH shortest path
 //! ```
 //!
 //! Read-only procedures are registered with `write = false`; the
@@ -25,6 +26,10 @@
 
 use super::{
     FnArguments, FnType, Functions, Type, empty_procedure_batch, get_functions, get_udf_functions,
+};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::cch::procedure::{
+    cch_index_rows, cch_query_rows, parse_cch_query_config,
 };
 use crate::{
     index::indexer::{IndexInfo, IndexType},
@@ -267,6 +272,20 @@ pub fn register(funcs: &mut Functions) {
                             col_info.push(Value::Map(Arc::new(info_map)));
             }
 
+            // Graph-level CCH indexes come after the RediSearch-backed ones, like C.
+            #[cfg(feature = "index-falkordb")]
+            for row in cch_index_rows(&runtime.graph()) {
+                col_label.push(row.label);
+                col_properties.push(row.properties);
+                col_types.push(row.types);
+                col_options.push(Value::Map(Arc::new(OrderMap::default())));
+                col_language.push(Value::String(Arc::new(String::new())));
+                col_stopwords.push(Value::List(Arc::new(thin_vec![])));
+                col_entitytype.push(Value::String(Arc::new(String::from("RELATIONSHIP"))));
+                col_status.push(row.status);
+                col_info.push(Value::Map(Arc::new(OrderMap::default())));
+            }
+
             Ok(Batch::from_columns([
                 Column::Values(col_label),
                 Column::Values(col_properties),
@@ -389,6 +408,40 @@ pub fn register(funcs: &mut Functions) {
         procedure: ["relationship", "score"],
         fn db_vector_query_relationships(_, _) {
             Err(String::from("db.idx.vector.queryRelationships() is rewritten by the planner"))
+        }
+    );
+
+    // ── db.idx.cch.query ────────────────────────────────────────────────
+    // CALL db.idx.cch.query({sourceNode, targetNode, relTypes, weightProp})
+    //      YIELD pathWeight, path
+    //
+    // Read-only (usable in GRAPH.RO_QUERY): the hierarchy is a side index, not
+    // a graph mutation. Argument validation mirrors C's `_read_config`
+    // (proc_cch_idx_query.c) error-for-error; then the index for exactly that
+    // definition answers the query (`cch_query_rows`).
+    // Registered only in a build with the `index-falkordb` feature, which has the index.
+    #[cfg(feature = "index-falkordb")]
+    cypher_fn!(funcs, "db.idx.cch.query",
+        args: [Type::Map],
+        ret: Type::Any,
+        procedure: ["pathWeight", "path"],
+        fn db_idx_cch_query(runtime, args) {
+            let config = parse_cch_query_config(&runtime.graph(), args)?;
+            // Inside a write query, every `Commit` before this read has flushed what it
+            // touched, so the index already reflects the query's earlier writes.
+            let g = runtime.graph();
+            // The fallback search can be long on a large graph: it honours the query's
+            // timeout and memory cap, as `algo.SPpaths` does.
+            let mut poll = || {
+                runtime.check_timeout()?;
+                runtime.check_mem_capacity()
+            };
+            let rows = cch_query_rows(&g, &config, &mut poll)?;
+            let (weights, paths): (Vec<Value>, Vec<Value>) = rows.into_iter().unzip();
+            Ok(Batch::from_columns([
+                Column::Values(weights),
+                Column::Values(paths),
+            ]))
         }
     );
 

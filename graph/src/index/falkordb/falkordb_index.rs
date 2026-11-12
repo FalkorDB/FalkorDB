@@ -1199,6 +1199,15 @@ impl FalkorDbIndex {
         CchIndex::entry(self, def)
     }
 
+    /// The entry held over `def` in any state, to change: for tests that set a state.
+    #[cfg(test)]
+    pub(crate) fn cch_entry_mut(
+        &mut self,
+        def: &CchIndexDef,
+    ) -> Option<&mut IndexEntry<CchIndex>> {
+        CchIndex::entry_mut(self, def)
+    }
+
     /// The index held over exactly `def`, if it is ready to answer: an entry still building, or
     /// whose build failed, is not returned.
     #[cfg(test)]
