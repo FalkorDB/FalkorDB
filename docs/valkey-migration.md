@@ -64,6 +64,13 @@ With a password, pass `-e REDISCLI_AUTH=<password>` to each `docker exec`
    docker exec falkordb redis-cli SAVE
    ```
 
+   With AOF off, stop and remove the Redis container now, so Valkey does not
+   share the volume with it and the name is free for step 3:
+
+   ```sh
+   docker stop falkordb && docker rm falkordb
+   ```
+
    With AOF on, also rewrite the AOF. `BGREWRITEAOF` is asynchronous, and a
    rewrite already running may still hold the streams you deleted. Check
    `INFO persistence` until `aof_rewrite_in_progress` and
