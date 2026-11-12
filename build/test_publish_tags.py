@@ -128,6 +128,13 @@ class MovesLatest(unittest.TestCase):
             with self.subTest(version=version), self.assertRaises(pt.PlanError):
                 pt.release_plan(version, SHA, [])
 
+    def test_a_version_whose_per_os_tag_docker_would_refuse(self):
+        # Fits as 6.1.0-rc.<long>-valkey, but not with -amazonlinux2023-valkey.
+        version = "6.1.0-rc." + "1" * 100
+        for plan in (lambda: pt.release_plan(version, SHA, []), lambda: pt.per_os_plan(version)):
+            with self.assertRaisesRegex(pt.PlanError, "not a valid Docker tag"):
+                plan()
+
     def test_rebuild_refuses_latest_where_a_release_would_not_move_it(self):
         rels = RELEASES + [release("v6.1.0"), release("v6.0.5"), release("v6.2.0", draft=True)]
         for tag in ("6.0.5", "6.2.0", "6.1.0-rc.1", "edge-test"):

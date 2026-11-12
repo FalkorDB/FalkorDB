@@ -113,10 +113,21 @@ def check_no_server_suffix(name: str, what: str) -> None:
         raise PlanError(f"{what} '{name}' ends in a server name; the server is added to each tag pushed")
 
 
+# Docker's tag grammar, 128 characters at most.
+DOCKER_TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
+
+
 def check_version(version: str) -> None:
     if parse_version(version) is None:
         raise PlanError(f"version '{version}' is not X.Y.Z[-prerelease] (no leading v)")
     check_no_server_suffix(version, "version")
+    # The release and per-OS steps run apart, so both refuse a version whose
+    # longest tag, a per-OS one, Docker would refuse: neither may push its
+    # tags and leave the other to fail.
+    for os_name, server in PER_OS:
+        tag = f"{version}-{os_name}-{server}"
+        if not DOCKER_TAG_RE.fullmatch(tag):
+            raise PlanError(f"version '{version}' would publish '{tag}', which is not a valid Docker tag")
 
 
 def is_prerelease(version: str) -> bool:
@@ -205,10 +216,6 @@ def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[d
                 "with a published GitHub release"
             )
     return _named_plan(tag, lambda repo, server: f"{GHCR}/{repo}:rc-rebuild-{sha}-{server}", latest)
-
-
-# Docker's tag grammar, 128 characters at most.
-DOCKER_TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 
 
 def _named_plan(name: str, source: Callable, latest: bool) -> list:
