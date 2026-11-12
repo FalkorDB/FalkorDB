@@ -6,7 +6,7 @@
 //! Layout (one file per area, so changes to different areas do not touch each other's files):
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
 //! - `nd.rs`        the nested-dissection call behind Phase 1's ordering
-//! - `customize.rs` Phase 2: customization (#3209)
+//! - `customize.rs` Phase 2: customization (#3209), and `WeightArr`, the metric's storage
 //! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
