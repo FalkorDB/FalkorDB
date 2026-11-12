@@ -385,14 +385,14 @@ pub(crate) struct CchIndex {
     pub def: CchIndexDef,
     pub(crate) hierarchy: Hierarchy,
     /// Builds started again in a row because writes committed during them could not be taken
-    /// ([`Absorbed::Restart`]). An adoption resets it; past [`MAX_REDOS`] the build is given up
+    /// ([`Absorbed::Restart`]). An adoption resets it; at [`MAX_REDOS`] the build is given up
     /// as failed, so writes faster than a build cannot keep it building for as long as they
     /// last.
     redos: u8,
 }
 
-/// How many builds in a row writers may overtake with a change the hierarchy cannot take before
-/// the index is given up as failed.
+/// How many builds in a row writers may overtake with a change the hierarchy cannot take: the
+/// index is given up as failed at the last of them, after `MAX_REDOS - 1` restarts.
 const MAX_REDOS: u8 = 5;
 
 /// The reason a build given up after [`MAX_REDOS`] restarts is failed with.
@@ -510,7 +510,10 @@ impl VersionedIndex for CchIndex {
     /// Take the edges the fork wrote (`written`): their pairs in `published` (an edge the fork
     /// deleted) and in `fork` (one it created or reweighted), seeded from `fork`. A change the
     /// hierarchy cannot take starts another build, under a new generation
-    /// ([`Absorbed::Restart`]). A copy still `Building`, or failed, takes nothing.
+    /// ([`Absorbed::Restart`]). So does an error taking them (a resource, a bug): it is not the
+    /// writer's fault, and the hierarchy is healthy, so the builder builds it again rather than
+    /// the index being failed, as a flush that cannot update an index hands it to the builder
+    /// ([`maint::flush`]). A copy still `Building`, or failed, takes nothing.
     fn writer_rebase(
         &mut self,
         state: &BuildState<()>,
@@ -522,7 +525,12 @@ impl VersionedIndex for CchIndex {
         if written.is_empty() || matches!(state, BuildState::Building { .. }) {
             return Absorbed::Yes;
         }
-        let absorbed = self.absorb(def, written, published, fork);
+        let absorbed = self
+            .absorb(def, written, published, fork)
+            .unwrap_or_else(|_| {
+                self.hierarchy = Hierarchy::Pending;
+                Absorbed::Restart(())
+            });
         if absorbed == Absorbed::Restart(()) {
             // Another generation: its own count of restarts.
             self.redos = 0;
@@ -534,8 +542,10 @@ impl VersionedIndex for CchIndex {
     /// writers wrote since (`written`): their pairs in `batch_version` (an edge deleted since)
     /// and in `published` (one created or reweighted since), seeded from `published`. A change
     /// the hierarchy cannot take starts the build again under the same generation, so the same
-    /// job reads a newer version ([`Absorbed::Restart`]); after [`MAX_REDOS`] in a row the
-    /// index is given up as failed instead.
+    /// job reads a newer version ([`Absorbed::Restart`]); the [`MAX_REDOS`]-th build in a row
+    /// overtaken that way gives the index up as failed instead. An error taking the edges (a
+    /// resource, a bug) is this build's result, held as failed with its reason, as a build that
+    /// fails is.
     fn indexer_catch_up(
         &mut self,
         _state: &BuildState<()>,
@@ -548,8 +558,14 @@ impl VersionedIndex for CchIndex {
             self.redos = 0;
             return Absorbed::Yes;
         }
-        let absorbed = self.absorb(def, written, batch_version, published);
-        if absorbed == Absorbed::Restart(()) && self.redos > MAX_REDOS {
+        let absorbed = match self.absorb(def, written, batch_version, published) {
+            Ok(absorbed) => absorbed,
+            Err(cause) => {
+                self.hierarchy = Hierarchy::Failed(Arc::from(cause.to_string()));
+                return Absorbed::Yes;
+            }
+        };
+        if absorbed == Absorbed::Restart(()) && self.redos >= MAX_REDOS {
             self.hierarchy = Hierarchy::Failed(Arc::from(OVERTAKEN));
             return Absorbed::Yes;
         }
@@ -621,34 +637,34 @@ impl VersionedIndex for CchIndex {
 impl CchIndex {
     /// Take the edges `written` between `before` and `after` into this copy's hierarchy
     /// (`maint::absorb`). A hierarchy that cannot take them is dropped, and the build starts
-    /// again: [`Absorbed::Restart`], counted in [`Self::redos`]. One that fails for another
-    /// reason (a bug, a resource) is failed with it. A failed copy takes nothing.
+    /// again: [`Absorbed::Restart`], counted in [`Self::redos`]. A failed copy takes nothing.
+    ///
+    /// # Errors
+    /// What `maint::absorb` reports (a resource, a bug), with this copy unchanged: the caller
+    /// answers it, a writer's rebase by starting the build again, a build's commit by holding
+    /// the index failed.
     fn absorb(
         &mut self,
         def: &CchIndexDef,
         written: &RoaringTreemap,
         before: &Graph,
         after: &Graph,
-    ) -> Absorbed<()> {
+    ) -> Result<Absorbed<()>, CchError> {
         let Hierarchy::Built(cch) = &self.hierarchy else {
-            return Absorbed::Yes;
+            return Ok(Absorbed::Yes);
         };
-        match maint::absorb(cch, def, written, before, after) {
-            Ok(Some(updated)) => {
+        Ok(match maint::absorb(cch, def, written, before, after)? {
+            Some(updated) => {
                 self.hierarchy = Hierarchy::Built(Arc::new(updated));
                 self.redos = 0;
                 Absorbed::Yes
             }
-            Ok(None) => {
+            None => {
                 self.hierarchy = Hierarchy::Pending;
                 self.redos = self.redos.saturating_add(1);
                 Absorbed::Restart(())
             }
-            Err(cause) => {
-                self.hierarchy = Hierarchy::Failed(Arc::from(cause.to_string()));
-                Absorbed::Yes
-            }
-        }
+        })
     }
 }
 

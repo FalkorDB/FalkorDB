@@ -259,7 +259,7 @@ mod background_build {
     use crate::graph::graphblas::matrix::Matrix;
     use crate::graph::mvcc_graph::MvccGraph;
     use crate::index::falkordb::cch::testkit::{INDEXED, RealEdge, index_def, real_graph, weights};
-    use crate::index::falkordb::cch::{CchIndexDef, Hierarchy};
+    use crate::index::falkordb::cch::{CchError, CchIndexDef, Hierarchy, maint};
     use crate::index::falkordb::online_build::{Job, Sizing, Step};
     use crate::index::falkordb::versioned::{BuildState, IndexId};
     use crate::index::index_docs::IndexDocs;
@@ -560,8 +560,9 @@ mod background_build {
         assert_eq!(cch.query(0, 3).map(|(weight, _)| weight), Some(0.5));
     }
 
-    /// Writers that overtake every build with a change it cannot take: after `MAX_REDOS` (5)
-    /// restarts the index is given up as failed, with that reason, and no job runs for it.
+    /// Writers that overtake every build with a change it cannot take: the `MAX_REDOS`-th (5th)
+    /// build in a row overtaken that way gives the index up as failed, after four restarts,
+    /// with that reason, and no job runs for it.
     #[test]
     fn a_build_overtaken_too_often_is_failed() {
         let (host, def, attr) = host("cch_bg_redos");
@@ -589,14 +590,7 @@ mod background_build {
         }
         assert_eq!(
             steps,
-            [
-                Step::More,
-                Step::More,
-                Step::More,
-                Step::More,
-                Step::More,
-                Step::Done
-            ]
+            [Step::More, Step::More, Step::More, Step::More, Step::Done]
         );
         let published = host.mvcc.read();
         let entry = published.falkordb_index.cch_entry(&def).expect("held");
@@ -649,6 +643,36 @@ mod background_build {
                 assert_queries_match(cch, &oracle(10.0));
             }
         }
+    }
+
+    /// A writer whose rebase onto an adoption fails to take its writes (a resource limit, a bug)
+    /// does not fail the healthy index: the index goes back to `Building` under a new
+    /// generation, the builder builds it again, and the result has the writer's write.
+    #[test]
+    fn a_rebase_that_cannot_take_its_writes_restarts_the_build() {
+        let (host, def, attr) = host("cch_bg_rebase_error");
+        create(&host, &def);
+        let mut fork = host.mvcc.fork();
+        set_first_weight(&mut fork, attr, 10.0);
+        assert_eq!(job(&host, &def).step(), Step::Done);
+        let adopted = host
+            .mvcc
+            .read()
+            .falkordb_index
+            .cch_entry(&def)
+            .expect("held")
+            .generation;
+        maint::fail_next_update(CchError::Internal("injected"));
+        host.mvcc.rebase_onto_indexer_batches(&mut fork);
+        host.mvcc.commit(fork).expect("the writer commits");
+        let published = host.mvcc.read();
+        let entry = published.falkordb_index.cch_entry(&def).expect("held");
+        assert!(entry.is_building() && entry.generation != adopted);
+        assert_eq!(entry.index.failure(), None);
+        assert_eq!(job(&host, &def).step(), Step::Done);
+        let built = host.mvcc.read();
+        let cch = built.cch_index(&def).expect("built").cch().expect("built");
+        assert_queries_match(cch, &oracle(10.0));
     }
 
     /// Random writes, weight changes and new edges among the existing nodes, before a build

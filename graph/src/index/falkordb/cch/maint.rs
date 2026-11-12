@@ -456,7 +456,8 @@ pub(crate) enum Update {
 /// An index that cannot be updated in place for any other reason (a resource limit, a bug in
 /// the update) is not the write's fault: it is handed to the builder as for
 /// [`Update::Rebuild`], and the write goes on. The builder builds it from scratch, or holds it
-/// `FAILED` with the reason.
+/// `FAILED` with the reason. A writer whose fork a build's adoption overtook answers an error
+/// taking its writes the same way ([`CchIndex::writer_rebase`](super::CchIndex)).
 ///
 /// Every update is computed before any entry is changed, so on error none is.
 ///
@@ -586,9 +587,10 @@ fn update(
 /// Take edges written between two versions into a hierarchy that holds `before`'s edges or
 /// later ones: for a build's commit (`before` its version, `after` the published one) and for a
 /// writer's rebase onto an adoption (`before` the published version, `after` the writer's
-/// fork). Each id in `written` is classified, as a write to a built index is, by its pair in
-/// `before` (an edge deleted since) and in `after` (one created or reweighted since), if the
-/// edge is of an indexed type there; the update then runs over `after`. `None`: the hierarchy
+/// fork). Each id in `written` is recorded as a write to a built index is, if the edge is of an
+/// indexed type there: its pair in `before` (an edge deleted since) as a deletion, never
+/// structural, and its pair in `after` (one created or reweighted since) classified against
+/// the hierarchy; the update then runs over `after`. `None`: the hierarchy
 /// cannot take them, and only a build can ([`Update::Rebuild`]).
 ///
 /// # Errors
@@ -601,15 +603,20 @@ pub(crate) fn absorb(
     after: &Graph,
 ) -> Result<Option<Cch>, CchError> {
     let mut changes = CchChanges::default();
+    let indexed_endpoints = |version: &Graph, id: u64| {
+        let (u, v) = version.endpoints_for_edge(id)?;
+        let edge_type = version.get_relationship_type_id(RelationshipId::from(id));
+        def.rel_types().contains(&edge_type).then_some((u, v))
+    };
     for id in written {
-        for version in [before, after] {
-            let Some((u, v)) = version.endpoints_for_edge(id) else {
-                continue;
-            };
-            let edge_type = version.get_relationship_type_id(RelationshipId::from(id));
-            if def.rel_types().contains(&edge_type) {
-                changes.classify(hierarchy, u, v);
-            }
+        // The pair as it was: an edge deleted (or its id reused) since. Never structural,
+        // as for a deletion the flush records: the arc stays, reseeded from `after`.
+        if let Some((u, v)) = indexed_endpoints(before, id) {
+            changes.push(u, v);
+        }
+        // The pair as it is now: an edge created or reweighted since.
+        if let Some((u, v)) = indexed_endpoints(after, id) {
+            changes.classify(hierarchy, u, v);
         }
         if changes.structural {
             return Ok(None);
@@ -652,6 +659,13 @@ fn index_name(
         .collect::<Vec<_>>()
         .join("|");
     format!("(:{types} {{{}}})", attribute_name(g, def.weight_attr))
+}
+
+/// Make the next update on this thread (a flush's or a catch-up's) fail with `cause`, as a
+/// resource limit or a bug would, for tests elsewhere in the crate.
+#[cfg(test)]
+pub(crate) fn fail_next_update(cause: CchError) {
+    tests::FAIL_UPDATE.set(Some(cause));
 }
 
 /// Every update [`flush`] made on this thread so far, and how many scoped attempts met a pair
