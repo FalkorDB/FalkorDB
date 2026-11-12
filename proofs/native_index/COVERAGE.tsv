@@ -339,21 +339,21 @@ graph/src/index/falkordb/range.rs	RangeIndex::lists_holding	790	NOT COVERED	tag 
 graph/src/index/falkordb/tag.rs	StrSel::set	53	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/tag.rs	StrSel::none	61	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/tag.rs	StrSel::is_empty	68	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	StrSel::contains	101	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	StrSel::is_empty_window	127	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	StrSel::intersect	141	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::tree	210	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::tree_mut	224	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::rows_at	239	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::for_each_stored_key	284	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::add_encoded	302	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::remove_encoded	314	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::is_empty	326	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::memory_usage	331	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::scalars	337	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::lists_holding	345	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::is_scalar_in	352	NOT COVERED	tag kind (#3742): not modelled yet
-graph/src/index/falkordb/tag.rs	TagIndex::is_list_holding	359	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	StrSel::contains	100	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	StrSel::is_empty_window	126	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	StrSel::intersect	140	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::tree	209	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::tree_mut	223	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::rows_at	238	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::for_each_stored_key	280	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::add_encoded	298	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::remove_encoded	310	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::is_empty	322	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::memory_usage	327	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::scalars	333	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::lists_holding	341	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::is_scalar_in	348	NOT COVERED	tag kind (#3742): not modelled yet
+graph/src/index/falkordb/tag.rs	TagIndex::is_list_holding	355	NOT COVERED	tag kind (#3742): not modelled yet
 graph/src/index/falkordb/encode.rs	KeyKind::is_tag	100	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
 graph/src/index/falkordb/numeric.rs	EncodedTuples::tags	285	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
 graph/src/index/falkordb/numeric.rs	EncodedTuples::tags_mut	293	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
@@ -361,52 +361,70 @@ graph/src/index/falkordb/numeric.rs	EncodedTuples::tag_slot	300	NOT COVERED	tag 
 graph/src/index/falkordb/numeric.rs	EncodedTuples::retain_docs	328	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
 graph/src/index/falkordb/pending_writes.rs	ColumnLog::slot	42	NOT COVERED	tag kind (#3742): tuples carry strings, numbered by the copy they go into; not modelled yet
 graph/src/index/falkordb/tag.rs	StrSel::ranges	75	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/tag.rs	sorted_keys	270	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	Group::max_bytes	85	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	put_varint	92	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	get_varint	103	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	encode_leaf	122	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	decode_leaf	202	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	build_leaves	233	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	underfull_groups	276	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	concat_groups	283	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	split_groups	297	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	group_ops	323	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	merge_groups	338	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	union	371	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	difference	399	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	Node::len	420	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	Node::first	427	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	Node::underfull	442	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	Node::is_leaf	449	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	build_branches	456	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	fix_underflow	482	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	combine	507	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	with_lows	546	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	cmp_tuple	556	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	apply	565	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::is_empty	605	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::len	611	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::from_sorted	617	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::insert_batch	624	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::remove_batch	639	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::set_root	655	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::point	676	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::range	686	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::heap_bytes	697	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::heap_bytes::node	698	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::tuples::walk	717	NOT COVERED	TEST-ONLY: a helper inside a #[cfg(test)] fn
-graph/src/index/falkordb/data_structures/str_btree.rs	StrBTree::shape::walk	740	NOT COVERED	TEST-ONLY: a helper inside a #[cfg(test)] fn
-graph/src/index/falkordb/data_structures/str_btree.rs	StrRange::new	795	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrRange::enter	856	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrRange::next_leaf	904	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrRange::load_group	925	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrRange::skip_group	953	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrRange::past_hi	968	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrRange::next	981	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrRanges::new	1016	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrRanges::next	1031	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	header	168	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	restart_offset	181	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	restart_key	191	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
-graph/src/index/falkordb/data_structures/str_btree.rs	StrRange::seek_restart	875	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
+graph/src/index/falkordb/tag.rs	sorted_keys	266	NOT COVERED	tag kind (#3742): the string-keyed tree that replaces the dictionary; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::empty	19	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::build	23	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::count	26	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::min	29	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::is_underfull	32	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::insert	35	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::remove	43	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::merge_batch	50	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::remove_batch	57	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::combine	64	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/page.rs	Page::heap_bytes	70	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	Group::max_bytes	49	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	put_varint	56	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	get_varint	67	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	header	95	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	restart_offset	117	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	restart_key	127	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	encode	138	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	decode	181	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	pack	211	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	underfull_groups	251	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	concat_groups	258	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	split_groups	272	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	group_tuples	298	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	merge_groups	313	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	union	346	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	difference	374	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	as_key	392	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::fits	398	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::empty	421	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::build	425	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::count	429	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::min	433	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::is_underfull	444	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::insert	448	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::remove	479	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::merge_batch	504	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::remove_batch	511	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::combine	523	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::heap_bytes	538	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	StrRange::new	42	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	StrRange::enter	98	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	StrRange::seek_restart	114	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	StrRange::next_page	140	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	StrRange::load_group	164	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	StrRange::skip_group	190	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	StrRange::past_hi	202	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	StrRange::next	215	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	StrRanges::new	247	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	StrRanges::next	262	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	PageTree::range	277	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	PageTree::point	287	NOT COVERED	tag kind (#3742): one tree for every key type — the Page trait, the u64 Leaf's Page impl, and the string page and its cursor; not modelled yet
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	PageTree::tuples::walk	298	NOT COVERED	TEST-ONLY: a test helper
+graph/src/index/falkordb/data_structures/cow_btree/str_cursor.rs	PageTree::shape::walk	317	NOT COVERED	TEST-ONLY: a test helper
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::empty	513	PROVEN	`<Leaf as Page>::empty` = `Leaf::from_pairs(&[])` behind the LEAF_MAX/DOC_BYTES const assert: the model's empty leaf `.leaf []` (emptyTree, buildRoot); Assert.lean, Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::build	519	PROVEN	`<Leaf as Page>::build` = `chunks(LEAF_MAX).map(from_pairs)` behind the const assert: fromSorted's chunks (chunks_spec', fromSorted_wf); Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::count	524	PROVEN	`<Leaf as Page>::count` = `Leaf::count`; Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::min	528	PROVEN	`<Leaf as Page>::min` = `(key(0), doc(0))`: minOpt's leaf arm (minOpt_head); Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::is_underfull	532	PROVEN	`<Leaf as Page>::is_underfull` = `count < LEAF_MAX / 2`: isUnderfull_leaf; Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::insert	536	PROVEN	`<Leaf as Page>::insert` = `Leaf::insert` (leafInsert) with a split's one right page in a list: insertOneR's leaf arm, insertOneR_eq; Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::remove	550	PROVEN	`<Leaf as Page>::remove` = `Leaf::remove` (leafRemove); Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::merge_batch	558	PROVEN	`<Leaf as Page>::merge_batch` = `Leaf::merge_batch` (mergeBatch); Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::remove_batch	567	PROVEN	`<Leaf as Page>::remove_batch`: the survivor walk moved from node.rs, = subtract (removeBatch_good, subtract_eq); Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::combine	588	PROVEN	`<Leaf as Page>::combine`: the leaf arm moved from node.rs (aos_combine or rebuild) = combine's leaf arm (combine_spec, combine_good); Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::heap_bytes	610	PROVEN	`<Leaf as Page>::heap_bytes` = the blob length: heapBytes' leaf arm (heapBytes_eq, heapBytes_aos); Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	assert_leaf_params	617	PROVEN	Assert.constAssert: the LEAF_MAX in 2..=256 and is_read_width(DOC_BYTES) conjuncts, asserted on every u64 tree's birth (`Page::empty`, `Page::build`) since #3742; Assert.lean header

@@ -211,7 +211,7 @@ Fixed by #3087 (W3-conc-3 / #3075 and the W5-idx-2 no-options shape; counterexam
   (`aos_roundtripD`, `aosMergeD_spec`, `docLayoutD_spec`, `aosBuildD_length`, `fromPairsD_roundtrip`
   for every `DOC_BYTES ∈ {1, 2, 4, 8}`) and proves it is the old model at 8 (`aosD8_*`, `fromPairsD8`).
   NEW BUG 14 (latent: no production `CowBTree` yet): the const assert admits `DOC_BYTES ∈ 1..=8`,
-  but `read_width` (`cow_btree/mod.rs:88-102`) reads 8 bytes for any width outside {1, 2, 4, 8}, so
+  but `read_width` (`cow_btree/mod.rs:94-108`) reads 8 bytes for any width outside {1, 2, 4, 8}, so
   `DOC_BYTES = 3/5/6/7` reads garbage docs or panics (FIXED by #3285, see below; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). Confirmed on the Rust sources: `CowBTree::<256, 256, 3>` panics on its second
   `insert` ("range end index 16 out of range for slice of length 11", `mod.rs:99`). Fix: assert
   `DOC_BYTES ∈ {1, 2, 4, 8}`.

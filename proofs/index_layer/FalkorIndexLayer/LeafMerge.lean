@@ -1,8 +1,8 @@
 /-
 # Sorted merges with exact-duplicate collapsing
-(`merge_sorted` `leaf/mod.rs:50`, `merge_walk` `leaf/mod.rs:97`, the distinct
+(`merge_sorted` `leaf/mod.rs:51`, `merge_walk` `leaf/mod.rs:98`, the distinct
 merge of `CompactIndexedLeaf::merge` `leaf/compact_indexed.rs`), and
-`partition_point` (`leaf/mod.rs:77`) / `gallop_lower_bound`.
+`partition_point` (`leaf/mod.rs:78`) / `gallop_lower_bound`.
 
 One generic algorithm over a linear order `le`: take the left head when it is
 `<=` the right head, skip a value equal to the last one emitted.

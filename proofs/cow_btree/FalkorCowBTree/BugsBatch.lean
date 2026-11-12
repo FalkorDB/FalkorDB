@@ -10,13 +10,13 @@ HISTORY: the pre-#3283 model and its counterexample theorems were removed in bbe
 `Node::remove_batch` (`node.rs:483-538` before #3283) repaired under-full children with `merge_underfull`, one level
 at a time. A branch `X` that ends with one child is flagged under-full (`1 < BRANCH_MAX / 2` for
 `BRANCH_MAX >= 4`) — but only its parent `P` can repair it, and if `P` itself ends with `X` as its
-*only* child, `P`'s `merge_underfull` loop does not run (`children.len() > 1`, `node.rs:153`). `P` is
+*only* child, `P`'s `merge_underfull` loop does not run (`children.len() > 1`, `node.rs:147`). `P` is
 then merged one level up by `combine`, which concatenates child lists: `X` lands in the combined node
 with one child and is never re-examined. The tree is no longer well-formed (`TreeWF` / the Rust
 `check_invariants`: "branch must have >= 2 children"). One later single-key `remove` that drains `X`'s
-lone leaf then leaves an **empty non-root leaf** (`Branch::rebalance` on `X` is a no-op, `node.rs:211`,
+lone leaf then leaves an **empty non-root leaf** (`Branch::rebalance` on `X` is a no-op, `node.rs:204`,
 and the parent's `combine` keeps the empty page), and the next `Node::min` over it panics
-(`leaf.key(0)` out of bounds, `node.rs:249`) — e.g. in `insert_batch`'s `pack_branches`.
+(`leaf.key(0)` out of bounds, `node.rs:240`) — e.g. in `insert_batch`'s `pack_branches`.
 
 Since #3307 (18836a355) `remove_batch` has a production caller (`FalkorDbIndex::apply_writes` →
 `remove_encoded`), so the single-child branch is reachable; the panic chain still needs a single-key

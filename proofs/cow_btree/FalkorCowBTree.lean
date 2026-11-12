@@ -14,6 +14,7 @@ import FalkorCowBTree.Extract
 import FalkorCowBTree.BugsBatch
 import FalkorCowBTree.InsertBatchWF
 import FalkorCowBTree.Assert
+import FalkorCowBTree.Page
 
 /-!
 # `cow_btree`: Lean 4 model and proofs (re-targeted to origin/main 1d15bf713: #3283 799968a8b; earlier #2897 7b60f28db, #3285 cab3cf192)
@@ -26,20 +27,22 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
 ## Lean ↔ Rust
 | Lean | Rust |
 | --- | --- |
-| `insert`, `insertOne`, `insertFlag`, `insertRet` | `mod.rs:223`, `node.rs:321-379` |
-| `remove`, `removeOne`, `collapse`, `removeRet` | `mod.rs:260-279`, `node.rs:471-490` |
-| `rebalance`, `cws`, `combine` | `node.rs:219`, `:113` (`combine_with_sibling`), `:384` (+ `aos_combine` `:447`) |
-| `removeBatchTree`, `removeBatch`, `subtract`, `stripEmpty` (`BatchWF.lean`, `Batch.lean`) | `mod.rs:286`, `node.rs:498-555`, `:180` |
-| `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`) | `node.rs:155-175` (`merge_underfull`), `:563-574` (`merge_underfull_below`) |
-| `isUnderfull`, `branchUnderfull`, `isEmptyNode` | `node.rs:576`, `:212`, `:585` |
-| `route`, `applyBatch`, `insertBatch` | `node.rs:284-304` (old `:194-206`), `:259`, `mod.rs:241` |
-| `packBranches`, `buildRoot`, `fromSorted`, `mergeWalk`, `mergeBatch`, `chunks` | `node.rs:56`, `:90`, `mod.rs:190`, `leaf/mod.rs:50`/`:97`, `:471` |
+| `insert`, `insertOne`, `insertFlag`, `insertRet` | `mod.rs:220`, `node.rs:312-376` |
+| `insertR`, `insertOneR`, `insEach` (`Page.lean`: the code since #3742, = `insert` / `insertOne` by `insertR_eq` / `insertOneR_eq`) | `mod.rs:220-238`, `node.rs:312-376`, `leaf/mod.rs:536-549` |
+| the `u64` page (`<Leaf as Page>`, `Page.lean` table) | `leaf/mod.rs:508-614`, `page.rs` |
+| `remove`, `removeOne`, `collapse`, `removeRet` | `mod.rs:260-279`, `node.rs:431-450` |
+| `rebalance`, `cws`, `combine` | `node.rs:212`, `:107` (`combine_with_sibling`), `:381` (+ `aos_combine` `leaf/mod.rs:633`) |
+| `removeBatchTree`, `removeBatch`, `subtract`, `stripEmpty` (`BatchWF.lean`, `Batch.lean`) | `mod.rs:286`, `node.rs:458-501`, `:174` |
+| `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`) | `node.rs:149-169` (`merge_underfull`), `:509-520` (`merge_underfull_below`) |
+| `isUnderfull`, `branchUnderfull`, `isEmptyNode` | `node.rs:522`, `:205`, `:531` |
+| `route`, `applyBatch`, `insertBatch` | `node.rs:275-295` (old `:194-206`), `:250`, `mod.rs:241` |
+| `packBranches`, `buildRoot`, `fromSorted`, `mergeWalk`, `mergeBatch`, `chunks` | `node.rs:52`, `:86`, `mod.rs:199`, `leaf/mod.rs:51`/`:98`, `:472` |
 | `Cursor.new`/`seek`, `descendLeft`, `advanceLeaf`, `wholeOf` | `cursor.rs:82-116`, `:140`, `:160`, `:129` |
 | `Cursor.next`, `Cursor.nextWith`, `Extract`, `DocExtract`, `TupleExtract` | `cursor.rs:181-207`, `:16-53` |
-| `range`, `rangeWith` | `mod.rs:314` (`range`), `:324` (`point`), `:408` (`range_tuples`) |
-| `firstDocGo`, `firstDoc`, `containsKey`, `minOpt` | `mod.rs:357-400`, `:343`, `node.rs:245` |
-| `heapWalk`, `heapBytes`, `Mem` | `mod.rs:419-442` |
-| `constAssert`, `isReadWidth`, `Cfg.ofAssert` (`Assert.lean`) | the const asserts `mod.rs:151-160`, `:173-182`, `:191-200`; `is_read_width` `mod.rs:88` |
+| `range`, `rangeWith` | `mod.rs:366` (`range`), `:376` (`point`), `:460` (`range_tuples`) |
+| `firstDocGo`, `firstDoc`, `containsKey`, `minOpt` | `mod.rs:409-452`, `:395`, `node.rs:236` |
+| `heapWalk`, `heapBytes`, `Mem` | `mod.rs:314-334` |
+| `constAssert`, `isReadWidth`, `Cfg.ofAssert` (`Assert.lean`) | the const asserts `mod.rs:162-167`, `:180-189`, `:200-209`; `is_read_width` `mod.rs:94` |
 
 ## Proven
 - **Every tree the Rust API can build is well-formed** (`InsertBatchWF.lean`): `Reachable_wf`,

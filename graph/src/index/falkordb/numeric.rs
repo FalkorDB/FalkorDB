@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
+use super::data_structures::cow_btree::StrRanges;
 use super::data_structures::cow_btree::{CowBTree, RangeIter};
-use super::data_structures::str_btree::StrRanges;
 use super::encode::{self, KeyKind, StoredKey, encode_numeric};
 use super::range::RangeKind;
 use crate::runtime::value::Value;
@@ -53,8 +53,9 @@ pub enum DocIter {
     /// Several streams chained, each doc yielded once — a union across columns, where a doc may
     /// satisfy several members.
     Distinct(DistinctIter),
-    /// A tag tree's key ranges, one cursor after another ([`StrRanges`]).
-    Strings(StrRanges),
+    /// A tag tree's key ranges, one cursor after another ([`StrRanges`]). Boxed: inline it is the
+    /// largest variant, and the size it adds to every `DocIter` measurably slows numeric scans.
+    Strings(Box<StrRanges>),
 }
 
 impl Iterator for DocIter {

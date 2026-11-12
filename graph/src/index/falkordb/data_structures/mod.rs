@@ -4,5 +4,3 @@
 //! in later changes.
 
 pub mod cow_btree;
-
-pub mod str_btree;

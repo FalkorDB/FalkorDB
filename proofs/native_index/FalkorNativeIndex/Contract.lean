@@ -19,13 +19,13 @@ namespace NI
 
 open CowBTree (Cfg Node Reachable constAssert HI SortedLe toList)
 
-/-- `CowBTree::from_sorted` (`cow_btree/mod.rs:190`) is `tFromSorted`. -/
+/-- `CowBTree::from_sorted` (`cow_btree/mod.rs:199`) is `tFromSorted`. -/
 theorem contract_fromSorted (c : Cfg) (pairs : List Nat) (hs : Sorted pairs) (hlt : ∀ e ∈ pairs, e < HI) :
     Reachable c (CowBTree.fromSorted c pairs).2 (CowBTree.fromSorted c pairs).1 ∧
       toList (CowBTree.fromSorted c pairs).2 (CowBTree.fromSorted c pairs).1 = tFromSorted pairs :=
   ⟨.fromSorted pairs hs hlt, (CowBTree.fromSorted_wf c pairs hs hlt).2⟩
 
-/-- `CowBTree::insert` (`cow_btree/mod.rs:223`) is `tInsert`. -/
+/-- `CowBTree::insert` (`cow_btree/mod.rs:220`) is `tInsert`. -/
 theorem contract_insert (c : Cfg) (D : Nat) (ha : constAssert c.L c.B D = true) {h : Nat} {t : Node}
     (hr : Reachable c h t) (x : Nat) (hx : x < HI) :
     Reachable c (CowBTree.insert c h t x).2 (CowBTree.insert c h t x).1 ∧
@@ -63,7 +63,7 @@ theorem contract_removeBatch (c : Cfg) (D : Nat) (ha : constAssert c.L c.B D = t
   rw [ht]
   simp [tRemoveBatch]
 
-/-- `CowBTree::range` (`cow_btree/mod.rs:314`, collected; `n` bounds the collection) is `tRange`. -/
+/-- `CowBTree::range` (`cow_btree/mod.rs:366`, collected; `n` bounds the collection) is `tRange`. -/
 theorem contract_range (c : Cfg) (D : Nat) (ha : constAssert c.L c.B D = true) {h : Nat} {t : Node}
     (hr : Reachable c h t) (lo hi n : Nat) (hn : (toList h t).length ≤ n) :
     CowBTree.rangeWith CowBTree.DocExtract h t lo hi n = tRange (toList h t) lo hi :=

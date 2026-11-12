@@ -1292,7 +1292,7 @@ fn check_invariants<const L: usize, const B: usize, const DOC_BYTES: usize>(
     use super::node::Node;
     // Returns (subtree min (key,doc), subtree max (key,doc), depth, entry count).
     fn walk<const L: usize, const B: usize, const DOC_BYTES: usize>(
-        node: &Node<L, B, DOC_BYTES>,
+        node: &Node<Leaf<L, DOC_BYTES>, B>,
         is_root: bool,
         min_fill: bool,
     ) -> ((u64, u64), (u64, u64), usize, usize) {

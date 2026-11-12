@@ -8,7 +8,7 @@
 //! allowed here: `utilize_index` drops the filter for a plain string equality (the plan is a bare
 //! `Node By Index Scan`), so nothing downstream would reject the extra rows.
 //!
-//! So the tag trees key on the string itself: a [`StrBTree`] of `(string, doc)` tuples, ordered by
+//! So the tag trees key on the string itself: a [`StrTree`] of `(string, doc)` tuples, ordered by
 //! the string's bytes. Equality is one point lookup and exact; a string range is one cursor over
 //! one run of the tree, in string order. There is no dictionary, so nothing interns a string or
 //! hands out an id, and a string whose last tuple goes leaves nothing behind.
@@ -24,7 +24,7 @@
 use std::ops::Bound;
 use std::sync::Arc;
 
-use super::data_structures::str_btree::{StrBTree, StrRanges};
+use super::data_structures::cow_btree::{StrBounds, StrRanges, StrTree};
 use super::encode::{KeyKind, StoredKey};
 use super::numeric::{DocIter, EncodedTuples};
 use super::range::RangeKind;
@@ -72,12 +72,11 @@ impl StrSel {
     /// The key ranges of the strings this selects, in order and disjoint: a point per string of a
     /// set, the window itself, or none for a window no string lies in.
     #[must_use]
-    pub fn ranges(&self) -> Vec<(Bound<Arc<[u8]>>, Bound<Arc<[u8]>>)> {
-        let key = |s: &Arc<String>| -> Arc<[u8]> { Arc::from(s.as_bytes()) };
+    pub fn ranges(&self) -> Vec<StrBounds> {
         match self {
             Self::Set(strings) => strings
                 .iter()
-                .map(|s| (Bound::Included(key(s)), Bound::Included(key(s))))
+                .map(|s| (Bound::Included(s.clone()), Bound::Included(s.clone())))
                 .collect(),
             Self::Window { .. } if self.is_empty_window() => Vec::new(),
             Self::Window {
@@ -88,8 +87,8 @@ impl StrSel {
             } => {
                 let bound = |v: &Option<Arc<String>>, inclusive: bool| match v {
                     None => Bound::Unbounded,
-                    Some(v) if inclusive => Bound::Included(key(v)),
-                    Some(v) => Bound::Excluded(key(v)),
+                    Some(v) if inclusive => Bound::Included(v.clone()),
+                    Some(v) => Bound::Excluded(v.clone()),
                 };
                 vec![(bound(min, *include_min), bound(max, *include_max))]
             }
@@ -192,14 +191,14 @@ impl StrSel {
 #[derive(Clone, Default)]
 pub struct TagIndex {
     /// String scalar values: one tuple per indexed entity.
-    tree: StrBTree,
+    tree: StrTree,
     /// String elements of **list**-valued properties: one tuple per distinct element.
     ///
     /// A separate key space for the same reason the numeric kind keeps one: sharing would make
     /// `WHERE n.v = 'a'` match a node whose `v` is `['a', 'b']`, which is false in Cypher, and
     /// `Equal` has no post-filter to catch it. RediSearch keeps the same split with its
     /// `string:arr` sub-field.
-    array_tree: StrBTree,
+    array_tree: StrTree,
 }
 
 impl TagIndex {
@@ -210,7 +209,7 @@ impl TagIndex {
     fn tree(
         &self,
         kind: KeyKind,
-    ) -> &StrBTree {
+    ) -> &StrTree {
         match kind {
             KeyKind::Tag => &self.tree,
             KeyKind::TagArray => &self.array_tree,
@@ -224,7 +223,7 @@ impl TagIndex {
     fn tree_mut(
         &mut self,
         kind: KeyKind,
-    ) -> &mut StrBTree {
+    ) -> &mut StrTree {
         match kind {
             KeyKind::Tag => &mut self.tree,
             KeyKind::TagArray => &mut self.array_tree,
@@ -239,15 +238,12 @@ impl TagIndex {
     pub fn rows_at(
         &self,
         kind: KeyKind,
-        s: &str,
+        s: &Arc<String>,
     ) -> DocIter {
-        DocIter::Strings(StrRanges::new(
+        DocIter::Strings(Box::new(StrRanges::new(
             self.tree(kind),
-            vec![(
-                Bound::Included(Arc::from(s.as_bytes())),
-                Bound::Included(Arc::from(s.as_bytes())),
-            )],
-        ))
+            vec![(Bound::Included(s.clone()), Bound::Included(s.clone()))],
+        )))
     }
 
     /// Every `(kind, string, doc)` tuple the kind holds, the scalar tree's then the array tree's.
@@ -266,9 +262,9 @@ impl TagIndex {
     }
 }
 
-/// `tuples`' `(string, doc)` pairs as tree keys, sorted and distinct.
-fn sorted_keys(tuples: &[(Arc<String>, u64)]) -> Vec<(&[u8], u64)> {
-    let mut keys: Vec<(&[u8], u64)> = tuples.iter().map(|(s, d)| (s.as_bytes(), *d)).collect();
+/// `tuples` sorted and distinct, as the tree takes them. The strings are shared, not copied.
+fn sorted_keys(tuples: &[(Arc<String>, u64)]) -> Vec<(Arc<String>, u64)> {
+    let mut keys = tuples.to_vec();
     keys.sort_unstable();
     keys.dedup();
     keys
@@ -338,7 +334,7 @@ impl RangeKind for TagIndex {
         &self,
         strings: StrSel,
     ) -> DocIter {
-        DocIter::Strings(StrRanges::new(&self.tree, strings.ranges()))
+        DocIter::Strings(Box::new(StrRanges::new(&self.tree, strings.ranges())))
     }
 
     /// A point lookup into the array tree.

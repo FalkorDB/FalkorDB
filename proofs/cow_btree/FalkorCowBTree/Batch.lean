@@ -5,7 +5,7 @@ import FalkorCowBTree.Bugs
 
 * `route_keeps_all`, `route_routes_TOP`, `route_TOP_example` — the new sweep (last child takes the
   rest) loses nothing; in particular `(u64::MAX, u64::MAX)` now reaches the last child (Bug 1 fixed).
-* `subtract_eq` — the leaf survivor walk of `remove_batch` (`node.rs:502-514`) is `List.filter`.
+* `subtract_eq` — the leaf survivor walk of `remove_batch` (`leaf/mod.rs:567-582`) is `List.filter`.
 * `combine_with_sibling` (`cws`), `strip_empty`, `Node::is_underfull`, `Branch::is_underfull`,
   `Node::is_empty_node` — modelled line by line, with `rebalance_eq_cws` (the single-key repair is
   exactly one `combine_with_sibling` step). Unchanged by #3283.
@@ -17,27 +17,29 @@ namespace CowBTree
 
 /-! ## Model -/
 
-/-- `Node::is_underfull` (`node.rs:576`), reporting through `Branch::is_underfull` (`node.rs:212`). -/
+/-- `Node::is_underfull` (`node.rs:522`), reporting through `Branch::is_underfull` (`node.rs:205`). Its
+    leaf arm is `Page::is_underfull`, for the `u64` page `count < LEAF_MAX / 2` (`leaf/mod.rs:532-534`,
+    `Page.lean`). -/
 def isUnderfull (c : Cfg) : Node → Bool
   | .leaf es => decide (es.length < c.L / 2)
   | .branch _ cs => decide (cs.length < c.B / 2)
 
-/-- `Branch::is_underfull` (`node.rs:212`): `children.len() < BRANCH_MAX / 2`. -/
+/-- `Branch::is_underfull` (`node.rs:205`): `children.len() < BRANCH_MAX / 2`. -/
 def branchUnderfull (c : Cfg) (cs : List Node) : Bool := decide (cs.length < c.B / 2)
 
-/-- `Node::is_empty_node` (`node.rs:585`): a leaf with `count() == 0`. -/
+/-- `Node::is_empty_node` (`node.rs:531`): a leaf with `count() == 0`. -/
 def isEmptyNode : Node → Bool
   | .leaf es => es.isEmpty
   | .branch _ _ => false
 
-/-- `combine_with_sibling` (`node.rs:113-140`): pair child `ci` with its right neighbour (its left one
+/-- `combine_with_sibling` (`node.rs:107-134`): pair child `ci` with its right neighbour (its left one
     when it is the last), combine, and return the new `(seps, children)` and the index to examine next. -/
 def cws (c : Cfg) (seps : List E) (cs : List Node) (ci : Nat) : List E × List Node × Nat :=
-  let li := if ci + 1 < cs.length then ci else ci - 1          -- lines 119-123
+  let li := if ci + 1 < cs.length then ci else ci - 1          -- lines 113-117
   let ri := if ci + 1 < cs.length then ci + 1 else ci
   match combine c (cs.getD li default) (seps.getD li 0) (cs.getD ri default) with
-  | .one m => (delAt seps li, delAt (setAt cs li m) ri, li)       -- lines 125-130
-  | .two l s r => (setAt seps li s, setAt (setAt cs li l) ri r, ri) -- lines 132-137
+  | .one m => (delAt seps li, delAt (setAt cs li m) ri, li)       -- lines 119-124
+  | .two l s r => (setAt seps li s, setAt (setAt cs li l) ri r, ri) -- lines 126-131
 
 /-- The `.two` arm of `combine` always hands back a right node that is *not* under-full. -/
 theorem combine_two_not_uf (c : Cfg) (a b : Node) (sep : E) :
@@ -94,13 +96,13 @@ theorem cws_measure (c : Cfg) (seps : List E) (cs : List Node) (i : Nat) (h1 : 1
       simp only [Bool.false_eq_true, and_false, ↓reduceIte]
       omega
 
-/-- `strip_empty` (`node.rs:180-195`): drop every empty child, and with it the near separator
+/-- `strip_empty` (`node.rs:174-189`): drop every empty child, and with it the near separator
     (`seps[i]`, or the trailing one for the last child). -/
 def stripEmpty (seps : List E) (cs : List Node) (i : Nat) : List E × List Node :=
   if hi : i < cs.length then
-    if isEmptyNode (cs.getD i default) then                                       -- line 172
-      stripEmpty (if seps.isEmpty then seps else delAt seps (min i (seps.length - 1)))  -- lines 173-175
-        (delAt cs i) i                                                            -- line 176
+    if isEmptyNode (cs.getD i default) then                                       -- line 166
+      stripEmpty (if seps.isEmpty then seps else delAt seps (min i (seps.length - 1)))  -- lines 167-169
+        (delAt cs i) i                                                            -- line 170
     else stripEmpty seps cs (i + 1)
   else (seps, cs)
 termination_by cs.length - i
@@ -108,14 +110,14 @@ decreasing_by
   · simp only [delAt, List.length_append, List.length_take, List.length_drop]; omega
   · omega
 
-/-- The leaf arm of `Node::remove_batch` (`node.rs:502-514`): the survivor merge-walk. `bs` is the
+/-- The leaf arm of `Node::remove_batch` (`leaf/mod.rs:567-582`): the survivor merge-walk. `bs` is the
     unconsumed batch suffix (`batch[bi..]`), which persists across entries. -/
 def subtract : List E → List E → List E
   | [], _ => []
   | p :: ps, bs =>
-    let bs' := bs.dropWhile (fun b => decide (b < p))                 -- lines 492-494
-    if bs'.head? = some p then subtract ps bs'                         -- lines 495-497
-    else p :: subtract ps bs'                                          -- line 498
+    let bs' := bs.dropWhile (fun b => decide (b < p))                 -- lines 452-454
+    if bs'.head? = some p then subtract ps bs'                         -- lines 455-457
+    else p :: subtract ps bs'                                          -- line 458
 
 /-! ## The routing sweep (fix of Bug 1) -/
 
@@ -225,7 +227,7 @@ theorem subtract_eq : ∀ (es bs : List E), Sorted es → SortedLe bs →
 
 /-! ## `Branch::rebalance` is one `combine_with_sibling` step -/
 
-/-- The #2278 refactor of `Branch::rebalance` (`node.rs:219-233`) into `combine_with_sibling` keeps it
+/-- The #2278 refactor of `Branch::rebalance` (`node.rs:212-226`) into `combine_with_sibling` keeps it
     the same function: the old model `rebalance` is the new code's first two components. -/
 theorem rebalance_eq_cws (c : Cfg) (seps : List E) (cs : List Node) (ci : Nat) :
     rebalance c seps cs ci = if cs.length < 2 then (seps, cs) else ((cws c seps cs ci).1, (cws c seps cs ci).2.1) := by
