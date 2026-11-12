@@ -27,7 +27,7 @@ use super::graph_writes;
 use super::numeric::{DocIter, EncodedTuples};
 use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
 use super::range::{RangeIndex, Selection, attributes_of};
-use super::versioned::{BuildState, IndexEntry, VersionedIndex};
+use super::versioned::{Absorbed, BuildState, IndexEntry, VersionedIndex};
 
 /// Identifies one index column: `(label, attribute)`.
 ///
@@ -366,8 +366,9 @@ impl VersionedIndex for IndexColumn {
         written: &RoaringTreemap,
         published: &Graph,
         fork: &Graph,
-    ) {
+    ) -> Absorbed<BuildCursor> {
         self.refresh(state, name, written, published, fork);
+        Absorbed::Yes
     }
 
     fn indexer_catch_up(
@@ -377,8 +378,9 @@ impl VersionedIndex for IndexColumn {
         written: &RoaringTreemap,
         batch_version: &Graph,
         published: &Graph,
-    ) {
+    ) -> Absorbed<BuildCursor> {
         self.refresh(state, name, written, batch_version, published);
+        Absorbed::Yes
     }
 
     fn indexer_insert(
@@ -1259,12 +1261,19 @@ impl FalkorDbIndex {
         &mut self,
         def: &CchIndexDef,
     ) {
-        self.indexes_created += 1;
-        let generation = self.indexes_created;
+        let generation = self.next_generation();
         let entry = self.cch_indexes.get_mut(def).expect("held");
         entry.index.hierarchy = Hierarchy::Pending;
+        entry.index.restart_count_reset();
         entry.state = BuildState::building(());
         entry.generation = generation;
+    }
+
+    /// A new generation, for an index created or built again on this version: the version's
+    /// count of indexes created, counted up.
+    pub(crate) fn next_generation(&mut self) -> u64 {
+        self.indexes_created += 1;
+        self.indexes_created
     }
 
     /// Stop holding the index over `def`.
