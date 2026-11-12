@@ -81,6 +81,9 @@ use roaring::RoaringTreemap;
 use thiserror::Error;
 
 #[cfg(feature = "index-falkordb")]
+use std::mem;
+
+#[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::falkordb_index::ScanFilter;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
@@ -3996,7 +3999,7 @@ impl Graph {
             if docs.cch.is_empty() {
                 return Ok(());
             }
-            let dirty = std::mem::take(&mut docs.cch);
+            let dirty = mem::take(&mut docs.cch);
             cch::maint::flush(self, &dirty).map_err(|e| e.to_string())
         }
         #[cfg(not(feature = "index-falkordb"))]

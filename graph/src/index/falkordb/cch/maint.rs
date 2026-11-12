@@ -45,9 +45,9 @@
 //!   hands it to the index builder, which rebuilds it off the lock: no hierarchy is built in
 //!   the write path. Until the build is adopted this version holds no hierarchy for it; older
 //!   versions keep theirs;
-//! - past the cap: a full customization that shares the topology, [`CchInput::build`] and
-//!   [`Cch::customized`] (a rebuild in the background if the graph's node capacity has grown past the
-//!   hierarchy's);
+//! - past the cap: a full customization that shares the topology, the weights sized to the
+//!   hierarchy ([`CchInput::weights_for`]) and [`Cch::customized`], so a node capacity grown
+//!   since the build is no reason to rebuild;
 //! - otherwise: [`Cch::recustomize_seeded`] on a copy ([`Cch::new_version`], which shares the
 //!   metric's chunks and copies only those it writes), seeded pair by pair from the graph
 //!   ([`PairWeights`]); no weight matrix is built. Its `n / 8` valve hands over to the full
@@ -430,7 +430,8 @@ pub(crate) enum Update {
     /// The hierarchy cannot take the change: the entry is set back to `Building` under a new
     /// generation, and the commit hands it to the index builder. Nothing is built in the write.
     Rebuild,
-    /// The old topology, every arc recomputed from a fresh [`CchInput`].
+    /// The old topology, every arc recomputed from the graph's weights
+    /// ([`CchInput::weights_for`]).
     Full,
     /// The old topology, only the arcs the updated pairs reach recomputed, seeded from the
     /// graph pair by pair; no [`CchInput`] built.
@@ -536,12 +537,19 @@ fn update(
             Recustomized::NeedsFull => {}
         }
     }
-    let input = CchInput::build(g, def)?;
-    match hierarchy.customized(&input.weights) {
+    // Sized to the hierarchy, not the graph: nodes created since it was built have no
+    // indexed edge (one would be structural), so a grown node capacity is no reason to
+    // rebuild.
+    let node_count = u64::try_from(hierarchy.node_count())
+        .map_err(|_| CchError::Internal("a hierarchy's node count does not fit a u64"))?;
+    let Some(weights) = CchInput::weights_for(g, def, node_count)? else {
+        // An indexed edge past the hierarchy's nodes that the change set did not report.
+        return Ok((None, Update::Rebuild));
+    };
+    match hierarchy.customized(&weights) {
         Ok(cch) => Ok((Some(cch), Update::Full)),
-        // A shape the topology cannot take: a new adjacency the change set did not report,
-        // or a graph whose node capacity grew past the hierarchy's (nodes created with no
-        // indexed edge yet record nothing). Only a rebuild can.
+        // A shape the topology cannot take: a new adjacency the change set did not report.
+        // Only a rebuild can.
         Err(CchError::NeedsRebuild) => Ok((None, Update::Rebuild)),
         Err(e) => Err(e),
     }
@@ -1879,6 +1887,82 @@ mod tests {
             add_edge(&mut rebuilt, s, t, oracle_weight_of(&g, id));
         }
         check_exact(&db, &def, &rebuilt.oracle(), "overflow");
+    }
+
+    /// Nodes created with no indexed edge grow the graph's node capacity past the hierarchy's,
+    /// and are no reason to rebuild: a change set past the cap still customizes the held
+    /// topology (`Update::Full`), over weights sized to the hierarchy. An indexed edge past
+    /// the hierarchy's nodes is lost by that sizing, and the weights say so (`None`), so only
+    /// a rebuild takes it.
+    #[test]
+    fn a_grown_node_capacity_still_takes_a_full_customization() {
+        let edges = [
+            (0, 1, Some(2.0), INDEXED[0]),
+            (1, 2, Some(3.0), INDEXED[0]),
+            (2, 0, Some(4.0), INDEXED[0]),
+        ];
+        let mut db = Db::new("cch_grown_capacity");
+        load(&mut db, 3, &edges);
+        let def = db.create_index(&[0], "w");
+        let hierarchy_nodes = u64::try_from(db.cch(&def).node_count()).expect("fits");
+        while db.committed().node_cap() <= hierarchy_nodes {
+            db.ok("UNWIND range(1, 64) AS i CREATE (:N)");
+        }
+        let built = db.cch(&def);
+        assert_eq!(
+            built.node_count(),
+            db.cch(&def).node_count(),
+            "no rebuild yet"
+        );
+
+        // A change set that overflowed its cap, flushed by hand over one weight write.
+        let mut next = db.mvcc.fork();
+        {
+            let g = &mut next;
+            let w = g.get_or_create_rel_attr_id(&Arc::new(String::from("w")));
+            let first = all_t0_edges(g, &def)[0].0;
+            let mut attrs = rustc_hash::FxHashMap::default();
+            attrs.insert(first, vec![(w, Value::Float(0.5))]);
+            g.set_relationships_attributes(&attrs, &mut IndexDocs::default())
+                .expect("set");
+            let mut dirty = super::CchDirty::default();
+            dirty.entry(&def).overflow = true;
+            let start = updates_len();
+            super::flush(g, &dirty).expect("flush");
+            assert_eq!(updates_since(start), [Update::Full]);
+        }
+        db.mvcc.commit(next).expect("the version validates");
+        assert_eq!(db.cch(&def).node_count(), built.node_count());
+        let mut oracle = EditGraph {
+            n: built.node_count(),
+            ..EditGraph::default()
+        };
+        let g = db.committed();
+        for (id, (s, t)) in all_t0_edges(&g, &def) {
+            add_edge(&mut oracle, s, t, oracle_weight_of(&g, id));
+        }
+        check_exact(&db, &def, &oracle.oracle(), "grown capacity");
+
+        // An indexed edge to a node past the hierarchy: sized to the hierarchy, the weights
+        // lose it, and say so.
+        assert!(
+            super::super::CchInput::weights_for(&g, &def, hierarchy_nodes)
+                .expect("weights")
+                .is_some()
+        );
+        let past = db.rows("MATCH (n:N) RETURN max(id(n))").expect("a read")[0][0].clone();
+        let Value::Int(past) = past else {
+            panic!("an id: {past:?}")
+        };
+        assert!(u64::try_from(past).expect("an id") >= hierarchy_nodes);
+        db.ok(&format!(
+            "MATCH (a), (b) WHERE id(a) = 0 AND id(b) = {past} CREATE (a)-[:T0 {{w: 1.0}}]->(b)"
+        ));
+        assert!(
+            super::super::CchInput::weights_for(&db.committed(), &def, hierarchy_nodes)
+                .expect("weights")
+                .is_none()
+        );
     }
 
     /// The weight an edge reads as, by the index's rule.

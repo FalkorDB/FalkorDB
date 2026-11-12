@@ -26,7 +26,7 @@ use crate::graph::graph::Graph;
 use crate::graph::graphblas::matrix::{Descriptor, Matrix};
 use crate::runtime::value::Value;
 
-use super::{CchError, CchIndexDef, CchInput, id_index};
+use super::{CchError, CchIndexDef, CchInput, WeightCsr, id_index};
 pub(crate) use pair_weights::PairWeights;
 #[cfg(test)]
 pub(super) use weight_ops::edge_weight;
@@ -114,8 +114,37 @@ impl CchInput {
 
     /// The weight CSR, for tests that customize a hierarchy over it.
     #[cfg(test)]
-    pub(crate) const fn weights(&self) -> &super::WeightCsr {
+    pub(crate) const fn weights(&self) -> &WeightCsr {
         &self.weights
+    }
+
+    /// The weights alone, as [`Self::build`] makes them, but for a hierarchy over `node_count`
+    /// nodes: what a full customization of an existing topology takes. The graph's node
+    /// capacity only grows, and nodes created since the hierarchy was built are not in it;
+    /// sizing the weights to the graph would refuse the customization for nothing once the
+    /// capacity has grown past the hierarchy's.
+    ///
+    /// The weight matrix is resized to `node_count` in GraphBLAS. An indexed edge with an
+    /// endpoint at or past `node_count` is lost by the resize, which its entry count shows:
+    /// then `None`, since only a rebuild can take that edge.
+    ///
+    /// # Errors
+    /// As [`Self::build`].
+    pub(crate) fn weights_for(
+        graph: &Graph,
+        def: &CchIndexDef,
+        node_count: u64,
+    ) -> Result<Option<WeightCsr>, CchError> {
+        let (graph_node_count, mut weights) = Self::scored_weights(graph, def)?;
+        weights.drop_diagonal();
+        if node_count != graph_node_count {
+            let entries = weights.nvals();
+            weights.resize(node_count, node_count);
+            if weights.nvals() != entries {
+                return Ok(None);
+            }
+        }
+        Ok(Some(weights.into_csr().into()))
     }
 
     /// What `CREATE CCH INDEX` checks before it returns, while the hierarchy itself is built in
