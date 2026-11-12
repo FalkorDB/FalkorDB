@@ -221,8 +221,10 @@ if [ "$SERVER" = valkey ]; then
             fail "the message does not name /srv/graphs/dump.rdb"; }
     CASE=dot-prefixed-rdb
     v=$(copy_vol "$RDB" "$CASE")
-    in_vol "$v" 'mv /data/dump.rdb /data/..dump.rdb'
-    refused "$CASE" "$IMAGE" "$v" -e "VALKEY_ARGS=--dbfilename ..dump.rdb"
+    in_vol "$v" 'mv /data/dump.rdb /data/..dump.rdb' || fail "cannot rename dump.rdb"
+    refused "$CASE" "$IMAGE" "$v" -e "VALKEY_ARGS=--dbfilename ..dump.rdb" &&
+        { grep -qF "$DATA/..dump.rdb (Redis RDB version" <<<"$(logs "$CASE")" ||
+            fail "the message does not name $DATA/..dump.rdb"; }
     CASE=aof-rdb-base
     refused "$CASE" "$IMAGE" "$(copy_vol "$AOF" "$CASE")" -e "VALKEY_ARGS=--appendonly yes"
     # RDB version 11, as Redis 7.2 and Valkey 8 write it, is Valkey's own: an
