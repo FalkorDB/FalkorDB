@@ -547,6 +547,45 @@ fn update(
     }
 }
 
+/// Take edges written between two versions into a hierarchy that holds `before`'s edges or
+/// later ones: for a build's commit (`before` its version, `after` the published one) and for a
+/// writer's rebase onto an adoption (`before` the published version, `after` the writer's
+/// fork). Each id in `written` is classified, as a write to a built index is, by its pair in
+/// `before` (an edge deleted since) and in `after` (one created or reweighted since), if the
+/// edge is of an indexed type there; the update then runs over `after`. `None`: the hierarchy
+/// cannot take them, and only a build can ([`Update::Rebuild`]).
+///
+/// # Errors
+/// What [`flush`]'s update reports: a resource, a bug.
+pub(crate) fn absorb(
+    hierarchy: &Cch,
+    def: &CchIndexDef,
+    written: &RoaringTreemap,
+    before: &Graph,
+    after: &Graph,
+) -> Result<Option<Cch>, CchError> {
+    let mut changes = CchChanges::default();
+    for id in written {
+        for version in [before, after] {
+            let Some((u, v)) = version.endpoints_for_edge(id) else {
+                continue;
+            };
+            let edge_type = version.get_relationship_type_id(RelationshipId::from(id));
+            if def.rel_types().contains(&edge_type) {
+                changes.classify(hierarchy, u, v);
+            }
+        }
+        if changes.structural {
+            return Ok(None);
+        }
+    }
+    let (cch, how) = update(after, def, hierarchy, &changes)?;
+    #[cfg(test)]
+    tests::UPDATES.with(|u| u.borrow_mut().push(how));
+    let _ = how;
+    Ok(cch)
+}
+
 /// The relationship type's name, or `#id` if it no longer resolves.
 fn type_name(
     g: &Graph,

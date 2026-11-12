@@ -327,6 +327,61 @@ mod background_build {
         )
     }
 
+    /// The published `Building` generation of the index over `def`.
+    fn generation_of(
+        host: &TestHost,
+        def: &CchIndexDef,
+    ) -> u64 {
+        host.mvcc
+            .read()
+            .falkordb_index
+            .cch_entry(def)
+            .expect("held")
+            .generation
+    }
+
+    /// Create a `T0` edge `src -> dst` at `weight`, flushed as a writer's unit of work is; its id.
+    fn add_edge(
+        g: &mut Graph,
+        attr: u16,
+        src: u64,
+        dst: u64,
+        weight: f64,
+    ) -> u64 {
+        let mut docs = IndexDocs::default();
+        let ids = g
+            .relationship_id_space()
+            .reserve(1, &RoaringTreemap::new())
+            .expect("reserved");
+        g.create_relationships_bulk(
+            &Arc::new(String::from(INDEXED[0])),
+            &[src],
+            &[dst],
+            &ids,
+            &mut docs,
+        )
+        .expect("creatable");
+        let weights = FxHashMap::from_iter([(ids[0], vec![(attr, Value::Float(weight))])]);
+        g.set_relationships_attributes(&weights, &mut docs)
+            .expect("valid");
+        g.apply_cch_writes(&mut docs).expect("flushed");
+        ids[0]
+    }
+
+    /// Set edge `id`'s weight to `weight`, flushed as a writer's unit of work is.
+    fn set_weight(
+        g: &mut Graph,
+        attr: u16,
+        id: u64,
+        weight: f64,
+    ) {
+        let attrs = FxHashMap::from_iter([(id, vec![(attr, Value::Float(weight))])]);
+        let mut docs = IndexDocs::default();
+        g.set_relationships_attributes(&attrs, &mut docs)
+            .expect("a valid weight");
+        g.apply_cch_writes(&mut docs).expect("flushed");
+    }
+
     /// Set edge 0's weight to `weight`, as a writer's unit of work does.
     fn set_first_weight(
         g: &mut Graph,
@@ -334,8 +389,10 @@ mod background_build {
         weight: f64,
     ) {
         let attrs = FxHashMap::from_iter([(0, vec![(attr, Value::Float(weight))])]);
-        g.set_relationships_attributes(&attrs, &mut IndexDocs::default())
+        let mut docs = IndexDocs::default();
+        g.set_relationships_attributes(&attrs, &mut docs)
             .expect("a valid weight");
+        g.apply_cch_writes(&mut docs).expect("flushed");
     }
 
     /// The commit that brings the `Building` index in hands it to the builder, under its
@@ -457,11 +514,10 @@ mod background_build {
         assert_queries_match(index.cch().expect("built"), &oracle(1.0));
     }
 
-    /// Until #3214 a write made while the build reads is not in the hierarchy it adopts, as a
-    /// `Ready` index is not maintained either: the commit catches up on nothing. The write itself
-    /// is published as usual.
+    /// A weight written while the build reads is in the hierarchy its commit adopts: the commit
+    /// catches up on the edges writers wrote, scoped.
     #[test]
-    fn a_write_during_the_build_is_not_in_the_adopted_hierarchy_yet() {
+    fn a_weight_written_during_the_build_is_caught_up() {
         let (host, def, attr) = host("cch_bg_write");
         create(&host, &def);
         let writer = Arc::clone(&host);
@@ -469,19 +525,214 @@ mod background_build {
             writer.write(|g| set_first_weight(g, attr, 10.0));
         });
         assert_eq!(job.step(), Step::Done);
-
         let published = host.mvcc.read();
         let cch = published
             .cch_index(&def)
             .expect("built")
             .cch()
             .expect("built");
-        assert_queries_match(cch, &oracle(1.0));
-        let stored = published
-            .relationship_attrs()
-            .get_attr_by_idx(0, attr)
-            .expect("stored");
-        assert_eq!(stored, Value::Float(10.0), "the write is published");
+        assert_queries_match(cch, &oracle(10.0));
+    }
+
+    /// An edge written while the build reads that the new hierarchy does not join starts the
+    /// build again, under the same generation: the same job's next batch reads the newer
+    /// version and adopts a hierarchy with the edge.
+    #[test]
+    fn a_structural_write_during_the_build_starts_it_again() {
+        let (host, def, attr) = host("cch_bg_restart");
+        create(&host, &def);
+        let generation = generation_of(&host, &def);
+        let writer = Arc::clone(&host);
+        let mut job = job_running(&host, &def, move |_| {
+            writer.write(|g| {
+                add_edge(g, attr, 0, 3, 0.5);
+            });
+        });
+        assert_eq!(job.step(), Step::More, "built again");
+        assert_eq!(generation_of(&host, &def), generation);
+        assert_eq!(job.step(), Step::Done);
+        let published = host.mvcc.read();
+        let cch = published
+            .cch_index(&def)
+            .expect("built")
+            .cch()
+            .expect("built");
+        assert_eq!(cch.query(0, 3).map(|(weight, _)| weight), Some(0.5));
+    }
+
+    /// Writers that overtake every build with a change it cannot take: after `MAX_REDOS` (5)
+    /// restarts the index is given up as failed, with that reason, and no job runs for it.
+    #[test]
+    fn a_build_overtaken_too_often_is_failed() {
+        let (host, def, attr) = host("cch_bg_redos");
+        create(&host, &def);
+        let mut steps = Vec::new();
+        for round in 0..6 {
+            let writer = Arc::clone(&host);
+            let mut job = job_running(&host, &def, move |_| {
+                writer.write(|g| {
+                    // A new node, joined to node 0: never in the hierarchy being built.
+                    let node = g
+                        .node_id_space()
+                        .reserve(1, &RoaringTreemap::new())
+                        .expect("reserved")[0];
+                    g.create_nodes(&RoaringTreemap::from_iter([node]))
+                        .expect("creatable");
+                    add_edge(g, attr, 0, node, 1.0 + f64::from(round));
+                });
+            });
+            let step = job.step();
+            steps.push(step);
+            if step == Step::Done {
+                break;
+            }
+        }
+        assert_eq!(
+            steps,
+            [
+                Step::More,
+                Step::More,
+                Step::More,
+                Step::More,
+                Step::More,
+                Step::Done
+            ]
+        );
+        let published = host.mvcc.read();
+        let entry = published.falkordb_index.cch_entry(&def).expect("held");
+        assert!(!entry.is_building());
+        assert_eq!(
+            entry.index.failure(),
+            Some("structural writes kept overtaking its build")
+        );
+    }
+
+    /// A writer that forked while the index was building, wrote a weight, and escalates after
+    /// the adoption: its rebase takes its write into the adopted hierarchy, so what it commits
+    /// answers with its own write. One that wrote an edge the hierarchy cannot take puts the
+    /// index back to `Building` under a new generation instead, for the builder.
+    #[test]
+    fn a_writer_rebased_onto_an_adoption_takes_its_writes() {
+        for structural in [false, true] {
+            let (host, def, attr) = host(&format!("cch_bg_rebase_writes_{structural}"));
+            create(&host, &def);
+            let mut fork = host.mvcc.fork();
+            if structural {
+                add_edge(&mut fork, attr, 0, 3, 0.5);
+            } else {
+                set_first_weight(&mut fork, attr, 10.0);
+            }
+            assert_eq!(job(&host, &def).step(), Step::Done);
+            let adopted = host
+                .mvcc
+                .read()
+                .falkordb_index
+                .cch_entry(&def)
+                .expect("held")
+                .generation;
+            host.mvcc.rebase_onto_indexer_batches(&mut fork);
+            host.mvcc.commit(fork).expect("the writer commits");
+            let published = host.mvcc.read();
+            let entry = published.falkordb_index.cch_entry(&def).expect("held");
+            if structural {
+                assert!(entry.is_building() && entry.generation != adopted);
+                assert_eq!(job(&host, &def).step(), Step::Done);
+                let built = host.mvcc.read();
+                let cch = built.cch_index(&def).expect("built").cch().expect("built");
+                assert_eq!(cch.query(0, 3).map(|(weight, _)| weight), Some(0.5));
+            } else {
+                let cch = published
+                    .cch_index(&def)
+                    .expect("built")
+                    .cch()
+                    .expect("built");
+                assert_queries_match(cch, &oracle(10.0));
+            }
+        }
+    }
+
+    /// Random writes, weight changes and new edges among the existing nodes, before a build
+    /// reads, while it reads, or on the built index, round after round: each published version
+    /// that holds the index built answers like Dijkstra on its own graph. A new edge between
+    /// nodes the hierarchy does not join sends the index back to the builder.
+    #[test]
+    fn writes_interleaved_with_builds_keep_every_published_version_exact() {
+        use parking_lot::Mutex;
+        use rand::rngs::SmallRng;
+        use rand::{RngExt, SeedableRng};
+
+        /// The `T0` edges as the graph holds them, `(src, dst, weight, id)`.
+        type Mirror = Vec<(u64, u64, f64, u64)>;
+
+        fn write(
+            state: &Mutex<(SmallRng, Mirror)>,
+            attr: u16,
+            g: &mut Graph,
+        ) {
+            let mut guard = state.lock();
+            let (rng, mirror) = &mut *guard;
+            let weight = f64::from(rng.random_range(1..9_u32));
+            if rng.random_range(0..2) == 0 {
+                let at = rng.random_range(0..mirror.len());
+                set_weight(g, attr, mirror[at].3, weight);
+                mirror[at].2 = weight;
+            } else {
+                let (u, v) = (rng.random_range(0..4_u64), rng.random_range(0..4_u64));
+                if u != v {
+                    let id = add_edge(g, attr, u, v, weight);
+                    mirror.push((u, v, weight, id));
+                }
+            }
+        }
+
+        for seed in 0..8_u64 {
+            let (host, def, attr) = host(&format!("cch_bg_interleave_{seed}"));
+            let mirror: Mirror = EDGES
+                .iter()
+                .enumerate()
+                .filter(|(_, edge)| edge.3 == INDEXED[0])
+                .map(|(id, edge)| (edge.0, edge.1, edge.2.unwrap_or(1.0), id as u64))
+                .collect();
+            let state = Arc::new(Mutex::new((SmallRng::seed_from_u64(seed), mirror)));
+            create(&host, &def);
+            for _ in 0..6 {
+                let building = host
+                    .mvcc
+                    .read()
+                    .falkordb_index
+                    .cch_entry(&def)
+                    .expect("held")
+                    .is_building();
+                let during = state.lock().0.random_range(0..2) == 0;
+                if !building {
+                    host.write(|g| write(&state, attr, g));
+                } else if during {
+                    let (writer, state) = (Arc::clone(&host), Arc::clone(&state));
+                    let mut job = job_running(&host, &def, move |_| {
+                        writer.write(|g| write(&state, attr, g));
+                    });
+                    while job.step() == Step::More {}
+                } else {
+                    host.write(|g| write(&state, attr, g));
+                    let mut job = job(&host, &def);
+                    while job.step() == Step::More {}
+                }
+                let published = host.mvcc.read();
+                let Some(index) = published.cch_index(&def) else {
+                    continue;
+                };
+                // `T1`'s edge, which the index also spans, then `T0`'s.
+                let mut cheapest: std::collections::BTreeMap<(u64, u64), f64> =
+                    std::collections::BTreeMap::from([((2, 0), 7.0)]);
+                for &(u, v, weight, _) in &state.lock().1 {
+                    let pair = cheapest.entry((u, v)).or_insert(weight);
+                    *pair = pair.min(weight);
+                }
+                let mut edges: Vec<(u64, u64, f64)> =
+                    cheapest.into_iter().map(|((u, v), w)| (u, v, w)).collect();
+                assert_queries_match(index.cch().expect("built"), &weights(4, &edges));
+            }
+        }
     }
 
     /// A drop while the build reads, or a drop and a create again: the batch's commit publishes
