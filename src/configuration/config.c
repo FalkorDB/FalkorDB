@@ -71,6 +71,9 @@
 // delay indexing
 #define DELAY_INDEXING "DELAY_INDEXING"
 
+// parallel indexing
+#define PARALLEL_INDEXING "PARALLEL_INDEXING"
+
 // import folder
 #define IMPORT_FOLDER "IMPORT_FOLDER"
 
@@ -96,6 +99,7 @@
 #define CMD_INFO_DEFAULT true
 #define CMD_INFO_QUERIES_MAX_COUNT_DEFAULT 1000
 #define DELAY_INDEXING_DEFAULT false
+#define PARALLEL_INDEXING_DEFAULT false
 #define IMPORT_DIR_DEFAULT "/var/lib/FalkorDB/import/"
 #define TEMP_DIR_DEFAULT "/tmp"
 #define JS_HEAP_SIZE_DEFAULT  (256 * 1024 * 1024)  // 256 MB
@@ -122,6 +126,7 @@ typedef struct
 	uint64_t effects_threshold;		   // replicate via effects when runtime exceeds threshold
 	uint64_t max_info_queries_count;   // maximum number of query info elements
 	bool delay_indexing;			   // delay index construction when decoding
+	bool parallel_indexing;			   // construct indices in parallel when decoding
 	char *import_folder;			   // path to import folder, used for CSV loading
 	char *temp_folder;				   // path to temp folder, used for storing temporary files
 	size_t js_heap_size;               // quickjs runtime max heap size;
@@ -509,6 +514,21 @@ static void Config_delay_indexing_set(
 }
 
 //------------------------------------------------------------------------------
+// parallel indexing
+//------------------------------------------------------------------------------
+
+static bool Config_parallel_indexing_get(void)
+{
+	return config.parallel_indexing;
+}
+
+static void Config_parallel_indexing_set(
+	const bool parallel_indexing)
+{
+	config.parallel_indexing = parallel_indexing;
+}
+
+//------------------------------------------------------------------------------
 // import folder
 //------------------------------------------------------------------------------
 
@@ -673,6 +693,10 @@ bool Config_Contains_field(
 	{
 		f = Config_DELAY_INDEXING;
 	}
+	else if (!(strcasecmp(field_str, PARALLEL_INDEXING)))
+	{
+		f = Config_PARALLEL_INDEXING;
+	}
 	else if (!(strcasecmp(field_str, IMPORT_FOLDER)))
 	{
 		f = Config_IMPORT_FOLDER;
@@ -758,6 +782,9 @@ SIType Config_Field_type(
 		return T_INT64;
 
 	case Config_DELAY_INDEXING:
+		return T_BOOL;
+
+	case Config_PARALLEL_INDEXING:
 		return T_BOOL;
 
 	case Config_IMPORT_FOLDER:
@@ -862,6 +889,10 @@ const char *Config_Field_name(
 		name = DELAY_INDEXING;
 		break;
 
+	case Config_PARALLEL_INDEXING:
+		name = PARALLEL_INDEXING;
+		break;
+
 	case Config_IMPORT_FOLDER:
 		name = IMPORT_FOLDER;
 		break;
@@ -955,6 +986,9 @@ static void _Config_SetToDefaults(void)
 
 	// index entities as they're being decoded
 	config.delay_indexing = DELAY_INDEXING_DEFAULT;
+
+	// construct indices in parallel when decoding
+	config.parallel_indexing = PARALLEL_INDEXING_DEFAULT;
 
 	// set default import folder path
 	config.import_folder = rm_strdup(IMPORT_DIR_DEFAULT);
@@ -1322,6 +1356,21 @@ bool Config_Option_get(
 
 		ASSERT(delay_indexing != NULL);
 		(*delay_indexing) = Config_delay_indexing_get();
+	}
+	break;
+
+		//----------------------------------------------------------------------
+		// parallel indexing
+		//----------------------------------------------------------------------
+
+	case Config_PARALLEL_INDEXING:
+	{
+		va_start(ap, field);
+		bool *parallel_indexing = va_arg(ap, bool *);
+		va_end(ap);
+
+		ASSERT(parallel_indexing != NULL);
+		(*parallel_indexing) = Config_parallel_indexing_get();
 	}
 	break;
 
@@ -1761,8 +1810,46 @@ bool Config_Option_set
 				return false ;
 			}
 
+			// DELAY_INDEXING (async) and PARALLEL_INDEXING (synchronous,
+			// concurrent) are mutually-exclusive index-construction modes
+			if (delay_indexing && Config_parallel_indexing_get ()) {
+				if (err != NULL) {
+					*err = "DELAY_INDEXING and PARALLEL_INDEXING are mutually "
+						"exclusive" ;
+				}
+				return false ;
+			}
+
 			if (Config_delay_indexing_get () != delay_indexing) {
 				Config_delay_indexing_set (delay_indexing) ;
+				updated = true ;
+			}
+		}
+		break ;
+
+		//----------------------------------------------------------------------
+		// parallel indexing
+		//----------------------------------------------------------------------
+
+		case Config_PARALLEL_INDEXING:
+		{
+			bool parallel_indexing ;
+			if (!_Config_ParseYesNo (val, &parallel_indexing)) {
+				return false ;
+			}
+
+			// PARALLEL_INDEXING (synchronous, concurrent) and DELAY_INDEXING
+			// (async) are mutually-exclusive index-construction modes
+			if (parallel_indexing && Config_delay_indexing_get ()) {
+				if (err != NULL) {
+					*err = "PARALLEL_INDEXING and DELAY_INDEXING are mutually "
+						"exclusive" ;
+				}
+				return false ;
+			}
+
+			if (Config_parallel_indexing_get () != parallel_indexing) {
+				Config_parallel_indexing_set (parallel_indexing) ;
 				updated = true ;
 			}
 		}
@@ -1892,6 +1979,40 @@ bool Config_Option_dryrun(
 	config = config_clone;
 
 	return valid;
+}
+
+// dry run a batch of configuration changes
+// the changes are applied cumulatively on top of one another (not each against
+// the current configuration) so that a single command can't set a combination
+// that is individually valid but jointly invalid, e.g. two mutually-exclusive
+// options; the live configuration is left unchanged
+// returns the index of the first invalid change, or -1 if all are valid;
+// *err is set when the failing change provided a specific error message
+int Config_Option_dryrun_batch(
+	const Config_Option_Field *fields,  // fields to set
+	const char **vals,                  // values to set
+	int n,                              // number of fields/values
+	char **err)                         // [output] error message
+{
+	// clone configuration
+	RG_Config config_clone = config;
+
+	// disable configuration notification during the dry run
+	config.cb = NULL;
+
+	// apply the changes cumulatively on the live configuration
+	int failed = -1;
+	for (int i = 0; i < n; i++) {
+		if (!Config_Option_set(fields[i], vals[i], err)) {
+			failed = i;
+			break;
+		}
+	}
+
+	// restore original configuration
+	config = config_clone;
+
+	return failed;
 }
 
 void Config_Subscribe_Changes(

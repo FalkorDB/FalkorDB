@@ -7,6 +7,7 @@
 #include "../../../../index/indexer.h"
 #include "../../../../index/cch_index.h"
 #include "../../../../globals.h"
+#include "../../../../util/thpool/pool.h"
 
 // find the graph a multi-key load of 'graph_name' is building, NULL if none
 //
@@ -384,9 +385,11 @@ GraphContext *RdbLoadGraphContext_latest
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
 
-		// get delay indexing configuration
+		// get indexing configuration
 		bool delay_indexing;
+		bool parallel_indexing;
 		Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+		Config_Option_get(Config_PARALLEL_INDEXING, &parallel_indexing);
 
 		// report index construction method
 		if(delay_indexing) {
@@ -398,48 +401,115 @@ GraphContext *RdbLoadGraphContext_latest
 					GraphContext_GetName(gc));
 		}
 
-		// update the node statistics, enable node indices
+		// update node statistics for every label
 		for(LabelID i = 0; i < label_count; i++) {
 			GrB_Index nvals;
 			Delta_Matrix L = Graph_GetLabelMatrix(g, i);
 			Delta_Matrix_nvals(&nvals, L);
 			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
+		}
 
-			Index idx;
+		//----------------------------------------------------------------------
+		// collect indices to construct
+		//----------------------------------------------------------------------
+
+		// each schema holds at most one pending index; a graph with multiple
+		// labels / relationship-types yields multiple independent indices, each
+		// backed by a disjoint RediSearch spec -- safe to populate concurrently
+		Schema **idx_schemas = arr_new(Schema*, label_count + rel_count);
+		Index   *idx_pending = arr_new(Index,   label_count + rel_count);
+
+		for(LabelID i = 0; i < label_count; i++) {
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
-			idx = PENDING_IDX(s);
+			Index idx = PENDING_IDX(s);
+			if(idx == NULL) continue;
 
-			if(idx != NULL) {
-				if(delay_indexing) {
-					// start async indexing
-					Indexer_PopulateIndex(gc, s, idx);
-				} else {
-					// populate index
-					Index_Populate (idx, gc) ;
-					Index_Enable (idx) ;
-					Schema_ActivateIndex (s) ;
-				}
+			if(delay_indexing) {
+				// start async indexing
+				Indexer_PopulateIndex(gc, s, idx);
+			} else {
+				arr_append(idx_schemas, s);
+				arr_append(idx_pending, idx);
 			}
 		}
 
-		// enable all edge indices
 		for(uint i = 0; i < rel_count; i++) {
-			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
-			idx = PENDING_IDX(s);
+			Index idx = PENDING_IDX(s);
+			if(idx == NULL) continue;
 
-			if(idx != NULL) {
-				if(delay_indexing) {
-					// start async indexing
-					Indexer_PopulateIndex(gc, s, idx);
-				} else {
-					// populate index
-					Index_Populate (idx, gc) ;
-					Index_Enable(idx);
-					Schema_ActivateIndex(s);
-				}
+			if(delay_indexing) {
+				// start async indexing
+				Indexer_PopulateIndex(gc, s, idx);
+			} else {
+				arr_append(idx_schemas, s);
+				arr_append(idx_pending, idx);
 			}
 		}
+
+		//----------------------------------------------------------------------
+		// populate indices (synchronous path)
+		//----------------------------------------------------------------------
+
+		uint n_idx = arr_len(idx_pending);
+		if(n_idx > 0) {
+			// parallel, lock-free population is only safe during a blocking RDB
+			// load on the Redis main thread: the event loop is frozen, so no
+			// query and no fork-GC can touch these (not-yet-registered) specs
+			// while workers add to them without the global write lock. other
+			// decode paths run on the cron thread with the event loop live
+			// (e.g. GRAPH.COPY), where GC can fire -- those keep the serial,
+			// locked path
+			bool use_parallel = parallel_indexing && ThreadPool_AmIMainThread();
+
+			// cap worker threads at the configured OpenMP thread count
+			uint64_t omp_nthread;
+			Config_Option_get(Config_OPENMP_NTHREAD, &omp_nthread);
+			int n_threads = (n_idx < omp_nthread) ? (int)n_idx : (int)omp_nthread;
+			if(n_threads < 1) n_threads = 1;
+
+			// for the parallel path only: workers skip the per-batch graph lock
+			// (Index_PopulateUnsafe), so nothing resets the matrix sync policy
+			// mid-region. Graph_ApplyAllPending above already synchronized every
+			// matrix, so pin a no-op policy for the region (pure reads) and
+			// restore it once the workers have joined (after the implicit
+			// barrier). the serial path manages the policy itself via its
+			// per-batch lock, so leave it untouched
+			MATRIX_POLICY policy = SYNC_POLICY_UNKNOWN;
+			if(use_parallel) {
+				policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
+			}
+
+			// populate each index; when parallel indexing is disabled, we're not
+			// on the main thread, or there is a single index, the 'if' clause
+			// runs the loop serially. the parallel path uses the lock-free add:
+			// each index is a disjoint RediSearch spec not reachable by queries
+			// or GC during a main-thread load
+			#pragma omp parallel for if(use_parallel && n_idx > 1) \
+				num_threads(n_threads) schedule(dynamic)
+			for(uint i = 0; i < n_idx; i++) {
+				if(use_parallel) {
+					Index_PopulateUnsafe(idx_pending[i], gc);
+				} else {
+					Index_Populate(idx_pending[i], gc);
+				}
+			}
+
+			if(use_parallel) {
+				Graph_SetMatrixPolicy(g, policy);
+			}
+
+			// enable and activate indices on the main thread; Schema_ActivateIndex
+			// mutates schema arrays and may drop a stale index, so it must not run
+			// concurrently with population
+			for(uint i = 0; i < n_idx; i++) {
+				Index_Enable(idx_pending[i]);
+				Schema_ActivateIndex(idx_schemas[i]);
+			}
+		}
+
+		arr_free(idx_schemas);
+		arr_free(idx_pending);
 
 		// graph-level CCH path indices are decoded as definitions only (their
 		// identity) during ENCODE_STATE_CCH_INDICES; rebuild each hierarchy now
