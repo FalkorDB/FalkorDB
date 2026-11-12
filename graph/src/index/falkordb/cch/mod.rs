@@ -595,7 +595,8 @@ impl VersionedIndex for CchIndex {
 }
 
 /// [`CchIndex::indexer_read`]'s build: input, ordering, customization, with a check for the
-/// builder's stop before each step that takes long.
+/// builder's stop before each of the three ([`Cch::build_checked`] makes the last one, between
+/// the ordering and the customization).
 fn build_off_the_lock(
     version: &Graph,
     def: &CchIndexDef,
@@ -610,7 +611,7 @@ fn build_off_the_lock(
     stopping()?;
     let input = CchInput::build(version, def)?;
     stopping()?;
-    Cch::build(&input)
+    Cch::build_checked(&input, stopping)
 }
 
 /// What a unit of work's writes touched that the graph's CCH indexes might care about. The

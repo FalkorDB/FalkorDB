@@ -352,7 +352,22 @@ impl Cch {
     /// another node count than `input`'s, weights with an edge its skeleton lacks, or a
     /// malformed CSR. [`CchInput::build`] makes the weights and the skeleton from one graph,
     /// so each is a bug; never [`CchError::NeedsRebuild`], since this is the rebuild.
+    #[cfg(test)]
     pub(crate) fn build(input: &CchInput) -> Result<Self, CchError> {
+        Self::build_checked(input, || Ok(()))
+    }
+
+    /// [`Self::build`], calling `between_steps` once the ordering is done and before the
+    /// customization starts, and giving up with its error. The background build checks there
+    /// whether the index builder is stopping: the ordering cannot be interrupted, so that is the
+    /// last moment before the second long step.
+    ///
+    /// # Errors
+    /// As [`Self::build`], and whatever `between_steps` returns.
+    pub(crate) fn build_checked(
+        input: &CchInput,
+        between_steps: impl FnOnce() -> Result<(), CchError>,
+    ) -> Result<Self, CchError> {
         if input.skeleton.node_count != input.n || input.weights.csr.node_count != input.n {
             return Err(CchError::Internal(
                 "the input's skeleton or weights are for another node count",
@@ -360,6 +375,7 @@ impl Cch {
         }
 
         let topology = Arc::new(Topology::build(&input.skeleton)?);
+        between_steps()?;
         let metric = customize(&topology, &input.weights).map_err(|error| match error {
             CchError::NeedsRebuild => {
                 CchError::Internal("the input's weights do not match its own skeleton")
@@ -887,6 +903,41 @@ mod tests {
         let mut count_too_small = to_input(&path(4));
         count_too_small.n = 3;
         internal("both for 4 nodes, input for 3", &count_too_small);
+    }
+
+    /// `build_checked` asks its check once, after the ordering, and gives up with the check's
+    /// error; a check that passes builds what `build` builds. An input `build` refuses is
+    /// refused before the check is asked.
+    #[test]
+    fn build_checked_asks_once_between_the_ordering_and_the_customization() {
+        let input = to_input(&grid(3, 3));
+        let mut asked = 0;
+        let checked = Cch::build_checked(&input, || {
+            asked += 1;
+            Ok(())
+        })
+        .expect("a passing check builds");
+        assert_eq!(asked, 1);
+        let plain = Cch::build(&input).expect("plain build");
+        assert_eq!(checked.topology().arc_count(), plain.topology().arc_count());
+        assert_eq!(checked.node_count(), plain.node_count());
+
+        assert!(matches!(
+            Cch::build_checked(&input, || Err(CchError::Cancelled)),
+            Err(CchError::Cancelled)
+        ));
+
+        let mut count_too_small = to_input(&grid(3, 3));
+        count_too_small.n = 3;
+        let mut asked = 0;
+        assert!(matches!(
+            Cch::build_checked(&count_too_small, || {
+                asked += 1;
+                Ok(())
+            }),
+            Err(CchError::Internal(_))
+        ));
+        assert_eq!(asked, 0, "refused before the check is asked");
     }
 
     /// The degenerate graphs: no node at all, and one node with no edge. Both build and
