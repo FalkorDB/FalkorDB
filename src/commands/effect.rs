@@ -14,7 +14,7 @@
 use crate::divergence_guard;
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{ThreadedGraph, c_graph_key, c_graph_name, register_graph},
+    graph_core::{ThreadedGraph, c_graph_key, c_graph_name, log_cch_warnings, register_graph},
     redis_type::GRAPH_TYPE,
 };
 use graph::effects::EffectsPayload;
@@ -70,6 +70,8 @@ pub fn graph_effect(
     // Any CCH index the records touched is rebuilt inside `apply`, so a failure to
     // do so diverges like any other apply failure.
     let result = EffectsPayload::apply(&mut fork, buf).map_err(|e| e.to_string());
+    // Logged once the version is published: a refused buffer's are dropped with it.
+    let cch_warnings = fork.take_cch_warnings();
 
     // Folded into the same result rather than handled in the `Ok` arm. `commit`
     // validates before publishing, and a version it refuses is dropped — so
@@ -86,6 +88,7 @@ pub fn graph_effect(
 
     match result {
         Ok(()) => {
+            log_cch_warnings("GRAPH.EFFECT", &key_str.to_string(), cch_warnings);
             ctx.replicate_verbatim();
             Ok(RedisValue::SimpleStringStatic("OK"))
         }

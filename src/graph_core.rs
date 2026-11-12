@@ -54,7 +54,6 @@ use graph::{
 };
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
-#[cfg(feature = "index-falkordb")]
 use redis_module::logging::log_warning;
 use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
 use std::{
@@ -1522,6 +1521,19 @@ pub(crate) fn abandon_write(
     }
 }
 
+/// Log what the CCH maintenance warned about while writing a version (see
+/// `Graph::take_cch_warnings`), once `command` has published it on graph `graph_name`. The
+/// graph crate logs nothing itself; a version that was not published takes its warnings with it.
+pub(crate) fn log_cch_warnings(
+    command: &str,
+    graph_name: &str,
+    warnings: Vec<String>,
+) {
+    for warning in warnings {
+        log_warning(format!("{command} on graph '{graph_name}': {warning}"));
+    }
+}
+
 /// Commit a successfully-executed write and replicate it.
 ///
 /// Runs in writer mode — GIL *and* per-graph write lock — so the `commit` Arc-swap
@@ -1547,9 +1559,15 @@ fn commit_and_replicate(
     // `Commit` operator at all — index DDL — creates no ids and passes for the
     // same reason. There is also nothing this could do about a refusal: the
     // query has already succeeded and its reply is about to be serialized.
-    if let Err(e) = runtime.publish(|fork| g.graph.commit(fork)) {
+    // Taken from the version before it is published, logged once it is.
+    let mut cch_warnings = Vec::new();
+    if let Err(e) = runtime.publish(|mut fork| {
+        cch_warnings = fork.take_cch_warnings();
+        g.graph.commit(fork)
+    }) {
         unreachable!("a write query's version is current and verified by now: {e}");
     }
+    log_cch_warnings("GRAPH.QUERY", key_name, cch_warnings);
     // Signal the key as modified so WATCH gets triggered.
     unsafe { ffi::signal_modified_key(ctx.ctx, key_name.as_bytes()) };
 

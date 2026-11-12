@@ -475,6 +475,7 @@ pub(crate) fn flush(
     let mut written = Vec::new();
     let mut updated = Vec::new();
     let mut rebuilt = Vec::new();
+    let mut warnings = Vec::new();
     for (def, entry) in &g.falkordb_index.cch_indexes {
         let Some(changes) = dirty.get(def) else {
             continue;
@@ -498,7 +499,14 @@ pub(crate) fn flush(
                 });
             }
             // Not the write's fault: the builder builds the index again, or records why not.
-            Err(_) => (None, Update::Rebuild),
+            // Said out loud, since only a bug or a resource failure gets here.
+            Err(cause) => {
+                warnings.push(format!(
+                    "CCH index {} could not be updated ({cause}); rebuilding it in the background",
+                    index_name(g, def)
+                ));
+                (None, Update::Rebuild)
+            }
         };
         #[cfg(test)]
         tests::UPDATES.with(|u| u.borrow_mut().push(how));
@@ -507,6 +515,10 @@ pub(crate) fn flush(
             None => rebuilt.push(def.clone()),
         }
         let _ = how;
+    }
+    // Every update is computed, so none of them fails the flush from here on.
+    for warning in warnings {
+        g.falkordb_index.cch_warnings.push(warning);
     }
     for (def, edges) in written {
         let entry = g.falkordb_index.cch_indexes.get_mut(&def).expect("held");
@@ -683,6 +695,9 @@ mod tests {
 
     struct Db {
         mvcc: Arc<MvccGraph>,
+        /// The CCH warnings the last successful write took from its version, as the host does
+        /// before publishing it.
+        warnings: Vec<String>,
     }
 
     impl Db {
@@ -693,6 +708,7 @@ mod tests {
             init_udf_functions();
             Self {
                 mvcc: MvccGraph::from_graph(Graph::new(16, 16, 1, 0, name)),
+                warnings: Vec::new(),
             }
         }
 
@@ -742,9 +758,14 @@ mod tests {
                     );
                 }
             }
+            let mut warnings = Vec::new();
             runtime
-                .publish(|fork| self.mvcc.commit(fork))
+                .publish(|mut fork| {
+                    warnings = fork.take_cch_warnings();
+                    self.mvcc.commit(fork)
+                })
                 .expect("the version validates");
+            self.warnings = warnings;
             self.build_in_background();
             Ok(rows)
         }
@@ -1923,15 +1944,29 @@ mod tests {
         FAIL_UPDATE.set(Some(CchError::Internal("injected")));
         db.ok(&format!("{} SET r.w = 5.0", pair(0, 1)));
         assert_eq!(updates_since(start), [Update::Rebuild]);
+        // The host is told, with the index and the cause.
+        let [warning] = db.warnings.as_slice() else {
+            panic!("one warning: {:?}", db.warnings);
+        };
+        assert!(
+            warning.contains("CCH index (:") && warning.contains("injected"),
+            "{warning}"
+        );
         // The harness ran the builder's part: the index is built again, with the write.
         check(&db, &def, &weights(3, &[(0, 1, 5.0), (1, 2, 3.0)]));
+        // A write that updates the index warns of nothing, and the published version holds none.
+        db.ok(&format!("{} SET r.w = 5.0", pair(1, 2)));
+        assert_eq!(db.warnings, Vec::<String>::new());
+        assert!(db.committed().falkordb_index.cch_warnings.0.is_empty());
 
         FAIL_UPDATE.set(Some(CchError::InvalidWeight));
         let error = db
             .write(&format!("{} SET r.w = 6.0", pair(0, 1)))
             .expect_err("an invalid weight at the flush fails the write");
         assert!(error.contains("got past the write-time check"), "{error}");
-        check(&db, &def, &weights(3, &[(0, 1, 5.0), (1, 2, 3.0)]));
+        // The failed write's version is dropped, warnings and all.
+        assert!(db.committed().falkordb_index.cch_warnings.0.is_empty());
+        check(&db, &def, &weights(3, &[(0, 1, 5.0), (1, 2, 5.0)]));
     }
 
     /// Nodes created with no indexed edge grow the graph's node capacity past the hierarchy's,

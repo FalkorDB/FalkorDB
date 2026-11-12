@@ -10,6 +10,7 @@
 //! avoids. The write path mutates a version's own copy instead.
 
 use std::collections::{BTreeMap, HashMap};
+use std::mem;
 use std::sync::Arc;
 
 use roaring::RoaringTreemap;
@@ -597,6 +598,31 @@ pub struct FalkorDbIndex {
     /// update an entry in place (`CchIndex`'s [`VersionedIndex`] lookup); everything else goes
     /// through the CCH methods below.
     pub(super) cch_indexes: BTreeMap<CchIndexDef, IndexEntry<CchIndex>>,
+    /// What the CCH maintenance had to warn about while writing this version (an index it could
+    /// not update and handed to the builder, say), for the owner of the write to take and log:
+    /// the graph crate logs nothing itself. Never carried into the next version.
+    pub(super) cch_warnings: VersionWarnings,
+}
+
+/// Messages raised while writing one version, for its owner to take
+/// ([`FalkorDbIndex::take_cch_warnings`]). A clone is empty: a new version starts with none,
+/// so a message is never reported twice.
+#[derive(Default)]
+pub(crate) struct VersionWarnings(pub(super) Vec<String>);
+
+impl Clone for VersionWarnings {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl VersionWarnings {
+    pub(crate) fn push(
+        &mut self,
+        warning: String,
+    ) {
+        self.0.push(warning);
+    }
 }
 
 impl FalkorDbIndex {
@@ -1265,6 +1291,11 @@ impl FalkorDbIndex {
         entry.index.hierarchy = Hierarchy::Pending;
         entry.state = BuildState::building(());
         entry.generation = generation;
+    }
+
+    /// The warnings the CCH maintenance raised on this version, oldest first, leaving none.
+    pub(crate) fn take_cch_warnings(&mut self) -> Vec<String> {
+        mem::take(&mut self.cch_warnings.0)
     }
 
     /// Stop holding the index over `def`.

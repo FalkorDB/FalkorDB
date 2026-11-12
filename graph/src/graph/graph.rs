@@ -3987,9 +3987,13 @@ impl Graph {
     /// A no-op without the `index-falkordb` feature, which has no CCH index, and when nothing
     /// was staged.
     ///
+    /// An index that cannot be updated for any other reason than an invalid weight is handed to
+    /// the index builder, with a warning on this version ([`Self::take_cch_warnings`]), and the
+    /// writes go on.
+    ///
     /// # Errors
-    /// A changed index could not be updated (a resource, a bug). The owner fails the unit, and
-    /// its rollback drops this version with whatever was updated.
+    /// An invalid weight reached the flush past the write-time check (a bug). The owner fails
+    /// the unit, and its rollback drops this version with whatever was updated.
     pub fn apply_cch_writes(
         &mut self,
         docs: &mut IndexDocs,
@@ -4006,6 +4010,21 @@ impl Graph {
         {
             let _ = docs;
             Ok(())
+        }
+    }
+
+    /// The warnings the CCH maintenance raised on this version (an index it could not update
+    /// and handed to the builder, say), oldest first, leaving none. The graph crate logs nothing
+    /// itself: whoever owns the write takes them before publishing the version and logs them
+    /// once it is published. Empty without the `index-falkordb` feature.
+    pub fn take_cch_warnings(&mut self) -> Vec<String> {
+        #[cfg(feature = "index-falkordb")]
+        {
+            self.falkordb_index.take_cch_warnings()
+        }
+        #[cfg(not(feature = "index-falkordb"))]
+        {
+            Vec::new()
         }
     }
 

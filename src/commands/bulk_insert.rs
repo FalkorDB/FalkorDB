@@ -2,7 +2,10 @@ use crate::dispatch::must_run_inline;
 use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
+    graph_core::{
+        BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, log_cch_warnings,
+        register_graph,
+    },
     redis_type::GRAPH_TYPE,
     telemetry,
 };
@@ -873,9 +876,12 @@ pub fn graph_bulk_insert(
         // bitmap on a path that has just parsed a whole payload, and is the only
         // ordering where a refusal leaves nothing behind. (`commit` cannot find
         // this version stale: it was forked under the write lock held here.)
+        // Taken from the version before it is published, logged once it is.
+        let mut cch_warnings = Vec::new();
         let result = result.and_then(|()| {
             fork.validate().map_err(|e| e.to_string())?;
             fork.commit_index_docs(&mut docs);
+            cch_warnings = fork.take_cch_warnings();
             tg.graph
                 .commit(fork)
                 .map(|_published| ())
@@ -883,6 +889,7 @@ pub fn graph_bulk_insert(
         });
         return match result {
             Ok(()) => {
+                log_cch_warnings("GRAPH.BULK", &key_str.to_string(), cch_warnings);
                 ctx.replicate_verbatim();
                 let reply = format!("{node_count} nodes created, {edge_count} edges created");
                 Ok(RedisValue::SimpleString(reply))
@@ -997,12 +1004,20 @@ pub fn graph_bulk_insert(
                     break 'phase Err(e.to_string());
                 }
                 fork.commit_index_docs(&mut docs);
+                // Taken from the version before it is published, logged once it is, still
+                // holding the GIL.
+                let cch_warnings = fork.take_cch_warnings();
                 if let Err(e) = session
                     .with_graph_mut(|tg| tg.graph.commit(fork))
                     .expect("writer mode after upgrade_to_write")
                 {
                     break 'phase Err(e.to_string());
                 }
+                log_cch_warnings(
+                    "GRAPH.BULK",
+                    &String::from_utf8_lossy(&key_bytes),
+                    cch_warnings,
+                );
                 // Replicate the client's own argument strings.
                 //
                 // `RM_ReplicateVerbatim` cannot be used from here. It propagates
