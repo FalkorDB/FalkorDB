@@ -17,8 +17,8 @@ graph/src/parser/cypher.rs	Parser::parse_unsigned_literal	481	PROVEN	C.Params ul
 graph/src/parser/cypher.rs	Parser::parse_literal_list	509	PROVEN	C.Params listLitV/listItems: lit_sound (GLItems)
 graph/src/parser/cypher.rs	Parser::parse_literal_map	524	PROVEN	C.Params mapLitV/mapItems: lit_sound (GMItems), omInsert_replaces
 graph/src/parser/cypher.rs	Parser::expect_end_of_input	542	PROVEN	C.ClausesG3 endP_sound (GSemis), np_endP
-graph/src/parser/cypher.rs	Parser::parse	561	PROVEN	C.Index parseP_sound (GCypher), parse_no_panic
-graph/src/parser/cypher.rs	Parser::parse_index_ops	577	PROVEN	C.Index indexOps/idxBody: idxBody_sound (GIdx), np_indexOps
+graph/src/parser/cypher.rs	Parser::parse	561	NOT COVERED	not modelled yet: the Lean grammar (C.Index idxBody) has no CREATE/DROP CCH INDEX (#3213, #3362); without CCH: C.Index parseP_sound (GCypher), parse_no_panic
+graph/src/parser/cypher.rs	Parser::parse_index_ops	577	NOT COVERED	not modelled yet: the Lean grammar (C.Index idxBody) has no CREATE/DROP CCH INDEX (#3213, #3362); without CCH: C.Index indexOps/idxBody: idxBody_sound (GIdx), np_indexOps
 graph/src/parser/cypher.rs	Parser::parse_query	852	PROVEN	C.ClausesG3 queryP_sound (GQuery), C.ClausesNP queryP_no_panic; union_mix_rejected
 graph/src/parser/cypher.rs	Parser::parse_single_query	877	PROVEN	C.ClausesG3 sound_mut (GSingle/GSegs/GReads/GWrites), np_mut; match_after_create_rejected
 graph/src/parser/cypher.rs	Parser::parse_reading_clasue	1010	PROVEN	C.ClausesG2 readingP_sound (GReading, no MATCH MATCH since #3060), C.ClausesNP readingP_np (unreachable! not reached); match_match_refused, reading_match_at_adv, load_csv_with_from_refused, no_load_with_from
