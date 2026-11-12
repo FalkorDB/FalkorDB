@@ -628,17 +628,26 @@ impl FalkorDbIndex {
         self.node_columns.len() + self.edge_columns.len()
     }
 
-    /// Heap bytes every column holds in this version, node and edge
-    /// ([`VersionedIndex::memory_usage`]): what a build with `index-falkordb` adds to
-    /// `indices_sz_mb` in `GRAPH.MEMORY USAGE`. Walks every page of every column. The CCH
-    /// indexes are not counted: their hierarchy holds no arrays until #3208 and #3209.
+    /// Heap bytes every index holds in this version, node and edge columns and CCH
+    /// hierarchies ([`VersionedIndex::memory_usage`]): what a build with `index-falkordb` adds
+    /// to `indices_sz_mb` in `GRAPH.MEMORY USAGE`. Walks every page of every column.
+    ///
+    /// A CCH index's map key is its own copy of the definition, so its type list is counted
+    /// here, next to the one the entry counts.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        self.node_columns
+        let columns: usize = self
+            .node_columns
             .values()
             .chain(self.edge_columns.values())
             .map(IndexEntry::memory_usage)
-            .sum()
+            .sum();
+        let hierarchies: usize = self
+            .cch_indexes
+            .iter()
+            .map(|(def, entry)| size_of_val(def.rel_types()) + entry.memory_usage())
+            .sum();
+        columns + hierarchies
     }
 
     /// The column map for `entity` — node labels and relationship types keep
@@ -1162,26 +1171,52 @@ impl FalkorDbIndex {
 /// CCH shortest-path indexes, held next to the columns. `Graph`'s CCH methods build a
 /// hierarchy from the graph first, then hand it here; nothing here reads the graph.
 ///
-/// The signatures are fixed here so the DDL, maintenance and procedure changes can be written
-/// against them. Every body is `unimplemented!()`: nothing in the engine calls these, so a
-/// graph with no CCH index behaves exactly as it did before.
+/// MVCC: an entry holds its hierarchy as `Arc<Cch>`, and `Graph::new_version` clones the `Arc`.
+/// Every write here adds or removes an entry on the version it is called on only,
+/// so a reader holding an older version keeps its hierarchy, and rolling a write back is
+/// dropping the new version. Every write is all-or-nothing.
 impl FalkorDbIndex {
-    /// The index held over exactly `def`, if it is ready to answer.
+    /// The entry held over `def` in any state, looked up by its definition, the whole key
+    /// ([`VersionedIndex::entry`]).
+    #[must_use]
+    pub(crate) fn cch_entry(
+        &self,
+        def: &CchIndexDef,
+    ) -> Option<&IndexEntry<CchIndex>> {
+        CchIndex::entry(self, def)
+    }
+
+    /// The index held over exactly `def`, if it is ready to answer: an entry that is still
+    /// building is not returned.
     #[must_use]
     pub(crate) fn cch_index(
         &self,
-        _def: &CchIndexDef,
+        def: &CchIndexDef,
     ) -> Option<&CchIndex> {
-        unimplemented!("Graph API, #3212")
+        self.cch_entry(def)
+            .filter(|idx| !idx.is_building())
+            .map(|idx| &idx.index)
     }
 
-    /// Every held CCH definition, in no guaranteed order.
+    /// Every held CCH definition, ready or not, in definition order.
     pub(crate) fn cch_defs(&self) -> impl Iterator<Item = &CchIndexDef> {
-        unimplemented!("Graph API, #3212");
-        // Unreachable, but it pins the return type: `impl Iterator` needs a concrete type
-        // and `unimplemented!()` alone leaves the compiler without one.
-        #[allow(unreachable_code)]
-        std::iter::empty()
+        self.cch_indexes.keys()
+    }
+
+    /// Hold `index`, built and `Ready`, as a new index: the next generation, like a
+    /// column's. The caller has checked that no entry over the same definition is held
+    /// ([`Self::cch_entry`]), before building it.
+    pub(crate) fn add_cch(
+        &mut self,
+        index: CchIndex,
+    ) {
+        self.indexes_created += 1;
+        let entry = IndexEntry::new(index, BuildState::Ready, self.indexes_created);
+        let held = self.cch_indexes.insert(entry.index.def.clone(), entry);
+        debug_assert!(
+            held.is_none(),
+            "a CCH index over this definition was already held"
+        );
     }
 
     /// Stop holding the index over `def`.
@@ -1190,9 +1225,12 @@ impl FalkorDbIndex {
     /// [`CchError::NotFound`] if no entry over `def` is held.
     pub(crate) fn drop_cch(
         &mut self,
-        _def: &CchIndexDef,
+        def: &CchIndexDef,
     ) -> Result<(), CchError> {
-        unimplemented!("Graph API, #3212")
+        self.cch_indexes
+            .remove(def)
+            .map(drop)
+            .ok_or(CchError::NotFound)
     }
 }
 

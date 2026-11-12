@@ -9,16 +9,25 @@
 //! - [`lower_rank_distances`], the exact customization oracle, and [`valley`], the graph of C's
 //!   `test01_create_query_drop`;
 //! - [`EditGraph`], [`Edit`] and [`random_edit_batch`], the weight and structure edits the
-//!   maintenance tests replay, over a graph that keeps every parallel edge of a pair.
+//!   maintenance tests replay, over a graph that keeps every parallel edge of a pair;
+//! - [`materialize`], a real `Graph` standing for a weight matrix, built without Cypher, with
+//!   [`Decoys`] that must never win, and the index definition over it; [`real_graph`], the
+//!   `Graph` of an edge list, which `materialize` builds on.
 
 pub(crate) use crate::testkit::*;
 
-use super::{CchInput, Csr, WeightCsr};
+use super::{CchIndexDef, CchInput, Csr, WeightCsr};
 use crate::graph::graphblas::matrix::{Descriptor, Dup, Matrix};
+use crate::graph::{graph::Graph, graphblas::test_init};
+use crate::index::index_docs::IndexDocs;
+use crate::runtime::value::Value;
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
+use roaring::RoaringTreemap;
+use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 /// [`CchInput`] as its contract defines it, for the weight matrix `g`: a symmetric,
 /// self-loop-free skeleton for Phase 1, and directed weights, one per entry of `g`. Built with
@@ -66,6 +75,26 @@ fn csr(
         node_count: n,
         row_offsets,
         neighbors: cols,
+    }
+}
+
+/// Splices one more weight entry, `row -> neighbor` of `weight`, into `input`'s weight CSR at
+/// its sorted place in the row, before an equal neighbor, so it can repeat one. The skeleton
+/// is left as it is: this makes weights [`CchInput::build`] never gives, a self-loop or a
+/// repeated pair.
+pub(super) fn insert_weight_entry(
+    input: &mut CchInput,
+    row: usize,
+    neighbor: u64,
+    weight: f64,
+) {
+    let csr = &mut input.weights.csr;
+    let range = csr.row_range(row);
+    let at = range.start + csr.neighbors[range].partition_point(|&v| v < neighbor);
+    csr.neighbors.insert(at, neighbor);
+    input.weights.values.insert(at, weight);
+    for offset in &mut csr.row_offsets[row + 1..] {
+        *offset += 1;
     }
 }
 
@@ -547,6 +576,180 @@ fn draw_edit(
             None
         }
         EditKind::AddNode => Some(Edit::AddNode),
+    }
+}
+
+/// Weight attribute name of every [`real_graph`].
+const W: &str = "w";
+
+/// The relationship types of a [`materialize`]d graph: its index covers the two indexed ones,
+/// never [`UNINDEXED`].
+pub(crate) const INDEXED: [&str; 2] = ["T0", "T1"];
+
+/// A relationship type no materialized index covers.
+const UNINDEXED: &str = "U";
+
+/// One relationship of a [`real_graph`]: `(src, dst, weight, type)`. A `None` weight writes no
+/// attribute, which an index reads as 1.0.
+pub(crate) type RealEdge = (u64, u64, Option<f64>, &'static str);
+
+/// A `Graph` of `n` nodes (ids `0..n`) holding exactly `edges`, one relationship each (so
+/// parallel and multi-type edges stay distinct relationships), weight attribute `w`. Every
+/// type of [`INDEXED`] exists even with no edge, and the types are created in that order,
+/// then any other in order of appearance; each type is one batch, in `edges`' order.
+/// Returns the graph and the attribute id.
+pub(crate) fn real_graph(
+    n: usize,
+    edges: &[RealEdge],
+    name: &str,
+) -> (Graph, u16) {
+    test_init::ensure_init();
+    let mut g = Graph::new(16, 16, 1, 0, name);
+    // A fresh graph's id spaces open their first batch themselves.
+    let nodes: RoaringTreemap = g
+        .node_id_space()
+        .reserve(n, &RoaringTreemap::new())
+        .expect("reserved")
+        .into_iter()
+        .collect();
+    assert_eq!(nodes.len(), n as u64, "a fresh graph hands out 0..n");
+    g.create_nodes(&nodes).expect("creatable");
+    let attr = g.get_or_create_rel_attr_id(&Arc::new(String::from(W)));
+
+    let mut types: Vec<&str> = INDEXED.to_vec();
+    for e in edges {
+        if !types.contains(&e.3) {
+            types.push(e.3);
+        }
+    }
+    let mut weights: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
+    for ty in types {
+        let mine: Vec<usize> = (0..edges.len()).filter(|&k| edges[k].3 == ty).collect();
+        // One batch per type, as one query each would be.
+        g.roll_id_batches().expect("a consistent space");
+        let rel_ids: Vec<u64> = g
+            .relationship_id_space()
+            .reserve(mine.len(), &RoaringTreemap::new())
+            .expect("reserved");
+        let srcs: Vec<u64> = mine.iter().map(|&k| edges[k].0).collect();
+        let dsts: Vec<u64> = mine.iter().map(|&k| edges[k].1).collect();
+        g.create_relationships_bulk(&Arc::new(String::from(ty)), &srcs, &dsts, &rel_ids)
+            .expect("creatable");
+        for (&k, &id) in mine.iter().zip(&rel_ids) {
+            if let Some(w) = edges[k].2 {
+                weights.insert(id, vec![(attr, Value::Float(w))]);
+            }
+        }
+    }
+    g.import_relationship_attrs(&weights, &mut IndexDocs::default());
+    (g, attr)
+}
+
+/// The index over the [`INDEXED`] types of a [`real_graph`], weighted by its attribute `attr`.
+pub(crate) fn index_def(
+    g: &Graph,
+    attr: u16,
+) -> CchIndexDef {
+    let types = INDEXED
+        .iter()
+        .map(|t| g.get_type_id(t).expect("type exists"))
+        .collect();
+    CchIndexDef::new(types, attr)
+}
+
+/// What [`materialize`] adds next to each pair's own edge: edges an index must never answer
+/// with. All off by default.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Decoys {
+    /// Parallel edges per pair, alternating between the indexed types, each heavier than the
+    /// pair's weight: the first one has no attribute (it reads as 1.0) where the weight is
+    /// below 1.0. None on a closed pair.
+    pub(crate) heavier: usize,
+    /// A closed (`+inf`) parallel edge on every open pair, and a closed edge from each node
+    /// `u` to `u + 1` where `g` has none (an arc in the hierarchy, never on a path).
+    pub(crate) closed: bool,
+    /// A weight-0 parallel edge of [`UNINDEXED`] on every pair, and one from each node `u` to
+    /// `u + 1` where `g` has none: cheaper than anything, never usable.
+    pub(crate) unindexed: bool,
+    /// A weight-0 self-loop at every node.
+    pub(crate) self_loops: bool,
+    /// A parallel edge at exactly the pair's weight, on the other indexed type, a tie. Every
+    /// other pair puts its own edge on `T1` and the tie on `T0`, so the tie wins those.
+    pub(crate) ties: bool,
+}
+
+/// A real graph standing for a weight matrix.
+pub(crate) struct Materialized {
+    pub(crate) graph: Graph,
+    /// The index over [`INDEXED`].
+    pub(crate) def: CchIndexDef,
+}
+
+/// A `Graph` holding `g`: one edge per entry of weight exactly the entry's (no attribute when
+/// it is 1.0, which the missing-attribute rule reads back as 1.0), plus `decoys`. Its cheapest
+/// edge per pair is the matrix's weight, so `g` is the oracle of any index over it.
+pub(crate) fn materialize(
+    g: &Matrix<f64>,
+    decoys: Decoys,
+    name: &str,
+) -> Materialized {
+    let n = node_count(g) as u64;
+    let as_attr = |w: f64| (w != 1.0).then_some(w);
+    let entries = entries(g);
+    let has = |u: u64, v: u64| {
+        entries
+            .binary_search_by(|e| (e.0, e.1).cmp(&(u, v)))
+            .is_ok()
+    };
+    let mut edges: Vec<RealEdge> = Vec::new();
+    for (k, &(u, v, w)) in entries.iter().enumerate() {
+        let (own, other) = if decoys.ties && k % 2 == 1 {
+            (INDEXED[1], INDEXED[0])
+        } else {
+            (INDEXED[0], INDEXED[1])
+        };
+        edges.push((u, v, as_attr(w), own));
+        if u == v {
+            continue;
+        }
+        if w.is_finite() {
+            for h in 0..decoys.heavier {
+                let dw = if h == 0 && w < 1.0 {
+                    None
+                } else {
+                    Some(w + 1.0 + h as f64)
+                };
+                edges.push((u, v, dw, INDEXED[(k + h) % 2]));
+            }
+            if decoys.closed {
+                edges.push((u, v, Some(f64::INFINITY), INDEXED[k % 2]));
+            }
+        }
+        if decoys.unindexed {
+            edges.push((u, v, Some(0.0), UNINDEXED));
+        }
+        if decoys.ties {
+            edges.push((u, v, as_attr(w), other));
+        }
+    }
+    for u in 0..n {
+        let v = (u + 1) % n;
+        if u != v && !has(u, v) {
+            if decoys.closed {
+                edges.push((u, v, Some(f64::INFINITY), INDEXED[0]));
+            }
+            if decoys.unindexed {
+                edges.push((u, v, Some(0.0), UNINDEXED));
+            }
+        }
+        if decoys.self_loops {
+            edges.push((u, u, Some(0.0), INDEXED[0]));
+        }
+    }
+    let (graph, attr) = real_graph(n as usize, &edges, name);
+    Materialized {
+        def: index_def(&graph, attr),
+        graph,
     }
 }
 

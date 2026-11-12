@@ -1,18 +1,15 @@
-//! Customizable Contraction Hierarchies (CCH) path index — contract skeleton.
+//! Customizable Contraction Hierarchies (CCH) path index.
 //!
-//! [`Cch`]'s methods are stubs: signatures the implementation changes build against. The
-//! engine does not call any of it yet: `Graph` only holds an empty list of indexes, and
-//! the query pipeline never reaches the `unimplemented!()` bodies below. (The public
-//! `Graph` methods in `graph.rs` are stubs too, or delegate to `FalkorDbIndex`'s CCH methods,
-//! which are, so a caller that invokes them directly reaches `unimplemented!()`.)
+//! A graph version holds its indexes as `Arc<Cch>`, in its native index state
+//! ([`FalkorDbIndex`]); the `Graph` methods in `graph.rs` create, drop and list them.
 //!
 //! Layout (one file per area, so changes to different areas do not touch each other's files):
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
 //! - `nd.rs`        the nested-dissection call behind Phase 1's ordering
 //! - `customize.rs` Phase 2: customization (#3209)
-//! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
+//! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
 //! files are where the `impl` blocks land.
@@ -192,7 +189,7 @@ impl From<CsrExport<f64>> for WeightCsr {
 }
 
 /// What `Graph` hands the hierarchy builder (built by #3211, consumed by #3208 and #3209).
-pub struct CchInput {
+pub(crate) struct CchInput {
     n: usize,
     /// Symmetric, no self-loops ([`Csr::is_symmetric_simple`]): `CchInput::build` takes it
     /// as the pattern union of the weights and their transpose after dropping the diagonal.
@@ -221,6 +218,8 @@ impl CchIndexDef {
     ) -> Self {
         rel_types.sort_unstable();
         rel_types.dedup();
+        // The definition is kept for the index's life and counted by its length.
+        rel_types.shrink_to_fit();
         Self {
             rel_types,
             weight_attr,
@@ -363,7 +362,7 @@ pub enum Recustomized {
 #[derive(Clone)]
 pub struct CchIndex {
     pub def: CchIndexDef,
-    pub cch: Arc<Cch>,
+    pub(crate) cch: Arc<Cch>,
 }
 
 /// CCH as a kind of versioned index. An entry is found by its whole definition, and until the
@@ -475,10 +474,10 @@ impl VersionedIndex for CchIndex {
         unreachable!("CCH is not dispatched through IndexId until the background build")
     }
 
-    /// Never called: [`FalkorDbIndex::memory_usage`] counts the node and edge columns only, since
-    /// the hierarchy holds no arrays until #3208 and #3209.
+    /// The hierarchy ([`Cch::memory_usage`]) and the definition's type list. A `Topology`
+    /// shared with another version is counted here too, as every index counts a shared page.
     fn memory_usage(&self) -> usize {
-        unreachable!("GRAPH.MEMORY USAGE counts no CCH index until the hierarchy holds arrays")
+        self.cch.memory_usage() + size_of_val(self.def.rel_types())
     }
 }
 
@@ -514,6 +513,8 @@ mod tests {
     fn new_dedups_rel_types() {
         let def = CchIndexDef::new(vec![TypeId(4), TypeId(1), TypeId(4), TypeId(1)], 0);
         assert_eq!(def.rel_types(), &[TypeId(1), TypeId(4)]);
+        // `memory_usage` counts the length, so no capacity is left over.
+        assert_eq!(def.rel_types.capacity(), def.rel_types.len());
     }
 
     #[test]
@@ -577,9 +578,8 @@ mod tests {
     /// hierarchy. Drop `cch_indexes` from `Graph::new_version` and this fails on the length;
     /// deep-copy the hierarchy instead of cloning the `Arc` and it fails on `ptr_eq`.
     ///
-    /// Reaches past the (still unimplemented) DDL by inserting into the field directly, which is
-    /// also why this test and `CchIndex::entry` are the only things in the crate that touch
-    /// `cch_indexes` at all.
+    /// Inserts into the field directly, so it checks `new_version` alone, independent of
+    /// `create_cch_index` and the graph input.
     #[test]
     fn new_version_shares_the_hierarchy() {
         test_init::ensure_init();
