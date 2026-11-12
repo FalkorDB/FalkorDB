@@ -35,20 +35,20 @@ graph/src/graph/graph.rs	set_nodes_attributes	1863	PROVEN	via insert_attrs: Span
 graph/src/graph/graph.rs	import_node_attrs	1900	PROVEN	via import_attrs: Props.read_your_writes_new
 graph/src/graph/graph.rs	import_node_attrs_resolved	1948	MODELLED	bulk path, no null filter
 graph/src/graph/graph.rs	import_relationship_attrs	2072	PROVEN	via import_attrs: Props.read_your_writes_new
-graph/src/graph/graph.rs	set_relationships_attributes	2891	PROVEN	via insert_attrs: Span.mergeSpan_correct
+graph/src/graph/graph.rs	set_relationships_attributes	2909	PROVEN	via insert_attrs: Span.mergeSpan_correct
 graph/src/graph/graph.rs	set_node_labels_product	2160	AXIOMATISED	GraphBLAS assign as set product
 graph/src/graph/graph.rs	set_nodes_labels_bulk	2239	AXIOMATISED	GraphBLAS set_all assumed set-insert; then Labels.commit_eq_ref
 graph/src/graph/graph.rs	remove_nodes_labels	2285	AXIOMATISED	GraphBLAS remove assumed set-delete; then Labels.commit_eq_ref
 graph/src/graph/graph.rs	delete_nodes	2319	MODELLED	Snapshot.del/commit; attrs cleared by remove_all (hypothesis of read_your_writes_new)
-graph/src/graph/graph.rs	create_relationships_bulk	2720	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_relationships	2992	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_implicit_edges	3127	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	create_relationships_bulk	2724	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_relationships	3016	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_implicit_edges	3156	NOT COVERED	tensor (proofs/versioned_matrix)
 graph/src/graph/graph.rs	get_or_create_node_attr_id	1981	NOT COVERED	name interning
 graph/src/graph/graph.rs	get_or_create_rel_attr_id	2060	NOT COVERED	name interning
-graph/src/graph/graph.rs	commit_index	3966	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index	3989	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index_locked	4001	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_index_kind	4082	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_index	4030	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index	4053	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index_locked	4065	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_index_kind	4146	NOT COVERED	RediSearch index boundary
 graph/src/graph/attribute_store.rs	into_iter	148	PROVEN	NameMap.accessors (into_iter = vec)
 graph/src/graph/attribute_store.rs	len	155	PROVEN	NameMap.accessors
 graph/src/graph/attribute_store.rs	is_empty	160	PROVEN	NameMap.accessors
@@ -178,12 +178,12 @@ graph/src/runtime/pending.rs	pending_outdegree	1255	PROVEN	PS.pendingDeg_spec, p
 graph/src/runtime/pending.rs	pending_deleted_indegree	1282	PROVEN	PS.deletedDeg_some, deletedDeg_none (only an id neither created here nor committed), deletedDeg_skips_created, fixed2769_created_deleted (#2769 fixed by #3520: created edges are skipped, no panic)
 graph/src/runtime/pending.rs	pending_deleted_outdegree	1312	PROVEN	PS.deletedDeg_some, deletedDeg_none (only an id neither created here nor committed), deletedDeg_skips_created, fixed2769_created_deleted (#2769 fixed by #3520: created edges are skipped, no panic)
 graph/src/runtime/pending.rs	commit	1336	PROVEN	PC.commit_spec (stats, deleted_relationships; graph ops incl. id-space creates/deletes uninterpreted) + Props.read_your_writes_* + Labels.commit_eq_ref + Stats.c_eq_rust_plus_cancelled
-graph/src/runtime/pending.rs	enforce_constraints	1484	PROVEN	PC.enforce_spec, affected_spec
-graph/src/runtime/pending.rs	constraint_node_has_label	1556	PROVEN	PC.constraintHas_eq
-graph/src/runtime/pending.rs	check_node_constraint	1580	CONDITIONAL	UQ.checkNode2 (#3334, #3547; is_candidate = `!deleted_nodes.contains(n)` ∧ PC.constraintHas): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; RediSearch cfg (`redisearch_unique_query` + `get_indexed_nodes`): checkUnique_redisearch_spec discharges hIdx from Equal-exactness of the index alone (FFI), redisearch_unindexed_scans; HYPOTHESIS (why CONDITIONAL): under `index-falkordb` the `(query_for, lookup)` pair is `native_unique_query` + `ReadOnce::candidates` (index/falkordb/unique.rs), modelled only as the abstract contract hIdx: for a query it gives a member's key, `lookup` returns every live nodes not written by this commit that carries the key; plus hScan: the label matrix lists every live member
-graph/src/runtime/pending.rs	check_edge_constraint	1672	CONDITIONAL	UQ.checkEdge2 (#3334, #3547; membership PC.edgeMember_spec; is_candidate = `!deleted_relationships.contains(e)`): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; RediSearch cfg (`redisearch_unique_query` + `get_indexed_edges`): checkUnique_redisearch_spec discharges hIdx from Equal-exactness of the index alone (FFI), redisearch_unindexed_scans; HYPOTHESIS (why CONDITIONAL): under `index-falkordb` the `(query_for, lookup)` pair is `native_unique_query` + `ReadOnce::candidates` (index/falkordb/unique.rs), modelled only as the abstract contract hIdx: for a query it gives a member's key, `lookup` returns every live edges not written by this commit that carries the key; plus hScan: the tensor lists every live member
-graph/src/runtime/pending.rs	take_deferred_indexes	1771	PROVEN	PD.commitDeferred_spec (takeDeferred)
-graph/src/runtime/pending.rs	resync_published_indexes	1793	PROVEN	PD.resync_spec
-graph/src/runtime/pending.rs	commit_deferred_indexes	1847	PROVEN	PD.commitDeferred_spec
-graph/src/runtime/pending.rs	effects_count	1961	PROVEN	PD.effects_ignores_cancelled (definition = documented sum)
-graph/src/runtime/pending.rs	end_segment	1888	PROVEN	PD.clear_spec, endSegment_spec; CommitOpNext.commitNext_endSegment_err
+graph/src/runtime/pending.rs	enforce_constraints	1489	PROVEN	PC.enforce_spec, affected_spec
+graph/src/runtime/pending.rs	constraint_node_has_label	1561	PROVEN	PC.constraintHas_eq
+graph/src/runtime/pending.rs	check_node_constraint	1585	CONDITIONAL	UQ.checkNode2 (#3334, #3547; is_candidate = `!deleted_nodes.contains(n)` ∧ PC.constraintHas): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; RediSearch cfg (`redisearch_unique_query` + `get_indexed_nodes`): checkUnique_redisearch_spec discharges hIdx from Equal-exactness of the index alone (FFI), redisearch_unindexed_scans; HYPOTHESIS (why CONDITIONAL): under `index-falkordb` the `(query_for, lookup)` pair is `native_unique_query` + `ReadOnce::candidates` (index/falkordb/unique.rs), modelled only as the abstract contract hIdx: for a query it gives a member's key, `lookup` returns every live nodes not written by this commit that carries the key; plus hScan: the label matrix lists every live member
+graph/src/runtime/pending.rs	check_edge_constraint	1677	CONDITIONAL	UQ.checkEdge2 (#3334, #3547; membership PC.edgeMember_spec; is_candidate = `!deleted_relationships.contains(e)`): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; RediSearch cfg (`redisearch_unique_query` + `get_indexed_edges`): checkUnique_redisearch_spec discharges hIdx from Equal-exactness of the index alone (FFI), redisearch_unindexed_scans; HYPOTHESIS (why CONDITIONAL): under `index-falkordb` the `(query_for, lookup)` pair is `native_unique_query` + `ReadOnce::candidates` (index/falkordb/unique.rs), modelled only as the abstract contract hIdx: for a query it gives a member's key, `lookup` returns every live edges not written by this commit that carries the key; plus hScan: the tensor lists every live member
+graph/src/runtime/pending.rs	take_deferred_indexes	1776	PROVEN	PD.commitDeferred_spec (takeDeferred)
+graph/src/runtime/pending.rs	resync_published_indexes	1798	PROVEN	PD.resync_spec
+graph/src/runtime/pending.rs	commit_deferred_indexes	1852	PROVEN	PD.commitDeferred_spec
+graph/src/runtime/pending.rs	effects_count	1969	PROVEN	PD.effects_ignores_cancelled (definition = documented sum)
+graph/src/runtime/pending.rs	end_segment	1893	PROVEN	PD.clear_spec, endSegment_spec; CommitOpNext.commitNext_endSegment_err

@@ -102,6 +102,26 @@ impl WeightContext {
     }
 }
 
+/// The weight attribute of one edge as a number, [`DEFAULT_WEIGHT`]
+/// when it is missing or not a number. The one reading shared by the index build and by
+/// [`cheapest_edge`](super::cheapest_edge). It does not check the value: the build checks it
+/// ([`cch_edge_weight`] maps a negative or NaN weight to [`INVALID_WEIGHT`]), and a write is
+/// refused before it can store one
+/// ([`check_edge_weights`](super::super::maint::check_edge_weights)), so the edges a held index
+/// answers over carry only valid weights.
+pub(crate) fn edge_weight(
+    attributes: &AttributeStore,
+    attribute: u16,
+    edge_id: u64,
+) -> f64 {
+    match attributes.get_attr_by_idx(edge_id, attribute) {
+        Some(Value::Float(weight)) => weight,
+        #[allow(clippy::cast_precision_loss)]
+        Some(Value::Int(integer)) => integer as f64,
+        _ => DEFAULT_WEIGHT,
+    }
+}
+
 /// Weight of one edge id: the numeric weight attribute, or
 /// [`DEFAULT_WEIGHT`] when it is missing or not a number, or
 /// [`INVALID_WEIGHT`] when it is negative or NaN. `+inf` is kept: a closed
@@ -121,13 +141,11 @@ unsafe fn cch_edge_weight(
     context: &WeightContext,
     edge_id: u64,
 ) -> f64 {
-    let weight =
-        match unsafe { (*context.store).get_attr_by_idx(edge_id, context.weight_attribute) } {
-            Some(Value::Float(weight)) => weight,
-            #[allow(clippy::cast_precision_loss)]
-            Some(Value::Int(integer)) => integer as f64,
-            _ => DEFAULT_WEIGHT,
-        };
+    let weight = edge_weight(
+        unsafe { &*context.store },
+        context.weight_attribute,
+        edge_id,
+    );
     // NaN fails the comparison; `+inf` and `-0.0` pass it.
     if weight >= 0.0 {
         weight

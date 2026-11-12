@@ -21,7 +21,7 @@ use crate::graph::graph::{Graph, NodeId, RelationshipId};
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
-use super::cch::{CchError, CchIndex, CchIndexDef};
+use super::cch::{CchError, CchIndex, CchIndexDef, Hierarchy};
 use super::encode::KeyKind;
 use super::graph_writes;
 use super::numeric::{DocIter, EncodedTuples};
@@ -1249,6 +1249,22 @@ impl FalkorDbIndex {
             held.is_none(),
             "a CCH index over this definition was already held"
         );
+    }
+
+    /// Set the built entry over `def` back to `Building` under a new generation, with no
+    /// hierarchy: a write changed the graph in a way it cannot take. The commit of this version
+    /// hands it to the index builder, as for a `CREATE`; older versions keep their entry and its
+    /// hierarchy. The definition is held, so an RDB saves it as for any entry.
+    pub(crate) fn rebuild_cch_in_background(
+        &mut self,
+        def: &CchIndexDef,
+    ) {
+        self.indexes_created += 1;
+        let generation = self.indexes_created;
+        let entry = self.cch_indexes.get_mut(def).expect("held");
+        entry.index.hierarchy = Hierarchy::Pending;
+        entry.state = BuildState::building(());
+        entry.generation = generation;
     }
 
     /// Stop holding the index over `def`.
