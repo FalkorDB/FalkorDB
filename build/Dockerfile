@@ -64,13 +64,30 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Base runtime libs that previously came with the `redis:` base image
 # (ca-certificates for git/curl HTTPS, libssl3 for the redis-server binary
 # copied into the final stage).
-RUN apt update -y && \
+#
+# apt.llvm.org is reached over IPv4 only, with retries. The GitHub arm64
+# runners resolve it to an IPv6 address they cannot route to ("Network is
+# unreachable"), and llvm.sh probes the repo URL with `wget --method=HEAD`
+# before installing, reporting any failure as "Distribution 'debian' in
+# version '13 (trixie)' is not supported by this script." -- so a network
+# failure looked like a distro one. /etc/wgetrc covers llvm.sh's own wget
+# calls; the apt.conf.d entry covers apt here and in the stages below.
+# llvm.sh's HEAD probes can still fail at once on an error wget does not
+# retry (the GPG key probe did, in the merge queue), so llvm.sh itself is
+# retried too, clearing the key and sources a failed attempt may leave.
+RUN printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
+        > /etc/apt/apt.conf.d/99falkordb-network && \
+    apt update -y && \
     apt install -y --no-install-recommends \
         ca-certificates libssl3 openssl && \
     apt install -y lsb-release gnupg wget && \
+    printf 'inet4_only = on\ntries = 5\nwaitretry = 5\nretry_connrefused = on\nretry_on_http_error = 429,500,502,503,504\n' >> /etc/wgetrc && \
     wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
-    ./llvm.sh "${CLANG_MAJOR}" && \
+    for i in 1 2 3; do ./llvm.sh "${CLANG_MAJOR}" && break; \
+        [ "$i" = 3 ] && exit 1; echo "llvm.sh failed (attempt $i), retrying"; \
+        rm -f /etc/apt/trusted.gpg.d/apt.llvm.org.asc /etc/apt/sources.list.d/http_apt_llvm_org_*.sources; \
+        sleep 15; done && \
     apt update -y
 
 # Toolchain + headers the three deps compile against.
