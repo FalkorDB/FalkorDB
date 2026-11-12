@@ -214,13 +214,13 @@ void QueryCtx_SetAST
 // QueryCtx_SetGlobalExecutionCtx (e.g. GRAPH.CONSTRAINT)
 void QueryCtx_SetRedisCtx
 (
-	RedisModuleCtx *redis_ctx,
-	RedisModuleBlockedClient *bc
+	RedisModuleCtx *redis_ctx
 ) {
 	ASSERT (redis_ctx != NULL) ;
 	QueryCtx *ctx = _QueryCtx_GetCreateCtx () ;
 	ctx->global_exec_ctx.redis_ctx = redis_ctx ;
-	ctx->global_exec_ctx.bc        = bc ;
+	// blocked client on a worker thread, NULL on the Redis main thread
+	ctx->global_exec_ctx.bc = RedisModule_GetBlockedClientHandle (redis_ctx) ;
 }
 
 // set the provided GraphCtx for access through the QueryCtx

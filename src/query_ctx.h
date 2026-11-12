@@ -155,9 +155,7 @@ void QueryCtx_SetGlobalExecutionCtx
 // graph's write lock with QueryCtx_AcquireWriteLock / QueryCtx_ReleaseLock
 void QueryCtx_SetRedisCtx
 (
-	RedisModuleCtx *redis_ctx,    // the command's Redis context
-	RedisModuleBlockedClient *bc  // blocked client on a worker thread,
-	                              // NULL on the Redis main thread
+	RedisModuleCtx *redis_ctx  // the command's Redis context
 );
 
 // set the provided AST for access through the QueryCtx

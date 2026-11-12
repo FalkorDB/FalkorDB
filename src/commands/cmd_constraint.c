@@ -239,14 +239,13 @@ static int Constraint_Parse
 // type] PROPERTIES prop_count prop0, prop1...
 static bool _Constraint_Drop
 (
-	RedisModuleCtx *ctx,           // redis module context
-	RedisModuleBlockedClient *bc,  // blocked client, NULL on the main thread
-	RedisModuleString *key,        // graph key to operate on
-	ConstraintType ct,             // constraint type
-	GraphEntityType et,            // entity type
-	const char *lbl,               // label / rel-type
-	uint8_t n,                     // properties count
-	const char **props             // properties
+	RedisModuleCtx *ctx,    // redis module context
+	RedisModuleString *key, // graph key to operate on
+	ConstraintType ct,      // constraint type
+	GraphEntityType et,     // entity type
+	const char *lbl,        // label / rel-type
+	uint8_t n,              // properties count
+	const char **props      // properties
 ) {
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_DEBUG, "drop constraint") ;
 
@@ -278,20 +277,20 @@ static bool _Constraint_Drop
 	}
 
 	// set graph context in query context TLS, required for the effects
-	// buffer GraphHub_DropConstraint writes into and for taking the graph's
-	// write lock
+	// buffer GraphHub_DropConstraint writes into
 	QueryCtx_SetGraphCtx (gc) ;
-	QueryCtx_SetRedisCtx (ctx, bc) ;
+	QueryCtx_SetRedisCtx (ctx) ;
 
-	// acquire graph write lock, and the GIL on a worker thread, the same way
-	// a write query does: the wait yields the GIL, so a long read can't freeze
+	// acquire graph write lock (and the GIL on a worker thread) the way a
+	// write query does: the wait yields the GIL, so a long read can't freeze
 	// the server, and the replica pause, role and graph key are re-checked
-	// under the GIL before each attempt. on failure nothing is held and
-	// ErrorCtx holds the reason (valid until ErrorCtx_Clear)
+	// under the GIL before each attempt. on failure nothing is held
 	if (!QueryCtx_AcquireWriteLock ()) {
-		error_msg = ErrorCtx_Get ()->error ;
-		res = false ;
-		goto unlocked ;
+		RedisModule_ReplyWithError (ctx, ErrorCtx_Get ()->error) ;
+		QueryCtx_Free  () ;
+		ErrorCtx_Clear () ;
+		GraphContext_DecreaseRefCount (gc) ;
+		return false ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -317,10 +316,9 @@ static bool _Constraint_Drop
 	rm_free (buf) ;
 
 cleanup:
-	// release graph write lock and the GIL
+	// release graph R/W lock and the GIL
 	QueryCtx_ReleaseLock () ;
 
-unlocked:
 	if (res == false) {
 		RedisModule_ReplyWithError (ctx, error_msg) ;
 	}
@@ -346,8 +344,7 @@ static int _cmp_attr_id
 }
 
 // read-only pre-validation for constraint creation, run under the graph READ
-// lock before _Constraint_Create acquires the write lock, and again under the
-// write lock on the worker-thread path.
+// lock before _Constraint_Create acquires the write lock.
 //
 // checks the two common, benign rejections a CREATE would otherwise perform
 // under the write lock: (a) the constraint already exists, and (b) a UNIQUE
@@ -360,13 +357,12 @@ static int _cmp_attr_id
 // returns an error string when the CREATE is certain to fail, or NULL to
 // proceed to the authoritative, write-locked GraphHub_AddConstraint().
 //
-// TOCTOU: a NULL return from the read-locked run is NOT a guarantee of success.
-// On the worker-thread path the write-lock wait yields the GIL, so another op
-// may register the same constraint or drop the supporting index meanwhile;
-// _Constraint_Create therefore re-runs this check under the write lock. Other
-// GraphHub_AddConstraint failures (e.g. max attributes) still take the
-// rollback (reserved-id reset) path - see Graph_ResetReservedNode for the
-// per-QueryCtx fix that closes it.
+// TOCTOU: a NULL return is NOT a guarantee of success. Between this read-locked
+// check and acquiring the write lock, another op may register the same
+// constraint or drop the supporting index; GraphHub_AddConstraint() will then
+// still fail under the write lock and take the rollback (reserved-id reset)
+// path. this is a mitigation that removes the common case, not a complete fix -
+// see Graph_ResetReservedNode for the per-QueryCtx fix that closes it.
 static const char *_Constraint_CreatePrecheck
 (
 	GraphContext *gc,     // graph context
@@ -443,14 +439,13 @@ static const char *_Constraint_CreatePrecheck
 // type] PROPERTIES prop_count prop0, prop1...
 static bool _Constraint_Create
 (
-	RedisModuleCtx *ctx,           // redis module context
-	RedisModuleBlockedClient *bc,  // blocked client, NULL on the main thread
-	RedisModuleString *key,        // graph key to operate on
-	ConstraintType ct,             // constraint type
-	GraphEntityType et,            // entity type
-	const char *lbl,               // label / rel-type
-	uint8_t n,                     // properties count
-	const char **props             // properties
+	RedisModuleCtx *ctx,    // redis module context
+	RedisModuleString *key, // graph key to operate on
+	ConstraintType ct,      // constraint type
+	GraphEntityType et,     // entity type
+	const char *lbl,        // label / rel-type
+	uint8_t n,              // properties count
+	const char **props      // properties
 ) {
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_DEBUG, "create constraint") ;
 
@@ -480,7 +475,7 @@ static bool _Constraint_Create
 	// the effects buffer GraphHub_AddConstraint writes into
 	// TODO: find a better way
 	QueryCtx_SetGraphCtx (gc) ;
-	QueryCtx_SetRedisCtx (ctx, bc) ;
+	QueryCtx_SetRedisCtx (ctx) ;
 
 	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
 
@@ -497,50 +492,58 @@ static bool _Constraint_Create
 	// not contend with that write query, and on rejection here no rollback is
 	// performed, so the reserved-node counter is left untouched.
 	//
-	// TOCTOU: the state checked here may change between releasing this read
-	// lock and acquiring the write lock below (another op registers the same
-	// constraint, or drops the supporting index). the worker-thread path yields
-	// the GIL while it waits for the write lock, so it re-runs this check under
-	// the write lock. other GraphHub_AddConstraint() failures still take the
-	// rollback/reset path; closing that requires making the reserved-node
-	// bookkeeping per-QueryCtx rather than graph-global.
+	// TOCTOU: this is a mitigation, not a complete fix. The state checked here
+	// may change between releasing this read lock and acquiring the write lock
+	// below (another op registers the same constraint, or drops the supporting
+	// index); GraphHub_AddConstraint() will then still fail under the write
+	// lock and take the rollback/reset path. Closing that residual requires
+	// making the reserved-node bookkeeping per-QueryCtx rather than
+	// graph-global.
 	GraphContext_AcquireReadLock (gc) ;
 	const char *precheck_err =
 		_Constraint_CreatePrecheck (gc, ct, et, lbl, props, n) ;
 	GraphContext_ReleaseReadLock (gc) ;
 
-	Constraint c = NULL ;
-
-	// nothing was mutated so far: the failures below skip the rollback
-	// (QueryCtx_Rollback resets the graph-global reserved-node counter)
 	if (precheck_err != NULL) {
-		error_msg = precheck_err ;
-		res = false ;
-		goto unlocked ;
+		// reply lock-free: on the async path this is a blocked-client
+		// thread-safe context whose replies are buffered and flushed on
+		// UnblockClient, so no GIL is needed (same as the success reply in
+		// Constraint_Op and the write-locked error paths below); on the sync
+		// AOF/replicated path there is no blocked client and we are already on
+		// the main thread holding the GIL, where taking it again would deadlock
+		RedisModule_ReplyWithError (ctx, precheck_err) ;
+
+		QueryCtx_Free  () ;
+		ErrorCtx_Clear () ;
+		GraphContext_DecreaseRefCount (gc) ;
+		return false ;
 	}
 
-	// acquire graph write lock, and the GIL on a worker thread, the same way
-	// a write query does: the wait yields the GIL, so a long read can't freeze
+	// acquire graph write lock (and the GIL on a worker thread) the way a
+	// write query does: the wait yields the GIL, so a long read can't freeze
 	// the server, and the replica pause, role and graph key are re-checked
-	// under the GIL before each attempt. on failure nothing is held and
-	// ErrorCtx holds the reason (valid until ErrorCtx_Clear)
+	// under the GIL before each attempt. on failure nothing is held
 	if (!QueryCtx_AcquireWriteLock ()) {
-		error_msg = ErrorCtx_Get ()->error ;
-		res = false ;
-		goto unlocked ;
+		RedisModule_ReplyWithError (ctx, ErrorCtx_Get ()->error) ;
+		QueryCtx_Free  () ;
+		ErrorCtx_Clear () ;
+		GraphContext_DecreaseRefCount (gc) ;
+		return false ;
 	}
 
-	// re-run the precheck now that the write lock makes it authoritative.
-	// a worker thread yielded the GIL while waiting for the write lock, so a
-	// concurrent CREATE / DROP INDEX may have landed since the read-locked
-	// precheck above
+	// on a worker thread the wait above yields the GIL, so a concurrent
+	// CREATE / DROP INDEX may have landed since the read-locked precheck (the
+	// TOCTOU window described there): re-run it under the write lock, again
+	// rejecting without QueryCtx_Rollback
 	if (from_thread) {
 		precheck_err = _Constraint_CreatePrecheck (gc, ct, et, lbl, props, n) ;
 		if (precheck_err != NULL) {
 			QueryCtx_ReleaseLock () ;
-			error_msg = precheck_err ;
-			res = false ;
-			goto unlocked ;
+			RedisModule_ReplyWithError (ctx, precheck_err) ;
+			QueryCtx_Free  () ;
+			ErrorCtx_Clear () ;
+			GraphContext_DecreaseRefCount (gc) ;
+			return false ;
 		}
 	}
 
@@ -549,8 +552,8 @@ static bool _Constraint_Create
 	//--------------------------------------------------------------------------
 
 	ConstraintCreateStatus status ;
-	c = GraphHub_AddConstraint (gc, ct, et, lbl, props, n, true, &status,
-			&error_msg) ;
+	Constraint c = GraphHub_AddConstraint (gc, ct, et, lbl, props, n, true,
+			&status, &error_msg) ;
 
 	// failed to add constraint
 	if (c == NULL) {
@@ -578,14 +581,10 @@ cleanup:
 		QueryCtx_Rollback () ;
 	}
 
-	// release graph write lock and the GIL
+	// release graph R/W lock and the GIL
 	QueryCtx_ReleaseLock () ;
 
-unlocked:
-	// reply lock-free: on the async path this is a blocked-client thread-safe
-	// context whose replies are buffered and flushed on UnblockClient, so no
-	// GIL is needed; on the sync AOF/replicated path we are already on the
-	// main thread holding the GIL, where taking it again would deadlock
+	// constraint already exists
 	if (res == false) {
 		// TODO: give additional information to caller
 		RedisModule_ReplyWithError (ctx, error_msg) ;
@@ -621,11 +620,11 @@ static void Constraint_Op
 	bool success = false ;
 
 	if(ctx->op == CT_CREATE) {
-		success = _Constraint_Create (rm_ctx, ctx->bc, ctx->graph_id, ctx->ct,
+		success = _Constraint_Create (rm_ctx, ctx->graph_id, ctx->ct,
 				ctx->entity_type, ctx->label, ctx->prop_count,
 				(const char **)ctx->props) ;
 	} else {
-		success = _Constraint_Drop (rm_ctx, ctx->bc, ctx->graph_id, ctx->ct,
+		success = _Constraint_Drop (rm_ctx, ctx->graph_id, ctx->ct,
 				ctx->entity_type, ctx->label, ctx->prop_count,
 				(const char **)ctx->props) ;
 	}
