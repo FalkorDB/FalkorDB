@@ -70,7 +70,12 @@ pub fn apply_effects(
     // the version is published — records arrive grouped by shape rather than
     // ordered by id, so the id space is legitimately fragmented partway through
     // and only has to be whole at the end.
-    let mut docs = IndexDocs::default();
+    // A replay: what the primary accepted is applied, not refused again by this server's own
+    // rules (see `IndexDocs::replay`).
+    let mut docs = IndexDocs {
+        replay: true,
+        ..IndexDocs::default()
+    };
     for record in payload.records() {
         apply_record(g, record?, &mut docs)?;
     }
@@ -2472,6 +2477,7 @@ mod tests {
     #[cfg(feature = "index-falkordb")]
     mod cch {
         use super::*;
+        use crate::index::falkordb::cch::maint::flush_count;
         use crate::index::falkordb::cch::{Cch, CchDirty, CchIndexDef, CchInput};
         use crate::index::falkordb::graph_writes;
 
@@ -3075,6 +3081,87 @@ mod tests {
             }
         }
 
+        /// The write-time weight check does not run on replay. A primary with the index refuses
+        /// these before emitting them, so a buffer carrying one comes from a primary that does
+        /// not check weights (a C primary checks none) or has diverged. Refusing it would fail
+        /// the buffer: a full resync on a replica, `exit(1)` loading the AOF. The buffer
+        /// applies, and the index that cannot take the weight is marked `FAILED`: at the flush
+        /// for a pair it joins, or by its rebuild for an edge it does not. The same write
+        /// through the graph method outside a replay is still refused, before anything is
+        /// written.
+        #[test]
+        fn a_replayed_weight_the_index_cannot_hold_applies_and_fails_the_index() {
+            for (what, record) in [
+                (
+                    "a negative update",
+                    float_edge_update(&[0], ROAD, TIME, -1.0),
+                ),
+                (
+                    "a NaN update",
+                    float_edge_update(&[0], ROAD, TIME, f64::NAN),
+                ),
+                (
+                    "a -inf weight on a created edge",
+                    Record::CreateEdge {
+                        ids: IdList::from([3]),
+                        relation_id: ROAD,
+                        src: IdList::from([3]),
+                        dst: IdList::from([4]),
+                        attr_ids: vec![TIME],
+                        rows: vec![Value::Float(f64::NEG_INFINITY)],
+                    },
+                ),
+            ] {
+                let (mut g, def) = cch_setup();
+                apply_one(&mut g, record).expect(what);
+                build_in_background(&mut g);
+                let entry = g.falkordb_index.cch_entry(&def).expect("still held");
+                assert!(
+                    !entry.is_building() && entry.index.failure().is_some(),
+                    "{what}: the index is FAILED"
+                );
+            }
+            // Outside a replay (a Cypher write, `GRAPH.BULK`), the graph method refuses it.
+            let (mut g, def) = cch_setup();
+            let before = held(&g, &def);
+            let flushes = flush_count();
+            let attrs: FxHashMap<u64, Vec<(u16, Value)>> =
+                FxHashMap::from_iter([(0, vec![(TIME, Value::Float(-1.0))])]);
+            let mut docs = IndexDocs::default();
+            let err = g
+                .set_relationships_attributes_of_type(TypeId(ROAD as usize), &attrs, &mut docs)
+                .expect_err("refused at the write");
+            assert!(err.contains("CCH weight constraint violation"), "{err}");
+            g.apply_cch_writes(&mut docs).expect("nothing staged");
+            assert_eq!(flush_count(), flushes, "refused before anything was staged");
+            assert!(Arc::ptr_eq(&before, &held(&g, &def)));
+            // Not indexed: another type, another attribute.
+            for record in [
+                float_edge_update(&[2], FERRY, TIME, -1.0),
+                float_edge_update(&[0], ROAD, OTHER, -1.0),
+            ] {
+                let (mut g, _) = cch_setup();
+                apply_one(&mut g, record).expect("not an indexed weight");
+            }
+            // `+inf` is a closed edge, legal on the indexed weight: it applies and the index
+            // is rebuilt to match.
+            for record in [
+                float_edge_update(&[0], ROAD, TIME, f64::INFINITY),
+                Record::CreateEdge {
+                    ids: IdList::from([3]),
+                    relation_id: ROAD,
+                    src: IdList::from([3]),
+                    dst: IdList::from([4]),
+                    attr_ids: vec![TIME],
+                    rows: vec![Value::Float(f64::INFINITY)],
+                },
+            ] {
+                let (mut g, def) = cch_setup();
+                apply_one(&mut g, record).expect("+inf is legal");
+                assert_index_is_current(&g, &def);
+            }
+        }
+
         /// A refused buffer commits none of its index writes: every refusal, the CCH flush's
         /// included, comes before `commit_index_docs`, whose RediSearch half a discarded
         /// version cannot take back. Seen through the native half, which the same call applies.
@@ -3094,10 +3181,12 @@ mod tests {
             float_edge_update(&[0], ROAD, OTHER, 7.0)
                 .encode(&mut buf)
                 .unwrap();
-            float_edge_update(&[0], ROAD, TIME, -1.0)
+            // An edge that does not exist: the buffer is refused after the first record staged
+            // its index write.
+            float_edge_update(&[99], ROAD, OTHER, 1.0)
                 .encode(&mut buf)
                 .unwrap();
-            apply_effects(&mut g, &buf).expect_err("a negative weight cannot be indexed");
+            apply_effects(&mut g, &buf).expect_err("the edge is not live");
             let seven = Value::Float(7.0);
             let column = g
                 .falkordb_index
@@ -3393,118 +3482,6 @@ mod cch_tests {
                 err,
                 ApplyError::Graph(CchError::InvalidWeight.query_message())
             );
-        }
-
-        /// `ROAD` and `time` (id 0), `FERRY` (type 1) and `other` (attribute 1); nodes 0 to 3;
-        /// edge 0 `ROAD` 0 -> 1 and edge 1 `FERRY` 1 -> 2, both at `time = 2.0`; and the index
-        /// over `ROAD` by `time`.
-        fn indexed() -> Graph {
-            let mut g = graph();
-            apply(
-                &mut g,
-                schema().into_iter().chain([
-                    Record::AddRelType {
-                        id: 1,
-                        name: "FERRY".to_owned(),
-                    },
-                    Record::AddAttribute {
-                        id: 1,
-                        name: "other".to_owned(),
-                    },
-                    Record::CreateNode {
-                        ids: IdList::from([0, 1, 2, 3]),
-                        labels: vec![],
-                        attr_ids: vec![],
-                        rows: vec![],
-                    },
-                    Record::CreateEdge {
-                        ids: IdList::from([0]),
-                        relation_id: 0,
-                        src: IdList::from([0]),
-                        dst: IdList::from([1]),
-                        attr_ids: vec![0],
-                        rows: vec![Value::Float(2.0)],
-                    },
-                    Record::CreateEdge {
-                        ids: IdList::from([1]),
-                        relation_id: 1,
-                        src: IdList::from([1]),
-                        dst: IdList::from([2]),
-                        attr_ids: vec![0],
-                        rows: vec![Value::Float(2.0)],
-                    },
-                    Record::cch_index(true, vec![road()], time()),
-                ]),
-            )
-            .unwrap();
-            // A later buffer is a later write version, as `GRAPH.EFFECT` applies it.
-            g.new_version()
-        }
-
-        fn update(
-            edge: u64,
-            relation_id: u32,
-            attribute: u16,
-            weight: f64,
-        ) -> Record {
-            Record::UpdateEdge {
-                ids: IdList::from([edge]),
-                relation_id,
-                attr_ids: vec![attribute],
-                rows: vec![Value::Float(weight)],
-            }
-        }
-
-        /// A new `ROAD` edge 2 -> 3 at `time = weight`.
-        fn created(weight: f64) -> Record {
-            Record::CreateEdge {
-                ids: IdList::from([2]),
-                relation_id: 0,
-                src: IdList::from([2]),
-                dst: IdList::from([3]),
-                attr_ids: vec![0],
-                rows: vec![Value::Float(weight)],
-            }
-        }
-
-        /// The write-time weight check runs on replay too: the graph methods the records
-        /// apply through hold it. A primary with the index refuses these before it emits them,
-        /// so a buffer carrying one comes from a primary that does not hold the index (a C
-        /// primary, which does not check weights, or one that diverged), and this replica
-        /// refuses it like any apply failure rather than hold a weight its index cannot take.
-        #[test]
-        fn a_weight_the_index_cannot_hold_fails_the_buffer() {
-            for (what, record) in [
-                ("a negative update", update(0, 0, 0, -1.0)),
-                ("a NaN update", update(0, 0, 0, f64::NAN)),
-                (
-                    "a -inf weight on a created edge",
-                    created(f64::NEG_INFINITY),
-                ),
-            ] {
-                let mut g = indexed();
-                let err = apply(&mut g, [record]).expect_err(what);
-                assert!(
-                    err.to_string().contains(
-                        "CCH weight constraint violation: edge of relationship-type ROAD"
-                    ),
-                    "{what}: {err}"
-                );
-            }
-            // Not indexed: another type, another attribute.
-            for record in [update(1, 1, 0, -1.0), update(0, 0, 1, -1.0)] {
-                let mut g = indexed();
-                apply(&mut g, [record]).expect("not an indexed weight");
-            }
-            // `+inf` is a closed edge, legal on the indexed weight: it applies, and an index
-            // built over it holds it.
-            for record in [update(0, 0, 0, f64::INFINITY), created(f64::INFINITY)] {
-                let mut g = indexed();
-                apply(&mut g, [record]).expect("+inf is legal");
-                g.drop_cch_index(&road_by_time()).unwrap();
-                g.create_cch_index(road_by_time())
-                    .expect("+inf is a weight an index takes");
-            }
         }
     }
 }

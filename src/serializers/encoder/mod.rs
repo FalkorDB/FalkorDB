@@ -180,6 +180,7 @@ pub fn build_multi_key_payloads(
                 count: 1,
                 offset: 0,
             });
+            push_cch_payload(graph, &mut key_payloads);
         }
 
         keys.push(key_payloads);
@@ -250,6 +251,31 @@ fn build_payloads(graph: &Graph) -> Vec<PayloadEntry> {
         count: 1,
         offset: 0,
     });
+    push_cch_payload(graph, &mut payloads);
 
     payloads
+}
+
+/// Adds the CCH-definitions payload, only when the graph has a CCH index: a graph without one
+/// gets exactly the payload list it had before encoding version 20. A build without the
+/// `index-falkordb` feature has no CCH index and never adds it.
+#[cfg(feature = "index-falkordb")]
+fn push_cch_payload(
+    graph: &Graph,
+    payloads: &mut Vec<PayloadEntry>,
+) {
+    if graph.cch_indexes().next().is_some() {
+        payloads.push(PayloadEntry {
+            state: EncodeState::CchIndices,
+            count: 1,
+            offset: 0,
+        });
+    }
+}
+
+#[cfg(not(feature = "index-falkordb"))]
+const fn push_cch_payload(
+    _: &Graph,
+    _: &mut Vec<PayloadEntry>,
+) {
 }
