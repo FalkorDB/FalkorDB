@@ -273,7 +273,7 @@ impl Selection {
     /// would look up both values in `a` and return wrong rows, not missing ones. Any other member —
     /// a range, an array-contains, a conjunction — declines the union, and so does an empty `IN`
     /// list (for [`of`](Self::of)'s reason) and a value no kind holds.
-    fn disjunction(members: &[&IndexQuery<Value>]) -> Option<Self> {
+    pub(super) fn disjunction(members: &[&IndexQuery<Value>]) -> Option<Self> {
         if !on_one_attribute(members) {
             return None;
         }
