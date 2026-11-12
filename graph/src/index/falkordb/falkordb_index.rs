@@ -440,14 +440,16 @@ impl VersionedIndex for IndexColumn {
 ///
 /// `A` names an attribute: as the query names it, or as a scan has resolved it
 /// ([`Self::resolve`]), so a scan looks each name up once rather than once per entity.
+///
+/// Each variant holds every attribute the query constrains, with what the built column for it
+/// selects: one for a query on one attribute, one per attribute for a conjunction or a union
+/// across several.
 #[derive(Clone, Debug)]
-pub struct ScanFilter<A = Arc<String>> {
-    /// Each attribute the query constrains, with what the built column for it selects. One for a
-    /// query on one attribute; one per attribute for a conjunction or a union across several.
-    conditions: Vec<(A, Selection)>,
-    /// Whether an entity matching any one condition matches (a union across attributes), rather
-    /// than one matching all of them (a conjunction).
-    any: bool,
+pub enum ScanFilter<A = Arc<String>> {
+    /// A conjunction: an entity matches when it matches every condition.
+    All(Vec<(A, Selection)>),
+    /// A union across attributes: an entity matches when it matches any one condition.
+    Any(Vec<(A, Selection)>),
 }
 
 impl ScanFilter {
@@ -456,10 +458,7 @@ impl ScanFilter {
         attribute: Arc<String>,
         selection: Selection,
     ) -> Self {
-        Self {
-            conditions: vec![(attribute, selection)],
-            any: false,
-        }
+        Self::All(vec![(attribute, selection)])
     }
 }
 
@@ -471,17 +470,27 @@ impl<A> ScanFilter<A> {
         self,
         mut resolve: impl FnMut(&A) -> Option<B>,
     ) -> Option<ScanFilter<B>> {
-        let any = self.any;
-        let mut conditions = Vec::with_capacity(self.conditions.len());
-        for (attribute, selection) in self.conditions {
+        let (all, conditions) = match self {
+            Self::All(conditions) => (true, conditions),
+            Self::Any(conditions) => (false, conditions),
+        };
+        let mut resolved = Vec::with_capacity(conditions.len());
+        for (attribute, selection) in conditions {
             match resolve(&attribute) {
-                Some(attribute) => conditions.push((attribute, selection)),
+                Some(attribute) => resolved.push((attribute, selection)),
                 // A conjunction needs every attribute; a union only one.
-                None if !any => return None,
+                None if all => return None,
                 None => {}
             }
         }
-        (!conditions.is_empty()).then_some(ScanFilter { conditions, any })
+        if resolved.is_empty() {
+            return None;
+        }
+        Some(if all {
+            ScanFilter::All(resolved)
+        } else {
+            ScanFilter::Any(resolved)
+        })
     }
 
     /// Whether the built columns answer the query with an entity whose attributes `value_of`
@@ -496,10 +505,9 @@ impl<A> ScanFilter<A> {
         let holds = |(attribute, selection): &(A, Selection)| {
             value_of(attribute).is_some_and(|value| selection.matches(&value))
         };
-        if self.any {
-            self.conditions.iter().any(holds)
-        } else {
-            self.conditions.iter().all(holds)
+        match self {
+            Self::All(conditions) => conditions.iter().all(holds),
+            Self::Any(conditions) => conditions.iter().any(holds),
         }
     }
 }
@@ -1001,8 +1009,9 @@ impl FalkorDbIndex {
             // union for a disjunction. What neither can do is answer from a single column: looking
             // every value up in one of them would return rows the query never asked for.
             return match query {
-                IndexQuery::And(children) => self.combine_columns(entity, label, children, false),
-                IndexQuery::Or(children) => self.combine_columns(entity, label, children, true),
+                IndexQuery::And(_) | IndexQuery::Or(_) => {
+                    self.combine_columns(entity, label, query)
+                }
                 _ => None,
             };
         }
@@ -1018,8 +1027,8 @@ impl FalkorDbIndex {
         Some(Ok(entry.index.lookup(selection)))
     }
 
-    /// A conjunction (`any == false`) or a union (`any == true`) spanning several attributes:
-    /// combine one column per attribute.
+    /// A conjunction (`query` an `And`) or a union (an `Or`) spanning several attributes: combine
+    /// one column per attribute.
     ///
     /// Each attribute's own members are first collapsed by [`Selection::conjunction`] or
     /// [`Selection::disjunction`], so this only combines one doc stream per attribute. A member
@@ -1041,8 +1050,7 @@ impl FalkorDbIndex {
         &self,
         entity: EntityType,
         label: &Arc<String>,
-        children: &[IndexQuery<Value>],
-        any: bool,
+        query: &IndexQuery<Value>,
     ) -> Option<Result<DocIter, ScanFilter>> {
         // Regroup the members per attribute, flattening the nesting a combinator of the same kind
         // arrives with (`a IN [..] OR b IN [..]`, `And(And(a, b), c)`), so each column is asked
@@ -1079,6 +1087,11 @@ impl FalkorDbIndex {
             }
             Some(())
         }
+        let (children, any) = match query {
+            IndexQuery::And(children) => (children, false),
+            IndexQuery::Or(children) => (children, true),
+            _ => unreachable!("only a conjunction or a union is combined"),
+        };
         let mut per_attr: Vec<(&Arc<String>, Vec<&IndexQuery<Value>>)> = Vec::new();
         group(children, any, &mut per_attr)?;
 
@@ -1097,12 +1110,14 @@ impl FalkorDbIndex {
         }
         if columns.iter().any(|(_, entry, _)| entry.is_building()) {
             // The scan standing in has to check every attribute, as the combination would.
-            return Some(Err(ScanFilter {
-                conditions: columns
-                    .into_iter()
-                    .map(|(attr, _, selection)| (attr.clone(), selection))
-                    .collect(),
-                any,
+            let conditions = columns
+                .into_iter()
+                .map(|(attr, _, selection)| (attr.clone(), selection))
+                .collect();
+            return Some(Err(if any {
+                ScanFilter::Any(conditions)
+            } else {
+                ScanFilter::All(conditions)
             }));
         }
 
