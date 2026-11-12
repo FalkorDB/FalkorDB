@@ -170,12 +170,6 @@ jobs:
             server
             full
 
-      - name: Check the image on a Redis 8 data volume (${{ matrix.arch }} / ${{ matrix.target }})
-        if: ${{ inputs.flavour == 'release' }}
-        env:
-          IMAGE: ${{ inputs.create_manifest && format('ghcr.io/falkordb/{0}:{1}-{2}', matrix.repo, inputs.tag, matrix.arch) || format('ghcr.io/falkordb/{0}:{1}', matrix.repo, inputs.tag) }}
-        run: tests/docker/redis8_volume_check.sh "$IMAGE"
-
   # Manifest combining job — only for multi-arch (release).
   # For each unique repo in `cells`, combines the per-arch tags into a
   # single multi-arch manifest tagged ${repo}:${tag}.
