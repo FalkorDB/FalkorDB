@@ -211,6 +211,7 @@ if [ "$SERVER" = valkey ]; then
     echo "== Valkey image $IMAGE; volumes written by $WRITER"
     RDB=$(write_redis8 rdb) || exit 2
     AOF=$(write_redis8 aof "--appendonly yes" rewrite) || exit 2
+    AOF_DOT=$(write_redis8 aof-dot "--appendonly yes --appendfilename .aof" rewrite) || exit 2
     AOF_CMDS=$(write_redis8 aof-cmds "--appendonly yes --aof-use-rdb-preamble no") || exit 2
 
     CASE=rdb
@@ -225,6 +226,10 @@ if [ "$SERVER" = valkey ]; then
     refused "$CASE" "$IMAGE" "$v" -e "VALKEY_ARGS=--dbfilename ..dump.rdb" &&
         { grep -qF "$DATA/..dump.rdb (Redis RDB version" <<<"$(logs "$CASE")" ||
             fail "the message does not name $DATA/..dump.rdb"; }
+    CASE=dot-prefixed-aof-base
+    refused "$CASE" "$IMAGE" "$(copy_vol "$AOF_DOT" "$CASE")" -e "VALKEY_ARGS=--appendonly yes --appendfilename .aof" &&
+        { grep -qF "$DATA/appendonlydir/.aof." <<<"$(logs "$CASE")" ||
+            fail "the message does not name the .aof base file"; }
     CASE=aof-rdb-base
     refused "$CASE" "$IMAGE" "$(copy_vol "$AOF" "$CASE")" -e "VALKEY_ARGS=--appendonly yes"
     # RDB version 11, as Redis 7.2 and Valkey 8 write it, is Valkey's own: an

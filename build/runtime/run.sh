@@ -113,17 +113,18 @@ redis_rdb_version() {
 }
 
 valkey_preflight() {
-    redis_files=""
-    # .[!.]* and ..?* cover every dot-prefixed name except . and ..
-    for _f in "${FALKORDB_DATA_PATH}"/* "${FALKORDB_DATA_PATH}"/.[!.]* "${FALKORDB_DATA_PATH}"/..?* \
-        "${FALKORDB_DATA_PATH}"/*/*.base.rdb "${FALKORDB_DATA_PATH}"/.[!.]*/*.base.rdb "${FALKORDB_DATA_PATH}"/..?*/*.base.rdb; do
-        [ -f "$_f" ] || continue
-        _version=$(redis_rdb_version "$_f")
-        if [ -n "$_version" ] && [ "$_version" -ge 12 ]; then
-            redis_files="${redis_files}  $_f (Redis RDB version $_version)
-"
-        fi
-    done
+    # find, not a glob: a glob skips dot-prefixed names (--dbfilename ..x,
+    # --appendfilename .aof, whose base file is .aof.1.base.rdb).
+    redis_files=$(
+        { find -L "${FALKORDB_DATA_PATH}" -maxdepth 1 -type f
+          find -L "${FALKORDB_DATA_PATH}" -mindepth 2 -maxdepth 2 -type f -name '*.base.rdb'
+        } 2>/dev/null | while IFS= read -r _f; do
+            _version=$(redis_rdb_version "$_f")
+            if [ -n "$_version" ] && [ "$_version" -ge 12 ]; then
+                echo "  $_f (Redis RDB version $_version)"
+            fi
+        done
+    )
     [ -z "$redis_files" ] && return 0
     cat >&2 <<EOF
 Error: this image runs Valkey, and ${FALKORDB_DATA_PATH} holds save files
