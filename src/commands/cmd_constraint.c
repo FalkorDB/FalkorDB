@@ -60,30 +60,6 @@
 
 extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
 
-// acquire the graph write lock (and on a worker thread the GIL) for a
-// constraint CREATE / DROP the same way a write query does, through
-// QueryCtx_AcquireWriteLock. on a worker thread it waits for the lock in
-// GIL-yielding slices, so a long read can't freeze the server (#3753), and it
-// re-checks the replica pause, the role and the graph key under the GIL before
-// each attempt, since the main thread runs while it waits. requires
-// QueryCtx_SetGraphCtx + QueryCtx_SetRedisCtx
-//
-// returns true holding the lock; on failure sets *err_msg (owned by ErrorCtx,
-// valid until ErrorCtx_Clear) and returns false holding nothing
-static bool _Constraint_AcquireWriteLock
-(
-	const char **err_msg  // [output] reason for failure
-) {
-	if (QueryCtx_AcquireWriteLock ()) {
-		return true ;
-	}
-
-	const char *err = ErrorCtx_Get ()->error ;
-	*err_msg = (err != NULL) ? err :
-		"Failed to acquire the graph write lock" ;
-	return false ;
-}
-
 // constraint operation
 typedef enum {
 	CT_CREATE,  // create constraint
@@ -307,9 +283,13 @@ static bool _Constraint_Drop
 	QueryCtx_SetGraphCtx (gc) ;
 	QueryCtx_SetRedisCtx (ctx, bc) ;
 
-	// acquire graph write lock, and the GIL on a worker thread
-	// on failure nothing is held
-	if (!_Constraint_AcquireWriteLock (&error_msg)) {
+	// acquire graph write lock, and the GIL on a worker thread, the same way
+	// a write query does: the wait yields the GIL, so a long read can't freeze
+	// the server, and the replica pause, role and graph key are re-checked
+	// under the GIL before each attempt. on failure nothing is held and
+	// ErrorCtx holds the reason (valid until ErrorCtx_Clear)
+	if (!QueryCtx_AcquireWriteLock ()) {
+		error_msg = ErrorCtx_Get ()->error ;
 		res = false ;
 		goto unlocked ;
 	}
@@ -539,9 +519,13 @@ static bool _Constraint_Create
 		goto unlocked ;
 	}
 
-	// acquire graph write lock, and the GIL on a worker thread
-	// on failure nothing is held
-	if (!_Constraint_AcquireWriteLock (&error_msg)) {
+	// acquire graph write lock, and the GIL on a worker thread, the same way
+	// a write query does: the wait yields the GIL, so a long read can't freeze
+	// the server, and the replica pause, role and graph key are re-checked
+	// under the GIL before each attempt. on failure nothing is held and
+	// ErrorCtx holds the reason (valid until ErrorCtx_Clear)
+	if (!QueryCtx_AcquireWriteLock ()) {
+		error_msg = ErrorCtx_Get ()->error ;
 		res = false ;
 		goto unlocked ;
 	}
