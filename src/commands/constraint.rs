@@ -273,14 +273,10 @@ pub fn settle_constraint(
     unsafe { ffi::free_thread_safe_context(ctx.ctx) };
 }
 
-/// One attempt at the two-phase settle. Takes a fresh session each time.
-///
-/// A fresh one is required, not merely tidy: `QuerySession::escalate` records
-/// writer mode *before* `reauthorize_write` runs, so calling `upgrade_to_write`
-/// again on a session that already failed takes the already-a-writer early
-/// return and reports success — skipping the pause check that refused it. It also
-/// means a failed session is still holding the GIL and the write lock, so it has
-/// to be dropped before anything sleeps.
+/// One attempt at the two-phase settle. Takes a fresh session each time, so
+/// every attempt validates the graph as it is then, and a refused session —
+/// back to a reader if escalation refused it, still a writer if its commit was
+/// refused — is dropped before the caller sleeps.
 fn attempt_settle(
     graph: &Arc<RwLock<ThreadedGraph>>,
     ctx: &Context,

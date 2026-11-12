@@ -89,19 +89,29 @@ flowchart TD
     C2 --> CZ
 
     B -->|no| D[block client, hand to pool]
-    D --> G[escalate: drop read lock,<br/>take GIL, take write lock]
+    D --> G[escalate: drop read lock,<br/>take GIL]
     G --> H{graph still registered?}
     H -->|no| X1[abort: GraphUnregistered]
     H -->|yes| J{facts.replicates<br/>AND traffic paused?}
     J -->|yes| X2[abort: ReplicaTrafficPaused]
     J -->|no| K{facts.originated_here<br/>AND READONLY?}
     K -->|yes| X3[abort: NotAMaster]
-    K -->|no| L([commit and propagate])
+    K -->|no| I{interval 0 when the wait began,<br/>or this thread already held the GIL?}
+    I -->|yes| Z[wait for the write lock,<br/>holding the GIL] --> L
+    I -->|no| W{write lock within<br/>WRITE_LOCK_POLL_INTERVAL?}
+    W -->|no| Y[release GIL, sleep 1 ms] --> G
+    W -->|yes| L([commit and propagate])
 
     S[spawned thread<br/>constraint validation] --> G
 ```
 
-Everything from the `graph_is_registered` check to the commit happens under **one
+The checks run on every attempt, because the GIL is released between attempts: a writer
+waits for the write lock in slices so that it never holds the GIL for longer than one
+slice (`acquire_write` in `src/query_session.rs`). Two cases wait once instead, holding
+the GIL until the lock is free: every writer when `WRITE_LOCK_POLL_INTERVAL` is 0, and a
+thread that already held the GIL, which cannot give it back mid-wait. On the attempt
+that gets the lock,
+everything from the `graph_is_registered` check to the commit happens under **one
 continuous GIL hold**. That is what makes the check race-free rather than merely
 well-timed: `CLIENT PAUSE` and role-change events both run on the main thread, which
 needs the GIL we are holding, so neither can move between the check and the commit.
