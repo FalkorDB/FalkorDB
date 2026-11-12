@@ -1,6 +1,6 @@
-//! `CREATE`/`DROP CCH INDEX` as effects, run as queries: what each statement puts
-//! on the wire, and that a replica applying it ends up holding what the primary
-//! holds.
+//! `CREATE`/`DROP CCH INDEX` as effects, run as queries on a primary: what each
+//! statement puts on the wire, and what the primary holds afterwards. A replica
+//! applying these records is tested in `effects/v3/apply.rs` (`cch_tests`).
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -58,6 +58,16 @@ impl Primary {
         &mut self,
         query: &str,
     ) -> Result<Vec<u8>, String> {
+        self.write_building_effects(query, true)
+    }
+
+    /// [`Self::write`], building effects only if `effects` (as with neither AOF nor
+    /// replicas when it is `false`).
+    fn write_building_effects(
+        &mut self,
+        query: &str,
+        effects: bool,
+    ) -> Result<Vec<u8>, String> {
         let plan = self.0.get_plan(query)?;
         let runtime = Runtime::new(
             self.0.new_version(),
@@ -72,6 +82,7 @@ impl Primary {
             None,
             &AlreadyWriter,
         );
+        runtime.build_effects.set(effects);
         runtime.query()?;
         let captured = Captured::default();
         if let Some(buf) = take_effects_buffer(&runtime) {
@@ -203,4 +214,41 @@ fn a_create_failing_after_it_registered_a_type_leaves_no_type_behind() {
     assert!(err.contains("attribute dictionary is full"), "{err}");
     assert_eq!(primary.0.get_types().len(), 0);
     assert_eq!(primary.0.cch_indexes().count(), 0);
+}
+
+/// A statement may name at most `u16::MAX` relationship types, repeats included: the
+/// index record carries every reference behind a `u16` count. The limit holds for both
+/// verbs whether or not the query builds effects, so a standalone server refuses what a
+/// replicated one would, and the refusal registers nothing.
+#[test]
+fn naming_more_types_than_the_record_holds_is_refused_with_or_without_effects() {
+    let repeated = |count: usize| vec!["ROAD"; count].join("|");
+    let at_limit = repeated(usize::from(u16::MAX));
+    let past_limit = repeated(usize::from(u16::MAX) + 1);
+    for effects in [true, false] {
+        let mut primary = Primary::new();
+        for verb in ["CREATE", "DROP"] {
+            let err = primary
+                .write_building_effects(
+                    &format!("{verb} CCH INDEX FOR ()-[e:{past_limit}]->() ON (e.time)"),
+                    effects,
+                )
+                .unwrap_err();
+            assert!(
+                err.contains("at most 65535"),
+                "{verb}, effects {effects}: {err}"
+            );
+        }
+        assert_eq!(primary.0.get_types().len(), 0, "effects {effects}");
+
+        for verb in ["CREATE", "DROP"] {
+            primary
+                .write_building_effects(
+                    &format!("{verb} CCH INDEX FOR ()-[e:{at_limit}]->() ON (e.time)"),
+                    effects,
+                )
+                .unwrap_or_else(|err| panic!("{verb}, effects {effects}: {err}"));
+        }
+        assert_eq!(primary.0.cch_indexes().count(), 0, "effects {effects}");
+    }
 }

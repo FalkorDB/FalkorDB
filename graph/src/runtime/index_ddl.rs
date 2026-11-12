@@ -118,6 +118,26 @@ fn reject_read_only_query(runtime: &Runtime<'_>) -> Result<(), String> {
     }
 }
 
+/// Refuse a CCH statement naming more relationship types than its index record can carry.
+///
+/// The record keeps every reference as written, repeats included, behind a `u16` count (C's
+/// layout), so `:ROAD|ROAD|…` 65,536 times cannot be replicated even though it defines a
+/// one-type index. Checked first and whether or not this query builds effects, so a
+/// statement is accepted or refused the same way with or without AOF and replicas, and
+/// before anything is registered.
+#[cfg(feature = "index-falkordb")]
+fn check_type_reference_count(spec: &CchIndexSpec) -> Result<(), String> {
+    let count = spec.rel_types.len();
+    if count > usize::from(u16::MAX) {
+        return Err(format!(
+            "CCH index error: a statement names at most {} relationship types, repeats \
+             included, but this one names {count}",
+            u16::MAX
+        ));
+    }
+    Ok(())
+}
+
 /// The CCH index definition `spec` names, registering any relationship type or
 /// weight attribute it does not find — as C's `cch_index_create` does, and as
 /// `CREATE INDEX` does. The registrations reach a replica as `ADD_SCHEMA` /
@@ -172,6 +192,7 @@ pub(crate) fn create_cch_index<'a>(
     spec: &CchIndexSpec,
 ) -> Result<BatchOp<'a>, String> {
     reject_read_only_query(runtime)?;
+    check_type_reference_count(spec)?;
     // See `create_index`: DDL runs in writer mode.
     runtime.upgrade_to_write()?;
     {
@@ -194,6 +215,7 @@ pub(crate) fn drop_cch_index<'a>(
     spec: &CchIndexSpec,
 ) -> Result<BatchOp<'a>, String> {
     reject_read_only_query(runtime)?;
+    check_type_reference_count(spec)?;
     runtime.upgrade_to_write()?;
     {
         let mut graph = runtime.graph_mut();
