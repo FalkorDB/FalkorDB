@@ -3,7 +3,12 @@ import GraphPersist.Persist.Store
 namespace GraphPersist.Persist
 open GraphPersist
 
-/-! ## Payload directory (`EncodeState`, serialization.rs:120-158) -/
+/-! ## Payload directory (`EncodeState`, serialization.rs:124-167)
+
+`St` is `EncodeState` without `CchIndices` (10): `decode_payload_directory` refuses a key that
+lists it (this module has no CCH index), exactly as it refuses an unknown state, so `St.ofU`
+maps 10 to `none` and the directory decoder fails on it like on any other tag it does not
+accept. The encoder never writes it. -/
 
 inductive St where
   | init | nodes | delNodes | edges | delEdges | schema | labelsM | relM | adj | lblsM | final
@@ -11,18 +16,19 @@ inductive St where
 
 def St.toU : St → Nat
   | .init => 0 | .nodes => 1 | .delNodes => 2 | .edges => 3 | .delEdges => 4 | .schema => 5
-  | .labelsM => 6 | .relM => 7 | .adj => 8 | .lblsM => 9 | .final => 10
+  | .labelsM => 6 | .relM => 7 | .adj => 8 | .lblsM => 9 | .final => 11
 
-/-- `EncodeState::from_u64` (:145). -/
+/-- `EncodeState::from_u64` (:150) followed by the `CchIndices` refusal of
+`decode_payload_directory` (decoder/mod.rs:43): 10 is not accepted. -/
 def St.ofU : Nat → Option St
   | 0 => some .init | 1 => some .nodes | 2 => some .delNodes | 3 => some .edges
   | 4 => some .delEdges | 5 => some .schema | 6 => some .labelsM | 7 => some .relM
-  | 8 => some .adj | 9 => some .lblsM | 10 => some .final | _ => none
+  | 8 => some .adj | 9 => some .lblsM | 11 => some .final | _ => none
 
 theorem St.ofU_toU (s : St) : St.ofU s.toU = some s := by cases s <;> rfl
 theorem St.toU_lt (s : St) : s.toU < 2 ^ 64 := by cases s <;> decide
 
-/-- `PayloadEntry` (:160). -/
+/-- `PayloadEntry` (:171). -/
 structure Entry where
   st : St
   count : Nat
@@ -33,8 +39,9 @@ structure Entry where
 def encDir (es : List Entry) : Stream :=
   encU es.length ++ es.flatMap fun e => encU e.st.toU ++ encU e.count
 
-/-- The directory loop of `rdb_load_graph` (:58-66) / `load_graph_from_reader` (:447-455):
-both words are read before the state is checked. -/
+/-- The directory loop of `decode_payload_directory` (decoder/mod.rs:43-59), which
+`rdb_load_graph` and `load_graph_from_reader` both call: both words are read before the state
+is checked. -/
 def decDirEntry : Dec (St × Nat) :=
   readU.bind fun s => readU.bind fun c =>
     match St.ofU s with
@@ -204,8 +211,8 @@ inductive PR (M Tn : Type) where
   | lbls (m : M)
   | skip
 
-/-- The payload `match` of `rdb_load_graph` (:193-228), `decode_payloads_into_pending`
-(:266-305) and `load_graph_from_reader` (:473-508) — the three are the same arms. -/
+/-- The payload `match` of `rdb_load_graph` (:214-249), `decode_payloads_into_pending`
+(:287-326) and `load_graph_from_reader` (:486-521) — the three are the same arms. -/
 def decPayload (C : Codecs M Tn Nm Ix Cn) (relCount : Nat) : St × Nat → Dec (PR M Tn)
   | (.nodes, c) => (rep decEnt c).bind fun es => Dec.pure (.nodes es)
   | (.delNodes, c) => (decRoar c).bind fun l => Dec.pure (.delN l)
@@ -273,8 +280,8 @@ structure Restore (M Tn Nm Ix Cn : Type) where
   indexes : List Ix
   constraints : List Cn
 
-/-- `load_graph_from_reader` (decoder/mod.rs:431-537), behind `pipe_load_graph` (:406)
-and `vec_load_graph` (:421). `attrs_name.len()` is the schema's attribute count (the
+/-- `load_graph_from_reader` (decoder/mod.rs:452-550), behind `pipe_load_graph` (:427)
+and `vec_load_graph` (:442). `attrs_name.len()` is the schema's attribute count (the
 names are distinct; `AttrNameMap` is an index set). -/
 def finish (C : Codecs M Tn Nm Ix Cn) (dest : Nm) (nc ec : Nat) (s : Sch Nm Ix Cn) (prs : List (PR M Tn)) :
     Restore M Tn Nm Ix Cn :=
@@ -290,7 +297,7 @@ def kSch (C : Codecs M Tn Nm Ix Cn) (rc : Nat) (dest : Nm) (nc ec : Nat) (s : Sc
     Dec (Restore M Tn Nm Ix Cn) :=
   decDir.bind (kDir C rc dest nc ec s)
 
-/-- `if hdr.key_count != 1 { return Err(..) }` (:438). -/
+/-- `if hdr.key_count != 1 { return Err(..) }` (:459). -/
 def kHdr (C : Codecs M Tn Nm Ix Cn) (dest : Nm) (h : Hdr Nm) : Dec (Restore M Tn Nm Ix Cn) :=
   if h.keyCount ≠ 1 then Dec.fail else C.S.dec.bind (kSch C h.relCount dest h.nodeCount h.edgeCount)
 

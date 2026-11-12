@@ -66,6 +66,75 @@ ENCODED_MARKER = (
 )
 
 
+def _crc64(data):
+    """Redis's CRC-64 (Jones polynomial, reflected), which seals a DUMP payload."""
+    crc = 0
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0x95AC9329AC4BC9B5 if crc & 1 else crc >> 1
+    return crc
+
+
+def with_module_encver(dump, encver):
+    """`dump` (one module value, as DUMP returns it) with its module type's
+    encoding version set to `encver`, and the CRC recomputed.
+
+    A DUMP is the value, a 2-byte RDB version and an 8-byte LE CRC-64. The value
+    starts with RDB_TYPE_MODULE_2 (7), then the 64-bit module type id (0x81 and
+    8 bytes BE) whose low 10 bits are the encoding version."""
+    assert dump[:2] == b"\x07\x81", dump[:2]
+    type_id = int.from_bytes(dump[2:10], "big")
+    type_id = (type_id & ~0x3FF) | encver
+    body = dump[:2] + type_id.to_bytes(8, "big") + dump[10:-8]
+    return body + struct.pack("<Q", _crc64(body))
+
+
+def module_encver(dump):
+    return int.from_bytes(dump[2:10], "big") & 0x3FF
+
+
+# `DUMP cch_v20` from a module built with `--features index-falkordb`, encoding
+# version 20: `(:N {id})` nodes 0..3, ROAD edges 0->1 (time 1.0), 1->2 (2.0),
+# 2->3 (1.5) and 0->3 (9.0), and `CREATE CCH INDEX FOR ()-[e:ROAD]->() ON
+# (e.time)`, so the value carries one CCH index definition.
+CCH_V20_DUMP = bytes.fromhex(
+    "078182b6a985d6ad681405c3446c6e88020008008000096363685f763230000404800fe0"
+    "0208200c6000e001080001600f2011e00008200c6000e001110002600f20000003200340"
+    "00046964000005400820000374696d65e0022b20118000c034004ee00113e0001ce0015a"
+    "802b2000c04e03524f4144e00116e0001f01040720234000e0013ac01b0004c095e00111"
+    "000640292000e0012ce0093ec12de00123000920314000e00111000a400e2000e0011120"
+    "0c6000e00a110100206019e10024e00223e1095be0002ce0001ac12fe0132ce00023e000"
+    "f2e0003e206f6000e00159e0002360172000e0012ce00135004020172000a05801f03fe0"
+    "011ae00023e00008e0062c010040e00ab3e00f2c01f83fe00ab3e00f2c012240e0021ac0"
+    "000060a0a3c085e00007a00000ffa000a00ee05000c0b4e0ff00e0d100c40f074772425f"
+    "424f4f4c2301a000e00008c363010000c44ee00000c43b403d04494e543332e00135e400"
+    "7be0123e000ba048403e0055a03fc27ae00a3fe00000e01376c024e00176e00000e003eb"
+    "206d0038e0012ce00a35e30f8ac02aa38900ffc00fe04f00c10fe0ff00e02700e1983fc3"
+    "54e000a8e203a68392c01ae30a130010e1020f4026464062fae30a23c2aa0004c0346028"
+    "6000001460058000e003466032e30ba6c8ca0004c039e0014bc05d4000e0034be02692e0"
+    "0000e1030fe330b6c00023b16000c00fe04f0040f8e0ff00e0d500e2039e83aec0efe000"
+    "08e3011bc3ece00000e30aa6c01be30aede0083ee30b9ac27ae00a3fe00000e01376c024"
+    "e001b5e00000e003ebe3178ae00047e7104ac06063902000e00131e04d00c118e0ff00e0"
+    "c800ae9ce00000c260c1f8471c6000e30736013634e7021dc045c03d0200000c2003c000"
+    "404b6047e30a42c0310004c030c010e70514403e401962efe0078a4b4360182000e70aa8"
+    "c75c40864043c04be00b8ee01246e00000e323d1e310c8c00023c36000c00fe04f0040fc"
+    "e0ff00e0d500e3071d43a8c0f1e0000843078000e7081fe30aa48029203ec02ce0123ee0"
+    "077e439cc27ce00a3fe00000e01376c024e00176e00000e3ff8ce0ff00e08600e3070de3"
+    "ff8c240bc3d5c007e00108e7ff34e0ff00e05a00e60346eeff916000f50fd3c78a6abc20"
+    "00e300c5e04e00c842e0ff00e02700e1983fca5ae000a8e30992c01aea0a46ce3d400040"
+    "264de3ea0b52c2b6eeff6ee04f004183e0ff00e0d500e309a6c0efe00008c374e301e4e0"
+    "0000ed13f5c411e0123eeb075eee936ce3071227346000e1000be04e00e00777e0ff00e0"
+    "c000c327e00000e31292c02be31253e36592c090e00000e0257ee00000e003f3f91766ea"
+    "08d4c322c4b163972000c00fe04f00c077e0ff00e02700e1983fc2dde000a8e203a68e67"
+    "c01ae30a9ad8b8400040264ad463b8e30a23c2aaf80aff0014403fa000e003466032e70b"
+    "410005a02c0004c03960746000e00392e00400e02592e00000e1030fe330b6c00023b160"
+    "00c00fe04f004144e0ff00e0cc00c3b6e00000e203a683b6c01ae30ab6e0083de30a1be0"
+    "233ee30ba2c282e0497ee00000e003f3e3179ae0018fe00098c047a011010000000d0018"
+    "19c0581af91ccd"
+)
+
+
 class testRdbLoad():
     def __init__(self):
         self.env, self.db = Env(moduleArgs='VKEY_MAX_ENTITY_COUNT 10',
@@ -304,3 +373,53 @@ class testRdbLoad():
                 self.env.assertContains(
                     f"nested up to {MAX_VALUE_NESTING} levels deep", str(e))
         self.env.assertTrue(self.conn.ping())
+
+    def test_restore_v20_without_cch_indexes(self):
+        # C's encoding version 20 adds one payload, the CCH index definitions,
+        # written only for a graph that has a CCH index: any other v20 value is
+        # a v19 value stamped 20, and loads like one.
+        self.conn.flushall()
+        src = self.db.select_graph("src")
+        src.query("CREATE INDEX FOR (a:A) ON (a.v)")
+        src.query("CREATE (:A {v: 1})-[:R {w: 2}]->(:B {v: 3})")
+        dump = self.conn.dump("src")
+        self.env.assertEqual(module_encver(dump), 19)
+        v20 = with_module_encver(dump, 20)
+        self.env.assertEqual(module_encver(v20), 20)
+
+        self.conn.restore("dst", 0, v20)
+        dst = self.db.select_graph("dst")
+        q = "MATCH (a:A)-[e:R]->(b:B) RETURN a.v, e.w, b.v"
+        self.env.assertEqual(dst.query(q).result_set, [[1, 2, 3]])
+        self.env.assertEqual(
+            [r[0] for r in dst.ro_query("CALL db.indexes()").result_set], ["A"])
+
+        # saved again, it is written as version 19
+        self.env.assertEqual(module_encver(self.conn.dump("dst")), 19)
+        self.conn.execute_command("DEBUG", "RELOAD")
+        self.env.assertEqual(dst.query(q).result_set, [[1, 2, 3]])
+
+    def test_restore_v20_with_cch_indexes_is_refused(self):
+        # This module has no CCH index. A v20 value that carries CCH index
+        # definitions is refused with an error, not misread and not a crash,
+        # and nothing is left under the key.
+        self.conn.flushall()
+        self.env.assertEqual(module_encver(CCH_V20_DUMP), 20)
+        try:
+            self.conn.restore("cch_v20", 0, CCH_V20_DUMP)
+            self.env.assertTrue(False, message="a v20 value with a CCH index restored")
+        except redis.exceptions.ResponseError:
+            pass
+        self.env.assertEqual(self.conn.exists("cch_v20"), 0)
+        self.env.assertTrue(self.conn.ping())
+        if self.env.log_path:
+            with open(self.env.log_path, "rb") as f:
+                self.env.assertTrue(
+                    b"this module does not support CCH indexes" in f.read(),
+                    message="the refusal must be logged")
+
+        # the server goes on loading other graphs
+        self.conn.execute_command("GRAPH.QUERY", "g", "CREATE (:N {v: 1})")
+        self.conn.execute_command("DEBUG", "RELOAD")
+        res = self.conn.execute_command("GRAPH.RO_QUERY", "g", "MATCH (n:N) RETURN n.v")
+        self.env.assertEqual(res[1], [[1]])

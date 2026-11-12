@@ -1,4 +1,4 @@
-/-! # `rebuild_indexes` (decoder/mod.rs:345-400)
+/-! # `rebuild_indexes` (decoder/mod.rs:366-421)
 
 After `Graph::restore`, each saved `IndexInfo` is replayed as `create_index_sync` calls: one
 per `(attribute, field)` in `field_order` order (an attribute missing from `fields` is

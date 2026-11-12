@@ -11,11 +11,11 @@ graph/src/graph/graphblas/serialization.rs	encode	34	NOT COVERED	trait default d
 graph/src/graph/graphblas/serialization.rs	encode_with_range	40	NOT COVERED	trait default (unimplemented!)
 graph/src/graph/graphblas/serialization.rs	decode	64	NOT COVERED	trait declaration
 graph/src/graph/graphblas/serialization.rs	decode_with_count	76	NOT COVERED	trait default (unimplemented!)
-graph/src/graph/graphblas/serialization.rs	from_u64	146	MODELLED	payload directory state tags; exercised via live roundtrip
-graph/src/graph/graphblas/serialization.rs	encode	173	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8
-graph/src/graph/graphblas/serialization.rs	encode_with_range	180	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip
-graph/src/graph/graphblas/serialization.rs	decode	195	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
-graph/src/graph/graphblas/serialization.rs	decode_with_count	216	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; before #2996 a count of 2^61 matched an empty buffer
+graph/src/graph/graphblas/serialization.rs	from_u64	150	MODELLED	payload directory state tags; exercised via live roundtrip
+graph/src/graph/graphblas/serialization.rs	encode	178	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8
+graph/src/graph/graphblas/serialization.rs	encode_with_range	185	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip
+graph/src/graph/graphblas/serialization.rs	decode	206	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
+graph/src/graph/graphblas/serialization.rs	decode_with_count	227	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; before #2996 a count of 2^61 matched an empty buffer
 src/redis_type.rs	io_cache_size	69	PROVEN	RedisType.ioCacheSize: ioCacheSize_spec, cache_size_on_load (RedisModule_GetContextFromIO = FFI; the configured CACHE_SIZE is the input)
 src/redis_type.rs	io_key_name	84	PROVEN	RedisType.ioKeyName: ioKeyName_spec (GetKeyNameFromIO/StringPtrLen results are inputs)
 src/redis_type.rs	graph_rdb_load	97	PROVEN	RedisType.loadWhole/loadPartial: load_main_last, load_main_first (registry Arc = key value = finished graph, no vkey registered, any key order); decoder Persist.multi_load; cacheOnLoad: cache_size_on_load (W5-rdb-1 fixed by #3262 361f62ac1)
@@ -65,13 +65,14 @@ src/serializers/encoder/mod.rs	vec_save_graph	59	PROVEN	Persist.encodeGraph: loa
 src/serializers/encoder/mod.rs	encode_graph	68	PROVEN	Persist.encodeGraph/encDir/encPayload: load_encode, key_rt, decDir_rt, payload_rt, entry_rt
 src/serializers/encoder/mod.rs	build_multi_key_payloads	95	PROVEN	Persist.buildMulti/fillKey/keysFrom: fillKey_spec, multi_key_tiles, multi_key_bound, multi_key_all_placed, multi_key_matrices
 src/serializers/encoder/mod.rs	build_payloads	192	PROVEN	Persist.buildPayloads: load_encode, fold_build, buildPayloads_bounds
-src/serializers/decoder/mod.rs	rdb_load_graph	44	PROVEN	Persist.rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pending, multi_load (any key order); key_count 1: key_rt K=1 + fold_build
-src/serializers/decoder/mod.rs	decode_payloads_into_pending	260	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
-src/serializers/decoder/mod.rs	finalize_pending_graph	310	PROVEN	Persist.finalizePG: run_keys, multi_load
-src/serializers/decoder/mod.rs	rebuild_indexes	345	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
-src/serializers/decoder/mod.rs	pipe_load_graph	406	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
-src/serializers/decoder/mod.rs	vec_load_graph	421	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
-src/serializers/decoder/mod.rs	load_graph_from_reader	431	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof
+src/serializers/decoder/mod.rs	decode_payload_directory	43	PROVEN	Persist.decDir/decDirEntry: decDir_rt; the CchIndices (10) refusal is St.ofU 10 = none, the same Dec.fail as an unknown state
+src/serializers/decoder/mod.rs	rdb_load_graph	73	PROVEN	Persist.rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pending, multi_load (any key order); key_count 1: key_rt K=1 + fold_build
+src/serializers/decoder/mod.rs	decode_payloads_into_pending	281	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
+src/serializers/decoder/mod.rs	finalize_pending_graph	331	PROVEN	Persist.finalizePG: run_keys, multi_load
+src/serializers/decoder/mod.rs	rebuild_indexes	366	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
+src/serializers/decoder/mod.rs	pipe_load_graph	427	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
+src/serializers/decoder/mod.rs	vec_load_graph	442	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
+src/serializers/decoder/mod.rs	load_graph_from_reader	452	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof
 graph/src/runtime/runtime.rs	publish	581	NOT COVERED	new with the plain-Graph fork, not modelled yet: moves the runtime's fork into MvccGraph::commit and reads the Arc it published from then on
 graph/src/runtime/runtime.rs	QueryGraph::from	119	NOT COVERED	enum constructor
 graph/src/runtime/runtime.rs	QueryGraph::from	125	NOT COVERED	enum constructor

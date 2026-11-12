@@ -1,8 +1,8 @@
 import GraphPersist.Persist.MultiKey
 /-! # One RDB key of a multi-key graph reads back its slices
 
-`rdb_load_graph` (decoder/mod.rs:44-66) reads header, schema and directory, then — with
-`key_count > 1` — `decode_payloads_into_pending` (:260-307) reads the payloads into the
+`rdb_load_graph` (decoder/mod.rs:73-87) reads header, schema and directory, then — with
+`key_count > 1` — `decode_payloads_into_pending` (:281-328) reads the payloads into the
 pending graph. `rdbKey` is that read; `key_rt` says every key `build_multi_key_payloads`
 lays out (entity slices `(offset, count)` and, on key 0, the matrices) reads back as the
 slices it encodes.
