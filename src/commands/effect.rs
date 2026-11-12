@@ -67,6 +67,8 @@ pub fn graph_effect(
     // different build. A version with no impl at all is divergence rather
     // than a compatibility case; `apply` rejects it and the guard below
     // forces a resync.
+    // Any CCH index the records touched is rebuilt inside `apply`, so a failure to
+    // do so diverges like any other apply failure.
     let result = EffectsPayload::apply(&mut fork, buf).map_err(|e| e.to_string());
 
     // Folded into the same result rather than handled in the `Ok` arm. `commit`

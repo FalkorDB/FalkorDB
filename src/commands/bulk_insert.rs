@@ -526,7 +526,7 @@ fn process_edge_token(
         return Ok(());
     }
 
-    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids)
+    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids, docs)
         .map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
@@ -855,7 +855,9 @@ pub fn graph_bulk_insert(
             rel_token_count,
             ctx.ctx,
             &mut docs,
-        );
+        )
+        // The CCH indexes every token touched, once for the whole insert.
+        .and_then(|()| fork.apply_cch_writes(&mut docs));
         // The commit joins the token result rather than sitting in the `Ok` arm
         // below. `commit` validates before publishing, and returning its refusal
         // straight to the caller skipped the whole error arm — so a `BEGIN` that
@@ -957,7 +959,10 @@ pub fn graph_bulk_insert(
                     node_token_count,
                     rel_token_count,
                     &mut docs,
-                );
+                )
+                // The CCH indexes every token touched, once for the whole insert: still
+                // GIL-free, before escalation.
+                .and_then(|()| fork.apply_cch_writes(&mut docs));
                 if let Err(e) = inserted {
                     break 'phase Err(format!("ERR bulk insert failed: {e}"));
                 }

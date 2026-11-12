@@ -290,7 +290,7 @@ fn create_index_leaves_the_edge_column_to_its_batches() {
         .relationship_id_space()
         .reserve(srcs.len(), &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let attrs: FxHashMap<u64, Vec<(u16, Value)>> = eids
         .iter()
@@ -566,7 +566,7 @@ fn edge_writes_maintain_the_index() {
         .relationship_id_space()
         .reserve(3, &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &[a; 3], &[b; 3], &ids)
+    g.create_relationships_bulk(&ty, &[a; 3], &[b; 3], &ids, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
     for (i, &id) in ids.iter().enumerate() {
@@ -874,7 +874,7 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
         .relationship_id_space()
         .reserve(srcs.len(), &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
         pairs
@@ -917,7 +917,7 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
         .relationship_id_space()
         .reserve(1, &RoaringTreemap::new())
         .expect("reserved")[0];
-    g.create_relationships_bulk(&ty, &[a], &[b], &[added])
+    g.create_relationships_bulk(&ty, &[a], &[b], &[added], &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     applied!(g, |w| g
         .import_relationship_attrs(&with_w(&[(added, 8)]), &mut w))
@@ -963,7 +963,7 @@ fn an_edge_write_is_placed_by_its_source_then_its_destination() {
         .relationship_id_space()
         .reserve(srcs.len(), &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
         pairs
@@ -1031,7 +1031,7 @@ fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
             .relationship_id_space()
             .reserve(srcs.len(), &RoaringTreemap::new())
             .expect("reserved");
-        g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+        g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
             .expect("freshly reserved ids are creatable");
         let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
             pairs
@@ -1065,7 +1065,7 @@ fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
         del.insert(eids[0]);
         g.delete_relationships(&del, &mut w).unwrap();
         let reused = eids[0];
-        g.create_relationships_bulk(&ty, &[d], &[a], &[reused])
+        g.create_relationships_bulk(&ty, &[d], &[a], &[reused], &mut IndexDocs::default())
             .expect("a freed id is creatable");
         g.import_relationship_attrs(&with_w(&[(reused, new_w)]), &mut w)
             .expect("stored");
@@ -1100,7 +1100,7 @@ fn scan_fixture() -> (Graph, Arc<String>, Arc<String>, Arc<String>, Arc<String>)
         .relationship_id_space()
         .reserve(srcs.len(), &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
     for (i, &eid) in eids.iter().enumerate() {
@@ -1570,8 +1570,14 @@ fn replica_edge_update_of_type_maintains_the_index() {
         .relationship_id_space()
         .reserve(1, &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &nodes[..1], &nodes[1..], &ids)
-        .expect("freshly reserved ids are creatable");
+    g.create_relationships_bulk(
+        &ty,
+        &nodes[..1],
+        &nodes[1..],
+        &ids,
+        &mut IndexDocs::default(),
+    )
+    .expect("freshly reserved ids are creatable");
     let type_id = g.get_type_id_mut("R");
 
     let attrs_of = |w: i64| -> FxHashMap<u64, Vec<(u16, Value)>> {
@@ -2196,7 +2202,7 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
                 .into_iter()
                 .chain(nodes[2..2 + extra].iter().copied())
                 .collect();
-            g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+            g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
                 .expect("freshly reserved ids are creatable");
             let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
                 pairs
@@ -2217,8 +2223,14 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
                 let mut del = RoaringTreemap::new();
                 del.insert(eids[deleted]);
                 g.delete_relationships(&del, &mut w).unwrap();
-                g.create_relationships_bulk(&ty, &[abcd[src]], &[abcd[dst]], &[eids[deleted]])
-                    .expect("a freed id is creatable");
+                g.create_relationships_bulk(
+                    &ty,
+                    &[abcd[src]],
+                    &[abcd[dst]],
+                    &[eids[deleted]],
+                    &mut w,
+                )
+                .expect("a freed id is creatable");
                 g.import_relationship_attrs(&with_w(&[(eids[deleted], 9)]), &mut w)
                     .expect("stored");
                 g.apply_index_writes(&mut w);
@@ -2342,7 +2354,7 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
             .into_iter()
             .chain(nodes[2..2 + extra].iter().copied())
             .collect();
-        g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+        g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
             .expect("freshly reserved ids are creatable");
         let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
             pairs
@@ -2365,7 +2377,7 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
             let mut del = RoaringTreemap::new();
             del.insert(eids[0]);
             g.delete_relationships(&del, &mut w).unwrap();
-            g.create_relationships_bulk(&other, &[a], &[a], &[eids[0]])
+            g.create_relationships_bulk(&other, &[a], &[a], &[eids[0]], &mut w)
                 .expect("a freed id is creatable");
             g.import_relationship_attrs(&with_w(&[(eids[0], 9)]), &mut w)
                 .expect("stored");
@@ -2988,7 +3000,7 @@ fn add_edges(
         .relationship_id_space()
         .reserve(srcs.len(), &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(ty, srcs, dsts, &eids)
+    g.create_relationships_bulk(ty, srcs, dsts, &eids, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let values: FxHashMap<u64, Vec<(u16, Value)>> = eids
         .iter()

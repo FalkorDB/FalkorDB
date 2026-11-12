@@ -17,6 +17,7 @@
 //! takes two passes, merged by `MIN`: the same shape as `algo.MSF`
 //! (`runtime/functions/algo_procedures.rs`).
 
+mod pair_weights;
 #[cfg(test)]
 mod tests;
 mod weight_ops;
@@ -26,13 +27,16 @@ use crate::graph::graphblas::matrix::{Descriptor, Matrix};
 use crate::runtime::value::Value;
 
 use super::{CchError, CchIndexDef, CchInput, id_index};
+pub(crate) use pair_weights::PairWeights;
+#[cfg(test)]
+pub(super) use weight_ops::edge_weight;
 use weight_ops::{WeightContext, WeightOps};
 
-/// Whether `value`, as an edge's weight attribute, is a weight an index takes: a number that
-/// is `>= 0`, `+inf` (a closed edge) and `-0.0` included. A missing or non-numeric value
-/// weighs [`DEFAULT_WEIGHT`](weight_ops::DEFAULT_WEIGHT), so only a negative number (`-inf`
-/// included) or NaN is refused. The rule the weight operators score by
-/// ([`cch_edge_weight`](weight_ops::cch_edge_weight)) and the write-time check
+/// Whether `value`, as an edge's weight attribute, is a weight an index takes: what
+/// [`edge_weight`](weight_ops::edge_weight) reads it as is `>= 0`, `+inf` (a closed edge) and `-0.0` included. A
+/// missing or non-numeric value reads as [`DEFAULT_WEIGHT`](weight_ops::DEFAULT_WEIGHT), so
+/// only a negative number (`-inf` included) or NaN is refused. The rule the weight operators
+/// score by ([`cch_edge_weight`](weight_ops::cch_edge_weight)) and the write-time check
 /// ([`check_edge_weights`](super::maint::check_edge_weights)) refuses by.
 pub(super) fn is_valid_weight(value: &Value) -> bool {
     match value {
@@ -106,6 +110,12 @@ impl CchInput {
         };
         debug_assert!(input.skeleton.is_symmetric_simple());
         Ok(input)
+    }
+
+    /// The weight CSR, for tests that customize a hierarchy over it.
+    #[cfg(test)]
+    pub(crate) const fn weights(&self) -> &super::WeightCsr {
+        &self.weights
     }
 
     /// What `CREATE CCH INDEX` checks before it returns, while the hierarchy itself is built in

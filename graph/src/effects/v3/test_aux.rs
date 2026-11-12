@@ -63,7 +63,13 @@ pub(crate) fn with_edge(
 ) {
     let mut graph = g.borrow_mut();
     graph
-        .create_relationships_bulk(&Arc::new(type_name.to_owned()), &[0], &[1], &[id])
+        .create_relationships_bulk(
+            &Arc::new(type_name.to_owned()),
+            &[0],
+            &[1],
+            &[id],
+            &mut IndexDocs::default(),
+        )
         .expect("a fixture's own ids, nothing to refuse");
 }
 
