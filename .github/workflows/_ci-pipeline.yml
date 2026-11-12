@@ -98,38 +98,13 @@ jobs:
           path: target/release
       - run: chmod +x target/release/libfalkordb.so
       - name: Run tests
-        id: pytest
         run: |
           . /data/venv/bin/activate
-          RELEASE=1 pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv --junitxml=test-results/pytest.xml
+          RELEASE=1 pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
       - name: Run TCK tests
-        id: tck
         run: |
           . /data/venv/bin/activate
-          RELEASE=1 TCK_DONE=tck_done.txt TCK_JUNIT_DIR=test-results/tck pytest tests/tck/test_tck.py -s
-      # tests/common.py starts the server with --logfile redis-test.log.
-      # Counts for the run summary (tests/count_results.py, summed per server by
-      # _ci-pipeline.yml's test-counts job). On every outcome but a cancel, so a
-      # failing cell still counts, including one whose setup failed before its
-      # tests ran. STATUS is the job's, so any failed step marks the cell. The
-      # report never gates: both steps continue on error. The server is FALKORDB_SERVER's, as flow.sh,
-      # tests/common.py and the images default it: redis unless set.
-      - name: Record test counts
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        env:
-          RUN: artifact, amd64
-          STATUS: ${{ job.status }}
-          NAME: test-counts-artifact
-        run: python3 tests/count_results.py record --server "${FALKORDB_SERVER:-redis}" --run "$RUN" --status "$STATUS" --junit test-results/pytest.xml --behave test-results/tck --logs redis-test.log --out "test-counts/$NAME.json"
-      - name: Upload test counts
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: test-counts-artifact
-          path: test-counts/
-          retention-days: 7
+          RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
   # Release flavour. The vehicle is the whole difference between the two events:
   # a pull request tests the binary it just built, the queue tests the image it
   # is about to promote. Same file list, same flavour config — two thin calls
@@ -305,35 +280,6 @@ jobs:
 
   # Build the asan instrumented runtime image (amd64-only). Single cell,
   # no manifest needed (push directly to the bare tag).
-  # Adds up, per server, the passed, failed and skipped tests every suite cell
-  # recorded (tests/count_results.py, `test-counts-*` artifacts), and writes
-  # them to the run summary, with the server versions the cells' logs name.
-  # A report, not a gate: each cell's own result gates. continue-on-error, so
-  # a failure here (an artifact download, the summary) can't fail this
-  # workflow and, through ci-gate, a pull request whose tests all passed.
-  test-counts:
-    needs: [test, flow-release, flow-release-image, flow-coverage, test-image, flow-asan]
-    if: ${{ !cancelled() }}
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          sparse-checkout: tests/count_results.py
-          sparse-checkout-cone-mode: false
-      - name: Download the recorded counts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          pattern: test-counts-*
-          path: test-counts
-          merge-multiple: true
-      - name: Summarise per server
-        run: |
-          mkdir -p test-counts
-          python3 tests/count_results.py summary test-counts | tee -a "$GITHUB_STEP_SUMMARY"
-
   build-rc-asan-image:
     if: ${{ inputs.use_image }}
     uses: ./.github/workflows/_build-flavour.yml
@@ -405,24 +351,20 @@ jobs:
           # The module crate's own unit tests (the RDB codec); `--lib` skips doctests.
           CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p falkordb-rs --lib
       - name: Run pytest tests against the RC image
-        id: pytest
         run: |
           . /data/venv/bin/activate
-          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv --junitxml=test-results/pytest.xml
+          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
       - name: Run TCK tests against the RC image
-        id: tck
         run: |
           . /data/venv/bin/activate
-          TCK_DONE=tck_done.txt TCK_JUNIT_DIR=test-results/tck pytest tests/tck/test_tck.py -s
-      # Capture the GHA service container's stdout/stderr so the run carries
-      # the server lifecycle, module RedisModule_Log output, and any
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+      # Capture the GHA service container's stdout/stderr so a failing run
+      # carries the redis lifecycle, module RedisModule_Log output, and any
       # ASAN/LSan reports off the runner. The service container is named
       # after its YAML key ("falkordb"); `docker logs` is run via the
-      # /var/run/docker.sock the runner shares with the job container. On
-      # every outcome, not only on failure: the counts below read the
-      # server's start-up banner from these logs.
-      - name: Capture service container logs
-        if: ${{ !cancelled() }}
+      # /var/run/docker.sock the runner shares with the job container.
+      - name: Capture service container logs on failure
+        if: failure()
         run: |
           mkdir -p tests/flow/logs
           # Dump every container the runner can see — GHA service containers
@@ -432,28 +374,6 @@ jobs:
             name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
             docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
           done
-      # Counts for the run summary (tests/count_results.py, summed per server by
-      # _ci-pipeline.yml's test-counts job). On every outcome but a cancel, so a
-      # failing cell still counts, including one whose setup failed before its
-      # tests ran. STATUS is the job's, so any failed step marks the cell. The
-      # report never gates: both steps continue on error. The server is FALKORDB_SERVER's, as flow.sh,
-      # tests/common.py and the images default it: redis unless set.
-      - name: Record test counts
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        env:
-          RUN: image, amd64
-          STATUS: ${{ job.status }}
-          NAME: test-counts-image
-        run: python3 tests/count_results.py record --server "${FALKORDB_SERVER:-redis}" --run "$RUN" --status "$STATUS" --junit test-results/pytest.xml --behave test-results/tck --logs tests/flow/logs --out "test-counts/$NAME.json"
-      - name: Upload test counts
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: test-counts-image
-          path: test-counts/
-          retention-days: 7
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

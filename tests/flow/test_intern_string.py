@@ -440,9 +440,9 @@ class testInternStringReplication():
         self.source_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
         self.replica_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
 
-        # clear DB, and wait for the replica's initial sync to complete
+        # clear DB
         self.conn.flushall()
-        wait_for_replica(self.source_con, self.replica_con)
+        self.source_con.execute_command("WAIT", "1", "0")
 
     def tearDown(self):
         # clear DB
@@ -458,7 +458,8 @@ class testInternStringReplication():
 
         res = self.graph.query(q, p)
 
-        wait_for_replica(self.source_con, self.replica_con)
+        # the WAIT command forces master slave sync to complete
+        self.source_con.execute_command("WAIT", "1", "0")
 
         return res
 
