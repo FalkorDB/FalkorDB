@@ -589,6 +589,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphblas-sys"
+version = "0.1.0"
+dependencies = [
+ "native-deps",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
