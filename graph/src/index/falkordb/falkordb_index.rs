@@ -22,10 +22,10 @@ use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
 use super::cch::{CchError, CchIndex, CchIndexDef};
-use super::encode::KeyKind;
+use super::encode::{ColumnKey, KeyKind, StoredKey};
 use super::graph_writes;
 use super::numeric::{DistinctIter, DocIter, EncodedTuples};
-use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
+use super::pending_writes::{ColumnLog, PendingIndexWrites, last_write_wins};
 use super::range::{RangeIndex, Selection, attributes_of};
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 
@@ -95,12 +95,11 @@ impl IndexColumn {
 
     /// The scalar tree and key `value` takes in *this* column, or `None` when no kind indexes it
     /// as a scalar (a list, whose elements are keys of the array trees instead; a temporal; a map).
-    /// The key is `None` for a value the column has never stored (a string it never interned).
     #[must_use]
     pub fn encode_value(
         &self,
         value: &Value,
-    ) -> Option<(KeyKind, Option<u64>)> {
+    ) -> Option<(KeyKind, ColumnKey)> {
         match self {
             Self::Range(idx) => idx.encode_value(value),
         }
@@ -108,10 +107,10 @@ impl IndexColumn {
 
     /// Call `emit` with each key a stored `value` takes in *this* column, and its [`KeyKind`].
     /// Nothing when no kind indexes it; one key per indexed element, of an array kind, for a list.
-    pub fn for_each_stored_key(
+    pub fn for_each_stored_key<'v>(
         &self,
-        value: &Value,
-        emit: impl FnMut(KeyKind, u64),
+        value: &'v Value,
+        emit: impl FnMut(KeyKind, StoredKey<'v>),
     ) {
         match self {
             Self::Range(idx) => idx.for_each_stored_key(value, emit),
@@ -166,7 +165,7 @@ impl IndexColumn {
     pub fn rows_at(
         &self,
         kind: KeyKind,
-        key: u64,
+        key: &ColumnKey,
     ) -> DocIter {
         match self {
             Self::Range(idx) => idx.rows_at(kind, key),
@@ -288,8 +287,7 @@ fn placed_in(
 pub struct EqualCandidates<'a> {
     column: &'a IndexColumn,
     kind: KeyKind,
-    /// `None` for a value the column has never stored: no entity holds it.
-    key: Option<u64>,
+    key: ColumnKey,
 }
 
 impl EqualCandidates<'_> {
@@ -298,17 +296,18 @@ impl EqualCandidates<'_> {
     /// `edge_id`s for an edge column.
     #[must_use]
     pub fn rows(&self) -> DocIter {
-        match self.key {
-            Some(key) => self.column.rows_at(self.kind, key),
-            None => DocIter::Set(std::collections::HashSet::new().into_iter()),
-        }
+        self.column.rows_at(self.kind, &self.key)
     }
 
     /// Which lookup this is: its column and the key it reads. Two lookups with the same id answer
     /// with the same rows.
     #[must_use]
-    pub fn id(&self) -> (usize, KeyKind, Option<u64>) {
-        (std::ptr::from_ref(self.column).addr(), self.kind, self.key)
+    pub fn id(&self) -> (usize, KeyKind, ColumnKey) {
+        (
+            std::ptr::from_ref(self.column).addr(),
+            self.kind,
+            self.key.clone(),
+        )
     }
 }
 
@@ -317,7 +316,7 @@ impl EqualCandidates<'_> {
 /// reads the label's entities in build order ([`BuildCursor`]) into encoded tuples.
 impl VersionedIndex for IndexColumn {
     type Cursor = BuildCursor;
-    type Changes = Vec<IndexWrite>;
+    type Changes = ColumnLog;
     type Batch = EncodedTuples;
     type Name = (EntityType, IndexKey);
     /// One pair of remove and add buffers for a whole unit of work, reused column to column.
@@ -346,19 +345,22 @@ impl VersionedIndex for IndexColumn {
     fn writer_record(
         &mut self,
         state: &mut BuildState<BuildCursor>,
-        mut log: Vec<IndexWrite>,
+        mut log: ColumnLog,
         place: impl Fn(u64) -> Option<BuildCursor>,
         (removes, adds): &mut (EncodedTuples, EncodedTuples),
     ) {
         if let BuildState::Building { next, written, .. } = state {
-            written.by_this_version.extend(log.iter().map(|w| w.id));
+            written
+                .by_this_version
+                .extend(log.writes.iter().map(|w| w.id));
             let next = *next;
             // A batch reads an entity at or above the cursor when it reaches it, so its
             // additions go. They go before the collapse, so one cannot cancel an earlier
             // removal of the same tuple.
-            log.retain(|w| !w.add || place(w.id).is_some_and(|at| at.precedes(next)));
+            log.writes
+                .retain(|w| !w.add || place(w.id).is_some_and(|at| at.precedes(next)));
         }
-        last_write_wins(&mut log, removes, adds);
+        last_write_wins(&mut log.writes, &log.strings, removes, adds);
         self.remove_encoded(removes);
         self.add_encoded(adds);
     }
@@ -394,10 +396,8 @@ impl VersionedIndex for IndexColumn {
         next: Option<BuildCursor>,
         published: &Graph,
     ) {
-        let mut adds = EncodedTuples::default();
-        for kind in KeyKind::ALL {
-            adds[kind].extend(batch[kind].iter().filter(|&&(_, id)| !written.contains(id)));
-        }
+        let mut adds = batch.clone();
+        adds.retain_docs(|id| !written.contains(id));
         // Add the written entities in the batch's range, with their values in `published`. Those
         // below `from` are already right in this copy. Their places are found before any value is
         // read, so a written entity outside the range costs no attribute read under the host's
@@ -918,13 +918,13 @@ impl FalkorDbIndex {
     /// Call `emit` with each key `value` takes in column `(entity, label, attr)` and its
     /// [`KeyKind`]; nothing when there is no such column or it does not index `value`. The write
     /// path's staging gate.
-    pub fn for_each_stored_key(
+    pub fn for_each_stored_key<'v>(
         &self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
-        value: &Value,
-        emit: impl FnMut(KeyKind, u64),
+        value: &'v Value,
+        emit: impl FnMut(KeyKind, StoredKey<'v>),
     ) {
         if let Some(entry) = self.entry(entity, label, attr) {
             entry.index.for_each_stored_key(value, emit);
@@ -965,7 +965,7 @@ impl FalkorDbIndex {
     fn apply_writes(
         &mut self,
         entity: EntityType,
-        writes: impl IntoIterator<Item = (IndexKey, Vec<IndexWrite>)>,
+        writes: impl IntoIterator<Item = (IndexKey, ColumnLog)>,
         place: &impl Fn(EntityType, u64) -> Option<BuildCursor>,
     ) {
         let columns = self.columns_mut(entity);
@@ -2004,8 +2004,7 @@ mod tests {
     }
 
     /// A building column answers a string predicate with a scan that selects by value: the scan
-    /// must keep a string no indexer batch has interned yet, which an id taken from the tag
-    /// dictionary at query time could not name.
+    /// must keep a string no indexer batch has added yet.
     #[test]
     fn a_building_column_scans_for_strings_by_value() {
         let (label, attr) = (arc("P"), arc("name"));
@@ -2024,7 +2023,7 @@ mod tests {
         });
         assert!(
             eq.matches(|_| Some(s("bob"))),
-            "never interned, still matched"
+            "never indexed, still matched"
         );
         assert!(!eq.matches(|_| Some(s("Bob"))));
         assert!(!eq.matches(|_| None), "an entity without the attribute");

@@ -1,171 +1,39 @@
 //! The tag kind: exact, case-sensitive string values, the native replacement for the TAG half of
 //! a RediSearch Range field.
 //!
-//! # Why a dictionary and not an encoded key
+//! # Keyed on the string itself
 //!
-//! The tuple tree keys on a `u64`, and a string does not fit in one. Every scheme that squeezes it
-//! in — an 8-byte prefix, a hash — answers `n.name = 'Bob'` with a *superset*, and that is not
+//! The numeric trees key on a `u64`, and a string does not fit in one. Every scheme that squeezes
+//! it in — an 8-byte prefix, a hash — answers `n.name = 'Bob'` with a *superset*, and that is not
 //! allowed here: `utilize_index` drops the filter for a plain string equality (the plan is a bare
 //! `Node By Index Scan`), so nothing downstream would reject the extra rows.
 //!
-//! So the string is not encoded, it is **interned**: a per-column [`TagDict`] assigns each distinct
-//! string a dense id, and the tree holds `(tag id, doc)`. Equality is exact because the id is
-//! exact. Lexicographic order lives in the dictionary rather than in the key, so a string range
-//! resolves in two steps — the dictionary names the ids inside the window, and the tree is scanned
-//! once per id.
+//! So the tag trees key on the string itself: a [`StrBTree`] of `(string, doc)` tuples, ordered by
+//! the string's bytes. Equality is one point lookup and exact; a string range is one cursor over
+//! one run of the tree, in string order. There is no dictionary, so nothing interns a string or
+//! hands out an id, and a string whose last tuple goes leaves nothing behind.
 //!
-//! # Why the dictionary is shared and append-only
+//! # Versions
 //!
-//! The dictionary sits behind an `Arc`, shared by every version of the column, and entries are
-//! never removed. Both properties are load-bearing:
-//!
-//! * **Shared** — so `Clone` stays `O(1)` and the MVCC fork on `Graph::new_version()` does not copy
-//!   it. It also makes the background build work: BASE is encoded off the write thread against the
-//!   same dictionary the live column uses, so the ids in BASE, DELTA and TOMB are the same ids, and
-//!   `install_base` can merge raw `(key, doc)` tuples exactly as the numeric kind does. Two
-//!   independent dictionaries would each number their strings from zero and the merge would be
-//!   garbage.
-//! * **Append-only** — so an id, once handed out, means the same string forever. Reclaiming an id
-//!   whose last tuple went away would corrupt any older snapshot still holding that id (a reader on
-//!   that version would resolve it to whatever string was interned next). What it costs is a
-//!   dictionary entry per string the column has *ever* seen; the entry is one pointer plus the
-//!   string, and a dropped column releases the lot.
-//!
-//! Mutating shared state from a version fork is safe here because the dictionary is a *name table*,
-//! not index content: an id an older snapshot never stored simply matches no tuples in that
-//! snapshot's tree, which is the right answer.
+//! The trees are copy-on-write like the numeric ones: `Clone` is a root clone, a version's fork
+//! copies only the path to what it changes, and a reader reads its own version with no lock.
+//! Tuples moving between versions — a unit of work's staged changes, an indexer batch read on one
+//! version and added to another — carry the string ([`StoredKey::Tag`],
+//! [`EncodedTuples::tags`]), the same key every version stores.
 
-use std::collections::BTreeMap;
 use std::ops::Bound;
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-
-use super::encode::KeyKind;
-use super::numeric::{DocIter, EncodedTuples, KeySet, Tree, add_sorted, docs_in, remove_sorted};
+use super::data_structures::str_btree::{StrBTree, StrRanges};
+use super::encode::{KeyKind, StoredKey};
+use super::numeric::{DocIter, EncodedTuples};
 use super::range::RangeKind;
 use crate::runtime::value::Value;
 
-/// The strings one column has interned, and the id each was given.
+/// Which strings a tag predicate selects: a set of them, or a lexicographic window.
 ///
-/// Cloning shares the dictionary (an `Arc` bump) rather than copying it — see the module docs for
-/// why every version of a column must see the same numbering.
-#[derive(Clone, Default)]
-pub struct TagDict(Arc<RwLock<DictInner>>);
-
-#[derive(Default)]
-struct DictInner {
-    /// Ordered by the string, so a lexicographic window is a `BTreeMap::range`. `String`'s `Ord` is
-    /// byte order over UTF-8, which is codepoint order — the order Cypher compares strings in.
-    ids: BTreeMap<Arc<String>, u64>,
-    next: u64,
-    /// Bytes the interned strings hold, for [`TagDict::heap_bytes`].
-    string_bytes: usize,
-}
-
-impl TagDict {
-    /// The id for `s`, assigning a fresh one if this is the first time the column has seen it.
-    #[must_use]
-    pub fn intern(
-        &self,
-        s: &Arc<String>,
-    ) -> u64 {
-        if let Some(id) = self.lookup(s) {
-            return id;
-        }
-        let mut inner = self.0.write();
-        // Another thread may have interned it between the read and the write lock.
-        if let Some(&id) = inner.ids.get(s) {
-            return id;
-        }
-        let id = inner.next;
-        inner.next += 1;
-        inner.string_bytes += s.capacity();
-        inner.ids.insert(s.clone(), id);
-        id
-    }
-
-    /// The id for `s`, or `None` if the column has never held that string — in which case no tuple
-    /// can match it and the caller can answer empty without touching the tree.
-    #[must_use]
-    pub fn lookup(
-        &self,
-        s: &Arc<String>,
-    ) -> Option<u64> {
-        self.0.read().ids.get(s).copied()
-    }
-
-    /// The ids of the strings `sel` selects that the column has seen, sorted and distinct.
-    ///
-    /// For a window this is where a string range costs more than a numeric one: the ids are
-    /// assigned in *insertion* order, so the window cannot be a single key range in the tree. It is
-    /// proportional to the number of distinct strings in the window, not to the number of matching
-    /// entities — including strings whose tuples have since been deleted, which contribute an
-    /// empty cursor each (see the module docs on append-only).
-    #[must_use]
-    pub fn ids(
-        &self,
-        sel: &StrSel,
-    ) -> Vec<u64> {
-        let inner = self.0.read();
-        let mut ids: Vec<u64> = match sel {
-            StrSel::Set(strings) => strings
-                .iter()
-                .filter_map(|s| inner.ids.get(s).copied())
-                .collect(),
-            StrSel::Window {
-                min,
-                max,
-                include_min,
-                include_max,
-            } => {
-                if sel.is_empty_window() {
-                    return Vec::new();
-                }
-                let bound = |v: &Option<Arc<String>>, inclusive: bool| match v {
-                    None => Bound::Unbounded,
-                    Some(v) if inclusive => Bound::Included(v.clone()),
-                    Some(v) => Bound::Excluded(v.clone()),
-                };
-                inner
-                    .ids
-                    .range((bound(min, *include_min), bound(max, *include_max)))
-                    .map(|(_, &id)| id)
-                    .collect()
-            }
-        };
-        ids.sort_unstable();
-        ids.dedup();
-        ids
-    }
-
-    /// Number of distinct strings interned. Diagnostics and tests.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.0.read().ids.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Heap bytes the dictionary holds: each entry's string and its map slot. Shared by every
-    /// version of the column, so each counts it, as each counts the tree pages it shares.
-    #[must_use]
-    pub fn heap_bytes(&self) -> usize {
-        let inner = self.0.read();
-        inner.string_bytes
-            + inner.ids.len()
-                * (size_of::<Arc<String>>() + size_of::<u64>() + size_of::<String>() + 16)
-    }
-}
-
-/// Which strings a tag predicate selects, by value rather than by dictionary id.
-///
-/// By value because a column that is still building answers with a scan, and the scan must
-/// recognise a string no batch has interned yet: an id set taken from the dictionary at query time
-/// would miss it.
+/// A built column reads it as key ranges of its trees ([`ranges`](Self::ranges)); a column still
+/// building answers with a scan, which matches it against each value ([`contains`](Self::contains)).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StrSel {
     /// These strings, sorted and distinct.
@@ -199,6 +67,33 @@ impl StrSel {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         matches!(self, Self::Set(strings) if strings.is_empty()) || self.is_empty_window()
+    }
+
+    /// The key ranges of the strings this selects, in order and disjoint: a point per string of a
+    /// set, the window itself, or none for a window no string lies in.
+    #[must_use]
+    pub fn ranges(&self) -> Vec<(Bound<Arc<[u8]>>, Bound<Arc<[u8]>>)> {
+        let key = |s: &Arc<String>| -> Arc<[u8]> { Arc::from(s.as_bytes()) };
+        match self {
+            Self::Set(strings) => strings
+                .iter()
+                .map(|s| (Bound::Included(key(s)), Bound::Included(key(s))))
+                .collect(),
+            Self::Window { .. } if self.is_empty_window() => Vec::new(),
+            Self::Window {
+                min,
+                max,
+                include_min,
+                include_max,
+            } => {
+                let bound = |v: &Option<Arc<String>>, inclusive: bool| match v {
+                    None => Bound::Unbounded,
+                    Some(v) if inclusive => Bound::Included(key(v)),
+                    Some(v) => Bound::Excluded(key(v)),
+                };
+                vec![(bound(min, *include_min), bound(max, *include_max))]
+            }
+        }
     }
 
     /// Whether `s` is selected.
@@ -291,22 +186,20 @@ impl StrSel {
     }
 }
 
-/// The tag kind of one `(label, attribute)` column: entity ids keyed by the dictionary id of their
-/// string value.
+/// The tag kind of one `(label, attribute)` column: entity ids keyed by their string value.
 ///
-/// `Clone` is `O(1)`: two root-`Arc` bumps for the trees and one for the shared dictionary.
+/// `Clone` is `O(1)`: a root clone per tree.
 #[derive(Clone, Default)]
 pub struct TagIndex {
-    dict: TagDict,
     /// String scalar values: one tuple per indexed entity.
-    tree: Tree,
+    tree: StrBTree,
     /// String elements of **list**-valued properties: one tuple per distinct element.
     ///
     /// A separate key space for the same reason the numeric kind keeps one: sharing would make
     /// `WHERE n.v = 'a'` match a node whose `v` is `['a', 'b']`, which is false in Cypher, and
     /// `Equal` has no post-filter to catch it. RediSearch keeps the same split with its
     /// `string:arr` sub-field.
-    array_tree: Tree,
+    array_tree: StrBTree,
 }
 
 impl TagIndex {
@@ -317,7 +210,7 @@ impl TagIndex {
     fn tree(
         &self,
         kind: KeyKind,
-    ) -> &Tree {
+    ) -> &StrBTree {
         match kind {
             KeyKind::Tag => &self.tree,
             KeyKind::TagArray => &self.array_tree,
@@ -331,7 +224,7 @@ impl TagIndex {
     fn tree_mut(
         &mut self,
         kind: KeyKind,
-    ) -> &mut Tree {
+    ) -> &mut StrBTree {
         match kind {
             KeyKind::Tag => &mut self.tree,
             KeyKind::TagArray => &mut self.array_tree,
@@ -341,69 +234,64 @@ impl TagIndex {
         }
     }
 
-    /// The id the column gave `s`, or `None` for a string it never held. Reads the dictionary,
-    /// never interns: a unique-constraint check asks this of a value whose write may yet be
-    /// refused, and the dictionary is append-only.
-    #[must_use]
-    pub fn id_of(
-        &self,
-        s: &Arc<String>,
-    ) -> Option<u64> {
-        self.dict.lookup(s)
-    }
-
-    /// The ids stored under the dictionary id `id` in the tree of `kind`.
+    /// The ids stored under the string `s` in the tree of `kind`.
     #[must_use]
     pub fn rows_at(
         &self,
         kind: KeyKind,
-        id: u64,
+        s: &str,
     ) -> DocIter {
-        docs_in(self.tree(kind), KeySet::Point(id))
+        DocIter::Strings(StrRanges::new(
+            self.tree(kind),
+            vec![(
+                Bound::Included(Arc::from(s.as_bytes())),
+                Bound::Included(Arc::from(s.as_bytes())),
+            )],
+        ))
     }
 
-    /// The shared dictionary. For tests.
+    /// Every `(kind, string, doc)` tuple the kind holds, the scalar tree's then the array tree's.
+    /// For tests that compare a column with what it must hold.
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn dict(&self) -> &TagDict {
-        &self.dict
-    }
-
-    /// Every `(kind, id, doc)` tuple the kind holds, the scalar tree's then the array tree's. For
-    /// tests that compare a column with what it must hold.
-    #[cfg(test)]
-    #[must_use]
-    pub fn tuples(&self) -> Vec<(KeyKind, u64, u64)> {
+    pub fn tuples(&self) -> Vec<(KeyKind, String, u64)> {
         Self::TREES
             .into_iter()
             .flat_map(|kind| {
-                self.tree(kind)
-                    .range_tuples(0, u64::MAX)
-                    .map(move |(key, doc)| (kind, key, doc))
+                self.tree(kind).tuples().into_iter().map(move |(key, doc)| {
+                    (kind, String::from_utf8(key).expect("keys are strings"), doc)
+                })
             })
             .collect()
     }
+}
+
+/// `tuples`' `(string, doc)` pairs as tree keys, sorted and distinct.
+fn sorted_keys(tuples: &[(Arc<String>, u64)]) -> Vec<(&[u8], u64)> {
+    let mut keys: Vec<(&[u8], u64)> = tuples.iter().map(|(s, d)| (s.as_bytes(), *d)).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    keys
 }
 
 impl RangeKind for TagIndex {
     type Keys = StrSel;
     type Element = Arc<String>;
 
-    /// A string is stored under its dictionary id in the tag tree, and a list under each string
-    /// element's id in the tag array tree. Interns, so a background batch encoding entities off the
-    /// write thread numbers its strings the way the live column does. Not deduplicated, as
+    /// A string goes in the tag tree, and a list's string elements in the tag array tree, each
+    /// keyed on the string itself. Not deduplicated, as
     /// [`for_each_stored_key`](super::encode::for_each_stored_key) is not.
-    fn for_each_stored_key(
+    fn for_each_stored_key<'v>(
         &self,
-        value: &Value,
-        mut emit: impl FnMut(KeyKind, u64),
+        value: &'v Value,
+        mut emit: impl FnMut(KeyKind, StoredKey<'v>),
     ) {
         match value {
-            Value::String(s) => emit(KeyKind::Tag, self.dict.intern(s)),
+            Value::String(s) => emit(KeyKind::Tag, StoredKey::Tag(s)),
             Value::List(items) => {
                 for item in items.iter() {
                     if let Value::String(s) = item {
-                        emit(KeyKind::TagArray, self.dict.intern(s));
+                        emit(KeyKind::TagArray, StoredKey::Tag(s));
                     }
                 }
             }
@@ -416,7 +304,10 @@ impl RangeKind for TagIndex {
         tuples: &EncodedTuples,
     ) {
         for kind in Self::TREES {
-            add_sorted(self.tree_mut(kind), &tuples[kind]);
+            if !tuples.tags(kind).is_empty() {
+                self.tree_mut(kind)
+                    .insert_batch(&sorted_keys(tuples.tags(kind)));
+            }
         }
     }
 
@@ -425,41 +316,37 @@ impl RangeKind for TagIndex {
         tuples: &EncodedTuples,
     ) {
         for kind in Self::TREES {
-            remove_sorted(self.tree_mut(kind), &tuples[kind]);
+            if !tuples.tags(kind).is_empty() {
+                self.tree_mut(kind)
+                    .remove_batch(&sorted_keys(tuples.tags(kind)));
+            }
         }
     }
 
-    /// Whether the kind holds no tuples. The dictionary is not consulted: a string interned by a
-    /// write that was later removed leaves an entry behind, and that does not make the column
-    /// non-empty.
     fn is_empty(&self) -> bool {
         self.tree.is_empty() && self.array_tree.is_empty()
     }
 
-    /// Heap bytes: both trees' pages and the dictionary.
+    /// Heap bytes: both trees' nodes.
     fn memory_usage(&self) -> usize {
-        self.tree.heap_bytes() + self.array_tree.heap_bytes() + self.dict.heap_bytes()
+        self.tree.heap_bytes() + self.array_tree.heap_bytes()
     }
 
-    /// One cursor per distinct string the selection names that the column has interned, chained
-    /// lazily ([`TagDict::ids`]).
+    /// One cursor per range the selection names, chained lazily over one snapshot: a point per
+    /// string of a set, one run for a window.
     fn scalars(
         &self,
         strings: StrSel,
     ) -> DocIter {
-        docs_in(&self.tree, KeySet::of_keys(self.dict.ids(&strings)))
+        DocIter::Strings(StrRanges::new(&self.tree, strings.ranges()))
     }
 
-    /// A point lookup into the array tree. A string the column never interned is in no list.
+    /// A point lookup into the array tree.
     fn lists_holding(
         &self,
         element: &Arc<String>,
     ) -> DocIter {
-        let keys = self
-            .dict
-            .lookup(element)
-            .map_or(KeySet::Empty, KeySet::Point);
-        docs_in(&self.array_tree, keys)
+        self.rows_at(KeyKind::TagArray, element)
     }
 
     fn is_scalar_in(
@@ -575,14 +462,14 @@ mod tests {
         assert!(point(&idx, "BOB").is_empty());
         assert!(point(&idx, "bo").is_empty(), "no prefix matching");
         assert!(
-            point(&idx, "never interned").is_empty(),
+            point(&idx, "never held").is_empty(),
             "a string the column never held answers empty without touching the tree"
         );
     }
 
     /// Bytes that RediSearch's tag tokenizer would split on or strip — the separator, whitespace,
-    /// backslashes, the escape prefix — are just bytes to a dictionary, so they need no encoding
-    /// and cannot collide. `test06_tag_separator` and `test_25_unescaped_string` are the flow
+    /// backslashes, the escape prefix — are just bytes to a byte-ordered key, so they need no
+    /// encoding and cannot collide. `test06_tag_separator` and `test_25_unescaped_string` are the flow
     /// tests this covers.
     #[test]
     fn tokenizer_hostile_strings_are_ordinary_keys() {
@@ -613,7 +500,7 @@ mod tests {
         assert!(all(Some("a"), Some("a"), false, false).is_empty());
     }
 
-    /// A window and a set select by value, so a scan can match a string no batch interned yet.
+    /// A window and a set select by value, so a scan can match a string no batch has added yet.
     #[test]
     fn a_selection_matches_by_value_and_intersects() {
         let window = |min: &str, max: &str| StrSel::Window {
@@ -633,22 +520,19 @@ mod tests {
         assert!(!window("a", "b").is_empty());
     }
 
-    /// A string deleted from the graph leaves its dictionary entry behind. That must cost nothing
-    /// but an empty cursor — never a stale row.
+    /// A string whose last tuple goes leaves nothing behind: no entry, no empty cursor in a
+    /// range, and adding it again is like adding it the first time.
     #[test]
-    fn a_removed_string_keeps_its_id_but_yields_nothing() {
+    fn a_removed_string_leaves_nothing_behind() {
         let mut idx = sample();
         idx.remove(&val("bob"), 1);
         assert!(point(&idx, "bob").is_empty());
-        assert_eq!(idx.tag().dict().len(), 4, "the dictionary entry stays");
-        assert_eq!(
-            range(&idx, Some(""), None, true, true),
-            vec![2, 3, 4],
-            "the emptied id contributes no rows to a range"
+        assert!(
+            !idx.tag().tuples().iter().any(|(_, s, _)| s == "bob"),
+            "no tuple for bob remains"
         );
-        // And re-adding the same string reuses the id rather than minting a second one.
+        assert_eq!(range(&idx, Some(""), None, true, true), vec![2, 3, 4]);
         idx.add(&val("bob"), 9);
-        assert_eq!(idx.tag().dict().len(), 4);
         assert_eq!(point(&idx, "bob"), vec![9]);
     }
 
@@ -700,19 +584,58 @@ mod tests {
         assert!(idx.is_empty());
     }
 
-    /// The property the shared dictionary exists for: a clone of the column (another version, or
-    /// the copy an indexer batch encodes through) numbers its strings the way the live column
-    /// does, so tuples encoded by one mean the same strings in the other.
+    /// Tuples encoded on one copy go into another by string: a batch read on an older version,
+    /// as `CatchUp::Insert` adds one. Each copy's own changes stay its own.
     #[test]
-    fn a_clone_shares_the_numbering() {
+    fn tuples_move_between_copies_by_string() {
         let mut live = RangeIndex::new();
         live.add(&val("a"), 1);
-        let batch = live.clone();
+        let mut batch = live.clone();
+        batch.add(&val("b"), 2);
+        live.add(&val("c"), 3);
         let mut tuples = EncodedTuples::default();
         batch.push_encoded(&val("b"), 100, &mut tuples);
         batch.push_encoded(&val("a"), 101, &mut tuples);
+        batch.push_encoded(&list(&["b", "d"]), 102, &mut tuples);
         live.add_encoded(&mut tuples);
         assert_eq!(point(&live, "a"), vec![1, 101]);
         assert_eq!(point(&live, "b"), vec![100]);
+        assert_eq!(point(&live, "c"), vec![3]);
+        assert_eq!(holding(&live, "d"), vec![102]);
+        // And the copy the tuples were read on is as it was.
+        assert_eq!(point(&batch, "b"), vec![2]);
+        assert!(point(&batch, "c").is_empty());
+    }
+
+    /// Removing a string the copy never held changes nothing.
+    #[test]
+    fn removing_an_unknown_string_changes_nothing() {
+        let mut idx = sample();
+        let before = idx.tag().tuples();
+        idx.remove(&val("never held"), 1);
+        assert_eq!(idx.tag().tuples(), before);
+    }
+
+    /// A string range is one run of the tree, in string order, with no cursor per string.
+    #[test]
+    fn a_range_reads_one_run_in_string_order() {
+        let mut idx = RangeIndex::new();
+        for (i, s) in ["delta", "alpha", "charlie", "bravo", "echo"]
+            .iter()
+            .enumerate()
+        {
+            idx.add(&val(s), i as u64);
+        }
+        let docs: Vec<u64> = idx
+            .query(&IndexQuery::Range {
+                key: attr(),
+                min: Some(val("b")),
+                max: Some(val("d")),
+                include_min: true,
+                include_max: false,
+            })
+            .expect("a string range is served")
+            .collect();
+        assert_eq!(docs, vec![3, 2], "bravo, then charlie");
     }
 }

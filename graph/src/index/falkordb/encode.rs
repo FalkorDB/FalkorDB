@@ -15,6 +15,8 @@
 //! coercion inherits RediSearch's precision limit for integer magnitudes
 //! `>= 2^53`; it is documented here and a wider key is a future refinement.
 
+use std::sync::Arc;
+
 use crate::runtime::value::Value;
 
 /// IEEE-754 sign bit of an `f64`.
@@ -59,10 +61,31 @@ pub enum KeyKind {
     Scalar,
     /// The numeric elements of a list value: one key per element, read only by `value IN n.prop`.
     Array,
-    /// A string scalar value: its id in the column's tag dictionary.
+    /// A string scalar value: the string itself, in a string-keyed tree.
     Tag,
-    /// The string elements of a list value: one dictionary id per distinct element.
+    /// The string elements of a list value: one key per distinct element.
     TagArray,
+}
+
+/// The key one value takes in one tree, owned: what a unique-constraint lookup reads under
+/// ([`RangeIndex::encode_value`](super::range::RangeIndex::encode_value)).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ColumnKey {
+    /// A number's key in a numeric tree.
+    Encoded(u64),
+    /// A string, its own key in a tag tree.
+    Tag(Arc<String>),
+}
+
+/// The key a stored value takes in one tree, as it is carried before it goes in.
+///
+/// A number's key is its encoding; a string is its own key.
+#[derive(Clone, Copy, Debug)]
+pub enum StoredKey<'a> {
+    /// The key of a [`Scalar`](KeyKind::Scalar) or [`Array`](KeyKind::Array) tuple.
+    Encoded(u64),
+    /// The string of a [`Tag`](KeyKind::Tag) or [`TagArray`](KeyKind::TagArray) tuple.
+    Tag(&'a Arc<String>),
 }
 
 impl KeyKind {
@@ -71,6 +94,12 @@ impl KeyKind {
 
     /// The numeric kinds, the trees [`for_each_stored_key`] fills.
     pub const NUMERIC: [Self; 2] = [Self::Scalar, Self::Array];
+
+    /// Whether this kind's tuples are carried by their string ([`StoredKey::Tag`]).
+    #[must_use]
+    pub const fn is_tag(self) -> bool {
+        matches!(self, Self::Tag | Self::TagArray)
+    }
 }
 
 /// Call `emit` with each key a **stored** value contributes, and the kind of key it is.

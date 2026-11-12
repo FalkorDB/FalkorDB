@@ -7,9 +7,9 @@
 //! and `age = 'thirty'` on another stores each in the kind that can order it, and a predicate is
 //! routed by the type of its operand.
 //!
-//! Every kind's keys are `u64` (the numeric encoding, a tag dictionary id), each in a tree of its
-//! own [`KeyKind`], so a column's tuples move between threads and versions as [`EncodedTuples`]
-//! whatever their kind.
+//! Each kind keys its trees on what orders it — a number's `u64` encoding, a string's bytes — one
+//! tree per [`KeyKind`], and a column's tuples move between threads and versions as
+//! [`EncodedTuples`] whatever their kind.
 //!
 //! Routing is exhaustive and total. Every predicate either reaches a kind, is answered empty
 //! because it cannot match — a `NULL` operand, say, or a scalar predicate and a list predicate on
@@ -22,7 +22,7 @@ use std::{iter, slice};
 
 use rustc_hash::FxHashSet;
 
-use super::encode::{KeyKind, encode_numeric};
+use super::encode::{ColumnKey, KeyKind, StoredKey, encode_numeric};
 use super::numeric::{DistinctIter, DocIter, EncodedTuples, KeySet, NumericIndex};
 use super::tag::{StrSel, TagIndex};
 use crate::index::IndexQuery;
@@ -45,11 +45,12 @@ pub trait RangeKind {
     type Element;
 
     /// Call `emit` with each tuple `value` is stored under in this kind, as the tree it goes in and
-    /// its key. Nothing when the kind holds no part of `value`.
-    fn for_each_stored_key(
+    /// its key ([`StoredKey`]: a string is carried as itself, never numbered here). Nothing when
+    /// the kind holds no part of `value`.
+    fn for_each_stored_key<'v>(
         &self,
-        value: &Value,
-        emit: impl FnMut(KeyKind, u64),
+        value: &'v Value,
+        emit: impl FnMut(KeyKind, StoredKey<'v>),
     );
 
     /// Add this kind's share of `tuples`, which are sorted and unique
@@ -201,7 +202,7 @@ impl Scalars {
 pub enum Element {
     /// A number, by its key in the numeric array tree.
     Numeric(u64),
-    /// A string, by value: the tag dictionary may not have interned it yet.
+    /// A string, its own key in the tag array tree.
     Tag(Arc<String>),
 }
 
@@ -560,8 +561,8 @@ pub(super) fn attributes_of<'a>(
 
 /// One indexed `(label, attribute)`: the kinds of the same column.
 ///
-/// `Clone` is `O(1)` — a root-`Arc` bump per tree, and one for the shared tag dictionary — so a
-/// graph version forks its index snapshot cheaply.
+/// `Clone` is `O(1)` — a root-`Arc` bump per tree — so a graph version forks its index snapshot
+/// cheaply.
 ///
 /// A method that asks every kind — the writes, `is_empty`, `memory_usage` — starts with
 /// `let Self { numeric, tag } = self`, a pattern without `..`: a new kind is a compile error in each of
@@ -587,7 +588,7 @@ impl RangeIndex {
         &self.numeric
     }
 
-    /// The tag kind, for tests that look at its dictionary.
+    /// The tag kind, for tests that look at its tuples.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn tag(&self) -> &TagIndex {
@@ -595,12 +596,13 @@ impl RangeIndex {
     }
 
     /// Call `emit` with each key a stored `value` takes in this column, and its [`KeyKind`]: a
-    /// scalar lands in at most one kind, and a list's elements in the kinds' array trees. Interns a
-    /// string the column has not seen.
-    pub fn for_each_stored_key(
+    /// scalar lands in at most one kind, and a list's elements in the kinds' array trees. A string
+    /// is passed as itself ([`StoredKey::Tag`]): it is numbered only by the column copy its tuple
+    /// goes into ([`add_encoded`](Self::add_encoded)).
+    pub fn for_each_stored_key<'v>(
         &self,
-        value: &Value,
-        mut emit: impl FnMut(KeyKind, u64),
+        value: &'v Value,
+        mut emit: impl FnMut(KeyKind, StoredKey<'v>),
     ) {
         let Self { numeric, tag } = self;
         numeric.for_each_stored_key(value, &mut emit);
@@ -615,7 +617,10 @@ impl RangeIndex {
         id: u64,
         out: &mut EncodedTuples,
     ) {
-        self.for_each_stored_key(value, |kind, key| out[kind].push((key, id)));
+        self.for_each_stored_key(value, |kind, key| match key {
+            StoredKey::Encoded(key) => out[kind].push((key, id)),
+            StoredKey::Tag(s) => out.tags_mut(kind).push((s.clone(), id)),
+        });
     }
 
     /// Index `id` under `value`.
@@ -710,19 +715,17 @@ impl RangeIndex {
 
     /// The scalar tree and key `value` takes, or `None` when no kind indexes it as a scalar (a
     /// list: its elements are in the array trees, which say which lists contain a value, not
-    /// which equal a list). The key is `None` for a string the column never interned, which no
-    /// entity holds.
-    ///
-    /// Reads the tag dictionary, never interns: a unique-constraint check asks this of a value
-    /// whose write may yet be refused, and the dictionary is append-only.
+    /// which equal a list).
     #[must_use]
     pub fn encode_value(
         &self,
         value: &Value,
-    ) -> Option<(KeyKind, Option<u64>)> {
+    ) -> Option<(KeyKind, ColumnKey)> {
         match Kind::of(value)? {
-            Kind::Numeric => encode_numeric(value).map(|k| (KeyKind::Scalar, Some(k))),
-            Kind::Tag(s) => Some((KeyKind::Tag, self.tag.id_of(s))),
+            Kind::Numeric => {
+                encode_numeric(value).map(|k| (KeyKind::Scalar, ColumnKey::Encoded(k)))
+            }
+            Kind::Tag(s) => Some((KeyKind::Tag, ColumnKey::Tag(s.clone()))),
         }
     }
 
@@ -731,12 +734,13 @@ impl RangeIndex {
     pub fn rows_at(
         &self,
         kind: KeyKind,
-        key: u64,
+        key: &ColumnKey,
     ) -> DocIter {
-        match kind {
-            KeyKind::Scalar => self.numeric.scalars(KeySet::Point(key)),
-            KeyKind::Array => self.numeric.lists_holding(&key),
-            KeyKind::Tag | KeyKind::TagArray => self.tag.rows_at(kind, key),
+        match (kind, key) {
+            (KeyKind::Scalar, ColumnKey::Encoded(k)) => self.numeric.scalars(KeySet::Point(*k)),
+            (KeyKind::Array, ColumnKey::Encoded(k)) => self.numeric.lists_holding(k),
+            (KeyKind::Tag | KeyKind::TagArray, ColumnKey::Tag(s)) => self.tag.rows_at(kind, s),
+            _ => unreachable!("a key of the kind's own type"),
         }
     }
 
@@ -806,10 +810,18 @@ impl RangeIndex {
     /// column with what it must hold.
     #[cfg(test)]
     #[must_use]
-    pub fn tuples(&self) -> Vec<(KeyKind, u64, u64)> {
+    pub fn tuples(&self) -> Vec<(KeyKind, ColumnKey, u64)> {
         let Self { numeric, tag } = self;
-        let mut tuples = numeric.tuples();
-        tuples.extend(tag.tuples());
+        let mut tuples: Vec<_> = numeric
+            .tuples()
+            .into_iter()
+            .map(|(kind, key, doc)| (kind, ColumnKey::Encoded(key), doc))
+            .collect();
+        tuples.extend(
+            tag.tuples()
+                .into_iter()
+                .map(|(kind, s, doc)| (kind, ColumnKey::Tag(Arc::new(s)), doc)),
+        );
         tuples
     }
 
@@ -1203,22 +1215,17 @@ mod tests {
         assert!(idx.is_empty(), "no tuple stranded in any kind");
     }
 
-    /// A unique-constraint lookup reads the dictionary and never interns: the write it checks may
-    /// be refused, and an entry, once added, stays for the column's life.
+    /// A unique-constraint lookup keys on the value: the number's encoding, or the string itself,
+    /// which reads no rows when no entity holds it.
     #[test]
-    fn encode_value_does_not_intern() {
+    fn encode_value_keys_on_the_value() {
         let mut idx = RangeIndex::new();
         idx.add(&s("a"), 1);
-        assert!(matches!(
-            idx.encode_value(&s("a")),
-            Some((KeyKind::Tag, Some(_)))
-        ));
-        assert_eq!(
-            idx.encode_value(&s("never stored")),
-            Some((KeyKind::Tag, None)),
-            "a string no entity holds has no key"
-        );
-        assert_eq!(idx.tag.dict().len(), 1, "and the lookup did not add one");
+        let (kind, key) = idx.encode_value(&s("a")).expect("a string is a scalar");
+        assert_eq!(kind, KeyKind::Tag);
+        assert_eq!(idx.rows_at(kind, &key).collect::<Vec<_>>(), vec![1]);
+        let (kind, key) = idx.encode_value(&s("never stored")).expect("a string");
+        assert_eq!(idx.rows_at(kind, &key).count(), 0);
         assert_eq!(idx.encode_value(&list(vec![s("a")])), None);
     }
 

@@ -14,15 +14,47 @@ use std::sync::Arc;
 
 use crate::{entity_type::EntityType, runtime::value::Value};
 
-use super::encode::KeyKind;
+use super::encode::{KeyKind, StoredKey};
 use super::falkordb_index::{FalkorDbIndex, IndexKey};
 use super::numeric::EncodedTuples;
 
 /// Per column, its staged changes in the order they were made.
-pub(crate) type ColumnWrites = HashMap<IndexKey, Vec<IndexWrite>>;
+pub(crate) type ColumnWrites = HashMap<IndexKey, ColumnLog>;
+
+/// One column's staged changes, in the order they were made, and the strings its tag changes
+/// name.
+///
+/// A tag change is staged by its string, the tag trees' key ([`last_write_wins`] hands the strings
+/// on). Each distinct string gets one slot here, and a tag change's `key` is its slot, so a change
+/// of the same string collapses with the others of it and [`IndexWrite`] stays 24 bytes.
+#[derive(Default)]
+pub(crate) struct ColumnLog {
+    pub(crate) writes: Vec<IndexWrite>,
+    /// The string of each slot.
+    pub(crate) strings: Vec<Arc<String>>,
+    /// The slot of each string.
+    slots: HashMap<Arc<String>, u64>,
+}
+
+impl ColumnLog {
+    /// The slot of `s`, giving it one if it has none.
+    fn slot(
+        &mut self,
+        s: &Arc<String>,
+    ) -> u64 {
+        if let Some(&slot) = self.slots.get(s) {
+            return slot;
+        }
+        let slot = self.strings.len() as u64;
+        self.strings.push(s.clone());
+        self.slots.insert(s.clone(), slot);
+        slot
+    }
+}
 
 /// One staged change to one column: an encoded `(key, id)` tuple going in or coming out of the
-/// column's tree for `kind`.
+/// column's tree for `kind`. For a tag kind, `key` is the string's slot in the column's
+/// [`ColumnLog`] (or, before it is staged, in its [`IndexChanges`]).
 ///
 /// `kind` is part of the tuple's identity. A scalar `1` and a list element `1` on the same entity
 /// are different tuples in different trees, so a value that changes kind within one unit of work
@@ -41,6 +73,8 @@ pub(crate) struct IndexWrite {
 pub struct IndexChanges {
     entity: EntityType,
     changes: Vec<(IndexKey, IndexWrite)>,
+    /// The strings the tag changes name, a tag change's `key` its index here.
+    strings: Vec<Arc<String>>,
 }
 
 impl IndexChanges {
@@ -50,6 +84,7 @@ impl IndexChanges {
         Self {
             entity,
             changes: Vec::new(),
+            strings: Vec::new(),
         }
     }
 
@@ -96,8 +131,15 @@ impl IndexChanges {
         id: u64,
         add: bool,
     ) {
-        let changes = &mut self.changes;
+        let (changes, strings) = (&mut self.changes, &mut self.strings);
         index.for_each_stored_key(self.entity, label, attr, value, |kind, key| {
+            let key = match key {
+                StoredKey::Encoded(key) => key,
+                StoredKey::Tag(s) => {
+                    strings.push(s.clone());
+                    strings.len() as u64 - 1
+                }
+            };
             changes.push((
                 (label.clone(), attr.clone()),
                 IndexWrite { key, id, kind, add },
@@ -132,7 +174,7 @@ impl PendingIndexWrites {
     pub(crate) fn drain(
         &mut self,
         entity: EntityType,
-    ) -> impl Iterator<Item = (IndexKey, Vec<IndexWrite>)> + '_ {
+    ) -> impl Iterator<Item = (IndexKey, ColumnLog)> + '_ {
         match entity {
             EntityType::Node => self.nodes.drain(),
             EntityType::Relationship => self.edges.drain(),
@@ -154,8 +196,12 @@ impl PendingIndexWrites {
             EntityType::Node => &mut self.nodes,
             EntityType::Relationship => &mut self.edges,
         };
-        for (key, write) in changes.changes {
-            columns.entry(key).or_default().push(write);
+        for (key, mut write) in changes.changes {
+            let log = columns.entry(key).or_default();
+            if write.kind.is_tag() {
+                write.key = log.slot(&changes.strings[write.key as usize]);
+            }
+            log.writes.push(write);
         }
     }
 }
@@ -171,8 +217,11 @@ impl PendingIndexWrites {
 ///
 /// The sort is stable, so equal tuples keep the order they were staged in and the last of each
 /// run is the latest change.
+///
+/// A tag change's `key` is a slot in `strings`, and its tuple goes out by string.
 pub(crate) fn last_write_wins(
     log: &mut [IndexWrite],
+    strings: &[Arc<String>],
     removes: &mut EncodedTuples,
     adds: &mut EncodedTuples,
 ) {
@@ -186,7 +235,12 @@ pub(crate) fn last_write_wins(
             continue;
         }
         let side = if w.add { &mut *adds } else { &mut *removes };
-        side[w.kind].push((w.key, w.id));
+        if w.kind.is_tag() {
+            side.tags_mut(w.kind)
+                .push((strings[w.key as usize].clone(), w.id));
+        } else {
+            side[w.kind].push((w.key, w.id));
+        }
     }
 }
 
@@ -229,7 +283,7 @@ mod tests {
         let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
         // SET n.v = 5 then DELETE n: add then remove of (5, n). The remove must win.
         let mut log = vec![w(1, 7, false), w(5, 7, true), w(5, 7, false)];
-        last_write_wins(&mut log, &mut removes, &mut adds);
+        last_write_wins(&mut log, &[], &mut removes, &mut adds);
         assert_eq!(removes, scalars(&[(1, 7), (5, 7)]));
         assert!(
             adds.is_empty(),
@@ -238,7 +292,7 @@ mod tests {
 
         // v0 -> v1 -> v0: remove then add of (1, 7). The add must win.
         let mut log = vec![w(1, 7, false), w(2, 7, true), w(2, 7, false), w(1, 7, true)];
-        last_write_wins(&mut log, &mut removes, &mut adds);
+        last_write_wins(&mut log, &[], &mut removes, &mut adds);
         assert_eq!(removes, scalars(&[(2, 7)]));
         assert_eq!(adds, scalars(&[(1, 7)]));
     }
@@ -257,7 +311,7 @@ mod tests {
             }
             log.push(w(100 + round, 8, true));
         }
-        last_write_wins(&mut log, &mut removes, &mut adds);
+        last_write_wins(&mut log, &[], &mut removes, &mut adds);
         // Round 39 is the last: tuple t ends added when 39 + t is even.
         let ends = |added: bool| -> Vec<(u64, u64)> {
             (0..10)
@@ -275,7 +329,7 @@ mod tests {
     fn untouched_tuples_pass_through_sorted() {
         let (mut removes, mut adds) = (scalars(&[(9, 9)]), scalars(&[(9, 9)]));
         let mut log = vec![w(3, 1, true), w(1, 2, false), w(2, 1, true)];
-        last_write_wins(&mut log, &mut removes, &mut adds);
+        last_write_wins(&mut log, &[], &mut removes, &mut adds);
         assert_eq!(removes, scalars(&[(1, 2)]), "cleared first, then filled");
         assert_eq!(adds, scalars(&[(2, 1), (3, 1)]));
     }
@@ -289,7 +343,7 @@ mod tests {
     fn a_change_of_kind_keeps_both_trees_changes() {
         let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
         let mut log = vec![w(1, 7, false), arr(1, 7, true), arr(2, 7, true)];
-        last_write_wins(&mut log, &mut removes, &mut adds);
+        last_write_wins(&mut log, &[], &mut removes, &mut adds);
         assert_eq!(
             removes[KeyKind::Scalar],
             vec![(1, 7)],
@@ -305,7 +359,7 @@ mod tests {
 
         // And back: `SET n.v = 1` on `[1, 2]`.
         let mut log = vec![arr(1, 7, false), arr(2, 7, false), w(1, 7, true)];
-        last_write_wins(&mut log, &mut removes, &mut adds);
+        last_write_wins(&mut log, &[], &mut removes, &mut adds);
         assert_eq!(removes[KeyKind::Array], vec![(1, 7), (2, 7)]);
         assert_eq!(adds[KeyKind::Scalar], vec![(1, 7)]);
         assert!(removes[KeyKind::Scalar].is_empty() && adds[KeyKind::Array].is_empty());

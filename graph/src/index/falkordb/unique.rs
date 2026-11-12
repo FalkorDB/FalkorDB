@@ -9,7 +9,7 @@ use rustc_hash::FxHashSet;
 
 use crate::{entity_type::EntityType, runtime::value::Value};
 
-use super::encode::KeyKind;
+use super::encode::{ColumnKey, KeyKind};
 use super::falkordb_index::{EqualCandidates, FalkorDbIndex};
 
 /// The native lookups for one member of a unique constraint: one per
@@ -41,7 +41,7 @@ pub(crate) fn native_unique_query<'g>(
 /// (a tenant): every member looks up only the tenant, and reading it once per
 /// member would make a bulk insert quadratic.
 #[derive(Default)]
-pub(crate) struct ReadOnce(RefCell<FxHashSet<Vec<(usize, KeyKind, Option<u64>)>>>);
+pub(crate) struct ReadOnce(RefCell<FxHashSet<Vec<(usize, KeyKind, ColumnKey)>>>);
 
 impl ReadOnce {
     /// The candidates of `lookups` ([`fewest_candidates`]), or none when an

@@ -9,13 +9,13 @@
 //! [`FalkorDbIndex`](super::falkordb_index::FalkorDbIndex).
 
 use std::ops::{Index, IndexMut};
-#[cfg(test)]
 use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
 use super::data_structures::cow_btree::{CowBTree, RangeIter};
-use super::encode::{self, KeyKind, encode_numeric};
+use super::data_structures::str_btree::StrRanges;
+use super::encode::{self, KeyKind, StoredKey, encode_numeric};
 use super::range::RangeKind;
 use crate::runtime::value::Value;
 
@@ -53,6 +53,8 @@ pub enum DocIter {
     /// Several streams chained, each doc yielded once — a union across columns, where a doc may
     /// satisfy several members.
     Distinct(DistinctIter),
+    /// A tag tree's key ranges, one cursor after another ([`StrRanges`]).
+    Strings(StrRanges),
 }
 
 impl Iterator for DocIter {
@@ -64,6 +66,7 @@ impl Iterator for DocIter {
             Self::Many(it) => it.next(),
             Self::Set(it) => it.next(),
             Self::Distinct(it) => it.next(),
+            Self::Strings(it) => it.next(),
         }
     }
 }
@@ -238,9 +241,14 @@ impl Iterator for UnionIter {
 /// Indexed by the kind (`tuples[KeyKind::Array]`), so a tuple always goes back into the tree it
 /// came from. A flat list would lose which tree each tuple belongs in, and a kind stored on every
 /// tuple would cost 8 more bytes per tuple for what the position already says.
+///
+/// The tag kinds' tuples are carried by their **string** ([`tags`](Self::tags)), the key a tag tree
+/// stores. Their `u64` shares stay empty.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct EncodedTuples {
     by_kind: [Vec<(u64, u64)>; KeyKind::ALL.len()],
+    /// `(string, doc)` tuples of [`KeyKind::Tag`] and [`KeyKind::TagArray`], in that order.
+    tags: [Vec<(Arc<String>, u64)>; 2],
 }
 
 impl Index<KeyKind> for EncodedTuples {
@@ -272,25 +280,66 @@ impl EncodedTuples {
         tuples
     }
 
-    /// Whether there are no tuples of either kind.
+    /// The `(string, doc)` tuples of tag kind `kind`.
+    #[must_use]
+    pub fn tags(
+        &self,
+        kind: KeyKind,
+    ) -> &Vec<(Arc<String>, u64)> {
+        &self.tags[Self::tag_slot(kind)]
+    }
+
+    /// The `(string, doc)` tuples of tag kind `kind`, to change.
+    pub fn tags_mut(
+        &mut self,
+        kind: KeyKind,
+    ) -> &mut Vec<(Arc<String>, u64)> {
+        &mut self.tags[Self::tag_slot(kind)]
+    }
+
+    fn tag_slot(kind: KeyKind) -> usize {
+        match kind {
+            KeyKind::Tag => 0,
+            KeyKind::TagArray => 1,
+            _ => unreachable!("only the tag kinds are carried by string"),
+        }
+    }
+
+    /// Whether there are no tuples of any kind.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.by_kind.iter().all(Vec::is_empty)
+        self.by_kind.iter().all(Vec::is_empty) && self.tags.iter().all(Vec::is_empty)
     }
 
     /// How many tuples there are, of every kind.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.by_kind.iter().map(Vec::len).sum()
+        self.by_kind.iter().map(Vec::len).sum::<usize>()
+            + self.tags.iter().map(Vec::len).sum::<usize>()
     }
 
     /// Empty the tuples, keeping their capacity for reuse.
     pub fn clear(&mut self) {
         self.by_kind.iter_mut().for_each(Vec::clear);
+        self.tags.iter_mut().for_each(Vec::clear);
     }
 
-    /// Sort each kind's tuples ascending and drop duplicates: the **sorted and unique** shape a
-    /// tree's bulk build requires.
+    /// Keep only the tuples of the docs `keep` accepts, of every kind.
+    pub fn retain_docs(
+        &mut self,
+        mut keep: impl FnMut(u64) -> bool,
+    ) {
+        for tuples in &mut self.by_kind {
+            tuples.retain(|&(_, doc)| keep(doc));
+        }
+        for tuples in &mut self.tags {
+            tuples.retain(|&(_, doc)| keep(doc));
+        }
+    }
+
+    /// Sort each kind's `u64` tuples ascending and drop duplicates: the **sorted and unique** shape
+    /// a tree's bulk build requires. The tag tuples are left alone: the tag kind sorts them as its
+    /// keys.
     pub fn sort_dedup(&mut self) {
         for tuples in &mut self.by_kind {
             tuples.sort_unstable();
@@ -424,12 +473,12 @@ impl RangeKind for NumericIndex {
 
     /// A scalar is stored under its key in the scalar tree, and a list under each numeric
     /// element's key in the array tree ([`encode::for_each_stored_key`]).
-    fn for_each_stored_key(
+    fn for_each_stored_key<'v>(
         &self,
-        value: &Value,
-        emit: impl FnMut(KeyKind, u64),
+        value: &'v Value,
+        mut emit: impl FnMut(KeyKind, StoredKey<'v>),
     ) {
-        encode::for_each_stored_key(value, emit);
+        encode::for_each_stored_key(value, |kind, key| emit(kind, StoredKey::Encoded(key)));
     }
 
     /// Tuples are never re-encoded: re-encoding a decoded key would be a second trip through a
