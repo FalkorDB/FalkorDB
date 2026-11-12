@@ -279,15 +279,19 @@ static bool _Constraint_Drop
 	// set graph context in query context TLS, required for the effects
 	// buffer GraphHub_DropConstraint writes into
 	QueryCtx_SetGraphCtx (gc) ;
+	QueryCtx_SetRedisCtx (ctx) ;
 
-	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
-
-	// acquire graph write lock
-	if (from_thread) {
-		RedisModule_ThreadSafeContextLock (ctx) ;
+	// acquire graph write lock (and the GIL on a worker thread) the way a
+	// write query does: the wait yields the GIL, so a long read can't freeze
+	// the server, and the replica pause, role and graph key are re-checked
+	// under the GIL before each attempt. on failure nothing is held
+	if (!QueryCtx_AcquireWriteLock ()) {
+		RedisModule_ReplyWithError (ctx, ErrorCtx_Get ()->error) ;
+		QueryCtx_Free  () ;
+		ErrorCtx_Clear () ;
+		GraphContext_DecreaseRefCount (gc) ;
+		return false ;
 	}
-
-	GraphContext_AcquireWriteLock (gc) ;
 
 	//--------------------------------------------------------------------------
 	// drop constraint via GraphHub
@@ -312,12 +316,8 @@ static bool _Constraint_Drop
 	rm_free (buf) ;
 
 cleanup:
-	// release graph R/W lock
-	GraphContext_ReleaseLock (gc) ;
-
-	if (from_thread) {
-		RedisModule_ThreadSafeContextUnlock (ctx) ;
-	}
+	// release graph R/W lock and the GIL
+	QueryCtx_ReleaseLock () ;
 
 	if (res == false) {
 		RedisModule_ReplyWithError (ctx, error_msg) ;
@@ -475,6 +475,7 @@ static bool _Constraint_Create
 	// the effects buffer GraphHub_AddConstraint writes into
 	// TODO: find a better way
 	QueryCtx_SetGraphCtx (gc) ;
+	QueryCtx_SetRedisCtx (ctx) ;
 
 	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
 
@@ -518,11 +519,33 @@ static bool _Constraint_Create
 		return false ;
 	}
 
-	if (from_thread) {
-		RedisModule_ThreadSafeContextLock (ctx) ;
+	// acquire graph write lock (and the GIL on a worker thread) the way a
+	// write query does: the wait yields the GIL, so a long read can't freeze
+	// the server, and the replica pause, role and graph key are re-checked
+	// under the GIL before each attempt. on failure nothing is held
+	if (!QueryCtx_AcquireWriteLock ()) {
+		RedisModule_ReplyWithError (ctx, ErrorCtx_Get ()->error) ;
+		QueryCtx_Free  () ;
+		ErrorCtx_Clear () ;
+		GraphContext_DecreaseRefCount (gc) ;
+		return false ;
 	}
 
-	GraphContext_AcquireWriteLock (gc) ;
+	// on a worker thread the wait above yields the GIL, so a concurrent
+	// CREATE / DROP INDEX may have landed since the read-locked precheck (the
+	// TOCTOU window described there): re-run it under the write lock, again
+	// rejecting without QueryCtx_Rollback
+	if (from_thread) {
+		precheck_err = _Constraint_CreatePrecheck (gc, ct, et, lbl, props, n) ;
+		if (precheck_err != NULL) {
+			QueryCtx_ReleaseLock () ;
+			RedisModule_ReplyWithError (ctx, precheck_err) ;
+			QueryCtx_Free  () ;
+			ErrorCtx_Clear () ;
+			GraphContext_DecreaseRefCount (gc) ;
+			return false ;
+		}
+	}
 
 	//--------------------------------------------------------------------------
 	// create constraint via GraphHub
@@ -558,11 +581,8 @@ cleanup:
 		QueryCtx_Rollback () ;
 	}
 
-	// release graph R/W lock
-	GraphContext_ReleaseLock (gc) ;
-	if (from_thread) {
-		RedisModule_ThreadSafeContextUnlock (ctx) ;
-	}
+	// release graph R/W lock and the GIL
+	QueryCtx_ReleaseLock () ;
 
 	// constraint already exists
 	if (res == false) {
