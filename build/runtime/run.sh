@@ -101,29 +101,31 @@ keep_root() {
 # migration steps when Redis wrote one. The migration is
 # docs/valkey-migration.md.
 
-# redis_rdb_version FILE: the RDB version when FILE starts with a Redis RDB
-# header, REDIS0 and three digits (`REDIS0015`); nothing otherwise. Valkey 9
-# heads its own files VALKEY.
-redis_rdb_version() {
-    _magic=$(head -c 9 "$1" 2>/dev/null) || return 0
-    case "$_magic" in
+# The files go to the shell as arguments (find -exec), not as lines, so a name
+# with a newline is checked whole. A glob would skip dot-prefixed names
+# (--dbfilename ..x, --appendfilename .aof, whose base is .aof.1.base.rdb).
+# A file's version is read from a header of REDIS0 and three digits
+# (`REDIS0015`); Valkey 9 heads its own files VALKEY.
+# shellcheck disable=SC2016
+CHECK_RDB_VERSION='
+for f; do
+    m=$(head -c 9 "$f" 2>/dev/null) || continue
+    case "$m" in
         # 1NNN - 1000 rather than NNN: a leading 0 would read as octal.
-        REDIS0[0-9][0-9][0-9]) echo $(( 1${_magic#REDIS0} - 1000 )) ;;
+        REDIS0[0-9][0-9][0-9])
+            v=$(( 1${m#REDIS0} - 1000 ))
+            [ "$v" -ge 12 ] && printf "  %s (Redis RDB version %s)\n" "$f" "$v"
+            ;;
     esac
-}
+done
+exit 0'
 
 valkey_preflight() {
-    # find, not a glob: a glob skips dot-prefixed names (--dbfilename ..x,
-    # --appendfilename .aof, whose base file is .aof.1.base.rdb).
     redis_files=$(
-        { find -L "${FALKORDB_DATA_PATH}" -maxdepth 1 -type f
-          find -L "${FALKORDB_DATA_PATH}" -mindepth 2 -maxdepth 2 -type f -name '*.base.rdb'
-        } 2>/dev/null | while IFS= read -r _f; do
-            _version=$(redis_rdb_version "$_f")
-            if [ -n "$_version" ] && [ "$_version" -ge 12 ]; then
-                echo "  $_f (Redis RDB version $_version)"
-            fi
-        done
+        find -L "${FALKORDB_DATA_PATH}" -maxdepth 1 -type f \
+            -exec sh -c "$CHECK_RDB_VERSION" sh {} + 2>/dev/null
+        find -L "${FALKORDB_DATA_PATH}" -mindepth 2 -maxdepth 2 -type f -name '*.base.rdb' \
+            -exec sh -c "$CHECK_RDB_VERSION" sh {} + 2>/dev/null
     )
     [ -z "$redis_files" ] && return 0
     cat >&2 <<EOF

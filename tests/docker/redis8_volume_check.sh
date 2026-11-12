@@ -230,6 +230,10 @@ if [ "$SERVER" = valkey ]; then
     refused "$CASE" "$IMAGE" "$(copy_vol "$AOF_DOT" "$CASE")" -e "VALKEY_ARGS=--appendonly yes --appendfilename .aof" &&
         { grep -qF "$DATA/appendonlydir/.aof." <<<"$(logs "$CASE")" ||
             fail "the message does not name the .aof base file"; }
+    CASE=newline-in-filename
+    v=$(copy_vol "$AOF" "$CASE")
+    in_vol "$v" 'cd /data/appendonlydir && mv *.base.rdb "$(printf "aof\nfile.aof.1.base.rdb")"' || fail "cannot rename the base file"
+    refused "$CASE" "$IMAGE" "$v"
     CASE=aof-rdb-base
     refused "$CASE" "$IMAGE" "$(copy_vol "$AOF" "$CASE")" -e "VALKEY_ARGS=--appendonly yes"
     # RDB version 11, as Redis 7.2 and Valkey 8 write it, is Valkey's own: an
