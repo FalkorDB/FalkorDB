@@ -143,15 +143,15 @@ Shared foundations (the engine `Value` as `V F`, `wrap` and the `wrapping_*` hel
 
 Line numbers are pinned to main 8621212fc.
 
-`COVERAGE.tsv` has 191 rows: 69 in `value.rs`, 36 in `functions/mod.rs`, 21 in `procedures.rs`, 17 in `math.rs`, 14 in `trig.rs`, 12 in `aggregation.rs`, 11 in `conversion.rs`, 7 in `index_ddl.rs`, 3 in `path.rs`, and 1 in `entity_type.rs`.
+`COVERAGE.tsv` has 194 rows: 69 in `value.rs`, 36 in `functions/mod.rs`, 21 in `procedures.rs`, 17 in `math.rs`, 14 in `trig.rs`, 12 in `aggregation.rs`, 11 in `conversion.rs`, 10 in `index_ddl.rs`, 3 in `path.rs`, and 1 in `entity_type.rs`.
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 165 |
 | MODELLED | 3 |
-| NOT COVERED | 23 |
+| NOT COVERED | 26 |
 
-The four rows #3362 adds in `index_ddl.rs` (the shared read-only check and the three CCH DDL functions) are NOT COVERED (not modelled). All other non-PROVEN rows are in `value.rs`:
+The seven CCH rows in `index_ddl.rs` are NOT COVERED (not modelled): the four #3362 adds (the shared read-only check and the three CCH DDL functions) and the three #3764 adds for replication (`resolve_or_create_cch_index`, `emit_cch_effect`, `check_type_reference_count`). All other non-PROVEN rows are in `value.rs`:
 
 - **MODELLED:** `Point::distance` (proven in `functions_temporal`, `Spatial.lean`), `Value::name` (used by the error-message theorems) and `fmt_json` (only non-finite floats are proven; the rest is `write!` formatting, live-checked against C).
 - **NOT COVERED:** trait method declarations (`order`, `compare_value`, `value_of_type`, `get_type`, `contains`, `fmt_json`); trivial constructors and `clone`; chrono formatting and calendar accessors (`format_datetime`, `get_date_component`, …), which are trusted and live-checked against C; `json_escape` and node JSON writing.

@@ -35,7 +35,7 @@ graph/src/effects/v3/records.rs	IndexFields::decode	346	PROVEN	RecArms.bFields (
 graph/src/effects/v3/records.rs	IndexSchemas::encode	388	PROVEN	RecArms.bSchemas (sorts by id): bSchemas_enc_sorted, bSchemas.rt
 graph/src/effects/v3/records.rs	IndexSchemas::decode	421	PROVEN	RecArms.bSchemas (EmptyIndexSchemaList on 0): bSchemas.rt, readN_length
 graph/src/effects/v3/records.rs	check_index_record	456	PROVEN	RecFull.checkIndex: checkIndex_ok
-graph/src/effects/v3/records.rs	read_record	643	PROVEN	RecFull.readRecord/arm: readRecord_encRecord (all 14 opcodes), readRecord_encRecord_wf, readRecord_empty, readRecord_batched, readRecord_single — an index record carrying INDEX_FLD_CCH (0x20, #3219) is not modelled yet
+graph/src/effects/v3/records.rs	read_record	643	MODELLED	RecFull.readRecord/arm: readRecord_encRecord (all 14 opcodes), readRecord_encRecord_wf, readRecord_empty, readRecord_batched, readRecord_single — an index record carrying INDEX_FLD_CCH (0x20, #3219) is not modelled yet
 graph/src/effects/v3/records.rs	read_constraint_props	850	PROVEN	RecArms.bProps (u8 count, guard 11): bItems.rt
 graph/src/effects/v3/records.rs	check_endpoint_columns	870	PROVEN	RecFull.checkEndpoints: checkEndpoints_ok
 graph/src/effects/v3/records.rs	check_row_shape	896	PROVEN	RecFull.checkRowShape (checked_mul == Some(len)): checkRowShape_ok, encRecord_rowShape_refused, encRecord_ok_shape (#2916)
@@ -104,9 +104,9 @@ graph/src/effects/v3/mod.rs	entity_from_schema_tag	214	PROVEN	RecArms.entityFrom
 graph/src/effects/v3/mod.rs	entity_tag	228	PROVEN	RecArms.entityTag: tags_roundtrip
 graph/src/effects/v3/mod.rs	entity_from_tag	236	PROVEN	RecArms.entityFromTag: tags_roundtrip
 graph/src/effects/v3/mod.rs	update_opcode	246	PROVEN	ModRs.updateOpcode: updateOpcode_batchable
-graph/src/effects/v3/mod.rs	IndexFieldBit::index_kind	301	PROVEN	RecArms.bitKind: bitKind_spec — the CCH bit (INDEX_FLD_CCH = 0x20, IndexKind::Cch, #3219) is not modelled yet: the model has the five property bits only
+graph/src/effects/v3/mod.rs	IndexFieldBit::index_kind	301	MODELLED	RecArms.bitKind: bitKind_spec — the CCH bit (INDEX_FLD_CCH = 0x20, IndexKind::Cch, #3219) is not modelled yet: the model has the five property bits only
 graph/src/effects/v3/mod.rs	field_type_bits	343	PROVEN	RecArms.setBits: setBits_spec
-graph/src/effects/v3/mod.rs	index_kind_of	376	PROVEN	RecArms.indexTypeOf: indexTypeOf_mixed, #guards; used by bFieldType.rt — the CCH bit (INDEX_FLD_CCH = 0x20, IndexKind::Cch, #3219) is not modelled yet: the model has the five property bits only
+graph/src/effects/v3/mod.rs	index_kind_of	376	MODELLED	RecArms.indexTypeOf: indexTypeOf_mixed, #guards; used by bFieldType.rt — the CCH bit (INDEX_FLD_CCH = 0x20, IndexKind::Cch, #3219) is not modelled yet: the model has the five property bits only
 graph/src/effects/v3/mod.rs	constraint_tag	414	PROVEN	RecArms.ctypeTag: tags_roundtrip
 graph/src/effects/v3/mod.rs	constraint_status_tag	430	PROVEN	RecArms.statusTag: tags_roundtrip
 graph/src/effects/v3/mod.rs	constraint_status_from_tag	439	PROVEN	RecArms.statusFromTag: tags_roundtrip, statusFromTag_err

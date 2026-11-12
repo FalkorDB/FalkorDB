@@ -115,13 +115,14 @@ The project has no Lake dependencies. [`../replication`](../replication) require
 
 ## Coverage
 
-`COVERAGE.tsv` has 36 rows: 18 in `apply.rs`, 16 in `emit.rs`, plus `Pending::effects_count` (`pending.rs`) and the commit gate (`commit.rs`).
+`COVERAGE.tsv` has 42 rows: 21 in `apply.rs`, 19 in `emit.rs`, plus `Pending::effects_count` (`pending.rs`) and the commit gate (`commit.rs`).
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 36 |
+| NOT COVERED | 6 |
 
-Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model is exact and the theorems say what it does, including that it is wrong for cancelled and schema-only writes. Likewise `for_each_record`, `digest_cancelled` and `digest_labels` are PROVEN as models, and `CancelGap.lean` proves that what they emit is wrong for #3447 and #3448.
+The six NOT COVERED rows come with CCH DDL replication (#3764): `apply_cch_index`, `hold_cch_index` (two rows, one per build of the `index-falkordb` feature) and `build_cch_index_buffer` are not modelled yet, and `baseline_of` and `attr_ref` are helpers factored out of the emitters there. Every other row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model is exact and the theorems say what it does, including that it is wrong for cancelled and schema-only writes. Likewise `for_each_record`, `digest_cancelled` and `digest_labels` are PROVEN as models, and `CancelGap.lean` proves that what they emit is wrong for #3447 and #3448.
 
 ## What the model does not cover
 

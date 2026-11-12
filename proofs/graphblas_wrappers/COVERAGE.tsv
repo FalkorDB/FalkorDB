@@ -1213,7 +1213,7 @@ graph/src/graph/graphblas/serialization.rs	encode	34	AXIOMATISED	trait method de
 graph/src/graph/graphblas/serialization.rs	encode_with_range	40	PROVEN	GBWSerial.encodeWithRangeDefault: defaults_panic
 graph/src/graph/graphblas/serialization.rs	decode	64	AXIOMATISED	trait method declaration (no body): its contract is the structure GBWSerial.Codec, an obligation each impl owes; Codec.roundtrip is a field, so Codec.roundtrip2 proves nothing about an impl (instances are proved in their own projects, e.g. VMOps.decode_encode)
 graph/src/graph/graphblas/serialization.rs	decode_with_count	76	PROVEN	GBWSerial.decodeWithCountDefault: defaults_panic
-graph/src/graph/graphblas/serialization.rs	from_u64	146	PROVEN	GBWSerial.fromU64: fromU64_disc, fromU64_some, fromU64_none
+graph/src/graph/graphblas/serialization.rs	from_u64	149	PROVEN	GBWSerial.fromU64: fromU64_disc, fromU64_some, fromU64_none
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::new	1498	NOT COVERED	not modelled yet: `#[cfg(any(test, feature = "index-falkordb"))] impl Matrix<f64>`, the test kit's block, now also the CCH input's (#3211)
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::set	1525	NOT COVERED	not modelled yet: `#[cfg(any(test, feature = "index-falkordb"))] impl Matrix<f64>`, the test kit's block, now also the CCH input's (#3211)
 graph/src/graph/graphblas/matrix.rs	Matrix<f64>::build	1545	NOT COVERED	not modelled yet: `#[cfg(any(test, feature = "index-falkordb"))] impl Matrix<f64>`, the test kit's block, now also the CCH input's (#3211)
