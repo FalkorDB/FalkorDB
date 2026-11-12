@@ -236,7 +236,7 @@ class testConstraintWriteLockStateChanges(ConstraintBehindLongReads):
         async def delete(admin):
             await admin.delete(GRAPH_ID)
 
-        self._assert_aborted_by(CREATE_MANDATORY, delete, "deleted or replaced")
+        self._assert_aborted_by(CREATE_MANDATORY, delete, "empty key")
         self.env.assertEqual(self.conn.exists(GRAPH_ID), 0)
 
         # replaying the AOF must neither crash nor resurrect the graph

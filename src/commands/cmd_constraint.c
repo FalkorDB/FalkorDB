@@ -60,6 +60,30 @@
 
 extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
 
+// acquire the graph write lock (and on a worker thread the GIL) for a
+// constraint CREATE / DROP the same way a write query does, through
+// QueryCtx_AcquireWriteLock. on a worker thread it waits for the lock in
+// GIL-yielding slices, so a long read can't freeze the server (#3753), and it
+// re-checks the replica pause, the role and the graph key under the GIL before
+// each attempt, since the main thread runs while it waits. requires
+// QueryCtx_SetGraphCtx + QueryCtx_SetRedisCtx
+//
+// returns true holding the lock; on failure sets *err_msg (owned by ErrorCtx,
+// valid until ErrorCtx_Clear) and returns false holding nothing
+static bool _Constraint_AcquireWriteLock
+(
+	const char **err_msg  // [output] reason for failure
+) {
+	if (QueryCtx_AcquireWriteLock ()) {
+		return true ;
+	}
+
+	const char *err = ErrorCtx_Get ()->error ;
+	*err_msg = (err != NULL) ? err :
+		"Failed to acquire the graph write lock" ;
+	return false ;
+}
+
 // constraint operation
 typedef enum {
 	CT_CREATE,  // create constraint
@@ -239,13 +263,14 @@ static int Constraint_Parse
 // type] PROPERTIES prop_count prop0, prop1...
 static bool _Constraint_Drop
 (
-	RedisModuleCtx *ctx,    // redis module context
-	RedisModuleString *key, // graph key to operate on
-	ConstraintType ct,      // constraint type
-	GraphEntityType et,     // entity type
-	const char *lbl,        // label / rel-type
-	uint8_t n,              // properties count
-	const char **props      // properties
+	RedisModuleCtx *ctx,           // redis module context
+	RedisModuleBlockedClient *bc,  // blocked client, NULL on the main thread
+	RedisModuleString *key,        // graph key to operate on
+	ConstraintType ct,             // constraint type
+	GraphEntityType et,            // entity type
+	const char *lbl,               // label / rel-type
+	uint8_t n,                     // properties count
+	const char **props             // properties
 ) {
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_DEBUG, "drop constraint") ;
 
@@ -277,14 +302,14 @@ static bool _Constraint_Drop
 	}
 
 	// set graph context in query context TLS, required for the effects
-	// buffer GraphHub_DropConstraint writes into
+	// buffer GraphHub_DropConstraint writes into and for taking the graph's
+	// write lock
 	QueryCtx_SetGraphCtx (gc) ;
-
-	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
+	QueryCtx_SetRedisCtx (ctx, bc) ;
 
 	// acquire graph write lock, and the GIL on a worker thread
-	// on failure neither is held
-	if (!GraphContext_AcquireWriteLockChecked (gc, ctx, &error_msg)) {
+	// on failure nothing is held
+	if (!_Constraint_AcquireWriteLock (&error_msg)) {
 		res = false ;
 		goto unlocked ;
 	}
@@ -312,12 +337,8 @@ static bool _Constraint_Drop
 	rm_free (buf) ;
 
 cleanup:
-	// release graph R/W lock
-	GraphContext_ReleaseLock (gc) ;
-
-	if (from_thread) {
-		RedisModule_ThreadSafeContextUnlock (ctx) ;
-	}
+	// release graph write lock and the GIL
+	QueryCtx_ReleaseLock () ;
 
 unlocked:
 	if (res == false) {
@@ -442,13 +463,14 @@ static const char *_Constraint_CreatePrecheck
 // type] PROPERTIES prop_count prop0, prop1...
 static bool _Constraint_Create
 (
-	RedisModuleCtx *ctx,    // redis module context
-	RedisModuleString *key, // graph key to operate on
-	ConstraintType ct,      // constraint type
-	GraphEntityType et,     // entity type
-	const char *lbl,        // label / rel-type
-	uint8_t n,              // properties count
-	const char **props      // properties
+	RedisModuleCtx *ctx,           // redis module context
+	RedisModuleBlockedClient *bc,  // blocked client, NULL on the main thread
+	RedisModuleString *key,        // graph key to operate on
+	ConstraintType ct,             // constraint type
+	GraphEntityType et,            // entity type
+	const char *lbl,               // label / rel-type
+	uint8_t n,                     // properties count
+	const char **props             // properties
 ) {
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_DEBUG, "create constraint") ;
 
@@ -478,6 +500,7 @@ static bool _Constraint_Create
 	// the effects buffer GraphHub_AddConstraint writes into
 	// TODO: find a better way
 	QueryCtx_SetGraphCtx (gc) ;
+	QueryCtx_SetRedisCtx (ctx, bc) ;
 
 	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
 
@@ -517,8 +540,8 @@ static bool _Constraint_Create
 	}
 
 	// acquire graph write lock, and the GIL on a worker thread
-	// on failure neither is held
-	if (!GraphContext_AcquireWriteLockChecked (gc, ctx, &error_msg)) {
+	// on failure nothing is held
+	if (!_Constraint_AcquireWriteLock (&error_msg)) {
 		res = false ;
 		goto unlocked ;
 	}
@@ -530,8 +553,7 @@ static bool _Constraint_Create
 	if (from_thread) {
 		precheck_err = _Constraint_CreatePrecheck (gc, ct, et, lbl, props, n) ;
 		if (precheck_err != NULL) {
-			GraphContext_ReleaseLock (gc) ;
-			RedisModule_ThreadSafeContextUnlock (ctx) ;
+			QueryCtx_ReleaseLock () ;
 			error_msg = precheck_err ;
 			res = false ;
 			goto unlocked ;
@@ -572,11 +594,8 @@ cleanup:
 		QueryCtx_Rollback () ;
 	}
 
-	// release graph R/W lock
-	GraphContext_ReleaseLock (gc) ;
-	if (from_thread) {
-		RedisModule_ThreadSafeContextUnlock (ctx) ;
-	}
+	// release graph write lock and the GIL
+	QueryCtx_ReleaseLock () ;
 
 unlocked:
 	// reply lock-free: on the async path this is a blocked-client thread-safe
@@ -618,11 +637,11 @@ static void Constraint_Op
 	bool success = false ;
 
 	if(ctx->op == CT_CREATE) {
-		success = _Constraint_Create (rm_ctx, ctx->graph_id, ctx->ct,
+		success = _Constraint_Create (rm_ctx, ctx->bc, ctx->graph_id, ctx->ct,
 				ctx->entity_type, ctx->label, ctx->prop_count,
 				(const char **)ctx->props) ;
 	} else {
-		success = _Constraint_Drop (rm_ctx, ctx->graph_id, ctx->ct,
+		success = _Constraint_Drop (rm_ctx, ctx->bc, ctx->graph_id, ctx->ct,
 				ctx->entity_type, ctx->label, ctx->prop_count,
 				(const char **)ctx->props) ;
 	}

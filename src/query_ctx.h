@@ -150,6 +150,16 @@ void QueryCtx_SetGlobalExecutionCtx
 	CommandCtx *cmd_ctx
 );
 
+// sets the Redis context of a command that doesn't go through
+// QueryCtx_SetGlobalExecutionCtx (e.g. GRAPH.CONSTRAINT), so it can take the
+// graph's write lock with QueryCtx_AcquireWriteLock / QueryCtx_ReleaseLock
+void QueryCtx_SetRedisCtx
+(
+	RedisModuleCtx *redis_ctx,    // the command's Redis context
+	RedisModuleBlockedClient *bc  // blocked client on a worker thread,
+	                              // NULL on the Redis main thread
+);
+
 // set the provided AST for access through the QueryCtx
 void QueryCtx_SetAST
 (
