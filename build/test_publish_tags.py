@@ -140,6 +140,13 @@ class MovesLatest(unittest.TestCase):
             with self.subTest(tag=tag), self.assertRaises(pt.PlanError):
                 pt.rebuild_plan(tag, SHA, latest=False)
 
+    def test_rebuild_refuses_a_tag_docker_would_refuse(self):
+        # 122 characters is valid alone, but 129 once -valkey is added.
+        for tag in ("a" * 122, "edge test", "edge/test", ".edge"):
+            with self.subTest(tag=tag), self.assertRaisesRegex(pt.PlanError, "not a valid Docker tag"):
+                pt.rebuild_plan(tag, SHA, latest=False)
+        pt.rebuild_plan("a" * 121, SHA, latest=False)
+
 
 class Archives(unittest.TestCase):
     def _archives(self, root, names):

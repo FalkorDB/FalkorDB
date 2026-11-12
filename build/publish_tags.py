@@ -207,6 +207,10 @@ def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[d
     return _named_plan(tag, lambda repo, server: f"{GHCR}/{repo}:rc-rebuild-{sha}-{server}", latest)
 
 
+# Docker's tag grammar, 128 characters at most.
+DOCKER_TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
+
+
 def _named_plan(name: str, source: Callable, latest: bool) -> list:
     plan = []
     for repo in REPOS:
@@ -214,6 +218,11 @@ def _named_plan(name: str, source: Callable, latest: bool) -> list:
             tags = server_tags(name, server)
             if latest:
                 tags += server_tags("latest", server)
+            for tag in tags:
+                # Here, not at push time: release-image.yml plans before it
+                # builds, so a tag Docker would refuse fails in seconds.
+                if not DOCKER_TAG_RE.fullmatch(tag):
+                    raise PlanError(f"'{name}' would publish '{tag}', which is not a valid Docker tag")
             plan.append(Retag(source(repo, server), server, everywhere(repo, tags)))
     return plan
 
