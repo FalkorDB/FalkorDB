@@ -11,6 +11,7 @@ files="build/Dockerfile
 build/runtime/Dockerfile
 build/runtime/Dockerfile.rhel9
 build/runtime/Dockerfile.amazonlinux2023
+build/runtime/Dockerfile.alpine
 build/runtime/Dockerfile.coverage
 build/runtime/Dockerfile.asan"
 
