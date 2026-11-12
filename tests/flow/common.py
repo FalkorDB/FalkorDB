@@ -856,27 +856,3 @@ def assert_error_reply(env, conn, *cmd):
         msg = str(e)
     env.assertTrue(conn.ping())
     return msg
-
-
-def wait_for_replica(primary, replica, timeout=30):
-    """Block until `replica` has applied everything `primary` has propagated so
-    far. Call it after the writes it should cover.
-
-    WAIT can't promise that: it waits only for the calling connection's own
-    writes, not those of another connection (a FalkorDB client's pool, a
-    loader) or a module thread, and it counts a replica as soon as the primary
-    marks it online, which on Valkey is before the replica has loaded its
-    initial sync. So compare offsets."""
-    target = primary.info("replication")["master_repl_offset"]
-    deadline = time.time() + timeout
-    info = {}
-    while time.time() < deadline:
-        info = replica.info("replication")
-        if (info.get("master_link_status") == "up"
-                and info.get("slave_repl_offset", -1) >= target):
-            return
-        time.sleep(0.01)
-    raise AssertionError(
-        f"replica did not reach the primary's offset {target} within {timeout}s "
-        f"(link {info.get('master_link_status')}, "
-        f"offset {info.get('slave_repl_offset')})")

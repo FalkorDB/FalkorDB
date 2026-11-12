@@ -1232,8 +1232,8 @@ class testConstraintReplication():
         # clear DB
         self.source.delete(GRAPH_ID)
 
-        # wait for the replica's initial sync to complete
-        wait_for_replica(self.source, self.replica)
+        # the WAIT command forces master slave sync to complete
+        self.source.execute_command("WAIT", 1, 0)
 
     def monitor_thread(self):
         global MONITOR_ATTACHED
@@ -1296,13 +1296,12 @@ class testConstraintReplication():
         # `test_effects_ddl.py` pins the per-shape announcement counts, where
         # the payloads are read off the wire rather than counted through
         # MONITOR.
-        wait_for_replica(self.source, self.replica)
+        self.source.execute_command("WAIT", 1, 0)
 
         replica_g = Graph(self.replica, GRAPH_ID)
         deadline = time.time() + 30
         while time.time() < deadline:
-            wait_for_replica(self.source, self.replica,
-                             timeout=max(deadline - time.time(), 0.01))
+            self.source.execute_command("WAIT", 1, 0)
             cs = list_constraints(replica_g)
             if len(cs) == 6 and all(c.status == 'OPERATIONAL' for c in cs):
                 break
@@ -1348,7 +1347,7 @@ class testConstraintReplication():
         # validates synchronously on the main thread and never spawns.
         lbl = 'AsyncValidated'
         self.g.query(f"UNWIND range(1, 10500) AS x CREATE (:{lbl} {{v: x}})")
-        wait_for_replica(self.source, self.replica)
+        self.source.execute_command("WAIT", 1, 0)
 
         create_mandatory_node_constraint(self.g, lbl, 'v', sync=True)
 
@@ -1356,8 +1355,7 @@ class testConstraintReplication():
         deadline = time.time() + 30
         c = None
         while time.time() < deadline:
-            wait_for_replica(self.source, self.replica,
-                             timeout=max(deadline - time.time(), 0.01))
+            self.source.execute_command("WAIT", 1, 0)
             c = get_constraint(replica_g, 'MANDATORY', 'NODE', lbl, 'v')
             if c is not None and c.status != 'UNDER CONSTRUCTION':
                 break
