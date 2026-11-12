@@ -86,7 +86,7 @@ use crate::index::falkordb::falkordb_index::ScanFilter;
 use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
-    cch::{Cch, CchError, CchIndex, CchIndexDef, CchInput},
+    cch::{Cch, CchError, CchIndex, CchIndexDef, CchInput, maint::check_edge_weights},
     falkordb_index::{BuildCursor, FalkorDbIndex},
     graph_writes,
 };
@@ -2024,12 +2024,22 @@ impl Graph {
     /// [`import_relationship_attrs`](Self::import_relationship_attrs) does; the caller
     /// publishes them with [`commit_edge_index`](Self::commit_edge_index). Tracking runs
     /// **before** the import because `import_attrs_resolved` drains `data`.
+    ///
+    /// # Errors
+    /// A weight a CCH index over `type_id` cannot take (`cch::maint::check_edge_weights`),
+    /// refused before anything is written.
     pub fn import_relationship_attrs_resolved(
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
         type_id: TypeId,
         docs: &mut IndexDocs,
-    ) -> usize {
+    ) -> Result<usize, String> {
+        #[cfg(feature = "index-falkordb")]
+        check_edge_weights(
+            self,
+            data.iter().map(|(id, attrs)| (id, attrs)),
+            Some(type_id),
+        )?;
         let index_add_edge_docs = &mut docs.edge_adds;
         #[cfg(feature = "index-falkordb")]
         docs.native
@@ -2040,7 +2050,7 @@ impl Graph {
             data.iter().map(|(id, attrs)| (id, attrs)),
             index_add_edge_docs,
         );
-        self.relationship_attrs.import_attrs_resolved(data)
+        Ok(self.relationship_attrs.import_attrs_resolved(data))
     }
 
     /// Resolve a relationship attribute name to its index, creating if needed.
@@ -2051,11 +2061,18 @@ impl Graph {
         self.attrs_name.get_or_create(attr)
     }
 
+    /// Set the attributes of relationships created in this unit of work.
+    ///
+    /// # Errors
+    /// A weight a CCH index over the edge's type cannot take (`cch::maint::check_edge_weights`),
+    /// refused before anything is written.
     pub fn import_relationship_attrs(
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         docs: &mut IndexDocs,
-    ) -> usize {
+    ) -> Result<usize, String> {
+        #[cfg(feature = "index-falkordb")]
+        check_edge_weights(self, attrs, None)?;
         let index_add_edge_docs = &mut docs.edge_adds;
         let nset = self.relationship_attrs.import_attrs(attrs);
 
@@ -2064,7 +2081,7 @@ impl Graph {
             .extend(graph_writes::new_edge_attrs(self, attrs));
 
         self.track_edge_index_updates(attrs, index_add_edge_docs);
-        nset
+        Ok(nset)
     }
 
     /// Mark every `(type_id, edge_id)` whose changed attributes are
@@ -2863,11 +2880,19 @@ impl Graph {
             && self.relationship_matrices.iter().all(Tensor::is_synced)
     }
 
+    /// Set or remove attributes of existing relationships.
+    ///
+    /// # Errors
+    /// A weight a CCH index over the edge's type cannot take (`cch::maint::check_edge_weights`),
+    /// refused before anything is written; or what the attribute store refuses.
     pub fn set_relationships_attributes(
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         docs: &mut IndexDocs,
     ) -> Result<(usize, usize), String> {
+        // Before anything is written, so a refused weight leaves the graph untouched.
+        #[cfg(feature = "index-falkordb")]
+        check_edge_weights(self, attrs, None)?;
         let index_add_edge_docs = &mut docs.edge_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
@@ -2889,12 +2914,17 @@ impl Graph {
     ///
     /// The v3 `UPDATE_EDGE` record does, since #2570: its group key is the
     /// relationship type, so one record is one type by construction.
+    ///
+    /// # Errors
+    /// As [`Self::set_relationships_attributes`].
     pub fn set_relationships_attributes_of_type(
         &mut self,
         type_id: TypeId,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         docs: &mut IndexDocs,
     ) -> Result<(usize, usize), String> {
+        #[cfg(feature = "index-falkordb")]
+        check_edge_weights(self, attrs, Some(type_id))?;
         let index_add_edge_docs = &mut docs.edge_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]

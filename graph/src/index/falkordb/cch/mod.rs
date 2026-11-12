@@ -9,6 +9,7 @@
 //! - `customize.rs` Phase 2: customization (#3209)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
+//! - `maint.rs`     keeping indexes correct under writes (#3214): the write-time weight check
 //! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
@@ -16,6 +17,7 @@
 
 mod customize;
 mod input;
+pub(crate) mod maint;
 mod nd;
 mod order;
 mod query;

@@ -35,7 +35,7 @@ graph/src/effects/v3/apply.rs	single_index_label	841	PROVEN	ApplyHelpers.singleI
 graph/src/effects/v3/apply.rs	apply_cch_index	855	NOT COVERED	not modelled yet: CCH DDL replication (#3219)
 graph/src/effects/v3/apply.rs	hold_cch_index	883	NOT COVERED	not modelled yet: CCH DDL replication (#3219)
 graph/src/effects/v3/apply.rs	hold_cch_index	907	NOT COVERED	not modelled yet: CCH DDL replication (#3219)
-graph/src/runtime/pending.rs	effects_count	1958	PROVEN	Emit.effectsCount, Emit.gate_zero_stream, Emit.gate_drops_cancelled, Emit.gate_drops_schema_only (BUG W2-effects-1, still present at 2c874022a)
+graph/src/runtime/pending.rs	effects_count	1961	PROVEN	Emit.effectsCount, Emit.gate_zero_stream, Emit.gate_drops_cancelled, Emit.gate_drops_schema_only (BUG W2-effects-1, still present at 2c874022a)
 graph/src/runtime/ops/commit.rs	CommitOp::next (effects gate)	69	PROVEN	Emit.commitShips, Emit.commitShips_eq_iff (BUG W2-effects-1, still present at 2c874022a)
 graph/src/effects/v3/emit.rs	wire_index_options	2191	PROVEN	EmitDDL.wireIndexOptions: wireIndexOptions_spec
 graph/src/effects/v3/emit.rs	build_cch_index_buffer	316	NOT COVERED	not modelled yet: CCH DDL replication (#3219)
