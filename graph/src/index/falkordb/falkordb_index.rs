@@ -631,6 +631,9 @@ impl FalkorDbIndex {
     /// Heap bytes every index holds in this version, node and edge columns and CCH
     /// hierarchies ([`VersionedIndex::memory_usage`]): what a build with `index-falkordb` adds
     /// to `indices_sz_mb` in `GRAPH.MEMORY USAGE`. Walks every page of every column.
+    ///
+    /// A CCH index's map key is its own copy of the definition, so its type list is counted
+    /// here, next to the one the entry counts.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         let columns: usize = self
@@ -641,8 +644,8 @@ impl FalkorDbIndex {
             .sum();
         let hierarchies: usize = self
             .cch_indexes
-            .values()
-            .map(IndexEntry::memory_usage)
+            .iter()
+            .map(|(def, entry)| size_of_val(def.rel_types()) + entry.memory_usage())
             .sum();
         columns + hierarchies
     }

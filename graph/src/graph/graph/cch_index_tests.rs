@@ -43,8 +43,9 @@ fn hold(
 }
 
 /// `GRAPH.MEMORY USAGE` counts each held hierarchy, at least its two weight arrays (one
-/// `f64` per arc and direction), and stops counting it once dropped. Two indexes over the
-/// same graph and as many types count the same, each on its own.
+/// `f64` per arc and direction) and both copies of its type list (the entry's and the map
+/// key's), and stops counting it once dropped. Two indexes over the same graph and as many
+/// types count the same, each on its own.
 #[test]
 fn memory_usage_counts_each_held_hierarchy() {
     let mut g = graph("cch_memory");
@@ -59,6 +60,11 @@ fn memory_usage_counts_each_held_hierarchy() {
     assert!(
         one >= 2 * arc_count * size_of::<f64>(),
         "{one} bytes cannot hold both weight arrays of {arc_count} arcs"
+    );
+    assert_eq!(
+        one,
+        cch.memory_usage() + 2 * size_of_val(a.rel_types()),
+        "the hierarchy and both copies of the type list"
     );
     hold(&mut g, &b);
     assert_eq!(g.falkordb_index.memory_usage() - before, 2 * one);
