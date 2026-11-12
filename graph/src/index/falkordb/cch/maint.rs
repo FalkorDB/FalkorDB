@@ -386,8 +386,9 @@ pub(crate) fn check_edge_weights<'a>(
     Ok(())
 }
 
-/// A held index could not be brought up to date. The write that caused it fails, and its
-/// rollback leaves the committed indexes as they were.
+/// A held index met a weight the write-time check should have refused. The write that caused
+/// it fails, and its rollback leaves the committed indexes as they were. Every other reason an
+/// index cannot be updated hands it to the builder instead ([`flush`]).
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct CchFlushError {
     def: CchIndexDef,
@@ -452,12 +453,16 @@ pub(crate) enum Update {
 ///   built in the write path;
 /// - failed: nothing, until it is dropped and created again.
 ///
+/// An index that cannot be updated in place for any other reason (a resource limit, a bug in
+/// the update) is not the write's fault: it is handed to the builder as for
+/// [`Update::Rebuild`], and the write goes on. The builder builds it from scratch, or holds it
+/// `FAILED` with the reason.
+///
 /// Every update is computed before any entry is changed, so on error none is.
 ///
 /// # Errors
-/// The first index that fails to update, with the reason (a resource, a bug). An invalid
-/// weight is refused at the write ([`check_edge_weights`]), so here it is a bug: it still
-/// fails the unit, and the error says so.
+/// An invalid weight, which the write-time check ([`check_edge_weights`]) refuses before
+/// anything is written, so here it is a bug: it fails the unit, and the error says so.
 pub(crate) fn flush(
     g: &mut Graph,
     dirty: &CchDirty,
@@ -483,11 +488,18 @@ pub(crate) fn flush(
         let Some(hierarchy) = entry.index.cch() else {
             continue;
         };
-        let (cch, how) = update(g, def, hierarchy, changes).map_err(|cause| CchFlushError {
-            def: def.clone(),
-            name: index_name(g, def),
-            cause,
-        })?;
+        let (cch, how) = match update(g, def, hierarchy, changes) {
+            Ok(done) => done,
+            Err(CchError::InvalidWeight) => {
+                return Err(CchFlushError {
+                    def: def.clone(),
+                    name: index_name(g, def),
+                    cause: CchError::InvalidWeight,
+                });
+            }
+            // Not the write's fault: the builder builds the index again, or records why not.
+            Err(_) => (None, Update::Rebuild),
+        };
         #[cfg(test)]
         tests::UPDATES.with(|u| u.borrow_mut().push(how));
         match cch {
@@ -519,6 +531,10 @@ fn update(
     hierarchy: &Cch,
     changes: &CchChanges,
 ) -> Result<(Option<Cch>, Update), CchError> {
+    #[cfg(test)]
+    if let Some(cause) = tests::FAIL_UPDATE.take() {
+        return Err(cause);
+    }
     if changes.structural {
         return Ok((None, Update::Rebuild));
     }
@@ -613,7 +629,7 @@ mod tests {
     use rand::{RngExt, SeedableRng};
 
     use super::super::testkit::{Edit, EditGraph, INDEXED, RealEdge, entries, random_edit_batch};
-    use super::super::{Cch, CchIndexDef};
+    use super::super::{Cch, CchError, CchIndexDef};
     use super::Update;
     use crate::graph::graph::Graph;
     use crate::graph::graphblas::matrix::Matrix;
@@ -635,6 +651,9 @@ mod tests {
         /// Scoped attempts on this thread that found a pair the change set had not marked
         /// structural but the hierarchy cannot absorb.
         pub(super) static MISCLASSIFIED: Cell<usize> = const { Cell::new(0) };
+        /// An error the next [`update`](super::update) on this thread returns, as a resource
+        /// limit or a bug would.
+        pub(super) static FAIL_UPDATE: Cell<Option<CchError>> = const { Cell::new(None) };
     }
 
     /// The updates made since `start` (an earlier [`updates_len`]).
@@ -1887,6 +1906,32 @@ mod tests {
             add_edge(&mut rebuilt, s, t, oracle_weight_of(&g, id));
         }
         check_exact(&db, &def, &rebuilt.oracle(), "overflow");
+    }
+
+    /// An index that cannot be updated for a reason that is not the write's (a resource limit,
+    /// a bug in the update) does not fail the write: it is handed to the builder, which builds
+    /// it again from the published graph. Only an invalid weight, which the write-time check
+    /// should have refused, still fails the write.
+    #[test]
+    fn an_index_that_cannot_be_updated_is_rebuilt_and_the_write_goes_on() {
+        let edges = [(0, 1, Some(2.0), INDEXED[0]), (1, 2, Some(3.0), INDEXED[0])];
+        let mut db = Db::new("cch_update_error");
+        load(&mut db, 3, &edges);
+        let def = db.create_index(&[0], "w");
+
+        let start = updates_len();
+        FAIL_UPDATE.set(Some(CchError::Internal("injected")));
+        db.ok(&format!("{} SET r.w = 5.0", pair(0, 1)));
+        assert_eq!(updates_since(start), [Update::Rebuild]);
+        // The harness ran the builder's part: the index is built again, with the write.
+        check(&db, &def, &weights(3, &[(0, 1, 5.0), (1, 2, 3.0)]));
+
+        FAIL_UPDATE.set(Some(CchError::InvalidWeight));
+        let error = db
+            .write(&format!("{} SET r.w = 6.0", pair(0, 1)))
+            .expect_err("an invalid weight at the flush fails the write");
+        assert!(error.contains("got past the write-time check"), "{error}");
+        check(&db, &def, &weights(3, &[(0, 1, 5.0), (1, 2, 3.0)]));
     }
 
     /// Nodes created with no indexed edge grow the graph's node capacity past the hierarchy's,

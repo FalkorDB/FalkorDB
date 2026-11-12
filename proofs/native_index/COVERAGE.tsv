@@ -332,9 +332,9 @@ graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::multi_edge_pass	405	
 graph/src/index/falkordb/cch/input.rs	is_valid_weight	41	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
 graph/src/index/falkordb/cch/input.rs	CchInput::weights_for	133	NOT COVERED	not modelled yet: CCH write maintenance (#3214, #3363)
 graph/src/index/falkordb/cch/maint.rs	check_edge_weights	344	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
-graph/src/index/falkordb/cch/maint.rs	type_name	559	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
-graph/src/index/falkordb/cch/maint.rs	attribute_name	568	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
-graph/src/index/falkordb/cch/maint.rs	index_name	577	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
+graph/src/index/falkordb/cch/maint.rs	type_name	575	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
+graph/src/index/falkordb/cch/maint.rs	attribute_name	584	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
+graph/src/index/falkordb/cch/maint.rs	index_name	593	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	302	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; nodeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; edgeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/index/falkordb/range.rs	RangeKind::for_each_stored_key	43	NOT COVERED	native Range column (#3740): trait signature; not modelled yet
@@ -400,7 +400,7 @@ graph/src/index/falkordb/cch/maint.rs	edges_deleted	238	NOT COVERED	not modelled
 graph/src/index/falkordb/cch/maint.rs	edge_attrs_set	260	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
 graph/src/index/falkordb/cch/maint.rs	record	297	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
 graph/src/index/falkordb/cch/maint.rs	spanning	317	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	Display::fmt	400	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	flush	461	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	update	516	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	Display::fmt	401	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	flush	466	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	update	528	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::rebuild_cch_in_background	1258	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
