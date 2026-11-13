@@ -7,15 +7,21 @@
 # never carry their own copy. New platforms (see #608) are added here.
 #
 # Each cell extracts the .so from the `artifact` target of its Dockerfile (for
-# x64/arm64v8, the exact .so the runtime image ships) and uploads it as
-# `falkordb-<suffix>.so` together with its `.sha256`. Cells are independent
-# (fail-fast: false) and run on native runners (no QEMU) for maximum parallelism.
+# x64/arm64v8, the exact .so the runtime image ships) and, unless the cell is
+# `test_only`, uploads it as `falkordb-<suffix>.so` together with its `.sha256`.
+# Cells are independent (fail-fast: false) and run on native runners (no QEMU)
+# for maximum parallelism.
 #
-# Cells marked `image` (rhel9, amazonlinux2023) also build their Dockerfile's
-# `server` target, the falkordb-server image for that OS, and start it to check
-# that the module loads and answers a query. With `export_images` the image is
-# uploaded too, as `image-falkordb-server-<suffix>`, for the release to push.
-# x64/arm64v8 have no such step: the merge queue builds the Debian images.
+# Cells marked `image` (rhel9, amazonlinux2023, alpine) also build their
+# Dockerfile's `server` target, the falkordb-server image for that OS, and start
+# it to check that the module loads and answers a query. With `export_images`
+# the image is uploaded too, as `image-falkordb-server-<suffix>`, for the
+# release to push. x64/arm64v8 have no such step: the merge queue builds the
+# Debian images.
+#
+# Cells marked `test_only` (alpine) are built and smoke-tested like any other,
+# but upload nothing and are left out of the `suffixes`/`image_suffixes`
+# outputs, so a release does not ship them.
 
 name: Build artifacts (reusable)
 
@@ -53,13 +59,15 @@ on:
     outputs:
       suffixes:
         description: >-
-          JSON array of the suffixes this run built. The release's publish step
-          requires an artifact for every one of them.
+          JSON array of the suffixes this run built, `test_only` cells
+          excluded. The release's publish step requires an artifact for every
+          one of them.
         value: ${{ jobs.cells.outputs.suffixes }}
       image_suffixes:
         description: >-
-          JSON array of the suffixes this run built a server image for. The
-          release's image push requires every one of them.
+          JSON array of the suffixes this run built a server image for,
+          `test_only` cells excluded. The release's image push requires every
+          one of them.
         value: ${{ jobs.cells.outputs.image_suffixes }}
 
 jobs:
@@ -77,16 +85,22 @@ jobs:
           PLATFORMS: ${{ inputs.platforms }}
         run: |
           set -euo pipefail
-          # {suffix, arch, platform, runner, dockerfile, build_image, cxx, image}.
+          # {suffix, arch, platform, runner, dockerfile, build_image, cxx, image[, test_only]}.
           # `dockerfile` provides the `artifact` target; `build_image` is the
           # chef/builder base (Debian toolchain image) or "" for self-contained
           # per-OS Dockerfiles; `cxx` is the C++ compiler passed to the builder;
           # `image` says the Dockerfile's `server` target is built here too.
+          # `test_only` (missing means false): build and smoke-test but upload
+          # nothing, because release-tag.yml uploads every falkordb-*.so
+          # artifact; dropping them from `suffixes` alone would not keep them
+          # out of a release.
           ALL='[
             {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false},
             {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false},
             {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++","image":true},
-            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true}
+            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true},
+            {"suffix":"alpine-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"test_only":true},
+            {"suffix":"alpine-arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"test_only":true}
           ]'
           if [ -z "${PLATFORMS// /}" ] || [ "$PLATFORMS" = "all" ]; then
             CELLS=$(printf '%s' "$ALL" | jq -c .)
@@ -99,14 +113,14 @@ jobs:
             fi
             CELLS=$(printf '%s' "$ALL" | jq -c --argjson want "$WANT" '[ .[] | select(.suffix as $s | $want | index($s)) ]')
           fi
-          SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[].suffix ]')
-          IMAGE_SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[] | select(.image) | .suffix ]')
+          SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[] | select(.test_only | not) | .suffix ]')
+          IMAGE_SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[] | select(.image and (.test_only | not)) | .suffix ]')
           {
             echo "cells=$CELLS"
             echo "suffixes=$SUFFIXES"
             echo "image_suffixes=$IMAGE_SUFFIXES"
           } >> "$GITHUB_OUTPUT"
-          echo "Building: $SUFFIXES (server images: $IMAGE_SUFFIXES)"
+          echo "Building: $(printf '%s' "$CELLS" | jq -c '[ .[].suffix ]') (published: $SUFFIXES; published server images: $IMAGE_SUFFIXES)"
 
   build:
     needs: cells
@@ -191,6 +205,7 @@ jobs:
           cat "$DIST/falkordb-${SUFFIX}.so.sha256"
 
       - name: Upload artifact
+        if: ${{ !matrix.test_only }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: falkordb-${{ matrix.suffix }}.so
@@ -230,7 +245,19 @@ jobs:
           set -euo pipefail
           docker load --input "$TAR"
           docker run -d --name smoke "falkordb-server:${SUFFIX}"
-          trap 'rc=$?; if [ "$rc" -ne 0 ]; then docker logs smoke; fi; docker rm -f smoke >/dev/null' EXIT
+          trap 'rc=$?; if [ "$rc" -ne 0 ]; then docker logs smoke; docker logs smoke-args || true; docker logs smoke-fallback || true; fi; docker rm -f smoke smoke-args smoke-fallback >/dev/null' EXIT
+          # run.sh hands the server its own args variable, or the other one when
+          # its own is unset, and never joins the two. smoke-args sets both, to
+          # different configs: the server must show its own setting and not the
+          # other's. smoke-fallback sets only the other server's variable.
+          SERVER=$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "falkordb-server:${SUFFIX}" | sed -n 's/^FALKORDB_SERVER=//p')
+          case "$SERVER" in
+            redis) OTHER=VALKEY_ARGS ;;
+            valkey) OTHER=REDIS_ARGS ;;
+            *) echo "::error::FALKORDB_SERVER is '$SERVER', expected redis or valkey"; exit 1 ;;
+          esac
+          docker run -d --name smoke-args -e "REDIS_ARGS=--maxclients 77" -e "VALKEY_ARGS=--hz 33" "falkordb-server:${SUFFIX}"
+          docker run -d --name smoke-fallback -e "${OTHER}=--hz 44" "falkordb-server:${SUFFIX}"
           # Outputs are captured before matching: `docker exec ... | grep -q`
           # under pipefail reports 141 when grep exits early.
           for i in $(seq 1 30); do
@@ -245,10 +272,29 @@ jobs:
           # PID 1 is redis-server: run.sh and gosu both exec into it.
           UIDS=$(docker exec smoke sh -c 'while read -r k v _; do if [ "$k" = Uid: ]; then echo "$v"; fi; done < /proc/1/status')
           if [ "$UIDS" != "999" ]; then echo "::error::redis-server runs as uid '$UIDS', expected 999"; exit 1; fi
-          echo "OK: falkordb-server:${SUFFIX} loads the module, answers, and runs as falkordb"
+          wait_pong() {
+            for i in $(seq 1 30); do
+              if [ "$(docker exec "$1" redis-cli ping 2>/dev/null || true)" = "PONG" ]; then return 0; fi
+              sleep 1
+            done
+            echo "::error::the server in $1 did not start"; exit 1
+          }
+          config() { docker exec "$1" redis-cli CONFIG GET "$2" | sed -n 2p; }
+          wait_pong smoke-args
+          MAXCLIENTS=$(config smoke-args maxclients)
+          HZ=$(config smoke-args hz)
+          case "$SERVER:$MAXCLIENTS:$HZ" in
+            redis:77:33 | valkey:77:33) echo "::error::${SERVER} got both REDIS_ARGS and VALKEY_ARGS (maxclients $MAXCLIENTS, hz $HZ)"; exit 1 ;;
+            redis:77:* | valkey:*:33) ;;
+            *) echo "::error::${SERVER} did not get its own args variable (maxclients $MAXCLIENTS, hz $HZ)"; exit 1 ;;
+          esac
+          wait_pong smoke-fallback
+          HZ=$(config smoke-fallback hz)
+          if [ "$HZ" != "44" ]; then echo "::error::${SERVER} with only ${OTHER} set got hz '$HZ', expected 44"; exit 1; fi
+          echo "OK: falkordb-server:${SUFFIX} loads the module, answers, runs as falkordb, and takes ${SERVER}'s own args, else the other's, never both"
 
       - name: Upload falkordb-server image (${{ matrix.suffix }})
-        if: matrix.image && inputs.export_images
+        if: matrix.image && inputs.export_images && !matrix.test_only
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image-falkordb-server-${{ matrix.suffix }}

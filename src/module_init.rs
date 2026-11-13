@@ -141,6 +141,67 @@ unsafe extern "C" fn on_fork_child() {
     }
 }
 
+/// Point this module's view of `environ` at a snapshot of the live environment.
+///
+/// Valkey `dlopen`s modules with `RTLD_DEEPBIND`, so the module and its
+/// dependencies (notably libomp) bind `environ` to libc's own definition
+/// before the global scope. When the server executable copy-relocates
+/// `environ` (Ubuntu's valkey-server package does), libc's startup code and
+/// `setenv` only ever update that copy, leaving libc's original NULL. libomp
+/// iterates `environ` directly during its first initialization and segfaults
+/// on the NULL.
+///
+/// When both views are already the same object (Redis, or a valkey-server
+/// without the copy relocation) this is a no-op. Valkey passes
+/// `RTLD_DEEPBIND` only on glibc and FreeBSD (musl ignores it), and macOS
+/// dylibs must not reference `environ` directly. FalkorDB ships only for
+/// Linux and macOS, so the helper exists only on Linux.
+#[cfg(target_os = "linux")]
+unsafe fn sync_deepbind_environ() {
+    unsafe extern "C" {
+        static mut environ: *mut *mut libc::c_char;
+    }
+    unsafe {
+        // `dlopen(NULL)` searches the global scope starting at the executable,
+        // which yields the copy-relocated `environ` that libc keeps updated.
+        let main = libc::dlopen(std::ptr::null(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        if main.is_null() {
+            return;
+        }
+        let live = libc::dlsym(main, c"environ".as_ptr()).cast::<*mut *mut libc::c_char>();
+        libc::dlclose(main);
+        let ours = &raw mut environ;
+        if live.is_null() || live == ours {
+            return;
+        }
+        // Install an owned, leaked snapshot rather than aliasing `*live`: the
+        // live array is typically the one glibc's `setenv` allocated, so a
+        // later `setenv` (e.g. libomp registering itself) may `realloc` it and
+        // leave `*ours` dangling. Copy the strings too: a `putenv` caller owns
+        // its buffer and may free it after `unsetenv`, so borrowing it could
+        // leave the snapshot pointing at freed memory.
+        let snapshot = graph::env_snapshot::leak_deep_copy(*live);
+        // The snapshot is a point-in-time view: a later `setenv` updates only
+        // the executable's copy, so code that scans `environ` directly (e.g.
+        // `std::env::vars()`) will not see it. That includes every other
+        // module the server loaded with `RTLD_DEEPBIND`, since they share
+        // libc's `environ`; they saw NULL before, so this is still an
+        // improvement. `getenv`/`std::env::var` go through libc and are
+        // unaffected. libomp only needs it once, at init.
+        //
+        // SAFETY: `ours` points to libc's `char **environ`; this runs on the
+        // main thread during module load. At startup no other thread reads
+        // it. Under a runtime `MODULE LOAD`, a thread of an earlier
+        // DEEPBIND-loaded module could read it concurrently; that is a single
+        // aligned pointer store, so it sees either the old or the new array,
+        // both NULL-terminated. `*live` and its strings are only read here.
+        // The snapshot owns both the pointer array and every string, all
+        // leaked, so it stays valid for the life of the process whatever a
+        // later `setenv`, `putenv` or `unsetenv` does to the live environment.
+        *ours = snapshot;
+    }
+}
+
 pub fn graph_init(
     ctx: &Context,
     args: &[redis_module::RedisString],
@@ -209,6 +270,10 @@ pub fn graph_init(
         if RediSearch_SetDefaultScorer(c"TFIDF".as_ptr()) != REDISMODULE_OK as c_int {
             ctx.log_warning("Failed to set RediSearch default scorer to TFIDF");
         }
+        // Must run after the `KMP_*` `set_var` calls above and before
+        // GraphBLAS starts libomp, which reads `environ` once at init.
+        #[cfg(target_os = "linux")]
+        sync_deepbind_environ();
         if let Err(err) = init(
             RedisModule_Alloc,
             RedisModule_Calloc,

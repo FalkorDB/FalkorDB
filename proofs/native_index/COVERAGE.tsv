@@ -4,9 +4,12 @@ graph/src/index/falkordb/encode.rs	encode_numeric	29	PROVEN	encodeNumeric: filte
 graph/src/index/falkordb/encode.rs	encode_f64	50	PROVEN	encodeF64 (bit-level f64): encodeF64_cmp, encodeF64_inj, encodeF64_negZero, encodeF64_bounds, encodeF64_inf_extremes
 graph/src/index/falkordb/numeric.rs	NumericIndex::add_encoded	387	NOT COVERED	native Range column (#3740): RangeKind impl since the cleanup: takes tuples the column already sorted, fills only its two trees and skips an empty share; the Lean addEncoded sorts first; re-target pending
 graph/src/index/falkordb/numeric.rs	NumericIndex::remove_encoded	405	NOT COVERED	native Range column (#3740): RangeKind impl since the cleanup: takes tuples the column already sorted and skips an empty share; the Lean removeEncoded sorts first; re-target pending
-graph/src/index/falkordb/numeric.rs	NumericIndex::is_empty	417	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); isEmpty_spec
-graph/src/index/falkordb/numeric.rs	DocIter::next	56	PROVEN	dispatch only (One -> RangeIter::next, cow_btree range_spec; Many -> UnionIter::next, unionNext_spec): lookup_mem, query_spec
-graph/src/index/falkordb/numeric.rs	UnionIter::next	175	PROVEN	unionNext/UState: unionNext_spec (each next yields the head of the remaining output and leaves its tail; None only when nothing remains), unionIter_initial (a KeySet::Keys lookup starts at (keys, no cursor); remaining output = lookup (.keys ks))
+graph/src/index/falkordb/numeric.rs	NumericIndex::is_empty	464	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); isEmpty_spec
+graph/src/index/falkordb/numeric.rs	DocIter::next	61	PROVEN	dispatch only (One -> RangeIter::next, cow_btree range_spec; Many -> UnionIter::next, unionNext_spec): lookup_mem, query_spec
+graph/src/index/falkordb/numeric.rs	DistinctIter::new	85	NOT COVERED	cross-attribute union (#3741): not modelled yet
+graph/src/index/falkordb/numeric.rs	DistinctIter::next	97	NOT COVERED	cross-attribute union (#3741): not modelled yet
+graph/src/index/falkordb/numeric.rs	DocIter::next/Distinct	61	NOT COVERED	cross-attribute union (#3741): the Distinct arm dispatches to DistinctIter::next, not modelled yet
+graph/src/index/falkordb/numeric.rs	UnionIter::next	222	PROVEN	unionNext/UState: unionNext_spec (each next yields the head of the remaining output and leaves its tail; None only when nothing remains), unionIter_initial (a KeySet::Keys lookup starts at (keys, no cursor); remaining output = lookup (.keys ks))
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::add	52	PROVEN	IndexColumn.add: indexColumn_delegates (glue)
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::remove	63	PROVEN	IndexColumn.remove: indexColumn_delegates (glue)
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::add_batch	74	PROVEN	IndexColumn.addBatch: indexColumn_delegates (glue)
@@ -15,8 +18,8 @@ graph/src/index/falkordb/falkordb_index.rs	IndexColumn::encode_value	98	PROVEN	I
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::add_encoded	122	PROVEN	IndexColumn.addEncoded: indexColumn_delegates (glue), addEncoded_spec
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::remove_encoded	132	PROVEN	IndexColumn.removeEncoded: indexColumn_delegates (glue), removeEncoded_spec
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::is_empty	158	PROVEN	IndexColumn.isEmpty: indexColumn_delegates (glue)
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::new	605	PROVEN	FalkorDbIndex.new: new_empty
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::is_empty	611	PROVEN	FalkorDbIndex.isEmpty: isEmpty_spec', new_empty
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::new	619	PROVEN	FalkorDbIndex.new: new_empty
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::is_empty	625	PROVEN	FalkorDbIndex.isEmpty: isEmpty_spec', new_empty
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::has_columns	520	PROVEN	hasColumns: hasColumns_spec, hasColumns_of_hasColumn
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::len	529	PROVEN	len: len_spec
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::columns	535	PROVEN	columns: columns_setColumns, node_edge_independent
@@ -65,15 +68,15 @@ graph/src/graph/graph.rs	query_index_nodes	4221	NOT COVERED	native Range column 
 graph/src/graph/graph.rs	query_index_edges	4239	NOT COVERED	native Range column (#3740): query_index_numeric_edges until #3736; wraps query_column, re-target pending
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	302	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; nodeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; edgeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
-graph/src/index/falkordb/numeric.rs	EncodedTuples::scalars	222	PROVEN	EncodedTuples.scalars: encodedTuples_spec
-graph/src/index/falkordb/numeric.rs	EncodedTuples::is_empty	230	PROVEN	EncodedTuples.isEmpty: encodedTuples_spec
+graph/src/index/falkordb/numeric.rs	EncodedTuples::scalars	269	PROVEN	EncodedTuples.scalars: encodedTuples_spec
+graph/src/index/falkordb/numeric.rs	EncodedTuples::is_empty	277	PROVEN	EncodedTuples.isEmpty: encodedTuples_spec
 graph/src/index/falkordb/numeric.rs	EncodedTuples::len	236	PROVEN	EncodedTuples.len: encodedTuples_spec
 graph/src/index/falkordb/numeric.rs	EncodedTuples::clear	241	PROVEN	EncodedTuples.clear: encodedTuples_spec
 graph/src/index/falkordb/numeric.rs	EncodedTuples::sort_dedup	247	PROVEN	EncodedTuples.sortDedup (sort_unstable + dedup): encodedTuples_spec, sortDedup_spec (sorted, unique, same members)
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::push_encoded	110	PROVEN	IndexColumn.pushEncoded: pushAttr_scalar, tupleOf_numeric (appends enc key id iff the column indexes the value)
 graph/src/index/falkordb/falkordb_index.rs	BuildCursor::precedes	417	PROVEN	BuildCursor.precedes: precedes_spec (node by id, edge by (src, dst) tuple <); the unreachable! on a kind mix never fires: kind_new, kind_place, scan_kind
-graph/src/index/falkordb/falkordb_index.rs	BuildCursor::new	550	PROVEN	BuildCursor.new: new_cursor, kind_new
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::entry	667	PROVEN	FalkorDbIndex.entry: entry_spec (hmGet of the entity map)
+graph/src/index/falkordb/falkordb_index.rs	BuildCursor::new	564	PROVEN	BuildCursor.new: new_cursor, kind_new
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::entry	681	PROVEN	FalkorDbIndex.entry: entry_spec (hmGet of the entity map)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::create_building	588	PROVEN	createBuilding: entry_createBuilding (Building at BuildCursor.new), numeric_createBuilding, node_edge_independent
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::insert_column	604	PROVEN	insertColumn: entry_insertColumn; #3566: also indexes_created += 1, the entry's generation: Batch.V.createEntry, createEntry_generation
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::entry	322	PROVEN	IndexColumn impl of the trait fn: FalkorDbIndex.entry (entry_spec)
@@ -99,7 +102,7 @@ graph/src/index/falkordb/graph_writes.rs	scan	569	PROVEN	scan: scan_sorted (sort
 graph/src/index/falkordb/graph_writes.rs	scan_nodes	594	PROVEN	scanNodes: scanNodes_tuples, scanNodes_missing, scanNodes_below_cursor (read nodes = those that precede the returned cursor), scanNodes_all
 graph/src/index/falkordb/graph_writes.rs	scan_edges	630	PROVEN	scanEdges/edgeLoop: edgeLoop_spec (prefix read, a multi-edge pair never split), scanEdges_below_cursor, scanEdges_missing, scanEdges_all, edgeLoop_all
 graph/src/index/falkordb/numeric.rs	KeySet::distinct	84	PROVEN	KeySet.distinct: distinct_mem (sorted, same members), lookup_distinct_mem, keysOf_sorted
-graph/src/index/falkordb/numeric.rs	KeySet::contains	104	PROVEN	KeySet.contains/matchesValue (Keys = binary_search over a sorted list = membership): distinct_mem, keysOf_sorted, lookup_mem, lookup_fromEntries
+graph/src/index/falkordb/numeric.rs	KeySet::contains	151	PROVEN	KeySet.contains/matchesValue (Keys = binary_search over a sorted list = membership): distinct_mem, keysOf_sorted, lookup_mem, lookup_fromEntries
 graph/src/index/falkordb/numeric.rs	NumericIndex::range_keys	294	PROVEN	rangeKeys/rangeBounds (checked_add/checked_sub branches): range_eq, range_keys, rangeBounds_eq
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::rows_at	151	PROVEN	IndexColumn.rowsAt (= NumericIndex.pointKey): rows_mem
 graph/src/index/falkordb/falkordb_index.rs	EqualCandidates::rows	299	PROVEN	EqualCandidates.rows: rows_mem (exactly the ids whose value shares the key), equalCandidates_complete
@@ -169,7 +172,7 @@ graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_add	443	PROVEN	Cch.c
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::indexer_insert	356	PROVEN	Rebase.IndexColumn.indexerInsert: indexerInsert_mem, insert_inv (Inv preserved for the state the batch leaves, given Frame and the batch's content), placedIn_edge_spec/placedIn_node_spec (the published column keeps its tuples; the batch adds those of entities no writer changed; written entities placed in [from, next) add their tuple as published has it) (#3568)
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::batch_len	382	PROVEN	Memory.IndexColumn.batchLen: batchLen_spec (= EncodedTuples::len)
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::memory_usage	429	PROVEN	Memory.IndexColumn.memoryUsage (delegates to NumericIndex::memory_usage = CowBTree::heap_bytes, proved in cow_btree heapBytes_eq for a TreeWF tree (every reachable tree is: Reachable_wf_asserted); the walk is the parameter hb) (#3569)
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::memory_usage	636	PROVEN	Memory.memoryUsage: memoryUsage_add, memoryUsage_nil (sum over every node and edge column; CCH not counted) (#3569)
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::memory_usage	650	PROVEN	Memory.memoryUsage: memoryUsage_add, memoryUsage_nil (sum over every node and edge column; CCH not counted) (#3569)
 graph/src/index/falkordb/numeric.rs	NumericIndex::memory_usage	423	PROVEN	Memory.NumericIndex.memoryUsage (= tree.heap_bytes(); CowBTree::heap_bytes proved in cow_btree heapBytes_eq, for a TreeWF tree: every reachable tree is, Reachable_wf_asserted) (#3569)
 graph/src/index/falkordb/versioned.rs	catch_up_by	175	PROVEN	Batch.catchUpBy: Rebase.catchUpBy_refresh_iff, catchUpBy_no_writes, catchUpBy_empty_batch, catchUpBy_many_writes, catchUpBy_saturating (u64 saturating_mul) (#3568)
 graph/src/index/falkordb/versioned.rs	VersionedIndex::indexer_insert	274	PROVEN	trait signature; the IndexColumn impl: Rebase.indexerInsert_mem (#3568)
@@ -239,9 +242,9 @@ graph/src/index/falkordb/encode.rs	for_each_stored_key	81	NOT COVERED	numeric ar
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::for_each_stored_key	112	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
 graph/src/index/falkordb/falkordb_index.rs	ScanFilter::one	440	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
 graph/src/index/falkordb/falkordb_index.rs	ScanFilter::resolve	454	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::for_each_stored_key	895	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::intersect_columns	1077	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::intersect_columns::group	1085	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::for_each_stored_key	909	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::combine_columns	1040	NOT COVERED	cross-attribute intersection and union (#3741): not modelled yet (intersect_columns until #3737)
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::combine_columns::group	1050	NOT COVERED	cross-attribute intersection and union (#3741): not modelled yet
 graph/src/index/falkordb/numeric.rs	EncodedTuples::index	202	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
 graph/src/index/falkordb/numeric.rs	EncodedTuples::index_mut	211	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
 graph/src/index/falkordb/numeric.rs	NumericIndex::tree_mut	282	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
@@ -269,7 +272,7 @@ graph/src/index/falkordb/cch/query.rs	erase_loops	352	NOT COVERED	not modelled y
 graph/src/index/falkordb/numeric.rs	KeySet::of_keys	94	NOT COVERED	native Range column (#3740): a key set from loose keys, Empty when there are none; not modelled yet
 graph/src/index/falkordb/numeric.rs	KeySet::and	124	NOT COVERED	native Range column (#3740): two predicates on one scalar under AND, folded on keys (window meets window, a point set keeps what the other side holds); not modelled yet
 graph/src/index/falkordb/numeric.rs	NumericIndex::for_each_stored_key	376	NOT COVERED	native Range column (#3740): RangeKind impl; delegates to encode::for_each_stored_key; not modelled yet
-graph/src/index/falkordb/numeric.rs	NumericIndex::scalars	427	NOT COVERED	native Range column (#3740): RangeKind impl; the scalar-tree half of the old NumericIndex::lookup; not modelled yet
+graph/src/index/falkordb/numeric.rs	NumericIndex::scalars	474	NOT COVERED	native Range column (#3740): RangeKind impl; the scalar-tree half of the old NumericIndex::lookup; not modelled yet
 graph/src/index/falkordb/numeric.rs	NumericIndex::lists_holding	454	NOT COVERED	native Range column (#3740): RangeKind impl; a point lookup in the array tree, the old array_contains; not modelled yet
 graph/src/index/falkordb/numeric.rs	NumericIndex::is_scalar_in	461	NOT COVERED	native Range column (#3740): RangeKind impl; the scan's scalar check, through the stored-key encoder; not modelled yet
 graph/src/index/falkordb/numeric.rs	NumericIndex::is_list_holding	468	NOT COVERED	native Range column (#3740): RangeKind impl; the scan's list check, through the stored-key encoder; not modelled yet

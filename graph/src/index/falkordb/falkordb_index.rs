@@ -24,7 +24,7 @@ use crate::runtime::value::Value;
 use super::cch::{CchError, CchIndex, CchIndexDef};
 use super::encode::KeyKind;
 use super::graph_writes;
-use super::numeric::{DocIter, EncodedTuples};
+use super::numeric::{DistinctIter, DocIter, EncodedTuples};
 use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
 use super::range::{RangeIndex, Selection, attributes_of};
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
@@ -440,11 +440,16 @@ impl VersionedIndex for IndexColumn {
 ///
 /// `A` names an attribute: as the query names it, or as a scan has resolved it
 /// ([`Self::resolve`]), so a scan looks each name up once rather than once per entity.
+///
+/// Each variant holds every attribute the query constrains, with what the built column for it
+/// selects: one for a query on one attribute, one per attribute for a conjunction or a union
+/// across several.
 #[derive(Clone, Debug)]
-pub struct ScanFilter<A = Arc<String>> {
-    /// Each attribute the query constrains, with what the built column for it selects. One for a
-    /// query on one attribute; one per attribute for a conjunction across several.
-    conditions: Vec<(A, Selection)>,
+pub enum ScanFilter<A = Arc<String>> {
+    /// A conjunction: an entity matches when it matches every condition.
+    All(Vec<(A, Selection)>),
+    /// A union across attributes: an entity matches when it matches any one condition.
+    Any(Vec<(A, Selection)>),
 }
 
 impl ScanFilter {
@@ -453,40 +458,57 @@ impl ScanFilter {
         attribute: Arc<String>,
         selection: Selection,
     ) -> Self {
-        Self {
-            conditions: vec![(attribute, selection)],
-        }
+        Self::All(vec![(attribute, selection)])
     }
 }
 
 impl<A> ScanFilter<A> {
-    /// The same filter with each attribute resolved by `resolve`, or `None` when one does not
-    /// resolve. A scan resolves names to the graph's attribute ids: no entity holds a name the
-    /// graph has never seen, so such a filter matches nothing.
+    /// The same filter with each attribute resolved by `resolve`. A scan resolves names to the
+    /// graph's attribute ids: no entity holds a name the graph has never seen, so a condition on
+    /// one matches nothing. `None` when the whole filter therefore matches nothing.
     pub fn resolve<B>(
         self,
         mut resolve: impl FnMut(&A) -> Option<B>,
     ) -> Option<ScanFilter<B>> {
-        let conditions = self
-            .conditions
-            .into_iter()
-            .map(|(attribute, selection)| Some((resolve(&attribute)?, selection)))
-            .collect::<Option<_>>()?;
-        Some(ScanFilter { conditions })
+        let (all, conditions) = match self {
+            Self::All(conditions) => (true, conditions),
+            Self::Any(conditions) => (false, conditions),
+        };
+        let mut resolved = Vec::with_capacity(conditions.len());
+        for (attribute, selection) in conditions {
+            match resolve(&attribute) {
+                Some(attribute) => resolved.push((attribute, selection)),
+                // A conjunction needs every attribute; a union only one.
+                None if all => return None,
+                None => {}
+            }
+        }
+        if resolved.is_empty() {
+            return None;
+        }
+        Some(if all {
+            ScanFilter::All(resolved)
+        } else {
+            ScanFilter::Any(resolved)
+        })
     }
 
     /// Whether the built columns answer the query with an entity whose attributes `value_of`
-    /// reads: its value of every attribute is one its column answers with
-    /// ([`Selection::matches`]). An entity missing one of the attributes does not match, as no
-    /// column holds it.
+    /// reads: its value of every attribute (any, for a union) is one its column answers with
+    /// ([`Selection::matches`]). An entity missing an attribute does not match its condition, as
+    /// no column holds it.
     #[must_use]
     pub fn matches(
         &self,
         value_of: impl Fn(&A) -> Option<Value>,
     ) -> bool {
-        self.conditions.iter().all(|(attribute, selection)| {
+        let holds = |(attribute, selection): &(A, Selection)| {
             value_of(attribute).is_some_and(|value| selection.matches(&value))
-        })
+        };
+        match self {
+            Self::All(conditions) => conditions.iter().all(holds),
+            Self::Any(conditions) => conditions.iter().any(holds),
+        }
     }
 }
 
@@ -968,8 +990,8 @@ impl FalkorDbIndex {
     ///   `Building`. The caller scans and keeps what the [`ScanFilter`] matches. This is a timing
     ///   state, not a capability gap, so it must never surface as an error.
     /// * `None` — no such column, or no kind in it serves this predicate (a value of a type no
-    ///   kind holds, a union mixing ranges in, a union spanning attributes). Under
-    ///   `index-falkordb` there is no other index, and the caller turns this into an error.
+    ///   kind holds, a union mixing ranges in). Under `index-falkordb` there is no other index,
+    ///   and the caller turns this into an error.
     #[must_use]
     pub fn query_column(
         &self,
@@ -983,11 +1005,13 @@ impl FalkorDbIndex {
         }
         let first = keys[0];
         if keys.iter().any(|k| *k != first) {
-            // Several attributes: a conjunction intersects one column per attribute. What cannot be
-            // done is answer from a single column: looking every value up in one of them would
-            // return rows the query never asked for.
+            // Several attributes: combine one column per attribute — intersect for a conjunction,
+            // union for a disjunction. What neither can do is answer from a single column: looking
+            // every value up in one of them would return rows the query never asked for.
             return match query {
-                IndexQuery::And(children) => self.intersect_columns(entity, label, children),
+                IndexQuery::And(_) | IndexQuery::Or(_) => {
+                    self.combine_columns(entity, label, query)
+                }
                 _ => None,
             };
         }
@@ -1003,40 +1027,50 @@ impl FalkorDbIndex {
         Some(Ok(entry.index.lookup(selection)))
     }
 
-    /// A conjunction spanning several attributes: intersect one column per attribute.
+    /// A conjunction (`query` an `And`) or a union (an `Or`) spanning several attributes: combine
+    /// one column per attribute.
     ///
-    /// Each attribute's own conjuncts are first collapsed by [`Selection::conjunction`], so this
-    /// only combines one doc stream per attribute. A conjunct that itself spans attributes
-    /// (`a = 1 AND (b = 2 OR c = 3)`) is not regrouped and declines.
+    /// Each attribute's own members are first collapsed by [`Selection::conjunction`] or
+    /// [`Selection::disjunction`], so this only combines one doc stream per attribute. A member
+    /// that itself spans attributes (`a = 1 AND (b = 2 OR c = 3)`) is not regrouped and declines.
     ///
-    /// **Set probe, not a sorted merge.** `DocIter` yields docs in *value* order, not id order —
-    /// deliberately, since Cypher guarantees no order without `ORDER BY`, and merging would cost
-    /// a comparison per doc and force every branch to stay live. Value-ordered streams cannot be
-    /// merge-intersected, so the first attribute is materialised into a set and the rest probe it.
-    /// Memory is proportional to the first attribute's match count; there is no cardinality
-    /// estimate to pick the smallest side with, so the order is the query's.
+    /// An intersection is **materialised**: `DocIter` yields docs in *value* order, not id order —
+    /// deliberately, since Cypher guarantees no order without `ORDER BY`, and merging would cost a
+    /// comparison per doc and force every branch to stay live. Value-ordered streams cannot be
+    /// merge-intersected, so the first attribute is materialised into a set and the rest probe it;
+    /// there is no cardinality estimate to pick the smallest side with, so the order is the
+    /// query's. A union is **lazy**: one column after another, each doc yielded once
+    /// ([`DistinctIter`]) — a doc satisfying several members is one row in Cypher.
     ///
-    /// Every attribute needs a column. A missing one declines the conjunction rather than
-    /// answering from the attributes that have one, which would return rows the conjunction
-    /// excludes. One still `Building` makes the whole conjunction a scan (`Err`, a
-    /// [`ScanFilter`]): intersecting against a half-built column would silently drop rows, which
-    /// is worse than scanning.
-    fn intersect_columns(
+    /// Every attribute needs a column. A missing one declines rather than answering from the
+    /// attributes that have one, which would return rows a conjunction excludes or miss rows a
+    /// union includes. One still `Building` makes the whole query a scan (`Err`, a [`ScanFilter`]):
+    /// combining with a half-built column would silently drop rows, which is worse than scanning.
+    fn combine_columns(
         &self,
         entity: EntityType,
         label: &Arc<String>,
-        children: &[IndexQuery<Value>],
+        query: &IndexQuery<Value>,
     ) -> Option<Result<DocIter, ScanFilter>> {
-        // Regroup the conjuncts per attribute, flattening nested conjunctions, so each column is
-        // asked once for its whole share.
+        // Regroup the members per attribute, flattening the nesting a combinator of the same kind
+        // arrives with (`a IN [..] OR b IN [..]`, `And(And(a, b), c)`), so each column is asked
+        // once for its whole share.
         fn group<'a>(
             children: &'a [IndexQuery<Value>],
+            any: bool,
             out: &mut Vec<(&'a Arc<String>, Vec<&'a IndexQuery<Value>>)>,
         ) -> Option<()> {
             for child in children {
-                if let IndexQuery::And(nested) = child {
-                    group(nested, out)?;
-                    continue;
+                match child {
+                    IndexQuery::And(nested) if !any => {
+                        group(nested, any, out)?;
+                        continue;
+                    }
+                    IndexQuery::Or(nested) if any => {
+                        group(nested, any, out)?;
+                        continue;
+                    }
+                    _ => {}
                 }
                 let mut keys = Vec::new();
                 if !attributes_of(child, &mut keys) {
@@ -1044,7 +1078,7 @@ impl FalkorDbIndex {
                 }
                 let key = *keys.first()?;
                 if keys.iter().any(|k| *k != key) {
-                    return None; // one conjunct spanning columns is not groupable
+                    return None; // one member spanning columns is not groupable
                 }
                 match out.iter_mut().find(|(k, _)| *k == key) {
                     Some((_, qs)) => qs.push(child),
@@ -1053,28 +1087,49 @@ impl FalkorDbIndex {
             }
             Some(())
         }
+        let (children, any) = match query {
+            IndexQuery::And(children) => (children, false),
+            IndexQuery::Or(children) => (children, true),
+            _ => unreachable!("only a conjunction or a union is combined"),
+        };
         let mut per_attr: Vec<(&Arc<String>, Vec<&IndexQuery<Value>>)> = Vec::new();
-        group(children, &mut per_attr)?;
+        group(children, any, &mut per_attr)?;
 
         // Every column is checked, and every attribute's share translated, before any is read: a
         // missing column or an unservable share declines whatever the others' state, and a
         // building column makes it a scan only if every attribute could be answered.
         let mut columns = Vec::with_capacity(per_attr.len());
-        for (attr, conjuncts) in per_attr {
+        for (attr, members) in per_attr {
             let entry = self.entry(entity, label, attr)?;
-            let selection = Selection::conjunction(&conjuncts)?;
+            let selection = if any {
+                Selection::disjunction(&members)?
+            } else {
+                Selection::conjunction(&members)?
+            };
             columns.push((attr, entry, selection));
         }
         if columns.iter().any(|(_, entry, _)| entry.is_building()) {
-            // The scan standing in has to check every attribute, as the intersection would.
-            return Some(Err(ScanFilter {
-                conditions: columns
-                    .into_iter()
-                    .map(|(attr, _, selection)| (attr.clone(), selection))
-                    .collect(),
+            // The scan standing in has to check every attribute, as the combination would.
+            let conditions = columns
+                .into_iter()
+                .map(|(attr, _, selection)| (attr.clone(), selection))
+                .collect();
+            return Some(Err(if any {
+                ScanFilter::Any(conditions)
+            } else {
+                ScanFilter::All(conditions)
             }));
         }
 
+        if any {
+            // Lazy: each column's stream is read only once the ones before it are exhausted, so a
+            // `LIMIT` stops the union early ([`DistinctIter`]).
+            let streams = columns
+                .into_iter()
+                .map(|(_, entry, selection)| entry.index.lookup(selection))
+                .collect();
+            return Some(Ok(DocIter::Distinct(DistinctIter::new(streams))));
+        }
         let mut result: Option<FxHashSet<u64>> = None;
         for (_, entry, selection) in columns {
             let rows = entry.index.lookup(selection);
@@ -1905,6 +1960,105 @@ mod tests {
         assert!(
             candidates(&idx, &Value::Int(1)).is_none(),
             "a Building column cannot rule an entity out"
+        );
+    }
+
+    /// A union across attributes combines one column per attribute: a doc satisfying both members
+    /// is one row. While one of the columns builds, the scan standing in keeps an entity matching
+    /// either member.
+    #[test]
+    fn a_union_across_columns_combines_and_dedups() {
+        let (label, rank, age) = (arc("P"), arc("rank"), arc("age"));
+        let mut idx = FalkorDbIndex::new();
+        idx.create_column(Node, &label, &rank);
+        idx.create_column(Node, &label, &age);
+        for (v, id) in [(Value::Int(5), 1), (Value::Int(6), 2)] {
+            idx.column_mut(Node, &label, &rank).unwrap().add(&v, id);
+        }
+        for (v, id) in [(Value::Int(33), 1), (Value::Int(40), 3)] {
+            idx.column_mut(Node, &label, &age).unwrap().add(&v, id);
+        }
+        let union = |a: Value, b: i64| {
+            IndexQuery::Or(vec![
+                IndexQuery::Equal {
+                    key: rank.clone(),
+                    value: a,
+                },
+                IndexQuery::Equal {
+                    key: age.clone(),
+                    value: Value::Int(b),
+                },
+            ])
+        };
+        let mut got = rows(idx.query_column(Node, &label, &union(Value::Int(5), 40)));
+        got.sort_unstable();
+        assert_eq!(got, vec![1, 3]);
+        assert_eq!(
+            rows(idx.query_column(Node, &label, &union(Value::Int(5), 33))),
+            vec![1],
+            "a doc matching both members is one row"
+        );
+        assert!(
+            idx.query_column(
+                Node,
+                &label,
+                &IndexQuery::Or(vec![
+                    IndexQuery::Equal {
+                        key: rank.clone(),
+                        value: Value::Int(5)
+                    },
+                    IndexQuery::Equal {
+                        key: arc("missing"),
+                        value: Value::Int(1)
+                    },
+                ])
+            )
+            .is_none(),
+            "a member with no column declines: answering from the rest would miss its rows"
+        );
+
+        idx.create_building(Node, &label, &age);
+        let Some(Err(filter)) = idx.query_column(Node, &label, &union(Value::Int(5), 40)) else {
+            panic!("a building column makes the union a scan");
+        };
+        let entity = |n: Option<Value>, a: Option<Value>| {
+            move |attr: &Arc<String>| {
+                if **attr == "rank" {
+                    n.clone()
+                } else {
+                    a.clone()
+                }
+            }
+        };
+        assert!(filter.matches(entity(Some(Value::Int(5)), None)));
+        assert!(filter.matches(entity(None, Some(Value::Int(40)))));
+        assert!(!filter.matches(entity(Some(Value::Int(6)), Some(Value::Int(33)))));
+
+        // A scan resolves the names first. A union keeps a member whose attribute resolves, and
+        // only one with none resolvable matches nothing; a conjunction needs every attribute.
+        let only = |name: &'static str| move |attr: &Arc<String>| (**attr == name).then_some(0u16);
+        let kept = filter
+            .clone()
+            .resolve(only("rank"))
+            .expect("a union keeps its resolvable member");
+        assert!(kept.matches(|_| Some(Value::Int(5))));
+        assert!(filter.resolve(|_| None::<u16>).is_none());
+        let conjunction = IndexQuery::And(vec![
+            IndexQuery::Equal {
+                key: rank.clone(),
+                value: Value::Int(5),
+            },
+            IndexQuery::Equal {
+                key: age.clone(),
+                value: Value::Int(40),
+            },
+        ]);
+        let Some(Err(both)) = idx.query_column(Node, &label, &conjunction) else {
+            panic!("a building column makes the conjunction a scan");
+        };
+        assert!(
+            both.resolve(only("rank")).is_none(),
+            "a conjunction on an attribute the graph never saw matches nothing"
         );
     }
 
