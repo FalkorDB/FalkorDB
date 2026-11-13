@@ -29,13 +29,14 @@
 //! `sibling_edges` and `transposed = false`. When any condition fails the
 //! pair is left alone and the fast/slow paths run as before.
 
+use crate::parser::ast::is_generated_anon_alias;
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use super::super::IR;
 use super::references::ir_references_variable;
 
 fn is_anon(name_opt: Option<&std::sync::Arc<String>>) -> bool {
-    name_opt.is_some_and(|n| n.starts_with("_anon"))
+    name_opt.is_some_and(|n| is_generated_anon_alias(n))
 }
 
 /// True when the QueryRelationship's inline-attrs tree is the empty `{}` map.

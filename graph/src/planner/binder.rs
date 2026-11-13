@@ -28,7 +28,7 @@
 use crate::parser::ast::{
     AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, RawQueryIR, ReduceVars, RegexFn, RegexFnKind, SetItem, SupportAggregation,
-    Variable,
+    Variable, is_generated_anon_alias,
 };
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
@@ -1372,7 +1372,7 @@ impl Binder {
         // Bind relationships, binding any referenced nodes that weren't in the graph
         for relationship in graph.relationships() {
             if relationship.min_hops.is_some()
-                && !relationship.alias.starts_with("_anon")
+                && !is_generated_anon_alias(&relationship.alias)
                 && named_path_names.contains(&relationship.alias)
             {
                 return Err(format!(
@@ -1586,7 +1586,7 @@ impl Binder {
 
         // Validate nodes - only check nodes that are NOT purely endpoints of relationships
         for node in pattern.nodes() {
-            if node.alias.starts_with("_anon") {
+            if is_generated_anon_alias(&node.alias) {
                 continue; // Skip anonymous nodes
             }
 
@@ -1633,7 +1633,7 @@ impl Binder {
 
         // Check relationships for redeclaration
         for rel in pattern.relationships() {
-            if rel.alias.starts_with("_anon") {
+            if is_generated_anon_alias(&rel.alias) {
                 continue; // Skip anonymous relationships
             }
 
@@ -1688,7 +1688,7 @@ impl Binder {
         entity_alias: &Arc<String>,
         attrs: &QueryExpr<Arc<String>>,
     ) -> Result<(), String> {
-        if entity_alias.starts_with("_anon") {
+        if is_generated_anon_alias(entity_alias) {
             return Ok(());
         }
         for idx in attrs.root().indices::<Dfs>() {
@@ -1886,7 +1886,7 @@ impl Binder {
                 // `bind_graph` reuses them and the cleanup below keeps them.
                 if self.use_parent_scope {
                     for name in graph.variables() {
-                        if !name.starts_with("_anon")
+                        if !is_generated_anon_alias(&name)
                             && !self.current_env().contains_key(&name)
                             && !locals.iter().any(|scope| scope.contains_key(&name))
                         {
@@ -1925,7 +1925,7 @@ impl Binder {
                 // fresh and their IDs must be visible to scope_vars so the planner
                 // can avoid ID collisions.
                 self.current_env_mut().retain(|name, _| {
-                    outer_scope_names.contains(name) || name.starts_with("_anon")
+                    outer_scope_names.contains(name) || is_generated_anon_alias(name)
                 });
 
                 let mut new_tree =
@@ -1950,6 +1950,29 @@ impl Binder {
                         root.push_child_tree(child);
                     }
                     return Ok(new_tree);
+                }
+
+                // Traversal patterns are not valid function arguments
+                // (e.g. `exists((p)-->())`) — matches FalkorDB C, which
+                // rejects patterns inside exists(). Bare pattern predicates
+                // (`WHERE (p)-->()`) and pattern comprehensions remain
+                // supported. Checked before the arguments are bound, so it
+                // is the error whatever the pattern's variables are.
+                if let ExprIR::FuncInvocation(func) = node_ref.data()
+                    && func.name == "exists"
+                    && node_ref.children().any(|mut c| {
+                        // `exists(((p)-->()))`: look through the parentheses.
+                        while matches!(c.data(), ExprIR::Paren)
+                            && let Some(inner) = c.children().next()
+                        {
+                            c = inner;
+                        }
+                        matches!(c.data(), ExprIR::Pattern(_))
+                    })
+                {
+                    return Err("Invalid input: traversal patterns are not allowed as \
+                         arguments to exists()"
+                        .to_string());
                 }
 
                 let mut children = node_ref
@@ -2018,20 +2041,6 @@ impl Binder {
                         ExprIR::Property(prop)
                     }
                     ExprIR::FuncInvocation(func) => {
-                        // Traversal patterns are not valid function arguments
-                        // (e.g. `exists((p)-->())`) — matches FalkorDB C,
-                        // which rejects patterns inside exists(). Bare
-                        // pattern predicates (`WHERE (p)-->()`) and pattern
-                        // comprehensions remain supported.
-                        if func.name == "exists"
-                            && children
-                                .iter()
-                                .any(|c| matches!(c.root().data(), ExprIR::Pattern(_)))
-                        {
-                            return Err("Invalid input: traversal patterns are not allowed as \
-                                 arguments to exists()"
-                                .to_string());
-                        }
                         // Compile-time type check: validate argument types
                         // against the function's declared parameter types.
                         // Skip hasLabels — it is generated internally by the parser
@@ -2080,6 +2089,21 @@ impl Binder {
                         unreachable!("produced only by the binder itself")
                     }
                     ExprIR::Pattern(pattern) => {
+                        // A pattern predicate only tests variables already in
+                        // scope; it cannot declare one (`WHERE () -- (n1)`
+                        // with no `n1` bound). Resolve each named alias as a
+                        // plain variable reference is, so an unknown one is
+                        // "not defined", and a parent-scope one is copied in
+                        // before the snapshot below and so is kept.
+                        // Only the parser's own `_anon_<n>` aliases are
+                        // exempt; a user-written name that merely starts
+                        // with `_anon` is a variable like any other.
+                        for name in pattern.variables() {
+                            if !is_generated_anon_alias(&name) {
+                                self.resolve_name(&name, locals)?;
+                            }
+                        }
+
                         // Snapshot outer scope so pattern-local aliases can be
                         // cleaned up after binding (they must not leak outward).
                         let outer_scope_names: HashSet<Arc<String>> =
@@ -2104,7 +2128,7 @@ impl Binder {
                         // the outer scope.  Keep anonymous variables (_anon_*)
                         // since their IDs must remain visible in scope_vars.
                         self.current_env_mut().retain(|name, _| {
-                            outer_scope_names.contains(name) || name.starts_with("_anon")
+                            outer_scope_names.contains(name) || is_generated_anon_alias(name)
                         });
 
                         ExprIR::Pattern(Box::new(result?))
@@ -2164,7 +2188,7 @@ impl Binder {
         allow_reuse: bool,
     ) -> Result<Variable, String> {
         // Anonymous variables (_anon_*) should always be fresh, never reused
-        if !name.starts_with("_anon")
+        if !is_generated_anon_alias(&name)
             && let Some(existing) = self.current_env().get(&name)
         {
             if !allow_reuse {
@@ -2206,7 +2230,7 @@ impl Binder {
         }
 
         // Anonymous variables should also create fresh variables
-        if name.starts_with("_anon") {
+        if is_generated_anon_alias(name) {
             let scope_id = self.env_stack.len() as u32 - 1;
             let var = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
             // Insert with the anon name (unique by construction) to reserve
