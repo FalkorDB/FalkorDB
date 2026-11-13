@@ -236,7 +236,7 @@ class testEffects_02_ValueTypes(_EffectsBase):
         # happened, so the assertion has to go through the rendering.
         self.assert_agree(
             "MATCH (n:VEdge) RETURN toString(n.nz), toString(n.pz)",
-            [['-0', '0']])
+            [['-0.0', '0.0']])
 
         # Infinities, which have no decimal representation to round-trip
         # through and so exercise the float encoding directly.
