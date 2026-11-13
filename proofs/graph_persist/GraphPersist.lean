@@ -87,8 +87,8 @@ vanish on reload — is identical in C (both write only operational ones).
 | `Persist.Store` — `encRoar`/`decRoar`, `encEnt`/`decEnt`, `applyEnt`, `fold_ents` | `RoaringTreemap` codec (serialization.rs:172-241), `AttributeStore::encode_with_range`/`decode_with_count` (attribute_store.rs:1409-1497) |
 | `Persist.Payload` — `encDir`/`decDir`, `encIdx`/`decIdx`, `buildPayloads`, `encodeGraph`, `decPayload`, `applyPR`, `loadFromReader` | `encode_graph`, `build_payloads`, `Graph::encode_payload` (graph.rs:4926), `load_graph_from_reader` |
 | `Persist.MultiKey` — `fillKey`, `keysFrom`, `buildMulti` | `build_multi_key_payloads` (encoder/mod.rs:95-189) |
-| `Persist.KeyRT`, `Fold`, `Pending`, `MultiLoad*` — `rdbKey`, `stepKey`, `runKeys`, `fold_char` | `rdb_load_graph` (decoder/mod.rs:44-174), `decode_payloads_into_pending`, `finalize_pending_graph`, `DECODE_STATE` |
-| `Persist.Indexes` — `rebuild` | `rebuild_indexes` (decoder/mod.rs:345-400) |
+| `Persist.KeyRT`, `Fold`, `Pending`, `MultiLoad*` — `rdbKey`, `stepKey`, `runKeys`, `fold_char` | `rdb_load_graph` (decoder/mod.rs:73-195), `decode_payloads_into_pending`, `finalize_pending_graph`, `DECODE_STATE` |
+| `Persist.Indexes` — `rebuild` | `rebuild_indexes` (decoder/mod.rs:366-421) |
 | `RedisType.AuxData`, `Uuid`, `VKeys`, `Load` | `redis_type.rs`: aux save/load, `on_persistence`, `pre_fork_prepare`, `uuid_v4`, virtual keys, `graph_rdb_save`, `graph_rdb_load`, `finalize_pending_graphs`, `install_graph`, `graphmeta_*` |
 
 Sub-codecs enter as the laws of `Persist.Codecs` (hypotheses, not axioms): header/schema

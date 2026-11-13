@@ -4,7 +4,7 @@
 | here | there (`graph/src/graph/graphblas/serialization.rs`) |
 | --- | --- |
 | `EncodeState`/`disc` | `enum EncodeState` (:130), `#[repr(u64)]` discriminants |
-| `fromU64`     | `from_u64` (:146) |
+| `fromU64`     | `from_u64` (:150) |
 | `Codec`       | `trait Encode::encode` (:34) + `trait Decode::decode` (:64): the contract every impl owes |
 | `encodeWithRangeDefault` / `decodeWithCountDefault` | the `unimplemented!()` defaults (:40 / :76) |
 
@@ -22,20 +22,20 @@ namespace GBWSerial
 
 inductive EncodeState
   | init | nodes | deletedNodes | edges | deletedEdges | graphSchema | labelsMatrices
-  | relationMatrices | adjMatrix | lblsMatrix | final
+  | relationMatrices | adjMatrix | lblsMatrix | cchIndices | final
   deriving DecidableEq, Repr
 
 def disc : EncodeState → Nat
   | .init => 0 | .nodes => 1 | .deletedNodes => 2 | .edges => 3 | .deletedEdges => 4
   | .graphSchema => 5 | .labelsMatrices => 6 | .relationMatrices => 7 | .adjMatrix => 8
-  | .lblsMatrix => 9 | .final => 10
+  | .lblsMatrix => 9 | .cchIndices => 10 | .final => 11
 
 def fromU64 (v : Nat) : Option EncodeState :=
   match v with
   | 0 => some .init | 1 => some .nodes | 2 => some .deletedNodes | 3 => some .edges
   | 4 => some .deletedEdges | 5 => some .graphSchema | 6 => some .labelsMatrices
   | 7 => some .relationMatrices | 8 => some .adjMatrix | 9 => some .lblsMatrix
-  | 10 => some .final | _ => none
+  | 10 => some .cchIndices | 11 => some .final | _ => none
 
 /-- `from_u64` inverts the `repr(u64)` discriminant. -/
 theorem fromU64_disc (s : EncodeState) : fromU64 (disc s) = some s := by cases s <;> rfl
@@ -45,7 +45,7 @@ theorem fromU64_some {v : Nat} {s : EncodeState} (h : fromU64 v = some s) : disc
   unfold fromU64 at h
   split at h <;> (try simp at h) <;> (subst h; rfl)
 
-theorem fromU64_none {v : Nat} (h : 10 < v) : fromU64 v = none := by
+theorem fromU64_none {v : Nat} (h : 11 < v) : fromU64 v = none := by
   unfold fromU64; split <;> first | rfl | omega
 
 /-- The contract of the required methods `encode` (:34) and `decode` (:64). -/
