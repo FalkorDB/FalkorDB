@@ -64,7 +64,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use crate::allocator::{
@@ -729,6 +729,14 @@ pub fn execute_profile(
 /// A write that started as a reader and lost its version to a writer that
 /// committed while it was matching ([`QuerySession::is_stale`]) has mutated and
 /// replied nothing, so it is run again from the start on a fresh session.
+///
+/// Retrying is bounded. Every retry loses to the next writer that commits during
+/// its matching window, so under a steady stream of writes it could run forever
+/// while C finishes in one pass. After [`MAX_STALE_RETRIES`] stale runs the write
+/// runs once more as a writer, holding the write lock from the start like C does,
+/// which no one can make stale. All attempts share one clock and one timeout,
+/// resolved on the first attempt, so `TIMEOUT` and the slow log count from the
+/// first attempt, and a config change during a retry cannot move the deadline.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_query_write(
     session: QuerySession,
@@ -742,9 +750,13 @@ pub fn execute_query_write(
 ) -> Result<(usize, f64), String> {
     let graph = session.graph_arc();
     let facts = session.facts();
+    let started = Instant::now();
+    let mut timeout = None;
+    let mut stale_runs = 0;
     let mut session = session;
     loop {
-        match try_query_write(
+        let attempt_start = Instant::now();
+        let r = try_query_write(
             session,
             ctx,
             key_name,
@@ -752,14 +764,36 @@ pub fn execute_query_write(
             compact,
             first_cached,
             per_query_timeout,
+            &mut timeout,
             profile,
-        ) {
-            Err(WriteAttempt::Stale) => session = QuerySession::begin_with(&graph, facts),
+            started,
+        );
+        let wasted = attempt_start.elapsed();
+        match r {
+            Err(WriteAttempt::Stale) => {
+                stale_runs += 1;
+                session = if stale_runs >= MAX_STALE_RETRIES || wasted >= SLOW_STALE_RUN {
+                    QuerySession::begin_writer_checked(&graph, facts).map_err(|e| e.to_string())?
+                } else {
+                    QuerySession::begin_with(&graph, facts)
+                };
+            }
             Err(WriteAttempt::Failed(err)) => return Err(err),
             Ok(done) => return Ok(done),
         }
     }
 }
+
+/// Stale runs a write that began as a reader may lose before it runs as a writer
+/// for the whole query.
+pub(crate) const MAX_STALE_RETRIES: u32 = 3;
+
+/// A stale run that took this long is not retried as a reader at all. Rerunning it
+/// as a reader risks losing the same race again for as long as it took here,
+/// while waiting for the write lock costs about one more run. Cheap matches keep
+/// retrying (up to [`MAX_STALE_RETRIES`]), since a retry there is cheaper than
+/// queueing for the lock.
+pub(crate) const SLOW_STALE_RUN: Duration = Duration::from_millis(10);
 
 /// Why one run of [`try_query_write`] did not succeed.
 enum WriteAttempt {
@@ -774,7 +808,8 @@ impl From<String> for WriteAttempt {
     }
 }
 
-/// One run of [`execute_query_write`].
+/// One run of [`execute_query_write`]. `timeout` is the write's resolved timeout,
+/// set by the first run and kept for the retries.
 #[allow(clippy::too_many_arguments)]
 fn try_query_write(
     session: QuerySession,
@@ -784,9 +819,10 @@ fn try_query_write(
     compact: bool,
     first_cached: bool,
     per_query_timeout: Option<i64>,
+    timeout: &mut Option<Option<u64>>,
     profile: bool,
+    wall_start: Instant,
 ) -> Result<(usize, f64), WriteAttempt> {
-    let wall_start = Instant::now();
     let Plan {
         plan,
         parameters,
@@ -799,7 +835,21 @@ fn try_query_write(
         IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
     )));
 
-    let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
+    // The budget is for the whole write, so a retry gets what the earlier runs left.
+    let total = match *timeout {
+        Some(total) => total,
+        None => *timeout.insert(compute_effective_timeout(per_query_timeout, true)?),
+    };
+    let timeout_ms = match total {
+        Some(total) => {
+            let spent = u64::try_from(wall_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if spent >= total {
+                return Err(WriteAttempt::Failed("Query timed out".to_string()));
+            }
+            Some(total - spent)
+        }
+        None => None,
+    };
 
     // The private COW version to build into. Forking takes nothing, so an
     // inline writer is never refused because we are still matching; if one
