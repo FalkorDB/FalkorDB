@@ -11,12 +11,12 @@ Argument handling and reply shapes; key access, locks and replication calls are 
 | `effectCmd`       | `effect.rs` `graph_effect` `:25` |
 | `explainLine`, `explainCmd`, `explainCmdA` | `explain.rs` `explain` `:36`, `graph_explain` `:60` (flags `:65`) |
 | `infoSections`, `formatAvg` | `info.rs` `graph_info` `:22`, `format_avg` `:88` |
-| `cReplyName`, `scanLoop` | `list.rs` `c_reply_name` `:47`, `graph_list` `:60` |
+| `cReplyName`, `replyBytes`, `scanPage`, `scanLoop` | `list.rs` `c_reply_name` `:48`, `reply_bytes` `:59`, `graph_list` `:67` |
 | `memArgs`, `memTotal`, `cSchemaName` | `memory.rs` `graph_memory` `:181` (#3053), `memory_report` `:69`, `c_schema_name` `:65` |
-| `slowlogCmd`      | `slowlog.rs` `graph_slowlog` `:16` |
+| `slowlogCmd`      | `slowlog.rs` `graph_slowlog` `:19` |
 | `udfCmd`, `udfLoadArgs`, `udfListArgs` | `udf.rs` `:47-229` |
-| `exited`, `exitCode` | `copy.rs` `graph_copy` `:27` (`waitpid` status decoding) |
-| `restoreCmd`      | `restore.rs` `graph_restore` `:12` |
+| `exited`, `exitCode` | `copy.rs` `graph_copy` `:29` (`waitpid` status decoding) |
+| `restoreCmd`      | `restore.rs` `graph_restore` `:14` |
 | `bulkReply`       | `bulk_insert.rs` `graph_bulk_insert` success reply |
 -/
 namespace RedisLayer.Commands
@@ -133,17 +133,130 @@ theorem cReplyName_nonul (b : List Nat) : 0 ∉ cReplyName b := by
   | nil => simp [cReplyName]
   | cons x xs ih => unfold cReplyName; split <;> simp_all; omega
 
-/-- The `SCAN … TYPE graphdata` loop over a finite cursor chain: names of every page. -/
-def scanLoop (pages : List (List (List Nat))) : List (List Nat) :=
-  (pages.map fun p => p.map cReplyName).flatten
+/-- One element of a `SCAN` reply as `call_ext` hands it over: a string (any bytes, not
+necessarily UTF-8), another reply type, or an error. -/
+inductive ScanElem | str (b : List Nat) | other | err
+  deriving DecidableEq, Repr
 
-theorem scanLoop_nonul (pages : List (List (List Nat))) : ∀ n ∈ scanLoop pages, 0 ∉ n := by
-  intro n hn
-  simp only [scanLoop, List.mem_flatten, List.mem_map] at hn
-  obtain ⟨_, ⟨p, _, rfl⟩, hn⟩ := hn
-  rw [List.mem_map] at hn
-  obtain ⟨b, _, rfl⟩ := hn
-  exact cReplyName_nonul b
+/-- `reply_bytes`: a string element's bytes, unconverted; anything else is `None`, which
+`graph_list` turns into `ERR Failed to list graphs` instead of a panic. -/
+def replyBytes : ScanElem → Option (List Nat)
+  | .str b => some b
+  | _ => none
+
+theorem replyBytes_str (b : List Nat) : replyBytes (.str b) = some b := rfl
+theorem replyBytes_nonstr (e : ScanElem) (h : ∀ b, e ≠ .str b) : replyBytes e = none := by
+  cases e with
+  | str b => exact absurd rfl (h b)
+  | other => rfl
+  | err => rfl
+
+/-- One `SCAN` page as `graph_list` reads it: each element through `reply_bytes`, its
+name through `c_reply_name`; one element that is not a string makes the whole command
+`ERR Failed to list graphs` (`none`). -/
+def scanPage : List ScanElem → Option (List (List Nat))
+  | [] => some []
+  | e :: es => (replyBytes e).bind fun b => (scanPage es).map (cReplyName b :: ·)
+
+/-- `graph_list`'s `SCAN … TYPE graphdata` loop over a finite cursor chain: the names of
+every page, in order, or `none` as soon as a page has an element that is not a string.
+
+Taken as given rather than modelled: the arity check (list.rs:71); the shape of each reply,
+an array whose first two elements are the cursor and an array of keys; a reply that is not an
+array, or lacks those two, is also `ERR Failed to list graphs` (:86-92); a
+`SCAN` error reply, passed through as the server's own error (:86); the cursor, read through
+`reply_bytes` as well and failing the same way if it is not a string (:96); and termination,
+by handing the model the cursor chain as a finite list of pages. -/
+def scanLoop : List (List ScanElem) → Option (List (List Nat))
+  | [] => some []
+  | p :: ps => (scanPage p).bind fun ns => (scanLoop ps).map (ns ++ ·)
+
+theorem scanPage_nonul (p : List ScanElem) : ∀ ns, scanPage p = some ns → ∀ n ∈ ns, 0 ∉ n := by
+  induction p with
+  | nil => intro ns h; simp [scanPage] at h; subst h; simp
+  | cons e es ih =>
+    intro ns h n hn
+    cases e with
+    | str b =>
+      simp [scanPage, replyBytes] at h
+      cases hs : scanPage es with
+      | none => simp [hs] at h
+      | some ms =>
+        simp [hs] at h
+        subst h
+        simp only [List.mem_cons] at hn
+        rcases hn with rfl | hn
+        · exact cReplyName_nonul b
+        · exact ih ms hs n hn
+    | other => simp [scanPage, replyBytes] at h
+    | err => simp [scanPage, replyBytes] at h
+
+/-- No name `GRAPH.LIST` replies holds a NUL. -/
+theorem scanLoop_nonul (pages : List (List ScanElem)) :
+    ∀ ns, scanLoop pages = some ns → ∀ n ∈ ns, 0 ∉ n := by
+  induction pages with
+  | nil => intro ns h; simp [scanLoop] at h; subst h; simp
+  | cons p ps ih =>
+    intro ns h n hn
+    cases hp : scanPage p with
+    | none => simp [scanLoop, hp] at h
+    | some ms =>
+      cases hs : scanLoop ps with
+      | none => simp [scanLoop, hp, hs] at h
+      | some rs =>
+        simp [scanLoop, hp, hs] at h
+        subst h
+        rcases List.mem_append.mp hn with hn | hn
+        · exact scanPage_nonul p ms hp n hn
+        · exact ih rs hs n hn
+
+theorem scanPage_strs (bs : List (List Nat)) :
+    scanPage (bs.map ScanElem.str) = some (bs.map cReplyName) := by
+  induction bs with
+  | nil => rfl
+  | cons b bs ih => simp [scanPage, replyBytes, ih]
+
+/-- Pages of strings, any bytes: the reply is every key cut at its first NUL, page by
+page — the key's bytes, never a lossy or failed conversion of them. -/
+theorem scanLoop_strs (pages : List (List (List Nat))) :
+    scanLoop (pages.map (List.map ScanElem.str)) = some (pages.map (List.map cReplyName)).flatten := by
+  induction pages with
+  | nil => rfl
+  | cons p ps ih => simp [scanLoop, scanPage_strs, ih]
+
+theorem scanPage_nonstr (e : ScanElem) (he : ∀ b, e ≠ .str b) :
+    ∀ p : List ScanElem, e ∈ p → scanPage p = none := by
+  intro p
+  induction p with
+  | nil => intro h; simp at h
+  | cons x xs ih =>
+    intro h
+    simp only [List.mem_cons] at h
+    rcases h with rfl | h
+    · cases e with
+      | str b => exact absurd rfl (he b)
+      | other => simp [scanPage, replyBytes]
+      | err => simp [scanPage, replyBytes]
+    · cases x with
+      | str b => simp [scanPage, replyBytes, ih h]
+      | other => simp [scanPage, replyBytes]
+      | err => simp [scanPage, replyBytes]
+
+/-- A page that fails fails the whole listing (`ERR Failed to list graphs`), never a
+partial reply. -/
+theorem scanLoop_page_none (p : List ScanElem) (hp : scanPage p = none) :
+    ∀ pages : List (List ScanElem), p ∈ pages → scanLoop pages = none := by
+  intro pages
+  induction pages with
+  | nil => intro h; simp at h
+  | cons q qs ih =>
+    intro h
+    simp only [List.mem_cons] at h
+    rcases h with rfl | h
+    · simp [scanLoop, hp]
+    · cases hq : scanPage q with
+      | none => simp [scanLoop, hq]
+      | some ns => simp [scanLoop, hq, ih h]
 
 /-! ## GRAPH.MEMORY -/
 

@@ -21,16 +21,16 @@ use crate::{
         query_args::{QueryFlags, parse_query_flags},
     },
     graph_core::{ThreadedGraph, query_mut, up_to_nul},
-    redis_type::GRAPH_TYPE,
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
 };
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisResult, RedisString};
 use std::sync::Arc;
+use valkey_module::{Context, NextArg, ValkeyResult, ValkeyString};
 
 pub fn graph_ro_query(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     let QueryFlags {
         compact,
         track_memory,
@@ -47,7 +47,9 @@ pub fn graph_ro_query(
     let key_name: Arc<str> = Arc::from(key.to_string());
     let key = ctx.open_key(&key);
 
-    (key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?).map_or(EMPTY_KEY_ERR, |graph| {
+    (key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?)
+    .map_or(EMPTY_KEY_ERR, |graph| {
         query_mut(
             ctx,
             graph,

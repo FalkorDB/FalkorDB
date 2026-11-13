@@ -48,12 +48,12 @@ use graph::{
     threadpool::{self, init_thread_pool},
     udf,
 };
-use redis_module::{
+use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc};
+use valkey_module::{
     Context, ContextFlags, InfoContext, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc,
     RedisModule_Free, RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx,
-    RedisModuleEvent, Status, basic_info_command_handler, logging::log_warning, raw,
+    RedisModuleEvent, Status, ValkeyString, basic_info_command_handler, logging::log_warning, raw,
 };
-use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc};
 
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
@@ -204,7 +204,7 @@ unsafe fn sync_deepbind_environ() {
 
 pub fn graph_init(
     ctx: &Context,
-    args: &[redis_module::RedisString],
+    args: &[ValkeyString],
 ) -> Status {
     graph::thread_id::set_main_thread();
     panic::set_hook(Box::new(|info| {
@@ -224,10 +224,7 @@ pub fn graph_init(
 
     // Every module argument, parsed and validated the way C's `Config_Init`
     // does. A bad argument refuses the load, as in C.
-    let args: Vec<String> = args
-        .iter()
-        .map(redis_module::RedisString::to_string_lossy)
-        .collect();
+    let args: Vec<String> = args.iter().map(ValkeyString::to_string_lossy).collect();
     if let Err(err) = apply_module_args(ctx, &args) {
         ctx.log_warning(&err);
         return Status::Err;
@@ -455,7 +452,7 @@ pub fn graph_init(
 
     // Subscribe to keyspace notifications for graph key rename handling.
     unsafe {
-        let res = redis_module::raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
+        let res = raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
             ctx.ctx,
             4, // REDISMODULE_NOTIFY_GENERIC (covers RENAME)
             Some(on_keyspace_event),
@@ -497,7 +494,7 @@ pub fn graph_init(
 }
 
 /// The module's INFO callback. Adds nothing to a normal `INFO`, matching C's
-/// `InfoFunc` (debug.c). For a crash report it keeps redis-module's default
+/// `InfoFunc` (debug.c). For a crash report it keeps valkey-module's default
 /// trace info and, like C, lists every query that was executing.
 extern "C" fn info_func(
     ctx: *mut raw::RedisModuleInfoCtx,
@@ -685,19 +682,18 @@ unsafe extern "C" fn on_keyspace_event(
     ctx: *mut RedisModuleCtx,
     _type: c_int,
     event: *const std::os::raw::c_char,
-    key: *mut redis_module::raw::RedisModuleString,
+    key: *mut raw::RedisModuleString,
 ) -> c_int {
     let event_str = unsafe { std::ffi::CStr::from_ptr(event) }
         .to_str()
         .unwrap_or("");
 
     let mut key_len: usize = 0;
-    let key_ptr =
-        unsafe { redis_module::raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut key_len) };
+    let key_ptr = unsafe { raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut key_len) };
     let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr.cast(), key_len) };
     // Lossy rather than rejected: a Redis key name is arbitrary bytes, and every other
     // producer of a registry name converts the same lossy way — `register_graph` off
-    // `RedisString::to_string`, the virtual-key builder and `graph_rdb_save` off
+    // `ValkeyString::to_string`, the virtual-key builder and `graph_rdb_save` off
     // `String::from_utf8_lossy`. Bailing out here left a renamed non-UTF-8 graph
     // (`test_binary_key_name_scan_skip` keeps one under `\xc3\x28...`) with a stale
     // registry entry under the key it no longer occupies.

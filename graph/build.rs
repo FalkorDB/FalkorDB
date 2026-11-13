@@ -231,8 +231,9 @@ fn link_redisearch(redisearch: &Resolved) {
     // libredisearch_rs.a embeds its own copy of the `redis-module` crate (pulled
     // by rlookup / redis_mock). That crate unconditionally defines linkme
     // `#[distributed_slice]`s (COMMANDS_LIST, configs, info, ...). FalkorDB links
-    // its own `redis-module`, so without intervention the final cdylib carries two
-    // definitions of each slice and linkme aborts at module load with
+    // `valkey-module`, which defines slices with the same names, so without
+    // intervention the final cdylib carries two definitions of each slice and
+    // linkme aborts at module load with
     // `duplicate #[distributed_slice] with name "COMMANDS_LIST"`. In RediSearch's
     // library build those slices are empty and never iterated, so we strip the
     // linkme sections from a private copy of the archive and link that instead.
@@ -240,8 +241,8 @@ fn link_redisearch(redisearch: &Resolved) {
     link_static(&patched);
 }
 
-/// RediSearch's Rust archive carries a second copy of the `redis-module` crate
-/// whose linkme `#[distributed_slice]` markers collide with FalkorDB's at load
+/// RediSearch's Rust archive carries a copy of the `redis-module` crate whose
+/// linkme `#[distributed_slice]` markers collide with `valkey-module`'s at load
 /// time. Produce a copy in `OUT_DIR` with every linkme section removed and return
 /// its path. The slices are empty in RediSearch's library build, so dropping them
 /// only removes dead bookkeeping.
