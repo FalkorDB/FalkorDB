@@ -786,6 +786,12 @@ impl<'a> AggregateOp<'a> {
             }
         }
 
+        self.runtime
+            .aggregate_group_counts
+            .borrow_mut()
+            .entry(self.idx)
+            .and_modify(|n| *n = (*n).max(groups.len() as u64))
+            .or_insert(groups.len() as u64);
         self.errors = errors.into_iter();
         self.groups = groups.into_iter();
     }
@@ -917,6 +923,12 @@ impl<'a> AggregateOp<'a> {
             );
         }
 
+        self.runtime
+            .aggregate_group_counts
+            .borrow_mut()
+            .entry(self.idx)
+            .and_modify(|n| *n = (*n).max(groups.len() as u64))
+            .or_insert(groups.len() as u64);
         self.errors = errors.into_iter();
         self.groups = groups.into_iter();
     }
