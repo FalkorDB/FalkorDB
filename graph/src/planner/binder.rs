@@ -1196,21 +1196,19 @@ impl Binder {
             })
             .collect();
 
-        // When an ORDER BY expression (or a sub-expression within it) is an
-        // aggregation that matches a projected aggregation, rewrite it to
-        // reference the projected alias before binding.
+        // When an ORDER BY expression (or a sub-expression within it) matches
+        // a projected expression, rewrite it to reference the projected alias
+        // before binding, so the sort reads the column the projection already
+        // computed instead of re-evaluating it and carrying its inputs.
         // E.g. RETURN count(x) AS cnt ORDER BY count(x)  →  ORDER BY cnt
         // E.g. RETURN avg(x.age) AS a ORDER BY $p + avg(x.age) - 1000
         //   →  ORDER BY $p + a - 1000
+        // E.g. RETURN n.i ORDER BY n.i  →  ORDER BY `n.i`
         let orderby: Vec<_> = orderby
             .iter()
             .map(|(expr, desc)| {
-                if expr.is_aggregation() {
-                    let replaced = replace_agg_subtrees(&expr.root(), exprs);
-                    (Arc::new(replaced), *desc)
-                } else {
-                    (expr.clone(), *desc)
-                }
+                let replaced = replace_projected_subtrees(&expr.root(), exprs);
+                (Arc::new(replaced), *desc)
             })
             .collect();
 
@@ -1759,6 +1757,16 @@ impl Binder {
                 let var = self.resolve_name(name, locals)?;
                 Ok(tree!(ExprIR::Variable(var)))
             }
+            ExprIR::AggOrderByPlaceholder => {
+                // Always a fresh variable, in a slot of its own.
+                let scope_id = self.env_stack.len() as u32 - 1;
+                let var = self.fresh_var(None, Type::Any, scope_id);
+                // Insert with a unique key so each placeholder occupies its own
+                // slot in the env (keeping env.len() == next available ID).
+                let key = Arc::new(format!("__agg_placeholder_{}", var.id));
+                self.env_stack[scope_id as usize].insert(key, var.clone());
+                Ok(tree!(ExprIR::Variable(var)))
+            }
             ExprIR::Quantifier {
                 quantifier_type: qt,
                 var: name,
@@ -2079,6 +2087,7 @@ impl Binder {
                     ExprIR::CompiledRegex(_) => {
                         unreachable!("produced only by the binder itself")
                     }
+                    ExprIR::AggOrderByPlaceholder => unreachable!("handled above"),
                     ExprIR::Pattern(pattern) => {
                         // Snapshot outer scope so pattern-local aliases can be
                         // cleaned up after binding (they must not leak outward).
@@ -2194,17 +2203,6 @@ impl Binder {
         name: &Arc<String>,
         locals: &[HashMap<Arc<String>, Variable>],
     ) -> Result<Variable, String> {
-        // Special placeholder for aggregate function ordering - always create a fresh variable
-        if name.as_str() == "__agg_order_by_placeholder__" {
-            let scope_id = self.env_stack.len() as u32 - 1;
-            let var = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
-            // Insert with a unique key so each placeholder occupies its own
-            // slot in the env (keeping env.len() == next available ID).
-            let key = Arc::new(format!("__agg_placeholder_{}", var.id));
-            self.env_stack[scope_id as usize].insert(key, var.clone());
-            return Ok(var);
-        }
-
         // Anonymous variables should also create fresh variables
         if name.starts_with("_anon") {
             let scope_id = self.env_stack.len() as u32 - 1;
@@ -2386,6 +2384,9 @@ impl Binder {
             // All regex kinds may return Null (and Matches returns Bool),
             // matching the original functions' declared return types
             ExprIR::CompiledRegex(_) => true,
+
+            // Replaced by a variable when the aggregate is bound
+            ExprIR::AggOrderByPlaceholder => false,
         }
     }
 
@@ -2445,6 +2446,7 @@ impl Binder {
             | ExprIR::Quantifier { .. }
             | ExprIR::ShortestPath(_)
             | ExprIR::CompiledRegex(_)
+            | ExprIR::AggOrderByPlaceholder
             | ExprIR::Pattern(_) => false,
 
             // Pre-evaluated constant – only Null and entity values count
@@ -2609,12 +2611,31 @@ fn rewrite_compiled_regex(
     )
 }
 
-/// Recursively walk an ORDER BY expression tree and replace any aggregation
-/// sub-tree that structurally matches a projected aggregation with a variable
-/// reference to the projection alias.
-fn replace_agg_subtrees(
+/// Recursively walk an ORDER BY expression tree and replace any sub-tree that
+/// structurally matches a projected expression with a variable reference to
+/// the projection alias.
+///
+/// Aggregations are always replaced when they match (an unmatched one is an
+/// error later on). A non-aggregate sub-tree is replaced only when it is
+/// [`is_alias_rewritable`] and none of its variables is shadowed by a
+/// projected alias: in `RETURN n.x AS n ORDER BY n.x` the ORDER BY `n` is the
+/// projected `n`, not the matched node, so `n.x` there is not the projection.
+fn replace_projected_subtrees(
     node: &DynNode<ExprIR<Arc<String>>>,
     exprs: &[(Arc<String>, QueryExpr<Arc<String>>)],
+) -> DynTree<ExprIR<Arc<String>>> {
+    let shadowed: HashSet<&Arc<String>> = exprs
+        .iter()
+        .filter(|(name, expr)| !matches!(expr.root().data(), ExprIR::Variable(v) if v == name))
+        .map(|(name, _)| name)
+        .collect();
+    replace_projected_subtrees_rec(node, exprs, &shadowed)
+}
+
+fn replace_projected_subtrees_rec(
+    node: &DynNode<ExprIR<Arc<String>>>,
+    exprs: &[(Arc<String>, QueryExpr<Arc<String>>)],
+    shadowed: &HashSet<&Arc<String>>,
 ) -> DynTree<ExprIR<Arc<String>>> {
     // If this node is an aggregate function, check if the subtree rooted here
     // matches any projected aggregation.
@@ -2627,27 +2648,114 @@ fn replace_agg_subtrees(
                 return DynTree::new(ExprIR::Variable(name.clone()));
             }
         }
+    } else if is_alias_rewritable(node, shadowed) {
+        let subtree = node.clone_as_tree();
+        for (name, proj_expr) in exprs {
+            if is_alias_rewritable(&proj_expr.root(), &HashSet::new())
+                && raw_exprs_structurally_equal(&subtree, proj_expr)
+            {
+                return DynTree::new(ExprIR::Variable(name.clone()));
+            }
+        }
     }
 
-    // Not a matching aggregation — reconstruct this node with recursively
+    // Not a matching projection — reconstruct this node with recursively
     // processed children.
+    // Children from `local_from` on are evaluated with names the node binds
+    // (a comprehension or quantifier variable, a reduce accumulator, a
+    // pattern's variables), which can shadow a projected alias: leave them
+    // alone. The iterable / init / list children are still in the outer scope.
+    let local_from = match node.data() {
+        ExprIR::Quantifier { .. } | ExprIR::ListComprehension(_) => 1,
+        ExprIR::Reduce(_) => 2,
+        ExprIR::PatternComprehension(_) => 0,
+        _ => usize::MAX,
+    };
     let mut new_tree = DynTree::new(node.data().clone());
-    for child in node.children() {
-        let child_tree = replace_agg_subtrees(&child, exprs);
+    for (i, child) in node.children().enumerate() {
+        let child_tree = if i >= local_from {
+            child.clone_as_tree()
+        } else {
+            replace_projected_subtrees_rec(&child, exprs, shadowed)
+        };
         new_tree.root_mut().push_child_tree(child_tree);
     }
     new_tree
 }
 
-/// Compare two raw (pre-bind) expression trees structurally, ignoring
-/// internal `__agg_order_by_placeholder__` variables that the parser
-/// appends to aggregate functions.
+/// Whether a non-aggregate ORDER BY sub-tree may be replaced by the alias of
+/// a structurally equal projection: it references at least one variable, none
+/// of them in `shadowed`, and every node is deterministic and compared
+/// exactly by [`raw_exprs_structurally_equal`] (which, for node kinds outside
+/// this list, compares only the kind and not its payload).
+fn is_alias_rewritable(
+    node: &DynNode<ExprIR<Arc<String>>>,
+    shadowed: &HashSet<&Arc<String>>,
+) -> bool {
+    let mut has_variable = false;
+    for n in node.walk::<Dfs>() {
+        match n {
+            ExprIR::Variable(v) => {
+                if shadowed.contains(v) {
+                    return false;
+                }
+                has_variable = true;
+            }
+            ExprIR::FuncInvocation(f) => {
+                // A UDF may keep state in its JavaScript library, so a second
+                // call need not return what the projected one did.
+                if f.is_aggregate()
+                    || f.non_deterministic
+                    || f.write
+                    || matches!(f.fn_type, FnType::Udf)
+                {
+                    return false;
+                }
+            }
+            ExprIR::Constant(
+                Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::String(_),
+            )
+            | ExprIR::Property(_)
+            | ExprIR::Parameter(_)
+            | ExprIR::List
+            | ExprIR::Length
+            | ExprIR::GetElement
+            | ExprIR::GetElements
+            | ExprIR::IsNode
+            | ExprIR::IsRelationship
+            | ExprIR::Or
+            | ExprIR::Xor
+            | ExprIR::And
+            | ExprIR::Not
+            | ExprIR::Negate
+            | ExprIR::Eq
+            | ExprIR::Neq
+            | ExprIR::Lt
+            | ExprIR::Gt
+            | ExprIR::Le
+            | ExprIR::Ge
+            | ExprIR::In
+            | ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Pow
+            | ExprIR::Modulo
+            | ExprIR::Paren => {}
+            _ => return false,
+        }
+    }
+    has_variable
+}
+
+/// Compare two raw (pre-bind) expression trees structurally, ignoring the
+/// placeholder the parser appends to aggregate functions.
 fn raw_exprs_structurally_equal(
     a: &DynTree<ExprIR<Arc<String>>>,
     b: &DynTree<ExprIR<Arc<String>>>,
 ) -> bool {
     fn is_agg_placeholder(node: &ExprIR<Arc<String>>) -> bool {
-        matches!(node, ExprIR::Variable(v) if v.as_str() == "__agg_order_by_placeholder__")
+        matches!(node, ExprIR::AggOrderByPlaceholder)
     }
 
     fn nodes_eq(
@@ -2659,11 +2767,17 @@ fn raw_exprs_structurally_equal(
         let a_node = a.node(a_idx);
         let b_node = b.node(b_idx);
 
+        // Only an aggregate call carries the parser's placeholder child; a
+        // user expression that happens to use the name keeps it.
+        let skip_placeholder = |node: &DynNode<ExprIR<Arc<String>>>, i: usize| {
+            matches!(node.data(), ExprIR::FuncInvocation(f) if f.is_aggregate())
+                && is_agg_placeholder(node.child(i).data())
+        };
         let a_children: Vec<_> = (0..a_node.num_children())
-            .filter(|&i| !is_agg_placeholder(a_node.child(i).data()))
+            .filter(|&i| !skip_placeholder(&a_node, i))
             .collect();
         let b_children: Vec<_> = (0..b_node.num_children())
-            .filter(|&i| !is_agg_placeholder(b_node.child(i).data()))
+            .filter(|&i| !skip_placeholder(&b_node, i))
             .collect();
 
         if a_children.len() != b_children.len() {
@@ -2725,13 +2839,108 @@ fn merge_scope_vars(
 
 #[cfg(test)]
 mod tests {
+    use orx_tree::{Bfs, NodeRef};
+
     use super::Binder;
     use crate::parser::cypher::Parser;
+    use crate::planner::{IR, Planner};
+    use crate::runtime::functions::init_functions;
+
+    /// Names of the variables the first `Project` of `query`'s plan carries
+    /// past the projection for a later clause (its `copies`).
+    fn project_copies(query: &str) -> Vec<String> {
+        let _ = init_functions();
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let plan = Planner::new(scope_vars).plan(ir);
+        plan.root()
+            .indices::<Bfs>()
+            .find_map(|idx| match plan.node(idx).data() {
+                IR::Project { copies, .. } => Some(
+                    copies
+                        .iter()
+                        .map(|(_, v)| v.name.as_deref().cloned().unwrap_or_default())
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .expect("plan has a Project")
+    }
+
+    /// An ORDER BY expression that repeats a projection sorts on the projected
+    /// column, so its inputs are not carried through the projection (#2925).
+    #[test]
+    fn order_by_projected_expression_reads_the_alias() {
+        for q in [
+            "MATCH (n:N) RETURN n.i ORDER BY n.i LIMIT 10",
+            "MATCH (n:N) RETURN n.i ORDER BY n.i DESC",
+            "MATCH (n:N) RETURN n.i + 1 AS k ORDER BY n.i + 1",
+            "MATCH (n:N) RETURN n.i * 2 AS d ORDER BY n.i * 2 + 1",
+            "MATCH (n:N) RETURN DISTINCT toString(n.i) ORDER BY toString(n.i)",
+            "MATCH (n:N) WITH n.i AS i ORDER BY n.i RETURN i",
+        ] {
+            assert!(project_copies(q).is_empty(), "{q}");
+        }
+    }
+
+    /// Cases that must still evaluate the ORDER BY expression over the input.
+    #[test]
+    fn order_by_unmatched_or_unsafe_expression_keeps_its_inputs() {
+        for q in [
+            // no matching projection
+            "MATCH (n:N) RETURN n.i ORDER BY n.j",
+            // non-deterministic: a second call is not the projected value
+            "MATCH (n:N) RETURN n.i + rand() AS r ORDER BY n.i + rand()",
+            // a comprehension variable shadows the projected alias in its body
+            "MATCH (n:N) RETURN n.i AS x ORDER BY [x IN [1, 2] | n.i]",
+            "MATCH (n:N) RETURN n.i AS x ORDER BY reduce(x = 0, y IN [1, 2] | n.i)",
+        ] {
+            assert_eq!(project_copies(q), vec![String::from("n")], "{q}");
+        }
+    }
+
+    /// The slot the parser appends to aggregate calls has no name, so an
+    /// alias that spells the old reserved one is an ordinary alias.
+    #[test]
+    fn alias_named_like_the_aggregate_slot_is_ordinary() {
+        let q = "MATCH (n:N) RETURN n.i AS __agg_order_by_placeholder__ \
+                 ORDER BY __agg_order_by_placeholder__";
+        // `project_copies` binds and plans the query, and panics if either fails
+        assert!(project_copies(q).is_empty());
+    }
+
+    /// The iterable of a comprehension is still in the outer scope, so a
+    /// projection repeated there is read from its alias.
+    #[test]
+    fn order_by_comprehension_iterable_reads_the_alias() {
+        assert!(project_copies("MATCH (n:N) RETURN n.i AS x ORDER BY [y IN [n.i] | y]").is_empty());
+    }
+
+    /// A UDF call is not rewritten to the projected alias: the library may
+    /// keep state, so a second call can return something else.
+    #[test]
+    fn udf_call_is_not_alias_rewritable() {
+        use std::{collections::HashSet, sync::Arc};
+
+        use orx_tree::{DynTree, NodeRef};
+
+        use super::is_alias_rewritable;
+        use crate::parser::ast::ExprIR;
+        use crate::runtime::functions::GraphFn;
+
+        let tree = DynTree::new(ExprIR::FuncInvocation(Arc::new(GraphFn::new_udf("lib.f"))));
+        let mut root = tree;
+        root.root_mut()
+            .push_child_tree(DynTree::new(ExprIR::Variable(Arc::new(String::from("n")))));
+        assert!(!is_alias_rewritable(&root.root(), &HashSet::new()));
+    }
 
     /// The bound IR of `query`, rendered with `Debug`.
     fn bound(query: &str) -> String {
         // Binding a call resolves it against the process-global registry.
-        let _ = crate::runtime::functions::init_functions();
+        let _ = init_functions();
         let mut parser = Parser::new(query);
         parser.parse_parameters().expect("parse parameters");
         let raw = parser.parse().expect("parse");

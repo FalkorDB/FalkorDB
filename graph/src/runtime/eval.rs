@@ -881,6 +881,9 @@ impl<'a> ExprEval<'a> {
                 ExprIR::CompiledRegex(rf) => {
                     res.push(self.eval_compiled_regex(rf, &node, env, agg_group_key)?);
                 }
+                ExprIR::AggOrderByPlaceholder => {
+                    unreachable!("the binder replaces it with a variable")
+                }
                 ExprIR::FuncInvocation(func) => {
                     let rt = self.rt()?;
                     if agg_group_key.is_none()
