@@ -41,7 +41,9 @@ use std::{
 };
 
 use crate::planner::hop_order::{HopShape, self_loops_after_binders};
-use crate::planner::optimizer::collect_expr_variables;
+use crate::planner::optimizer::collect_expr_scoped_variables;
+use crate::planner::optimizer::collect_single_variable_conjuncts;
+use crate::planner::optimizer::{endpoint_scan_score, walk_scans_to_endpoint};
 use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
 use crate::tree;
@@ -1822,9 +1824,16 @@ impl Planner {
         let mut vec = vec![];
         // Variables the WHERE predicate constrains. Used below to order the
         // hops of a component so constrained endpoints are reached first.
-        let filter_vars: HashSet<u32> = filter
+        let filter_vars: HashSet<(u32, u32)> = filter
             .as_ref()
-            .map(|f| collect_expr_variables(f))
+            .map(|f| collect_expr_scoped_variables(f))
+            .unwrap_or_default();
+        // The subset of those a promoted walk can start from: variables a WHERE
+        // conjunct constrains by itself, evaluable as soon as the endpoint is
+        // scanned (`p.id = length(r)` waits for the path, so it anchors nothing).
+        let anchor_vars: HashSet<(u32, u32)> = filter
+            .as_ref()
+            .map(|f| collect_single_variable_conjuncts(f))
             .unwrap_or_default();
         // Collect extra filters for bound variables with new constraints
         // (labels or inline properties). These are applied as top-level
@@ -1834,6 +1843,16 @@ impl Planner {
         // Inline attrs already lowered to a Filter in this clause, keyed by
         // (alias, attrs map identity). See `lower_inline_attrs`.
         let mut lowered_attrs: HashSet<(u32, u32, usize)> = HashSet::new();
+        // Whether an earlier clause bound anything. Reversing a promoted walk
+        // rebuilds its scan, which would drop an earlier clause's input if one
+        // sits underneath. Components of this clause are independent of each
+        // other, so what they bind does not count.
+        let bound_before_clause = !self.visited.is_empty();
+        // Computed once: the decomposition is a graph walk.
+        let single_component = pattern.connected_components().len() == 1
+            && !filter
+                .as_ref()
+                .is_some_and(|f| Self::has_pattern_expr(&f.root()));
         for component in pattern.connected_components() {
             let relationships = component.relationships();
             // Endpoints already bound by earlier clauses may carry labels
@@ -1859,9 +1878,102 @@ impl Planner {
             // traversals (especially self-loops / ExpandInto) are planned as
             // leaves and variable-length traversals sit above them.
             let mut sorted_rels: Vec<_> = relationships.to_vec();
+            // An endpoint the query constrains (inline attributes, or a WHERE
+            // predicate) is a cheap place to start: an index lookup or a short
+            // scan rather than every node of a label.
+            let is_constrained = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+                n.attrs.root().num_children() > 0
+                    || anchor_vars.contains(&(n.alias.scope_id, n.alias.id))
+            };
+            let anchored = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                is_constrained(&r.from) || is_constrained(&r.to)
+            };
+            // A variable-length hop on an anchored endpoint leads the component
+            // when no fixed-length hop is anchored and nothing is bound yet.
+            // Planned last, as the sort below does by default, it would sit
+            // above a fixed-length hop that `select_scan_node` then starts from
+            // an unrelated label scan, and the var-length expansion runs from
+            // every candidate that scan finds (#2558).
+            //
+            // Only a walk that can start the plan leads, and the hops after it
+            // follow the pattern outward (see below), so each one has a bound
+            // endpoint when its turn comes:
+            //   - no walk in the component reads a variable in its endpoint or
+            //     edge attributes, so moving it loses no match;
+            //   - the endpoint `select_var_len_scan_node` will scan is the
+            //     anchored one. That pass scans the endpoint with the higher
+            //     `endpoint_scan_score` (the `to` side only when strictly
+            //     higher, since the walk can run either way), so the decision is
+            //     made here with the same score and a predicate that mentions
+            //     an endpoint at all (`a.x = c.x`) counts for it, anchored or not.
+            // Otherwise a walk keeps its place after the fixed-length hops,
+            // where its endpoints are bound by the hops before it.
+            let var_len_anchor_leads = !bound_before_clause
+                && !relationships.iter().any(|r| {
+                    r.min_hops.is_none()
+                        && r.all_shortest_paths == AllShortestPaths::No
+                        && anchored(r)
+                });
+            let references_variable =
+                |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                    [&r.attrs, &r.from.attrs, &r.to.attrs]
+                        .into_iter()
+                        .any(|attrs| !collect_expr_scoped_variables(attrs).is_empty())
+                };
+            // The WHERE sits above everything the clause plans. Scan selection
+            // reads the Filters directly above the component (through its own
+            // traversals), so a predicate is only visible to it when the
+            // component is the clause's only one (no CartesianProduct between)
+            // and is a tree (a cycle or self-loop plans an `ExpandInto`, which
+            // hides it), and the WHERE holds no pattern (that plans an `Apply`
+            // between). Otherwise only the inline attributes count here.
+            let where_visible =
+                single_component && relationships.len() + 1 == component.nodes().len();
+            let scan_score = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+                endpoint_scan_score(
+                    n.attrs.root().num_children() > 0
+                        || (where_visible && filter_vars.contains(&(n.alias.scope_id, n.alias.id))),
+                    !n.labels.is_empty(),
+                )
+            };
+            let is_anchored_end = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+                n.attrs.root().num_children() > 0
+                    || (where_visible && anchor_vars.contains(&(n.alias.scope_id, n.alias.id)))
+            };
+            let leads_from_anchor = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                let lead = if walk_scans_to_endpoint(scan_score(&r.from), scan_score(&r.to)) {
+                    &r.to
+                } else {
+                    &r.from
+                };
+                is_anchored_end(lead)
+            };
+            // Every hop must be free to move: none reads a variable some other
+            // hop binds (a fixed hop's edge filter or an endpoint's attrs would
+            // run before the hop that binds it), and none is an allShortestPaths
+            // (which needs both ends).
+            let walks_can_move = relationships
+                .iter()
+                .all(|r| r.all_shortest_paths == AllShortestPaths::No && !references_variable(r));
+            let leading_walk = if var_len_anchor_leads && walks_can_move {
+                relationships
+                    .iter()
+                    .find(|r| {
+                        r.min_hops.is_some()
+                            && r.from.alias.id != r.to.alias.id
+                            && leads_from_anchor(r)
+                    })
+                    .map(|r| (r.alias.scope_id, r.alias.id))
+            } else {
+                None
+            };
             sorted_rels.sort_by_key(|r| {
                 let base = if r.all_shortest_paths == AllShortestPaths::No {
-                    i32::from(r.min_hops.is_some())
+                    if leading_walk == Some((r.alias.scope_id, r.alias.id)) {
+                        -1
+                    } else {
+                        i32::from(r.min_hops.is_some())
+                    }
                 } else {
                     2
                 };
@@ -1884,13 +1996,42 @@ impl Planner {
                 // the filters land.
                 let unfiltered = if has_bound == 0 {
                     i32::from(![&r.from, &r.to].iter().any(|n| {
-                        n.attrs.root().num_children() > 0 || filter_vars.contains(&n.alias.id)
+                        n.attrs.root().num_children() > 0
+                            || filter_vars.contains(&(n.alias.scope_id, n.alias.id))
                     }))
                 } else {
                     0
                 };
                 (base, has_bound, unfiltered)
             });
+            // A promoted walk starts the plan, and every hop after it must touch
+            // what is bound already, as in a walk outward from the anchor: a hop
+            // sorted by tier alone could come first with neither end bound
+            // (a second walk would then start from every node). The runtime
+            // runs a walk from whichever end is bound, so the order is free.
+            if let Some(lead) = leading_walk {
+                let mut ordered = Vec::with_capacity(sorted_rels.len());
+                let mut bound: HashSet<(u32, u32)> = HashSet::new();
+                let mut rest: Vec<_> = sorted_rels.into_iter().collect();
+                let first = rest
+                    .iter()
+                    .position(|r| (r.alias.scope_id, r.alias.id) == lead)
+                    .expect("the leading walk is one of the component's hops");
+                let mut next = Some(rest.remove(first));
+                while let Some(r) = next {
+                    bound.insert((r.from.alias.id, r.from.alias.scope_id));
+                    bound.insert((r.to.alias.id, r.to.alias.scope_id));
+                    ordered.push(r);
+                    let pos = rest.iter().position(|r| {
+                        bound.contains(&(r.from.alias.id, r.from.alias.scope_id))
+                            || bound.contains(&(r.to.alias.id, r.to.alias.scope_id))
+                    });
+                    next = pos
+                        .or_else(|| (!rest.is_empty()).then_some(0))
+                        .map(|i| rest.remove(i));
+                }
+                sorted_rels = ordered;
+            }
             // Past the first hop, a fixed-length self-loop on a node nothing
             // has bound yet could only scan that node again and cross it with
             // the hops before it (the var-length hop that reaches it was

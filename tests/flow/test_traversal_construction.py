@@ -571,3 +571,282 @@ class testTraversalConstruction():
             self.env.assertContains("Node By Label Scan | (p:P)", plan)
             self.env.assertEqual(g.query(q).result_set, [[3]])
         g.delete()
+
+    # A variable-length hop anchored on an indexed endpoint must start the plan
+    # even when the same MATCH has a second, fixed-length pattern on the other
+    # endpoint (#2558). Otherwise the planner starts from the unrelated label
+    # scan and expands the var-length hop from every row it finds.
+    def test_var_len_anchor_with_second_pattern(self):
+        g = self.db.select_graph("VarLenAnchorSecondPattern")
+        g.query("CREATE INDEX FOR (p:Person) ON (p.id)")
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 199) AS i CREATE (:Person {id: i})")
+        g.query("UNWIND range(0, 4) AS i CREATE (:City {id: i})")
+        g.query("""UNWIND range(0, 199) AS i
+                   MATCH (p:Person {id: i}), (c:City {id: i % 5}) CREATE (p)-[:LIVES]->(c)""")
+        g.query("""UNWIND range(0, 199) AS i UNWIND [1, 7] AS d
+                   MATCH (a:Person {id: i}), (b:Person {id: (i * d + d) % 200})
+                   CREATE (a)-[:KNOWS]->(b)""")
+
+        single = "MATCH (person:Person {id: 5})-[:KNOWS*2..2]-(friend) RETURN count(*)"
+        for q in ["""MATCH (person:Person {id: 5})-[:KNOWS*2..2]-(friend),
+                           (friend)-[:LIVES]->(city:City) RETURN count(*)""",
+                  """MATCH (friend)-[:LIVES]->(city:City),
+                           (person:Person {id: 5})-[:KNOWS*2..2]-(friend) RETURN count(*)""",
+                  """MATCH (person:Person)-[:KNOWS*2..2]-(friend), (friend)-[:LIVES]->(city:City)
+                     WHERE person.id = 5 RETURN count(*)"""]:
+            plan = str(g.explain(q))
+            # the index scan on `person` is the only scan: it leads the plan
+            scans = [l.strip() for l in plan.splitlines() if "Scan" in l]
+            self.env.assertEqual(scans, ["Node By Index Scan | (person:Person)"], message=plan)
+            # every friend lives in exactly one city, so the counts agree
+            self.env.assertEqual(g.query(q).result_set, g.query(single).result_set, message=q)
+
+        # A fixed-length hop that is itself anchored keeps leading.
+        anchored = """MATCH (friend:Person {id: 9})-[:LIVES]->(city:City),
+                            (person:Person)-[:KNOWS*2..2]-(friend) RETURN count(*)"""
+        self.env.assertContains("Node By Index Scan | (friend:Person)", str(g.explain(anchored)))
+        g.delete()
+
+    # The walk that leads a component must be one that can start the plan, and
+    # must not be moved before the hops that bind variables it depends on.
+    def test_var_len_anchor_not_promoted_when_unsafe(self):
+        g = self.db.select_graph("VarLenAnchorUnsafe")
+        g.query("CREATE INDEX FOR (p:Person) ON (p.id)")
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 199) AS i CREATE (:Person {id: i})")
+        g.query("UNWIND range(0, 4) AS i CREATE (:City {id: i})")
+        g.query("""UNWIND range(0, 199) AS i
+                   MATCH (p:Person {id: i}), (c:City {id: i % 5}) CREATE (p)-[:LIVES]->(c)""")
+        g.query("""UNWIND range(0, 199) AS i UNWIND [1, 7] AS d
+                   MATCH (a:Person {id: i}), (b:Person {id: (i * d + d) % 200})
+                   CREATE (a)-[:KNOWS]->(b)""")
+
+        # A walk anchored on its `to` endpoint leads too, bidirectional or
+        # directed: the runtime runs it backwards from the bound end, so the
+        # index scan on `person` starts the plan and no City scan precedes it.
+        single = "MATCH (person:Person {id: 5})-[:KNOWS*2..2]-(friend) RETURN count(*)"
+        for q in ["""MATCH (friend)-[:KNOWS*2..2]-(person:Person {id: 5}),
+                           (friend)-[:LIVES]->(city:City) RETURN count(*)""",
+                  """MATCH (friend)-[:KNOWS*2..2]-(person:Person), (friend)-[:LIVES]->(city:City)
+                     WHERE person.id = 5 RETURN count(*)"""]:
+            plan = str(g.explain(q))
+            scans = [l.strip() for l in plan.splitlines() if "Scan" in l]
+            self.env.assertEqual(scans, ["Node By Index Scan | (person:Person)"], message=plan)
+            self.env.assertEqual(g.query(q).result_set, g.query(single).result_set, message=q)
+        q = """MATCH (friend)-[:LIVES]->(city:City),
+                     (friend)-[:KNOWS*2..2]->(person:Person {id: 5}) RETURN count(*)"""
+        single = "MATCH (friend)-[:KNOWS*2..2]->(person:Person {id: 5}) RETURN count(*)"
+        plan = str(g.explain(q))
+        scans = [l.strip() for l in plan.splitlines() if "Scan" in l]
+        self.env.assertEqual(scans, ["Node By Index Scan | (person:Person)"], message=plan)
+        self.env.assertEqual(g.query(q).result_set, g.query(single).result_set)
+        g.delete()
+
+        # A variable an earlier clause bound (UNWIND's x) is not lost when the
+        # walk is reversed to start from its anchored endpoint.
+        g.query("""CREATE (b:B)-[:S]->(:C), (b)-[:R]->(:A {id: 1})""")
+        q = """UNWIND [1, 2] AS x MATCH (b)-[:S]->(c:C), (b)-[:R*1..2]->(a:A {id: 1})
+               RETURN count(*)"""
+        self.env.assertEqual(g.query(q).result_set, [[2]], message=q)
+        g.delete()
+
+        # A WHERE conjunct that also reads the walk's path cannot run at the
+        # starting endpoint, so it does not anchor the walk.
+        g = self.db.select_graph("VarLenAnchorPathWhere")
+        g.query("CREATE INDEX FOR (p:Person) ON (p.id)")
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 199) AS i CREATE (:Person {id: i})")
+        g.query("UNWIND range(0, 4) AS i CREATE (:City {id: i})")
+        g.query("""UNWIND range(0, 3) AS i
+                   MATCH (p:Person {id: i}), (c:City {id: i}) CREATE (p)-[:LIVES]->(c)""")
+        g.query("""UNWIND range(0, 199) AS i UNWIND [1, 7] AS d
+                   MATCH (a:Person {id: i}), (b:Person {id: (i * d + d) % 200})
+                   CREATE (a)-[:KNOWS]->(b)""")
+        q = """MATCH (p:Person)-[r:KNOWS*2..2]->(f), (f)-[:LIVES]->(c:City)
+               WHERE p.id = length(r) RETURN count(*)"""
+        self.env.assertContains("Node By Label Scan | (c:City)", str(g.explain(q)))
+        g.delete()
+
+        # Attribute expressions that read a variable keep their binding hop first.
+        g = self.db.select_graph("VarLenAnchorDeps")
+        g.query("""CREATE (a:A {id: 1})-[:R {weight: 5}]->(b:B)-[:S]->(c:C {limit: 5, aid: 1})""")
+        for q in ["MATCH (b)-[:S]->(c), (a:A {id: 1})-[:R*1..2 {weight: c.limit}]->(b) RETURN count(*)",
+                  "MATCH (b)-[:S]->(c), (a:A {id: c.aid})-[:R*1..2]->(b) RETURN count(*)"]:
+            self.env.assertEqual(g.query(q).result_set, [[1]], message=q)
+        g.delete()
+
+        # A component with a second walk promotes none (the walks would run
+        # before the hop that binds one of their endpoints) and keeps its result.
+        g = self.db.select_graph("VarLenAnchorChain")
+        g.query("""CREATE (a:A {id: 1})-[:R]->(b:B)-[:S]->(c:C)-[:T]->(d:D {id: 2})""")
+        g.query("UNWIND range(0, 99) AS i CREATE (:C)-[:T]->(:D {id: 3})")
+        q = "MATCH (a:A {id: 1})-[:R*1..2]->(b)-[:S]->(c)-[:T*1..2]->(d:D {id: 2}) RETURN count(*)"
+        self.env.assertEqual(g.query(q).result_set, [[1]])
+        g.delete()
+
+        # Predicates the starting endpoint cannot evaluate alone do not anchor
+        # the walk: one over two variables, one holding a pattern.
+        g = self.db.select_graph("VarLenAnchorMixed")
+        g.query("CREATE INDEX FOR (p:Person) ON (p.id)")
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 199) AS i CREATE (:Person {id: i})")
+        g.query("UNWIND range(0, 199) AS i CREATE (:A {x: i})-[:R]->(:B {id: i})-[:T]->(:D {id: 2})")
+        g.query("UNWIND range(0, 4) AS i CREATE (:City {id: i})")
+        g.query("MATCH (a:A {x: 0}), (c:City {id: 0}) CREATE (a)-[:S]->(c)")
+        for q in [
+                ("""MATCH (a:A)-[:R*1..2]->(b:B {id: 2}), (a)-[:S]->(c:City)
+                    WHERE a.x = c.id RETURN count(*)"""),
+                ("""MATCH (p:Person)-[:KNOWS*2..2]->(f), (f)-[:LIVES]->(c:City)
+                    WHERE p.id = size([(c)-[:X]->() | 1]) RETURN count(*)""")]:
+            self.env.assertContains("Node By Label Scan | (c:City)", str(g.explain(q)), message=q)
+        # adjacent walks: the undirected one stays bound by the hop before it
+        q = "MATCH (a:A)-[:R*1..1]-(b:B)-[:T*1..1]->(d:D {id: 2}) RETURN count(*)"
+        self.env.assertContains("Node By Label Scan | (d:D)", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[200]])
+        g.delete()
+
+    # An undirected walk reverses like a directed one: with only its `to`
+    # endpoint bound it starts there. Emitted endpoints and the path keep the
+    # pattern's from -> to orientation.
+    def test_undirected_var_len_runs_from_bound_to(self):
+        g = self.db.select_graph("UndirectedVarLenReversed")
+        g.query("CREATE (:A {id: 1})-[:R {w: 1}]->(:M {id: 2})<-[:R {w: 2}]-(:B {id: 3})")
+        g.query("CREATE (:A {id: 10})-[:R]->(:A {id: 11}), (:A {id: 11})-[:R]->(:A {id: 12})")
+        # the bound end is the pattern's `to`, bound by an earlier clause
+        q = """MATCH (b:B) WITH b MATCH p = (a:A)-[:R*2..2]-(b)
+               RETURN a.id, b.id, [e IN relationships(p) | e.w]"""
+        res = g.query(q).result_set
+        self.env.assertEqual(res, [[1, 3, [1, 2]]])
+        # the path reads from `a` to `b`, whichever end the walk started at
+        q = """MATCH (b:B) WITH b MATCH p = (a:A)-[:R*2..2]-(b) RETURN [n IN nodes(p) | n.id]"""
+        self.env.assertEqual(g.query(q).result_set, [[[1, 2, 3]]])
+        # zero-length and unconstrained ends
+        q = "MATCH (b:B) WITH b MATCH (a)-[:R*0..1]-(b) RETURN a.id ORDER BY a.id"
+        self.env.assertEqual(g.query(q).result_set, [[2], [3]])
+        g.delete()
+
+    # A walk whose `to` endpoint is the more selective one is scanned from
+    # there. Rebuilding the scan must keep whatever an earlier clause put under
+    # the walk: its WHERE, its rows' multiplicity and the variables it binds.
+    def test_var_len_reversal_keeps_earlier_clause(self):
+        g = self.db.select_graph("VarLenReversalKeepsEarlier")
+        g.query("CREATE INDEX FOR (n:B) ON (n.id)")
+        wait_for_indices_to_sync(g)
+        g.query("""CREATE (:A {id: 1})-[:R]->(:B {id: 1}), (:A {id: 99})-[:R]->(:B {id: 1}),
+                          (:A {id: 5})-[:R]->(:C {id: 1})""")
+        for q, expected in [
+                ("MATCH (a) WHERE a.id = 99 MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 1),
+                ("MATCH (a) WHERE a.id = 99 MATCH (a)-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 1),
+                ("MATCH (a:A) WHERE a.id = 99 MATCH (a)<-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 0),
+                ("UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 4),
+                ("UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]-(b:B {id: 1}) RETURN count(*)", 4),
+                ("MATCH (x:A) WHERE x.id = 5 MATCH (a)-[:R*1..2]->(b:B {id: 1}) RETURN count(*)", 2)]:
+            self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
+        res = g.query("""UNWIND [1, 2] AS x MATCH (a)-[:R*1..2]->(b:B {id: 1})
+                         RETURN x, a.id ORDER BY x, a.id""").result_set
+        self.env.assertEqual(res, [[1, 1], [1, 99], [2, 1], [2, 99]])
+        g.delete()
+
+    # Several walks in one component: the anchored walk leads and the others
+    # follow outward from what it binds, each one with a bound endpoint. A DAG
+    # keeps edge uniqueness out of the count, so it can be computed directly.
+    def test_var_len_anchor_with_several_walks(self):
+        g = self.db.select_graph("VarLenAnchorSeveralWalks")
+        g.query("CREATE INDEX FOR (p:Person) ON (p.id)")
+        wait_for_indices_to_sync(g)
+        n = 120
+        g.query(f"UNWIND range(0, {n - 1}) AS i CREATE (:Person {{id: i}})")
+        g.query("UNWIND range(0, 4) AS i CREATE (:City {id: i})")
+        g.query(f"""UNWIND range(0, {n - 1}) AS i
+                    MATCH (p:Person {{id: i}}), (c:City {{id: i % 5}}) CREATE (p)-[:LIVES]->(c)""")
+        g.query(f"""UNWIND range(0, {n - 1}) AS i UNWIND [1, 3] AS d
+                    MATCH (a:Person {{id: i}}), (b:Person {{id: i + d}}) CREATE (a)-[:KNOWS]->(b)""")
+        out = {i: [j for j in (i + 1, i + 3) if j < n] for i in range(n)}
+
+        def reach(src):
+            level, res = {src: 1}, {}
+            for _ in range(2):
+                nxt = {}
+                for u, c in level.items():
+                    for v in out[u]:
+                        nxt[v] = nxt.get(v, 0) + c
+                for v, c in nxt.items():
+                    res[v] = res.get(v, 0) + c
+                level = nxt
+            return res
+        # (p)-[*1..2]->(f)-[*1..2]->(g)-[:LIVES]->(city), one city per person
+        expected = sum(c1 * c2 for f, c1 in reach(5).items() for g_, c2 in reach(f).items())
+
+        for q in ["""MATCH (p:Person {id: 5})-[:KNOWS*1..2]->(f), (f)-[:KNOWS*1..2]->(g),
+                           (g)-[:LIVES]->(c:City) RETURN count(*)""",
+                  """MATCH (c:City)<-[:LIVES]-(g)<-[:KNOWS*1..2]-(f)<-[:KNOWS*1..2]-(p:Person {id: 5})
+                     RETURN count(*)""",
+                  """MATCH (g)-[:LIVES]->(c:City), (f)-[:KNOWS*1..2]->(g), (p:Person)-[:KNOWS*1..2]->(f)
+                     WHERE p.id = 5 RETURN count(*)"""]:
+            plan = str(g.explain(q))
+            scans = [l.strip() for l in plan.splitlines() if "Scan" in l]
+            self.env.assertEqual(scans, ["Node By Index Scan | (p:Person)"], message=plan)
+            self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
+        g.delete()
+
+    # Hops that read a variable another hop binds keep their order: moving the
+    # walk first must not run a fixed hop's edge filter before the hop that
+    # binds what it reads, and reversing a walk must not unbind an endpoint its
+    # own edge attributes read.
+    def test_var_len_anchor_keeps_attribute_dependencies(self):
+        g = self.db.select_graph("VarLenAnchorAttrDeps")
+        g.query("""CREATE (a:A {id: 1})-[:R]->(b)-[:S {weight: 5}]->(e),
+                          (b)-[:U]->(c)-[:T]->(d {limit: 5})""")
+        q = """MATCH (c)-[:T]->(d), (b)-[:S {weight: d.limit}]->(e), (a:A)-[:R*1..2]->(b)-[:U*1..2]->(c)
+               WHERE a.id = 1 RETURN count(*)"""
+        self.env.assertEqual(g.query(q).result_set, [[1]], message=q)
+        g.delete()
+
+        g = self.db.select_graph("VarLenAnchorEdgeAttrEndpoint")
+        g.query("CREATE INDEX FOR (b:B) ON (b.id)")
+        wait_for_indices_to_sync(g)
+        g.query("CREATE (:A {id: 1})-[:R {w: 1}]->(:B {id: 1}), (:A {id: 2})-[:R {w: 7}]->(:B {id: 2})")
+        for q in ["MATCH (a:A)-[:R*1..2 {w: a.id}]-(b:B {id: 1}) RETURN count(*)",
+                  "MATCH (a:A)-[:R*1..2 {w: a.id}]->(b:B {id: 1}) RETURN count(*)"]:
+            self.env.assertEqual(g.query(q).result_set, [[1]], message=q)
+        g.delete()
+
+    # The WHERE sits above the whole clause: with another component (a
+    # CartesianProduct) or a cycle (an ExpandInto) between, scan selection does
+    # not see it, so it cannot make an endpoint the walk's starting scan and
+    # the walk keeps its place instead of expanding from every `a`.
+    def test_var_len_anchor_where_hidden_by_barrier(self):
+        g = self.db.select_graph("VarLenAnchorWhereBarrier")
+        g.query("CREATE INDEX FOR (b:B) ON (b.id)")
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(1, 100) AS i CREATE (:A {id: i})-[:R]->(:B {id: i})")
+        g.query("UNWIND range(1, 100) AS i MATCH (a:A {id: i}) CREATE (a)-[:S]->(:C {id: i})")
+        g.query("CREATE (:X)")
+        for q in ["""MATCH (x:X), (a:A)-[:R*1..2]->(b:B), (a)-[:S]->(c:C)
+                     WHERE b.id = 1 RETURN count(*)""",
+                  """MATCH (a:A)-[:R*1..2]->(b:B), (a)-[:S]->(c:C), (c)-[:S]->(c)
+                     WHERE b.id = 1 RETURN count(*)""",
+                  # a pattern in the WHERE plans an Apply between the clause and it
+                  """MATCH (a:A)-[:R*1..2]->(b:B), (a)-[:S]->(c:C)
+                     WHERE b.id = 1 AND size([(c)-[:X]->() | 1]) > 0 RETURN count(*)"""]:
+            plan = str(g.explain(q))
+            # the fixed hop keeps leading: its traverse sits below the walk
+            walk = plan.index("Variable Length Traverse")
+            self.env.assertTrue(plan.index("Conditional Traverse") > walk, message=plan)
+            self.env.assertEqual(g.query(q).result_set, [[1]] if "(x:X)" in q else [[0]], message=q)
+        g.delete()
+
+    # An input that already binds the walk's `to` endpoint lets the planner's
+    # scan of `from` go even when the edge attributes read `to`: the walk runs
+    # backwards from the bound node instead of from every `a`.
+    def test_var_len_walk_from_bound_endpoint_with_attr_dependency(self):
+        g = self.db.select_graph("VarLenBoundEndpointAttrs")
+        g.query("UNWIND range(1, 100) AS i CREATE (:A {id: i})-[:R {w: 1}]->(:M {id: i})")
+        g.query("CREATE (:A {id: 0})-[:R {w: 1}]->(:B {id: 1})")
+        q = """MATCH (b:B {id: 1}) WITH b MATCH (a:A)-[:R*1..2 {w: b.id}]->(b)
+               RETURN count(*)"""
+        plan = str(g.explain(q))
+        self.env.assertNotContains("Node By Label Scan | (a:A)", plan)
+        self.env.assertEqual(g.query(q).result_set, [[1]], message=q)
+        g.delete()

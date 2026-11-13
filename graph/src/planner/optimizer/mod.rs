@@ -63,7 +63,7 @@ mod utilize_node_by_id;
 
 use std::collections::{HashMap, HashSet};
 
-use orx_tree::{Bfs, DynTree, NodeRef};
+use orx_tree::{Bfs, DynNode, DynTree, NodeRef};
 
 use crate::{
     graph::graph::Graph,
@@ -97,6 +97,84 @@ pub(crate) fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSe
         }
     }
     vars
+}
+
+/// Collects the `(scope_id, id)` of every variable an expression references.
+/// Variable ids are only unique within a scope, so callers that mix scopes
+/// (a pattern next to a `WHERE` with comprehension variables) key on both.
+pub(crate) fn collect_expr_scoped_variables(
+    expr: &DynTree<ExprIR<Variable>>
+) -> HashSet<(u32, u32)> {
+    let mut vars = HashSet::new();
+    for idx in expr.root().indices::<Bfs>() {
+        if let ExprIR::Variable(var) = expr.node(idx).data() {
+            vars.insert((var.scope_id, var.id));
+        }
+    }
+    vars
+}
+
+/// Collects the `(scope_id, id)` of every variable that a top-level `AND`
+/// conjunct of `expr` reads on its own: a conjunct over a single variable can
+/// run as soon as that variable is bound, one that also reads another
+/// (a path, a second node) has to wait for it. A conjunct holding a pattern
+/// is left out: the aliases the pattern reads are not in the expression tree.
+pub(crate) fn collect_single_variable_conjuncts(
+    expr: &DynTree<ExprIR<Variable>>
+) -> HashSet<(u32, u32)> {
+    fn walk(
+        node: &DynNode<ExprIR<Variable>>,
+        out: &mut HashSet<(u32, u32)>,
+    ) {
+        match node.data() {
+            ExprIR::And | ExprIR::Paren => {
+                for child in node.children() {
+                    walk(&child, out);
+                }
+            }
+            _ => {
+                let mut vars = HashSet::new();
+                let mut has_pattern = false;
+                for data in node.walk::<Bfs>() {
+                    match data {
+                        ExprIR::Variable(var) => {
+                            vars.insert((var.scope_id, var.id));
+                        }
+                        ExprIR::Pattern(_) | ExprIR::PatternComprehension(_) => has_pattern = true,
+                        _ => {}
+                    }
+                }
+                if !has_pattern && vars.len() == 1 {
+                    out.extend(vars);
+                }
+            }
+        }
+    }
+    let mut out = HashSet::new();
+    walk(&expr.root(), &mut out);
+    out
+}
+
+/// The part of a scan endpoint's score known before the plan is built: a
+/// predicate that mentions the node (inline attributes included) counts 2, a
+/// label 1. `select_scan_node` adds the bound-variable bonus and breaks ties on
+/// label cardinality; the planner has neither, so it uses this alone.
+pub(crate) fn endpoint_scan_score(
+    filtered: bool,
+    labelled: bool,
+) -> u32 {
+    u32::from(filtered) * 2 + u32::from(labelled)
+}
+
+/// Which end of a variable-length walk `select_var_len_scan_node` scans: the
+/// `to` end only when it strictly outscores `from`, a tie keeps the pattern's
+/// own direction. The planner asks the same question to decide whether a walk
+/// can lead its component, so both read this one rule.
+pub(crate) fn walk_scans_to_endpoint(
+    from_score: u32,
+    to_score: u32,
+) -> bool {
+    to_score > from_score
 }
 
 /// Collects all variable IDs provided by a plan subtree.
