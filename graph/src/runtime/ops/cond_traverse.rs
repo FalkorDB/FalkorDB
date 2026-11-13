@@ -1037,6 +1037,7 @@ impl<'a> CondTraverseOp<'a> {
             }
 
             // Process reverse relationships for bidirectional patterns.
+            let fwd_end = out.len();
             if let Some(ref rev_iter_cell) = state.rev_iter {
                 let mut rev_borrow;
                 let mut bwd_borrow;
@@ -1078,6 +1079,14 @@ impl<'a> CondTraverseOp<'a> {
                     &state.rev_src_label_ids,
                     &state.rev_dst_label_ids,
                 );
+
+                // Collapse mode keeps one representative edge per matrix pair, so
+                // a pair stored in both directions (a->b and b->a) was produced by
+                // both scans. C collapses per pattern pair (A + Aᵀ is boolean):
+                // drop the reverse results the forward scan already produced.
+                if !emit_relationship && fwd_end > start && out.len() > fwd_end {
+                    Self::drop_reverse_duplicates(out, start, fwd_end);
+                }
             }
         }
 
@@ -1112,6 +1121,41 @@ impl<'a> CondTraverseOp<'a> {
         Ok(())
     }
 
+    /// Remove from `out[fwd_end..]` (reverse-scan results) every `(from, to)`
+    /// pair already present in `out[start..fwd_end]` (forward-scan results),
+    /// keeping the retained reverse results in scan order.
+    /// The forward results of one row come off a row-major matrix iterator, so
+    /// they are normally sorted and are binary-searched in place; only an
+    /// unsorted slice pays for a sorted copy.
+    fn drop_reverse_duplicates(
+        out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
+        start: usize,
+        fwd_end: usize,
+    ) {
+        let key = |t: &(NodeId, NodeId, RelationshipId)| (u64::from(t.0), u64::from(t.1));
+        let (head, rev) = out.split_at_mut(fwd_end);
+        let fwd = &head[start..];
+        let sorted_copy: Option<Vec<(u64, u64)>> = if fwd.is_sorted_by_key(key) {
+            None
+        } else {
+            let mut v: Vec<(u64, u64)> = fwd.iter().map(key).collect();
+            v.sort_unstable();
+            Some(v)
+        };
+        let mut w = 0;
+        for r in 0..rev.len() {
+            let seen = match &sorted_copy {
+                Some(v) => v.binary_search(&key(&rev[r])).is_ok(),
+                None => fwd.binary_search_by_key(&key(&rev[r]), key).is_ok(),
+            };
+            if !seen {
+                rev.swap(w, r);
+                w += 1;
+            }
+        }
+        out.truncate(fwd_end + w);
+    }
+
     /// `expand_row`'s expansion for a multi-type pattern: the single-type
     /// forward/reverse code run over the union iterators. Out of line on
     /// purpose — single-type traversals never take it, and a second inlined
@@ -1143,6 +1187,7 @@ impl<'a> CondTraverseOp<'a> {
         }
         let state = &*state;
         let iters = state.union.as_deref().expect("multi-type state");
+        let start = out.len();
         // Reuse the persistent forward iterator: seek the row range
         // instead of allocating a fresh GxB_Iterator per input row.
         {
@@ -1186,6 +1231,7 @@ impl<'a> CondTraverseOp<'a> {
         }
 
         // Process reverse relationships for bidirectional patterns.
+        let fwd_end = out.len();
         if let Some(ref rev_iter_cell) = iters.rev {
             let mut rev_borrow;
             let mut bwd_borrow;
@@ -1227,6 +1273,11 @@ impl<'a> CondTraverseOp<'a> {
                 &state.rev_src_label_ids,
                 &state.rev_dst_label_ids,
             );
+
+            // Same collapse rule as the single-type path in `expand_row`.
+            if !emit_relationship && fwd_end > start && out.len() > fwd_end {
+                Self::drop_reverse_duplicates(out, start, fwd_end);
+            }
         }
     }
 
