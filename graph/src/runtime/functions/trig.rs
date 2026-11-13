@@ -119,7 +119,7 @@ pub fn register(funcs: &mut Functions) {
         args: [],
         ret: Type::Float,
         fn pi(_, args) {
-            debug_assert!(args.is_empty());
+            debug_assert_eq!(args, []);
             Ok(Value::Float(std::f64::consts::PI))
         }
     );

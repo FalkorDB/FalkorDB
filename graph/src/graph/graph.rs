@@ -141,7 +141,7 @@ use crate::{
 /// still query RediSearch, so they are fed exactly as before. This is per **field**, not per
 /// index, so a label carrying both a Range and a Fulltext index keeps the Fulltext half.
 #[cfg(not(feature = "index-falkordb"))]
-fn redisearch_fields(
+const fn redisearch_fields(
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>
 ) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
     fields
@@ -670,15 +670,12 @@ fn populate_index_batch(
                     let g = &*graph;
                     match kind {
                         IndexKind::Node => {
-                            ids = g
-                                .get_label_matrix(&label)
-                                .map(|lm| {
-                                    lm.iter(cursor.row, u64::MAX)
-                                        .take(BATCH_SIZE)
-                                        .map(|(n, _)| n)
-                                        .collect()
-                                })
-                                .unwrap_or_default();
+                            ids = g.get_label_matrix(&label).map_or_default(|lm| {
+                                lm.iter(cursor.row, u64::MAX)
+                                    .take(BATCH_SIZE)
+                                    .map(|(n, _)| n)
+                                    .collect()
+                            });
                             edge_triples = Vec::new();
                             scanned_count = ids.len();
                         }
@@ -686,9 +683,8 @@ fn populate_index_batch(
                             let skip_src = cursor.row;
                             let skip_dst = cursor.within_row_dst;
                             let skip_eid = cursor.within_pair_edge_id;
-                            let triples: Vec<(u64, u64, u64)> = g
-                                .get_relationship_matrix(&label)
-                                .map(|t| {
+                            let triples: Vec<(u64, u64, u64)> =
+                                g.get_relationship_matrix(&label).map_or_default(|t| {
                                     t.iter(cursor.row, u64::MAX, false)
                                         .filter(|(src, dst, eid)| {
                                             // Row mismatch: past the resume
@@ -709,8 +705,7 @@ fn populate_index_batch(
                                         })
                                         .take(BATCH_SIZE)
                                         .collect()
-                                })
-                                .unwrap_or_default();
+                                });
                             ids = Vec::new();
                             scanned_count = triples.len();
                             edge_triples = triples;
@@ -2567,7 +2562,6 @@ impl Graph {
             .sum()
     }
 
-    #[must_use]
     pub fn get_nodes(
         &self,
         labels: &OrderSet<Arc<String>>,
@@ -3893,7 +3887,7 @@ impl Graph {
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
     /// A no-op without the `index-falkordb` feature, which has no native index. `self` must be the
     /// private version the changes were staged against.
-    pub fn apply_index_writes(
+    pub const fn apply_index_writes(
         &mut self,
         docs: &mut IndexDocs,
     ) {
@@ -4772,7 +4766,6 @@ impl Graph {
                         }
                     }
                 }
-                true
             }
             EntityType::Relationship => {
                 let Some(tensor) = self.get_relationship_matrix(&constraint.label) else {
@@ -4788,9 +4781,9 @@ impl Graph {
                         }
                     }
                 }
-                true
             }
         }
+        true
     }
 
     fn validate_unique_constraint(
@@ -4816,7 +4809,6 @@ impl Graph {
                         return false;
                     }
                 }
-                true
             }
             EntityType::Relationship => {
                 let Some(tensor) = self.get_relationship_matrix(&constraint.label) else {
@@ -4836,9 +4828,9 @@ impl Graph {
                         return false;
                     }
                 }
-                true
             }
         }
+        true
     }
 
     /// Build the composite unique-constraint key for `properties`.
@@ -5462,7 +5454,7 @@ mod composite_key_tests {
     #[test]
     fn complete_key_is_built_and_discriminates() {
         let a = key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(2))]);
-        assert!(!a.is_empty());
+        assert_ne!(a, [] as [u8; 0]);
         assert_eq!(
             a,
             key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(2))])
@@ -5477,26 +5469,32 @@ mod composite_key_tests {
     /// is vacuously unique — regardless of which component it is.
     #[test]
     fn any_null_component_yields_empty_key() {
-        assert!(key(&["a", "b"], &[("a", Value::Int(1))]).is_empty());
-        assert!(key(&["a", "b"], &[("b", Value::Int(2))]).is_empty());
-        assert!(key(&["a", "b"], &[]).is_empty());
-        assert!(key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Null)]).is_empty());
-        assert!(key(&["a", "b"], &[("a", Value::Null), ("b", Value::Int(2))]).is_empty());
-        assert!(
+        assert_eq!(key(&["a", "b"], &[("a", Value::Int(1))]), [] as [u8; 0]);
+        assert_eq!(key(&["a", "b"], &[("b", Value::Int(2))]), [] as [u8; 0]);
+        assert_eq!(key(&["a", "b"], &[]), [] as [u8; 0]);
+        assert_eq!(
+            key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Null)]),
+            [] as [u8; 0]
+        );
+        assert_eq!(
+            key(&["a", "b"], &[("a", Value::Null), ("b", Value::Int(2))]),
+            [] as [u8; 0]
+        );
+        assert_eq!(
             key(
                 &["a", "b", "c"],
                 &[("a", Value::Int(1)), ("c", Value::Int(3))]
-            )
-            .is_empty()
+            ),
+            [] as [u8; 0]
         );
     }
 
     /// For a single property ALL and ANY coincide, so behaviour is unchanged.
     #[test]
     fn single_property_is_unaffected() {
-        assert!(!key(&["a"], &[("a", Value::Int(1))]).is_empty());
-        assert!(key(&["a"], &[]).is_empty());
-        assert!(key(&["a"], &[("a", Value::Null)]).is_empty());
+        assert_ne!(key(&["a"], &[("a", Value::Int(1))]), [] as [u8; 0]);
+        assert_eq!(key(&["a"], &[]), [] as [u8; 0]);
+        assert_eq!(key(&["a"], &[("a", Value::Null)]), [] as [u8; 0]);
     }
 }
 
@@ -5536,7 +5534,7 @@ mod reservation_tests {
 
         fn reserve(
             &mut self,
-            g: &mut Graph,
+            g: &Graph,
             n: usize,
         ) -> Vec<u64> {
             let before = &self.created | &self.cancelled;
@@ -5640,7 +5638,7 @@ mod reservation_tests {
 
         let mut all = Vec::new();
         for _ in 0..5 {
-            all.extend(q.reserve(&mut g, 1024));
+            all.extend(q.reserve(&g, 1024));
         }
 
         assert_eq!(all, (0..5120).collect::<Vec<_>>(), "dense and in order");
@@ -5653,14 +5651,14 @@ mod reservation_tests {
     fn reclaims_from_the_bin_before_allocating_fresh() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 10);
+        q.reserve(&g, 10);
         q.commit(&mut g);
         delete(&mut g, &[2, 5, 7]);
 
         let mut q = Query::new(&mut g);
-        assert_eq!(q.reserve(&mut g, 2), vec![2, 5]);
-        assert_eq!(q.reserve(&mut g, 1), vec![7], "then the last freed id");
-        assert_eq!(q.reserve(&mut g, 2), vec![10, 11], "then fresh");
+        assert_eq!(q.reserve(&g, 2), vec![2, 5]);
+        assert_eq!(q.reserve(&g, 1), vec![7], "then the last freed id");
+        assert_eq!(q.reserve(&g, 2), vec![10, 11], "then fresh");
         q.commit(&mut g);
         assert_dense(&g, 12);
     }
@@ -5672,14 +5670,14 @@ mod reservation_tests {
     fn one_batch_spanning_the_bin_and_fresh_ids() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 10);
+        q.reserve(&g, 10);
         q.commit(&mut g);
         delete(&mut g, &[3]);
 
         // 9 live (0..10 minus 3), one in the bin, so 10 ids handed out.
         let mut q = Query::new(&mut g);
         assert_eq!(
-            q.reserve(&mut g, 3),
+            q.reserve(&g, 3),
             vec![3, 10, 11],
             "the freed id, then above the boundary"
         );
@@ -5694,7 +5692,7 @@ mod reservation_tests {
     fn a_cancelled_reservation_returns_to_the_bin() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        let ids = q.reserve(&mut g, 2);
+        let ids = q.reserve(&g, 2);
         assert_eq!(ids, vec![0, 1]);
         q.cancel(&mut g, 1);
         q.commit(&mut g);
@@ -5706,7 +5704,7 @@ mod reservation_tests {
         // A *later* query does hand it back out — by then it is a different
         // effects buffer, where recreating a recycled id is ordinary.
         let mut q = Query::new(&mut g);
-        assert_eq!(q.reserve(&mut g, 1), vec![1]);
+        assert_eq!(q.reserve(&g, 1), vec![1]);
         q.commit(&mut g);
         assert_dense(&g, 2);
     }
@@ -5717,7 +5715,7 @@ mod reservation_tests {
     fn reserving_after_a_cancellation_in_the_same_query() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 3);
+        q.reserve(&g, 3);
         q.cancel(&mut g, 1);
 
         // Id 1 is back in the bin, but this query has already had it, so it is
@@ -5725,7 +5723,7 @@ mod reservation_tests {
         // put the same id in two records of one effects buffer: the cancelled
         // node's own create/delete pair, and the real create that reused it.
         // A replica refuses that buffer as `AlreadyLive`, measured.
-        let next = q.reserve(&mut g, 2);
+        let next = q.reserve(&g, 2);
         assert_eq!(next, vec![3, 4], "not 1 again, even though it is free");
         q.commit(&mut g);
 
@@ -5740,7 +5738,7 @@ mod reservation_tests {
     fn relationship_ids_reclaim_then_allocate_fresh() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 4);
+        q.reserve(&g, 4);
         q.commit(&mut g);
 
         let type_name = Arc::new("R".to_owned());
@@ -5810,19 +5808,15 @@ mod reservation_tests {
     fn outstanding_covers_ids_reclaimed_by_an_earlier_batch() {
         let mut g = graph();
         let mut q = Query::new(&mut g);
-        q.reserve(&mut g, 8);
+        q.reserve(&g, 8);
         q.commit(&mut g);
         delete(&mut g, &[0, 1, 2, 3, 4, 5]);
 
         let mut q = Query::new(&mut g);
-        assert_eq!(q.reserve(&mut g, 2), vec![0, 1]);
-        assert_eq!(q.reserve(&mut g, 2), vec![2, 3], "not 0 and 1 again");
-        assert_eq!(q.reserve(&mut g, 2), vec![4, 5]);
-        assert_eq!(
-            q.reserve(&mut g, 2),
-            vec![8, 9],
-            "bin exhausted, then fresh"
-        );
+        assert_eq!(q.reserve(&g, 2), vec![0, 1]);
+        assert_eq!(q.reserve(&g, 2), vec![2, 3], "not 0 and 1 again");
+        assert_eq!(q.reserve(&g, 2), vec![4, 5]);
+        assert_eq!(q.reserve(&g, 2), vec![8, 9], "bin exhausted, then fresh");
         q.commit(&mut g);
         assert_dense(&g, 10);
     }
@@ -5977,7 +5971,7 @@ mod adjacency_cascade_tests {
 
         // And deleting both endpoints clears it, S edge included.
         delete_nodes_cascade(&mut g, &[0, 1]);
-        assert!(adjacency_entries(&g).is_empty());
+        assert_eq!(adjacency_entries(&g), [] as [(u64, u64); 0]);
     }
 }
 
@@ -6164,10 +6158,10 @@ mod restore_tests {
     /// tensor shrink is where `me` kept the ids of pairs it cut off.
     #[test]
     fn restore_never_shrinks_the_saved_matrices() {
-        ensure_init();
         // Two nodes, saved by a server whose node_cap had grown to 40,960:
         // restore rounds two nodes up to one 16,384 chunk.
         const SAVED: u64 = 40_960;
+        ensure_init();
         let mut tensor = Tensor::new(SAVED, SAVED);
         tensor.set_all_from_slices(&[0, 0], &[1, 1], &[0, 1]);
         tensor.flush();

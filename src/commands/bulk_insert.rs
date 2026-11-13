@@ -593,6 +593,10 @@ fn bulk_insert_sync(
 
 /// Process bulk insert synchronously with periodic yield for PING handling. `docs` as in
 /// [`bulk_insert_sync`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the arguments of `bulk_insert_sync` plus the yield context"
+)]
 fn bulk_insert_sync_yield(
     g: &mut Graph,
     tokens: &[&[u8]],
@@ -818,21 +822,20 @@ pub fn graph_bulk_insert(
     }
 
     // Every argument checks out, so it is safe to put a graph in the keyspace.
-    let graph = match existing {
-        Some(g) => g,
-        None => {
-            // Created under C's name and stored at the key rebuilt from it, not at
-            // the key the command addressed — see `c_graph_key`.
-            let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
-            let name = c_graph_name(&key_str);
-            let g = Arc::new(RwLock::new(ThreadedGraph::new(
-                *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-                &name,
-            )));
-            key.set_value(&GRAPH_TYPE, g.clone())?;
-            register_graph(name, g.clone());
-            g
-        }
+    let graph = if let Some(g) = existing {
+        g
+    } else {
+        // Created under C's name and stored at the key rebuilt from it, not at
+        // the key the command addressed — see `c_graph_key`.
+        let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+        let name = c_graph_name(&key_str);
+        let g = Arc::new(RwLock::new(ThreadedGraph::new(
+            *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+            &name,
+        )));
+        key.set_value(&GRAPH_TYPE, g.clone())?;
+        register_graph(name, g.clone());
+        g
     };
 
     // Run inline on this thread; `inline` is decided above, before the arguments were

@@ -121,9 +121,9 @@ pub struct Field {
 impl Field {
     fn make_arr_names(
         name: &CString,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> (Option<CString>, Option<CString>) {
-        if *ty == IndexType::Range {
+        if ty == IndexType::Range {
             let base = name.to_str().unwrap_or("");
             (
                 CString::new(format!("{base}:numeric:arr")).ok(),
@@ -140,7 +140,7 @@ impl Field {
         ty: IndexType,
         options: Option<TextIndexOptions>,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -157,7 +157,7 @@ impl Field {
         ty: IndexType,
         vector_options: VectorIndexOptions,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -801,7 +801,11 @@ impl Document {
                 // temporal value: the scan ops refuse them (`can_utilize_index`), so
                 // a temporal predicate is answered by a label scan and its
                 // retained filter.
-                Value::Datetime(_) | Value::Date(_) | Value::Time(_) | Value::Duration(_) => {}
+                Value::Datetime(_)
+                | Value::Date(_)
+                | Value::Time(_)
+                | Value::Duration(_)
+                | Value::VecF32(_) => {}
                 Value::List(items) => {
                     // Index array elements in separate fields for contains queries.
                     // Numeric elements go to "range:{attr}:numeric:arr",
@@ -852,7 +856,7 @@ impl Document {
                         self.string_arr_values.extend(string_cstrs);
                     }
                 }
-                Value::VecF32(_) => {} // Only for vector fields
+                // Only for vector fields
                 Value::Point(p) => {
                     RediSearch_DocumentAddFieldGeo(
                         self.rs_doc,

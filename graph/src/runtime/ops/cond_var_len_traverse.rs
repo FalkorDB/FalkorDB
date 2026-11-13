@@ -448,6 +448,10 @@ pub struct CondVarLenTraverseOp<'a> {
 }
 
 impl<'a> CondVarLenTraverseOp<'a> {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "built once from the plan node; mirrors its fields"
+    )]
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
@@ -507,6 +511,10 @@ impl<'a> CondVarLenTraverseOp<'a> {
     /// binds it without any transpose. Callers pass the op's fields explicitly
     /// so this runs inside the emitter closure without borrowing the emitter
     /// through `&self`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "takes the op's fields explicitly; see above"
+    )]
     fn expand_row(
         runtime: &'a Runtime<'a>,
         rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,

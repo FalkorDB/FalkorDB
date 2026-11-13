@@ -208,7 +208,6 @@ pub fn graph_record(
     // write lock and waits for the GIL.
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let query: Arc<str> = Arc::from(query);
-    let key_name = key_name.clone();
     spawn(
         move || {
             let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };

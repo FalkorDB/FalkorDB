@@ -217,7 +217,7 @@ const MIN_FOLD_DELTA: u64 = 256;
 /// Write-path fold policy, evaluated in `dup` (version creation). Balances the
 /// COW dup tax against the fold; see the module docs above for the model and
 /// the measurements behind [`WRITE_FOLD_K`].
-pub(super) fn should_fold(
+pub(super) const fn should_fold(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -229,7 +229,7 @@ pub(super) fn should_fold(
 /// [`should_fold`], but the transaction pays the `O(|delta|)` pending-tuple
 /// merge on top of the dup, so `w` is 250x larger and the balance point
 /// `sqrt(250) ≈ 16x` tighter. See [`READ_FOLD_K`].
-pub(super) fn should_fold_read(
+pub(super) const fn should_fold_read(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -238,7 +238,7 @@ pub(super) fn should_fold_read(
 }
 
 /// `|delta| ≥ sqrt(k · tx_added)`, or a delta comparable to the base.
-fn fold_balance(
+const fn fold_balance(
     delta_nvals: u64,
     tx_added: u64,
     base_nvals: u64,
@@ -258,7 +258,7 @@ fn fold_balance(
 /// same order as a single delta touch — and because the delta is holding as
 /// much memory as the base it shadows. Evaluated on the approximate counters,
 /// so it never forces a delta's pending tuples to merge.
-pub(super) fn delta_dominates_base(
+pub(super) const fn delta_dominates_base(
     delta_nvals: u64,
     base_nvals: u64,
 ) -> bool {
@@ -514,6 +514,10 @@ impl<T> Delta<T> {
 
     /// Consume the latched decision: true when this layer must fold *and* has
     /// something to fold.
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "consuming the latch is a write; `&mut` keeps it to the owner"
+    )]
     pub(super) fn take_fold(&mut self) -> bool {
         self.fold.swap(false, Ordering::Relaxed) && self.layer.nvals() > 0
     }
@@ -1650,7 +1654,7 @@ mod tests {
         tx_added: u64,
     ) -> u64 {
         let target = k * tx_added;
-        (1..).find(|d| d * d >= target).unwrap()
+        (1..=target.max(1)).find(|d| d * d >= target).unwrap()
     }
 
     /// A base big enough that the `2·|delta| ≥ base_nvals` escape hatch never

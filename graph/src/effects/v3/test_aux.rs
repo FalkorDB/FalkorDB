@@ -33,18 +33,18 @@ use crate::runtime::pending::Pending;
 ///
 /// `ensure_init` because `GrB_init` is process-wide and may only run once,
 /// whichever test gets there first.
-pub(crate) fn graph() -> Graph {
+pub fn graph() -> Graph {
     ensure_init();
     Graph::new(64, 64, 0, 0, "t")
 }
 
 /// The same graph, wrapped as the emit path takes it.
-pub(crate) fn graph_cell() -> AtomicRefCell<Graph> {
+pub fn graph_cell() -> AtomicRefCell<Graph> {
     AtomicRefCell::new(graph())
 }
 
 /// Register node attribute names, so the ids the tests use resolve.
-pub(crate) fn with_attrs(
+pub fn with_attrs(
     g: &AtomicRefCell<Graph>,
     names: &[&str],
 ) {
@@ -56,7 +56,7 @@ pub(crate) fn with_attrs(
 
 /// One live edge of `type_name`, so a delete or an update has something real to
 /// name.
-pub(crate) fn with_edge(
+pub fn with_edge(
     g: &AtomicRefCell<Graph>,
     type_name: &str,
     id: u64,
@@ -68,7 +68,7 @@ pub(crate) fn with_edge(
 }
 
 /// One live node, labelled.
-pub(crate) fn live_node(
+pub fn live_node(
     g: &AtomicRefCell<Graph>,
     id: u64,
     labels: &[&str],
@@ -99,7 +99,7 @@ pub(crate) fn live_node(
 /// to time encoding separately from digesting — and reconstructing them by
 /// decoding a buffer would test the decoder rather than the digest.
 #[must_use]
-pub(crate) fn digest(
+pub fn digest(
     p: &Pending,
     g: &AtomicRefCell<Graph>,
 ) -> Vec<Record> {
@@ -110,7 +110,7 @@ pub(crate) fn digest(
 
 /// The loop `format::build` runs, so a test goes through the bytes rather than
 /// stopping at the records.
-pub(crate) fn encode_all(
+pub fn encode_all(
     p: &Pending,
     g: &AtomicRefCell<Graph>,
     buf: &mut Vec<u8>,
@@ -119,7 +119,7 @@ pub(crate) fn encode_all(
 }
 
 /// Encode, then decode: what a replica would see.
-pub(crate) fn round_trip(
+pub fn round_trip(
     p: &Pending,
     g: &AtomicRefCell<Graph>,
 ) -> Vec<Record> {
@@ -139,6 +139,6 @@ pub(crate) fn round_trip(
 /// # Errors
 ///
 /// Returns [`DecodeError`] if the payload or any record in it is malformed.
-pub(crate) fn read_buffer(buf: &[u8]) -> Result<Vec<Record>, DecodeError> {
+pub fn read_buffer(buf: &[u8]) -> Result<Vec<Record>, DecodeError> {
     open_payload(buf)?.records().collect()
 }

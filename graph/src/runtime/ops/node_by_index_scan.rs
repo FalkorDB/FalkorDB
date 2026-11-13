@@ -291,7 +291,7 @@ impl<'a> NodeByIndexScanOp<'a> {
                     Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
                 )
             }
-            _ => true,
+            IndexQuery::Point { .. } => true,
         }
     }
 }
