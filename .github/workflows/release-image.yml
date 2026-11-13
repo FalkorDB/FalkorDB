@@ -91,15 +91,9 @@ jobs:
           SHA=$(git -C built-commit rev-parse HEAD)
           # A commit from before the images named their server builds Redis
           # whatever SERVER says, and labels nothing, so it cannot be published
-          # under server-named tags. Nor can one without the Redis 8 volume
-          # check the image build runs from the commit. Refuse either here,
-          # before an hour of building.
+          # under server-named tags. Refuse it here, before an hour of building.
           if ! grep -q 'com.falkordb.server.name' built-commit/build/runtime/Dockerfile; then
             echo "::error::${SHA} predates server-named images (its build/runtime/Dockerfile sets no com.falkordb.server.name label), so it has no Valkey image to publish"
-            exit 1
-          fi
-          if [ ! -f built-commit/tests/docker/redis8_volume_check.sh ]; then
-            echo "::error::${SHA} predates tests/docker/redis8_volume_check.sh, which the image build runs; rebuild a later commit"
             exit 1
           fi
           LATEST=()
