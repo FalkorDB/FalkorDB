@@ -231,6 +231,7 @@ impl Binder {
                     rel.max_hops,
                 );
                 new_rel.all_shortest_paths = rel.all_shortest_paths;
+                new_rel.written_incoming = rel.written_incoming;
                 *rel = Arc::new(new_rel);
             }
         }
@@ -1520,6 +1521,7 @@ impl Binder {
                 relationship.max_hops,
             );
             new_rel.all_shortest_paths = relationship.all_shortest_paths;
+            new_rel.written_incoming = relationship.written_incoming;
             let rel = Arc::new(new_rel);
             bound.add_relationship(rel);
         }
@@ -1531,13 +1533,25 @@ impl Binder {
             let alias = self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
 
             let vars = if raw_path.vars.is_empty() {
-                // Pattern comprehension stub: derive from bound relationships
+                // Pattern comprehension stub: derive from bound relationships,
+                // walking each one in its written direction (an incoming one
+                // is stored with `from`/`to` swapped).
                 let mut v = Vec::new();
                 if let Some(first_rel) = bound.relationships().first() {
-                    v.push(first_rel.from.alias.clone());
-                    for rel in bound.relationships() {
+                    let start = if raw_path.is_incoming(1) {
+                        &first_rel.to
+                    } else {
+                        &first_rel.from
+                    };
+                    v.push(start.alias.clone());
+                    for (i, rel) in bound.relationships().iter().enumerate() {
+                        let next = if raw_path.is_incoming(2 * i + 1) {
+                            &rel.from
+                        } else {
+                            &rel.to
+                        };
                         v.push(rel.alias.clone());
-                        v.push(rel.to.alias.clone());
+                        v.push(next.alias.clone());
                     }
                 }
                 v
@@ -1553,7 +1567,11 @@ impl Binder {
                 }
                 v
             };
-            bound.add_path(Arc::new(QueryPath::new(alias, vars)));
+            bound.add_path(Arc::new(QueryPath::new(
+                alias,
+                vars,
+                raw_path.incoming.clone(),
+            )));
         }
 
         Ok(bound)
