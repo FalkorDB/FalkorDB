@@ -56,7 +56,7 @@ graph/src/parser/cypher.rs	parse_pattern	1400	NOT COVERED	parser routine not mod
 graph/src/parser/cypher.rs	parse_case_expression	1589	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_quantifier_expr	1621	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_reduce_expr	1680	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_shortest_path_expr	1758	MODELLED	fragment: hop bound cast i as u32 = asU32 (hop_truncation_bug); rest not modelled
+graph/src/parser/cypher.rs	parse_shortest_path_expr	1768	MODELLED	fragment: hop bounds go through hop_bound = hopBound (hopBound_large, hopBound_mono; pre3691_hop_truncation_bug was the old i as u32); rest not modelled
 graph/src/parser/cypher.rs	parse_primary_expr	1940	MODELLED	PRIMARY_LEVELS premise checked per constructor shape (primary_levels); parsing itself not modelled
 graph/src/parser/cypher.rs	parse_list_operator_expression	2134	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_property_lookup	2165	NOT COVERED	parser routine not modelled by the lexer project
@@ -76,7 +76,8 @@ graph/src/parser/cypher.rs	parse_list_comprehension	2916	NOT COVERED	parser rout
 graph/src/parser/cypher.rs	parse_pattern_comprehension	2959	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_inline_properties	3016	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_node_pattern	3032	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_relationship_pattern	3067	MODELLED	fragment: hop bound casts i as u32 = asU32 (hop_truncation_bug, bug); rest not modelled
+graph/src/parser/cypher.rs	parse_relationship_pattern	3099	MODELLED	fragment: hop bounds go through hop_bound = hopBound (hopBound_large, hopBound_mono; pre3691_hop_truncation_bug was the old i as u32); rest not modelled
+graph/src/parser/cypher.rs	hop_bound	3629	PROVEN	hopBound: hopBound_in_range, hopBound_le, hopBound_large, hopBound_mono (#3691)
 graph/src/parser/cypher.rs	parse_labels	3207	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_map	3216	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_map_projection	3248	NOT COVERED	parser routine not modelled by the lexer project

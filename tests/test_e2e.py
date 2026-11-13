@@ -2059,3 +2059,24 @@ def test_self_loop_hop_after_other_hops_keeps_them():
         assert query(q).result_set == [[1, 2, 3]], q
     res = query("MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c)-[:L]->(c) RETURN count(*)")
     assert res.result_set == [[1]]
+
+
+def test_var_len_hop_bounds_above_u32_do_not_wrap():
+    """Hop bounds above u32::MAX used to wrap, so `*4294967297` ran as `*1`
+    and `*1..4294967296` failed as max < min (#3691)."""
+    query("CREATE (a:N {id:0})-[:R]->(b:N {id:1})-[:R]->(c:N {id:2})", write=True)
+    for bound, expected in [
+        ("*1..3", 3),
+        ("*4294967297", 0),
+        ("*4294967298..", 0),
+        ("*..4294967297", 3),
+        ("*1..4294967296", 3),
+    ]:
+        res = query(f"MATCH (a:N)-[:R{bound}]->(b:N) RETURN count(*) AS c")
+        assert res.result_set == [[expected]], bound
+
+    res = query(
+        "MATCH (a:N {id:0}), (b:N {id:2}) "
+        "RETURN length(shortestPath((a)-[:R*1..4294967297]->(b))) AS l"
+    )
+    assert res.result_set == [[2]]
