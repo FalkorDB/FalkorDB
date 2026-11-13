@@ -1832,42 +1832,20 @@ impl<'a> Parser<'a> {
                 (1, Some(1)) // no *, fixed 1-hop
             };
 
-            // Check for edge filter properties (not allowed)
-            let has_filter = if let Token::Parameter(_) = self.lexer.current()? {
-                true
-            } else {
-                self.lexer.current()? == Token::LBracket
-            };
-
-            // Skip filter content if present (consume until we reach `]`)
-            if has_filter {
-                let mut depth = 0i32;
-                loop {
-                    let tok = self.lexer.current()?;
-                    match tok {
-                        Token::LBracket => {
-                            // Nested `{`
-                            depth += 1;
-                            self.lexer.next();
-                        }
-                        Token::RBracket => {
-                            // Closing `}`
-                            depth -= 1;
-                            self.lexer.next();
-                            if depth <= 0 {
-                                break;
-                            }
-                        }
-                        Token::RBrace => {
-                            // `]` - stop before consuming it
-                            break;
-                        }
-                        _ => {
-                            self.lexer.next();
-                        }
-                    }
+            // An edge filter is not allowed, but it is parsed like any other
+            // so that a malformed or unterminated one is a syntax error; the
+            // caller rejects it once the pattern is known to be complete.
+            let has_filter = match self.lexer.current()? {
+                Token::Parameter(_) => {
+                    self.lexer.next();
+                    true
                 }
-            }
+                Token::LBracket => {
+                    self.parse_map()?;
+                    true
+                }
+                _ => false,
+            };
 
             match_token!(self.lexer, RBrace);
             (types, min, max, has_filter)
@@ -4254,6 +4232,34 @@ mod tests {
         assert_eq!(rest.trim_start(), "MATCH (n) RETURN n");
         assert_eq!(format!("{:?}", params["a"]), format!("{:?}", Value::Int(3)));
         assert_eq!(params.len(), 2);
+    }
+
+    // The edge filter of a shortestPath used to be skipped token by token until
+    // `]` or `}`; at end of input that loop never ended and pinned a worker.
+    #[test]
+    fn shortest_path_edge_filter_at_end_of_input_is_an_error() {
+        with_functions();
+        for query in [
+            "RETURN shortestPath((a)-[{",
+            "RETURN shortestPath((a)-[$p",
+            "RETURN shortestPath((a)-[{x: [1, {y: 2",
+            "MATCH (a), (b) RETURN shortestPath((a)-[* {x: 1",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        // A complete filter is still parsed and rejected for being a filter.
+        for query in [
+            "MATCH (a), (b) RETURN shortestPath((a)-[{x: {y: [1]}}]->(b))",
+            "MATCH (a), (b) RETURN shortestPath((a)-[$p]->(b))",
+        ] {
+            let Err(err) = Parser::new(query).parse() else {
+                panic!("accepted {query:?}");
+            };
+            assert!(
+                err.contains("filters on relationships in shortestPath are not allowed"),
+                "{query:?}: {err}"
+            );
+        }
     }
 
     // The speculative-ident path must still recognise what it probes for.
