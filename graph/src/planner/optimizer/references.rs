@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use orx_tree::{Bfs, DynNode, DynTree, NodeRef};
+use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{ExprIR, QueryExpr, QueryGraph, SetItem, Variable};
@@ -81,10 +81,15 @@ pub(super) fn ir_references_variable(
                 .any(|v| v.id == var_id && v.scope_id == scope_id)
         }),
         // The list they iterate is read; `UNWIND [e] AS x` reads `e`.
-        IR::Unwind { expr: list, var } | IR::ForEach { list, var } => {
+        IR::Unwind { expr: list, var } => {
             expr_references_variable(list, var_id, scope_id)
                 || (var.id == var_id && var.scope_id == scope_id)
         }
+        // The loop variable is an output binding, not a read: `FOREACH (r IN
+        // [1] | ...)` may reuse an outer edge's name, and a body that never
+        // reads it must not keep that edge per-edge. A body that does read it
+        // is a sibling branch, inspected on its own.
+        IR::ForEach { list, .. } => expr_references_variable(list, var_id, scope_id),
         IR::Delete { exprs, .. } | IR::Remove(exprs) => exprs
             .iter()
             .any(|expr| expr_references_variable(expr, var_id, scope_id)),
@@ -195,6 +200,112 @@ pub(super) fn ir_references_variable(
         // them. (`optimize` also strips this root before any pass runs.)
         IR::NestedPlans => false,
     }
+}
+
+/// Whether the rows the child `cur` of `parent` produces are handed to the
+/// parent's other children. `Apply`-like operators run their body children once
+/// per row of their input (first) child, and nothing flows from a body back to
+/// the input. `Union`, `CartesianProduct` and the hash join run independent
+/// children: a variable the other branch binds is a different variable even when
+/// a fresh binder gave it the same `(id, scope_id)`.
+fn row_reaches_siblings(
+    parent: &IR,
+    is_input_child: bool,
+) -> bool {
+    match parent {
+        IR::Union | IR::CartesianProduct | IR::ValueHashJoin { .. } => false,
+        _ => is_input_child,
+    }
+}
+
+/// Whether the operator binds the variable itself: a traverse's edge or path.
+fn ir_binds_variable(
+    ir: &IR,
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    let is_it = |v: &Variable| v.id == var_id && v.scope_id == scope_id;
+    match ir {
+        IR::CondTraverse { relationship, .. } | IR::ExpandInto { relationship, .. } => {
+            is_it(&relationship.alias)
+        }
+        IR::CondVarLenTraverse {
+            relationship,
+            path_var,
+            ..
+        } => is_it(&relationship.alias) || path_var.as_ref().is_some_and(is_it),
+        IR::AllShortestPaths(relationship) => is_it(&relationship.alias),
+        _ => false,
+    }
+}
+
+/// Whether any operator in the subtree rooted at `idx` reads the variable. The
+/// branches of a nested `Union` are independent plans that a fresh binder gives
+/// the same `(id, scope_id)` numbers, so a branch that binds the variable itself
+/// reads its own, not the outer one, and is skipped.
+fn subtree_reads_variable(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    // An explicit stack: plans nest as deep as the query's subqueries do.
+    let mut pending = vec![idx];
+    while let Some(idx) = pending.pop() {
+        let node = plan.node(idx);
+        if ir_references_variable(node.data(), var_id, scope_id) {
+            return true;
+        }
+        let is_union = matches!(node.data(), IR::Union);
+        for child in node.children() {
+            let own = is_union
+                && child
+                    .walk::<Bfs>()
+                    .any(|ir| ir_binds_variable(ir, var_id, scope_id));
+            if !own {
+                pending.push(child.idx());
+            }
+        }
+    }
+    false
+}
+
+/// True when an operator outside the subtree rooted at `idx` reads the
+/// variable `(var_id, scope_id)` that the operator at `idx` binds.
+///
+/// Every row `idx` produces flows up through its ancestors, and each ancestor
+/// hands it to its other branches too: `Apply`/`SemiApply`/`ForEach`/`Merge`
+/// run their right-hand sub-plan once per input row, with the row as the
+/// `Argument`. So the readers are not only the ancestors but every node outside
+/// `idx`'s own subtree (whose nodes only produce its input): the body of
+/// `CALL {}`, the right side of an `OPTIONAL MATCH` or pattern-predicate Apply,
+/// a pattern comprehension sub-plan, a `FOREACH` body. Only the branches that
+/// receive the row count (see [`row_reaches_siblings`]): the other side of a
+/// `Union` or `CartesianProduct`, or an `Apply` input reached from its body,
+/// never sees it.
+pub(super) fn variable_read_outside(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    let mut cur = plan.node(idx);
+    while let Some(parent) = cur.parent() {
+        if ir_references_variable(parent.data(), var_id, scope_id) {
+            return true;
+        }
+        if row_reaches_siblings(parent.data(), parent.child(0).idx() == cur.idx()) {
+            for sibling in parent.children() {
+                if sibling.idx() != cur.idx()
+                    && subtree_reads_variable(plan, sibling.idx(), var_id, scope_id)
+                {
+                    return true;
+                }
+            }
+        }
+        cur = parent;
+    }
+    false
 }
 
 /// Whether an index query's operands reference the variable. The operands are
