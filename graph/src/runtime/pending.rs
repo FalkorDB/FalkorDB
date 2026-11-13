@@ -1371,7 +1371,6 @@ impl Pending {
         }
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);
-            stats.borrow_mut().labels_removed += rows.len();
             g.remove_nodes_labels(&rows, &cols, &mut self.index_docs);
         }
         if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
@@ -1551,7 +1550,7 @@ impl Pending {
     /// [`Self::update_node_labels`] semantics; `set_labels` and `remove_labels`
     /// are disjoint per node (see [`Self::stage_node_labels`]), so the two
     /// branches below cannot both match.
-    fn constraint_node_has_label(
+    pub(crate) fn constraint_node_has_label(
         &self,
         g: &Graph,
         node_id: u64,
