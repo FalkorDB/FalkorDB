@@ -51,6 +51,10 @@
 //! whole effects buffer, or one commit segment of a write query.
 //! [`IdSpace::open_batch`] begins one, and has a precondition worth reading.
 //!
+//! A sixth field, `retired`, outlives the batch: every id this *version* has
+//! freed, kept out of [`IdSpace::reserve`] until the version ends. A version is
+//! one write query, so an id never names two entities in one query (#2876).
+//!
 //! A fifth field, `released`, records what the batch freed. It is outside the
 //! equation above — a release already moves both of its halves — and exists
 //! for callers that must tell "freed by this batch" from "free before it"; see
@@ -205,6 +209,23 @@ pub struct IdSpace {
     /// id an earlier record of the same batch freed. Cleared with `taken`, for
     /// the same reason.
     released: RoaringTreemap,
+    /// Every id this version has freed — released, or reserved and cancelled —
+    /// in any batch. [`Self::reserve`] does not hand these out again until the
+    /// version ends.
+    ///
+    /// A version is one write query, and a query keeps reading what it deleted:
+    /// `Runtime::deleted_nodes` and `deleted_relationships` snapshot the entity
+    /// by id, and a variable bound to it still names that id. Reissuing the id
+    /// in a later commit segment of the same query gave one id two entities,
+    /// and every read of the new one returned the deleted one's labels and
+    /// properties (#2876). `taken` cannot cover this, because it is cleared at
+    /// every segment.
+    ///
+    /// Outside the invariant like `released`: it only narrows what `reserve`
+    /// may choose, and a retired id stays in `recycled`, so the boundary does
+    /// not see it. Not carried by [`Self::new_version`], so the next query may
+    /// reuse what this one freed.
+    retired: RoaringTreemap,
 }
 
 /// Append up to `count` ids from `pool` that `held` does not already hold, to
@@ -245,10 +266,11 @@ fn reclaim_ids(
     pool: &RoaringTreemap,
     taken: &RoaringTreemap,
     issued: &RoaringTreemap,
+    retired: &RoaringTreemap,
     count: u64,
     out: &mut Vec<u64>,
 ) -> u64 {
-    let free = pool - taken - issued;
+    let free = pool - taken - issued - retired;
     let before = out.len();
     out.extend(free.iter().take(count as usize));
     (out.len() - before) as u64
@@ -270,6 +292,7 @@ impl IdSpace {
             entry_bound: 0,
             taken: RoaringTreemap::new(),
             released: RoaringTreemap::new(),
+            retired: RoaringTreemap::new(),
         }
     }
 
@@ -288,6 +311,7 @@ impl IdSpace {
             entry_bound,
             taken: RoaringTreemap::new(),
             released: RoaringTreemap::new(),
+            retired: RoaringTreemap::new(),
         }
     }
 
@@ -360,7 +384,8 @@ impl IdSpace {
     /// The same id space in a new MVCC version, with a fresh batch.
     ///
     /// A version is where a batch begins, so neither `taken` nor `released` is
-    /// carried forward:
+    /// carried forward, and it is where a query begins, so neither is
+    /// `retired`:
     /// that would put per-batch state in a version readers hold, and have a
     /// `verify` there measure the previous version's work.
     #[must_use]
@@ -384,6 +409,7 @@ impl IdSpace {
             entry_bound,
             taken,
             released: RoaringTreemap::new(),
+            retired: RoaringTreemap::new(),
         }
     }
 
@@ -495,7 +521,15 @@ impl IdSpace {
         // — `GRAPH.BULK`, or anything reserving one id at a time — would
         // otherwise have to hand its own creations back to the thing that
         // recorded them.
-        let reclaimed = reclaim_ids(&self.recycled, &self.taken, issued, count, &mut ids);
+        // Nor is anything this query freed in an earlier segment: see `retired`.
+        let reclaimed = reclaim_ids(
+            &self.recycled,
+            &self.taken,
+            issued,
+            &self.retired,
+            count,
+            &mut ids,
+        );
 
         // Above every id ever handed out. `entry_bound` accounts for everything
         // issued before this batch; the ids issued *by* it that sit at or above
@@ -534,6 +568,7 @@ impl IdSpace {
             return Err(IdSpaceError::AlreadyTaken(id));
         }
         self.recycled.insert(id);
+        self.retired.insert(id);
         self.checked()
     }
 
@@ -715,6 +750,7 @@ impl IdSpace {
         self.recycled |= freed;
         self.live -= freed.len();
         self.released |= freed;
+        self.retired |= freed;
         self.checked()
     }
 
@@ -1168,6 +1204,40 @@ mod tests {
     /// `release` frees what the caller resolved, not what it was handed. The
     /// two sets differ on the relationship side, where `delete_relationships`
     /// skips ids it cannot resolve to a type and both endpoints.
+    /// An id freed in one segment of a query is not handed out in a later
+    /// segment of the same query, and is again in the next query (#2876).
+    #[test]
+    fn a_released_id_is_not_reissued_until_the_next_version() {
+        let mut space = IdSpace::restored(2, RoaringTreemap::new());
+        space.open_batch().expect("a consistent space");
+        space.release(&ids(&[0]), &ids(&[0])).expect("a live id");
+        space.open_batch().expect("a consistent space");
+        let ids = space.reserve(1, &RoaringTreemap::new()).expect("fits");
+        assert_eq!(ids, vec![2], "the freed 0 is retired for this version");
+
+        let next = space.new_version();
+        let ids = next.reserve(1, &RoaringTreemap::new()).expect("fits");
+        assert_eq!(ids, vec![0], "a new version may reuse it");
+    }
+
+    /// The same for a reservation cancelled in an earlier segment.
+    #[test]
+    fn a_cancelled_id_is_not_reissued_in_a_later_batch_of_the_version() {
+        let mut space = IdSpace::new();
+        let ids = space.reserve(1, &RoaringTreemap::new()).expect("fits");
+        space.cancel(ids[0]).expect("a consistent space");
+        space.open_batch().expect("a consistent space");
+        let again = space.reserve(1, &RoaringTreemap::new()).expect("fits");
+        assert_eq!(again, vec![1]);
+        assert_eq!(
+            space
+                .new_version()
+                .reserve(1, &RoaringTreemap::new())
+                .expect("fits"),
+            vec![0]
+        );
+    }
+
     #[test]
     fn release_frees_the_resolved_and_leaves_the_rest() {
         // Four ids handed out and all live, so the batch opens at 4.
@@ -1248,7 +1318,14 @@ mod reclaim_ids_tests {
         count: u64,
     ) -> (Vec<u64>, u64) {
         let mut out: Vec<u64> = Vec::new();
-        let taken = reclaim_ids(pool, &RoaringTreemap::new(), held, count, &mut out);
+        let taken = reclaim_ids(
+            pool,
+            &RoaringTreemap::new(),
+            held,
+            &RoaringTreemap::new(),
+            count,
+            &mut out,
+        );
         assert_eq!(
             taken,
             out.len() as u64,
@@ -1321,6 +1398,7 @@ mod reclaim_ids_tests {
             &pool,
             &RoaringTreemap::new(),
             &RoaringTreemap::new(),
+            &RoaringTreemap::new(),
             3,
             &mut out,
         );
@@ -1378,6 +1456,8 @@ mod differential {
         /// Reserved and not yet created or cancelled — the caller's half, which
         /// `Pending` holds and lends back as `issued`.
         held: BTreeSet<u64>,
+        /// Freed — released or cancelled — since the version began.
+        retired: BTreeSet<u64>,
     }
 
     impl Model {
@@ -1459,6 +1539,7 @@ mod differential {
         let mut space = IdSpace::new();
         let mut model = Model::default();
         let (mut reserves, mut creates, mut cancels, mut releases, mut batches) = (0, 0, 0, 0, 0);
+        let mut versions = 0;
 
         for step in 0..20_000 {
             let r = xorshift(&mut state);
@@ -1482,6 +1563,10 @@ mod differential {
                         assert!(
                             !model.taken.contains(&id),
                             "step {step}: reissued a taken id {id}"
+                        );
+                        assert!(
+                            !model.retired.contains(&id),
+                            "step {step}: reissued an id this version freed {id}"
                         );
                         assert!(model.held.insert(id), "step {step}: reserve repeated {id}");
                     }
@@ -1515,6 +1600,7 @@ mod differential {
                     model.held.remove(&id);
                     model.free.insert(id);
                     model.taken.insert(id);
+                    model.retired.insert(id);
                     cancels += 1;
                     agree(&space, &model, step, "cancel");
                 }
@@ -1529,6 +1615,7 @@ mod differential {
                         .expect("a live id below the boundary");
                     model.live.remove(&id);
                     model.free.insert(id);
+                    model.retired.insert(id);
                     releases += 1;
                     agree(&space, &model, step, "release");
                 }
@@ -1547,7 +1634,15 @@ mod differential {
                         }
                         agree(&space, &model, step, "settle");
                     }
-                    space.open_batch().expect("a consistent space");
+                    // One boundary in four is the end of the query: the next
+                    // one forks a new version, which may reuse what this freed.
+                    if (r >> 40) % 4 == 0 {
+                        space = space.new_version();
+                        model.retired.clear();
+                        versions += 1;
+                    } else {
+                        space.open_batch().expect("a consistent space");
+                    }
                     model.open_batch();
                     batches += 1;
                     agree(&space, &model, step, "open_batch");
@@ -1563,5 +1658,6 @@ mod differential {
         assert!(cancels > 200, "too few cancels: {cancels}");
         assert!(releases > 200, "too few releases: {releases}");
         assert!(batches > 500, "too few batch boundaries: {batches}");
+        assert!(versions > 100, "too few versions: {versions}");
     }
 }

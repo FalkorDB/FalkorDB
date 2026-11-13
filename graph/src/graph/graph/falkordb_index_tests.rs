@@ -52,7 +52,9 @@ fn reserve_nodes(
     g: &mut Graph,
     n: usize,
 ) -> Vec<u64> {
-    g.open_id_batches().expect("a consistent space");
+    // Each call stands for a query of its own, which is a version of its own: an
+    // id an earlier call freed may be reused, as it is by the next write query.
+    *g = g.new_version();
     g.node_id_space()
         .reserve(n, &RoaringTreemap::new())
         .expect("reserved")
