@@ -1,0 +1,500 @@
+# Lean proof impact of a PR, and an AI re-prove of what it touches.
+#
+# The Lean proofs under proofs/ are hand-written
+# models of the Rust code: rebuilding them on a PR proves nothing new. What a PR
+# can do is change a function whose model and theorems then describe old code.
+#
+#   impact   every PR: proofs/pr_impact.py maps the diff to the verified
+#            functions it touches, new functions with no coverage row, and
+#            removed/renamed functions that still have rows, and keeps one sticky
+#            comment with the result. No Lean build, a few seconds.
+#   reprove  only when a verified function changed, and only for branches of
+#            this repo (a fork PR's token cannot bill Copilot): the GitHub
+#            Copilot CLI, on the model in COPILOT_MODEL (Claude Opus 5.5),
+#            edits the Lean models for the change and writes its verdicts. Its
+#            token can only read the repo and call Copilot.
+#   gate     on a fresh runner, checks the AI's patch (paths, modes, no
+#            build-time code, no new axiom/sorry, existing theorem statements
+#            unchanged, a verdict per function) and runs the proof gates on it.
+#   report   keeps one re-prove comment: the verdicts, the gate result, and a
+#            link to the run, whose `proof-gate` artifact holds the patch. When
+#            the proofs find a probable bug, it also posts a review comment on
+#            the function's code with the counterexample and a Cypher repro.
+#
+# This workflow only suggests: nothing is pushed from here. When the gate says
+# `pass`, someone with write access comments `/proofs apply` (or adds the label
+# `proofs:apply`) and proof-apply.yml commits that very patch to the PR branch,
+# when the PR head is still the one this run checked; or the author applies the
+# patch (or writes their own) in the PR itself. Either way the Lean proofs workflow
+# and review check it like any other proof change. The gate's checks make the
+# suggestion trustworthy enough to read, not a sandbox.
+#
+# The bot's own commit (author falkordb-proof-bot, trailer `Proof-Bot-Run:`) is not
+# re-proved: its proofs are what the gate just verified.
+#
+# Advisory: not part of ci-gate.
+#
+# Which proofs/ each job reads:
+#   - the scripts (pr_impact.py; the gate's proof_gate.sh, proof_gate_checks.py,
+#     lean_ci.sh and coverage.sh; the report's proof_review.py) and the COVERAGE
+#     rows that say which functions are verified come from the PR's base commit,
+#     so a PR cannot change the checks that judge it;
+#   - the Lean sources the re-prove edits, and the patch it suggests, are the
+#     PR head's, so a PR that already updated its proofs is re-proved from there.
+
+name: Proof impact
+
+on:
+  pull_request:
+    # `edited` so a base-branch change re-runs; title/body edits are skipped below.
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+    # Like rust-pr.yml: every base but master (the C tree), so stacks are covered.
+    branches-ignore:
+      - "master"
+    # No `paths:` filter: a push that reverts a PR's last Rust change must still run,
+    # so the zero-impact path can retire the earlier re-prove verdict. The
+    # impact job is a few seconds and finds nothing to do on other PRs.
+
+concurrency:
+  # A title/body edit (bots rewrite PR bodies after each push) gets its own group:
+  # sharing the run group would cancel the push's run before the job-level `if:`
+  # skips the edit.
+  group: proof-impact-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && github.event.changes.base == null && '-edit' || '' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Copilot CLI model id for the re-prove; needs the org's Copilot to offer it.
+  COPILOT_MODEL: claude-opus-5.5
+  # elan from a pinned release asset (same pin as lean-proofs.yml); bump both together.
+  ELAN_VERSION: v4.2.4
+  ELAN_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
+  # Only comments this workflow wrote are reused.
+  BOT_LOGIN: github-actions[bot]
+  # Author email of the commits proof-apply.yml pushes (keep in sync with proofs/proof_apply.py).
+  BOT_COMMIT_EMAIL: falkordb-proof-bot@users.noreply.github.com
+  # The only paths a re-prove patch may touch: Lean sources (no dot directories,
+  # so never .lake/), each project's COVERAGE.tsv and README.md, and FINDINGS.md.
+  # Not any Lake configuration (lakefile.toml / lakefile.lean, lake-manifest.json,
+  # lean-toolchain: the build uses the base's projects and targets), the gate
+  # scripts, or anything outside proofs/.
+  # lakefile.lean is a Lake configuration (and build-time code), denied though it ends in .lean.
+  PROOF_DENY: '(^|/)lakefile\.lean$'
+  PROOF_PATHS: '^proofs/(FINDINGS\.md|[A-Za-z0-9_]+/(COVERAGE\.tsv|README\.md|([A-Za-z0-9_]+/)*[A-Za-z0-9_]+\.lean))$'
+
+jobs:
+  impact:
+    if: >-
+      !github.event.pull_request.draft &&
+      (github.event.action != 'edited' || github.event.changes.base != null)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      changed: ${{ steps.impact.outputs.changed }}
+      proofs_sha: ${{ steps.impact.outputs.proofs_sha }}
+      applied: ${{ steps.applied.outputs.applied }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: code
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: proofs-base
+          sparse-checkout: proofs
+          persist-credentials: false
+      - name: Recognise the bot's own commit
+        id: applied
+        env:
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # proof-apply.yml's commit: the proofs in it are what the gate just verified,
+          # so there is nothing to re-prove (and no loop when its push starts this run).
+          # A commit can claim this identity, but the re-prove is advisory anyway.
+          email=$(git -C code log -1 --format=%ae "$HEAD")
+          if [[ "$email" == "$BOT_COMMIT_EMAIL" ]] && git -C code log -1 --format=%B "$HEAD" | grep -q '^Proof-Bot-Run: '; then
+            echo "applied=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "applied=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Map the diff to verified functions
+        id: impact
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # The re-prove and gate jobs edit and check the PR head's proofs.
+          echo "proofs_sha=$HEAD" >> "$GITHUB_OUTPUT"
+          if [[ ! -f proofs-base/proofs/pr_impact.py ]]; then
+            # A base branch without the proofs (e.g. an older release branch).
+            printf '<!-- proof-impact -->\n### Lean proof impact\n\nNo Lean proofs on the base branch at %s; nothing to check.\n' \
+              "${BASE:0:9}" > impact.md
+            echo '{"changed": [], "added": [], "removed": []}' > impact.json
+          else
+            python3 proofs-base/proofs/pr_impact.py --repo code --base "$BASE" --head "$HEAD" \
+              --proofs proofs-base/proofs --proofs-ref "base ${BASE:0:9}" \
+              --json impact.json --md impact.md
+          fi
+          cat impact.md >> "$GITHUB_STEP_SUMMARY"
+          echo "changed=$(jq '.changed | length' impact.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: proof-impact
+          path: impact.json
+      - name: Keep the sticky comments
+        # A fork PR's token cannot comment; the job summary still has the report.
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          CHANGED: ${{ steps.impact.outputs.changed }}
+          APPLIED: ${{ steps.applied.outputs.applied }}
+        run: |
+          # upsert <marker> <file>: edit this workflow's comment with that marker, or post one.
+          upsert() {
+            local id
+            id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+              -q ".[] | select(.user.login == \"$BOT_LOGIN\" and (.body | startswith(\"$1\"))) | .id" | head -1)
+            if [[ -n "$id" ]]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$2" >/dev/null
+            elif [[ "${3:-}" != "existing-only" ]]; then
+              gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$2" >/dev/null
+            fi
+          }
+          upsert "<!-- proof-impact -->" impact.md
+          if [[ "$APPLIED" == "true" ]]; then
+            # The bot's own commit: say so on the earlier re-prove comment, which was
+            # about the head before it.
+            printf '<!-- proof-reprove -->\n### Lean re-prove\n\nThe proof-impact bot committed its verified proof update as %s; nothing further to re-prove.\n' \
+              "${HEAD:0:9}" > reprove.md
+            upsert "<!-- proof-reprove -->" reprove.md existing-only
+          # No verified function left: retire an earlier re-prove verdict, if any.
+          elif [[ "$CHANGED" == "0" ]]; then
+            printf '<!-- proof-reprove -->\n### Lean re-prove\n\nNothing to re-prove at %s: no verified function is changed.\n' \
+              "${HEAD:0:9}" > reprove.md
+            upsert "<!-- proof-reprove -->" reprove.md existing-only
+          fi
+
+  reprove:
+    needs: impact
+    if: >-
+      needs.impact.outputs.changed != '0' &&
+      needs.impact.outputs.applied != 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read           # the agent's token: read the repo, nothing else
+      copilot-requests: write  # Copilot CLI on the job's own token
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: code
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.impact.outputs.proofs_sha }}
+          path: proofs-src
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: proof-impact
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.elan
+            proofs-src/proofs/*/.lake
+          key: lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs-src/proofs/*/lean-toolchain') }}-${{ needs.impact.outputs.proofs_sha }}
+          restore-keys: |
+            lean-${{ runner.os }}-elan-${{ env.ELAN_VERSION }}-${{ hashFiles('proofs-src/proofs/*/lean-toolchain') }}-
+      - name: Install elan
+        run: |
+          set -euo pipefail
+          asset=elan-x86_64-unknown-linux-gnu.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$asset" \
+            "https://github.com/leanprover/elan/releases/download/${ELAN_VERSION}/${asset}"
+          echo "${ELAN_SHA256}  $RUNNER_TEMP/$asset" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/elan"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/elan"
+          "$RUNNER_TEMP/elan/elan-init" -y --default-toolchain none --no-modify-path
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Install the Copilot CLI
+        run: npm install -g @github/copilot@1.0.102
+      - name: Re-prove with Copilot
+        env:
+          # The Copilot CLI authenticates with the job's token (read-only apart
+          # from Copilot); the org policy "Allow use of Copilot CLI billed to the
+          # organization" must be on.
+          GITHUB_TOKEN: ${{ github.token }}
+          PROMPT: |
+            You re-check FalkorDB's Lean 4 proofs against a pull request's Rust change.
+
+            Repository ${{ github.repository }}, PR #${{ github.event.pull_request.number }}.
+            - ./code: the PR head (${{ github.event.pull_request.head.sha }}), full history.
+              Its diff is `git -C code diff ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}`.
+            - ./proofs-src: a separate, clean checkout of the same PR head; edit the proofs here.
+              proofs/<project>/ are Lake projects; proofs/<project>/COVERAGE.tsv maps each Rust
+              fn (file, name, line, bucket, Lean names) to its model and theorems. Read
+              proofs/FINDINGS.md and the .claude/skills/proofs skill there first if present.
+            - ./impact.json: `changed` lists every verified fn the PR's diff touches, with its
+              COVERAGE rows (project, bucket, Lean names); `added` new fns with no row;
+              `removed` fns gone or renamed that still have rows.
+
+            For each fn in `changed`, read its new Rust body and the Lean model and theorems
+            its rows name, and decide one of:
+            1. unchanged: the model still describes the new code exactly (e.g. a refactor or
+               a change the model abstracts away). Say why in one line.
+            2. model updated: update the model to the new code and repair the proofs so the
+               same properties are proved. Never weaken a theorem's statement to make it
+               pass; adding a theorem for new behaviour is welcome.
+            3. counterexample: a theorem's property no longer holds for the new code. Do not
+               weaken it. Keep the old statement, prove its negation on the new model (a
+               concrete input), and translate it into the smallest Cypher query or command
+               that shows it, with the result the old code gave and the new code gives.
+               This is a probable bug in the PR.
+            For `removed` and `added`, update COVERAGE.tsv rows (renamed fns keep their
+            proofs; new fns get a row, with a model and proof when they are small, else
+            NOT COVERED with a reason). Line numbers in rows must match ./code.
+
+            Check your work from ./proofs-src with `proofs/lean_ci.sh <project> ...` for every
+            project you touched and every project that requires it (lakefile path
+            dependencies), and `COVERAGE_RUST_ROOT=$PWD/../code proofs/coverage.sh --unmatched`.
+            Do not edit proofs/lean_ci.sh or proofs/coverage.sh: the workflow re-runs both from
+            the PR's base commit and drops any patch that touches them.
+
+            Leave your edits as uncommitted changes in ./proofs-src; do not commit, push or
+            comment (the workflow publishes them). Never edit ./code.
+
+            Never add build-time code to a .lean file: no #eval, #exit, run_cmd, run_elab,
+            run_meta, initialize, elab / elab_rules, IO., unsafe, implemented_by or extern. The
+            workflow rejects a patch that adds any of them.
+
+            Finally write ./verdicts.json, a JSON list with one object per entry of
+            impact.json `changed`: {"file", "fn", "line"} copied from that entry, "verdict" one
+            of "unchanged", "model updated", "counterexample", and "theorems" (Lean names).
+            For a "counterexample" also give: "theorem" (the full Lean name of the theorem that
+            proves the counterexample, which you added), "why" (one sentence: what the new code
+            gets wrong), "repro" (the smallest Cypher query or redis command sequence that shows
+            it, runnable as is on an empty graph), "before" (what the code before this PR
+            returns for it) and "after" (what this PR's code returns). These are posted as a
+            review comment on the function, so keep them short and exact.
+            And write ./reprove.md: a heading "### Lean re-prove", one line per fn with its
+            verdict and the Lean theorem names. Put counterexamples first, each with its Cypher
+            repro. Keep it short; no preamble.
+        run: |
+          copilot -p "$PROMPT" -s --model "$COPILOT_MODEL" --allow-all-tools --no-ask-user
+      - name: Export the patch (untrusted; the gate job checks it on a fresh runner)
+        env:
+          BASE_SHA: ${{ needs.impact.outputs.proofs_sha }}
+        run: |
+          cd proofs-src
+          git add -A
+          git diff --cached --binary --no-renames "$BASE_SHA" > ../proofs.patch
+          touch ../reprove.md ../verdicts.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: proof-reprove
+          path: |
+            proofs.patch
+            reprove.md
+            verdicts.json
+
+  # Fresh runner: none of the agent's processes or files reach it, only the two
+  # uploaded files. It validates the patch and runs the gates on the PR head's
+  # proofs + patch, with the gate scripts from the PR's base commit
+  # (proofs/proof_gate.sh says what it checks).
+  gate:
+    needs: [impact, reprove]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      gates: ${{ steps.gates.outputs.gates }}
+      # Whether lean_ci.sh built the patch (pass), apart from the other gates.
+      lean: ${{ steps.gates.outputs.lean }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: code
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.impact.outputs.proofs_sha }}
+          path: proofs-src
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: proofs-base
+          sparse-checkout: |
+            proofs/lean_ci.sh
+            proofs/coverage.sh
+            proofs/proof_gate.sh
+            proofs/proof_gate_checks.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: proof-reprove
+          path: in
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: proof-impact
+          path: in
+      # No cache restore here: the re-prove job writes the same cache keys, so a
+      # restored toolchain or .lake could carry the agent's changes. A cold build
+      # takes about 20 minutes and only runs when a verified function changed.
+      - name: Install elan
+        run: |
+          set -euo pipefail
+          asset=elan-x86_64-unknown-linux-gnu.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$asset" \
+            "https://github.com/leanprover/elan/releases/download/${ELAN_VERSION}/${asset}"
+          echo "${ELAN_SHA256}  $RUNNER_TEMP/$asset" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/elan"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/elan"
+          "$RUNNER_TEMP/elan/elan-init" -y --default-toolchain none --no-modify-path
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Validate the patch and run the gates
+        id: gates
+        env:
+          PROOFS_SHA: ${{ needs.impact.outputs.proofs_sha }}
+        # proofs/proof_gate.sh, from the PR's base commit (see its header).
+        run: |
+          set -euo pipefail
+          if [[ ! -f proofs-base/proofs/proof_gate.sh ]]; then
+            # A base branch from before the gate script existed.
+            mkdir -p out
+            echo "No proofs/proof_gate.sh on the base branch, so the patch was not checked." > out/gates.md
+            echo rejected > out/gate_status
+            echo "gates=rejected" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          bash proofs-base/proofs/proof_gate.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ always() }}
+        with:
+          name: proof-gate
+          path: out/
+          if-no-files-found: ignore
+
+  report:
+    needs: [impact, reprove, gate]
+    if: >-
+      always() && needs.impact.result == 'success' && needs.impact.outputs.changed != '0' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.reprove.result != 'skipped' && needs.reprove.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read         # the base checkout of proofs/proof_review.py
+      pull-requests: write   # the re-prove comment; nothing is pushed
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: proofs-base
+          sparse-checkout: |
+            proofs/proof_review.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        id: download
+        # Absent when the re-prove or gate job failed before uploading; reported below.
+        continue-on-error: true
+        with:
+          name: proof-gate
+          path: out
+      - name: Keep the re-prove comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          GATES: ${{ needs.gate.outputs.gates }}
+          GATE_RESULT: ${{ needs.gate.result }}
+          DOWNLOAD: ${{ steps.download.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          # A newer push has its own run; don't overwrite its comment with this one.
+          if [[ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" -q .head.sha)" != "$HEAD" ]]; then
+            echo "PR head moved; this run (${HEAD:0:9}) is superseded."; exit 0
+          fi
+          if [[ "$DOWNLOAD" != success || ! -f out/gates.md ]]; then
+            note="No result: the gate did not finish (gate job: $GATE_RESULT). See the [run]($RUN_URL)."
+          elif [[ "$GATES" == pass && -s out/proofs.patch ]]; then
+            note="Suggested proof update: comment \`/proofs apply\` to commit this patch (people with write access; it is committed only while the PR head is still \`${HEAD:0:9}\`), or download \`proofs.patch\` from the [run's \`proof-gate\` artifact]($RUN_URL) and apply it yourself (\`git apply proofs.patch\`)."
+          elif [[ "$GATES" == pass ]]; then
+            note="No proof change was needed."
+          else
+            note="Gates: **${GATES:-did not run}**, so the patch is not suggested as is; it and the logs are in the [run's \`proof-gate\` artifact]($RUN_URL)."
+          fi
+          {
+            echo "<!-- proof-reprove -->"
+            if [[ -s out/reprove.md ]]; then
+              cat out/reprove.md
+            else
+              echo "### Lean re-prove"; echo
+              if [[ -s out/verdicts.json ]] && jq -e 'length > 0' out/verdicts.json >/dev/null 2>&1; then
+                jq -r '.[] | "- `\(.file)` `\(.fn)`: \(.verdict)\(if (.theorems // []) | length > 0 then " (" + ((.theorems) | join(", ")) + ")" else "" end)"' out/verdicts.json
+              else
+                echo "The re-prove wrote no verdicts."
+              fi
+            fi
+            echo
+            [[ -s out/gates.md ]] && cat out/gates.md
+            echo
+            echo "$note"
+            echo
+            echo "<sub>At ${HEAD:0:9}. Advisory, not part of ci-gate; nothing is pushed unless someone asks with \`/proofs apply\`.</sub>"
+          } > comment.md
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            -q ".[] | select(.user.login == \"$BOT_LOGIN\" and (.body | startswith(\"<!-- proof-reprove -->\"))) | .id" | head -1)
+          if [[ -n "$id" ]]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@comment.md >/dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@comment.md >/dev/null
+          fi
+      - name: Review the code where the proofs found a probable bug
+        # Only when Lean built the patch, so each counterexample is a checked theorem
+        # (whatever the other gates said).
+        if: ${{ steps.download.outcome == 'success' && needs.gate.outputs.lean == 'pass' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" -q .head.sha)" != "$HEAD" ]]; then
+            echo "PR head moved; this run (${HEAD:0:9}) is superseded."; exit 0
+          fi
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" > files.json
+          # Earlier counterexamples, inline or in a review's own text, are not posted again.
+          { gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/comments"
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews"; } > posted.json
+          if [[ ! -f proofs-base/proofs/proof_review.py ]]; then
+            echo "No proofs/proof_review.py on the base branch; no review posted."; exit 0
+          fi
+          python3 -I proofs-base/proofs/proof_review.py out/verdicts.json out/impact.json out/added_theorems.json \
+            files.json posted.json > review.json
+          if [[ "$(cat review.json)" == "{}" ]]; then
+            echo "No new counterexample to review."; exit 0
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --input review.json >/dev/null
