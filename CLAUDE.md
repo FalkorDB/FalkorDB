@@ -214,6 +214,17 @@ Cypher Query String
   (see `src/commands/explain.rs`)
 - The parser (`cypher.rs`) is hand-written, not generated from Cypher.g4 grammar file
 - GraphBLAS FFI bindings are in `graph/src/graph/GraphBLAS.rs` (auto-generated, do not edit)
+- Keep clippy clean under the strict set (the same flags `.vscode/settings.json`
+  gives rust-analyzer), and check it before every commit:
+  ```bash
+  CXX=clang++ cargo clippy --workspace --all-targets -- -W clippy::pedantic \
+    -W clippy::nursery -W clippy::cargo -A clippy::missing-errors-doc \
+    -A clippy::missing-panics-doc -A clippy::doc-markdown
+  ```
+  Fix every warning. Where a lint is wrong or the shape is deliberate, put a
+  scoped `#[allow(clippy::<lint>, reason = "...")]` on the narrowest item it
+  covers (a bench/test module at most), never a crate-wide allow. Review `--fix` output: its `map_or` rewrites can
+  delete comments inside match arms.
 
 ## Configuration
 
