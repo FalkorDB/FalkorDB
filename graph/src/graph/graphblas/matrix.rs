@@ -1071,11 +1071,11 @@ impl<T> Matrix<T> {
         unsafe {
             let info = GrB_Matrix_eWiseAdd_BinaryOp(
                 self.inner(),
-                mask.map_or(null_mut(), |m| m.inner()),
+                mask.map_or(null_mut(), Matrix::inner),
                 null_mut(),
                 T::add_op(),
-                a.map_or(self.inner(), |a| a.inner()),
-                b.map_or(self.inner(), |b| b.inner()),
+                a.map_or_else(|| self.inner(), Matrix::inner),
+                b.map_or_else(|| self.inner(), Matrix::inner),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1093,11 +1093,11 @@ impl<T> Matrix<T> {
         unsafe {
             let info = GrB_Matrix_eWiseMult_Semiring(
                 self.inner(),
-                mask.map_or(null_mut(), |m| m.inner()),
+                mask.map_or(null_mut(), Matrix::inner),
                 null_mut(),
                 GxB_ANY_PAIR_BOOL,
-                a.map_or(self.inner(), |a| a.inner()),
-                b.map_or(self.inner(), |b| b.inner()),
+                a.map_or_else(|| self.inner(), Matrix::inner),
+                b.map_or_else(|| self.inner(), Matrix::inner),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1122,7 +1122,7 @@ impl<T> Matrix<T> {
         unsafe {
             let info = GrB_Matrix_apply(
                 self.inner(),
-                mask.map_or(null_mut(), |m| m.inner()),
+                mask.map_or(null_mut(), Matrix::inner),
                 GxB_ANY_BOOL,
                 GxB_ONE_BOOL,
                 a.inner(),
@@ -2371,8 +2371,8 @@ mod tests {
             GrB_Matrix_wait, GrB_WaitMode, GxB_ANY_BOOL, GxB_Matrix_iso, GxB_Matrix_memoryUsage,
         };
 
-        ensure_init();
         const N: u64 = 4096;
+        ensure_init();
         let rows: Vec<u64> = (0..N).collect();
         let cols: Vec<u64> = (0..N).map(|i| (i * 7) % N).collect();
 

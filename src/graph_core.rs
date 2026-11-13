@@ -87,10 +87,7 @@ use crate::query_session::hold_gil;
 /// conversions that used to abort the process (#2490).
 #[must_use]
 pub fn up_to_nul(s: &str) -> &str {
-    match s.find('\0') {
-        Some(end) => &s[..end],
-        None => s,
-    }
+    s.find('\0').map_or(s, |end| &s[..end])
 }
 
 /// The graph name the C engine would see for `key`: [`up_to_nul`] of its bytes.
@@ -775,7 +772,11 @@ impl From<String> for WriteAttempt {
 }
 
 /// One run of [`execute_query_write`].
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::needless_pass_by_value,
+    reason = "the session is consumed: dropping it releases the locks"
+)]
 fn try_query_write(
     session: QuerySession,
     ctx: &Context,
@@ -977,7 +978,7 @@ fn compute_effective_timeout(
 
 /// Replies `[error, current_version]` for a client-supplied version that does
 /// not match the graph's current schema version.
-pub(crate) fn reply_invalid_graph_version(
+pub fn reply_invalid_graph_version(
     ctx: &Context,
     current_version: i64,
 ) {
@@ -1503,7 +1504,7 @@ fn profile_sync(
 /// publish it identically. Both carried a copy of this, and of
 /// [`abandon_write`] below, which is how the effects decision came to be made
 /// in two places.
-pub(crate) fn finish_write(
+pub fn finish_write(
     session: &QuerySession,
     ctx: &Context,
     key_name: &Arc<str>,
@@ -1528,7 +1529,7 @@ pub(crate) fn finish_write(
 /// A session whose version was never found current (still matching, or its
 /// fork went stale) published no document, so there is nothing to resync. The
 /// version itself goes with the runtime; there is nothing else to release.
-pub(crate) fn abandon_write(
+pub fn abandon_write(
     session: &QuerySession,
     runtime: &Runtime,
 ) {
@@ -1637,22 +1638,21 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // BGSAVE interleave between messages.
         let msg = {
             let g = graph.read();
-            match g.receiver.try_recv() {
-                Ok(msg) => msg,
-                Err(_) => {
-                    g.write_loop.store(false, Ordering::Release);
-                    if g.receiver.is_empty() {
-                        return;
-                    }
-                    if g.write_loop
-                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-                        .is_err()
-                    {
-                        return;
-                    }
-                    // A producer raced an enqueue after we saw empty; keep draining.
-                    continue;
+            if let Ok(msg) = g.receiver.try_recv() {
+                msg
+            } else {
+                g.write_loop.store(false, Ordering::Release);
+                if g.receiver.is_empty() {
+                    return;
                 }
+                if g.write_loop
+                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+                    .is_err()
+                {
+                    return;
+                }
+                // A producer raced an enqueue after we saw empty; keep draining.
+                continue;
             }
         };
         let WriteMessage {
@@ -1768,7 +1768,7 @@ const EFFECT_COMMAND: &str = "GRAPH.EFFECT";
 /// `pub(crate)` because the constraint command sends payloads of its own, from
 /// outside any query. They are still payloads, so they still go out through the
 /// format.
-pub(crate) struct CtxSink<'a>(pub(crate) &'a Context);
+pub struct CtxSink<'a>(pub(crate) &'a Context);
 
 impl ReplicationSink for CtxSink<'_> {
     fn replicate(

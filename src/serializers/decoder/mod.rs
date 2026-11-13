@@ -376,8 +376,8 @@ fn rebuild_indexes(
                         let mut topts = field.options().cloned();
                         if text_meta_pending && field.ty == graph::index::IndexType::Fulltext {
                             let topts = topts.get_or_insert_with(Default::default);
-                            topts.language = info.language.clone();
-                            topts.stopwords = info.stopwords.clone();
+                            topts.language.clone_from(&info.language);
+                            topts.stopwords.clone_from(&info.stopwords);
                             text_meta_pending = false;
                         }
                         topts.map(graph::index::indexer::IndexOptions::Text)

@@ -221,7 +221,7 @@ pub const ME_BLOCK_0: MeBlock = (0, 0);
 /// `promotion_survives_node_ids_past_the_old_key_width`.
 #[inline]
 #[must_use]
-pub fn compound_key(
+pub const fn compound_key(
     src: u64,
     dst: u64,
 ) -> (MeBlock, u64) {
@@ -240,7 +240,7 @@ pub fn compound_key(
 /// for `row < ME_DIM`, which holds for any key it produced.
 #[inline]
 #[must_use]
-pub fn compound_key_inverse(
+pub const fn compound_key_inverse(
     block: MeBlock,
     row: u64,
 ) -> (u64, u64) {
@@ -381,17 +381,16 @@ impl Tensor {
         &mut self,
         block: MeBlock,
     ) -> &mut VersionedMatrix<bool> {
-        let at = match self.me.iter().position(|(b, _)| *b == block) {
-            Some(at) => at,
-            None => {
-                // A new block is created at whatever width the tensor already
-                // has, so one that has widened does not go on creating narrow
-                // blocks behind it and re-widening them one at a time.
-                let ncols = self.me[0].1.ncols();
-                self.me
-                    .push((block, VersionedMatrix::<bool>::new(ME_DIM, ncols)));
-                self.me.len() - 1
-            }
+        let at = if let Some(at) = self.me.iter().position(|(b, _)| *b == block) {
+            at
+        } else {
+            // A new block is created at whatever width the tensor already
+            // has, so one that has widened does not go on creating narrow
+            // blocks behind it and re-widening them one at a time.
+            let ncols = self.me[0].1.ncols();
+            self.me
+                .push((block, VersionedMatrix::<bool>::new(ME_DIM, ncols)));
+            self.me.len() - 1
         };
         &mut self.me[at].1
     }
@@ -540,7 +539,9 @@ impl Tensor {
             match batch.entry((s, d)) {
                 Entry::Occupied(mut e) => {
                     let idx = *e.get();
-                    if idx != usize::MAX {
+                    if idx == usize::MAX {
+                        self.me_block_mut(block).set(key, id, true);
+                    } else {
                         // Second edge of a pair new in this batch: promote the
                         // pending inline slot in place.
                         let me = self.me_block_mut(block);
@@ -548,8 +549,6 @@ impl Tensor {
                         me.set(key, id, true);
                         m_ids[idx] = MULTI_EDGE;
                         e.insert(usize::MAX);
-                    } else {
-                        self.me_block_mut(block).set(key, id, true);
                     }
                 }
                 Entry::Vacant(e) => {
@@ -706,8 +705,7 @@ impl Tensor {
                     Some(MULTI_EDGE) => {
                         let ids: Vec<u64> = self
                             .me_block(block)
-                            .map(|me| me.iter(key, key).map(|(_, id)| id).collect())
-                            .unwrap_or_default();
+                            .map_or_default(|me| me.iter(key, key).map(|(_, id)| id).collect());
                         debug_assert!(
                             ids.windows(2).all(|w| w[0] < w[1]),
                             "`me` row ({src}, {dst}) not ascending; the search below needs it"
@@ -1524,8 +1522,7 @@ impl Encode<19> for Tensor {
                     let (block, key) = compound_key(src, dst);
                     let ids: Vec<u64> = self
                         .me_block(block)
-                        .map(|me| me.iter(key, key).map(|(_, id)| id).collect())
-                        .unwrap_or_default();
+                        .map_or_default(|me| me.iter(key, key).map(|(_, id)| id).collect());
                     f_vals.push(ids.len() as u64 | MSB_MASK);
                     multi.push((src, dst, ids));
                 } else {
@@ -1670,13 +1667,10 @@ impl Decode<19> for Tensor {
                     // form says nothing about how they are blocked and needs no
                     // version bump for this change: re-keying happens here.
                     let (block, key) = compound_key(src, dst);
-                    let at = match me.iter().position(|(b, _)| *b == block) {
-                        Some(at) => at,
-                        None => {
-                            me.push((block, VersionedMatrix::<bool>::new(ME_DIM, me_ncols)));
-                            me.len() - 1
-                        }
-                    };
+                    let at = me.iter().position(|(b, _)| *b == block).unwrap_or_else(|| {
+                        me.push((block, VersionedMatrix::<bool>::new(ME_DIM, me_ncols)));
+                        me.len() - 1
+                    });
                     // Streamed rather than collected: the ids are only needed
                     // one at a time, and the width check they used to be
                     // gathered for is a compare that fires at most once in the
@@ -1717,6 +1711,7 @@ impl Decode<19> for Tensor {
 }
 
 /// Owned edge-id iterator for one `(src, dest)` pair (see [`Tensor::get`]).
+///
 /// The common single-edge case is allocation-free; multi-edge pairs stream
 /// their `me` row live (the inner iterator keeps the underlying GraphBLAS
 /// matrix alive via its own `Arc`, so no borrow of the tensor is held).
@@ -2074,8 +2069,8 @@ mod tests {
 
     #[test]
     fn bulk_remove_and_extract_edge_id_zero() {
-        ensure_init();
         const N: u64 = 10_000;
+        ensure_init();
         let mut t = Tensor::new(N + 1, N + 1);
         let srcs: Vec<u64> = (0..N).collect();
         let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
@@ -2125,8 +2120,8 @@ mod tests {
     /// bug hides.
     #[test]
     fn resize_leaves_base_materialized() {
-        ensure_init();
         const N: u64 = 10_000;
+        ensure_init();
         let mut t = Tensor::new(N + 1, N + 1);
         let srcs: Vec<u64> = (0..N).collect();
         let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
@@ -2202,8 +2197,8 @@ mod tests {
     /// edges reported 41 MB of graph memory against 25 MB before the delete.
     #[test]
     fn deleting_everything_folds_the_tombstones_away() {
-        ensure_init();
         const N: u64 = 10_000;
+        ensure_init();
         let mut t = Tensor::new(N + 1, N + 1);
         let srcs: Vec<u64> = (0..N).collect();
         let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
@@ -2257,8 +2252,8 @@ mod tests {
     /// machine the old loop got for free by re-reading its own writes.
     #[test]
     fn batch_demote_leaves_every_survivor_inline() {
-        ensure_init();
         const N: u64 = FOLDABLE;
+        ensure_init();
         let mut t = committed_pairs(N);
 
         // Delete the odd id of every pair: each demotes 2 -> 1 edges.
@@ -2347,8 +2342,8 @@ mod tests {
     /// repeated ids in the batch must change nothing.
     #[test]
     fn batch_can_demote_and_then_empty_the_same_pair() {
-        ensure_init();
         const N: u64 = FOLDABLE;
+        ensure_init();
         let mut t = committed_pairs(N);
 
         let mut rels: Vec<(u64, u64, u64)> = Vec::new();
@@ -2395,8 +2390,8 @@ mod tests {
     /// committed base, which the buffered `dp` writes must not disturb.
     #[test]
     fn demoting_to_the_committed_value_cancels_to_clean() {
-        ensure_init();
         const N: u64 = FOLDABLE;
+        ensure_init();
         let mut t = Tensor::new(N + 1, N + 1);
         let srcs: Vec<u64> = (0..N).collect();
         let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
@@ -2884,8 +2879,8 @@ mod tests {
     /// would show up as a lost edge.
     #[test]
     fn degree_agrees_with_counting_the_iterator() {
-        ensure_init();
         const N: u64 = 64;
+        ensure_init();
         let mut t = Tensor::new(N, N);
         // A deliberately uneven shape: row `r` holds `r % 5` pairs, and every
         // third pair is multi-edge with a different fan-out.

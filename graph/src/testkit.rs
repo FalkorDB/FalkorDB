@@ -31,7 +31,7 @@ use std::collections::HashSet;
 
 /// An empty `n x n` weight matrix: `n` nodes, no edges.
 #[must_use]
-pub(crate) fn empty(n: usize) -> Matrix<f64> {
+pub fn empty(n: usize) -> Matrix<f64> {
     test_init::ensure_init();
     Matrix::<f64>::new(n as u64, n as u64)
 }
@@ -43,7 +43,7 @@ pub(crate) fn empty(n: usize) -> Matrix<f64> {
 /// # Panics
 /// If a pair `(u, v)` repeats (a matrix holds one weight per pair), or a node is out of range.
 #[must_use]
-pub(crate) fn weights(
+pub fn weights(
     n: usize,
     edges: &[(u64, u64, f64)],
 ) -> Matrix<f64> {
@@ -57,13 +57,13 @@ pub(crate) fn weights(
 
 /// The number of nodes of `g`.
 #[must_use]
-pub(crate) fn node_count(g: &Matrix<f64>) -> usize {
+pub fn node_count(g: &Matrix<f64>) -> usize {
     g.nrows() as usize
 }
 
 /// Every edge of `g` as `(u, v, weight)`, row by row, columns ascending.
 #[must_use]
-pub(crate) fn entries(g: &Matrix<f64>) -> Vec<(u64, u64, f64)> {
+pub fn entries(g: &Matrix<f64>) -> Vec<(u64, u64, f64)> {
     let (rows, cols, vals) = g.extract_tuples();
     rows.into_iter()
         .zip(cols)
@@ -145,7 +145,7 @@ fn adjacency(g: &Matrix<f64>) -> Vec<Vec<(u64, f64)>> {
 /// shortest-path function over a weight matrix is ever added to the engine, cross-check this
 /// one against it.
 #[must_use]
-pub(crate) fn dijkstra(
+pub fn dijkstra(
     g: &Matrix<f64>,
     src: u64,
 ) -> Vec<f64> {
@@ -207,7 +207,7 @@ fn dijkstra_over(
 /// `dijkstra` from every node, over one read of `g`. `result[s][t]` is the cheapest
 /// `s -> t` weight, `f64::INFINITY` if unreachable.
 #[must_use]
-pub(crate) fn all_pairs(g: &Matrix<f64>) -> Vec<Vec<f64>> {
+pub fn all_pairs(g: &Matrix<f64>) -> Vec<Vec<f64>> {
     let adj = adjacency(g);
     (0..adj.len() as u64)
         .map(|s| dijkstra_over(&adj, s))
@@ -235,7 +235,7 @@ fn edge_weights(g: &Matrix<f64>) -> HashMap<(u64, u64), f64> {
 /// If the path is empty, does not start/end at `src`/`dst`, skips a pair
 /// with no edge between them, or its weight sum does not match `weight`
 /// ([`weights_agree`]).
-pub(crate) fn assert_path_valid(
+pub fn assert_path_valid(
     g: &Matrix<f64>,
     src: u64,
     dst: u64,
@@ -301,7 +301,7 @@ fn weights_agree(
 
 /// A node id in `[0, n)` from the next draw. `n` must be `> 0`. Every generator below draws
 /// from a [`SmallRng`] seeded with its `seed`, so a failing seed reproduces.
-pub(crate) fn next_node(
+pub fn next_node(
     rng: &mut SmallRng,
     n: usize,
 ) -> u64 {
@@ -318,7 +318,7 @@ fn next_weight(
 
 /// An `rows x cols` grid, 4-connected, unit weights. `rows, cols >= 1`.
 #[must_use]
-pub(crate) fn grid(
+pub fn grid(
     rows: u64,
     cols: u64,
 ) -> Matrix<f64> {
@@ -348,7 +348,7 @@ pub(crate) fn grid(
 /// # Panics
 /// If `m` is more than the `n * (n - 1)` pairs there are.
 #[must_use]
-pub(crate) fn random_sparse(
+pub fn random_sparse(
     n: usize,
     m: usize,
     wmax: u32,
@@ -392,7 +392,7 @@ fn random_edges(
 /// `nodes_per_component` nodes and `edges_per_component` edges, with no edge
 /// crossing components.
 #[must_use]
-pub(crate) fn disconnected_components(
+pub fn disconnected_components(
     count: usize,
     nodes_per_component: usize,
     edges_per_component: usize,
@@ -418,14 +418,14 @@ pub(crate) fn disconnected_components(
 
 /// A single node, no edges.
 #[must_use]
-pub(crate) fn single_node() -> Matrix<f64> {
+pub fn single_node() -> Matrix<f64> {
     empty(1)
 }
 
 /// A star: node `0` is the hub, `leaves` outer nodes, edges both ways with
 /// weight `w`.
 #[must_use]
-pub(crate) fn star(
+pub fn star(
     leaves: u64,
     w: f64,
 ) -> Matrix<f64> {
@@ -439,7 +439,7 @@ pub(crate) fn star(
 /// A simple directed path `0 -> 1 -> ... -> n-1`, unit weights, plus the
 /// reverse arcs so the underlying skeleton is connected both ways.
 #[must_use]
-pub(crate) fn path(n: usize) -> Matrix<f64> {
+pub fn path(n: usize) -> Matrix<f64> {
     assert!(n >= 1);
     let edges: Vec<_> = (0..n.saturating_sub(1) as u64)
         .flat_map(|u| [(u, u + 1, 1.0), (u + 1, u, 1.0)])
@@ -453,7 +453,7 @@ pub(crate) fn path(n: usize) -> Matrix<f64> {
 /// must accept whichever of the `k` middle nodes the caller passed, not a
 /// single canonical one. `k >= 1`.
 #[must_use]
-pub(crate) fn tied_paths(
+pub fn tied_paths(
     k: u64,
     hop_w: f64,
 ) -> Matrix<f64> {
@@ -477,7 +477,7 @@ pub(crate) fn tied_paths(
 /// check must be strict, not `<=`), and every node on the cycle is at
 /// distance `0.0` from every other. `len >= 2`.
 #[must_use]
-pub(crate) fn zero_weight_cycle(len: u64) -> Matrix<f64> {
+pub fn zero_weight_cycle(len: u64) -> Matrix<f64> {
     assert!(len >= 2);
     let edges: Vec<_> = (0..len).map(|u| (u, (u + 1) % len, 0.0)).collect();
     weights(len as usize, &edges)
@@ -486,7 +486,7 @@ pub(crate) fn zero_weight_cycle(len: u64) -> Matrix<f64> {
 /// `base` with the edge `u -> v` at weight zero (added, or made free if it is there) -- a
 /// free shortcut: distance to `v` can never exceed distance to `u`.
 #[must_use]
-pub(crate) fn with_zero_weight_edge(
+pub fn with_zero_weight_edge(
     mut base: Matrix<f64>,
     u: u64,
     v: u64,
@@ -502,7 +502,7 @@ pub(crate) fn with_zero_weight_edge(
 /// produces that shape on its own, since they only draw node ids that get
 /// used.
 #[must_use]
-pub(crate) fn with_isolated_nodes(
+pub fn with_isolated_nodes(
     mut base: Matrix<f64>,
     extra: usize,
 ) -> Matrix<f64> {
@@ -517,7 +517,7 @@ pub(crate) fn with_isolated_nodes(
 ///
 /// # Panics
 /// If any node repeats.
-pub(crate) fn assert_path_simple(path: &[u64]) {
+pub fn assert_path_simple(path: &[u64]) {
     let mut seen = HashSet::new();
     for &node in path {
         assert!(seen.insert(node), "path repeats node {node}: {path:?}");
@@ -529,7 +529,7 @@ pub(crate) fn assert_path_simple(path: &[u64]) {
 /// create zero-weight cycles and many equal-weight walks, which is where a
 /// path can go wrong while its weight stays right.
 #[must_use]
-pub(crate) fn random_zero_heavy(
+pub fn random_zero_heavy(
     n: usize,
     m: usize,
     wmax: u32,
@@ -556,7 +556,7 @@ pub(crate) fn random_zero_heavy(
 ///
 /// # Panics
 /// On the first disagreement, naming the pair.
-pub(crate) fn check_index_against_oracle(
+pub fn check_index_against_oracle(
     index_query: impl Fn(u64, u64) -> Option<(f64, Vec<u64>)>,
     g: &Matrix<f64>,
 ) {
@@ -825,6 +825,10 @@ mod checker_tests {
     /// A correct stand-in index: Dijkstra with predecessors, written
     /// separately from the kit's `dijkstra` so the checker is not tested
     /// against its own oracle's code path.
+    #[allow(
+        clippy::many_single_char_names,
+        reason = "textbook Dijkstra names: s, t, u, a, b, w"
+    )]
     fn reference_query(
         g: &Matrix<f64>,
         s: u64,
@@ -940,7 +944,7 @@ mod checker_tests {
                 if s == t {
                     Some((0.0, vec![s]))
                 } else {
-                    reference_query(&g, s, t).or(Some((1.0, vec![s, t])))
+                    reference_query(&g, s, t).or_else(|| Some((1.0, vec![s, t])))
                 }
             },
             &g,

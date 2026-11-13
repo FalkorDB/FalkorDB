@@ -472,7 +472,7 @@ pub fn register(funcs: &mut Functions) {
 /// Build the `string.matchRegEx` result: one sub-list per match, containing
 /// the full match followed by all capture groups, with `Null` for
 /// non-participating optional groups to preserve index positions.
-pub(crate) fn regex_captures_list(
+pub fn regex_captures_list(
     re: &regex::Regex,
     text: &str,
 ) -> Value {

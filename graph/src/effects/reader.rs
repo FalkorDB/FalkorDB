@@ -67,7 +67,7 @@ impl<'a> Reader<'a> {
     /// for 64 GiB — see `blocks::tests`. `min_bytes_each` belongs to the type
     /// being decoded, so each one is a named constant on that type rather than
     /// a number invented at the call site.
-    pub(super) fn guard_count(
+    pub(super) const fn guard_count(
         &self,
         count: u64,
         min_bytes_each: usize,
@@ -146,7 +146,9 @@ impl<'a> Reader<'a> {
         let n = self.guard_count(count, W)?;
         let bytes = self.take(n * W)?;
         Ok(bytes
-            .chunks_exact(W)
+            .as_chunks::<W>()
+            .0
+            .iter()
             .map(|c| {
                 let mut a = [0_u8; W];
                 a.copy_from_slice(c);

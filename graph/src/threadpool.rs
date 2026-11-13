@@ -64,11 +64,13 @@ pub struct ThreadPool {
 unsafe impl Sync for ThreadPool {}
 
 impl ThreadPool {
+    #[must_use]
     pub fn new(size: usize) -> Self {
         Self::with_names(size, None)
     }
 
     /// [`Self::new`], its workers named `{name}-0`, `{name}-1`, ….
+    #[must_use]
     pub fn named(
         size: usize,
         name: &str,
@@ -236,6 +238,7 @@ impl QueueSlot {
     ///
     /// `max` is `MAX_QUEUED_QUERIES` as configured, so the count is a `u64` too
     /// and the two compare without a conversion.
+    #[must_use]
     pub fn try_acquire(max: u64) -> Option<Self> {
         Self::try_acquire_in(&QUEUED_QUERIES, max)
     }

@@ -7,7 +7,9 @@ use super::leaf::Leaf;
 use super::node::{Branch, Node};
 use super::read_width;
 
-/// What a [`RangeIter`] yields per entry. The default [`DocExtract`] yields the
+/// What a [`RangeIter`] yields per entry.
+///
+/// The default [`DocExtract`] yields the
 /// doc id only, which is all the index needs; [`TupleExtract`] yields the full
 /// `(key, doc)` pair for a consumer that must recover the indexed value too.
 /// A doc-only cursor can skip reading the key on a wholly in-range leaf; a tuple

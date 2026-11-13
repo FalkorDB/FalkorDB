@@ -75,7 +75,7 @@ const INVALID_PROPERTY_MSG: &str =
 
 /// Whether a non-list value is a valid property: a primitive, or NULL when
 /// `allow_null`. Lists are checked by [`validate_list_property`].
-fn is_valid_property(
+const fn is_valid_property(
     value: &Value,
     allow_null: bool,
 ) -> bool {
@@ -750,6 +750,7 @@ impl Pending {
     /// `set_labels` and `remove_labels` are disjoint per node (see
     /// [`Self::stage_node_labels`]), so at most one of the two branches below can
     /// match and the order they are consulted in carries no meaning.
+    #[must_use]
     pub fn node_has_label(
         &self,
         id: NodeId,
@@ -1680,10 +1681,10 @@ impl Pending {
             // would materialize the delta's pending tuples on every commit.
             // An edge's type never changes, so created under a different
             // type means not a member.
-            match self.created_rel_types.get(&edge_id.into()) {
-                Some(created_type) => created_type.as_str() == type_name.as_str(),
-                None => g.edge_has_type(edge_id.into(), type_name),
-            }
+            self.created_rel_types.get(&edge_id.into()).map_or_else(
+                || g.edge_has_type(edge_id.into(), type_name),
+                |created_type| created_type.as_str() == type_name.as_str(),
+            )
         });
 
         match constraint.ct {
@@ -2021,7 +2022,7 @@ mod label_effect_tests {
         add: bool,
         labels: &[LabelId],
     ) -> Record {
-        let ids: IdList = [NODE].into_iter().collect();
+        let ids: IdList = std::iter::once(NODE).collect();
         let mut shape: Vec<u32> = labels.iter().map(|l| usize::from(*l) as u32).collect();
         shape.sort_unstable();
         shape.dedup();
@@ -2041,7 +2042,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
 
         assert_eq!(records(&pending, &g), vec![labelled(true, &[l])]);
     }
@@ -2072,7 +2073,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
         pending.remove_node_labels(NODE.into(), &[l]);
 
         assert!(
@@ -2096,7 +2097,7 @@ mod label_effect_tests {
         let l = labels[0];
 
         pending.remove_node_labels(NODE.into(), &[l]);
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
 
         assert!(
             !pending.remove_labels.contains_key(&NODE),

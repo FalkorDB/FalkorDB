@@ -75,7 +75,7 @@ pub fn register(funcs: &mut Functions) {
         args: [],
         ret: Type::Float,
         fn e(_, args) {
-            debug_assert!(args.is_empty());
+            debug_assert_eq!(args, []);
             Ok(Value::Float(std::f64::consts::E))
         }
     );
@@ -174,7 +174,7 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::union([Type::Float, Type::Null]),
         fn pow(_, args) {
-            apply_pow(args[0].clone(), args[1].clone())
+            apply_pow(&args[0], &args[1])
         }
     );
 
@@ -184,7 +184,7 @@ pub fn register(funcs: &mut Functions) {
         non_deterministic,
         #[allow(clippy::needless_pass_by_value)]
         fn rand(_, args) {
-            debug_assert!(args.is_empty());
+            debug_assert_eq!(args, []);
             let mut rng = rand::rng();
             Ok(Value::Float(rng.random_range(0.0..1.0)))
         }
@@ -326,8 +326,8 @@ pub fn register(funcs: &mut Functions) {
 // called from fn pow and expr pow (^)
 #[inline]
 pub fn apply_pow(
-    base: Value,
-    exponent: Value,
+    base: &Value,
+    exponent: &Value,
 ) -> Result<Value, String> {
     // `pow()` is guarded by its declared argument types, but the `^`
     // operator is not, so reject non-numeric operands here (as C does),

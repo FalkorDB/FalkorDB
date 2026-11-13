@@ -69,9 +69,7 @@ fn assert_sanitizer_agrees(request: &Request) {
     // plain RUSTFLAGS, so checking only the first two would miss the exact
     // configuration this guard is for.
     let mut sources = vec![
-        std::env::var("CARGO_ENCODED_RUSTFLAGS")
-            .map(|v| v.replace('\x1f', " "))
-            .unwrap_or_default(),
+        std::env::var("CARGO_ENCODED_RUSTFLAGS").map_or_default(|v| v.replace('\x1f', " ")),
         std::env::var("RUSTFLAGS").unwrap_or_default(),
     ];
     if let Ok(target) = std::env::var("TARGET") {

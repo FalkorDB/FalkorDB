@@ -31,8 +31,8 @@ pub(crate) fn create_index<'a>(
     runtime: &'a Runtime<'a>,
     label: &Arc<String>,
     attrs: &Vec<Arc<String>>,
-    index_type: &IndexType,
-    entity_type: &EntityType,
+    index_type: IndexType,
+    entity_type: EntityType,
     options: Option<&QueryExpr<Variable>>,
 ) -> Result<BatchOp<'a>, String> {
     if !runtime.write {
@@ -55,12 +55,12 @@ pub(crate) fn create_index<'a>(
         None => None,
     };
     let index_options = match &options_value {
-        Some(Value::Map(map)) => map_to_index_options(index_type, map)?,
+        Some(Value::Map(map)) => map_to_index_options(&index_type, map)?,
         _ => None,
     };
     // A vector index needs its dimension and similarity function (C rejects a
     // missing OPTIONS block the same way).
-    if *index_type == IndexType::Vector && index_options.is_none() {
+    if index_type == IndexType::Vector && index_options.is_none() {
         return Err("Invalid vector index configuration".into());
     }
     // Index DDL mutates the shared, non-MVCC index directly (not via `pending`)
@@ -69,7 +69,7 @@ pub(crate) fn create_index<'a>(
     runtime.upgrade_to_write()?;
     runtime
         .graph_mut()
-        .create_index(index_type, entity_type, label, attrs, index_options)?;
+        .create_index(&index_type, &entity_type, label, attrs, index_options)?;
     runtime.stats.borrow_mut().indexes_created += attrs.len();
     emit_effect(
         runtime,
@@ -88,8 +88,8 @@ pub(crate) fn drop_index<'a>(
     runtime: &'a Runtime<'a>,
     label: &Arc<String>,
     attrs: &Vec<Arc<String>>,
-    index_type: &IndexType,
-    entity_type: &EntityType,
+    index_type: IndexType,
+    entity_type: EntityType,
 ) -> Result<BatchOp<'a>, String> {
     if !runtime.write {
         return Err(String::from(
@@ -100,7 +100,7 @@ pub(crate) fn drop_index<'a>(
     runtime.upgrade_to_write()?;
     let dropped = runtime
         .graph_mut()
-        .drop_index(index_type, entity_type, label, attrs)?;
+        .drop_index(&index_type, &entity_type, label, attrs)?;
     runtime.stats.borrow_mut().indexes_dropped += dropped;
     emit_effect(runtime, false, label, attrs, index_type, entity_type, None)?;
     Ok(BatchOp::Once(None))
@@ -116,8 +116,8 @@ fn emit_effect(
     create: bool,
     label: &Arc<String>,
     attrs: &Vec<Arc<String>>,
-    index_type: &IndexType,
-    entity_type: &EntityType,
+    index_type: IndexType,
+    entity_type: EntityType,
     options: Option<&Value>,
 ) -> Result<(), String> {
     if !runtime.build_effects.get() {
@@ -130,8 +130,8 @@ fn emit_effect(
         &runtime.graph(),
         create,
         &AnnouncedIndex {
-            entity_type: *entity_type,
-            index_type,
+            entity_type,
+            index_type: &index_type,
             label,
             fields: attrs,
             options,

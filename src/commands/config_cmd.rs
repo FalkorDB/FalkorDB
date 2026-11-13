@@ -48,7 +48,7 @@ use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
 
 /// C's reply for a name it does not know, in GET and SET alike.
-pub(crate) const UNKNOWN_FIELD: &str = "Unknown configuration field";
+pub const UNKNOWN_FIELD: &str = "Unknown configuration field";
 
 /// Smallest `JS_HEAP_SIZE` / `JS_STACK_SIZE` C accepts: 1MB.
 const JS_MIN_SIZE: i64 = 1_048_576;
@@ -111,7 +111,7 @@ fn config_get_one(
 }
 
 /// Validate and parse a config SET request. Returns the parsed value or error.
-pub(crate) fn validate_config_set(
+pub fn validate_config_set(
     name: &str,
     value: &str,
 ) -> Result<ConfigValue, String> {
@@ -217,7 +217,7 @@ fn validate_timeout_cross_constraints(validated: &[(&str, ConfigValue)]) -> Resu
 /// - Cannot set deprecated TIMEOUT when TIMEOUT_DEFAULT or TIMEOUT_MAX are active
 /// - TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX (when TIMEOUT_MAX > 0)
 /// - TIMEOUT_MAX cannot be lower than TIMEOUT_DEFAULT (when TIMEOUT_DEFAULT > 0)
-pub(crate) fn check_timeout_constraints(
+pub fn check_timeout_constraints(
     timeout_default: &mut i64,
     timeout_max: &mut i64,
     validated: &[(&str, ConfigValue)],
@@ -252,13 +252,13 @@ pub(crate) fn check_timeout_constraints(
     Ok(())
 }
 
-pub(crate) enum ConfigValue {
+pub enum ConfigValue {
     Int(i64),
     Uint(u64),
 }
 
 /// Apply a validated config value.
-pub(crate) fn apply_config_set(
+pub fn apply_config_set(
     ctx: &Context,
     name: &str,
     val: &ConfigValue,

@@ -1041,7 +1041,8 @@ pub fn shutdown_flusher_thread() {
         let _ = h.join();
     }
     // Only after the join: the flusher's template borrows these.
-    if let Some(names) = FIELD_NAME_STRINGS.lock().take() {
+    let names = FIELD_NAME_STRINGS.lock().take();
+    if let Some(names) = names {
         for name in names.0 {
             free_detached_string(name);
         }

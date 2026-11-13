@@ -55,7 +55,7 @@ impl<'a> FilterOp<'a> {
     /// Returns `Ok(Some(batch))` with passing rows, `Ok(None)` when every row
     /// was filtered out, or `Err` on a predicate evaluation error.
     fn eval(
-        &mut self,
+        &self,
         mut batch: Batch<'a>,
     ) -> Result<Option<Batch<'a>>, String> {
         let rows: Vec<usize> = batch.active_indices().collect();

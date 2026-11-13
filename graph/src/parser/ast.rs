@@ -1519,11 +1519,11 @@ mod tests {
         let and = ExprIR::and_of([a_or_b.clone(), a_xor_b.clone(), not_and.clone(), var("c")]);
         let expected = op(
             ExprIR::And,
-            vec![a_or_b.clone(), a_xor_b.clone(), not_and, var("c")],
+            vec![a_or_b, a_xor_b.clone(), not_and, var("c")],
         );
         assert_eq!(show(&and), show(&expected));
 
-        let or = ExprIR::or_of([a_and_b.clone(), a_xor_b, var("c")]);
+        let or = ExprIR::or_of([a_and_b, a_xor_b, var("c")]);
         assert_eq!(root_children(&or), 3);
         assert!(matches!(or.root().child(0).data(), ExprIR::And));
     }

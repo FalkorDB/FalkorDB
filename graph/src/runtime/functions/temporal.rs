@@ -525,7 +525,9 @@ pub fn construct_duration_secs(
         .and_then(check_date_range)
 }
 
-/// Largest civil year a date or duration may reach. `civil_from_days` returns
+/// Largest civil year a date or duration may reach.
+///
+/// `civil_from_days` returns
 /// an `i32` year, so past this the year would silently wrap; the margin keeps
 /// the `year - 1970` and month-carry arithmetic around it inside `i32` too.
 pub const MAX_DATE_YEAR: i32 = i32::MAX - 2000;
@@ -762,7 +764,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Int,
         non_deterministic,
         fn timestamp_fn(_, args) {
-            debug_assert!(args.is_empty());
+            debug_assert_eq!(args, []);
             let now = Utc::now();
             Ok(Value::Int(now.timestamp_millis()))
         }

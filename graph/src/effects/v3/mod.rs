@@ -67,9 +67,11 @@ use crate::{
     index::IndexType,
 };
 
-/// Buffer header. C accepts any version `<= EFFECTS_VERSION` and branches per
-/// version, so raising this is its established mechanism rather than a break —
-/// but C must be raised to 3 as well before it can read what we write.
+/// Buffer header.
+///
+/// C accepts any version `<= EFFECTS_VERSION` and branches per version, so
+/// raising this is its established mechanism rather than a break — but C must
+/// be raised to 3 as well before it can read what we write.
 pub const EFFECTS_VERSION: u8 = 3;
 
 pub mod apply;
@@ -334,7 +336,7 @@ fn field_type_bits(field_type: u32) -> impl Iterator<Item = u32> {
         }
         // Lowest set bit, then clear it. `wrapping_neg` because `-rest` on the
         // sign bit would overflow in debug.
-        let lowest = rest & rest.wrapping_neg();
+        let lowest = rest.isolate_lowest_one();
         rest &= rest - 1;
         Some(lowest)
     })
@@ -456,10 +458,11 @@ pub const fn constraint_from_tag(v: u32) -> Result<ConstraintType, DecodeError> 
 /// knows what it is holding before it commits to decoding anything.
 pub const FLAG_COMPRESSED: u8 = 1 << 0;
 
-/// Every flag this build understands. A reader that meets a bit outside this
-/// mask **rejects the buffer** rather than guessing: an old node reading a
-/// future payload must fail loudly, not decode the first record it recognises
-/// and corrupt itself with the rest.
+/// Every flag this build understands.
+///
+/// A reader that meets a bit outside this mask **rejects the buffer** rather
+/// than guessing: an old node reading a future payload must fail loudly, not
+/// decode the first record it recognises and corrupt itself with the rest.
 pub const KNOWN_FLAGS: u8 = FLAG_COMPRESSED;
 
 /// Start a fresh buffer: `u8 version · u8 flags`.
@@ -508,7 +511,7 @@ mod tests {
             ("INDEX_FLD_VECTOR", index_field_type::INDEX_FLD_VECTOR),
         ] {
             assert!(
-                value <= u64::from(u32::MAX),
+                u32::try_from(value).is_ok(),
                 "{name} = {value:#x} does not fit the four bytes the wire carries"
             );
         }

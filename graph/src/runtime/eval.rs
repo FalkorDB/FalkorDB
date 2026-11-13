@@ -510,6 +510,10 @@ impl<'a> ExprEval<'a> {
         let mut i = 0;
         while i + 1 < num_arms {
             let when = self.eval_node(&arms.child(i), env, agg_group_key)?;
+            #[allow(
+                clippy::option_if_let_else,
+                reason = "the value arm carries a null-semantics note"
+            )]
             let matched = match &subject {
                 // `PartialEq` reports two nulls as equal because it keeps only
                 // the ordering half of `compare_value`. `=` reads the other
@@ -839,7 +843,7 @@ impl<'a> ExprEval<'a> {
                 ExprIR::Pow => res.push(
                     node.children()
                         .map(|child| self.eval_node(&child, env, agg_group_key))
-                        .reduce(|acc, value| apply_pow(acc?, value?))
+                        .reduce(|acc, value| apply_pow(&acc?, &value?))
                         .ok_or_else(|| {
                             String::from("Pow operator requires at least one argument")
                         })??,

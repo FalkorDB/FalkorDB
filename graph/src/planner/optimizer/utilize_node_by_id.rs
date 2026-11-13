@@ -121,12 +121,12 @@ pub(super) fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
                 let mut new_op = optimized_plan.node_mut(idx);
                 if node.labels.is_empty() {
                     *new_op.data_mut() = IR::NodeByIdSeek {
-                        node: node.clone(),
+                        node,
                         filter: filters,
                     };
                 } else {
                     *new_op.data_mut() = IR::NodeByLabelAndIdScan {
-                        node: node.clone(),
+                        node,
                         filter: filters,
                     };
                 }

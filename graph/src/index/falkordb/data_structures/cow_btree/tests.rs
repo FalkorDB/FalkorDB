@@ -174,7 +174,7 @@ fn first_doc_matches_reference_across_configs() {
     assert_first_doc_matches(&CowBTree::<4, 4, 8>::new(), &BTreeSet::new());
     let mut one = CowBTree::<4, 4, 4>::new();
     one.insert(7, 42);
-    assert_first_doc_matches(&one, &[(7u64, 42u64)].into_iter().collect());
+    assert_first_doc_matches(&one, &std::iter::once((7u64, 42u64)).collect());
 
     // Small fan-out => deep trees with many leaf/branch boundaries; heavy key
     // collisions => multi-doc keys; docs strictly > 0 to exercise the case where
@@ -1620,7 +1620,7 @@ fn insert_batch_handles_the_maximal_tuple() {
     );
 
     t.insert_batch(&[(u64::MAX, u64::MAX)]);
-    let mut expected = base.clone();
+    let mut expected = base;
     expected.push((u64::MAX, u64::MAX));
     assert_eq!(
         tree_pairs(&t),

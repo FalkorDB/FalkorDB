@@ -19,6 +19,10 @@ use graph::runtime::string_pool;
 use redis_module::{Context, RedisResult, RedisString, RedisValue};
 
 #[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "a Redis command handler must return `RedisResult`"
+)]
 pub fn graph_info(
     _ctx: &Context,
     args: Vec<RedisString>,
