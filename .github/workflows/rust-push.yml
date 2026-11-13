@@ -94,7 +94,7 @@ jobs:
   # trunk merge: edge-rs-valkey and edge-rs-redis, with edge and edge-rs
   # pointing at Valkey. It is a retag of the same manifests, never a rebuild,
   # on both repositories and both registries; build/publish_tags.py lists the
-  # tags, checks each source first, and checks every tag's digest after.
+  # tags and checks each source first.
   #
   # Deliberately NOT the PR's own rc-pr-<N>-<server> images, even though
   # same-repo PRs still publish them. Those are built from the PR head; the

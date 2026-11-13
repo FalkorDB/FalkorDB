@@ -68,9 +68,9 @@ jobs:
 
       # Validate Cargo.toml only against a semver-shaped tag, so operators can
       # still dispatch ad-hoc tags like 'edge-test' without enforcement. Then
-      # print the tags the publish job will push, which also refuses a tag
-      # they cannot be (another workflow's tag, a prerelease with
-      # mark_latest, ...) before anything is built.
+      # print the tags the publish job will push, which also refuses
+      # mark_latest where a release would not move latest*, before anything
+      # is built.
       - name: Validate tag against Cargo.toml and the tag plan
         id: derive
         env:
@@ -129,17 +129,6 @@ jobs:
   publish:
     needs: [prepare, build]
     runs-on: ubuntu-latest
-    # Every job that can move latest* shares this lock, across versions and
-    # across release-tag.yml and release-image.yml, so an older release that
-    # read the release list cannot overwrite latest* after a newer one moved
-    # it. The release list is read inside the job, so inside the lock. If a
-    # third publisher queues behind a waiting one, GitHub cancels the waiting
-    # one: a visible, re-runnable failure, where a race would be silent.
-    # A dispatch without mark_latest never touches latest*, so it takes a
-    # group of its own and cannot cancel a publisher waiting on the lock.
-    concurrency:
-      group: ${{ inputs.mark_latest && 'publish-latest-images' || format('release-image-publish-{0}', github.run_id) }}
-      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -174,7 +163,7 @@ jobs:
           set -euo pipefail
           # latest* moves only to the highest stable version with a published
           # GitHub release; publish_tags.py reads the list again right before
-          # the push, inside this job's lock.
+          # the push.
           LATEST=()
           if [ "$MARK_LATEST" = "true" ]; then LATEST=(--latest); fi
           python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" "${LATEST[@]}" --execute

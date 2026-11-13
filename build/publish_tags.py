@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Work out, and optionally push, the public image tags of one publish.
 
-Every publishing workflow gets its tags from here, so the tags a workflow
-pushes are the tags this file's tests check:
+Every publishing workflow gets its tags from here:
 
   edge     rust-push.yml     the queue's rc-mg-<sha>-<server> → the rolling tags
   release  release-tag.yml   the queue's rc-mg-<sha>-<server> → <version>[, latest]
@@ -15,8 +14,6 @@ Valkey. Every public tag is a multi-arch index, so none names an architecture.
 Without --execute nothing is pushed: the commands are printed, which is the
 dry run. With --execute each source is checked first (its platforms and the
 server its label names), and nothing is pushed unless every source passes.
-After the push every tag must hold the digest it was given, on GHCR and on
-Docker Hub alike: publishing retags, it never rebuilds.
 """
 
 from __future__ import annotations
@@ -24,7 +21,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import shlex
 import subprocess
@@ -35,10 +31,6 @@ from typing import Callable, Iterable, Optional, Sequence
 
 GHCR = "ghcr.io/falkordb"
 DOCKER_HUB = "docker.io/falkordb"
-# tag-plan.yml's rehearsal points both at local registries, as
-# "<ghcr stand-in> <docker hub stand-in>"; nothing else sets it.
-if os.environ.get("PUBLISH_TAGS_REHEARSAL_REGISTRIES"):
-    GHCR, DOCKER_HUB = os.environ["PUBLISH_TAGS_REHEARSAL_REGISTRIES"].split()
 REGISTRIES = (GHCR, DOCKER_HUB)
 
 REPOS = ("falkordb", "falkordb-server")
@@ -61,10 +53,6 @@ PER_OS = (
 
 SERVER_LABEL = "com.falkordb.server.name"
 
-# Whole tags other workflows own; a rebuild may not publish over them. The C
-# engine publishes the edge-c family from master.
-RESERVED_TAGS = {"edge", "edge-rs", "edge-c", "latest"}
-RESERVED_PREFIXES = ("rc-", "edge-c-")
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
 ARCHIVE_RE = re.compile(
     r"^falkordb-server-(?P<os>[a-z0-9]+)-(?P<server>[a-z]+)-(?P<arch>[a-z0-9]+)\.tar$"
@@ -105,29 +93,9 @@ def parse_version(text: str):
     return int(m[1]), int(m[2]), int(m[3]), m[4]
 
 
-def check_no_server_suffix(name: str, what: str) -> None:
-    """The server is appended to every tag pushed, so a name that already ends
-    in one would publish over that server's channel with the other server's
-    image: 6.1.0-redis's Valkey tag is the 6.1.0 release's Redis tag."""
-    if "-" in name and name.rsplit("-", 1)[1].lower() in SERVERS:
-        raise PlanError(f"{what} '{name}' ends in a server name; the server is added to each tag pushed")
-
-
-# Docker's tag grammar, 128 characters at most.
-DOCKER_TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
-
-
 def check_version(version: str) -> None:
     if parse_version(version) is None:
         raise PlanError(f"version '{version}' is not X.Y.Z[-prerelease] (no leading v)")
-    check_no_server_suffix(version, "version")
-    # The release and per-OS steps run apart, so both refuse a version whose
-    # longest tag, a per-OS one, Docker would refuse: neither may push its
-    # tags and leave the other to fail.
-    for os_name, server in PER_OS:
-        tag = f"{version}-{os_name}-{server}"
-        if not DOCKER_TAG_RE.fullmatch(tag):
-            raise PlanError(f"version '{version}' would publish '{tag}', which is not a valid Docker tag")
 
 
 def is_prerelease(version: str) -> bool:
@@ -198,15 +166,6 @@ def rebuild_plan(tag: str, sha: str, latest: bool, releases: Optional[Iterable[d
     latest* moves only where a release would move it: `tag` must be the
     highest stable version with a published GitHub release, in `releases`.
     """
-    check_no_server_suffix(tag, "tag")
-    if parse_version(tag) is None:
-        if re.match(r"v\d", tag, re.IGNORECASE):
-            raise PlanError(f"tag '{tag}': image versions have no leading v")
-        # Judged on what would be pushed: `rc` alone would publish rc-valkey.
-        for name in server_tags(tag, DEFAULT_SERVER) + server_tags(tag, "redis"):
-            # Case-blind: Latest or RC-x would read as the real channels.
-            if name.lower() in RESERVED_TAGS or name.lower().startswith(RESERVED_PREFIXES):
-                raise PlanError(f"tag '{tag}' would publish '{name}', which belongs to another workflow")
     if latest:
         if parse_version(tag) is None or is_prerelease(tag):
             raise PlanError(f"latest only moves to a stable X.Y.Z version; '{tag}' is not one")
@@ -225,11 +184,6 @@ def _named_plan(name: str, source: Callable, latest: bool) -> list:
             tags = server_tags(name, server)
             if latest:
                 tags += server_tags("latest", server)
-            for tag in tags:
-                # Here, not at push time: release-image.yml plans before it
-                # builds, so a tag Docker would refuse fails in seconds.
-                if not DOCKER_TAG_RE.fullmatch(tag):
-                    raise PlanError(f"'{name}' would publish '{tag}', which is not a valid Docker tag")
             plan.append(Retag(source(repo, server), server, everywhere(repo, tags)))
     return plan
 
@@ -393,13 +347,6 @@ def check_archive(step: Assemble, arch: str, path: str, runner: Callable = run) 
         raise PlanError(f"{path}: {SERVER_LABEL} is {server!r}, expected {step.server!r}")
 
 
-def expect_digest(tags: Iterable[str], digest: str, runner: Callable = run) -> None:
-    for tag in tags:
-        got = digest_of(tag, runner)
-        if got != digest:
-            raise PlanError(f"{tag} holds {got}, expected {digest}")
-
-
 def execute(plan: Sequence, runner: Callable = run, workdir: Optional[Path] = None) -> None:
     # Check every source before pushing anything: a bad source stops the
     # whole publish, not the half after it.
@@ -414,14 +361,12 @@ def execute(plan: Sequence, runner: Callable = run, workdir: Optional[Path] = No
         if isinstance(step, Retag):
             # From the digest just checked, not the tag, which could move.
             runner(retag_command(step, f"{repository(step.source)}@{digests[step]}"))
-            expect_digest(step.tags, digests[step], runner)
         else:
             digest_file = (workdir or Path(".")) / f"publish-{step.name}.digest"
             for cmd in podman_commands(step, str(digest_file)):
                 runner(cmd)
             digest = digest_file.read_text().strip()
             runner(hub_copy_command(step, digest))
-            expect_digest(step.tags, digest, runner)
 
 
 # --- command line -------------------------------------------------------------

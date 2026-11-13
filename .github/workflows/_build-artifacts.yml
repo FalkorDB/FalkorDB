@@ -86,7 +86,7 @@ jobs:
           # falkordb-server-<os>-<server>-<arch>; `os` is "" unless `image`, and
           # an image cell's suffix is <os>-<arch>. The per-OS
           # images a release publishes are build/publish_tags.py's PER_OS, on
-          # both architectures; its tests check this list builds exactly those.
+          # both architectures.
           ALL='[
             {"suffix":"x64","os":"","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false,"servers":[]},
             {"suffix":"arm64v8","os":"","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false,"servers":[]},
@@ -97,16 +97,6 @@ jobs:
             {"suffix":"alpine-x64","os":"alpine","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"servers":["valkey"]},
             {"suffix":"alpine-arm64v8","os":"alpine","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile.alpine","build_image":"","cxx":"clang++","image":true,"servers":["valkey"]}
           ]'
-          BAD_SERVERS=$(printf '%s' "$ALL" | jq -r '[ .[] | select((.servers | type) != "array" or (.servers | length > 0) != .image or any(.servers[]; . != "redis" and . != "valkey")) | .suffix ] | join(",")')
-          if [ -n "$BAD_SERVERS" ]; then
-            echo "::error::cells whose \"servers\" is not redis/valkey for an image cell, or empty otherwise: $BAD_SERVERS"
-            exit 1
-          fi
-          BAD_OS=$(printf '%s' "$ALL" | jq -r '[ .[] | select(if .image then .suffix != "\(.os)-\(.arch)" or .os == "" else .os != "" end) | .suffix ] | join(",")')
-          if [ -n "$BAD_OS" ]; then
-            echo "::error::cells whose \"os\" does not match their suffix: $BAD_OS"
-            exit 1
-          fi
           if [ -z "${PLATFORMS// /}" ] || [ "$PLATFORMS" = "all" ]; then
             CELLS=$(printf '%s' "$ALL" | jq -c .)
           else

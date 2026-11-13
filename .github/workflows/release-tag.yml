@@ -37,8 +37,7 @@
 #                          each, as <semver>-<os>-<server>
 #   7. browser-tests     — exercise the published image
 #
-# build/publish_tags.py works out every tag pushed here; its tests are the
-# list of what a release, a prerelease and the per-OS images get.
+# build/publish_tags.py works out every tag pushed here.
 #
 # workflow_dispatch re-runs all of it for an existing tag; every step is
 # idempotent (existing release reused, assets uploaded with --clobber, retag
@@ -227,15 +226,6 @@ jobs:
   image:
     needs: [guard, create-release]
     runs-on: ubuntu-latest
-    # Every job that can move latest* shares this lock, across versions and
-    # across release-tag.yml and release-image.yml, so an older release that
-    # read the release list cannot overwrite latest* after a newer one moved
-    # it. The release list is read inside the job, so inside the lock. If a
-    # third publisher queues behind a waiting one, GitHub cancels the waiting
-    # one: a visible, re-runnable failure, where a race would be silent.
-    concurrency:
-      group: publish-latest-images
-      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -271,8 +261,8 @@ jobs:
           # with a published (non-draft) GitHub release, so a backport patch on
           # an old version branch does not clobber it and a prerelease never
           # moves it. publish_tags.py reads the release list itself, right
-          # before the push and inside this job's lock, so a newer release
-          # published meanwhile is already in it.
+          # before the push, so a newer release published meanwhile is
+          # already in it.
           python3 build/publish_tags.py release --version "$SEMVER" --sha "$COMMIT_SHA" --execute
 
   # Per-OS server images, falkordb-server:<semver>-<os>-<server>. Unlike the
