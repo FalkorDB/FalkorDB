@@ -1127,6 +1127,9 @@ impl<'a> ExprEval<'a> {
                     res.push(runtime.run_nested_plan(nested.id, &nested.result, &row)?);
                 }
                 ExprIR::Paren => unreachable!("the binder removes every Paren"),
+                ExprIR::AggOrderPlaceholder => {
+                    unreachable!("the binder turns every AggOrderPlaceholder into a variable")
+                }
                 ExprIR::Pattern(_) => {
                     unreachable!("Pattern should be handled by the planner")
                 }
