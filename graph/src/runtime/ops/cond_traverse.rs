@@ -194,7 +194,9 @@ pub struct CondTraverseOp<'a> {
     optional_unmatched: std::cell::RefCell<Vec<usize>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Maximum number of records this operator should produce. Once reached,
-    /// subsequent `next()` calls return `None`. Set by limit propagation.
+    /// subsequent `next()` calls return `None`. Set by limit propagation
+    /// (`Runtime::hard_record_cap`), which stops at any row-dropping operator
+    /// between here and the `Limit`, so the stop never loses a needed row.
     record_cap: Option<usize>,
     /// Number of records produced so far (tracked when `record_cap` is set).
     produced: usize,
@@ -361,10 +363,18 @@ fn build_transposed_union_iter(
 }
 
 impl<'a> CondTraverseOp<'a> {
+    /// Forgets the (source, destination) pairs already emitted by the
+    /// bidirectional dedup, for a new argument batch.
+    pub fn clear_bidir_dedup(&mut self) {
+        if let Some(dedup) = &self.bidir_dedup {
+            dedup.borrow_mut().clear();
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: &'a Runtime<'a>,
-        child: Box<BatchOp<'a>>,
+        mut child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         emit_relationship: bool,
         sibling_edges: &'a [u32],
@@ -373,6 +383,7 @@ impl<'a> CondTraverseOp<'a> {
         optional: bool,
         bind_relationship: bool,
         idx: NodeIdx<Dyn<IR>>,
+        pack_hint: Option<usize>,
         record_cap: Option<usize>,
     ) -> Self {
         let rp = relationship_pattern;
@@ -416,6 +427,15 @@ impl<'a> CondTraverseOp<'a> {
                 (None, None)
             };
 
+        // The dedup set outlives input batches, but keep the child packing full
+        // batches under a LIMIT hint as it does without one, so the dedup work per
+        // batch is not multiplied by tiny batches.
+        if bidir_dedup.is_some()
+            && let BatchOp::CondTraverse(child_ct) = &mut *child
+        {
+            child_ct.emitter.lift_pack_ceiling();
+        }
+
         // For fused chains the batched path is the ONLY correct path —
         // expand_row only handles single-hop.
         //
@@ -448,7 +468,7 @@ impl<'a> CondTraverseOp<'a> {
                 edge: relationship_pattern.alias.id,
                 transposed: false,
             },
-            record_cap,
+            pack_hint,
         );
 
         Self {
@@ -1462,11 +1482,11 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     // child batch and decide fast vs. per-row path for it.
                     match self.child.next() {
                         Some(Ok(b)) => {
-                            // Reset bidirectional dedup for each new input batch
-                            // so Apply/Optional scopes see fresh state.
-                            if let Some(ref dedup) = self.bidir_dedup {
-                                dedup.borrow_mut().clear();
-                            }
+                            // The bidirectional dedup set is kept across input
+                            // batches: a (source, destination) pair reached through
+                            // intermediates in two batches is one result. It is
+                            // cleared when a new argument batch is installed
+                            // (`set_argument_batch`), the Apply/Optional boundary.
                             // Try the batched mxm path on the whole batch. When it
                             // fully handles the batch (`true`) its output is
                             // queued on `pending_batches` and the emitter is left
