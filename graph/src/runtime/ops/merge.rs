@@ -381,11 +381,7 @@ impl<'a> Iterator for MergeOp<'a> {
                     .all(|node| input_env.is_bound_by_id(node.alias.id))
                     && pattern.relationships().iter().all(|rel| {
                         input_env.is_bound_by_id(rel.alias.id)
-                            || (rel
-                                .alias
-                                .name
-                                .as_ref()
-                                .is_none_or(|n| n.starts_with("_anon_"))
+                            || (rel.alias.is_unnamed()
                                 && !pattern
                                     .paths()
                                     .iter()
