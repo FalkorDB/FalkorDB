@@ -134,3 +134,33 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
 
         g.delete()
 
+
+    def test08_inline_filter_after_unwind_waits_for_its_node(self):
+        # The best endpoint of the chain is `t` (filtered and labelled), but
+        # the chain hangs off the UNWIND, so no scan binds `t`. The inline
+        # filter `{id:100}` must still wait for the hop that binds `t` (#2556).
+        g = self.db.select_graph("multi_pattern_unwind")
+        g.query("""CREATE (p:Person {id:1}), (f:Person {id:2}), (p)-[:KNOWS]->(f),
+                          (m1:Post {id:10}), (m2:Post {id:11}),
+                          (m1)-[:HAS_CREATOR]->(f), (m2)-[:HAS_CREATOR]->(f),
+                          (t1:Tag {id:100}), (t2:Tag {id:200}),
+                          (m1)-[:HAS_TAG]->(t1), (m1)-[:HAS_TAG]->(t2), (m2)-[:HAS_TAG]->(t1)""")
+
+        for head in ["MATCH (person:Person {id:1})-[:KNOWS]-(friend) WITH collect(friend) AS friends",
+                     "MATCH (friend:Person {id:2}) WITH collect(friend) AS friends"]:
+            res = g.query(f"""{head}
+                              UNWIND friends AS f
+                              MATCH (f)<-[:HAS_CREATOR]-(post:Post),
+                                    (post)-[:HAS_TAG]->(t:Tag {{id:100}}),
+                                    (post)-[:HAS_TAG]->(tag:Tag)
+                              RETURN count(post)""")
+            self.env.assertEqual(res.result_set, [[3]], depth=1)
+
+        res = g.query("""MATCH (person:Person {id:1})-[:KNOWS]-(friend)
+                         WITH collect(friend) AS friends
+                         UNWIND friends AS f
+                         MATCH (f)<-[:HAS_CREATOR]-(post:Post), (post)-[:HAS_TAG]->(t:Tag {id:100})
+                         MATCH (post)-[:HAS_CREATOR]->(z:Person)
+                         RETURN count(post)""")
+        self.env.assertEqual(res.result_set, [[2]])
+        g.delete()
