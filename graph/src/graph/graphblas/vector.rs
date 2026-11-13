@@ -3,7 +3,7 @@
 //! This module provides [`Vector<T>`], which wraps `GrB_Vector` from the
 //! SuiteSparse:GraphBLAS C library. Three element types are implemented:
 //! `Vector<bool>`, used to represent sets of node IDs efficiently;
-//! `Vector<u64>`, a count or an id per index; and, with the `index-falkordb` feature,
+//! `Vector<u64>`, a count or an id per index; and
 //! `Vector<f64>`, a weight per index.
 //!
 //! ## Use Cases
@@ -48,9 +48,7 @@ use crate::graph::graphblas::{
     GrB_Vector_setElement_UINT64, GxB_Vector_build_Scalar,
 };
 
-#[cfg(feature = "index-falkordb")]
 use super::length;
-#[cfg(feature = "index-falkordb")]
 use super::matrix::grb;
 use super::serialization::{Decode, Encode, Reader, Writer};
 use super::{
@@ -66,7 +64,7 @@ use super::{GrB_FP64, GrB_Vector_extractTuples_FP64, GrB_Vector_nvals};
 
 /// A sparse vector backed by GraphBLAS.
 ///
-/// Generic over element type T: `bool`, `u64` and (with `index-falkordb`) `f64`.
+/// Generic over element type T: `bool`, `u64` and `f64`.
 /// The vector automatically frees its GraphBLAS resources on drop.
 pub struct Vector<T> {
     v: GrB_Vector,
@@ -117,7 +115,6 @@ impl<T> Vector<T> {
     }
 
     /// The number of stored entries.
-    #[cfg(feature = "index-falkordb")]
     #[must_use]
     fn nvals(&self) -> u64 {
         let mut nvals = 0;
@@ -471,7 +468,6 @@ impl Decode<19> for Vector<bool> {
 }
 
 /// `FP64` vectors, as a weight per index (e.g. a minimum per row).
-#[cfg(feature = "index-falkordb")]
 impl Vector<f64> {
     #[must_use]
     pub(crate) fn new(nrows: u64) -> Self {
@@ -861,7 +857,7 @@ mod decode_tests {
     }
 }
 
-#[cfg(all(test, feature = "index-falkordb"))]
+#[cfg(test)]
 mod fp64_tests {
     use super::super::GrB_Vector_setElement_FP64;
     use super::super::test_init::ensure_init;

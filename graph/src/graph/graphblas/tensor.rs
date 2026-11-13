@@ -130,7 +130,6 @@ use crate::graph::{
     graphblas::matrix::{BoolExtract, Uint64Extract},
 };
 
-#[cfg(feature = "index-falkordb")]
 use super::versioned_matrix::Effective;
 use super::{
     matrix::{Descriptor, Dup, Matrix},
@@ -1055,7 +1054,6 @@ impl Tensor {
     /// matrix, `dp`'s value winning on a pair it shadows: no copy when both
     /// deltas are empty (see [`Effective`]). A multi-edge pair holds
     /// [`MULTI_EDGE`] here, as it does in every layer; its ids are in `me`.
-    #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub(crate) fn effective_fwd(&self) -> Effective<'_, u64> {
         // The deltas as every forward reader takes them (resynced, the fold
@@ -1882,7 +1880,6 @@ mod tests {
     /// are no deltas, and `(m ∖ dm) ∪ dp` (with `dp`'s value) when there are,
     /// checked pair by pair against the tensor's own iterator.
     #[test]
-    #[cfg(feature = "index-falkordb")]
     fn effective_fwd_is_the_base_or_the_merge() {
         ensure_init();
         const N: u64 = 1_000;
@@ -1930,7 +1927,6 @@ mod tests {
     /// through `wait_fwd`: each delta's counter pinned to its exact size and
     /// the fold decision latched (here a delta the size of the base: fold).
     #[test]
-    #[cfg(feature = "index-falkordb")]
     fn effective_fwd_resyncs_and_latches_like_every_forward_reader() {
         ensure_init();
         const N: u64 = 1_000;

@@ -1,8 +1,8 @@
 # Reusable workflow: build libfalkordb.so in the toolchain container and upload it as an
 # artifact, for the artifact vehicle (_flow-artifact.yml) to run against.
 #
-# One definition for every build of the engine a CI job tests: the release build, the coverage
-# build and the native-index build differ only in the inputs below. Another build is another call
+# One definition for every build of the engine a CI job tests: the release build and the coverage
+# build differ only in the inputs below. Another build is another call
 # of this file, not another copy of it.
 
 name: Build engine artifact (reusable)

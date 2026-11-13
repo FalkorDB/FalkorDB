@@ -23,8 +23,6 @@
 use std::sync::Arc;
 
 use crate::graph::graph::NodeId;
-#[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::unsupported_by_native_index;
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
@@ -231,15 +229,15 @@ impl<'a> NodeByIndexScanOp<'a> {
                             matches!(
                                 v,
                                 Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
-                            ) || (cfg!(feature = "index-falkordb") && matches!(v, Value::Point(_)))
+                            ) || matches!(v, Value::Point(_))
                         };
-                        // Under the flag, a member no kind holds (a date, a map) keeps the list
+                        // A member no kind holds (a date, a map) keeps the list
                         // whole: `can_utilize_index` then sends the query to a scan, whose retained
                         // filter checks every member. Dropping it would lose the rows holding it,
                         // which the filter cannot add back. A `NULL` member matches nothing and
                         // is still dropped.
-                        let unservable = cfg!(feature = "index-falkordb")
-                            && items.iter().any(|v| !keep(v) && !matches!(v, Value::Null));
+                        let unservable =
+                            items.iter().any(|v| !keep(v) && !matches!(v, Value::Null));
                         let items = if unservable || items.iter().all(keep) {
                             items
                         } else {
@@ -321,61 +319,54 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 let view = BatchRow::new(b, row);
                 let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
-                // Check if the index can satisfy this query. `None` here means "scan instead":
-                // the predicate is not index-shaped (e.g. non-indexable value types), which the
-                // planner keeps a filter for. That is not a capability gap, so it may not error
-                // even under the no-fallback flag.
-                let indexed: Option<Box<dyn Iterator<Item = NodeId>>> =
+                // What the index answers: its rows, or `None` for a scan that checks the
+                // predicate itself. That covers a value of a type no index lookup answers exactly
+                // (a date, an integer past 2^53), which the planner keeps a filter for only when
+                // it can see it coming, not when a constant folds to one (#2958), and a shape the
+                // native index declines (one spanning attributes it cannot combine, or an
+                // attribute with no column in this version), whose filter the planner dropped.
+                let g = self.runtime.graph();
+                let served: Option<Box<dyn Iterator<Item = NodeId>>> =
                     if Self::can_utilize_index(&q) {
-                        let g = self.runtime.graph();
-                        // Under `index-falkordb` the native index is the ONLY index: a predicate
-                        // it cannot serve is an error, not a quiet detour to RediSearch. Falling
-                        // back would hide every unimplemented kind behind correct-looking
-                        // results, which is exactly what the xfail ledger exists to prevent — a
-                        // gap has to be visible to be closed. The message names the predicate so
-                        // the failure is diagnosable rather than a bare "no rows".
-                        #[cfg(feature = "index-falkordb")]
-                        let it: Option<Box<dyn Iterator<Item = NodeId>>> = match g
-                            .query_index_nodes(self.index, &q)
-                        {
+                        match g.query_index_nodes(self.index, &q) {
                             Some(Ok(rows)) => Some(Box::new(rows)),
-                            // The column exists and will serve this once its build reaches
-                            // every entity. Until then scan the label for what it will answer:
-                            // the planner dropped the predicate it handed this op, so the scan
-                            // must check it itself.
+                            // The column exists and will serve this once its build reaches every
+                            // entity. Until then scan the label for what it will answer: the planner
+                            // dropped the predicate it handed this op, so the scan must check it
+                            // itself.
                             Some(Err(scan_filter)) => {
                                 let runtime = self.runtime;
-                                // Resolved once per scan. No node holds a name the graph has
-                                // never seen.
-                                let nodes: Box<dyn Iterator<Item = NodeId>> = match scan_filter
-                                    .resolve(|attr| {
+                                // Resolved once per scan. No node holds a name the graph has never
+                                // seen.
+                                Some(
+                                    match scan_filter.resolve(|attr| {
                                         g.get_node_attribute_id(attr).map(|attr| attr as u16)
                                     }) {
-                                    Some(scan_filter) => {
-                                        Box::new(g.get_nodes(&self.node_pattern.labels, 0).filter(
-                                            move |&id| {
-                                                runtime.graph().node_matches(id, &scan_filter)
-                                            },
-                                        ))
-                                    }
-                                    None => Box::new(std::iter::empty()),
-                                };
-                                Some(nodes)
+                                        Some(scan_filter) => Box::new(
+                                            g.get_nodes(&self.node_pattern.labels, 0).filter(
+                                                move |&id| {
+                                                    runtime.graph().node_matches(id, &scan_filter)
+                                                },
+                                            ),
+                                        ),
+                                        None => Box::new(std::iter::empty()),
+                                    },
+                                )
                             }
-                            None => {
-                                return Err(unsupported_by_native_index("node", self.index, &q));
-                            }
-                        };
-                        #[cfg(not(feature = "index-falkordb"))]
-                        let it: Option<Box<dyn Iterator<Item = NodeId>>> =
-                            Some(Box::new(g.get_indexed_nodes(self.index, q)));
-                        it
+                            None => None,
+                        }
                     } else {
                         None
                     };
-                let base: Box<dyn Iterator<Item = NodeId>> = match indexed {
-                    Some(it) => it,
-                    None => Box::new(self.runtime.graph().get_nodes(&self.node_pattern.labels, 0)),
+                let base: Box<dyn Iterator<Item = NodeId>> = match served {
+                    Some(rows) => rows,
+                    None => {
+                        let runtime = self.runtime;
+                        Box::new(
+                            g.get_nodes(&self.node_pattern.labels, 0)
+                                .filter(move |&id| runtime.graph().node_holds(id, &q)),
+                        )
+                    }
                 };
                 let iter: Box<dyn Iterator<Item = NodeId> + 'a> = match &self.extra_labels {
                     Some(extra) => {

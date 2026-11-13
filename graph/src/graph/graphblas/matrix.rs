@@ -75,13 +75,9 @@ use crate::graph::graphblas::{
 /// Size of the `GxB_Container_struct` in bytes.
 const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_struct>();
 
-#[cfg(feature = "index-falkordb")]
 pub use super::csr::CsrExport;
-#[cfg(feature = "index-falkordb")]
 use super::csr::{ExportFn, copy_out_csr};
-#[cfg(any(test, feature = "index-falkordb"))]
 use super::length;
-#[cfg(feature = "index-falkordb")]
 use super::scalar::Scalar;
 use super::vector::Vector;
 use super::{
@@ -122,7 +118,6 @@ use super::{
 /// in release too: for calls on data the caller built, where a failure is a
 /// bug, never bad input. (In the module, out of memory aborts in
 /// `RedisModule_Alloc` before GraphBLAS sees it.)
-#[cfg(feature = "index-falkordb")]
 macro_rules! grb {
     ($call:expr) => {{
         let info = $call;
@@ -134,7 +129,6 @@ macro_rules! grb {
         );
     }};
 }
-#[cfg(feature = "index-falkordb")]
 pub(crate) use grb;
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -319,7 +313,6 @@ impl EWiseAdd for u64 {
 /// An `f64` matrix carries path weights, where two weights for the same pair
 /// fold to the cheaper one: `MIN`, the additive operator of the `(min, +)`
 /// semiring.
-#[cfg(feature = "index-falkordb")]
 impl EWiseAdd for f64 {
     fn add_op() -> GrB_BinaryOp {
         unsafe { GrB_MIN_FP64 }
@@ -1015,7 +1008,6 @@ impl<T> Matrix<T> {
 
     /// Remove every entry on the main diagonal (`GrB_select` with
     /// `GrB_OFFDIAG`, whose thunk 0 names the main diagonal), in place.
-    #[cfg(any(test, feature = "index-falkordb"))]
     pub(crate) fn drop_diagonal(&mut self) {
         let info = unsafe {
             GrB_Matrix_select_INT64(
@@ -1266,7 +1258,6 @@ impl<T> Matrix<T> {
 
     /// Whether this matrix is stored by column (GraphBLAS reports the storage
     /// itself, not the hint it was given).
-    #[cfg(feature = "index-falkordb")]
     fn stored_by_column(&self) -> bool {
         let mut orientation = 0;
         // SAFETY: a read of this wrapper's live handle's setting into a local.
@@ -1291,7 +1282,6 @@ impl<T> Matrix<T> {
     /// The export would transpose it into a scratch copy, and a transpose run
     /// on several threads can leave that copy's rows unsorted, which the export
     /// does not sort again. Every `Matrix::new` stores by row.
-    #[cfg(feature = "index-falkordb")]
     fn copy_csr<V: Copy + Default>(
         &self,
         export: ExportFn<V>,
@@ -1499,7 +1489,6 @@ impl Matrix<u64> {
 
 /// `FP64` matrices, e.g. a weight per node pair: the test kit's graphs, and the weights the
 /// CCH input is built from.
-#[cfg(any(test, feature = "index-falkordb"))]
 impl Matrix<f64> {
     /// Create a new `FP64` matrix.
     #[must_use]
@@ -1607,7 +1596,6 @@ impl Matrix<f64> {
 
     /// The smallest value, or `+inf` (the monoid's identity) if the matrix is
     /// empty. `GrB_MIN_FP64` is `fmin`: a NaN entry is skipped, not returned.
-    #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub(crate) fn min_value(&self) -> f64 {
         self.reduce_fp64(unsafe { GrB_MIN_MONOID_FP64 })
@@ -1617,7 +1605,6 @@ impl Matrix<f64> {
     /// empty. Unlike `min_value`, `+` sees a NaN: a NaN entry makes the sum
     /// NaN, as does `+inf` next to `-inf`; any other mix of infinities and
     /// finite values (or an overflow) gives `±inf`, never NaN.
-    #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub(crate) fn sum_value(&self) -> f64 {
         self.reduce_fp64(unsafe { GrB_PLUS_MONOID_FP64 })
@@ -1627,7 +1614,6 @@ impl Matrix<f64> {
     /// by GraphBLAS's own export, which takes the matrix as it is stored
     /// (see [`CsrExport`]). Consumes the matrix, so its GraphBLAS arrays are
     /// freed when the export returns, unless a clone still shares them.
-    #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub(crate) fn into_csr(self) -> CsrExport<f64> {
         self.copy_csr(GrB_Matrix_export_FP64)
@@ -1635,7 +1621,6 @@ impl Matrix<f64> {
 
     /// Reduce every entry to one scalar, with no scratch matrix. Pending work
     /// is finished first ([`Self::wait`]), so the reduction only reads.
-    #[cfg(feature = "index-falkordb")]
     fn reduce_fp64(
         &self,
         monoid: GrB_Monoid,
@@ -1679,7 +1664,6 @@ impl Matrix<f64> {
 impl Matrix<bool> {
     /// The matrix's pattern as row-major CSR, copied into Rust `Vec`s like
     /// [`Matrix::<f64>::into_csr`]; `values` is empty. Consumes the matrix.
-    #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub(crate) fn into_csr_pattern(self) -> CsrExport<()> {
         // The export copies the values too: a byte per entry, dropped here.
@@ -1705,7 +1689,6 @@ impl Matrix<bool> {
     /// entry only one of them has. A plain `eWiseAdd` would instead typecast
     /// a one-sided entry, so a stored `0` (a weight of `0.0`, an edge id of
     /// 0) would land as `false`.
-    #[cfg(feature = "index-falkordb")]
     pub(crate) fn pattern_union<TA, TB>(
         &mut self,
         a: &Matrix<TA>,
@@ -2540,7 +2523,7 @@ mod tests {
 }
 
 /// The `FP64` and pattern wrappers.
-#[cfg(all(test, feature = "index-falkordb"))]
+#[cfg(test)]
 mod weight_tests {
     use super::super::GxB_Matrix_iso;
     use super::{Descriptor, Matrix, grb};

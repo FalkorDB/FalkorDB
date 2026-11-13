@@ -58,7 +58,7 @@ lazy_static! {
     /// buffer (KNN still correct), no async migration.
     pub static ref CONFIGURATION_INDEX_WORKER_THREADS: RedisGILGuard<i64> =
         RedisGILGuard::new(0.into());
-    /// Workers in the native index's background build pool (feature `index-falkordb`), which runs
+    /// Workers in the native index's background build pool, which runs
     /// the indexer batches of every index `CREATE INDEX` leaves `Building`. Load-time only. Not
     /// listed by `GRAPH.CONFIG`, whose list mirrors the C engine's.
     pub static ref CONFIGURATION_INDEX_BUILD_THREAD_COUNT: RedisGILGuard<i64> =

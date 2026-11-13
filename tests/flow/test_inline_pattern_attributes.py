@@ -242,10 +242,8 @@ class testInlinePatternAttributes(FlowTestsBase):
     # It does NOT detect a returning duplicate, and is not the guard for one.
     # Verified by ablation: with the endpoint filter deliberately emitted twice,
     # this plan is byte-identical, because `utilize_index` folds
-    # `And(a.p = 1, a.p = 1)` back into a single index query. The duplicate is
-    # observable only under `--features index-falkordb`, where an unserviceable
-    # `And` is a hard error rather than a silent fold. What actually prevents it
-    # is `debug_assert_no_pattern_attrs`: with the attrs stripped there is
+    # `And(a.p = 1, a.p = 1)` back into a single index query. What actually
+    # prevents it is `debug_assert_no_pattern_attrs`: with the attrs stripped there is
     # nothing left for a downstream pass to re-derive a second copy from.
     def test14_inline_attr_is_served_by_the_index(self):
         g = self.db.select_graph(GRAPH_ID + "_once")

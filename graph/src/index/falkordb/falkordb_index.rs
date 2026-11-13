@@ -645,6 +645,18 @@ impl FalkorDbIndex {
         !self.columns(entity).is_empty()
     }
 
+    /// Whether `label` (a label for nodes, a type for relationships) has any column.
+    #[must_use]
+    pub fn has_label_columns(
+        &self,
+        entity: EntityType,
+        label: &str,
+    ) -> bool {
+        self.columns(entity)
+            .keys()
+            .any(|(l, _)| l.as_str() == label)
+    }
+
     /// Number of index columns (node + edge).
     #[must_use]
     pub fn len(&self) -> usize {
@@ -652,7 +664,7 @@ impl FalkorDbIndex {
     }
 
     /// Heap bytes every column holds in this version, node and edge
-    /// ([`VersionedIndex::memory_usage`]): what a build with `index-falkordb` adds to
+    /// ([`VersionedIndex::memory_usage`]): what the native index adds to
     /// `indices_sz_mb` in `GRAPH.MEMORY USAGE`. Walks every page of every column. The CCH
     /// indexes are not counted: their hierarchy holds no arrays until #3208 and #3209.
     #[must_use]
@@ -982,8 +994,7 @@ impl FalkorDbIndex {
     /// yet; what the predicate selects in a column is [`Selection::of`]'s business, since that
     /// depends on the operand's type and therefore on the kinds inside the column.
     ///
-    /// Three outcomes, and the caller must keep them apart, because the no-fallback build treats
-    /// each differently:
+    /// Three outcomes, and the caller must keep them apart, because it treats each differently:
     ///
     /// * `Some(Ok(rows))` — served here, from `Ready` columns. Possibly zero rows: a predicate
     ///   Cypher says cannot match (`n.v = null`, a comparison across types) is *answered*, not
@@ -992,8 +1003,8 @@ impl FalkorDbIndex {
     ///   `Building`. The caller scans and keeps what the [`ScanFilter`] matches. This is a timing
     ///   state, not a capability gap, so it must never surface as an error.
     /// * `None` — no such column, or no kind in it serves this predicate (a value of a type no
-    ///   kind holds, a union mixing ranges in). Under `index-falkordb` there is no other index,
-    ///   and the caller turns this into an error.
+    ///   kind holds, a conjunction holding a union that spans attributes). There is no other
+    ///   index, so the caller scans and checks the predicate itself ([`IndexQuery::holds`]).
     #[must_use]
     pub fn query_column(
         &self,
@@ -1317,8 +1328,8 @@ mod tests {
             rows(idx.query_column(Node, &label, &eq(v)))
         };
         // A `ScanFilter`, specifically — not `None`. A `Building` column is a timing state and
-        // the caller scans; `None` means unservable, which the no-fallback build turns into a
-        // query error. Collapsing the two errored every read against a still-building index.
+        // the caller scans what the column will answer; `None` means unservable, which the caller
+        // answers by checking the whole predicate. Collapsing the two lost the distinction.
         let building = |idx: &FalkorDbIndex, v: i64| {
             matches!(idx.query_column(Node, &label, &eq(v)), Some(Err(_)))
         };
