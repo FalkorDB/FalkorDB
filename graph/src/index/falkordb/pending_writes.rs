@@ -14,22 +14,22 @@ use std::sync::Arc;
 
 use crate::{entity_type::EntityType, runtime::value::Value};
 
-use super::encode::KeyKind;
+use super::encode::{ColumnKey, KeyKind};
 use super::falkordb_index::{FalkorDbIndex, IndexKey};
 use super::numeric::EncodedTuples;
 
 /// Per column, its staged changes in the order they were made.
 pub(crate) type ColumnWrites = HashMap<IndexKey, Vec<IndexWrite>>;
 
-/// One staged change to one column: an encoded `(key, id)` tuple going in or coming out of the
-/// column's tree for `kind`.
+/// One staged change to one column: the tuple `(key, id)` going in or coming out of the column's
+/// tree for `kind`.
 ///
 /// `kind` is part of the tuple's identity. A scalar `1` and a list element `1` on the same entity
 /// are different tuples in different trees, so a value that changes kind within one unit of work
 /// stages a remove from one tree and an add to the other, and neither may cancel the other.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct IndexWrite {
-    pub(crate) key: u64,
+    pub(crate) key: ColumnKey,
     pub(crate) id: u64,
     pub(crate) kind: KeyKind,
     pub(crate) add: bool,
@@ -85,7 +85,7 @@ impl IndexChanges {
         self.push(index, label, attr, value, id, true);
     }
 
-    /// Encoded now, so a change holds 18 bytes of payload and no `Value`. A list value stages one
+    /// Encoded now, so a change holds its key and no `Value`. A list value stages one
     /// change per numeric element, each into the column's array tree.
     fn push(
         &mut self,
@@ -178,15 +178,17 @@ pub(crate) fn last_write_wins(
 ) {
     removes.clear();
     adds.clear();
-    let tuple = |w: &IndexWrite| (w.kind, w.key, w.id);
-    log.sort_by_key(tuple);
+    fn tuple(w: &IndexWrite) -> (KeyKind, &ColumnKey, u64) {
+        (w.kind, &w.key, w.id)
+    }
+    log.sort_by(|a, b| tuple(a).cmp(&tuple(b)));
     for (i, w) in log.iter().enumerate() {
         let superseded = log.get(i + 1).is_some_and(|next| tuple(next) == tuple(w));
         if superseded {
             continue;
         }
         let side = if w.add { &mut *adds } else { &mut *removes };
-        side[w.kind].push((w.key, w.id));
+        side.push(w.kind, w.key.clone(), w.id);
     }
 }
 
@@ -201,7 +203,7 @@ mod tests {
         add: bool,
     ) -> IndexWrite {
         IndexWrite {
-            key,
+            key: ColumnKey::Encoded(key),
             id,
             kind: KeyKind::Scalar,
             add,
@@ -311,9 +313,39 @@ mod tests {
         assert!(removes[KeyKind::Scalar].is_empty() && adds[KeyKind::Array].is_empty());
     }
 
-    /// The kind rides in what used to be padding: a staged change is no bigger than before.
+    /// A change to the tag tree.
+    fn tag(
+        s: &str,
+        id: u64,
+        add: bool,
+    ) -> IndexWrite {
+        IndexWrite {
+            key: ColumnKey::Tag(Arc::new(s.to_string())),
+            id,
+            kind: KeyKind::Tag,
+            add,
+        }
+    }
+
+    /// A tag tuple is the string, not the `Arc` that carries it: changes to the same string from
+    /// different values collapse.
     #[test]
-    fn a_staged_change_did_not_grow() {
-        assert_eq!(std::mem::size_of::<IndexWrite>(), 24);
+    fn the_last_change_to_a_string_wins() {
+        let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
+        let mut log = vec![tag("b", 7, true), tag("a", 7, false), tag("b", 7, false)];
+        last_write_wins(&mut log, &mut removes, &mut adds);
+        let tuples = |v: &[(&str, u64)]| -> Vec<(Arc<String>, u64)> {
+            v.iter()
+                .map(|&(s, d)| (Arc::new(s.to_string()), d))
+                .collect()
+        };
+        assert_eq!(removes.tags(KeyKind::Tag), &tuples(&[("a", 7), ("b", 7)]));
+        assert!(adds.is_empty());
+    }
+
+    /// A staged change is a 16-byte key, the id, the kind and the side.
+    #[test]
+    fn a_staged_change_is_32_bytes() {
+        assert_eq!(std::mem::size_of::<IndexWrite>(), 32);
     }
 }

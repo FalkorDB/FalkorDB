@@ -7,12 +7,12 @@ In Rust a snapshot is `CowBTree::clone` / the `_root` a `RangeIter` owns: an `Ar
 every page. Isolation rests on two code facts, which is what licenses modelling pages as immutable
 values:
 
-1. `make_private` (`node.rs:595`) **always** replaces the `Arc<Branch>` by a fresh clone before
+1. `make_private` (`node.rs:529`) **always** replaces the `Arc<Branch>` by a fresh clone before
    handing out `&mut` (never `Arc::make_mut`'s in-place path), and the only `&mut` into a tree is
    through the writer's own `root` field (`insert` / `remove` / `insert_batch` take `&mut self`).
 2. Leaf pages are `Arc<[u8]>` built fresh by every edit (`Arc::from(buf)`, `leaf/*.rs`) and never
    written after construction (`grep get_mut` finds only `make_private`).
-3. Since #3283, `Node::merge_underfull_below` (`node.rs:563-574`) uses `Arc::make_mut`. It is only
+3. Since #3283, `Node::merge_underfull_below` (`node.rs:497-508`) uses `Arc::make_mut`. It is only
    called on a node `combine` has just built with `Arc::new` during the same `remove_batch`, so the
    `Arc` is unique and `make_mut` mutates that fresh page in place; were it ever shared, `make_mut`
    clones first. Either way no page reachable from an older root is written (the Rust test
@@ -54,7 +54,7 @@ theorem snapshot_reads_committed (c : Cfg) (t : Node × Nat) (ops : List Op) (lo
     range snapshot.2 snapshot.1 lo hi n = (toList t.2 t.1).filter (fun e => decide (lo ≤ keyOf e ∧ keyOf e ≤ hi)) :=
   range_spec c t.2 t.1 lo hi n hw hn
 
-/-- **Path copying** (`node.rs:346-351`): an insert that does not split a branch replaces exactly
+/-- **Path copying** (`node.rs:332-337`): an insert that does not split a branch replaces exactly
     the routed child; every other child is the *same* node (shared, never copied). -/
 theorem insertOne_shares_siblings (c : Cfg) (h : Nat) (seps : List E) (cs : List Node) (x : E) (c' : Node)
     (hc : (insertOne c h (cs.getD (childIndex seps x) default) x).2 = none)

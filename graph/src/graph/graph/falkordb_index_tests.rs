@@ -6,7 +6,7 @@ use super::{Graph, NodeId, Plan, RelationshipId};
 use crate::entity_type::EntityType;
 use crate::graph::mvcc_graph::{CommitError, MvccGraph};
 use crate::index::Field;
-use crate::index::falkordb::encode::{KeyKind, encode_numeric, for_each_stored_key};
+use crate::index::falkordb::encode::{ColumnKey, KeyKind, encode_numeric, for_each_stored_key};
 use crate::index::falkordb::falkordb_index::{BuildCursor, IndexColumn, IndexKey};
 use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::online_build::{
@@ -1902,6 +1902,79 @@ fn an_indexer_batch_after_a_writer_catches_up_on_its_changes() {
     }
 }
 
+/// The ids of the `:Person` nodes whose `attr` is the string `value`, sorted.
+fn tag_scan(
+    g: &Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    value: &str,
+) -> Vec<u64> {
+    let value = Value::String(Arc::new(value.to_string()));
+    let mut ids: Vec<u64> = g
+        .falkordb_index
+        .column(EntityType::Node, label, attr)
+        .unwrap()
+        .range(Some(&value), Some(&value), true, true)
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// A batch read on an older version goes into the published copy by an insert catch-up, after a
+/// writer changed one string below the batch's range (applied) and one inside it (read again).
+/// The batch's string tuples land as they were read, the written entity with its published
+/// value, and a reader on a version from before the writer still sees that version.
+#[test]
+fn an_insert_catch_up_adds_the_batchs_strings_to_the_published_copy() {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, &[0, 0, 0, 0]);
+    for (i, &id) in ids.iter().enumerate() {
+        set_attr(&mut g, id, &attr, Value::String(Arc::new(format!("s{i}"))));
+    }
+    create_index_on(&mut g, &label, &attr);
+    let mvcc = MvccGraph::from_graph(g);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+
+    // The first batch publishes `s0` and `s1`.
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    let before = mvcc.read();
+
+    // The second batch reads `s2` and `s3` on its own build version.
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    // The writer's `w` lands below the cursor, so it is applied. Its `x` is in the batch's range,
+    // so the catch-up reads it again.
+    commit_write(&mvcc, |g| {
+        set_attr(g, ids[0], &attr, Value::String(Arc::new("w".to_string())));
+        set_attr(g, ids[2], &attr, Value::String(Arc::new("x".to_string())));
+    });
+    assert_eq!(
+        mvcc.commit_indexer_batch(prepared, &batch),
+        Ok(IndexerCommit::CatchUp(CatchUp::Insert))
+    );
+
+    let published = mvcc.read();
+    for (value, want) in [
+        ("w", vec![ids[0]]),
+        ("s1", vec![ids[1]]),
+        ("x", vec![ids[2]]),
+        ("s3", vec![ids[3]]),
+        ("s0", vec![]),
+        ("s2", vec![]),
+    ] {
+        assert_eq!(tag_scan(&published, &label, &attr, value), want, "{value}");
+    }
+    assert_eq!(tag_scan(&before, &label, &attr, "s0"), vec![ids[0]]);
+    assert!(tag_scan(&before, &label, &attr, "w").is_empty());
+    assert!(
+        tag_scan(&before, &label, &attr, "s2").is_empty(),
+        "not built there yet"
+    );
+}
+
 /// When writers committed after a batch was read, the batch refreshes the entities they changed if
 /// that is cheaper than inserting the batch, counting each entity as [`REFRESH_COST`] tuples, and
 /// inserts the batch otherwise.
@@ -2643,11 +2716,11 @@ fn check_rules(
             };
             if let (true, true, Some(value)) = (*person, below, if i == 0 { v } else { w }) {
                 for_each_stored_key(value, |kind, key| {
-                    expected.insert((kind, key, id));
+                    expected.insert((kind, ColumnKey::Encoded(key), id));
                 });
             }
         }
-        let held: BTreeSet<(KeyKind, u64, u64)> = g
+        let held: BTreeSet<(KeyKind, ColumnKey, u64)> = g
             .falkordb_index
             .column(EntityType::Node, label, attr)
             .expect("a numeric column")
@@ -3051,11 +3124,11 @@ fn check_column(
         };
         if let (true, Some(value)) = (below, value) {
             for_each_stored_key(&value, |kind, key| {
-                expected.insert((kind, key, id));
+                expected.insert((kind, ColumnKey::Encoded(key), id));
             });
         }
     }
-    let held: BTreeSet<(KeyKind, u64, u64)> = g
+    let held: BTreeSet<(KeyKind, ColumnKey, u64)> = g
         .falkordb_index
         .column(entity, label, attr)
         .expect("a numeric column")
@@ -4705,12 +4778,20 @@ fn a_building_columns_scan_keeps_what_the_array_tree_answers() {
 }
 
 /// `query_column` serves `v IN n.attr` from the array tree and `n.attr = v` from the scalar tree,
-/// and declines a probe the encoder cannot represent.
+/// and declines a probe no kind can represent.
 #[test]
 fn array_contains_is_routed_to_the_array_tree() {
-    let (mut g, label, attr, ids) = graph_with_index(2);
+    let (mut g, label, attr, ids) = graph_with_index(3);
     set_attr(&mut g, ids[0], &attr, Value::Int(5));
     set_attr(&mut g, ids[1], &attr, ints(&[5, 6]));
+    let strings = |xs: &[&str]| {
+        Value::List(Arc::new(
+            xs.iter()
+                .map(|x| Value::String(Arc::new((*x).to_string())))
+                .collect(),
+        ))
+    };
+    set_attr(&mut g, ids[2], &attr, strings(&["x", "y"]));
     let probe = |v: Value| IndexQuery::ArrayContains {
         key: attr.clone(),
         value: v,
@@ -4725,8 +4806,20 @@ fn array_contains_is_routed_to_the_array_tree() {
     assert_eq!(rows(&eq(&attr, 5)), Some(vec![ids[0]]));
     assert_eq!(
         rows(&probe(Value::String(Arc::new("x".to_string())))),
+        Some(vec![ids[2]]),
+        "a string probe reads the tag kind's array tree"
+    );
+    assert_eq!(
+        rows(&probe(Value::String(Arc::new("z".to_string())))),
+        Some(vec![]),
+        "a string no list holds"
+    );
+    assert_eq!(
+        rows(&probe(Value::Point(crate::runtime::value::Point::new(
+            1.0, 2.0
+        )))),
         None,
-        "a non-numeric probe is not this column's to answer"
+        "no kind indexes a point inside a list"
     );
 }
 

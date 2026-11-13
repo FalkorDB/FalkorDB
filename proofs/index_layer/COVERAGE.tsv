@@ -220,33 +220,33 @@ graph/src/index/redisearch/mod.rs	RediSearch_ExportCapi	902	AXIOMATISED	RediSear
 graph/src/index/redisearch/mod.rs	RediSearch_Init	905	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_CleanupModule	914	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 # graph/src/index/redisearch/redis.rs	(no fns; bindgen consts/types)	0	AXIOMATISED	Redis module ABI types
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_u64	79	PROVEN	Leaf.readU64 (rd_le, rd_chunk, unle_le)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	doc_le_bytes	65	PROVEN	LeafAosD.docLeBytes: docLeBytes_spec (assert passes iff doc < 256^DOC_BYTES), docLeBytes_lossless, aosBuildD_some, aosBuildD_none
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	is_read_width	88	PROVEN	Leaf.isReadWidth: isReadWidth_iff, isReadWidth_upto16; LeafAosD.docBytesAssert_iff, docBytesAssert_rejects_3 (#3285)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	94	PROVEN	Leaf.readWidth_eq, readWidth_admitted (#3285: exact on every is_read_width width)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	default	150	PROVEN	Leaf.emptyTree_contents; LeafAosD.constAssert (const assert, #2897/#3285)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	new	172	PROVEN	Leaf.emptyTree_contents (new = default); LeafAosD.constAssert
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	from_sorted	190	PROVEN	Leaf.fromSorted_contents, LeafAosD.asserted_fromSorted_contents (under the const assert)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	insert_batch	241	PROVEN	Leaf.insertBatch_contents (relative to apply_batch fragments)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	count	448	PROVEN	Leaf.walk_spec (test-only len(): count = sum of leaf counts)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk	474	PROVEN	Leaf.walk_spec (test-only leaves(): concatenation = contents)
-graph/src/index/falkordb/data_structures/cow_btree/node.rs	pack_branches	56	PROVEN	Leaf.packBranches_contents, packBranches_arity, packBranches_kids, packBranches_shrinks
-graph/src/index/falkordb/data_structures/cow_btree/node.rs	build_root	90	PROVEN	Leaf.buildRoot_contents
-graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	595	PROVEN	Leaf.makePrivate_cow
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	pow2_bytes_for	42	PROVEN	Leaf.pow2BytesFor_spec, lt_widthFor
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_sorted	50	PROVEN	Leaf.mergeD_spec (union, strictly sorted)
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	partition_point	77	PROVEN	Leaf.partitionPoint_spec
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_walk	97	PROVEN	Leaf.mergeWI_fst, mergeWI_idx, mergeW_fst
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	count	180	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	key	189	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc	201	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	iter	233	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	to_pairs	238	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	raw	350	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc_layout	213	PROVEN	Leaf.docLayout_spec; LeafAosD.docLayoutD_spec (FIELD, FIELD + DOC_BYTES, DOC_BYTES)
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_pairs	260	PROVEN	Leaf.fromPairs_roundtrip, scan_doc, scan_distinct; LeafAosD.fromPairsD_roundtrip (every DOC_BYTES in {1,2,4,8}), fromPairsD8
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_parts	319	PROVEN	Leaf.fromParts_spec, fromParts_format
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_batch	471	PROVEN	Leaf.mergeBatch_spec (all fast paths = slow path = merge_sorted)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_u64	85	PROVEN	Leaf.readU64 (rd_le, rd_chunk, unle_le) — generic over the page since #3742; the u64 instance (Leaf) is the modelled code
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	doc_le_bytes	71	PROVEN	LeafAosD.docLeBytes: docLeBytes_spec (assert passes iff doc < 256^DOC_BYTES), docLeBytes_lossless, aosBuildD_some, aosBuildD_none — generic over the page since #3742; the u64 instance (Leaf) is the modelled code
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	is_read_width	94	PROVEN	Leaf.isReadWidth: isReadWidth_iff, isReadWidth_upto16; LeafAosD.docBytesAssert_iff, docBytesAssert_rejects_3 (#3285) — generic over the page since #3742; the u64 instance (Leaf) is the modelled code
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	100	PROVEN	Leaf.readWidth_eq, readWidth_admitted (#3285: exact on every is_read_width width) — generic over the page since #3742; the u64 instance (Leaf) is the modelled code
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	default	161	PROVEN	Leaf.emptyTree_contents; LeafAosD.constAssert (const assert, #2897/#3285) — since #3742 `PageTree::default` with root `Page::empty`, whose u64 impl carries the LEAF_MAX/DOC_BYTES assert; Assert.lean header
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	new	179	PROVEN	Leaf.emptyTree_contents (new = default); LeafAosD.constAssert — generic over the page since #3742; the u64 instance (Leaf) is the modelled code
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	from_sorted	199	PROVEN	Leaf.fromSorted_contents, LeafAosD.asserted_fromSorted_contents (under the const assert) — since #3742 the pages are `Page::build` (u64: `chunks(LEAF_MAX)`, leaf/mod.rs:519); Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	insert_batch	241	PROVEN	Leaf.insertBatch_contents (relative to apply_batch fragments) — generic over the page since #3742; the u64 instance (Leaf) is the modelled code
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	count	340	PROVEN	Leaf.walk_spec (test-only len(): count = sum of leaf counts) — generic over the page since #3742; the u64 instance (Leaf) is the modelled code
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk	475	PROVEN	Leaf.walk_spec (test-only leaves(): concatenation = contents) — generic over the page since #3742; the u64 instance (Leaf) is the modelled code
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	pack_branches	52	PROVEN	Leaf.packBranches_contents, packBranches_arity, packBranches_kids, packBranches_shrinks — generic over the page since #3742; the u64 instance (Leaf) is the modelled code
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	build_root	86	PROVEN	Leaf.buildRoot_contents — since #3742 the empty list becomes `Page::empty` (u64: `Leaf::from_pairs(&[])`, leaf/mod.rs:513); Page.lean
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	540	PROVEN	Leaf.makePrivate_cow — generic over the page since #3742; the u64 instance (Leaf) is the modelled code
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	pow2_bytes_for	43	PROVEN	Leaf.pow2BytesFor_spec, lt_widthFor
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_sorted	51	PROVEN	Leaf.mergeD_spec (union, strictly sorted)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	partition_point	78	PROVEN	Leaf.partitionPoint_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_walk	98	PROVEN	Leaf.mergeWI_fst, mergeWI_idx, mergeW_fst
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	count	181	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	key	190	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc	202	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	iter	234	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	to_pairs	239	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	raw	351	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc_layout	214	PROVEN	Leaf.docLayout_spec; LeafAosD.docLayoutD_spec (FIELD, FIELD + DOC_BYTES, DOC_BYTES)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_pairs	261	PROVEN	Leaf.fromPairs_roundtrip, scan_doc, scan_distinct; LeafAosD.fromPairsD_roundtrip (every DOC_BYTES in {1,2,4,8}), fromPairsD8
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_parts	320	PROVEN	Leaf.fromParts_spec, fromParts_format
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_batch	472	PROVEN	Leaf.mergeBatch_spec (all fast paths = slow path = merge_sorted)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	count	18	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	key	23	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	doc	31	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)

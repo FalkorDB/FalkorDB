@@ -33,13 +33,19 @@ use std::sync::Arc;
 mod cursor;
 mod leaf;
 mod node;
+mod page;
+mod str_cursor;
+mod str_leaf;
 #[cfg(test)]
 mod tests;
 
 pub use cursor::{DocExtract, Extract, RangeIter, TupleExtract};
-use leaf::Leaf;
+pub use leaf::Leaf;
 pub use leaf::LeafFormat;
 use node::{Branch, Node, Split, build_root};
+pub use page::{Page, Tuple};
+pub use str_cursor::{StrBounds, StrRange, StrRanges};
+pub use str_leaf::StrLeaf;
 
 // Max **entries** (`(key, doc)` tuples) per leaf page is the `LEAF_MAX` const generic on [`CowBTree`]
 // (default 256); split on overflow, merge below `LEAF_MAX / 2`. Leaf balance is by entry *count*, not byte
@@ -136,30 +142,31 @@ fn read_width(
 /// let _ = CowBTree::<2, 3>::new();
 /// ```
 #[derive(Clone)]
-pub struct CowBTree<
+pub struct PageTree<P: Page, const BRANCH_MAX: usize = 256> {
+    root: Node<P, BRANCH_MAX>,
+}
+
+/// The `u64`-keyed tree the numeric and geo kinds use: [`Leaf`] pages of at most `LEAF_MAX`
+/// `(key, doc)` tuples, docs `DOC_BYTES` wide in the array-of-structs form.
+pub type CowBTree<
     const LEAF_MAX: usize = 256,
     const BRANCH_MAX: usize = 256,
     const DOC_BYTES: usize = 8,
-> {
-    root: Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
-}
+> = PageTree<Leaf<LEAF_MAX, DOC_BYTES>, BRANCH_MAX>;
 
-impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> Default
-    for CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
-{
+/// The string-keyed tree the tag kind uses: [`StrLeaf`] pages, each string once per page.
+pub type StrTree<const BRANCH_MAX: usize = 256> = PageTree<StrLeaf, BRANCH_MAX>;
+
+impl<P: Page, const BRANCH_MAX: usize> Default for PageTree<P, BRANCH_MAX> {
     fn default() -> Self {
         const {
             assert!(
-                LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 4,
-                "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 4 (the BRANCH_MAX / 2 underflow threshold must flag a single-child branch)"
-            );
-            assert!(
-                is_read_width(DOC_BYTES),
-                "DOC_BYTES must be 1, 2, 4 or 8: it is the AoS doc field width, read back with read_width, which loads only those widths"
+                BRANCH_MAX >= 4,
+                "BRANCH_MAX >= 4 (the BRANCH_MAX / 2 underflow threshold must flag a single-child branch)"
             );
         }
         Self {
-            root: Node::Leaf(Leaf::from_pairs(&[])),
+            root: Node::Leaf(P::empty()),
         }
     }
 }
@@ -182,22 +189,14 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         }
         Self::default()
     }
+}
 
+impl<P: Page, const BRANCH_MAX: usize> PageTree<P, BRANCH_MAX> {
     /// Bulk-build from `pairs` **sorted ascending and unique** by `(key, doc)`. Packs full leaf pages
     /// directly from the slice and builds the branch levels bottom-up — no per-item sort, dedup, or
     /// insert traversal, so it is far cheaper than inserting one at a time.
     #[must_use]
-    pub fn from_sorted(pairs: &[(u64, u64)]) -> Self {
-        const {
-            assert!(
-                LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 4,
-                "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 4 (the BRANCH_MAX / 2 underflow threshold must flag a single-child branch)"
-            );
-            assert!(
-                is_read_width(DOC_BYTES),
-                "DOC_BYTES must be 1, 2, 4 or 8: it is the AoS doc field width, read back with read_width, which loads only those widths"
-            );
-        }
+    pub fn from_sorted(pairs: &[Tuple<P::Key>]) -> Self {
         // Enforced in all builds (not just `debug`): a violation silently corrupts the tree — the
         // bottom-up build derives separators assuming this order — and the O(n) scan is dwarfed by the
         // O(n) page encoding the build does anyway.
@@ -208,10 +207,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         if pairs.is_empty() {
             return Self::default();
         }
-        let leaves: Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>> = pairs
-            .chunks(LEAF_MAX)
-            .map(|chunk| Node::Leaf(Leaf::from_pairs(chunk)))
-            .collect();
+        let leaves: Vec<Node<P, BRANCH_MAX>> =
+            P::build(pairs).into_iter().map(Node::Leaf).collect();
         Self {
             root: build_root(leaves),
         }
@@ -222,17 +219,20 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     #[must_use]
     pub fn insert(
         &mut self,
-        key: u64,
+        key: P::Key,
         doc: u64,
     ) -> bool {
-        let (inserted, split) = self.root.insert_one(key, doc);
-        if let Some(Split { sep, right }) = split {
-            // The root split — grow a fresh level above the two halves.
-            let left = std::mem::replace(&mut self.root, Node::Leaf(Leaf::from_pairs(&[])));
-            self.root = Node::Branch(Arc::new(Branch {
-                seps: vec![sep],
-                children: vec![left, right],
-            }));
+        let (inserted, split) = self.root.insert_one(&key, doc);
+        if let Some(Split { rights }) = split {
+            // The root split — grow a fresh level above the halves.
+            let left = std::mem::replace(&mut self.root, Node::Leaf(P::empty()));
+            let (seps, mut children): (Vec<_>, Vec<_>) = rights.into_iter().unzip();
+            children.insert(0, left);
+            self.root = if children.len() <= BRANCH_MAX {
+                Node::Branch(Arc::new(Branch { seps, children }))
+            } else {
+                build_root(children)
+            };
         }
         inserted
     }
@@ -240,7 +240,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     /// Apply a batch of `(key, doc)` adds **sorted ascending**, copying each touched page once.
     pub fn insert_batch(
         &mut self,
-        sorted_adds: &[(u64, u64)],
+        sorted_adds: &[Tuple<P::Key>],
     ) {
         if sorted_adds.is_empty() {
             return;
@@ -259,10 +259,10 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     #[must_use]
     pub fn remove(
         &mut self,
-        key: u64,
+        key: P::Key,
         doc: u64,
     ) -> bool {
-        if self.root.remove_one(key, doc).is_some() {
+        if self.root.remove_one(&key, doc).is_some() {
             // A branch root that shrank to a single child loses a level.
             while let Node::Branch(branch) = &self.root {
                 if branch.children.len() == 1 {
@@ -285,7 +285,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     /// the runtime's columnar mass-delete / mass-update column.
     pub fn remove_batch(
         &mut self,
-        sorted_removes: &[(u64, u64)],
+        sorted_removes: &[Tuple<P::Key>],
     ) {
         if sorted_removes.is_empty() {
             return;
@@ -308,6 +308,58 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         }
     }
 
+    /// Approximate resident heap bytes: the sum of every leaf's byte blob plus branch child/separator
+    /// vectors. Walks all pages (`O(pages)`), so call it off hot paths (memory reporting).
+    #[must_use]
+    pub fn heap_bytes(&self) -> usize {
+        fn walk<P: Page, const BRANCH_MAX: usize>(
+            node: &Node<P, BRANCH_MAX>,
+            acc: &mut usize,
+        ) {
+            match node {
+                Node::Leaf(leaf) => *acc += leaf.heap_bytes(),
+                Node::Branch(branch) => {
+                    // `capacity`, not `len`: what is resident is what was allocated, and unlike the
+                    // leaves these are `Vec`s — a branch that has split or absorbed inserts keeps
+                    // spare slots. Each separator is a full `(key, doc)` pair, not a bare key.
+                    *acc += branch.seps.capacity() * std::mem::size_of::<Tuple<P::Key>>()
+                        + branch.children.capacity() * std::mem::size_of::<Node<P, BRANCH_MAX>>();
+                    branch.children.iter().for_each(|c| walk(c, acc));
+                }
+            }
+        }
+        let mut acc = 0;
+        walk(&self.root, &mut acc);
+        acc
+    }
+
+    /// Total number of live tuples. Test-only (`O(n)` page walk) — prefer [`is_empty`] in non-test code.
+    #[cfg(test)]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        fn count<P: Page, const BRANCH_MAX: usize>(node: &Node<P, BRANCH_MAX>) -> usize {
+            match node {
+                Node::Leaf(leaf) => leaf.count(),
+                Node::Branch(branch) => branch.children.iter().map(count).sum(),
+            }
+        }
+        count(&self.root)
+    }
+
+    /// Whether the tree holds no tuples. `O(1)`: the tree is empty iff its root is an empty leaf — a
+    /// non-empty tree's root is a branch or a leaf with entries, and underflowing leaves are merged, so an
+    /// empty leaf only ever exists as the root of an empty tree. (Avoids walking every page like [`len`].)
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        matches!(&self.root, Node::Leaf(leaf) if leaf.count() == 0)
+    }
+}
+
+/// The `u64` tree's own operations: the range cursor, which reads the fixed-width leaf layouts
+/// directly, and the byte-store export of its leaf formats.
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
+    CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
+{
     /// Lazily iterate the doc ids whose key lies in `[lo, hi]`, in `(key, doc)` order. The returned
     /// iterator owns a snapshot of the tree (an `O(1)` root clone) and can be dropped mid-scan.
     #[must_use]
@@ -372,7 +424,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         // longer in the tree, and reading a doc straight out of it hands back a
         // deleted entry. Re-deriving the minimum is one extra walk down a left
         // spine, and only on the miss path.
-        let mut right_subtree: Option<&Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>> = None;
+        let mut right_subtree: Option<&Node<Leaf<LEAF_MAX, DOC_BYTES>, BRANCH_MAX>> = None;
         loop {
             match node {
                 Node::Leaf(leaf) => {
@@ -387,7 +439,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                         .map(|(_, doc)| doc);
                 }
                 Node::Branch(branch) => {
-                    let ci = branch.child_index(key, 0);
+                    let ci = branch.child_index(&key, 0);
                     if ci + 1 < branch.children.len() {
                         // Deeper levels overwrite shallower ones, which is what we want:
                         // the nearest right neighbour is the deepest one on the path.
@@ -413,57 +465,6 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         RangeIter::new(&self.root, (lo, 0), hi)
     }
 
-    /// Approximate resident heap bytes: the sum of every leaf's byte blob plus branch child/separator
-    /// vectors. Walks all pages (`O(pages)`), so call it off hot paths (memory reporting).
-    #[must_use]
-    pub fn heap_bytes(&self) -> usize {
-        fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
-            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
-            acc: &mut usize,
-        ) {
-            match node {
-                // A leaf blob is an `Arc<[u8]>` — exact-sized, so its length *is* its allocation.
-                Node::Leaf(leaf) => *acc += leaf.raw().len(),
-                Node::Branch(branch) => {
-                    // `capacity`, not `len`: what is resident is what was allocated, and unlike the
-                    // leaves these are `Vec`s — a branch that has split or absorbed inserts keeps
-                    // spare slots. `seps` is `Vec<(u64, u64)>` — each separator is a full
-                    // `(key, doc)` pair, not a bare key.
-                    *acc += branch.seps.capacity() * std::mem::size_of::<(u64, u64)>()
-                        + branch.children.capacity()
-                            * std::mem::size_of::<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>();
-                    branch.children.iter().for_each(|c| walk(c, acc));
-                }
-            }
-        }
-        let mut acc = 0;
-        walk(&self.root, &mut acc);
-        acc
-    }
-
-    /// Total number of live tuples. Test-only (`O(n)` page walk) — prefer [`is_empty`] in non-test code.
-    #[cfg(test)]
-    #[must_use]
-    pub fn len(&self) -> usize {
-        fn count<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
-            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
-        ) -> usize {
-            match node {
-                Node::Leaf(leaf) => leaf.count(),
-                Node::Branch(branch) => branch.children.iter().map(count).sum(),
-            }
-        }
-        count(&self.root)
-    }
-
-    /// Whether the tree holds no tuples. `O(1)`: the tree is empty iff its root is an empty leaf — a
-    /// non-empty tree's root is a branch or a leaf with entries, and underflowing leaves are merged, so an
-    /// empty leaf only ever exists as the root of an empty tree. (Avoids walking every page like [`len`].)
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        matches!(&self.root, Node::Leaf(leaf) if leaf.count() == 0)
-    }
-
     /// All leaf pages in key order, each paired with its [`LeafFormat`]. The bytes are the (tag-free)
     /// serialized form and the format is carried alongside, so writing the tree out to a byte store needs
     /// no further encoding — re-adopt a page with [`Leaf::from_parts`]. Test-only for now (the byte-store
@@ -472,7 +473,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     #[must_use]
     pub fn leaves(&self) -> Vec<(LeafFormat, Arc<[u8]>)> {
         fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
-            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
+            node: &Node<Leaf<LEAF_MAX, DOC_BYTES>, BRANCH_MAX>,
             out: &mut Vec<(LeafFormat, Arc<[u8]>)>,
         ) {
             match node {

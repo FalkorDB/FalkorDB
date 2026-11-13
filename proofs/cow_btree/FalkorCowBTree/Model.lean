@@ -20,7 +20,7 @@ proofs live in the sibling files; this file only *defines*.
   a modelling gap here (see `FalkorCowBTree.lean`), proven in `proofs/index_layer` — it is covered by the Rust differential
   tests, not by this proof.
 * **`Arc` is a persistent value.** `make_private` always clones before it
-  mutates (`node.rs:595`), and leaf buffers are fresh `Arc<[u8]>`s that are
+  mutates (`node.rs:529`), and leaf buffers are fresh `Arc<[u8]>`s that are
   never written after construction, so from the point of view of any holder of
   an old root every operation is a *pure function* old-tree → new-tree. That is
   what `Snapshot.lean` states; the heap-level frame argument is there too.
@@ -51,7 +51,7 @@ def docOf (e : E) : Nat := e % W
 def TOP : E := enc (W - 1) (W - 1)
 
 /-- The const-generic parameters. `hB : 3 ≤ B` is what `pack_branches` needs; the const assert
-    (`mod.rs:151-160`) demands `4 ≤ B` since #2897 — `Assert.constAssert`, `Cfg.ofAssert` — and the
+    (`mod.rs:162-167`) demands `4 ≤ B` since #2897 — `Assert.constAssert`, `Cfg.ofAssert` — and the
     weaker bound here only lets the historical `BRANCH_MAX = 3` counterexample be stated. -/
 structure Cfg where
   L : Nat
@@ -59,7 +59,7 @@ structure Cfg where
   hL : 2 ≤ L ∧ L ≤ 256
   hB : 3 ≤ B
 
-/-- `Node` (`node.rs:14`): a leaf page or a branch (`seps`, `children`, `node.rs:23`). -/
+/-- `Node` (`node.rs:13`): a leaf page or a branch (`seps`, `children`, `node.rs:22`). -/
 inductive Node where
   | leaf : List E → Node
   | branch : List E → List Node → Node
@@ -82,8 +82,9 @@ def toList : Nat → Node → List E
   | 0, .branch _ _ => []
   | h + 1, .branch _ cs => (cs.map (toList h)).flatten
 
-/-- `Node::min` (`node.rs:245`): first entry of the left spine's leaf. `none` is Rust's panic
-    (`leaf.key(0)` on an empty page is an out-of-bounds slice). -/
+/-- `Node::min` (`node.rs:229`): first entry of the left spine's leaf, `Page::min`, which for the `u64`
+    page is `(key(0), doc(0))` (`leaf/mod.rs:528-530`, `Page.lean`). `none` is Rust's panic (`leaf.key(0)`
+    on an empty page is an out-of-bounds slice). -/
 def minOpt : Nat → Node → Option E
   | _, .leaf es => es.head?
   | 0, .branch _ _ => none
@@ -91,41 +92,41 @@ def minOpt : Nat → Node → Option E
     | [] => none
     | c :: _ => minOpt h c
 
-/-- `Branch::child_index` (`node.rs:201`): number of separators `<= x`. -/
+/-- `Branch::child_index` (`node.rs:186`): number of separators `<= x`. -/
 def childIndex (seps : List E) (x : E) : Nat := (seps.takeWhile (fun s => decide (s ≤ x))).length
 
 /-! ## Leaf operations (`leaf/mod.rs`) -/
 
-/-- `Leaf::lower_bound_entry` (`leaf/mod.rs:359`): first index with entry `>= x`. -/
+/-- `Leaf::lower_bound_entry` (`leaf/mod.rs:360`): first index with entry `>= x`. -/
 def lowerBoundEntry (es : List E) (x : E) : Nat := (es.takeWhile (fun e => decide (e < x))).length
 
-/-- `Leaf::lower_bound` (`leaf/mod.rs:223`): first index with *key* `>= k` (range seek). -/
+/-- `Leaf::lower_bound` (`leaf/mod.rs:224`): first index with *key* `>= k` (range seek). -/
 def lowerBound (es : List E) (k : Nat) : Nat := (es.takeWhile (fun e => decide (keyOf e < k))).length
 
-/-- `LeafInsert` (`leaf/mod.rs:158`). -/
+/-- `LeafInsert` (`leaf/mod.rs:159`). -/
 inductive LeafIns where
   | fit (es : List E)
   | split (l : List E) (sep : E) (r : List E)
 
-/-- `Leaf::insert` (`leaf/mod.rs:372`). Both the in-place splice arm (`count < LEAF_MAX`) and the
+/-- `Leaf::insert` (`leaf/mod.rs:373`). Both the in-place splice arm (`count < LEAF_MAX`) and the
     rebuild arm produce `take pos ++ x :: drop pos`; only the split decision depends on the count. -/
 def leafInsert (c : Cfg) (es : List E) (x : E) : Option LeafIns :=
   let pos := lowerBoundEntry es x
-  if es[pos]? = some x then none              -- already present (line 379)
+  if es[pos]? = some x then none              -- already present (line 380)
   else
-    let ps := insAt es pos x                  -- lines 386-415
-    if ps.length ≤ c.L then some (.fit ps)    -- line 416
+    let ps := insAt es pos x                  -- lines 387-416
+    if ps.length ≤ c.L then some (.fit ps)    -- line 417
     else
-      let mid := ps.length / 2                -- line 419
+      let mid := ps.length / 2                -- line 420
       some (.split (ps.take mid) (ps.getD mid 0) (ps.drop mid))
 
-/-- `Leaf::remove` (`leaf/mod.rs:432`): the new page and the underflow flag `new_count < LEAF_MAX / 2`. -/
+/-- `Leaf::remove` (`leaf/mod.rs:433`): the new page and the underflow flag `new_count < LEAF_MAX / 2`. -/
 def leafRemove (c : Cfg) (es : List E) (x : E) : Option (List E × Bool) :=
   let pos := lowerBoundEntry es x
   if es[pos]? = some x then some (delAt es pos, decide (es.length - 1 < c.L / 2))
-  else none                                   -- absent (line 439)
+  else none                                   -- absent (line 440)
 
-/-- `merge_sorted` / `merge_walk` (`leaf/mod.rs:50`, `:97`): two-pointer merge, left-biased on ties,
+/-- `merge_sorted` / `merge_walk` (`leaf/mod.rs:51`, `:98`): two-pointer merge, left-biased on ties,
     dropping an output equal to the previous output. `last` is `out.last()` / `last`. -/
 def mergeWalk : Option E → List E → List E → List E
   | _, [], [] => []
@@ -143,15 +144,17 @@ def chunks (n : Nat) (hn : 0 < n) : List α → List (List α)
 termination_by l => l.length
 decreasing_by simp only [List.length_drop, List.length_cons]; omega
 
-/-- `Leaf::merge_batch` (`leaf/mod.rs:471`). Every fast path (AoS `merge_walk`, compact `merge`,
+/-- `Leaf::merge_batch` (`leaf/mod.rs:472`). Every fast path (AoS `merge_walk`, compact `merge`,
     `block_copy_merge`) yields the merge-walk list; the slow path re-chunks it. -/
 def mergeBatch (c : Cfg) (es batch : List E) : List (List E) :=
   if es.length + batch.length ≤ c.L then [mergeWalk none es batch]
   else chunks c.L (by have := c.hL; omega) (mergeWalk none es batch)
 
-/-! ## Single insert (`node.rs:321`, `mod.rs:223`) -/
+/-! ## Single insert (`node.rs:305`, `mod.rs:220`) -/
 
-/-- `Node::insert_one`. Returns the replacement node and `Some (sep, right)` on a split. -/
+/-- `Node::insert_one`. Returns the replacement node and `Some (sep, right)` on a split. Since #3742 the
+    Rust hands up a *list* of right siblings (a string page may split into several); `insertOneR`
+    (`Page.lean`) models that code and `insertOneR_eq` proves it is this at the `u64` page. -/
 def insertOne (c : Cfg) : Nat → Node → E → Node × Option (E × Node)
   | _, .leaf es, x =>
     match leafInsert c es x with
@@ -160,33 +163,35 @@ def insertOne (c : Cfg) : Nat → Node → E → Node × Option (E × Node)
     | some (.split l s r) => (.leaf l, some (s, .leaf r))
   | 0, n@(.branch _ _), _ => (n, none)
   | h + 1, .branch seps cs, x =>
-    let i := childIndex seps x                               -- line 347
-    match insertOne c h (cs.getD i default) x with           -- line 348
-    | (c', none) => (.branch seps (setAt cs i c'), none)     -- line 350
+    let i := childIndex seps x                               -- line 399
+    match insertOne c h (cs.getD i default) x with           -- line 400
+    | (c', none) => (.branch seps (setAt cs i c'), none)     -- line 402
     | (c', some (s, r)) =>
-      let seps' := insAt seps i s                            -- line 353
-      let cs' := insAt (setAt cs i c') (i + 1) r             -- line 354
-      if cs'.length ≤ c.B then (.branch seps' cs', none)     -- line 357
+      let seps' := insAt seps i s                            -- line 405
+      let cs' := insAt (setAt cs i c') (i + 1) r             -- line 406
+      if cs'.length ≤ c.B then (.branch seps' cs', none)     -- line 409
       else
-        let mid := cs'.length / 2                            -- line 362
-        let ls := seps'.take mid                             -- line 364 (split_off keeps the prefix)
-        (.branch ls.dropLast (cs'.take mid),                 -- line 365 (pop)
+        let mid := cs'.length / 2                            -- line 414
+        let ls := seps'.take mid                             -- line 416 (split_off keeps the prefix)
+        (.branch ls.dropLast (cs'.take mid),                 -- line 417 (pop)
          some (ls.getLast?.getD 0, .branch (seps'.drop mid) (cs'.drop mid)))
 
-/-- `CowBTree::insert` (`mod.rs:223`; its returned `bool` is `insertFlag`, `Lookup.lean`). The ghost height grows by one on a root split. -/
+/-- `CowBTree::insert` (`mod.rs:220`; its returned `bool` is `insertFlag`, `Lookup.lean`). The ghost height grows by one on a root split.
+    The Rust since #3742 is `insertR` (`Page.lean`); `insertR_eq` proves it is this. -/
 def insert (c : Cfg) (h : Nat) (root : Node) (x : E) : Node × Nat :=
   match insertOne c h root x with
   | (n, none) => (n, h)
   | (n, some (s, r)) => (.branch [s] [n, r], h + 1)
 
-/-! ## Single remove (`node.rs:471`, `mod.rs:260`) -/
+/-! ## Single remove (`node.rs:419`, `mod.rs:260`) -/
 
-/-- `Combined` (`node.rs:38`). -/
+/-- `Combined<Node, u64>` (`page.rs:85`): one generic enum for a combined pair of pages or nodes. -/
 inductive Combined where
   | one (n : Node)
   | two (l : Node) (sep : E) (r : Node)
 
-/-- `Node::combine` (`node.rs:384`). The AoS byte-concat arm (`aos_combine`, `node.rs:447`) splits at
+/-- `Node::combine` (`node.rs:374`). Its leaf arm is `Page::combine`, for the `u64` page
+    `leaf/mod.rs:588-607` (`Page.lean`): the AoS byte-concat arm (`aos_combine`, `leaf/mod.rs:633`) splits at
     `count / 2` entries exactly like the generic arm, so both are this one definition. -/
 def combine (c : Cfg) (a : Node) (sep : E) (b : Node) : Combined :=
   match a, b with
@@ -204,20 +209,20 @@ def combine (c : Cfg) (a : Node) (sep : E) (b : Node) : Combined :=
       let mid := cs.length / 2
       let ls := ss.take mid
       .two (.branch ls.dropLast (cs.take mid)) (ls.getLast?.getD 0) (.branch (ss.drop mid) (cs.drop mid))
-  | _, _ => .one a   -- `unreachable!` (node.rs:439): siblings are the same kind
+  | _, _ => .one a   -- `unreachable!` (node.rs:412): siblings are the same kind
 
-/-- `Branch::rebalance` (`node.rs:219`) on the branch's `(seps, children)`; since #2278 its body is one
-    `combine_with_sibling` step (`node.rs:113`, `rebalance_eq_cws` in `Batch.lean`). -/
+/-- `Branch::rebalance` (`node.rs:205`) on the branch's `(seps, children)`; since #2278 its body is one
+    `combine_with_sibling` step (`node.rs:100`, `rebalance_eq_cws` in `Batch.lean`). -/
 def rebalance (c : Cfg) (seps : List E) (cs : List Node) (ci : Nat) : List E × List Node :=
-  if cs.length < 2 then (seps, cs)                               -- line 227
+  if cs.length < 2 then (seps, cs)                               -- line 213
   else
-    let li := if ci + 1 < cs.length then ci else ci - 1          -- node.rs:119-123
+    let li := if ci + 1 < cs.length then ci else ci - 1          -- node.rs:106-110
     let ri := if ci + 1 < cs.length then ci + 1 else ci
     match combine c (cs.getD li default) (seps.getD li 0) (cs.getD ri default) with
-    | .one m => (delAt seps li, delAt (setAt cs li m) ri)        -- node.rs:125-130
-    | .two l s r => (setAt seps li s, setAt (setAt cs li l) ri r) -- node.rs:132-137
+    | .one m => (delAt seps li, delAt (setAt cs li m) ri)        -- node.rs:112-117
+    | .two l s r => (setAt seps li s, setAt (setAt cs li l) ri r) -- node.rs:119-124
 
-/-- `Node::remove_one` (`node.rs:471`): `none` if absent, else the new node and its underflow flag. -/
+/-- `Node::remove_one` (`node.rs:419`): `none` if absent, else the new node and its underflow flag. -/
 def removeOne (c : Cfg) : Nat → Node → E → Option (Node × Bool)
   | _, .leaf es, x =>
     match leafRemove c es x with
@@ -230,8 +235,8 @@ def removeOne (c : Cfg) : Nat → Node → E → Option (Node × Bool)
     | none => none
     | some (c', u) =>
       let cs1 := setAt cs i c'
-      let r := if u then rebalance c seps cs1 i else (seps, cs1)   -- lines 485-486
-      some (.branch r.1 r.2, decide (r.2.length < c.B / 2))        -- line 488 (`Branch::is_underfull`, line 212)
+      let r := if u then rebalance c seps cs1 i else (seps, cs1)   -- lines 433-434
+      some (.branch r.1 r.2, decide (r.2.length < c.B / 2))        -- line 436 (`Branch::is_underfull`, line 198)
 
 /-- The root-collapse loop of `CowBTree::remove` (`mod.rs:267-274`). -/
 def collapse : Nat → Node → Node × Nat
@@ -244,14 +249,14 @@ def remove (c : Cfg) (h : Nat) (root : Node) (x : E) : Node × Nat :=
   | none => (root, h)
   | some (n, _) => collapse h n
 
-/-- `CowBTree::is_empty` (`mod.rs:463`). -/
+/-- `CowBTree::is_empty` (`mod.rs:353`). -/
 def isEmpty : Node → Bool
   | .leaf es => es.isEmpty
   | .branch _ _ => false
 
-/-! ## Bulk paths (`node.rs:56`, `:90`, `:244`; `mod.rs:190`, `:241`) -/
+/-! ## Bulk paths (`node.rs:45`, `:79`, `:228`; `mod.rs:199`, `:241`) -/
 
-/-- `pack_branches` (`node.rs:56`): chunks of `BRANCH_MAX`, except a remainder of `BRANCH_MAX + 1`
+/-- `pack_branches` (`node.rs:45`): chunks of `BRANCH_MAX`, except a remainder of `BRANCH_MAX + 1`
     is split `BRANCH_MAX - 1` + `2`. Separators are `Node::min` of every non-first child
     (`getD 0` stands in for the panic of `minOpt = none`, tracked separately). `h` is the children's height. -/
 def packBranches (c : Cfg) (h : Nat) (rest : List Node) : List Node :=
@@ -266,36 +271,37 @@ decreasing_by
   simp only [List.length_drop]
   split <;> omega
 
-/-- `build_root` (`node.rs:90`): pack until one fragment remains (`fuel` bounds the loop; each round
+/-- `build_root` (`node.rs:79`): pack until one fragment remains (`fuel` bounds the loop; each round
     of `pack_branches` on `>= 2` fragments strictly shrinks the list, so `fuel = length` suffices).
-    Returns the root and its height; the empty list becomes an empty leaf. -/
+    Returns the root and its height; the empty list becomes an empty leaf (`Page::empty`, for the `u64`
+    page `Leaf::from_pairs(&[])`, `leaf/mod.rs:513-516`). -/
 def buildRoot (c : Cfg) : Nat → Nat → List Node → Node × Nat
   | fuel + 1, h, frags@(_ :: _ :: _) => buildRoot c fuel (h + 1) (packBranches c h frags)
   | _, h, [n] => (n, h)
   | _, h, [] => (.leaf [], h)
   | 0, h, n :: _ => (n, h)   -- fuel exhausted: unreachable (see `buildRoot_fuel`)
 
-/-- The routing sweep of `apply_batch` (`node.rs:284-304`) and `remove_batch` (`node.rs:524-536`),
+/-- The routing sweep of `apply_batch` (`node.rs:268-288`) and `remove_batch` (`node.rs:458-470`),
     since #2278 (3597b3a82): the **last** child takes the rest of the batch outright
-    (`node.rs:294-295`); every other child takes the prefix of the remaining batch strictly below its
-    own separator `seps[child_idx]` (`node.rs:297-300`). (`getD 0` is the out-of-bounds panic of
+    (`node.rs:278-279`); every other child takes the prefix of the remaining batch strictly below its
+    own separator `seps[child_idx]` (`node.rs:281-284`). (`getD 0` is the out-of-bounds panic of
     `seps[child_idx]`, unreachable when `seps.len() == children.len() - 1`.) -/
 def route : List E → List Node → List E → List (Node × List E)
   | _, [], _ => []
-  | _, [ch], rest => [(ch, rest)]                             -- lines 294-295
+  | _, [ch], rest => [(ch, rest)]                             -- lines 278-279
   | seps, ch :: c2 :: cs, rest =>
-    let upper := seps.head?.getD 0                            -- line 297
-    let sl := rest.takeWhile (fun e => decide (e < upper))    -- lines 298-300
+    let upper := seps.head?.getD 0                            -- line 281
+    let sl := rest.takeWhile (fun e => decide (e < upper))    -- lines 282-284
     (ch, sl) :: route seps.tail (c2 :: cs) (rest.drop sl.length)
 
-/-- `Node::apply_batch` (`node.rs:259`). Returns the fragments that replace this node (height `h`). -/
+/-- `Node::apply_batch` (`node.rs:243`). Returns the fragments that replace this node (height `h`). -/
 def applyBatch (c : Cfg) : Nat → Node → List E → List Node
   | _, .leaf es, batch => (mergeBatch c es batch).map .leaf
   | 0, n@(.branch _ _), _ => [n]
   | h + 1, .branch seps cs, batch =>
     let newChildren := (route seps cs batch).flatMap
-      (fun p => if p.2 = [] then [p.1] else applyBatch c h p.1 p.2)   -- lines 302-307
-    packBranches c h newChildren                                      -- line 309
+      (fun p => if p.2 = [] then [p.1] else applyBatch c h p.1 p.2)   -- lines 286-291
+    packBranches c h newChildren                                      -- line 293
 
 /-- `CowBTree::insert_batch` (`mod.rs:241`). -/
 def insertBatch (c : Cfg) (h : Nat) (root : Node) (batch : List E) : Node × Nat :=
@@ -304,7 +310,8 @@ def insertBatch (c : Cfg) (h : Nat) (root : Node) (batch : List E) : Node × Nat
     let frags := applyBatch c h root batch
     buildRoot c frags.length h frags
 
-/-- `CowBTree::from_sorted` (`mod.rs:190`). -/
+/-- `CowBTree::from_sorted` (`mod.rs:199`). Its pages are `Page::build`, for the `u64` page
+    `chunks(LEAF_MAX)` of `Leaf::from_pairs` (`leaf/mod.rs:519-522`, `Page.lean`). -/
 def fromSorted (c : Cfg) (pairs : List E) : Node × Nat :=
   if pairs = [] then (.leaf [], 0)
   else

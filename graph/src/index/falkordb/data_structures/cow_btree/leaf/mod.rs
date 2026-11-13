@@ -2,13 +2,14 @@
 
 use std::sync::Arc;
 
-use super::{FIELD, doc_le_bytes};
+use super::page::{Combined, Page, PageInsert, Tuple};
+use super::{FIELD, doc_le_bytes, read_u64, read_width};
 
 mod aos;
 mod compact;
 mod compact_indexed;
 
-pub(super) use aos::AosLeaf;
+pub use aos::AosLeaf;
 use compact::{BODY_OFFSET, CompactLeaf, packing_fits};
 use compact_indexed::CompactIndexedLeaf;
 
@@ -147,7 +148,7 @@ fn merge_walk(
 /// is [`Leaf::from_parts`] — a copy, never a (de)serialization. These newtypes are the one place that knows
 /// the byte layout; the enum dispatches to them, so a tree may freely mix the formats.
 #[derive(Clone)]
-pub(super) enum Leaf<const LEAF_MAX: usize, const DOC_BYTES: usize> {
+pub enum Leaf<const LEAF_MAX: usize, const DOC_BYTES: usize> {
     Aos(AosLeaf<DOC_BYTES>),
     Compact(CompactLeaf),
     CompactIndexed(CompactIndexedLeaf),
@@ -499,5 +500,153 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Leaf<LEAF_MAX, DOC_BYTES> {
         // ~5x ahead of `sort_unstable()` (pdqsort can't exploit pre-sorted runs). Then re-chunk.
         let merged = merge_sorted(&self.to_pairs(), batch);
         merged.chunks(LEAF_MAX).map(Self::from_pairs).collect()
+    }
+}
+
+/// The `u64` key's page: each method is the leaf's own operation, plus the two the tree used to do
+/// itself — joining two sibling leaves (a byte concat for two AoS leaves) and subtracting a batch.
+impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Page for Leaf<LEAF_MAX, DOC_BYTES> {
+    type Key = u64;
+
+    /// Every tree is born here (`PageTree::default`), so the const assert on this page's
+    /// parameters is too: an empty tree of a bad `LEAF_MAX` or `DOC_BYTES` does not compile.
+    fn empty() -> Self {
+        const { assert_leaf_params::<LEAF_MAX, DOC_BYTES>() };
+        Self::from_pairs(&[])
+    }
+
+    /// Every bulk build goes through here (`PageTree::from_sorted`), so it carries the same assert.
+    fn build(tuples: &[Tuple<u64>]) -> Vec<Self> {
+        const { assert_leaf_params::<LEAF_MAX, DOC_BYTES>() };
+        tuples.chunks(LEAF_MAX).map(Self::from_pairs).collect()
+    }
+
+    fn count(&self) -> usize {
+        Leaf::count(self)
+    }
+
+    fn min(&self) -> Tuple<u64> {
+        (self.key(0), self.doc(0))
+    }
+
+    fn is_underfull(&self) -> bool {
+        Leaf::count(self) < LEAF_MAX / 2
+    }
+
+    fn insert(
+        &self,
+        key: &u64,
+        doc: u64,
+    ) -> Option<PageInsert<Self>> {
+        Some(match Leaf::insert(self, *key, doc)? {
+            LeafInsert::Fit(leaf) => PageInsert::Fit(leaf),
+            LeafInsert::Split { left, sep, right } => PageInsert::Split {
+                left,
+                rights: vec![(sep, right)],
+            },
+        })
+    }
+
+    fn remove(
+        &self,
+        key: &u64,
+        doc: u64,
+    ) -> Option<(Self, bool)> {
+        Leaf::remove(self, *key, doc)
+    }
+
+    fn merge_batch(
+        &self,
+        batch: &[Tuple<u64>],
+    ) -> Vec<Self> {
+        Leaf::merge_batch(self, batch)
+    }
+
+    /// Subtract the sorted `batch` from this sorted page — a linear merge-walk — and rebuild just
+    /// this one leaf. Iterates the page's pairs directly; no full `to_pairs` copy.
+    fn remove_batch(
+        &self,
+        batch: &[Tuple<u64>],
+    ) -> Self {
+        let mut survivors = Vec::with_capacity(Leaf::count(self));
+        let mut bi = 0usize;
+        for pair in self.iter() {
+            while bi < batch.len() && batch[bi] < pair {
+                bi += 1;
+            }
+            if bi < batch.len() && batch[bi] == pair {
+                continue; // this tuple is removed
+            }
+            survivors.push(pair);
+        }
+        Self::from_pairs(&survivors)
+    }
+
+    /// Two AoS leaves are tag-free `[(key, doc) × n]` and the siblings are ordered, so the join is a
+    /// byte concat ([`aos_combine`]). Compact/mixed leaves can't share a `min_value`/width, so they
+    /// decode and rebuild.
+    fn combine(
+        &self,
+        right: &Self,
+    ) -> Combined<Self, Self::Key> {
+        if let (Self::Aos(left_aos), Self::Aos(right_aos)) = (self, right) {
+            return aos_combine::<LEAF_MAX, DOC_BYTES>(left_aos, right_aos);
+        }
+        let mut pairs = self.to_pairs();
+        pairs.extend(right.to_pairs());
+        if pairs.len() <= LEAF_MAX {
+            Combined::One(Self::from_pairs(&pairs))
+        } else {
+            let mid = pairs.len() / 2;
+            Combined::Two(
+                Self::from_pairs(&pairs[..mid]),
+                pairs[mid],
+                Self::from_pairs(&pairs[mid..]),
+            )
+        }
+    }
+
+    /// A leaf blob is an `Arc<[u8]>`: exact-sized, so its length is its allocation.
+    fn heap_bytes(&self) -> usize {
+        self.raw().len()
+    }
+}
+
+/// The const assert on a `u64` page's parameters: `LEAF_MAX` in `2..=256` (the compact index is a
+/// `u8`), and `DOC_BYTES` a width `read_width` loads.
+const fn assert_leaf_params<const LEAF_MAX: usize, const DOC_BYTES: usize>() {
+    assert!(
+        LEAF_MAX >= 2 && LEAF_MAX <= 256,
+        "LEAF_MAX must be 2..=256 (compact index is u8)"
+    );
+    assert!(
+        super::is_read_width(DOC_BYTES),
+        "DOC_BYTES must be 1, 2, 4 or 8: it is the AoS doc field width, read back with read_width, which loads only those widths"
+    );
+}
+
+/// Join two ordered AoS sibling leaves. Their buffers are tag-free `[(key, doc) × n]` and `left`
+/// precedes `right`, so the merge is a plain byte concat — no decode. If the result overflows
+/// `LEAF_MAX` we split at the midpoint entry; the fixed `(FIELD + DOC_BYTES)` makes that a balanced
+/// split (both halves `>= LEAF_MAX / 2`), and `mid_sep` (the first entry of the right half) is the
+/// new separator.
+fn aos_combine<const LEAF_MAX: usize, const DOC_BYTES: usize>(
+    left: &AosLeaf<DOC_BYTES>,
+    right: &AosLeaf<DOC_BYTES>,
+) -> Combined<Leaf<LEAF_MAX, DOC_BYTES>, u64> {
+    let mut buf = Vec::with_capacity(left.0.len() + right.0.len());
+    buf.extend_from_slice(&left.0);
+    buf.extend_from_slice(&right.0);
+    let leaf = |bytes: Vec<u8>| Leaf::Aos(AosLeaf(bytes.into()));
+    if buf.len() / (FIELD + DOC_BYTES) <= LEAF_MAX {
+        Combined::One(leaf(buf))
+    } else {
+        let split = buf.len() / (FIELD + DOC_BYTES) / 2 * (FIELD + DOC_BYTES);
+        let mid_sep = (
+            read_u64(&buf, split),
+            read_width(&buf, split + FIELD, DOC_BYTES),
+        );
+        let right_buf = buf.split_off(split);
+        Combined::Two(leaf(buf), mid_sep, leaf(right_buf))
     }
 }
