@@ -2,21 +2,27 @@ name: Release image
 
 # Manual escape hatch: build the runtime images FROM SOURCE at a given commit and
 # publish them under a given tag. Releases do not come through here — the
-# release pipeline (release-tag.yml) retags the rc-mg-<sha>-redis image the merge queue
-# already validated. Use this when that image is gone (swept by
+# release pipeline (release-tag.yml) retags the rc-mg-<sha>-<server> images the
+# merge queue already validated. Use this when those images are gone (swept by
 # cleanup-rc-images.yml), when the commit never went through the queue, or to
 # publish an ad-hoc tag.
+#
+# Both servers are built, into GHCR only, as rc-rebuild-<sha>-<server> (and
+# rc-rebuild-<sha>-<server>-<arch> under it). The publish job then retags them
+# the way a release is: <tag>-valkey, <tag>-redis and <tag> (Valkey), plus
+# latest* when asked, on both repositories and both registries. No public tag
+# names an architecture. build/publish_tags.py works out the tags.
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag (no v prefix). If it matches X.Y.Z it must equal Cargo.toml version."
+        description: "Image tag (no v prefix, no server suffix). If it matches X.Y.Z it must equal Cargo.toml version."
         required: true
       commit_sha:
         description: "Commit SHA to build"
         required: true
       mark_latest:
-        description: "Also tag :latest (moves the latest pointer — use with care)"
+        description: "Also tag latest, latest-valkey and latest-redis. Refused unless the tag is the highest stable version with a published GitHub release"
         type: boolean
         default: false
 
@@ -34,6 +40,7 @@ jobs:
       contents: read
     outputs:
       tag: ${{ steps.derive.outputs.tag }}
+      sha: ${{ steps.derive.outputs.sha }}
     steps:
       # Refuse a dispatch from anywhere except main or a version branch (X.Y).
       # This guards against a dispatch from a feature branch pushing user-facing
@@ -47,45 +54,116 @@ jobs:
             exit 1
           fi
 
+      # The tag plan comes from this workflow's own commit; the commit being
+      # built may predate it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.commit_sha }}
+          path: built-commit
           persist-credentials: false
 
       # Validate Cargo.toml only against a semver-shaped tag, so operators can
-      # still dispatch ad-hoc tags like 'edge-test' without enforcement.
-      - name: Validate tag against Cargo.toml
+      # still dispatch ad-hoc tags like 'edge-test' without enforcement. Then
+      # print the tags the publish job will push, which also refuses
+      # mark_latest where a release would not move latest*, before anything
+      # is built.
+      - name: Validate tag against Cargo.toml and the tag plan
         id: derive
         env:
           TAG: ${{ inputs.tag }}
+          MARK_LATEST: ${{ inputs.mark_latest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if echo "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            CARGO_VERSION=$(cargo metadata --no-deps --format-version=1 \
+          if echo "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            CARGO_VERSION=$(cargo metadata --no-deps --format-version=1 --manifest-path built-commit/Cargo.toml \
               | jq -r '.packages[] | select(.name=="falkordb-rs") | .version')
             if [ "$CARGO_VERSION" != "$TAG" ]; then
               echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($TAG)"
               exit 1
             fi
           fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          SHA=$(git -C built-commit rev-parse HEAD)
+          # A commit from before the images named their server builds Redis
+          # whatever SERVER says, and labels nothing, so it cannot be published
+          # under server-named tags. Refuse it here, before an hour of building.
+          if ! grep -q 'com.falkordb.server.name' built-commit/build/runtime/Dockerfile; then
+            echo "::error::${SHA} predates server-named images (its build/runtime/Dockerfile sets no com.falkordb.server.name label), so it has no Valkey image to publish"
+            exit 1
+          fi
+          LATEST=()
+          if [ "$MARK_LATEST" = "true" ]; then LATEST=(--latest); fi
+          python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" "${LATEST[@]}"
+          {
+            echo "tag=${TAG}"
+            echo "sha=${SHA}"
+          } >> "$GITHUB_OUTPUT"
 
-  # The `cells:` input describes the release matrix shape (2 archs × 2 variants).
+  # The `cells:` input describes the release matrix shape (2 archs × 2 variants),
+  # once per server. GHCR only: nothing public is pushed until `publish`.
   build:
     needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        server: [valkey, redis]
     uses: ./.github/workflows/_build-flavour.yml
     permissions:
       contents: read
       packages: write
     with:
       flavour: release
-      tag: ${{ needs.prepare.outputs.tag }}
-      commit_sha: ${{ inputs.commit_sha }}
+      server: ${{ matrix.server }}
+      tag: rc-rebuild-${{ needs.prepare.outputs.sha }}-${{ matrix.server }}
+      commit_sha: ${{ needs.prepare.outputs.sha }}
       cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
       browser_tag: latest
-      # Manual dispatch publishes to Docker Hub too — that's the "promote" escape hatch.
-      push_to_dockerhub: true
-      is_latest: ${{ inputs.mark_latest }}
-    # Forward DOCKER_USERNAME + DOCKER_PASSWORD (org-level secrets) to the
-    # reusable workflow's Docker Hub login.
-    secrets: inherit
+      push_to_dockerhub: false
+      is_latest: false
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Retag rc-rebuild-${{ needs.prepare.outputs.sha }}-<server> → ${{ needs.prepare.outputs.tag }}
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          MARK_LATEST: ${{ inputs.mark_latest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # latest* moves only to the highest stable version with a published
+          # GitHub release; publish_tags.py reads the list again right before
+          # the push.
+          LATEST=()
+          if [ "$MARK_LATEST" = "true" ]; then LATEST=(--latest); fi
+          python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" "${LATEST[@]}" --execute

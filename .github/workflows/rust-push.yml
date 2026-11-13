@@ -89,33 +89,33 @@ jobs:
             -t ghcr.io/falkordb/falkordb-build:latest \
             "ghcr.io/falkordb/falkordb-build:${CI_KEY}"
 
-  # Promote the runtime images the MERGE QUEUE built (rc-mg-<sha>-redis, the
-  # Redis leg's) to the rolling `:edge` channel on every trunk merge —
-  # byte-identical retag.
+  # Promote the runtime images the MERGE QUEUE built and tested
+  # (rc-mg-<sha>-valkey and rc-mg-<sha>-redis) to the rolling tags on every
+  # trunk merge: edge-rs-valkey and edge-rs-redis, with edge and edge-rs
+  # pointing at Valkey. It is a retag of the same manifests, never a rebuild,
+  # on both repositories and both registries; build/publish_tags.py lists the
+  # tags and checks each source first.
   #
-  # Deliberately NOT the PR's own rc-pr-<N> image, even though same-repo PRs
-  # still publish one. That image is built from the PR head; the queue's is
-  # built from the merge candidate, which is what actually lands. Promoting the
-  # PR image would ship bytes that were never tested in the combination that
-  # merged — the staleness this whole change exists to remove. A fork PR has no
-  # rc-pr-<N> at all, so keying on it would simply fail for forks.
+  # Deliberately NOT the PR's own rc-pr-<N>-<server> images, even though
+  # same-repo PRs still publish them. Those are built from the PR head; the
+  # queue's are built from the merge candidate, which is what actually lands.
+  # A fork PR has no rc-pr-<N>-<server> at all, so keying on it would simply
+  # fail for forks.
   #
-  # `:edge` serves the Rust engine now that this tree is the default branch.
-  # The C engine's rolling images moved to the `edge-c` family on `master`, and
-  # C never published to GHCR, so there is no contention on either registry.
-  # `:edge-rs` stays as a deprecated alias. Bare `:latest` is untouched — that
-  # pointer moves only on a release, via release-tag.yml. See issue #2290.
+  # The C engine's rolling images are the `edge-c` family on `master`, and C
+  # never published to GHCR, so there is no contention on either registry.
+  # `latest` is untouched: it moves only on a release, via release-tag.yml.
   promote-edge:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        repo: [falkordb, falkordb-server]
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
@@ -131,30 +131,8 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Promote rc-mg-${{ github.sha }}-redis → :edge (${{ matrix.repo }})
-        env:
-          CI_KEY: mg-${{ github.sha }}
-          REPO:   ${{ matrix.repo }}
-        run: |
-          set -euo pipefail
-          # One imagetools call fans the SAME multi-arch manifest out to both
-          # registries — still a retag, never a rebuild, so the bytes PR CI
-          # validated are the bytes that ship. Same pattern release-tag.yml
-          # uses for semver tags.
-          # `:edge` is the primary rolling channel now that this tree is the
-          # default branch. `:edge-rs` is kept as an alias so anything already
-          # pinned to it keeps working — same manifest, so the extra tags cost
-          # nothing. It is deprecated and will be dropped once consumers move.
-          #
-          # No contention with the C engine: its rolling images moved to the
-          # `edge-c` family on `master`, and C never published to GHCR at all.
-          # See issue #2290.
-          docker buildx imagetools create \
-            -t "ghcr.io/falkordb/${REPO}:edge" \
-            -t "docker.io/falkordb/${REPO}:edge" \
-            -t "ghcr.io/falkordb/${REPO}:edge-rs" \
-            -t "docker.io/falkordb/${REPO}:edge-rs" \
-            "ghcr.io/falkordb/${REPO}:rc-${CI_KEY}-redis"
+      - name: Promote rc-mg-${{ github.sha }}-<server> to the rolling tags
+        run: python3 build/publish_tags.py edge --sha "$GITHUB_SHA" --execute
 
   flow-test-matrix:
     runs-on: ubuntu-latest
