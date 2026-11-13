@@ -1,0 +1,421 @@
+diff -ru -x bench_main.rs feral-f127189/coarsen.rs stage1/coarsen.rs
+--- feral-f127189/coarsen.rs	2026-11-07 00:20:32
++++ stage1/coarsen.rs	2026-11-13 00:30:08
+@@ -25,11 +25,42 @@
+ 
+ use crate::graph::Graph;
+ use crate::rng::SplitMix;
+-use crate::MetisOptions;
++use crate::{Matching, MetisOptions};
+ use feral_ordering_core::Idx;
++use std::sync::Mutex;
+ 
+ const UNMATCHED: Idx = -1;
+ 
++/// M1 prototype: one record per coarsening level built.
++#[derive(Debug, Clone, Copy)]
++pub struct LevelRec {
++    /// Index of the `coarsen` call (0-based, process-wide).
++    pub call: u32,
++    /// Level within that call (0 = first contraction of the input).
++    pub level: u32,
++    pub n_fine: Idx,
++    /// Coarse vertices after matching rounds, before 2-hop.
++    pub n_after_match: Idx,
++    pub n_coarse: Idx,
++    /// Mutual-max rounds run (0 for SHEM).
++    pub rounds: u32,
++    /// True when the round cap stopped matching with candidates left.
++    pub capped: bool,
++    pub two_hop: bool,
++    /// Pairs refused by the vertex-weight cap (SHEM: skipped candidates).
++    pub cap_refusals: u64,
++}
++
++/// M1 prototype: every level built since the last `take_level_log`.
++pub static LEVEL_LOG: Mutex<(u32, Vec<LevelRec>)> = Mutex::new((0, Vec::new()));
++
++/// Drain the level log.
++pub fn take_level_log() -> Vec<LevelRec> {
++    let mut g = LEVEL_LOG.lock().unwrap();
++    g.0 = 0;
++    std::mem::take(&mut g.1)
++}
++
+ /// Output of one coarsening level.
+ #[derive(Debug)]
+ pub struct CoarseGraph {
+@@ -56,6 +87,47 @@
+     two_hop_threshold: f64,
+     counters: &mut CoarsenCounters,
+ ) -> CoarseGraph {
++    let opts = MetisOptions {
++        two_hop_ratio_threshold: two_hop_threshold,
++        ..MetisOptions::default()
++    };
++    coarsen_level_with(fine, rng, &opts, None, counters).0
++}
++
++/// Per-level matching statistics (M1 prototype).
++#[derive(Debug, Default, Clone, Copy)]
++pub struct MatchInfo {
++    pub n_after_match: Idx,
++    pub rounds: u32,
++    pub capped: bool,
++    pub two_hop: bool,
++    pub cap_refusals: u64,
++}
++
++/// Coarsen one level with the matching `opts` selects. `cap` is the
++/// largest combined vertex weight a pair may have (`None`: no cap).
++pub fn coarsen_level_with(
++    fine: &Graph,
++    rng: &mut SplitMix,
++    opts: &MetisOptions,
++    cap: Option<Idx>,
++    counters: &mut CoarsenCounters,
++) -> (CoarseGraph, MatchInfo) {
++    match opts.matching {
++        Matching::Shem => shem_level(fine, rng, opts.two_hop_ratio_threshold, cap, counters),
++        Matching::MutualMax => mutual_max_level(fine, rng, opts, cap, counters),
++    }
++}
++
++/// Stock feral SHEM (unchanged when `cap` is `None`).
++fn shem_level(
++    fine: &Graph,
++    rng: &mut SplitMix,
++    two_hop_threshold: f64,
++    cap: Option<Idx>,
++    counters: &mut CoarsenCounters,
++) -> (CoarseGraph, MatchInfo) {
++    let mut info = MatchInfo::default();
+     let n = fine.nvtxs as usize;
+     let mut match_: Vec<Idx> = vec![UNMATCHED; n];
+     let mut cmap: Vec<Idx> = vec![-1; n];
+@@ -90,6 +162,12 @@
+             if match_[u as usize] != UNMATCHED {
+                 continue;
+             }
++            if let Some(c) = cap {
++                if fine.vwgt[vu] + fine.vwgt[u as usize] > c {
++                    info.cap_refusals += 1;
++                    continue;
++                }
++            }
+             let w = fine.adjwgt[k];
+             // Tie-break: strictly greater weight wins; on ties pick
+             // the lower vertex id (matches METIS SHEM).
+@@ -113,17 +191,228 @@
+     }
+ 
+     // --- Pass 2: 2-hop fallback, only if reduction is poor ---
++    info.n_after_match = cnvtxs;
+     let reduction_ratio = cnvtxs as f64 / fine.nvtxs.max(1) as f64;
+     if reduction_ratio > two_hop_threshold && fine.nvtxs >= 4 {
+         counters.n_two_hop_fallbacks += 1;
++        info.two_hop = true;
+         cnvtxs = two_hop_pass(fine, &mut match_, &mut cmap);
+     }
+ 
+     // --- Contract ---
+     let graph = contract(fine, &cmap, cnvtxs);
+-    CoarseGraph { graph, cmap }
++    (CoarseGraph { graph, cmap }, info)
+ }
+ 
++/// Bijective 32-bit mix (murmur3 fmix32 after a salt xor): every step
++/// is invertible mod 2^32, so distinct ids get distinct scrambles and
++/// the keys `(w << 32) | scramble(u)` are unique within a row.
++#[inline]
++fn scramble(u: Idx, salt: u32) -> u64 {
++    let mut x = (u as u32) ^ salt;
++    x ^= x >> 16;
++    x = x.wrapping_mul(0x85EB_CA6B);
++    x ^= x >> 13;
++    x = x.wrapping_mul(0xC2B2_AE35);
++    x ^= x >> 16;
++    x as u64
++}
++
++#[inline]
++fn key(w: Idx, u: Idx, salt: u32, invert: bool) -> u64 {
++    let w = w.clamp(0, u32::MAX as Idx) as u64;
++    let w = if invert { u32::MAX as u64 - w } else { w };
++    (w << 32) | scramble(u, salt)
++}
++
++/// The design's matching (§3 step 3), round synchronous, exactly what
++/// the GraphBLAS formulation computes:
++///
++/// * every unmatched vertex proposes to its unmatched neighbour with
++///   the largest unique key `(w << 32) | scramble(u)` among those the
++///   cap allows (`y<unmatched> = K MAX_FIRST unmatched`);
++/// * mutual proposals match (`p(p(v)) == v`);
++/// * repeat over the still-unmatched, up to `mm_round_cap` rounds
++///   (0 = until a round has no proposer, a maximal matching).
++///
++/// Proposals of one round all read the matched set as it was at the
++/// start of the round, so the result does not depend on visit order or
++/// thread count. A round with at least one proposer always matches a
++/// pair (keys strictly increase along a proposal chain, so it ends in
++/// a 2-cycle), so the unbounded loop terminates.
++///
++/// Then a 2-hop pass when the level shrinks under 15 % (same threshold
++/// as SHEM): unmatched vertices group by their heaviest neighbour
++/// (anchor, unique key, matched or not) and pair consecutively in
++/// scramble order within a group, subject to the cap. This is a
++/// GraphBLAS-expressible pass (build anchor x scramble, sort rows, pair
++/// by position parity); `mm_seq_two_hop` swaps in feral's sequential
++/// pass instead.
++fn mutual_max_level(
++    fine: &Graph,
++    rng: &mut SplitMix,
++    opts: &MetisOptions,
++    cap: Option<Idx>,
++    counters: &mut CoarsenCounters,
++) -> (CoarseGraph, MatchInfo) {
++    let mut info = MatchInfo::default();
++    let n = fine.nvtxs as usize;
++    let salt = rng.next_u64() as u32;
++    let invert = opts.mm_invert_weight;
++    let mut match_: Vec<Idx> = vec![UNMATCHED; n];
++    let mut prop: Vec<Idx> = vec![-1; n];
++    let ok = |v: usize, u: usize| cap.is_none_or(|c| fine.vwgt[v] + fine.vwgt[u] <= c);
++
++    let mut active: Vec<Idx> = (0..fine.nvtxs).collect();
++    let mut next: Vec<Idx> = Vec::with_capacity(n);
++    let mut rounds = 0u32;
++    loop {
++        if active.is_empty() {
++            break;
++        }
++        if opts.mm_round_cap != 0 && rounds == opts.mm_round_cap {
++            info.capped = true;
++            break;
++        }
++        rounds += 1;
++        // Propose: read-only over match_.
++        next.clear();
++        for &v in &active {
++            let vu = v as usize;
++            let lo = fine.xadj[vu] as usize;
++            let hi = fine.xadj[vu + 1] as usize;
++            let mut best: Idx = -1;
++            let mut best_k: u64 = 0;
++            for k in lo..hi {
++                let u = fine.adjncy[k];
++                let uu = u as usize;
++                if match_[uu] != UNMATCHED {
++                    continue;
++                }
++                if !ok(vu, uu) {
++                    if rounds == 1 {
++                        info.cap_refusals += 1;
++                    }
++                    continue;
++                }
++                let kk = key(fine.adjwgt[k], u, salt, invert);
++                if best < 0 || kk > best_k {
++                    best = u;
++                    best_k = kk;
++                }
++            }
++            prop[vu] = best;
++            if best >= 0 {
++                next.push(v);
++            }
++        }
++        // A vertex with no candidate now never gets one: the unmatched
++        // set only shrinks and the cap is symmetric.
++        // Match mutual pairs.
++        let mut matched = 0usize;
++        for &v in &next {
++            let p = prop[v as usize];
++            if v < p && prop[p as usize] == v {
++                match_[v as usize] = p;
++                match_[p as usize] = v;
++                matched += 1;
++            }
++        }
++        assert!(next.is_empty() || matched > 0, "mutual-max round made no progress");
++        std::mem::swap(&mut active, &mut next);
++        active.retain(|&v| match_[v as usize] == UNMATCHED);
++    }
++    info.rounds = rounds;
++    for v in 0..n {
++        if match_[v] == UNMATCHED {
++            match_[v] = v as Idx;
++        }
++    }
++    let mut cmap: Vec<Idx> = vec![-1; n];
++    let mut cnvtxs = renumber(&match_, &mut cmap);
++    info.n_after_match = cnvtxs;
++
++    let reduction_ratio = cnvtxs as f64 / fine.nvtxs.max(1) as f64;
++    if reduction_ratio > opts.two_hop_ratio_threshold && fine.nvtxs >= 4 {
++        counters.n_two_hop_fallbacks += 1;
++        info.two_hop = true;
++        cnvtxs = if opts.mm_seq_two_hop {
++            two_hop_pass(fine, &mut match_, &mut cmap)
++        } else {
++            parallel_two_hop(fine, &mut match_, &mut cmap, salt, cap)
++        };
++    }
++    let graph = contract(fine, &cmap, cnvtxs);
++    (CoarseGraph { graph, cmap }, info)
++}
++
++/// Coarse ids in fine-id order from a complete `match_`.
++fn renumber(match_: &[Idx], cmap: &mut [Idx]) -> Idx {
++    cmap.iter_mut().for_each(|c| *c = -1);
++    let mut cnvtxs: Idx = 0;
++    for v in 0..match_.len() {
++        if cmap[v] >= 0 {
++            continue;
++        }
++        cmap[v] = cnvtxs;
++        let u = match_[v];
++        if u != v as Idx {
++            cmap[u as usize] = cnvtxs;
++        }
++        cnvtxs += 1;
++    }
++    cnvtxs
++}
++
++/// GraphBLAS-style 2-hop: each self-matched vertex with a neighbour
++/// takes its heaviest neighbour (unique key) as anchor; vertices of the
++/// same anchor, in scramble order, pair 1-2, 3-4, ... when the cap
++/// allows.
++fn parallel_two_hop(
++    fine: &Graph,
++    match_: &mut [Idx],
++    cmap: &mut [Idx],
++    salt: u32,
++    cap: Option<Idx>,
++) -> Idx {
++    let n = fine.nvtxs as usize;
++    let mut tuples: Vec<(Idx, u64, Idx)> = Vec::new();
++    for v in 0..n {
++        if match_[v] != v as Idx {
++            continue;
++        }
++        let lo = fine.xadj[v] as usize;
++        let hi = fine.xadj[v + 1] as usize;
++        let mut best: Idx = -1;
++        let mut best_k = 0u64;
++        for k in lo..hi {
++            let u = fine.adjncy[k];
++            let kk = key(fine.adjwgt[k], u, salt, false);
++            if best < 0 || kk > best_k {
++                best = u;
++                best_k = kk;
++            }
++        }
++        if best >= 0 {
++            tuples.push((best, scramble(v as Idx, salt ^ 0x5bd1_e995), v as Idx));
++        }
++    }
++    tuples.sort_unstable();
++    let mut i = 0;
++    while i + 1 < tuples.len() {
++        let (a, _, v) = tuples[i];
++        let (b, _, w) = tuples[i + 1];
++        if a == b && cap.is_none_or(|c| fine.vwgt[v as usize] + fine.vwgt[w as usize] <= c) {
++            match_[v as usize] = w;
++            match_[w as usize] = v;
++            i += 2;
++        } else {
++            i += 1;
++        }
++    }
++    renumber(match_, cmap)
++}
++
+ /// Run `coarsen_level` in a loop until the graph is small enough or
+ /// coarsening stalls (reduction ratio < 5%). Returns the hierarchy
+ /// of coarse graphs, finest first.
+@@ -136,12 +425,35 @@
+     let mut levels: Vec<CoarseGraph> = Vec::new();
+     let mut prev_nvtxs = fine.nvtxs;
+     let mut cur: &Graph = fine;
++    // METIS coarsen.c:38: maxvwgt = 1.5 * tvwgt / CoarsenTo, fixed for the call.
++    let cap = if opts.vwgt_cap {
++        let tvwgt: Idx = fine.vwgt.iter().copied().sum();
++        Some(((1.5 * tvwgt as f64) / (opts.coarsen_floor.max(1) as f64)) as Idx)
++    } else {
++        None
++    };
++    let call = {
++        let mut g = LEVEL_LOG.lock().unwrap();
++        g.0 += 1;
++        g.0 - 1
++    };
+     loop {
+         if cur.nvtxs <= opts.coarsen_floor as Idx {
+             break;
+         }
+-        let level = coarsen_level(cur, rng, opts.two_hop_ratio_threshold, counters);
++        let (level, info) = coarsen_level_with(cur, rng, opts, cap, counters);
+         let new_nvtxs = level.graph.nvtxs;
++        LEVEL_LOG.lock().unwrap().1.push(LevelRec {
++            call,
++            level: levels.len() as u32,
++            n_fine: cur.nvtxs,
++            n_after_match: info.n_after_match,
++            n_coarse: new_nvtxs,
++            rounds: info.rounds,
++            capped: info.capped,
++            two_hop: info.two_hop,
++            cap_refusals: info.cap_refusals,
++        });
+         if new_nvtxs == 0 || new_nvtxs as f64 > 0.95 * prev_nvtxs as f64 {
+             // Stalled: this level made <5% progress, so stop. Keep it
+             // only if it actually shrank, independent of whether earlier
+diff -ru -x bench_main.rs feral-f127189/lib.rs stage1/lib.rs
+--- feral-f127189/lib.rs	2026-11-07 00:20:32
++++ stage1/lib.rs	2026-11-13 00:30:08
+@@ -161,8 +161,30 @@
+     /// without flipping `dense_quotient_enabled` (useful for
+     /// regression sweeps).
+     pub dense_quotient_threshold: Option<usize>,
++    /// M1 prototype: which matching coarsening uses.
++    pub matching: Matching,
++    /// M1 prototype: mutual-max proposal rounds per level (0 = until a
++    /// round matches nothing, i.e. a maximal matching).
++    pub mm_round_cap: u32,
++    /// M1 prototype: forbid pairs whose combined vertex weight exceeds
++    /// METIS's `maxvwgt = 1.5 * tvwgt / CoarsenTo` (coarsen.c:38).
++    pub vwgt_cap: bool,
++    /// M1 prototype break: mutual-*min* weight proposals instead of max.
++    pub mm_invert_weight: bool,
++    /// M1 prototype: 2-hop pass for mutual-max (true = feral's sequential
++    /// pass, false = the parallel anchor-grouping pass).
++    pub mm_seq_two_hop: bool,
+ }
+ 
++/// M1 prototype: the matching used by coarsening.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Matching {
++    /// feral's sorted heavy-edge matching (stock).
++    Shem,
++    /// The design's parallel mutual-max matching (round synchronous).
++    MutualMax,
++}
++
+ impl Default for MetisOptions {
+     fn default() -> Self {
+         Self {
+@@ -176,6 +198,11 @@
+             node_refine: true,
+             dense_quotient_enabled: false,
+             dense_quotient_threshold: None,
++            matching: Matching::Shem,
++            mm_round_cap: 0,
++            vwgt_cap: false,
++            mm_invert_weight: false,
++            mm_seq_two_hop: false,
+         }
+     }
+ }

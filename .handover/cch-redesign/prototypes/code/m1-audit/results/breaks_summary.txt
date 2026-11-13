@@ -1,0 +1,13 @@
+cap: EXIT 101 AUDIT CHECK FAILED: cap mask by row/col scale differs
+contract: EXIT 101 AUDIT CHECK FAILED: contraction with C<!I> differs
+contract_b: EXIT 101 AUDIT CHECK FAILED: contraction without the C*A wait differs
+contract_c: EXIT 101 AUDIT CHECK FAILED: contraction with a packed C differs
+inplace: EXIT 101 AUDIT CHECK FAILED: in-place B2 level differs (nnz 2016456 vs 2016452)
+jitcmp_on_pa_altered: EXIT 0 
+match: EXIT 101 AUDIT CHECK FAILED: match (assign with accum) differs from mate
+matche: EXIT 101 AUDIT CHECK FAILED: match (emult+add) differs from mate
+matchu: EXIT 101 AUDIT CHECK FAILED: match unmatched pattern differs
+none: EXIT 0 
+splitinplace: EXIT 101 AUDIT CHECK FAILED: in-place fine split differs (depth 1, nnz 3079998 vs 3079992)
+zmatch: EXIT 101 AUDIT CHECK FAILED: zmatch final mate differs
+jitcmp altered log: # runs: 3 vs 3; hierarchy identical: False (167 level shapes)

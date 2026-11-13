@@ -1,0 +1,9 @@
+CA run=1 LOAD 2.90 2.48 2.40 :: METIS_NodeND status 1, 5.018s, maxrss before 61.5 MB after 550.7 MB
+CA run=2 LOAD 2.60 2.43 2.39 :: METIS_NodeND status 1, 5.021s, maxrss before 61.5 MB after 550.7 MB
+CA run=3 LOAD 2.56 2.43 2.38 :: METIS_NodeND status 1, 5.042s, maxrss before 61.5 MB after 553.6 MB
+PA run=1 LOAD 2.43 2.40 2.38 :: METIS_NodeND status 1, 2.641s, maxrss before 34.9 MB after 337.8 MB
+PA run=2 LOAD 2.43 2.40 2.38 :: METIS_NodeND status 1, 2.645s, maxrss before 34.9 MB after 337.8 MB
+PA run=3 LOAD 2.32 2.38 2.37 :: METIS_NodeND status 1, 2.646s, maxrss before 34.9 MB after 337.8 MB
+TX run=1 LOAD 2.32 2.38 2.37 :: METIS_NodeND status 1, 3.347s, maxrss before 43.3 MB after 396.4 MB
+TX run=2 LOAD 2.61 2.44 2.39 :: METIS_NodeND status 1, 3.334s, maxrss before 43.3 MB after 396.3 MB
+TX run=3 LOAD 2.61 2.44 2.39 :: METIS_NodeND status 1, 3.338s, maxrss before 43.3 MB after 396.3 MB

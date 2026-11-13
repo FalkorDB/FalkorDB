@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = ["crates/feral-ordering-core", "crates/feral-amd", "crates/feral-metis", "bench"]
+
+[profile.release]
+debug = 1

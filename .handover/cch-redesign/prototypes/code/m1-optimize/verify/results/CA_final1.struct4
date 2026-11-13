@@ -1,0 +1,58 @@
+PHASE threads=1 depth=0 path=D0 levels=20
+PHASE threads=1 depth=0 path=ROOTMAP 
+PHASE threads=1 depth=1 path=SPLIT 
+PHASE threads=1 depth=1 path=R levels=20 coarsened=5015125
+PHASE threads=1 depth=1 path=B2 levels=20 coarsest=2822
+PHASE threads=1 depth=1 path=CS levels=20 reused=17 fresh=3 coarsened=9477 cells_fresh=2 g_n=3429 reasons=0/2/0/0/0
+PHASE threads=1 depth=2 path=SPLIT 
+PHASE threads=1 depth=2 path=R levels=19 coarsened=5015727
+PHASE threads=1 depth=2 path=B2 levels=20 coarsest=2859
+PHASE threads=1 depth=2 path=CS levels=21 reused=16 fresh=5 coarsened=20478 cells_fresh=4 g_n=5839 reasons=0/4/0/0/0
+PHASE threads=1 depth=3 path=SPLIT 
+PHASE threads=1 depth=3 path=R levels=19 coarsened=5017800
+PHASE threads=1 depth=3 path=B2 levels=20 coarsest=2884
+PHASE threads=1 depth=3 path=CS levels=19 reused=13 fresh=6 coarsened=35239 cells_fresh=8 g_n=9690 reasons=0/8/0/0/0
+PHASE threads=1 depth=4 path=SPLIT 
+PHASE threads=1 depth=4 path=R levels=18 coarsened=5018190
+PHASE threads=1 depth=4 path=B2 levels=20 coarsest=2952
+PHASE threads=1 depth=4 path=CS levels=19 reused=12 fresh=7 coarsened=61997 cells_fresh=16 g_n=16528 reasons=0/16/0/0/0
+PHASE threads=1 depth=5 path=SPLIT 
+PHASE threads=1 depth=5 path=R levels=18 coarsened=5034514
+PHASE threads=1 depth=5 path=B2 levels=19 coarsest=3185
+PHASE threads=1 depth=5 path=CS levels=19 reused=11 fresh=8 coarsened=111294 cells_fresh=32 g_n=31862 reasons=0/32/0/0/0
+PHASE threads=1 depth=6 path=SPLIT 
+PHASE threads=1 depth=6 path=R levels=17 coarsened=5038839
+PHASE threads=1 depth=6 path=B2 levels=15 coarsest=5524
+PHASE threads=1 depth=6 path=CS levels=17 reused=9 fresh=8 coarsened=194507 cells_fresh=64 g_n=57074 reasons=0/64/0/0/0
+PHASE threads=1 depth=7 path=SPLIT 
+PHASE threads=1 depth=7 path=R levels=16 coarsened=5101951
+PHASE threads=1 depth=7 path=B2 levels=12 coarsest=12719
+PHASE threads=1 depth=7 path=CS levels=16 reused=8 fresh=8 coarsened=301629 cells_fresh=128 g_n=67534 reasons=0/128/0/0/0
+PHASE threads=1 depth=8 path=SPLIT 
+PHASE threads=1 depth=8 path=R levels=13 coarsened=5012746
+PHASE threads=1 depth=8 path=B2 levels=11 coarsest=20633
+PHASE threads=1 depth=8 path=CS levels=13 reused=7 fresh=6 coarsened=302611 cells_fresh=256 g_n=85213 reasons=0/256/0/0/0
+PHASE threads=1 depth=9 path=SPLIT 
+PHASE threads=1 depth=9 path=R levels=10 coarsened=4894823
+PHASE threads=1 depth=9 path=B2 levels=10 coarsest=35010
+PHASE threads=1 depth=9 path=CS levels=10 reused=6 fresh=4 coarsened=322991 cells_fresh=512 g_n=118895 reasons=0/512/0/0/0
+PHASE threads=1 depth=10 path=SPLIT 
+PHASE threads=1 depth=10 path=R levels=8 coarsened=4782406
+PHASE threads=1 depth=10 path=B2 levels=7 coarsest=87262
+PHASE threads=1 depth=10 path=CS levels=10 reused=6 fresh=4 coarsened=600978 cells_fresh=1024 g_n=229327 reasons=0/1007/15/2/0
+PHASE threads=1 depth=11 path=SPLIT 
+PHASE threads=1 depth=11 path=R levels=6 coarsened=4557458
+PHASE threads=1 depth=11 path=B2 levels=5 coarsest=168442
+PHASE threads=1 depth=11 path=CS levels=8 reused=6 fresh=2 coarsened=657534 cells_fresh=2048 g_n=404402 reasons=0/2032/14/2/0
+PHASE threads=1 depth=12 path=SPLIT 
+PHASE threads=1 depth=12 path=R levels=4 coarsened=4051918
+PHASE threads=1 depth=12 path=B2 levels=3 coarsest=408836
+PHASE threads=1 depth=12 path=CS levels=5 reused=3 fresh=2 coarsened=1087683 cells_fresh=4095 g_n=671748 reasons=1/4093/2/0/0
+PHASE threads=1 depth=13 path=SPLIT 
+PHASE threads=1 depth=13 path=R levels=2 coarsened=2917613
+PHASE threads=1 depth=13 path=B2 levels=2 coarsest=672751
+PHASE threads=1 depth=13 path=CS levels=2 reused=1 fresh=1 coarsened=1114565 cells_fresh=8188 g_n=1114565 reasons=4/8188/0/0/0
+PHASE threads=1 depth=14 path=SPLIT 
+PHASE threads=1 depth=14 path=R levels=1 coarsened=1770289
+PHASE threads=1 depth=14 path=B2 levels=1 coarsest=1098052
+PHASE threads=1 depth=14 path=CS levels=1 reused=1 fresh=0 coarsened=0 cells_fresh=0 g_n=0 reasons=16384/0/0/0/0

@@ -1,0 +1,16 @@
+# feral-amd oracle fixture: diag_4
+# generator: SuiteSparse AMD Rust crate (amd = 0.2.2)
+# provenance:
+#   generator: band(n=4, b=0) — banded + diagonal; programmatic, no RNG
+status: OK
+n: 4
+nz: 4
+nz_a_plus_at: 0
+n_dense: 0
+ncmpa: 0
+lnz: 0
+ndiv: 0
+nms_ldl: 0
+nms_lu: 0
+d_max: 1
+perm: 0 1 2 3

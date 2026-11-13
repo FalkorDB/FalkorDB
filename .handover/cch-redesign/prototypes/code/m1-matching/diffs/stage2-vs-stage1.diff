@@ -1,0 +1,1678 @@
+diff -ru stage1/bench_main.rs stage2/bench_main.rs
+--- stage1/bench_main.rs	2026-11-13 00:25:22
++++ stage2/bench_main.rs	2026-11-13 00:43:31
+@@ -7,6 +7,8 @@
+ //   m1bench checkbreak <graph.txt.gz>                     (closure checker must reject a broken row)
+ //
+ // variants: shem | shem-cap | mm | mm-nocap | mm-r<K> | mm-inv | mm-seq2hop | swap<K> (feral order + K random swaps)
++//           mm-reuse | mm-reuse-ge | mm-reuse-b<K> (M1 reuse prototype; b<K> = deliberate break K)
++//   m1bench samebase <graph.txt.gz> <variant> <seed>       (this crate vs the pre-reuse copy: identical perm?)
+ //
+ // The elimination tree and chordal supergraph are the harness's (cchbench/src/bin/phase3.rs, copied
+ // from the stack's order.rs): Liu's etree, then child absorption in increasing rank.
+@@ -15,6 +17,7 @@
+ use std::time::Instant;
+ 
+ use feral_metis::internals::coarsen::{coarsen, take_level_log, CoarsenCounters, LevelRec};
++use feral_metis::internals::reuse::{NODE_LOG, SPLIT_LOG, STRAD_LOG};
+ use feral_metis::internals::graph::Graph;
+ use feral_metis::internals::rng::SplitMix;
+ use feral_metis::{CscPattern, Matching, MetisOptions};
+@@ -78,6 +81,16 @@
+             o.vwgt_cap = true;
+         }
+         "mm-nocap" => o.matching = Matching::MutualMax,
++        "mm-reuse" | "mm-reuse-ge" | "mm-reuse-capstop" | "mm-reuse-b1" | "mm-reuse-b2" | "mm-reuse-b3" | "mm-reuse-b4" | "mm-reuse-b5" => {
++            o.matching = Matching::MutualMax;
++            o.vwgt_cap = true;
++            o.reuse = true;
++            o.reuse_stop_ge = v == "mm-reuse-ge";
++            o.reuse_capstop = v == "mm-reuse-capstop";
++            if let Some(k) = v.strip_prefix("mm-reuse-b") {
++                o.reuse_break = k.parse().unwrap();
++            }
++        }
+         "mm-inv" => {
+             o.matching = Matching::MutualMax;
+             o.vwgt_cap = true;
+@@ -253,27 +266,37 @@
+     height: u64,
+     mean_depth: f64,
+     cover_ok: bool,
++    tree_mismatch: u64,
+ }
+ 
+-fn quality(s: &Csr, perm: &[u64]) -> Quality {
+-    let iperm = invert(perm, s.n);
+-    let parent = elimination_tree(s, perm, &iperm);
+-    let up = chordal_supergraph(s, perm, &iperm, &parent);
+-    // implicit tree check: parent(r) = up(r)[0]
+-    for r in 0..s.n {
+-        assert_eq!(up.row(r).first().copied().unwrap_or(NONE), parent[r]);
+-    }
+-    // coverage: every skeleton edge is an arc
+-    let mut cover_ok = true;
++/// Implicit tree check: ranks r with parent(r) != up(r)[0].
++fn tree_mismatches(up: &Csr, parent: &[u64]) -> u64 {
++    (0..up.n)
++        .filter(|&r| up.row(r).first().copied().unwrap_or(NONE) != parent[r])
++        .count() as u64
++}
++
++/// Coverage: skeleton entries whose pair is not an arc.
++fn cover_misses(s: &Csr, iperm: &[u64], up: &Csr) -> u64 {
++    let mut miss = 0u64;
+     for u in 0..s.n {
+         for &v in s.row(u) {
+             let (a, b) = (iperm[u], iperm[v as usize]);
+             let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+             if up.row(lo as usize).binary_search(&hi).is_err() {
+-                cover_ok = false;
++                miss += 1;
+             }
+         }
+     }
++    miss
++}
++
++fn quality(s: &Csr, perm: &[u64]) -> Quality {
++    let iperm = invert(perm, s.n);
++    let parent = elimination_tree(s, perm, &iperm);
++    let up = chordal_supergraph(s, perm, &iperm, &parent);
++    let tree_mismatch = tree_mismatches(&up, &parent);
++    let cover_ok = cover_misses(s, &iperm, &up) == 0;
+     let (tri, bad) = triangles_and_closure(&up);
+     // height: nodes on the longest leaf-to-root path (a root alone is 1)
+     let mut depth = vec![0u32; s.n];
+@@ -284,7 +307,7 @@
+         height = height.max(depth[r] as u64);
+         sum += depth[r] as u64;
+     }
+-    Quality { arcs: up.i.len() as u64, tri, bad, height, mean_depth: sum as f64 / s.n as f64, cover_ok }
++    Quality { arcs: up.i.len() as u64, tri, bad, height, mean_depth: sum as f64 / s.n as f64, cover_ok, tree_mismatch }
+ }
+ 
+ fn summarize_levels(log: &[LevelRec]) -> String {
+@@ -327,6 +350,56 @@
+     out
+ }
+ 
++fn clear_logs() {
++    take_level_log();
++    NODE_LOG.lock().unwrap().clear();
++    SPLIT_LOG.lock().unwrap().clear();
++    STRAD_LOG.lock().unwrap().clear();
++}
++
++/// One line per ND depth: splits, fresh coarsening (all variants), and
++/// for reuse cells the levels reused, fresh, skipped, and the weight of
++/// their heaviest coarsest vertex against the cap R would have used.
++fn summarize_depths(
++    log: &[LevelRec],
++    nodes: &[feral_metis::internals::reuse::NodeRec],
++    splits: &[(u32, u32, u64)],
++) -> String {
++    let maxd = splits.iter().map(|x| x.0).max().unwrap_or(0);
++    let mut out = String::new();
++    for d in 0..=maxd {
++        let sp: Vec<_> = splits.iter().filter(|x| x.0 == d).collect();
++        let lv: Vec<_> = log.iter().filter(|r| r.depth == d).collect();
++        let nd: Vec<_> = nodes.iter().filter(|r| r.depth == d).collect();
++        let mut ratios: Vec<f64> = nd
++            .iter()
++            .filter(|r| !r.root)
++            .map(|r| r.maxw as f64 / r.cap_r.max(1) as f64)
++            .collect();
++        ratios.sort_by(|x, y| x.partial_cmp(y).unwrap());
++        let q = |f: f64| if ratios.is_empty() { 0.0 } else { ratios[((ratios.len() - 1) as f64 * f) as usize] };
++        out += &format!(
++            "  DEPTH d={d} splits={} n_sum={} coarsen_levels={} coarsen_nfine={} reuse_cells={} roots={} reused={} fresh={} skipped={} slow={} overcap={} wratio_p50={:.2} wratio_p90={:.2} wratio_max={:.2} l2_cells={}\n",
++            sp.len(),
++            sp.iter().map(|x| x.1 as u64).sum::<u64>(),
++            lv.len(),
++            lv.iter().map(|r| r.n_fine as u64).sum::<u64>(),
++            nd.iter().filter(|r| !r.root).count(),
++            nd.iter().filter(|r| r.root).count(),
++            nd.iter().filter(|r| !r.root).map(|r| r.reused as u64).sum::<u64>(),
++            nd.iter().filter(|r| !r.root).map(|r| r.fresh as u64).sum::<u64>(),
++            nd.iter().map(|r| r.skipped as u64).sum::<u64>(),
++            nd.iter().map(|r| r.slow as u64).sum::<u64>(),
++            nd.iter().filter(|r| !r.root && r.maxw > r.cap_r).count(),
++            q(0.5),
++            q(0.9),
++            q(1.0),
++            nd.iter().filter(|r| !r.root && r.l2).count(),
++        );
++    }
++    out
++}
++
+ fn main() {
+     let a: Vec<String> = std::env::args().collect();
+     let mode = a[1].as_str();
+@@ -342,11 +415,44 @@
+             let mut times = Vec::new();
+             let mut first: Option<Vec<u64>> = None;
+             let mut levels = String::new();
++            let mut depth_lines = String::new();
++            let mut check_lines = String::new();
++            let mut check_tot = String::from("b2_checked=- b2_mismatch=- ident_fail=- b1_invalid=- check_s=-");
+             let mut st = None;
+-            for _ in 0..reps {
+-                take_level_log();
+-                let (mut perm, secs, stats) = order(&s, &opts);
++            let mut mech = String::new();
++            clear_logs();
++            if opts.reuse && std::env::var("M1_NOCHECK").is_err() {
++                // Untimed check rep: B1 == B2 on every level, straddler statistics.
++                let copts = MetisOptions { reuse_check: true, ..opts.clone() };
++                let (perm, secs, _) = order(&s, &copts);
++                let strad = std::mem::take(&mut *STRAD_LOG.lock().unwrap());
++                clear_logs();
++                let (mut c, mut m, mut idf, mut inv) = (0u64, 0u64, 0u64, 0u64);
++                for ((d, l), r) in &strad {
++                    c += r.b2_checked;
++                    m += r.b2_mismatch;
++                    idf += r.ident_fail;
++                    inv += r.b1_invalid;
++                    check_lines += &format!(
++                        "  STRAD d={d} l={l} splits_all={} n_all={} nnz_all={} strad_side_all={} splits={} n={} nnz={} sep_only={} strad_side={} strad_child={} strad_rows_nnz={} parts={} child_n={} ident_fail={} used={} x_n={} x_nnz={} xprev_nnz={} rin={} rout={} x_strad={} b2_checked={} b2_mismatch={} b1_invalid={}\n",
++                        r.splits_all, r.n_all, r.nnz_all, r.strad_side_all, r.splits, r.n_coarse, r.nnz, r.sep_only, r.strad_side, r.strad_child, r.strad_rows_nnz, r.parts, r.child_n, r.ident_fail, r.used, r.x_n, r.x_nnz, r.xprev_nnz, r.recontract_in_nnz, r.recontract_out_nnz, r.x_strad, r.b2_checked, r.b2_mismatch, r.b1_invalid
++                    );
++                }
++                check_tot = format!("b2_checked={c} b2_mismatch={m} ident_fail={idf} b1_invalid={inv} check_s={secs:.3}");
++                first = Some(perm);
++            }
++            for rep in 0..reps {
++                clear_logs();
++                // Break: a different seed on the second repetition.
++                let ropts = if rep == 1 && std::env::var("M1_REP_BREAK").is_ok() {
++                    MetisOptions { seed: seed + 1, ..opts.clone() }
++                } else {
++                    opts.clone()
++                };
++                let (mut perm, secs, stats) = order(&s, &ropts);
+                 let log = take_level_log();
++                let nodes = std::mem::take(&mut *NODE_LOG.lock().unwrap());
++                let splits = std::mem::take(&mut *SPLIT_LOG.lock().unwrap());
+                 if v.starts_with("swap") {
+                     let k: usize = v[4..].parse().unwrap();
+                     let mut r = SplitMix::new(seed ^ 0xABCD);
+@@ -357,12 +463,25 @@
+                     }
+                 }
+                 times.push(secs);
+-                match &first {
+-                    None => {
+-                        levels = summarize_levels(&log);
+-                        st = Some(stats);
+-                        first = Some(perm);
++                if rep == 0 {
++                    levels = summarize_levels(&log);
++                    depth_lines = summarize_depths(&log, &nodes, &splits);
++                    // Mechanism: matching after depth 0 only where reuse ran out.
++                    let after0 = log.iter().filter(|r| r.depth >= 1).count();
++                    let fresh_nodes: u32 = nodes.iter().filter(|r| !r.root).map(|r| r.fresh).sum();
++                    let roots_after0 = nodes.iter().filter(|r| r.root && r.depth >= 1).count();
++                    let mut h: u64 = 0;
++                    for &(d, n, x) in &splits {
++                        if d == 0 {
++                            h = h.rotate_left(7) ^ x ^ (n as u64);
++                        }
+                     }
++                    let roots: Vec<String> = splits.iter().filter(|x| x.0 == 0).map(|x| format!("{}:{:016x}", x.1, x.2)).collect();
++                    mech = format!("coarsen_levels_after_d0={after0} reuse_fresh_levels={fresh_nodes} roots_after_d0={roots_after0} root_hash={h:016x} roots={}", roots.join(","));
++                    st = Some(stats);
++                }
++                match &first {
++                    None => first = Some(perm),
+                     Some(p) => assert_eq!(p, &perm, "order differs between repetitions"),
+                 }
+             }
+@@ -372,12 +491,13 @@
+             ts.sort_by(|x, y| x.partial_cmp(y).unwrap());
+             let st = st.unwrap();
+             println!(
+-                "RESULT graph={} variant={v} seed={seed} arcs={} triangles={} closure_violations={} cover_ok={} etree_height={} mean_depth={:.1} order_s_median={:.3} order_s_all={:?} nd_levels_total={} two_hop_fallbacks={} sep_vertices={}",
++                "RESULT graph={} variant={v} seed={seed} arcs={} triangles={} closure_violations={} cover_ok={} tree_mismatch={} etree_height={} mean_depth={:.1} order_s_median={:.3} order_s_all={:?} nd_levels_total={} two_hop_fallbacks={} sep_vertices={} {mech} {check_tot}",
+                 a[2].rsplit('/').next().unwrap(),
+                 q.arcs,
+                 q.tri,
+                 q.bad,
+                 q.cover_ok,
++                q.tree_mismatch,
+                 q.height,
+                 q.mean_depth,
+                 ts[ts.len() / 2],
+@@ -387,7 +507,38 @@
+                 st.n_separator_vertices
+             );
+             println!("  {levels}");
++            print!("{depth_lines}");
++            print!("{check_lines}");
+         }
++        "strad" => {
++            // The untimed check rep alone (B1 == B2, straddler statistics), with quality.
++            let v = a[3].as_str();
++            let seed: u64 = a[4].parse().unwrap();
++            let opts = MetisOptions { reuse_check: true, ..variant_opts(v, seed) };
++            assert!(opts.reuse, "strad: a reuse variant");
++            clear_logs();
++            let (perm, secs, _) = order(&s, &opts);
++            let strad = std::mem::take(&mut *STRAD_LOG.lock().unwrap());
++            clear_logs();
++            let q = quality(&s, &perm);
++            let (mut c, mut m, mut idf, mut inv) = (0u64, 0u64, 0u64, 0u64);
++            let mut lines = String::new();
++            for ((d, l), r) in &strad {
++                c += r.b2_checked;
++                m += r.b2_mismatch;
++                idf += r.ident_fail;
++                inv += r.b1_invalid;
++                lines += &format!(
++                    "  STRAD d={d} l={l} splits_all={} n_all={} nnz_all={} strad_side_all={} splits={} n={} nnz={} sep_only={} strad_side={} strad_child={} strad_rows_nnz={} parts={} child_n={} ident_fail={} used={} x_n={} x_nnz={} xprev_nnz={} rin={} rout={} x_strad={} b2_checked={} b2_mismatch={} b1_invalid={}\n",
++                    r.splits_all, r.n_all, r.nnz_all, r.strad_side_all, r.splits, r.n_coarse, r.nnz, r.sep_only, r.strad_side, r.strad_child, r.strad_rows_nnz, r.parts, r.child_n, r.ident_fail, r.used, r.x_n, r.x_nnz, r.xprev_nnz, r.recontract_in_nnz, r.recontract_out_nnz, r.x_strad, r.b2_checked, r.b2_mismatch, r.b1_invalid
++                );
++            }
++            println!(
++                "STRADRUN graph={} variant={v} seed={seed} arcs={} triangles={} etree_height={} closure_violations={} cover_ok={} tree_mismatch={} b2_checked={c} b2_mismatch={m} ident_fail={idf} b1_invalid={inv} check_s={secs:.3}",
++                a[2].rsplit('/').next().unwrap(), q.arcs, q.tri, q.height, q.bad, q.cover_ok, q.tree_mismatch
++            );
++            print!("{lines}");
++        }
+         "coarsen" => {
+             // largest connected component, coarsened to <= 100 (the design's cell floor)
+             let v = a[3].as_str();
+@@ -458,31 +609,84 @@
+         "same" => {
+             let (mut iso, nodes, xadj, adj) = connected_pattern(&s);
+             let pat = CscPattern::new(nodes.len(), &xadj, &adj).unwrap();
+-            let mine = feral_metis::metis_order(&pat).unwrap();
++            let mine = if std::env::var("M1_SAME_BREAK").is_ok() {
++                // Break: the copy with seed 2 must not match feral's default (seed 1).
++                feral_metis::metis_order_full(&pat, &MetisOptions { seed: 2, ..MetisOptions::default() }).unwrap().0
++            } else {
++                feral_metis::metis_order(&pat).unwrap()
++            };
+             let pat2 = feral_orig::CscPattern::new(nodes.len(), &xadj, &adj).unwrap();
+             let orig = feral_orig::metis_order(&pat2).unwrap();
+-            println!("SAME stock-copy == original feral f127189: {}", mine == orig);
++            println!("SAME graph={} break={} stock-copy == original feral f127189: {}", a[2].rsplit('/').next().unwrap(), std::env::var("M1_SAME_BREAK").is_ok(), mine == orig);
+             iso.extend(mine.into_iter().map(|v| nodes[v as usize]));
+         }
+         "checkbreak" => {
+-            let opts = variant_opts("shem", 1);
++            let v = a.get(3).map_or("shem", |x| x.as_str());
++            let opts = variant_opts(v, 1);
+             let (perm, _, _) = order(&s, &opts);
+             let iperm = invert(&perm, s.n);
+             let parent = elimination_tree(&s, &perm, &iperm);
+-            let mut up = chordal_supergraph(&s, &perm, &iperm, &parent);
+-            let (t0, b0) = triangles_and_closure(&up);
++            let up = chordal_supergraph(&s, &perm, &iperm, &parent);
++            let report = |tag: &str, up: &Csr, parent: &[u64]| {
++                let (t, b) = triangles_and_closure(up);
++                println!(
++                    "CHECKBREAK variant={v} {tag}: tree_mismatch={} cover_misses={} closure_violations={b} triangles={t}",
++                    tree_mismatches(up, parent),
++                    cover_misses(&s, &iperm, up)
++                );
++            };
++            report("intact", &up, &parent);
+             // c = first rank with >= 3 upper neighbours, r = its parent, z = its next one:
+             // closure needs z in up(r); drop it there.
+             let c = (0..up.n).find(|&c| up.row(c).len() >= 3).unwrap();
+             let r = up.row(c)[0] as usize;
+             let z = up.row(c)[1];
+-            let pos = up.p[r] as usize + up.row(r).binary_search(&z).unwrap();
+-            up.i.remove(pos);
+-            for k in r + 1..=up.n {
+-                up.p[k] -= 1;
++            let drop_arc = |up: &Csr, r: usize, z: u64| {
++                let mut b = Csr { n: up.n, p: up.p.clone(), i: up.i.clone() };
++                let pos = b.p[r] as usize + b.row(r).binary_search(&z).unwrap();
++                b.i.remove(pos);
++                for k in r + 1..=b.n {
++                    b.p[k] -= 1;
++                }
++                b
++            };
++            report(&format!("closure break: arc ({r},{z}) dropped"), &drop_arc(&up, r, z), &parent);
++            // cover: drop the arc of a skeleton edge that is not a tree edge
++            let (u, w) = (0..s.n)
++                .flat_map(|u| s.row(u).iter().map(move |&v| (u, v as usize)))
++                .map(|(u, v)| {
++                    let (x, y) = (iperm[u], iperm[v]);
++                    if x < y { (x as usize, y) } else { (y as usize, x) }
++                })
++                .find(|&(lo, hi)| parent[lo] != hi)
++                .unwrap();
++            report(&format!("cover break: skeleton arc ({u},{w}) dropped"), &drop_arc(&up, u, w), &parent);
++            // tree: re-point one parent to its second upper neighbour
++            let t = (0..up.n).find(|&t| up.row(t).len() >= 2).unwrap();
++            let mut bad_parent = parent.clone();
++            bad_parent[t] = up.row(t)[1];
++            report(&format!("tree break: parent({t}) := up({t})[1]"), &up, &bad_parent);
++        }
++        "samebase" => {
++            // This crate against the untouched pre-reuse copy, same variant and seed.
++            let v = a[3].as_str();
++            let seed: u64 = a[4].parse().unwrap();
++            let (_, nodes, xadj, adj) = connected_pattern(&s);
++            let pat = CscPattern::new(nodes.len(), &xadj, &adj).unwrap();
++            let bump = if std::env::var("M1_SAMEBASE_BREAK").is_ok() { 1 } else { 0 };
++            let mine = feral_metis::metis_order_full(&pat, &variant_opts(v, seed + bump)).unwrap().0;
++            let pat2 = feral_base::CscPattern::new(nodes.len(), &xadj, &adj).unwrap();
++            let mut bo = feral_base::MetisOptions { seed, ..feral_base::MetisOptions::default() };
++            match v {
++                "shem" => {}
++                "mm" => {
++                    bo.matching = feral_base::Matching::MutualMax;
++                    bo.vwgt_cap = true;
++                }
++                _ => panic!("samebase: shem or mm"),
+             }
+-            let (t1, b1) = triangles_and_closure(&up);
+-            println!("CHECKBREAK intact: triangles={t0} violations={b0}; one arc dropped from rank {r}: triangles={t1} violations={b1}");
++            let base = feral_base::metis_order_full(&pat2, &bo).unwrap().0;
++            println!("SAMEBASE graph={} variant={v} seed={seed} break={bump} identical={}", a[2].rsplit('/').next().unwrap(), mine == base);
+         }
+         "export" => {
+             let (_, nodes, xadj, adj) = connected_pattern(&s);
+diff -ru stage1/coarsen.rs stage2/coarsen.rs
+--- stage1/coarsen.rs	2026-11-13 00:30:08
++++ stage2/coarsen.rs	2026-11-13 00:30:18
+@@ -27,6 +27,7 @@
+ use crate::rng::SplitMix;
+ use crate::{Matching, MetisOptions};
+ use feral_ordering_core::Idx;
++use std::sync::atomic::{AtomicU32, Ordering};
+ use std::sync::Mutex;
+ 
+ const UNMATCHED: Idx = -1;
+@@ -49,8 +50,14 @@
+     pub two_hop: bool,
+     /// Pairs refused by the vertex-weight cap (SHEM: skipped candidates).
+     pub cap_refusals: u64,
++    /// M1 reuse prototype: ND depth of the call (bookkeeping only).
++    pub depth: u32,
+ }
+ 
++/// M1 reuse prototype: the ND depth the next `coarsen` call belongs to.
++/// Written by the ND driver before it coarsens; read only for the log.
++pub static CUR_DEPTH: AtomicU32 = AtomicU32::new(0);
++
+ /// M1 prototype: every level built since the last `take_level_log`.
+ pub static LEVEL_LOG: Mutex<(u32, Vec<LevelRec>)> = Mutex::new((0, Vec::new()));
+ 
+@@ -453,6 +460,7 @@
+             capped: info.capped,
+             two_hop: info.two_hop,
+             cap_refusals: info.cap_refusals,
++            depth: CUR_DEPTH.load(Ordering::Relaxed),
+         });
+         if new_nvtxs == 0 || new_nvtxs as f64 > 0.95 * prev_nvtxs as f64 {
+             // Stalled: this level made <5% progress, so stop. Keep it
+@@ -542,7 +550,7 @@
+ }
+ 
+ /// Build the coarse graph from a fine graph and a fine-to-coarse map.
+-fn contract(fine: &Graph, cmap: &[Idx], cnvtxs: Idx) -> Graph {
++pub fn contract(fine: &Graph, cmap: &[Idx], cnvtxs: Idx) -> Graph {
+     let cn = cnvtxs as usize;
+     // Accumulate vertex weights.
+     let mut vwgt: Vec<Idx> = vec![0; cn];
+diff -ru stage1/lib.rs stage2/lib.rs
+--- stage1/lib.rs	2026-11-13 00:30:08
++++ stage2/lib.rs	2026-11-13 00:38:46
+@@ -64,6 +64,10 @@
+     pub use crate::initial_partition;
+     pub use crate::rng;
+     pub use crate::separator;
++    /// M1 reuse prototype logs.
++    pub mod reuse {
++        pub use crate::node_nd::{NodeRec, StradRec, NODE_LOG, SPLIT_LOG, STRAD_LOG};
++    }
+ }
+ 
+ pub use feral_ordering_core::{CscPattern, OrderingError, OrderingStats, CONTRACT_VERSION};
+@@ -174,6 +178,30 @@
+     /// M1 prototype: 2-hop pass for mutual-max (true = feral's sequential
+     /// pass, false = the parallel anchor-grouping pass).
+     pub mm_seq_two_hop: bool,
++    /// M1 reuse prototype (D5 option b): coarsen each top-level
++    /// component once (depth 0) and give every deeper ND cell the
++    /// depth-0 levels restricted to its vertices, straddlers split,
++    /// instead of re-coarsening it. Matching never runs after depth 0
++    /// unless the depth-0 levels run out (counted as fresh levels).
++    pub reuse: bool,
++    /// M1 reuse prototype: stop a cell's reused levels at the deepest
++    /// one where it still has at least CoarsenTo vertices (the brief's
++    /// literal rule), instead of `coarsen`'s rule (the first level at
++    /// or below CoarsenTo).
++    pub reuse_stop_ge: bool,
++    /// M1 reuse prototype: at every split, build the children's levels
++    /// both ways (B1 re-contraction, B2 masked split plus straddler
++    /// re-contraction), compare them, and log straddler statistics.
++    /// Does not change the order.
++    pub reuse_check: bool,
++    /// M1 reuse prototype: deliberate break selector (0 = none).
++    pub reuse_break: u32,
++    /// M1 reuse diagnostic: reuse a level only while the cell's heaviest
++    /// coarse vertex stays within the cap R would use at that stage
++    /// (`1.5 * cell weight / CoarsenTo`); below that, coarsen fresh.
++    /// Best-of-5 cells reuse the top stage only, and each run coarsens
++    /// fresh as R does.
++    pub reuse_capstop: bool,
+ }
+ 
+ /// M1 prototype: the matching used by coarsening.
+@@ -203,6 +231,11 @@
+             vwgt_cap: false,
+             mm_invert_weight: false,
+             mm_seq_two_hop: false,
++            reuse: false,
++            reuse_stop_ge: false,
++            reuse_check: false,
++            reuse_break: 0,
++            reuse_capstop: false,
+         }
+     }
+ }
+diff -ru stage1/node_nd.rs stage2/node_nd.rs
+--- stage1/node_nd.rs	2026-11-13 00:30:08
++++ stage2/node_nd.rs	2026-11-13 00:40:55
+@@ -15,7 +15,7 @@
+ //! Internally we populate `iperm[original_vertex] = new_position` and
+ //! invert at the end.
+ 
+-use crate::coarsen::{coarsen, CoarsenCounters};
++use crate::coarsen::{coarsen, contract, CoarseGraph, CoarsenCounters, CUR_DEPTH};
+ use crate::fm_refine::{refine_bisection, refine_separator, refine_separator_fm};
+ use crate::graph::Graph;
+ use crate::initial_partition::{initial_bisect_bfs, initial_bisect_ggp, PART_A, PART_B};
+@@ -24,6 +24,10 @@
+ use crate::{MetisOptions, MetisStats};
+ use feral_ordering_core::Idx;
+ use feral_ordering_core::{CscPattern, OrderingError};
++use std::cell::RefCell;
++use std::collections::BTreeMap;
++use std::sync::atomic::Ordering;
++use std::sync::Mutex;
+ 
+ /// Entry point. Produces a permutation `perm` where `perm[i]` is the
+ /// old vertex id placed at new position `i` (new-to-old).
+@@ -40,7 +44,7 @@
+     stats.n_components = ncc as u32;
+     let identity: Vec<Idx> = (0..n as Idx).collect();
+     split_and_recurse(
+-        graph, identity, &cc_label, ncc, 0, &mut iperm, opts, &mut rng, stats,
++        graph, identity, &cc_label, ncc, 0, &mut iperm, opts, &mut rng, stats, 0, None,
+     )?;
+     invert_iperm(&iperm, n)
+ }
+@@ -62,6 +66,8 @@
+     opts: &MetisOptions,
+     rng: &mut SplitMix,
+     stats: &mut MetisStats,
++    depth: u32,
++    reuse: Option<Reuse<'_>>,
+ ) -> Result<(), OrderingError> {
+     let n = graph.nvtxs as usize;
+     // Counting sort by label keeps vertex order inside each component.
+@@ -82,7 +88,7 @@
+         fill[c] += 1;
+     }
+     drop(fill);
+-    let mut pieces: Vec<(Graph, Vec<Idx>)> = Vec::with_capacity(ncc);
++    let mut pieces: Vec<(Graph, Vec<Idx>, Option<Vec<Idx>>)> = Vec::with_capacity(ncc);
+     let mut singles: Vec<(usize, Idx)> = Vec::new();
+     for c in 0..ncc {
+         let m = &members[start[c]..start[c + 1]];
+@@ -92,14 +98,18 @@
+         }
+         let sub = build_induced(&graph, m, &local_id);
+         let map: Vec<Idx> = m.iter().map(|&v| vtx_map[v as usize]).collect();
+-        pieces.push((sub, map));
++        let gid = reuse
++            .as_ref()
++            .map(|r| m.iter().map(|&v| r.gid[v as usize]).collect());
++        pieces.push((sub, map, gid));
+     }
++    let root = reuse.map(|r| r.root);
+     drop((graph, vtx_map, members, local_id));
+     // Re-interleave singletons in component order.
+     let mut off = offset;
+     let mut si = singles.into_iter().peekable();
+     let mut k = 0usize;
+-    for (sub, map) in pieces {
++    for (sub, map, gid) in pieces {
+         while let Some(&(pos, orig)) = si.peek() {
+             if pos != k {
+                 break;
+@@ -110,7 +120,11 @@
+             si.next();
+         }
+         let count = sub.nvtxs as usize;
+-        recurse(sub, map, off, iperm, opts, rng, stats)?;
++        let ctx = gid.map(|gid| Reuse {
++            root: root.expect("reuse context"),
++            gid,
++        });
++        recurse(sub, map, off, iperm, opts, rng, stats, depth, ctx)?;
+         off += count;
+         k += 1;
+     }
+@@ -122,6 +136,7 @@
+     Ok(())
+ }
+ 
++#[allow(clippy::too_many_arguments)]
+ fn recurse(
+     subgraph: Graph,
+     vtx_map: Vec<Idx>,
+@@ -130,6 +145,8 @@
+     opts: &MetisOptions,
+     rng: &mut SplitMix,
+     stats: &mut MetisStats,
++    depth: u32,
++    reuse: Option<Reuse<'_>>,
+ ) -> Result<(), OrderingError> {
+     let n = subgraph.nvtxs as usize;
+     if n == 0 {
+@@ -143,7 +160,7 @@
+     let (cc_label, ncc) = connected_components(&subgraph);
+     if ncc > 1 {
+         return split_and_recurse(
+-            subgraph, vtx_map, &cc_label, ncc, offset, iperm, opts, rng, stats,
++            subgraph, vtx_map, &cc_label, ncc, offset, iperm, opts, rng, stats, depth, reuse,
+         );
+     }
+     drop(cc_label);
+@@ -153,11 +170,97 @@
+         return Ok(());
+     }
+ 
+-    let labels = if n >= L2_MIN_VERTICES {
+-        best_of_bisections(&subgraph, opts, rng, stats)
+-    } else {
+-        multilevel_node_bisection(&subgraph, opts, rng, stats)
++    CUR_DEPTH.store(depth, Ordering::Relaxed);
++    let l2 = n >= L2_MIN_VERTICES;
++    // Break 3: cells at depth >= 3 drop their context and re-coarsen.
++    let reuse = if opts.reuse_break == 3 && depth >= 3 { None } else { reuse };
++    let root_owned: RootHier;
++    let mut check_hier: Option<Hier> = None;
++    let (labels, shared): (Vec<u8>, Option<(&RootHier, Vec<Idx>)>) = match reuse {
++        None if !opts.reuse => {
++            let labels = if l2 {
++                best_of_bisections(&subgraph, opts, rng, stats)
++            } else {
++                multilevel_node_bisection(&subgraph, opts, rng, stats)
++            };
++            (labels, None)
++        }
++        None => {
++            // A root (depth 0, or a break-3 cell): R's bisection, keeping
++            // the winning hierarchy for the descendants.
++            if opts.reuse_break == 4 {
++                rng.next_u64();
++            }
++            let (labels, levels) = if l2 {
++                best_of_bisections_keep(&subgraph, opts, rng, stats)
++            } else {
++                mnb_keep(&subgraph, opts, rng, stats)
++            };
++            root_owned = RootHier::new(&levels, n);
++            NODE_LOG.lock().unwrap().push(NodeRec {
++                depth,
++                n: n as u32,
++                root: true,
++                l2,
++                reused: 0,
++                fresh: levels.len() as u32,
++                skipped: 0,
++                slow: 0,
++                maxw: levels.last().map_or(1, |c| *c.graph.vwgt.iter().max().unwrap()),
++                cap_r: ((1.5 * n as f64) / (opts.coarsen_floor as f64)) as Idx,
++            });
++            if opts.reuse_check {
++                check_hier = Some(Hier::from_root(levels));
++            }
++            (labels, Some((&root_owned, (0..n as Idx).collect())))
++        }
++        Some(ctx) if opts.reuse_capstop && l2 => {
++            // Diagnostic: reuse the top stage, then R's five fresh runs.
++            let h = reuse_levels(&subgraph, &ctx.gid, ctx.root, l2, opts, rng, stats, true);
++            let labels = best_of_bisections_top(&subgraph, &h.levels, opts, rng, stats);
++            NODE_LOG.lock().unwrap().push(NodeRec {
++                depth,
++                n: n as u32,
++                root: false,
++                l2,
++                reused: h.levels.len() as u32 - h.fresh,
++                fresh: h.fresh,
++                skipped: h.skipped,
++                slow: h.slow,
++                maxw: h.levels.last().map_or(1, |c| *c.graph.vwgt.iter().max().unwrap()),
++                cap_r: ((1.5 * n as f64) / (opts.coarsen_floor as f64)) as Idx,
++            });
++            if opts.reuse_check {
++                check_hier = Some(h);
++            }
++            (labels, Some((ctx.root, ctx.gid)))
++        }
++        Some(ctx) => {
++            let h = reuse_levels(&subgraph, &ctx.gid, ctx.root, l2, opts, rng, stats, true);
++            let labels = if l2 {
++                best_of_bisections_given(&subgraph, &h.levels, h.split, opts, rng, stats)
++            } else {
++                bisect_on_levels(&subgraph, &h.levels, opts, rng, stats)
++            };
++            NODE_LOG.lock().unwrap().push(NodeRec {
++                depth,
++                n: n as u32,
++                root: false,
++                l2,
++                reused: h.levels.len() as u32 - h.fresh,
++                fresh: h.fresh,
++                skipped: h.skipped,
++                slow: h.slow,
++                maxw: h.levels.last().map_or(1, |c| *c.graph.vwgt.iter().max().unwrap()),
++                cap_r: ((1.5 * n as f64) / (opts.coarsen_floor as f64)) as Idx,
++            });
++            if opts.reuse_check {
++                check_hier = Some(h);
++            }
++            (labels, Some((ctx.root, ctx.gid)))
++        }
+     };
++    log_split(depth, &labels);
+ 
+     let mut a_verts: Vec<Idx> = Vec::new();
+     let mut b_verts: Vec<Idx> = Vec::new();
+@@ -169,7 +272,6 @@
+             _ => s_verts.push(v as Idx),
+         }
+     }
+-    drop(labels);
+ 
+     if a_verts.is_empty() || b_verts.is_empty() {
+         amd_leaf(&subgraph, &vtx_map, offset, iperm, stats)?;
+@@ -198,12 +300,29 @@
+         local_id[v as usize] = i as Idx;
+     }
+     let sub_b = build_induced(&subgraph, &b_verts, &local_id);
++    // Reuse: each child keeps the root hierarchy and its vertices' root ids.
++    let children = shared.map(|(root, gid)| {
++        let ga: Vec<Idx> = a_verts.iter().map(|&v| gid[v as usize]).collect();
++        let gb: Vec<Idx> = b_verts.iter().map(|&v| gid[v as usize]).collect();
++        if let Some(h) = &check_hier {
++            check_split(
++                &subgraph, &labels, h, root, &sub_a, &ga, &a_verts, &sub_b, &gb, &b_verts, opts,
++                depth,
++            );
++        }
++        (Reuse { root, gid: ga }, Reuse { root, gid: gb })
++    });
++    drop((check_hier, labels));
+     let map_a: Vec<Idx> = a_verts.iter().map(|&l| vtx_map[l as usize]).collect();
+     let map_b: Vec<Idx> = b_verts.iter().map(|&l| vtx_map[l as usize]).collect();
+     drop((subgraph, vtx_map, local_id, a_verts, b_verts));
++    let (ra, rb) = match children {
++        Some((a, b)) => (Some(a), Some(b)),
++        None => (None, None),
++    };
+ 
+-    recurse(sub_a, map_a, offset, iperm, opts, rng, stats)?;
+-    recurse(sub_b, map_b, offset + na, iperm, opts, rng, stats)?;
++    recurse(sub_a, map_a, offset, iperm, opts, rng, stats, depth + 1, ra)?;
++    recurse(sub_b, map_b, offset + na, iperm, opts, rng, stats, depth + 1, rb)?;
+     Ok(())
+ }
+ 
+@@ -517,6 +636,944 @@
+         adjncy,
+         vwgt,
+         adjwgt,
++    }
++}
++
++// ---------------------------------------------------------------------
++// M1 reuse prototype (D5 option b): reuse the depth-0 hierarchy.
++// ---------------------------------------------------------------------
++
++/// The depth-0 (root) hierarchy's maps, shared by every descendant cell
++/// of one top-level component.
++pub(crate) struct RootHier {
++    /// `cmaps[l]` maps a root level-`l` vertex to its level-`l+1` vertex.
++    cmaps: Vec<Vec<Idx>>,
++    /// Epoch-stamped scratch keyed by a root-level id (size: root n).
++    scratch: RefCell<Scratch>,
++}
++
++struct Scratch {
++    epoch: u32,
++    slot: Vec<(u32, Idx)>,
++}
++
++impl Scratch {
++    fn next(&mut self) -> u32 {
++        self.epoch += 1;
++        self.epoch
++    }
++}
++
++impl RootHier {
++    fn new(levels: &[CoarseGraph], n: usize) -> Self {
++        RootHier {
++            cmaps: levels.iter().map(|c| c.cmap.clone()).collect(),
++            scratch: RefCell::new(Scratch {
++                epoch: 0,
++                slot: vec![(0, 0); n],
++            }),
++        }
++    }
++    fn depth(&self) -> usize {
++        self.cmaps.len()
++    }
++    /// Root level-`to` id of a root level-`from` id.
++    fn lift(&self, mut r: Idx, from: usize, to: usize) -> Idx {
++        for l in from..to {
++            r = self.cmaps[l][r as usize];
++        }
++        r
++    }
++}
++
++/// What a cell below depth 0 carries: the root maps and the root
++/// level-0 id of each of its vertices.
++pub(crate) struct Reuse<'a> {
++    root: &'a RootHier,
++    gid: Vec<Idx>,
++}
++
++const FRESH: u32 = u32::MAX;
++
++/// A cell's hierarchy (B1: the root matching, straddlers split).
++#[derive(Default)]
++struct Hier {
++    levels: Vec<CoarseGraph>,
++    /// Root level (1-based) of each level; `FRESH` for a fresh level.
++    rlev: Vec<u32>,
++    /// Root ids of each level's vertices (empty for a fresh level).
++    rids: Vec<Vec<Idx>>,
++    /// L2 cells: how many levels form the top stage (to max(100, n/30)).
++    split: usize,
++    fresh: u32,
++    skipped: u32,
++    slow: u32,
++}
++
++impl Hier {
++    fn from_root(levels: Vec<CoarseGraph>) -> Self {
++        let rlev = (1..=levels.len() as u32).collect();
++        let rids = levels.iter().map(|c| (0..c.graph.nvtxs).collect()).collect();
++        Hier {
++            levels,
++            rlev,
++            rids,
++            ..Default::default()
++        }
++    }
++}
++
++/// One reused level for a cell: group the cell's current vertices (root
++/// ids `rid` at root level `l-1`) by their root id at level `l`. Coarse
++/// ids follow first appearance, as `renumber` does, so a level that
++/// does not merge anything is the identity.
++fn compose_level(root: &RootHier, l: usize, rid: &[Idx]) -> (Vec<Idx>, Vec<Idx>) {
++    let cm = &root.cmaps[l - 1];
++    let mut sc = root.scratch.borrow_mut();
++    let e = sc.next();
++    let mut cmap = Vec::with_capacity(rid.len());
++    let mut nrid = Vec::new();
++    for &r in rid {
++        let t = cm[r as usize];
++        let s = &mut sc.slot[t as usize];
++        if s.0 == e {
++            cmap.push(s.1);
++        } else {
++            let id = nrid.len() as Idx;
++            *s = (e, id);
++            nrid.push(t);
++            cmap.push(id);
++        }
++    }
++    (cmap, nrid)
++}
++
++/// B1: a cell's levels from the root matching, re-contracted from the
++/// cell's own graph. Stops like `coarsen` (first level at or below the
++/// floor) unless `reuse_stop_ge` (deepest level still at or above it).
++/// L2 cells take the top stage to max(100, n/30), then the rest to
++/// `coarsen_floor`. When the root levels run out above the floor, the
++/// rest is coarsened fresh (only if `allow_fresh`).
++#[allow(clippy::too_many_arguments)]
++fn reuse_levels(
++    g: &Graph,
++    gid: &[Idx],
++    root: &RootHier,
++    l2: bool,
++    opts: &MetisOptions,
++    rng: &mut SplitMix,
++    stats: &mut MetisStats,
++    allow_fresh: bool,
++) -> Hier {
++    let n = g.nvtxs as usize;
++    let f1 = (g.nvtxs as u32 / 30).max(100) as usize;
++    let f2 = opts.coarsen_floor as usize;
++    let floors: Vec<usize> = if l2 && opts.reuse_capstop {
++        vec![f1]
++    } else if l2 {
++        vec![f1, f2]
++    } else {
++        vec![f2]
++    };
++    let total_w: Idx = g.vwgt.iter().sum();
++    let mut h = Hier::default();
++    let mut rid: Vec<Idx> = gid.to_vec();
++    let mut l = 1usize;
++    let mut pending: Option<(Vec<Idx>, Vec<Idx>, usize)> = None;
++    let mut exhausted = false;
++    for (pi, &floor) in floors.iter().enumerate() {
++        loop {
++            let cur_n = h.levels.last().map_or(n, |c| c.graph.nvtxs as usize);
++            if cur_n <= floor {
++                break;
++            }
++            if exhausted || (pending.is_none() && l > root.depth()) {
++                exhausted = true;
++                if !allow_fresh {
++                    break;
++                }
++                let fresh_opts = MetisOptions {
++                    coarsen_floor: floor as u32,
++                    ..opts.clone()
++                };
++                let mut ctr = CoarsenCounters::default();
++                let cur = h.levels.last().map_or(g, |c| &c.graph);
++                let lv = coarsen(cur, &fresh_opts, rng, &mut ctr);
++                stats.n_two_hop_fallbacks += ctr.n_two_hop_fallbacks;
++                stats.n_levels += lv.len() as u32;
++                h.fresh += lv.len() as u32;
++                for c in lv {
++                    h.levels.push(c);
++                    h.rlev.push(FRESH);
++                    h.rids.push(Vec::new());
++                }
++                break;
++            }
++            let (cmap, nrid, lvl) = match pending.take() {
++                Some(p) => p,
++                None => {
++                    let (c, r) = compose_level(root, l, &rid);
++                    l += 1;
++                    (c, r, l - 1)
++                }
++            };
++            let new_n = nrid.len();
++            if new_n == cur_n {
++                // Nothing merges inside this cell at this root level.
++                rid = nrid;
++                h.skipped += 1;
++                continue;
++            }
++            if opts.reuse_stop_ge && new_n < floor {
++                pending = Some((cmap, nrid, lvl));
++                break;
++            }
++            let cur = h.levels.last().map_or(g, |c| &c.graph);
++            if opts.reuse_capstop {
++                // R's cap for this stage, as `coarsen` computes it.
++                let cap = ((1.5 * total_w as f64) / (floor as f64)) as Idx;
++                let mut w = vec![0 as Idx; new_n];
++                for (v, &c) in cmap.iter().enumerate() {
++                    w[c as usize] += cur.vwgt[v];
++                }
++                if w.iter().any(|&x| x > cap) {
++                    exhausted = true;
++                    continue;
++                }
++            }
++            if new_n as f64 > 0.95 * cur_n as f64 {
++                h.slow += 1;
++            }
++            let mut cg = contract(cur, &cmap, new_n as Idx);
++            if opts.reuse_break == 5 && !cg.adjwgt.is_empty() {
++                // Break 5: one asymmetric edge weight in every reused level.
++                cg.adjwgt[0] += 1;
++            }
++            h.levels.push(CoarseGraph { graph: cg, cmap });
++            h.rlev.push(lvl as u32);
++            h.rids.push(nrid.clone());
++            rid = nrid;
++        }
++        if pi == 0 && l2 {
++            h.split = h.levels.len();
++        }
++    }
++    h
++}
++
++/// `multilevel_node_bisection` after coarsening, on given levels
++/// (a copy of its body; the stock function is untouched).
++fn bisect_on_levels(
++    graph: &Graph,
++    levels: &[CoarseGraph],
++    opts: &MetisOptions,
++    rng: &mut SplitMix,
++    stats: &mut MetisStats,
++) -> Vec<u8> {
++    let coarsest: &Graph = match levels.last() {
++        Some(cg) => &cg.graph,
++        None => graph,
++    };
++    let total: i64 = coarsest.vwgt.iter().copied().sum();
++    let target = total / 2;
++
++    let mut best_labels: Vec<u8> = vec![PART_A; coarsest.nvtxs as usize];
++    let mut best_cut: Idx = Idx::MAX;
++    for trial in 0..opts.niparts {
++        let mut trial_labels = if trial % 2 == 0 {
++            initial_bisect_ggp(coarsest, rng, target)
++        } else {
++            initial_bisect_bfs(coarsest, rng, target)
++        };
++        let cut = refine_bisection(
++            coarsest,
++            &mut trial_labels,
++            opts.max_imbalance,
++            opts.fm_passes,
++        );
++        stats.n_fm_passes += opts.fm_passes;
++        if cut < best_cut {
++            best_cut = cut;
++            best_labels = trial_labels;
++        }
++    }
++    let mut labels = best_labels;
++
++    if opts.node_refine {
++        construct_separator(coarsest, &mut labels);
++        stats.n_fm_passes += opts.fm_passes;
++        refine_separator_fm(coarsest, &mut labels, opts.max_imbalance, opts.fm_passes);
++        for level_idx in (0..levels.len()).rev() {
++            let cg = &levels[level_idx];
++            let prev_graph: &Graph = if level_idx == 0 {
++                graph
++            } else {
++                &levels[level_idx - 1].graph
++            };
++            let prev_n = prev_graph.nvtxs as usize;
++            let mut proj: Vec<u8> = vec![PART_A; prev_n];
++            for (v, p) in proj.iter_mut().enumerate().take(prev_n) {
++                *p = labels[cg.cmap[v] as usize];
++            }
++            labels = proj;
++            refine_separator_fm(prev_graph, &mut labels, opts.max_imbalance, opts.fm_passes);
++            stats.n_fm_passes += opts.fm_passes;
++        }
++        return labels;
++    }
++
++    for level_idx in (0..levels.len()).rev() {
++        let cg = &levels[level_idx];
++        let prev_graph: &Graph = if level_idx == 0 {
++            graph
++        } else {
++            &levels[level_idx - 1].graph
++        };
++        let prev_n = prev_graph.nvtxs as usize;
++        let mut proj: Vec<u8> = vec![PART_A; prev_n];
++        for (v, p) in proj.iter_mut().enumerate().take(prev_n) {
++            let c = cg.cmap[v] as usize;
++            *p = labels[c];
++        }
++        labels = proj;
++        refine_bisection(prev_graph, &mut labels, opts.max_imbalance, opts.fm_passes);
++        stats.n_fm_passes += opts.fm_passes;
++    }
++    construct_separator(graph, &mut labels);
++    refine_separator(graph, &mut labels, opts.max_imbalance, opts.fm_passes);
++    stats.n_fm_passes += opts.fm_passes;
++    labels
++}
++
++/// `multilevel_node_bisection`, keeping its levels.
++fn mnb_keep(
++    graph: &Graph,
++    opts: &MetisOptions,
++    rng: &mut SplitMix,
++    stats: &mut MetisStats,
++) -> (Vec<u8>, Vec<CoarseGraph>) {
++    let mut counters = CoarsenCounters::default();
++    let levels = coarsen(graph, opts, rng, &mut counters);
++    stats.n_two_hop_fallbacks += counters.n_two_hop_fallbacks;
++    stats.n_levels += levels.len() as u32;
++    let labels = bisect_on_levels(graph, &levels, opts, rng, stats);
++    (labels, levels)
++}
++
++/// `best_of_bisections`, keeping its top levels plus the winning run's
++/// levels: the root hierarchy the descendants reuse.
++fn best_of_bisections_keep(
++    graph: &Graph,
++    opts: &MetisOptions,
++    rng: &mut SplitMix,
++    stats: &mut MetisStats,
++) -> (Vec<u8>, Vec<CoarseGraph>) {
++    let coarse_opts = MetisOptions {
++        coarsen_floor: (graph.nvtxs as u32 / 30).max(100),
++        ..opts.clone()
++    };
++    let mut counters = CoarsenCounters::default();
++    let mut levels = coarsen(graph, &coarse_opts, rng, &mut counters);
++    stats.n_two_hop_fallbacks += counters.n_two_hop_fallbacks;
++    stats.n_levels += levels.len() as u32;
++    let coarse: &Graph = levels.last().map_or(graph, |c| &c.graph);
++
++    let separator = |labels: &[u8]| -> i64 {
++        labels
++            .iter()
++            .zip(&coarse.vwgt)
++            .filter(|(&p, _)| p != PART_A && p != PART_B)
++            .map(|(_, &w)| w)
++            .sum()
++    };
++    let (mut labels, mut sub) = mnb_keep(coarse, opts, rng, stats);
++    let mut best = separator(&labels);
++    for _ in 1..L2_RUNS {
++        if best == 0 {
++            break;
++        }
++        let (run, run_sub) = mnb_keep(coarse, opts, rng, stats);
++        let sep = separator(&run);
++        if sep < best {
++            best = sep;
++            labels = run;
++            sub = run_sub;
++        }
++    }
++
++    for level_idx in (0..levels.len()).rev() {
++        let cg = &levels[level_idx];
++        let finer: &Graph = if level_idx == 0 {
++            graph
++        } else {
++            &levels[level_idx - 1].graph
++        };
++        labels = (0..finer.nvtxs as usize)
++            .map(|v| labels[cg.cmap[v] as usize])
++            .collect();
++        refine_separator_fm(finer, &mut labels, opts.max_imbalance, opts.fm_passes);
++        stats.n_fm_passes += opts.fm_passes;
++    }
++    levels.extend(sub);
++    (labels, levels)
++}
++
++/// `best_of_bisections` with a given top stage; every run coarsens fresh
++/// (`multilevel_node_bisection`), as R does.
++fn best_of_bisections_top(
++    graph: &Graph,
++    top: &[CoarseGraph],
++    opts: &MetisOptions,
++    rng: &mut SplitMix,
++    stats: &mut MetisStats,
++) -> Vec<u8> {
++    let coarse: &Graph = top.last().map_or(graph, |c| &c.graph);
++    let separator = |labels: &[u8]| -> i64 {
++        labels
++            .iter()
++            .zip(&coarse.vwgt)
++            .filter(|(&p, _)| p != PART_A && p != PART_B)
++            .map(|(_, &w)| w)
++            .sum()
++    };
++    let mut labels = multilevel_node_bisection(coarse, opts, rng, stats);
++    let mut best = separator(&labels);
++    for _ in 1..L2_RUNS {
++        if best == 0 {
++            break;
++        }
++        let run = multilevel_node_bisection(coarse, opts, rng, stats);
++        let sep = separator(&run);
++        if sep < best {
++            best = sep;
++            labels = run;
++        }
++    }
++    for level_idx in (0..top.len()).rev() {
++        let cg = &top[level_idx];
++        let finer: &Graph = if level_idx == 0 {
++            graph
++        } else {
++            &top[level_idx - 1].graph
++        };
++        labels = (0..finer.nvtxs as usize)
++            .map(|v| labels[cg.cmap[v] as usize])
++            .collect();
++        refine_separator_fm(finer, &mut labels, opts.max_imbalance, opts.fm_passes);
++        stats.n_fm_passes += opts.fm_passes;
++    }
++    labels
++}
++
++/// `best_of_bisections` on given levels: the top stage is
++/// `levels[..split]`, and every run bisects `levels[split..]`.
++fn best_of_bisections_given(
++    graph: &Graph,
++    levels: &[CoarseGraph],
++    split: usize,
++    opts: &MetisOptions,
++    rng: &mut SplitMix,
++    stats: &mut MetisStats,
++) -> Vec<u8> {
++    let coarse: &Graph = if split == 0 {
++        graph
++    } else {
++        &levels[split - 1].graph
++    };
++    let sub = &levels[split..];
++    let separator = |labels: &[u8]| -> i64 {
++        labels
++            .iter()
++            .zip(&coarse.vwgt)
++            .filter(|(&p, _)| p != PART_A && p != PART_B)
++            .map(|(_, &w)| w)
++            .sum()
++    };
++    let mut labels = bisect_on_levels(coarse, sub, opts, rng, stats);
++    let mut best = separator(&labels);
++    for _ in 1..L2_RUNS {
++        if best == 0 {
++            break;
++        }
++        let run = bisect_on_levels(coarse, sub, opts, rng, stats);
++        let sep = separator(&run);
++        if sep < best {
++            best = sep;
++            labels = run;
++        }
++    }
++    for level_idx in (0..split).rev() {
++        let cg = &levels[level_idx];
++        let finer: &Graph = if level_idx == 0 {
++            graph
++        } else {
++            &levels[level_idx - 1].graph
++        };
++        labels = (0..finer.nvtxs as usize)
++            .map(|v| labels[cg.cmap[v] as usize])
++            .collect();
++        refine_separator_fm(finer, &mut labels, opts.max_imbalance, opts.fm_passes);
++        stats.n_fm_passes += opts.fm_passes;
++    }
++    labels
++}
++
++/// One record per bisected cell in reuse mode.
++#[derive(Debug, Clone, Copy)]
++pub struct NodeRec {
++    /// ND depth.
++    pub depth: u32,
++    /// Cell size.
++    pub n: u32,
++    /// A root: coarsened fresh (depth 0).
++    pub root: bool,
++    /// Took the best-of-5 (L2) path.
++    pub l2: bool,
++    /// Levels taken from the root hierarchy.
++    pub reused: u32,
++    /// Levels coarsened fresh (for a root: all of them).
++    pub fresh: u32,
++    /// Root levels that merged nothing inside the cell (skipped).
++    pub skipped: u32,
++    /// Reused levels that shrank the cell by under 5 %.
++    pub slow: u32,
++    /// Heaviest vertex at the coarsest level.
++    pub maxw: Idx,
++    /// The cap R would use at the bottom stage: 1.5 n / coarsen_floor.
++    pub cap_r: Idx,
++}
++
++/// Every cell bisected in reuse mode since the last take.
++pub static NODE_LOG: Mutex<Vec<NodeRec>> = Mutex::new(Vec::new());
++
++/// (depth, n, labels hash) of every bisection; the hash only at depth 0.
++pub static SPLIT_LOG: Mutex<Vec<(u32, u32, u64)>> = Mutex::new(Vec::new());
++
++fn log_split(depth: u32, labels: &[u8]) {
++    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
++    if depth == 0 {
++        for &l in labels {
++            h ^= l as u64;
++            h = h.wrapping_mul(0x0100_0000_01b3);
++        }
++    }
++    SPLIT_LOG
++        .lock()
++        .unwrap()
++        .push((depth, labels.len() as u32, if depth == 0 { h } else { 0 }));
++}
++
++/// Straddler statistics and B1/B2 results at one (split depth, root level).
++#[derive(Debug, Default, Clone, Copy)]
++pub struct StradRec {
++    /// Splits with a level at this root level (whether needed or not).
++    pub splits_all: u64,
++    /// Parent coarse vertices at this level, all splits.
++    pub n_all: u64,
++    /// Parent entries at this level, all splits.
++    pub nnz_all: u64,
++    /// Side straddlers at this level, all splits.
++    pub strad_side_all: u64,
++    /// Splits where a child of more than `nd_to_amd_switch` vertices
++    /// coarsens with this level ("needed"); the fields below up to
++    /// `strad_rows_nnz` count only those.
++    pub splits: u64,
++    /// Parent coarse vertices at this level.
++    pub n_coarse: u64,
++    /// Parent entries at this level.
++    pub nnz: u64,
++    /// Parent coarse vertices wholly in the separator (dropped).
++    pub sep_only: u64,
++    /// Parent coarse vertices with members in >= 2 of {A, B, S}.
++    pub strad_side: u64,
++    /// Parent coarse vertices with members in >= 2 of {components of A
++    /// and of B, S}: the children feral recurses into.
++    pub strad_child: u64,
++    /// Parent entries in the rows of side straddlers.
++    pub strad_rows_nnz: u64,
++    /// Sum over parent vertices of the sides {A, B} they touch.
++    pub parts: u64,
++    /// Sum over A and B of their distinct root ids at this level.
++    pub child_n: u64,
++    /// Splits where `parts != child_n` (accounting identity).
++    pub ident_fail: u64,
++    /// Child cells (A or B) whose B1 levels include this level.
++    pub used: u64,
++    /// Their vertices and entries at this level.
++    pub x_n: u64,
++    /// Entries of those child levels.
++    pub x_nnz: u64,
++    /// Entries of the child level each was contracted from.
++    pub xprev_nnz: u64,
++    /// Of those, the entries in rows of straddler members (B2's input).
++    pub recontract_in_nnz: u64,
++    /// Entries in the straddler rows of the child level (B2's output).
++    pub recontract_out_nnz: u64,
++    /// Child straddler parts at this level.
++    pub x_strad: u64,
++    /// Child levels compared B1 against B2.
++    pub b2_checked: u64,
++    /// Of those, levels where B1 and B2 differ.
++    pub b2_mismatch: u64,
++    /// B1 levels failing weight conservation, a self-loop or symmetry.
++    pub b1_invalid: u64,
++}
++
++/// Keyed by (split depth, root level).
++pub static STRAD_LOG: Mutex<BTreeMap<(u32, u32), StradRec>> = Mutex::new(BTreeMap::new());
++
++/// Sorted, merged (row rid, col rid, w) entries and (rid, vwgt) of a level.
++type LevelSig = (Vec<(Idx, Idx, Idx)>, Vec<(Idx, Idx)>);
++
++fn sig_of(g: &Graph, rids: &[Idx]) -> LevelSig {
++    let mut e = Vec::with_capacity(g.adjncy.len());
++    for v in 0..g.nvtxs as usize {
++        for k in g.xadj[v] as usize..g.xadj[v + 1] as usize {
++            e.push((rids[v], rids[g.adjncy[k] as usize], g.adjwgt[k]));
++        }
++    }
++    e.sort_unstable();
++    let mut w: Vec<(Idx, Idx)> = (0..g.nvtxs as usize).map(|v| (rids[v], g.vwgt[v])).collect();
++    w.sort_unstable();
++    (e, w)
++}
++
++fn merge_sorted(mut e: Vec<(Idx, Idx, Idx)>) -> Vec<(Idx, Idx, Idx)> {
++    e.sort_unstable_by_key(|&(a, b, _)| (a, b));
++    let mut out: Vec<(Idx, Idx, Idx)> = Vec::with_capacity(e.len());
++    for (a, b, w) in e {
++        match out.last_mut() {
++            Some(last) if last.0 == a && last.1 == b => last.2 += w,
++            _ => out.push((a, b, w)),
++        }
++    }
++    out
++}
++
++/// At a split: straddler statistics for every reused parent level, and
++/// for each side X in {A, B} its levels built two ways and compared:
++/// B1 = re-contraction with the root matching (`reuse_levels`), and
++/// B2 = the parent's level restricted to X's clean coarse vertices
++/// (a masked split), plus straddler rows and columns re-contracted from
++/// X's previous level. Neither touches the RNG or the order.
++#[allow(clippy::too_many_arguments)]
++fn check_split(
++    g: &Graph,
++    labels: &[u8],
++    h: &Hier,
++    root: &RootHier,
++    sub_a: &Graph,
++    gid_a: &[Idx],
++    a_verts: &[Idx],
++    sub_b: &Graph,
++    gid_b: &[Idx],
++    b_verts: &[Idx],
++    opts: &MetisOptions,
++    depth: u32,
++) {
++    const SEP: u32 = u32::MAX - 1;
++    const MIX: u32 = u32::MAX;
++    const UNSET: u32 = u32::MAX - 2;
++    let n = g.nvtxs as usize;
++    let mut recs: BTreeMap<u32, StradRec> = BTreeMap::new();
++
++    // Fine level: side bits (A=1, B=2, S=4) and child component ids.
++    let mut mask: Vec<u8> = labels
++        .iter()
++        .map(|&l| match l {
++            PART_A => 1,
++            PART_B => 2,
++            // Break 2: count separator members as A.
++            _ if opts.reuse_break == 2 => 1,
++            _ => 4,
++        })
++        .collect();
++    let mut cc: Vec<u32> = vec![SEP; n];
++    let (ca, na) = connected_components(sub_a);
++    for (i, &v) in a_verts.iter().enumerate() {
++        cc[v as usize] = ca[i] as u32;
++    }
++    let (cb, _) = connected_components(sub_b);
++    for (i, &v) in b_verts.iter().enumerate() {
++        cc[v as usize] = na as u32 + cb[i] as u32;
++    }
++
++    // Each side's B1 levels; a side of more than nd_to_amd_switch
++    // vertices will coarsen, so its levels are "needed".
++    let mut dummy_rng = SplitMix::new(0);
++    let mut dummy_stats = MetisStats::default();
++    let mut hxs: Vec<Hier> = Vec::new();
++    for (sub, gid) in [(sub_a, gid_a), (sub_b, gid_b)] {
++        hxs.push(reuse_levels(
++            sub,
++            gid,
++            root,
++            false,
++            opts,
++            &mut dummy_rng,
++            &mut dummy_stats,
++            false,
++        ));
++    }
++    let needed = [
++        sub_a.nvtxs > opts.nd_to_amd_switch as Idx,
++        sub_b.nvtxs > opts.nd_to_amd_switch as Idx,
++    ];
++    let need_max: u32 = (0..2)
++        .filter(|&k| needed[k])
++        .flat_map(|k| hxs[k].rlev.iter().copied())
++        .max()
++        .unwrap_or(0);
++
++    // Parent levels: masks per level (kept for B2), statistics.
++    let mut masks: Vec<Vec<u8>> = Vec::new();
++    let mut lvl_of: BTreeMap<u32, usize> = BTreeMap::new();
++    for (i, cg) in h.levels.iter().enumerate() {
++        if h.rlev[i] == FRESH {
++            break;
++        }
++        let np = cg.graph.nvtxs as usize;
++        let mut nm = vec![0u8; np];
++        let mut ncc = vec![UNSET; np];
++        for (v, &c) in cg.cmap.iter().enumerate() {
++            let c = c as usize;
++            nm[c] |= mask[v];
++            ncc[c] = match ncc[c] {
++                UNSET => cc[v],
++                x if x == cc[v] => x,
++                _ => MIX,
++            };
++        }
++        mask = nm;
++        cc = ncc;
++        let p = &cg.graph;
++        let need = h.rlev[i] <= need_max;
++        let r = recs.entry(h.rlev[i]).or_default();
++        r.splits_all += 1;
++        r.n_all += np as u64;
++        r.nnz_all += p.adjncy.len() as u64;
++        if need {
++            r.splits += 1;
++            r.n_coarse += np as u64;
++            r.nnz += p.adjncy.len() as u64;
++        }
++        for q in 0..np {
++            let m = mask[q];
++            if m.count_ones() >= 2 {
++                r.strad_side_all += 1;
++            }
++            if need {
++                if m == 4 {
++                    r.sep_only += 1;
++                }
++                if m.count_ones() >= 2 {
++                    r.strad_side += 1;
++                    r.strad_rows_nnz += (p.xadj[q + 1] - p.xadj[q]) as u64;
++                }
++                if cc[q] == MIX {
++                    r.strad_child += 1;
++                }
++            }
++            r.parts += (m & 3).count_ones() as u64;
++        }
++        masks.push(mask.clone());
++        lvl_of.insert(h.rlev[i], i);
++    }
++
++    // Accounting identity: sum over sides of their distinct root ids at
++    // each parent level equals the parts the masks predict.
++    for gid in [gid_a, gid_b] {
++        let mut ids: Vec<Idx> = gid.to_vec();
++        let mut from = 0usize;
++        for (&rl, _) in lvl_of.iter() {
++            let rl_us = rl as usize;
++            for x in ids.iter_mut() {
++                *x = root.lift(*x, from, rl_us);
++            }
++            from = rl_us;
++            let mut sc = root.scratch.borrow_mut();
++            let e = sc.next();
++            let mut cnt = 0u64;
++            for &x in &ids {
++                let s = &mut sc.slot[x as usize];
++                if s.0 != e {
++                    *s = (e, 0);
++                    cnt += 1;
++                }
++            }
++            recs.get_mut(&rl).unwrap().child_n += cnt;
++        }
++    }
++    for r in recs.values_mut() {
++        if r.parts != r.child_n {
++            r.ident_fail += 1;
++        }
++    }
++
++    // B1 against B2 for each side.
++    for (k, (bit, sub, gid)) in [(1u8, sub_a, gid_a), (2u8, sub_b, gid_b)].into_iter().enumerate() {
++        let hx = &hxs[k];
++        let need = needed[k];
++        let total_w: Idx = sub.vwgt.iter().sum();
++        for j in 0..hx.levels.len() {
++            let rl = hx.rlev[j];
++            let xl = &hx.levels[j].graph;
++            let x_rids = &hx.rids[j];
++            let (gprev, rprev, aprev): (&Graph, &[Idx], usize) = if j == 0 {
++                (sub, gid, 0)
++            } else {
++                (&hx.levels[j - 1].graph, &hx.rids[j - 1], hx.rlev[j - 1] as usize)
++            };
++            let b1 = sig_of(xl, x_rids);
++            // B1 validity: weight conserved, no self-loop, symmetric.
++            let mut invalid = xl.vwgt.iter().sum::<Idx>() != total_w;
++            invalid |= b1.0.iter().any(|&(a, b, _)| a == b);
++            let mut tr: Vec<(Idx, Idx, Idx)> = b1.0.iter().map(|&(a, b, w)| (b, a, w)).collect();
++            tr.sort_unstable();
++            invalid |= tr != b1.0;
++
++            let r = recs.entry(rl).or_default();
++            if need {
++                r.used += 1;
++                r.x_n += xl.nvtxs as u64;
++                r.x_nnz += xl.adjncy.len() as u64;
++                r.xprev_nnz += gprev.adjncy.len() as u64;
++            }
++            if invalid {
++                r.b1_invalid += 1;
++            }
++            let Some(&i) = lvl_of.get(&rl) else {
++                // The parent has no such level: a bug, except under the
++                // capstop diagnostic, whose best-of-5 cells keep only
++                // their top stage.
++                if !opts.reuse_capstop {
++                    r.b2_checked += 1;
++                    r.b2_mismatch += 1;
++                }
++                continue;
++            };
++            let pg = &h.levels[i].graph;
++            let prid = &h.rids[i];
++            let pm = &masks[i];
++
++            // B2.
++            let f: Vec<Idx> = rprev
++                .iter()
++                .map(|&x| root.lift(x, aprev, rl as usize))
++                .collect();
++            let mut sc = root.scratch.borrow_mut();
++            let e = sc.next();
++            for (q, &x) in prid.iter().enumerate() {
++                sc.slot[x as usize] = (e, q as Idx);
++            }
++            let pidx = |x: Idx| -> usize {
++                let s = sc.slot[x as usize];
++                assert_eq!(s.0, e, "child vertex outside the parent level");
++                s.1 as usize
++            };
++            let clean = |q: usize| pm[q] == bit;
++            let mut ent: Vec<(Idx, Idx, Idx)> = Vec::new();
++            let mut vw: Vec<(Idx, Idx)> = Vec::new();
++            let mut strad_w: Vec<(Idx, Idx)> = Vec::new();
++            let mut seen_p: Vec<usize> = Vec::new();
++            for &x in &f {
++                let q = pidx(x);
++                assert!(pm[q] & bit != 0, "child part of a parent vertex without it");
++                seen_p.push(q);
++            }
++            seen_p.sort_unstable();
++            seen_p.dedup();
++            let mut in_nnz = 0u64;
++            for &q in &seen_p {
++                if clean(q) || opts.reuse_break == 1 {
++                    // Break 1: straddlers treated as clean (masked, not
++                    // re-contracted): their mixed parent weights leak in.
++                    for k in pg.xadj[q] as usize..pg.xadj[q + 1] as usize {
++                        let t = pg.adjncy[k] as usize;
++                        let keep = if opts.reuse_break == 1 {
++                            pm[t] & bit != 0
++                        } else {
++                            clean(t)
++                        };
++                        if keep {
++                            ent.push((prid[q], prid[t], pg.adjwgt[k]));
++                        }
++                    }
++                    vw.push((prid[q], pg.vwgt[q]));
++                }
++            }
++            if opts.reuse_break != 1 {
++                for u in 0..gprev.nvtxs as usize {
++                    let fu = f[u];
++                    let q = pidx(fu);
++                    if clean(q) {
++                        continue;
++                    }
++                    strad_w.push((fu, gprev.vwgt[u]));
++                    in_nnz += (gprev.xadj[u + 1] - gprev.xadj[u]) as u64;
++                    for k in gprev.xadj[u] as usize..gprev.xadj[u + 1] as usize {
++                        let t = f[gprev.adjncy[k] as usize];
++                        if t == fu {
++                            continue;
++                        }
++                        let w = gprev.adjwgt[k];
++                        ent.push((fu, t, w));
++                        if clean(pidx(t)) {
++                            ent.push((t, fu, w));
++                        }
++                    }
++                }
++            }
++            let x_strad = seen_p.iter().filter(|&&q| !clean(q)).count() as u64;
++            let ent = merge_sorted(ent);
++            for (x, w) in merge_sorted(strad_w.into_iter().map(|(x, w)| (x, 0, w)).collect())
++                .into_iter()
++                .map(|(x, _, w)| (x, w))
++            {
++                vw.push((x, w));
++            }
++            vw.sort_unstable();
++            let out_nnz = ent.iter().filter(|&&(a, _, _)| !clean(pidx(a))).count() as u64;
++            drop(sc);
++            r.b2_checked += 1;
++            if ent != b1.0 || vw != b1.1 {
++                r.b2_mismatch += 1;
++            }
++            if need {
++                r.recontract_in_nnz += in_nnz;
++                r.recontract_out_nnz += out_nnz;
++                r.x_strad += x_strad;
++            }
++        }
++    }
++
++    let mut log = STRAD_LOG.lock().unwrap();
++    for (rl, r) in recs {
++        let t = log.entry((depth, rl)).or_default();
++        t.splits_all += r.splits_all;
++        t.n_all += r.n_all;
++        t.nnz_all += r.nnz_all;
++        t.strad_side_all += r.strad_side_all;
++        t.splits += r.splits;
++        t.n_coarse += r.n_coarse;
++        t.nnz += r.nnz;
++        t.sep_only += r.sep_only;
++        t.strad_side += r.strad_side;
++        t.strad_child += r.strad_child;
++        t.strad_rows_nnz += r.strad_rows_nnz;
++        t.parts += r.parts;
++        t.child_n += r.child_n;
++        t.ident_fail += r.ident_fail;
++        t.used += r.used;
++        t.x_n += r.x_n;
++        t.x_nnz += r.x_nnz;
++        t.xprev_nnz += r.xprev_nnz;
++        t.recontract_in_nnz += r.recontract_in_nnz;
++        t.recontract_out_nnz += r.recontract_out_nnz;
++        t.x_strad += r.x_strad;
++        t.b2_checked += r.b2_checked;
++        t.b2_mismatch += r.b2_mismatch;
++        t.b1_invalid += r.b1_invalid;
+     }
+ }
+ 

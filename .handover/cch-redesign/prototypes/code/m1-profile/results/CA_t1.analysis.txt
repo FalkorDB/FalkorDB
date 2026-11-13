@@ -1,0 +1,575 @@
+profile CA_t1.json.gz  log samply_CA_t1.log  compute thread #2 graph::graphblas::m1_coarsen_bench::reuse::m1_reuse  threads=12
+
+=== warm0: wall 1.054s instr 11.78G cycles 4.26G cpu 1.036s (sys 0.039) windows 1
+    samples: compute thread 1047 ms, CPU all threads 1.036s, workers 0.000s (0 samples, 0 with zero CPU)
+    compute-thread wall by leaf: gb= 83.9%  host=  2.1%  sort= 10.3%  mem=  3.1%  alloc=  0.4%  omp=  0.3%  other=  0.0%
+    CPU (all threads) by leaf:   gb= 84.2%  host=  2.3%  sort=  9.5%  mem=  3.1%  alloc=  0.3%  omp=  0.5%  other=  0.0%
+    partition, compute-thread wall: kernel=80.8%  gb_wait=9.6%  convert=1.7%  builder=2.2%  mem=2.8%  alloc=0.4%  sort=0.1%  host=2.1%  omp=0.3%  other=0.0%
+    partition, CPU all threads:     kernel=80.8%  gb_wait=8.8%  convert=2.1%  builder=2.2%  mem=2.8%  alloc=0.3%  sort=0.1%  host=2.3%  omp=0.5%  other=0.0%
+    compute-thread wall inside: wait=9.7%  builder=2.2%  convert=1.7%  transpose=0.8%
+    by timed call (compute-thread wall ms; CPU all threads s; leaf split of compute-thread wall):
+      CA                190 ms  18.1%  cpu  0.184s | gb=65%  sort=35% | in: wait=35%  transpose=4%
+          leaves: GB__Asaxpy3B_noM__plus_times_int32.omp_outlined_debug__.204  [graph-test] 36%; GB_AxB_saxpy3_sym_ss.omp_outlined_debug__  [graph-test] 24%; GB_quicksort_1b_32_4  [graph-test] 16%; GB_unjumble.omp_outlined_debug__.6  [graph-test] 13%
+      CAC'              173 ms  16.5%  cpu  0.173s | gb=78%  sort=20%  alloc=2%  omp=1% | in: wait=20%
+          leaves: GB__Asaxpy3B_noM__plus_times_int32.omp_outlined_debug__.204  [graph-test] 43%; GB_AxB_saxpy3_sym_ss.omp_outlined_debug__  [graph-test] 34%; GB_unjumble.omp_outlined_debug__.6  [graph-test] 11%; GB_quicksort_1b_32_4  [graph-test] 7%
+      mxv               132 ms  12.6%  cpu  0.126s | gb=99%  mem=1% | in: convert=1%
+          leaves: GB__Adot2B__max_first_uint64.omp_outlined_debug__.36  [graph-test] 71%; GB__Adot2B__max_first_uint64.omp_outlined_debug__.16  [graph-test] 14%; GB__Adot2B__max_first_uint64.omp_outlined_debug__.10  [graph-test] 6%; GB__Adot3B__max_first_uint64.omp_outlined_debug__  [graph-test] 5%
+      m_unext            72 ms   6.9%  cpu  0.072s | gb=83%  host=1%  mem=15% | in: convert=1%
+          leaves: GB_masker_phase2.omp_outlined_debug__.19  [graph-test] 78%; platform_memmove  [libsystem_platform.dylib] 14%; GB_mcast  [graph-test] 1%; GB_trim_binary_search_32  [graph-test] 1%
+      offdiag            65 ms   6.2%  cpu  0.066s | gb=91%  host=2%  mem=8%
+          leaves: GB_select_positional_phase2.omp_outlined_debug__.22  [graph-test] 57%; GB_select_positional_phase1.omp_outlined_debug__.6  [graph-test] 15%; GB_trim_binary_search_32  [graph-test] 12%; platform_memmove  [libsystem_platform.dylib] 8%
+      key                58 ms   5.5%  cpu  0.059s | gb=74%  host=21%  mem=5%
+          leaves: GB_apply_op.omp_outlined_debug__.56  [graph-test] 60%; key_op  [graph-test] 21%; GB__cast_int32_t_int32_t  [graph-test] 14%; platform_memmove  [libsystem_platform.dylib] 5%
+      m_assign           55 ms   5.3%  cpu  0.054s | gb=98%  mem=2% | in: convert=2%
+          leaves: GB_bitmap_assign_2_whole.omp_outlined_debug__.8  [graph-test] 84%; GB_jit__bitmap_assign_2_whole__0000003f000499b3.omp_outlined_debug__.2  [graph-test] 9%; GB__cast_uint64_t_uint64_t  [graph-test] 4%; GB_mcast  [graph-test] 2%
+      m_extract          46 ms   4.4%  cpu  0.043s | gb=98%  omp=2%
+          leaves: GB_ijproperties.omp_outlined_debug__  [graph-test] 67%; GB_jit__subref_bitmap__0800c9f.omp_outlined_debug__  [graph-test] 30%; kmp_serialized_parallel  [libomp.dylib] 2%
+      m_unkey            40 ms   3.8%  cpu  0.039s | gb=92%  host=8%
+          leaves: GB_apply_op.omp_outlined_debug__.56  [graph-test] 90%; unkey_op  [graph-test] 8%; GB__cast_uint64_t_uint64_t  [graph-test] 2%
+      m_eq               37 ms   3.5%  cpu  0.040s | gb=100%
+          leaves: GB__AemultB_bitmap__eq_uint64.omp_outlined_debug__.104  [graph-test] 95%; GB__AemultB_04__eq_uint64.omp_outlined_debug__  [graph-test] 5%
+      bnd                30 ms   2.9%  cpu  0.030s | gb=100%
+          leaves: GB__Adot2B__plus_second_int32.omp_outlined_debug__.16  [graph-test] 70%; GB__Adot2B__plus_second_int32.omp_outlined_debug__.10  [graph-test] 30%
+      Cw                 26 ms   2.5%  cpu  0.024s | gb=100%
+          leaves: GB__AsaxbitB__plus_times_int32.omp_outlined_debug__.134  [graph-test] 96%; GB_nnz  [graph-test] 4%
+      keep               21 ms   2.0%  cpu  0.021s | gb=71%  host=19%  mem=10%
+          leaves: GB_extract_vector_list.omp_outlined_debug__  [graph-test] 43%; GB_extractTuples.omp_outlined_debug__  [graph-test] 24%; write<u32>  [graph-test] 10%; index<u64>  [graph-test] 10%
+      m_full             19 ms   1.8%  cpu  0.020s | gb=95%  mem=5%
+          leaves: GB__AaddB__second_uint64.omp_outlined_debug__.38  [graph-test] 68%; GB__AaddB__second_uint64.omp_outlined_debug__.40  [graph-test] 21%; GB__Cewise_fulln__second_uint64.omp_outlined_debug__  [graph-test] 5%; platform_memset  [libsystem_platform.dylib] 5%
+      c_number_host      16 ms   1.5%  cpu  0.020s | gb=88%  mem=12% | in: builder=6%  convert=94%
+          leaves: GB_convert_b2s.omp_outlined_debug__.8  [graph-test] 81%; bzero  [libsystem_platform.dylib] 6%; platform_memmove  [libsystem_platform.dylib] 6%; GB_convert_s2b.omp_outlined_debug__.18  [graph-test] 6%
+      c_extract          16 ms   1.5%  cpu  0.016s | gb=75%  host=6%  mem=19%
+          leaves: GB_ijproperties.omp_outlined_debug__  [graph-test] 50%; GB_bitmap_subref.omp_outlined_debug__.6  [graph-test] 25%; platform_memmove  [libsystem_platform.dylib] 19%; 0x24ca888  [graph-test] 6%
+      twohop             16 ms   1.5%  cpu  0.016s | gb=56%  sort=44% | in: builder=44%
+          leaves: GB_partition_3_32_32_32  [graph-test] 19%; GB_subref_phase2.omp_outlined_debug__.2  [graph-test] 12%; GB_quicksort_2_32_32  [graph-test] 12%; GB_apply_op.omp_outlined_debug__.56  [graph-test] 6%
+      c_build            15 ms   1.4%  cpu  0.014s | gb=100% | in: builder=100%
+          leaves: GB_builder.omp_outlined_debug__  [graph-test] 53%; GB_builder.omp_outlined_debug__.14  [graph-test] 47%
+      c_leader            8 ms   0.8%  cpu  0.007s | gb=100%
+          leaves: GB__sel_bitmap__eq_thunk_bool.omp_outlined_debug__.2  [graph-test] 62%; GB__Cewise_fulln__min_uint64.omp_outlined_debug__  [graph-test] 25%; GB__Cewise_fulln__eq_uint64.omp_outlined_debug__  [graph-test] 12%
+      idx                 5 ms   0.5%  cpu  0.007s | gb=60%  alloc=20%  omp=20%
+          leaves: GB__uop_apply__identity_uint64_int64.omp_outlined_debug__  [graph-test] 40%; GB_apply_op.omp_outlined_debug__.2  [graph-test] 20%; 0x134d4  [libsystem_malloc.dylib] 20%; kmpc_flush  [libomp.dylib] 20%
+      (untimed)           4 ms   0.4%  cpu  0.002s | gb=25%  mem=75%
+          leaves: platform_memmove  [libsystem_platform.dylib] 75%; GB_extractTuples.omp_outlined_debug__  [graph-test] 25%
+    omp stacks (main: compute-thread samples; worker: CPU us):
+      main            1  kmp_serialized_parallel < kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*) < kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*) < kmp_fork_call
+      main            1  kmpc_flush < GB_nvec_nonempty_set < GB_Scalar_wrap < GrB_Vector_apply_IndexOp_INT64
+      main            1  0x86a40 < kmp_allocate < kmp_serialized_parallel < kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*)
+    mem stacks (main: compute-thread samples; worker: CPU us):
+      main            5  platform_memmove < GB_cast_matrix < GB_transplant < GB_accum_mask
+      main            5  platform_memmove < GB_select_positional_phase2.omp_outlined_debug__.22 < GB_select_positional_phase2.omp_outlined.21 < kmp_invoke_microtask
+      main            4  platform_memmove < GB_transplant < GB_accum_mask < GB_apply
+      main            4  platform_memmove < GB_masker_phase2.omp_outlined_debug__.19 < GB_masker_phase2.omp_outlined.18 < kmp_invoke_microtask
+      main            3  platform_memmove < GB_dup_worker < GB_dup < GrB_Vector_dup
+      main            3  platform_memmove < GB_bitmap_subref.omp_outlined_debug__.6 < GB_bitmap_subref.omp_outlined.5 < kmp_invoke_microtask
+    alloc stacks (main: compute-thread samples; worker: CPU us):
+      main            3  mach_vm_reclaim_update_kernel_accounting_trap < mach_vm_reclaim_update_kernel_accounting < 0x15206 < 0x13c2e
+      main            1  0x134d4 < 0x2a456 < GB_Global_malloc_function < GB_malloc_helper
+    sort stacks (main: compute-thread samples; worker: CPU us):
+      main           43  GB_unjumble.omp_outlined_debug__.6 < GB_unjumble.omp_outlined.5 < kmp_invoke_microtask < kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*)
+      main           36  GB_quicksort_1b_32_4 < GB_qsort_1b_32_4 < GB_unjumble.omp_outlined_debug__.6 < GB_unjumble.omp_outlined.5
+      main            9  GB_partition_1b_32_4 < GB_quicksort_1b_32_4 < GB_qsort_1b_32_4 < GB_unjumble.omp_outlined_debug__.6
+      main            5  GB_quicksort_1b_32_4 < GB_quicksort_1b_32_4 < GB_qsort_1b_32_4 < GB_unjumble.omp_outlined_debug__.6
+      main            4  GB_partition_1b_32_4 < GB_quicksort_1b_32_4 < GB_quicksort_1b_32_4 < GB_qsort_1b_32_4
+      main            3  GB_partition_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32
+    top self (CPU, all threads) -> timed calls it ran under:
+       14.4%  GB__Asaxpy3B_noM__plus_times_int32.omp_outlined_debug__.204  [graph-test]  <- CAC' 53%, CA 47%
+        9.7%  GB_AxB_saxpy3_sym_ss.omp_outlined_debug__  [graph-test]  <- CAC' 58%, CA 42%
+        8.6%  GB__Adot2B__max_first_uint64.omp_outlined_debug__.36  [graph-test]  <- mxv 100%
+        6.8%  GB_apply_op.omp_outlined_debug__.56  [graph-test]  <- m_unkey 50%, key 49%, twohop 2%
+        5.3%  GB_masker_phase2.omp_outlined_debug__.19  [graph-test]  <- m_unext 99%, twohop 1%
+        4.4%  GB_bitmap_assign_2_whole.omp_outlined_debug__.8  [graph-test]  <- m_assign 100%
+        4.0%  GB_unjumble.omp_outlined_debug__.6  [graph-test]  <- CA 55%, CAC' 45%
+        3.7%  GB_quicksort_1b_32_4  [graph-test]  <- CA 75%, CAC' 25%
+        3.7%  GB__AemultB_bitmap__eq_uint64.omp_outlined_debug__.104  [graph-test]  <- m_eq 100%
+        3.7%  GB_select_positional_phase2.omp_outlined_debug__.22  [graph-test]  <- offdiag 100%
+        3.4%  GB_ijproperties.omp_outlined_debug__  [graph-test]  <- m_extract 80%, c_extract 20%
+        2.5%  platform_memmove  [libsystem_platform.dylib]  <- m_unext 41%, offdiag 25%, key 13%
+        2.2%  GB__AsaxbitB__plus_times_int32.omp_outlined_debug__.134  [graph-test]  <- Cw 100%
+        2.0%  GB__Adot2B__plus_second_int32.omp_outlined_debug__.16  [graph-test]  <- bnd 100%
+        1.6%  GB_convert_b2s.omp_outlined_debug__.8  [graph-test]  <- c_number_host 100%
+    top total (CPU, inclusive, GraphBLAS and bench frames):
+       97.9%  hierarchy_keep
+       95.3%  kmp_fork_call
+       95.3%  kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*)
+       95.3%  kmpc_fork_call
+       94.9%  kmp_invoke_microtask
+       94.8%  coarsen_level
+       43.1%  GB_mxm
+       42.9%  GB_AxB_meta
+       26.8%  GB_AxB_saxpy
+       25.5%  GrB_mxm
+       24.7%  GB_AxB_saxpy3
+       17.8%  time<graph::graph::graphblas::m1_coarsen_bench::M, graph::graph::graphblas::m1_coarsen_bench::coarsen_level::{closure_env#15}>
+       17.6%  GrB_mxv
+       17.0%  GB_apply
+       16.7%  time<graph::graph::graphblas::m1_coarsen_bench::M, graph::graph::graphblas::m1_coarsen_bench::coarsen_level::{closure_env#16}>
+
+=== r0: wall 1.037s instr 11.33G cycles 4.12G cpu 1.022s (sys 0.018) windows 1
+    samples: compute thread 1034 ms, CPU all threads 1.021s, workers 0.000s (0 samples, 0 with zero CPU)
+    compute-thread wall by leaf: gb= 83.8%  host=  2.3%  sort= 10.5%  mem=  3.1%  alloc=  0.1%  omp=  0.1%  other=  0.1%
+    CPU (all threads) by leaf:   gb= 83.9%  host=  2.2%  sort= 10.2%  mem=  3.4%  alloc=  0.1%  omp=  0.0%  other=  0.1%
+    partition, compute-thread wall: kernel=80.9%  gb_wait=9.9%  convert=1.5%  builder=2.0%  mem=3.0%  alloc=0.0%  sort=0.1%  host=2.3%  omp=0.1%  other=0.1%
+    partition, CPU all threads:     kernel=81.1%  gb_wait=9.4%  convert=1.4%  builder=2.4%  mem=3.3%  alloc=0.0%  sort=0.2%  host=2.2%  omp=0.0%  other=0.1%
+    compute-thread wall inside: wait=9.9%  builder=2.0%  convert=1.5%  transpose=1.0%
+    by timed call (compute-thread wall ms; CPU all threads s; leaf split of compute-thread wall):
+      CA                192 ms  18.6%  cpu  0.187s | gb=64%  sort=36%  mem=1% | in: wait=36%  transpose=5%
+          leaves: GB__Asaxpy3B_noM__plus_times_int32.omp_outlined_debug__.204  [graph-test] 34%; GB_AxB_saxpy3_sym_ss.omp_outlined_debug__  [graph-test] 24%; GB_quicksort_1b_32_4  [graph-test] 17%; GB_unjumble.omp_outlined_debug__.6  [graph-test] 11%
+      CAC'              170 ms  16.4%  cpu  0.165s | gb=81%  sort=19% | in: wait=19%
+          leaves: GB__Asaxpy3B_noM__plus_times_int32.omp_outlined_debug__.204  [graph-test] 44%; GB_AxB_saxpy3_sym_ss.omp_outlined_debug__  [graph-test] 35%; GB_unjumble.omp_outlined_debug__.6  [graph-test] 14%; GB_quicksort_1b_32_4  [graph-test] 5%
+      mxv               138 ms  13.3%  cpu  0.137s | gb=98%  mem=1%  other=1% | in: convert=1%
+          leaves: GB__Adot2B__max_first_uint64.omp_outlined_debug__.36  [graph-test] 70%; GB__Adot2B__max_first_uint64.omp_outlined_debug__.16  [graph-test] 14%; GB__Adot2B__max_first_uint64.omp_outlined_debug__.10  [graph-test] 6%; GB__Adot3B__max_first_uint64.omp_outlined_debug__  [graph-test] 5%
+      m_unext            81 ms   7.8%  cpu  0.078s | gb=83%  host=2%  mem=15% | in: convert=2%
+          leaves: GB_masker_phase2.omp_outlined_debug__.19  [graph-test] 75%; platform_memmove  [libsystem_platform.dylib] 12%; GB_trim_binary_search_32  [graph-test] 4%; bzero  [libsystem_platform.dylib] 2%
+      offdiag            69 ms   6.7%  cpu  0.071s | gb=83%  host=4%  mem=13%
+          leaves: GB_select_positional_phase2.omp_outlined_debug__.22  [graph-test] 48%; GB_trim_binary_search_32  [graph-test] 13%; platform_memmove  [libsystem_platform.dylib] 13%; GB_select_positional_phase1.omp_outlined_debug__.6  [graph-test] 12%
+      m_assign           52 ms   5.0%  cpu  0.052s | gb=100%
+          leaves: GB_bitmap_assign_2_whole.omp_outlined_debug__.8  [graph-test] 87%; GB_jit__bitmap_assign_2_whole__0000003f000499b3.omp_outlined_debug__.2  [graph-test] 8%; GB__cast_uint64_t_uint64_t  [graph-test] 2%; GB_bitmap_assign_4_whole.omp_outlined_debug__.16  [graph-test] 2%
+      key                51 ms   4.9%  cpu  0.052s | gb=69%  host=25%  mem=6%
+          leaves: GB_apply_op.omp_outlined_debug__.56  [graph-test] 65%; key_op  [graph-test] 25%; platform_memmove  [libsystem_platform.dylib] 6%; GB__cast_int32_t_int32_t  [graph-test] 4%
+      m_extract          45 ms   4.4%  cpu  0.043s | gb=98%  omp=2%
+          leaves: GB_ijproperties.omp_outlined_debug__  [graph-test] 73%; GB_jit__subref_bitmap__0800c9f.omp_outlined_debug__  [graph-test] 24%; kmp_serialized_parallel  [libomp.dylib] 2%
+      m_unkey            40 ms   3.9%  cpu  0.039s | gb=92%  host=8%
+          leaves: GB_apply_op.omp_outlined_debug__.56  [graph-test] 85%; GB__cast_uint64_t_uint64_t  [graph-test] 8%; unkey_op  [graph-test] 8%
+      m_eq               39 ms   3.8%  cpu  0.043s | gb=100%
+          leaves: GB__AemultB_bitmap__eq_uint64.omp_outlined_debug__.104  [graph-test] 100%
+      bnd                30 ms   2.9%  cpu  0.029s | gb=100%
+          leaves: GB__Adot2B__plus_second_int32.omp_outlined_debug__.16  [graph-test] 70%; GB__Adot2B__plus_second_int32.omp_outlined_debug__.10  [graph-test] 30%
+      Cw                 27 ms   2.6%  cpu  0.027s | gb=100%
+          leaves: GB__AsaxbitB__plus_times_int32.omp_outlined_debug__.134  [graph-test] 100%
+      twohop             20 ms   1.9%  cpu  0.019s | gb=60%  host=5%  sort=35% | in: builder=35%
+          leaves: GB_partition_3_32_32_32  [graph-test] 20%; GB_select_generic_phase1.omp_outlined_debug__.4  [graph-test] 10%; GB_find_Ap_start_end  [graph-test] 10%; GB_emult_08_phase1.omp_outlined_debug__  [graph-test] 10%
+      m_full             17 ms   1.6%  cpu  0.017s | gb=100%
+          leaves: GB__AaddB__second_uint64.omp_outlined_debug__.38  [graph-test] 65%; GB__AaddB__second_uint64.omp_outlined_debug__.40  [graph-test] 29%; GB__Cewise_fulln__second_uint64.omp_outlined_debug__  [graph-test] 6%
+      c_number_host      16 ms   1.5%  cpu  0.017s | gb=88%  mem=6%  alloc=6% | in: builder=19%  convert=81%
+          leaves: GB_convert_b2s.omp_outlined_debug__.8  [graph-test] 69%; GB_builder.omp_outlined_debug__.3  [graph-test] 12%; GB_convert_s2b.omp_outlined_debug__.18  [graph-test] 6%; platform_memmove  [libsystem_platform.dylib] 6%
+      c_extract          16 ms   1.5%  cpu  0.015s | gb=69%  host=12%  mem=19%
+          leaves: GB_ijproperties.omp_outlined_debug__  [graph-test] 38%; GB_bitmap_subref.omp_outlined_debug__.6  [graph-test] 31%; platform_memmove  [libsystem_platform.dylib] 19%; 0x24ca888  [graph-test] 12%
+      c_build            11 ms   1.1%  cpu  0.012s | gb=100% | in: builder=100%
+          leaves: GB_builder.omp_outlined_debug__  [graph-test] 73%; GB_builder.omp_outlined_debug__.14  [graph-test] 27%
+      c_leader            9 ms   0.9%  cpu  0.009s | gb=100%
+          leaves: GB__sel_bitmap__eq_thunk_bool.omp_outlined_debug__.2  [graph-test] 78%; GB__Cewise_fulln__min_uint64.omp_outlined_debug__  [graph-test] 22%
+      idx                 5 ms   0.5%  cpu  0.004s | gb=100%
+          leaves: GB_apply_op.omp_outlined_debug__.2  [graph-test] 80%; GB__uop_apply__identity_uint64_int64.omp_outlined_debug__  [graph-test] 20%
+    omp stacks (main: compute-thread samples; worker: CPU us):
+      main            1  kmp_serialized_parallel < kmp_serialized_parallel < kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*) < kmp_fork_call
+    mem stacks (main: compute-thread samples; worker: CPU us):
+      main            9  platform_memmove < GB_select_positional_phase2.omp_outlined_debug__.22 < GB_select_positional_phase2.omp_outlined.21 < kmp_invoke_microtask
+      main            7  platform_memmove < GB_cast_matrix < GB_transplant < GB_accum_mask
+      main            4  platform_memmove < GB_transplant < GB_accum_mask < GB_apply
+      main            4  bzero < GB_calloc_helper < GB_calloc_memory < GB_bix_alloc
+      main            3  platform_memmove < GB_bitmap_subref.omp_outlined_debug__.6 < GB_bitmap_subref.omp_outlined.5 < kmp_invoke_microtask
+      main            2  platform_memmove < GB_masker_phase2.omp_outlined_debug__.19 < GB_masker_phase2.omp_outlined.18 < kmp_invoke_microtask
+    alloc stacks (main: compute-thread samples; worker: CPU us):
+      main            1  0x2a16c < GB_Global_malloc_function < GB_calloc_helper < GB_calloc_memory
+    sort stacks (main: compute-thread samples; worker: CPU us):
+      main           44  GB_unjumble.omp_outlined_debug__.6 < GB_unjumble.omp_outlined.5 < kmp_invoke_microtask < kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*)
+      main           32  GB_quicksort_1b_32_4 < GB_qsort_1b_32_4 < GB_unjumble.omp_outlined_debug__.6 < GB_unjumble.omp_outlined.5
+      main           14  GB_partition_1b_32_4 < GB_quicksort_1b_32_4 < GB_qsort_1b_32_4 < GB_unjumble.omp_outlined_debug__.6
+      main            7  GB_quicksort_1b_32_4 < GB_quicksort_1b_32_4 < GB_qsort_1b_32_4 < GB_unjumble.omp_outlined_debug__.6
+      main            4  GB_partition_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32
+      main            3  GB_partition_1b_32_4 < GB_quicksort_1b_32_4 < GB_quicksort_1b_32_4 < GB_qsort_1b_32_4
+    top self (CPU, all threads) -> timed calls it ran under:
+       13.7%  GB__Asaxpy3B_noM__plus_times_int32.omp_outlined_debug__.204  [graph-test]  <- CAC' 54%, CA 46%
+       10.2%  GB_AxB_saxpy3_sym_ss.omp_outlined_debug__  [graph-test]  <- CAC' 57%, CA 43%
+        9.4%  GB__Adot2B__max_first_uint64.omp_outlined_debug__.36  [graph-test]  <- mxv 100%
+        6.3%  GB_apply_op.omp_outlined_debug__.56  [graph-test]  <- key 51%, m_unkey 49%
+        5.8%  GB_masker_phase2.omp_outlined_debug__.19  [graph-test]  <- m_unext 98%, twohop 2%
+        4.6%  GB_bitmap_assign_2_whole.omp_outlined_debug__.8  [graph-test]  <- m_assign 100%
+        4.2%  GB__AemultB_bitmap__eq_uint64.omp_outlined_debug__.104  [graph-test]  <- m_eq 100%
+        3.7%  GB_unjumble.omp_outlined_debug__.6  [graph-test]  <- CA 52%, CAC' 48%
+        3.6%  GB_quicksort_1b_32_4  [graph-test]  <- CA 77%, CAC' 23%
+        3.5%  GB_ijproperties.omp_outlined_debug__  [graph-test]  <- m_extract 88%, c_extract 12%
+        3.4%  GB_select_positional_phase2.omp_outlined_debug__.22  [graph-test]  <- offdiag 100%
+        2.9%  platform_memmove  [libsystem_platform.dylib]  <- m_unext 36%, offdiag 33%, key 13%
+        2.6%  GB__AsaxbitB__plus_times_int32.omp_outlined_debug__.134  [graph-test]  <- Cw 100%
+        2.1%  GB__Adot2B__plus_second_int32.omp_outlined_debug__.16  [graph-test]  <- bnd 100%
+        2.0%  GB_partition_1b_32_4  [graph-test]  <- CA 90%, CAC' 10%
+    top total (CPU, inclusive, GraphBLAS and bench frames):
+      100.0%  hierarchy_keep
+       96.8%  coarsen_level
+       95.6%  kmp_fork_call
+       95.6%  kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*)
+       95.6%  kmpc_fork_call
+       95.6%  kmp_invoke_microtask
+       44.3%  GB_mxm
+       44.2%  GB_AxB_meta
+       26.9%  GB_AxB_saxpy
+       25.1%  GrB_mxm
+       24.3%  GB_AxB_saxpy3
+       19.1%  GrB_mxv
+       18.3%  time<graph::graph::graphblas::m1_coarsen_bench::M, graph::graph::graphblas::m1_coarsen_bench::coarsen_level::{closure_env#15}>
+       17.0%  GB_apply
+       16.4%  GB_AxB_dot
+
+=== keep0: wall 0.020s instr 0.34G cycles 0.08G | samples: compute 20 ms, CPU 0.021s
+    CPU  by leaf: gb= 71.3%  host=  7.9%  sort=  0.0%  mem= 15.4%  alloc=  5.5%  omp=  0.0%  other=  0.0%
+
+=== labels: wall 2.886s instr 40.38G cycles 11.63G | samples: compute 2870 ms, CPU 2.849s
+    CPU  by leaf: gb=  0.0%  host= 94.5%  sort=  0.3%  mem=  2.3%  alloc=  2.7%  omp=  0.0%  other=  0.2%
+
+=== feral: wall 7.639s instr 65.56G cycles 31.89G | samples: compute 7628 ms, CPU 7.537s
+    CPU  by leaf: gb=  0.0%  host= 88.9%  sort=  2.3%  mem=  4.7%  alloc=  4.0%  omp=  0.0%  other=  0.1%
+
+=== split_d>=1: wall 0.979s instr 13.83G cycles 3.94G cpu 0.965s (sys 0.013) windows 22
+    samples: compute thread 980 ms, CPU all threads 0.954s, workers 0.000s (0 samples, 0 with zero CPU)
+    compute-thread wall by leaf: gb= 95.8%  host=  1.2%  sort=  1.5%  mem=  1.2%  alloc=  0.1%  omp=  0.0%  other=  0.1%
+    CPU (all threads) by leaf:   gb= 95.9%  host=  1.2%  sort=  1.2%  mem=  1.5%  alloc=  0.1%  omp=  0.0%  other=  0.2%
+    partition, compute-thread wall: kernel=52.3%  gb_wait=33.6%  convert=3.5%  builder=8.1%  mem=1.2%  alloc=0.0%  sort=0.0%  host=1.2%  omp=0.0%  other=0.1%
+    partition, CPU all threads:     kernel=52.6%  gb_wait=34.3%  convert=3.0%  builder=7.2%  mem=1.5%  alloc=0.0%  sort=0.0%  host=1.2%  omp=0.0%  other=0.2%
+    compute-thread wall inside: wait=33.6%  builder=8.1%  convert=3.5%
+    by timed call (compute-thread wall ms; CPU all threads s; leaf split of compute-thread wall):
+      split_mxm         859 ms  87.7%  cpu  0.848s | gb=98%  sort=0%  mem=1% | in: wait=38%  builder=0%  convert=0%
+          leaves: GB__Adot3B__any_pair_iso.omp_outlined_debug__  [graph-test] 24%; GB_select_positional_phase1.omp_outlined_debug__.14  [graph-test] 18%; GB_select_positional_phase2.omp_outlined_debug__.14  [graph-test] 18%; GB_AxB_dot3.omp_outlined_debug__  [graph-test] 13%
+      split_buildM      108 ms  11.0%  cpu  0.093s | gb=89%  sort=10%  alloc=1% | in: builder=69%  convert=31%
+          leaves: GB_builder.omp_outlined_debug__  [graph-test] 34%; GB_builder.omp_outlined_debug__.14  [graph-test] 25%; GB_convert_hyper_to_sparse.omp_outlined_debug__  [graph-test] 24%; GB_partition_3_32_32_32  [graph-test] 9%
+      (untimed)          13 ms   1.3%  cpu  0.013s | host=92%  other=8%
+          leaves: fold<u32, (), core::iter::adapters::map::map_fold::{closure_env#0}<&u32, u64, (), graph::graph::graphblas::m1_coarsen_bench::reuse::split_live::{closure_env#2}, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<u64, alloc::vec::{impl#21}::extend_trusted::{closure_env#0}<u64, alloc::alloc::Global, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, graph::graph::graphblas::m1_coarsen_bench::reuse::split_live::{closure_env#2}>>>>>  [graph-test] 62%; fold<u32, (), core::iter::adapters::map::map_fold::{closure_env#0}<&u32, u64, (), graph::graph::graphblas::m1_coarsen_bench::reuse::split_live::{closure_env#0}, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<u64, alloc::vec::{impl#21}::extend_trusted::{closure_env#0}<u64, alloc::alloc::Global, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, graph::graph::graphblas::m1_coarsen_bench::reuse::split_live::{closure_env#0}>>>>>  [graph-test] 31%; 0x5d214  [libsystem_c.dylib] 8%
+    mem stacks (main: compute-thread samples; worker: CPU us):
+      main            7  platform_memset_pattern16 < GB_AxB_dot3.omp_outlined_debug__ < GB_AxB_dot3.omp_outlined < kmp_invoke_microtask
+      main            4  platform_memmove < GB_AxB_dot3 < GB_AxB_dot < GB_AxB_meta
+      main            1  platform_memset_pattern16 < GB_AxB_dot3.omp_outlined_debug__.10 < GB_AxB_dot3.omp_outlined.9 < kmp_invoke_microtask
+    alloc stacks (main: compute-thread samples; worker: CPU us):
+      main            1  0x134f8 < 0x2a456 < GB_Global_malloc_function < GB_malloc_helper
+    sort stacks (main: compute-thread samples; worker: CPU us):
+      main           11  GB_partition_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32
+      main            2  GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32
+      main            1  GB_partition_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_qsort_3_32_32_32 < GB_qsort_3
+      main            1  GB_partition_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_qsort_3_32_32_32
+    top self (CPU, all threads) -> timed calls it ran under:
+       21.6%  GB__Adot3B__any_pair_iso.omp_outlined_debug__  [graph-test]  <- split_mxm 100%
+       16.1%  GB_select_positional_phase1.omp_outlined_debug__.14  [graph-test]  <- split_mxm 100%
+       15.9%  GB_select_positional_phase2.omp_outlined_debug__.14  [graph-test]  <- split_mxm 100%
+       11.6%  GB_AxB_dot3.omp_outlined_debug__  [graph-test]  <- split_mxm 100%
+        5.4%  GB_cumsum1_float  [graph-test]  <- split_mxm 100%
+        5.1%  GB__Adot3B__any_pair_iso.omp_outlined_debug__.74  [graph-test]  <- split_mxm 100%
+        3.8%  GB_hyper_hash_lookup_32_32  [graph-test]  <- split_mxm 100%
+        3.3%  GB_builder.omp_outlined_debug__  [graph-test]  <- split_buildM 100%
+        2.7%  GB_builder.omp_outlined_debug__.14  [graph-test]  <- split_buildM 100%
+        2.3%  GB_convert_hyper_to_sparse.omp_outlined_debug__  [graph-test]  <- split_buildM 96%, split_mxm 4%
+        2.3%  GB_AxB_dot3.omp_outlined_debug__.20  [graph-test]  <- split_mxm 100%
+        2.3%  GB_cumsum  [graph-test]  <- split_mxm 100%
+        1.0%  GB_hyper_hash_lookup  [graph-test]  <- split_mxm 100%
+        1.0%  GB_partition_3_32_32_32  [graph-test]  <- split_buildM 75%, split_mxm 25%
+        0.9%  GB__Adot3B__any_pair_iso.omp_outlined_debug__.64  [graph-test]  <- split_mxm 100%
+    top total (CPU, inclusive, GraphBLAS and bench frames):
+       99.8%  split_live
+       89.0%  kmp_fork_call
+       89.0%  kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*)
+       89.0%  kmp_invoke_microtask
+       89.0%  kmpc_fork_call
+       88.9%  time<graph::graph::graphblas::m1_coarsen_bench::M, graph::graph::graphblas::m1_coarsen_bench::reuse::split_live::{closure_env#4}>
+       54.1%  GB_mxm
+       54.1%  GB_AxB_meta
+       54.1%  GB_AxB_dot
+       54.1%  GrB_mxm
+       54.1%  GB_AxB_dot3
+       35.6%  GrB_Matrix_wait
+       34.3%  GB_wait
+       34.2%  GB_selector
+       34.2%  GB_select_sparse
+
+=== r_d>=1: wall 14.142s instr 167.82G cycles 57.09G cpu 13.948s (sys 0.153) windows 22
+    samples: compute thread 14132 ms, CPU all threads 13.948s, workers 0.000s (0 samples, 0 with zero CPU)
+    compute-thread wall by leaf: gb= 86.5%  host=  1.5%  sort=  8.8%  mem=  3.0%  alloc=  0.2%  omp=  0.1%  other=  0.0%
+    CPU (all threads) by leaf:   gb= 86.5%  host=  1.5%  sort=  8.5%  mem=  3.1%  alloc=  0.3%  omp=  0.1%  other=  0.0%
+    partition, compute-thread wall: kernel=83.0%  gb_wait=8.5%  convert=1.9%  builder=2.0%  mem=2.8%  alloc=0.2%  sort=0.0%  host=1.5%  omp=0.1%  other=0.0%
+    partition, CPU all threads:     kernel=82.8%  gb_wait=8.2%  convert=2.1%  builder=2.1%  mem=2.9%  alloc=0.3%  sort=0.0%  host=1.5%  omp=0.1%  other=0.0%
+    compute-thread wall inside: wait=8.5%  builder=2.0%  convert=2.0%  transpose=0.9%
+    by timed call (compute-thread wall ms; CPU all threads s; leaf split of compute-thread wall):
+      CA               2336 ms  16.5%  cpu  2.269s | gb=66%  sort=34%  mem=0% | in: wait=34%  transpose=6%
+          leaves: GB__Asaxpy3B_noM__plus_times_int32.omp_outlined_debug__.204  [graph-test] 35%; GB_AxB_saxpy3_sym_ss.omp_outlined_debug__  [graph-test] 24%; GB_quicksort_1b_32_4  [graph-test] 17%; GB_unjumble.omp_outlined_debug__.6  [graph-test] 11%
+      CAC'             2122 ms  15.0%  cpu  2.097s | gb=81%  sort=19%  mem=0%  omp=0% | in: wait=19%
+          leaves: GB__Asaxpy3B_noM__plus_times_int32.omp_outlined_debug__.204  [graph-test] 44%; GB_AxB_saxpy3_sym_ss.omp_outlined_debug__  [graph-test] 36%; GB_unjumble.omp_outlined_debug__.6  [graph-test] 13%; GB_quicksort_1b_32_4  [graph-test] 5%
+      mxv              1607 ms  11.4%  cpu  1.595s | gb=99%  host=0%  mem=1%  other=0% | in: wait=0%  convert=1%
+          leaves: GB__Adot2B__max_first_uint64.omp_outlined_debug__.36  [graph-test] 70%; GB__Adot2B__max_first_uint64.omp_outlined_debug__.16  [graph-test] 22%; GB__Adot3B__max_first_uint64.omp_outlined_debug__  [graph-test] 3%; GB_trim_binary_search_32  [graph-test] 3%
+      m_unext          1001 ms   7.1%  cpu  0.981s | gb=86%  host=1%  mem=12%  alloc=0%  omp=0% | in: convert=2%
+          leaves: GB_masker_phase2.omp_outlined_debug__.19  [graph-test] 75%; platform_memmove  [libsystem_platform.dylib] 9%; bzero  [libsystem_platform.dylib] 3%; GB_mcast  [graph-test] 3%
+      offdiag           947 ms   6.7%  cpu  0.953s | gb=87%  host=2%  mem=10%  alloc=0%
+          leaves: GB_select_positional_phase2.omp_outlined_debug__.22  [graph-test] 52%; GB_select_positional_phase1.omp_outlined_debug__.6  [graph-test] 16%; platform_memmove  [libsystem_platform.dylib] 10%; GB_trim_binary_search_32  [graph-test] 9%
+      key               849 ms   6.0%  cpu  0.855s | gb=85%  host=11%  sort=0%  mem=3%  alloc=0% | in: builder=0%  convert=0%
+          leaves: GB_apply_op.omp_outlined_debug__.56  [graph-test] 64%; key_op  [graph-test] 11%; GB__cast_int32_t_int32_t  [graph-test] 7%; GB_masker_phase2.omp_outlined_debug__.11  [graph-test] 6%
+      m_assign          721 ms   5.1%  cpu  0.705s | gb=99%  mem=1%  alloc=0%  omp=0% | in: convert=1%
+          leaves: GB_bitmap_assign_2_whole.omp_outlined_debug__.8  [graph-test] 91%; GB_mcast  [graph-test] 5%; GB__cast_uint64_t_uint64_t  [graph-test] 2%; platform_memset  [libsystem_platform.dylib] 1%
+      compact           678 ms   4.8%  cpu  0.670s | gb=99%  host=0%  sort=0%  alloc=0% | in: builder=9%  convert=5%
+          leaves: GB_subref_phase3.omp_outlined_debug__.8  [graph-test] 31%; GB_subref_phase2.omp_outlined_debug__.2  [graph-test] 22%; GB_find_Ap_start_end  [graph-test] 11%; GB_ijproperties.omp_outlined_debug__  [graph-test] 8%
+      m_extract         655 ms   4.6%  cpu  0.654s | gb=100%  alloc=0%
+          leaves: GB_ijproperties.omp_outlined_debug__  [graph-test] 70%; GB_jit__subref_bitmap__0800c9f.omp_outlined_debug__  [graph-test] 29%; 0x134f8  [libsystem_malloc.dylib] 0%; mach_vm_reclaim_query_state  [libsystem_kernel.dylib] 0%
+      m_unkey           543 ms   3.8%  cpu  0.518s | gb=89%  host=11%
+          leaves: GB_apply_op.omp_outlined_debug__.56  [graph-test] 83%; unkey_op  [graph-test] 11%; GB__cast_uint64_t_uint64_t  [graph-test] 6%
+      m_eq              443 ms   3.1%  cpu  0.441s | gb=99%  mem=1%  alloc=0%  omp=0%
+          leaves: GB__AemultB_bitmap__eq_uint64.omp_outlined_debug__.104  [graph-test] 98%; GB__AemultB_04__eq_uint64.omp_outlined_debug__  [graph-test] 1%; bzero  [libsystem_platform.dylib] 1%; mach_vm_reclaim_update_kernel_accounting_trap  [libsystem_kernel.dylib] 0%
+      bnd               402 ms   2.8%  cpu  0.397s | gb=99%  mem=0%  alloc=0%
+          leaves: GB__Adot2B__plus_second_int32.omp_outlined_debug__.16  [graph-test] 99%; bzero  [libsystem_platform.dylib] 0%; mach_vm_reclaim_update_kernel_accounting_trap  [libsystem_kernel.dylib] 0%
+      Cw                343 ms   2.4%  cpu  0.319s | gb=99%  mem=1%  alloc=0%
+          leaves: GB__AsaxbitB__plus_times_int32.omp_outlined_debug__.134  [graph-test] 99%; bzero  [libsystem_platform.dylib] 1%; mach_vm_reclaim_update_kernel_accounting_trap  [libsystem_kernel.dylib] 0%
+      cap               343 ms   2.4%  cpu  0.332s | gb=98%  sort=0%  mem=1%  alloc=0%  omp=0% | in: builder=1%  convert=1%
+          leaves: GB_emult_08_phase1.omp_outlined_debug__  [graph-test] 26%; GB__AemultB_08__plus_int32.omp_outlined_debug__  [graph-test] 21%; GB__sel_phase2__le_thunk_int32.omp_outlined_debug__  [graph-test] 15%; GB__sel_phase1__le_thunk_int32.omp_outlined_debug__  [graph-test] 15%
+      c_number_host     232 ms   1.6%  cpu  0.261s | gb=89%  host=2%  mem=8%  alloc=1%  omp=0% | in: builder=14%  convert=82%
+          leaves: GB_convert_b2s.omp_outlined_debug__.8  [graph-test] 68%; GB_convert_s2b.omp_outlined_debug__.18  [graph-test] 11%; GB_builder.omp_outlined_debug__.3  [graph-test] 9%; platform_memmove  [libsystem_platform.dylib] 4%
+      c_extract         219 ms   1.5%  cpu  0.207s | gb=60%  host=5%  mem=34%
+          leaves: platform_memmove  [libsystem_platform.dylib] 32%; GB_bitmap_subref.omp_outlined_debug__.6  [graph-test] 31%; GB_ijproperties.omp_outlined_debug__  [graph-test] 29%; 0x24ca888  [graph-test] 5%
+      m_full            204 ms   1.4%  cpu  0.208s | gb=98%  alloc=2%  omp=0%
+          leaves: GB__AaddB__second_uint64.omp_outlined_debug__.38  [graph-test] 68%; GB__AaddB__second_uint64.omp_outlined_debug__.40  [graph-test] 28%; mach_vm_reclaim_update_kernel_accounting_trap  [libsystem_kernel.dylib] 1%; GB_add_phase2  [graph-test] 0%
+      c_build           145 ms   1.0%  cpu  0.142s | gb=100% | in: builder=100%
+          leaves: GB_builder.omp_outlined_debug__  [graph-test] 64%; GB_builder.omp_outlined_debug__.14  [graph-test] 36%
+      twohop            101 ms   0.7%  cpu  0.109s | gb=50%  host=2%  sort=45%  mem=2%  alloc=1% | in: builder=41%  convert=4%
+          leaves: GB_partition_3_32_32_32  [graph-test] 21%; GB_partition_2_32_32  [graph-test] 11%; GB__Adot2B__max_first_uint64.omp_outlined_debug__.38  [graph-test] 7%; GB_select_generic_phase2.omp_outlined_debug__.6  [graph-test] 6%
+      c_leader           78 ms   0.6%  cpu  0.076s | gb=99%  host=1%
+          leaves: GB__sel_bitmap__eq_thunk_bool.omp_outlined_debug__.2  [graph-test] 49%; GB__Cewise_fulln__min_uint64.omp_outlined_debug__  [graph-test] 35%; GB__Cewise_fulln__eq_uint64.omp_outlined_debug__  [graph-test] 15%; or_default<&str, f64, alloc::alloc::Global>  [graph-test] 1%
+      idx                64 ms   0.5%  cpu  0.056s | gb=100%
+          leaves: GB_apply_op.omp_outlined_debug__.2  [graph-test] 78%; GB__uop_apply__identity_uint64_int64.omp_outlined_debug__  [graph-test] 20%; GB_new  [graph-test] 2%
+      (untimed)          56 ms   0.4%  cpu  0.059s | gb=38%  host=2%  mem=54%  alloc=5%  other=2%
+          leaves: platform_memmove  [libsystem_platform.dylib] 46%; GB_extractTuples.omp_outlined_debug__  [graph-test] 27%; bzero  [libsystem_platform.dylib] 7%; GB__red__max_int32  [graph-test] 7%
+      project            43 ms   0.3%  cpu  0.042s | gb=100%
+          leaves: GB__Adot2B__plus_times_int32.omp_outlined_debug__.10  [graph-test] 98%; GB_is_diagonal.omp_outlined_debug__  [graph-test] 2%
+    omp stacks (main: compute-thread samples; worker: CPU us):
+      main            2  kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*) < kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*) < kmp_fork_call < kmpc_fork_call
+      main            1  kmp_fork_call < kmp_fork_call < kmpc_fork_call < GB_AxB_saxpy3_sym_ss
+      main            1  kmpc_for_static_init_8 < GB__AaddB__second_uint64.omp_outlined_debug__.38 < GB__AaddB__second_uint64.omp_outlined.37 < GB__AaddB__second_uint64.omp_outlined_debug__.38
+      main            1  kmp_resume_if_soft_paused < kmpc_end_serialized_parallel < kmp_join_call < kmpc_fork_call
+      main            1  kmpc_for_static_fini < GB_convert_b2s.omp_outlined_debug__.8 < GB_convert_b2s.omp_outlined.7 < GB_convert_b2s.omp_outlined_debug__.8
+      main            1  kmpc_dispatch_next_4 < GB_masker_phase2.omp_outlined_debug__.13 < GB_masker_phase2.omp_outlined.12 < GB_masker_phase2.omp_outlined_debug__.13
+    mem stacks (main: compute-thread samples; worker: CPU us):
+      main           97  platform_memmove < GB_select_positional_phase2.omp_outlined_debug__.22 < GB_select_positional_phase2.omp_outlined.21 < kmp_invoke_microtask
+      main           69  platform_memmove < GB_bitmap_subref.omp_outlined_debug__.6 < GB_bitmap_subref.omp_outlined.5 < kmp_invoke_microtask
+      main           51  platform_memmove < GB_masker_phase2.omp_outlined_debug__.19 < GB_masker_phase2.omp_outlined.18 < kmp_invoke_microtask
+      main           42  bzero < GB_calloc_helper < GB_calloc_memory < GB_bix_alloc
+      main           41  platform_memmove < GB_cast_matrix < GB_transplant < GB_accum_mask
+      main           25  platform_memmove < GB_transplant < GB_accum_mask < GB_apply
+    alloc stacks (main: compute-thread samples; worker: CPU us):
+      main            5  mach_vm_reclaim_update_kernel_accounting_trap < mach_vm_reclaim_update_kernel_accounting < 0x12fde < 0x15f76
+      main            4  madvise < 0x133a6 < 0x138e6 < 0x2a456
+      main            2  0x134f8 < 0x2a456 < GB_Global_malloc_function < GB_malloc_helper
+      main            2  mach_vm_reclaim_update_kernel_accounting_trap < mach_vm_reclaim_update_kernel_accounting < 0x12fde < 0x163ae
+      main            1  0x2b388 < dealloc < __rdl_dealloc < dealloc_nonnull
+      main            1  0x13c88 < 0x135f2 < 0x2a456 < GB_Global_malloc_function
+    sort stacks (main: compute-thread samples; worker: CPU us):
+      main          540  GB_unjumble.omp_outlined_debug__.6 < GB_unjumble.omp_outlined.5 < kmp_invoke_microtask < kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*)
+      main          417  GB_quicksort_1b_32_4 < GB_qsort_1b_32_4 < GB_unjumble.omp_outlined_debug__.6 < GB_unjumble.omp_outlined.5
+      main          109  GB_partition_1b_32_4 < GB_quicksort_1b_32_4 < GB_qsort_1b_32_4 < GB_unjumble.omp_outlined_debug__.6
+      main           60  GB_quicksort_1b_32_4 < GB_quicksort_1b_32_4 < GB_qsort_1b_32_4 < GB_unjumble.omp_outlined_debug__.6
+      main           24  GB_partition_1b_32_4 < GB_quicksort_1b_32_4 < GB_quicksort_1b_32_4 < GB_qsort_1b_32_4
+      main           22  GB_partition_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32
+    top self (CPU, all threads) -> timed calls it ran under:
+       12.5%  GB__Asaxpy3B_noM__plus_times_int32.omp_outlined_debug__.204  [graph-test]  <- CAC' 54%, CA 46%
+        9.2%  GB_AxB_saxpy3_sym_ss.omp_outlined_debug__  [graph-test]  <- CAC' 58%, CA 42%
+        8.0%  GB__Adot2B__max_first_uint64.omp_outlined_debug__.36  [graph-test]  <- mxv 100%
+        7.0%  GB_apply_op.omp_outlined_debug__.56  [graph-test]  <- key 56%, m_unkey 44%
+        5.3%  GB_masker_phase2.omp_outlined_debug__.19  [graph-test]  <- m_unext 100%, twohop 0%
+        4.6%  GB_bitmap_assign_2_whole.omp_outlined_debug__.8  [graph-test]  <- m_assign 100%
+        4.0%  GB_ijproperties.omp_outlined_debug__  [graph-test]  <- m_extract 81%, c_extract 11%, compact 9%
+        3.7%  GB_unjumble.omp_outlined_debug__.6  [graph-test]  <- CAC' 53%, CA 47%
+        3.6%  GB_select_positional_phase2.omp_outlined_debug__.22  [graph-test]  <- offdiag 100%
+        3.5%  GB_quicksort_1b_32_4  [graph-test]  <- CA 82%, CAC' 18%
+        3.1%  GB__AemultB_bitmap__eq_uint64.omp_outlined_debug__.104  [graph-test]  <- m_eq 100%
+        2.8%  GB__Adot2B__plus_second_int32.omp_outlined_debug__.16  [graph-test]  <- bnd 100%
+        2.4%  GB__Adot2B__max_first_uint64.omp_outlined_debug__.16  [graph-test]  <- mxv 100%
+        2.4%  platform_memmove  [libsystem_platform.dylib]  <- offdiag 32%, m_unext 27%, c_extract 19%
+        2.2%  GB__AsaxbitB__plus_times_int32.omp_outlined_debug__.134  [graph-test]  <- Cw 100%
+    top total (CPU, inclusive, GraphBLAS and bench frames):
+       96.0%  kmpc_fork_call
+       96.0%  kmp_fork_call
+       95.9%  kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*)
+       95.9%  kmp_invoke_microtask
+       95.2%  hierarchy_keep
+       95.2%  hierarchy
+       91.9%  coarsen_level
+       40.4%  GB_mxm
+       40.3%  GB_AxB_meta
+       24.5%  GB_AxB_saxpy
+       23.6%  GrB_mxm
+       22.2%  GB_AxB_saxpy3
+       17.3%  GB_apply
+       16.8%  GrB_mxv
+       16.3%  time<graph::graph::graphblas::m1_coarsen_bench::M, graph::graph::graphblas::m1_coarsen_bench::coarsen_level::{closure_env#15}>
+
+=== b2_d>=1: wall 5.130s instr 69.88G cycles 20.63G cpu 5.060s (sys 0.100) windows 22
+    samples: compute thread 5125 ms, CPU all threads 5.055s, workers 0.000s (0 samples, 0 with zero CPU)
+    compute-thread wall by leaf: gb= 75.5%  host= 16.2%  sort=  5.3%  mem=  2.4%  alloc=  0.5%  omp=  0.0%  other=  0.0%
+    CPU (all threads) by leaf:   gb= 73.8%  host= 17.1%  sort=  5.4%  mem=  3.0%  alloc=  0.7%  omp=  0.0%  other=  0.0%
+    partition, compute-thread wall: kernel=57.2%  gb_wait=12.4%  convert=3.4%  builder=8.5%  mem=1.9%  alloc=0.4%  sort=0.0%  host=16.2%  omp=0.0%  other=0.0%
+    partition, CPU all threads:     kernel=55.7%  gb_wait=12.4%  convert=3.4%  builder=8.7%  mem=2.2%  alloc=0.5%  sort=0.0%  host=17.1%  omp=0.0%  other=0.0%
+    compute-thread wall inside: wait=12.4%  builder=8.3%  convert=3.3%  transpose=0.3%  hyper_hash=0.0%
+    by timed call (compute-thread wall ms; CPU all threads s; leaf split of compute-thread wall):
+      mask_mxm         1606 ms  31.3%  cpu  1.537s | gb=97%  sort=0%  mem=2%  alloc=0% | in: wait=39%  builder=1%  convert=0%
+          leaves: GB__Adot3B__any_pair_iso.omp_outlined_debug__  [graph-test] 23%; GB_select_positional_phase1.omp_outlined_debug__.14  [graph-test] 18%; GB_select_positional_phase2.omp_outlined_debug__.14  [graph-test] 18%; GB_AxB_dot3.omp_outlined_debug__  [graph-test] 14%
+      mask_vals         978 ms  19.1%  cpu  0.973s | gb=100%  sort=0% | in: builder=0%
+          leaves: GB_emult_08_phase1.omp_outlined_debug__  [graph-test] 56%; GB__AemultB_08__first_int32.omp_outlined_debug__  [graph-test] 40%; GB_cumsum  [graph-test] 3%; GB_partition_3_32_32_32  [graph-test] 0%
+      book              726 ms  14.2%  cpu  0.768s | host=91%  mem=7%  alloc=2%  other=0%
+          leaves: book  [graph-test] 60%; eq<u32>  [graph-test] 5%; try_fold<core::ops::range::Range<u32>, (), core::iter::traits::iterator::Iterator::find::check::{closure_env#0}<u32, &mut graph::graph::graphblas::m1_coarsen_bench::reuse::book::{closure_env#1}>, core::ops::control_flow::ControlFlow<u32, ()>>  [graph-test] 4%; platform_memmove  [libsystem_platform.dylib] 3%
+      s_merge           580 ms  11.3%  cpu  0.555s | gb=97%  host=0%  sort=3%  mem=1% | in: builder=3%
+          leaves: GB__AaddB__plus_int32.omp_outlined_debug__  [graph-test] 65%; GB_add_phase1.omp_outlined_debug__  [graph-test] 23%; GB_cumsum  [graph-test] 5%; GB_add_phase0.omp_outlined_debug__.10  [graph-test] 3%
+      bnd               454 ms   8.9%  cpu  0.415s | gb=94%  sort=5%  mem=1%  alloc=0% | in: wait=1%  builder=1%  transpose=3%
+          leaves: GB__Adot2B__plus_second_int32.omp_outlined_debug__.14  [graph-test] 90%; GB_partition_2_32_32  [graph-test] 2%; GB__Adot2B__plus_second_int32.omp_outlined_debug__.16  [graph-test] 2%; bzero  [libsystem_platform.dylib] 1%
+      s_build           259 ms   5.1%  cpu  0.281s | gb=16%  host=8%  sort=75%  alloc=1% | in: builder=86%  convert=1%
+          leaves: GB_partition_3_32_32_32  [graph-test] 58%; GB_quicksort_3_32_32_32  [graph-test] 17%; {closure#7}  [graph-test] 5%; GB_builder.omp_outlined_debug__.16  [graph-test] 4%
+      project           227 ms   4.4%  cpu  0.246s | gb=38%  host=48%  mem=12%  alloc=1% | in: builder=19%  convert=30%
+          leaves: capacity<alloc::alloc::Global>  [graph-test] 28%; GB_convert_s2b.omp_outlined_debug__.14  [graph-test] 23%; GB_builder.omp_outlined_debug__.3  [graph-test] 15%; bzero  [libsystem_platform.dylib] 7%
+      m_build           196 ms   3.8%  cpu  0.183s | gb=71%  host=19%  sort=9%  mem=1%  alloc=1% | in: builder=56%  convert=24%
+          leaves: GB_builder.omp_outlined_debug__  [graph-test] 31%; GB_convert_hyper_to_sparse.omp_outlined_debug__  [graph-test] 20%; GB_builder.omp_outlined_debug__.14  [graph-test] 16%; GB_partition_3_32_32_32  [graph-test] 8%
+      resize             66 ms   1.3%  cpu  0.062s | gb=79%  sort=20%  alloc=2% | in: builder=21%  convert=77%  hyper_hash=2%
+          leaves: GB_convert_sparse_to_hyper.omp_outlined_debug__.2  [graph-test] 39%; GB_convert_hyper_to_sparse.omp_outlined_debug__  [graph-test] 35%; GB_partition_3_32_32_32  [graph-test] 20%; GB_convert_sparse_to_hyper.omp_outlined_debug__  [graph-test] 2%
+      s_extract          30 ms   0.6%  cpu  0.032s | gb=93%  host=3%  mem=3%
+          leaves: GB_subref_phase3.omp_outlined_debug__.12  [graph-test] 33%; GB_find_Ap_start_end  [graph-test] 33%; GB_subref_phase0.omp_outlined_debug__.4  [graph-test] 10%; GB_subref_phase2.omp_outlined_debug__.2  [graph-test] 10%
+    mem stacks (main: compute-thread samples; worker: CPU us):
+      main           25  platform_memmove < 0x2aef2 < 0x3a6f6 < 0x3af12
+      main           22  platform_memset < write<u32> < extend_with<u32, alloc::alloc::Global> < from_elem<u32, alloc::alloc::Global>
+      main           21  platform_memset_pattern16 < GB_AxB_dot3.omp_outlined_debug__ < GB_AxB_dot3.omp_outlined < kmp_invoke_microtask
+      main           13  bzero < GB_calloc_helper < GB_calloc_memory < GB_convert_s2b
+      main           10  platform_memmove < GB_builder < GB_build < GrB_Vector_build_INT32
+      main            6  platform_memmove < GB_AxB_dot3 < GB_AxB_dot < GB_AxB_meta
+    alloc stacks (main: compute-thread samples; worker: CPU us):
+      main           12  madvise < 0x133a6 < 0x138e6 < 0x2a456
+      main            3  mach_vm_reclaim_update_kernel_accounting_trap < mach_vm_reclaim_update_kernel_accounting < 0x12fde < 0x15f76
+      main            2  mach_absolute_time < mach_vm_reclaim_try_cancel < 0x15a9a < 0x15146
+      main            1  mach_vm_map < 0x15dce < 0x1366e < 0x2a456
+      main            1  0x2aa40 < alloc < __rdl_alloc < alloc
+      main            1  0x2b118 < dealloc < __rdl_dealloc < dealloc_nonnull
+    sort stacks (main: compute-thread samples; worker: CPU us):
+      main          177  GB_partition_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32
+      main           49  GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32
+      main           13  GB_partition_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_qsort_3_32_32_32 < GB_qsort_3
+      main           12  GB_partition_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_quicksort_3_32_32_32 < GB_qsort_3_32_32_32
+      main           10  GB_partition_2_32_32 < GB_quicksort_2_32_32 < GB_quicksort_2_32_32 < GB_quicksort_2_32_32
+      main            3  GB_quicksort_2_32_32 < GB_quicksort_2_32_32 < GB_quicksort_2_32_32 < GB_quicksort_2_32_32
+    top self (CPU, all threads) -> timed calls it ran under:
+       10.7%  GB_emult_08_phase1.omp_outlined_debug__  [graph-test]  <- mask_vals 100%
+        9.0%  book  [graph-test]  <- book 100%
+        7.8%  GB__AemultB_08__first_int32.omp_outlined_debug__  [graph-test]  <- mask_vals 100%
+        7.4%  GB__AaddB__plus_int32.omp_outlined_debug__  [graph-test]  <- s_merge 100%
+        7.4%  GB__Adot2B__plus_second_int32.omp_outlined_debug__.14  [graph-test]  <- bnd 100%
+        7.1%  GB__Adot3B__any_pair_iso.omp_outlined_debug__  [graph-test]  <- mask_mxm 100%
+        5.8%  GB_select_positional_phase1.omp_outlined_debug__.14  [graph-test]  <- mask_mxm 100%
+        5.5%  GB_select_positional_phase2.omp_outlined_debug__.14  [graph-test]  <- mask_mxm 100%
+        4.1%  GB_partition_3_32_32_32  [graph-test]  <- s_build 77%, resize 6%, m_build 6%
+        4.0%  GB_AxB_dot3.omp_outlined_debug__  [graph-test]  <- mask_mxm 100%
+        2.3%  GB_add_phase1.omp_outlined_debug__  [graph-test]  <- s_merge 100%
+        2.0%  GB_cumsum  [graph-test]  <- mask_mxm 38%, mask_vals 30%, s_merge 30%
+        1.9%  capacity<alloc::alloc::Global>  [graph-test]  <- project 76%, book 19%, s_build 4%
+        1.7%  GB__Adot3B__any_pair_iso.omp_outlined_debug__.74  [graph-test]  <- mask_mxm 100%
+        1.6%  GB_cumsum1_float  [graph-test]  <- mask_mxm 100%
+    top total (CPU, inclusive, GraphBLAS and bench frames):
+      100.0%  build_b
+       71.7%  contract_b2
+       70.7%  kmp_fork_call
+       70.7%  kmp_serial_fork_call(ident*, int, fork_context_e, int, void (*)(int*, int*, ...), int (*)(int), kmp_info*, kmp_team*, ompt_data_t*, void**, ompt_data_t**, char*)
+       70.7%  kmp_invoke_microtask
+       70.7%  kmpc_fork_call
+       30.4%  time<graph::graph::graphblas::m1_coarsen_bench::M, graph::graph::graphblas::m1_coarsen_bench::reuse::contract_b2::{closure_env#1}>
+       29.9%  GB_ewise
+       26.0%  GB_mxm
+       26.0%  GB_AxB_meta
+       25.5%  GB_AxB_dot
+       19.3%  time<(), graph::graph::graphblas::m1_coarsen_bench::reuse::contract_b2::{closure_env#2}>
+       19.1%  GrB_Matrix_eWiseMult_BinaryOp
+       19.1%  GB_emult
+       17.9%  GrB_mxm
+  b2_d1    wall 0.318s compute-ms   317  main-wall: gb= 80.1%  host= 17.0%  sort=  0.6%  mem=  1.6%  alloc=  0.6%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d10   wall 0.364s compute-ms   363  main-wall: gb= 75.5%  host= 16.0%  sort=  6.6%  mem=  1.7%  alloc=  0.3%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d11   wall 0.344s compute-ms   343  main-wall: gb= 75.5%  host= 15.7%  sort=  6.1%  mem=  1.7%  alloc=  0.6%  omp=  0.0%  other=  0.3% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d12   wall 0.319s compute-ms   318  main-wall: gb= 72.0%  host= 17.9%  sort=  5.7%  mem=  2.8%  alloc=  1.6%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d13   wall 0.262s compute-ms   262  main-wall: gb= 73.3%  host= 15.3%  sort=  5.7%  mem=  4.6%  alloc=  1.1%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d14   wall 0.204s compute-ms   204  main-wall: gb= 74.5%  host= 15.2%  sort=  4.9%  mem=  4.9%  alloc=  0.5%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d15   wall 0.160s compute-ms   160  main-wall: gb= 71.2%  host= 18.1%  sort=  7.5%  mem=  3.1%  alloc=  0.0%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d16   wall 0.114s compute-ms   114  main-wall: gb= 69.3%  host= 14.0%  sort= 12.3%  mem=  4.4%  alloc=  0.0%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d17   wall 0.093s compute-ms    92  main-wall: gb= 65.2%  host= 13.0%  sort= 16.3%  mem=  4.3%  alloc=  1.1%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d18   wall 0.074s compute-ms    75  main-wall: gb= 70.7%  host=  9.3%  sort= 16.0%  mem=  1.3%  alloc=  2.7%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d19   wall 0.050s compute-ms    49  main-wall: gb= 51.0%  host= 12.2%  sort= 28.6%  mem=  6.1%  alloc=  2.0%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d2    wall 0.334s compute-ms   334  main-wall: gb= 76.6%  host= 18.3%  sort=  2.4%  mem=  2.1%  alloc=  0.6%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d20   wall 0.027s compute-ms    27  main-wall: gb= 33.3%  host= 14.8%  sort= 48.1%  mem=  3.7%  alloc=  0.0%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d21   wall 0.010s compute-ms    10  main-wall: gb= 30.0%  host= 10.0%  sort= 50.0%  mem= 10.0%  alloc=  0.0%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d22   wall 0.004s compute-ms     4  main-wall: gb= 25.0%  host=  0.0%  sort= 25.0%  mem= 50.0%  alloc=  0.0%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d3    wall 0.340s compute-ms   340  main-wall: gb= 78.8%  host= 17.4%  sort=  1.5%  mem=  2.1%  alloc=  0.3%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d4    wall 0.348s compute-ms   349  main-wall: gb= 78.5%  host= 15.8%  sort=  3.2%  mem=  2.0%  alloc=  0.6%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d5    wall 0.350s compute-ms   350  main-wall: gb= 77.7%  host= 16.3%  sort=  4.0%  mem=  1.4%  alloc=  0.6%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d6    wall 0.358s compute-ms   358  main-wall: gb= 79.1%  host= 15.4%  sort=  3.6%  mem=  1.7%  alloc=  0.0%  omp=  0.0%  other=  0.3% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d7    wall 0.347s compute-ms   347  main-wall: gb= 78.1%  host= 16.7%  sort=  3.5%  mem=  1.7%  alloc=  0.0%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d8    wall 0.352s compute-ms   351  main-wall: gb= 77.8%  host= 15.7%  sort=  4.6%  mem=  1.7%  alloc=  0.3%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  b2_d9    wall 0.359s compute-ms   358  main-wall: gb= 75.1%  host= 16.8%  sort=  4.7%  mem=  3.1%  alloc=  0.3%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d1     wall 1.085s compute-ms  1085  main-wall: gb= 85.1%  host=  1.2%  sort= 10.1%  mem=  3.2%  alloc=  0.4%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d10    wall 0.980s compute-ms   980  main-wall: gb= 86.7%  host=  1.0%  sort=  8.2%  mem=  3.7%  alloc=  0.3%  omp=  0.0%  other=  0.1% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d11    wall 0.945s compute-ms   944  main-wall: gb= 87.7%  host=  1.6%  sort=  7.9%  mem=  2.5%  alloc=  0.2%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d12    wall 0.826s compute-ms   825  main-wall: gb= 88.4%  host=  1.7%  sort=  7.5%  mem=  2.3%  alloc=  0.1%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d13    wall 0.679s compute-ms   679  main-wall: gb= 89.4%  host=  0.9%  sort=  7.2%  mem=  2.4%  alloc=  0.1%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d14    wall 0.465s compute-ms   465  main-wall: gb= 88.4%  host=  1.7%  sort=  6.5%  mem=  3.0%  alloc=  0.0%  omp=  0.4%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.6%
+  r_d15    wall 0.283s compute-ms   283  main-wall: gb= 89.4%  host=  1.8%  sort=  6.4%  mem=  2.5%  alloc=  0.0%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d16    wall 0.182s compute-ms   182  main-wall: gb= 88.5%  host=  0.5%  sort=  7.1%  mem=  2.7%  alloc=  1.1%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d17    wall 0.108s compute-ms   108  main-wall: gb= 88.0%  host=  0.0%  sort=  8.3%  mem=  0.9%  alloc=  1.9%  omp=  0.9%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   1.0%
+  r_d18    wall 0.075s compute-ms    74  main-wall: gb= 86.5%  host=  4.1%  sort=  6.8%  mem=  2.7%  alloc=  0.0%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d19    wall 0.035s compute-ms    35  main-wall: gb= 85.7%  host=  2.9%  sort=  8.6%  mem=  2.9%  alloc=  0.0%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d2     wall 1.087s compute-ms  1084  main-wall: gb= 85.2%  host=  1.6%  sort=  9.6%  mem=  3.2%  alloc=  0.3%  omp=  0.1%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.2%
+  r_d20    wall 0.015s compute-ms    14  main-wall: gb= 85.7%  host=  0.0%  sort= 14.3%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d21    wall 0.005s compute-ms     5  main-wall: gb= 80.0%  host=  0.0%  sort=  0.0%  mem=  0.0%  alloc=  0.0%  omp= 20.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp  21.8%
+  r_d3     wall 1.086s compute-ms  1086  main-wall: gb= 84.8%  host=  2.0%  sort=  9.8%  mem=  3.1%  alloc=  0.1%  omp=  0.1%  other=  0.1% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.1%
+  r_d4     wall 1.084s compute-ms  1083  main-wall: gb= 85.7%  host=  1.7%  sort=  9.8%  mem=  2.5%  alloc=  0.3%  omp=  0.1%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.1%
+  r_d5     wall 1.072s compute-ms  1072  main-wall: gb= 86.6%  host=  1.3%  sort=  9.5%  mem=  2.4%  alloc=  0.1%  omp=  0.1%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.1%
+  r_d6     wall 1.070s compute-ms  1069  main-wall: gb= 86.2%  host=  1.7%  sort=  9.4%  mem=  2.6%  alloc=  0.1%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d7     wall 1.051s compute-ms  1051  main-wall: gb= 87.0%  host=  1.0%  sort=  8.8%  mem=  2.9%  alloc=  0.1%  omp=  0.1%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.1%
+  r_d8     wall 1.011s compute-ms  1010  main-wall: gb= 86.3%  host=  1.8%  sort=  8.7%  mem=  3.0%  alloc=  0.2%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+  r_d9     wall 0.998s compute-ms   998  main-wall: gb= 85.0%  host=  1.6%  sort=  8.6%  mem=  4.7%  alloc=  0.1%  omp=  0.0%  other=  0.0% | worker CPU 0.000s omp   0.0% | all-CPU omp   0.0%
+
+=== split_d1: wall 0.059s instr 0.71G cycles 0.23G | samples: compute 59 ms, CPU 0.057s
+    CPU  by leaf: gb= 94.8%  host=  1.8%  sort=  0.0%  mem=  3.4%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d10: wall 0.055s instr 0.86G cycles 0.23G | samples: compute 55 ms, CPU 0.054s
+    CPU  by leaf: gb=100.0%  host=  0.0%  sort=  0.0%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d11: wall 0.058s instr 0.84G cycles 0.23G | samples: compute 58 ms, CPU 0.056s
+    CPU  by leaf: gb= 97.3%  host=  1.0%  sort=  0.0%  mem=  1.8%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d12: wall 0.056s instr 0.82G cycles 0.23G | samples: compute 56 ms, CPU 0.054s
+    CPU  by leaf: gb= 96.6%  host=  1.8%  sort=  0.0%  mem=  1.6%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d13: wall 0.057s instr 0.76G cycles 0.23G | samples: compute 57 ms, CPU 0.057s
+    CPU  by leaf: gb= 97.2%  host=  2.8%  sort=  0.0%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d14: wall 0.051s instr 0.64G cycles 0.21G | samples: compute 51 ms, CPU 0.049s
+    CPU  by leaf: gb= 92.3%  host=  2.0%  sort=  0.0%  mem=  5.7%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d15: wall 0.040s instr 0.49G cycles 0.16G | samples: compute 40 ms, CPU 0.039s
+    CPU  by leaf: gb= 92.9%  host=  2.0%  sort=  0.0%  mem=  5.1%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d16: wall 0.029s instr 0.38G cycles 0.12G | samples: compute 30 ms, CPU 0.029s
+    CPU  by leaf: gb= 91.1%  host=  0.0%  sort=  0.0%  mem=  8.9%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d17: wall 0.021s instr 0.31G cycles 0.09G | samples: compute 21 ms, CPU 0.020s
+    CPU  by leaf: gb=100.0%  host=  0.0%  sort=  0.0%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d18: wall 0.046s instr 0.61G cycles 0.18G | samples: compute 46 ms, CPU 0.045s
+    CPU  by leaf: gb= 88.3%  host=  0.0%  sort= 11.7%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d19: wall 0.043s instr 0.58G cycles 0.17G | samples: compute 43 ms, CPU 0.041s
+    CPU  by leaf: gb= 87.4%  host=  0.0%  sort= 12.5%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d2: wall 0.053s instr 0.71G cycles 0.21G | samples: compute 53 ms, CPU 0.052s
+    CPU  by leaf: gb= 96.2%  host=  1.9%  sort=  0.0%  mem=  0.0%  alloc=  1.9%  omp=  0.0%  other=  0.0%
+
+=== split_d20: wall 0.009s instr 0.08G cycles 0.04G | samples: compute 10 ms, CPU 0.009s
+    CPU  by leaf: gb= 94.3%  host=  0.0%  sort=  5.7%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d21: wall 0.003s instr 0.03G cycles 0.01G | samples: compute 3 ms, CPU 0.002s
+    CPU  by leaf: gb= 71.7%  host=  0.0%  sort= 28.3%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d22: wall 0.001s instr 0.01G cycles 0.00G | samples: compute 1 ms, CPU 0.000s
+    CPU  by leaf: gb=100.0%  host=  0.0%  sort=  0.0%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d3: wall 0.056s instr 0.77G cycles 0.22G | samples: compute 56 ms, CPU 0.055s
+    CPU  by leaf: gb=100.0%  host=  0.0%  sort=  0.0%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d4: wall 0.057s instr 0.88G cycles 0.23G | samples: compute 57 ms, CPU 0.056s
+    CPU  by leaf: gb= 97.2%  host=  2.8%  sort=  0.0%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d5: wall 0.057s instr 0.88G cycles 0.22G | samples: compute 56 ms, CPU 0.055s
+    CPU  by leaf: gb=100.0%  host=  0.0%  sort=  0.0%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d6: wall 0.057s instr 0.87G cycles 0.23G | samples: compute 57 ms, CPU 0.056s
+    CPU  by leaf: gb= 95.4%  host=  1.1%  sort=  0.0%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  3.5%
+
+=== split_d7: wall 0.059s instr 0.87G cycles 0.23G | samples: compute 59 ms, CPU 0.057s
+    CPU  by leaf: gb= 95.5%  host=  1.0%  sort=  0.0%  mem=  3.6%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d8: wall 0.055s instr 0.87G cycles 0.22G | samples: compute 55 ms, CPU 0.053s
+    CPU  by leaf: gb= 96.3%  host=  1.8%  sort=  0.0%  mem=  1.8%  alloc=  0.0%  omp=  0.0%  other=  0.0%
+
+=== split_d9: wall 0.057s instr 0.86G cycles 0.23G | samples: compute 57 ms, CPU 0.055s
+    CPU  by leaf: gb= 99.2%  host=  0.8%  sort=  0.0%  mem=  0.0%  alloc=  0.0%  omp=  0.0%  other=  0.0%

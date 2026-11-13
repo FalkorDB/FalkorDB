@@ -1,0 +1,13 @@
+Instructions (1e9), CA, 1 thread, median [min-max] over 3 runs; log instr_ca.log
+d0 unext 0.790 [0.788-0.796] -> sel_false 0.286 [0.286-0.286]
+d0 assign_full_extract_eq 2.236 [2.235-2.237] -> z 2.096 [2.094-2.113]
+d0 CA_CAC_offdiag 3.855 [3.853-3.878] -> b 3.449 [3.446-3.476]
+d0 cap 0.002 [0.002-0.002] -> q_cap 0.001 [0.001-0.001]
+d0 CA_CAC_offdiag+cbuild_Cw 4.412 -> hostC 3.505
+R>=1 unext 10.086 [10.061-10.116] -> sel_false 3.763 [3.762-3.763]
+R>=1 assign_full_extract_eq 29.985 [29.969-30.010] -> z 27.618 [27.618-27.684]
+R>=1 CA_CAC_offdiag 50.324 [50.283-50.383] -> b 45.521 [45.508-45.522]
+R>=1 cap 3.686 [3.658-3.690] -> q_cap 1.372 [1.372-1.399]
+R>=1 CA_CAC_offdiag+cbuild_Cw 57.956 -> hostC 46.384
+b2 official 47.235 [47.197-47.369] -> in-place 23.692 [23.680-23.813]
+split official 13.657 [13.641-13.678] -> in-place 7.576 [7.549-7.585]

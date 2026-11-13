@@ -1,0 +1,1416 @@
+diff --git a/graph/src/index/falkordb/cch/m2_bench.rs b/graph/src/index/falkordb/cch/m2_bench.rs
+new file mode 100644
+index 000000000..ed4e2a2ea
+--- /dev/null
++++ b/graph/src/index/falkordb/cch/m2_bench.rs
+@@ -0,0 +1,1397 @@
++//! SCRATCH (M2 prototype, never committed): read paths for the CCH topology.
++//!
++//! Part 1: customization and query reading `up(r)` (a) as today's flat arrays, (b) through
++//! a GraphBLAS UINT64 matrix in rank space whose values are arc ids, rows read by row
++//! iterators (one iterator per role, re-seeked per row).
++//! Part 2: Rust-owned CSR loaded read-only into a GrB_Matrix (GxB_Vector_load +
++//! GxB_IS_READONLY + GxB_load_Matrix_from_Container), transpose + masked mxm on it.
++//!
++//! Run:
++//!   M2_ROAD=/path/roadNet-CA.txt cargo test --release -p graph --features index-falkordb \
++//!     m2_ -- --ignored --nocapture --test-threads=1
++
++#![allow(clippy::all, clippy::pedantic, unused)]
++
++use std::ffi::c_void;
++use std::mem::MaybeUninit;
++use std::ptr::null_mut;
++use std::time::Instant;
++
++use rustc_hash::FxHashMap;
++
++use super::customize::{Metric, customize};
++use super::order::{Rank, Topology};
++use super::{Cch, CchInput, Csr, WeightCsr};
++use crate::graph::graph::NodeId;
++use crate::graph::graphblas::instr::read_instr;
++use crate::graph::graphblas::matrix::{Iter, Matrix, Uint64Extract};
++use crate::graph::graphblas::test_init::ensure_init;
++use crate::graph::graphblas::*;
++
++// ---------------------------------------------------------------- data
++
++fn mix(
++    u: u64,
++    v: u64,
++) -> u64 {
++    let mut h = u.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ v.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
++    h ^= h >> 31;
++    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
++    h ^= h >> 29;
++    h
++}
++
++/// integer 1..=100, directed (w(u,v) != w(v,u) in general): the earlier harness's metric.
++fn weight_of(
++    u: u64,
++    v: u64,
++) -> f64 {
++    (mix(u, v) % 100 + 1) as f64
++}
++
++fn load_input(path: &str) -> CchInput {
++    let text = std::fs::read_to_string(path).expect("read road graph");
++    let mut edges: Vec<(u64, u64)> = Vec::new();
++    let mut n = 0u64;
++    for line in text.lines() {
++        if line.starts_with('#') || line.is_empty() {
++            continue;
++        }
++        let mut it = line.split_whitespace();
++        let u: u64 = it.next().unwrap().parse().unwrap();
++        let v: u64 = it.next().unwrap().parse().unwrap();
++        n = n.max(u + 1).max(v + 1);
++        if u != v {
++            edges.push((u, v));
++            edges.push((v, u));
++        }
++    }
++    drop(text);
++    edges.sort_unstable();
++    edges.dedup();
++    let n = n as usize;
++    let mut offsets = vec![0u64; n + 1];
++    for &(u, _) in &edges {
++        offsets[u as usize + 1] += 1;
++    }
++    for i in 0..n {
++        offsets[i + 1] += offsets[i];
++    }
++    let neighbors: Vec<u64> = edges.iter().map(|&(_, v)| v).collect();
++    let values: Vec<f64> = edges.iter().map(|&(u, v)| weight_of(u, v)).collect();
++    CchInput {
++        n,
++        skeleton: Csr {
++            node_count: n,
++            row_offsets: offsets.clone(),
++            neighbors: neighbors.clone(),
++        },
++        weights: WeightCsr {
++            csr: Csr {
++                node_count: n,
++                row_offsets: offsets,
++                neighbors,
++            },
++            values,
++        },
++    }
++}
++
++struct Rng(u64);
++impl Rng {
++    fn next(&mut self) -> u64 {
++        self.0 ^= self.0 << 13;
++        self.0 ^= self.0 >> 7;
++        self.0 ^= self.0 << 17;
++        self.0
++    }
++}
++
++fn pct(
++    v: &[f64],
++    q: f64,
++) -> f64 {
++    let mut v = v.to_vec();
++    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
++    v[((v.len() as f64 - 1.0) * q).round() as usize]
++}
++
++fn rusage_u64(field: usize) -> f64 {
++    unsafe extern "C" {
++        fn proc_pid_rusage(
++            pid: i32,
++            flavor: i32,
++            buffer: *mut u8,
++        ) -> i32;
++        fn getpid() -> i32;
++    }
++    let mut buf = [0u8; 1024];
++    assert_eq!(unsafe { proc_pid_rusage(getpid(), 4, buf.as_mut_ptr()) }, 0);
++    let off = 16 + field * 8;
++    u64::from_le_bytes(buf[off..off + 8].try_into().unwrap()) as f64 / 1048576.0
++}
++
++/// Current phys_footprint (MiB), rusage_info_v4 field 7.
++fn rss_mb() -> f64 {
++    rusage_u64(7)
++}
++
++/// Lifetime max phys_footprint (MiB), rusage_info_v4 field 28.
++fn peak_mb() -> f64 {
++    rusage_u64(28)
++}
++
++// ---------------------------------------------------------------- the read seam
++
++/// Everything customization and query read of the upward topology.
++trait UpRows {
++    /// Start reading row `r` (a rank index).
++    fn open(
++        &mut self,
++        r: usize,
++    );
++    /// Next `(upper rank index, arc id)` of the open row, ascending.
++    fn next(&mut self) -> Option<(usize, usize)>;
++    /// Arc id of `lo < hi`, or None.
++    fn slot(
++        &mut self,
++        lo: usize,
++        hi: usize,
++    ) -> Option<usize>;
++}
++
++/// (a) today's flat arrays.
++struct FlatRows<'a> {
++    t: &'a Topology,
++    row: &'a [Rank],
++    start: usize,
++    i: usize,
++}
++impl<'a> FlatRows<'a> {
++    fn new(t: &'a Topology) -> Self {
++        Self {
++            t,
++            row: &[],
++            start: 0,
++            i: 0,
++        }
++    }
++}
++impl UpRows for FlatRows<'_> {
++    #[inline]
++    fn open(
++        &mut self,
++        r: usize,
++    ) {
++        let rank = Rank::new(r);
++        self.row = self.t.up(rank);
++        self.start = self.t.up_range(rank).start;
++        self.i = 0;
++    }
++    #[inline]
++    fn next(&mut self) -> Option<(usize, usize)> {
++        let above = *self.row.get(self.i)?;
++        let out = (above.index(), self.start + self.i);
++        self.i += 1;
++        Some(out)
++    }
++    #[inline]
++    fn slot(
++        &mut self,
++        lo: usize,
++        hi: usize,
++    ) -> Option<usize> {
++        self.t.arc_slot(Rank::new(lo), Rank::new(hi))
++    }
++}
++
++/// (b1) GraphBLAS matrix through matrix.rs's `Iter<Uint64Extract>` wrapper, re-seeked per row;
++/// point lookups with `GrB_Matrix_extractElement_UINT64` (`Matrix<u64>::get`).
++struct GrbWrapRows<'a> {
++    m: &'a Matrix<u64>,
++    it: Iter<Uint64Extract>,
++    seeks: u64,
++}
++impl<'a> GrbWrapRows<'a> {
++    fn new(m: &'a Matrix<u64>) -> Self {
++        Self {
++            m,
++            it: Iter::detached(m),
++            seeks: 0,
++        }
++    }
++}
++impl UpRows for GrbWrapRows<'_> {
++    #[inline]
++    fn open(
++        &mut self,
++        r: usize,
++    ) {
++        self.seeks += 1;
++        self.it.seek(r as u64, r as u64);
++    }
++    #[inline]
++    fn next(&mut self) -> Option<(usize, usize)> {
++        self.it.next().map(|(_, c, v)| (c as usize, v as usize))
++    }
++    #[inline]
++    fn slot(
++        &mut self,
++        lo: usize,
++        hi: usize,
++    ) -> Option<usize> {
++        self.m.get(lo as u64, hi as u64).map(|v| v as usize)
++    }
++}
++
++/// (b2) the leanest row-iterator use: seekRow, then getColIndex + get_UINT64 + nextCol per
++/// entry, no row-index reads, no nextRow. Same point lookup as (b1).
++struct GrbLeanRows<'a> {
++    m: &'a Matrix<u64>,
++    it: GxB_Iterator,
++    live: bool,
++    seeks: u64,
++}
++impl<'a> GrbLeanRows<'a> {
++    fn new(m: &'a Matrix<u64>) -> Self {
++        m.wait();
++        unsafe {
++            let mut it: GxB_Iterator = null_mut();
++            assert_eq!(GxB_Iterator_new(&raw mut it), GrB_Info::GrB_SUCCESS);
++            assert_eq!(
++                GxB_rowIterator_attach(it, m.inner(), null_mut()),
++                GrB_Info::GrB_SUCCESS
++            );
++            Self {
++                m,
++                it,
++                live: false,
++                seeks: 0,
++            }
++        }
++    }
++}
++impl Drop for GrbLeanRows<'_> {
++    fn drop(&mut self) {
++        unsafe {
++            GxB_Iterator_free(&raw mut self.it);
++        }
++    }
++}
++impl UpRows for GrbLeanRows<'_> {
++    #[inline]
++    fn open(
++        &mut self,
++        r: usize,
++    ) {
++        self.seeks += 1;
++        self.live = unsafe { GxB_rowIterator_seekRow(self.it, r as u64) } == GrB_Info::GrB_SUCCESS;
++    }
++    #[inline]
++    fn next(&mut self) -> Option<(usize, usize)> {
++        if !self.live {
++            return None;
++        }
++        unsafe {
++            let c = GxB_rowIterator_getColIndex(self.it);
++            let v = GxB_Iterator_get_UINT64(self.it);
++            self.live = GxB_rowIterator_nextCol(self.it) == GrB_Info::GrB_SUCCESS;
++            Some((c as usize, v as usize))
++        }
++    }
++    #[inline]
++    fn slot(
++        &mut self,
++        lo: usize,
++        hi: usize,
++    ) -> Option<usize> {
++        self.m.get(lo as u64, hi as u64).map(|v| v as usize)
++    }
++}
++
++/// `Up` as a UINT64 GrB_Matrix in rank space, value = arc id, built from the topology.
++fn up_matrix(t: &Topology) -> Matrix<u64> {
++    let n = t.node_count();
++    let arcs = t.arc_count();
++    let (mut rows, mut cols, mut vals) = (
++        Vec::with_capacity(arcs),
++        Vec::with_capacity(arcs),
++        Vec::with_capacity(arcs),
++    );
++    for r in 0..n {
++        let rank = Rank::new(r);
++        for (slot, &hi) in t.up_range(rank).zip(t.up(rank)) {
++            rows.push(r as u64);
++            cols.push(hi.index() as u64);
++            vals.push(slot as u64);
++        }
++    }
++    if std::env::var("M2_BREAK_IDS").is_ok() {
++        // deliberate break: swap the ids of the first two arcs of every 1000th rank's row
++        let mut k = 0;
++        let mut swapped = 0;
++        for r in 0..n {
++            let len = t.up(Rank::new(r)).len();
++            if r % 1000 == 0 && len >= 2 {
++                vals.swap(k, k + 1);
++                swapped += 1;
++            }
++            k += len;
++        }
++        println!("BREAK: swapped arc ids in {swapped} rows of the GrB matrix");
++    }
++    let mut m = Matrix::<u64>::new(n as u64, n as u64);
++    m.build(&rows, &cols, &vals);
++    m.wait();
++    m
++}
++
++// ---------------------------------------------------------------- customization over the seam
++
++struct Buffers {
++    up_w: Vec<f64>,
++    dn_w: Vec<f64>,
++    up_m: Vec<Option<Rank>>,
++    dn_m: Vec<Option<Rank>>,
++}
++
++/// validate (an arc for every entry, weights >= 0) + seed + relax, reading `Up` only through
++/// `rows` (x's row is buffered: it is re-read pairwise; y's row is streamed by `rows_y`).
++#[derive(Default, Debug, Clone, Copy)]
++struct Phases {
++    validate: f64,
++    seed: f64,
++    relax: f64,
++}
++
++fn customize_with<R: UpRows>(
++    t: &Topology,
++    w: &WeightCsr,
++    rows_x: &mut R,
++    rows_y: &mut R,
++) -> (Buffers, Phases) {
++    let mut ph = Phases::default();
++    let entries = || w.entries();
++    // validate
++    let t0 = Instant::now();
++    for (u, v, weight) in entries() {
++        if u == v {
++            continue;
++        }
++        let (ru, rv) = (
++            t.rank_of(NodeId::from(u)).index(),
++            t.rank_of(NodeId::from(v)).index(),
++        );
++        assert!(rows_x.slot(ru.min(rv), ru.max(rv)).is_some());
++        assert!(!(weight.is_nan() || weight < 0.0));
++    }
++    ph.validate = t0.elapsed().as_secs_f64();
++    // seed
++    let t0 = Instant::now();
++    let arcs = t.arc_count();
++    let mut b = Buffers {
++        up_w: vec![f64::INFINITY; arcs],
++        dn_w: vec![f64::INFINITY; arcs],
++        up_m: vec![None; arcs],
++        dn_m: vec![None; arcs],
++    };
++    for (u, v, weight) in entries() {
++        if u == v {
++            continue;
++        }
++        let (ru, rv) = (
++            t.rank_of(NodeId::from(u)).index(),
++            t.rank_of(NodeId::from(v)).index(),
++        );
++        let slot = rows_x.slot(ru.min(rv), ru.max(rv)).unwrap();
++        if ru < rv {
++            b.up_w[slot] = weight;
++        } else {
++            b.dn_w[slot] = weight;
++        }
++    }
++    ph.seed = t0.elapsed().as_secs_f64();
++    // relax
++    let t0 = Instant::now();
++    let mut xrow: Vec<(usize, usize)> = Vec::new();
++    for x in 0..t.node_count() {
++        xrow.clear();
++        rows_x.open(x);
++        while let Some(e) = rows_x.next() {
++            xrow.push(e);
++        }
++        for i in 0..xrow.len() {
++            if i + 1 == xrow.len() {
++                break; // no z above y: today's loop body does nothing either
++            }
++            let (y, sxy) = xrow[i];
++            let x_to_y = b.up_w[sxy];
++            let y_to_x = b.dn_w[sxy];
++            rows_y.open(y);
++            for &(z, sxz) in &xrow[i + 1..] {
++                let x_to_z = b.up_w[sxz];
++                let z_to_x = b.dn_w[sxz];
++                let slot = loop {
++                    let (above, s) = rows_y
++                        .next()
++                        .unwrap_or_else(|| panic!("chordal closure broken: {y} {z}"));
++                    if above == z {
++                        break s;
++                    }
++                };
++                let through = y_to_x + x_to_z;
++                if through < b.up_w[slot] {
++                    b.up_w[slot] = through;
++                    b.up_m[slot] = Some(Rank::new(x));
++                }
++                let through = z_to_x + x_to_y;
++                if through < b.dn_w[slot] {
++                    b.dn_w[slot] = through;
++                    b.dn_m[slot] = Some(Rank::new(x));
++                }
++            }
++        }
++    }
++    ph.relax = t0.elapsed().as_secs_f64();
++    (b, ph)
++}
++
++/// Bitwise equal to today's metric, slot by slot. Returns the count of differing slots.
++fn diff_metric(
++    m: &Metric,
++    b: &Buffers,
++) -> usize {
++    let mut d = 0;
++    for s in 0..b.up_w.len() {
++        if m.upward_weight[s].to_bits() != b.up_w[s].to_bits()
++            || m.downward_weight[s].to_bits() != b.dn_w[s].to_bits()
++            || m.upward_middle[s] != b.up_m[s]
++            || m.downward_middle[s] != b.dn_m[s]
++        {
++            d += 1;
++        }
++    }
++    d
++}
++
++// ---------------------------------------------------------------- query over the seam
++// A copy of query.rs with every read of `Up` going through `UpRows`.
++
++struct Chain {
++    forward: bool,
++    ranks: Vec<usize>,
++    dist: Vec<f64>,
++    pred: Vec<Option<usize>>,
++}
++
++fn chain<R: UpRows>(
++    rows: &mut R,
++    start: usize,
++    forward: bool,
++) -> Chain {
++    let mut ranks = vec![start];
++    let mut r = start;
++    loop {
++        rows.open(r);
++        match rows.next() {
++            Some((p, _)) => {
++                ranks.push(p);
++                r = p;
++            }
++            None => break,
++        }
++    }
++    let mut dist = vec![f64::INFINITY; ranks.len()];
++    dist[0] = 0.0;
++    let pred = vec![None; ranks.len()];
++    Chain {
++        forward,
++        ranks,
++        dist,
++        pred,
++    }
++}
++
++fn gallop_to(
++    ranks: &[usize],
++    from: usize,
++    rank: usize,
++) -> usize {
++    let mut low = from;
++    let mut high = from;
++    let mut step = 1;
++    while high < ranks.len() && ranks[high] < rank {
++        low = high + 1;
++        high += step;
++        step *= 2;
++    }
++    let high = high.min(ranks.len());
++    low + ranks[low..high].partition_point(|&r| r < rank)
++}
++
++fn relax_from<R: UpRows>(
++    c: &mut Chain,
++    rows: &mut R,
++    m: &Metric,
++    at: usize,
++) {
++    let dist = c.dist[at];
++    if dist.is_infinite() {
++        return;
++    }
++    rows.open(c.ranks[at]);
++    let mut position = at + 1;
++    while let Some((above, slot)) = rows.next() {
++        position = gallop_to(&c.ranks, position, above);
++        debug_assert_eq!(c.ranks.get(position), Some(&above));
++        let weight = if c.forward {
++            m.upward_weight[slot]
++        } else {
++            m.downward_weight[slot]
++        };
++        let offer = dist + weight;
++        if offer < c.dist[position] {
++            c.dist[position] = offer;
++            c.pred[position] = Some(at);
++        }
++    }
++}
++
++fn arcs_up_to(
++    c: &Chain,
++    mut at: usize,
++) -> Vec<(usize, usize)> {
++    let mut arcs = Vec::new();
++    while let Some(p) = c.pred[at] {
++        arcs.push((c.ranks[p], c.ranks[at]));
++        at = p;
++    }
++    arcs.reverse();
++    arcs
++}
++
++fn unpack<R: UpRows>(
++    rows: &mut R,
++    m: &Metric,
++    from: usize,
++    to: usize,
++    out: &mut Vec<usize>,
++) -> bool {
++    let mut stack = vec![(from, to)];
++    while let Some((a, b)) = stack.pop() {
++        let Some(slot) = rows.slot(a.min(b), a.max(b)) else {
++            return false;
++        };
++        let middle = if a < b {
++            m.upward_middle[slot]
++        } else {
++            m.downward_middle[slot]
++        };
++        match middle {
++            None => out.push(b),
++            Some(mid) => {
++                let mid = mid.index();
++                stack.push((mid, b));
++                stack.push((a, mid));
++            }
++        }
++    }
++    true
++}
++
++fn erase_loops(route: &mut Vec<u64>) {
++    let mut at: FxHashMap<u64, usize> = FxHashMap::default();
++    let mut out = 0;
++    for i in 0..route.len() {
++        let r = route[i];
++        if let Some(&first) = at.get(&r) {
++            for &gone in &route[first + 1..out] {
++                at.remove(&gone);
++            }
++            out = first + 1;
++        } else {
++            at.insert(r, out);
++            route[out] = r;
++            out += 1;
++        }
++    }
++    route.truncate(out);
++}
++
++fn query_with<R: UpRows>(
++    cch: &Cch,
++    rows: &mut R,
++    src: u64,
++    dst: u64,
++) -> Option<(f64, Vec<u64>)> {
++    let n = cch.node_count();
++    if src as usize >= n || dst as usize >= n {
++        return None;
++    }
++    if src == dst {
++        return Some((0.0, vec![src]));
++    }
++    let t = cch.topology();
++    let m = &cch.metric;
++    let src_rank = t.rank_of(NodeId::from(src)).index();
++    let mut fw = chain(rows, src_rank, true);
++    let mut bw = chain(rows, t.rank_of(NodeId::from(dst)).index(), false);
++    let shared = fw
++        .ranks
++        .iter()
++        .rev()
++        .zip(bw.ranks.iter().rev())
++        .take_while(|(a, b)| a == b)
++        .count();
++    if shared == 0 {
++        return None;
++    }
++    let ff = fw.ranks.len() - shared;
++    let bf = bw.ranks.len() - shared;
++    for at in 0..ff {
++        relax_from(&mut fw, rows, m, at);
++    }
++    for at in 0..bf {
++        relax_from(&mut bw, rows, m, at);
++    }
++    let mut best = f64::INFINITY;
++    let mut meet = None;
++    for off in 0..shared {
++        let (fa, ba) = (ff + off, bf + off);
++        let (fd, bd) = (fw.dist[fa], bw.dist[ba]);
++        if fd + bd < best {
++            best = fd + bd;
++            meet = Some(off);
++        }
++        if fd < best {
++            relax_from(&mut fw, rows, m, fa);
++        }
++        if bd < best {
++            relax_from(&mut bw, rows, m, ba);
++        }
++    }
++    let meet = meet?;
++    let mut route = arcs_up_to(&fw, ff + meet);
++    route.extend(
++        arcs_up_to(&bw, bf + meet)
++            .into_iter()
++            .rev()
++            .map(|(lo, hi)| (hi, lo)),
++    );
++    let mut ranks = vec![src_rank];
++    for (a, b) in route {
++        if !unpack(rows, m, a, b, &mut ranks) {
++            return None;
++        }
++    }
++    let mut nodes: Vec<u64> = ranks
++        .into_iter()
++        .map(|r| u64::from(t.node_of(Rank::new(r))))
++        .collect();
++    erase_loops(&mut nodes);
++    Some((best, nodes))
++}
++
++type Answer = Option<(f64, Vec<u64>)>;
++
++/// One pass over all queries, each timed alone (µs).
++fn time_queries(
++    queries: &[(u64, u64)],
++    mut f: impl FnMut(u64, u64) -> Answer,
++) -> (Vec<f64>, Vec<Answer>) {
++    let mut lat = Vec::with_capacity(queries.len());
++    let mut ans = Vec::with_capacity(queries.len());
++    for &(s, t) in queries {
++        let t0 = Instant::now();
++        let a = f(s, t);
++        lat.push(t0.elapsed().as_secs_f64() * 1e6);
++        ans.push(a);
++    }
++    (lat, ans)
++}
++
++fn same_answers(
++    a: &[Answer],
++    b: &[Answer],
++) -> (usize, usize) {
++    // (distance mismatches, path mismatches)
++    let mut dist = 0;
++    let mut path = 0;
++    for (x, y) in a.iter().zip(b) {
++        match (x, y) {
++            (None, None) => {}
++            (Some((dx, px)), Some((dy, py))) => {
++                if dx.to_bits() != dy.to_bits() {
++                    dist += 1;
++                }
++                if px != py {
++                    path += 1;
++                }
++            }
++            _ => {
++                dist += 1;
++                path += 1;
++            }
++        }
++    }
++    (dist, path)
++}
++
++// ---------------------------------------------------------------- part 1
++
++#[test]
++#[ignore = "M2 scratch bench: needs M2_ROAD"]
++fn m2_read_paths() {
++    ensure_init();
++    let path = std::env::var("M2_ROAD").expect("M2_ROAD=<roadNet-*.txt>");
++    let reps: usize = std::env::var("M2_REPS")
++        .ok()
++        .and_then(|s| s.parse().ok())
++        .unwrap_or(3);
++    let nq: usize = std::env::var("M2_QUERIES")
++        .ok()
++        .and_then(|s| s.parse().ok())
++        .unwrap_or(10_000);
++    let threads: i32 = std::env::var("M2_GB_THREADS")
++        .ok()
++        .and_then(|s| s.parse().ok())
++        .unwrap_or(1);
++    crate::graph::graphblas::matrix::set_nthreads(threads);
++    let break_order = std::env::var("M2_BREAK").ok();
++
++    let t0 = Instant::now();
++    let input = load_input(&path);
++    println!(
++        "loaded {path}: n = {}, directed entries = {}, {:.1} s; RSS {:.0} MB",
++        input.n,
++        input.weights.values.len(),
++        t0.elapsed().as_secs_f64(),
++        rss_mb()
++    );
++
++    let t0 = Instant::now();
++    let topology = if let Some(b) = &break_order {
++        // deliberate break: node-id order instead of feral's ND
++        println!("BREAK: ordering by node id ({b})");
++        Topology::from_order(
++            &input.skeleton,
++            (0..input.n as u64).map(NodeId::from).collect(),
++        )
++        .unwrap()
++    } else {
++        Topology::build(&input.skeleton).unwrap()
++    };
++    let order_s = t0.elapsed().as_secs_f64();
++    let n = topology.node_count();
++    let arcs = topology.arc_count();
++    let triangles: u64 = (0..n)
++        .map(|r| {
++            let d = topology.up(Rank::new(r)).len() as u64;
++            d * d.saturating_sub(1) / 2
++        })
++        .sum();
++    let pairs_with_z: u64 = (0..n)
++        .map(|r| topology.up(Rank::new(r)).len().saturating_sub(1) as u64)
++        .sum();
++    println!(
++        "Phase 1 (feral ND + game): {order_s:.2} s; ranks {n}, arcs {arcs}, triangles {triangles}, y-rows opened by relax {pairs_with_z}; RSS {:.0} MB",
++        rss_mb()
++    );
++
++    let t0 = Instant::now();
++    let upm = up_matrix(&topology);
++    let mut msize = 0usize;
++    unsafe { GxB_Matrix_memoryUsage(&raw mut msize, upm.inner()) };
++    println!(
++        "Up as GrB UINT64 matrix ({}): built in {:.2} s, {} nvals, {:.1} MB (GxB_Matrix_memoryUsage); flat Topology {:.1} MB; RSS {:.0} MB",
++        upm.sparsity_status(),
++        t0.elapsed().as_secs_f64(),
++        upm.nvals(),
++        msize as f64 / 1e6,
++        topology.memory_usage() as f64 / 1e6,
++        rss_mb()
++    );
++
++    // ---- customization: T = today's customize(); A = flat via seam; B1 = wrapper iter; B2 = lean iter
++    let mut today_ms = Vec::new();
++    let mut a_ph = Vec::new();
++    let mut b1_ph = Vec::new();
++    let mut b2_ph = Vec::new();
++    let mut metric_today = None;
++    let mut b1_seeks = 0;
++    let mut instr = [0f64; 4];
++    for rep in 0..reps {
++        let i0 = read_instr();
++        let t0 = Instant::now();
++        let m = customize(&topology, &input.weights).unwrap();
++        today_ms.push(t0.elapsed().as_secs_f64() * 1e3);
++        let i1 = read_instr();
++
++        let (ba, pa) = customize_with(
++            &topology,
++            &input.weights,
++            &mut FlatRows::new(&topology),
++            &mut FlatRows::new(&topology),
++        );
++        let i2 = read_instr();
++        let mut x1 = GrbWrapRows::new(&upm);
++        let mut y1 = GrbWrapRows::new(&upm);
++        let (bb1, pb1) = customize_with(&topology, &input.weights, &mut x1, &mut y1);
++        let i3 = read_instr();
++        let mut x2 = GrbLeanRows::new(&upm);
++        let mut y2 = GrbLeanRows::new(&upm);
++        let (bb2, pb2) = customize_with(&topology, &input.weights, &mut x2, &mut y2);
++        let i4 = read_instr();
++        if let (Some(i0), Some(i1), Some(i2), Some(i3), Some(i4)) = (i0, i1, i2, i3, i4) {
++            instr = [
++                (i1 - i0) as f64,
++                (i2 - i1) as f64,
++                (i3 - i2) as f64,
++                (i4 - i3) as f64,
++            ];
++        }
++        b1_seeks = x1.seeks + y1.seeks;
++        if rep == 0 {
++            println!(
++                "metric bit-identity vs today's customize(): A {} differing slots, B1 {}, B2 {} (of {arcs})",
++                diff_metric(&m, &ba),
++                diff_metric(&m, &bb1),
++                diff_metric(&m, &bb2)
++            );
++            println!(
++                "row seeks during customize (B): {} (x rows {}, y rows {})",
++                b1_seeks, x1.seeks, y1.seeks
++            );
++        }
++        a_ph.push(pa);
++        b1_ph.push(pb1);
++        b2_ph.push(pb2);
++        drop((ba, bb1, bb2));
++        metric_today = Some(m);
++        println!(
++            "  rep {rep}: today {:.1} ms | A v/s/r {:.1}/{:.1}/{:.1} ms | B1 v/s/r {:.1}/{:.1}/{:.1} ms | B2 v/s/r {:.1}/{:.1}/{:.1} ms; RSS {:.0} MB",
++            today_ms[rep],
++            pa.validate * 1e3,
++            pa.seed * 1e3,
++            pa.relax * 1e3,
++            pb1.validate * 1e3,
++            pb1.seed * 1e3,
++            pb1.relax * 1e3,
++            pb2.validate * 1e3,
++            pb2.seed * 1e3,
++            pb2.relax * 1e3,
++            rss_mb()
++        );
++    }
++    let med = |v: Vec<f64>| pct(&v, 0.5);
++    let tot = |p: &Phases| (p.validate + p.seed + p.relax) * 1e3;
++    println!(
++        "CUSTOMIZE median of {reps}: today {:.1} ms; A {:.1} ms (relax {:.1}); B1 {:.1} ms (relax {:.1}); B2 {:.1} ms (relax {:.1})",
++        med(today_ms.clone()),
++        med(a_ph.iter().map(tot).collect()),
++        med(a_ph.iter().map(|p| p.relax * 1e3).collect()),
++        med(b1_ph.iter().map(tot).collect()),
++        med(b1_ph.iter().map(|p| p.relax * 1e3).collect()),
++        med(b2_ph.iter().map(tot).collect()),
++        med(b2_ph.iter().map(|p| p.relax * 1e3).collect()),
++    );
++    println!(
++        "instructions, last rep: today {:.3}G, A {:.3}G, B1 {:.3}G, B2 {:.3}G",
++        instr[0] / 1e9,
++        instr[1] / 1e9,
++        instr[2] / 1e9,
++        instr[3] / 1e9
++    );
++
++    // ---- queries
++    let cch = Cch {
++        topology: std::sync::Arc::new(topology),
++        metric: metric_today.unwrap(),
++    };
++    let mut rng = Rng(0x1234_5678_9ABC_DEF1);
++    let queries: Vec<(u64, u64)> = (0..nq)
++        .map(|_| (rng.next() % n as u64, rng.next() % n as u64))
++        .collect();
++    let mut fa = FlatRows::new(cch.topology());
++    let mut g1 = GrbWrapRows::new(&upm);
++    let mut g2 = GrbLeanRows::new(&upm);
++    // warm-up
++    for &(s, t) in queries.iter().take(300) {
++        std::hint::black_box(cch.query(s, t));
++        std::hint::black_box(query_with(&cch, &mut fa, s, t));
++        std::hint::black_box(query_with(&cch, &mut g1, s, t));
++        std::hint::black_box(query_with(&cch, &mut g2, s, t));
++    }
++    let names = ["today", "A flat", "B1 GrB wrapper iter", "B2 GrB lean iter"];
++    let mut best: Vec<Vec<f64>> = vec![vec![f64::INFINITY; nq]; 4];
++    let mut reference: Option<Vec<Answer>> = None;
++    for rep in 0..reps {
++        let mut line = format!("  query rep {rep}:");
++        for v in 0..4 {
++            let (lat, ans) = match v {
++                0 => time_queries(&queries, |s, t| cch.query(s, t)),
++                1 => time_queries(&queries, |s, t| query_with(&cch, &mut fa, s, t)),
++                2 => time_queries(&queries, |s, t| query_with(&cch, &mut g1, s, t)),
++                _ => time_queries(&queries, |s, t| query_with(&cch, &mut g2, s, t)),
++            };
++            for k in 0..nq {
++                best[v][k] = best[v][k].min(lat[k]);
++            }
++            match &reference {
++                None => {
++                    let reach = ans.iter().filter(|a| a.is_some()).count();
++                    println!("  reachable pairs: {reach} of {nq}");
++                    reference = Some(ans);
++                }
++                Some(r) => {
++                    let (d, p) = same_answers(r, &ans);
++                    if rep == 0 {
++                        println!(
++                            "  {}: distance mismatches vs today {d}, path mismatches {p}",
++                            names[v]
++                        );
++                    }
++                }
++            }
++            line += &format!(
++                " | {} p50 {:.1} p95 {:.1} p99 {:.1} max {:.1}",
++                names[v],
++                pct(&lat, 0.5),
++                pct(&lat, 0.95),
++                pct(&lat, 0.99),
++                pct(&lat, 1.0)
++            );
++        }
++        println!("{line}");
++    }
++    for v in 0..4 {
++        println!(
++            "QUERY best-of-{reps} per query, {}: p50 {:.1} us, p95 {:.1} us, p99 {:.1} us, max {:.1} us",
++            names[v],
++            pct(&best[v], 0.5),
++            pct(&best[v], 0.95),
++            pct(&best[v], 0.99),
++            pct(&best[v], 1.0)
++        );
++    }
++    println!("RSS end {:.0} MB", rss_mb());
++}
++
++// ---------------------------------------------------------------- part 2: read-only load
++
++unsafe extern "C" {
++    fn malloc_size(ptr: *const c_void) -> usize;
++}
++
++fn checksum<T: Copy>(v: &[T]) -> u64 {
++    let bytes =
++        unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), std::mem::size_of_val(v)) };
++    let mut h = 0xcbf2_9ce4_8422_2325u64;
++    for chunk in bytes.chunks(8) {
++        let mut w = [0u8; 8];
++        w[..chunk.len()].copy_from_slice(chunk);
++        h = (h ^ u64::from_le_bytes(w)).wrapping_mul(0x100_0000_01b3);
++    }
++    h
++}
++
++/// A dense GrB_Vector over `v`'s memory. `readonly` = GxB_IS_READONLY, else ownership moves.
++unsafe fn load_vec<T>(
++    v: &[T],
++    ty: GrB_Type,
++    readonly: bool,
++) -> GrB_Vector {
++    unsafe {
++        let mut vec: GrB_Vector = null_mut();
++        assert_eq!(GrB_Vector_new(&raw mut vec, ty, 0), GrB_Info::GrB_SUCCESS);
++        let mut p = v.as_ptr() as *mut c_void;
++        let handling = if readonly {
++            GxB_Option_Field::GxB_IS_READONLY as i32
++        } else {
++            0
++        };
++        let info = GxB_Vector_load(
++            vec,
++            &raw mut p,
++            ty,
++            v.len() as u64,
++            std::mem::size_of_val(v) as u64,
++            handling,
++            null_mut(),
++        );
++        assert_eq!(info, GrB_Info::GrB_SUCCESS, "GxB_Vector_load");
++        vec
++    }
++}
++
++/// Load (Ap, Aj, Ax) as an n x n sparse row-major matrix. Vectors are put straight into a
++/// container; the container's own empty vectors are freed first.
++unsafe fn load_csr<P, J, X>(
++    n: u64,
++    ap: &[P],
++    aj: &[J],
++    ax: &[X],
++    tp: GrB_Type,
++    tj: GrB_Type,
++    tx: GrB_Type,
++    readonly: bool,
++) -> GrB_Matrix {
++    unsafe {
++        let mut c: GxB_Container = null_mut();
++        assert_eq!(GxB_Container_new(&raw mut c), GrB_Info::GrB_SUCCESS);
++        for v in [&mut (*c).p, &mut (*c).i, &mut (*c).x] {
++            if !v.is_null() {
++                GrB_Vector_free(v);
++            }
++        }
++        (*c).p = load_vec(ap, tp, readonly);
++        (*c).i = load_vec(aj, tj, readonly);
++        (*c).x = load_vec(ax, tx, readonly);
++        (*c).nrows = n;
++        (*c).ncols = n;
++        (*c).nrows_nonempty = -1;
++        (*c).ncols_nonempty = -1;
++        (*c).nvals = aj.len() as u64;
++        (*c).format = GxB_SPARSE as i32;
++        (*c).orientation = GrB_Orientation::GrB_ROWMAJOR as i32;
++        (*c).iso = false;
++        (*c).jumbled = false;
++        let mut a: GrB_Matrix = null_mut();
++        assert_eq!(GrB_Matrix_new(&raw mut a, tx, 0, 0), GrB_Info::GrB_SUCCESS);
++        let info = GxB_load_Matrix_from_Container(a, c, null_mut());
++        assert_eq!(info, GrB_Info::GrB_SUCCESS, "load from container");
++        assert_eq!(GxB_Container_free(&raw mut c), GrB_Info::GrB_SUCCESS);
++        a
++    }
++}
++
++fn get_i32(
++    a: GrB_Matrix,
++    field: GxB_Option_Field,
++) -> i32 {
++    let mut v = 0i32;
++    unsafe { GrB_Matrix_get_INT32(a, &raw mut v, field as i32) };
++    v
++}
++
++fn mem_usage(a: GrB_Matrix) -> usize {
++    let mut s = 0usize;
++    unsafe { GxB_Matrix_memoryUsage(&raw mut s, a) };
++    s
++}
++
++/// Rank-space Up of a topology as (Ap, Aj, Ax) with index type I and value type X.
++fn up_arrays(t: &Topology) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
++    let n = t.node_count();
++    let mut ap = Vec::with_capacity(n + 1);
++    let mut aj = Vec::with_capacity(t.arc_count());
++    let mut ax = Vec::with_capacity(t.arc_count());
++    ap.push(0u64);
++    for r in 0..n {
++        let rank = Rank::new(r);
++        for (slot, &hi) in t.up_range(rank).zip(t.up(rank)) {
++            aj.push(hi.index() as u64);
++            ax.push(slot as u64);
++        }
++        ap.push(aj.len() as u64);
++    }
++    (ap, aj, ax)
++}
++
++fn readonly_case<P: Copy, J: Copy, X: Copy>(
++    label: &str,
++    n: u64,
++    ap: &[P],
++    aj: &[J],
++    ax: &[X],
++    tp: GrB_Type,
++    tj: GrB_Type,
++    tx: GrB_Type,
++    triangles: u64,
++    down_nvals_expect: u64,
++    readonly: bool,
++) {
++    let sums = (checksum(ap), checksum(aj), checksum(ax));
++    let bytes = std::mem::size_of_val(ap) + std::mem::size_of_val(aj) + std::mem::size_of_val(ax);
++    let live_before = unsafe {
++        (
++            malloc_size(ap.as_ptr().cast()),
++            malloc_size(aj.as_ptr().cast()),
++            malloc_size(ax.as_ptr().cast()),
++        )
++    };
++    let rss0 = rss_mb();
++    let t0 = Instant::now();
++    let mut a = unsafe { load_csr(n, ap, aj, ax, tp, tj, tx, readonly) };
++    let load_us = t0.elapsed().as_secs_f64() * 1e6;
++    let rss1 = rss_mb();
++    let mut nv = 0u64;
++    unsafe { GrB_Matrix_nvals(&raw mut nv, a) };
++    println!(
++        "[{label}] arrays {:.1} MB; load {load_us:.0} us; RSS {rss0:.0} -> {rss1:.0} MB; nvals {nv}; IS_READONLY {}; offset/row/col index bits {}/{}/{}; memoryUsage(A) {} B; peak {:.0} MB",
++        bytes as f64 / 1e6,
++        get_i32(a, GxB_Option_Field::GxB_IS_READONLY),
++        get_i32(a, GxB_Option_Field::GxB_OFFSET_INTEGER_BITS),
++        get_i32(a, GxB_Option_Field::GxB_ROWINDEX_INTEGER_BITS),
++        get_i32(a, GxB_Option_Field::GxB_COLINDEX_INTEGER_BITS),
++        mem_usage(a),
++        peak_mb(),
++    );
++    unsafe {
++        if readonly {
++            // read-only is enforced on outputs
++            let info = GrB_Matrix_setElement_UINT32(a, 7, 0, 0);
++            println!("[{label}] setElement on A -> {info:?}");
++            let info = GrB_transpose(a, null_mut(), null_mut(), a, null_mut());
++            println!("[{label}] in-place transpose of A -> {info:?}");
++        }
++
++        // transpose
++        let mut d: GrB_Matrix = null_mut();
++        assert_eq!(
++            GrB_Matrix_new(&raw mut d, tx, n, n),
++            GrB_Info::GrB_SUCCESS
++        );
++        let t0 = Instant::now();
++        let info = GrB_transpose(d, null_mut(), null_mut(), a, null_mut());
++        let tr_ms = t0.elapsed().as_secs_f64() * 1e3;
++        assert_eq!(info, GrB_Info::GrB_SUCCESS);
++        GrB_Matrix_wait(d, GrB_WaitMode::GrB_MATERIALIZE as _);
++        let mut dn = 0u64;
++        GrB_Matrix_nvals(&raw mut dn, d);
++        let rss2 = rss_mb();
++        // Down(hi, lo) must carry the same arc id as Up(lo, hi): sum of ids and a spot check
++        let mut sum_ids = 0u64;
++        GrB_Matrix_reduce_UINT64(
++            &raw mut sum_ids,
++            null_mut(),
++            GrB_PLUS_MONOID_UINT64,
++            d,
++            null_mut(),
++        );
++        println!(
++            "[{label}] transpose: {tr_ms:.1} ms, Down nvals {dn} (expect {down_nvals_expect}), sum of ids {sum_ids} (expect {}), memoryUsage(Down) {:.1} MB, footprint -> {rss2:.0} MB, peak {:.0} MB",
++            (nv * nv.saturating_sub(1)) / 2,
++            mem_usage(d) as f64 / 1e6,
++            peak_mb()
++        );
++
++        // masked mxm: C<struct(A)> = A PLUS_PAIR A  ==  per arc (lo,hi), the # of middles j
++        // with lo < j < hi; summed, the triangle count of the chordal supergraph
++        let mut cm: GrB_Matrix = null_mut();
++        assert_eq!(
++            GrB_Matrix_new(&raw mut cm, GrB_UINT64, n, n),
++            GrB_Info::GrB_SUCCESS
++        );
++        let t0 = Instant::now();
++        let info = GrB_mxm(
++            cm,
++            a,
++            null_mut(),
++            GxB_PLUS_PAIR_UINT64,
++            a,
++            a,
++            GrB_DESC_S,
++        );
++        assert_eq!(info, GrB_Info::GrB_SUCCESS, "mxm");
++        GrB_Matrix_wait(cm, GrB_WaitMode::GrB_MATERIALIZE as _);
++        let mxm_ms = t0.elapsed().as_secs_f64() * 1e3;
++        let mut tri = 0u64;
++        GrB_Matrix_reduce_UINT64(
++            &raw mut tri,
++            null_mut(),
++            GrB_PLUS_MONOID_UINT64,
++            cm,
++            null_mut(),
++        );
++        let rss3 = rss_mb();
++        println!(
++            "[{label}] masked mxm: {mxm_ms:.1} ms, sum {tri} (expect triangles {triangles}) {}, memoryUsage(C) {:.1} MB, footprint -> {rss3:.0} MB, peak {:.0} MB",
++            if tri == triangles { "OK" } else { "MISMATCH" },
++            mem_usage(cm) as f64 / 1e6,
++            peak_mb()
++        );
++        println!(
++            "[{label}] memoryUsage(A) after ops {} B (unchanged = no copy kept inside A)",
++            mem_usage(a)
++        );
++
++        let sums_mid = (checksum(ap), checksum(aj), checksum(ax));
++        GrB_Matrix_free(&raw mut cm);
++        GrB_Matrix_free(&raw mut d);
++        GrB_Matrix_free(&raw mut a);
++        // churn the allocator with same-size blocks: a freed array would be reused and dirtied
++        let churn: Vec<Vec<u8>> = [
++            std::mem::size_of_val(ap),
++            std::mem::size_of_val(aj),
++            std::mem::size_of_val(ax),
++        ]
++        .iter()
++        .map(|&len| vec![0xA5u8; len])
++        .collect();
++        let live_after = (
++            malloc_size(ap.as_ptr().cast()),
++            malloc_size(aj.as_ptr().cast()),
++            malloc_size(ax.as_ptr().cast()),
++        );
++        // a freed large block may be unmapped: only read the arrays if they are still allocated
++        let sums_after = if live_after == live_before {
++            Some((checksum(ap), checksum(aj), checksum(ax)))
++        } else {
++            None
++        };
++        drop(churn);
++        println!(
++            "[{label}] arrays unchanged during ops: {}; after GrB_Matrix_free: malloc_size before {:?} after {:?} -> {}; checksums after free+churn {}",
++            sums == sums_mid,
++            live_before,
++            live_after,
++            if live_after == live_before {
++                "still allocated"
++            } else {
++                "FREED BY GRAPHBLAS"
++            },
++            match sums_after {
++                Some(after) if after == sums => "unchanged",
++                Some(_) => "CHANGED",
++                None => "not read (freed)",
++            }
++        );
++    }
++}
++
++#[test]
++#[ignore = "M2 scratch: needs M2_ROAD"]
++fn m2_readonly_load() {
++    ensure_init();
++    let path = std::env::var("M2_ROAD").expect("M2_ROAD");
++    let input = load_input(&path);
++    let topology = Topology::build(&input.skeleton).unwrap();
++    drop(input);
++    let n = topology.node_count() as u64;
++    let triangles: u64 = (0..topology.node_count())
++        .map(|r| {
++            let d = topology.up(Rank::new(r)).len() as u64;
++            d * d.saturating_sub(1) / 2
++        })
++        .sum();
++    let arcs = topology.arc_count() as u64;
++    let (ap64, aj64, ax64) = up_arrays(&topology);
++    drop(topology);
++    println!("n {n}, arcs {arcs}, triangles {triangles}; RSS {:.0} MB", rss_mb());
++
++    unsafe {
++        readonly_case(
++            "u64 p/i/x, readonly",
++            n,
++            &ap64,
++            &aj64,
++            &ax64,
++            GrB_UINT64,
++            GrB_UINT64,
++            GrB_UINT64,
++            triangles,
++            arcs,
++            true,
++        );
++        let ap32: Vec<u32> = ap64.iter().map(|&x| x as u32).collect();
++        let aj32: Vec<u32> = aj64.iter().map(|&x| x as u32).collect();
++        let ax32: Vec<u32> = ax64.iter().map(|&x| x as u32).collect();
++        drop((ap64, aj64, ax64));
++        if let Ok(dump) = std::env::var("M2_DUMP") {
++            let mut bytes: Vec<u8> = Vec::new();
++            bytes.extend_from_slice(&n.to_le_bytes());
++            bytes.extend_from_slice(&triangles.to_le_bytes());
++            for v in [&ap32, &aj32, &ax32] {
++                bytes.extend_from_slice(&(v.len() as u64).to_le_bytes());
++                for x in v.iter() {
++                    bytes.extend_from_slice(&x.to_le_bytes());
++                }
++            }
++            std::fs::write(&dump, bytes).unwrap();
++            println!("dumped u32 arrays to {dump}");
++        }
++        readonly_case(
++            "u32 p/i/x, readonly",
++            n,
++            &ap32,
++            &aj32,
++            &ax32,
++            GrB_UINT32,
++            GrB_UINT32,
++            GrB_UINT32,
++            triangles,
++            arcs,
++            true,
++        );
++        // deliberate break: same arrays loaded WITHOUT GxB_IS_READONLY (ownership moves to
++        // GraphBLAS). The free check must fire. Copies, leaked afterwards so Rust never frees
++        // what GraphBLAS already freed.
++        let (bp, bj, bx) = (ap32.clone(), aj32.clone(), ax32.clone());
++        readonly_case(
++            "BREAK u32, GrB_DEFAULT handling",
++            n,
++            &bp,
++            &bj,
++            &bx,
++            GrB_UINT32,
++            GrB_UINT32,
++            GrB_UINT32,
++            triangles,
++            arcs,
++            false,
++        );
++        std::mem::forget((bp, bj, bx));
++    }
++}
++
++/// Part 2 again, from a dump of the u32 arrays, so the lifetime peak footprint is the
++/// arrays' and not the ordering's: the peak delta across each op is its transient.
++#[test]
++#[ignore = "M2 scratch: needs M2_DUMP"]
++fn m2_readonly_peak() {
++    ensure_init();
++    let bytes = std::fs::read(std::env::var("M2_DUMP").expect("M2_DUMP")).unwrap();
++    let rd = |o: usize| u64::from_le_bytes(bytes[o..o + 8].try_into().unwrap());
++    let n = rd(0);
++    let triangles = rd(8);
++    let mut off = 16;
++    let mut arrs: Vec<Vec<u32>> = Vec::new();
++    for _ in 0..3 {
++        let len = rd(off) as usize;
++        off += 8;
++        arrs.push(
++            bytes[off..off + 4 * len]
++                .chunks(4)
++                .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
++                .collect(),
++        );
++        off += 4 * len;
++    }
++    drop(bytes);
++    let arcs = arrs[1].len() as u64;
++    println!(
++        "from dump: n {n}, arcs {arcs}; footprint {:.0} MB, peak {:.0} MB",
++        rss_mb(),
++        peak_mb()
++    );
++    if std::env::var("M2_BURBLE").is_ok() {
++        crate::graph::graphblas::matrix::burble(true);
++    }
++    unsafe {
++        readonly_case(
++            "peak u32, readonly",
++            n,
++            &arrs[0],
++            &arrs[1],
++            &arrs[2],
++            GrB_UINT32,
++            GrB_UINT32,
++            GrB_UINT32,
++            triangles,
++            arcs,
++            true,
++        );
++    }
++    crate::graph::graphblas::matrix::burble(false);
++}
+diff --git a/graph/src/index/falkordb/cch/mod.rs b/graph/src/index/falkordb/cch/mod.rs
+index 871226ed3..6018b5628 100644
+--- a/graph/src/index/falkordb/cch/mod.rs
++++ b/graph/src/index/falkordb/cch/mod.rs
+@@ -22,6 +22,8 @@ pub(crate) mod maint;
+ mod nd;
+ mod order;
+ mod partial;
++#[cfg(test)]
++mod m2_bench;
+ mod query;
+ #[cfg(test)]
+ pub(crate) mod testkit;

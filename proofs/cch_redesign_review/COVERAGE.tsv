@@ -1,0 +1,4 @@
+file	function	line	bucket	lean_name_or_reason
+# cch_redesign_review models a design (.handover/cch-redesign/design/03-design.md, revision 3.1), not Rust
+# functions: there is no code for it yet, so this project lists no rows. It exists so coverage.sh counts the
+# project as having a table. The rows the design will make stale when it lands are in STALE_WHEN_LANDED.md.

@@ -1,0 +1,14 @@
+none rc=0 :: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 855 filtered out; finished in 15.61s
+b2mask rc=101 :: CHECK FAILED: B1 and B2 child matrices differ (depth 1 level 1: nvals 2016452 vs 2017216, 2017216 entries differ)
+bweight rc=101 :: CHECK FAILED: B1/B2 vertex weights differ on 1 vertices (depth 1 level 1)
+bcons rc=101 :: CHECK FAILED: vertex weight not conserved (depth 1 level 1)
+b1offdiag rc=101 :: CHECK FAILED: B1 level has a diagonal (depth 1 level 1)
+basym rc=101 :: CHECK FAILED: B1 level not symmetric (depth 1 level 1)
+bperm rc=101 :: CHECK FAILED: B hierarchy differs across runs/threads at depth 1
+bmatch rc=101 :: CHECK FAILED: matching ran after depth 0 (depth 1)
+lstar rc=101 :: CHECK FAILED: per-cell top level differs from the label pass (depth 4 cell 1)
+sepcut rc=101 :: CHECK FAILED: separator leaves an A-B edge (depth 1, cell 0, 125238-125241)
+split rc=101 :: CHECK FAILED: split pattern (depth 1)
+salt rc=101 :: CHECK FAILED: depth-0 hierarchy differs across runs/threads
+nooffdiag rc=101 :: CHECK FAILED: A_c has a diagonal
+nomutual rc=101 :: CHECK FAILED: mate is not an involution at 0

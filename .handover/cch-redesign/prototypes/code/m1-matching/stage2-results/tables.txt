@@ -1,0 +1,262 @@
+## Checks over the main sweep
+runs=45 closure_violations=0 cover_all_ok=True tree_mismatch=0
+reuse runs: b2_checked=653998 b2_mismatch=0 ident_fail=0 b1_invalid=0 coarsen_levels_after_d0=0 reuse_fresh_levels=0 roots_after_d0=0
+depth-0 hash equal R vs Reuse: 5/15
+  roots CA seed 1: R ['1957027:ef38ce0acbef', '340:27c385f1d881f2d0', '586:c4530e589e7a9259', '329:14ca55b05c3b2e71'] Reuse ['1957027:ef38ce0acbef', '340:ae542bbe3a763b99', '586:7be948f8725bdd46', '329:b365c303de9de2b9'] first_equal=True all_equal=False
+  roots CA seed 2: R ['1957027:bc886d9e1791', '340:a72741b2d794fdbd', '586:30b4c1a35ef2c163', '329:e315282fe92ff613'] Reuse ['1957027:bc886d9e1791', '340:da7d2270f6b574e8', '586:d628244b75ae5b82', '329:36e34b776c187a5d'] first_equal=True all_equal=False
+  roots CA seed 3: R ['1957027:c235506f60c9', '340:8b92657c2f8582b7', '586:3d3b94e997a5f87c', '329:48147852c68a3605'] Reuse ['1957027:c235506f60c9', '340:7cf046a2a8ef70cd', '586:377479df270bb525', '329:1563d0b2c51a5069'] first_equal=True all_equal=False
+  roots CA seed 4: R ['1957027:5ab05535f942', '340:5f91c9a5369844b3', '586:30b4c1a35ef2c163', '329:fbb9a45197f7728e'] Reuse ['1957027:5ab05535f942', '340:04de257d030b3373', '586:30b4c1a35ef2c163', '329:36e34b776c187a5d'] first_equal=True all_equal=False
+  roots CA seed 5: R ['1957027:13f04eef16e1', '340:9d6fd2eda8968386', '586:75052d5ae1efd00d', '329:14ca55b05c3b2e71'] Reuse ['1957027:13f04eef16e1', '340:7587b4a29ceb5d15', '586:30b4c1a35ef2c163', '329:041845c881850387'] first_equal=True all_equal=False
+  roots PA seed 1: R ['1087562:a9d47b062394'] Reuse ['1087562:a9d47b062394'] first_equal=True all_equal=True
+  roots PA seed 2: R ['1087562:385853680200'] Reuse ['1087562:385853680200'] first_equal=True all_equal=True
+  roots PA seed 3: R ['1087562:27bfa990b27b'] Reuse ['1087562:27bfa990b27b'] first_equal=True all_equal=True
+  roots PA seed 4: R ['1087562:6c47b4d35259'] Reuse ['1087562:6c47b4d35259'] first_equal=True all_equal=True
+  roots PA seed 5: R ['1087562:d424fe61dbf7'] Reuse ['1087562:d424fe61dbf7'] first_equal=True all_equal=True
+  roots TX seed 1: R ['1351137:893557d8184c', '27502:eed851a1228499'] Reuse ['1351137:893557d8184c', '27502:ad098328e3f85d'] first_equal=True all_equal=False
+  roots TX seed 2: R ['1351137:c5a9d8018a11', '27502:f8ece055c03b99'] Reuse ['1351137:c5a9d8018a11', '27502:0af8d3db5da173'] first_equal=True all_equal=False
+  roots TX seed 3: R ['1351137:06955a3f44d4', '27502:b6f0b16dd04b22'] Reuse ['1351137:06955a3f44d4', '27502:e151fcc46772c8'] first_equal=True all_equal=False
+  roots TX seed 4: R ['1351137:2bcc0abc239f', '27502:98911d16455c1d'] Reuse ['1351137:2bcc0abc239f', '27502:156d723c582821'] first_equal=True all_equal=False
+  roots TX seed 5: R ['1351137:570eaacbb370', '27502:a55a55a24f7c11'] Reuse ['1351137:570eaacbb370', '27502:2bd27366646235'] first_equal=True all_equal=False
+first top-level component identical at depth 0 (R vs Reuse): 15/15; components bisected at depth 0: {'CA': (4, ['1957027', '340', '586', '329']), 'PA': (1, ['1087562']), 'TX': (2, ['1351137', '27502'])}; roots runs tied to main sweep: 30/30
+check rep seconds (reuse): {'PA1': '9.680', 'PA2': '9.525', 'PA3': '9.702', 'PA4': '9.689', 'PA5': '9.858', 'TX1': '12.813', 'TX2': '12.193', 'TX3': '12.134', 'TX4': '12.283', 'TX5': '12.231', 'CA1': '18.502', 'CA2': '18.478', 'CA3': '18.584', 'CA4': '18.218', 'CA5': '18.570'}
+loads: ['1.23', '1.33', '1.38', '1.39', '1.43', '1.45', '1.59', '1.60', '1.62', '1.67', '1.69', '1.70', '1.73', '1.76', '1.84', '1.88', '1.90', '1.98', '13.23', '16.36', '2.03', '2.16', '2.17', '2.21', '2.24', '2.45', '2.58', '2.62', '2.72', '2.87', '2.91', '2.98', '3.13', '3.15', '3.24', '3.29', '3.39', '3.57', '4.81', '6.18', '6.43', '6.57', '7.13', '8.87']
+rss MB max per graph/variant: {'PA/shem': 634, 'PA/mm': 612, 'PA/mm-reuse': 1075, 'TX/shem': 691, 'TX/mm': 725, 'TX/mm-reuse': 1145, 'CA/shem': 1017, 'CA/mm': 1075, 'CA/mm-reuse': 1854}
+
+## Main table (5 seeds; medians, range in brackets)
+
+| Graph | Ordering | Arcs | Triangles | Tree height | Order time (s) |
+|---|---|---|---|---|---|
+| CA | feral SHEM | 12,631,332 [12.59–12.70M] | 219.0M [210.4–229.6] | 941 [859–976] | 7.20 [7.12–10.48] |
+| CA | mutual-max, re-coarsen (R) | 12,523,852 [12.51–12.59M] | 208.0M [204.1–215.8] | 900 [856–961] | 8.65 [8.58–11.90] |
+| CA | mutual-max, reuse (Reuse) | 12,705,568 [12.70–12.73M] | 232.8M [229.3–237.5] | 955 [921–980] | 5.72 [5.71–5.78] |
+| CA | C METIS (1 run, earlier report) | 11,864,871 | 194.9M | 843 | — |
+| PA | feral SHEM | 7,694,981 [7.62–7.72M] | 186.3M [174.4–191.2] | 878 [856–904] | 3.62 [3.56–3.75] |
+| PA | mutual-max, re-coarsen (R) | 7,597,818 [7.56–7.61M] | 174.3M [165.3–176.1] | 854 [830–891] | 4.59 [4.54–4.62] |
+| PA | mutual-max, reuse (Reuse) | 7,669,957 [7.63–7.72M] | 186.8M [178.9–194.8] | 882 [871–907] | 3.08 [3.06–3.12] |
+| PA | C METIS (1 run, earlier report) | 7,219,125 | 163.7M | 845 | — |
+| TX | feral SHEM | 8,456,370 [8.42–8.49M] | 113.0M [111.6–118.8] | 702 [690–739] | 4.69 [4.62–4.93] |
+| TX | mutual-max, re-coarsen (R) | 8,398,806 [8.38–8.40M] | 111.2M [107.5–111.7] | 691 [635–704] | 5.75 [5.74–5.77] |
+| TX | mutual-max, reuse (Reuse) | 8,441,100 [8.42–8.49M] | 115.0M [113.1–121.6] | 710 [664–735] | 3.90 [3.83–3.94] |
+| TX | C METIS (1 run, earlier report) | 7,920,038 | 100.1M | 631 | — |
+
+## Paired by seed
+
+| Graph | Seed | Reuse arcs | vs R | vs SHEM | Reuse triangles | vs R | vs SHEM | height R → Reuse | time R → Reuse (s) |
+|---|---|---|---|---|---|---|---|---|---|
+| CA | 1 | 12,716,829 | +1.32% | +0.35% | 231.3M | +7.18% | +2.02% | 942 → 921 | 11.901 → 5.721 |
+| CA | 2 | 12,699,561 | +1.40% | +0.65% | 236.6M | +15.96% | +8.90% | 878 → 980 | 8.609 → 5.715 |
+| CA | 3 | 12,705,568 | +1.47% | +0.59% | 229.3M | +11.41% | +4.72% | 856 → 955 | 8.647 → 5.715 |
+| CA | 4 | 12,696,889 | +1.49% | +0.82% | 237.5M | +14.17% | +12.87% | 900 → 968 | 8.583 → 5.758 |
+| CA | 5 | 12,725,805 | +1.04% | +0.23% | 232.8M | +9.00% | +1.40% | 961 → 954 | 8.693 → 5.776 |
+| PA | 1 | 7,721,776 | +1.46% | +0.09% | 194.8M | +10.66% | +1.90% | 888 → 907 | 4.541 → 3.073 |
+| PA | 2 | 7,680,460 | +1.56% | -0.19% | 191.1M | +15.61% | +3.02% | 830 → 871 | 4.591 → 3.062 |
+| PA | 3 | 7,660,227 | +1.16% | +0.48% | 186.8M | +11.85% | +7.11% | 854 → 882 | 4.584 → 3.075 |
+| PA | 4 | 7,669,957 | +0.84% | -0.56% | 184.1M | +4.98% | -3.42% | 891 → 902 | 4.615 → 3.121 |
+| PA | 5 | 7,629,517 | +0.42% | -0.70% | 178.9M | +2.61% | -3.96% | 841 → 879 | 4.592 → 3.091 |
+| TX | 1 | 8,492,507 | +1.10% | +0.03% | 121.6M | +8.83% | +2.35% | 691 → 690 | 5.749 → 3.859 |
+| TX | 2 | 8,442,330 | +0.45% | +0.32% | 116.7M | +4.66% | +4.45% | 672 → 710 | 5.767 → 3.897 |
+| TX | 3 | 8,425,354 | +0.36% | -0.37% | 115.0M | +3.49% | +1.78% | 704 → 735 | 5.736 → 3.828 |
+| TX | 4 | 8,424,069 | +0.50% | -0.11% | 113.1M | +5.15% | +1.28% | 635 → 664 | 5.764 → 3.899 |
+| TX | 5 | 8,441,100 | +0.50% | -0.18% | 114.5M | +3.31% | -0.62% | 699 → 725 | 5.748 → 3.944 |
+
+CA {'arcs<=R': '0/5', 'tri<=R': '0/5', 'arcs<=SHEM': '0/5', 'tri<=SHEM': '0/5'}
+PA {'arcs<=R': '0/5', 'tri<=R': '0/5', 'arcs<=SHEM': '3/5', 'tri<=SHEM': '2/5'}
+TX {'arcs<=R': '0/5', 'tri<=R': '0/5', 'arcs<=SHEM': '3/5', 'tri<=SHEM': '1/5'}
+
+gap to C METIS CA: shem: arcs +6.5% tri +12.4%; mm: arcs +5.6% tri +6.7%; mm-reuse: arcs +7.1% tri +19.5%
+gap to C METIS PA: shem: arcs +6.6% tri +13.7%; mm: arcs +5.2% tri +6.5%; mm-reuse: arcs +6.2% tri +14.1%
+gap to C METIS TX: shem: arcs +6.8% tri +13.0%; mm: arcs +6.0% tri +11.1%; mm-reuse: arcs +6.6% tri +15.0%
+
+## Per depth (sums over 5 seeds; wratio = heaviest coarsest vertex / R's cap, median over seeds of the per-run p50)
+
+
+### CA
+
+| Depth | cells (Reuse) | levels reused | per cell | fresh | over R's cap | wratio p50 / p90 / max | R: levels coarsened | R: vertices coarsened (n_fine sum) | Reuse: vertices coarsened |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0.0 | 0 | 0/0 (0%) | 0.00 / 0.00 / 0.00 | 504 | 28,128,157 | 28,128,494 |
+| 1 | 20 | 243 | 12.2 | 0 | 17/20 (85%) | 1.33 / 1.69 / 2.50 | 932 | 28,164,278 | 0 |
+| 2 | 20 | 405 | 20.2 | 0 | 20/20 (100%) | 4.07 / 4.25 / 5.74 | 1616 | 28,174,235 | 0 |
+| 3 | 40 | 739 | 18.5 | 0 | 40/40 (100%) | 6.44 / 8.45 / 10.15 | 2961 | 28,240,779 | 0 |
+| 4 | 81 | 1362 | 16.8 | 0 | 81/81 (100%) | 6.95 / 8.59 / 11.27 | 5159 | 28,270,632 | 0 |
+| 5 | 163 | 2507 | 15.4 | 0 | 163/163 (100%) | 6.77 / 8.49 / 11.99 | 7793 | 27,981,293 | 0 |
+| 6 | 327 | 4496 | 13.7 | 0 | 327/327 (100%) | 5.63 / 9.00 / 15.37 | 11598 | 27,612,054 | 0 |
+| 7 | 659 | 7599 | 11.5 | 0 | 658/659 (100%) | 2.55 / 4.65 / 12.58 | 16690 | 27,081,028 | 0 |
+| 8 | 1320 | 12793 | 9.7 | 0 | 1311/1320 (99%) | 1.83 / 2.56 / 6.12 | 21827 | 26,107,075 | 0 |
+| 9 | 2650 | 20986 | 7.9 | 0 | 2614/2650 (99%) | 1.61 / 2.14 / 3.66 | 24751 | 24,394,108 | 0 |
+| 10 | 5318 | 31706 | 6.0 | 0 | 5291/5318 (99%) | 1.88 / 2.50 / 3.75 | 33220 | 22,956,243 | 0 |
+| 11 | 10471 | 45011 | 4.3 | 0 | 10328/10471 (99%) | 1.94 / 2.50 / 3.67 | 47443 | 21,312,044 | 0 |
+| 12 | 18364 | 55954 | 3.0 | 0 | 17390/18364 (95%) | 1.60 / 2.20 / 3.50 | 60132 | 18,233,991 | 0 |
+| 13 | 18948 | 44649 | 2.4 | 0 | 17519/18948 (92%) | 1.60 / 2.00 / 3.00 | 48264 | 11,161,669 | 0 |
+| 14 | 6724 | 13975 | 2.1 | 0 | 6223/6724 (93%) | 2.00 / 2.00 / 2.67 | 14918 | 2,995,771 | 0 |
+| 15 | 619 | 1220 | 2.0 | 0 | 574/619 (93%) | 2.00 / 2.00 / 2.00 | 1215 | 230,502 | 0 |
+| 16 | 4 | 8 | 2.0 | 0 | 4/4 (100%) | 2.00 / 2.00 / 2.00 | 24 | 4,580 | 0 |
+
+### PA
+
+| Depth | cells (Reuse) | levels reused | per cell | fresh | over R's cap | wratio p50 / p90 / max | R: levels coarsened | R: vertices coarsened (n_fine sum) | Reuse: vertices coarsened |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0.0 | 0 | 0/0 (0%) | 0.00 / 0.00 / 0.00 | 462 | 15,713,995 | 15,713,995 |
+| 1 | 10 | 222 | 22.2 | 0 | 10/10 (100%) | 1.73 / 1.73 / 2.49 | 826 | 15,747,008 | 0 |
+| 2 | 20 | 395 | 19.8 | 0 | 20/20 (100%) | 3.63 / 4.21 / 5.90 | 1564 | 15,805,319 | 0 |
+| 3 | 40 | 688 | 17.2 | 0 | 40/40 (100%) | 7.05 / 8.21 / 9.69 | 2760 | 15,831,551 | 0 |
+| 4 | 81 | 1273 | 15.7 | 0 | 81/81 (100%) | 7.33 / 9.62 / 12.43 | 4108 | 15,651,962 | 0 |
+| 5 | 160 | 2290 | 14.3 | 0 | 160/160 (100%) | 6.29 / 9.37 / 12.58 | 6121 | 15,449,297 | 0 |
+| 6 | 320 | 3873 | 12.1 | 0 | 320/320 (100%) | 3.04 / 5.51 / 13.07 | 8912 | 15,189,829 | 0 |
+| 7 | 641 | 6549 | 10.2 | 0 | 641/641 (100%) | 1.97 / 2.94 / 7.58 | 11939 | 14,693,559 | 0 |
+| 8 | 1288 | 10958 | 8.5 | 0 | 1284/1288 (100%) | 1.61 / 2.20 / 3.50 | 13392 | 13,745,236 | 0 |
+| 9 | 2589 | 16756 | 6.5 | 0 | 2580/2589 (100%) | 1.88 / 2.50 / 3.23 | 17356 | 12,910,712 | 0 |
+| 10 | 5193 | 24135 | 4.6 | 0 | 5166/5193 (99%) | 2.00 / 2.64 / 3.44 | 25387 | 12,119,378 | 0 |
+| 11 | 9758 | 31472 | 3.2 | 0 | 9389/9758 (96%) | 1.67 / 2.29 / 3.33 | 33770 | 10,669,151 | 0 |
+| 12 | 11554 | 27822 | 2.4 | 0 | 10737/11554 (93%) | 1.60 / 2.00 / 3.33 | 30532 | 7,099,995 | 0 |
+| 13 | 4592 | 9525 | 2.1 | 0 | 4238/4592 (92%) | 2.00 / 2.00 / 2.67 | 9774 | 1,939,990 | 0 |
+| 14 | 382 | 741 | 1.9 | 0 | 345/382 (90%) | 2.00 / 2.00 / 2.00 | 546 | 102,041 | 0 |
+| 15 | 2 | 4 | 2.0 | 0 | 2/2 (100%) | 2.00 / 2.00 / 2.00 | 3 | 567 | 0 |
+
+### TX
+
+| Depth | cells (Reuse) | levels reused | per cell | fresh | over R's cap | wratio p50 / p90 / max | R: levels coarsened | R: vertices coarsened (n_fine sum) | Reuse: vertices coarsened |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0.0 | 0 | 0/0 (0%) | 0.00 / 0.00 / 0.00 | 658 | 19,920,417 | 19,920,447 |
+| 1 | 20 | 345 | 17.2 | 0 | 20/20 (100%) | 1.95 / 2.05 / 2.27 | 1110 | 19,927,869 | 0 |
+| 2 | 40 | 606 | 15.2 | 0 | 40/40 (100%) | 1.99 / 4.36 / 4.86 | 1907 | 19,977,754 | 0 |
+| 3 | 80 | 1011 | 12.6 | 0 | 78/80 (98%) | 1.85 / 6.89 / 8.13 | 3215 | 19,963,887 | 0 |
+| 4 | 160 | 1745 | 10.9 | 0 | 160/160 (100%) | 2.37 / 7.90 / 10.74 | 5013 | 19,832,000 | 0 |
+| 5 | 326 | 3079 | 9.4 | 0 | 325/326 (100%) | 2.58 / 8.20 / 12.82 | 7422 | 19,554,377 | 0 |
+| 6 | 635 | 5007 | 7.9 | 0 | 607/635 (96%) | 2.00 / 5.57 / 12.84 | 10934 | 19,225,056 | 0 |
+| 7 | 943 | 7549 | 8.0 | 0 | 906/943 (96%) | 2.00 / 2.90 / 9.62 | 14518 | 18,612,422 | 0 |
+| 8 | 1337 | 11864 | 8.9 | 0 | 1328/1337 (99%) | 1.67 / 2.26 / 3.33 | 16371 | 17,460,694 | 0 |
+| 9 | 2647 | 18595 | 7.0 | 0 | 2632/2647 (99%) | 1.70 / 2.26 / 3.14 | 19543 | 16,274,679 | 0 |
+| 10 | 5316 | 27176 | 5.1 | 0 | 5306/5316 (100%) | 2.00 / 2.62 / 3.46 | 28472 | 15,358,100 | 0 |
+| 11 | 10325 | 37023 | 3.6 | 0 | 10046/10325 (97%) | 1.78 / 2.38 / 3.62 | 39424 | 13,858,379 | 0 |
+| 12 | 15276 | 38949 | 2.5 | 0 | 14221/15276 (93%) | 1.60 / 2.00 / 3.46 | 42115 | 10,444,943 | 0 |
+| 13 | 8302 | 17546 | 2.1 | 0 | 7640/8302 (92%) | 1.60 / 2.00 / 2.80 | 18818 | 3,840,535 | 0 |
+| 14 | 887 | 1736 | 2.0 | 0 | 807/887 (91%) | 2.00 / 2.00 / 2.67 | 1869 | 351,726 | 0 |
+| 15 | 10 | 18 | 1.8 | 0 | 8/10 (80%) | 2.00 / 2.00 / 2.00 | 11 | 1,974 | 0 |
+
+## Strad runs (check rep alone) tied to the main sweep
+
+CA seed 1: arcs=12716829 tri=231336564 same_as_main=True b2_checked=57663 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=18.364
+CA seed 2: arcs=12699561 tri=236633589 same_as_main=True b2_checked=57638 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=18.374
+CA seed 3: arcs=12705568 tri=229295070 same_as_main=True b2_checked=57607 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=18.303
+CA seed 4: arcs=12696889 tri=237479779 same_as_main=True b2_checked=57691 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=18.255
+CA seed 5: arcs=12725805 tri=232827407 same_as_main=True b2_checked=57836 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=18.311
+PA seed 1: arcs=7721776 tri=194829293 same_as_main=True b2_checked=32349 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=17.045
+PA seed 2: arcs=7680460 tri=191099255 same_as_main=True b2_checked=32281 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=10.542
+PA seed 3: arcs=7660227 tri=186801361 same_as_main=True b2_checked=32409 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=9.672
+PA seed 4: arcs=7669957 tri=184054144 same_as_main=True b2_checked=32323 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=9.619
+PA seed 5: arcs=7629517 tri=178870394 same_as_main=True b2_checked=32271 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=9.602
+TX seed 1: arcs=8492507 tri=121616005 same_as_main=True b2_checked=40883 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=12.233
+TX seed 2: arcs=8442330 tri=116685551 same_as_main=True b2_checked=40730 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=12.054
+TX seed 3: arcs=8425354 tri=115041107 same_as_main=True b2_checked=40631 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=11.938
+TX seed 4: arcs=8424069 tri=113068655 same_as_main=True b2_checked=40797 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=11.973
+TX seed 5: arcs=8441100 tri=114465296 same_as_main=True b2_checked=40889 b2_mismatch=0 ident_fail=0 b1_invalid=0 closure=0 cover=true tree=0 check_s=11.994
+
+## Straddlers per split depth (sums over 5 seeds, needed levels only)
+
+share = side straddlers / parent coarse vertices; entries = their rows' entries / parent entries; B2 input = straddler-member entries re-contracted / entries a full re-contraction reads
+
+
+### CA
+
+| Split depth | needed levels | share at level 1 | share, all needed levels | max share (level) | entry share | B2 input / B1 input | child straddler share |
+|---|---|---|---|---|---|---|---|
+| 0 | 23 | 0.01% | 0.03% | 5.7% (l23) | 0.06% | 0.05% | 0.03% |
+| 1 | 22 | 0.02% | 0.08% | 9.5% (l22) | 0.15% | 0.12% | 0.08% |
+| 2 | 20 | 0.03% | 0.13% | 10.2% (l19) | 0.23% | 0.19% | 0.13% |
+| 3 | 19 | 0.05% | 0.17% | 10.5% (l19) | 0.31% | 0.25% | 0.17% |
+| 4 | 17 | 0.07% | 0.25% | 10.7% (l17) | 0.45% | 0.35% | 0.25% |
+| 5 | 16 | 0.10% | 0.35% | 7.9% (l16) | 0.62% | 0.47% | 0.35% |
+| 6 | 15 | 0.16% | 0.51% | 6.7% (l15) | 0.89% | 0.65% | 0.51% |
+| 7 | 14 | 0.23% | 0.71% | 5.2% (l11) | 1.21% | 0.85% | 0.71% |
+| 8 | 12 | 0.35% | 0.98% | 6.3% (l12) | 1.65% | 1.11% | 0.98% |
+| 9 | 10 | 0.53% | 1.27% | 6.2% (l10) | 2.09% | 1.34% | 1.27% |
+| 10 | 9 | 0.77% | 1.55% | 7.1% (l9) | 2.48% | 1.47% | 1.55% |
+| 11 | 7 | 1.13% | 1.88% | 5.0% (l7) | 2.89% | 1.53% | 1.88% |
+| 12 | 6 | 1.47% | 2.12% | 4.5% (l5) | 3.18% | 1.49% | 2.12% |
+| 13 | 4 | 1.74% | 2.33% | 4.4% (l4) | 3.45% | 1.53% | 2.33% |
+| 14 | 3 | 1.92% | 2.50% | 3.9% (l3) | 3.64% | 1.58% | 2.50% |
+| 15 | 2 | 2.52% | 3.23% | 4.4% (l2) | 4.58% | 2.30% | 3.23% |
+
+### PA
+
+| Split depth | needed levels | share at level 1 | share, all needed levels | max share (level) | entry share | B2 input / B1 input | child straddler share |
+|---|---|---|---|---|---|---|---|
+| 0 | 23 | 0.02% | 0.07% | 6.7% (l23) | 0.12% | 0.10% | 0.07% |
+| 1 | 22 | 0.05% | 0.18% | 12.0% (l22) | 0.32% | 0.26% | 0.18% |
+| 2 | 19 | 0.06% | 0.22% | 9.0% (l17) | 0.39% | 0.31% | 0.22% |
+| 3 | 17 | 0.08% | 0.30% | 10.8% (l17) | 0.54% | 0.42% | 0.30% |
+| 4 | 16 | 0.12% | 0.39% | 9.9% (l16) | 0.72% | 0.55% | 0.39% |
+| 5 | 15 | 0.17% | 0.55% | 7.7% (l15) | 0.98% | 0.72% | 0.55% |
+| 6 | 14 | 0.23% | 0.72% | 5.2% (l11) | 1.23% | 0.88% | 0.72% |
+| 7 | 12 | 0.36% | 1.02% | 6.2% (l10) | 1.73% | 1.18% | 1.03% |
+| 8 | 10 | 0.52% | 1.29% | 6.7% (l10) | 2.16% | 1.39% | 1.30% |
+| 9 | 9 | 0.76% | 1.58% | 6.7% (l9) | 2.56% | 1.54% | 1.58% |
+| 10 | 7 | 1.10% | 1.90% | 4.7% (l7) | 2.94% | 1.56% | 1.90% |
+| 11 | 6 | 1.50% | 2.18% | 5.1% (l6) | 3.28% | 1.54% | 2.19% |
+| 12 | 4 | 1.75% | 2.35% | 4.3% (l4) | 3.52% | 1.54% | 2.36% |
+| 13 | 3 | 1.90% | 2.46% | 4.4% (l3) | 3.68% | 1.61% | 2.47% |
+| 14 | 2 | 2.84% | 3.38% | 4.3% (l2) | 4.98% | 1.93% | 3.38% |
+
+### TX
+
+| Split depth | needed levels | share at level 1 | share, all needed levels | max share (level) | entry share | B2 input / B1 input | child straddler share |
+|---|---|---|---|---|---|---|---|
+| 0 | 24 | 0.01% | 0.04% | 3.0% (l24) | 0.07% | 0.06% | 0.04% |
+| 1 | 22 | 0.02% | 0.06% | 3.6% (l22) | 0.12% | 0.09% | 0.06% |
+| 2 | 19 | 0.04% | 0.14% | 5.8% (l19) | 0.25% | 0.20% | 0.14% |
+| 3 | 17 | 0.06% | 0.19% | 7.5% (l17) | 0.35% | 0.27% | 0.20% |
+| 4 | 16 | 0.11% | 0.33% | 8.5% (l16) | 0.59% | 0.45% | 0.33% |
+| 5 | 15 | 0.15% | 0.44% | 6.0% (l15) | 0.78% | 0.57% | 0.44% |
+| 6 | 14 | 0.22% | 0.64% | 5.1% (l12) | 1.11% | 0.78% | 0.64% |
+| 7 | 11 | 0.30% | 0.90% | 6.3% (l11) | 1.52% | 1.04% | 0.90% |
+| 8 | 10 | 0.45% | 1.19% | 6.7% (l10) | 2.00% | 1.30% | 1.19% |
+| 9 | 9 | 0.65% | 1.45% | 7.3% (l9) | 2.37% | 1.45% | 1.45% |
+| 10 | 7 | 0.96% | 1.76% | 4.7% (l7) | 2.77% | 1.53% | 1.76% |
+| 11 | 6 | 1.34% | 2.02% | 4.7% (l6) | 3.08% | 1.49% | 2.02% |
+| 12 | 4 | 1.62% | 2.21% | 4.5% (l4) | 3.32% | 1.48% | 2.21% |
+| 13 | 3 | 1.83% | 2.40% | 4.5% (l3) | 3.53% | 1.55% | 2.40% |
+| 14 | 2 | 2.42% | 3.08% | 4.4% (l2) | 4.35% | 2.11% | 3.08% |
+
+wrote /private/tmp/claude-501/-Users-dvirdukhan-Code-worktrees-FalkorDB-pr-reviews-FalkorDB/f9e19c4b-505c-4a27-80e5-7848348679f5/scratchpad/m1reuse/straddlers.json
+
+## Diagnostics (1 repetition per seed)
+
+| Graph | Variant | arcs median | tri median | paired vs R (arcs, tri ≤) | paired vs SHEM (arcs, tri ≤) | vertices coarsened after depth 0, share of R's |
+|---|---|---|---|---|---|---|
+| CA | mm-reuse-capstop | 12,601,507 | 215.7M | 1/5, 3/5 | 4/5, 4/5 | 14.7% |
+| CA | mm-reuse-ge | 12,685,268 | 224.7M | 0/5, 0/5 | 1/5, 2/5 | 0.0% |
+| PA | mm-reuse-capstop | 7,612,616 | 174.9M | 2/5, 2/5 | 5/5, 5/5 | 14.8% |
+| PA | mm-reuse-ge | 7,693,817 | 184.6M | 0/5, 0/5 | 4/5, 3/5 | 0.0% |
+| TX | mm-reuse-capstop | 8,390,161 | 109.3M | 4/5, 3/5 | 5/5, 5/5 | 14.7% |
+| TX | mm-reuse-ge | 8,474,855 | 117.8M | 0/5, 0/5 | 2/5, 1/5 | 0.0% |
+  CA mm-reuse-capstop seed 1: arcs +0.40% tri -0.06% vs R; time 6.749 (R 11.901)
+  CA mm-reuse-capstop seed 2: arcs +0.12% tri -0.55% vs R; time 6.751 (R 8.609)
+  CA mm-reuse-capstop seed 3: arcs +0.66% tri +4.94% vs R; time 6.714 (R 8.647)
+  CA mm-reuse-capstop seed 4: arcs +0.80% tri +3.71% vs R; time 6.689 (R 8.583)
+  CA mm-reuse-capstop seed 5: arcs -0.04% tri -0.59% vs R; time 6.679 (R 8.693)
+  CA mm-reuse-ge seed 1: arcs +1.19% tri +3.86% vs R; time 6.229 (R 11.901)
+  CA mm-reuse-ge seed 2: arcs +1.29% tri +10.14% vs R; time 6.025 (R 8.609)
+  CA mm-reuse-ge seed 3: arcs +1.08% tri +7.42% vs R; time 6.001 (R 8.647)
+  CA mm-reuse-ge seed 4: arcs +2.23% tri +19.99% vs R; time 5.933 (R 8.583)
+  CA mm-reuse-ge seed 5: arcs +0.67% tri +5.84% vs R; time 6.155 (R 8.693)
+  PA mm-reuse-capstop seed 1: arcs +0.05% tri +1.54% vs R; time 3.584 (R 4.541)
+  PA mm-reuse-capstop seed 2: arcs +1.06% tri +8.85% vs R; time 3.718 (R 4.591)
+  PA mm-reuse-capstop seed 3: arcs -0.31% tri -1.28% vs R; time 3.645 (R 4.584)
+  PA mm-reuse-capstop seed 4: arcs -0.38% tri -2.78% vs R; time 3.583 (R 4.615)
+  PA mm-reuse-capstop seed 5: arcs +0.19% tri +0.34% vs R; time 3.578 (R 4.592)
+  PA mm-reuse-ge seed 1: arcs +1.24% tri +9.04% vs R; time 3.192 (R 4.541)
+  PA mm-reuse-ge seed 2: arcs +1.21% tri +9.03% vs R; time 3.210 (R 4.591)
+  PA mm-reuse-ge seed 3: arcs +1.60% tri +10.51% vs R; time 3.227 (R 4.584)
+  PA mm-reuse-ge seed 4: arcs +1.25% tri +6.99% vs R; time 3.202 (R 4.615)
+  PA mm-reuse-ge seed 5: arcs +0.52% tri +2.82% vs R; time 3.206 (R 4.592)
+  TX mm-reuse-capstop seed 1: arcs +0.21% tri +1.23% vs R; time 4.436 (R 5.749)
+  TX mm-reuse-capstop seed 2: arcs -0.23% tri -2.02% vs R; time 4.428 (R 5.767)
+  TX mm-reuse-capstop seed 3: arcs -0.02% tri -0.11% vs R; time 4.401 (R 5.736)
+  TX mm-reuse-capstop seed 4: arcs -0.17% tri +0.29% vs R; time 4.474 (R 5.764)
+  TX mm-reuse-capstop seed 5: arcs -0.10% tri -1.35% vs R; time 4.417 (R 5.748)
+  TX mm-reuse-ge seed 1: arcs +1.04% tri +7.96% vs R; time 3.923 (R 5.749)
+  TX mm-reuse-ge seed 2: arcs +0.84% tri +5.69% vs R; time 3.959 (R 5.767)
+  TX mm-reuse-ge seed 3: arcs +1.01% tri +6.33% vs R; time 3.952 (R 5.736)
+  TX mm-reuse-ge seed 4: arcs +0.82% tri +6.13% vs R; time 3.966 (R 5.764)
+  TX mm-reuse-ge seed 5: arcs +0.20% tri +0.71% vs R; time 3.931 (R 5.748)

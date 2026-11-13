@@ -1,0 +1,12 @@
+[package]
+name = "feral-metis-base"
+version = "0.3.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "feral_metis_base"
+
+[dependencies]
+feral-ordering-core = { path = "../../crates/feral-ordering-core" }
+feral-amd = { path = "../../crates/feral-amd" }

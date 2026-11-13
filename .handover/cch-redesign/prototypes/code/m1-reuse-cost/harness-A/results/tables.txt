@@ -1,0 +1,629 @@
+log: logs/main_CA_fine.log
+feral runs [7.167, 7.01, 7.075] median 7.075s; LOAD lines min 2.40 max 4.09
+
+## threads=1: totals over 23 depths (median of runs per depth, summed)
+R 14.876s  B1 8.566s  B2 6.653s  feral 7.075s  (split, in every path: 0.909s)
+ratios to feral: R 2.10  B1 1.21  B2 0.94; B1/R 0.58 B2/R 0.45
+  R per-run totals: 14.955 14.928 14.867
+  B1 per-run totals: 8.604 8.625 8.753
+  B2 per-run totals: 6.666 6.649 6.664
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.929 | 0.947 | 0.947 | 0.000 | 3 |
+| 1 | 2 | 1964710 | 1.025 | 0.536 | 0.351 | 0.047 | 3 |
+| 2 | 4 | 1963319 | 1.015 | 0.529 | 0.349 | 0.049 | 3 |
+| 3 | 8 | 1961552 | 1.020 | 0.533 | 0.365 | 0.052 | 3 |
+| 4 | 16 | 1959591 | 1.023 | 0.538 | 0.367 | 0.052 | 3 |
+| 5 | 32 | 1956714 | 1.025 | 0.538 | 0.369 | 0.052 | 3 |
+| 6 | 64 | 1953262 | 1.032 | 0.541 | 0.376 | 0.053 | 3 |
+| 7 | 128 | 1947965 | 1.019 | 0.537 | 0.387 | 0.053 | 3 |
+| 8 | 255 | 1941295 | 1.022 | 0.539 | 0.392 | 0.054 | 3 |
+| 9 | 510 | 1932145 | 0.997 | 0.530 | 0.392 | 0.052 | 3 |
+| 10 | 1002 | 1919536 | 0.971 | 0.513 | 0.390 | 0.054 | 3 |
+| 11 | 1904 | 1893449 | 0.939 | 0.483 | 0.379 | 0.053 | 3 |
+| 12 | 3267 | 1821795 | 0.830 | 0.431 | 0.350 | 0.053 | 3 |
+| 13 | 4332 | 1597105 | 0.700 | 0.351 | 0.309 | 0.053 | 3 |
+| 14 | 3698 | 1147474 | 0.485 | 0.262 | 0.245 | 0.049 | 3 |
+| 15 | 2323 | 712336 | 0.307 | 0.206 | 0.184 | 0.039 | 3 |
+| 16 | 1357 | 437983 | 0.196 | 0.158 | 0.137 | 0.028 | 3 |
+| 17 | 848 | 283437 | 0.121 | 0.120 | 0.106 | 0.020 | 3 |
+| 18 | 789 | 202392 | 0.114 | 0.126 | 0.118 | 0.044 | 3 |
+| 19 | 487 | 107235 | 0.074 | 0.087 | 0.087 | 0.040 | 3 |
+| 20 | 215 | 41455 | 0.022 | 0.039 | 0.035 | 0.009 | 3 |
+| 21 | 78 | 13663 | 0.008 | 0.014 | 0.013 | 0.003 | 3 |
+| 22 | 17 | 2330 | 0.002 | 0.004 | 0.004 | 0.001 | 3 |
+  B1 calls, depths>=1 (s): CA=2.250 CAC'=1.996 offdiag=0.876 book=0.676 bnd=0.403 c_build=0.309 project=0.187
+  B2 calls, depths>=1 (s): mask_mxm=1.498 mask_vals=0.924 book=0.660 s_merge=0.545 bnd=0.405 s_build=0.239 project=0.224 m_build=0.200 resize=0.071 s_extract=0.026
+  R calls, depths>=1 (s): compact=0.629 CA=2.146 CAC'=1.947 mxv=1.486 m_unext=0.906 offdiag=0.891 key=0.815 m_assign=0.670 m_extract=0.600 m_unkey=0.495 m_eq=0.414 bnd=0.380 cap=0.327 Cw=0.324 c_number_host=0.222 c_extract=0.199 m_full=0.191 c_build=0.135 c_leader=0.068 idx=0.053 project=0.036
+
+## threads=4: totals over 23 depths (median of runs per depth, summed)
+R 5.687s  B1 3.888s  B2 3.158s  feral 7.075s  (split, in every path: 0.280s)
+ratios to feral: R 0.80  B1 0.55  B2 0.45; B1/R 0.68 B2/R 0.56
+  R per-run totals: 5.471 5.755 5.979
+  B1 per-run totals: 3.802 3.878 3.958
+  B2 per-run totals: 3.111 3.150 3.230
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.378 | 0.387 | 0.387 | 0.000 | 3 |
+| 1 | 2 | 1964710 | 0.396 | 0.228 | 0.154 | 0.014 | 3 |
+| 2 | 4 | 1963319 | 0.396 | 0.233 | 0.157 | 0.015 | 3 |
+| 3 | 8 | 1961552 | 0.398 | 0.234 | 0.170 | 0.015 | 3 |
+| 4 | 16 | 1959591 | 0.397 | 0.233 | 0.170 | 0.016 | 3 |
+| 5 | 32 | 1956714 | 0.399 | 0.242 | 0.175 | 0.016 | 3 |
+| 6 | 64 | 1953262 | 0.393 | 0.233 | 0.177 | 0.015 | 3 |
+| 7 | 128 | 1947965 | 0.400 | 0.236 | 0.181 | 0.016 | 3 |
+| 8 | 255 | 1941295 | 0.388 | 0.236 | 0.182 | 0.015 | 3 |
+| 9 | 510 | 1932145 | 0.382 | 0.244 | 0.195 | 0.015 | 3 |
+| 10 | 1002 | 1919536 | 0.358 | 0.244 | 0.193 | 0.018 | 3 |
+| 11 | 1904 | 1893449 | 0.335 | 0.228 | 0.189 | 0.016 | 3 |
+| 12 | 3267 | 1821795 | 0.296 | 0.202 | 0.174 | 0.016 | 3 |
+| 13 | 4332 | 1597105 | 0.256 | 0.165 | 0.150 | 0.015 | 3 |
+| 14 | 3698 | 1147474 | 0.169 | 0.126 | 0.121 | 0.014 | 3 |
+| 15 | 2323 | 712336 | 0.111 | 0.097 | 0.095 | 0.011 | 3 |
+| 16 | 1357 | 437983 | 0.075 | 0.079 | 0.072 | 0.008 | 3 |
+| 17 | 848 | 283437 | 0.051 | 0.066 | 0.060 | 0.006 | 3 |
+| 18 | 789 | 202392 | 0.045 | 0.069 | 0.059 | 0.014 | 3 |
+| 19 | 487 | 107235 | 0.039 | 0.055 | 0.052 | 0.018 | 3 |
+| 20 | 215 | 41455 | 0.015 | 0.034 | 0.030 | 0.005 | 3 |
+| 21 | 78 | 13663 | 0.008 | 0.013 | 0.012 | 0.003 | 3 |
+| 22 | 17 | 2330 | 0.002 | 0.004 | 0.004 | 0.001 | 3 |
+  B1 calls, depths>=1 (s): CA=0.933 CAC'=0.799 book=0.709 offdiag=0.267 project=0.197 c_build=0.166 bnd=0.141
+  B2 calls, depths>=1 (s): book=0.688 mask_mxm=0.517 mask_vals=0.324 s_build=0.242 s_merge=0.228 project=0.162 bnd=0.141 m_build=0.117 resize=0.041 s_extract=0.026
+  R calls, depths>=1 (s): compact=0.194 CA=0.886 CAC'=0.777 mxv=0.514 m_unext=0.385 key=0.291 offdiag=0.262 m_assign=0.242 m_extract=0.232 m_unkey=0.180 m_eq=0.150 Cw=0.147 cap=0.128 c_number_host=0.116 bnd=0.111 m_full=0.095 c_extract=0.072 c_build=0.050 c_leader=0.036 idx=0.027 project=0.014
+
+## straddler share (split depth: level 1 / over needed levels), ours vs quality stage (CA)
+| split depth | ours l1 | quality l1 | ours needed | quality needed | ratio needed |
+| 0 | 0.0391 % | 0.0083 % | 0.1109 % | 0.0348 % | 3.19 |
+| 1 | 0.1081 % | 0.0203 % | 0.2964 % | 0.0807 % | 3.67 |
+| 2 | 0.1393 % | 0.0333 % | 0.3828 % | 0.1269 % | 3.02 |
+| 3 | 0.1500 % | 0.0466 % | 0.4607 % | 0.1730 % | 2.66 |
+| 4 | 0.2227 % | 0.0684 % | 0.6247 % | 0.2490 % | 2.51 |
+| 5 | 0.2672 % | 0.1007 % | 0.7388 % | 0.3462 % | 2.13 |
+| 6 | 0.4085 % | 0.1585 % | 1.0406 % | 0.5117 % | 2.03 |
+| 7 | 0.5144 % | 0.2342 % | 1.2468 % | 0.7111 % | 1.75 |
+| 8 | 0.7079 % | 0.3532 % | 1.6502 % | 0.9825 % | 1.68 |
+| 9 | 0.8593 % | 0.5304 % | 1.8141 % | 1.2687 % | 1.43 |
+| 10 | 1.2137 % | 0.7744 % | 2.2664 % | 1.5467 % | 1.47 |
+| 11 | 1.5085 % | 1.1280 % | 2.4054 % | 1.8801 % | 1.28 |
+| 12 | 1.6666 % | 1.4657 % | 2.4502 % | 2.1150 % | 1.16 |
+| 13 | 1.7691 % | 1.7352 % | 2.5512 % | 2.3303 % | 1.09 |
+| 14 | 1.7914 % | 1.9159 % | 2.6618 % | 2.4973 % | 1.07 |
+| 15 | 1.7988 % | 2.5221 % | 2.7775 % | 3.2283 % | 0.86 |
+| 16 | 2.1264 % | nan % | 2.9892 % | nan % | nan |
+| 17 | 2.1690 % | nan % | 2.8347 % | nan % | nan |
+| 18 | 2.5613 % | nan % | 3.3031 % | nan % | nan |
+| 19 | 2.5407 % | nan % | 3.3580 % | nan % | nan |
+| 20 | 2.8552 % | nan % | 3.0941 % | nan % | nan |
+RANOUT depth=1 cells_at_parent_last_level=1 over_floor=1 max_n=2729 max_with_edges=92 cells_no_reused_level=0
+RANOUT depth=2 cells_at_parent_last_level=2 over_floor=2 max_n=2605 max_with_edges=56 cells_no_reused_level=0
+RANOUT depth=3 cells_at_parent_last_level=3 over_floor=3 max_n=2508 max_with_edges=35 cells_no_reused_level=0
+RANOUT depth=4 cells_at_parent_last_level=4 over_floor=4 max_n=1871 max_with_edges=25 cells_no_reused_level=0
+RANOUT depth=5 cells_at_parent_last_level=3 over_floor=3 max_n=1848 max_with_edges=17 cells_no_reused_level=0
+RANOUT depth=6 cells_at_parent_last_level=4 over_floor=4 max_n=1290 max_with_edges=14 cells_no_reused_level=0
+RANOUT depth=7 cells_at_parent_last_level=4 over_floor=4 max_n=788 max_with_edges=13 cells_no_reused_level=0
+RANOUT depth=8 cells_at_parent_last_level=6 over_floor=6 max_n=624 max_with_edges=2 cells_no_reused_level=0
+RANOUT depth=9 cells_at_parent_last_level=10 over_floor=10 max_n=503 max_with_edges=0 cells_no_reused_level=7
+RANOUT depth=10 cells_at_parent_last_level=11 over_floor=11 max_n=302 max_with_edges=0 cells_no_reused_level=8
+RANOUT depth=11 cells_at_parent_last_level=3 over_floor=3 max_n=185 max_with_edges=0 cells_no_reused_level=65
+RANOUT depth=12 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=337
+RANOUT depth=13 cells_at_parent_last_level=1 over_floor=1 max_n=110 max_with_edges=110 cells_no_reused_level=1029
+RANOUT depth=14 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=1251
+RANOUT depth=15 cells_at_parent_last_level=1 over_floor=1 max_n=115 max_with_edges=111 cells_no_reused_level=884
+RANOUT depth=16 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=533
+RANOUT depth=17 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=211
+RANOUT depth=18 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=261
+RANOUT depth=19 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=174
+RANOUT depth=20 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=114
+RANOUT depth=21 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=36
+RANOUT depth=22 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=15
+
+log: logs/main_PA_fine.log
+feral runs [3.782, 3.598, 3.599] median 3.599s; LOAD lines min 4.52 max 5.59
+
+## threads=1: totals over 22 depths (median of runs per depth, summed)
+R 7.359s  B1 4.213s  B2 3.316s  feral 3.599s  (split, in every path: 0.444s)
+ratios to feral: R 2.04  B1 1.17  B2 0.92; B1/R 0.57 B2/R 0.45
+  R per-run totals: 7.372 7.372 7.338
+  B1 per-run totals: 4.249 4.204 4.205
+  B2 per-run totals: 3.427 3.317 3.302
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.522 | 0.530 | 0.530 | 0.000 | 3 |
+| 1 | 2 | 1087546 | 0.567 | 0.292 | 0.190 | 0.026 | 3 |
+| 2 | 4 | 1086448 | 0.569 | 0.293 | 0.192 | 0.026 | 3 |
+| 3 | 8 | 1084888 | 0.567 | 0.296 | 0.201 | 0.028 | 3 |
+| 4 | 16 | 1082841 | 0.565 | 0.295 | 0.204 | 0.029 | 3 |
+| 5 | 32 | 1080066 | 0.561 | 0.294 | 0.208 | 0.028 | 3 |
+| 6 | 64 | 1076784 | 0.557 | 0.294 | 0.209 | 0.029 | 3 |
+| 7 | 128 | 1072487 | 0.551 | 0.295 | 0.211 | 0.028 | 3 |
+| 8 | 256 | 1066974 | 0.548 | 0.291 | 0.215 | 0.029 | 3 |
+| 9 | 508 | 1059895 | 0.532 | 0.283 | 0.216 | 0.028 | 3 |
+| 10 | 1002 | 1049873 | 0.511 | 0.268 | 0.210 | 0.029 | 3 |
+| 11 | 1858 | 1023297 | 0.466 | 0.237 | 0.199 | 0.029 | 3 |
+| 12 | 2646 | 911101 | 0.358 | 0.193 | 0.170 | 0.029 | 3 |
+| 13 | 2715 | 670853 | 0.261 | 0.135 | 0.131 | 0.028 | 3 |
+| 14 | 1679 | 340351 | 0.125 | 0.085 | 0.092 | 0.022 | 3 |
+| 15 | 620 | 118388 | 0.061 | 0.071 | 0.073 | 0.033 | 3 |
+| 16 | 187 | 33213 | 0.030 | 0.041 | 0.046 | 0.019 | 3 |
+| 17 | 29 | 5836 | 0.004 | 0.008 | 0.008 | 0.002 | 3 |
+| 18 | 4 | 1783 | 0.002 | 0.004 | 0.004 | 0.000 | 3 |
+| 19 | 4 | 1474 | 0.001 | 0.004 | 0.003 | 0.000 | 3 |
+| 20 | 4 | 1068 | 0.001 | 0.003 | 0.002 | 0.000 | 3 |
+| 21 | 4 | 700 | 0.000 | 0.002 | 0.002 | 0.000 | 3 |
+  B1 calls, depths>=1 (s): CA=1.073 CAC'=0.964 offdiag=0.423 book=0.334 bnd=0.202 c_build=0.147 project=0.091
+  B2 calls, depths>=1 (s): mask_mxm=0.733 mask_vals=0.444 book=0.326 s_merge=0.264 bnd=0.202 s_build=0.136 m_build=0.095 project=0.093 resize=0.033 s_extract=0.014
+  R calls, depths>=1 (s): compact=0.315 CA=1.051 CAC'=0.945 mxv=0.732 m_unext=0.442 offdiag=0.432 key=0.399 m_assign=0.335 m_extract=0.279 m_unkey=0.247 m_eq=0.204 bnd=0.184 Cw=0.165 cap=0.158 c_number_host=0.108 c_extract=0.097 m_full=0.088 c_build=0.068 c_leader=0.033 idx=0.026 project=0.018
+
+## threads=4: totals over 22 depths (median of runs per depth, summed)
+R 2.931s  B1 1.971s  B2 1.638s  feral 3.599s  (split, in every path: 0.138s)
+ratios to feral: R 0.81  B1 0.55  B2 0.46; B1/R 0.67 B2/R 0.56
+  R per-run totals: 2.951 2.945 2.942
+  B1 per-run totals: 1.931 1.977 1.999
+  B2 per-run totals: 1.608 1.641 1.659
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.228 | 0.234 | 0.234 | 0.000 | 3 |
+| 1 | 2 | 1087546 | 0.232 | 0.133 | 0.088 | 0.008 | 3 |
+| 2 | 4 | 1086448 | 0.233 | 0.132 | 0.091 | 0.008 | 3 |
+| 3 | 8 | 1084888 | 0.233 | 0.132 | 0.096 | 0.009 | 3 |
+| 4 | 16 | 1082841 | 0.231 | 0.134 | 0.098 | 0.009 | 3 |
+| 5 | 32 | 1080066 | 0.229 | 0.136 | 0.104 | 0.008 | 3 |
+| 6 | 64 | 1076784 | 0.230 | 0.136 | 0.108 | 0.008 | 3 |
+| 7 | 128 | 1072487 | 0.230 | 0.134 | 0.108 | 0.008 | 3 |
+| 8 | 256 | 1066974 | 0.212 | 0.132 | 0.108 | 0.008 | 3 |
+| 9 | 508 | 1059895 | 0.207 | 0.130 | 0.110 | 0.008 | 3 |
+| 10 | 1002 | 1049873 | 0.184 | 0.125 | 0.108 | 0.008 | 3 |
+| 11 | 1858 | 1023297 | 0.170 | 0.114 | 0.101 | 0.009 | 3 |
+| 12 | 2646 | 911101 | 0.124 | 0.093 | 0.085 | 0.008 | 3 |
+| 13 | 2715 | 670853 | 0.088 | 0.066 | 0.065 | 0.008 | 3 |
+| 14 | 1679 | 340351 | 0.044 | 0.045 | 0.047 | 0.006 | 3 |
+| 15 | 620 | 118388 | 0.029 | 0.044 | 0.037 | 0.012 | 3 |
+| 16 | 187 | 33213 | 0.018 | 0.030 | 0.032 | 0.009 | 3 |
+| 17 | 29 | 5836 | 0.004 | 0.008 | 0.008 | 0.002 | 3 |
+| 18 | 4 | 1783 | 0.002 | 0.004 | 0.004 | 0.000 | 3 |
+| 19 | 4 | 1474 | 0.001 | 0.004 | 0.003 | 0.000 | 3 |
+| 20 | 4 | 1068 | 0.001 | 0.003 | 0.002 | 0.000 | 3 |
+| 21 | 4 | 700 | 0.001 | 0.002 | 0.002 | 0.000 | 3 |
+  B1 calls, depths>=1 (s): CA=0.463 CAC'=0.401 book=0.354 offdiag=0.130 project=0.087 c_build=0.083 bnd=0.076
+  B2 calls, depths>=1 (s): book=0.336 mask_mxm=0.264 mask_vals=0.159 s_build=0.137 s_merge=0.118 project=0.082 bnd=0.075 m_build=0.059 resize=0.020 s_extract=0.014
+  R calls, depths>=1 (s): compact=0.095 CA=0.442 CAC'=0.394 mxv=0.260 m_unext=0.197 key=0.148 offdiag=0.136 m_assign=0.127 m_extract=0.117 m_unkey=0.093 m_eq=0.081 Cw=0.079 c_number_host=0.068 cap=0.066 bnd=0.056 m_full=0.048 c_extract=0.037 c_build=0.027 c_leader=0.017 idx=0.015 project=0.008
+
+## straddler share (split depth: level 1 / over needed levels), ours vs quality stage (PA)
+| split depth | ours l1 | quality l1 | ours needed | quality needed | ratio needed |
+| 0 | 0.0779 % | 0.0172 % | 0.2333 % | 0.0691 % | 3.38 |
+| 1 | 0.1545 % | 0.0482 % | 0.4448 % | 0.1756 % | 2.53 |
+| 2 | 0.2164 % | 0.0620 % | 0.6234 % | 0.2173 % | 2.87 |
+| 3 | 0.2861 % | 0.0843 % | 0.7862 % | 0.2951 % | 2.66 |
+| 4 | 0.3869 % | 0.1159 % | 1.0390 % | 0.3938 % | 2.64 |
+| 5 | 0.4569 % | 0.1692 % | 1.1693 % | 0.5532 % | 2.11 |
+| 6 | 0.6047 % | 0.2347 % | 1.4988 % | 0.7223 % | 2.08 |
+| 7 | 0.7733 % | 0.3587 % | 1.8398 % | 1.0247 % | 1.80 |
+| 8 | 0.9600 % | 0.5196 % | 2.0836 % | 1.2947 % | 1.61 |
+| 9 | 1.1816 % | 0.7586 % | 2.2391 % | 1.5824 % | 1.42 |
+| 10 | 1.5856 % | 1.1027 % | 2.6017 % | 1.8981 % | 1.37 |
+| 11 | 1.9775 % | 1.4976 % | 2.9033 % | 2.1815 % | 1.33 |
+| 12 | 2.2596 % | 1.7545 % | 2.9267 % | 2.3541 % | 1.24 |
+| 13 | 2.2966 % | 1.9031 % | 2.9752 % | 2.4630 % | 1.21 |
+| 14 | 2.2727 % | 2.8369 % | 2.9037 % | 3.3838 % | 0.86 |
+| 15 | 1.7729 % | nan % | 2.3688 % | nan % | nan |
+| 16 | 2.1820 % | nan % | 3.8441 % | nan % | nan |
+| 17 | 0.4449 % | nan % | 1.7871 % | nan % | nan |
+| 18 | 2.6726 % | nan % | 4.0782 % | nan % | nan |
+| 19 | 2.0225 % | nan % | 2.4896 % | nan % | nan |
+RANOUT depth=1 cells_at_parent_last_level=1 over_floor=1 max_n=256 max_with_edges=51 cells_no_reused_level=0
+RANOUT depth=2 cells_at_parent_last_level=1 over_floor=1 max_n=227 max_with_edges=21 cells_no_reused_level=0
+RANOUT depth=3 cells_at_parent_last_level=1 over_floor=1 max_n=216 max_with_edges=11 cells_no_reused_level=0
+RANOUT depth=4 cells_at_parent_last_level=1 over_floor=1 max_n=207 max_with_edges=7 cells_no_reused_level=0
+RANOUT depth=5 cells_at_parent_last_level=1 over_floor=1 max_n=141 max_with_edges=4 cells_no_reused_level=0
+RANOUT depth=6 cells_at_parent_last_level=1 over_floor=1 max_n=120 max_with_edges=2 cells_no_reused_level=0
+RANOUT depth=7 cells_at_parent_last_level=1 over_floor=1 max_n=104 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=8 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=2
+RANOUT depth=9 cells_at_parent_last_level=1 over_floor=0 max_n=100 max_with_edges=36 cells_no_reused_level=0
+RANOUT depth=10 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=12
+RANOUT depth=11 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=168
+RANOUT depth=12 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=477
+RANOUT depth=13 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=823
+RANOUT depth=14 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=772
+RANOUT depth=15 cells_at_parent_last_level=1 over_floor=1 max_n=101 max_with_edges=37 cells_no_reused_level=294
+RANOUT depth=16 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=99
+RANOUT depth=17 cells_at_parent_last_level=1 over_floor=1 max_n=110 max_with_edges=46 cells_no_reused_level=19
+RANOUT depth=18 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=2
+RANOUT depth=19 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=20 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=1
+RANOUT depth=21 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=1
+
+log: logs/main_TX_fine.log
+feral runs [4.539, 4.499, 4.531] median 4.531s; LOAD lines min 2.47 max 4.75
+
+## threads=1: totals over 19 depths (median of runs per depth, summed)
+R 9.553s  B1 5.385s  B2 4.205s  feral 4.531s  (split, in every path: 0.550s)
+ratios to feral: R 2.11  B1 1.19  B2 0.93; B1/R 0.56 B2/R 0.44
+  R per-run totals: 9.590 9.541 9.551
+  B1 per-run totals: 5.413 5.394 5.381
+  B2 per-run totals: 4.255 4.205 4.197
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.651 | 0.663 | 0.663 | 0.000 | 3 |
+| 1 | 2 | 1379078 | 0.725 | 0.372 | 0.242 | 0.033 | 3 |
+| 2 | 4 | 1378576 | 0.714 | 0.366 | 0.235 | 0.032 | 3 |
+| 3 | 8 | 1377432 | 0.712 | 0.367 | 0.249 | 0.035 | 3 |
+| 4 | 16 | 1375627 | 0.717 | 0.369 | 0.253 | 0.036 | 3 |
+| 5 | 32 | 1373419 | 0.723 | 0.369 | 0.259 | 0.035 | 3 |
+| 6 | 64 | 1370658 | 0.713 | 0.370 | 0.258 | 0.036 | 3 |
+| 7 | 126 | 1366608 | 0.714 | 0.365 | 0.266 | 0.036 | 3 |
+| 8 | 252 | 1360679 | 0.702 | 0.366 | 0.268 | 0.036 | 3 |
+| 9 | 496 | 1352289 | 0.676 | 0.359 | 0.271 | 0.036 | 3 |
+| 10 | 984 | 1341621 | 0.659 | 0.345 | 0.272 | 0.036 | 3 |
+| 11 | 1917 | 1323179 | 0.636 | 0.317 | 0.255 | 0.036 | 3 |
+| 12 | 3118 | 1236673 | 0.536 | 0.268 | 0.230 | 0.037 | 3 |
+| 13 | 3612 | 983884 | 0.324 | 0.200 | 0.186 | 0.037 | 3 |
+| 14 | 2567 | 576223 | 0.209 | 0.126 | 0.128 | 0.032 | 3 |
+| 15 | 1319 | 249978 | 0.082 | 0.090 | 0.090 | 0.022 | 3 |
+| 16 | 390 | 68125 | 0.048 | 0.055 | 0.062 | 0.031 | 3 |
+| 17 | 76 | 13428 | 0.009 | 0.014 | 0.013 | 0.004 | 3 |
+| 18 | 23 | 3428 | 0.002 | 0.004 | 0.004 | 0.001 | 3 |
+  B1 calls, depths>=1 (s): CA=1.372 CAC'=1.242 offdiag=0.571 book=0.421 bnd=0.250 c_build=0.190 project=0.118
+  B2 calls, depths>=1 (s): mask_mxm=0.947 mask_vals=0.576 book=0.408 s_merge=0.338 bnd=0.251 s_build=0.154 project=0.132 m_build=0.123 resize=0.041 s_extract=0.016
+  R calls, depths>=1 (s): compact=0.399 CA=1.346 CAC'=1.226 mxv=0.947 m_unext=0.607 offdiag=0.586 key=0.504 m_assign=0.468 m_extract=0.372 m_unkey=0.325 m_eq=0.269 bnd=0.239 Cw=0.214 cap=0.174 c_extract=0.156 c_number_host=0.142 m_full=0.119 c_build=0.083 c_leader=0.043 idx=0.034 project=0.023
+
+## threads=4: totals over 19 depths (median of runs per depth, summed)
+R 3.636s  B1 2.399s  B2 1.973s  feral 4.531s  (split, in every path: 0.165s)
+ratios to feral: R 0.80  B1 0.53  B2 0.44; B1/R 0.66 B2/R 0.54
+  R per-run totals: 3.584 3.633 3.787
+  B1 per-run totals: 2.377 2.402 2.442
+  B2 per-run totals: 1.965 1.978 1.984
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.264 | 0.271 | 0.271 | 0.000 | 3 |
+| 1 | 2 | 1379078 | 0.281 | 0.160 | 0.112 | 0.010 | 3 |
+| 2 | 4 | 1378576 | 0.281 | 0.161 | 0.107 | 0.009 | 3 |
+| 3 | 8 | 1377432 | 0.278 | 0.163 | 0.114 | 0.010 | 3 |
+| 4 | 16 | 1375627 | 0.288 | 0.162 | 0.116 | 0.010 | 3 |
+| 5 | 32 | 1373419 | 0.279 | 0.162 | 0.122 | 0.010 | 3 |
+| 6 | 64 | 1370658 | 0.277 | 0.164 | 0.122 | 0.010 | 3 |
+| 7 | 126 | 1366608 | 0.274 | 0.161 | 0.125 | 0.010 | 3 |
+| 8 | 252 | 1360679 | 0.264 | 0.158 | 0.131 | 0.010 | 3 |
+| 9 | 496 | 1352289 | 0.252 | 0.161 | 0.137 | 0.011 | 3 |
+| 10 | 984 | 1341621 | 0.241 | 0.153 | 0.133 | 0.010 | 3 |
+| 11 | 1917 | 1323179 | 0.226 | 0.143 | 0.128 | 0.010 | 3 |
+| 12 | 3118 | 1236673 | 0.186 | 0.123 | 0.112 | 0.011 | 3 |
+| 13 | 3612 | 983884 | 0.110 | 0.094 | 0.089 | 0.011 | 3 |
+| 14 | 2567 | 576223 | 0.071 | 0.061 | 0.063 | 0.009 | 3 |
+| 15 | 1319 | 249978 | 0.030 | 0.051 | 0.045 | 0.006 | 3 |
+| 16 | 390 | 68125 | 0.024 | 0.034 | 0.034 | 0.012 | 3 |
+| 17 | 76 | 13428 | 0.007 | 0.012 | 0.011 | 0.003 | 3 |
+| 18 | 23 | 3428 | 0.002 | 0.004 | 0.004 | 0.001 | 3 |
+  B1 calls, depths>=1 (s): CA=0.573 CAC'=0.494 book=0.433 offdiag=0.170 project=0.100 c_build=0.099 bnd=0.083
+  B2 calls, depths>=1 (s): book=0.413 mask_mxm=0.323 mask_vals=0.203 s_build=0.154 s_merge=0.144 project=0.097 bnd=0.082 m_build=0.074 resize=0.024 s_extract=0.016
+  R calls, depths>=1 (s): compact=0.120 CA=0.550 CAC'=0.479 mxv=0.316 m_unext=0.256 key=0.179 offdiag=0.172 m_assign=0.168 m_extract=0.149 m_unkey=0.116 Cw=0.111 m_eq=0.099 c_number_host=0.082 cap=0.073 bnd=0.070 m_full=0.063 c_extract=0.054 c_build=0.032 c_leader=0.023 idx=0.018 project=0.010
+
+## straddler share (split depth: level 1 / over needed levels), ours vs quality stage (TX)
+| split depth | ours l1 | quality l1 | ours needed | quality needed | ratio needed |
+| 0 | 0.0926 % | 0.0110 % | 0.2732 % | 0.0413 % | 6.61 |
+| 1 | 0.0568 % | 0.0192 % | 0.1734 % | 0.0647 % | 2.68 |
+| 2 | 0.1285 % | 0.0409 % | 0.3809 % | 0.1413 % | 2.69 |
+| 3 | 0.1969 % | 0.0605 % | 0.5664 % | 0.1947 % | 2.91 |
+| 4 | 0.2438 % | 0.1065 % | 0.6975 % | 0.3289 % | 2.12 |
+| 5 | 0.3030 % | 0.1454 % | 0.7957 % | 0.4404 % | 1.81 |
+| 6 | 0.4323 % | 0.2193 % | 1.0987 % | 0.6435 % | 1.71 |
+| 7 | 0.6547 % | 0.3020 % | 1.5890 % | 0.8993 % | 1.77 |
+| 8 | 0.8351 % | 0.4497 % | 1.9291 % | 1.1906 % | 1.62 |
+| 9 | 1.0932 % | 0.6539 % | 2.2664 % | 1.4471 % | 1.57 |
+| 10 | 1.4275 % | 0.9640 % | 2.4692 % | 1.7611 % | 1.40 |
+| 11 | 1.8239 % | 1.3375 % | 2.7539 % | 2.0181 % | 1.36 |
+| 12 | 2.1153 % | 1.6245 % | 2.9179 % | 2.2094 % | 1.32 |
+| 13 | 2.3121 % | 1.8329 % | 3.0641 % | 2.3999 % | 1.28 |
+| 14 | 2.3574 % | 2.4197 % | 2.9172 % | 3.0757 % | 0.95 |
+| 15 | 2.8100 % | nan % | 3.2333 % | nan % | nan |
+| 16 | 2.6316 % | nan % | 3.2063 % | nan % | nan |
+| 17 | 2.4590 % | nan % | 2.4590 % | nan % | nan |
+RANOUT depth=1 cells_at_parent_last_level=1 over_floor=1 max_n=478 max_with_edges=56 cells_no_reused_level=0
+RANOUT depth=2 cells_at_parent_last_level=1 over_floor=1 max_n=444 max_with_edges=28 cells_no_reused_level=0
+RANOUT depth=3 cells_at_parent_last_level=1 over_floor=1 max_n=429 max_with_edges=16 cells_no_reused_level=0
+RANOUT depth=4 cells_at_parent_last_level=2 over_floor=2 max_n=310 max_with_edges=12 cells_no_reused_level=0
+RANOUT depth=5 cells_at_parent_last_level=2 over_floor=2 max_n=305 max_with_edges=7 cells_no_reused_level=0
+RANOUT depth=6 cells_at_parent_last_level=1 over_floor=1 max_n=284 max_with_edges=0 cells_no_reused_level=1
+RANOUT depth=7 cells_at_parent_last_level=2 over_floor=2 max_n=150 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=8 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=9 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=2
+RANOUT depth=10 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=6
+RANOUT depth=11 cells_at_parent_last_level=2 over_floor=2 max_n=129 max_with_edges=125 cells_no_reused_level=70
+RANOUT depth=12 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=476
+RANOUT depth=13 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=1061
+RANOUT depth=14 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=903
+RANOUT depth=15 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=664
+RANOUT depth=16 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=226
+RANOUT depth=17 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=42
+RANOUT depth=18 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=17
+
+log: logs/main_CA_all.log
+feral runs [7.163, 6.976, 6.958] median 6.976s; LOAD lines min 1.59 max 2.69
+
+## threads=1: totals over 20 depths (median of runs per depth, summed)
+R 14.125s  B1 7.908s  B2 6.080s  feral 6.976s  (split, in every path: 0.818s)
+ratios to feral: R 2.02  B1 1.13  B2 0.87; B1/R 0.56 B2/R 0.43
+  R per-run totals: 14.173 14.101 14.122
+  B1 per-run totals: 7.953 7.907 7.888
+  B2 per-run totals: 6.106 6.072 6.149
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.929 | 0.946 | 0.946 | 0.000 | 3 |
+| 1 | 2 | 1964840 | 1.027 | 0.528 | 0.341 | 0.047 | 3 |
+| 2 | 4 | 1964094 | 1.021 | 0.534 | 0.349 | 0.049 | 3 |
+| 3 | 8 | 1962660 | 1.020 | 0.531 | 0.359 | 0.051 | 3 |
+| 4 | 16 | 1961093 | 1.031 | 0.535 | 0.368 | 0.055 | 3 |
+| 5 | 32 | 1958892 | 1.016 | 0.532 | 0.372 | 0.052 | 3 |
+| 6 | 64 | 1955741 | 1.019 | 0.536 | 0.377 | 0.053 | 3 |
+| 7 | 128 | 1951436 | 1.016 | 0.530 | 0.378 | 0.052 | 3 |
+| 8 | 256 | 1946136 | 1.017 | 0.530 | 0.380 | 0.052 | 3 |
+| 9 | 511 | 1938584 | 0.993 | 0.524 | 0.386 | 0.051 | 3 |
+| 10 | 1006 | 1926928 | 0.971 | 0.508 | 0.384 | 0.052 | 3 |
+| 11 | 2010 | 1911486 | 0.933 | 0.477 | 0.373 | 0.054 | 3 |
+| 12 | 3737 | 1861544 | 0.889 | 0.414 | 0.338 | 0.054 | 3 |
+| 13 | 5979 | 1691560 | 0.645 | 0.317 | 0.284 | 0.053 | 3 |
+| 14 | 4998 | 1048015 | 0.369 | 0.219 | 0.198 | 0.050 | 3 |
+| 15 | 1936 | 384948 | 0.127 | 0.116 | 0.114 | 0.035 | 3 |
+| 16 | 653 | 122704 | 0.079 | 0.095 | 0.099 | 0.047 | 3 |
+| 17 | 173 | 31463 | 0.019 | 0.029 | 0.027 | 0.008 | 3 |
+| 18 | 44 | 7254 | 0.004 | 0.007 | 0.007 | 0.002 | 3 |
+| 19 | 2 | 247 | 0.000 | 0.002 | 0.002 | 0.000 | 3 |
+  B1 calls, depths>=1 (s): CA=2.063 CAC'=1.829 offdiag=0.798 book=0.613 bnd=0.377 c_build=0.278 project=0.179
+  B2 calls, depths>=1 (s): mask_mxm=1.338 mask_vals=0.846 book=0.600 s_merge=0.487 bnd=0.378 project=0.207 s_build=0.191 m_build=0.185 resize=0.056 s_extract=0.021
+  R calls, depths>=1 (s): compact=0.601 CA=2.043 CAC'=1.843 mxv=1.422 m_unext=0.865 offdiag=0.829 key=0.777 m_assign=0.643 m_extract=0.575 m_unkey=0.472 m_eq=0.398 bnd=0.356 Cw=0.302 cap=0.290 c_number_host=0.209 c_extract=0.188 m_full=0.179 c_build=0.133 c_leader=0.064 idx=0.050 project=0.033
+
+## threads=4: totals over 20 depths (median of runs per depth, summed)
+R 5.279s  B1 3.443s  B2 2.770s  feral 6.976s  (split, in every path: 0.248s)
+ratios to feral: R 0.76  B1 0.49  B2 0.40; B1/R 0.65 B2/R 0.52
+  R per-run totals: 5.104 5.315 5.367
+  B1 per-run totals: 3.402 3.438 3.511
+  B2 per-run totals: 2.739 2.773 2.825
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.358 | 0.368 | 0.368 | 0.000 | 3 |
+| 1 | 2 | 1964840 | 0.383 | 0.228 | 0.150 | 0.014 | 3 |
+| 2 | 4 | 1964094 | 0.387 | 0.231 | 0.155 | 0.015 | 3 |
+| 3 | 8 | 1962660 | 0.395 | 0.228 | 0.162 | 0.015 | 3 |
+| 4 | 16 | 1961093 | 0.386 | 0.230 | 0.161 | 0.016 | 3 |
+| 5 | 32 | 1958892 | 0.392 | 0.231 | 0.165 | 0.015 | 3 |
+| 6 | 64 | 1955741 | 0.392 | 0.230 | 0.174 | 0.016 | 3 |
+| 7 | 128 | 1951436 | 0.386 | 0.227 | 0.174 | 0.015 | 3 |
+| 8 | 256 | 1946136 | 0.384 | 0.227 | 0.179 | 0.015 | 3 |
+| 9 | 511 | 1938584 | 0.363 | 0.229 | 0.188 | 0.015 | 3 |
+| 10 | 1006 | 1926928 | 0.353 | 0.226 | 0.185 | 0.016 | 3 |
+| 11 | 2010 | 1911486 | 0.327 | 0.210 | 0.179 | 0.015 | 3 |
+| 12 | 3737 | 1861544 | 0.318 | 0.181 | 0.161 | 0.015 | 3 |
+| 13 | 5979 | 1691560 | 0.223 | 0.146 | 0.134 | 0.015 | 3 |
+| 14 | 4998 | 1048015 | 0.128 | 0.099 | 0.091 | 0.015 | 3 |
+| 15 | 1936 | 384948 | 0.045 | 0.061 | 0.058 | 0.011 | 3 |
+| 16 | 653 | 122704 | 0.038 | 0.058 | 0.054 | 0.019 | 3 |
+| 17 | 173 | 31463 | 0.014 | 0.025 | 0.023 | 0.005 | 3 |
+| 18 | 44 | 7254 | 0.004 | 0.007 | 0.007 | 0.002 | 3 |
+| 19 | 2 | 247 | 0.000 | 0.002 | 0.002 | 0.000 | 3 |
+  B1 calls, depths>=1 (s): CA=0.827 CAC'=0.707 book=0.630 offdiag=0.231 project=0.148 c_build=0.143 bnd=0.127
+  B2 calls, depths>=1 (s): book=0.611 mask_mxm=0.436 mask_vals=0.282 s_merge=0.195 s_build=0.192 project=0.152 bnd=0.129 m_build=0.102 resize=0.030 s_extract=0.020
+  R calls, depths>=1 (s): compact=0.182 CA=0.811 CAC'=0.728 mxv=0.470 m_unext=0.353 key=0.278 offdiag=0.243 m_assign=0.218 m_extract=0.218 m_unkey=0.169 m_eq=0.139 Cw=0.138 c_number_host=0.113 cap=0.112 bnd=0.102 m_full=0.088 c_extract=0.065 c_build=0.047 c_leader=0.034 idx=0.025 project=0.013
+
+## straddler share (split depth: level 1 / over needed levels), ours vs quality stage (CA)
+| split depth | ours l1 | quality l1 | ours needed | quality needed | ratio needed |
+| 0 | 0.0274 % | 0.0083 % | 0.0807 % | 0.0348 % | 2.32 |
+| 1 | 0.0565 % | 0.0203 % | 0.1794 % | 0.0807 % | 2.22 |
+| 2 | 0.1066 % | 0.0333 % | 0.3178 % | 0.1269 % | 2.51 |
+| 3 | 0.1136 % | 0.0466 % | 0.3316 % | 0.1730 % | 1.92 |
+| 4 | 0.1669 % | 0.0684 % | 0.4938 % | 0.2490 % | 1.98 |
+| 5 | 0.2328 % | 0.1007 % | 0.6743 % | 0.3462 % | 1.95 |
+| 6 | 0.3198 % | 0.1585 % | 0.8741 % | 0.5117 % | 1.71 |
+| 7 | 0.3961 % | 0.2342 % | 1.0516 % | 0.7111 % | 1.48 |
+| 8 | 0.5593 % | 0.3532 % | 1.3802 % | 0.9825 % | 1.40 |
+| 9 | 0.7426 % | 0.5304 % | 1.6200 % | 1.2687 % | 1.28 |
+| 10 | 1.0567 % | 0.7744 % | 2.0132 % | 1.5467 % | 1.30 |
+| 11 | 1.4714 % | 1.1280 % | 2.3237 % | 1.8801 % | 1.24 |
+| 12 | 1.8418 % | 1.4657 % | 2.5125 % | 2.1150 % | 1.19 |
+| 13 | 1.9120 % | 1.7352 % | 2.4905 % | 2.3303 % | 1.07 |
+| 14 | 1.9965 % | 1.9159 % | 2.5777 % | 2.4973 % | 1.03 |
+| 15 | 2.1136 % | 2.5221 % | 2.7310 % | 3.2283 % | 0.85 |
+| 16 | 2.2579 % | nan % | 2.7667 % | nan % | nan |
+| 17 | 3.3541 % | nan % | 3.3541 % | nan % | nan |
+RANOUT depth=1 cells_at_parent_last_level=1 over_floor=1 max_n=2729 max_with_edges=91 cells_no_reused_level=0
+RANOUT depth=2 cells_at_parent_last_level=2 over_floor=2 max_n=2599 max_with_edges=56 cells_no_reused_level=0
+RANOUT depth=3 cells_at_parent_last_level=3 over_floor=3 max_n=2498 max_with_edges=33 cells_no_reused_level=0
+RANOUT depth=4 cells_at_parent_last_level=3 over_floor=3 max_n=1866 max_with_edges=18 cells_no_reused_level=0
+RANOUT depth=5 cells_at_parent_last_level=2 over_floor=2 max_n=1852 max_with_edges=13 cells_no_reused_level=0
+RANOUT depth=6 cells_at_parent_last_level=2 over_floor=2 max_n=1843 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=7 cells_at_parent_last_level=4 over_floor=4 max_n=961 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=8 cells_at_parent_last_level=8 over_floor=8 max_n=585 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=9 cells_at_parent_last_level=7 over_floor=7 max_n=298 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=10 cells_at_parent_last_level=12 over_floor=12 max_n=158 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=11 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=45
+RANOUT depth=12 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=214
+RANOUT depth=13 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=1362
+RANOUT depth=14 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=2357
+RANOUT depth=15 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=964
+RANOUT depth=16 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=368
+RANOUT depth=17 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=102
+RANOUT depth=18 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=26
+RANOUT depth=19 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=2
+
+log: logs/main_PA_all.log
+feral runs [3.547, 3.588, 3.622] median 3.588s; LOAD lines min 1.89 max 3.93
+
+## threads=1: totals over 16 depths (median of runs per depth, summed)
+R 7.157s  B1 3.978s  B2 3.091s  feral 3.588s  (split, in every path: 0.409s)
+ratios to feral: R 1.99  B1 1.11  B2 0.86; B1/R 0.56 B2/R 0.43
+  R per-run totals: 7.166 7.164 7.155
+  B1 per-run totals: 3.981 3.985 3.976
+  B2 per-run totals: 3.092 3.092 3.095
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.512 | 0.522 | 0.522 | 0.000 | 3 |
+| 1 | 2 | 1087321 | 0.565 | 0.291 | 0.189 | 0.026 | 3 |
+| 2 | 4 | 1085545 | 0.562 | 0.290 | 0.190 | 0.026 | 3 |
+| 3 | 8 | 1084441 | 0.562 | 0.294 | 0.197 | 0.028 | 3 |
+| 4 | 16 | 1083119 | 0.561 | 0.294 | 0.200 | 0.029 | 3 |
+| 5 | 32 | 1081049 | 0.559 | 0.292 | 0.204 | 0.028 | 3 |
+| 6 | 64 | 1078600 | 0.558 | 0.291 | 0.205 | 0.028 | 3 |
+| 7 | 128 | 1075327 | 0.558 | 0.290 | 0.208 | 0.029 | 3 |
+| 8 | 252 | 1070748 | 0.556 | 0.287 | 0.210 | 0.029 | 3 |
+| 9 | 504 | 1064963 | 0.541 | 0.278 | 0.209 | 0.030 | 3 |
+| 10 | 1008 | 1056801 | 0.512 | 0.261 | 0.203 | 0.029 | 3 |
+| 11 | 2010 | 1043099 | 0.492 | 0.228 | 0.189 | 0.029 | 3 |
+| 12 | 3389 | 963943 | 0.362 | 0.176 | 0.157 | 0.030 | 3 |
+| 13 | 3138 | 620453 | 0.178 | 0.105 | 0.108 | 0.029 | 3 |
+| 14 | 1167 | 191612 | 0.055 | 0.053 | 0.067 | 0.020 | 3 |
+| 15 | 120 | 17376 | 0.023 | 0.026 | 0.034 | 0.018 | 3 |
+  B1 calls, depths>=1 (s): CA=1.015 CAC'=0.925 offdiag=0.405 book=0.302 bnd=0.182 c_build=0.134 project=0.085
+  B2 calls, depths>=1 (s): mask_mxm=0.692 mask_vals=0.417 book=0.292 s_merge=0.245 bnd=0.182 s_build=0.111 project=0.094 m_build=0.086 resize=0.027 s_extract=0.011
+  R calls, depths>=1 (s): compact=0.305 CA=1.026 CAC'=0.939 mxv=0.718 m_unext=0.431 offdiag=0.423 key=0.385 m_assign=0.329 m_extract=0.270 m_unkey=0.241 m_eq=0.200 bnd=0.180 Cw=0.154 cap=0.150 c_number_host=0.105 c_extract=0.094 m_full=0.088 c_build=0.064 c_leader=0.032 idx=0.025 project=0.017
+
+## threads=4: totals over 16 depths (median of runs per depth, summed)
+R 2.758s  B1 1.763s  B2 1.452s  feral 3.588s  (split, in every path: 0.120s)
+ratios to feral: R 0.77  B1 0.49  B2 0.40; B1/R 0.64 B2/R 0.53
+  R per-run totals: 2.707 2.783 2.822
+  B1 per-run totals: 1.746 1.791 1.785
+  B2 per-run totals: 1.446 1.479 1.440
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.213 | 0.219 | 0.219 | 0.000 | 3 |
+| 1 | 2 | 1087321 | 0.224 | 0.128 | 0.086 | 0.008 | 3 |
+| 2 | 4 | 1085545 | 0.222 | 0.128 | 0.089 | 0.008 | 3 |
+| 3 | 8 | 1084441 | 0.222 | 0.130 | 0.092 | 0.008 | 3 |
+| 4 | 16 | 1083119 | 0.225 | 0.129 | 0.093 | 0.009 | 3 |
+| 5 | 32 | 1081049 | 0.223 | 0.133 | 0.100 | 0.008 | 3 |
+| 6 | 64 | 1078600 | 0.220 | 0.129 | 0.097 | 0.008 | 3 |
+| 7 | 128 | 1075327 | 0.222 | 0.128 | 0.101 | 0.008 | 3 |
+| 8 | 252 | 1070748 | 0.213 | 0.124 | 0.102 | 0.008 | 3 |
+| 9 | 504 | 1064963 | 0.196 | 0.125 | 0.105 | 0.008 | 3 |
+| 10 | 1008 | 1056801 | 0.184 | 0.116 | 0.101 | 0.008 | 3 |
+| 11 | 2010 | 1043099 | 0.176 | 0.101 | 0.093 | 0.009 | 3 |
+| 12 | 3389 | 963943 | 0.127 | 0.082 | 0.078 | 0.009 | 3 |
+| 13 | 3138 | 620453 | 0.058 | 0.051 | 0.049 | 0.008 | 3 |
+| 14 | 1167 | 191612 | 0.022 | 0.028 | 0.030 | 0.006 | 3 |
+| 15 | 120 | 17376 | 0.012 | 0.014 | 0.017 | 0.007 | 3 |
+  B1 calls, depths>=1 (s): CA=0.425 CAC'=0.362 book=0.305 offdiag=0.118 project=0.079 c_build=0.072 bnd=0.060
+  B2 calls, depths>=1 (s): book=0.295 mask_mxm=0.237 mask_vals=0.144 s_build=0.112 s_merge=0.103 project=0.078 bnd=0.061 m_build=0.052 resize=0.016 s_extract=0.011
+  R calls, depths>=1 (s): compact=0.091 CA=0.419 CAC'=0.368 mxv=0.245 m_unext=0.186 key=0.137 offdiag=0.125 m_assign=0.120 m_extract=0.110 m_unkey=0.085 m_eq=0.076 Cw=0.073 cap=0.062 c_number_host=0.062 bnd=0.054 m_full=0.046 c_extract=0.036 c_build=0.025 c_leader=0.017 idx=0.014 project=0.007
+
+## straddler share (split depth: level 1 / over needed levels), ours vs quality stage (PA)
+| split depth | ours l1 | quality l1 | ours needed | quality needed | ratio needed |
+| 0 | 0.0733 % | 0.0172 % | 0.1881 % | 0.0691 % | 2.72 |
+| 1 | 0.1749 % | 0.0482 % | 0.4348 % | 0.1756 % | 2.48 |
+| 2 | 0.1333 % | 0.0620 % | 0.4010 % | 0.2173 % | 1.85 |
+| 3 | 0.1770 % | 0.0843 % | 0.5482 % | 0.2951 % | 1.86 |
+| 4 | 0.2817 % | 0.1159 % | 0.8169 % | 0.3938 % | 2.07 |
+| 5 | 0.3319 % | 0.1692 % | 0.9453 % | 0.5532 % | 1.71 |
+| 6 | 0.4449 % | 0.2347 % | 1.1774 % | 0.7223 % | 1.63 |
+| 7 | 0.5657 % | 0.3587 % | 1.4119 % | 1.0247 % | 1.38 |
+| 8 | 0.7673 % | 0.5196 % | 1.7600 % | 1.2947 % | 1.36 |
+| 9 | 1.0404 % | 0.7586 % | 2.0125 % | 1.5824 % | 1.27 |
+| 10 | 1.5143 % | 1.1027 % | 2.4174 % | 1.8981 % | 1.27 |
+| 11 | 1.8025 % | 1.4976 % | 2.4617 % | 2.1815 % | 1.13 |
+| 12 | 2.1091 % | 1.7545 % | 2.6804 % | 2.3541 % | 1.14 |
+| 13 | 2.2662 % | 1.9031 % | 2.6780 % | 2.4630 % | 1.09 |
+| 14 | 1.4433 % | 2.8369 % | 1.4433 % | 3.3838 % | 0.43 |
+| 15 | nan % | nan % | nan % | nan % | nan |
+RANOUT depth=1 cells_at_parent_last_level=1 over_floor=1 max_n=253 max_with_edges=48 cells_no_reused_level=0
+RANOUT depth=2 cells_at_parent_last_level=1 over_floor=1 max_n=238 max_with_edges=33 cells_no_reused_level=0
+RANOUT depth=3 cells_at_parent_last_level=1 over_floor=1 max_n=221 max_with_edges=21 cells_no_reused_level=0
+RANOUT depth=4 cells_at_parent_last_level=1 over_floor=1 max_n=194 max_with_edges=12 cells_no_reused_level=0
+RANOUT depth=5 cells_at_parent_last_level=1 over_floor=1 max_n=148 max_with_edges=4 cells_no_reused_level=0
+RANOUT depth=6 cells_at_parent_last_level=1 over_floor=1 max_n=136 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=7 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=2
+RANOUT depth=8 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=9 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=10 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=11 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=50
+RANOUT depth=12 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=615
+RANOUT depth=13 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=1358
+RANOUT depth=14 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=706
+RANOUT depth=15 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=92
+
+log: logs/main_TX_all.log
+feral runs [4.502, 4.476, 4.513] median 4.502s; LOAD lines min 2.44 max 3.60
+
+## threads=1: totals over 19 depths (median of runs per depth, summed)
+R 9.233s  B1 5.169s  B2 4.020s  feral 4.502s  (split, in every path: 0.542s)
+ratios to feral: R 2.05  B1 1.15  B2 0.89; B1/R 0.56 B2/R 0.44
+  R per-run totals: 9.222 9.232 9.239
+  B1 per-run totals: 5.167 5.174 5.176
+  B2 per-run totals: 4.029 4.016 4.022
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.639 | 0.652 | 0.652 | 0.000 | 3 |
+| 1 | 2 | 1378373 | 0.710 | 0.366 | 0.246 | 0.032 | 3 |
+| 2 | 4 | 1377730 | 0.704 | 0.362 | 0.236 | 0.032 | 3 |
+| 3 | 8 | 1376592 | 0.708 | 0.366 | 0.248 | 0.034 | 3 |
+| 4 | 16 | 1375117 | 0.700 | 0.366 | 0.249 | 0.036 | 3 |
+| 5 | 32 | 1373501 | 0.701 | 0.366 | 0.252 | 0.035 | 3 |
+| 6 | 64 | 1371109 | 0.705 | 0.366 | 0.255 | 0.035 | 3 |
+| 7 | 128 | 1368040 | 0.699 | 0.364 | 0.264 | 0.036 | 3 |
+| 8 | 248 | 1362788 | 0.690 | 0.360 | 0.261 | 0.036 | 3 |
+| 9 | 496 | 1356681 | 0.675 | 0.352 | 0.263 | 0.036 | 3 |
+| 10 | 992 | 1347534 | 0.652 | 0.335 | 0.260 | 0.036 | 3 |
+| 11 | 1955 | 1330670 | 0.604 | 0.304 | 0.246 | 0.036 | 3 |
+| 12 | 3657 | 1286515 | 0.498 | 0.251 | 0.214 | 0.037 | 3 |
+| 13 | 4394 | 989692 | 0.335 | 0.170 | 0.167 | 0.036 | 3 |
+| 14 | 2451 | 438058 | 0.135 | 0.089 | 0.100 | 0.030 | 3 |
+| 15 | 535 | 90098 | 0.051 | 0.063 | 0.071 | 0.034 | 3 |
+| 16 | 78 | 13644 | 0.025 | 0.030 | 0.030 | 0.020 | 3 |
+| 17 | 24 | 4058 | 0.002 | 0.005 | 0.005 | 0.001 | 3 |
+| 18 | 2 | 245 | 0.000 | 0.002 | 0.002 | 0.000 | 3 |
+  B1 calls, depths>=1 (s): CA=1.314 CAC'=1.184 offdiag=0.531 book=0.404 bnd=0.244 c_build=0.181 project=0.114
+  B2 calls, depths>=1 (s): mask_mxm=0.891 mask_vals=0.551 book=0.396 s_merge=0.318 bnd=0.245 s_build=0.129 project=0.126 m_build=0.116 resize=0.038 s_extract=0.013
+  R calls, depths>=1 (s): compact=0.400 CA=1.316 CAC'=1.192 mxv=0.929 m_unext=0.570 offdiag=0.551 key=0.487 m_assign=0.430 m_extract=0.365 m_unkey=0.317 m_eq=0.262 bnd=0.232 Cw=0.207 cap=0.165 c_number_host=0.140 c_extract=0.124 m_full=0.116 c_build=0.083 c_leader=0.042 idx=0.033 project=0.022
+
+## threads=4: totals over 19 depths (median of runs per depth, summed)
+R 3.508s  B1 2.279s  B2 1.854s  feral 4.502s  (split, in every path: 0.163s)
+ratios to feral: R 0.78  B1 0.51  B2 0.41; B1/R 0.65 B2/R 0.53
+  R per-run totals: 3.421 3.507 3.651
+  B1 per-run totals: 2.298 2.342 2.292
+  B2 per-run totals: 1.848 1.864 1.878
+| depth | cells | live | R | B1 | B2 | split | runs |
+| 0 | 1 |  | 0.254 | 0.261 | 0.261 | 0.000 | 3 |
+| 1 | 2 | 1378373 | 0.274 | 0.158 | 0.112 | 0.009 | 3 |
+| 2 | 4 | 1377730 | 0.272 | 0.163 | 0.106 | 0.009 | 3 |
+| 3 | 8 | 1376592 | 0.282 | 0.160 | 0.112 | 0.010 | 3 |
+| 4 | 16 | 1375117 | 0.277 | 0.159 | 0.116 | 0.010 | 3 |
+| 5 | 32 | 1373501 | 0.277 | 0.162 | 0.116 | 0.010 | 3 |
+| 6 | 64 | 1371109 | 0.275 | 0.158 | 0.120 | 0.010 | 3 |
+| 7 | 128 | 1368040 | 0.273 | 0.160 | 0.123 | 0.010 | 3 |
+| 8 | 248 | 1362788 | 0.254 | 0.156 | 0.127 | 0.010 | 3 |
+| 9 | 496 | 1356681 | 0.249 | 0.152 | 0.128 | 0.010 | 3 |
+| 10 | 992 | 1347534 | 0.235 | 0.148 | 0.127 | 0.010 | 3 |
+| 11 | 1955 | 1330670 | 0.214 | 0.136 | 0.119 | 0.010 | 3 |
+| 12 | 3657 | 1286515 | 0.173 | 0.113 | 0.100 | 0.011 | 3 |
+| 13 | 4394 | 989692 | 0.116 | 0.083 | 0.078 | 0.011 | 3 |
+| 14 | 2451 | 438058 | 0.045 | 0.046 | 0.048 | 0.009 | 3 |
+| 15 | 535 | 90098 | 0.023 | 0.037 | 0.038 | 0.012 | 3 |
+| 16 | 78 | 13644 | 0.014 | 0.019 | 0.018 | 0.009 | 3 |
+| 17 | 24 | 4058 | 0.002 | 0.005 | 0.005 | 0.001 | 3 |
+| 18 | 2 | 245 | 0.000 | 0.002 | 0.002 | 0.000 | 3 |
+  B1 calls, depths>=1 (s): CA=0.537 CAC'=0.469 book=0.412 offdiag=0.154 project=0.096 c_build=0.093 bnd=0.083
+  B2 calls, depths>=1 (s): book=0.396 mask_mxm=0.299 mask_vals=0.189 s_merge=0.133 s_build=0.129 project=0.097 bnd=0.083 m_build=0.067 resize=0.022 s_extract=0.013
+  R calls, depths>=1 (s): compact=0.120 CA=0.523 CAC'=0.465 mxv=0.315 m_unext=0.242 key=0.174 offdiag=0.165 m_assign=0.153 m_extract=0.146 m_unkey=0.112 Cw=0.100 m_eq=0.097 c_number_host=0.078 cap=0.070 bnd=0.069 m_full=0.060 c_extract=0.046 c_build=0.031 c_leader=0.022 idx=0.018 project=0.009
+
+## straddler share (split depth: level 1 / over needed levels), ours vs quality stage (TX)
+| split depth | ours l1 | quality l1 | ours needed | quality needed | ratio needed |
+| 0 | 0.1194 % | 0.0110 % | 0.2858 % | 0.0413 % | 6.92 |
+| 1 | 0.0586 % | 0.0192 % | 0.1746 % | 0.0647 % | 2.70 |
+| 2 | 0.1058 % | 0.0409 % | 0.3254 % | 0.1413 % | 2.30 |
+| 3 | 0.1425 % | 0.0605 % | 0.4249 % | 0.1947 % | 2.18 |
+| 4 | 0.1677 % | 0.1065 % | 0.5105 % | 0.3289 % | 1.55 |
+| 5 | 0.2450 % | 0.1454 % | 0.7097 % | 0.4404 % | 1.61 |
+| 6 | 0.3205 % | 0.2193 % | 0.9252 % | 0.6435 % | 1.44 |
+| 7 | 0.4564 % | 0.3020 % | 1.2157 % | 0.8993 % | 1.35 |
+| 8 | 0.6309 % | 0.4497 % | 1.5503 % | 1.1906 % | 1.30 |
+| 9 | 0.9200 % | 0.6539 % | 1.9303 % | 1.4471 % | 1.33 |
+| 10 | 1.3073 % | 0.9640 % | 2.2929 % | 1.7611 % | 1.30 |
+| 11 | 1.6439 % | 1.3375 % | 2.3644 % | 2.0181 % | 1.17 |
+| 12 | 1.9088 % | 1.6245 % | 2.4888 % | 2.2094 % | 1.13 |
+| 13 | 1.9653 % | 1.8329 % | 2.3622 % | 2.3999 % | 0.98 |
+| 14 | 2.1161 % | 2.4197 % | 2.8559 % | 3.0757 % | 0.93 |
+| 15 | 2.0497 % | nan % | 2.9516 % | nan % | nan |
+| 16 | 1.0936 % | nan % | 0.8867 % | nan % | nan |
+RANOUT depth=1 cells_at_parent_last_level=1 over_floor=1 max_n=471 max_with_edges=49 cells_no_reused_level=0
+RANOUT depth=2 cells_at_parent_last_level=1 over_floor=1 max_n=439 max_with_edges=26 cells_no_reused_level=0
+RANOUT depth=3 cells_at_parent_last_level=1 over_floor=1 max_n=358 max_with_edges=13 cells_no_reused_level=0
+RANOUT depth=4 cells_at_parent_last_level=1 over_floor=1 max_n=306 max_with_edges=8 cells_no_reused_level=0
+RANOUT depth=5 cells_at_parent_last_level=1 over_floor=1 max_n=298 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=6 cells_at_parent_last_level=2 over_floor=2 max_n=163 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=7 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=8 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=0
+RANOUT depth=9 cells_at_parent_last_level=1 over_floor=1 max_n=125 max_with_edges=76 cells_no_reused_level=0
+RANOUT depth=10 cells_at_parent_last_level=1 over_floor=1 max_n=107 max_with_edges=57 cells_no_reused_level=0
+RANOUT depth=11 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=22
+RANOUT depth=12 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=381
+RANOUT depth=13 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=1491
+RANOUT depth=14 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=1382
+RANOUT depth=15 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=347
+RANOUT depth=16 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=47
+RANOUT depth=17 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=12
+RANOUT depth=18 cells_at_parent_last_level=0 over_floor=0 max_n=0 max_with_edges=0 cells_no_reused_level=2
+

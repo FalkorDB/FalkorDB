@@ -1,0 +1,12 @@
+m1prof: profile of the m1 GraphBLAS coarsening bench (R depth 0, R depths>=1, B2 depths>=1) on roadNet-CA.
+Sources: wt/graph/src/graph/graphblas/{m1_coarsen_bench.rs,m1_reuse_bench.rs,m1_prof.rs}; originals in orig/ (= m1rcA/snap/*.final.rs).
+Binary: graph-test (+ graph-test.dSYM, needed by analyze2.py for inline frames). Built release, LTO, codegen-units=1,
+  debug=line-tables-only, strip=none, split-debuginfo=packed; CC/CXX Homebrew clang. target/ deleted.
+Env added: M1_PROF=1 (skip untimed checks and B1 inside phase windows), M1_CALLRU=1 (rusage per timed call),
+  M1_BURBLE_PHASES / M1_BURBLE_DEPTHS, M1_DUMP_ND=path (C METIS input, same CSR as feral).
+Runner: run.sh LOG {samply-out|-} VAR=VAL...   Tables: ru_table.py, call_table.py, burble_sum.py, analyze2.py, derive_instr.py.
+Checks: struct_compare.py (structure identical to m1rcA logs; deliberate break logs/check_CA_fine.BROKEN.log is caught).
+Profiles: profiles/CA_t{1,4}.json.gz (+ .syms.json), analyses profiles/CA_t{1,4}.analysis.txt, summaries *.summary.json.
+Logs: logs/ru_{CA,PA,TX}.log (phase rusage, 3 runs x {1,4} thr), logs/callru_CA.log (+ .table.txt), logs/samply_CA_t{1,4}.log,
+  logs/burble_CA_t{1,4}.log (+ .summary.txt), logs/ru_CA_t4_bt{0,200}.log (KMP_BLOCKTIME), logs/cmetis.log, logs/check_CA_fine.log.
+ndin/{CA,PA,TX}.bin: C METIS driver inputs.

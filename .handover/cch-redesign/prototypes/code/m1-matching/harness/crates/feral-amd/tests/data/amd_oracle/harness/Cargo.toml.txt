@@ -1,0 +1,7 @@
+[package]
+name = "feral-amd-oracle"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+amd = "0.2.2"

@@ -1,0 +1,113 @@
+# threads=4: burble seconds by (depth, path, call); flags = share of that time
+d=0 R     CA                 n=   40 burble_ms=    72.15 timer_ms=    72.31  unjumble=19.3 convert=0.1 transpose=52.9 1thr=4.2
+d=0 R     CAC'               n=   40 burble_ms=    63.32 timer_ms=    63.56  unjumble=9.3
+d=0 R     mxv                n=  190 burble_ms=    42.16 timer_ms=    42.89  convert=1.5
+d=0 R     m_unext            n=  118 burble_ms=    31.85 timer_ms=    32.30  generic=31.8 convert=2.9
+d=0 R     offdiag            n=   20 burble_ms=    19.71 timer_ms=    19.81  
+d=0 R     m_assign           n=  118 burble_ms=    19.58 timer_ms=    19.99  generic=18.3 convert=19.6
+d=0 R     m_extract          n=  118 burble_ms=    19.21 timer_ms=    19.73  
+d=0 R     key                n=   20 burble_ms=    18.45 timer_ms=    18.57  generic=18.4
+d=0 R     untimed            n=  498 burble_ms=    18.12 timer_ms=     0.00  generic=7.7 convert=7.9 1thr=0.0
+d=0 R     twohop             n=  190 burble_ms=    14.92 timer_ms=    15.68  generic=4.2 convert=6.7 1thr=6.8
+d=0 R     m_unkey            n=  118 burble_ms=    14.54 timer_ms=    15.00  generic=14.5
+d=0 R     c_number_host      n=   60 burble_ms=    14.39 timer_ms=    15.17  convert=10.5 1thr=0.6
+d=0 R     m_eq               n=  118 burble_ms=    12.79 timer_ms=    13.26  convert=0.8
+d=0 R     Cw                 n=   20 burble_ms=    11.02 timer_ms=    11.10  convert=11.0
+d=0 R     bnd                n=   20 burble_ms=     8.48 timer_ms=     8.59  
+d=0 R     m_full             n=  118 burble_ms=     8.08 timer_ms=     8.59  
+d=0 R     c_extract          n=   20 burble_ms=     5.64 timer_ms=     5.72  generic=5.6 convert=5.6
+d=0 R     c_build            n=   20 burble_ms=     4.12 timer_ms=     4.20  convert=4.1 1thr=0.9
+d=0 R     c_leader           n=   60 burble_ms=     3.29 timer_ms=     3.61  
+d=0 R     idx                n=   40 burble_ms=     2.82 timer_ms=     2.99  
+d=0 R     project            n=   20 burble_ms=     1.28 timer_ms=     1.37  
+d=0 R     cap                n=   10 burble_ms=     0.15 timer_ms=     0.18  
+d=0 R     None               n=    2 burble_ms=     0.01 timer_ms=     0.00  
+d=0 keep  keep               n=   82 burble_ms=     4.34 timer_ms=     9.15  
+d=1 B1    CA                 n=   40 burble_ms=    67.05 timer_ms=    67.27  unjumble=18.2 convert=0.1 transpose=48.8 1thr=4.1
+d=1 B1    CAC'               n=   40 burble_ms=    59.21 timer_ms=    59.37  unjumble=9.0
+d=1 B1    offdiag            n=   20 burble_ms=    17.57 timer_ms=    17.70  
+d=1 B1    bnd                n=   20 burble_ms=     7.99 timer_ms=     8.11  
+d=1 B1    c_build            n=   20 burble_ms=     6.03 timer_ms=    10.60  convert=6.0 1thr=0.9
+d=1 B1    project            n=   20 burble_ms=     4.33 timer_ms=    11.07  convert=3.9 1thr=0.3
+d=1 B1    untimed            n=   40 burble_ms=     0.00 timer_ms=     0.00  
+d=1 B2    untimed            n=  307 burble_ms=    40.15 timer_ms=     0.00  convert=23.2
+d=1 B2    mask_mxm           n=   40 burble_ms=    28.39 timer_ms=    28.55  
+d=1 B2    mask_vals          n=   20 burble_ms=    22.48 timer_ms=    22.61  
+d=1 B2    s_merge            n=   20 burble_ms=    14.12 timer_ms=    14.24  
+d=1 B2    bnd                n=   20 burble_ms=     7.94 timer_ms=     8.02  convert=0.0
+d=1 B2    project            n=   20 burble_ms=     4.68 timer_ms=    12.12  convert=4.2 1thr=0.4
+d=1 B2    m_build            n=   20 burble_ms=     4.45 timer_ms=     7.81  convert=4.4 1thr=1.2
+d=1 B2    s_build            n=   67 burble_ms=     2.07 timer_ms=     2.52  1thr=1.7
+d=1 B2    resize             n=   18 burble_ms=     1.91 timer_ms=     1.99  convert=1.9
+d=1 B2    s_extract          n=   20 burble_ms=     0.31 timer_ms=     0.39  generic=0.3 convert=0.0
+d=1 R     CA                 n=   40 burble_ms=    67.96 timer_ms=    68.20  unjumble=18.2 transpose=49.8 1thr=4.1
+d=1 R     CAC'               n=   40 burble_ms=    58.24 timer_ms=    58.47  unjumble=8.9
+d=1 R     mxv                n=  195 burble_ms=    44.27 timer_ms=    45.05  convert=1.9
+d=1 R     m_unext            n=  118 burble_ms=    32.83 timer_ms=    33.31  generic=32.8 convert=3.4
+d=1 R     m_extract          n=  118 burble_ms=    21.06 timer_ms=    21.71  
+d=1 R     m_assign           n=  118 burble_ms=    20.91 timer_ms=    21.31  generic=20.9 convert=20.9
+d=1 R     key                n=   20 burble_ms=    18.85 timer_ms=    18.96  generic=18.8
+d=1 R     untimed            n=  500 burble_ms=    17.88 timer_ms=     0.00  generic=7.7 convert=7.9 1thr=0.0
+d=1 R     offdiag            n=   20 burble_ms=    17.82 timer_ms=    17.95  
+d=1 R     twohop             n=  190 burble_ms=    14.83 timer_ms=    15.57  generic=4.2 convert=6.6 1thr=6.7
+d=1 R     m_unkey            n=  118 burble_ms=    14.63 timer_ms=    15.09  generic=14.6
+d=1 R     m_eq               n=  118 burble_ms=    13.23 timer_ms=    13.72  
+d=1 R     compact            n=    1 burble_ms=    12.80 timer_ms=    13.01  convert=12.8
+d=1 R     Cw                 n=   20 burble_ms=    12.08 timer_ms=    12.16  convert=12.1
+d=1 R     c_number_host      n=   60 burble_ms=     9.77 timer_ms=    10.58  convert=5.6 1thr=0.6
+d=1 R     m_full             n=  118 burble_ms=     9.52 timer_ms=    10.13  
+d=1 R     bnd                n=   20 burble_ms=     8.08 timer_ms=     8.18  
+d=1 R     c_extract          n=   20 burble_ms=     6.99 timer_ms=     7.06  generic=7.0 convert=7.0
+d=1 R     c_leader           n=   60 burble_ms=     4.35 timer_ms=     4.68  
+d=1 R     c_build            n=   20 burble_ms=     4.08 timer_ms=     4.16  convert=4.1 1thr=0.8
+d=1 R     idx                n=   40 burble_ms=     2.46 timer_ms=     2.62  
+d=1 R     project            n=   20 burble_ms=     1.16 timer_ms=     1.25  
+d=1 R     cap                n=   25 burble_ms=     0.55 timer_ms=     0.64  
+d=1 split split_mxm          n=    2 burble_ms=    11.79 timer_ms=    11.80  
+d=1 split split_buildM       n=    1 burble_ms=     2.21 timer_ms=     2.22  convert=2.2
+d=1 split untimed            n=    1 burble_ms=     0.00 timer_ms=     0.00  
+d=13 B1    CA                 n=   26 burble_ms=    39.33 timer_ms=    39.50  unjumble=8.6 convert=0.2 transpose=30.7 1thr=2.2
+d=13 B1    CAC'               n=   26 burble_ms=    35.04 timer_ms=    35.17  unjumble=5.0
+d=13 B1    offdiag            n=   14 burble_ms=    12.11 timer_ms=    12.17  
+d=13 B1    bnd                n=   15 burble_ms=     6.70 timer_ms=     6.77  unjumble=0.0 convert=0.1 transpose=0.1 1thr=0.1
+d=13 B1    c_build            n=   16 burble_ms=     4.08 timer_ms=     7.61  convert=3.4 1thr=0.5
+d=13 B1    project            n=   13 burble_ms=     2.07 timer_ms=     7.88  convert=2.1 1thr=0.3
+d=13 B1    untimed            n=   26 burble_ms=     0.00 timer_ms=     0.00  
+d=13 B2    mask_mxm           n=   26 burble_ms=    33.97 timer_ms=    34.08  
+d=13 B2    untimed            n=  202 burble_ms=    28.62 timer_ms=     0.00  convert=17.5
+d=13 B2    mask_vals          n=   14 burble_ms=    17.38 timer_ms=    17.45  
+d=13 B2    s_build            n=   48 burble_ms=    14.37 timer_ms=    15.96  1thr=9.4
+d=13 B2    s_merge            n=   16 burble_ms=    12.67 timer_ms=    12.75  convert=0.3
+d=13 B2    bnd                n=   15 burble_ms=     5.95 timer_ms=     6.00  unjumble=0.0 convert=0.2 transpose=0.1 1thr=0.1
+d=13 B2    m_build            n=   17 burble_ms=     3.79 timer_ms=     5.59  convert=2.9 1thr=0.6
+d=13 B2    resize             n=   14 burble_ms=     2.20 timer_ms=     2.25  convert=1.5
+d=13 B2    project            n=   13 burble_ms=     2.07 timer_ms=     7.52  convert=2.1 1thr=0.3
+d=13 B2    s_extract          n=   13 burble_ms=     1.93 timer_ms=     1.98  generic=1.5 convert=0.1
+d=13 R     CA                 n=    8 burble_ms=    41.99 timer_ms=    42.09  unjumble=8.1 transpose=33.9
+d=13 R     CAC'               n=    8 burble_ms=    38.17 timer_ms=    38.24  unjumble=5.5
+d=13 R     mxv                n=   40 burble_ms=    21.30 timer_ms=    21.44  
+d=13 R     key                n=    5 burble_ms=    16.59 timer_ms=    16.63  generic=16.4 convert=2.5
+d=13 R     cap                n=   11 burble_ms=    15.62 timer_ms=    15.68  convert=1.7
+d=13 R     offdiag            n=    4 burble_ms=    15.32 timer_ms=    15.35  
+d=13 R     m_unext            n=   22 burble_ms=    14.94 timer_ms=    15.04  generic=14.9 convert=2.5
+d=13 R     untimed            n=  100 burble_ms=    14.52 timer_ms=     0.00  generic=4.7 convert=6.4
+d=13 R     compact            n=    1 burble_ms=    10.20 timer_ms=    10.39  convert=10.2
+d=13 R     m_extract          n=   22 burble_ms=     9.44 timer_ms=     9.55  
+d=13 R     m_assign           n=   22 burble_ms=     8.72 timer_ms=     8.78  generic=8.7 convert=8.7
+d=13 R     Cw                 n=    4 burble_ms=     7.67 timer_ms=     7.70  convert=7.7
+d=13 R     m_unkey            n=   22 burble_ms=     6.95 timer_ms=     7.04  generic=7.0
+d=13 R     m_eq               n=   22 burble_ms=     5.65 timer_ms=     5.74  
+d=13 R     bnd                n=    4 burble_ms=     5.36 timer_ms=     5.38  
+d=13 R     c_number_host      n=   12 burble_ms=     5.29 timer_ms=     5.72  convert=3.4
+d=13 R     m_full             n=   22 burble_ms=     4.15 timer_ms=     4.26  
+d=13 R     c_extract          n=    4 burble_ms=     2.94 timer_ms=     2.95  generic=2.9 convert=2.9
+d=13 R     c_build            n=    4 burble_ms=     2.12 timer_ms=     2.13  convert=2.1
+d=13 R     c_leader           n=   12 burble_ms=     1.71 timer_ms=     1.77  
+d=13 R     idx                n=    8 burble_ms=     1.29 timer_ms=     1.33  
+d=13 R     project            n=    4 burble_ms=     0.60 timer_ms=     0.61  
+d=13 R     twohop             n=   19 burble_ms=     0.34 timer_ms=     0.44  generic=0.1 convert=0.0 1thr=0.0
+d=13 split split_mxm          n=    2 burble_ms=    13.45 timer_ms=    13.47  
+d=13 split split_buildM       n=    1 burble_ms=     1.56 timer_ms=     1.57  convert=1.6
+d=13 split untimed            n=    1 burble_ms=     0.00 timer_ms=     0.00  
+
+# descriptors

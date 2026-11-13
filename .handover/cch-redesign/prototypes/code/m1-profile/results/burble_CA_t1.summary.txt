@@ -1,0 +1,298 @@
+=== b2_d1: burble-timed 0.2553s
+  mask_vals     n=  19   0.0695s  27.2%  GrB_eWiseMult emult:(S<.>=S.*S)
+  mask_mxm      n=  19   0.0476s  18.6%  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = B'*B) nthreads # ntasks #
+  s_merge       n=  18   0.0454s  17.8%  GrB_eWiseAdd add:(S<.>=S+H)
+  mask_mxm      n=  20   0.0399s  15.6%  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish)
+  bnd           n=   5   0.0250s   9.8%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*B)
+  m_build       n=  20   0.0099s   3.9%  GxB_Matrix_build_Scalar (iso build, # threads) (sparse to bitmap)
+  project       n=   5   0.0068s   2.7%  GrB_Vector_build_INT32 (build, # threads) (sparse to bitmap)
+  resize        n=  17   0.0045s   1.7%  GrB_Matrix_resize (sparse/hyper and dims not shrinking; no wait required) (sparse to hyper) (hyper to sparse)
+  bnd           n=  14   0.0035s   1.4%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+  s_build       n=  20   0.0018s   0.7%  GrB_Matrix_build_INT32 (cast J # #) (build, # threads)
+  project       n=  15   0.0005s   0.2%  GrB_Vector_build_INT32 (build, # threads) (hypersparse to full)
+  s_build       n=   7   0.0004s   0.2%  GrB_Matrix_wait (build hyper hash)
+  s_extract     n=  18   0.0003s   0.1%  GrB_extract (generic subref)
+=== b2_d14: burble-timed 0.1685s
+  mask_mxm      n=   5   0.0352s  20.9%  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = S'*S) nthreads # ntasks #
+  mask_vals     n=   7   0.0337s  20.0%  GrB_eWiseMult emult:(S<.>=S.*S)
+  mask_mxm      n=   9   0.0296s  17.6%  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish)
+  s_merge       n=   4   0.0203s  12.0%  GrB_eWiseAdd add:(S<.>=S+H)
+  bnd           n=   6   0.0159s   9.5%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*B)
+  s_build       n=  11   0.0064s   3.8%  GrB_Matrix_build_INT32 (cast J # #) (build, # threads)
+  m_build       n=   5   0.0045s   2.7%  GxB_Matrix_build_Scalar (iso build, # threads) (hyper to sparse)
+  mask_mxm      n=   2   0.0044s   2.6%  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = H'*H) nthreads # ntasks #
+  project       n=  10   0.0036s   2.1%  GrB_Vector_build_INT32 (build, # threads) (sparse to bitmap)
+  s_build       n=   9   0.0032s   1.9%  GrB_Matrix_wait (build hyper hash)
+  resize        n=   3   0.0024s   1.4%  GrB_Matrix_resize (sparse/hyper and dims not shrinking; no wait required) (sparse to hyper) (hyper to sparse)
+  resize        n=   5   0.0015s   0.9%  GrB_Matrix_wait (build hyper hash)
+  mask_mxm      n=   4   0.0012s   0.7%  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (H{H} = H'*H) nthreads # ntasks #
+  s_merge       n=   4   0.0010s   0.6%  GrB_Matrix_wait (build hyper hash)
+  m_build       n=   4   0.0009s   0.5%  GrB_Matrix_wait (build hyper hash)
+  s_extract     n=   5   0.0009s   0.5%  GrB_extract (generic subref)
+  s_merge       n=   6   0.0007s   0.4%  GrB_eWiseAdd add:(H<.>=H+H)
+  s_merge       n=   1   0.0006s   0.3%  GrB_eWiseAdd add:(H<.>=H+H) (hyper to sparse)
+  mask_mxm      n=   2   0.0005s   0.3%  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish) (build hyper hash)
+  s_extract     n=   1   0.0003s   0.2%  GrB_extract (iso subref)
+  s_build       n=  11   0.0003s   0.2%  GrB_Matrix_extractTuples_INT32
+  bnd           n=   4   0.0003s   0.2%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = H'*B) (expand bitmap/full to hyper) (sparse to bitmap)
+  resize        n=   3   0.0003s   0.2%  GrB_Matrix_resize (sparse/hyper and dims not shrinking; no wait required) (sparse to hyper)
+  mask_vals     n=   4   0.0003s   0.2%  GrB_eWiseMult emult:(S<.>=H.*H) (C aliased with T)
+  bnd           n=   1   0.0002s   0.1%  GrB_mxv (saxpy C=(A')*B) (saxpy C=(A')*B) (iso transpose) (bucket transpose) (#-thread bucket transpose) (sparse to hyper) C=A'*B, saxpy (transposed A: #-by-#, int32_t, # entries) (S = H*S, anz: # bnz
+  mask_vals     n=   2   0.0002s   0.1%  GrB_Matrix_wait (build hyper hash)
+  s_extract     n=   5   0.0001s   0.1%  GrB_extract (generic subref) (hyper to sparse)
+=== b2_d8: burble-timed 0.2801s
+  mask_vals     n=  14   0.0688s  24.6%  GrB_eWiseMult emult:(S<.>=S.*S)
+  mask_mxm      n=  14   0.0601s  21.5%  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = S'*S) nthreads # ntasks #
+  mask_mxm      n=  20   0.0412s  14.7%  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish)
+  s_merge       n=   9   0.0343s  12.3%  GrB_eWiseAdd add:(S<.>=S+H)
+  bnd           n=  15   0.0287s  10.2%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*B)
+  s_build       n=  15   0.0094s   3.4%  GrB_Matrix_build_INT32 (cast J # #) (build, # threads)
+  m_build       n=  20   0.0090s   3.2%  GxB_Matrix_build_Scalar (iso build, # threads) (hyper to sparse)
+  project       n=  20   0.0075s   2.7%  GrB_Vector_build_INT32 (build, # threads) (sparse to bitmap)
+  s_build       n=   5   0.0065s   2.3%  GrB_Matrix_build_INT32 (cast J # #) (build, # threads) (hyper to sparse)
+  resize        n=  12   0.0040s   1.4%  GrB_Matrix_resize (sparse/hyper and dims not shrinking; no wait required) (sparse to hyper) (hyper to sparse)
+  s_build       n=   6   0.0039s   1.4%  GrB_Matrix_wait (build hyper hash)
+  s_merge       n=   5   0.0037s   1.3%  GrB_eWiseAdd add:(S<.>=S+S)
+  s_extract     n=  14   0.0021s   0.7%  GrB_extract (generic subref)
+  s_build       n=  20   0.0006s   0.2%  GrB_Matrix_extractTuples_INT32
+  s_extract     n=   1   0.0002s   0.1%  GrB_extract (iso subref)
+=== r0: burble-timed 1.0256s
+  mxv           n=  49   0.0919s   9.0%  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B)
+  offdiag       n=  20   0.0650s   6.3%  GrB_select
+  m_unext       n=  57   0.0636s   6.2%  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker)
+  CA            n=  20   0.0627s   6.1%  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+  key           n=  18   0.0609s   5.9%  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop)
+  m_extract     n= 118   0.0513s   5.0%  GrB_extract (A full)
+  m_assign      n=  68   0.0492s   4.8%  GrB_assign (full to bitmap) (bit2_whole: C<M,bitmap> = A ) (generic assign) (bitmap to full)
+  m_unkey       n= 118   0.0481s   4.7%  GrB_apply (in-place-op) (jit: undefined) (generic apply: user-defined idxunop)
+  CAC'          n=   1   0.0480s   4.7%  GrB_mxm C=A*B, saxpy (S = S*S, anz: #.96521e+# bnz: #.4478e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  CA            n=   1   0.0403s   3.9%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.53321e+# bnz: #.96521e+#) (single-threaded Gustavson) (
+  CAC'          n=  20   0.0315s   3.1%  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+  m_eq          n=  68   0.0309s   3.0%  GrB_eWiseMult emult_bitmap:(B<B,struct>=F.*F)
+  CAC'          n=   1   0.0281s   2.7%  GrB_mxm C=A*B, saxpy (S = S*S, anz: #.14467e+# bnz: #.46629e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  CA            n=   1   0.0264s   2.6%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.61579e+# bnz: #.14467e+#) (single-threaded Gustavson) (
+  CAC'          n=  15   0.0210s   2.0%  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  mxv           n=   1   0.0209s   2.0%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot F = S'*F)
+  bnd           n=  19   0.0195s   1.9%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+  CA            n=  15   0.0194s   1.9%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse:
+  mxv           n=  19   0.0179s   1.7%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+  CAC'          n=   1   0.0178s   1.7%  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #.17485e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  c_build       n=  20   0.0172s   1.7%  GxB_Matrix_build_Scalar (iso build, # threads) (hyper to sparse)
+  CA            n=   1   0.0169s   1.6%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.31261e+# bnz: #) (single-threaded Gustavson) (nthreads 
+  c_extract     n=  20   0.0151s   1.5%  GrB_extract (A bitmap) (generic subref) (bitmap to full)
+  m_full        n=  68   0.0122s   1.2%  GrB_Vector_eWiseAdd add:(F<.>=F+B)
+  c_number_host n=  20   0.0114s   1.1%  GrB_Vector_extractTuples_BOOL (A bitmap)
+  CAC'          n=   1   0.0112s   1.1%  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #.3642e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  CA            n=   1   0.0104s   1.0%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.46755e+# bnz: #) (single-threaded Gustavson) (nthreads 
+  Cw            n=   1   0.0101s   1.0%  GrB_mxv C=A*B, saxpy (B = S*F, anz: #.96521e+# bnz: #.96521e+#) (coarse, threads: #) (bitmap saxpy) (bitmap to full)
+  Cw            n=  18   0.0090s   0.9%  GrB_mxv C=A*B, saxpy (B = S*F, anz: # bnz: #) (coarse, threads: #) (bitmap saxpy) (bitmap to full)
+  m_unext       n=   1   0.0079s   0.8%  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!F>=F) (generic masker)
+  bnd           n=   1   0.0077s   0.8%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot F = S'*F)
+  mxv           n=  60   0.0060s   0.6%  GrB_mxv C<M>=A'*B, masked_dot_product (dot3) (S{S} = S'*S) nthreads # ntasks #  factory
+  Cw            n=   1   0.0056s   0.5%  GrB_mxv C=A*B, saxpy (B = S*F, anz: #.14467e+# bnz: #.14467e+#) (coarse, threads: #) (bitmap saxpy) (bitmap to full)
+  m_unext       n=  11   0.0055s   0.5%  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker) (bitmap to sparse)
+  m_full        n=  49   0.0048s   0.5%  GrB_Vector_eWiseAdd add:(F<.>=F+S)
+  idx           n=  20   0.0047s   0.5%  GrB_apply (shallow-op)
+  c_number_host n=  20   0.0044s   0.4%  GrB_Vector_build_UINT64 (build, # threads) (sparse to bitmap)
+  twohop        n=   5   0.0044s   0.4%  GxB_Matrix_build_Vector (cast J # #) (build, # threads) (hyper to sparse)
+  m_assign      n=   1   0.0043s   0.4%  GrB_assign (full to bitmap) (bit2_whole: C<M,full> = A ) (bitmap to full)
+  m_unext       n=  49   0.0042s   0.4%  GrB_apply (shallow-op) (pure shallow) masker:(S:S<!S>=S) (generic masker) (generic masker)
+  mxv           n=   9   0.0041s   0.4%  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B) (bitmap to sparse)
+  m_eq          n=   1   0.0037s   0.4%  GrB_eWiseMult emult_bitmap:(B<F,struct>=F.*F) (bitmap to full)
+  c_leader      n=  40   0.0031s   0.3%  GrB_eWiseMult dense C=A+B
+  m_full        n=   1   0.0030s   0.3%  GrB_Vector_eWiseAdd dense C=A+B
+  c_leader      n=  20   0.0028s   0.3%  GrB_select (C full) (A full) (iso select) (bitmap select)
+  project       n=  20   0.0027s   0.3%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot F = S'*F)
+  idx           n=  40   0.0027s   0.3%  GrB_Vector_dup (dup)
+  twohop        n=   8   0.0023s   0.2%  GrB_Vector_build_UINT64 (build, # threads) (sparse to bitmap)
+  twohop        n=  20   0.0022s   0.2%  GrB_select (jit: undefined) (generic select) (jit: undefined)
+  twohop        n=  20   0.0020s   0.2%  GrB_extract (generic subref)
+  twohop        n=  10   0.0017s   0.2%  GrB_eWiseMult emult:(S<.>=S.*S)
+  bnd           n=   1   0.0012s   0.1%  GrB_Vector_extractTuples_INT32 (A full)
+  m_assign      n=  49   0.0010s   0.1%  GrB_assign (full to bitmap) (bit4_whole: C<M> = A ) (generic assign) (bitmap to full)
+  twohop        n=  10   0.0008s   0.1%  GxB_Matrix_sort
+  cap           n=   2   0.0007s   0.1%  GrB_mxm C=A*B, rowscale (S=S*S)
+  Cw            n=  19   0.0006s   0.1%  GrB_reduce (A full)
+  twohop        n=  10   0.0006s   0.1%  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B<F> = S'*F)
+  mxv           n= 138   0.0000s   0.0%  GrB_Vector_nvals
+  m_unext       n= 118   0.0000s   0.0%  GrB_Vector_nvals
+=== r_d1: burble-timed 1.0529s
+  mxv           n=  51   0.0883s   8.4%  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B)
+  offdiag       n=  20   0.0675s   6.4%  GrB_select
+  m_unext       n=  55   0.0662s   6.3%  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker)
+  CA            n=  20   0.0623s   5.9%  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+  m_assign      n=  71   0.0543s   5.2%  GrB_assign (full to bitmap) (bit2_whole: C<M,bitmap> = A ) (generic assign) (bitmap to full)
+  compact       n=   1   0.0529s   5.0%  GrB_extract (iso subref) (iso build, # threads) (hyper to sparse)
+  m_extract     n= 118   0.0514s   4.9%  GrB_extract (A full)
+  CAC'          n=   1   0.0461s   4.4%  GrB_mxm C=A*B, saxpy (S = S*S, anz: #.96471e+# bnz: #.4445e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  m_unkey       n= 118   0.0458s   4.4%  GrB_apply (in-place-op) (jit: undefined) (generic apply: user-defined idxunop)
+  CA            n=   1   0.0377s   3.6%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.52977e+# bnz: #.96471e+#) (single-threaded Gustavson) (
+  key           n=  14   0.0357s   3.4%  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop)
+  CAC'          n=   1   0.0351s   3.3%  GrB_mxm C=A*B, saxpy (S = S*S, anz: #.14488e+# bnz: #.46487e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  m_eq          n=  71   0.0331s   3.1%  GrB_eWiseMult emult_bitmap:(B<B,struct>=F.*F)
+  bnd           n=  20   0.0316s   3.0%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+  CAC'          n=  20   0.0309s   2.9%  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+  CA            n=   1   0.0277s   2.6%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.61391e+# bnz: #.14488e+#) (single-threaded Gustavson) (
+  mxv           n=  20   0.0270s   2.6%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+  CAC'          n=  16   0.0219s   2.1%  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  CA            n=  16   0.0205s   1.9%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse:
+  key           n=   1   0.0204s   1.9%  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) (A iso; C non-iso)
+  CAC'          n=   1   0.0179s   1.7%  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #.1743e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  CA            n=   1   0.0171s   1.6%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.31215e+# bnz: #) (single-threaded Gustavson) (nthreads 
+  c_extract     n=  20   0.0149s   1.4%  GrB_extract (A bitmap) (generic subref) (bitmap to full)
+  CAC'          n=   1   0.0117s   1.1%  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #.36377e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  c_number_host n=  20   0.0113s   1.1%  GrB_Vector_extractTuples_BOOL (A bitmap)
+  CA            n=   1   0.0107s   1.0%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.46713e+# bnz: #) (single-threaded Gustavson) (nthreads 
+  m_full        n=  71   0.0107s   1.0%  GrB_Vector_eWiseAdd add:(F<.>=F+B)
+  c_build       n=  20   0.0098s   0.9%  GxB_Matrix_build_Scalar (iso build, # threads) (hyper to sparse)
+  Cw            n=   1   0.0096s   0.9%  GrB_mxv C=A*B, saxpy (B = S*F, anz: #.96471e+# bnz: #.96471e+#) (coarse, threads: #) (bitmap saxpy) (bitmap to full)
+  Cw            n=  18   0.0092s   0.9%  GrB_mxv C=A*B, saxpy (B = S*F, anz: # bnz: #) (coarse, threads: #) (bitmap saxpy) (bitmap to full)
+  m_unext       n=  16   0.0065s   0.6%  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker) (bitmap to sparse)
+  mxv           n=  63   0.0062s   0.6%  GrB_mxv C<M>=A'*B, masked_dot_product (dot3) (S{S} = S'*S) nthreads # ntasks #  factory
+  Cw            n=   1   0.0059s   0.6%  GrB_mxv C=A*B, saxpy (B = S*F, anz: #.14488e+# bnz: #.14488e+#) (coarse, threads: #) (bitmap saxpy) (bitmap to full)
+  c_number_host n=  20   0.0053s   0.5%  GrB_Vector_build_UINT64 (build, # threads) (sparse to bitmap)
+  m_full        n=  47   0.0049s   0.5%  GrB_Vector_eWiseAdd add:(F<.>=F+S)
+  idx           n=  20   0.0048s   0.5%  GrB_apply (shallow-op)
+  mxv           n=   4   0.0046s   0.4%  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B) (bitmap to sparse)
+  twohop        n=   5   0.0044s   0.4%  GxB_Matrix_build_Vector (cast J # #) (build, # threads) (hyper to sparse)
+  m_unext       n=  47   0.0042s   0.4%  GrB_apply (shallow-op) (pure shallow) masker:(S:S<!S>=S) (generic masker) (generic masker)
+  project       n=  20   0.0036s   0.3%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot F = S'*F)
+  c_leader      n=  20   0.0028s   0.3%  GrB_select (C full) (A full) (iso select) (bitmap select)
+  c_leader      n=  40   0.0026s   0.2%  GrB_eWiseMult dense C=A+B
+  twohop        n=   7   0.0023s   0.2%  GrB_Vector_build_UINT64 (build, # threads) (sparse to bitmap)
+  twohop        n=  20   0.0023s   0.2%  GrB_select (jit: undefined) (generic select) (jit: undefined)
+  twohop        n=  20   0.0020s   0.2%  GrB_extract (generic subref)
+  twohop        n=  10   0.0018s   0.2%  GrB_eWiseMult emult:(S<.>=S.*S)
+  idx           n=  40   0.0018s   0.2%  GrB_Vector_dup (dup)
+  bnd           n=   1   0.0012s   0.1%  GrB_Vector_extractTuples_INT32 (A full)
+  m_assign      n=  47   0.0010s   0.1%  GrB_assign (full to bitmap) (bit4_whole: C<M> = A ) (generic assign) (bitmap to full)
+  twohop        n=  10   0.0007s   0.1%  GxB_Matrix_sort
+  Cw            n=  19   0.0007s   0.1%  GrB_reduce (A full)
+  twohop        n=   9   0.0006s   0.1%  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B<F> = S'*F)
+  mxv           n=  51   0.0004s   0.0%  GrB_Vector_wait (wait:vector # zombies, # pending) (wait: remove zombies) (wait: no pending; conform and finish)
+  mxv           n= 138   0.0000s   0.0%  GrB_Vector_nvals
+  m_unext       n= 118   0.0000s   0.0%  GrB_Vector_nvals
+=== r_d14: burble-timed 0.4933s
+  offdiag       n=   4   0.0370s   7.5%  GrB_select
+  compact       n=   1   0.0349s   7.1%  GrB_extract (iso subref) (iso build, # threads) (hyper to sparse)
+  mxv           n=   6   0.0319s   6.5%  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B)
+  m_unext       n=   6   0.0261s   5.3%  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker)
+  CAC'          n=   1   0.0244s   4.9%  GrB_mxm C=A*B, saxpy (S = S*S, anz: #.14747e+# bnz: #.93005e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  m_assign      n=   9   0.0218s   4.4%  GrB_assign (full to bitmap) (bit2_whole: C<M,bitmap> = A ) (generic assign) (bitmap to full)
+  CA            n=   1   0.0210s   4.3%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.97148e+# bnz: #.14747e+#) (single-threaded Gustavson) (
+  cap           n=   2   0.0205s   4.1%  GrB_eWiseMult emult:(S<.>=S.*S)
+  CA            n=   3   0.0203s   4.1%  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+  m_extract     n=  18   0.0196s   4.0%  GrB_extract (A full)
+  m_unkey       n=  18   0.0177s   3.6%  GrB_apply (in-place-op) (jit: undefined) (generic apply: user-defined idxunop)
+  CAC'          n=   1   0.0167s   3.4%  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #.81138e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  CA            n=   1   0.0151s   3.1%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.89012e+# bnz: #) (single-threaded Gustavson) (nthreads 
+  key           n=   1   0.0150s   3.0%  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) (A iso; C non-iso)
+  bnd           n=   4   0.0150s   3.0%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+  m_eq          n=   9   0.0134s   2.7%  GrB_eWiseMult emult_bitmap:(B<B,struct>=F.*F)
+  CAC'          n=   3   0.0118s   2.4%  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+  mxv           n=   3   0.0115s   2.3%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+  CAC'          n=   1   0.0083s   1.7%  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #.15432e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  key           n=   1   0.0083s   1.7%  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) masker:(S:H{S}=S) (generic masker)
+  Cw            n=   1   0.0076s   1.5%  GrB_mxv C=A*B, saxpy (B = S*F, anz: #.14747e+# bnz: #.14747e+#) (coarse, threads: #) (bitmap saxpy) (bitmap to full)
+  key           n=   1   0.0073s   1.5%  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) masker:(S:H{H}=S) (generic masker) (generic masker) (sparse to hyper)
+  key           n=   1   0.0070s   1.4%  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop)
+  c_extract     n=   3   0.0066s   1.3%  GrB_extract (A bitmap) (generic subref) (bitmap to full)
+  CA            n=   1   0.0062s   1.3%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.16146e+# bnz: #) (single-threaded Gustavson) (nthreads 
+  cap           n=   1   0.0060s   1.2%  GrB_select
+  cap           n=   2   0.0057s   1.1%  GrB_mxm C=A*B, colscale (S=S*S)
+  c_build       n=   4   0.0053s   1.1%  GxB_Matrix_build_Scalar (iso build, # threads) (hyper to sparse)
+  cap           n=   1   0.0052s   1.1%  GrB_select (sparse to hyper)
+  c_number_host n=   3   0.0048s   1.0%  GrB_Vector_extractTuples_BOOL (A bitmap)
+  Cw            n=   2   0.0047s   1.0%  GrB_mxv C=A*B, saxpy (B = S*F, anz: # bnz: #) (coarse, threads: #) (bitmap saxpy) (bitmap to full)
+  m_unext       n=   3   0.0046s   0.9%  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker) (bitmap to sparse)
+  m_full        n=   9   0.0044s   0.9%  GrB_Vector_eWiseAdd add:(F<.>=F+B)
+  mxv           n=  12   0.0037s   0.7%  GrB_mxv C<M>=A'*B, masked_dot_product (dot3) (S{S} = S'*S) nthreads # ntasks #  factory
+  idx           n=   4   0.0029s   0.6%  GrB_apply (shallow-op)
+  CA            n=   1   0.0028s   0.6%  GrB_mxm C=A*B', colscale (S=S*S)
+  c_number_host n=   3   0.0022s   0.5%  GrB_Vector_build_UINT64 (build, # threads) (sparse to bitmap)
+  m_full        n=   9   0.0019s   0.4%  GrB_Vector_eWiseAdd add:(F<.>=F+S)
+  m_unext       n=   9   0.0014s   0.3%  GrB_apply (shallow-op) (pure shallow) masker:(S:S<!S>=S) (generic masker) (generic masker)
+  c_leader      n=   3   0.0013s   0.3%  GrB_select (C full) (A full) (iso select) (bitmap select)
+  c_leader      n=   8   0.0013s   0.3%  GrB_eWiseMult dense C=A+B
+  project       n=   3   0.0012s   0.2%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot F = S'*F)
+  twohop        n=   1   0.0010s   0.2%  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B<F> = S'*F) (bitmap to sparse)
+  cap           n=   2   0.0010s   0.2%  GrB_mxm C=A*B, rowscale (S=S*S)
+  bnd           n=   1   0.0008s   0.2%  GrB_Vector_extractTuples_INT32 (A full)
+  idx           n=   8   0.0007s   0.1%  GrB_Vector_dup (dup)
+  twohop        n=   2   0.0005s   0.1%  GrB_Vector_extractTuples_INT32 (A full)
+  project       n=   1   0.0005s   0.1%  GrB_mxv C=A'*B, rowscale (F=S*F)
+  CAC'          n=   1   0.0005s   0.1%  GrB_mxm C=A*B, rowscale (S=S*S)
+  c_extract     n=   1   0.0004s   0.1%  GrB_extract (A full) (prejit: ok)
+  Cw            n=   1   0.0003s   0.1%  GrB_mxv C=A*B, rowscale (F=S*F)
+  cap           n=   2   0.0003s   0.1%  GrB_Matrix_diag
+  c_number_host n=   1   0.0003s   0.1%  GrB_Vector_build_UINT64 (build, # threads) (hypersparse to full)
+  Cw            n=   3   0.0003s   0.1%  GrB_reduce (A full)
+  twohop        n=   1   0.0003s   0.1%  GrB_eWiseMult emult:(S<.>=H.*H) (build hyper hash)
+  m_assign      n=   9   0.0003s   0.1%  GrB_assign (full to bitmap) (bit4_whole: C<M> = A ) (generic assign) (bitmap to full)
+=== r_d8: burble-timed 0.9951s
+  mxv           n=  22   0.0790s   7.9%  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B)
+  offdiag       n=  13   0.0665s   6.7%  GrB_select
+  m_unext       n=  28   0.0610s   6.1%  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker)
+  CA            n=  13   0.0568s   5.7%  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+  m_assign      n=  34   0.0514s   5.2%  GrB_assign (full to bitmap) (bit2_whole: C<M,bitmap> = A ) (generic assign) (bitmap to full)
+  m_extract     n=  67   0.0469s   4.7%  GrB_extract (A full)
+  CAC'          n=   1   0.0440s   4.4%  GrB_mxm C=A*B, saxpy (S = S*S, anz: #.9413e+# bnz: #.28421e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  compact       n=   1   0.0437s   4.4%  GrB_extract (iso subref) (iso build, # threads) (hyper to sparse)
+  m_unkey       n=  67   0.0384s   3.9%  GrB_apply (in-place-op) (jit: undefined) (generic apply: user-defined idxunop)
+  CA            n=   1   0.0360s   3.6%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.36638e+# bnz: #.9413e+#) (single-threaded Gustavson) (n
+  key           n=   5   0.0308s   3.1%  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop)
+  m_eq          n=  34   0.0307s   3.1%  GrB_eWiseMult emult_bitmap:(B<B,struct>=F.*F)
+  bnd           n=  13   0.0286s   2.9%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+  CAC'          n=  13   0.0282s   2.8%  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+  CAC'          n=   1   0.0274s   2.8%  GrB_mxm C=A*B, saxpy (S = S*S, anz: #.13417e+# bnz: #.34107e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  CA            n=   1   0.0271s   2.7%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.48482e+# bnz: #.13417e+#) (single-threaded Gustavson) (
+  mxv           n=  12   0.0257s   2.6%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+  CAC'          n=   9   0.0230s   2.3%  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  CA            n=   9   0.0194s   1.9%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse:
+  key           n=   1   0.0191s   1.9%  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) (A iso; C non-iso)
+  CAC'          n=   1   0.0182s   1.8%  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #.0809e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  CA            n=   1   0.0172s   1.7%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.21287e+# bnz: #) (single-threaded Gustavson) (nthreads 
+  key           n=   6   0.0149s   1.5%  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) masker:(S:H{S}=S) (generic masker)
+  c_extract     n=  13   0.0148s   1.5%  GrB_extract (A bitmap) (generic subref) (bitmap to full)
+  c_number_host n=  13   0.0111s   1.1%  GrB_Vector_extractTuples_BOOL (A bitmap)
+  CAC'          n=   1   0.0111s   1.1%  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #.29199e+#) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+  cap           n=   7   0.0110s   1.1%  GrB_eWiseMult emult:(S<.>=S.*S)
+  CA            n=   1   0.0106s   1.1%  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: #.38986e+# bnz: #) (single-threaded Gustavson) (nthreads 
+  m_full        n=  34   0.0102s   1.0%  GrB_Vector_eWiseAdd add:(F<.>=F+B)
+  c_build       n=  13   0.0097s   1.0%  GxB_Matrix_build_Scalar (iso build, # threads) (hyper to sparse)
+  Cw            n=   1   0.0095s   1.0%  GrB_mxv C=A*B, saxpy (B = S*F, anz: #.9413e+# bnz: #.9413e+#) (coarse, threads: #) (bitmap saxpy) (bitmap to full)
+  Cw            n=  11   0.0090s   0.9%  GrB_mxv C=A*B, saxpy (B = S*F, anz: # bnz: #) (coarse, threads: #) (bitmap saxpy) (bitmap to full)
+  cap           n=   6   0.0063s   0.6%  GrB_select
+  Cw            n=   1   0.0057s   0.6%  GrB_mxv C=A*B, saxpy (B = S*F, anz: #.13417e+# bnz: #.13417e+#) (coarse, threads: #) (bitmap saxpy) (bitmap to full)
+  mxv           n=  37   0.0051s   0.5%  GrB_mxv C<M>=A'*B, masked_dot_product (dot3) (S{S} = S'*S) nthreads # ntasks #  factory
+  mxv           n=   6   0.0050s   0.5%  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B) (bitmap to sparse)
+  m_unext       n=   6   0.0049s   0.5%  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker) (bitmap to sparse)
+  m_full        n=  33   0.0047s   0.5%  GrB_Vector_eWiseAdd add:(F<.>=F+S)
+  c_number_host n=  13   0.0045s   0.5%  GrB_Vector_build_UINT64 (build, # threads) (sparse to bitmap)
+  m_unext       n=  33   0.0042s   0.4%  GrB_apply (shallow-op) (pure shallow) masker:(S:S<!S>=S) (generic masker) (generic masker)
+  idx           n=  13   0.0040s   0.4%  GrB_apply (shallow-op)
+  cap           n=   7   0.0032s   0.3%  GrB_mxm C=A*B, colscale (S=S*S)
+  project       n=  13   0.0027s   0.3%  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot F = S'*F)
+  c_leader      n=  13   0.0027s   0.3%  GrB_select (C full) (A full) (iso select) (bitmap select)
+  c_leader      n=  26   0.0024s   0.2%  GrB_eWiseMult dense C=A+B
+  idx           n=  26   0.0014s   0.1%  GrB_Vector_dup (dup)
+  bnd           n=   1   0.0012s   0.1%  GrB_Vector_extractTuples_INT32 (A full)
+  m_assign      n=  33   0.0009s   0.1%  GrB_assign (full to bitmap) (bit4_whole: C<M> = A ) (generic assign) (bitmap to full)
+  key           n=   1   0.0008s   0.1%  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) masker:(S:H{H}=S) (generic masker) (generic masker) (sparse to hyper)
+  Cw            n=  12   0.0006s   0.1%  GrB_reduce (A full)
+  cap           n=   7   0.0005s   0.1%  GrB_mxm C=A*B, rowscale (S=S*S)
+  cap           n=   1   0.0005s   0.1%  GrB_select (sparse to hyper)
+  m_unext       n=  67   0.0000s   0.0%  GrB_Vector_nvals
+  mxv           n=  80   0.0000s   0.0%  GrB_Vector_nvals
+=== split_d1: burble-timed 0.0545s
+  split_mxm     n=   1   0.0283s  51.9%  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = B'*B) nthreads # ntasks #
+  split_mxm     n=   1   0.0194s  35.6%  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish)
+  split_buildM  n=   1   0.0068s  12.5%  GxB_Matrix_build_Scalar (iso build, # threads) (sparse to bitmap)
+=== split_d14: burble-timed 0.0504s
+  split_mxm     n=   1   0.0276s  54.7%  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = S'*S) nthreads # ntasks #
+  split_mxm     n=   1   0.0185s  36.7%  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish)
+  split_buildM  n=   1   0.0043s   8.6%  GxB_Matrix_build_Scalar (iso build, # threads) (hyper to sparse)
+=== split_d8: burble-timed 0.0515s
+  split_mxm     n=   1   0.0276s  53.6%  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = S'*S) nthreads # ntasks #
+  split_mxm     n=   1   0.0182s  35.4%  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish)
+  split_buildM  n=   1   0.0057s  11.0%  GxB_Matrix_build_Scalar (iso build, # threads) (hyper to sparse)

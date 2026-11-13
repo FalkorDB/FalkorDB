@@ -1,0 +1,16 @@
+# feral-amd oracle fixture: amd_demo_24
+# generator: SuiteSparse AMD Rust crate (amd = 0.2.2)
+# provenance:
+#   SYNTHETIC SUBSTITUTE for AMD Demo 24x24 — using 6x4 grid because the canonical can_24.mtx requires network fetch. Replace in a follow-up commit once can_24.mtx is downloaded.
+status: OK
+n: 24
+nz: 100
+nz_a_plus_at: 76
+n_dense: 0
+ncmpa: 1
+lnz: 72
+ndiv: 72
+nms_ldl: 158
+nms_lu: 244
+d_max: 5
+perm: 0 4 1 3 7 20 21 16 23 19 15 18 22 17 13 12 14 10 9 2 6 8 11 5

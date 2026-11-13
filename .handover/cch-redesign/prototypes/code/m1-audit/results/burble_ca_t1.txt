@@ -1,0 +1,102 @@
+# threads=1: burble seconds by (depth, path, call); flags = share of that time
+d=0 R     CAC'               n=   40 ms=   186.47  unjumble=34.6 1thr=151.8
+d=0 R     CA                 n=   40 ms=   182.85  unjumble=69.1 convert=0.0 transpose=113.8 1thr=113.8
+d=0 R     mxv                n=  328 ms=   127.55  convert=4.3
+d=0 R     Cw                 n=  200 ms=    74.93  generic=23.7 convert=50.6 1thr=0.0
+d=0 R     m_unext            n=  236 ms=    74.07  generic=74.1 convert=5.7
+d=0 R     offdiag            n=   20 ms=    72.87  
+d=0 R     key                n=   20 ms=    69.94  generic=69.9
+d=0 R     m_assign           n=  118 ms=    53.26  generic=48.5 convert=53.3
+d=0 R     m_extract          n=  118 ms=    49.45  
+d=0 R     m_unkey            n=  118 ms=    45.16  generic=45.2
+d=0 R     m_eq               n=  118 ms=    36.37  convert=2.5
+d=0 R     bnd                n=   22 ms=    29.20  
+d=0 R     c_number_host      n=   60 ms=    16.23  convert=4.6 1thr=4.6
+d=0 R     twohop             n=  190 ms=    15.64  generic=5.1 convert=6.8 1thr=6.9
+d=0 R     m_full             n=  118 ms=    15.41  
+d=0 R     c_extract          n=   20 ms=    15.16  generic=15.2 convert=15.2
+d=0 R     c_build            n=   20 ms=    10.86  convert=10.9 1thr=10.9
+d=0 R     idx                n=   80 ms=     6.78  
+d=0 R     c_leader           n=   60 ms=     5.38  
+d=0 R     project            n=   40 ms=     2.93  
+d=0 R     cap                n=   10 ms=     0.13  
+d=0 R     None               n=    2 ms=     0.02  
+d=0 keep  keep               n=   82 ms=    13.94  
+d=1 B1    CA                 n=   40 ms=   183.54  unjumble=65.1 convert=0.0 transpose=118.4 1thr=118.4
+d=1 B1    CAC'               n=   40 ms=   156.07  unjumble=31.1 1thr=125.0
+d=1 B1    offdiag            n=   60 ms=    65.67  
+d=1 B1    bnd                n=   20 ms=    28.12  
+d=1 B1    c_build            n=   20 ms=    15.64  convert=15.6 1thr=15.6
+d=1 B1    project            n=   20 ms=     6.63  convert=6.1 1thr=6.6
+d=1 B2    bnd                n=  269 ms=   157.75  convert=76.3
+d=1 B2    mask_mxm           n=   40 ms=    88.71  
+d=1 B2    mask_vals          n=   20 ms=    70.74  
+d=1 B2    s_merge            n=   60 ms=    38.54  
+d=1 B2    project            n=   20 ms=    12.44  convert=11.8 1thr=12.4
+d=1 B2    m_build            n=   20 ms=    11.83  convert=11.8 1thr=11.8
+d=1 B2    resize             n=   18 ms=     4.58  convert=4.6
+d=1 B2    s_build            n=   67 ms=     2.16  1thr=1.7
+d=1 B2    s_extract          n=   40 ms=     0.50  generic=0.5 convert=0.1
+d=1 R     CA                 n=   40 ms=   176.89  unjumble=64.8 transpose=112.1 1thr=112.1
+d=1 R     CAC'               n=   40 ms=   167.21  unjumble=31.5 1thr=135.8
+d=1 R     mxv                n=  333 ms=   124.37  convert=4.4
+d=1 R     m_unext            n=  236 ms=    73.24  generic=73.2 convert=6.4
+d=1 R     Cw                 n=  200 ms=    72.21  generic=23.4 convert=48.2 1thr=0.0
+d=1 R     offdiag            n=   20 ms=    65.85  
+d=1 R     m_assign           n=  118 ms=    53.94  generic=53.9 convert=53.9
+d=1 R     key                n=   20 ms=    53.31  generic=53.3
+d=1 R     m_extract          n=  118 ms=    49.23  
+d=1 R     compact            n=    3 ms=    45.21  convert=45.2 1thr=45.2
+d=1 R     m_unkey            n=  118 ms=    41.33  generic=41.3
+d=1 R     m_eq               n=  118 ms=    35.56  
+d=1 R     bnd                n=   22 ms=    30.04  
+d=1 R     c_number_host      n=   60 ms=    15.95  convert=4.6 1thr=4.6
+d=1 R     twohop             n=  190 ms=    15.48  generic=5.0 convert=6.8 1thr=6.9
+d=1 R     m_full             n=  118 ms=    15.28  
+d=1 R     c_extract          n=   20 ms=    14.92  generic=14.9 convert=14.9
+d=1 R     c_build            n=   20 ms=    10.08  convert=10.1 1thr=10.1
+d=1 R     idx                n=   80 ms=     6.89  
+d=1 R     c_leader           n=   60 ms=     5.24  
+d=1 R     project            n=   40 ms=     2.75  
+d=1 R     cap                n=   25 ms=     0.54  
+d=1 split split_mxm          n=    3 ms=    44.40  
+d=1 split split_buildM       n=    1 ms=     6.63  convert=6.6 1thr=6.6
+d=13 B1    CA                 n=   26 ms=    96.52  unjumble=29.6 convert=0.2 transpose=66.9 1thr=66.7
+d=13 B1    CAC'               n=   26 ms=    85.44  unjumble=16.9 1thr=68.4
+d=13 B1    offdiag            n=   40 ms=    40.97  
+d=13 B1    bnd                n=   15 ms=    20.49  unjumble=0.0 convert=0.1 transpose=0.1 1thr=0.1
+d=13 B1    c_build            n=   16 ms=    10.53  convert=9.8 1thr=9.9
+d=13 B1    project            n=   13 ms=     4.70  convert=4.7 1thr=4.7
+d=13 B2    bnd                n=  180 ms=   114.60  unjumble=0.0 convert=62.8 transpose=0.1 1thr=0.1
+d=13 B2    mask_mxm           n=   26 ms=    86.94  
+d=13 B2    mask_vals          n=   14 ms=    43.70  
+d=13 B2    s_merge            n=   42 ms=    29.12  convert=0.3
+d=13 B2    s_build            n=   48 ms=    14.56  1thr=9.5
+d=13 B2    m_build            n=   17 ms=     7.30  convert=6.4 1thr=6.5
+d=13 B2    project            n=   13 ms=     4.89  convert=4.9 1thr=4.9
+d=13 B2    resize             n=   14 ms=     4.35  convert=3.6
+d=13 B2    s_extract          n=   26 ms=     2.05  generic=1.6 convert=0.1
+d=13 R     CAC'               n=    8 ms=    99.02  unjumble=18.1 1thr=80.9
+d=13 R     CA                 n=    8 ms=    97.99  unjumble=30.4 transpose=67.6 1thr=67.6
+d=13 R     mxv                n=   66 ms=    61.43  
+d=13 R     key                n=    5 ms=    52.06  generic=51.8 convert=7.9
+d=13 R     Cw                 n=   40 ms=    50.53  generic=15.2 convert=34.7 1thr=0.3
+d=13 R     cap                n=   11 ms=    47.81  convert=5.9
+d=13 R     offdiag            n=    4 ms=    47.08  
+d=13 R     m_unext            n=   44 ms=    41.40  generic=41.4 convert=6.7
+d=13 R     compact            n=    3 ms=    37.61  convert=37.6 1thr=37.6
+d=13 R     m_assign           n=   22 ms=    30.23  generic=30.2 convert=30.2
+d=13 R     m_extract          n=   22 ms=    28.35  
+d=13 R     m_unkey            n=   22 ms=    23.39  generic=23.4
+d=13 R     bnd                n=    6 ms=    20.83  
+d=13 R     m_eq               n=   22 ms=    20.16  
+d=13 R     c_number_host      n=   12 ms=    10.94  convert=4.0 1thr=4.0
+d=13 R     c_extract          n=    4 ms=    10.32  generic=10.3 convert=10.3
+d=13 R     m_full             n=   22 ms=     8.90  
+d=13 R     c_build            n=    4 ms=     7.22  convert=7.2 1thr=7.2
+d=13 R     idx                n=   16 ms=     3.96  
+d=13 R     c_leader           n=   12 ms=     3.67  
+d=13 R     project            n=    8 ms=     2.93  
+d=13 R     twohop             n=   19 ms=     0.51  generic=0.1 convert=0.0 1thr=0.0
+d=13 split split_mxm          n=    3 ms=    49.10  
+d=13 split split_buildM       n=    1 ms=     6.07  convert=6.1 1thr=6.1

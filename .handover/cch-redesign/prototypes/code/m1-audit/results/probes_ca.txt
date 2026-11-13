@@ -1,0 +1,80 @@
+
+## threads=1: B2 masked split (m_build+mask_mxm+mask_vals+resize+s_merge) vs in-place delete+insert, all depths >= 1, 3 runs
+  official     3218.6 ms  [3193.8-3221.6]
+  probe        1600.9 ms  [1598.2-1603.0]
+  host           33.2 ms  [33.2-33.6]
+  del_t         487.1 ms  [484.0-487.6]
+  ins_t         129.1 ms  [128.4-129.4]
+  wait_t        952.2 ms  [951.2-953.0]
+  levels=304 nnzP_sum=137118878 deleted=11369866 inserted=2958764
+## threads=1: fine split (buildM+mxm) vs in-place delete, all depths, 3 runs
+  official      901.6 ms  [900.5-909.2]
+  probe         527.5 ms  [526.8-534.7]
+  host           20.5 ms  [20.4-20.9]
+  del_t         189.2 ms  [188.8-189.4]
+  wait_t        317.9 ms  [317.3-324.8]
+  depths=22 nnz_prev_sum=81579652 deleted=5018611
+## threads=1: coarsen_level probes, d0, 3 runs, 20 levels
+  match: official assign+unext = 124.0 (assign 50.4, unext 73.5); select-true 27.2, accum-assign 90.7, emult+add 58.3, select-false (u pattern) 27.9
+  contract: official CA+CAC'+offdiag = 383.2 (CA 169.3, CAC' 151.2, offdiag 62.6); c_build 10.7; Cw 23.4
+    (a) CA no wait 104.8 + C<!I> 242.7 = 347.5
+    (b) CA no wait 105.2 + CAC' 115.7 + offdiag 113.5 = 334.4
+    (c) host C pack 11.9 + CA 99.2 + CAC' 115.1 + offdiag 113.3 + Cw 5.6 = 345.0  vs official incl. c_build+Cw = 417.3
+## threads=1: coarsen_level probes, R>=1, 3 runs, 194 levels
+  match: official assign+unext = 1597.7 (assign 665.5, unext 932.2); select-true 345.7, accum-assign 1100.7, emult+add 746.0, select-false (u pattern) 357.4
+  contract: official CA+CAC'+offdiag = 4919.4 (CA 2115.8, CAC' 1928.2, offdiag 875.3); c_build 147.2; Cw 311.3
+    (a) CA no wait 1368.6 + C<!I> 3169.7 = 4538.4
+    (b) CA no wait 1365.2 + CAC' 1505.5 + offdiag 1499.5 = 4370.3
+    (c) host C pack 164.7 + CA 1282.8 + CAC' 1504.5 + offdiag 1499.6 + Cw 72.7 = 4524.4  vs official incl. c_build+Cw = 5377.9
+
+## threads=4: B2 masked split (m_build+mask_mxm+mask_vals+resize+s_merge) vs in-place delete+insert, all depths >= 1, 3 runs
+  official     1220.2 ms  [1206.3-1221.8]
+  probe         934.2 ms  [930.3-948.3]
+  host           33.7 ms  [33.6-33.8]
+  del_t         459.7 ms  [457.8-465.8]
+  ins_t         104.1 ms  [102.4-104.8]
+  wait_t        336.5 ms  [336.5-343.9]
+  levels=304 nnzP_sum=137118878 deleted=11369866 inserted=2958764
+## threads=4: fine split (buildM+mxm) vs in-place delete, all depths, 3 runs
+  official      277.4 ms  [276.3-280.0]
+  probe         302.3 ms  [287.2-305.5]
+  host           20.7 ms  [20.7-21.7]
+  del_t         185.8 ms  [168.8-188.3]
+  wait_t         95.8 ms  [95.6-97.7]
+  depths=22 nnz_prev_sum=81579652 deleted=5018611
+## threads=4: coarsen_level probes, d0, 3 runs, 20 levels
+  match: official assign+unext = 48.8 (assign 17.5, unext 31.3); select-true 9.7, accum-assign 29.4, emult+add 23.5, select-false (u pattern) 9.9
+  contract: official CA+CAC'+offdiag = 145.9 (CA 67.9, CAC' 59.5, offdiag 18.6); c_build 3.9; Cw 11.1
+    (a) CA no wait 50.2 + C<!I> 78.8 = 129.0
+    (b) CA no wait 48.1 + CAC' 46.7 + offdiag 34.0 = 128.8
+    (c) host C pack 12.1 + CA 42.9 + CAC' 47.1 + offdiag 34.0 + Cw 2.2 = 138.3  vs official incl. c_build+Cw = 161.0
+## threads=4: coarsen_level probes, R>=1, 3 runs, 194 levels
+  match: official assign+unext = 628.9 (assign 229.6, unext 399.3); select-true 120.7, accum-assign 379.9, emult+add 312.0, select-false (u pattern) 125.9
+  contract: official CA+CAC'+offdiag = 1994.6 (CA 868.6, CAC' 852.7, offdiag 273.3); c_build 51.5; Cw 156.6
+    (a) CA no wait 686.5 + C<!I> 1027.5 = 1714.1
+    (b) CA no wait 638.2 + CAC' 632.6 + offdiag 442.4 = 1713.2
+    (c) host C pack 170.6 + CA 533.3 + CAC' 625.5 + offdiag 437.8 + Cw 29.1 = 1796.3  vs official incl. c_build+Cw = 2202.7
+
+## B2 per depth, threads=1, median over runs (ms): official / in-place
+  depth  1:   204.1 /    70.3
+  depth  2:   207.6 /    73.6
+  depth  3:   217.7 /    75.1
+  depth  4:   215.5 /    76.5
+  depth  5:   219.9 /    78.9
+  depth  6:   220.6 /    81.7
+  depth  7:   218.6 /    85.6
+  depth  8:   218.5 /    92.1
+  depth  9:   218.9 /    98.2
+  depth 10:   216.6 /   107.6
+  depth 11:   210.0 /   122.0
+  depth 12:   193.6 /   133.9
+  depth 13:   169.9 /   138.6
+  depth 14:   131.7 /   121.8
+  depth 15:   102.9 /    86.0
+  depth 16:    78.1 /    56.9
+  depth 17:    64.2 /    38.4
+  depth 18:    54.7 /    28.1
+  depth 19:    34.0 /    20.9
+  depth 20:     8.0 /    10.1
+  depth 21:     2.2 /     3.1
+  depth 22:     0.2 /     1.0

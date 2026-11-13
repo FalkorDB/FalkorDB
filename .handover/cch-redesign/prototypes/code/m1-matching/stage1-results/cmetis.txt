@@ -1,0 +1,3 @@
+RESULT graph=roadNet-CA.txt.gz variant=cmetis seed=0 arcs=11864871 triangles=194881762 closure_violations=0 cover_ok=true etree_height=843 mean_depth=664.8 order_s_median=0 nd_levels_total=0 two_hop_fallbacks=0 sep_vertices=0
+RESULT graph=roadNet-PA.txt.gz variant=cmetis seed=0 arcs=7219125 triangles=163744705 closure_violations=0 cover_ok=true etree_height=845 mean_depth=664.4 order_s_median=0 nd_levels_total=0 two_hop_fallbacks=0 sep_vertices=0
+RESULT graph=roadNet-TX.txt.gz variant=cmetis seed=0 arcs=7920038 triangles=100067599 closure_violations=0 cover_ok=true etree_height=631 mean_depth=415.3 order_s_median=0 nd_levels_total=0 two_hop_fallbacks=0 sep_vertices=0

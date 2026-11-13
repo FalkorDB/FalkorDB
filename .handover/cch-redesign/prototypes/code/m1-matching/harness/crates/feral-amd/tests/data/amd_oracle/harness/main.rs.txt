@@ -1,0 +1,263 @@
+//! feral-amd oracle harness.
+//!
+//! Runs the SuiteSparse AMD Rust crate (`amd = "0.2.2"`) against a
+//! fixed set of fixtures and dumps the resulting permutation and
+//! fill statistics to plain-text files.
+//!
+//! Intentionally throwaway — lives OUTSIDE the feral-amd crate and
+//! must never be linked against feral-amd code.
+//!
+//! Usage: `cargo run --release -- <out_dir>`
+
+use std::collections::BTreeSet;
+use std::env;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use amd::{order, Control};
+
+type I = i32;
+
+/// Owned CSC pattern, full-symmetric, sorted rows.
+struct Pattern {
+    n: I,
+    col_ptr: Vec<I>,
+    row_idx: Vec<I>,
+    /// Free-form provenance (SHA-256, generator description, ...).
+    provenance: String,
+}
+
+impl Pattern {
+    /// Build from (row, col) pairs. Symmetrized: for every (i, j)
+    /// both (i, j) and (j, i) end up in the result. Duplicates
+    /// dropped. Diagonal entries are included unchanged.
+    fn from_triples(n: usize, triples: &[(usize, usize)], provenance: String) -> Self {
+        let mut set: BTreeSet<(usize, usize)> = BTreeSet::new();
+        for &(i, j) in triples {
+            set.insert((i, j));
+            set.insert((j, i));
+        }
+        // Bucket by column.
+        let mut cols: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for &(r, c) in &set {
+            cols[c].push(r);
+        }
+        for col in &mut cols {
+            col.sort();
+        }
+        let mut col_ptr: Vec<I> = Vec::with_capacity(n + 1);
+        col_ptr.push(0);
+        let mut row_idx: Vec<I> = Vec::new();
+        for col in &cols {
+            for &r in col {
+                row_idx.push(r as I);
+            }
+            col_ptr.push(row_idx.len() as I);
+        }
+        Pattern {
+            n: n as I,
+            col_ptr,
+            row_idx,
+            provenance,
+        }
+    }
+}
+
+// ---- generators --------------------------------------------------
+
+fn arrow(n: usize) -> Pattern {
+    let mut t = Vec::new();
+    for i in 0..n {
+        t.push((i, i));
+    }
+    for i in 1..n {
+        t.push((0, i));
+    }
+    Pattern::from_triples(
+        n,
+        &t,
+        format!(
+            "generator: arrow(n={}) — hub at var 0 + diagonal; programmatic, no RNG",
+            n
+        ),
+    )
+}
+
+fn band(n: usize, b: usize) -> Pattern {
+    let mut t = Vec::new();
+    for i in 0..n {
+        t.push((i, i));
+        for k in 1..=b {
+            if i + k < n {
+                t.push((i, i + k));
+            }
+        }
+    }
+    Pattern::from_triples(
+        n,
+        &t,
+        format!(
+            "generator: band(n={}, b={}) — banded + diagonal; programmatic, no RNG",
+            n, b
+        ),
+    )
+}
+
+fn grid_2d(m: usize, n: usize) -> Pattern {
+    let idx = |r: usize, c: usize| r * n + c;
+    let total = m * n;
+    let mut t = Vec::new();
+    for r in 0..m {
+        for c in 0..n {
+            let k = idx(r, c);
+            t.push((k, k));
+            if r + 1 < m {
+                t.push((k, idx(r + 1, c)));
+            }
+            if c + 1 < n {
+                t.push((k, idx(r, c + 1)));
+            }
+        }
+    }
+    Pattern::from_triples(
+        total,
+        &t,
+        format!(
+            "generator: grid_2d({}x{}) — 5-point stencil + diagonal; programmatic, no RNG",
+            m, n
+        ),
+    )
+}
+
+/// Representative 24-var sparse pattern — SYNTHETIC SUBSTITUTE for
+/// the canonical `AMD/Demo/can_24.mtx`, which requires a network
+/// fetch we do not perform here. Uses a 6x4 2D grid.
+fn amd_demo_24() -> Pattern {
+    let mut p = grid_2d(6, 4);
+    p.provenance = "SYNTHETIC SUBSTITUTE for AMD Demo 24x24 — using 6x4 grid \
+                    because the canonical can_24.mtx requires network fetch. \
+                    Replace in a follow-up commit once can_24.mtx is downloaded."
+        .to_string();
+    p
+}
+
+// ---- triplet readers ---------------------------------------------
+
+fn read_faer_triplet(path: &Path) -> std::io::Result<Pattern> {
+    let f = File::open(path)?;
+    let reader = BufReader::new(f);
+    let mut triples: Vec<(usize, usize)> = Vec::new();
+    let mut max_idx = 0usize;
+    for line in reader.lines() {
+        let line = line?;
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('%') || line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let r: usize = parts[0].parse().expect("row");
+        let c: usize = parts[1].parse().expect("col");
+        max_idx = max_idx.max(r).max(c);
+        triples.push((r, c));
+    }
+    let n = max_idx + 1;
+    let sha = sha256_file(path)?;
+    Ok(Pattern::from_triples(
+        n,
+        &triples,
+        format!("file: {}\nsha256: {}", path.display(), sha),
+    ))
+}
+
+fn sha256_file(path: &Path) -> std::io::Result<String> {
+    let out = std::process::Command::new("shasum")
+        .arg("-a")
+        .arg("256")
+        .arg(path)
+        .output()?;
+    let s = String::from_utf8_lossy(&out.stdout);
+    Ok(s.split_whitespace().next().unwrap_or("").to_string())
+}
+
+// ---- runner ------------------------------------------------------
+
+fn write_oracle(name: &str, p: &Pattern, out_dir: &Path) -> std::io::Result<()> {
+    let control = Control::default();
+    let result = order::<I>(p.n, &p.col_ptr, &p.row_idx, &control);
+    let path = out_dir.join(format!("{}.txt", name));
+    let mut f = File::create(&path)?;
+
+    match result {
+        Ok((perm, _perm_inv, info)) => {
+            writeln!(f, "# feral-amd oracle fixture: {}", name)?;
+            writeln!(f, "# generator: SuiteSparse AMD Rust crate (amd = 0.2.2)")?;
+            writeln!(f, "# provenance:")?;
+            for line in p.provenance.lines() {
+                writeln!(f, "#   {}", line)?;
+            }
+            writeln!(f, "status: {:?}", info.status)?;
+            writeln!(f, "n: {}", info.n)?;
+            writeln!(f, "nz: {}", info.nz)?;
+            writeln!(f, "nz_a_plus_at: {}", info.nz_a_plus_at)?;
+            writeln!(f, "n_dense: {}", info.n_dense)?;
+            writeln!(f, "ncmpa: {}", info.n_cmp_a)?;
+            writeln!(f, "lnz: {}", info.lnz)?;
+            writeln!(f, "ndiv: {}", info.n_div)?;
+            writeln!(f, "nms_ldl: {}", info.n_mult_subs_ldl)?;
+            writeln!(f, "nms_lu: {}", info.n_mult_subs_lu)?;
+            writeln!(f, "d_max: {}", info.d_max)?;
+            write!(f, "perm:")?;
+            for p in &perm {
+                write!(f, " {}", p)?;
+            }
+            writeln!(f)?;
+            println!(
+                "{:30} n={:5}  lnz={:7}  ncmpa={}  status={:?}",
+                name, info.n, info.lnz, info.n_cmp_a, info.status
+            );
+        }
+        Err(status) => {
+            writeln!(f, "# ERROR: amd::order returned {:?}", status)?;
+            writeln!(f, "status: {:?}", status)?;
+            eprintln!("{:30} ERROR {:?}", name, status);
+        }
+    }
+    Ok(())
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        eprintln!("usage: feral-amd-oracle <out_dir>");
+        return ExitCode::from(2);
+    }
+    let out_dir = PathBuf::from(&args[1]);
+    fs::create_dir_all(&out_dir).expect("mkdir out_dir");
+
+    // Programmatic fixtures
+    write_oracle("arrow_5", &arrow(5), &out_dir).unwrap();
+    write_oracle("arrow_200", &arrow(200), &out_dir).unwrap();
+    write_oracle("band_20_3", &band(20, 3), &out_dir).unwrap();
+    write_oracle("grid_7x7", &grid_2d(7, 7), &out_dir).unwrap();
+    write_oracle("amd_demo_24", &amd_demo_24(), &out_dir).unwrap();
+
+    // Trivial edge cases
+    write_oracle("diag_4", &band(4, 0), &out_dir).unwrap();
+    write_oracle("tridiag_10", &band(10, 1), &out_dir).unwrap();
+
+    // File-based fixture (local faer test_data).
+    let gh258 = Path::new("/Users/jkitchin/Dropbox/projects/ripopt/ref/faer-rs/faer/test_data/sparse_cholesky/gh_258.txt");
+    if gh258.exists() {
+        let p = read_faer_triplet(gh258).unwrap();
+        write_oracle("gh_258", &p, &out_dir).unwrap();
+    } else {
+        eprintln!("skipping gh_258: file not found at {}", gh258.display());
+    }
+
+    ExitCode::SUCCESS
+}

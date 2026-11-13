@@ -1,0 +1,10 @@
+break=usel M1O=usel: broken exit=101 hash_compared: 9, hash_fail: 9 panicked at graph/src/graph/graphblas/m1_reuse_bench.rs:1882:5: | control exit=0 hash_compared: 9, hash_fail: 0
+break=zmatch M1O=zmatch: broken exit=101  panicked at graph/src/graph/graphblas/m1_coarsen_bench.rs:1052:13: | control exit=0 hash_compared: 9, hash_fail: 0
+break=nowait M1O=nowait: broken exit=101 hash_compared: 9, hash_fail: 9 panicked at graph/src/graph/graphblas/m1_reuse_bench.rs:1873:5: | control exit=0 hash_compared: 9, hash_fail: 0
+break=cpack M1O=cpack: broken exit=101 hash_compared: 9, hash_fail: 9 panicked at graph/src/graph/graphblas/m1_reuse_bench.rs:1873:5: | control exit=0 hash_compared: 9, hash_fail: 0
+break=caprc M1O=caprc: broken exit=101 hash_compared: 9, hash_fail: 9 panicked at graph/src/graph/graphblas/m1_reuse_bench.rs:1882:5: | control exit=0 hash_compared: 9, hash_fail: 0
+break=hcon M1O=cpack,hcon: broken exit=101 hash_compared: 9, hash_fail: 9 panicked at graph/src/graph/graphblas/m1_reuse_bench.rs:1873:5: | control exit=0 hash_compared: 9, hash_fail: 0
+break=hb2 M1O=hb2: broken exit=101 hash_compared: 9, hash_fail: 4 panicked at graph/src/graph/graphblas/m1_reuse_bench.rs:1873:5: | control exit=0 hash_compared: 9, hash_fail: 0
+break=hsplit M1O=hsplit: broken exit=101 hash_compared: 9, hash_fail: 4 panicked at graph/src/graph/graphblas/m1_reuse_bench.rs:1872:5: | control exit=0 hash_compared: 9, hash_fail: 0
+break=pk M1O=pk: broken exit=101 hash_compared: 9, hash_fail: 4 panicked at graph/src/graph/graphblas/m1_reuse_bench.rs:1873:5: | control exit=0 hash_compared: 9, hash_fail: 0
+break=gath M1O=gath: broken exit=101 hash_compared: 9, hash_fail: 2 panicked at graph/src/graph/graphblas/m1_reuse_bench.rs:1882:5: | control exit=0 hash_compared: 9, hash_fail: 0

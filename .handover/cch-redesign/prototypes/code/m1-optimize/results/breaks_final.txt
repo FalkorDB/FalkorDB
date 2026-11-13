@@ -1,0 +1,28 @@
+control_final exit=0 hash_compared: 13, hash_fail: 0 | 
+control_base exit=0 hash_compared: 13, hash_fail: 0 | 
+brk_hb2 exit=101 hash_compared: 13, hash_fail: 6 | assertion `left == right` failed: CHECK FAILED: B1 != B2
+brk_hsplit exit=101 hash_compared: 13, hash_fail: 6 | assertion `left == right` failed: CHECK FAILED: split pattern
+brk_cpack exit=101 hash_compared: 13, hash_fail: 7 | assertion `left == right` failed: CHECK FAILED: differs from the baseline (hash)
+brk_hcon exit=101 hash_compared: 13, hash_fail: 13 | assertion `left == right` failed: CHECK FAILED: B1 != B2
+brk_pk exit=101 hash_compared: 13, hash_fail: 6 | assertion `left == right` failed: CHECK FAILED: B1 != B2
+brk_book exit=101 hash_compared: 13, hash_fail: 1 | assertion `left == right` failed: CHECK FAILED: differs from the baseline (hash)
+brk_hkey exit=101 hash_compared: 13, hash_fail: 13 | assertion `left == right` failed: CHECK FAILED: differs from the baseline (hash)
+brk_gath exit=101 hash_compared: 13, hash_fail: 3 | assertion `left == right` failed: CHECK FAILED: differs from the baseline (hash)
+brk_usel exit=101 hash_compared: 13, hash_fail: 13 | assertion `left == right` failed: CHECK FAILED: differs from the baseline (hash)
+brk_zmatch exit=101  | assertion `left == right` failed: CHECK FAILED: vertex weight not conserved
+brk_npar exit=101 hash_compared: 13, hash_fail: 6 | assertion `left == right` failed: CHECK FAILED: B1 level invalid
+brk_caprc exit=101 hash_compared: 13, hash_fail: 13 | assertion `left == right` failed: CHECK FAILED: differs from the baseline (hash)
+brk_nowait exit=101 hash_compared: 13, hash_fail: 13 | assertion `left == right` failed: CHECK FAILED: B1 != B2
+base_split exit=101 hash_compared: 0, hash_fail: 0 | assertion `left == right` failed: GraphBLAS: GxB_Vector_extract_Vector(q.0, null(), null(), zv.0, zv.0, null())
+base_cap2 exit=101 hash_compared: 13, hash_fail: 3 | assertion `left == right` failed: CHECK FAILED: capstop reused a level over the cap
+base_salt exit=101 hash_compared: 13, hash_fail: 20 | assertion `left == right` failed: CHECK FAILED: hierarchy differs across runs/threads
+base_nooffdiag exit=0 hash_compared: 13, hash_fail: 0 | 
+base_sepclean exit=101 hash_compared: 13, hash_fail: 14 | assertion `left == right` failed: CHECK FAILED: B1 != B2
+base_mergeparts exit=101 hash_compared: 0, hash_fail: 0 | assertion `left == right` failed: CHECK FAILED: capstop projection lost vertices
+base_gfdrop exit=101 hash_compared: 13, hash_fail: 3 | assertion `left == right` failed: CHECK FAILED: capstop weight not conserved
+base_nosep exit=101 hash_compared: 13, hash_fail: 12 | assertion `left == right` failed: CHECK FAILED: separator does not separate
+base_rematch exit=101 hash_compared: 13, hash_fail: 1 | assertion `left == right` failed: CHECK FAILED: B1/B2 ran a matching
+base_b1diag exit=101 hash_compared: 13, hash_fail: 0 | assertion `left == right` failed: CHECK FAILED: B1 != B2
+base_nomutual exit=101  | assertion `left == right` failed: CHECK FAILED: vertex weight not conserved
+nooffdiag M1O='' exit=101 assertion `left == right` failed: CHECK FAILED: A_c has a diagonal
+nooffdiag M1O='hb2' exit=101 assertion `left == right` failed: CHECK FAILED: A_c has a diagonal

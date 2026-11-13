@@ -1,0 +1,7 @@
+CA fine exit=0 EXIT 0 MAXRSS_KB 1400896 UPTIME_END  2:13  up 14 days, 15:02, 32 users, load averages: 4.85 4.66 4.14
+PA fine exit=0 EXIT 0 MAXRSS_KB 839056 UPTIME_END  2:14  up 14 days, 15:03, 32 users, load averages: 4.75 4.71 4.21
+TX fine exit=0 EXIT 0 MAXRSS_KB 1044400 UPTIME_END  2:16  up 14 days, 15:05, 32 users, load averages: 2.69 3.97 3.97
+CA all exit=0 EXIT 0 MAXRSS_KB 1378768 UPTIME_END  2:18  up 14 days, 15:07, 32 users, load averages: 2.53 3.27 3.67
+PA all exit=0 EXIT 0 MAXRSS_KB 847568 UPTIME_END  2:20  up 14 days, 15:08, 32 users, load averages: 3.60 3.35 3.66
+TX all exit=0 EXIT 0 MAXRSS_KB 1031280 UPTIME_END  2:21  up 14 days, 15:10, 32 users, load averages: 2.70 3.05 3.50
+SWEEP_DONE

@@ -1,0 +1,12 @@
+name = "falkor-cch-redesign-review"
+defaultTargets = ["CchRedesignReview"]
+
+[[lean_lib]]
+name = "CchRedesignReview"
+
+# native_index's model of today's fit and rebase gate is imported, not copied:
+# `NI.discardedAgainst` (`IndexEntry::discarded_against`), `NI.overtakenSE` (`Graph::overtaken`, the
+# pre-D6 rule), `NI.overtakenAny` (`overtaken_by_indexer_batches`'s gate), `NI.IndexerCommit`.
+[[require]]
+name = "falkor-native-index"
+path = "../native_index"

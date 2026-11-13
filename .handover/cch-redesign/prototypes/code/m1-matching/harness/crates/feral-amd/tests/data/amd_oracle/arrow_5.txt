@@ -1,0 +1,16 @@
+# feral-amd oracle fixture: arrow_5
+# generator: SuiteSparse AMD Rust crate (amd = 0.2.2)
+# provenance:
+#   generator: arrow(n=5) — hub at var 0 + diagonal; programmatic, no RNG
+status: OK
+n: 5
+nz: 13
+nz_a_plus_at: 8
+n_dense: 0
+ncmpa: 0
+lnz: 4
+ndiv: 4
+nms_ldl: 4
+nms_lu: 4
+d_max: 2
+perm: 4 3 2 1 0

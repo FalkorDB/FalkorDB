@@ -1,0 +1,3061 @@
+diff --git a/graph/src/graph/graphblas/m1_coarsen_bench.rs b/graph/src/graph/graphblas/m1_coarsen_bench.rs
+new file mode 100644
+index 000000000..52a0e73bd
+--- /dev/null
++++ b/graph/src/graph/graphblas/m1_coarsen_bench.rs
+@@ -0,0 +1,1217 @@
++//! SCRATCH (never committed): M1 cost of the GraphBLAS coarsening of design §3.
++//!
++//! Env: M1_GRAPH (edge list path), M1_THREADS ("1,4"), M1_RUNS (3), M1_DEPTHS ("0..=14"),
++//! M1_BREAK (nomutual|nooffdiag|split), M1_BURBLE (1), M1_JIT (run), M1_VERIFY (1), M1_FERAL (runs).
++//!
++//!   cargo test --release -p graph --features index-falkordb m1_coarsen -- --ignored --nocapture
++
++use super::matrix::set_nthreads;
++use super::test_init::ensure_init;
++use super::*;
++use std::collections::BTreeMap;
++use std::ffi::c_void;
++use std::time::Instant;
++
++macro_rules! ok {
++    ($e:expr) => {{
++        #[allow(unused_unsafe)]
++        let info = unsafe { $e };
++        assert_eq!(info, GrB_Info::GrB_SUCCESS, "GraphBLAS: {}", stringify!($e));
++    }};
++}
++
++unsafe extern "C" {
++    fn fflush(f: *mut c_void) -> i32;
++}
++fn flush() {
++    use std::io::Write;
++    std::io::stdout().flush().unwrap();
++    unsafe { fflush(std::ptr::null_mut()) };
++}
++
++struct M(GrB_Matrix);
++impl M {
++    fn new(t: GrB_Type, r: u64, c: u64) -> M {
++        let mut m = std::ptr::null_mut();
++        ok!(GrB_Matrix_new(&mut m, t, r, c));
++        M(m)
++    }
++    fn nvals(&self) -> u64 {
++        let mut n = 0;
++        ok!(GrB_Matrix_nvals(&mut n, self.0));
++        n
++    }
++    fn nrows(&self) -> u64 {
++        let mut n = 0;
++        ok!(GrB_Matrix_nrows(&mut n, self.0));
++        n
++    }
++    fn wait(&self) {
++        ok!(GrB_Matrix_wait(self.0, GrB_WaitMode::GrB_MATERIALIZE as i32));
++    }
++    fn sum(&self) -> i64 {
++        let mut s = 0i64;
++        ok!(GrB_Matrix_reduce_INT64(&mut s, std::ptr::null_mut(), GrB_PLUS_MONOID_INT64, self.0, std::ptr::null_mut()));
++        s
++    }
++}
++impl Drop for M {
++    fn drop(&mut self) {
++        unsafe { GrB_Matrix_free(&mut self.0) };
++    }
++}
++struct V(GrB_Vector);
++impl V {
++    fn new(t: GrB_Type, n: u64) -> V {
++        let mut v = std::ptr::null_mut();
++        ok!(GrB_Vector_new(&mut v, t, n));
++        V(v)
++    }
++    fn dup(&self) -> V {
++        let mut v = std::ptr::null_mut();
++        ok!(GrB_Vector_dup(&mut v, self.0));
++        V(v)
++    }
++    fn nvals(&self) -> u64 {
++        let mut n = 0;
++        ok!(GrB_Vector_nvals(&mut n, self.0));
++        n
++    }
++    fn wait(&self) {
++        ok!(GrB_Vector_wait(self.0, GrB_WaitMode::GrB_MATERIALIZE as i32));
++    }
++    fn sum(&self) -> i64 {
++        let mut s = 0i64;
++        ok!(GrB_Vector_reduce_INT64(&mut s, std::ptr::null_mut(), GrB_PLUS_MONOID_INT64, self.0, std::ptr::null_mut()));
++        s
++    }
++    fn u64s(&self) -> (Vec<u64>, Vec<u64>) {
++        let mut n = self.nvals();
++        let mut i = vec![0u64; n as usize];
++        let mut x = vec![0u64; n as usize];
++        ok!(GrB_Vector_extractTuples_UINT64(i.as_mut_ptr(), x.as_mut_ptr(), &mut n, self.0));
++        (i, x)
++    }
++    fn i32s(&self) -> (Vec<u64>, Vec<i32>) {
++        let mut n = self.nvals();
++        let mut i = vec![0u64; n as usize];
++        let mut x = vec![0i32; n as usize];
++        ok!(GrB_Vector_extractTuples_INT32(i.as_mut_ptr(), x.as_mut_ptr(), &mut n, self.0));
++        (i, x)
++    }
++}
++impl Drop for V {
++    fn drop(&mut self) {
++        unsafe { GrB_Vector_free(&mut self.0) };
++    }
++}
++fn null<T>() -> *mut T {
++    std::ptr::null_mut()
++}
++fn t_bool() -> GrB_Type {
++    unsafe { GrB_BOOL }
++}
++fn t_i32() -> GrB_Type {
++    unsafe { GrB_INT32 }
++}
++fn t_i64() -> GrB_Type {
++    unsafe { GrB_INT64 }
++}
++fn t_u64() -> GrB_Type {
++    unsafe { GrB_UINT64 }
++}
++
++// ---- user operators (these are what a PreJIT harvest would have to cover) ----
++fn fmix32(mut h: u32) -> u32 {
++    h ^= h >> 16;
++    h = h.wrapping_mul(0x85eb_ca6b);
++    h ^= h >> 13;
++    h = h.wrapping_mul(0xc2b2_ae35);
++    h ^= h >> 16;
++    h
++}
++fn unfmix32(mut h: u32) -> u32 {
++    h ^= h >> 16;
++    h = h.wrapping_mul(0x7ed1_b41d);
++    h ^= (h >> 13) ^ (h >> 26);
++    h = h.wrapping_mul(0xa5cb_9243);
++    h ^= h >> 16;
++    h
++}
++/// K(i,j) = (A(i,j) << 32) | fmix32(j ^ salt): unique per row, so MAX is deterministic.
++unsafe extern "C" fn key_op(
++    z: *mut c_void,
++    x: *const c_void,
++    _i: GrB_Index,
++    j: GrB_Index,
++    y: *const c_void,
++) {
++    unsafe {
++        let w = *(x as *const i32) as u32 as u64;
++        let salt = *(y as *const u64) as u32;
++        *(z as *mut u64) = (w << 32) | fmix32((j as u32) ^ salt) as u64;
++    }
++}
++/// The column a key was made from.
++unsafe extern "C" fn unkey_op(
++    z: *mut c_void,
++    x: *const c_void,
++    _i: GrB_Index,
++    _j: GrB_Index,
++    y: *const c_void,
++) {
++    unsafe {
++        let k = *(x as *const u64);
++        let salt = *(y as *const u64) as u32;
++        *(z as *mut u64) = (unfmix32(k as u32) ^ salt) as u64;
++    }
++}
++unsafe extern "C" fn even_op(
++    z: *mut c_void,
++    _x: *const c_void,
++    _i: GrB_Index,
++    j: GrB_Index,
++    _y: *const c_void,
++) {
++    unsafe { *(z as *mut bool) = j & 1 == 0 };
++}
++unsafe extern "C" fn odd_op(
++    z: *mut c_void,
++    _x: *const c_void,
++    _i: GrB_Index,
++    j: GrB_Index,
++    _y: *const c_void,
++) {
++    unsafe { *(z as *mut bool) = j & 1 == 1 };
++}
++
++struct Ops {
++    key: GrB_IndexUnaryOp,
++    unkey: GrB_IndexUnaryOp,
++    even: GrB_IndexUnaryOp,
++    odd: GrB_IndexUnaryOp,
++    one_i32: GrB_Scalar,
++}
++impl Ops {
++    fn new() -> Ops {
++        let mut key = null();
++        let mut unkey = null();
++        let mut even = null();
++        let mut odd = null();
++        if env("M1_NAMED_OPS").is_some() {
++            let kd = c"void m1_key (uint64_t *z, const int32_t *x, uint64_t i, uint64_t j, const uint64_t *y) { uint32_t h = ((uint32_t) j) ^ ((uint32_t) (*y)) ; h ^= h >> 16 ; h *= 0x85ebca6bu ; h ^= h >> 13 ; h *= 0xc2b2ae35u ; h ^= h >> 16 ; (*z) = (((uint64_t) (uint32_t) (*x)) << 32) | (uint64_t) h ; }";
++            let ud = c"void m1_unkey (uint64_t *z, const uint64_t *x, uint64_t i, uint64_t j, const uint64_t *y) { uint32_t h = (uint32_t) (*x) ; h ^= h >> 16 ; h *= 0x7ed1b41du ; h ^= (h >> 13) ^ (h >> 26) ; h *= 0xa5cb9243u ; h ^= h >> 16 ; (*z) = (uint64_t) (h ^ ((uint32_t) (*y))) ; }";
++            let ed = c"void m1_even (bool *z, const int64_t *x, uint64_t i, uint64_t j, const int64_t *y) { (*z) = ((j & 1) == 0) ; }";
++            let od = c"void m1_odd (bool *z, const int64_t *x, uint64_t i, uint64_t j, const int64_t *y) { (*z) = ((j & 1) == 1) ; }";
++            ok!(GxB_IndexUnaryOp_new(&mut key, Some(key_op), t_u64(), t_i32(), t_u64(), c"m1_key".as_ptr(), kd.as_ptr()));
++            ok!(GxB_IndexUnaryOp_new(&mut unkey, Some(unkey_op), t_u64(), t_u64(), t_u64(), c"m1_unkey".as_ptr(), ud.as_ptr()));
++            ok!(GxB_IndexUnaryOp_new(&mut even, Some(even_op), t_bool(), t_i64(), t_i64(), c"m1_even".as_ptr(), ed.as_ptr()));
++            ok!(GxB_IndexUnaryOp_new(&mut odd, Some(odd_op), t_bool(), t_i64(), t_i64(), c"m1_odd".as_ptr(), od.as_ptr()));
++            println!("OPS: named");
++        } else {
++            ok!(GrB_IndexUnaryOp_new(&mut key, Some(key_op), t_u64(), t_i32(), t_u64()));
++            ok!(GrB_IndexUnaryOp_new(&mut unkey, Some(unkey_op), t_u64(), t_u64(), t_u64()));
++            ok!(GrB_IndexUnaryOp_new(&mut even, Some(even_op), t_bool(), t_i64(), t_i64()));
++            ok!(GrB_IndexUnaryOp_new(&mut odd, Some(odd_op), t_bool(), t_i64(), t_i64()));
++        }
++        let mut one_i32 = null();
++        ok!(GrB_Scalar_new(&mut one_i32, t_i32()));
++        ok!(GrB_Scalar_setElement_INT32(one_i32, 1));
++        Ops { key, unkey, even, odd, one_i32 }
++    }
++}
++
++unsafe extern "C" {
++    fn proc_pid_rusage(
++        pid: i32,
++        flavor: i32,
++        buffer: *mut c_void,
++    ) -> i32;
++    fn getpid() -> i32;
++}
++/// (instructions, cycles) of this process so far: RUSAGE_INFO_V4 ri_instructions / ri_cycles.
++fn instr() -> (u64, u64) {
++    let mut b = [0u64; 40];
++    let rc = unsafe { proc_pid_rusage(getpid(), 4, b.as_mut_ptr() as *mut c_void) };
++    assert_eq!(rc, 0, "proc_pid_rusage");
++    (b[31], b[32])
++}
++
++/// Seconds per named call, summed within a level; .1 holds (instructions, cycles).
++#[derive(Default, Clone)]
++struct Timer(BTreeMap<&'static str, f64>, BTreeMap<&'static str, (u64, u64)>);
++impl Timer {
++    fn time<R>(
++        &mut self,
++        name: &'static str,
++        f: impl FnOnce() -> R,
++    ) -> R {
++        if burble() {
++            println!("@@CALL {name}");
++            flush();
++        }
++        let i0 = instr();
++        let t = Instant::now();
++        let r = f();
++        let el = t.elapsed().as_secs_f64();
++        let i1 = instr();
++        *self.0.entry(name).or_default() += el;
++        let e = self.1.entry(name).or_default();
++        e.0 += i1.0 - i0.0;
++        e.1 += i1.1 - i0.1;
++        if burble() {
++            println!("@@END {name} {el:.6}");
++            flush();
++        }
++        r
++    }
++}
++
++fn env(k: &str) -> Option<String> {
++    std::env::var(k).ok().filter(|s| !s.is_empty())
++}
++fn brk(k: &str) -> bool {
++    env("M1_BREAK").as_deref() == Some(k)
++}
++fn burble() -> bool {
++    env("M1_BURBLE").is_some()
++}
++/// Build C' (n x nc, row-major sorted tuples) instead of C.
++fn ct() -> bool {
++    env("M1_CT").is_some()
++}
++fn verify() -> bool {
++    env("M1_VERIFY").is_some()
++}
++/// M1_JIT=on: runtime JIT with the cache in M1_JIT_CACHE (never the shared ~/.SuiteSparse).
++fn jit_setup() {
++    match env("M1_JIT").as_deref() {
++        Some("run") => {
++            ok!(GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_Control::GxB_JIT_RUN as i32, GxB_Option_Field::GxB_JIT_C_CONTROL as _));
++            println!("JIT: RUN");
++        }
++        Some("on") => {
++            let dir = env("M1_JIT_CACHE").expect("M1_JIT_CACHE");
++            let c = std::ffi::CString::new(dir.clone()).unwrap();
++            ok!(GrB_Global_set_String(GrB_GLOBAL, c.as_ptr() as *mut _, GxB_Option_Field::GxB_JIT_CACHE_PATH as _));
++            ok!(GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_Control::GxB_JIT_ON as i32, GxB_Option_Field::GxB_JIT_C_CONTROL as _));
++            let mut ctl = 0i32;
++            ok!(GrB_Global_get_INT32(GrB_GLOBAL, &mut ctl, GxB_Option_Field::GxB_JIT_C_CONTROL as _));
++            println!("JIT: ON cache={dir} control={ctl}");
++        }
++        _ => {}
++    }
++}
++/// AUDIT probes (untimed by the official timers): M1_AUDIT=match,contract,inplace
++fn audit(k: &str) -> bool {
++    env("M1_AUDIT").is_some_and(|s| s.split(',').any(|x| x == k))
++}
++fn abrk(k: &str) -> bool {
++    env("M1_AUDIT_BREAK").as_deref() == Some(k)
++}
++fn tup_i32(m: &M) -> (Vec<u64>, Vec<u64>, Vec<i32>) {
++    let mut n = m.nvals();
++    let mut i = vec![0u64; n as usize];
++    let mut j = vec![0u64; n as usize];
++    let mut x = vec![0i32; n as usize];
++    ok!(GrB_Matrix_extractTuples_INT32(i.as_mut_ptr(), j.as_mut_ptr(), x.as_mut_ptr(), &mut n, m.0));
++    let mut p: Vec<usize> = (0..i.len()).collect();
++    p.sort_unstable_by_key(|&k| (i[k], j[k]));
++    (p.iter().map(|&k| i[k]).collect(), p.iter().map(|&k| j[k]).collect(), p.iter().map(|&k| x[k]).collect())
++}
++fn vidx(v: &V) -> Vec<u64> {
++    let mut n = v.nvals();
++    let mut i = vec![0u64; n as usize];
++    ok!(GrB_Vector_extractTuples_BOOL(i.as_mut_ptr(), null(), &mut n, v.0));
++    i
++}
++fn abeg(k: &str) {
++    if burble() {
++        println!("@@AUDIT begin {k}");
++        flush();
++    }
++}
++fn aend() {
++    if burble() {
++        println!("@@AUDIT end");
++        flush();
++    }
++}
++
++/// Full UINT64 vector idx(i) = i.
++fn index_vector(n: u64) -> V {
++    let idx = V::new(t_u64(), n);
++    ok!(GrB_Vector_assign_UINT64(idx.0, null(), null(), 0, GrB_ALL, n, null()));
++    ok!(GrB_Vector_apply_IndexOp_INT64(idx.0, null(), null(), GrB_ROWINDEX_INT64, idx.0, 0, null()));
++    idx.wait();
++    idx
++}
++
++struct LevelOut {
++    c: M,
++    ac: M,
++    wc: V,
++    rounds: u32,
++    twohop: bool,
++    pairs: u64,
++}
++
++/// Number of coarsen_level calls (matching runs) so far; B1/B2 must never add to it.
++static MATCH_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++/// One coarsening level, steps (1)-(2) of design §3, every call timed.
++fn coarsen_level(
++    a: &M,
++    w: &V,
++    cap: i32,
++    salt: u64,
++    ops: &Ops,
++    t: &mut Timer,
++) -> LevelOut {
++    MATCH_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++    let n = a.nrows();
++    // (1a) cap mask: S(i,j) = w(i)+w(j) on A's pattern, keep <= cap. Skipped when no pair can exceed it.
++    let mut maxw = 0i32;
++    ok!(GrB_Vector_reduce_INT32(&mut maxw, null(), GrB_MAX_MONOID_INT32, w.0, null()));
++    let mcap = if 2 * maxw as i64 > cap as i64 {
++        Some(t.time("cap", || {
++            let mut d = null();
++            ok!(GrB_Matrix_diag(&mut d, w.0, 0));
++            let d = M(d);
++            let left = M::new(t_i32(), n, n);
++            ok!(GrB_mxm(left.0, null(), null(), GxB_PLUS_FIRST_INT32, d.0, a.0, null()));
++            let right = M::new(t_i32(), n, n);
++            ok!(GrB_mxm(right.0, null(), null(), GxB_PLUS_SECOND_INT32, a.0, d.0, null()));
++            let s = M::new(t_i32(), n, n);
++            ok!(GrB_Matrix_eWiseMult_BinaryOp(s.0, null(), null(), GrB_PLUS_INT32, left.0, right.0, null()));
++            ok!(GrB_Matrix_select_INT32(s.0, null(), null(), GrB_VALUELE_INT32, s.0, cap, null()));
++            s.wait();
++            s
++        }))
++    } else {
++        None
++    };
++    let mut at = Timer::default();
++    if let Some(s_off) = mcap.as_ref().filter(|_| audit("cap")) {
++        abeg("cap");
++        let s2 = at.time("q_cap_rowcol", || {
++            let mut d = null();
++            ok!(GrB_Matrix_diag(&mut d, w.0, 0));
++            let d = M(d);
++            let s2 = M::new(t_i32(), n, n);
++            ok!(GrB_mxm(s2.0, null(), null(), GxB_PLUS_FIRST_INT32, d.0, a.0, null()));
++            let sr = unsafe { if abrk("cap") { GxB_PLUS_FIRST_INT32 } else { GxB_PLUS_PLUS_INT32 } };
++            ok!(GrB_mxm(s2.0, null(), null(), sr, s2.0, d.0, null()));
++            ok!(GrB_Matrix_select_INT32(s2.0, null(), null(), GrB_VALUELE_INT32, s2.0, cap, null()));
++            s2.wait();
++            s2
++        });
++        aend();
++        assert!(tup_i32(&s2) == tup_i32(s_off), "AUDIT CHECK FAILED: cap mask by row/col scale differs");
++    }
++    // (1b) keys by a user positional op.
++    let k = t.time("key", || {
++        let k = M::new(t_u64(), n, n);
++        let mask = mcap.as_ref().map_or(null(), |m| m.0);
++        let desc = if mcap.is_some() { unsafe { GrB_DESC_S } } else { null() };
++        ok!(GrB_Matrix_apply_IndexOp_UINT64(k.0, mask, null(), ops.key, a.0, salt, desc));
++        k.wait();
++        k
++    });
++    drop(mcap);
++    let idx = t.time("idx", || index_vector(n));
++    let mate = idx.dup();
++    let mut u = idx.dup();
++    // (1c) rounds of mutual-max proposals until a round matches nothing.
++    let mut rounds = 0;
++    let mut matched = 0u64;
++    // zmatch probe: Z = mate overlaid with this round's proposals; the mutual test reads Z(Z)
++    let mut zv = if audit("zmatch") && !brk("nomutual") { Some(idx.dup()) } else { None };
++    loop {
++        rounds += 1;
++        let y = V::new(t_u64(), n);
++        t.time("mxv", || {
++            ok!(GrB_mxv(y.0, u.0, null(), GxB_MAX_FIRST_UINT64, k.0, u.0, GrB_DESC_RS));
++            y.wait();
++        });
++        let np = y.nvals();
++        if burble() {
++            println!("@@NP round={rounds} n={n} proposers={np}");
++        }
++        if np == 0 {
++            break;
++        }
++        t.time("m_unkey", || {
++            ok!(GrB_Vector_apply_IndexOp_UINT64(y.0, null(), null(), ops.unkey, y.0, salt, null()));
++            y.wait();
++        });
++        let m = V::new(t_bool(), n);
++        if brk("nomutual") {
++            ok!(GrB_Vector_assign_BOOL(m.0, y.0, null(), true, GrB_ALL, n, GrB_DESC_S));
++        } else {
++            let pf = t.time("m_full", || {
++                let pf = V::new(t_u64(), n);
++                ok!(GrB_Vector_eWiseAdd_BinaryOp(pf.0, null(), null(), GrB_SECOND_UINT64, idx.0, y.0, null()));
++                pf.wait();
++                pf
++            });
++            let q = t.time("m_extract", || {
++                let q = V::new(t_u64(), n);
++                ok!(GxB_Vector_extract_Vector(q.0, null(), null(), pf.0, pf.0, null()));
++                q.wait();
++                q
++            });
++            t.time("m_eq", || {
++                ok!(GrB_Vector_eWiseMult_BinaryOp(m.0, y.0, null(), GrB_EQ_UINT64, q.0, idx.0, GrB_DESC_RS));
++                m.wait();
++            });
++        }
++        if let Some(z) = zv.as_mut() {
++            abeg("zmatch");
++            let z2 = at.time("z_add", || {
++                let z2 = V::new(t_u64(), n);
++                ok!(GrB_Vector_eWiseAdd_BinaryOp(z2.0, null(), null(), GrB_SECOND_UINT64, z.0, y.0, null()));
++                z2.wait();
++                z2
++            });
++            *z = z2;
++            let qz = at.time("z_gather", || {
++                let qz = V::new(t_u64(), n);
++                ok!(GxB_Vector_extract_Vector(qz.0, null(), null(), z.0, z.0, null()));
++                qz.wait();
++                qz
++            });
++            let mz = at.time("z_eq", || {
++                let mz = V::new(t_bool(), n);
++                ok!(GrB_Vector_eWiseMult_BinaryOp(mz.0, y.0, null(), GrB_EQ_UINT64, qz.0, idx.0, GrB_DESC_RS));
++                mz.wait();
++                mz
++            });
++            aend();
++            let tb = |v: &V| {
++                let mut k = v.nvals();
++                let mut i = vec![0u64; k as usize];
++                let mut x = vec![false; k as usize];
++                ok!(GrB_Vector_extractTuples_BOOL(i.as_mut_ptr(), x.as_mut_ptr(), &mut k, v.0));
++                (i, x)
++            };
++            assert!(tb(&mz) == tb(&m), "AUDIT CHECK FAILED: zmatch mutual test differs (round {rounds})");
++        }
++        let mate_before = if audit("match") && !brk("nomutual") { Some((mate.dup(), mate.dup())) } else { None };
++        t.time("m_assign", || {
++            ok!(GrB_Vector_assign(mate.0, m.0, null(), y.0, GrB_ALL, n, null()));
++            mate.wait();
++        });
++        let u2 = t.time("m_unext", || {
++            let u2 = V::new(t_u64(), n);
++            ok!(GrB_Vector_apply(u2.0, m.0, null(), GrB_IDENTITY_UINT64, y.0, GrB_DESC_RC));
++            u2.wait();
++            u2
++        });
++        if let Some((mb, mb2)) = mate_before {
++            abeg("match");
++            let want = !abrk("match");
++            let ms = at.time("a_sel_true", || {
++                let ms = V::new(t_bool(), n);
++                ok!(GrB_Vector_select_BOOL(ms.0, null(), null(), GrB_VALUEEQ_BOOL, m.0, want, null()));
++                ms.wait();
++                ms
++            });
++            at.time("a_assign_accum", || {
++                ok!(GrB_Vector_assign(mb.0, ms.0, GrB_SECOND_UINT64, y.0, GrB_ALL, n, GrB_DESC_S));
++                mb.wait();
++            });
++            at.time("a_emult_add", || {
++                let ym = V::new(t_u64(), n);
++                ok!(GrB_Vector_eWiseMult_BinaryOp(ym.0, null(), null(), GrB_FIRST_UINT64, y.0, ms.0, null()));
++                let op = unsafe { if abrk("matche") { GrB_FIRST_UINT64 } else { GrB_SECOND_UINT64 } };
++                ok!(GrB_Vector_eWiseAdd_BinaryOp(mb2.0, null(), null(), op, mb2.0, ym.0, null()));
++                mb2.wait();
++            });
++            let u3 = at.time("a_sel_false", || {
++                let u3 = V::new(t_bool(), n);
++                ok!(GrB_Vector_select_BOOL(u3.0, null(), null(), GrB_VALUEEQ_BOOL, m.0, abrk("matchu"), null()));
++                u3.wait();
++                u3
++            });
++            aend();
++            let off = mate.u64s();
++            assert!(mb.u64s() == off, "AUDIT CHECK FAILED: match (assign with accum) differs from mate");
++            assert!(mb2.u64s() == off, "AUDIT CHECK FAILED: match (emult+add) differs from mate");
++            assert!(vidx(&u3) == u2.u64s().0, "AUDIT CHECK FAILED: match unmatched pattern differs");
++        }
++        let newly = np - u2.nvals();
++        u = u2;
++        matched += newly;
++        if newly == 0 {
++            break;
++        }
++    }
++    if let Some(z) = zv.take() {
++        abeg("zfinal");
++        let m2 = at.time("z_final", || {
++            // stale proposals (proposed, never matched) go back to self: mate = Z, except where Z(Z) != idx
++            let qz = V::new(t_u64(), n);
++            ok!(GxB_Vector_extract_Vector(qz.0, null(), null(), z.0, z.0, null()));
++            let eq = V::new(t_bool(), n);
++            ok!(GrB_Vector_eWiseMult_BinaryOp(eq.0, null(), null(), GrB_EQ_UINT64, qz.0, idx.0, null()));
++            let st = V::new(t_bool(), n);
++            ok!(GrB_Vector_select_BOOL(st.0, null(), null(), GrB_VALUEEQ_BOOL, eq.0, false, null()));
++            let m2 = V::new(t_u64(), n);
++            if abrk("zmatch") {
++                ok!(GrB_Vector_apply(m2.0, null(), null(), GrB_IDENTITY_UINT64, z.0, null()));
++            } else {
++                let si = V::new(t_u64(), n);
++                ok!(GrB_Vector_apply_IndexOp_UINT64(si.0, null(), null(), GrB_ROWINDEX_INT64, st.0, 0, null()));
++                ok!(GrB_Vector_eWiseAdd_BinaryOp(m2.0, null(), null(), GrB_SECOND_UINT64, z.0, si.0, null()));
++            }
++            m2.wait();
++            m2
++        });
++        aend();
++        assert!(m2.u64s() == mate.u64s(), "AUDIT CHECK FAILED: zmatch final mate differs");
++    }
++    let round_mate = if verify() { Some(mate.u64s().1) } else { None };
++    // (1d) 2-hop pass when the matching shrinks the level by under 15 %.
++    let mut twohop = false;
++    if (matched / 2) * 100 < 15 * n {
++        twohop = true;
++        let pairs = t.time("twohop", || {
++            let um = V::new(t_bool(), n);
++            ok!(GrB_Vector_eWiseMult_BinaryOp(um.0, null(), null(), GrB_EQ_UINT64, mate.0, idx.0, null()));
++            let anchor = V::new(t_u64(), n);
++            ok!(GrB_mxv(anchor.0, um.0, null(), GxB_MAX_FIRST_UINT64, k.0, idx.0, GrB_DESC_R));
++            ok!(GrB_Vector_apply_IndexOp_UINT64(anchor.0, null(), null(), ops.unkey, anchor.0, salt, null()));
++            let jv = V::new(t_u64(), n);
++            ok!(GrB_Vector_apply(jv.0, anchor.0, null(), GrB_IDENTITY_UINT64, idx.0, GrB_DESC_RS));
++            let g = M::new(t_u64(), n, n);
++            ok!(GxB_Matrix_build_Vector(g.0, anchor.0, jv.0, jv.0, null(), null()));
++            let p = M::new(t_i64(), n, n);
++            ok!(GxB_Matrix_sort(null(), p.0, GrB_LT_UINT64, g.0, null()));
++            let e = M::new(t_i64(), n, n);
++            ok!(GrB_Matrix_select_INT64(e.0, null(), null(), ops.even, p.0, 0, null()));
++            let o = M::new(t_i64(), n, n);
++            ok!(GrB_Matrix_select_INT64(o.0, null(), null(), ops.odd, p.0, 0, null()));
++            let e2 = M::new(t_i64(), n, n - 1);
++            let lo = [0u64, n - 2];
++            ok!(GrB_Matrix_extract(e2.0, null(), null(), e.0, GrB_ALL, n, lo.as_ptr(), GxB_RANGE, null()));
++            let o2 = M::new(t_i64(), n, n - 1);
++            let hi = [1u64, n - 1];
++            ok!(GrB_Matrix_extract(o2.0, null(), null(), o.0, GrB_ALL, n, hi.as_ptr(), GxB_RANGE, null()));
++            let pe = M::new(t_i64(), n, n - 1);
++            ok!(GrB_Matrix_eWiseMult_BinaryOp(pe.0, null(), null(), GrB_FIRST_INT64, e2.0, o2.0, null()));
++            let po = M::new(t_i64(), n, n - 1);
++            ok!(GrB_Matrix_eWiseMult_BinaryOp(po.0, null(), null(), GrB_SECOND_INT64, e2.0, o2.0, null()));
++            let mut np = pe.nvals();
++            let mut xe = vec![0i64; np as usize];
++            let mut xo = vec![0i64; np as usize];
++            ok!(GrB_Matrix_extractTuples_INT64(null(), null(), xe.as_mut_ptr(), &mut np, pe.0));
++            ok!(GrB_Matrix_extractTuples_INT64(null(), null(), xo.as_mut_ptr(), &mut np, po.0));
++            // host: cap check, then both directions into mate
++            let wv = w.i32s().1;
++            let mut bi = Vec::with_capacity(2 * xe.len());
++            let mut bx = Vec::with_capacity(2 * xe.len());
++            for (&x, &y) in xe.iter().zip(&xo) {
++                if (wv[x as usize] as i64 + wv[y as usize] as i64) <= cap as i64 {
++                    bi.push(x as u64);
++                    bx.push(y as u64);
++                    bi.push(y as u64);
++                    bx.push(x as u64);
++                }
++            }
++            let tmp = V::new(t_u64(), n);
++            ok!(GrB_Vector_build_UINT64(tmp.0, bi.as_ptr(), bx.as_ptr(), bi.len() as u64, null()));
++            ok!(GrB_Vector_assign(mate.0, tmp.0, null(), tmp.0, GrB_ALL, n, GrB_DESC_S));
++            mate.wait();
++            bi.len() as u64 / 2
++        });
++        matched += 2 * pairs;
++    }
++    if let Some(rm) = round_mate {
++        check_matching(a, w, cap, &rm, &mate.u64s().1);
++    }
++    drop(k);
++    // (1e) C: one row per coarse vertex; leader = min(i, mate(i)).
++    let (l, lead) = t.time("c_leader", || {
++        let l = V::new(t_u64(), n);
++        ok!(GrB_Vector_eWiseMult_BinaryOp(l.0, null(), null(), GrB_MIN_UINT64, idx.0, mate.0, null()));
++        let lead = V::new(t_bool(), n);
++        ok!(GrB_Vector_eWiseMult_BinaryOp(lead.0, null(), null(), GrB_EQ_UINT64, l.0, idx.0, null()));
++        ok!(GrB_Vector_select_BOOL(lead.0, null(), null(), GrB_VALUEEQ_BOOL, lead.0, true, null()));
++        lead.wait();
++        l.wait();
++        (l, lead)
++    });
++    let (cid, nc) = t.time("c_number_host", || {
++        let mut nc = lead.nvals();
++        let mut li = vec![0u64; nc as usize];
++        ok!(GrB_Vector_extractTuples_BOOL(li.as_mut_ptr(), null(), &mut nc, lead.0));
++        let ids: Vec<u64> = (0..nc).collect();
++        let cid = V::new(t_u64(), n);
++        ok!(GrB_Vector_build_UINT64(cid.0, li.as_ptr(), ids.as_ptr(), nc, null()));
++        cid.wait();
++        (cid, nc)
++    });
++    let ca = t.time("c_extract", || {
++        let ca = V::new(t_u64(), n);
++        ok!(GxB_Vector_extract_Vector(ca.0, null(), null(), cid.0, l.0, null()));
++        ca.wait();
++        ca
++    });
++    let c = t.time("c_build", || {
++        let c = if ct() { M::new(t_i32(), n, nc) } else { M::new(t_i32(), nc, n) };
++        if ct() {
++            ok!(GxB_Matrix_build_Scalar_Vector(c.0, idx.0, ca.0, ops.one_i32, null()));
++        } else {
++            ok!(GxB_Matrix_build_Scalar_Vector(c.0, ca.0, idx.0, ops.one_i32, null()));
++        }
++        c.wait();
++        c
++    });
++    // (2) contraction A_c = select(OFFDIAG, C A C'), PLUS_TIMES_INT32; w_c = C w.
++    let tmat = t.time("CA", || {
++        let tm = M::new(t_i32(), nc, n);
++        let d = if ct() { unsafe { GrB_DESC_T0 } } else { null() };
++        ok!(GrB_mxm(tm.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, c.0, a.0, d));
++        tm.wait();
++        tm
++    });
++    let ac = t.time("CAC'", || {
++        let ac = M::new(t_i32(), nc, nc);
++        let d = if ct() { null() } else { unsafe { GrB_DESC_T1 } };
++        ok!(GrB_mxm(ac.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, tmat.0, c.0, d));
++        ac.wait();
++        ac
++    });
++    drop(tmat);
++    if !brk("nooffdiag") {
++        t.time("offdiag", || {
++            ok!(GrB_Matrix_select_INT64(ac.0, null(), null(), GrB_OFFDIAG, ac.0, 0, null()));
++            ac.wait();
++        });
++    }
++    let wc = t.time("Cw", || {
++        let wc = V::new(t_i32(), nc);
++        let d = if ct() { unsafe { GrB_DESC_T0 } } else { null() };
++        ok!(GrB_mxv(wc.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, c.0, w.0, d));
++        wc.wait();
++        wc
++    });
++    if audit("contract") && ct() {
++        abeg("contract");
++        let tm2 = at.time("a_CA_nowait", || {
++            let tm2 = M::new(t_i32(), nc, n);
++            ok!(GrB_mxm(tm2.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, c.0, a.0, GrB_DESC_T0));
++            tm2
++        });
++        let ac2 = at.time("a_CAC_maskNotI", || {
++            let iv = V::new(t_bool(), nc);
++            ok!(GrB_Vector_assign_BOOL(iv.0, null(), null(), true, GrB_ALL, nc, null()));
++            let mut dg = null();
++            ok!(GrB_Matrix_diag(&mut dg, iv.0, 0));
++            let dg = M(dg);
++            let ac2 = M::new(t_i32(), nc, nc);
++            let (mk, ds) = if abrk("contract") { (null(), null()) } else { (dg.0, unsafe { GrB_DESC_SC }) };
++            ok!(GrB_mxm(ac2.0, mk, null(), GrB_PLUS_TIMES_SEMIRING_INT32, tm2.0, c.0, ds));
++            ac2.wait();
++            ac2
++        });
++        aend();
++        assert!(tup_i32(&ac2) == tup_i32(&ac), "AUDIT CHECK FAILED: contraction with C<!I> differs");
++        drop(ac2);
++        // (b) the official sequence without the MATERIALIZE wait on C*A
++        abeg("contract_nowait");
++        let tm3 = at.time("b_CA_nowait", || {
++            let tm3 = M::new(t_i32(), nc, n);
++            ok!(GrB_mxm(tm3.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, c.0, a.0, GrB_DESC_T0));
++            tm3
++        });
++        let ac3 = at.time("b_CAC", || {
++            let ac3 = M::new(t_i32(), nc, nc);
++            ok!(GrB_mxm(ac3.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, tm3.0, c.0, null()));
++            ac3
++        });
++        drop(tm3);
++        at.time("b_offdiag", || {
++            if !abrk("contract_b") {
++                ok!(GrB_Matrix_select_INT64(ac3.0, null(), null(), GrB_OFFDIAG, ac3.0, 0, null()));
++            }
++            ac3.wait();
++        });
++        aend();
++        assert!(tup_i32(&ac3) == tup_i32(&ac), "AUDIT CHECK FAILED: contraction without the C*A wait differs");
++        drop(ac3);
++        // (c) C (nc x n) packed from a host counting sort of the coarse ids: no transpose, Cw by dot
++        let cah = ca.u64s().1; // the host already holds this map in a host numbering
++        abeg("contract_hostC");
++        let cm = at.time("c_hostC_pack", || {
++            unsafe extern "C" {
++                fn malloc(size: usize) -> *mut c_void;
++            }
++            let ncu = nc as usize;
++            let nu = n as usize;
++            let ap = unsafe { malloc((ncu + 1) * 8) as *mut u64 };
++            let aj = unsafe { malloc(nu.max(1) * 8) as *mut u64 };
++            let ax = unsafe { malloc(4) as *mut i32 };
++            let (aps, ajs) = unsafe { (std::slice::from_raw_parts_mut(ap, ncu + 1), std::slice::from_raw_parts_mut(aj, nu.max(1))) };
++            aps.iter_mut().for_each(|x| *x = 0);
++            for &g in &cah {
++                aps[g as usize + 1] += 1;
++            }
++            for k in 0..ncu {
++                aps[k + 1] += aps[k];
++            }
++            let mut fill: Vec<u64> = aps[..ncu].to_vec();
++            for (i, &g) in cah.iter().enumerate() {
++                let f = &mut fill[g as usize];
++                ajs[*f as usize] = i as u64;
++                *f += 1;
++            }
++            if abrk("contract_c") {
++                ajs.swap(0, 1);
++            }
++            unsafe { *ax = 1 };
++            let cm = M::new(t_i32(), nc, n);
++            let (mut app, mut ajp, mut axp) = (ap, aj, ax as *mut c_void);
++            ok!(GxB_Matrix_pack_CSR(cm.0, &mut app, &mut ajp, &mut axp, ((ncu + 1) * 8) as u64, (nu.max(1) * 8) as u64, 4, true, false, null()));
++            cm
++        });
++        let tm4 = at.time("c_hostC_CA", || {
++            let tm4 = M::new(t_i32(), nc, n);
++            ok!(GrB_mxm(tm4.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, cm.0, a.0, null()));
++            tm4
++        });
++        let ac4 = at.time("c_hostC_CAC", || {
++            let ac4 = M::new(t_i32(), nc, nc);
++            ok!(GrB_mxm(ac4.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, tm4.0, c.0, null()));
++            ac4
++        });
++        drop(tm4);
++        at.time("c_hostC_offdiag", || {
++            ok!(GrB_Matrix_select_INT64(ac4.0, null(), null(), GrB_OFFDIAG, ac4.0, 0, null()));
++            ac4.wait();
++        });
++        let wc4 = at.time("c_hostC_Cw", || {
++            let wc4 = V::new(t_i32(), nc);
++            ok!(GrB_mxv(wc4.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, cm.0, w.0, null()));
++            wc4.wait();
++            wc4
++        });
++        aend();
++        assert!(tup_i32(&ac4) == tup_i32(&ac), "AUDIT CHECK FAILED: contraction with a packed C differs");
++        assert!(wc4.i32s() == wc.i32s(), "AUDIT CHECK FAILED: Cw with a packed C differs");
++    }
++    if !at.0.is_empty() {
++        let gi = |k: &str| t.1.get(k).map_or(0, |x| x.0);
++        let hi = |k: &str| at.1.get(k).map_or(0, |x| x.0);
++        println!(
++            "AUDITI n={n} unext={} sel_false={} assign_full_extract_eq={} z={} CA_CAC_offdiag={} b={} cbuild_Cw={} hostC={} cap={} q_cap={}",
++            gi("m_unext"),
++            hi("a_sel_false"),
++            gi("m_assign") + gi("m_full") + gi("m_extract") + gi("m_eq"),
++            hi("z_add") + hi("z_gather") + hi("z_eq") + hi("z_final"),
++            gi("CA") + gi("CAC'") + gi("offdiag"),
++            hi("b_CA_nowait") + hi("b_CAC") + hi("b_offdiag"),
++            gi("c_build") + gi("Cw"),
++            hi("c_hostC_pack") + hi("c_hostC_CA") + hi("c_hostC_CAC") + hi("c_hostC_offdiag") + hi("c_hostC_Cw"),
++            gi("cap"),
++            hi("q_cap_rowcol")
++        );
++        let g = |k: &str| t.0.get(k).copied().unwrap_or(0.0);
++        let h = |k: &str| at.0.get(k).copied().unwrap_or(0.0);
++        println!(
++            "AUDITL n={n} nnz={} nc={nc} rounds={rounds} off_assign={:.6} off_unext={:.6} a_sel_true={:.6} a_assign_accum={:.6} a_emult_add={:.6} a_sel_false={:.6} off_CA={:.6} off_CAC={:.6} off_offdiag={:.6} a_CA_nowait={:.6} a_CAC_maskNotI={:.6} off_cbuild={:.6} off_Cw={:.6} b_CA_nowait={:.6} b_CAC={:.6} b_offdiag={:.6} c_hostC_pack={:.6} c_hostC_CA={:.6} c_hostC_CAC={:.6} c_hostC_offdiag={:.6} c_hostC_Cw={:.6} off_cap={:.6} q_cap_rowcol={:.6} off_full={:.6} off_extract={:.6} off_eq={:.6} z_add={:.6} z_gather={:.6} z_eq={:.6} z_final={:.6}",
++            a.nvals(),
++            g("m_assign"),
++            g("m_unext"),
++            h("a_sel_true"),
++            h("a_assign_accum"),
++            h("a_emult_add"),
++            h("a_sel_false"),
++            g("CA"),
++            g("CAC'"),
++            g("offdiag"),
++            h("a_CA_nowait"),
++            h("a_CAC_maskNotI"),
++            g("c_build"),
++            g("Cw"),
++            h("b_CA_nowait"),
++            h("b_CAC"),
++            h("b_offdiag"),
++            h("c_hostC_pack"),
++            h("c_hostC_CA"),
++            h("c_hostC_CAC"),
++            h("c_hostC_offdiag"),
++            h("c_hostC_Cw"),
++            g("cap"),
++            h("q_cap_rowcol"),
++            g("m_full"),
++            g("m_extract"),
++            g("m_eq"),
++            h("z_add"),
++            h("z_gather"),
++            h("z_eq"),
++            h("z_final")
++        );
++    }
++    // checks (cheap, always on; untimed)
++    let diag = M::new(t_i32(), nc, nc);
++    ok!(GrB_Matrix_select_INT64(diag.0, null(), null(), GrB_DIAG, ac.0, 0, null()));
++    assert_eq!(diag.nvals(), 0, "CHECK FAILED: A_c has a diagonal");
++    assert_eq!(wc.sum(), w.sum(), "CHECK FAILED: vertex weight not conserved");
++    assert_eq!(c.nvals(), n, "CHECK FAILED: C must have one entry per fine vertex");
++    LevelOut { c, ac, wc, rounds, twohop, pairs: matched / 2 }
++}
++
++/// mate is an involution; round pairs are adjacent; every pair is within the cap.
++fn check_matching(
++    a: &M,
++    w: &V,
++    cap: i32,
++    round_mate: &[u64],
++    mate: &[u64],
++) {
++    let wv = w.i32s().1;
++    for (i, &m) in mate.iter().enumerate() {
++        let m = m as usize;
++        assert_eq!(mate[m] as usize, i, "CHECK FAILED: mate is not an involution at {i}");
++        if m != i {
++            assert!(wv[i] as i64 + wv[m] as i64 <= cap as i64, "CHECK FAILED: cap");
++        }
++        if round_mate[i] as usize != i {
++            let mut x = 0i32;
++            let info = unsafe { GrB_Matrix_extractElement_INT32(&mut x, a.0, i as u64, round_mate[i]) };
++            assert_eq!(info, GrB_Info::GrB_SUCCESS, "CHECK FAILED: matched pair not adjacent");
++        }
++    }
++}
++
++/// Host CSR of the symmetric, loop-free, isolated-free skeleton.
++struct Csr {
++    n: usize,
++    p: Vec<u64>,
++    j: Vec<u64>,
++}
++fn load(path: &str) -> Csr {
++    let text = std::fs::read_to_string(path).unwrap();
++    let mut e: Vec<(u64, u64)> = Vec::new();
++    let mut n = 0u64;
++    for line in text.lines() {
++        if line.starts_with('#') {
++            continue;
++        }
++        let mut it = line.split_whitespace();
++        let u: u64 = it.next().unwrap().parse().unwrap();
++        let v: u64 = it.next().unwrap().parse().unwrap();
++        if u == v {
++            continue;
++        }
++        n = n.max(u + 1).max(v + 1);
++        e.push((u, v));
++        e.push((v, u));
++    }
++    e.sort_unstable();
++    e.dedup();
++    let mut map = vec![u64::MAX; n as usize];
++    let mut c = 0u64;
++    for &(u, _) in &e {
++        if map[u as usize] == u64::MAX {
++            map[u as usize] = c;
++            c += 1;
++        }
++    }
++    let nn = c as usize;
++    let mut p = vec![0u64; nn + 1];
++    let mut j = Vec::with_capacity(e.len());
++    // e sorted by u, and map is increasing in u, so rows come out in order.
++    for &(u, v) in &e {
++        p[map[u as usize] as usize + 1] += 1;
++        j.push(map[v as usize]);
++    }
++    for k in 0..nn {
++        p[k + 1] += p[k];
++    }
++    // columns within a row: map is monotone, so still sorted
++    Csr { n: nn, p, j }
++}
++fn to_grb(s: &Csr) -> M {
++    let mut ii = Vec::with_capacity(s.j.len());
++    for u in 0..s.n {
++        for _ in s.p[u]..s.p[u + 1] {
++            ii.push(u as u64);
++        }
++    }
++    let x = vec![1i32; s.j.len()];
++    let a = M::new(t_i32(), s.n as u64, s.n as u64);
++    ok!(GrB_Matrix_build_INT32(a.0, ii.as_ptr(), s.j.as_ptr(), x.as_ptr(), ii.len() as u64, null()));
++    a.wait();
++    a
++}
++
++fn feral_perm(s: &Csr) -> (Vec<i64>, f64) {
++    let xadj: Vec<i64> = s.p.iter().map(|&x| x as i64).collect();
++    let adj: Vec<i64> = s.j.iter().map(|&x| x as i64).collect();
++    let pat = feral_metis::CscPattern::new(s.n, &xadj, &adj).unwrap();
++    let t = Instant::now();
++    let perm = feral_metis::metis_order(&pat).unwrap();
++    (perm, t.elapsed().as_secs_f64())
++}
++
++/// (4) the split: A_next<A, struct> = M ANY_PAIR M', M(i, label(i)) = 1.
++fn split(
++    a: &M,
++    labels: &[u32],
++    cells: u64,
++    ops: &Ops,
++    t: &mut Timer,
++) -> M {
++    let n = a.nrows();
++    let lv = V::new(t_u64(), n);
++    let ii: Vec<u64> = (0..n).collect();
++    let lx: Vec<u64> = if brk("split") {
++        (0..n as usize).map(|i| labels[(i + 1) % n as usize] as u64).collect()
++    } else {
++        labels.iter().map(|&x| x as u64).collect()
++    };
++    ok!(GrB_Vector_build_UINT64(lv.0, ii.as_ptr(), lx.as_ptr(), n, null()));
++    let idx = index_vector(n);
++    let mm = t.time("split_buildM", || {
++        let mm = M::new(t_i32(), n, cells);
++        ok!(GxB_Matrix_build_Scalar_Vector(mm.0, idx.0, lv.0, ops.one_i32, null()));
++        mm.wait();
++        mm
++    });
++    t.time("split_mxm", || {
++        let an = M::new(t_i32(), n, n);
++        ok!(GrB_mxm(an.0, a.0, null(), GxB_ANY_PAIR_INT32, mm.0, mm.0, GrB_DESC_ST1));
++        an.wait();
++        an
++    })
++}
++fn host_split_count(
++    s: &Csr,
++    labels: &[u32],
++) -> u64 {
++    let mut c = 0;
++    for u in 0..s.n {
++        for &v in &s.j[s.p[u] as usize..s.p[u + 1] as usize] {
++            c += (labels[u] == labels[v as usize]) as u64;
++        }
++    }
++    c
++}
++
++struct Rng(u64);
++impl Rng {
++    fn next(&mut self) -> u64 {
++        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
++        let mut z = self.0;
++        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
++        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
++        z ^ (z >> 31)
++    }
++}
++
++/// Coarsen `a0` to <= stop vertices or < 5 % shrink, then project a random 2-way label back.
++/// Returns per-level timers (level 0 = finest), the fingerprint and the level-0 label.
++fn hierarchy(
++    a0: &M,
++    cap: i32,
++    stop: u64,
++    ops: &Ops,
++) -> (Vec<(u64, u64, u32, bool, Timer)>, Vec<(u64, u64, i64)>, Vec<u32>) {
++    hierarchy_keep(a0, cap, stop, ops, None)
++}
++
++/// The levels R built, handed to the reuse paths: (A_l or null for the input, w_l, C_l: l -> l+1), A_L, w_L.
++type Kept = (Vec<(M, V, M)>, Option<M>, V);
++
++fn hierarchy_keep(
++    a0: &M,
++    cap: i32,
++    stop: u64,
++    ops: &Ops,
++    keep: Option<&mut Option<Kept>>,
++) -> (Vec<(u64, u64, u32, bool, Timer)>, Vec<(u64, u64, i64)>, Vec<u32>) {
++    let n0 = a0.nrows();
++    let w0 = V::new(t_i32(), n0);
++    ok!(GrB_Vector_assign_INT32(w0.0, null(), null(), 1, GrB_ALL, n0, null()));
++    let mut levels: Vec<(M, V, M)> = Vec::new(); // (A_l, w_l, C_l)
++    let mut rows = Vec::new();
++    let mut fp = Vec::new();
++    let mut a = None::<M>;
++    let mut w = w0;
++    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++    let mut salt = if brk("salt") { 0x5EED_u64 + call } else { 0x5EED_u64 };
++    loop {
++        let cur: &M = a.as_ref().unwrap_or(a0);
++        let n = cur.nrows();
++        if n <= stop || rows.len() >= 200 {
++            break;
++        }
++        let mut t = Timer::default();
++        salt = salt.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 1;
++        let out = coarsen_level(cur, &w, cap, salt & 0xFFFF_FFFF, ops, &mut t);
++        let nc = out.ac.nrows();
++        rows.push((n, cur.nvals(), out.rounds, out.twohop, t));
++        fp.push((nc, out.ac.nvals(), out.ac.sum()));
++        let _ = out.pairs;
++        let prev_a = a.take();
++        let prev_w = std::mem::replace(&mut w, out.wc);
++        // keep A_l (None for the input) and C_l for the projection
++        levels.push((prev_a.unwrap_or_else(|| M(null())), prev_w, out.c));
++        a = Some(out.ac);
++        if nc * 100 > 95 * n {
++            break;
++        }
++    }
++    // (3) projection: random labels on the coarsest level, then mxv(C', labels) per level.
++    let top = a.as_ref().map_or(n0, |m| m.nrows());
++    let mut rng = Rng(42);
++    let lab: Vec<i32> = (0..top).map(|_| (rng.next() & 1) as i32).collect();
++    let ii: Vec<u64> = (0..top).collect();
++    let mut lv = V::new(t_i32(), top);
++    ok!(GrB_Vector_build_INT32(lv.0, ii.as_ptr(), lab.as_ptr(), top, null()));
++    for (l, (al, _wl, cl)) in levels.iter().enumerate().rev() {
++        let nf = rows[l].0;
++        let t = &mut rows[l].4;
++        let fine = t.time("project", || {
++            let f = V::new(t_i32(), nf);
++            let d = if ct() { null() } else { unsafe { GrB_DESC_T0 } };
++            ok!(GrB_mxv(f.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, cl.0, lv.0, d));
++            f.wait();
++            f
++        });
++        assert_eq!(fine.nvals(), nf, "CHECK FAILED: projection lost vertices");
++        let am = if al.0.is_null() { a0.0 } else { al.0 };
++        t.time("bnd", || {
++            let b = V::new(t_i32(), nf);
++            ok!(GrB_mxv(b.0, null(), null(), GxB_PLUS_SECOND_INT32, am, fine.0, null()));
++            b.wait();
++        });
++        lv = fine;
++    }
++    let (_, l0) = lv.i32s();
++    if let Some(k) = keep {
++        *k = Some((levels, a, w));
++    }
++    (rows, fp, l0.into_iter().map(|x| x as u32).collect())
++}
++
++#[test]
++#[ignore]
++fn m1_coarsen() {
++    ensure_init();
++    for x in [0u32, 1, 2, 12345, 0xFFFF_FFFF, 0xDEAD_BEEF] {
++        assert_eq!(unfmix32(fmix32(x)), x);
++    }
++    jit_setup();
++    let path = env("M1_GRAPH").expect("M1_GRAPH");
++    let t = Instant::now();
++    let s = load(&path);
++    println!("graph {path}: n={} entries={} load={:.2}s", s.n, s.j.len(), t.elapsed().as_secs_f64());
++    let a0 = to_grb(&s);
++    let ops = Ops::new();
++    let threads: Vec<i32> = env("M1_THREADS").unwrap_or("1,4".into()).split(',').map(|x| x.parse().unwrap()).collect();
++    let runs: usize = env("M1_RUNS").map_or(3, |x| x.parse().unwrap());
++    let max_depth: u32 = env("M1_DEPTHS").map_or(14, |x| x.parse().unwrap());
++    let feral_runs: usize = env("M1_FERAL").map_or(3, |x| x.parse().unwrap());
++
++    // feral: whole ordering time, and its order for the depth>0 cell labels
++    let mut pos = vec![0u64; s.n];
++    if max_depth > 0 || feral_runs > 0 {
++        let mut times = Vec::new();
++        let mut perm0 = None;
++        for r in 0..feral_runs.max(1) {
++            let (perm, sec) = feral_perm(&s);
++            println!("FERAL run={r} sec={sec:.3}");
++            times.push(sec);
++            if let Some(p0) = &perm0 {
++                assert_eq!(p0, &perm, "feral not deterministic");
++            } else {
++                perm0 = Some(perm);
++            }
++            flush();
++        }
++        for (k, &v) in perm0.unwrap().iter().enumerate() {
++            pos[v as usize] = k as u64;
++        }
++    }
++    if burble() {
++        ok!(GxB_Global_Option_set_INT32(GxB_Option_Field::GxB_BURBLE as _, 1));
++    }
++    let n = s.n as u64;
++    let mut fps: BTreeMap<u32, Vec<(u64, u64, i64)>> = BTreeMap::new();
++    for &th in &threads {
++        set_nthreads(th);
++        for run in 0..runs {
++            for d in 0..=max_depth {
++                let cells = 1u64 << d;
++                let mut st = Timer::default();
++                // depth d's block-diagonal matrix: cells = contiguous chunks of feral's order
++                let ad = if d == 0 {
++                    None
++                } else {
++                    let labels: Vec<u32> = (0..s.n).map(|v| (pos[v] * cells / n) as u32).collect();
++                    let ad = split(&a0, &labels, cells, &ops, &mut st);
++                    if !brk("split") || d == 1 {
++                        let want = host_split_count(&s, &labels);
++                        assert_eq!(ad.nvals(), want, "CHECK FAILED: split pattern (depth {d})");
++                    }
++                    Some(ad)
++                };
++                let a = ad.as_ref().unwrap_or(&a0);
++                let cap = ((15 * n / cells) / 1000).max(2) as i32; // 1.5 * cell weight / 100
++                let stop = 100 * cells;
++                let wall = Instant::now();
++                let (rows, fp, l0) = hierarchy(a, cap, stop, &ops);
++                let wall = wall.elapsed().as_secs_f64();
++                if d == 0 {
++                    // (4) once at the top depth: projected (clustered) label, then iid label.
++                    let lab_iid: Vec<u32> = {
++                        let mut r = Rng(7);
++                        (0..s.n).map(|_| (r.next() & 1) as u32).collect()
++                    };
++                    for (name, lab) in [("projected", &l0), ("iid", &lab_iid)] {
++                        let mut t = Timer::default();
++                        let an = split(&a0, lab, 2, &ops, &mut t);
++                        let want = host_split_count(&s, lab);
++                        let got = an.nvals();
++                        println!(
++                            "SPLIT threads={th} run={run} label={name} kept={got} of={} buildM={:.6} mxm={:.6}",
++                            a0.nvals(),
++                            t.0["split_buildM"],
++                            t.0["split_mxm"]
++                        );
++                        assert_eq!(got, want, "CHECK FAILED: split pattern");
++                    }
++                }
++                match fps.get(&d) {
++                    Some(f) => assert_eq!(f, &fp, "CHECK FAILED: hierarchy differs across runs/threads at depth {d}"),
++                    None => {
++                        fps.insert(d, fp.clone());
++                    }
++                }
++                for (l, (ln, nnz, rounds, two, t)) in rows.iter().enumerate() {
++                    let calls: Vec<String> = t.0.iter().map(|(k, v)| format!("{k}={v:.6}")).collect();
++                    println!(
++                        "LVL threads={th} run={run} depth={d} level={l} n={ln} nnz={nnz} rounds={rounds} twohop={} {}",
++                        *two as u8,
++                        calls.join(" ")
++                    );
++                }
++                let spl: f64 = st.0.values().sum();
++                println!(
++                    "DEPTH threads={th} run={run} depth={d} levels={} coarsest={} wall={wall:.6} split={spl:.6}",
++                    rows.len(),
++                    fp.last().map_or(a.nrows(), |x| x.0)
++                );
++                flush();
++            }
++        }
++    }
++}
++
++#[path = "m1_reuse_bench.rs"]
++mod reuse;
+diff --git a/graph/src/graph/graphblas/m1_reuse_bench.rs b/graph/src/graph/graphblas/m1_reuse_bench.rs
+new file mode 100644
+index 000000000..3b29a2187
+--- /dev/null
++++ b/graph/src/graph/graphblas/m1_reuse_bench.rs
+@@ -0,0 +1,1819 @@
++//! SCRATCH (never committed): D5 option (b), the GraphBLAS cost of reusing the depth-0
++//! coarsening at deeper ND depths.
++//!
++//! - R:  today's re-coarsening, the parent bench's `hierarchy` on each depth's split matrix.
++//! - B1: reuse the depth-0 matching; split each straddler into one coarse vertex per child it
++//!   touches and re-contract every reused level: A' = select(OFFDIAG, C'·A·C'ᵀ), built as Cᵀ.
++//! - B2: the same coarse graphs, from the parent's level matrices: one masked split per level
++//!   (clean coarse vertices), plus re-contraction of the straddler rows only.
++//!
++//! Env (on top of the parent's M1_GRAPH, M1_THREADS, M1_RUNS, M1_JIT, M1_CT, M1_FERAL, M1_BREAK):
++//!   M1_CELLS=real|proxy (default real), M1_DEPTHS (max depth, default 40), M1_VERIFY (symmetry).
++//!
++//!   cargo test --release -p graph --features index-falkordb --lib m1_reuse -- --ignored --nocapture
++
++use super::*;
++use std::collections::HashMap;
++use std::collections::VecDeque;
++use std::rc::Rc;
++use std::sync::atomic::AtomicU64;
++use std::sync::atomic::Ordering;
++
++const OUT: u32 = u32::MAX;
++const MIXED: u32 = u32::MAX - 1;
++const UNSET: u32 = u32::MAX - 2;
++const SEPG: u32 = u32::MAX - 3;
++const LEAF: usize = 120;
++const CTO: u32 = 100;
++
++static CUR_RUN: AtomicU64 = AtomicU64::new(0);
++
++unsafe extern "C" {
++    fn getloadavg(
++        loadavg: *mut f64,
++        nelem: i32,
++    ) -> i32;
++}
++fn load1() -> f64 {
++    let mut l = [0f64; 3];
++    unsafe { getloadavg(l.as_mut_ptr(), 3) };
++    l[0]
++}
++
++thread_local! {
++    static BOOKT: std::cell::RefCell<BTreeMap<&'static str, f64>> = const { std::cell::RefCell::new(BTreeMap::new()) };
++}
++fn bt(k: &'static str, t: &mut Instant) {
++    let e = t.elapsed().as_secs_f64();
++    BOOKT.with(|m| *m.borrow_mut().entry(k).or_default() += e);
++    *t = Instant::now();
++}
++fn bt_take() -> String {
++    BOOKT.with(|m| {
++        let s = m.borrow().iter().map(|(k, v)| format!("{k}={v:.6}")).collect::<Vec<_>>().join(" ");
++        m.borrow_mut().clear();
++        s
++    })
++}
++
++/// Library burble only at the depths listed in M1_BURBLE_DEPTHS (e.g. "0,1,13").
++fn set_burble(d: u32) {
++    if let Some(s) = env("M1_BURBLE_DEPTHS") {
++        let on = s.split(',').any(|x| x.parse::<u32>().ok() == Some(d));
++        ok!(GxB_Global_Option_set_INT32(GxB_Option_Field::GxB_BURBLE as _, on as i32));
++        println!("@@DEPTH {d} burble={}", on as u8);
++        flush();
++    }
++}
++
++/// AUDIT: delete the rows and columns of `drop` from a dup of `src` in place (zombies), insert
++/// `ins` as pending tuples, one wait. Returns (matrix, deleted entries, seconds by phase).
++fn inplace_delete_insert(
++    src: &M,
++    drop_rows: &[u64],
++    new_dim: u64,
++    ins: Option<&(Vec<u64>, Vec<u64>, Vec<i32>)>,
++) -> (M, u64, [f64; 4]) {
++    let p = {
++        let mut d = null();
++        ok!(GrB_Matrix_dup(&mut d, src.0));
++        M(d)
++    };
++    p.wait();
++    let dim = p.nrows();
++    let t0 = Instant::now();
++    let mut ndel = 0u64;
++    if !drop_rows.is_empty() {
++        let rows = M::new(t_i32(), drop_rows.len() as u64, dim);
++        ok!(GrB_Matrix_extract(rows.0, null(), null(), p.0, drop_rows.as_ptr(), drop_rows.len() as u64, GrB_ALL, dim, null()));
++        let mut k = rows.nvals();
++        let mut ri = vec![0u64; k as usize];
++        let mut rj = vec![0u64; k as usize];
++        ok!(GrB_Matrix_extractTuples_INT32(ri.as_mut_ptr(), rj.as_mut_ptr(), null(), &mut k, rows.0));
++        for q in 0..k as usize {
++            let (i, j) = (drop_rows[ri[q] as usize], rj[q]);
++            ok!(GrB_Matrix_removeElement(p.0, i, j));
++            ok!(GrB_Matrix_removeElement(p.0, j, i));
++        }
++        ndel = k;
++    }
++    let t_del = t0.elapsed().as_secs_f64();
++    if new_dim > dim {
++        ok!(GrB_Matrix_resize(p.0, new_dim, new_dim));
++    }
++    if let Some((ii, jj, xx)) = ins {
++        for q in 0..ii.len() {
++            ok!(GrB_Matrix_setElement_INT32(p.0, xx[q], ii[q], jj[q]));
++        }
++    }
++    let t_ins = t0.elapsed().as_secs_f64();
++    p.wait();
++    let t_all = t0.elapsed().as_secs_f64();
++    (p, ndel, [t_del, t_ins - t_del, t_all - t_ins, t_all])
++}
++
++/// AUDIT probe for B2: the same child level from the parent's matrix by in-place deletion.
++fn audit_b2_inplace(
++    par: &HLevel,
++    bk: &Book,
++    rs: Option<&M>,
++    official: &M,
++    t: &Timer,
++) {
++    if !audit("inplace") {
++        return;
++    }
++    abeg("b2inplace");
++    let ins = rs.map(mat_tuples); // a host merge would hold these already (PLUS-reduced)
++    let th = Instant::now();
++    let mut keep = vec![false; par.dim];
++    for &q in &bk.clean {
++        keep[q as usize] = true;
++    }
++    let mut dl: Vec<u64> = par.live.iter().filter(|&&q| !keep[q as usize]).map(|&q| q as u64).collect();
++    if abrk("inplace") && !dl.is_empty() {
++        dl.remove(0);
++    }
++    let host = th.elapsed().as_secs_f64();
++    let i0 = instr();
++    let (p, ndel, ph) = inplace_delete_insert(&par.a, &dl, bk.dim as u64, ins.as_ref());
++    let i1 = instr();
++    aend();
++    let a = mat_tuples(&p);
++    let b = mat_tuples(official);
++    assert!(a == b, "AUDIT CHECK FAILED: in-place B2 level differs (nnz {} vs {})", a.0.len(), b.0.len());
++    let off: f64 = ["m_build", "mask_mxm", "mask_vals", "resize", "s_merge"].iter().map(|k| t.0.get(k).copied().unwrap_or(0.0)).sum();
++    let offi: u64 = ["m_build", "mask_mxm", "mask_vals", "resize", "s_merge"].iter().map(|k| t.1.get(k).map_or(0, |x| x.0)).sum();
++    // the probe's dup (untimed) sits inside i0..i1: subtract a dup's instructions measured alone
++    let dupi = {
++        let a0 = instr();
++        let mut d = null();
++        ok!(GrB_Matrix_dup(&mut d, par.a.0));
++        let d = M(d);
++        d.wait();
++        let a1 = instr();
++        drop(d);
++        a1.0 - a0.0
++    };
++    println!("AUDITI2 kind=b2 official_instr={offi} probe_instr={}", (i1.0 - i0.0).saturating_sub(dupi));
++    println!(
++        "AUDITB2 pd={} dim={} nnzP={} nnzQ={} drop_rows={} del={ndel} ins={} official={off:.6} probe={:.6} host={host:.6} del_t={:.6} ins_t={:.6} wait_t={:.6}",
++        par.dim,
++        bk.dim,
++        par.a.nvals(),
++        official.nvals(),
++        dl.len(),
++        ins.as_ref().map_or(0, |x| x.0.len()),
++        host + ph[3],
++        ph[0],
++        ph[1],
++        ph[2]
++    );
++}
++
++fn mat_tuples(m: &M) -> (Vec<u64>, Vec<u64>, Vec<i32>) {
++    let mut n = m.nvals();
++    let mut i = vec![0u64; n as usize];
++    let mut j = vec![0u64; n as usize];
++    let mut x = vec![0i32; n as usize];
++    ok!(GrB_Matrix_extractTuples_INT32(i.as_mut_ptr(), j.as_mut_ptr(), x.as_mut_ptr(), &mut n, m.0));
++    let sorted = i.windows(2).zip(j.windows(2)).all(|(a, b)| (a[0], b[0]) < (a[1], b[1]));
++    if !sorted {
++        let mut p: Vec<usize> = (0..i.len()).collect();
++        p.sort_unstable_by_key(|&k| (i[k], j[k]));
++        let i2 = p.iter().map(|&k| i[k]).collect();
++        let j2 = p.iter().map(|&k| j[k]).collect();
++        let x2 = p.iter().map(|&k| x[k]).collect();
++        return (i2, j2, x2);
++    }
++    (i, j, x)
++}
++fn fmix64(mut k: u64) -> u64 {
++    k ^= k >> 33;
++    k = k.wrapping_mul(0xff51_afd7_ed55_8ccd);
++    k ^= k >> 33;
++    k = k.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
++    k ^ (k >> 33)
++}
++fn tuple_hash(t: &(Vec<u64>, Vec<u64>, Vec<i32>)) -> u64 {
++    let mut h = 0u64;
++    for k in 0..t.0.len() {
++        h = h.wrapping_add(fmix64(t.0[k].wrapping_mul(0x9E37_79B9) ^ t.1[k].wrapping_mul(0x85EB_CA6B) << 1 ^ (t.2[k] as u64) << 40));
++    }
++    h
++}
++
++/// One level of a reusable hierarchy. Ids are stable: a clean coarse vertex keeps its parent id,
++/// the first piece of a straddler keeps it too, further pieces are appended after the parent's ids.
++struct HLevel {
++    dim: usize,
++    live: Vec<u32>,
++    cell: Vec<u32>,
++    w: Vec<i32>,
++    base: Vec<u32>,
++    up: Vec<u32>,
++    a: Rc<M>,
++}
++
++/// Depth 0's hierarchy as a parent for depth 1: the matrices R built, plus host maps and weights.
++fn depth0_parent(
++    a0: &Rc<M>,
++    kept: Kept,
++    t: &mut Timer,
++) -> Vec<HLevel> {
++    let (levels, a_top, w_top) = kept;
++    let nl = levels.len();
++    let mut mats: Vec<Rc<M>> = vec![a0.clone()];
++    let mut ws: Vec<V> = Vec::new();
++    let mut cs: Vec<M> = Vec::new();
++    for (i, (al, wl, cl)) in levels.into_iter().enumerate() {
++        if i > 0 {
++            mats.push(Rc::new(al));
++        }
++        ws.push(wl);
++        cs.push(cl);
++    }
++    if let Some(a) = a_top {
++        mats.push(Rc::new(a));
++    }
++    ws.push(w_top);
++    assert_eq!(mats.len(), nl + 1);
++    t.time("keep", || {
++        let mut out = Vec::new();
++        for l in 0..=nl {
++            let dim = mats[l].nrows() as usize;
++            let (wi, wx) = ws[l].i32s();
++            assert_eq!(wi.len(), dim, "weights not full");
++            let up = if l == 0 {
++                Vec::new()
++            } else {
++                let c = &cs[l - 1];
++                let mut k = c.nvals();
++                let mut ii = vec![0u64; k as usize];
++                let mut jj = vec![0u64; k as usize];
++                ok!(GrB_Matrix_extractTuples_INT32(ii.as_mut_ptr(), jj.as_mut_ptr(), null(), &mut k, c.0));
++                let nprev = mats[l - 1].nrows() as usize;
++                let mut up = vec![OUT; nprev];
++                if ct() {
++                    for q in 0..k as usize {
++                        up[ii[q] as usize] = jj[q] as u32;
++                    }
++                } else {
++                    for q in 0..k as usize {
++                        up[jj[q] as usize] = ii[q] as u32;
++                    }
++                }
++                assert!(up.iter().all(|&x| x != OUT), "C does not cover every vertex");
++                up
++            };
++            out.push(HLevel {
++                dim,
++                live: (0..dim as u32).collect(),
++                cell: vec![0; dim],
++                w: wx,
++                base: (0..dim as u32).collect(),
++                up,
++                a: mats[l].clone(),
++            });
++        }
++        out
++    })
++}
++
++// ------------------------------------------------------------------------------------------
++// Cell labels for depths >= 1: a small host ND driver over the reused hierarchy.
++// ------------------------------------------------------------------------------------------
++
++/// Cells of one depth. `grp[v]` is the cell id (active or leaf), SEPG for the separator made by
++/// the split into this depth, or OUT for vertices already ordered (older separators, leaves).
++struct DepthLabels {
++    grp: Vec<u32>,
++    active: Vec<bool>,
++    lstar: Vec<u32>,
++    size: Vec<u32>,
++}
++
++#[derive(Default, Clone, Copy)]
++struct Share {
++    n: u64,
++    strad: u64,
++    seponly: u64,
++}
++
++/// Deepest level at which the members still have at least `cto` distinct coarse vertices.
++fn lstar_of(
++    m: &[u32],
++    anc: &[Vec<u32>],
++    stamp: &mut [u32],
++    cur: &mut u32,
++    cto: u32,
++) -> u32 {
++    let mut l = 0;
++    while l + 1 < anc.len() {
++        *cur += 1;
++        let a = &anc[l + 1];
++        let mut k = 0u32;
++        for &v in m {
++            let x = a[v as usize] as usize;
++            if stamp[x] != *cur {
++                stamp[x] = *cur;
++                k += 1;
++            }
++        }
++        if k < cto {
++            break;
++        }
++        l += 1;
++    }
++    l as u32
++}
++
++fn bfs_far(
++    start: usize,
++    xadj: &[usize],
++    adj: &[u32],
++    seen: &mut [u32],
++    cur: u32,
++) -> usize {
++    let mut q = VecDeque::new();
++    q.push_back(start);
++    seen[start] = cur;
++    let mut last = start;
++    while let Some(v) = q.pop_front() {
++        last = v;
++        for &u in &adj[xadj[v]..xadj[v + 1]] {
++            if seen[u as usize] != cur {
++                seen[u as usize] = cur;
++                q.push_back(u as usize);
++            }
++        }
++    }
++    last
++}
++
++/// Coarse bisection: BFS growing from a pseudo-peripheral vertex to half the weight, then the
++/// lighter boundary side as the vertex separator. 0 = A, 1 = B, 2 = S.
++fn bisect(
++    xadj: &[usize],
++    adj: &[u32],
++    vw: &[u64],
++) -> Vec<u8> {
++    let n = vw.len();
++    let total: u64 = vw.iter().sum();
++    let mut seen = vec![0u32; n];
++    let s1 = bfs_far(0, xadj, adj, &mut seen, 1);
++    let s0 = bfs_far(s1, xadj, adj, &mut seen, 2);
++    let mut side = vec![1u8; n];
++    let mut vis = vec![false; n];
++    let mut q = VecDeque::new();
++    q.push_back(s0);
++    vis[s0] = true;
++    let mut acc = 0u64;
++    let mut next = 0usize;
++    loop {
++        let v = match q.pop_front() {
++            Some(v) => v,
++            None => {
++                while next < n && vis[next] {
++                    next += 1;
++                }
++                if next == n {
++                    break;
++                }
++                vis[next] = true;
++                next
++            }
++        };
++        if acc >= total / 2 {
++            break;
++        }
++        side[v] = 0;
++        acc += vw[v];
++        for &u in &adj[xadj[v]..xadj[v + 1]] {
++            if !vis[u as usize] {
++                vis[u as usize] = true;
++                q.push_back(u as usize);
++            }
++        }
++    }
++    let bnd = |s: u8| -> (Vec<usize>, u64) {
++        let mut l = Vec::new();
++        let mut w = 0;
++        for v in 0..n {
++            if side[v] == s && adj[xadj[v]..xadj[v + 1]].iter().any(|&u| side[u as usize] == 1 - s) {
++                l.push(v);
++                w += vw[v];
++            }
++        }
++        (l, w)
++    };
++    let (sa, wa) = bnd(0);
++    let (sb, wb) = bnd(1);
++    let na = side.iter().filter(|&&x| x == 0).count();
++    let nb = n - na;
++    let pick_a = match (sa.len() < na, sb.len() < nb) {
++        (true, false) => true,
++        (false, true) => false,
++        _ => wa <= wb,
++    };
++    for v in if pick_a { sa } else { sb } {
++        side[v] = 2;
++    }
++    side
++}
++
++/// Simple boundary FM at the fine level, inside one cell: thin the projected separator from both
++/// sides, then zero-gain moves toward the lighter side while the halves differ by over 2 %.
++fn refine(
++    s: &Csr,
++    m: &[u32],
++    side: &mut [u8],
++    grp: &[u32],
++    c: u32,
++    inq: &mut [bool],
++    locked: &mut [bool],
++) {
++    let nb = |v: u32| s.j[s.p[v as usize] as usize..s.p[v as usize + 1] as usize].iter().map(|&u| u as u32).filter(move |&u| grp[u as usize] == c);
++    let mut cnt = [0i64; 3];
++    for &v in m {
++        cnt[side[v as usize] as usize] += 1;
++    }
++    let thin = |side: &mut [u8], cnt: &mut [i64; 3], inq: &mut [bool]| {
++        let mut q: VecDeque<u32> = m.iter().copied().filter(|&v| side[v as usize] == 2).collect();
++        for &v in &q {
++            inq[v as usize] = true;
++        }
++        loop {
++            while let Some(v) = q.pop_front() {
++                inq[v as usize] = false;
++                if side[v as usize] != 2 {
++                    continue;
++                }
++                let (mut ha, mut hb) = (false, false);
++                for u in nb(v) {
++                    match side[u as usize] {
++                        0 => ha = true,
++                        1 => hb = true,
++                        _ => {}
++                    }
++                }
++                let to = if ha && !hb {
++                    0
++                } else if hb && !ha {
++                    1
++                } else {
++                    continue;
++                };
++                side[v as usize] = to;
++                cnt[2] -= 1;
++                cnt[to as usize] += 1;
++                for u in nb(v) {
++                    if side[u as usize] == 2 && !inq[u as usize] {
++                        inq[u as usize] = true;
++                        q.push_back(u);
++                    }
++                }
++            }
++            // separator islands with no A or B neighbour: the lighter side takes one, then thin again
++            let island = m.iter().copied().find(|&v| side[v as usize] == 2 && nb(v).all(|u| side[u as usize] == 2));
++            match island {
++                Some(v) => {
++                    let to = if cnt[0] <= cnt[1] { 0 } else { 1 };
++                    side[v as usize] = to;
++                    cnt[2] -= 1;
++                    cnt[to as usize] += 1;
++                    for u in nb(v) {
++                        if side[u as usize] == 2 && !inq[u as usize] {
++                            inq[u as usize] = true;
++                            q.push_back(u);
++                        }
++                    }
++                }
++                None => break,
++            }
++        }
++    };
++    thin(side, &mut cnt, inq);
++    let tol = (m.len() as i64 / 50).max(2);
++    for _pass in 0..16 {
++        let (light, heavy) = if cnt[0] <= cnt[1] { (0u8, 1u8) } else { (1u8, 0u8) };
++        if cnt[heavy as usize] - cnt[light as usize] <= tol {
++            break;
++        }
++        let mut moved = 0;
++        let svs: Vec<u32> = m.iter().copied().filter(|&v| side[v as usize] == 2).collect();
++        let mut touched = Vec::new();
++        for v in svs {
++            if side[v as usize] != 2 || locked[v as usize] {
++                continue;
++            }
++            if cnt[heavy as usize] - cnt[light as usize] <= tol {
++                break;
++            }
++            let hn: Vec<u32> = nb(v).filter(|&u| side[u as usize] == heavy).collect();
++            if hn.is_empty() {
++                side[v as usize] = light;
++                cnt[2] -= 1;
++                cnt[light as usize] += 1;
++                moved += 1;
++            } else if hn.len() == 1 && !locked[hn[0] as usize] {
++                let u = hn[0];
++                side[v as usize] = light;
++                side[u as usize] = 2;
++                cnt[light as usize] += 1;
++                cnt[heavy as usize] -= 1;
++                locked[v as usize] = true;
++                locked[u as usize] = true;
++                touched.push(v);
++                touched.push(u);
++                moved += 1;
++            }
++        }
++        for v in touched {
++            locked[v as usize] = false;
++        }
++        if moved == 0 {
++            break;
++        }
++        thin(side, &mut cnt, inq);
++    }
++}
++
++/// Multilevel mode (M1_REFINE=all): the same thinning and zero-gain balance moves on the cell's
++/// coarse vertices at one level, adjacency read through the members' fine edges. On entry all
++/// members of a coarse vertex share a side (the projection); on exit they still do.
++#[allow(clippy::too_many_arguments)]
++fn refine_level(
++    s: &Csr,
++    m: &[u32],
++    al: &[u32],
++    side: &mut [u8],
++    grp: &[u32],
++    c: u32,
++    loc: &mut [u32],
++    stamp: &mut [u32],
++    cur: &mut u32,
++) {
++    *cur += 1;
++    let mut pw: Vec<i64> = Vec::new();
++    for &v in m {
++        let x = al[v as usize] as usize;
++        if stamp[x] != *cur {
++            stamp[x] = *cur;
++            loc[x] = pw.len() as u32;
++            pw.push(0);
++        }
++        pw[loc[x] as usize] += 1;
++    }
++    let np = pw.len();
++    let mut start = vec![0usize; np + 1];
++    for &v in m {
++        start[loc[al[v as usize] as usize] as usize + 1] += 1;
++    }
++    for p in 0..np {
++        start[p + 1] += start[p];
++    }
++    let mut fill = start.clone();
++    let mut mem = vec![0u32; m.len()];
++    for &v in m {
++        let p = loc[al[v as usize] as usize] as usize;
++        mem[fill[p]] = v;
++        fill[p] += 1;
++    }
++    let mut ps: Vec<u8> = (0..np).map(|p| side[mem[start[p]] as usize]).collect();
++    let loc_r: &[u32] = loc;
++    let nbp = |p: usize| -> Vec<usize> {
++        let mut out = Vec::new();
++        for &v in &mem[start[p]..start[p + 1]] {
++            for &u in &s.j[s.p[v as usize] as usize..s.p[v as usize + 1] as usize] {
++                if grp[u as usize] == c {
++                    let q = loc_r[al[u as usize] as usize] as usize;
++                    if q != p {
++                        out.push(q);
++                    }
++                }
++            }
++        }
++        out.sort_unstable();
++        out.dedup();
++        out
++    };
++    let mut cnt = [0i64; 3];
++    for p in 0..np {
++        cnt[ps[p] as usize] += pw[p];
++    }
++    let thin = |ps: &mut Vec<u8>, cnt: &mut [i64; 3]| {
++        let mut inq = vec![false; np];
++        let mut q: VecDeque<usize> = (0..np).filter(|&p| ps[p] == 2).collect();
++        for &p in &q {
++            inq[p] = true;
++        }
++        loop {
++            while let Some(p) = q.pop_front() {
++                inq[p] = false;
++                if ps[p] != 2 {
++                    continue;
++                }
++                let nb = nbp(p);
++                let ha = nb.iter().any(|&u| ps[u] == 0);
++                let hb = nb.iter().any(|&u| ps[u] == 1);
++                let to = if ha && !hb {
++                    0
++                } else if hb && !ha {
++                    1
++                } else {
++                    continue;
++                };
++                ps[p] = to;
++                cnt[2] -= pw[p];
++                cnt[to as usize] += pw[p];
++                for u in nb {
++                    if ps[u] == 2 && !inq[u] {
++                        inq[u] = true;
++                        q.push_back(u);
++                    }
++                }
++            }
++            let island = (0..np).find(|&p| ps[p] == 2 && nbp(p).iter().all(|&u| ps[u] == 2));
++            match island {
++                Some(p) => {
++                    let to = if cnt[0] <= cnt[1] { 0 } else { 1 };
++                    ps[p] = to;
++                    cnt[2] -= pw[p];
++                    cnt[to as usize] += pw[p];
++                    for u in nbp(p) {
++                        if ps[u] == 2 && !inq[u] {
++                            inq[u] = true;
++                            q.push_back(u);
++                        }
++                    }
++                }
++                None => break,
++            }
++        }
++    };
++    thin(&mut ps, &mut cnt);
++    let total: i64 = pw.iter().sum();
++    let tol = (total / 50).max(2);
++    for _pass in 0..16 {
++        let (light, heavy) = if cnt[0] <= cnt[1] { (0u8, 1u8) } else { (1u8, 0u8) };
++        if cnt[heavy as usize] - cnt[light as usize] <= tol {
++            break;
++        }
++        let mut moved = 0;
++        let mut locked = vec![false; np];
++        let svs: Vec<usize> = (0..np).filter(|&p| ps[p] == 2).collect();
++        for p in svs {
++            if ps[p] != 2 || locked[p] {
++                continue;
++            }
++            let gap = cnt[heavy as usize] - cnt[light as usize];
++            if gap <= tol {
++                break;
++            }
++            let hn: Vec<usize> = nbp(p).into_iter().filter(|&u| ps[u] == heavy).collect();
++            if hn.is_empty() {
++                ps[p] = light;
++                cnt[2] -= pw[p];
++                cnt[light as usize] += pw[p];
++                moved += 1;
++            } else if hn.len() == 1 && !locked[hn[0]] && pw[hn[0]] <= pw[p] && (gap - pw[p] - pw[hn[0]]).abs() < gap {
++                let u = hn[0];
++                ps[p] = light;
++                ps[u] = 2;
++                cnt[light as usize] += pw[p];
++                cnt[2] += pw[u] - pw[p];
++                cnt[heavy as usize] -= pw[u];
++                locked[p] = true;
++                locked[u] = true;
++                moved += 1;
++            }
++        }
++        if moved == 0 {
++            break;
++        }
++        thin(&mut ps, &mut cnt);
++    }
++    for p in 0..np {
++        for &v in &mem[start[p]..start[p + 1]] {
++            side[v as usize] = ps[p];
++        }
++    }
++}
++
++/// Real cells: depth 0 is the whole graph; each active cell of depth d is bisected on its coarse
++/// graph at its deepest reused level (>= CTO vertices), projected to the fine level and refined
++/// there. Cells of <= LEAF vertices are leaves. Also returns the straddler shares (needed levels).
++fn nd_labels(
++    s: &Csr,
++    p0: &[HLevel],
++    max_depth: u32,
++    cto: u32,
++) -> (Vec<DepthLabels>, BTreeMap<(u32, u32), Share>) {
++    let n = s.n;
++    let nl = p0.len() - 1;
++    let mut anc: Vec<Vec<u32>> = vec![(0..n as u32).collect()];
++    for l in 1..=nl {
++        let up = &p0[l].up;
++        let a: Vec<u32> = anc[l - 1].iter().map(|&x| up[x as usize]).collect();
++        anc.push(a);
++    }
++    let mut stamp = vec![0u32; n];
++    let mut cur = 0u32;
++    let mut loc = vec![0u32; n];
++    let mut gl = vec![0u32; n];
++    let mut inq = vec![false; n];
++    let mut locked = vec![false; n];
++    let mut side = vec![0u8; n];
++    let mut shares: BTreeMap<(u32, u32), Share> = BTreeMap::new();
++    let all: Vec<u32> = (0..n as u32).collect();
++    let root_l = lstar_of(&all, &anc, &mut stamp, &mut cur, cto);
++    let mut out = vec![DepthLabels { grp: vec![0; n], active: vec![true], lstar: vec![root_l], size: vec![n as u32] }];
++    for d in 0..max_depth {
++        let lab = &out[d as usize];
++        let k = lab.active.len();
++        let mut members: Vec<Vec<u32>> = vec![Vec::new(); k];
++        for v in 0..n {
++            let g = lab.grp[v];
++            if (g as usize) < k && lab.active[g as usize] {
++                members[g as usize].push(v as u32);
++            }
++        }
++        if members.iter().all(|m| m.is_empty()) {
++            break;
++        }
++        let mut grp = vec![OUT; n];
++        let mut active = Vec::new();
++        let mut lstar = Vec::new();
++        let mut size = Vec::new();
++        let (mut nsep, mut nleaf_v, mut ranout, mut retried) = (0u64, 0u64, 0u64, 0u64);
++        for c in 0..k {
++            let m = &members[c];
++            if m.is_empty() {
++                continue;
++            }
++            let ls = lab.lstar[c] as usize;
++            if ls == nl {
++                ranout += 1;
++            }
++            // coarse graph of the cell at its deepest reused level; if the split leaves a side
++            // empty (a few heavy disconnected chunks), retry one level finer
++            let mut lvl = ls;
++            loop {
++                cur += 1;
++                let a = &anc[lvl];
++                let mut vw: Vec<u64> = Vec::new();
++                for &v in m {
++                    let x = a[v as usize] as usize;
++                    if stamp[x] != cur {
++                        stamp[x] = cur;
++                        loc[x] = vw.len() as u32;
++                        vw.push(0);
++                    }
++                    vw[loc[x] as usize] += 1;
++                }
++                let mut pairs: Vec<u64> = Vec::new();
++                for &v in m {
++                    let lv = loc[a[v as usize] as usize] as u64;
++                    for &u in &s.j[s.p[v as usize] as usize..s.p[v as usize + 1] as usize] {
++                        if lab.grp[u as usize] == c as u32 {
++                            let lu = loc[a[u as usize] as usize] as u64;
++                            if lu != lv {
++                                pairs.push(lv << 32 | lu);
++                            }
++                        }
++                    }
++                }
++                pairs.sort_unstable();
++                pairs.dedup();
++                let nc = vw.len();
++                let mut xadj = vec![0usize; nc + 1];
++                for &p in &pairs {
++                    xadj[(p >> 32) as usize + 1] += 1;
++                }
++                for i in 0..nc {
++                    xadj[i + 1] += xadj[i];
++                }
++                let adj: Vec<u32> = pairs.iter().map(|&p| p as u32).collect();
++                drop(pairs);
++                let cs = bisect(&xadj, &adj, &vw);
++                for &v in m {
++                    side[v as usize] = cs[loc[a[v as usize] as usize] as usize];
++                }
++                if env("M1_REFINE").as_deref() == Some("all") {
++                    for l in (1..=lvl).rev() {
++                        refine_level(s, m, &anc[l], &mut side, &lab.grp, c as u32, &mut loc, &mut stamp, &mut cur);
++                    }
++                }
++                refine(s, m, &mut side, &lab.grp, c as u32, &mut inq, &mut locked);
++                let na = m.iter().filter(|&&v| side[v as usize] == 0).count();
++                let nb = m.iter().filter(|&&v| side[v as usize] == 1).count();
++                if (na > 0 && nb > 0) || lvl == 0 {
++                    if lvl < ls {
++                        retried += 1;
++                    }
++                    break;
++                }
++                lvl -= 1;
++            }
++            if brk("sepcut") && d == 1 {
++                // put one separator vertex that touches both sides into A
++                if let Some(&v) = m.iter().find(|&&v| {
++                    side[v as usize] == 2 && {
++                        let nb = &s.j[s.p[v as usize] as usize..s.p[v as usize + 1] as usize];
++                        nb.iter().any(|&u| lab.grp[u as usize] == c as u32 && side[u as usize] == 0)
++                            && nb.iter().any(|&u| lab.grp[u as usize] == c as u32 && side[u as usize] == 1)
++                    }
++                }) {
++                    side[v as usize] = 0;
++                }
++            }
++            // check: a vertex separator, no A-B edge inside the cell
++            for &v in m {
++                if side[v as usize] == 0 {
++                    for &u in &s.j[s.p[v as usize] as usize..s.p[v as usize + 1] as usize] {
++                        assert!(
++                            !(lab.grp[u as usize] == c as u32 && side[u as usize] == 1),
++                            "CHECK FAILED: separator leaves an A-B edge (depth {d}, cell {c}, {v}-{u})"
++                        );
++                    }
++                }
++            }
++            let ida = active.len() as u32;
++            let mut parts = [Vec::new(), Vec::new()];
++            for &v in m {
++                match side[v as usize] {
++                    0 => parts[0].push(v),
++                    1 => parts[1].push(v),
++                    _ => {
++                        grp[v as usize] = SEPG;
++                        nsep += 1;
++                    }
++                }
++            }
++            let mut child_ls = [0u32; 2];
++            for (h, part) in parts.iter().enumerate() {
++                let id = ida + h as u32;
++                for &v in part {
++                    grp[v as usize] = id;
++                }
++                let act = part.len() > LEAF;
++                let pl = if act { lstar_of(part, &anc, &mut stamp, &mut cur, cto) } else { 0 };
++                child_ls[h] = if part.len() > 200 { pl } else { 0 };
++                if !act {
++                    nleaf_v += part.len() as u64;
++                }
++                active.push(act);
++                lstar.push(pl);
++                size.push(part.len() as u32);
++            }
++            // straddler shares of this split over the levels its children (> 200 vertices) use
++            let needed = child_ls[0].max(child_ls[1]) as usize;
++            for l in 1..=needed {
++                cur += 1;
++                let al = &anc[l];
++                let mut dist = Vec::new();
++                for &v in m {
++                    let x = al[v as usize] as usize;
++                    let g = side[v as usize] as u32;
++                    if stamp[x] != cur {
++                        stamp[x] = cur;
++                        gl[x] = g;
++                        dist.push(x);
++                    } else if gl[x] != g {
++                        gl[x] = MIXED;
++                    }
++                }
++                let e = shares.entry((d, l as u32)).or_default();
++                e.n += dist.len() as u64;
++                for &x in &dist {
++                    if gl[x] == MIXED {
++                        e.strad += 1;
++                    } else if gl[x] == 2 {
++                        e.seponly += 1;
++                    }
++                }
++            }
++        }
++        let nact = active.iter().filter(|&&a| a).count();
++        let live: u64 = (0..active.len()).filter(|&i| active[i]).map(|i| size[i] as u64).sum();
++        println!(
++            "LABELS depth={} cells={} active={nact} live={live} sep={nsep} leafv={nleaf_v} parent_ranout={ranout} retried_finer={retried} lstar_max={}",
++            d + 1,
++            active.len(),
++            lstar.iter().max().copied().unwrap_or(0)
++        );
++        out.push(DepthLabels { grp, active, lstar, size });
++        if nact == 0 {
++            break;
++        }
++    }
++    (out, shares)
++}
++
++/// The earlier proxy: 2^d contiguous chunks of feral's order, no separators, every cell active.
++fn proxy_labels(
++    pos: &[u64],
++    p0: &[HLevel],
++    max_depth: u32,
++    cto: u32,
++) -> (Vec<DepthLabels>, BTreeMap<(u32, u32), Share>) {
++    let n = pos.len();
++    let nl = p0.len() - 1;
++    let mut anc: Vec<Vec<u32>> = vec![(0..n as u32).collect()];
++    for l in 1..=nl {
++        let up = &p0[l].up;
++        anc.push(anc[l - 1].iter().map(|&x| up[x as usize]).collect());
++    }
++    let mut stamp = vec![0u32; n];
++    let mut cur = 0;
++    let mut gl = vec![0u32; n];
++    let mut shares: BTreeMap<(u32, u32), Share> = BTreeMap::new();
++    let mut out = Vec::new();
++    for d in 0..=max_depth {
++        let cells = 1u64 << d;
++        let grp: Vec<u32> = (0..n).map(|v| (pos[v] * cells / n as u64) as u32).collect();
++        let mut members: Vec<Vec<u32>> = vec![Vec::new(); cells as usize];
++        for v in 0..n {
++            members[grp[v] as usize].push(v as u32);
++        }
++        let lstar: Vec<u32> = members.iter().map(|m| lstar_of(m, &anc, &mut stamp, &mut cur, cto)).collect();
++        let size: Vec<u32> = members.iter().map(|m| m.len() as u32).collect();
++        if d > 0 {
++            // shares of the split from depth d-1: parent chunk p = c / 2
++            let prev: &DepthLabels = &out[d as usize - 1];
++            for p in 0..(cells / 2) as usize {
++                let m: Vec<u32> = members[2 * p].iter().chain(members[2 * p + 1].iter()).copied().collect();
++                let needed = [2 * p, 2 * p + 1].iter().filter(|&&c| size[c] > 200).map(|&c| lstar[c]).max().unwrap_or(0);
++                let _ = prev;
++                for l in 1..=needed as usize {
++                    cur += 1;
++                    let al = &anc[l];
++                    let mut dist = Vec::new();
++                    for &v in &m {
++                        let x = al[v as usize] as usize;
++                        if stamp[x] != cur {
++                            stamp[x] = cur;
++                            gl[x] = grp[v as usize];
++                            dist.push(x);
++                        } else if gl[x] != grp[v as usize] {
++                            gl[x] = MIXED;
++                        }
++                    }
++                    let e = shares.entry((d - 1, l as u32)).or_default();
++                    e.n += dist.len() as u64;
++                    e.strad += dist.iter().filter(|&&x| gl[x] == MIXED).count() as u64;
++                }
++            }
++        }
++        println!("LABELS depth={d} cells={cells} active={cells} live={n} sep=0 leafv=0 lstar_max={}", lstar.iter().max().unwrap());
++        out.push(DepthLabels { grp, active: vec![true; cells as usize], lstar, size });
++    }
++    (out, shares)
++}
++
++// ------------------------------------------------------------------------------------------
++// B1 and B2
++// ------------------------------------------------------------------------------------------
++
++struct Book {
++    dim: usize,
++    up: Vec<u32>,
++    live: Vec<u32>,
++    cell: Vec<u32>,
++    base: Vec<u32>,
++    w: Vec<i32>,
++    grp: Vec<u32>,
++    clean: Vec<u32>,
++    strad_x: Vec<u32>,
++    is_strad: Vec<bool>,
++    // stats
++    n_par: u64,
++    n_mixed: u64,
++    n_seponly: u64,
++    n_pieces: u64,
++    extras: u64,
++}
++
++/// Host bookkeeping for child level l: group of every parent coarse vertex (one child cell, the
++/// separator, or MIXED), the child's pieces and ids, the per-cell stop, and the weights.
++/// B1 sums every member's weight; B2 copies the parent's weight for clean vertices.
++fn book(
++    pgrp_prev: &[u32],
++    par_prev: &HLevel,
++    par: &HLevel,
++    ch_prev: &HLevel,
++    active: &mut [bool],
++    b2_weights: bool,
++    cto: u32,
++) -> Book {
++    let mut tb = Instant::now();
++    let pd = par.dim;
++    let mut grp = vec![UNSET; pd];
++    bt("b1_grp_alloc", &mut tb);
++    for &q0 in &par_prev.live {
++        let q = par.up[q0 as usize];
++        if q == OUT {
++            continue;
++        }
++        let g = pgrp_prev[q0 as usize];
++        let c = &mut grp[q as usize];
++        *c = if *c == UNSET || *c == g { g } else { MIXED };
++    }
++    bt("b2_grp_loop", &mut tb);
++    let ncells = active.len();
++    let mut cnt = vec![0u32; ncells];
++    let mut seen = vec![false; pd];
++    let mut px = vec![OUT; ch_prev.dim];
++    let mut pk = vec![0u8; ch_prev.dim];
++    let mut spieces: Vec<(u32, u32)> = Vec::new();
++    let mut smap: HashMap<(u32, u32), u32> = HashMap::new();
++    bt("b3_child_alloc", &mut tb);
++    for &x in &ch_prev.live {
++        let c = ch_prev.cell[x as usize];
++        let q = par.up[ch_prev.base[x as usize] as usize];
++        if q == OUT {
++            continue;
++        }
++        let g = grp[q as usize];
++        if g == c {
++            if !seen[q as usize] {
++                seen[q as usize] = true;
++                cnt[c as usize] += 1;
++            }
++            px[x as usize] = q;
++            pk[x as usize] = 1;
++        } else {
++            assert_eq!(g, MIXED, "child vertex maps into a parent vertex of another group");
++            let k = *smap.entry((q, c)).or_insert_with(|| {
++                spieces.push((q, c));
++                cnt[c as usize] += 1;
++                (spieces.len() - 1) as u32
++            });
++            px[x as usize] = k;
++            pk[x as usize] = 2;
++        }
++    }
++    bt("b4_child_loop", &mut tb);
++    for c in 0..ncells {
++        if active[c] && cnt[c] < cto {
++            active[c] = false;
++        }
++    }
++    let mut taken = vec![false; pd];
++    let mut sid = vec![OUT; spieces.len()];
++    let mut extras = 0usize;
++    let order: Vec<usize> = if brk("bperm") && CUR_RUN.load(Ordering::Relaxed) == 1 {
++        (0..spieces.len()).rev().collect()
++    } else {
++        (0..spieces.len()).collect()
++    };
++    for k in order {
++        let (q, c) = spieces[k];
++        if !active[c as usize] {
++            continue;
++        }
++        if !taken[q as usize] {
++            taken[q as usize] = true;
++            sid[k] = q;
++        } else {
++            sid[k] = (pd + extras) as u32;
++            extras += 1;
++        }
++    }
++    let dim = pd + extras;
++    bt("b5_stop_sid", &mut tb);
++    let mut up = vec![OUT; ch_prev.dim];
++    let mut cell = vec![OUT; dim];
++    let mut base = vec![OUT; dim];
++    let mut w = vec![0i32; dim];
++    let mut is_strad = vec![false; dim];
++    let mut strad_x = Vec::new();
++    bt("b6_out_alloc", &mut tb);
++    for &x in &ch_prev.live {
++        match pk[x as usize] {
++            1 => {
++                let q = px[x as usize];
++                let c = ch_prev.cell[x as usize];
++                if active[c as usize] {
++                    up[x as usize] = q;
++                    cell[q as usize] = c;
++                    base[q as usize] = q;
++                    if !b2_weights {
++                        w[q as usize] += ch_prev.w[x as usize];
++                    }
++                }
++            }
++            2 => {
++                let k = px[x as usize] as usize;
++                let id = sid[k];
++                if id != OUT {
++                    up[x as usize] = id;
++                    let (q, c) = spieces[k];
++                    cell[id as usize] = c;
++                    base[id as usize] = q;
++                    is_strad[id as usize] = true;
++                    w[id as usize] += ch_prev.w[x as usize];
++                    strad_x.push(x);
++                }
++            }
++            _ => {}
++        }
++    }
++    bt("b7_out_fill", &mut tb);
++    let live: Vec<u32> = (0..dim as u32).filter(|&i| cell[i as usize] != OUT).collect();
++    let clean: Vec<u32> = live.iter().copied().filter(|&i| !is_strad[i as usize]).collect();
++    if b2_weights {
++        for &q in &clean {
++            w[q as usize] = par.w[q as usize];
++        }
++        if brk("bweight") {
++            if let Some(&q) = live.iter().find(|&&i| is_strad[i as usize]) {
++                w[q as usize] += 1;
++            }
++        }
++    }
++    if brk("bcons") {
++        // break: the same extra unit of weight in B1 and B2
++        w[live[0] as usize] += 1;
++    }
++    bt("b8_live_clean_w", &mut tb);
++    let n_par = grp.iter().filter(|&&g| g != UNSET).count() as u64;
++    let n_mixed = grp.iter().filter(|&&g| g == MIXED).count() as u64;
++    let n_seponly = grp.iter().filter(|&&g| g == SEPG).count() as u64;
++    let n_pieces = sid.iter().filter(|&&x| x != OUT).count() as u64;
++    bt("b9_stats", &mut tb);
++    Book {
++        dim,
++        up,
++        live,
++        cell,
++        base,
++        w,
++        grp,
++        clean,
++        strad_x,
++        is_strad,
++        n_par,
++        n_mixed,
++        n_seponly,
++        n_pieces,
++        extras: extras as u64,
++    }
++}
++
++/// B1: full re-contraction of the child's previous level with C' (built as C'ᵀ, run as the
++/// "best" configuration of the parent bench).
++fn contract_b1(
++    prev: &HLevel,
++    bk: &Book,
++    ops: &Ops,
++    t: &mut Timer,
++) -> M {
++    let ct = t.time("c_build", || {
++        let mut ii = Vec::with_capacity(prev.live.len());
++        let mut jj = Vec::with_capacity(prev.live.len());
++        for &x in &prev.live {
++            let u = bk.up[x as usize];
++            if u != OUT {
++                ii.push(x as u64);
++                jj.push(u as u64);
++            }
++        }
++        let ct = M::new(t_i32(), prev.dim as u64, bk.dim as u64);
++        ok!(GxB_Matrix_build_Scalar(ct.0, ii.as_ptr(), jj.as_ptr(), ops.one_i32, ii.len() as u64));
++        ct.wait();
++        ct
++    });
++    let tm = t.time("CA", || {
++        let tm = M::new(t_i32(), bk.dim as u64, prev.dim as u64);
++        ok!(GrB_mxm(tm.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, ct.0, prev.a.0, GrB_DESC_T0));
++        tm.wait();
++        tm
++    });
++    let q = t.time("CAC'", || {
++        let q = M::new(t_i32(), bk.dim as u64, bk.dim as u64);
++        ok!(GrB_mxm(q.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, tm.0, ct.0, null()));
++        q.wait();
++        q
++    });
++    drop(tm);
++    if !brk("b1offdiag") {
++        t.time("offdiag", || {
++            ok!(GrB_Matrix_select_INT64(q.0, null(), null(), GrB_OFFDIAG, q.0, 0, null()));
++            q.wait();
++        });
++    }
++    q
++}
++
++/// B2: the parent's level restricted to clean vertices by one masked split, plus the straddler
++/// rows re-contracted from the child's previous level (and their columns by symmetry).
++fn contract_b2(
++    prev: &HLevel,
++    par: &HLevel,
++    bk: &Book,
++    ncells: usize,
++    ops: &Ops,
++    t: &mut Timer,
++) -> (M, u64) {
++    let pd = par.dim as u64;
++    let masked = brk("b2mask");
++    let mm = t.time("m_build", || {
++        let mut ii = Vec::with_capacity(bk.clean.len());
++        let mut jj = Vec::with_capacity(bk.clean.len());
++        for &q in &bk.live {
++            // b2mask (break): a straddler's first piece is treated as clean
++            if !bk.is_strad[q as usize] || (masked && (q as u64) < pd) {
++                ii.push(q as u64);
++                jj.push(bk.cell[q as usize] as u64);
++            }
++        }
++        let mm = M::new(t_i32(), pd, ncells as u64);
++        ok!(GxB_Matrix_build_Scalar(mm.0, ii.as_ptr(), jj.as_ptr(), ops.one_i32, ii.len() as u64));
++        mm.wait();
++        mm
++    });
++    let sm = t.time("mask_mxm", || {
++        let sm = M::new(t_i32(), pd, pd);
++        ok!(GrB_mxm(sm.0, par.a.0, null(), GxB_ANY_PAIR_INT32, mm.0, mm.0, GrB_DESC_ST1));
++        sm.wait();
++        sm
++    });
++    drop(mm);
++    t.time("mask_vals", || {
++        ok!(GrB_Matrix_eWiseMult_BinaryOp(sm.0, null(), null(), GrB_FIRST_INT32, par.a.0, sm.0, null()));
++        sm.wait();
++    });
++    if bk.dim as u64 > pd {
++        t.time("resize", || {
++            ok!(GrB_Matrix_resize(sm.0, bk.dim as u64, bk.dim as u64));
++            sm.wait();
++        });
++    }
++    let xs: Vec<u64> = bk.strad_x.iter().filter(|&&x| !(masked && (bk.up[x as usize] as u64) < pd)).map(|&x| x as u64).collect();
++    if xs.is_empty() {
++        audit_b2_inplace(par, bk, None, &sm, t);
++        return (sm, 0);
++    }
++    let tr = t.time("s_extract", || {
++        let tr = M::new(t_i32(), xs.len() as u64, prev.dim as u64);
++        ok!(GrB_Matrix_extract(tr.0, null(), null(), prev.a.0, xs.as_ptr(), xs.len() as u64, GrB_ALL, prev.dim as u64, null()));
++        tr.wait();
++        tr
++    });
++    let rin = tr.nvals();
++    let rs = t.time("s_build", || {
++        let (ti, tj, tx) = mat_tuples(&tr);
++        let mut ri = Vec::with_capacity(2 * ti.len());
++        let mut rj = Vec::with_capacity(2 * ti.len());
++        let mut rx = Vec::with_capacity(2 * ti.len());
++        for k in 0..ti.len() {
++            let sv = bk.up[xs[ti[k] as usize] as usize];
++            let tv = bk.up[tj[k] as usize];
++            assert_ne!(tv, OUT, "straddler row reaches a dropped vertex");
++            if sv == tv {
++                continue;
++            }
++            ri.push(sv as u64);
++            rj.push(tv as u64);
++            rx.push(tx[k]);
++            let t_is_strad = bk.is_strad[tv as usize] && !(masked && (tv as u64) < pd);
++            if !t_is_strad {
++                ri.push(tv as u64);
++                rj.push(sv as u64);
++                rx.push(tx[k]);
++            }
++        }
++        let rs = M::new(t_i32(), bk.dim as u64, bk.dim as u64);
++        ok!(GrB_Matrix_build_INT32(rs.0, ri.as_ptr(), rj.as_ptr(), rx.as_ptr(), ri.len() as u64, GrB_PLUS_INT32));
++        rs.wait();
++        rs
++    });
++    drop(tr);
++    let q = t.time("s_merge", || {
++        let q = M::new(t_i32(), bk.dim as u64, bk.dim as u64);
++        ok!(GrB_Matrix_eWiseAdd_BinaryOp(q.0, null(), null(), GrB_PLUS_INT32, sm.0, rs.0, null()));
++        q.wait();
++        q
++    });
++    audit_b2_inplace(par, bk, Some(&rs), &q, t);
++    (q, rin)
++}
++
++struct BOut {
++    lv: Vec<HLevel>,
++    timers: Vec<Timer>,
++    stats: Vec<[u64; 9]>,
++    top: Vec<u32>,
++}
++
++/// Build a depth's child hierarchy from its parent's (mode 1 = B1, 2 = B2), then the same
++/// uncoarsening work R's bench times: per level, project labels and one boundary mxv.
++fn build_b(
++    mode: u8,
++    parent: &[HLevel],
++    q0: Rc<M>,
++    lab: &DepthLabels,
++    ops: &Ops,
++) -> BOut {
++    let n = q0.nrows() as usize;
++    let ncells = lab.active.len();
++    let mut timers = vec![Timer::default()];
++    let lv0 = timers[0].time("book", || {
++        let mut tb = Instant::now();
++        let mut cell = vec![OUT; n];
++        let mut w = vec![0i32; n];
++        let mut live = Vec::new();
++        for v in 0..n {
++            let g = lab.grp[v];
++            if (g as usize) < ncells && lab.active[g as usize] {
++                cell[v] = g;
++                w[v] = 1;
++                live.push(v as u32);
++            }
++        }
++        let h = HLevel { dim: n, live, cell, w, base: (0..n as u32).collect(), up: Vec::new(), a: q0 };
++        bt("b0_level0", &mut tb);
++        h
++    });
++    let mut lv = vec![lv0];
++    let mut active = lab.active.clone();
++    let mut top: Vec<u32> = active.iter().map(|&a| if a { 0 } else { OUT }).collect();
++    let mut stats = vec![[0u64; 9]];
++    let mut pgrp_owned: Option<Vec<u32>> = None;
++    let cto = CTO;
++    for l in 1..parent.len() {
++        let mut t = Timer::default();
++        let pgrp: &[u32] = pgrp_owned.as_deref().unwrap_or(&lab.grp);
++        let bk = t.time("book", || book(pgrp, &parent[l - 1], &parent[l], &lv[l - 1], &mut active, mode == 2, cto));
++        if bk.live.is_empty() {
++            for (k, v) in t.0 {
++                *timers[l - 1].0.entry(k).or_default() += v;
++            }
++            break;
++        }
++        for c in 0..ncells {
++            if active[c] {
++                top[c] = l as u32;
++            }
++        }
++        let prev = &lv[l - 1];
++        let (a, rin) = if mode == 1 {
++            (contract_b1(prev, &bk, ops, &mut t), 0)
++        } else {
++            contract_b2(prev, &parent[l], &bk, ncells, ops, &mut t)
++        };
++        if brk("basym") && l == 1 {
++            // break: one asymmetric entry, the same in B1 and B2
++            let (i, j) = (bk.live[0] as u64, bk.live[1] as u64);
++            ok!(GrB_Matrix_setElement_INT32(a.0, 7, i, j));
++            a.wait();
++        }
++        if brk("bmatch") && mode == 2 && l == 1 {
++            // break: run one matching level inside the reuse path
++            let wv = V::new(t_i32(), a.nrows());
++            ok!(GrB_Vector_assign_INT32(wv.0, null(), null(), 1, GrB_ALL, a.nrows(), null()));
++            let _ = coarsen_level(&a, &wv, i32::MAX, 1, ops, &mut Timer::default());
++        }
++        stats.push([bk.n_par, bk.n_mixed, bk.n_seponly, bk.n_pieces, bk.extras, rin, prev.a.nvals(), a.nvals(), bk.live.len() as u64]);
++        lv.push(HLevel { dim: bk.dim, live: bk.live, cell: bk.cell, w: bk.w, base: bk.base, up: bk.up, a: Rc::new(a) });
++        pgrp_owned = Some(bk.grp);
++        timers.push(t);
++    }
++    // uncoarsening work: random 2-way labels at each cell's top level, project, boundary mxv
++    let topl = lv.len() - 1;
++    let mut rng = Rng(42);
++    let mut lab_up: Vec<i32> = vec![0; lv[topl].dim];
++    for &x in &lv[topl].live {
++        lab_up[x as usize] = (rng.next() & 1) as i32;
++    }
++    for l in (0..topl).rev() {
++        let t = &mut timers[l];
++        let h = &lv[l];
++        let up = &lv[l + 1].up;
++        let (f, nl) = t.time("project", || {
++            let mut nl = vec![0i32; h.dim];
++            let mut ii = Vec::with_capacity(h.live.len());
++            let mut xx = Vec::with_capacity(h.live.len());
++            for &x in &h.live {
++                let u = up[x as usize];
++                let v = if u != OUT { lab_up[u as usize] } else { (rng.next() & 1) as i32 };
++                nl[x as usize] = v;
++                ii.push(x as u64);
++                xx.push(v);
++            }
++            let mut tb = Instant::now();
++            let f = V::new(t_i32(), h.dim as u64);
++            ok!(GrB_Vector_build_INT32(f.0, ii.as_ptr(), xx.as_ptr(), ii.len() as u64, null()));
++            f.wait();
++            bt("p_build", &mut tb);
++            (f, nl)
++        });
++        t.time("bnd", || {
++            let b = V::new(t_i32(), h.dim as u64);
++            ok!(GrB_mxv(b.0, null(), null(), GxB_PLUS_SECOND_INT32, h.a.0, f.0, null()));
++            b.wait();
++        });
++        lab_up = nl;
++    }
++    BOut { lv, timers, stats, top }
++}
++
++/// B1 and B2 must agree on every level: ids, live sets, maps, weights, and the matrices
++/// (nvals, pattern and values). Also checks each level's own invariants. Returns per-level
++/// fingerprints (dim, nvals, hash).
++fn compare_b(
++    b1: &BOut,
++    b2: &BOut,
++    lab: &DepthLabels,
++    depth: u32,
++) -> Vec<(usize, u64, u64)> {
++    assert_eq!(b1.lv.len(), b2.lv.len(), "CHECK FAILED: B1/B2 level counts differ (depth {depth})");
++    assert_eq!(b1.top, b2.top, "CHECK FAILED: B1/B2 per-cell tops differ");
++    let mut fp = Vec::new();
++    for l in 0..b1.lv.len() {
++        let (x, y) = (&b1.lv[l], &b2.lv[l]);
++        assert_eq!(x.dim, y.dim, "CHECK FAILED: B1/B2 dim differs (depth {depth} level {l})");
++        assert_eq!(x.live, y.live, "CHECK FAILED: B1/B2 live set differs");
++        assert_eq!(x.up, y.up, "CHECK FAILED: B1/B2 maps differ");
++        let wdiff = x.live.iter().filter(|&&i| x.w[i as usize] != y.w[i as usize]).count();
++        assert_eq!(wdiff, 0, "CHECK FAILED: B1/B2 vertex weights differ on {wdiff} vertices (depth {depth} level {l})");
++        // weight conservation: each cell active at this level carries all its fine vertices
++        let want: i64 = (0..lab.active.len()).filter(|&c| b1.top[c] != OUT && b1.top[c] as usize >= l).map(|c| lab.size[c] as i64).sum();
++        let got: i64 = x.live.iter().map(|&i| x.w[i as usize] as i64).sum();
++        assert_eq!(got, want, "CHECK FAILED: vertex weight not conserved (depth {depth} level {l})");
++        for (name, h) in [("B1", x), ("B2", y)] {
++            let dg = M::new(t_i32(), h.dim as u64, h.dim as u64);
++            ok!(GrB_Matrix_select_INT64(dg.0, null(), null(), GrB_DIAG, h.a.0, 0, null()));
++            assert_eq!(dg.nvals(), 0, "CHECK FAILED: {name} level has a diagonal (depth {depth} level {l})");
++        }
++        if l == 0 {
++            assert!(Rc::ptr_eq(&x.a, &y.a));
++            fp.push((x.dim, x.a.nvals(), 0));
++            continue;
++        }
++        let (n1, n2) = (x.a.nvals(), y.a.nvals());
++        let t1 = mat_tuples(&x.a);
++        let t2 = mat_tuples(&y.a);
++        let mut diff = 0u64;
++        if n1 != n2 || t1.0 != t2.0 || t1.1 != t2.1 {
++            diff = n1.max(n2);
++        } else {
++            diff += t1.2.iter().zip(&t2.2).filter(|(a, b)| a != b).count() as u64;
++        }
++        assert!(
++            diff == 0,
++            "CHECK FAILED: B1 and B2 child matrices differ (depth {depth} level {l}: nvals {n1} vs {n2}, {diff} entries differ)"
++        );
++        if verify() {
++            let tt = M::new(t_i32(), x.dim as u64, x.dim as u64);
++            ok!(GrB_transpose(tt.0, null(), null(), x.a.0, null()));
++            let tt = mat_tuples(&tt);
++            assert!(tt == t1, "CHECK FAILED: B1 level not symmetric (depth {depth} level {l})");
++        }
++        fp.push((x.dim, n1, tuple_hash(&t1)));
++    }
++    fp
++}
++
++/// Cells whose reuse ran out: still active at the parent's last level. Reports how big their
++/// coarsest level is, and how many of those vertices have an edge (could still be matched).
++fn ranout(
++    b: &BOut,
++    nlev_parent: usize,
++    depth: u32,
++) {
++    let last = b.lv.len() - 1;
++    let h = &b.lv[last];
++    let (ti, _, _) = mat_tuples(&h.a);
++    let mut deg = vec![0u32; h.dim];
++    for &i in &ti {
++        deg[i as usize] += 1;
++    }
++    let mut per: BTreeMap<u32, (u64, u64)> = BTreeMap::new();
++    for &x in &h.live {
++        let c = h.cell[x as usize];
++        if b.top[c as usize] as usize == nlev_parent - 1 {
++            let e = per.entry(c).or_default();
++            e.0 += 1;
++            e.1 += (deg[x as usize] > 0) as u64;
++        }
++    }
++    let over: Vec<&(u64, u64)> = per.values().filter(|e| e.0 > CTO as u64).collect();
++    let noreuse = b.top.iter().filter(|&&t| t == 0).count();
++    println!(
++        "RANOUT depth={depth} cells_at_parent_last_level={} over_floor={} max_n={} max_with_edges={} cells_no_reused_level={noreuse}",
++        per.len(),
++        over.len(),
++        per.values().map(|e| e.0).max().unwrap_or(0),
++        per.values().map(|e| e.1).max().unwrap_or(0)
++    );
++}
++
++fn split_live(
++    a: &M,
++    live: &[u32],
++    grp: &[u32],
++    ncells: u64,
++    ops: &Ops,
++    t: &mut Timer,
++    depth: u32,
++) -> M {
++    let n = a.nrows();
++    let ii: Vec<u64> = live.iter().map(|&v| v as u64).collect();
++    let jj: Vec<u64> = if brk("split") && depth == 1 {
++        (0..live.len()).map(|k| grp[live[(k + 1) % live.len()] as usize] as u64).collect()
++    } else {
++        live.iter().map(|&v| grp[v as usize] as u64).collect()
++    };
++    let mm = t.time("split_buildM", || {
++        let mm = M::new(t_i32(), n, ncells);
++        ok!(GxB_Matrix_build_Scalar(mm.0, ii.as_ptr(), jj.as_ptr(), ops.one_i32, ii.len() as u64));
++        mm.wait();
++        mm
++    });
++    t.time("split_mxm", || {
++        let an = M::new(t_i32(), n, n);
++        ok!(GrB_mxm(an.0, a.0, null(), GxB_ANY_PAIR_INT32, mm.0, mm.0, GrB_DESC_ST1));
++        an.wait();
++        an
++    })
++}
++
++fn fmt_timer(t: &Timer) -> String {
++    t.0.iter().map(|(k, v)| format!("{k}={v:.6}")).collect::<Vec<_>>().join(" ")
++}
++fn sum_timers(ts: &[Timer]) -> Timer {
++    let mut out = Timer::default();
++    for t in ts {
++        for (k, v) in &t.0 {
++            *out.0.entry(k).or_default() += v;
++        }
++    }
++    out
++}
++
++#[test]
++#[ignore]
++fn m1_reuse() {
++    ensure_init();
++    jit_setup();
++    println!("CT: {}", ct());
++    let path = env("M1_GRAPH").expect("M1_GRAPH");
++    let t = Instant::now();
++    let s = load(&path);
++    println!("graph {path}: n={} entries={} load={:.2}s", s.n, s.j.len(), t.elapsed().as_secs_f64());
++    let a0 = to_grb(&s);
++    let a0rc = {
++        let mut d = null();
++        ok!(GrB_Matrix_dup(&mut d, a0.0));
++        Rc::new(M(d))
++    };
++    let ops = Ops::new();
++    let threads: Vec<i32> = env("M1_THREADS").unwrap_or("1,4".into()).split(',').map(|x| x.parse().unwrap()).collect();
++    let runs: usize = env("M1_RUNS").map_or(3, |x| x.parse().unwrap());
++    let max_depth: u32 = env("M1_DEPTHS").map_or(40, |x| x.parse().unwrap());
++    let feral_runs: usize = env("M1_FERAL").map_or(3, |x| x.parse().unwrap());
++    let proxy = env("M1_CELLS").as_deref() == Some("proxy");
++    let n = s.n as u64;
++
++    let mut pos = vec![0u64; s.n];
++    {
++        let mut perm0 = None;
++        for r in 0..feral_runs.max(1) {
++            if r < feral_runs {
++                println!("LOAD feral run={r} load1={:.2}", load1());
++            }
++            let (perm, sec) = feral_perm(&s);
++            if r < feral_runs {
++                println!("FERAL run={r} sec={sec:.3}");
++            }
++            if let Some(p0) = &perm0 {
++                assert_eq!(p0, &perm, "feral not deterministic");
++            } else {
++                perm0 = Some(perm);
++            }
++            flush();
++        }
++        for (k, &v) in perm0.unwrap().iter().enumerate() {
++            pos[v as usize] = k as u64;
++        }
++    }
++
++    // untimed warm-up of depth 0: its hierarchy defines every deeper depth's cells
++    set_nthreads(threads[0]);
++    let cap0 = ((15 * n) / 1000).max(2) as i32;
++    let stop0 = 100u64;
++    let mut kept = None;
++    let (_, fp0, _) = hierarchy_keep(&a0, cap0, stop0, &ops, Some(&mut kept));
++    let p0 = depth0_parent(&a0rc, kept.take().unwrap(), &mut Timer::default());
++    println!("DEPTH0 levels={} dims={:?}", p0.len() - 1, p0.iter().map(|h| h.dim).collect::<Vec<_>>());
++    let t = Instant::now();
++    let cto_labels = if brk("lstar") { CTO + 1 } else { CTO };
++    let (labels, shares) = if proxy { proxy_labels(&pos, &p0, max_depth.min(14), cto_labels) } else { nd_labels(&s, &p0, max_depth, cto_labels) };
++    println!(
++        "LABELS_TIME {:.2}s mode={} refine={}",
++        t.elapsed().as_secs_f64(),
++        if proxy { "proxy" } else { "real" },
++        env("M1_REFINE").unwrap_or("fine".into())
++    );
++    for ((d, l), e) in &shares {
++        println!("SHARE depth={d} level={l} n={} strad={} seponly={}", e.n, e.strad, e.seponly);
++    }
++    drop(p0);
++    flush();
++
++    let mut fps_r: BTreeMap<u32, Vec<(u64, u64, i64)>> = BTreeMap::new();
++    let mut fps_b: BTreeMap<u32, Vec<(usize, u64, u64)>> = BTreeMap::new();
++    for (ti, &th) in threads.iter().enumerate() {
++        set_nthreads(th);
++        for run in 0..runs {
++            CUR_RUN.store(run as u64, Ordering::Relaxed);
++            println!("LOAD threads={th} run={run} load1={:.2}", load1());
++            set_burble(0);
++            let mut prev_live: Vec<u32> = (0..s.n as u32).collect();
++            // depth 0: the same for all three paths; B also keeps the maps on the host
++            let wall = Instant::now();
++            let mut kept = None;
++            let (rows, fp, _) = hierarchy_keep(&a0, cap0, stop0, &ops, Some(&mut kept));
++            assert_eq!(fp, fp0, "CHECK FAILED: depth-0 hierarchy differs across runs/threads");
++            let mut tk = Timer::default();
++            let mut parent = depth0_parent(&a0rc, kept.take().unwrap(), &mut tk);
++            // the design's split reads the parent depth's matrix: A_{d+1}<A_d, struct> = M ANY_PAIR M'
++            let mut prev_q0: Rc<M> = a0rc.clone();
++            let r0: f64 = rows.iter().map(|r| r.4 .0.values().sum::<f64>()).sum();
++            for (l, (ln, nnz, rounds, two, tt)) in rows.iter().enumerate() {
++                println!("RLVL threads={th} run={run} depth=0 level={l} n={ln} nnz={nnz} rounds={rounds} twohop={} {}", *two as u8, fmt_timer(tt));
++            }
++            println!(
++                "DEPTHX threads={th} run={run} depth=0 method=R total={r0:.6} split=0 extra=0 levels={} wall={:.6}",
++                rows.len(),
++                wall.elapsed().as_secs_f64()
++            );
++            for m in ["B1", "B2"] {
++                println!("DEPTHX threads={th} run={run} depth=0 method={m} total={:.6} split=0 extra={:.6} levels={}", r0 + tk.0["keep"], tk.0["keep"], rows.len());
++            }
++            flush();
++            for d in 1..labels.len() as u32 {
++                let lab = &labels[d as usize];
++                let ncells = lab.active.len();
++                let live: Vec<u32> = (0..s.n as u32).filter(|&v| (lab.grp[v as usize] as usize) < ncells && lab.active[lab.grp[v as usize] as usize]).collect();
++                if live.is_empty() {
++                    break;
++                }
++                let cells_act = lab.active.iter().filter(|&&a| a).count() as u64;
++                set_burble(d);
++                // shared fine split (charged to every path)
++                let mut st = Timer::default();
++                let q0 = split_live(&prev_q0, &live, &lab.grp, ncells as u64, &ops, &mut st, d);
++                {
++                    let mut want = 0u64;
++                    for &u in &live {
++                        let gu = lab.grp[u as usize];
++                        for &v in &s.j[s.p[u as usize] as usize..s.p[u as usize + 1] as usize] {
++                            want += (lab.grp[v as usize] == gu) as u64;
++                        }
++                    }
++                    assert_eq!(q0.nvals(), want, "CHECK FAILED: split pattern (depth {d})");
++                }
++                let split_t: f64 = st.0.values().sum();
++                if audit("inplace") {
++                    abeg("splitinplace");
++                    let t_h = Instant::now();
++                    let mut keep = vec![false; s.n];
++                    for &v in &live {
++                        keep[v as usize] = true;
++                    }
++                    let mut dl: Vec<u64> = prev_live.iter().filter(|&&v| !keep[v as usize]).map(|&v| v as u64).collect();
++                    if abrk("splitinplace") && !dl.is_empty() {
++                        dl.remove(0);
++                    }
++                    let host = t_h.elapsed().as_secs_f64();
++                    let i0 = instr();
++                    let (p, ndel, ph) = inplace_delete_insert(&prev_q0, &dl, n, None);
++                    let i1 = instr();
++                    let dupi = {
++                        let a0 = instr();
++                        let mut dd = null();
++                        ok!(GrB_Matrix_dup(&mut dd, prev_q0.0));
++                        let dd = M(dd);
++                        dd.wait();
++                        let a1 = instr();
++                        drop(dd);
++                        a1.0 - a0.0
++                    };
++                    let offi: u64 = st.1.values().map(|x| x.0).sum();
++                    println!("AUDITI2 kind=split depth={d} official_instr={offi} probe_instr={}", (i1.0 - i0.0).saturating_sub(dupi));
++                    aend();
++                    let a = mat_tuples(&p);
++                    let b = mat_tuples(&q0);
++                    assert!(a == b, "AUDIT CHECK FAILED: in-place fine split differs (depth {d}, nnz {} vs {})", a.0.len(), b.0.len());
++                    println!(
++                        "AUDITSPLIT threads={th} run={run} depth={d} nnz_prev={} nnz_new={} drop_rows={} del={ndel} official={split_t:.6} probe={:.6} host={host:.6} del_t={:.6} wait_t={:.6}",
++                        prev_q0.nvals(),
++                        q0.nvals(),
++                        dl.len(),
++                        host + ph[3],
++                        ph[0],
++                        ph[2]
++                    );
++                }
++                prev_live = live.clone();
++                let q0 = Rc::new(q0);
++                // R: compact the active vertices, then today's re-coarsening
++                let mut rt = Timer::default();
++                let qc = if (live.len() as u64) < n {
++                    Some(rt.time("compact", || {
++                        let ii: Vec<u64> = live.iter().map(|&v| v as u64).collect();
++                        let qc = M::new(t_i32(), ii.len() as u64, ii.len() as u64);
++                        ok!(GrB_Matrix_extract(qc.0, null(), null(), q0.0, ii.as_ptr(), ii.len() as u64, ii.as_ptr(), ii.len() as u64, null()));
++                        qc.wait();
++                        qc
++                    }))
++                } else {
++                    None
++                };
++                let ra = qc.as_ref().unwrap_or(&q0);
++                let nl = live.len() as u64;
++                let cap = ((15 * nl / cells_act) / 1000).max(2) as i32;
++                let stop = 100 * cells_act;
++                let (rows, fp, _) = hierarchy(ra, cap, stop, &ops);
++                drop(qc);
++                match fps_r.get(&d) {
++                    Some(f) => assert_eq!(f, &fp, "CHECK FAILED: R hierarchy differs across runs/threads at depth {d}"),
++                    None => {
++                        fps_r.insert(d, fp.clone());
++                    }
++                }
++                let rsum: f64 = rows.iter().map(|r| r.4 .0.values().sum::<f64>()).sum();
++                for (l, (ln, nnz, rounds, two, tt)) in rows.iter().enumerate() {
++                    println!("RLVL threads={th} run={run} depth={d} level={l} n={ln} nnz={nnz} rounds={rounds} twohop={} {}", *two as u8, fmt_timer(tt));
++                }
++                let rx = rt.0.get("compact").copied().unwrap_or(0.0);
++                println!(
++                    "DEPTHX threads={th} run={run} depth={d} method=R total={:.6} split={split_t:.6} extra={rx:.6} levels={} cells={cells_act} live={nl} cap={cap} coarsest={}",
++                    rsum + split_t + rx,
++                    rows.len(),
++                    fp.last().map_or(nl, |x| x.0)
++                );
++                flush();
++                // B1, B2: no matching after depth 0
++                let mc = MATCH_CALLS.load(Ordering::Relaxed);
++                let _ = bt_take();
++                let b1 = build_b(1, &parent, q0.clone(), lab, &ops);
++                println!("BOOKT threads={th} run={run} depth={d} method=B1 {}", bt_take());
++                let b2 = build_b(2, &parent, q0.clone(), lab, &ops);
++                println!("BOOKT threads={th} run={run} depth={d} method=B2 {}", bt_take());
++                assert_eq!(MATCH_CALLS.load(Ordering::Relaxed), mc, "CHECK FAILED: matching ran after depth 0 (depth {d})");
++                for c in 0..ncells {
++                    if lab.active[c] {
++                        assert_eq!(b2.top[c], lab.lstar[c], "CHECK FAILED: per-cell top level differs from the label pass (depth {d} cell {c})");
++                    }
++                }
++                let fp = compare_b(&b1, &b2, lab, d);
++                match fps_b.get(&d) {
++                    Some(f) => assert_eq!(f, &fp, "CHECK FAILED: B hierarchy differs across runs/threads at depth {d}"),
++                    None => {
++                        fps_b.insert(d, fp.clone());
++                    }
++                }
++                if ti == 0 && run == 0 {
++                    ranout(&b2, parent.len(), d);
++                }
++                for (m, b) in [("B1", &b1), ("B2", &b2)] {
++                    for l in 0..b.lv.len() {
++                        let st = &b.stats[l];
++                        println!(
++                            "BLVL threads={th} run={run} depth={d} method={m} level={l} dim={} live={} nnz={} par={} mixed={} seponly={} pieces={} extras={} rin={} xprev={} {}",
++                            b.lv[l].dim,
++                            b.lv[l].live.len(),
++                            b.lv[l].a.nvals(),
++                            st[0],
++                            st[1],
++                            st[2],
++                            st[3],
++                            st[4],
++                            st[5],
++                            st[6],
++                            fmt_timer(&b.timers[l])
++                        );
++                    }
++                    let tt = sum_timers(&b.timers);
++                    let tot: f64 = tt.0.values().sum();
++                    println!(
++                        "DEPTHX threads={th} run={run} depth={d} method={m} total={:.6} split={split_t:.6} extra=0 levels={} {}",
++                        tot + split_t,
++                        b.lv.len() - 1,
++                        fmt_timer(&tt)
++                    );
++                }
++                flush();
++                drop(b1);
++                prev_q0 = q0;
++                parent = b2.lv;
++            }
++        }
++    }
++    println!("DONE");
++}
+diff --git a/graph/src/graph/graphblas/mod.rs b/graph/src/graph/graphblas/mod.rs
+index bb78d7766..59b05d053 100644
+--- a/graph/src/graph/graphblas/mod.rs
++++ b/graph/src/graph/graphblas/mod.rs
+@@ -76,6 +76,8 @@ mod block_scaling_bench;
+ mod csr;
+ #[cfg(test)]
+ mod degree_bench;
++#[cfg(all(test, feature = "index-falkordb"))]
++mod m1_coarsen_bench;
+ #[cfg(test)]
+ mod fold_cost_bench;
+ pub mod lagraph_bindings;

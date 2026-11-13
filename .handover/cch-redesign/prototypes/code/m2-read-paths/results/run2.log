@@ -1,0 +1,28 @@
+
+running 1 test
+test index::falkordb::cch::m2_bench::m2_read_paths ... loaded /private/tmp/claude-501/-Users-dvirdukhan-Code-worktrees-FalkorDB-pr-reviews-FalkorDB/f9e19c4b-505c-4a27-80e5-7848348679f5/scratchpad/m2/data/roadNet-CA.txt: n = 1971281, directed entries = 5533214, 0.4 s; RSS 375 MB
+Phase 1 (feral ND + game): 7.56 s; ranks 1971281, arcs 12672804, triangles 226766191, y-rows opened by relax 10710236; RSS 720 MB
+Up as GrB UINT64 matrix (sparse): built in 0.08 s, 12672804 nvals, 160.0 MB (GxB_Matrix_memoryUsage); flat Topology 265.8 MB; RSS 1158 MB
+metric bit-identity vs today's customize(): A 0 differing slots, B1 0, B2 0 (of 12672804)
+row seeks during customize (B): 12681517 (x rows 1971281, y rows 10710236)
+  rep 0: today 753.0 ms | A v/s/r 45.1/48.9/505.8 ms | B1 v/s/r 94.4/128.9/1416.3 ms | B2 v/s/r 88.9/121.8/1127.1 ms; RSS 2365 MB
+  rep 1: today 776.4 ms | A v/s/r 60.9/44.2/513.1 ms | B1 v/s/r 89.6/101.6/1437.8 ms | B2 v/s/r 88.6/108.7/1125.4 ms; RSS 1275 MB
+  rep 2: today 742.1 ms | A v/s/r 43.7/44.1/504.8 ms | B1 v/s/r 89.6/115.5/1341.4 ms | B2 v/s/r 88.8/114.9/1111.6 ms; RSS 765 MB
+CUSTOMIZE median of 3: today 753.0 ms; A 599.9 ms (relax 505.8); B1 1629.1 ms (relax 1416.3); B2 1322.7 ms (relax 1125.4)
+instructions, last rep: today 14.423G, A 9.485G, B1 29.085G, B2 23.904G
+  reachable pairs: 9860 of 10000
+  A flat: distance mismatches vs today 0, path mismatches 0
+  B1 GrB wrapper iter: distance mismatches vs today 0, path mismatches 0
+  B2 GrB lean iter: distance mismatches vs today 0, path mismatches 0
+  query rep 0: | today p50 398.7 p95 536.3 p99 842.3 max 1126.0 | A flat p50 388.1 p95 499.2 p99 540.9 max 623.4 | B1 GrB wrapper iter p50 896.7 p95 1194.5 p99 1326.1 max 3081.2 | B2 GrB lean iter p50 650.0 p95 861.3 p99 1003.1 max 1890.7
+  query rep 1: | today p50 388.7 p95 497.0 p99 542.7 max 791.1 | A flat p50 388.7 p95 497.3 p99 542.0 max 665.9 | B1 GrB wrapper iter p50 886.0 p95 1184.0 p99 1312.9 max 2139.4 | B2 GrB lean iter p50 661.2 p95 865.8 p99 943.3 max 1239.5
+  query rep 2: | today p50 391.2 p95 501.2 p99 548.0 max 684.8 | A flat p50 394.0 p95 514.5 p99 672.4 max 1030.1 | B1 GrB wrapper iter p50 875.3 p95 1146.5 p99 1250.4 max 1855.9 | B2 GrB lean iter p50 658.0 p95 860.1 p99 936.9 max 1720.9
+QUERY best-of-3 per query, today: p50 384.5 us, p95 491.3 us, p99 533.5 us, max 611.2 us
+QUERY best-of-3 per query, A flat: p50 383.1 us, p95 489.6 us, p99 531.4 us, max 623.4 us
+QUERY best-of-3 per query, B1 GrB wrapper iter: p50 847.1 us, p95 1100.5 us, p99 1197.4 us, max 1453.0 us
+QUERY best-of-3 per query, B2 GrB lean iter: p50 637.8 us, p95 827.4 us, p99 896.8 us, max 1029.0 us
+RSS end 1263 MB
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 941 filtered out; finished in 89.24s
+

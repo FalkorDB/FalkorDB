@@ -1,0 +1,46 @@
+
+running 1 test
+test index::falkordb::cch::m2_bench::m2_read_paths ... loaded /private/tmp/claude-501/-Users-dvirdukhan-Code-worktrees-FalkorDB-pr-reviews-FalkorDB/f9e19c4b-505c-4a27-80e5-7848348679f5/scratchpad/m2/data/roadNet-CA.txt: n = 1971281, directed entries = 5533214, 0.3 s; RSS 375 MB
+Phase 1 (feral ND + game): 7.00 s; ranks 1971281, arcs 12672804, triangles 226766191, y-rows opened by relax 10710236; RSS 706 MB
+Up as GrB UINT64 matrix (sparse): built in 0.07 s, 12672804 nvals, 160.0 MB (GxB_Matrix_memoryUsage); flat Topology 265.8 MB; RSS 1144 MB
+metric bit-identity vs today's customize(): A 0 differing slots, B1 0, B2 0 (of 12672804)
+row seeks during customize (B): 12681517 (x rows 1971281, y rows 10710236)
+  rep 0: today 721.3 ms | A v/s/r 43.7/43.4/497.3 ms | B1 v/s/r 88.7/113.0/1550.7 ms | B2 v/s/r 88.7/110.2/1148.1 ms; RSS 2400 MB
+  rep 1: today 719.1 ms | A v/s/r 43.8/43.3/496.5 ms | B1 v/s/r 87.9/100.5/1498.6 ms | B2 v/s/r 89.6/106.1/1107.5 ms; RSS 1274 MB
+  rep 2: today 729.7 ms | A v/s/r 44.1/44.2/497.6 ms | B1 v/s/r 88.5/114.6/1527.9 ms | B2 v/s/r 89.7/122.0/1118.9 ms; RSS 764 MB
+CUSTOMIZE median of 3: today 721.3 ms; A 584.4 ms (relax 497.3); B1 1731.1 ms (relax 1527.9); B2 1330.6 ms (relax 1118.9)
+instructions, last rep: today 14.368G, A 9.484G, B1 29.086G, B2 23.917G
+  reachable pairs: 9860 of 10000
+  A flat: distance mismatches vs today 0, path mismatches 0
+  B1 GrB wrapper iter: distance mismatches vs today 0, path mismatches 0
+  B2 GrB lean iter: distance mismatches vs today 0, path mismatches 0
+  query rep 0: | today p50 386.3 p95 496.3 p99 542.5 max 797.6 | A flat p50 382.1 p95 489.1 p99 529.6 max 618.8 | B1 GrB wrapper iter p50 920.9 p95 1208.4 p99 1318.4 max 1599.3 | B2 GrB lean iter p50 677.1 p95 879.5 p99 958.4 max 1130.0
+  query rep 1: | today p50 382.0 p95 488.8 p99 530.6 max 607.4 | A flat p50 381.2 p95 488.5 p99 532.9 max 605.7 | B1 GrB wrapper iter p50 926.9 p95 1229.5 p99 1341.6 max 1532.8 | B2 GrB lean iter p50 670.9 p95 882.1 p99 960.7 max 1570.4
+  query rep 2: | today p50 383.2 p95 489.2 p99 532.4 max 602.3 | A flat p50 385.0 p95 494.8 p99 536.4 max 632.3 | B1 GrB wrapper iter p50 935.9 p95 1237.5 p99 1362.2 max 1684.6 | B2 GrB lean iter p50 657.7 p95 881.5 p99 1254.5 max 2099.5
+QUERY best-of-3 per query, today: p50 378.2 us, p95 482.8 us, p99 523.6 us, max 588.8 us
+QUERY best-of-3 per query, A flat: p50 376.9 us, p95 482.1 us, p99 523.9 us, max 605.7 us
+QUERY best-of-3 per query, B1 GrB wrapper iter: p50 876.6 us, p95 1151.5 us, p99 1274.2 us, max 1523.5 us
+QUERY best-of-3 per query, B2 GrB lean iter: p50 642.5 us, p95 837.4 us, p99 904.3 us, max 1053.1 us
+RSS end 842 MB
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 941 filtered out; finished in 89.69s
+
+       89.73 real        89.08 user         0.54 sys
+          3091841024  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              395649  page reclaims
+                   9  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   3  voluntary context switches
+               13510  involuntary context switches
+       2049321062550  instructions retired
+        387908039399  cycles elapsed
+          3059288848  peak memory footprint

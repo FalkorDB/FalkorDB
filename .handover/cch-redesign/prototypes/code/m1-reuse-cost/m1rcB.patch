@@ -1,0 +1,2344 @@
+diff --git a/graph/src/graph/graphblas/m1_coarsen_bench.rs b/graph/src/graph/graphblas/m1_coarsen_bench.rs
+new file mode 100644
+index 000000000..d3c33f4ac
+--- /dev/null
++++ b/graph/src/graph/graphblas/m1_coarsen_bench.rs
+@@ -0,0 +1,915 @@
++//! SCRATCH (never committed): M1 cost of the GraphBLAS coarsening of design §3.
++//!
++//! Env: M1_GRAPH (edge list path), M1_THREADS ("1,4"), M1_RUNS (3), M1_DEPTHS ("0..=14"),
++//! M1_BREAK (nomutual|nooffdiag|split), M1_BURBLE (1), M1_JIT (run), M1_VERIFY (1), M1_FERAL (runs).
++//!
++//!   cargo test --release -p graph --features index-falkordb m1_coarsen -- --ignored --nocapture
++
++use super::matrix::set_nthreads;
++use super::test_init::ensure_init;
++use super::*;
++use std::collections::BTreeMap;
++use std::ffi::c_void;
++use std::time::Instant;
++
++macro_rules! ok {
++    ($e:expr) => {{
++        #[allow(unused_unsafe)]
++        let info = unsafe { $e };
++        assert_eq!(info, GrB_Info::GrB_SUCCESS, "GraphBLAS: {}", stringify!($e));
++    }};
++}
++
++unsafe extern "C" {
++    fn fflush(f: *mut c_void) -> i32;
++}
++fn flush() {
++    use std::io::Write;
++    std::io::stdout().flush().unwrap();
++    unsafe { fflush(std::ptr::null_mut()) };
++}
++
++struct M(GrB_Matrix);
++impl M {
++    fn new(t: GrB_Type, r: u64, c: u64) -> M {
++        let mut m = std::ptr::null_mut();
++        ok!(GrB_Matrix_new(&mut m, t, r, c));
++        M(m)
++    }
++    fn nvals(&self) -> u64 {
++        let mut n = 0;
++        ok!(GrB_Matrix_nvals(&mut n, self.0));
++        n
++    }
++    fn nrows(&self) -> u64 {
++        let mut n = 0;
++        ok!(GrB_Matrix_nrows(&mut n, self.0));
++        n
++    }
++    fn wait(&self) {
++        ok!(GrB_Matrix_wait(self.0, GrB_WaitMode::GrB_MATERIALIZE as i32));
++    }
++    fn sum(&self) -> i64 {
++        let mut s = 0i64;
++        ok!(GrB_Matrix_reduce_INT64(&mut s, std::ptr::null_mut(), GrB_PLUS_MONOID_INT64, self.0, std::ptr::null_mut()));
++        s
++    }
++}
++impl Drop for M {
++    fn drop(&mut self) {
++        unsafe { GrB_Matrix_free(&mut self.0) };
++    }
++}
++struct V(GrB_Vector);
++impl V {
++    fn new(t: GrB_Type, n: u64) -> V {
++        let mut v = std::ptr::null_mut();
++        ok!(GrB_Vector_new(&mut v, t, n));
++        V(v)
++    }
++    fn dup(&self) -> V {
++        let mut v = std::ptr::null_mut();
++        ok!(GrB_Vector_dup(&mut v, self.0));
++        V(v)
++    }
++    fn nvals(&self) -> u64 {
++        let mut n = 0;
++        ok!(GrB_Vector_nvals(&mut n, self.0));
++        n
++    }
++    fn wait(&self) {
++        ok!(GrB_Vector_wait(self.0, GrB_WaitMode::GrB_MATERIALIZE as i32));
++    }
++    fn sum(&self) -> i64 {
++        let mut s = 0i64;
++        ok!(GrB_Vector_reduce_INT64(&mut s, std::ptr::null_mut(), GrB_PLUS_MONOID_INT64, self.0, std::ptr::null_mut()));
++        s
++    }
++    fn u64s(&self) -> (Vec<u64>, Vec<u64>) {
++        let mut n = self.nvals();
++        let mut i = vec![0u64; n as usize];
++        let mut x = vec![0u64; n as usize];
++        ok!(GrB_Vector_extractTuples_UINT64(i.as_mut_ptr(), x.as_mut_ptr(), &mut n, self.0));
++        (i, x)
++    }
++    fn i32s(&self) -> (Vec<u64>, Vec<i32>) {
++        let mut n = self.nvals();
++        let mut i = vec![0u64; n as usize];
++        let mut x = vec![0i32; n as usize];
++        ok!(GrB_Vector_extractTuples_INT32(i.as_mut_ptr(), x.as_mut_ptr(), &mut n, self.0));
++        (i, x)
++    }
++}
++impl Drop for V {
++    fn drop(&mut self) {
++        unsafe { GrB_Vector_free(&mut self.0) };
++    }
++}
++fn null<T>() -> *mut T {
++    std::ptr::null_mut()
++}
++fn t_bool() -> GrB_Type {
++    unsafe { GrB_BOOL }
++}
++fn t_i32() -> GrB_Type {
++    unsafe { GrB_INT32 }
++}
++fn t_i64() -> GrB_Type {
++    unsafe { GrB_INT64 }
++}
++fn t_u64() -> GrB_Type {
++    unsafe { GrB_UINT64 }
++}
++
++// ---- user operators (these are what a PreJIT harvest would have to cover) ----
++fn fmix32(mut h: u32) -> u32 {
++    h ^= h >> 16;
++    h = h.wrapping_mul(0x85eb_ca6b);
++    h ^= h >> 13;
++    h = h.wrapping_mul(0xc2b2_ae35);
++    h ^= h >> 16;
++    h
++}
++fn unfmix32(mut h: u32) -> u32 {
++    h ^= h >> 16;
++    h = h.wrapping_mul(0x7ed1_b41d);
++    h ^= (h >> 13) ^ (h >> 26);
++    h = h.wrapping_mul(0xa5cb_9243);
++    h ^= h >> 16;
++    h
++}
++/// K(i,j) = (A(i,j) << 32) | fmix32(j ^ salt): unique per row, so MAX is deterministic.
++unsafe extern "C" fn key_op(
++    z: *mut c_void,
++    x: *const c_void,
++    _i: GrB_Index,
++    j: GrB_Index,
++    y: *const c_void,
++) {
++    unsafe {
++        let w = *(x as *const i32) as u32 as u64;
++        let salt = *(y as *const u64) as u32;
++        *(z as *mut u64) = (w << 32) | fmix32((j as u32) ^ salt) as u64;
++    }
++}
++/// The column a key was made from.
++unsafe extern "C" fn unkey_op(
++    z: *mut c_void,
++    x: *const c_void,
++    _i: GrB_Index,
++    _j: GrB_Index,
++    y: *const c_void,
++) {
++    unsafe {
++        let k = *(x as *const u64);
++        let salt = *(y as *const u64) as u32;
++        *(z as *mut u64) = (unfmix32(k as u32) ^ salt) as u64;
++    }
++}
++unsafe extern "C" fn even_op(
++    z: *mut c_void,
++    _x: *const c_void,
++    _i: GrB_Index,
++    j: GrB_Index,
++    _y: *const c_void,
++) {
++    unsafe { *(z as *mut bool) = j & 1 == 0 };
++}
++unsafe extern "C" fn odd_op(
++    z: *mut c_void,
++    _x: *const c_void,
++    _i: GrB_Index,
++    j: GrB_Index,
++    _y: *const c_void,
++) {
++    unsafe { *(z as *mut bool) = j & 1 == 1 };
++}
++
++struct Ops {
++    key: GrB_IndexUnaryOp,
++    unkey: GrB_IndexUnaryOp,
++    even: GrB_IndexUnaryOp,
++    odd: GrB_IndexUnaryOp,
++    one_i32: GrB_Scalar,
++}
++impl Ops {
++    fn new() -> Ops {
++        let mut key = null();
++        let mut unkey = null();
++        let mut even = null();
++        let mut odd = null();
++        ok!(GrB_IndexUnaryOp_new(&mut key, Some(key_op), t_u64(), t_i32(), t_u64()));
++        ok!(GrB_IndexUnaryOp_new(&mut unkey, Some(unkey_op), t_u64(), t_u64(), t_u64()));
++        ok!(GrB_IndexUnaryOp_new(&mut even, Some(even_op), t_bool(), t_i64(), t_i64()));
++        ok!(GrB_IndexUnaryOp_new(&mut odd, Some(odd_op), t_bool(), t_i64(), t_i64()));
++        let mut one_i32 = null();
++        ok!(GrB_Scalar_new(&mut one_i32, t_i32()));
++        ok!(GrB_Scalar_setElement_INT32(one_i32, 1));
++        Ops { key, unkey, even, odd, one_i32 }
++    }
++}
++
++/// Seconds per named call, summed within a level.
++#[derive(Default, Clone)]
++struct Timer(BTreeMap<&'static str, f64>);
++impl Timer {
++    fn time<R>(
++        &mut self,
++        name: &'static str,
++        f: impl FnOnce() -> R,
++    ) -> R {
++        if burble() {
++            println!("@@CALL {name}");
++            flush();
++        }
++        let t = Instant::now();
++        let r = f();
++        *self.0.entry(name).or_default() += t.elapsed().as_secs_f64();
++        r
++    }
++}
++
++fn env(k: &str) -> Option<String> {
++    std::env::var(k).ok().filter(|s| !s.is_empty())
++}
++fn brk(k: &str) -> bool {
++    env("M1_BREAK").as_deref() == Some(k)
++}
++fn burble() -> bool {
++    env("M1_BURBLE").is_some()
++}
++/// Build C' (n x nc, row-major sorted tuples) instead of C.
++fn ct() -> bool {
++    env("M1_CT").is_some()
++}
++fn verify() -> bool {
++    env("M1_VERIFY").is_some()
++}
++
++/// w as a dense host array indexed by vertex (0 where w has no entry). Equals w.i32s().1 for a full w.
++fn dense_i32(w: &V) -> Vec<i32> {
++    let (wi, wx) = w.i32s();
++    let mut n = 0;
++    ok!(GrB_Vector_size(&mut n, w.0));
++    if wi.len() as u64 == n {
++        return wx;
++    }
++    let mut d = vec![0i32; n as usize];
++    for (i, x) in wi.into_iter().zip(wx) {
++        d[i as usize] = x;
++    }
++    d
++}
++
++/// Full UINT64 vector idx(i) = i.
++fn index_vector(n: u64) -> V {
++    let idx = V::new(t_u64(), n);
++    ok!(GrB_Vector_assign_UINT64(idx.0, null(), null(), 0, GrB_ALL, n, null()));
++    ok!(GrB_Vector_apply_IndexOp_INT64(idx.0, null(), null(), GrB_ROWINDEX_INT64, idx.0, 0, null()));
++    idx.wait();
++    idx
++}
++
++struct LevelOut {
++    c: M,
++    ac: M,
++    wc: V,
++    rounds: u32,
++    twohop: bool,
++    pairs: u64,
++}
++
++/// Number of coarsen_level calls (matching runs) so far; B1/B2 must never add to it.
++static MATCH_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++/// One coarsening level, steps (1)-(2) of design §3, every call timed.
++fn coarsen_level(
++    a: &M,
++    w: &V,
++    cap: i32,
++    salt: u64,
++    ops: &Ops,
++    t: &mut Timer,
++) -> LevelOut {
++    MATCH_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++    let n = a.nrows();
++    // Live vertices are w's entries; dead ones (removed separators) have empty rows and must not get a
++    // coarse vertex. With a full w (every existing caller) this is the old code path, unchanged.
++    let n_live = w.nvals();
++    let partial = n_live != n;
++    // (1a) cap mask: S(i,j) = w(i)+w(j) on A's pattern, keep <= cap. Skipped when no pair can exceed it.
++    let mut maxw = 0i32;
++    ok!(GrB_Vector_reduce_INT32(&mut maxw, null(), GrB_MAX_MONOID_INT32, w.0, null()));
++    let mcap = if 2 * maxw as i64 > cap as i64 {
++        Some(t.time("cap", || {
++            let mut d = null();
++            ok!(GrB_Matrix_diag(&mut d, w.0, 0));
++            let d = M(d);
++            let left = M::new(t_i32(), n, n);
++            ok!(GrB_mxm(left.0, null(), null(), GxB_PLUS_FIRST_INT32, d.0, a.0, null()));
++            let right = M::new(t_i32(), n, n);
++            ok!(GrB_mxm(right.0, null(), null(), GxB_PLUS_SECOND_INT32, a.0, d.0, null()));
++            let s = M::new(t_i32(), n, n);
++            ok!(GrB_Matrix_eWiseMult_BinaryOp(s.0, null(), null(), GrB_PLUS_INT32, left.0, right.0, null()));
++            ok!(GrB_Matrix_select_INT32(s.0, null(), null(), GrB_VALUELE_INT32, s.0, cap, null()));
++            s.wait();
++            s
++        }))
++    } else {
++        None
++    };
++    // (1b) keys by a user positional op.
++    let k = t.time("key", || {
++        let k = M::new(t_u64(), n, n);
++        let mask = mcap.as_ref().map_or(null(), |m| m.0);
++        let desc = if mcap.is_some() { unsafe { GrB_DESC_S } } else { null() };
++        ok!(GrB_Matrix_apply_IndexOp_UINT64(k.0, mask, null(), ops.key, a.0, salt, desc));
++        k.wait();
++        k
++    });
++    drop(mcap);
++    let idx = t.time("idx", || index_vector(n));
++    let mate = idx.dup();
++    let mut u = if partial {
++        t.time("idx", || {
++            let u = V::new(t_u64(), n);
++            ok!(GrB_Vector_apply(u.0, w.0, null(), GrB_IDENTITY_UINT64, idx.0, GrB_DESC_S));
++            u.wait();
++            u
++        })
++    } else {
++        idx.dup()
++    };
++    // (1c) rounds of mutual-max proposals until a round matches nothing.
++    let mut rounds = 0;
++    let mut matched = 0u64;
++    loop {
++        rounds += 1;
++        let y = V::new(t_u64(), n);
++        t.time("mxv", || {
++            ok!(GrB_mxv(y.0, u.0, null(), GxB_MAX_FIRST_UINT64, k.0, u.0, GrB_DESC_RS));
++            y.wait();
++        });
++        let np = y.nvals();
++        if np == 0 {
++            break;
++        }
++        t.time("m_unkey", || {
++            ok!(GrB_Vector_apply_IndexOp_UINT64(y.0, null(), null(), ops.unkey, y.0, salt, null()));
++            y.wait();
++        });
++        let m = V::new(t_bool(), n);
++        if brk("nomutual") {
++            ok!(GrB_Vector_assign_BOOL(m.0, y.0, null(), true, GrB_ALL, n, GrB_DESC_S));
++        } else {
++            let pf = t.time("m_full", || {
++                let pf = V::new(t_u64(), n);
++                ok!(GrB_Vector_eWiseAdd_BinaryOp(pf.0, null(), null(), GrB_SECOND_UINT64, idx.0, y.0, null()));
++                pf.wait();
++                pf
++            });
++            let q = t.time("m_extract", || {
++                let q = V::new(t_u64(), n);
++                ok!(GxB_Vector_extract_Vector(q.0, null(), null(), pf.0, pf.0, null()));
++                q.wait();
++                q
++            });
++            t.time("m_eq", || {
++                ok!(GrB_Vector_eWiseMult_BinaryOp(m.0, y.0, null(), GrB_EQ_UINT64, q.0, idx.0, GrB_DESC_RS));
++                m.wait();
++            });
++        }
++        t.time("m_assign", || {
++            ok!(GrB_Vector_assign(mate.0, m.0, null(), y.0, GrB_ALL, n, null()));
++            mate.wait();
++        });
++        let u2 = t.time("m_unext", || {
++            let u2 = V::new(t_u64(), n);
++            ok!(GrB_Vector_apply(u2.0, m.0, null(), GrB_IDENTITY_UINT64, y.0, GrB_DESC_RC));
++            u2.wait();
++            u2
++        });
++        let newly = np - u2.nvals();
++        u = u2;
++        matched += newly;
++        if newly == 0 {
++            break;
++        }
++    }
++    let round_mate = if verify() { Some(mate.u64s().1) } else { None };
++    // (1d) 2-hop pass when the matching shrinks the level by under 15 %.
++    let mut twohop = false;
++    if (matched / 2) * 100 < 15 * n_live {
++        twohop = true;
++        let pairs = t.time("twohop", || {
++            let um = V::new(t_bool(), n);
++            ok!(GrB_Vector_eWiseMult_BinaryOp(um.0, null(), null(), GrB_EQ_UINT64, mate.0, idx.0, null()));
++            let anchor = V::new(t_u64(), n);
++            ok!(GrB_mxv(anchor.0, um.0, null(), GxB_MAX_FIRST_UINT64, k.0, idx.0, GrB_DESC_R));
++            ok!(GrB_Vector_apply_IndexOp_UINT64(anchor.0, null(), null(), ops.unkey, anchor.0, salt, null()));
++            let jv = V::new(t_u64(), n);
++            ok!(GrB_Vector_apply(jv.0, anchor.0, null(), GrB_IDENTITY_UINT64, idx.0, GrB_DESC_RS));
++            let g = M::new(t_u64(), n, n);
++            ok!(GxB_Matrix_build_Vector(g.0, anchor.0, jv.0, jv.0, null(), null()));
++            let p = M::new(t_i64(), n, n);
++            ok!(GxB_Matrix_sort(null(), p.0, GrB_LT_UINT64, g.0, null()));
++            let e = M::new(t_i64(), n, n);
++            ok!(GrB_Matrix_select_INT64(e.0, null(), null(), ops.even, p.0, 0, null()));
++            let o = M::new(t_i64(), n, n);
++            ok!(GrB_Matrix_select_INT64(o.0, null(), null(), ops.odd, p.0, 0, null()));
++            let e2 = M::new(t_i64(), n, n - 1);
++            let lo = [0u64, n - 2];
++            ok!(GrB_Matrix_extract(e2.0, null(), null(), e.0, GrB_ALL, n, lo.as_ptr(), GxB_RANGE, null()));
++            let o2 = M::new(t_i64(), n, n - 1);
++            let hi = [1u64, n - 1];
++            ok!(GrB_Matrix_extract(o2.0, null(), null(), o.0, GrB_ALL, n, hi.as_ptr(), GxB_RANGE, null()));
++            let pe = M::new(t_i64(), n, n - 1);
++            ok!(GrB_Matrix_eWiseMult_BinaryOp(pe.0, null(), null(), GrB_FIRST_INT64, e2.0, o2.0, null()));
++            let po = M::new(t_i64(), n, n - 1);
++            ok!(GrB_Matrix_eWiseMult_BinaryOp(po.0, null(), null(), GrB_SECOND_INT64, e2.0, o2.0, null()));
++            let mut np = pe.nvals();
++            let mut xe = vec![0i64; np as usize];
++            let mut xo = vec![0i64; np as usize];
++            ok!(GrB_Matrix_extractTuples_INT64(null(), null(), xe.as_mut_ptr(), &mut np, pe.0));
++            ok!(GrB_Matrix_extractTuples_INT64(null(), null(), xo.as_mut_ptr(), &mut np, po.0));
++            // host: cap check, then both directions into mate
++            let wv = dense_i32(w);
++            let mut bi = Vec::with_capacity(2 * xe.len());
++            let mut bx = Vec::with_capacity(2 * xe.len());
++            for (&x, &y) in xe.iter().zip(&xo) {
++                if (wv[x as usize] as i64 + wv[y as usize] as i64) <= cap as i64 {
++                    bi.push(x as u64);
++                    bx.push(y as u64);
++                    bi.push(y as u64);
++                    bx.push(x as u64);
++                }
++            }
++            let tmp = V::new(t_u64(), n);
++            ok!(GrB_Vector_build_UINT64(tmp.0, bi.as_ptr(), bx.as_ptr(), bi.len() as u64, null()));
++            ok!(GrB_Vector_assign(mate.0, tmp.0, null(), tmp.0, GrB_ALL, n, GrB_DESC_S));
++            mate.wait();
++            bi.len() as u64 / 2
++        });
++        matched += 2 * pairs;
++    }
++    if let Some(rm) = round_mate {
++        check_matching(a, w, cap, &rm, &mate.u64s().1);
++    }
++    drop(k);
++    // (1e) C: one row per coarse vertex; leader = min(i, mate(i)).
++    let (l, lead) = t.time("c_leader", || {
++        let l = V::new(t_u64(), n);
++        ok!(GrB_Vector_eWiseMult_BinaryOp(l.0, null(), null(), GrB_MIN_UINT64, idx.0, mate.0, null()));
++        let lead = V::new(t_bool(), n);
++        ok!(GrB_Vector_eWiseMult_BinaryOp(lead.0, null(), null(), GrB_EQ_UINT64, l.0, idx.0, null()));
++        ok!(GrB_Vector_select_BOOL(lead.0, null(), null(), GrB_VALUEEQ_BOOL, lead.0, true, null()));
++        let lead = if partial {
++            let l2 = V::new(t_bool(), n);
++            ok!(GrB_Vector_apply(l2.0, w.0, null(), GrB_IDENTITY_BOOL, lead.0, GrB_DESC_S));
++            l2
++        } else {
++            lead
++        };
++        lead.wait();
++        l.wait();
++        (l, lead)
++    });
++    let (cid, nc) = t.time("c_number_host", || {
++        let mut nc = lead.nvals();
++        let mut li = vec![0u64; nc as usize];
++        ok!(GrB_Vector_extractTuples_BOOL(li.as_mut_ptr(), null(), &mut nc, lead.0));
++        let ids: Vec<u64> = (0..nc).collect();
++        let cid = V::new(t_u64(), n);
++        ok!(GrB_Vector_build_UINT64(cid.0, li.as_ptr(), ids.as_ptr(), nc, null()));
++        cid.wait();
++        (cid, nc)
++    });
++    let ca = t.time("c_extract", || {
++        let ca = V::new(t_u64(), n);
++        ok!(GxB_Vector_extract_Vector(ca.0, null(), null(), cid.0, l.0, null()));
++        ca.wait();
++        ca
++    });
++    let c = t.time("c_build", || {
++        let c = if ct() { M::new(t_i32(), n, nc) } else { M::new(t_i32(), nc, n) };
++        let idl = if partial {
++            let v = V::new(t_u64(), n);
++            ok!(GrB_Vector_apply(v.0, w.0, null(), GrB_IDENTITY_UINT64, idx.0, GrB_DESC_S));
++            Some(v)
++        } else {
++            None
++        };
++        let ii = idl.as_ref().map_or(idx.0, |v| v.0);
++        if ct() {
++            ok!(GxB_Matrix_build_Scalar_Vector(c.0, ii, ca.0, ops.one_i32, null()));
++        } else {
++            ok!(GxB_Matrix_build_Scalar_Vector(c.0, ca.0, ii, ops.one_i32, null()));
++        }
++        c.wait();
++        c
++    });
++    // (2) contraction A_c = select(OFFDIAG, C A C'), PLUS_TIMES_INT32; w_c = C w.
++    let tmat = t.time("CA", || {
++        let tm = M::new(t_i32(), nc, n);
++        let d = if ct() { unsafe { GrB_DESC_T0 } } else { null() };
++        ok!(GrB_mxm(tm.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, c.0, a.0, d));
++        tm.wait();
++        tm
++    });
++    let ac = t.time("CAC'", || {
++        let ac = M::new(t_i32(), nc, nc);
++        let d = if ct() { null() } else { unsafe { GrB_DESC_T1 } };
++        ok!(GrB_mxm(ac.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, tmat.0, c.0, d));
++        ac.wait();
++        ac
++    });
++    drop(tmat);
++    if !brk("nooffdiag") {
++        t.time("offdiag", || {
++            ok!(GrB_Matrix_select_INT64(ac.0, null(), null(), GrB_OFFDIAG, ac.0, 0, null()));
++            ac.wait();
++        });
++    }
++    let wc = t.time("Cw", || {
++        let wc = V::new(t_i32(), nc);
++        let d = if ct() { unsafe { GrB_DESC_T0 } } else { null() };
++        ok!(GrB_mxv(wc.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, c.0, w.0, d));
++        wc.wait();
++        wc
++    });
++    // checks (cheap, always on; untimed)
++    let diag = M::new(t_i32(), nc, nc);
++    ok!(GrB_Matrix_select_INT64(diag.0, null(), null(), GrB_DIAG, ac.0, 0, null()));
++    assert_eq!(diag.nvals(), 0, "CHECK FAILED: A_c has a diagonal");
++    assert_eq!(wc.sum(), w.sum(), "CHECK FAILED: vertex weight not conserved");
++    assert_eq!(c.nvals(), n_live, "CHECK FAILED: C must have one entry per live fine vertex");
++    LevelOut { c, ac, wc, rounds, twohop, pairs: matched / 2 }
++}
++
++/// mate is an involution; round pairs are adjacent; every pair is within the cap.
++fn check_matching(
++    a: &M,
++    w: &V,
++    cap: i32,
++    round_mate: &[u64],
++    mate: &[u64],
++) {
++    let wv = dense_i32(w);
++    for (i, &m) in mate.iter().enumerate() {
++        let m = m as usize;
++        assert_eq!(mate[m] as usize, i, "CHECK FAILED: mate is not an involution at {i}");
++        if m != i {
++            assert!(wv[i] as i64 + wv[m] as i64 <= cap as i64, "CHECK FAILED: cap");
++        }
++        if round_mate[i] as usize != i {
++            let mut x = 0i32;
++            let info = unsafe { GrB_Matrix_extractElement_INT32(&mut x, a.0, i as u64, round_mate[i]) };
++            assert_eq!(info, GrB_Info::GrB_SUCCESS, "CHECK FAILED: matched pair not adjacent");
++        }
++    }
++}
++
++/// Host CSR of the symmetric, loop-free, isolated-free skeleton.
++struct Csr {
++    n: usize,
++    p: Vec<u64>,
++    j: Vec<u64>,
++}
++fn load(path: &str) -> Csr {
++    let text = std::fs::read_to_string(path).unwrap();
++    let mut e: Vec<(u64, u64)> = Vec::new();
++    let mut n = 0u64;
++    for line in text.lines() {
++        if line.starts_with('#') {
++            continue;
++        }
++        let mut it = line.split_whitespace();
++        let u: u64 = it.next().unwrap().parse().unwrap();
++        let v: u64 = it.next().unwrap().parse().unwrap();
++        if u == v {
++            continue;
++        }
++        n = n.max(u + 1).max(v + 1);
++        e.push((u, v));
++        e.push((v, u));
++    }
++    e.sort_unstable();
++    e.dedup();
++    let mut map = vec![u64::MAX; n as usize];
++    let mut c = 0u64;
++    for &(u, _) in &e {
++        if map[u as usize] == u64::MAX {
++            map[u as usize] = c;
++            c += 1;
++        }
++    }
++    let nn = c as usize;
++    let mut p = vec![0u64; nn + 1];
++    let mut j = Vec::with_capacity(e.len());
++    // e sorted by u, and map is increasing in u, so rows come out in order.
++    for &(u, v) in &e {
++        p[map[u as usize] as usize + 1] += 1;
++        j.push(map[v as usize]);
++    }
++    for k in 0..nn {
++        p[k + 1] += p[k];
++    }
++    // columns within a row: map is monotone, so still sorted
++    Csr { n: nn, p, j }
++}
++fn to_grb(s: &Csr) -> M {
++    let mut ii = Vec::with_capacity(s.j.len());
++    for u in 0..s.n {
++        for _ in s.p[u]..s.p[u + 1] {
++            ii.push(u as u64);
++        }
++    }
++    let x = vec![1i32; s.j.len()];
++    let a = M::new(t_i32(), s.n as u64, s.n as u64);
++    ok!(GrB_Matrix_build_INT32(a.0, ii.as_ptr(), s.j.as_ptr(), x.as_ptr(), ii.len() as u64, null()));
++    a.wait();
++    a
++}
++
++fn feral_perm(s: &Csr) -> (Vec<i64>, f64) {
++    let xadj: Vec<i64> = s.p.iter().map(|&x| x as i64).collect();
++    let adj: Vec<i64> = s.j.iter().map(|&x| x as i64).collect();
++    let pat = feral_metis::CscPattern::new(s.n, &xadj, &adj).unwrap();
++    let t = Instant::now();
++    let perm = feral_metis::metis_order(&pat).unwrap();
++    (perm, t.elapsed().as_secs_f64())
++}
++
++/// (4) the split: A_next<A, struct> = M ANY_PAIR M', M(i, label(i)) = 1.
++fn split(
++    a: &M,
++    labels: &[u32],
++    cells: u64,
++    ops: &Ops,
++    t: &mut Timer,
++) -> M {
++    let n = a.nrows();
++    let lv = V::new(t_u64(), n);
++    let ii: Vec<u64> = (0..n).collect();
++    let lx: Vec<u64> = if brk("split") {
++        (0..n as usize).map(|i| labels[(i + 1) % n as usize] as u64).collect()
++    } else {
++        labels.iter().map(|&x| x as u64).collect()
++    };
++    ok!(GrB_Vector_build_UINT64(lv.0, ii.as_ptr(), lx.as_ptr(), n, null()));
++    let idx = index_vector(n);
++    let mm = t.time("split_buildM", || {
++        let mm = M::new(t_i32(), n, cells);
++        ok!(GxB_Matrix_build_Scalar_Vector(mm.0, idx.0, lv.0, ops.one_i32, null()));
++        mm.wait();
++        mm
++    });
++    t.time("split_mxm", || {
++        let an = M::new(t_i32(), n, n);
++        ok!(GrB_mxm(an.0, a.0, null(), GxB_ANY_PAIR_INT32, mm.0, mm.0, GrB_DESC_ST1));
++        an.wait();
++        an
++    })
++}
++fn host_split_count(
++    s: &Csr,
++    labels: &[u32],
++) -> u64 {
++    let mut c = 0;
++    for u in 0..s.n {
++        for &v in &s.j[s.p[u] as usize..s.p[u + 1] as usize] {
++            c += (labels[u] == labels[v as usize]) as u64;
++        }
++    }
++    c
++}
++
++struct Rng(u64);
++impl Rng {
++    fn next(&mut self) -> u64 {
++        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
++        let mut z = self.0;
++        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
++        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
++        z ^ (z >> 31)
++    }
++}
++
++/// Coarsen `a0` to <= stop vertices or < 5 % shrink, then project a random 2-way label back.
++/// Returns per-level timers (level 0 = finest), the fingerprint and the level-0 label.
++fn hierarchy(
++    a0: &M,
++    cap: i32,
++    stop: u64,
++    ops: &Ops,
++) -> (Vec<(u64, u64, u32, bool, Timer)>, Vec<(u64, u64, i64)>, Vec<u32>) {
++    hierarchy_keep(a0, None, cap, stop, ops, None)
++}
++
++/// The levels R built, handed to the reuse paths: (A_l or null for the input, w_l, C_l: l -> l+1), A_L, w_L.
++type Kept = (Vec<(M, V, M)>, Option<M>, V);
++
++fn hierarchy_keep(
++    a0: &M,
++    w_init: Option<V>,
++    cap: i32,
++    stop: u64,
++    ops: &Ops,
++    keep: Option<&mut Option<Kept>>,
++) -> (Vec<(u64, u64, u32, bool, Timer)>, Vec<(u64, u64, i64)>, Vec<u32>) {
++    let n0 = a0.nrows();
++    let w0 = w_init.unwrap_or_else(|| {
++        let w0 = V::new(t_i32(), n0);
++        ok!(GrB_Vector_assign_INT32(w0.0, null(), null(), 1, GrB_ALL, n0, null()));
++        w0
++    });
++    let mut levels: Vec<(M, V, M)> = Vec::new(); // (A_l, w_l, C_l)
++    let mut rows = Vec::new();
++    let mut fp = Vec::new();
++    let mut a = None::<M>;
++    let mut w = w0;
++    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++    let mut salt = if brk("salt") { 0x5EED_u64 + call } else { 0x5EED_u64 };
++    loop {
++        let cur: &M = a.as_ref().unwrap_or(a0);
++        let n = w.nvals(); // live vertices (all of them unless w_init leaves some out)
++        if n <= stop || rows.len() >= 200 {
++            break;
++        }
++        let mut t = Timer::default();
++        salt = salt.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 1;
++        let out = coarsen_level(cur, &w, cap, salt & 0xFFFF_FFFF, ops, &mut t);
++        let nc = out.ac.nrows();
++        rows.push((n, cur.nvals(), out.rounds, out.twohop, t));
++        fp.push((nc, out.ac.nvals(), out.ac.sum()));
++        let _ = out.pairs;
++        let prev_a = a.take();
++        let prev_w = std::mem::replace(&mut w, out.wc);
++        // keep A_l (None for the input) and C_l for the projection
++        levels.push((prev_a.unwrap_or_else(|| M(null())), prev_w, out.c));
++        a = Some(out.ac);
++        if nc * 100 > 95 * n {
++            break;
++        }
++    }
++    // (3) projection: random labels on the coarsest level, then mxv(C', labels) per level.
++    let top = a.as_ref().map_or(n0, |m| m.nrows());
++    let mut rng = Rng(42);
++    let lab: Vec<i32> = (0..top).map(|_| (rng.next() & 1) as i32).collect();
++    let ii: Vec<u64> = (0..top).collect();
++    let mut lv = V::new(t_i32(), top);
++    ok!(GrB_Vector_build_INT32(lv.0, ii.as_ptr(), lab.as_ptr(), top, null()));
++    for (l, (al, _wl, cl)) in levels.iter().enumerate().rev() {
++        let nf = rows[l].0; // live vertices of the fine level
++        // its dimension (equal to nf unless some vertices are dead)
++        let nd = if ct() {
++            cl.nrows()
++        } else {
++            let mut c = 0;
++            ok!(GrB_Matrix_ncols(&mut c, cl.0));
++            c
++        };
++        let t = &mut rows[l].4;
++        let fine = t.time("project", || {
++            let f = V::new(t_i32(), nd);
++            let d = if ct() { null() } else { unsafe { GrB_DESC_T0 } };
++            ok!(GrB_mxv(f.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, cl.0, lv.0, d));
++            f.wait();
++            f
++        });
++        assert_eq!(fine.nvals(), nf, "CHECK FAILED: projection lost vertices");
++        let am = if al.0.is_null() { a0.0 } else { al.0 };
++        t.time("bnd", || {
++            let b = V::new(t_i32(), nd);
++            ok!(GrB_mxv(b.0, null(), null(), GxB_PLUS_SECOND_INT32, am, fine.0, null()));
++            b.wait();
++        });
++        lv = fine;
++    }
++    let (_, l0) = lv.i32s();
++    if let Some(k) = keep {
++        *k = Some((levels, a, w));
++    }
++    (rows, fp, l0.into_iter().map(|x| x as u32).collect())
++}
++
++#[test]
++#[ignore]
++fn m1_coarsen() {
++    ensure_init();
++    for x in [0u32, 1, 2, 12345, 0xFFFF_FFFF, 0xDEAD_BEEF] {
++        assert_eq!(unfmix32(fmix32(x)), x);
++    }
++    if env("M1_JIT").as_deref() == Some("run") {
++        ok!(GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_Control::GxB_JIT_RUN as i32, GxB_Option_Field::GxB_JIT_C_CONTROL as _));
++        println!("JIT: RUN");
++    }
++    let path = env("M1_GRAPH").expect("M1_GRAPH");
++    let t = Instant::now();
++    let s = load(&path);
++    println!("graph {path}: n={} entries={} load={:.2}s", s.n, s.j.len(), t.elapsed().as_secs_f64());
++    let a0 = to_grb(&s);
++    let ops = Ops::new();
++    let threads: Vec<i32> = env("M1_THREADS").unwrap_or("1,4".into()).split(',').map(|x| x.parse().unwrap()).collect();
++    let runs: usize = env("M1_RUNS").map_or(3, |x| x.parse().unwrap());
++    let max_depth: u32 = env("M1_DEPTHS").map_or(14, |x| x.parse().unwrap());
++    let feral_runs: usize = env("M1_FERAL").map_or(3, |x| x.parse().unwrap());
++
++    // feral: whole ordering time, and its order for the depth>0 cell labels
++    let mut pos = vec![0u64; s.n];
++    if max_depth > 0 || feral_runs > 0 {
++        let mut times = Vec::new();
++        let mut perm0 = None;
++        for r in 0..feral_runs.max(1) {
++            let (perm, sec) = feral_perm(&s);
++            println!("FERAL run={r} sec={sec:.3}");
++            times.push(sec);
++            if let Some(p0) = &perm0 {
++                assert_eq!(p0, &perm, "feral not deterministic");
++            } else {
++                perm0 = Some(perm);
++            }
++            flush();
++        }
++        for (k, &v) in perm0.unwrap().iter().enumerate() {
++            pos[v as usize] = k as u64;
++        }
++    }
++    if burble() {
++        ok!(GxB_Global_Option_set_INT32(GxB_Option_Field::GxB_BURBLE as _, 1));
++    }
++    let n = s.n as u64;
++    let mut fps: BTreeMap<u32, Vec<(u64, u64, i64)>> = BTreeMap::new();
++    for &th in &threads {
++        set_nthreads(th);
++        for run in 0..runs {
++            for d in 0..=max_depth {
++                let cells = 1u64 << d;
++                let mut st = Timer::default();
++                // depth d's block-diagonal matrix: cells = contiguous chunks of feral's order
++                let ad = if d == 0 {
++                    None
++                } else {
++                    let labels: Vec<u32> = (0..s.n).map(|v| (pos[v] * cells / n) as u32).collect();
++                    let ad = split(&a0, &labels, cells, &ops, &mut st);
++                    if !brk("split") || d == 1 {
++                        let want = host_split_count(&s, &labels);
++                        assert_eq!(ad.nvals(), want, "CHECK FAILED: split pattern (depth {d})");
++                    }
++                    Some(ad)
++                };
++                let a = ad.as_ref().unwrap_or(&a0);
++                let cap = ((15 * n / cells) / 1000).max(2) as i32; // 1.5 * cell weight / 100
++                let stop = 100 * cells;
++                let wall = Instant::now();
++                let (rows, fp, l0) = hierarchy(a, cap, stop, &ops);
++                let wall = wall.elapsed().as_secs_f64();
++                if d == 0 {
++                    // (4) once at the top depth: projected (clustered) label, then iid label.
++                    let lab_iid: Vec<u32> = {
++                        let mut r = Rng(7);
++                        (0..s.n).map(|_| (r.next() & 1) as u32).collect()
++                    };
++                    for (name, lab) in [("projected", &l0), ("iid", &lab_iid)] {
++                        let mut t = Timer::default();
++                        let an = split(&a0, lab, 2, &ops, &mut t);
++                        let want = host_split_count(&s, lab);
++                        let got = an.nvals();
++                        println!(
++                            "SPLIT threads={th} run={run} label={name} kept={got} of={} buildM={:.6} mxm={:.6}",
++                            a0.nvals(),
++                            t.0["split_buildM"],
++                            t.0["split_mxm"]
++                        );
++                        assert_eq!(got, want, "CHECK FAILED: split pattern");
++                    }
++                }
++                match fps.get(&d) {
++                    Some(f) => assert_eq!(f, &fp, "CHECK FAILED: hierarchy differs across runs/threads at depth {d}"),
++                    None => {
++                        fps.insert(d, fp.clone());
++                    }
++                }
++                for (l, (ln, nnz, rounds, two, t)) in rows.iter().enumerate() {
++                    let calls: Vec<String> = t.0.iter().map(|(k, v)| format!("{k}={v:.6}")).collect();
++                    println!(
++                        "LVL threads={th} run={run} depth={d} level={l} n={ln} nnz={nnz} rounds={rounds} twohop={} {}",
++                        *two as u8,
++                        calls.join(" ")
++                    );
++                }
++                let spl: f64 = st.0.values().sum();
++                println!(
++                    "DEPTH threads={th} run={run} depth={d} levels={} coarsest={} wall={wall:.6} split={spl:.6}",
++                    rows.len(),
++                    fp.last().map_or(a.nrows(), |x| x.0)
++                );
++                flush();
++            }
++        }
++    }
++}
++
++#[path = "m1_reuse_bench.rs"]
++mod reuse;
+diff --git a/graph/src/graph/graphblas/m1_reuse_bench.rs b/graph/src/graph/graphblas/m1_reuse_bench.rs
+new file mode 100644
+index 000000000..9c0a2ec54
+--- /dev/null
++++ b/graph/src/graph/graphblas/m1_reuse_bench.rs
+@@ -0,0 +1,1404 @@
++//! SCRATCH (never committed): D5 option (b), cost. For every ND depth >= 1 it times
++//!   R  - re-coarsen from scratch (the parent bench's `hierarchy`),
++//!   B1 - reuse the parent's matching, re-contract every reused level with straddlers split,
++//!   B2 - the same coarse graphs: one masked split of the parent's level plus straddler-only
++//!        re-contraction,
++//!   CS - capstop: B2 while a cell's heaviest coarse vertex stays within R's cap, then that cell
++//!        coarsens fresh with R's matching.
++//! Depth 0 is R's hierarchy, shared by all four.
++//!
++//! Env, besides the parent's M1_GRAPH, M1_THREADS, M1_RUNS, M1_DEPTHS, M1_JIT, M1_CT, M1_FERAL, M1_BREAK:
++//!   M1R_CELLS = real (default): each cell is bisected on its coarsest reused level (by feral position),
++//!               projected with a greedy boundary refinement at every level, and a vertex separator
++//!               is taken at level 0 | chunks: 2^d contiguous chunks of feral's order (the earlier proxy)
++//!   M1R_CHECK = all: full B1/B2 checks on every run (default: run 0 of each thread count)
++//!
++//!   cargo test --release -p graph --features index-falkordb m1_reuse -- --ignored --nocapture
++
++use super::*;
++use std::collections::BTreeMap;
++use std::sync::atomic::Ordering::Relaxed;
++use std::time::Instant;
++
++const SEP: u32 = u32::MAX;
++const NONE: u32 = u32::MAX;
++
++fn ncols(a: &M) -> u64 {
++    let mut n = 0;
++    ok!(GrB_Matrix_ncols(&mut n, a.0));
++    n
++}
++fn tuples(a: &M) -> (Vec<u64>, Vec<u64>, Vec<i32>) {
++    a.wait(); // materialize: sorted within rows, so tuple lists compare as sets
++    let mut n = a.nvals();
++    let mut i = vec![0u64; n as usize];
++    let mut j = vec![0u64; n as usize];
++    let mut x = vec![0i32; n as usize];
++    ok!(GrB_Matrix_extractTuples_INT32(i.as_mut_ptr(), j.as_mut_ptr(), x.as_mut_ptr(), &mut n, a.0));
++    (i, j, x)
++}
++fn row_degrees(a: &M) -> Vec<u32> {
++    let mut n = a.nvals();
++    let mut i = vec![0u64; n as usize];
++    ok!(GrB_Matrix_extractTuples_INT32(i.as_mut_ptr(), null(), null(), &mut n, a.0));
++    let mut d = vec![0u32; a.nrows() as usize];
++    for r in i {
++        d[r as usize] += 1;
++    }
++    d
++}
++fn vec_i32(n: u64, ids: &[u64], x: &[i32]) -> V {
++    let v = V::new(t_i32(), n);
++    ok!(GrB_Vector_build_INT32(v.0, ids.as_ptr(), x.as_ptr(), ids.len() as u64, null()));
++    v.wait();
++    v
++}
++fn mxv_i32(a: &M, x: &V, transpose: bool) -> V {
++    let mut r = 0;
++    ok!(if transpose { GrB_Matrix_ncols(&mut r, a.0) } else { GrB_Matrix_nrows(&mut r, a.0) });
++    let y = V::new(t_i32(), r);
++    let d = if transpose { unsafe { GrB_DESC_T0 } } else { null() };
++    ok!(GrB_mxv(y.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, a.0, x.0, d));
++    y.wait();
++    y
++}
++
++/// One reused level l >= 1. Ids are the parent's ids at level l, plus one appended id per straddler
++/// part; a parent id whose members split, or were all dropped, is a hole (cell SEP, weight 0).
++struct Lvl {
++    n: u64,
++    a: M,
++    /// C' (n_{l-1} x n_l): projection and column map.
++    ct: M,
++    wv: V,
++    w: Vec<i32>,
++    cell: Vec<u32>,
++    /// The parent's id at this level (identity for kept ids).
++    pa: Vec<u32>,
++    /// Level l-1 id -> level l id (NONE for dead ids and for cells that stopped reusing).
++    cmap: Vec<u32>,
++    live: u64,
++}
++#[derive(Default)]
++struct Hier {
++    levels: Vec<Lvl>,
++}
++
++/// Level 0 of a depth: the split graph, its cells and unit weights.
++struct L0<'a> {
++    a: &'a M,
++    n: u64,
++    cell: &'a [u32],
++    w: &'a [i32],
++    live: u64,
++}
++struct View<'a> {
++    a: &'a M,
++    n: u64,
++    cell: &'a [u32],
++    w: &'a [i32],
++    pa: Option<&'a [u32]>,
++    live: u64,
++}
++fn view<'a>(
++    h: &'a Hier,
++    l0: &'a L0,
++    s: usize,
++) -> View<'a> {
++    if s == 0 {
++        View { a: l0.a, n: l0.n, cell: l0.cell, w: l0.w, pa: None, live: l0.live }
++    } else {
++        let x = &h.levels[s - 1];
++        View { a: &x.a, n: x.n, cell: &x.cell, w: &x.w, pa: Some(&x.pa), live: x.live }
++    }
++}
++
++/// Depth 0: R's kept hierarchy as a parent for depth 1 (host maps extracted, timed as "rootmap").
++fn root_hier(
++    kept: Kept,
++    n0: u64,
++    t: &mut Timer,
++) -> Hier {
++    assert!(ct(), "the reuse paths need M1_CT=1 (C' maps)");
++    let (levels, mut a_last, w_last) = kept;
++    let nl = levels.len();
++    let mut w_last = Some(w_last);
++    let mut as_: Vec<Option<M>> = Vec::new();
++    let mut ws: Vec<Option<V>> = Vec::new();
++    let mut cs: Vec<Option<M>> = Vec::new();
++    for (a, w, c) in levels {
++        as_.push(Some(a));
++        ws.push(Some(w));
++        cs.push(Some(c));
++    }
++    let mut h = Hier::default();
++    let mut prev_n = n0;
++    for l in 1..=nl {
++        let a = if l < nl { as_[l].take().unwrap() } else { a_last.take().unwrap() };
++        let wv = if l < nl { ws[l].take().unwrap() } else { w_last.take().unwrap() };
++        let ctm = cs[l - 1].take().unwrap();
++        let (n, cmap, w) = t.time("rootmap", || {
++            let n = ncols(&ctm);
++            let (i, j, _) = tuples(&ctm);
++            let mut cmap = vec![NONE; prev_n as usize];
++            for (x, y) in i.iter().zip(&j) {
++                cmap[*x as usize] = *y as u32;
++            }
++            (n, cmap, dense_i32(&wv))
++        });
++        let live = w.iter().filter(|&&x| x > 0).count() as u64;
++        h.levels.push(Lvl {
++            n,
++            a,
++            ct: ctm,
++            wv,
++            w,
++            cell: vec![0; n as usize],
++            pa: (0..n as u32).collect(),
++            cmap,
++            live,
++        });
++        prev_n = n;
++    }
++    h
++}
++
++/// Host numbering of a child level (timed as "number" by the callers).
++struct Num {
++    n: u64,
++    cmap: Vec<u32>,
++    w: Vec<i32>,
++    cell: Vec<u32>,
++    pa: Vec<u32>,
++    live: u64,
++    ct_i: Vec<u64>,
++    ct_j: Vec<u64>,
++    cl_q: Vec<u64>,
++    cl_c: Vec<u64>,
++    ps_i: Vec<u64>,
++    ps_j: Vec<u64>,
++    strad: u64,
++    sep_only: u64,
++    parent_live: u64,
++    maxw: Vec<i32>,
++    plim: Vec<u32>,
++}
++
++/// Child level l from the child's level l-1 (`p`) and the parent's level l (`par`): a child vertex
++/// at l is (parent vertex at l, child cell). A parent vertex is clean when all its members are live
++/// in one child cell (its weight is then whole); its id is kept. Otherwise each child cell it
++/// touches gets an appended part, ordered by (parent id, cell).
++fn number(
++    p: &View,
++    par: &Lvl,
++    active: Option<&[bool]>,
++    ncells: usize,
++) -> Num {
++    let np = par.n as usize;
++    let nprev = p.n as usize;
++    let mut f = vec![NONE; np];
++    let mut multi = vec![false; np];
++    let mut ws = vec![0i64; np];
++    let mut qx = vec![NONE; nprev];
++    let mut plim_flag = vec![false; ncells];
++    for x in 0..nprev {
++        let c = p.cell[x];
++        if c == SEP {
++            continue;
++        }
++        if let Some(a) = active {
++            if !a[c as usize] {
++                continue;
++            }
++        }
++        let pid = p.pa.map_or(x, |pa| pa[x] as usize);
++        let q = par.cmap[pid];
++        if q == NONE {
++            plim_flag[c as usize] = true;
++            continue;
++        }
++        qx[x] = q;
++        let qi = q as usize;
++        ws[qi] += p.w[x] as i64;
++        if f[qi] == NONE {
++            f[qi] = c;
++        } else if f[qi] != c {
++            multi[qi] = true;
++        }
++    }
++    let sepclean = brk("sepclean");
++    let merge = brk("mergeparts");
++    let is_clean = |q: usize| f[q] != NONE && !multi[q] && (sepclean || ws[q] == par.w[q] as i64);
++    let mut sx: Vec<(u32, u32, u32)> = Vec::new();
++    for (x, &q) in qx.iter().enumerate() {
++        if q != NONE && !is_clean(q as usize) {
++            sx.push((q, if merge { 0 } else { p.cell[x] }, x as u32));
++        }
++    }
++    sx.sort_unstable();
++    let mut cmap = vec![NONE; nprev];
++    let mut part_q: Vec<u32> = Vec::new();
++    let mut part_c: Vec<u32> = Vec::new();
++    let mut part_w: Vec<i64> = Vec::new();
++    let mut last = (NONE, NONE);
++    for &(q, kc, x) in &sx {
++        if (q, kc) != last {
++            part_q.push(q);
++            part_c.push(p.cell[x as usize]);
++            part_w.push(0);
++            last = (q, kc);
++        }
++        cmap[x as usize] = (np + part_q.len() - 1) as u32;
++        *part_w.last_mut().unwrap() += p.w[x as usize] as i64;
++    }
++    let nparts = part_q.len();
++    let n = np + nparts;
++    let mut cell = vec![SEP; n];
++    let mut w = vec![0i32; n];
++    let mut pa = vec![NONE; n];
++    let mut cl_q = Vec::new();
++    let mut cl_c = Vec::new();
++    let (mut strad, mut sep_only, mut parent_live) = (0, 0, 0);
++    let mut maxw = vec![0i32; ncells];
++    for q in 0..np {
++        if par.cell[q] != SEP {
++            parent_live += 1;
++        }
++        if f[q] == NONE {
++            if par.cell[q] != SEP {
++                sep_only += 1;
++            }
++            continue;
++        }
++        if is_clean(q) {
++            cell[q] = f[q];
++            w[q] = par.w[q];
++            pa[q] = q as u32;
++            cl_q.push(q as u64);
++            cl_c.push(f[q] as u64);
++            let m = &mut maxw[f[q] as usize];
++            *m = (*m).max(par.w[q]);
++        } else {
++            strad += 1;
++        }
++    }
++    for k in 0..nparts {
++        let id = np + k;
++        cell[id] = part_c[k];
++        w[id] = part_w[k] as i32;
++        pa[id] = part_q[k];
++        let m = &mut maxw[part_c[k] as usize];
++        *m = (*m).max(w[id]);
++    }
++    for (x, &q) in qx.iter().enumerate() {
++        if q != NONE && cmap[x] == NONE {
++            cmap[x] = q;
++        }
++    }
++    let mut ct_i = Vec::with_capacity(nprev);
++    let mut ct_j = Vec::with_capacity(nprev);
++    let mut ps_i = Vec::new();
++    let mut ps_j = Vec::new();
++    for (x, &y) in cmap.iter().enumerate() {
++        if y != NONE {
++            ct_i.push(x as u64);
++            ct_j.push(y as u64);
++            if y as usize >= np {
++                ps_i.push(x as u64);
++                ps_j.push(y as u64);
++            }
++        }
++    }
++    let live = cell.iter().filter(|&&c| c != SEP).count() as u64;
++    let plim = (0..ncells as u32).filter(|&c| plim_flag[c as usize]).collect();
++    Num {
++        n: n as u64,
++        cmap,
++        w,
++        cell,
++        pa,
++        live,
++        ct_i,
++        ct_j,
++        cl_q,
++        cl_c,
++        ps_i,
++        ps_j,
++        strad,
++        sep_only,
++        parent_live,
++        maxw,
++        plim,
++    }
++}
++
++#[derive(Clone, Copy, PartialEq, Debug)]
++enum Mode {
++    B1,
++    B2,
++}
++
++/// The child level's matrices from the numbering, every call timed.
++fn build_level(
++    mode: Mode,
++    p: &View,
++    par: &Lvl,
++    num: Num,
++    ncells: u64,
++    ops: &Ops,
++    t: &mut Timer,
++) -> Lvl {
++    let n = num.n;
++    let ct = t.time("ct_build", || {
++        let c = M::new(t_i32(), p.n, n);
++        ok!(GxB_Matrix_build_Scalar(c.0, num.ct_i.as_ptr(), num.ct_j.as_ptr(), ops.one_i32, num.ct_i.len() as u64));
++        c.wait();
++        c
++    });
++    let a = match mode {
++        Mode::B1 => {
++            // A' = select(OFFDIAG, C' A C'^T), as R's contraction.
++            let tm = t.time("CA", || {
++                let tm = M::new(t_i32(), n, p.n);
++                ok!(GrB_mxm(tm.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, ct.0, p.a.0, GrB_DESC_T0));
++                tm.wait();
++                tm
++            });
++            let a = t.time("CAC'", || {
++                let a = M::new(t_i32(), n, n);
++                ok!(GrB_mxm(a.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, tm.0, ct.0, null()));
++                a.wait();
++                a
++            });
++            drop(tm);
++            if !brk("b1diag") {
++                t.time("offdiag", || {
++                    ok!(GrB_Matrix_select_INT64(a.0, null(), null(), GrB_OFFDIAG, a.0, 0, null()));
++                    a.wait();
++                });
++            }
++            a
++        }
++        Mode::B2 => {
++            let np = par.n;
++            // masked split of the parent's level: keep (q, q') when both are clean and in one cell
++            let m = t.time("m_build", || {
++                let m = M::new(t_i32(), np, ncells);
++                ok!(GxB_Matrix_build_Scalar(m.0, num.cl_q.as_ptr(), num.cl_c.as_ptr(), ops.one_i32, num.cl_q.len() as u64));
++                m.wait();
++                m
++            });
++            let z = t.time("split_mxm", || {
++                let z = M::new(t_i32(), np, np);
++                ok!(GrB_mxm(z.0, par.a.0, null(), GxB_ANY_PAIR_INT32, m.0, m.0, GrB_DESC_ST1));
++                z.wait();
++                z
++            });
++            drop(m);
++            let x = t.time("split_mult", || {
++                let x = M::new(t_i32(), np, np);
++                ok!(GrB_Matrix_eWiseMult_BinaryOp(x.0, null(), null(), GrB_FIRST_INT32, par.a.0, z.0, null()));
++                x.wait();
++                x
++            });
++            drop(z);
++            if n != np {
++                t.time("resize", || {
++                    ok!(GrB_Matrix_resize(x.0, n, n));
++                    x.wait();
++                });
++            }
++            if num.ps_i.is_empty() {
++                x
++            } else {
++                // straddler parts: their rows re-contracted from the child's previous level,
++                // their columns by transpose
++                let y = t.time("strad", || {
++                    let cs = M::new(t_i32(), p.n, n);
++                    ok!(GxB_Matrix_build_Scalar(cs.0, num.ps_i.as_ptr(), num.ps_j.as_ptr(), ops.one_i32, num.ps_i.len() as u64));
++                    let t1 = M::new(t_i32(), n, p.n);
++                    ok!(GrB_mxm(t1.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, cs.0, p.a.0, GrB_DESC_T0));
++                    let rows = M::new(t_i32(), n, n);
++                    ok!(GrB_mxm(rows.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, t1.0, ct.0, null()));
++                    ok!(GrB_Matrix_select_INT64(rows.0, null(), null(), GrB_OFFDIAG, rows.0, 0, null()));
++                    if brk("nofill") {
++                        rows.wait();
++                        return rows;
++                    }
++                    let y = M::new(t_i32(), n, n);
++                    ok!(GrB_Matrix_eWiseAdd_BinaryOp(y.0, null(), null(), GrB_FIRST_INT32, rows.0, rows.0, GrB_DESC_T1));
++                    y.wait();
++                    y
++                });
++                t.time("union", || {
++                    let a = M::new(t_i32(), n, n);
++                    ok!(GrB_Matrix_eWiseAdd_BinaryOp(a.0, null(), null(), GrB_FIRST_INT32, x.0, y.0, null()));
++                    a.wait();
++                    a
++                })
++            }
++        }
++    };
++    let wv = t.time("w_build", || {
++        let ids: Vec<u64> = (0..n).filter(|&i| num.cell[i as usize] != SEP).collect();
++        let x: Vec<i32> = ids.iter().map(|&i| num.w[i as usize]).collect();
++        vec_i32(n, &ids, &x)
++    });
++    Lvl { n, a, ct, wv, w: num.w, cell: num.cell, pa: num.pa, cmap: num.cmap, live: num.live }
++}
++
++/// Straddler statistics for one child level (untimed; prep pass only).
++fn strad_line(
++    d: u32,
++    l: usize,
++    p: &View,
++    par: &Lvl,
++    num: &Num,
++) -> String {
++    let pdeg = row_degrees(&par.a);
++    let xdeg = row_degrees(p.a);
++    let mut strad_rows = 0u64;
++    for (q, &dg) in pdeg.iter().enumerate() {
++        // a parent id that is live in the parent but not clean in the child: straddler or sep-only
++        if par.cell[q] != SEP && num.cell.get(q).is_none_or(|&c| c == SEP) {
++            strad_rows += dg as u64;
++        }
++    }
++    let rin: u64 = num.ps_i.iter().map(|&x| xdeg[x as usize] as u64).sum();
++    format!(
++        "STRAD depth={d} level={l} parent_live={} parent_nnz={} strad={} sep_only={} parts={} child_live={} strad_rows_nnz={strad_rows} prev_nnz={} rin={rin} parts_members={}",
++        num.parent_live,
++        par.a.nvals(),
++        num.strad,
++        num.sep_only,
++        num.n - par.n,
++        num.live,
++        p.a.nvals(),
++        num.ps_i.len()
++    )
++}
++
++/// B1 or B2 for every reused level of one depth: the parent's levels, down to R's stop rule
++/// (stop at the first level with <= `stop` live vertices) or the end of the parent's levels.
++#[allow(clippy::too_many_arguments)]
++fn build_reuse(
++    mode: Mode,
++    parent: &Hier,
++    l0: &L0,
++    ncells: usize,
++    stop: u64,
++    ops: &Ops,
++    t: &mut Timer,
++    mut stats: Option<&mut Vec<String>>,
++    d: u32,
++) -> Hier {
++    let mut h = Hier::default();
++    loop {
++        let l = h.levels.len() + 1;
++        let lv = {
++            let p = view(&h, l0, l - 1);
++            if p.live <= stop || l > parent.levels.len() {
++                break;
++            }
++            let par = &parent.levels[l - 1];
++            let num = t.time("number", || number(&p, par, None, ncells));
++            if let Some(st) = stats.as_mut() {
++                st.push(strad_line(d, l, &p, par, &num));
++            }
++            build_level(mode, &p, par, num, ncells as u64, ops, t)
++        };
++        h.levels.push(lv);
++    }
++    h
++}
++
++/// Uncoarsening for reused levels, as R does it: random labels on the coarsest level (untimed),
++/// then per level mxv(C', labels) and the boundary mxv(A, labels).
++fn project_b(
++    h: &Hier,
++    l0: &L0,
++    t: &mut Timer,
++) {
++    let lr = h.levels.len();
++    if lr == 0 {
++        return;
++    }
++    let top = &h.levels[lr - 1];
++    let mut rng = Rng(42);
++    let ids: Vec<u64> = (0..top.n).filter(|&i| top.cell[i as usize] != SEP).collect();
++    let x: Vec<i32> = ids.iter().map(|_| (rng.next() & 1) as i32).collect();
++    let mut lab = vec_i32(top.n, &ids, &x);
++    for s in (0..lr).rev() {
++        let v = view(h, l0, s);
++        let up = &h.levels[s];
++        let fine = t.time("project", || mxv_i32(&up.ct, &lab, false));
++        assert_eq!(fine.nvals(), v.live, "CHECK FAILED: projection lost vertices");
++        t.time("bnd", || {
++            let b = V::new(t_i32(), v.n);
++            ok!(GrB_mxv(b.0, null(), null(), GxB_PLUS_SECOND_INT32, v.a.0, fine.0, null()));
++            b.wait();
++        });
++        lab = fine;
++    }
++}
++
++struct CsOut {
++    h: Hier,
++    fresh_rows: Vec<(u64, u64, u32, bool, Timer)>,
++    fresh_fp: Vec<(u64, u64, i64)>,
++    cells_fresh: u64,
++    cells_plim: u64,
++    g_n: u64,
++    stops: Vec<u64>,
++}
++
++/// Capstop: B2 for each cell while every one of its coarse vertices is within `cap` (R's cap at
++/// this depth), then fresh matching from that cell's last reused level. Cells that stop are
++/// gathered into one graph and coarsened together, as R coarsens all cells at once.
++fn build_capstop(
++    parent: &Hier,
++    l0: &L0,
++    ncells: usize,
++    cap: i32,
++    ops: &Ops,
++    t: &mut Timer,
++    ck: &mut Checks,
++    check: bool,
++) -> CsOut {
++    let mut active = vec![true; ncells];
++    let mut stopped: Vec<Vec<u32>> = Vec::new();
++    let mut h = Hier::default();
++    let mut cells_plim = 0u64;
++    let lim = if brk("cap2") { 2 * cap as i64 } else { cap as i64 };
++    loop {
++        let l = h.levels.len() + 1;
++        while stopped.len() < l {
++            stopped.push(Vec::new());
++        }
++        let lv = {
++            let p = view(&h, l0, l - 1);
++            let (k, live) = t.time("number", || {
++                let mut seen = vec![false; ncells];
++                let (mut k, mut live) = (0u64, 0u64);
++                for &c in p.cell {
++                    if c != SEP && active[c as usize] {
++                        live += 1;
++                        if !seen[c as usize] {
++                            seen[c as usize] = true;
++                            k += 1;
++                        }
++                    }
++                }
++                (k, live)
++            });
++            if live == 0 || live <= 100 * k || l > parent.levels.len() {
++                break;
++            }
++            let par = &parent.levels[l - 1];
++            let mut num = t.time("number", || number(&p, par, Some(&active), ncells));
++            let mut newly = vec![false; ncells];
++            let mut any = false;
++            for &c in &num.plim {
++                newly[c as usize] = true;
++                cells_plim += 1;
++                any = true;
++            }
++            for c in 0..ncells {
++                if active[c] && !newly[c] && num.maxw[c] as i64 > lim {
++                    newly[c] = true;
++                    any = true;
++                }
++            }
++            if any {
++                for c in 0..ncells {
++                    if newly[c] {
++                        active[c] = false;
++                        stopped[l - 1].push(c as u32);
++                    }
++                }
++                num = t.time("number", || number(&p, par, Some(&active), ncells));
++                if num.live == 0 {
++                    break;
++                }
++            }
++            build_level(Mode::B2, &p, par, num, ncells as u64, ops, t)
++        };
++        h.levels.push(lv);
++    }
++    let lr = h.levels.len();
++    // gather the stopped cells' parts, each at its own last reused level
++    let mut blocks: Vec<(usize, Vec<u64>, u64)> = Vec::new();
++    let mut gw: Vec<i32> = Vec::new();
++    let mut cells_fresh = 0u64;
++    let mut dropped_first = false;
++    let (g, wg) = t.time("gfresh", || {
++        let (mut gi, mut gj, mut gx) = (Vec::new(), Vec::new(), Vec::new());
++        let mut off = 0u64;
++        let mut flag = vec![false; ncells];
++        for (s, cs) in stopped.iter().enumerate() {
++            if cs.is_empty() {
++                continue;
++            }
++            if brk("gfdrop") && !dropped_first {
++                dropped_first = true;
++                continue;
++            }
++            for &c in cs {
++                flag[c as usize] = true;
++            }
++            let v = view(&h, l0, s);
++            let ids: Vec<u64> = (0..v.n).filter(|&x| v.cell[x as usize] != SEP && flag[v.cell[x as usize] as usize]).collect();
++            let mut seen = vec![false; ncells];
++            for &x in &ids {
++                let c = v.cell[x as usize] as usize;
++                if !seen[c] {
++                    seen[c] = true;
++                    cells_fresh += 1;
++                }
++            }
++            for &c in cs {
++                flag[c as usize] = false;
++            }
++            if ids.is_empty() {
++                continue;
++            }
++            let k = ids.len() as u64;
++            let e = M::new(t_i32(), k, k);
++            ok!(GrB_Matrix_extract(e.0, null(), null(), v.a.0, ids.as_ptr(), k, ids.as_ptr(), k, null()));
++            let (ei, ej, ex) = tuples(&e);
++            gi.extend(ei.iter().map(|&i| i + off));
++            gj.extend(ej.iter().map(|&j| j + off));
++            gx.extend(ex);
++            gw.extend(ids.iter().map(|&x| v.w[x as usize]));
++            blocks.push((s, ids, off));
++            off += k;
++        }
++        let g = M::new(t_i32(), off, off);
++        ok!(GrB_Matrix_build_INT32(g.0, gi.as_ptr(), gj.as_ptr(), gx.as_ptr(), gi.len() as u64, null()));
++        g.wait();
++        let ii: Vec<u64> = (0..off).collect();
++        let wg = vec_i32(off, &ii, &gw);
++        (g, wg)
++    });
++    let g_n = g.nrows();
++    let (fresh_rows, fresh_fp, glab) = if g_n > 0 {
++        hierarchy_keep(&g, Some(wg), cap, 100 * cells_fresh, ops, None)
++    } else {
++        (Vec::new(), Vec::new(), Vec::new())
++    };
++    // projection through the reused levels, picking up each stopped cell's labels at its level
++    let gvec = |s: usize, n: u64| -> Option<V> {
++        let b = blocks.iter().find(|b| b.0 == s)?;
++        let x: Vec<i32> = (0..b.1.len()).map(|k| glab[b.2 as usize + k] as i32).collect();
++        Some(vec_i32(n, &b.1, &x))
++    };
++    if lr > 0 {
++        let top = &h.levels[lr - 1];
++        let mut rng = Rng(42);
++        let ids: Vec<u64> = (0..top.n).filter(|&i| top.cell[i as usize] != SEP).collect();
++        let x: Vec<i32> = ids.iter().map(|_| (rng.next() & 1) as i32).collect();
++        let mut lab = vec_i32(top.n, &ids, &x);
++        if let Some(gv) = gvec(lr, top.n) {
++            ok!(GrB_Vector_assign(lab.0, gv.0, null(), gv.0, GrB_ALL, top.n, GrB_DESC_S));
++        }
++        for s in (0..lr).rev() {
++            let v = view(&h, l0, s);
++            let up = &h.levels[s];
++            let fine = t.time("project", || {
++                let f = mxv_i32(&up.ct, &lab, false);
++                match gvec(s, v.n) {
++                    Some(gv) => {
++                        let u = V::new(t_i32(), v.n);
++                        ok!(GrB_Vector_eWiseAdd_BinaryOp(u.0, null(), null(), GrB_FIRST_INT32, f.0, gv.0, null()));
++                        u.wait();
++                        u
++                    }
++                    None => f,
++                }
++            });
++            if !brk("gfdrop") {
++                assert_eq!(fine.nvals(), v.live, "CHECK FAILED: capstop projection lost vertices");
++            }
++            t.time("bnd", || {
++                let b = V::new(t_i32(), v.n);
++                ok!(GrB_mxv(b.0, null(), null(), GxB_PLUS_SECOND_INT32, v.a.0, fine.0, null()));
++                b.wait();
++            });
++            lab = fine;
++        }
++    }
++    if check {
++        // every reused level within the cap, per cell (from the GraphBLAS weights)
++        for lv in &h.levels {
++            let w = dense_i32(&lv.wv);
++            let mut mx = vec![0i64; ncells];
++            for (x, &c) in lv.cell.iter().enumerate() {
++                if c != SEP {
++                    mx[c as usize] = mx[c as usize].max(w[x] as i64);
++                }
++            }
++            ck.cs_cap_checked += 1;
++            if mx.iter().any(|&m| m > cap as i64) {
++                ck.cs_cap_fail += 1;
++            }
++        }
++        // weight conservation: cells finished in reuse (at the top level) plus the fresh graph
++        let top_w: i64 = {
++            let top = view(&h, l0, lr);
++            let mut st = vec![false; ncells];
++            if let Some(cs) = stopped.get(lr) {
++                for &c in cs {
++                    st[c as usize] = true;
++                }
++            }
++            (0..top.n as usize).filter(|&x| top.cell[x] != SEP && !st[top.cell[x] as usize]).map(|x| top.w[x] as i64).sum()
++        };
++        let gsum: i64 = gw.iter().map(|&x| x as i64).sum();
++        ck.cs_w_checked += 1;
++        if top_w + gsum != l0.live as i64 {
++            ck.cs_w_fail += 1;
++        }
++    }
++    let stops = stopped.iter().map(|s| s.len() as u64).collect();
++    CsOut { h, fresh_rows, fresh_fp, cells_fresh, cells_plim, g_n, stops }
++}
++
++#[derive(Default, Debug)]
++struct Checks {
++    split_fail: u64,
++    eq_levels: u64,
++    eq_fail: u64,
++    b1_checked: u64,
++    b1_invalid: u64,
++    w_fail: u64,
++    acct_levels: u64,
++    acct_fail: u64,
++    match_calls_b: u64,
++    cs_cap_checked: u64,
++    cs_cap_fail: u64,
++    cs_w_checked: u64,
++    cs_w_fail: u64,
++    sep_checked: u64,
++    sep_fail: u64,
++    fp_compared: u64,
++    fp_fail: u64,
++}
++
++/// B1 = B2 on every level (n, nvals, pattern and values); B1 valid (no diagonal, symmetric,
++/// weight conserved, host weights = C'^T w).
++fn compare(
++    h1: &Hier,
++    h2: &Hier,
++    l0: &L0,
++    ck: &mut Checks,
++) {
++    if h1.levels.len() != h2.levels.len() {
++        ck.eq_fail += 1;
++    }
++    for (l, (x, y)) in h1.levels.iter().zip(&h2.levels).enumerate() {
++        ck.eq_levels += 1;
++        if x.n != y.n || x.a.nvals() != y.a.nvals() || x.w != y.w || tuples(&x.a) != tuples(&y.a) {
++            ck.eq_fail += 1;
++        }
++        ck.b1_checked += 1;
++        let diag = M::new(t_i32(), x.n, x.n);
++        ok!(GrB_Matrix_select_INT64(diag.0, null(), null(), GrB_DIAG, x.a.0, 0, null()));
++        let at = M::new(t_i32(), x.n, x.n);
++        ok!(GrB_transpose(at.0, null(), null(), x.a.0, null()));
++        let wsum: i64 = x.w.iter().map(|&v| v as i64).sum();
++        let (dg, sym) = (diag.nvals(), tuples(&at) == tuples(&x.a));
++        if dg != 0 || !sym || wsum != l0.live as i64 {
++            if ck.b1_invalid < 3 {
++                println!("B1INVALID level={} diag={dg} symmetric={sym} wsum={wsum} live={}", l + 1, l0.live);
++            }
++            ck.b1_invalid += 1;
++        }
++        let prev = view(h1, l0, l);
++        let ids: Vec<u64> = (0..prev.n).filter(|&i| prev.cell[i as usize] != SEP).collect();
++        let pw: Vec<i32> = ids.iter().map(|&i| prev.w[i as usize]).collect();
++        let wv = mxv_i32(&x.ct, &vec_i32(prev.n, &ids, &pw), true);
++        let gw = dense_i32(&wv);
++        let ok_w = (0..x.n as usize).all(|i| gw.get(i).copied().unwrap_or(0) == x.w[i]);
++        if !ok_w {
++            ck.w_fail += 1;
++        }
++    }
++}
++
++/// Accounting identity: the live coarse vertices of every B level equal the distinct
++/// (depth-0 coarse vertex, cell) pairs over live fine vertices.
++fn accounting(
++    h: &Hier,
++    l0: &L0,
++    root_cmaps: &[Vec<u32>],
++    ncells: u64,
++    ck: &mut Checks,
++) {
++    let mut anc: Vec<u32> = (0..l0.n as u32).collect();
++    for (l, lv) in h.levels.iter().enumerate() {
++        let cm = &root_cmaps[l];
++        let mut keys: Vec<u64> = Vec::with_capacity(l0.live as usize);
++        for v in 0..l0.n as usize {
++            if l0.cell[v] == SEP {
++                continue;
++            }
++            anc[v] = cm[anc[v] as usize];
++            keys.push(anc[v] as u64 * ncells + l0.cell[v] as u64);
++        }
++        keys.sort_unstable();
++        keys.dedup();
++        ck.acct_levels += 1;
++        if keys.len() as u64 != lv.live {
++            ck.acct_fail += 1;
++        }
++    }
++}
++
++/// Greedy boundary refinement of a 2-way label inside every cell (edge cut, 3 % balance).
++fn refine(
++    v: &View,
++    side: &mut [u8],
++    ncells: usize,
++) {
++    let (ii, jj, xx) = tuples(v.a);
++    let n = v.n as usize;
++    let mut rp = vec![0usize; n + 1];
++    for &i in &ii {
++        rp[i as usize + 1] += 1;
++    }
++    for k in 0..n {
++        rp[k + 1] += rp[k];
++    }
++    let mut sw = vec![[0i64; 2]; ncells];
++    for x in 0..n {
++        if v.cell[x] != SEP {
++            sw[v.cell[x] as usize][side[x] as usize] += v.w[x] as i64;
++        }
++    }
++    let lim: Vec<i64> = sw.iter().map(|s| ((s[0] + s[1]) as f64 * 0.5 * 1.03).ceil() as i64).collect();
++    for _pass in 0..4 {
++        let mut moved = 0;
++        for x in 0..n {
++            let c = v.cell[x];
++            if c == SEP {
++                continue;
++            }
++            let c = c as usize;
++            let s = side[x] as usize;
++            let (mut ext, mut int) = (0i64, 0i64);
++            for k in rp[x]..rp[x + 1] {
++                if side[jj[k] as usize] as usize == s {
++                    int += xx[k] as i64;
++                } else {
++                    ext += xx[k] as i64;
++                }
++            }
++            let wx = v.w[x] as i64;
++            if ext > int && sw[c][1 - s] + wx <= lim[c] {
++                side[x] = (1 - s) as u8;
++                sw[c][s] -= wx;
++                sw[c][1 - s] += wx;
++                moved += 1;
++            }
++        }
++        if moved == 0 {
++            break;
++        }
++    }
++}
++
++/// Real-ish cells for depth d+1: bisect each depth-d cell on its coarsest reused level by feral
++/// position (half the weight each side), project level by level with a boundary refinement at
++/// each, then take the smaller side's boundary at level 0 as the vertex separator.
++fn derive(
++    h: &Hier,
++    l0: &L0,
++    pos: &[u64],
++    ncells: usize,
++    ck: &mut Checks,
++    s: &Csr,
++    d: u32,
++) -> Vec<u32> {
++    let lr = h.levels.len();
++    // feral position of each coarse vertex's first member, per level
++    let mut mps: Vec<Vec<u64>> = vec![(0..l0.n as usize).map(|v| if l0.cell[v] != SEP { pos[v] } else { u64::MAX }).collect()];
++    for lv in &h.levels {
++        let prev = mps.last().unwrap();
++        let mut m2 = vec![u64::MAX; lv.n as usize];
++        for (x, &y) in lv.cmap.iter().enumerate() {
++            if y != NONE {
++                m2[y as usize] = m2[y as usize].min(prev[x]);
++            }
++        }
++        mps.push(m2);
++    }
++    // each cell is bisected at the deepest level where it still has >= 100 coarse vertices
++    let mut chosen = vec![0usize; ncells];
++    for lvl in 1..=lr {
++        let v = view(h, l0, lvl);
++        let mut cnt = vec![0u32; ncells];
++        for &c in v.cell {
++            if c != SEP {
++                cnt[c as usize] += 1;
++            }
++        }
++        for c in 0..ncells {
++            if cnt[c] >= 100 {
++                chosen[c] = lvl;
++            }
++        }
++    }
++    let mut side: Vec<u8> = Vec::new();
++    for lvl in (0..=lr).rev() {
++        let v = view(h, l0, lvl);
++        let mut sd = vec![0u8; v.n as usize];
++        if lvl < lr {
++            for (x, &y) in h.levels[lvl].cmap.iter().enumerate() {
++                if y != NONE {
++                    sd[x] = side[y as usize];
++                }
++            }
++        }
++        let mp = &mps[lvl];
++        let mut order: Vec<u32> = (0..v.n as u32).filter(|&x| v.cell[x as usize] != SEP && chosen[v.cell[x as usize] as usize] == lvl).collect();
++        if !order.is_empty() {
++            order.sort_unstable_by_key(|&x| (v.cell[x as usize], mp[x as usize], x));
++            let mut wc = vec![0i64; ncells];
++            for &x in &order {
++                wc[v.cell[x as usize] as usize] += v.w[x as usize] as i64;
++            }
++            let mut acc = vec![0i64; ncells];
++            for &x in &order {
++                let c = v.cell[x as usize] as usize;
++                sd[x as usize] = if acc[c] * 2 < wc[c] { 0 } else { 1 };
++                acc[c] += v.w[x as usize] as i64;
++            }
++        }
++        refine(&v, &mut sd, ncells);
++        side = sd;
++    }
++    // vertex separator: per cell, the boundary of the side with fewer boundary vertices
++    let n = l0.n as usize;
++    let mut bnd = vec![false; n];
++    let mut nb = vec![[0u64; 2]; ncells];
++    for v in 0..n {
++        let c = l0.cell[v];
++        if c == SEP {
++            continue;
++        }
++        for &u in &s.j[s.p[v] as usize..s.p[v + 1] as usize] {
++            let u = u as usize;
++            if l0.cell[u] == c && side[u] != side[v] {
++                bnd[v] = true;
++                nb[c as usize][side[v] as usize] += 1;
++                break;
++            }
++        }
++    }
++    let nosep = brk("nosep");
++    let mut out = vec![SEP; n];
++    let mut nsep = 0u64;
++    let mut cw = vec![0u64; 2 * ncells];
++    for v in 0..n {
++        let c = l0.cell[v];
++        if c == SEP {
++            continue;
++        }
++        let ss = if nb[c as usize][0] <= nb[c as usize][1] { 0 } else { 1 };
++        if bnd[v] && side[v] == ss && !(nosep && c == 0) {
++            nsep += 1;
++            continue;
++        }
++        out[v] = 2 * c + side[v] as u32;
++        cw[out[v] as usize] += 1;
++    }
++    // check: no edge joins two different live cells
++    let mut bad = 0u64;
++    for v in 0..n {
++        if out[v] == SEP {
++            continue;
++        }
++        for &u in &s.j[s.p[v] as usize..s.p[v + 1] as usize] {
++            let cu = out[u as usize];
++            if cu != SEP && cu != out[v] {
++                bad += 1;
++            }
++        }
++    }
++    ck.sep_checked += 1;
++    if bad > 0 {
++        ck.sep_fail += 1;
++    }
++    let nz: Vec<u64> = cw.iter().copied().filter(|&x| x > 0).collect();
++    println!(
++        "LABELS depth={} cells={} nonempty={} sep={nsep} live={} min_cell={} max_cell={} sep_violations={bad}",
++        d + 1,
++        2 * ncells,
++        nz.len(),
++        out.iter().filter(|&&c| c != SEP).count(),
++        nz.iter().min().copied().unwrap_or(0),
++        nz.iter().max().copied().unwrap_or(0)
++    );
++    out
++}
++
++/// The depth split of design §3 step 6 for labels with separators (no row for SEP).
++fn split2(
++    a0: &M,
++    labels: &[u32],
++    cells: u64,
++    ops: &Ops,
++    t: &mut Timer,
++) -> M {
++    let n = a0.nrows() as usize;
++    let shift = brk("split");
++    let mut ii = Vec::with_capacity(n);
++    let mut jj = Vec::with_capacity(n);
++    for v in 0..n {
++        let c = if shift { labels[(v + 1) % n] } else { labels[v] };
++        if c != SEP {
++            ii.push(v as u64);
++            jj.push(c as u64);
++        }
++    }
++    let mm = t.time("split_buildM", || {
++        let mm = M::new(t_i32(), n as u64, cells);
++        ok!(GxB_Matrix_build_Scalar(mm.0, ii.as_ptr(), jj.as_ptr(), ops.one_i32, ii.len() as u64));
++        mm.wait();
++        mm
++    });
++    t.time("split_mxm", || {
++        let an = M::new(t_i32(), n as u64, n as u64);
++        ok!(GrB_mxm(an.0, a0.0, null(), GxB_ANY_PAIR_INT32, mm.0, mm.0, GrB_DESC_ST1));
++        an.wait();
++        an
++    })
++}
++fn split_count(
++    s: &Csr,
++    labels: &[u32],
++) -> u64 {
++    let mut c = 0;
++    for u in 0..s.n {
++        for &v in &s.j[s.p[u] as usize..s.p[u + 1] as usize] {
++            c += (labels[u] != SEP && labels[u] == labels[v as usize]) as u64;
++        }
++    }
++    c
++}
++
++fn sh(cmd: &str) -> String {
++    std::process::Command::new("sh")
++        .arg("-c")
++        .arg(cmd)
++        .output()
++        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
++        .unwrap_or_default()
++}
++fn rss_mb() -> u64 {
++    sh(&format!("ps -o rss= -p {}", std::process::id())).parse::<u64>().unwrap_or(0) / 1024
++}
++fn tsum(t: &Timer) -> f64 {
++    t.0.values().sum()
++}
++fn calls_str(t: &Timer) -> String {
++    t.0.iter().map(|(k, v)| format!("c:{k}={v:.6}")).collect::<Vec<_>>().join(" ")
++}
++fn rows_timer(rows: &[(u64, u64, u32, bool, Timer)]) -> Timer {
++    let mut t = Timer::default();
++    for r in rows {
++        for (k, v) in &r.4 .0 {
++            *t.0.entry(*k).or_default() += v;
++        }
++    }
++    t
++}
++fn merge(
++    a: &mut Timer,
++    b: &Timer,
++) {
++    for (k, v) in &b.0 {
++        *a.0.entry(*k).or_default() += v;
++    }
++}
++fn hier_fp(h: &Hier) -> Vec<(u64, u64, i64)> {
++    h.levels.iter().map(|l| (l.live, l.a.nvals(), l.a.sum())).collect()
++}
++fn ones_vec(
++    n: u64,
++    cell: &[u32],
++) -> Option<V> {
++    let ids: Vec<u64> = (0..n).filter(|&i| cell[i as usize] != SEP).collect();
++    if ids.len() as u64 == n {
++        return None;
++    }
++    let x = vec![1i32; ids.len()];
++    Some(vec_i32(n, &ids, &x))
++}
++fn print_rows(
++    th: i32,
++    run: usize,
++    d: u32,
++    rows: &[(u64, u64, u32, bool, Timer)],
++) {
++    for (l, (ln, nnz, rounds, two, t)) in rows.iter().enumerate() {
++        let calls: Vec<String> = t.0.iter().map(|(k, v)| format!("{k}={v:.6}")).collect();
++        println!(
++            "LVL threads={th} run={run} depth={d} level={l} n={ln} nnz={nnz} rounds={rounds} twohop={} {}",
++            *two as u8,
++            calls.join(" ")
++        );
++    }
++}
++
++#[test]
++#[ignore]
++fn m1_reuse() {
++    ensure_init();
++    if env("M1_JIT").as_deref() == Some("run") {
++        ok!(GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_Control::GxB_JIT_RUN as i32, GxB_Option_Field::GxB_JIT_C_CONTROL as _));
++        println!("JIT: RUN");
++    }
++    assert!(ct(), "set M1_CT=1");
++    let path = env("M1_GRAPH").expect("M1_GRAPH");
++    let t = Instant::now();
++    let s = load(&path);
++    println!("graph {path}: n={} entries={} load={:.2}s", s.n, s.j.len(), t.elapsed().as_secs_f64());
++    let a0 = to_grb(&s);
++    let ops = Ops::new();
++    let threads: Vec<i32> = env("M1_THREADS").unwrap_or("1,4".into()).split(',').map(|x| x.parse().unwrap()).collect();
++    let runs: usize = env("M1_RUNS").map_or(3, |x| x.parse().unwrap());
++    let max_depth: u32 = env("M1_DEPTHS").map_or(14, |x| x.parse().unwrap());
++    let feral_runs: usize = env("M1_FERAL").map_or(3, |x| x.parse().unwrap());
++    let real = env("M1R_CELLS").as_deref() != Some("chunks");
++    let check_all = env("M1R_CHECK").as_deref() == Some("all");
++    println!("CELLS {} BREAK {:?}", if real { "real" } else { "chunks" }, env("M1_BREAK"));
++    let n = s.n as u64;
++
++    // feral: the whole ordering, same process; its order gives the cell keys
++    let mut pos = vec![0u64; s.n];
++    {
++        let mut perm0 = None;
++        for r in 0..feral_runs.max(1) {
++            println!("LOAD feral run={r} {}", sh("uptime"));
++            let (perm, sec) = feral_perm(&s);
++            println!("FERAL run={r} sec={sec:.3}");
++            if let Some(p0) = &perm0 {
++                assert_eq!(p0, &perm, "feral not deterministic");
++            } else {
++                perm0 = Some(perm);
++            }
++            flush();
++        }
++        for (k, &v) in perm0.unwrap().iter().enumerate() {
++            pos[v as usize] = k as u64;
++        }
++    }
++    let cap_of = |d: u32| ((15 * n / (1u64 << d)) / 1000).max(2) as i32;
++    let stop_of = |d: u32| 100u64 << d;
++    let mut ck = Checks::default();
++
++    // labels per depth
++    let mut labels: Vec<Vec<u32>> = vec![vec![0; s.n]];
++    if !real {
++        for d in 1..=max_depth {
++            let cells = 1u64 << d;
++            labels.push((0..s.n).map(|v| (pos[v] * cells / n) as u32).collect());
++        }
++    }
++
++    // ---- prep pass (untimed): derive real labels, straddler statistics, accounting identity ----
++    set_nthreads(*threads.iter().max().unwrap());
++    let tp = Instant::now();
++    let ones: Vec<i32> = vec![1; s.n];
++    {
++        let mut kept = None;
++        let _ = hierarchy_keep(&a0, None, cap_of(0), stop_of(0), &ops, Some(&mut kept));
++        let h0 = root_hier(kept.unwrap(), n, &mut Timer::default());
++        let root_cmaps: Vec<Vec<u32>> = h0.levels.iter().map(|l| l.cmap.clone()).collect();
++        println!("ROOT levels={} coarsest={}", h0.levels.len(), h0.levels.last().map_or(n, |l| l.n));
++        if real {
++            let l0 = L0 { a: &a0, n, cell: &labels[0], w: &ones, live: n };
++            let next = derive(&h0, &l0, &pos, 1, &mut ck, &s, 0);
++            labels.push(next);
++        }
++        let mut parent = h0;
++        for d in 1..=max_depth {
++            let cells = 1usize << d;
++            let next;
++            {
++                let lab = &labels[d as usize];
++                let wd: Vec<i32> = lab.iter().map(|&c| (c != SEP) as i32).collect();
++                let live = wd.iter().filter(|&&x| x > 0).count() as u64;
++                let ad = split2(&a0, lab, cells as u64, &ops, &mut Timer::default());
++                if ad.nvals() != split_count(&s, lab) {
++                    ck.split_fail += 1;
++                }
++                let l0 = L0 { a: &ad, n, cell: lab, w: &wd, live };
++                let mut st = Vec::new();
++                let hd = build_reuse(Mode::B2, &parent, &l0, cells, stop_of(d), &ops, &mut Timer::default(), Some(&mut st), d);
++                for line in st {
++                    println!("{line}");
++                }
++                accounting(&hd, &l0, &root_cmaps, cells as u64, &mut ck);
++                println!(
++                    "PREP depth={d} live={live} split_nnz={} levels={} coarsest={} rss_mb={}",
++                    ad.nvals(),
++                    hd.levels.len(),
++                    hd.levels.last().map_or(live, |l| l.live),
++                    rss_mb()
++                );
++                next = if real && d < max_depth { Some(derive(&hd, &l0, &pos, cells, &mut ck, &s, d)) } else { None };
++                parent = hd;
++            }
++            if let Some(nx) = next {
++                labels.push(nx);
++            }
++            flush();
++        }
++    }
++    println!("PREP done {:.1}s rss_mb={}", tp.elapsed().as_secs_f64(), rss_mb());
++    println!("CHECKS-PREP {ck:?}");
++    flush();
++
++    // ---- timed runs ----
++    let mut fps: BTreeMap<(&'static str, u32), Vec<(u64, u64, i64)>> = BTreeMap::new();
++    let mut fpc = |ck: &mut Checks, key: (&'static str, u32), fp: Vec<(u64, u64, i64)>| match fps.get(&key) {
++        Some(f) => {
++            ck.fp_compared += 1;
++            if f != &fp {
++                ck.fp_fail += 1;
++            }
++        }
++        None => {
++            fps.insert(key, fp);
++        }
++    };
++    for &th in &threads {
++        set_nthreads(th);
++        for run in 0..runs {
++            let check = check_all || run == 0;
++            println!("LOAD threads={th} run={run} {}", sh("uptime"));
++            flush();
++            let wall = Instant::now();
++            // depth 0: R, shared by all variants
++            let mut kept = None;
++            let (rows, fp, _) = hierarchy_keep(&a0, None, cap_of(0), stop_of(0), &ops, Some(&mut kept));
++            print_rows(th, run, 0, &rows);
++            let r0 = rows_timer(&rows);
++            fpc(&mut ck, ("R", 0), fp);
++            let mut troot = Timer::default();
++            let h0 = root_hier(kept.unwrap(), n, &mut troot);
++            println!(
++                "VAR threads={th} run={run} depth=0 var=R levels={} reused=0 fresh={} coarsened={} calls={:.6} split=0 {}",
++                rows.len(),
++                rows.len(),
++                rows.iter().map(|r| r.0).sum::<u64>(),
++                tsum(&r0),
++                calls_str(&r0)
++            );
++            println!("VAR threads={th} run={run} depth=0 var=ROOTMAP calls={:.6} split=0", tsum(&troot));
++            let mut h0 = Some(h0);
++            let (mut pb1, mut pb2, mut pcs): (Option<Hier>, Option<Hier>, Option<Hier>) = (None, None, None);
++            for d in 1..=max_depth {
++                let cells = 1usize << d;
++                let lab = &labels[d as usize];
++                let wd: Vec<i32> = lab.iter().map(|&c| (c != SEP) as i32).collect();
++                let live = wd.iter().filter(|&&x| x > 0).count() as u64;
++                let mut tsplit = Timer::default();
++                let ad = split2(&a0, lab, cells as u64, &ops, &mut tsplit);
++                if check && ad.nvals() != split_count(&s, lab) {
++                    ck.split_fail += 1;
++                }
++                let split = tsum(&tsplit);
++                let l0 = L0 { a: &ad, n, cell: lab, w: &wd, live };
++                // R
++                let (rows, fp, _) = hierarchy_keep(&ad, ones_vec(n, lab), cap_of(d), stop_of(d), &ops, None);
++                print_rows(th, run, d, &rows);
++                let rt = rows_timer(&rows);
++                println!(
++                    "VAR threads={th} run={run} depth={d} var=R levels={} reused=0 fresh={} coarsened={} coarsest={} calls={:.6} split={split:.6} {}",
++                    rows.len(),
++                    rows.len(),
++                    rows.iter().map(|r| r.0).sum::<u64>(),
++                    fp.last().map_or(live, |x| x.0),
++                    tsum(&rt),
++                    calls_str(&rt)
++                );
++                fpc(&mut ck, ("R", d), fp);
++                // B1, B2: never match
++                let mc0 = MATCH_CALLS.load(Relaxed);
++                let mut tb1 = Timer::default();
++                let hb1 = build_reuse(Mode::B1, pb1.as_ref().or(h0.as_ref()).unwrap(), &l0, cells, stop_of(d), &ops, &mut tb1, None, d);
++                project_b(&hb1, &l0, &mut tb1);
++                let mut tb2 = Timer::default();
++                let hb2 = build_reuse(Mode::B2, pb2.as_ref().or(h0.as_ref()).unwrap(), &l0, cells, stop_of(d), &ops, &mut tb2, None, d);
++                if brk("rematch") && d >= 3 {
++                    let _ = hierarchy(&ad, cap_of(d), stop_of(d), &ops);
++                }
++                project_b(&hb2, &l0, &mut tb2);
++                ck.match_calls_b += MATCH_CALLS.load(Relaxed) - mc0;
++                for (name, h, tt) in [("B1", &hb1, &tb1), ("B2", &hb2, &tb2)] {
++                    println!(
++                        "VAR threads={th} run={run} depth={d} var={name} levels={} reused={} fresh=0 coarsened=0 coarsest={} calls={:.6} split={split:.6} {}",
++                        h.levels.len(),
++                        h.levels.len(),
++                        h.levels.last().map_or(live, |l| l.live),
++                        tsum(tt),
++                        calls_str(tt)
++                    );
++                }
++                if check {
++                    compare(&hb1, &hb2, &l0, &mut ck);
++                }
++                fpc(&mut ck, ("B1", d), hier_fp(&hb1));
++                fpc(&mut ck, ("B2", d), hier_fp(&hb2));
++                // capstop
++                let mut tcs = Timer::default();
++                let cs = build_capstop(pcs.as_ref().or(h0.as_ref()).unwrap(), &l0, cells, cap_of(d), &ops, &mut tcs, &mut ck, check);
++                let fr = rows_timer(&cs.fresh_rows);
++                let mut tall = Timer::default();
++                merge(&mut tall, &tcs);
++                merge(&mut tall, &fr);
++                println!(
++                    "VAR threads={th} run={run} depth={d} var=CS levels={} reused={} fresh={} coarsened={} coarsest={} calls={:.6} split={split:.6} cells_fresh={} cells_plim={} g_n={} stops={} {}",
++                    cs.h.levels.len() + cs.fresh_rows.len(),
++                    cs.h.levels.len(),
++                    cs.fresh_rows.len(),
++                    cs.fresh_rows.iter().map(|r| r.0).sum::<u64>(),
++                    cs.fresh_fp.last().map_or(cs.g_n, |x| x.0),
++                    tsum(&tall),
++                    cs.cells_fresh,
++                    cs.cells_plim,
++                    cs.g_n,
++                    cs.stops.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","),
++                    calls_str(&tall)
++                );
++                let mut fpcs = hier_fp(&cs.h);
++                fpcs.push((u64::MAX, cs.g_n, 0));
++                fpcs.extend(cs.fresh_fp.iter().copied());
++                fpc(&mut ck, ("CS", d), fpcs);
++                drop(l0);
++                pb1 = Some(hb1);
++                pb2 = Some(hb2);
++                pcs = Some(cs.h);
++                h0 = None;
++                flush();
++            }
++            println!("RUN threads={th} run={run} wall={:.2}s rss_mb={}", wall.elapsed().as_secs_f64(), rss_mb());
++            flush();
++        }
++    }
++    println!("CHECKS {ck:?}");
++    flush();
++    assert_eq!(ck.split_fail, 0, "CHECK FAILED: split pattern");
++    assert_eq!(ck.eq_fail, 0, "CHECK FAILED: B1 != B2");
++    assert_eq!(ck.b1_invalid, 0, "CHECK FAILED: B1 level invalid");
++    assert_eq!(ck.w_fail, 0, "CHECK FAILED: host weights != C'^T w");
++    assert_eq!(ck.acct_fail, 0, "CHECK FAILED: accounting identity");
++    assert_eq!(ck.match_calls_b, 0, "CHECK FAILED: B1/B2 ran a matching");
++    assert_eq!(ck.cs_cap_fail, 0, "CHECK FAILED: capstop reused a level over the cap");
++    assert_eq!(ck.cs_w_fail, 0, "CHECK FAILED: capstop weight not conserved");
++    assert_eq!(ck.sep_fail, 0, "CHECK FAILED: separator does not separate");
++    assert_eq!(ck.fp_fail, 0, "CHECK FAILED: hierarchy differs across runs/threads");
++}
+diff --git a/graph/src/graph/graphblas/mod.rs b/graph/src/graph/graphblas/mod.rs
+index bb78d7766..59b05d053 100644
+--- a/graph/src/graph/graphblas/mod.rs
++++ b/graph/src/graph/graphblas/mod.rs
+@@ -76,6 +76,8 @@ mod block_scaling_bench;
+ mod csr;
+ #[cfg(test)]
+ mod degree_bench;
++#[cfg(all(test, feature = "index-falkordb"))]
++mod m1_coarsen_bench;
+ #[cfg(test)]
+ mod fold_cost_bench;
+ pub mod lagraph_bindings;

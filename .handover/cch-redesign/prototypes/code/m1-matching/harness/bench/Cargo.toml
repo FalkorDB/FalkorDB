@@ -1,0 +1,10 @@
+[package]
+name = "m1bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+feral-metis = { path = "../crates/feral-metis" }
+feral_orig = { package = "feral-metis", git = "https://github.com/FalkorDB/feral", rev = "f1271891d4719ff070e2eaf4a7641a7052604bcd" }
+flate2 = "1"
+feral_base = { package = "feral-metis-base", path = "../base/feral-metis-base" }

@@ -1,0 +1,59 @@
+diff --git a/graph/src/graph/graphblas/m1_coarsen_bench.rs b/graph/src/graph/graphblas/m1_coarsen_bench.rs
+index 5c0a3ad..1b32856 100644
+--- a/graph/src/graph/graphblas/m1_coarsen_bench.rs
++++ b/graph/src/graph/graphblas/m1_coarsen_bench.rs
+@@ -1330,6 +1330,8 @@ where
+         let (pp, jp) = (SendPtr(p.ptr), SendPtr(j.ptr));
+         let xp = SendPtr(x.as_ref().map_or(null(), |b| b.ptr));
+         let (outs, offs, splits) = (&outs, &offs, &splits);
++        // VERIFIER break (M1V_BREAK=hpar): chunk 1's first value takes its second value's place.
++        let vbrk = env("M1V_BREAK").as_deref() == Some("hpar");
+         par_run(k, |c| {
+             let o = &outs[c];
+             let r0 = splits[c];
+@@ -1340,6 +1342,9 @@ where
+                 std::ptr::copy_nonoverlapping(o.1.as_ptr(), jp.g().add(offs[c]), o.1.len());
+                 if !iso {
+                     std::ptr::copy_nonoverlapping(o.2.as_ptr(), xp.g().add(offs[c]), o.2.len());
++                    if vbrk && c == 1 && o.2.len() >= 2 {
++                        *xp.g().add(offs[c]) = o.2[1];
++                    }
+                 }
+             }
+         });
+diff --git a/graph/src/graph/graphblas/m1_reuse_bench.rs b/graph/src/graph/graphblas/m1_reuse_bench.rs
+index 4431cae..a182df3 100644
+--- a/graph/src/graph/graphblas/m1_reuse_bench.rs
++++ b/graph/src/graph/graphblas/m1_reuse_bench.rs
+@@ -1187,6 +1187,8 @@ fn build_capstop(
+     let mut stop = vec![(u32::MAX, 0u8); ncells];
+     let mut fresh_at: Vec<Vec<u32>> = Vec::new();
+     let mut done_at: Vec<Vec<u32>> = Vec::new();
++    let floor30 = env("M1V_FLOOR30").is_some();
++    let mut floor_c: Vec<u64> = vec![FLOOR; ncells];
+     let mut h = Hier::default();
+     loop {
+         let l = h.levels.len() + 1;
+@@ -1211,6 +1213,11 @@ fn build_capstop(
+                 }
+                 cnt
+             });
++            // VERIFIER variant (M1V_FLOOR30=1): the harness's top-stage floor for cells of 5,000 or
++            // more vertices, max(100, n/30); reaching it sends the cell to fresh coarsening.
++            if l == 1 {
++                floor_c = cnt.iter().map(|&m| if floor30 && m >= 5000 { (m / 30).max(FLOOR) } else { FLOOR }).collect();
++            }
+             let mut any_active = false;
+             for c in 0..ncells {
+                 if !active[c] {
+@@ -1219,6 +1226,10 @@ fn build_capstop(
+                 if cnt[c] == 0 {
+                     active[c] = false;
+                     stop[c] = ((l - 1) as u32, R_EMPTY);
++                } else if cnt[c] <= floor_c[c] && floor_c[c] > FLOOR {
++                    active[c] = false;
++                    stop[c] = ((l - 1) as u32, R_END);
++                    fresh_at[l - 1].push(c as u32);
+                 } else if cnt[c] <= FLOOR {
+                     active[c] = false;
+                     stop[c] = ((l - 1) as u32, R_FLOOR);

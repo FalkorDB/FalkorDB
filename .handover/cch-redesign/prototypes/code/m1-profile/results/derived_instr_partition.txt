@@ -1,0 +1,8 @@
+r0          thr=1 timed-call instr   11.31G  kernel=80.0%  gb_wait=8.0%  convert=1.4%  builder=3.3%  mem=3.1%  sort=0.1%  host=3.9%  omp=0.2%  other=0.1%  (no samples)=0.0%
+r_d>=1      thr=1 timed-call instr  167.34G  kernel=82.7%  gb_wait=6.7%  convert=1.9%  builder=3.6%  mem=2.8%  alloc=0.2%  sort=0.0%  host=2.1%  omp=0.1%  other=0.0%
+b2_d>=1     thr=1 timed-call instr   69.75G  kernel=55.5%  gb_wait=9.4%  convert=5.4%  builder=8.6%  mem=1.8%  alloc=0.3%  host=18.9%  other=0.0%
+split_d>=1  thr=1 timed-call instr   13.60G  kernel=47.9%  gb_wait=30.7%  convert=6.2%  builder=14.2%  mem=1.1%
+r0          thr=4 timed-call instr   13.12G  kernel=67.9%  gb_wait=1.3%  convert=2.1%  builder=2.9%  mem=2.3%  sort=4.8%  host=2.0%  omp=16.7%  (no samples)=0.0%
+r_d>=1      thr=4 timed-call instr  188.40G  kernel=68.2%  gb_wait=1.2%  convert=1.2%  builder=2.6%  mem=2.7%  alloc=0.1%  sort=4.0%  host=1.9%  omp=18.1%  other=0.0%
+b2_d>=1     thr=4 timed-call instr   74.54G  kernel=52.3%  gb_wait=2.3%  convert=3.7%  builder=5.5%  mem=1.9%  alloc=0.2%  sort=0.4%  host=13.9%  omp=19.7%  other=0.0%
+split_d>=1  thr=4 timed-call instr   13.59G  kernel=63.0%  gb_wait=6.8%  convert=5.8%  builder=7.1%  mem=1.2%  alloc=0.1%  sort=0.2%  host=0.0%  omp=15.8%

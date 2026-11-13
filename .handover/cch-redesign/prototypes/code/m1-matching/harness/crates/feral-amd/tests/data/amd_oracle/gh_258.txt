@@ -1,0 +1,17 @@
+# feral-amd oracle fixture: gh_258
+# generator: SuiteSparse AMD Rust crate (amd = 0.2.2)
+# provenance:
+#   file: /Users/jkitchin/Dropbox/projects/ripopt/ref/faer-rs/faer/test_data/sparse_cholesky/gh_258.txt
+#   sha256: 9f70a3cfb1b068984cf76b8b11da1a786a39c8701a1cc48a909fd25aca282c40
+status: OK
+n: 52
+nz: 410
+nz_a_plus_at: 372
+n_dense: 0
+ncmpa: 1
+lnz: 320
+ndiv: 320
+nms_ldl: 1263
+nms_lu: 2206
+d_max: 12
+perm: 25 22 40 48 50 47 46 45 49 42 43 51 44 29 26 23 3 6 4 7 34 30 2 5 8 0 1 31 32 33 10 9 35 11 13 12 36 14 24 21 15 18 16 17 19 20 27 28 38 39 41 37

@@ -1,0 +1,4029 @@
+diff --git a/graph/src/graph/graphblas/m1_coarsen_bench.rs b/graph/src/graph/graphblas/m1_coarsen_bench.rs
+new file mode 100644
+index 000000000..5c0a3adcb
+--- /dev/null
++++ b/graph/src/graph/graphblas/m1_coarsen_bench.rs
+@@ -0,0 +1,1649 @@
++//! SCRATCH (never committed): M1 GraphBLAS coarsening, optimized copy (m1opt).
++//!
++//! Shared pieces of the reuse bench (`m1_reuse_bench.rs`): the level coarsening of design §3
++//! (`coarsen_level`), the hierarchy driver, graph loading, feral, and the host CSR access used by
++//! the optimized paths.
++//!
++//! Every optimization sits behind its own switch in `M1O` (comma list); the baseline is `M1O=`
++//! (empty). `M1O_BREAK=<name>` perturbs that optimization's output so the equality check fails.
++//!   usel     u = select(m == false) instead of the complemented-mask masker
++//!   zmatch   matches carried in the gather vector Z; no per-round mate assign
++//!   nowait   no per-call GrB_wait; one wait on each level's outputs
++//!   cpack    host leader numbering in one pass; C and C' packed; C*A without a transpose; w_c on
++//!            the host
++//!   caprc    cap mask by a row scale and a column scale
++//!   hcon     contraction A_c = C A C' as one host pass over A's CSR (sorted rows, no diagonal)
++//!   (the reuse-side switches are listed in m1_reuse_bench.rs)
++
++use super::matrix::set_nthreads;
++use super::*;
++use std::collections::{BTreeMap, HashSet};
++use std::ffi::c_void;
++use std::sync::OnceLock;
++use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
++use std::time::Instant;
++
++macro_rules! ok {
++    ($e:expr) => {{
++        #[allow(unused_unsafe)]
++        let info = unsafe { $e };
++        assert_eq!(info, GrB_Info::GrB_SUCCESS, "GraphBLAS: {}", stringify!($e));
++    }};
++}
++
++unsafe extern "C" {
++    fn fflush(f: *mut c_void) -> i32;
++    fn malloc(size: usize) -> *mut c_void;
++    fn free(p: *mut c_void);
++    fn proc_pid_rusage(
++        pid: i32,
++        flavor: i32,
++        buffer: *mut c_void,
++    ) -> i32;
++    fn getpid() -> i32;
++}
++fn flush() {
++    use std::io::Write;
++    std::io::stdout().flush().unwrap();
++    unsafe { fflush(std::ptr::null_mut()) };
++}
++
++/// (instructions, cycles) of this process so far: RUSAGE_INFO_V4 ri_instructions / ri_cycles.
++fn instr() -> (u64, u64) {
++    let mut b = [0u64; 48];
++    let rc = unsafe { proc_pid_rusage(getpid(), 4, b.as_mut_ptr() as *mut c_void) };
++    assert_eq!(rc, 0, "proc_pid_rusage");
++    (b[31], b[32])
++}
++
++// ---- switches ----
++fn env(k: &str) -> Option<String> {
++    std::env::var(k).ok().filter(|s| !s.is_empty())
++}
++fn opt_set() -> &'static HashSet<String> {
++    static S: OnceLock<HashSet<String>> = OnceLock::new();
++    S.get_or_init(|| env("M1O").unwrap_or_default().split(',').filter(|x| !x.is_empty()).map(|x| x.to_string()).collect())
++}
++/// Optimization `k` is on.
++fn opt(k: &str) -> bool {
++    opt_set().contains(k)
++}
++/// Deliberate break of optimization `k` (its output is perturbed; the equality check must fail).
++fn obrk(k: &str) -> bool {
++    env("M1O_BREAK").as_deref() == Some(k)
++}
++/// Breaks of the baseline checks (as in m1rcB).
++fn brk(k: &str) -> bool {
++    env("M1_BREAK").as_deref() == Some(k)
++}
++fn burble() -> bool {
++    env("M1_BURBLE").is_some()
++}
++fn ct() -> bool {
++    env("M1_CT").is_some()
++}
++fn verify() -> bool {
++    env("M1_VERIFY").is_some()
++}
++/// Per-call waits: the baseline, and the instrumented run of the nowait build.
++fn callwait() -> bool {
++    !opt("nowait") || env("M1O_CALLWAIT").is_some()
++}
++
++/// GraphBLAS threads, also used by the host passes.
++static NTH: AtomicUsize = AtomicUsize::new(1);
++fn set_threads(th: i32) {
++    set_nthreads(th);
++    NTH.store(th as usize, Relaxed);
++}
++fn nth() -> usize {
++    NTH.load(Relaxed)
++}
++
++pub(super) struct M(pub GrB_Matrix);
++impl M {
++    fn new(
++        t: GrB_Type,
++        r: u64,
++        c: u64,
++    ) -> M {
++        let mut m = std::ptr::null_mut();
++        ok!(GrB_Matrix_new(&mut m, t, r, c));
++        M(m)
++    }
++    fn nvals(&self) -> u64 {
++        let mut n = 0;
++        ok!(GrB_Matrix_nvals(&mut n, self.0));
++        n
++    }
++    fn nrows(&self) -> u64 {
++        let mut n = 0;
++        ok!(GrB_Matrix_nrows(&mut n, self.0));
++        n
++    }
++    fn wait(&self) {
++        ok!(GrB_Matrix_wait(self.0, GrB_WaitMode::GrB_MATERIALIZE as i32));
++    }
++    fn sum(&self) -> i64 {
++        let mut s = 0i64;
++        ok!(GrB_Matrix_reduce_INT64(&mut s, std::ptr::null_mut(), GrB_PLUS_MONOID_INT64, self.0, std::ptr::null_mut()));
++        s
++    }
++}
++impl Drop for M {
++    fn drop(&mut self) {
++        unsafe { GrB_Matrix_free(&mut self.0) };
++    }
++}
++pub(super) struct V(pub GrB_Vector);
++impl V {
++    fn new(
++        t: GrB_Type,
++        n: u64,
++    ) -> V {
++        let mut v = std::ptr::null_mut();
++        ok!(GrB_Vector_new(&mut v, t, n));
++        V(v)
++    }
++    fn dup(&self) -> V {
++        let mut v = std::ptr::null_mut();
++        ok!(GrB_Vector_dup(&mut v, self.0));
++        V(v)
++    }
++    fn nvals(&self) -> u64 {
++        let mut n = 0;
++        ok!(GrB_Vector_nvals(&mut n, self.0));
++        n
++    }
++    fn size(&self) -> u64 {
++        let mut n = 0;
++        ok!(GrB_Vector_size(&mut n, self.0));
++        n
++    }
++    fn wait(&self) {
++        ok!(GrB_Vector_wait(self.0, GrB_WaitMode::GrB_MATERIALIZE as i32));
++    }
++    fn sum(&self) -> i64 {
++        let mut s = 0i64;
++        ok!(GrB_Vector_reduce_INT64(&mut s, std::ptr::null_mut(), GrB_PLUS_MONOID_INT64, self.0, std::ptr::null_mut()));
++        s
++    }
++    fn u64s(&self) -> (Vec<u64>, Vec<u64>) {
++        let mut n = self.nvals();
++        let mut i = vec![0u64; n as usize];
++        let mut x = vec![0u64; n as usize];
++        ok!(GrB_Vector_extractTuples_UINT64(i.as_mut_ptr(), x.as_mut_ptr(), &mut n, self.0));
++        (i, x)
++    }
++    fn i32s(&self) -> (Vec<u64>, Vec<i32>) {
++        let mut n = self.nvals();
++        let mut i = vec![0u64; n as usize];
++        let mut x = vec![0i32; n as usize];
++        ok!(GrB_Vector_extractTuples_INT32(i.as_mut_ptr(), x.as_mut_ptr(), &mut n, self.0));
++        (i, x)
++    }
++    fn bools(&self) -> (Vec<u64>, Vec<bool>) {
++        let mut n = self.nvals();
++        let mut i = vec![0u64; n as usize];
++        let mut x = vec![false; n as usize];
++        ok!(GrB_Vector_extractTuples_BOOL(i.as_mut_ptr(), x.as_mut_ptr(), &mut n, self.0));
++        (i, x)
++    }
++}
++impl Drop for V {
++    fn drop(&mut self) {
++        unsafe { GrB_Vector_free(&mut self.0) };
++    }
++}
++fn w8m(m: &M) {
++    if callwait() {
++        m.wait();
++    }
++}
++fn w8v(v: &V) {
++    if callwait() {
++        v.wait();
++    }
++}
++fn null<T>() -> *mut T {
++    std::ptr::null_mut()
++}
++fn t_bool() -> GrB_Type {
++    unsafe { GrB_BOOL }
++}
++fn t_i32() -> GrB_Type {
++    unsafe { GrB_INT32 }
++}
++fn t_i64() -> GrB_Type {
++    unsafe { GrB_INT64 }
++}
++fn t_u64() -> GrB_Type {
++    unsafe { GrB_UINT64 }
++}
++fn t_u32() -> GrB_Type {
++    unsafe { GrB_UINT32 }
++}
++
++// ---- host buffers in GraphBLAS's allocator (libc malloc in tests; RedisAlloc in the module) ----
++pub(super) struct MBuf<T: Copy> {
++    ptr: *mut T,
++    len: usize,
++    cap: usize,
++}
++impl<T: Copy> MBuf<T> {
++    fn new(len: usize) -> MBuf<T> {
++        let bytes = (len.max(1)) * std::mem::size_of::<T>();
++        let ptr = unsafe { malloc(bytes) as *mut T };
++        assert!(!ptr.is_null(), "malloc {bytes}");
++        MBuf { ptr, len, cap: len.max(1) }
++    }
++    /// A Vec's buffer, handed over without a copy: the test binary's Rust allocator is libc
++    /// malloc, the same allocator GraphBLAS was initialized with (`test_init`).
++    fn from_vec(mut v: Vec<T>) -> MBuf<T> {
++        if v.capacity() == 0 {
++            return MBuf::new(0);
++        }
++        let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
++        std::mem::forget(v);
++        MBuf { ptr, len, cap }
++    }
++    fn s(&mut self) -> &mut [T] {
++        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
++    }
++    fn bytes(&self) -> u64 {
++        (self.cap * std::mem::size_of::<T>()) as u64
++    }
++    /// Hand the buffer to GraphBLAS.
++    fn take(mut self) -> *mut c_void {
++        let p = self.ptr;
++        self.ptr = null();
++        p as *mut c_void
++    }
++}
++impl<T: Copy> Drop for MBuf<T> {
++    fn drop(&mut self) {
++        if !self.ptr.is_null() {
++            unsafe { free(self.ptr as *mut c_void) };
++        }
++    }
++}
++
++/// Pack a row-major CSR into a new INT32 matrix (O(1)): offsets p (n+1), columns j, values x
++/// (None: iso 1).
++pub(super) fn pack_csr(
++    nrows: u64,
++    ncols: u64,
++    p: MBuf<u32>,
++    j: MBuf<u32>,
++    nnz: u64,
++    x: Option<MBuf<i32>>,
++) -> M {
++    pack_csr_t(nrows, ncols, p, j, nnz, x, t_i32(), 1i32)
++}
++/// pack_csr for any value type `xt` (iso value `one` when `x` is None).
++pub(super) fn pack_csr_t<T: Copy>(
++    nrows: u64,
++    ncols: u64,
++    p: MBuf<u32>,
++    j: MBuf<u32>,
++    nnz: u64,
++    x: Option<MBuf<T>>,
++    xt: GrB_Type,
++    one: T,
++) -> M {
++    let m = M::new(xt, nrows, ncols);
++    let mut c: GxB_Container = null();
++    ok!(GxB_Container_new(&mut c));
++    unsafe {
++        (*c).nrows = nrows;
++        (*c).ncols = ncols;
++        (*c).nrows_nonempty = -1;
++        (*c).ncols_nonempty = -1;
++        (*c).nvals = nnz;
++        (*c).format = GxB_SPARSE as i32;
++        (*c).orientation = GrB_Orientation::GrB_ROWMAJOR as i32;
++        (*c).iso = x.is_none();
++        (*c).jumbled = false;
++    }
++    let (pb, jb) = (p.bytes(), j.bytes());
++    let mut pp = p.take();
++    let mut jp = j.take();
++    ok!(GxB_Vector_load((*c).p, &mut pp, t_u32(), nrows + 1, pb, 0, null()));
++    ok!(GxB_Vector_load((*c).i, &mut jp, t_u32(), nnz, jb, 0, null()));
++    match x {
++        Some(xb) => {
++            let b = xb.bytes();
++            let mut xp = xb.take();
++            ok!(GxB_Vector_load((*c).x, &mut xp, xt, nnz, b, 0, null()));
++        }
++        None => {
++            let mut o = MBuf::<T>::new(1);
++            o.s()[0] = one;
++            let b = o.bytes();
++            let mut xp = o.take();
++            ok!(GxB_Vector_load((*c).x, &mut xp, xt, 1, b, 0, null()));
++        }
++    }
++    ok!(GxB_load_Matrix_from_Container(m.0, c, null()));
++    ok!(GxB_Container_free(&mut c));
++    m
++}
++/// A full INT32 vector from a host array (O(1)).
++pub(super) fn pack_full_i32(x: MBuf<i32>) -> V {
++    let n = x.len as u64;
++    let v = V::new(t_i32(), n);
++    let b = x.bytes();
++    let mut xp = x.take();
++    ok!(GxB_Vector_load(v.0, &mut xp, t_i32(), n, b, 0, null()));
++    v
++}
++fn mbuf_from<T: Copy>(s: &[T]) -> MBuf<T> {
++    let mut b = MBuf::new(s.len());
++    b.s().copy_from_slice(s);
++    b
++}
++
++static SLOW_BORROW: AtomicUsize = AtomicUsize::new(0);
++
++/// A matrix's CSR arrays, borrowed in O(1) (GraphBLAS container unload); the matrix is restored on
++/// drop. Rows are sorted. 32-bit offsets and indices are read in place; anything else is copied.
++pub(super) struct Csr<'a> {
++    m: &'a M,
++    c: GxB_Container,
++    raw: [(*mut c_void, GrB_Type, u64, u64, i32); 3],
++    pub n: usize,
++    pub nnz: usize,
++    p: *const u32,
++    j: *const u32,
++    x: *const i32,
++    pub iso: bool,
++    own: Option<(Vec<u32>, Vec<u32>)>,
++}
++impl<'a> Csr<'a> {
++    pub fn new(m: &'a M) -> Csr<'a> {
++        m.wait(); // sorted rows, no zombies or pending tuples (a no-op when already so)
++        let mut c: GxB_Container = null();
++        ok!(GxB_Container_new(&mut c));
++        ok!(GxB_unload_Matrix_into_Container(m.0, c, null()));
++        let (fmt, ori) = unsafe { ((*c).format, (*c).orientation) };
++        if fmt != GxB_SPARSE as i32 || ori != GrB_Orientation::GrB_ROWMAJOR as i32 {
++            // convert once: reload, force sparse by row, unload again
++            ok!(GxB_load_Matrix_from_Container(m.0, c, null()));
++            ok!(GxB_Matrix_Option_set_INT32(m.0, GxB_Option_Field::GxB_SPARSITY_CONTROL as _, GxB_SPARSE as i32));
++            m.wait();
++            ok!(GxB_unload_Matrix_into_Container(m.0, c, null()));
++            SLOW_BORROW.fetch_add(1, Relaxed);
++            let (fmt, ori) = unsafe { ((*c).format, (*c).orientation) };
++            assert!(fmt == GxB_SPARSE as i32 && ori == GrB_Orientation::GrB_ROWMAJOR as i32, "Csr: not sparse by row");
++        }
++        let n = unsafe { (*c).nrows } as usize;
++        let iso = unsafe { (*c).iso };
++        assert!(!unsafe { (*c).jumbled }, "Csr: jumbled after wait");
++        let mut raw = [(null(), null(), 0u64, 0u64, 0i32); 3];
++        let vs = unsafe { [(*c).p, (*c).i, (*c).x] };
++        for (k, v) in vs.iter().enumerate() {
++            let r = &mut raw[k];
++            ok!(GxB_Vector_unload(*v, &mut r.0, &mut r.1, &mut r.2, &mut r.3, &mut r.4, null()));
++        }
++        let (pt, it, xt) = (raw[0].1, raw[1].1, raw[2].1);
++        assert!(xt == t_i32(), "Csr: values must be INT32");
++        let mut own = None;
++        let is32 = |t: GrB_Type| t == t_u32() || t == unsafe { GrB_INT32 };
++        let tname = |t: GrB_Type| {
++            let names = unsafe { [(GrB_UINT32, "u32"), (GrB_INT32, "i32"), (GrB_UINT64, "u64"), (GrB_INT64, "i64"), (GrB_BOOL, "bool")] };
++            names.iter().find(|x| x.0 == t).map_or("?", |x| x.1)
++        };
++        static SHOWN: AtomicUsize = AtomicUsize::new(0);
++        if SHOWN.fetch_add(1, Relaxed) < 3 {
++            println!("CSRTYPES p={} i={} x={}", tname(pt), tname(it), tname(xt));
++        }
++        let (p, j) = if is32(pt) && is32(it) {
++            (raw[0].0 as *const u32, raw[1].0 as *const u32)
++        } else {
++            SLOW_BORROW.fetch_add(1, Relaxed);
++            let rd = |ptr: *mut c_void, t: GrB_Type, k: usize| -> Vec<u32> {
++                if is32(t) {
++                    unsafe { std::slice::from_raw_parts(ptr as *const u32, k) }.to_vec()
++                } else if t == t_u64() || t == t_i64() {
++                    unsafe { std::slice::from_raw_parts(ptr as *const u64, k) }.iter().map(|&x| x as u32).collect()
++                } else {
++                    panic!("Csr: unexpected integer type {}", tname(t))
++                }
++            };
++            let pv = rd(raw[0].0, pt, n + 1);
++            let jv = rd(raw[1].0, it, raw[1].2 as usize);
++            let r = (pv.as_ptr(), jv.as_ptr());
++            own = Some((pv, jv));
++            r
++        };
++        let nnz = unsafe { *p.add(n) } as usize;
++        Csr { m, c, raw, n, nnz, p, j, x: raw[2].0 as *const i32, iso, own }
++    }
++    #[inline(always)]
++    pub fn p(&self) -> &[u32] {
++        unsafe { std::slice::from_raw_parts(self.p, self.n + 1) }
++    }
++    #[inline(always)]
++    pub fn j(&self) -> &[u32] {
++        unsafe { std::slice::from_raw_parts(self.j, self.nnz) }
++    }
++    /// Values (one entry when iso).
++    #[inline(always)]
++    pub fn x(&self) -> &[i32] {
++        unsafe { std::slice::from_raw_parts(self.x, if self.iso { 1 } else { self.nnz }) }
++    }
++    #[inline(always)]
++    pub fn val(
++        &self,
++        k: usize,
++    ) -> i32 {
++        if self.iso { unsafe { *self.x } } else { unsafe { *self.x.add(k) } }
++    }
++}
++unsafe impl Sync for Csr<'_> {}
++impl Drop for Csr<'_> {
++    fn drop(&mut self) {
++        let _ = self.own.take();
++        let vs = unsafe { [(*self.c).p, (*self.c).i, (*self.c).x] };
++        for (k, v) in vs.iter().enumerate() {
++            let r = &mut self.raw[k];
++            ok!(GxB_Vector_load(*v, &mut r.0, r.1, r.2, r.3, r.4, null()));
++        }
++        ok!(GxB_load_Matrix_from_Container(self.m.0, self.c, null()));
++        ok!(GxB_Container_free(&mut self.c));
++    }
++}
++
++/// Run `f(chunk)` for chunk in 0..k on k threads (chunk 0 on this thread).
++fn par_run<F: Fn(usize) + Sync>(
++    k: usize,
++    f: F,
++) {
++    if k <= 1 {
++        f(0);
++        return;
++    }
++    std::thread::scope(|s| {
++        for c in 1..k {
++            let f = &f;
++            s.spawn(move || f(c));
++        }
++        f(0);
++    });
++}
++/// Uniform ranges of 0..n in k chunks.
++fn uniform(
++    n: usize,
++    k: usize,
++) -> Vec<usize> {
++    (0..=k).map(|c| n * c / k).collect()
++}
++/// Chunks for a host pass over `work` entries: 1 below the threshold or at 1 thread.
++fn chunks_for(work: usize) -> usize {
++    if opt("hpar") && nth() > 1 && work >= 100_000 { nth() } else { 1 }
++}
++/// Row ranges of `n` rows split into `k` chunks of about equal entry counts (by offsets `p`).
++fn row_splits(
++    p: &[u32],
++    k: usize,
++) -> Vec<usize> {
++    let n = p.len() - 1;
++    let tot = p[n] as u64;
++    let mut out = vec![0usize; k + 1];
++    for c in 1..k {
++        let target = (tot * c as u64 / k as u64) as u32;
++        out[c] = p.partition_point(|&x| x < target).min(n).max(out[c - 1]);
++    }
++    out[k] = n;
++    out
++}
++struct SendPtr<T>(*mut T);
++impl<T> SendPtr<T> {
++    /// The pointer (a method, so closures capture the whole Sync wrapper).
++    fn g(&self) -> *mut T {
++        self.0
++    }
++}
++unsafe impl<T> Sync for SendPtr<T> {}
++unsafe impl<T> Send for SendPtr<T> {}
++
++// ---- user operators ----
++fn fmix32(mut h: u32) -> u32 {
++    h ^= h >> 16;
++    h = h.wrapping_mul(0x85eb_ca6b);
++    h ^= h >> 13;
++    h = h.wrapping_mul(0xc2b2_ae35);
++    h ^= h >> 16;
++    h
++}
++fn unfmix32(mut h: u32) -> u32 {
++    h ^= h >> 16;
++    h = h.wrapping_mul(0x7ed1_b41d);
++    h ^= (h >> 13) ^ (h >> 26);
++    h = h.wrapping_mul(0xa5cb_9243);
++    h ^= h >> 16;
++    h
++}
++/// K(i,j) = (A(i,j) << 32) | fmix32(j ^ salt): unique per row, so MAX is deterministic.
++unsafe extern "C" fn key_op(
++    z: *mut c_void,
++    x: *const c_void,
++    _i: GrB_Index,
++    j: GrB_Index,
++    y: *const c_void,
++) {
++    unsafe {
++        let w = *(x as *const i32) as u32 as u64;
++        let salt = *(y as *const u64) as u32;
++        *(z as *mut u64) = (w << 32) | fmix32((j as u32) ^ salt) as u64;
++    }
++}
++/// The column a key was made from.
++unsafe extern "C" fn unkey_op(
++    z: *mut c_void,
++    x: *const c_void,
++    _i: GrB_Index,
++    _j: GrB_Index,
++    y: *const c_void,
++) {
++    unsafe {
++        let k = *(x as *const u64);
++        let salt = *(y as *const u64) as u32;
++        *(z as *mut u64) = (unfmix32(k as u32) ^ salt) as u64;
++    }
++}
++unsafe extern "C" fn even_op(
++    z: *mut c_void,
++    _x: *const c_void,
++    _i: GrB_Index,
++    j: GrB_Index,
++    _y: *const c_void,
++) {
++    unsafe { *(z as *mut bool) = j & 1 == 0 };
++}
++unsafe extern "C" fn odd_op(
++    z: *mut c_void,
++    _x: *const c_void,
++    _i: GrB_Index,
++    j: GrB_Index,
++    _y: *const c_void,
++) {
++    unsafe { *(z as *mut bool) = j & 1 == 1 };
++}
++
++pub(super) struct Ops {
++    key: GrB_IndexUnaryOp,
++    unkey: GrB_IndexUnaryOp,
++    even: GrB_IndexUnaryOp,
++    odd: GrB_IndexUnaryOp,
++    pub one_i32: GrB_Scalar,
++}
++impl Ops {
++    pub fn new() -> Ops {
++        let mut key = null();
++        let mut unkey = null();
++        let mut even = null();
++        let mut odd = null();
++        ok!(GrB_IndexUnaryOp_new(&mut key, Some(key_op), t_u64(), t_i32(), t_u64()));
++        ok!(GrB_IndexUnaryOp_new(&mut unkey, Some(unkey_op), t_u64(), t_u64(), t_u64()));
++        ok!(GrB_IndexUnaryOp_new(&mut even, Some(even_op), t_bool(), t_i64(), t_i64()));
++        ok!(GrB_IndexUnaryOp_new(&mut odd, Some(odd_op), t_bool(), t_i64(), t_i64()));
++        let mut one_i32 = null();
++        ok!(GrB_Scalar_new(&mut one_i32, t_i32()));
++        ok!(GrB_Scalar_setElement_INT32(one_i32, 1));
++        Ops { key, unkey, even, odd, one_i32 }
++    }
++}
++
++/// Seconds per named call, summed; .1 holds (instructions, cycles) per call name.
++#[derive(Default, Clone)]
++pub(super) struct Timer(pub BTreeMap<&'static str, f64>, pub BTreeMap<&'static str, (u64, u64)>);
++impl Timer {
++    fn time<R>(
++        &mut self,
++        name: &'static str,
++        f: impl FnOnce() -> R,
++    ) -> R {
++        if burble() {
++            println!("@@CALL {name}");
++            flush();
++        }
++        let i0 = instr();
++        let t = Instant::now();
++        let r = f();
++        let el = t.elapsed().as_secs_f64();
++        let i1 = instr();
++        *self.0.entry(name).or_default() += el;
++        let e = self.1.entry(name).or_default();
++        e.0 += i1.0 - i0.0;
++        e.1 += i1.1 - i0.1;
++        if burble() {
++            println!("@@END {name} {el:.6}");
++            flush();
++        }
++        r
++    }
++    fn add(
++        &mut self,
++        b: &Timer,
++    ) {
++        for (k, v) in &b.0 {
++            *self.0.entry(*k).or_default() += v;
++        }
++        for (k, v) in &b.1 {
++            let e = self.1.entry(*k).or_default();
++            e.0 += v.0;
++            e.1 += v.1;
++        }
++    }
++    fn wall(&self) -> f64 {
++        self.0.values().sum()
++    }
++    fn instr(&self) -> (u64, u64) {
++        self.1.values().fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1))
++    }
++}
++
++// ---- equality hash (check run only) ----
++thread_local! {
++    static HASH: std::cell::RefCell<Option<(u64, u64)>> = const { std::cell::RefCell::new(None) };
++}
++fn hmix(
++    h: u64,
++    x: u64,
++) -> u64 {
++    let mut z = (h ^ x).wrapping_add(0x9E37_79B9_7F4A_7C15);
++    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
++    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
++    z ^ (z >> 31)
++}
++fn hash_on() -> bool {
++    HASH.with(|h| h.borrow().is_some())
++}
++fn hash_begin() {
++    HASH.with(|h| *h.borrow_mut() = Some((0x1234_5678, 0)));
++}
++/// (hash, number of items fed)
++fn hash_end() -> (u64, u64) {
++    HASH.with(|h| h.borrow_mut().take().unwrap_or((0, 0)))
++}
++fn hash_u64s(xs: impl IntoIterator<Item = u64>) {
++    HASH.with(|h| {
++        if let Some((s, c)) = h.borrow_mut().as_mut() {
++            let mut n = 0u64;
++            for x in xs {
++                *s = hmix(*s, x);
++                n += 1;
++            }
++            *s = hmix(*s, 0xFEED ^ n);
++            *c += 1;
++        }
++    });
++}
++fn hash_mat(m: &M) {
++    if !hash_on() {
++        return;
++    }
++    m.wait();
++    let mut n = m.nvals();
++    let mut i = vec![0u64; n as usize];
++    let mut j = vec![0u64; n as usize];
++    let mut x = vec![0i32; n as usize];
++    ok!(GrB_Matrix_extractTuples_INT32(i.as_mut_ptr(), j.as_mut_ptr(), x.as_mut_ptr(), &mut n, m.0));
++    let mut nc = 0;
++    ok!(GrB_Matrix_ncols(&mut nc, m.0));
++    hash_u64s([m.nrows(), nc]);
++    hash_u64s(i.iter().zip(&j).zip(&x).map(|((&a, &b), &c)| (a << 32 | b) ^ ((c as u32 as u64) << 17).rotate_left(29)));
++}
++fn hash_vec_i32(v: &V) {
++    if !hash_on() {
++        return;
++    }
++    v.wait();
++    let (i, x) = v.i32s();
++    hash_u64s([v.size()]);
++    hash_u64s(i.iter().zip(&x).map(|(&a, &b)| a << 32 | b as u32 as u64));
++}
++fn hash_u32s(xs: &[u32]) {
++    if hash_on() {
++        hash_u64s(xs.iter().map(|&x| x as u64));
++    }
++}
++fn hash_i32s(xs: &[i32]) {
++    if hash_on() {
++        hash_u64s(xs.iter().map(|&x| x as u32 as u64));
++    }
++}
++
++/// w as a dense host array indexed by vertex (0 where w has no entry).
++fn dense_i32(w: &V) -> Vec<i32> {
++    let (wi, wx) = w.i32s();
++    let n = w.size();
++    if wi.len() as u64 == n {
++        return wx;
++    }
++    let mut d = vec![0i32; n as usize];
++    for (i, x) in wi.into_iter().zip(wx) {
++        d[i as usize] = x;
++    }
++    d
++}
++
++/// Full UINT64 vector idx(i) = i.
++fn index_vector(n: u64) -> V {
++    let idx = V::new(t_u64(), n);
++    ok!(GrB_Vector_assign_UINT64(idx.0, null(), null(), 0, GrB_ALL, n, null()));
++    ok!(GrB_Vector_apply_IndexOp_INT64(idx.0, null(), null(), GrB_ROWINDEX_INT64, idx.0, 0, null()));
++    idx.wait();
++    idx
++}
++
++pub(super) struct LevelOut {
++    /// C' (n x nc): the projection map.
++    pub c: M,
++    pub ac: M,
++    pub wc: V,
++    /// host w_c (cpack only)
++    pub wc_host: Option<Vec<i32>>,
++    /// fine -> coarse id, NONE for dead (cpack only)
++    pub ca: Option<Vec<u32>>,
++    pub rounds: u32,
++    pub twohop: bool,
++    pub pairs: u64,
++}
++
++/// Number of coarsen_level calls (matching runs) so far; B1/B2 must never add to it.
++pub(super) static MATCH_CALLS: AtomicUsize = AtomicUsize::new(0);
++
++/// Read a full UINT64 vector's values on the host (O(1) unload, copied out, reloaded).
++fn read_full_u64(v: &V) -> Vec<u64> {
++    let mut x: *mut c_void = null();
++    let (mut t, mut n, mut sz, mut h) = (null(), 0u64, 0u64, 0i32);
++    let info = unsafe { GxB_Vector_unload(v.0, &mut x, &mut t, &mut n, &mut sz, &mut h, null()) };
++    if info != GrB_Info::GrB_SUCCESS {
++        SLOW_BORROW.fetch_add(1, Relaxed);
++        return v.u64s().1;
++    }
++    assert!(t == t_u64());
++    let out = unsafe { std::slice::from_raw_parts(x as *const u64, n as usize) }.to_vec();
++    ok!(GxB_Vector_load(v.0, &mut x, t, n, sz, h, null()));
++    out
++}
++
++/// One coarsening level, steps (1)-(2) of design §3, every call timed.
++/// `w_host`: the same weights as `w` on the host (dense, 0 = dead), used by the cpack/hcon paths.
++pub(super) fn coarsen_level(
++    a: &M,
++    w: &V,
++    w_host: Option<&[i32]>,
++    cap: i32,
++    salt: u64,
++    ops: &Ops,
++    t: &mut Timer,
++) -> LevelOut {
++    MATCH_CALLS.fetch_add(1, Relaxed);
++    let n = a.nrows();
++    let n_live = w.nvals();
++    let partial = n_live != n;
++    // (1a) cap mask: S(i,j) = w(i)+w(j) on A's pattern, keep <= cap. Skipped when no pair can exceed it.
++    let mut maxw = 0i32;
++    ok!(GrB_Vector_reduce_INT32(&mut maxw, null(), GrB_MAX_MONOID_INT32, w.0, null()));
++    let hkey = opt("hkey") && w_host.is_some();
++    let mcap = if 2 * maxw as i64 > cap as i64 && !hkey {
++        Some(t.time("cap", || {
++            let mut d = null();
++            ok!(GrB_Matrix_diag(&mut d, w.0, 0));
++            let d = M(d);
++            let s = M::new(t_i32(), n, n);
++            if opt("caprc") {
++                // s = D A (row scale: w(i)), then s = s D (column scale: + w(j))
++                ok!(GrB_mxm(s.0, null(), null(), GxB_PLUS_FIRST_INT32, d.0, a.0, null()));
++                let sr = unsafe { if obrk("caprc") { GxB_PLUS_FIRST_INT32 } else { GxB_PLUS_PLUS_INT32 } };
++                ok!(GrB_mxm(s.0, null(), null(), sr, s.0, d.0, null()));
++            } else {
++                let left = M::new(t_i32(), n, n);
++                ok!(GrB_mxm(left.0, null(), null(), GxB_PLUS_FIRST_INT32, d.0, a.0, null()));
++                let right = M::new(t_i32(), n, n);
++                ok!(GrB_mxm(right.0, null(), null(), GxB_PLUS_SECOND_INT32, a.0, d.0, null()));
++                ok!(GrB_Matrix_eWiseMult_BinaryOp(s.0, null(), null(), GrB_PLUS_INT32, left.0, right.0, null()));
++            }
++            ok!(GrB_Matrix_select_INT32(s.0, null(), null(), GrB_VALUELE_INT32, s.0, cap, null()));
++            w8m(&s);
++            s
++        }))
++    } else {
++        None
++    };
++    // (1b) keys by a user positional op.
++    let k = t.time("key", || {
++        if hkey {
++            return host_keys(a, w_host.unwrap(), cap, 2 * maxw as i64 > cap as i64, salt);
++        }
++        let k = M::new(t_u64(), n, n);
++        let mask = mcap.as_ref().map_or(null(), |m| m.0);
++        let desc = if mcap.is_some() { unsafe { GrB_DESC_S } } else { null() };
++        ok!(GrB_Matrix_apply_IndexOp_UINT64(k.0, mask, null(), ops.key, a.0, salt, desc));
++        w8m(&k);
++        k
++    });
++    drop(mcap);
++    let usel = opt("usel");
++    let zmatch = opt("zmatch") && !brk("nomutual");
++    let idx = t.time("idx", || index_vector(n));
++    let mut mate: Option<V> = if zmatch { None } else { Some(t.time("idx", || idx.dup())) };
++    let mut z: Option<V> = if zmatch { Some(t.time("idx", || idx.dup())) } else { None };
++    // u: the unmatched proposers (round 1: every live vertex)
++    let mut u_own: Option<V> = if partial {
++        Some(t.time("idx", || {
++            let u = V::new(t_u64(), n);
++            ok!(GrB_Vector_apply(u.0, w.0, null(), GrB_IDENTITY_UINT64, idx.0, GrB_DESC_S));
++            w8v(&u);
++            u
++        }))
++    } else if usel {
++        None // idx itself
++    } else {
++        Some(t.time("idx", || idx.dup()))
++    };
++    // (1c) rounds of mutual-max proposals until a round matches nothing.
++    let mut rounds = 0;
++    let mut matched = 0u64;
++    loop {
++        rounds += 1;
++        let u = u_own.as_ref().unwrap_or(&idx);
++        let y = V::new(t_u64(), n);
++        t.time("mxv", || {
++            ok!(GrB_mxv(y.0, u.0, null(), GxB_MAX_FIRST_UINT64, k.0, u.0, GrB_DESC_RS));
++            w8v(&y);
++        });
++        let np = y.nvals();
++        if burble() {
++            println!("@@NP round={rounds} n={n} proposers={np}");
++        }
++        if np == 0 {
++            break;
++        }
++        t.time("m_unkey", || {
++            ok!(GrB_Vector_apply_IndexOp_UINT64(y.0, null(), null(), ops.unkey, y.0, salt, null()));
++            w8v(&y);
++        });
++        let m = V::new(t_bool(), n);
++        if brk("nomutual") {
++            ok!(GrB_Vector_assign_BOOL(m.0, y.0, null(), true, GrB_ALL, n, GrB_DESC_S));
++        } else if let Some(zv) = z.as_mut() {
++            let z2 = t.time("z_add", || {
++                let z2 = V::new(t_u64(), n);
++                ok!(GrB_Vector_eWiseAdd_BinaryOp(z2.0, null(), null(), GrB_SECOND_UINT64, zv.0, y.0, null()));
++                w8v(&z2);
++                z2
++            });
++            *zv = z2;
++            let q = t.time("m_extract", || {
++                let q = V::new(t_u64(), n);
++                ok!(GxB_Vector_extract_Vector(q.0, null(), null(), zv.0, zv.0, null()));
++                w8v(&q);
++                q
++            });
++            t.time("m_eq", || {
++                ok!(GrB_Vector_eWiseMult_BinaryOp(m.0, y.0, null(), GrB_EQ_UINT64, q.0, idx.0, GrB_DESC_RS));
++                w8v(&m);
++            });
++        } else {
++            let pf = t.time("m_full", || {
++                let pf = V::new(t_u64(), n);
++                ok!(GrB_Vector_eWiseAdd_BinaryOp(pf.0, null(), null(), GrB_SECOND_UINT64, idx.0, y.0, null()));
++                w8v(&pf);
++                pf
++            });
++            let q = t.time("m_extract", || {
++                let q = V::new(t_u64(), n);
++                ok!(GxB_Vector_extract_Vector(q.0, null(), null(), pf.0, pf.0, null()));
++                w8v(&q);
++                q
++            });
++            t.time("m_eq", || {
++                ok!(GrB_Vector_eWiseMult_BinaryOp(m.0, y.0, null(), GrB_EQ_UINT64, q.0, idx.0, GrB_DESC_RS));
++                w8v(&m);
++            });
++        }
++        if let Some(mt) = mate.as_ref() {
++            t.time("m_assign", || {
++                ok!(GrB_Vector_assign(mt.0, m.0, null(), y.0, GrB_ALL, n, null()));
++                w8v(mt);
++            });
++        }
++        let u2 = if usel {
++            t.time("m_unext", || {
++                let u2 = V::new(t_bool(), n);
++                ok!(GrB_Vector_select_BOOL(u2.0, null(), null(), GrB_VALUEEQ_BOOL, m.0, obrk("usel"), null()));
++                w8v(&u2);
++                u2
++            })
++        } else {
++            t.time("m_unext", || {
++                let u2 = V::new(t_u64(), n);
++                ok!(GrB_Vector_apply(u2.0, m.0, null(), GrB_IDENTITY_UINT64, y.0, GrB_DESC_RC));
++                w8v(&u2);
++                u2
++            })
++        };
++        let newly = np.saturating_sub(u2.nvals());
++        u_own = Some(u2);
++        matched += newly;
++        if newly == 0 {
++            break;
++        }
++    }
++    drop(u_own);
++    if let Some(zv) = z.take() {
++        // stale proposals (proposed, never matched) go back to self: mate = Z except where Z(Z) != idx
++        let m2 = t.time("z_final", || {
++            let qz = V::new(t_u64(), n);
++            ok!(GxB_Vector_extract_Vector(qz.0, null(), null(), zv.0, zv.0, null()));
++            let eq = V::new(t_bool(), n);
++            ok!(GrB_Vector_eWiseMult_BinaryOp(eq.0, null(), null(), GrB_EQ_UINT64, qz.0, idx.0, null()));
++            let st = V::new(t_bool(), n);
++            ok!(GrB_Vector_select_BOOL(st.0, null(), null(), GrB_VALUEEQ_BOOL, eq.0, false, null()));
++            let m2 = V::new(t_u64(), n);
++            if obrk("zmatch") {
++                ok!(GrB_Vector_apply(m2.0, null(), null(), GrB_IDENTITY_UINT64, zv.0, null()));
++            } else {
++                let si = V::new(t_u64(), n);
++                ok!(GrB_Vector_apply_IndexOp_UINT64(si.0, null(), null(), GrB_ROWINDEX_INT64, st.0, 0, null()));
++                ok!(GrB_Vector_eWiseAdd_BinaryOp(m2.0, null(), null(), GrB_SECOND_UINT64, zv.0, si.0, null()));
++            }
++            w8v(&m2);
++            m2
++        });
++        mate = Some(m2);
++    }
++    let mate = mate.unwrap();
++    let round_mate = if verify() { Some(mate.u64s().1) } else { None };
++    // (1d) 2-hop pass when the matching shrinks the level by under 15 %.
++    let mut twohop = false;
++    if (matched / 2) * 100 < 15 * n_live {
++        twohop = true;
++        let pairs = t.time("twohop", || {
++            let um = V::new(t_bool(), n);
++            ok!(GrB_Vector_eWiseMult_BinaryOp(um.0, null(), null(), GrB_EQ_UINT64, mate.0, idx.0, null()));
++            let anchor = V::new(t_u64(), n);
++            ok!(GrB_mxv(anchor.0, um.0, null(), GxB_MAX_FIRST_UINT64, k.0, idx.0, GrB_DESC_R));
++            ok!(GrB_Vector_apply_IndexOp_UINT64(anchor.0, null(), null(), ops.unkey, anchor.0, salt, null()));
++            let jv = V::new(t_u64(), n);
++            ok!(GrB_Vector_apply(jv.0, anchor.0, null(), GrB_IDENTITY_UINT64, idx.0, GrB_DESC_RS));
++            let g = M::new(t_u64(), n, n);
++            ok!(GxB_Matrix_build_Vector(g.0, anchor.0, jv.0, jv.0, null(), null()));
++            let p = M::new(t_i64(), n, n);
++            ok!(GxB_Matrix_sort(null(), p.0, GrB_LT_UINT64, g.0, null()));
++            let e = M::new(t_i64(), n, n);
++            ok!(GrB_Matrix_select_INT64(e.0, null(), null(), ops.even, p.0, 0, null()));
++            let o = M::new(t_i64(), n, n);
++            ok!(GrB_Matrix_select_INT64(o.0, null(), null(), ops.odd, p.0, 0, null()));
++            let e2 = M::new(t_i64(), n, n - 1);
++            let lo = [0u64, n - 2];
++            ok!(GrB_Matrix_extract(e2.0, null(), null(), e.0, GrB_ALL, n, lo.as_ptr(), GxB_RANGE, null()));
++            let o2 = M::new(t_i64(), n, n - 1);
++            let hi = [1u64, n - 1];
++            ok!(GrB_Matrix_extract(o2.0, null(), null(), o.0, GrB_ALL, n, hi.as_ptr(), GxB_RANGE, null()));
++            let pe = M::new(t_i64(), n, n - 1);
++            ok!(GrB_Matrix_eWiseMult_BinaryOp(pe.0, null(), null(), GrB_FIRST_INT64, e2.0, o2.0, null()));
++            let po = M::new(t_i64(), n, n - 1);
++            ok!(GrB_Matrix_eWiseMult_BinaryOp(po.0, null(), null(), GrB_SECOND_INT64, e2.0, o2.0, null()));
++            let mut np = pe.nvals();
++            let mut xe = vec![0i64; np as usize];
++            let mut xo = vec![0i64; np as usize];
++            ok!(GrB_Matrix_extractTuples_INT64(null(), null(), xe.as_mut_ptr(), &mut np, pe.0));
++            ok!(GrB_Matrix_extractTuples_INT64(null(), null(), xo.as_mut_ptr(), &mut np, po.0));
++            // host: cap check, then both directions into mate
++            let wd;
++            let wv: &[i32] = match w_host.filter(|_| opt("cpack")) {
++                Some(h) => h,
++                None => {
++                    wd = dense_i32(w);
++                    &wd
++                }
++            };
++            let mut bi = Vec::with_capacity(2 * xe.len());
++            let mut bx = Vec::with_capacity(2 * xe.len());
++            for (&x, &y) in xe.iter().zip(&xo) {
++                if (wv[x as usize] as i64 + wv[y as usize] as i64) <= cap as i64 {
++                    bi.push(x as u64);
++                    bx.push(y as u64);
++                    bi.push(y as u64);
++                    bx.push(x as u64);
++                }
++            }
++            let tmp = V::new(t_u64(), n);
++            ok!(GrB_Vector_build_UINT64(tmp.0, bi.as_ptr(), bx.as_ptr(), bi.len() as u64, null()));
++            ok!(GrB_Vector_assign(mate.0, tmp.0, null(), tmp.0, GrB_ALL, n, GrB_DESC_S));
++            w8v(&mate);
++            bi.len() as u64 / 2
++        });
++        matched += 2 * pairs;
++    }
++    if let Some(rm) = round_mate {
++        check_matching(a, w, cap, &rm, &mate.u64s().1);
++    }
++    drop(k);
++    if opt("cpack") {
++        return contract_packed(a, w, w_host, &mate, n, n_live, rounds, twohop, matched / 2, t);
++    }
++    // (1e) C: one row per coarse vertex; leader = min(i, mate(i)).
++    let (l, lead) = t.time("c_leader", || {
++        let l = V::new(t_u64(), n);
++        ok!(GrB_Vector_eWiseMult_BinaryOp(l.0, null(), null(), GrB_MIN_UINT64, idx.0, mate.0, null()));
++        let lead = V::new(t_bool(), n);
++        ok!(GrB_Vector_eWiseMult_BinaryOp(lead.0, null(), null(), GrB_EQ_UINT64, l.0, idx.0, null()));
++        ok!(GrB_Vector_select_BOOL(lead.0, null(), null(), GrB_VALUEEQ_BOOL, lead.0, true, null()));
++        let lead = if partial {
++            let l2 = V::new(t_bool(), n);
++            ok!(GrB_Vector_apply(l2.0, w.0, null(), GrB_IDENTITY_BOOL, lead.0, GrB_DESC_S));
++            l2
++        } else {
++            lead
++        };
++        w8v(&lead);
++        w8v(&l);
++        (l, lead)
++    });
++    let (cid, nc) = t.time("c_number_host", || {
++        let mut nc = lead.nvals();
++        let mut li = vec![0u64; nc as usize];
++        ok!(GrB_Vector_extractTuples_BOOL(li.as_mut_ptr(), null(), &mut nc, lead.0));
++        let ids: Vec<u64> = (0..nc).collect();
++        let cid = V::new(t_u64(), n);
++        ok!(GrB_Vector_build_UINT64(cid.0, li.as_ptr(), ids.as_ptr(), nc, null()));
++        w8v(&cid);
++        (cid, nc)
++    });
++    let ca = t.time("c_extract", || {
++        let ca = V::new(t_u64(), n);
++        ok!(GxB_Vector_extract_Vector(ca.0, null(), null(), cid.0, l.0, null()));
++        w8v(&ca);
++        ca
++    });
++    let c = t.time("c_build", || {
++        let c = if ct() { M::new(t_i32(), n, nc) } else { M::new(t_i32(), nc, n) };
++        let idl = if partial {
++            let v = V::new(t_u64(), n);
++            ok!(GrB_Vector_apply(v.0, w.0, null(), GrB_IDENTITY_UINT64, idx.0, GrB_DESC_S));
++            Some(v)
++        } else {
++            None
++        };
++        let ii = idl.as_ref().map_or(idx.0, |v| v.0);
++        if ct() {
++            ok!(GxB_Matrix_build_Scalar_Vector(c.0, ii, ca.0, ops.one_i32, null()));
++        } else {
++            ok!(GxB_Matrix_build_Scalar_Vector(c.0, ca.0, ii, ops.one_i32, null()));
++        }
++        c.wait();
++        c
++    });
++    // (2) contraction A_c = select(OFFDIAG, C A C'), PLUS_TIMES_INT32; w_c = C w.
++    let tmat = t.time("CA", || {
++        let tm = M::new(t_i32(), nc, n);
++        let d = if ct() { unsafe { GrB_DESC_T0 } } else { null() };
++        ok!(GrB_mxm(tm.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, c.0, a.0, d));
++        w8m(&tm);
++        tm
++    });
++    let ac = t.time("CAC'", || {
++        let ac = M::new(t_i32(), nc, nc);
++        let d = if ct() { null() } else { unsafe { GrB_DESC_T1 } };
++        ok!(GrB_mxm(ac.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, tmat.0, c.0, d));
++        w8m(&ac);
++        ac
++    });
++    drop(tmat);
++    if !brk("nooffdiag") {
++        t.time("offdiag", || {
++            ok!(GrB_Matrix_select_INT64(ac.0, null(), null(), GrB_OFFDIAG, ac.0, 0, null()));
++            ac.wait();
++        });
++    }
++    nowait_break(&ac);
++    let wc = t.time("Cw", || {
++        let wc = V::new(t_i32(), nc);
++        let d = if ct() { unsafe { GrB_DESC_T0 } } else { null() };
++        ok!(GrB_mxv(wc.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, c.0, w.0, d));
++        wc.wait();
++        wc
++    });
++    level_checks(&c, &ac, &wc, w, n_live);
++    LevelOut { c, ac, wc, wc_host: None, ca: None, rounds, twohop, pairs: matched / 2 }
++}
++
++/// Break of the nowait build's equality check: +1 on the first stored value of A_c.
++fn nowait_break(ac: &M) {
++    if opt("nowait") && obrk("nowait") && ac.nvals() > 0 {
++        let (i, j, x) = {
++            let mut n = ac.nvals();
++            let mut i = vec![0u64; n as usize];
++            let mut j = vec![0u64; n as usize];
++            let mut x = vec![0i32; n as usize];
++            ok!(GrB_Matrix_extractTuples_INT32(i.as_mut_ptr(), j.as_mut_ptr(), x.as_mut_ptr(), &mut n, ac.0));
++            (i[0], j[0], x[0])
++        };
++        ok!(GrB_Matrix_setElement_INT32(ac.0, x + 1, i, j));
++        ac.wait();
++    }
++}
++
++/// checks (cheap, always on; untimed)
++fn level_checks(
++    c: &M,
++    ac: &M,
++    wc: &V,
++    w: &V,
++    n_live: u64,
++) {
++    let nc = ac.nrows();
++    let diag = M::new(t_i32(), nc, nc);
++    ok!(GrB_Matrix_select_INT64(diag.0, null(), null(), GrB_DIAG, ac.0, 0, null()));
++    assert_eq!(diag.nvals(), 0, "CHECK FAILED: A_c has a diagonal");
++    assert_eq!(wc.sum(), w.sum(), "CHECK FAILED: vertex weight not conserved");
++    assert_eq!(c.nvals(), n_live, "CHECK FAILED: C must have one entry per live fine vertex");
++}
++
++/// cpack: host leader numbering in one pass over mate, C and C' packed, contraction without a
++/// transpose (or as one host pass under `hcon`), w_c on the host.
++#[allow(clippy::too_many_arguments)]
++fn contract_packed(
++    a: &M,
++    w: &V,
++    w_host: Option<&[i32]>,
++    mate: &V,
++    n: u64,
++    n_live: u64,
++    rounds: u32,
++    twohop: bool,
++    pairs: u64,
++    t: &mut Timer,
++) -> LevelOut {
++    let wd;
++    let wh: &[i32] = match w_host {
++        Some(h) => h,
++        None => {
++            wd = dense_i32(w);
++            &wd
++        }
++    };
++    let nu = n as usize;
++    let nl = n_live as usize;
++    let (c_rows, ctp, ca, wch, nc) = t.time("c_host", || {
++        let mt = read_full_u64(mate);
++        let mut ca = vec![u32::MAX; nu];
++        // C (nc x n): row c = its members (1 or 2, ascending)
++        let mut cp = MBuf::<u32>::new(nl + 1);
++        let mut cj = MBuf::<u32>::new(nl);
++        // C' (n x nc): row i = [ca(i)] for live i
++        let mut tp = MBuf::<u32>::new(nu + 1);
++        let mut tj = MBuf::<u32>::new(nl);
++        let mut wch: Vec<i32> = Vec::with_capacity(nl);
++        let (cps, cjs, tps, tjs) = (cp.s(), cj.s(), tp.s(), tj.s());
++        let mut nc = 0usize;
++        let mut ce = 0usize;
++        let mut te = 0usize;
++        cps[0] = 0;
++        for i in 0..nu {
++            tps[i] = te as u32;
++            if wh[i] <= 0 {
++                continue;
++            }
++            let m = mt[i] as usize;
++            let id = if m >= i {
++                cjs[ce] = i as u32;
++                ce += 1;
++                let mut wsum = wh[i];
++                if m != i {
++                    cjs[ce] = m as u32;
++                    ce += 1;
++                    wsum += wh[m];
++                }
++                nc += 1;
++                cps[nc] = ce as u32;
++                wch.push(wsum);
++                (nc - 1) as u32
++            } else {
++                ca[m]
++            };
++            ca[i] = id;
++            tjs[te] = id;
++            te += 1;
++        }
++        tps[nu] = te as u32;
++        assert_eq!(te, nl, "cpack: live count");
++        if obrk("cpack") && nl > 1 {
++            tjs.swap(0, 1);
++        }
++        let c_rows = pack_csr(nc as u64, n, cp, cj, ce as u64, None);
++        let ctp = pack_csr(n, nc as u64, tp, tj, te as u64, None);
++        (c_rows, ctp, ca, wch, nc as u64)
++    });
++    let ac = if opt("hcon") {
++        t.time("hcon", || host_contract(a, &c_rows, &ca, nc))
++    } else {
++        let tmat = t.time("CA", || {
++            let tm = M::new(t_i32(), nc, n);
++            ok!(GrB_mxm(tm.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, c_rows.0, a.0, null()));
++            w8m(&tm);
++            tm
++        });
++        let ac = t.time("CAC'", || {
++            let ac = M::new(t_i32(), nc, nc);
++            ok!(GrB_mxm(ac.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, tmat.0, ctp.0, null()));
++            w8m(&ac);
++            ac
++        });
++        drop(tmat);
++        if !brk("nooffdiag") {
++            t.time("offdiag", || {
++                ok!(GrB_Matrix_select_INT64(ac.0, null(), null(), GrB_OFFDIAG, ac.0, 0, null()));
++                ac.wait();
++            });
++        }
++        nowait_break(&ac);
++        ac
++    };
++    let wc = t.time("Cw", || {
++        let wc = pack_full_i32(mbuf_from(&wch));
++        wc.wait();
++        wc
++    });
++    drop(c_rows);
++    level_checks(&ctp, &ac, &wc, w, n_live);
++    LevelOut { c: ctp, ac, wc, wc_host: Some(wch), ca: Some(ca), rounds, twohop, pairs }
++}
++
++/// Build an `nrows` x `ncols` INT32 CSR by emitting rows in order: `f(r0, r1, cols, vals, cnt)`
++/// appends rows r0..r1 (columns ascending), pushing `cols.len()` into `cnt` before each row.
++/// `wp` is a work prefix over the first `wp.len() - 1` rows, used to balance chunks under hpar
++/// (later rows go to the last chunk). With one chunk the Vecs are handed to GraphBLAS uncopied.
++pub(super) fn emit_csr<F>(
++    nrows: usize,
++    ncols: u64,
++    wp: &[u32],
++    est: usize,
++    iso: bool,
++    f: F,
++) -> M
++where
++    F: Fn(usize, usize, &mut Vec<u32>, &mut Vec<i32>, &mut Vec<u32>) + Sync,
++{
++    emit_csr_t::<i32, F>(nrows, ncols, wp, est, iso, t_i32(), 1, f)
++}
++#[allow(clippy::too_many_arguments)]
++pub(super) fn emit_csr_t<T: Copy + Send + Sync, F>(
++    nrows: usize,
++    ncols: u64,
++    wp: &[u32],
++    est: usize,
++    iso: bool,
++    xt: GrB_Type,
++    one: T,
++    f: F,
++) -> M
++where
++    F: Fn(usize, usize, &mut Vec<u32>, &mut Vec<T>, &mut Vec<u32>) + Sync,
++{
++    let work = if wp.len() >= 2 { *wp.last().unwrap() as usize } else { nrows };
++    let k = chunks_for(work);
++    if k == 1 {
++        let mut cols = Vec::with_capacity(est);
++        let mut vals = if iso { Vec::new() } else { Vec::with_capacity(est) };
++        let mut cnt = Vec::with_capacity(nrows + 1);
++        f(0, nrows, &mut cols, &mut vals, &mut cnt);
++        debug_assert_eq!(cnt.len(), nrows);
++        cnt.push(cols.len() as u32);
++        let nnz = cols.len() as u64;
++        let x = if iso { None } else { Some(MBuf::from_vec(vals)) };
++        return pack_csr_t(nrows as u64, ncols, MBuf::from_vec(cnt), MBuf::from_vec(cols), nnz, x, xt, one);
++    }
++    let mut splits = if wp.len() >= 2 { row_splits(wp, k) } else { (0..=k).map(|c| nrows * c / k).collect() };
++    splits[k] = nrows;
++    let mut outs: Vec<(Vec<u32>, Vec<u32>, Vec<T>)> = (0..k).map(|_| (Vec::new(), Vec::new(), Vec::new())).collect();
++    {
++        let op = SendPtr(outs.as_mut_ptr());
++        let splits = &splits;
++        let f = &f;
++        par_run(k, |c| {
++            let o = unsafe { &mut *op.g().add(c) };
++            let (r0, r1) = (splits[c], splits[c + 1]);
++            o.0.reserve(r1 - r0);
++            o.1.reserve(est / k + 16);
++            if !iso {
++                o.2.reserve(est / k + 16);
++            }
++            f(r0, r1, &mut o.1, &mut o.2, &mut o.0);
++        });
++    }
++    let mut offs = vec![0usize; k + 1];
++    for c in 0..k {
++        offs[c + 1] = offs[c] + outs[c].1.len();
++    }
++    let nnz = offs[k];
++    let mut p = MBuf::<u32>::new(nrows + 1);
++    let j = MBuf::<u32>::new(nnz);
++    let x = if iso { None } else { Some(MBuf::<T>::new(nnz)) };
++    {
++        let (pp, jp) = (SendPtr(p.ptr), SendPtr(j.ptr));
++        let xp = SendPtr(x.as_ref().map_or(null(), |b| b.ptr));
++        let (outs, offs, splits) = (&outs, &offs, &splits);
++        par_run(k, |c| {
++            let o = &outs[c];
++            let r0 = splits[c];
++            unsafe {
++                for (q, &v) in o.0.iter().enumerate() {
++                    *pp.g().add(r0 + q) = (offs[c] + v as usize) as u32;
++                }
++                std::ptr::copy_nonoverlapping(o.1.as_ptr(), jp.g().add(offs[c]), o.1.len());
++                if !iso {
++                    std::ptr::copy_nonoverlapping(o.2.as_ptr(), xp.g().add(offs[c]), o.2.len());
++                }
++            }
++        });
++    }
++    p.s()[nrows] = nnz as u32;
++    pack_csr_t(nrows as u64, ncols, p, j, nnz as u64, x, xt, one)
++}
++
++/// hkey: the keys K(i,j) = (A(i,j) << 32) | fmix32(j ^ salt) in one host pass over A's CSR,
++/// keeping only the pairs within the cap (w(i) + w(j) <= cap) when `capped`. Replaces the cap
++/// mask (diag scalings, eWiseMult, select) and the masked user-op apply.
++fn host_keys(
++    a: &M,
++    wh: &[i32],
++    cap: i32,
++    capped: bool,
++    salt: u64,
++) -> M {
++    let ar = Csr::new(a);
++    let n = ar.n;
++    let salt = salt as u32;
++    let cap = cap as i64;
++    let brk1 = obrk("hkey");
++    let m = emit_csr_t::<u64, _>(n, n as u64, ar.p(), ar.nnz, false, t_u64(), 0, |r0, r1, cols, vals, cnt| {
++        let (ap, aj) = (ar.p(), ar.j());
++        for i in r0..r1 {
++            cnt.push(cols.len() as u32);
++            let wi = wh[i] as i64;
++            for kk in ap[i] as usize..ap[i + 1] as usize {
++                let j = aj[kk];
++                if capped && wi + wh[j as usize] as i64 > cap {
++                    continue;
++                }
++                let wv = ar.val(kk) as u32 as u64;
++                let mut key = (wv << 32) | fmix32(j ^ salt) as u64;
++                if brk1 && i == 0 && kk == ap[0] as usize {
++                    key = key.wrapping_add(10 << 32); // raise one edge's priority
++                }
++                cols.push(j);
++                vals.push(key);
++            }
++        }
++    });
++    drop(ar);
++    m
++}
++
++/// hcon: A_c(c, c') = sum of A(i, j) over i in c, j in c', c != c', as one pass over A's CSR.
++/// Rows come out sorted (a small sort per coarse row; road-graph rows are short).
++fn host_contract(
++    a: &M,
++    c_rows: &M,
++    ca: &[u32],
++    nc: u64,
++) -> M {
++    let ar = Csr::new(a);
++    let cr = Csr::new(c_rows);
++    let ncu = nc as usize;
++    let brk1 = obrk("hcon");
++    let m = emit_csr(ncu, nc, cr.p(), ar.nnz, false, |r0, r1, cols, vals, cnt| {
++        let (ap, aj) = (ar.p(), ar.j());
++        let (cp, cj) = (cr.p(), cr.j());
++        let mut tmp: Vec<(u32, i32)> = Vec::new();
++        for r in r0..r1 {
++            cnt.push(cols.len() as u32);
++            tmp.clear();
++            for &i in &cj[cp[r] as usize..cp[r + 1] as usize] {
++                for kk in ap[i as usize] as usize..ap[i as usize + 1] as usize {
++                    let cc = ca[aj[kk] as usize];
++                    if cc as usize != r {
++                        tmp.push((cc, ar.val(kk)));
++                    }
++                }
++            }
++            tmp.sort_unstable_by_key(|e| e.0);
++            let mut q = 0;
++            while q < tmp.len() {
++                let (cc, mut sm) = tmp[q];
++                q += 1;
++                while q < tmp.len() && tmp[q].0 == cc {
++                    sm += tmp[q].1;
++                    q += 1;
++                }
++                if brk1 && r == 0 && cols.is_empty() {
++                    sm += 1;
++                }
++                cols.push(cc);
++                vals.push(sm);
++            }
++        }
++    });
++    drop(cr);
++    drop(ar);
++    m
++}
++
++/// mate is an involution; round pairs are adjacent; every pair is within the cap.
++fn check_matching(
++    a: &M,
++    w: &V,
++    cap: i32,
++    round_mate: &[u64],
++    mate: &[u64],
++) {
++    let wv = dense_i32(w);
++    for (i, &m) in mate.iter().enumerate() {
++        let m = m as usize;
++        assert_eq!(mate[m] as usize, i, "CHECK FAILED: mate is not an involution at {i}");
++        if m != i {
++            assert!(wv[i] as i64 + wv[m] as i64 <= cap as i64, "CHECK FAILED: cap");
++        }
++        if round_mate[i] as usize != i {
++            let mut x = 0i32;
++            let info = unsafe { GrB_Matrix_extractElement_INT32(&mut x, a.0, i as u64, round_mate[i]) };
++            assert_eq!(info, GrB_Info::GrB_SUCCESS, "CHECK FAILED: matched pair not adjacent");
++        }
++    }
++}
++
++/// Host CSR of the symmetric, loop-free, isolated-free skeleton.
++pub(super) struct HostCsr {
++    pub n: usize,
++    pub p: Vec<u64>,
++    pub j: Vec<u64>,
++}
++pub(super) fn load(path: &str) -> HostCsr {
++    let text = std::fs::read_to_string(path).unwrap();
++    let mut e: Vec<(u64, u64)> = Vec::new();
++    let mut n = 0u64;
++    for line in text.lines() {
++        if line.starts_with('#') {
++            continue;
++        }
++        let mut it = line.split_whitespace();
++        let u: u64 = it.next().unwrap().parse().unwrap();
++        let v: u64 = it.next().unwrap().parse().unwrap();
++        if u == v {
++            continue;
++        }
++        n = n.max(u + 1).max(v + 1);
++        e.push((u, v));
++        e.push((v, u));
++    }
++    e.sort_unstable();
++    e.dedup();
++    let mut map = vec![u64::MAX; n as usize];
++    let mut c = 0u64;
++    for &(u, _) in &e {
++        if map[u as usize] == u64::MAX {
++            map[u as usize] = c;
++            c += 1;
++        }
++    }
++    let nn = c as usize;
++    let mut p = vec![0u64; nn + 1];
++    let mut j = Vec::with_capacity(e.len());
++    for &(u, v) in &e {
++        p[map[u as usize] as usize + 1] += 1;
++        j.push(map[v as usize]);
++    }
++    for k in 0..nn {
++        p[k + 1] += p[k];
++    }
++    HostCsr { n: nn, p, j }
++}
++pub(super) fn to_grb(s: &HostCsr) -> M {
++    let mut ii = Vec::with_capacity(s.j.len());
++    for u in 0..s.n {
++        for _ in s.p[u]..s.p[u + 1] {
++            ii.push(u as u64);
++        }
++    }
++    let x = vec![1i32; s.j.len()];
++    let a = M::new(t_i32(), s.n as u64, s.n as u64);
++    ok!(GrB_Matrix_build_INT32(a.0, ii.as_ptr(), s.j.as_ptr(), x.as_ptr(), ii.len() as u64, null()));
++    a.wait();
++    a
++}
++
++pub(super) fn feral_perm(s: &HostCsr) -> (Vec<i64>, f64, u64) {
++    let xadj: Vec<i64> = s.p.iter().map(|&x| x as i64).collect();
++    let adj: Vec<i64> = s.j.iter().map(|&x| x as i64).collect();
++    let pat = feral_metis::CscPattern::new(s.n, &xadj, &adj).unwrap();
++    let i0 = instr();
++    let t = Instant::now();
++    let perm = feral_metis::metis_order(&pat).unwrap();
++    let sec = t.elapsed().as_secs_f64();
++    (perm, sec, instr().0 - i0.0)
++}
++
++pub(super) struct Rng(pub u64);
++impl Rng {
++    pub fn next(&mut self) -> u64 {
++        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
++        let mut z = self.0;
++        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
++        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
++        z ^ (z >> 31)
++    }
++}
++
++/// One level R built, handed to the reuse paths.
++pub(super) struct KeptLevel {
++    /// A_l (None for the input matrix)
++    pub a: Option<M>,
++    pub w: V,
++    pub w_host: Option<Vec<i32>>,
++    /// C'_l: l -> l+1
++    pub c: M,
++    pub ca: Option<Vec<u32>>,
++}
++pub(super) struct Kept {
++    pub levels: Vec<KeptLevel>,
++    pub a_last: Option<M>,
++    pub w_last: V,
++    pub w_last_host: Option<Vec<i32>>,
++}
++pub(super) type Rows = Vec<(u64, u64, u32, bool, Timer)>;
++
++/// Coarsen `a0` to <= stop vertices or < 5 % shrink, then project a random 2-way label back.
++/// Returns per-level timers (level 0 = finest), the fingerprint and the level-0 label.
++/// `w_init`: the live weights (GraphBLAS and host), or None for all ones.
++pub(super) fn hierarchy_keep(
++    a0: &M,
++    w_init: Option<(V, Vec<i32>)>,
++    cap: i32,
++    stop: u64,
++    ops: &Ops,
++    keep: Option<&mut Option<Kept>>,
++) -> (Rows, Vec<(u64, u64, i64)>, Vec<u32>) {
++    let n0 = a0.nrows();
++    let (w0, w0h) = w_init.unwrap_or_else(|| {
++        let w0 = V::new(t_i32(), n0);
++        ok!(GrB_Vector_assign_INT32(w0.0, null(), null(), 1, GrB_ALL, n0, null()));
++        (w0, vec![1i32; n0 as usize])
++    });
++    let mut levels: Vec<KeptLevel> = Vec::new();
++    let mut rows = Vec::new();
++    let mut fp = Vec::new();
++    let mut a = None::<M>;
++    let mut w = w0;
++    let mut wh: Option<Vec<i32>> = Some(w0h);
++    static CALLS: AtomicUsize = AtomicUsize::new(0);
++    let call = CALLS.fetch_add(1, Relaxed) as u64;
++    let mut salt = if brk("salt") { 0x5EED_u64 + call } else { 0x5EED_u64 };
++    loop {
++        let cur: &M = a.as_ref().unwrap_or(a0);
++        let n = w.nvals();
++        if n <= stop || rows.len() >= 200 {
++            break;
++        }
++        let mut t = Timer::default();
++        salt = salt.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 1;
++        let out = coarsen_level(cur, &w, wh.as_deref(), cap, salt & 0xFFFF_FFFF, ops, &mut t);
++        let nc = out.ac.nrows();
++        if hash_on() {
++            hash_mat(&out.ac);
++            hash_vec_i32(&out.wc);
++            hash_mat(&out.c);
++        }
++        rows.push((n, cur.nvals(), out.rounds, out.twohop, t));
++        fp.push((nc, out.ac.nvals(), out.ac.sum()));
++        let prev_a = a.take();
++        let prev_w = std::mem::replace(&mut w, out.wc);
++        let prev_wh = std::mem::replace(&mut wh, out.wc_host);
++        levels.push(KeptLevel { a: prev_a, w: prev_w, w_host: prev_wh, c: out.c, ca: out.ca });
++        a = Some(out.ac);
++        if nc * 100 > 95 * n {
++            break;
++        }
++    }
++    // (3) projection: random labels on the coarsest level, then mxv(C', labels) per level.
++    let top = a.as_ref().map_or(n0, |m| m.nrows());
++    let mut rng = Rng(42);
++    let lab: Vec<i32> = (0..top).map(|_| (rng.next() & 1) as i32).collect();
++    let ii: Vec<u64> = (0..top).collect();
++    let mut lv = V::new(t_i32(), top);
++    ok!(GrB_Vector_build_INT32(lv.0, ii.as_ptr(), lab.as_ptr(), top, null()));
++    for (l, kl) in levels.iter().enumerate().rev() {
++        let nf = rows[l].0;
++        let nd = kl.c.nrows();
++        let t = &mut rows[l].4;
++        let fine = t.time("project", || {
++            let f = V::new(t_i32(), nd);
++            ok!(GrB_mxv(f.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, kl.c.0, lv.0, null()));
++            w8v(&f);
++            f
++        });
++        assert_eq!(fine.nvals(), nf, "CHECK FAILED: projection lost vertices");
++        let am = kl.a.as_ref().map_or(a0.0, |m| m.0);
++        t.time("bnd", || {
++            let b = V::new(t_i32(), nd);
++            ok!(GrB_mxv(b.0, null(), null(), GxB_PLUS_SECOND_INT32, am, fine.0, null()));
++            b.wait();
++        });
++        lv = fine;
++    }
++    hash_vec_i32(&lv);
++    let (_, l0) = lv.i32s();
++    if let Some(k) = keep {
++        *k = Some(Kept { levels, a_last: a, w_last: w, w_last_host: wh });
++    }
++    (rows, fp, l0.into_iter().map(|x| x as u32).collect())
++}
++
++#[path = "m1_reuse_bench.rs"]
++mod reuse;
+diff --git a/graph/src/graph/graphblas/m1_reuse_bench.rs b/graph/src/graph/graphblas/m1_reuse_bench.rs
+new file mode 100644
+index 000000000..4431cae10
+--- /dev/null
++++ b/graph/src/graph/graphblas/m1_reuse_bench.rs
+@@ -0,0 +1,2355 @@
++//! SCRATCH (never committed): D5 option (b), optimized copy (m1opt) of m1rcB's reuse bench.
++//! For every ND depth >= 1 it times
++//!   R  - re-coarsen from scratch (the parent bench's `hierarchy`),
++//!   B2 - one masked split of the parent's level plus straddler-only re-contraction,
++//!   CS - capstop: B2 per cell while the cell's heaviest coarse vertex stays within R's cap and
++//!        the cell has more than 100 coarse vertices; a cell that breaks the cap (or whose parent
++//!        has no such level) coarsens fresh with R's matching, as `m1-reuse-quality.md`'s
++//!        `reuse_capstop` rule does.
++//! B1 (re-contract every level) runs in the check run only, as B2's equality check.
++//! Depth 0 is R's hierarchy, shared by all paths.
++//!
++//! Env, besides M1_GRAPH, M1_THREADS, M1_RUNS (timed runs), M1_DEPTHS, M1_JIT, M1_CT, M1_BREAK:
++//!   M1_FERAL=k      feral timing runs (0: read the order from M1_PERM_CACHE)
++//!   M1_PERM_CACHE   file holding feral's order (written when missing)
++//!   M1_HASH=write:F | check:F   per-(path, depth) equality hashes against a baseline
++//!   M1_RULECHECK=1  replay the quality harness's capstop rule and compare stop levels per cell
++//!   M1_NOCHECK=1    no check run (run 0)
++//! Reuse-side switches in M1O (see m1_coarsen_bench.rs for the level switches):
++//!   hsplit  the fine split per depth as one host pass over A0's CSR
++//!   hb2     the B2 level as one host pass over the parent level's CSR, splicing the straddler
++//!           rows and columns in (replaces masked mxm, value copy, resize, straddler products
++//!           and the union)
++//!   pk      C' packed from the numbering; the level's GraphBLAS w vector is not built (only
++//!           checks read it)
++//!   gath    capstop's gather by appending the stopped blocks' CSR rows
++//!   book    numbering with reused scratch and one pass for capstop's stop test
++//!   hpar    host passes split across the thread count
++
++use super::*;
++use std::collections::BTreeMap;
++use std::time::Instant;
++
++const SEP: u32 = u32::MAX;
++const NONE: u32 = u32::MAX;
++/// Per-cell floor: a cell with at most this many coarse vertices needs no more coarsening (the
++/// bench's stop, 100 per cell).
++const FLOOR: u64 = 100;
++/// Hashes that differ between thread counts within one process.
++static HASHDIFF: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++
++fn ncols(a: &M) -> u64 {
++    let mut n = 0;
++    ok!(GrB_Matrix_ncols(&mut n, a.0));
++    n
++}
++fn tuples(a: &M) -> (Vec<u64>, Vec<u64>, Vec<i32>) {
++    a.wait();
++    let mut n = a.nvals();
++    let mut i = vec![0u64; n as usize];
++    let mut j = vec![0u64; n as usize];
++    let mut x = vec![0i32; n as usize];
++    ok!(GrB_Matrix_extractTuples_INT32(i.as_mut_ptr(), j.as_mut_ptr(), x.as_mut_ptr(), &mut n, a.0));
++    (i, j, x)
++}
++fn row_degrees(a: &M) -> Vec<u32> {
++    let mut n = a.nvals();
++    let mut i = vec![0u64; n as usize];
++    ok!(GrB_Matrix_extractTuples_INT32(i.as_mut_ptr(), null(), null(), &mut n, a.0));
++    let mut d = vec![0u32; a.nrows() as usize];
++    for r in i {
++        d[r as usize] += 1;
++    }
++    d
++}
++fn vec_i32(
++    n: u64,
++    ids: &[u64],
++    x: &[i32],
++) -> V {
++    let v = V::new(t_i32(), n);
++    ok!(GrB_Vector_build_INT32(v.0, ids.as_ptr(), x.as_ptr(), ids.len() as u64, null()));
++    w8v(&v);
++    v
++}
++fn mxv_i32(
++    a: &M,
++    x: &V,
++    transpose: bool,
++) -> V {
++    let mut r = 0;
++    ok!(if transpose { GrB_Matrix_ncols(&mut r, a.0) } else { GrB_Matrix_nrows(&mut r, a.0) });
++    let y = V::new(t_i32(), r);
++    let d = if transpose { unsafe { GrB_DESC_T0 } } else { null() };
++    ok!(GrB_mxv(y.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, a.0, x.0, d));
++    w8v(&y);
++    y
++}
++
++/// One reused level l >= 1. Ids are the parent's ids at level l, plus one appended id per straddler
++/// part; a parent id whose members split, or were all dropped, is a hole (cell SEP, weight 0).
++struct Lvl {
++    n: u64,
++    a: M,
++    /// C' (n_{l-1} x n_l): projection and column map.
++    ct: M,
++    /// the GraphBLAS weights (None under pk: only checks read them; they use `w`)
++    wv: Option<V>,
++    w: Vec<i32>,
++    cell: Vec<u32>,
++    /// The parent's id at this level (identity for kept ids).
++    pa: Vec<u32>,
++    /// Level l-1 id -> level l id (NONE for dead ids and for cells that stopped reusing).
++    cmap: Vec<u32>,
++    live: u64,
++    /// live coarse vertices per cell (book only; empty otherwise)
++    ccount: Vec<u32>,
++}
++#[derive(Default)]
++struct Hier {
++    levels: Vec<Lvl>,
++}
++
++/// Level 0 of a depth: the split graph, its cells and unit weights.
++struct L0<'a> {
++    a: &'a M,
++    n: u64,
++    cell: &'a [u32],
++    w: &'a [i32],
++    live: u64,
++}
++struct View<'a> {
++    a: &'a M,
++    n: u64,
++    cell: &'a [u32],
++    w: &'a [i32],
++    pa: Option<&'a [u32]>,
++    live: u64,
++}
++fn view<'a>(
++    h: &'a Hier,
++    l0: &'a L0,
++    s: usize,
++) -> View<'a> {
++    if s == 0 {
++        View { a: l0.a, n: l0.n, cell: l0.cell, w: l0.w, pa: None, live: l0.live }
++    } else {
++        let x = &h.levels[s - 1];
++        View { a: &x.a, n: x.n, cell: &x.cell, w: &x.w, pa: Some(&x.pa), live: x.live }
++    }
++}
++fn hash_lvl(x: &Lvl) {
++    if !hash_on() {
++        return;
++    }
++    hash_u64s([x.n, x.live]);
++    hash_mat(&x.a);
++    hash_mat(&x.ct);
++    hash_i32s(&x.w);
++    hash_u32s(&x.cell);
++    hash_u32s(&x.pa);
++    hash_u32s(&x.cmap);
++}
++
++/// Depth 0: R's kept hierarchy as a parent for depth 1 (host maps, timed as "rootmap").
++fn root_hier(
++    kept: Kept,
++    n0: u64,
++    t: &mut Timer,
++) -> Hier {
++    assert!(ct(), "the reuse paths need M1_CT=1 (C' maps)");
++    let Kept { levels, a_last, w_last, w_last_host } = kept;
++    let nl = levels.len();
++    let mut a_last = a_last;
++    let mut w_last = Some((w_last, w_last_host));
++    let mut as_: Vec<Option<M>> = Vec::new();
++    let mut ws: Vec<Option<(V, Option<Vec<i32>>)>> = Vec::new();
++    let mut cs: Vec<Option<(M, Option<Vec<u32>>)>> = Vec::new();
++    for kl in levels {
++        as_.push(kl.a);
++        ws.push(Some((kl.w, kl.w_host)));
++        cs.push(Some((kl.c, kl.ca)));
++    }
++    let mut h = Hier::default();
++    let mut prev_n = n0;
++    for l in 1..=nl {
++        let a = if l < nl { as_[l].take().unwrap() } else { a_last.take().unwrap() };
++        let (wv, wh) = if l < nl { ws[l].take().unwrap() } else { w_last.take().unwrap() };
++        let (ctm, ca) = cs[l - 1].take().unwrap();
++        let (n, cmap, w) = t.time("rootmap", || {
++            let n = ncols(&ctm);
++            let cmap = match ca {
++                Some(ca) => ca,
++                None => {
++                    let (i, j, _) = tuples(&ctm);
++                    let mut cmap = vec![NONE; prev_n as usize];
++                    for (x, y) in i.iter().zip(&j) {
++                        cmap[*x as usize] = *y as u32;
++                    }
++                    cmap
++                }
++            };
++            let w = match wh {
++                Some(w) => w,
++                None => dense_i32(&wv),
++            };
++            (n, cmap, w)
++        });
++        let live = w.iter().filter(|&&x| x > 0).count() as u64;
++        h.levels.push(Lvl { n, a, ct: ctm, wv: Some(wv), w, cell: vec![0; n as usize], pa: (0..n as u32).collect(), cmap, live, ccount: vec![live as u32] });
++        prev_n = n;
++    }
++    h
++}
++
++/// Host numbering of a child level (timed as "number" by the callers).
++struct Num {
++    n: u64,
++    cmap: Vec<u32>,
++    w: Vec<i32>,
++    cell: Vec<u32>,
++    pa: Vec<u32>,
++    live: u64,
++    ct_i: Vec<u64>,
++    ct_j: Vec<u64>,
++    cl_q: Vec<u64>,
++    cl_c: Vec<u64>,
++    ps_i: Vec<u64>,
++    ps_j: Vec<u64>,
++    /// members (previous-level ids) of part k: part_mem[part_start[k]..part_start[k+1]]
++    part_start: Vec<u32>,
++    part_mem: Vec<u32>,
++    strad: u64,
++    sep_only: u64,
++    parent_live: u64,
++    maxw: Vec<i32>,
++    plim: Vec<u32>,
++    /// live coarse vertices per cell (book only)
++    ccount: Vec<u32>,
++}
++
++/// Child level l from the child's level l-1 (`p`) and the parent's level l (`par`): a child vertex
++/// at l is (parent vertex at l, child cell). A parent vertex is clean when all its members are live
++/// in one child cell (its weight is then whole); its id is kept. Otherwise each child cell it
++/// touches gets an appended part, ordered by (parent id, cell).
++fn number(
++    p: &View,
++    par: &Lvl,
++    active: Option<&[bool]>,
++    ncells: usize,
++) -> Num {
++    let np = par.n as usize;
++    let nprev = p.n as usize;
++    let need_cl = !opt("hb2");
++    let need_ct = !opt("pk");
++    let mut f = vec![NONE; np];
++    let mut multi = vec![false; np];
++    let mut ws = vec![0i64; np];
++    let mut qx = vec![NONE; nprev];
++    let mut plim_flag = vec![false; ncells];
++    for x in 0..nprev {
++        let c = p.cell[x];
++        if c == SEP {
++            continue;
++        }
++        if let Some(a) = active {
++            if !a[c as usize] {
++                continue;
++            }
++        }
++        let pid = p.pa.map_or(x, |pa| pa[x] as usize);
++        let q = par.cmap[pid];
++        if q == NONE {
++            plim_flag[c as usize] = true;
++            continue;
++        }
++        qx[x] = q;
++        let qi = q as usize;
++        ws[qi] += p.w[x] as i64;
++        if f[qi] == NONE {
++            f[qi] = c;
++        } else if f[qi] != c {
++            multi[qi] = true;
++        }
++    }
++    let sepclean = brk("sepclean");
++    let merge = brk("mergeparts");
++    let is_clean = |q: usize| f[q] != NONE && !multi[q] && (sepclean || ws[q] == par.w[q] as i64);
++    let mut sx: Vec<(u32, u32, u32)> = Vec::new();
++    for (x, &q) in qx.iter().enumerate() {
++        if q != NONE && !is_clean(q as usize) {
++            sx.push((q, if merge { 0 } else { p.cell[x] }, x as u32));
++        }
++    }
++    sx.sort_unstable();
++    let mut cmap = vec![NONE; nprev];
++    let mut part_q: Vec<u32> = Vec::new();
++    let mut part_c: Vec<u32> = Vec::new();
++    let mut part_w: Vec<i64> = Vec::new();
++    let mut part_start: Vec<u32> = Vec::new();
++    let mut part_mem: Vec<u32> = Vec::with_capacity(sx.len());
++    let mut last = (NONE, NONE);
++    for &(q, kc, x) in &sx {
++        if (q, kc) != last {
++            part_q.push(q);
++            part_c.push(p.cell[x as usize]);
++            part_w.push(0);
++            part_start.push(part_mem.len() as u32);
++            last = (q, kc);
++        }
++        cmap[x as usize] = (np + part_q.len() - 1) as u32;
++        part_mem.push(x);
++        *part_w.last_mut().unwrap() += p.w[x as usize] as i64;
++    }
++    part_start.push(part_mem.len() as u32);
++    let nparts = part_q.len();
++    let n = np + nparts;
++    let mut cell = vec![SEP; n];
++    let mut w = vec![0i32; n];
++    let mut pa = vec![NONE; n];
++    let mut cl_q = Vec::new();
++    let mut cl_c = Vec::new();
++    let (mut strad, mut sep_only, mut parent_live) = (0, 0, 0);
++    let mut maxw = vec![0i32; ncells];
++    for q in 0..np {
++        if par.cell[q] != SEP {
++            parent_live += 1;
++        }
++        if f[q] == NONE {
++            if par.cell[q] != SEP {
++                sep_only += 1;
++            }
++            continue;
++        }
++        if is_clean(q) {
++            cell[q] = f[q];
++            w[q] = par.w[q];
++            pa[q] = q as u32;
++            if need_cl {
++                cl_q.push(q as u64);
++                cl_c.push(f[q] as u64);
++            }
++            let m = &mut maxw[f[q] as usize];
++            *m = (*m).max(par.w[q]);
++        } else {
++            strad += 1;
++        }
++    }
++    for k in 0..nparts {
++        let id = np + k;
++        cell[id] = part_c[k];
++        w[id] = part_w[k] as i32;
++        pa[id] = part_q[k];
++        let m = &mut maxw[part_c[k] as usize];
++        *m = (*m).max(w[id]);
++    }
++    for (x, &q) in qx.iter().enumerate() {
++        if q != NONE && cmap[x] == NONE {
++            cmap[x] = q;
++        }
++    }
++    let mut ct_i = Vec::new();
++    let mut ct_j = Vec::new();
++    let mut ps_i = Vec::new();
++    let mut ps_j = Vec::new();
++    if need_ct {
++        ct_i.reserve(nprev);
++        ct_j.reserve(nprev);
++        for (x, &y) in cmap.iter().enumerate() {
++            if y != NONE {
++                ct_i.push(x as u64);
++                ct_j.push(y as u64);
++                if y as usize >= np {
++                    ps_i.push(x as u64);
++                    ps_j.push(y as u64);
++                }
++            }
++        }
++    } else {
++        // the straddler members, for the stats line and checks
++        for k in 0..nparts {
++            for &x in &part_mem[part_start[k] as usize..part_start[k + 1] as usize] {
++                ps_i.push(x as u64);
++                ps_j.push((np + k) as u64);
++            }
++        }
++    }
++    let live = cell.iter().filter(|&&c| c != SEP).count() as u64;
++    let plim = (0..ncells as u32).filter(|&c| plim_flag[c as usize]).collect();
++    Num { n: n as u64, cmap, w, cell, pa, live, ct_i, ct_j, cl_q, cl_c, ps_i, ps_j, part_start, part_mem, strad, sep_only, parent_live, maxw, plim, ccount: Vec::new() }
++}
++
++/// book: the same numbering in fewer passes. `cmap` holds the parent id while the members are
++/// counted (no separate q array), weights are i32, the cell or MULTI sits in one array, and the
++/// per-cell live counts come out of the fill. The stats fields are computed only for `stats`.
++fn number_fast(
++    p: &View,
++    par: &Lvl,
++    active: Option<&[bool]>,
++    ncells: usize,
++    stats: bool,
++) -> Num {
++    const MULTI: u32 = u32::MAX - 1;
++    let np = par.n as usize;
++    let nprev = p.n as usize;
++    let mut f = vec![NONE; np];
++    let mut ws = vec![0i32; np];
++    let mut cmap = vec![NONE; nprev];
++    let mut plim_flag = vec![false; ncells];
++    let pw = &par.w;
++    for x in 0..nprev {
++        let c = p.cell[x];
++        if c == SEP {
++            continue;
++        }
++        if let Some(a) = active {
++            if !a[c as usize] {
++                continue;
++            }
++        }
++        let pid = p.pa.map_or(x, |pa| pa[x] as usize);
++        let q = par.cmap[pid];
++        if q == NONE {
++            plim_flag[c as usize] = true;
++            continue;
++        }
++        cmap[x] = q;
++        let qi = q as usize;
++        ws[qi] += p.w[x];
++        let fq = f[qi];
++        f[qi] = if fq == NONE || fq == c { c } else { MULTI };
++    }
++    let sepclean = brk("sepclean");
++    let merge = brk("mergeparts");
++    let is_clean = |q: usize| f[q] < MULTI && (sepclean || ws[q] == pw[q]);
++    let mut sx: Vec<(u32, u32, u32)> = Vec::new();
++    for (x, &q) in cmap.iter().enumerate() {
++        if q != NONE && !is_clean(q as usize) {
++            sx.push((q, if merge { 0 } else { p.cell[x] }, x as u32));
++        }
++    }
++    sx.sort_unstable();
++    let mut part_q: Vec<u32> = Vec::new();
++    let mut part_c: Vec<u32> = Vec::new();
++    let mut part_w: Vec<i32> = Vec::new();
++    let mut part_start: Vec<u32> = Vec::new();
++    let mut part_mem: Vec<u32> = Vec::with_capacity(sx.len());
++    let mut last = (NONE, NONE);
++    for &(q, kc, x) in &sx {
++        if (q, kc) != last {
++            part_q.push(q);
++            part_c.push(p.cell[x as usize]);
++            part_w.push(0);
++            part_start.push(part_mem.len() as u32);
++            last = (q, kc);
++        }
++        cmap[x as usize] = (np + part_q.len() - 1) as u32;
++        part_mem.push(x);
++        *part_w.last_mut().unwrap() += p.w[x as usize];
++    }
++    part_start.push(part_mem.len() as u32);
++    let nparts = part_q.len();
++    let n = np + nparts;
++    let mut cell = vec![SEP; n];
++    let mut w = vec![0i32; n];
++    let mut pa = vec![NONE; n];
++    let mut maxw = vec![0i32; ncells];
++    let mut ccount = vec![0u32; ncells];
++    let mut live = 0u64;
++    let (mut strad, mut sep_only, mut parent_live) = (0, 0, 0);
++    for q in 0..np {
++        let fq = f[q];
++        if stats {
++            if par.cell[q] != SEP {
++                parent_live += 1;
++            }
++            if fq == NONE && par.cell[q] != SEP {
++                sep_only += 1;
++            }
++        }
++        if fq == NONE {
++            continue;
++        }
++        if is_clean(q) {
++            cell[q] = fq;
++            w[q] = pw[q];
++            pa[q] = q as u32;
++            let m = &mut maxw[fq as usize];
++            *m = (*m).max(pw[q]);
++            ccount[fq as usize] += 1;
++            live += 1;
++        } else {
++            strad += 1;
++        }
++    }
++    for k in 0..nparts {
++        let id = np + k;
++        let c = part_c[k] as usize;
++        cell[id] = part_c[k];
++        w[id] = part_w[k];
++        pa[id] = part_q[k];
++        maxw[c] = maxw[c].max(part_w[k]);
++        ccount[c] += 1;
++        live += 1;
++    }
++    let mut ps_i = Vec::new();
++    let mut ps_j = Vec::new();
++    if stats {
++        for k in 0..nparts {
++            for &x in &part_mem[part_start[k] as usize..part_start[k + 1] as usize] {
++                ps_i.push(x as u64);
++                ps_j.push((np + k) as u64);
++            }
++        }
++    }
++    let plim = (0..ncells as u32).filter(|&c| plim_flag[c as usize]).collect();
++    Num {
++        n: n as u64,
++        cmap,
++        w,
++        cell,
++        pa,
++        live,
++        ct_i: Vec::new(),
++        ct_j: Vec::new(),
++        cl_q: Vec::new(),
++        cl_c: Vec::new(),
++        ps_i,
++        ps_j,
++        part_start,
++        part_mem,
++        strad,
++        sep_only,
++        parent_live,
++        maxw,
++        plim,
++        ccount,
++    }
++}
++
++/// npar: number_fast with its passes over the previous level and the parent level split across
++/// the threads (atomics for the per-parent sums; per-chunk partials for the per-cell ones).
++/// The part numbering stays serial (it is a sort of the few straddler members).
++fn number_par(
++    p: &View,
++    par: &Lvl,
++    active: Option<&[bool]>,
++    ncells: usize,
++    stats: bool,
++) -> Num {
++    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32};
++    const MULTI: u32 = u32::MAX - 1;
++    let np = par.n as usize;
++    let nprev = p.n as usize;
++    let k = chunks_for(nprev.max(np));
++    if k <= 1 {
++        return number_fast(p, par, active, ncells, stats);
++    }
++    let fv = vec![NONE; np];
++    let wv = vec![0i32; np];
++    let mut cmap = vec![NONE; nprev];
++    let pl: Vec<AtomicBool> = (0..ncells).map(|_| AtomicBool::new(false)).collect();
++    let f: &[AtomicU32] = unsafe { &*(fv.as_slice() as *const [u32] as *const [AtomicU32]) };
++    let ws: &[AtomicI32] = unsafe { &*(wv.as_slice() as *const [i32] as *const [AtomicI32]) };
++    let xs = uniform(nprev, k);
++    let (pcell, ppa, pwx) = (p.cell, p.pa, p.w);
++    let (parcmap, parcell): (&[u32], &[u32]) = (&par.cmap, &par.cell);
++    {
++        let cm = SendPtr(cmap.as_mut_ptr());
++        par_run(k, |c| {
++            for x in xs[c]..xs[c + 1] {
++                let cc = pcell[x];
++                if cc == SEP {
++                    continue;
++                }
++                if let Some(a) = active {
++                    if !a[cc as usize] {
++                        continue;
++                    }
++                }
++                let pid = ppa.map_or(x, |pa| pa[x] as usize);
++                let q = parcmap[pid];
++                if q == NONE {
++                    pl[cc as usize].store(true, Relaxed);
++                    continue;
++                }
++                unsafe { *cm.g().add(x) = q };
++                let qi = q as usize;
++                ws[qi].fetch_add(pwx[x], Relaxed);
++                let mut cur = f[qi].load(Relaxed);
++                loop {
++                    let new = if cur == NONE || cur == cc { cc } else { MULTI };
++                    if new == cur {
++                        break;
++                    }
++                    match f[qi].compare_exchange_weak(cur, new, Relaxed, Relaxed) {
++                        Ok(_) => break,
++                        Err(v) => cur = v,
++                    }
++                }
++            }
++        });
++    }
++    let (f, ws) = (fv, wv);
++    let pw: &[i32] = &par.w;
++    let is_clean = |q: usize| f[q] < MULTI && ws[q] == pw[q];
++    let mut parts_sx: Vec<Vec<(u32, u32, u32)>> = (0..k).map(|_| Vec::new()).collect();
++    {
++        let ps = SendPtr(parts_sx.as_mut_ptr());
++        let cmr = &cmap;
++        par_run(k, |c| {
++            let o = unsafe { &mut *ps.g().add(c) };
++            for x in xs[c]..xs[c + 1] {
++                let q = cmr[x];
++                if q != NONE && !is_clean(q as usize) {
++                    o.push((q, pcell[x], x as u32));
++                }
++            }
++        });
++    }
++    let mut sx: Vec<(u32, u32, u32)> = parts_sx.concat();
++    sx.sort_unstable();
++    let mut part_q: Vec<u32> = Vec::new();
++    let mut part_c: Vec<u32> = Vec::new();
++    let mut part_w: Vec<i32> = Vec::new();
++    let mut part_start: Vec<u32> = Vec::new();
++    let mut part_mem: Vec<u32> = Vec::with_capacity(sx.len());
++    let mut last = (NONE, NONE);
++    for &(q, kc, x) in &sx {
++        if (q, kc) != last {
++            part_q.push(q);
++            part_c.push(p.cell[x as usize]);
++            part_w.push(0);
++            part_start.push(part_mem.len() as u32);
++            last = (q, kc);
++        }
++        cmap[x as usize] = (np + part_q.len() - 1) as u32;
++        part_mem.push(x);
++        *part_w.last_mut().unwrap() += p.w[x as usize];
++    }
++    part_start.push(part_mem.len() as u32);
++    let nparts = part_q.len();
++    let n = np + nparts;
++    let mut cell = vec![SEP; n];
++    let mut w = vec![0i32; n];
++    let mut pa = vec![NONE; n];
++    let qs = uniform(np, k);
++    // per chunk: maxw, ccount, (live, strad, sep_only, parent_live)
++    let mut acc: Vec<(Vec<i32>, Vec<u32>, [u64; 4])> = (0..k).map(|_| (vec![0i32; ncells], vec![0u32; ncells], [0u64; 4])).collect();
++    {
++        let (cp, wp2, pp, ap) = (SendPtr(cell.as_mut_ptr()), SendPtr(w.as_mut_ptr()), SendPtr(pa.as_mut_ptr()), SendPtr(acc.as_mut_ptr()));
++        let fr = &f;
++        par_run(k, |c| {
++            let a = unsafe { &mut *ap.g().add(c) };
++            for q in qs[c]..qs[c + 1] {
++                let fq = fr[q];
++                if stats {
++                    if parcell[q] != SEP {
++                        a.2[3] += 1;
++                    }
++                    if fq == NONE && parcell[q] != SEP {
++                        a.2[2] += 1;
++                    }
++                }
++                if fq == NONE {
++                    continue;
++                }
++                if is_clean(q) {
++                    unsafe {
++                        *cp.g().add(q) = fq;
++                        *wp2.g().add(q) = pw[q];
++                        *pp.g().add(q) = q as u32;
++                    }
++                    let m = &mut a.0[fq as usize];
++                    *m = (*m).max(pw[q]);
++                    a.1[fq as usize] += 1;
++                    a.2[0] += 1;
++                } else {
++                    a.2[1] += 1;
++                }
++            }
++        });
++    }
++    let mut maxw = vec![0i32; ncells];
++    let mut ccount = vec![0u32; ncells];
++    let mut tot = [0u64; 4];
++    for a in &acc {
++        for c in 0..ncells {
++            maxw[c] = maxw[c].max(a.0[c]);
++            ccount[c] += a.1[c];
++        }
++        for t in 0..4 {
++            tot[t] += a.2[t];
++        }
++    }
++    let mut live = tot[0];
++    for kk in 0..nparts {
++        let id = np + kk;
++        let c = part_c[kk] as usize;
++        cell[id] = part_c[kk];
++        w[id] = part_w[kk];
++        pa[id] = part_q[kk];
++        maxw[c] = maxw[c].max(part_w[kk]);
++        ccount[c] += 1;
++        live += 1;
++    }
++    let mut ps_i = Vec::new();
++    let mut ps_j = Vec::new();
++    if stats {
++        for kk in 0..nparts {
++            for &x in &part_mem[part_start[kk] as usize..part_start[kk + 1] as usize] {
++                ps_i.push(x as u64);
++                ps_j.push((np + kk) as u64);
++            }
++        }
++    }
++    let plim = (0..ncells as u32).filter(|&c| pl[c as usize].load(Relaxed)).collect();
++    if obrk("npar") {
++        w[0] += 1;
++    }
++    Num {
++        n: n as u64,
++        cmap,
++        w,
++        cell,
++        pa,
++        live,
++        ct_i: Vec::new(),
++        ct_j: Vec::new(),
++        cl_q: Vec::new(),
++        cl_c: Vec::new(),
++        ps_i,
++        ps_j,
++        part_start,
++        part_mem,
++        strad: tot[1],
++        sep_only: tot[2],
++        parent_live: tot[3],
++        maxw,
++        plim,
++        ccount,
++    }
++}
++
++/// book: drop the cells in `stop` from a numbering, as if they had been inactive when it ran
++/// (their clean ids become holes, their parts go and later parts move down).
++fn number_patch(
++    num: &mut Num,
++    p: &View,
++    np: usize,
++    stop: &[bool],
++) {
++    let nparts = num.part_start.len() - 1;
++    // new id of each part (NONE if removed)
++    let mut newid = vec![NONE; nparts];
++    let mut k2 = 0usize;
++    let mut new_start: Vec<u32> = Vec::with_capacity(nparts + 1);
++    let mut new_mem: Vec<u32> = Vec::with_capacity(num.part_mem.len());
++    for k in 0..nparts {
++        let c = num.cell[np + k] as usize;
++        if !stop[c] {
++            newid[k] = (np + k2) as u32;
++            new_start.push(new_mem.len() as u32);
++            new_mem.extend_from_slice(&num.part_mem[num.part_start[k] as usize..num.part_start[k + 1] as usize]);
++            num.cell[np + k2] = num.cell[np + k];
++            num.w[np + k2] = num.w[np + k];
++            num.pa[np + k2] = num.pa[np + k];
++            k2 += 1;
++        }
++    }
++    new_start.push(new_mem.len() as u32);
++    let n = np + k2;
++    num.cell.truncate(n);
++    num.w.truncate(n);
++    num.pa.truncate(n);
++    // clean ids of stopped cells become holes
++    for q in 0..np {
++        let c = num.cell[q];
++        if c != SEP && stop[c as usize] {
++            num.cell[q] = SEP;
++            num.w[q] = 0;
++            num.pa[q] = NONE;
++        }
++    }
++    // the map: stopped cells' vertices leave, part members move to their new ids
++    for x in 0..num.cmap.len() {
++        let y = num.cmap[x];
++        if y == NONE {
++            continue;
++        }
++        let c = p.cell[x];
++        if stop[c as usize] {
++            num.cmap[x] = NONE;
++        } else if y as usize >= np {
++            num.cmap[x] = newid[y as usize - np];
++        }
++    }
++    for c in 0..stop.len() {
++        if stop[c] {
++            num.ccount[c] = 0;
++        }
++    }
++    num.live = num.ccount.iter().map(|&x| x as u64).sum();
++    num.n = n as u64;
++    num.part_start = new_start;
++    num.part_mem = new_mem;
++    num.ps_i.clear();
++    num.ps_j.clear();
++}
++
++
++#[derive(Clone, Copy, PartialEq, Debug)]
++enum Mode {
++    B1,
++    B2,
++}
++
++/// C' (n_prev x n) packed from the numbering: row x holds cmap[x] when it is not NONE.
++fn pack_ct(
++    cmap: &[u32],
++    n: u64,
++) -> M {
++    let nprev = cmap.len();
++    if opt("npar") && !obrk("pk") {
++        return emit_csr(nprev, n, &[], nprev, true, |r0, r1, cols, _vals, cnt| {
++            for &y in &cmap[r0..r1] {
++                cnt.push(cols.len() as u32);
++                if y != NONE {
++                    cols.push(y);
++                }
++            }
++        });
++    }
++    let mut p: Vec<u32> = Vec::with_capacity(nprev + 1);
++    let mut j: Vec<u32> = Vec::with_capacity(nprev);
++    for &y in cmap {
++        p.push(j.len() as u32);
++        if y != NONE {
++            j.push(y);
++        }
++    }
++    p.push(j.len() as u32);
++    if obrk("pk") && j.len() > 1 {
++        j.swap(0, 1);
++    }
++    let nnz = j.len() as u64;
++    pack_csr(nprev as u64, n, MBuf::from_vec(p), MBuf::from_vec(j), nnz, None)
++}
++
++/// hb2: the child level in one pass over the parent level's CSR. Row q of a clean parent vertex
++/// keeps its entries to clean vertices of its own cell, then gets its straddler-part columns
++/// appended (part ids are above every parent id, so rows stay sorted). Part rows are contracted
++/// from the members' rows of the child's previous level.
++fn b2_splice(
++    p: &View,
++    par: &Lvl,
++    num: &Num,
++) -> M {
++    let np = par.n as usize;
++    let n = num.n as usize;
++    let nparts = n - np;
++    let pc = Csr::new(&par.a);
++    let xc = Csr::new(p.a);
++    // part rows, sorted by column, and their transposed entries in clean rows
++    let mut prow_p: Vec<u32> = Vec::with_capacity(nparts + 1);
++    let mut prow_j: Vec<u32> = Vec::new();
++    let mut prow_x: Vec<i32> = Vec::new();
++    let mut tcol: Vec<(u32, u32, i32)> = Vec::new();
++    {
++        let (xp, xj) = (xc.p(), xc.j());
++        let mut tmp: Vec<(u32, i32)> = Vec::new();
++        for k in 0..nparts {
++            prow_p.push(prow_j.len() as u32);
++            let s = (np + k) as u32;
++            tmp.clear();
++            for &x in &num.part_mem[num.part_start[k] as usize..num.part_start[k + 1] as usize] {
++                for kk in xp[x as usize] as usize..xp[x as usize + 1] as usize {
++                    let jj = num.cmap[xj[kk] as usize];
++                    if jj != NONE && jj != s {
++                        tmp.push((jj, xc.val(kk)));
++                    }
++                }
++            }
++            tmp.sort_unstable_by_key(|e| e.0);
++            let mut q = 0;
++            while q < tmp.len() {
++                let (jj, mut v) = tmp[q];
++                q += 1;
++                while q < tmp.len() && tmp[q].0 == jj {
++                    v += tmp[q].1;
++                    q += 1;
++                }
++                prow_j.push(jj);
++                prow_x.push(v);
++                if (jj as usize) < np {
++                    tcol.push((jj, s, v));
++                }
++            }
++        }
++        prow_p.push(prow_j.len() as u32);
++        tcol.sort_unstable_by_key(|e| (e.0, e.1));
++    }
++    // row starts of tcol per clean row, for chunked emission
++    let brk1 = obrk("hb2");
++    let est = pc.nnz + prow_j.len() + tcol.len();
++    let cell = &num.cell;
++    let (pc_r, tcol_r, prow) = (&pc, &tcol, (&prow_p, &prow_j, &prow_x));
++    let m = emit_csr(n, n as u64, pc.p(), est, false, |r0, r1, cols, vals, cnt| {
++        let (pp, pj) = (pc_r.p(), pc_r.j());
++        let mut tc = tcol_r.partition_point(|e| (e.0 as usize) < r0);
++        for i in r0..r1 {
++            cnt.push(cols.len() as u32);
++            if i < np {
++                let ci = cell[i];
++                if ci != SEP {
++                    for kk in pp[i] as usize..pp[i + 1] as usize {
++                        let q2 = pj[kk];
++                        if cell[q2 as usize] == ci && !(brk1 && i == 0) {
++                            cols.push(q2);
++                            vals.push(pc_r.val(kk));
++                        }
++                    }
++                }
++                while tc < tcol_r.len() && tcol_r[tc].0 as usize == i {
++                    cols.push(tcol_r[tc].1);
++                    vals.push(tcol_r[tc].2);
++                    tc += 1;
++                }
++            } else {
++                let k = i - np;
++                let (a0, a1) = (prow.0[k] as usize, prow.0[k + 1] as usize);
++                cols.extend_from_slice(&prow.1[a0..a1]);
++                vals.extend_from_slice(&prow.2[a0..a1]);
++            }
++        }
++    });
++    drop(xc);
++    drop(pc);
++    m
++}
++
++/// The child level's matrices from the numbering, every call timed.
++fn build_level(
++    mode: Mode,
++    p: &View,
++    par: &Lvl,
++    num: Num,
++    ncells: u64,
++    ops: &Ops,
++    t: &mut Timer,
++) -> Lvl {
++    let n = num.n;
++    let ct = t.time("ct_build", || {
++        if opt("pk") {
++            pack_ct(&num.cmap, n)
++        } else {
++            let c = M::new(t_i32(), p.n, n);
++            ok!(GxB_Matrix_build_Scalar(c.0, num.ct_i.as_ptr(), num.ct_j.as_ptr(), ops.one_i32, num.ct_i.len() as u64));
++            c.wait();
++            c
++        }
++    });
++    let a = match mode {
++        Mode::B1 => {
++            let tm = t.time("CA", || {
++                let tm = M::new(t_i32(), n, p.n);
++                ok!(GrB_mxm(tm.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, ct.0, p.a.0, GrB_DESC_T0));
++                tm.wait();
++                tm
++            });
++            let a = t.time("CAC'", || {
++                let a = M::new(t_i32(), n, n);
++                ok!(GrB_mxm(a.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, tm.0, ct.0, null()));
++                a.wait();
++                a
++            });
++            drop(tm);
++            if !brk("b1diag") {
++                t.time("offdiag", || {
++                    ok!(GrB_Matrix_select_INT64(a.0, null(), null(), GrB_OFFDIAG, a.0, 0, null()));
++                    a.wait();
++                });
++            }
++            a
++        }
++        Mode::B2 if opt("hb2") => t.time("b2_splice", || b2_splice(p, par, &num)),
++        Mode::B2 => {
++            let np = par.n;
++            // masked split of the parent's level: keep (q, q') when both are clean and in one cell
++            let m = t.time("m_build", || {
++                let m = M::new(t_i32(), np, ncells);
++                ok!(GxB_Matrix_build_Scalar(m.0, num.cl_q.as_ptr(), num.cl_c.as_ptr(), ops.one_i32, num.cl_q.len() as u64));
++                m.wait();
++                m
++            });
++            let z = t.time("split_mxm", || {
++                let z = M::new(t_i32(), np, np);
++                ok!(GrB_mxm(z.0, par.a.0, null(), GxB_ANY_PAIR_INT32, m.0, m.0, GrB_DESC_ST1));
++                z.wait();
++                z
++            });
++            drop(m);
++            let x = t.time("split_mult", || {
++                let x = M::new(t_i32(), np, np);
++                ok!(GrB_Matrix_eWiseMult_BinaryOp(x.0, null(), null(), GrB_FIRST_INT32, par.a.0, z.0, null()));
++                x.wait();
++                x
++            });
++            drop(z);
++            if n != np {
++                t.time("resize", || {
++                    ok!(GrB_Matrix_resize(x.0, n, n));
++                    x.wait();
++                });
++            }
++            if num.ps_i.is_empty() {
++                x
++            } else {
++                let y = t.time("strad", || {
++                    let cs = M::new(t_i32(), p.n, n);
++                    ok!(GxB_Matrix_build_Scalar(cs.0, num.ps_i.as_ptr(), num.ps_j.as_ptr(), ops.one_i32, num.ps_i.len() as u64));
++                    let t1 = M::new(t_i32(), n, p.n);
++                    ok!(GrB_mxm(t1.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, cs.0, p.a.0, GrB_DESC_T0));
++                    let rows = M::new(t_i32(), n, n);
++                    ok!(GrB_mxm(rows.0, null(), null(), GrB_PLUS_TIMES_SEMIRING_INT32, t1.0, ct.0, null()));
++                    ok!(GrB_Matrix_select_INT64(rows.0, null(), null(), GrB_OFFDIAG, rows.0, 0, null()));
++                    if brk("nofill") {
++                        rows.wait();
++                        return rows;
++                    }
++                    let y = M::new(t_i32(), n, n);
++                    ok!(GrB_Matrix_eWiseAdd_BinaryOp(y.0, null(), null(), GrB_FIRST_INT32, rows.0, rows.0, GrB_DESC_T1));
++                    y.wait();
++                    y
++                });
++                t.time("union", || {
++                    let a = M::new(t_i32(), n, n);
++                    ok!(GrB_Matrix_eWiseAdd_BinaryOp(a.0, null(), null(), GrB_FIRST_INT32, x.0, y.0, null()));
++                    a.wait();
++                    a
++                })
++            }
++        }
++    };
++    let wv = if opt("pk") {
++        None
++    } else {
++        Some(t.time("w_build", || {
++            let ids: Vec<u64> = (0..n).filter(|&i| num.cell[i as usize] != SEP).collect();
++            let x: Vec<i32> = ids.iter().map(|&i| num.w[i as usize]).collect();
++            vec_i32(n, &ids, &x)
++        }))
++    };
++    let lv = Lvl { n, a, ct, wv, w: num.w, cell: num.cell, pa: num.pa, cmap: num.cmap, live: num.live, ccount: num.ccount };
++    hash_lvl(&lv);
++    lv
++}
++
++/// Straddler statistics for one child level (untimed; prep pass only).
++fn strad_line(
++    d: u32,
++    l: usize,
++    p: &View,
++    par: &Lvl,
++    num: &Num,
++) -> String {
++    let pdeg = row_degrees(&par.a);
++    let xdeg = row_degrees(p.a);
++    let mut strad_rows = 0u64;
++    for (q, &dg) in pdeg.iter().enumerate() {
++        if par.cell[q] != SEP && num.cell.get(q).is_none_or(|&c| c == SEP) {
++            strad_rows += dg as u64;
++        }
++    }
++    let rin: u64 = num.ps_i.iter().map(|&x| xdeg[x as usize] as u64).sum();
++    format!(
++        "STRAD depth={d} level={l} parent_live={} parent_nnz={} strad={} sep_only={} parts={} child_live={} strad_rows_nnz={strad_rows} prev_nnz={} rin={rin} parts_members={}",
++        num.parent_live,
++        par.a.nvals(),
++        num.strad,
++        num.sep_only,
++        num.n - par.n,
++        num.live,
++        p.a.nvals(),
++        num.ps_i.len()
++    )
++}
++
++/// B1 or B2 for every reused level of one depth: the parent's levels, down to R's stop rule
++/// (stop at the first level with <= `stop` live vertices) or the end of the parent's levels.
++#[allow(clippy::too_many_arguments)]
++fn build_reuse(
++    mode: Mode,
++    parent: &Hier,
++    l0: &L0,
++    ncells: usize,
++    stop: u64,
++    ops: &Ops,
++    t: &mut Timer,
++    mut stats: Option<&mut Vec<String>>,
++    d: u32,
++) -> Hier {
++    let mut h = Hier::default();
++    loop {
++        let l = h.levels.len() + 1;
++        let lv = {
++            let p = view(&h, l0, l - 1);
++            if p.live <= stop || l > parent.levels.len() {
++                break;
++            }
++            let par = &parent.levels[l - 1];
++            let num = t.time("number", || {
++                if opt("npar") {
++                    number_par(&p, par, None, ncells, stats.is_some())
++                } else if opt("book") {
++                    number_fast(&p, par, None, ncells, stats.is_some())
++                } else {
++                    number(&p, par, None, ncells)
++                }
++            });
++            if let Some(st) = stats.as_mut() {
++                st.push(strad_line(d, l, &p, par, &num));
++            }
++            build_level(mode, &p, par, num, ncells as u64, ops, t)
++        };
++        h.levels.push(lv);
++    }
++    h
++}
++
++/// Uncoarsening for reused levels, as R does it: random labels on the coarsest level (untimed),
++/// then per level mxv(C', labels) and the boundary mxv(A, labels). Returns the level-0 labels.
++fn project_b(
++    h: &Hier,
++    l0: &L0,
++    t: &mut Timer,
++) -> Option<V> {
++    let lr = h.levels.len();
++    if lr == 0 {
++        return None;
++    }
++    let top = &h.levels[lr - 1];
++    let mut rng = Rng(42);
++    let ids: Vec<u64> = (0..top.n).filter(|&i| top.cell[i as usize] != SEP).collect();
++    let x: Vec<i32> = ids.iter().map(|_| (rng.next() & 1) as i32).collect();
++    let mut lab = vec_i32(top.n, &ids, &x);
++    for s in (0..lr).rev() {
++        let v = view(h, l0, s);
++        let up = &h.levels[s];
++        let fine = t.time("project", || mxv_i32(&up.ct, &lab, false));
++        assert_eq!(fine.nvals(), v.live, "CHECK FAILED: projection lost vertices");
++        t.time("bnd", || {
++            let b = V::new(t_i32(), v.n);
++            ok!(GrB_mxv(b.0, null(), null(), GxB_PLUS_SECOND_INT32, v.a.0, fine.0, null()));
++            b.wait();
++        });
++        lab = fine;
++    }
++    Some(lab)
++}
++
++/// Why a capstop cell stopped reusing.
++const R_FLOOR: u8 = 1; // <= FLOOR coarse vertices: done, no fresh coarsening
++const R_CAP: u8 = 2; // the next level breaks the cap: fresh
++const R_PLIM: u8 = 3; // the parent cell has no next level (B2 needs it): fresh
++const R_END: u8 = 4; // no more levels: fresh
++const R_EMPTY: u8 = 5; // no live vertex
++
++struct CsOut {
++    h: Hier,
++    fresh_rows: Rows,
++    fresh_fp: Vec<(u64, u64, i64)>,
++    cells_fresh: u64,
++    g_n: u64,
++    /// per cell: (last reused level, reason)
++    stop: Vec<(u32, u8)>,
++    nreason: [u64; 6],
++}
++
++/// Capstop (the quality harness's `reuse_capstop`, single stage): a cell reuses the parent's next
++/// level by B2 while it has more than FLOOR coarse vertices and the next level keeps every one of
++/// its coarse vertices within `cap` (R's cap at this depth). A cell that breaks the cap, or whose
++/// parent has no next level, is gathered with the others that stopped and coarsened fresh with R's
++/// matching, as R coarsens all cells at once.
++#[allow(clippy::too_many_arguments)]
++fn build_capstop(
++    parent: &Hier,
++    l0: &L0,
++    ncells: usize,
++    cap: i32,
++    ops: &Ops,
++    t: &mut Timer,
++    ck: &mut Checks,
++    check: bool,
++) -> CsOut {
++    let lim = if brk("cap2") { 2 * cap as i64 } else { cap as i64 };
++    let mut active = vec![true; ncells];
++    let mut stop = vec![(u32::MAX, 0u8); ncells];
++    let mut fresh_at: Vec<Vec<u32>> = Vec::new();
++    let mut done_at: Vec<Vec<u32>> = Vec::new();
++    let mut h = Hier::default();
++    loop {
++        let l = h.levels.len() + 1;
++        while fresh_at.len() < l {
++            fresh_at.push(Vec::new());
++            done_at.push(Vec::new());
++        }
++        let lv = {
++            let p = view(&h, l0, l - 1);
++            let cnt = t.time("number", || {
++                let mut cnt = vec![0u64; ncells];
++                if opt("book") && l > 1 {
++                    for (c, &k) in h.levels[l - 2].ccount.iter().enumerate() {
++                        cnt[c] = k as u64;
++                    }
++                } else {
++                    for &c in p.cell {
++                        if c != SEP {
++                            cnt[c as usize] += 1;
++                        }
++                    }
++                }
++                cnt
++            });
++            let mut any_active = false;
++            for c in 0..ncells {
++                if !active[c] {
++                    continue;
++                }
++                if cnt[c] == 0 {
++                    active[c] = false;
++                    stop[c] = ((l - 1) as u32, R_EMPTY);
++                } else if cnt[c] <= FLOOR {
++                    active[c] = false;
++                    stop[c] = ((l - 1) as u32, R_FLOOR);
++                    done_at[l - 1].push(c as u32);
++                } else {
++                    any_active = true;
++                }
++            }
++            if !any_active {
++                break;
++            }
++            if l > parent.levels.len() {
++                let why = R_END;
++                for c in 0..ncells {
++                    if active[c] {
++                        active[c] = false;
++                        stop[c] = ((l - 1) as u32, why);
++                        fresh_at[l - 1].push(c as u32);
++                    }
++                }
++                break;
++            }
++            let par = &parent.levels[l - 1];
++            let book = opt("book");
++            let mut num = t.time("number", || {
++                if opt("npar") {
++                    number_par(&p, par, Some(&active), ncells, false)
++                } else if book {
++                    number_fast(&p, par, Some(&active), ncells, false)
++                } else {
++                    number(&p, par, Some(&active), ncells)
++                }
++            });
++            let mut newly = vec![false; ncells];
++            let mut any = false;
++            for &c in &num.plim {
++                let c = c as usize;
++                if active[c] {
++                    active[c] = false;
++                    newly[c] = true;
++                    stop[c] = ((l - 1) as u32, R_PLIM);
++                    fresh_at[l - 1].push(c as u32);
++                    any = true;
++                }
++            }
++            for c in 0..ncells {
++                if active[c] && num.maxw[c] as i64 > lim {
++                    active[c] = false;
++                    newly[c] = true;
++                    stop[c] = ((l - 1) as u32, R_CAP);
++                    fresh_at[l - 1].push(c as u32);
++                    any = true;
++                }
++            }
++            if any {
++                if !active.iter().any(|&a| a) {
++                    break;
++                }
++                if book {
++                    t.time("number", || number_patch(&mut num, &p, par.n as usize, &newly));
++                    if obrk("book") {
++                        num.w[0] += 1;
++                    }
++                } else {
++                    num = t.time("number", || number(&p, par, Some(&active), ncells));
++                }
++            }
++            build_level(Mode::B2, &p, par, num, ncells as u64, ops, t)
++        };
++        h.levels.push(lv);
++    }
++    let lr = h.levels.len();
++    for s in fresh_at.iter_mut().chain(done_at.iter_mut()) {
++        s.sort_unstable();
++    }
++    // gather the fresh cells' parts, each at its own last reused level
++    let mut blocks: Vec<(usize, Vec<u64>, u64)> = Vec::new();
++    let mut gw: Vec<i32> = Vec::new();
++    let mut cells_fresh = 0u64;
++    let mut dropped_first = false;
++    let (g, wg) = t.time("gfresh", || {
++        let mut flag = vec![false; ncells];
++        let mut parts: Vec<(usize, Vec<u64>)> = Vec::new();
++        for (s, cs) in fresh_at.iter().enumerate() {
++            if cs.is_empty() {
++                continue;
++            }
++            if brk("gfdrop") && !dropped_first {
++                dropped_first = true;
++                continue;
++            }
++            for &c in cs {
++                flag[c as usize] = true;
++            }
++            cells_fresh += cs.len() as u64;
++            let v = view(&h, l0, s);
++            let ids: Vec<u64> = (0..v.n).filter(|&x| v.cell[x as usize] != SEP && flag[v.cell[x as usize] as usize]).collect();
++            for &c in cs {
++                flag[c as usize] = false;
++            }
++            if !ids.is_empty() {
++                parts.push((s, ids));
++            }
++        }
++        let mut off = 0u64;
++        let g = if opt("gath") {
++            // append each block's rows with columns renumbered (blocks are closed: a stopped
++            // cell's vertices only link inside the cell)
++            let tot_rows: u64 = parts.iter().map(|x| x.1.len() as u64).sum();
++            let mut gp: Vec<u32> = Vec::with_capacity(tot_rows as usize + 1);
++            let mut gj: Vec<u32> = Vec::new();
++            let mut gx: Vec<i32> = Vec::new();
++            for (s, ids) in &parts {
++                let v = view(&h, l0, *s);
++                let vc = Csr::new(v.a);
++                let mut rank = vec![NONE; v.n as usize];
++                for (k, &x) in ids.iter().enumerate() {
++                    rank[x as usize] = k as u32;
++                }
++                let (vp, vj) = (vc.p(), vc.j());
++                for &x in ids {
++                    gp.push(gj.len() as u32);
++                    for kk in vp[x as usize] as usize..vp[x as usize + 1] as usize {
++                        let r = rank[vj[kk] as usize];
++                        if r != NONE {
++                            gj.push(off as u32 + r);
++                            gx.push(vc.val(kk));
++                        }
++                    }
++                }
++                gw.extend(ids.iter().map(|&x| v.w[x as usize]));
++                blocks.push((*s, ids.clone(), off));
++                off += ids.len() as u64;
++            }
++            gp.push(gj.len() as u32);
++            if obrk("gath") && gx.len() > 1 {
++                gx[0] += 1;
++            }
++            let nnz = gj.len() as u64;
++            pack_csr(off, off, MBuf::from_vec(gp), MBuf::from_vec(gj), nnz, Some(MBuf::from_vec(gx)))
++        } else {
++            let (mut gi, mut gj, mut gx) = (Vec::new(), Vec::new(), Vec::new());
++            for (s, ids) in &parts {
++                let v = view(&h, l0, *s);
++                let k = ids.len() as u64;
++                let e = M::new(t_i32(), k, k);
++                ok!(GrB_Matrix_extract(e.0, null(), null(), v.a.0, ids.as_ptr(), k, ids.as_ptr(), k, null()));
++                let (ei, ej, ex) = tuples(&e);
++                gi.extend(ei.iter().map(|&i| i + off));
++                gj.extend(ej.iter().map(|&j| j + off));
++                gx.extend(ex);
++                gw.extend(ids.iter().map(|&x| v.w[x as usize]));
++                blocks.push((*s, ids.clone(), off));
++                off += k;
++            }
++            let g = M::new(t_i32(), off, off);
++            ok!(GrB_Matrix_build_INT32(g.0, gi.as_ptr(), gj.as_ptr(), gx.as_ptr(), gi.len() as u64, null()));
++            g.wait();
++            g
++        };
++        let wg = if opt("pk") {
++            pack_full_i32(mbuf_from(&gw))
++        } else {
++            let ii: Vec<u64> = (0..off).collect();
++            vec_i32(off, &ii, &gw)
++        };
++        (g, wg)
++    });
++    if hash_on() {
++        hash_mat(&g);
++        hash_vec_i32(&wg);
++    }
++    let g_n = g.nrows();
++    let (fresh_rows, fresh_fp, glab) =
++        if g_n > 0 { hierarchy_keep(&g, Some((wg, gw.clone())), cap, FLOOR * cells_fresh, ops, None) } else { (Vec::new(), Vec::new(), Vec::new()) };
++    // projection through the reused levels; at each level, the cells that stopped there get their
++    // labels: fresh cells from the fresh hierarchy, done cells a random label (their bisection
++    // stand-in)
++    let inj = |s: usize, v: &View| -> Option<V> {
++        let mut ids: Vec<u64> = Vec::new();
++        let mut x: Vec<i32> = Vec::new();
++        if let Some(b) = blocks.iter().find(|b| b.0 == s) {
++            for (k, &id) in b.1.iter().enumerate() {
++                ids.push(id);
++                x.push(glab[b.2 as usize + k] as i32);
++            }
++        }
++        if !done_at[s].is_empty() {
++            let mut rng = Rng(42 + s as u64);
++            for xx in 0..v.n as usize {
++                let c = v.cell[xx];
++                if c != SEP && done_at[s].binary_search(&c).is_ok() {
++                    ids.push(xx as u64);
++                    x.push((rng.next() & 1) as i32);
++                }
++            }
++        }
++        if ids.is_empty() {
++            return None;
++        }
++        let mut pr: Vec<usize> = (0..ids.len()).collect();
++        pr.sort_unstable_by_key(|&k| ids[k]);
++        let ids2: Vec<u64> = pr.iter().map(|&k| ids[k]).collect();
++        let x2: Vec<i32> = pr.iter().map(|&k| x[k]).collect();
++        Some(vec_i32(v.n, &ids2, &x2))
++    };
++    let top = view(&h, l0, lr);
++    let mut lab = t.time("project", || inj(lr, &top).unwrap_or_else(|| V::new(t_i32(), top.n)));
++    for s in (0..lr).rev() {
++        let v = view(&h, l0, s);
++        let up = &h.levels[s];
++        let fine = t.time("project", || {
++            let f = mxv_i32(&up.ct, &lab, false);
++            match inj(s, &v) {
++                Some(gv) => {
++                    let u = V::new(t_i32(), v.n);
++                    ok!(GrB_Vector_eWiseAdd_BinaryOp(u.0, null(), null(), GrB_FIRST_INT32, f.0, gv.0, null()));
++                    w8v(&u);
++                    u
++                }
++                None => f,
++            }
++        });
++        if !brk("gfdrop") {
++            assert_eq!(fine.nvals(), v.live, "CHECK FAILED: capstop projection lost vertices");
++        }
++        t.time("bnd", || {
++            let b = V::new(t_i32(), v.n);
++            ok!(GrB_mxv(b.0, null(), null(), GxB_PLUS_SECOND_INT32, v.a.0, fine.0, null()));
++            b.wait();
++        });
++        lab = fine;
++    }
++    hash_vec_i32(&lab);
++    let mut nreason = [0u64; 6];
++    for &(_, r) in &stop {
++        nreason[r as usize] += 1;
++    }
++    if hash_on() {
++        hash_u64s(stop.iter().map(|&(a, b)| (a as u64) << 8 | b as u64));
++    }
++    if check {
++        // every reused level within the cap, per cell
++        for lv in &h.levels {
++            let mut mx = vec![0i64; ncells];
++            for (x, &c) in lv.cell.iter().enumerate() {
++                if c != SEP {
++                    mx[c as usize] = mx[c as usize].max(lv.w[x] as i64);
++                }
++            }
++            ck.cs_cap_checked += 1;
++            if mx.iter().any(|&m| m > cap as i64) {
++                ck.cs_cap_fail += 1;
++            }
++        }
++        // weight conservation: cells done at their stop level plus the fresh graph
++        let mut done_w = 0i64;
++        for (s, cs) in done_at.iter().enumerate() {
++            if cs.is_empty() {
++                continue;
++            }
++            let v = view(&h, l0, s);
++            for x in 0..v.n as usize {
++                if v.cell[x] != SEP && cs.binary_search(&v.cell[x]).is_ok() {
++                    done_w += v.w[x] as i64;
++                }
++            }
++        }
++        let gsum: i64 = gw.iter().map(|&x| x as i64).sum();
++        ck.cs_w_checked += 1;
++        if done_w + gsum != l0.live as i64 {
++            ck.cs_w_fail += 1;
++        }
++    }
++    CsOut { h, fresh_rows, fresh_fp, cells_fresh, g_n, stop, nreason }
++}
++
++/// The quality harness's capstop rule (`reuse_levels` under `reuse_capstop`, one stage, floor
++/// FLOOR), replayed on the host from the depth-0 maps: per cell, walk the depth-0 levels composed
++/// over the cell's live vertices; stop at <= FLOOR coarse vertices (done), at the last level
++/// (fresh), or before the first level whose heaviest coarse vertex exceeds the cap (fresh).
++/// `cap_of_cell(c, W_c)` gives the cap. Levels that merge nothing in a cell are walked through,
++/// as the harness skips them (they change neither size nor weights).
++fn rule_replay(
++    l0: &L0,
++    root_cmaps: &[Vec<u32>],
++    ncells: usize,
++    cap_of_cell: &dyn Fn(usize, i64) -> i64,
++) -> Vec<(u32, u8)> {
++    let nl = root_cmaps.len();
++    let mut wc = vec![0i64; ncells];
++    for v in 0..l0.n as usize {
++        if l0.cell[v] != SEP {
++            wc[l0.cell[v] as usize] += 1;
++        }
++    }
++    // per level: (count, max weight) per cell
++    let mut cnt: Vec<Vec<u64>> = vec![wc.iter().map(|&x| x as u64).collect()];
++    let mut mxw: Vec<Vec<i64>> = vec![wc.iter().map(|&x| (x > 0) as i64).collect()];
++    let mut anc: Vec<u32> = (0..l0.n as u32).collect();
++    let mut keys: Vec<u64> = Vec::with_capacity(l0.live as usize);
++    for cm in root_cmaps.iter().take(nl) {
++        keys.clear();
++        for v in 0..l0.n as usize {
++            if l0.cell[v] == SEP {
++                continue;
++            }
++            anc[v] = cm[anc[v] as usize];
++            keys.push(anc[v] as u64 * ncells as u64 + l0.cell[v] as u64);
++        }
++        keys.sort_unstable();
++        let mut c1 = vec![0u64; ncells];
++        let mut m1 = vec![0i64; ncells];
++        let mut q = 0;
++        while q < keys.len() {
++            let k = keys[q];
++            let mut r = q;
++            while r < keys.len() && keys[r] == k {
++                r += 1;
++            }
++            let c = (k % ncells as u64) as usize;
++            c1[c] += 1;
++            m1[c] = m1[c].max((r - q) as i64);
++            q = r;
++        }
++        cnt.push(c1);
++        mxw.push(m1);
++    }
++    (0..ncells)
++        .map(|c| {
++            let cap = cap_of_cell(c, wc[c]);
++            let mut s = 0usize;
++            loop {
++                if cnt[s][c] == 0 {
++                    return (s as u32, R_EMPTY);
++                }
++                if cnt[s][c] <= FLOOR {
++                    return (s as u32, R_FLOOR);
++                }
++                if s == nl {
++                    return (s as u32, R_END);
++                }
++                if mxw[s + 1][c] > cap {
++                    return (s as u32, R_CAP);
++                }
++                s += 1;
++            }
++        })
++        .collect()
++}
++
++#[derive(Default, Debug)]
++struct Checks {
++    split_fail: u64,
++    eq_levels: u64,
++    eq_fail: u64,
++    b1_checked: u64,
++    b1_invalid: u64,
++    w_fail: u64,
++    acct_levels: u64,
++    acct_fail: u64,
++    match_calls_b: u64,
++    cs_cap_checked: u64,
++    cs_cap_fail: u64,
++    cs_w_checked: u64,
++    cs_w_fail: u64,
++    sep_checked: u64,
++    sep_fail: u64,
++    fp_compared: u64,
++    fp_fail: u64,
++    hash_compared: u64,
++    hash_fail: u64,
++    rule_cells: u64,
++    rule_same: u64,
++    rule_plim: u64,
++    rule_fail: u64,
++    rule_percell_diff: u64,
++}
++
++/// B1 = B2 on every level (n, nvals, pattern and values); B1 valid (no diagonal, symmetric,
++/// weight conserved, host weights = C'^T w).
++fn compare(
++    h1: &Hier,
++    h2: &Hier,
++    l0: &L0,
++    ck: &mut Checks,
++) {
++    if h1.levels.len() != h2.levels.len() {
++        ck.eq_fail += 1;
++    }
++    for (l, (x, y)) in h1.levels.iter().zip(&h2.levels).enumerate() {
++        ck.eq_levels += 1;
++        if x.n != y.n || x.a.nvals() != y.a.nvals() || x.w != y.w || tuples(&x.a) != tuples(&y.a) {
++            ck.eq_fail += 1;
++        }
++        ck.b1_checked += 1;
++        let diag = M::new(t_i32(), x.n, x.n);
++        ok!(GrB_Matrix_select_INT64(diag.0, null(), null(), GrB_DIAG, x.a.0, 0, null()));
++        let at = M::new(t_i32(), x.n, x.n);
++        ok!(GrB_transpose(at.0, null(), null(), x.a.0, null()));
++        let wsum: i64 = x.w.iter().map(|&v| v as i64).sum();
++        let (dg, sym) = (diag.nvals(), tuples(&at) == tuples(&x.a));
++        if dg != 0 || !sym || wsum != l0.live as i64 {
++            if ck.b1_invalid < 3 {
++                println!("B1INVALID level={} diag={dg} symmetric={sym} wsum={wsum} live={}", l + 1, l0.live);
++            }
++            ck.b1_invalid += 1;
++        }
++        let prev = view(h1, l0, l);
++        let ids: Vec<u64> = (0..prev.n).filter(|&i| prev.cell[i as usize] != SEP).collect();
++        let pw: Vec<i32> = ids.iter().map(|&i| prev.w[i as usize]).collect();
++        let wv = mxv_i32(&x.ct, &vec_i32(prev.n, &ids, &pw), true);
++        let gw = dense_i32(&wv);
++        let ok_w = (0..x.n as usize).all(|i| gw.get(i).copied().unwrap_or(0) == x.w[i]);
++        if !ok_w {
++            ck.w_fail += 1;
++        }
++    }
++}
++
++/// Accounting identity: the live coarse vertices of every B level equal the distinct
++/// (depth-0 coarse vertex, cell) pairs over live fine vertices.
++fn accounting(
++    h: &Hier,
++    l0: &L0,
++    root_cmaps: &[Vec<u32>],
++    ncells: u64,
++    ck: &mut Checks,
++) {
++    let mut anc: Vec<u32> = (0..l0.n as u32).collect();
++    for (l, lv) in h.levels.iter().enumerate() {
++        let cm = &root_cmaps[l];
++        let mut keys: Vec<u64> = Vec::with_capacity(l0.live as usize);
++        for v in 0..l0.n as usize {
++            if l0.cell[v] == SEP {
++                continue;
++            }
++            anc[v] = cm[anc[v] as usize];
++            keys.push(anc[v] as u64 * ncells + l0.cell[v] as u64);
++        }
++        keys.sort_unstable();
++        keys.dedup();
++        ck.acct_levels += 1;
++        if keys.len() as u64 != lv.live {
++            ck.acct_fail += 1;
++        }
++    }
++}
++
++/// Greedy boundary refinement of a 2-way label inside every cell (edge cut, 3 % balance).
++fn refine(
++    v: &View,
++    side: &mut [u8],
++    ncells: usize,
++) {
++    let (ii, jj, xx) = tuples(v.a);
++    let n = v.n as usize;
++    let mut rp = vec![0usize; n + 1];
++    for &i in &ii {
++        rp[i as usize + 1] += 1;
++    }
++    for k in 0..n {
++        rp[k + 1] += rp[k];
++    }
++    let mut sw = vec![[0i64; 2]; ncells];
++    for x in 0..n {
++        if v.cell[x] != SEP {
++            sw[v.cell[x] as usize][side[x] as usize] += v.w[x] as i64;
++        }
++    }
++    let lim: Vec<i64> = sw.iter().map(|s| ((s[0] + s[1]) as f64 * 0.5 * 1.03).ceil() as i64).collect();
++    for _pass in 0..4 {
++        let mut moved = 0;
++        for x in 0..n {
++            let c = v.cell[x];
++            if c == SEP {
++                continue;
++            }
++            let c = c as usize;
++            let s = side[x] as usize;
++            let (mut ext, mut int) = (0i64, 0i64);
++            for k in rp[x]..rp[x + 1] {
++                if side[jj[k] as usize] as usize == s {
++                    int += xx[k] as i64;
++                } else {
++                    ext += xx[k] as i64;
++                }
++            }
++            let wx = v.w[x] as i64;
++            if ext > int && sw[c][1 - s] + wx <= lim[c] {
++                side[x] = (1 - s) as u8;
++                sw[c][s] -= wx;
++                sw[c][1 - s] += wx;
++                moved += 1;
++            }
++        }
++        if moved == 0 {
++            break;
++        }
++    }
++}
++
++/// Real-ish cells for depth d+1: bisect each depth-d cell on its coarsest reused level by feral
++/// position (half the weight each side), project level by level with a boundary refinement at
++/// each, then take the smaller side's boundary at level 0 as the vertex separator.
++fn derive(
++    h: &Hier,
++    l0: &L0,
++    pos: &[u64],
++    ncells: usize,
++    ck: &mut Checks,
++    s: &HostCsr,
++    d: u32,
++) -> Vec<u32> {
++    let lr = h.levels.len();
++    let mut mps: Vec<Vec<u64>> = vec![(0..l0.n as usize).map(|v| if l0.cell[v] != SEP { pos[v] } else { u64::MAX }).collect()];
++    for lv in &h.levels {
++        let prev = mps.last().unwrap();
++        let mut m2 = vec![u64::MAX; lv.n as usize];
++        for (x, &y) in lv.cmap.iter().enumerate() {
++            if y != NONE {
++                m2[y as usize] = m2[y as usize].min(prev[x]);
++            }
++        }
++        mps.push(m2);
++    }
++    let mut chosen = vec![0usize; ncells];
++    for lvl in 1..=lr {
++        let v = view(h, l0, lvl);
++        let mut cnt = vec![0u32; ncells];
++        for &c in v.cell {
++            if c != SEP {
++                cnt[c as usize] += 1;
++            }
++        }
++        for c in 0..ncells {
++            if cnt[c] >= 100 {
++                chosen[c] = lvl;
++            }
++        }
++    }
++    let mut side: Vec<u8> = Vec::new();
++    for lvl in (0..=lr).rev() {
++        let v = view(h, l0, lvl);
++        let mut sd = vec![0u8; v.n as usize];
++        if lvl < lr {
++            for (x, &y) in h.levels[lvl].cmap.iter().enumerate() {
++                if y != NONE {
++                    sd[x] = side[y as usize];
++                }
++            }
++        }
++        let mp = &mps[lvl];
++        let mut order: Vec<u32> = (0..v.n as u32).filter(|&x| v.cell[x as usize] != SEP && chosen[v.cell[x as usize] as usize] == lvl).collect();
++        if !order.is_empty() {
++            order.sort_unstable_by_key(|&x| (v.cell[x as usize], mp[x as usize], x));
++            let mut wc = vec![0i64; ncells];
++            for &x in &order {
++                wc[v.cell[x as usize] as usize] += v.w[x as usize] as i64;
++            }
++            let mut acc = vec![0i64; ncells];
++            for &x in &order {
++                let c = v.cell[x as usize] as usize;
++                sd[x as usize] = if acc[c] * 2 < wc[c] { 0 } else { 1 };
++                acc[c] += v.w[x as usize] as i64;
++            }
++        }
++        refine(&v, &mut sd, ncells);
++        side = sd;
++    }
++    let n = l0.n as usize;
++    let mut bnd = vec![false; n];
++    let mut nb = vec![[0u64; 2]; ncells];
++    for v in 0..n {
++        let c = l0.cell[v];
++        if c == SEP {
++            continue;
++        }
++        for &u in &s.j[s.p[v] as usize..s.p[v + 1] as usize] {
++            let u = u as usize;
++            if l0.cell[u] == c && side[u] != side[v] {
++                bnd[v] = true;
++                nb[c as usize][side[v] as usize] += 1;
++                break;
++            }
++        }
++    }
++    let nosep = brk("nosep");
++    let mut out = vec![SEP; n];
++    let mut nsep = 0u64;
++    let mut cw = vec![0u64; 2 * ncells];
++    for v in 0..n {
++        let c = l0.cell[v];
++        if c == SEP {
++            continue;
++        }
++        let ss = if nb[c as usize][0] <= nb[c as usize][1] { 0 } else { 1 };
++        if bnd[v] && side[v] == ss && !(nosep && c == 0) {
++            nsep += 1;
++            continue;
++        }
++        out[v] = 2 * c + side[v] as u32;
++        cw[out[v] as usize] += 1;
++    }
++    let mut bad = 0u64;
++    for v in 0..n {
++        if out[v] == SEP {
++            continue;
++        }
++        for &u in &s.j[s.p[v] as usize..s.p[v + 1] as usize] {
++            let cu = out[u as usize];
++            if cu != SEP && cu != out[v] {
++                bad += 1;
++            }
++        }
++    }
++    ck.sep_checked += 1;
++    if bad > 0 {
++        ck.sep_fail += 1;
++    }
++    let nz: Vec<u64> = cw.iter().copied().filter(|&x| x > 0).collect();
++    println!(
++        "LABELS depth={} cells={} nonempty={} sep={nsep} live={} min_cell={} max_cell={} sep_violations={bad}",
++        d + 1,
++        2 * ncells,
++        nz.len(),
++        out.iter().filter(|&&c| c != SEP).count(),
++        nz.iter().min().copied().unwrap_or(0),
++        nz.iter().max().copied().unwrap_or(0)
++    );
++    out
++}
++
++/// The depth split of design §3 step 6 for labels with separators (no row for SEP).
++fn split2(
++    a0: &M,
++    labels: &[u32],
++    cells: u64,
++    ops: &Ops,
++    t: &mut Timer,
++) -> M {
++    let n = a0.nrows() as usize;
++    let shift = brk("split");
++    if opt("hsplit") {
++        return t.time("split_host", || {
++            let ac = Csr::new(a0);
++            let brk1 = obrk("hsplit");
++            let lab = |v: usize| if shift { labels[(v + 1) % n] } else { labels[v] };
++            let m = emit_csr(n, n as u64, ac.p(), ac.nnz, true, |r0, r1, cols, _vals, cnt| {
++                let (ap, aj) = (ac.p(), ac.j());
++                for u in r0..r1 {
++                    cnt.push(cols.len() as u32);
++                    let lu = lab(u);
++                    if lu == SEP {
++                        continue;
++                    }
++                    for &v in &aj[ap[u] as usize..ap[u + 1] as usize] {
++                        if lab(v as usize) == lu && !(brk1 && u == 0) {
++                            cols.push(v);
++                        }
++                    }
++                }
++            });
++            drop(ac);
++            m
++        });
++    }
++    let mut ii = Vec::with_capacity(n);
++    let mut jj = Vec::with_capacity(n);
++    for v in 0..n {
++        let c = if shift { labels[(v + 1) % n] } else { labels[v] };
++        if c != SEP {
++            ii.push(v as u64);
++            jj.push(c as u64);
++        }
++    }
++    let mm = t.time("split_buildM", || {
++        let mm = M::new(t_i32(), n as u64, cells);
++        ok!(GxB_Matrix_build_Scalar(mm.0, ii.as_ptr(), jj.as_ptr(), ops.one_i32, ii.len() as u64));
++        mm.wait();
++        mm
++    });
++    t.time("split_mxm", || {
++        let an = M::new(t_i32(), n as u64, n as u64);
++        ok!(GrB_mxm(an.0, a0.0, null(), GxB_ANY_PAIR_INT32, mm.0, mm.0, GrB_DESC_ST1));
++        an.wait();
++        an
++    })
++}
++fn split_count(
++    s: &HostCsr,
++    labels: &[u32],
++) -> u64 {
++    let mut c = 0;
++    for u in 0..s.n {
++        for &v in &s.j[s.p[u] as usize..s.p[u + 1] as usize] {
++            c += (labels[u] != SEP && labels[u] == labels[v as usize]) as u64;
++        }
++    }
++    c
++}
++
++fn sh(cmd: &str) -> String {
++    std::process::Command::new("sh")
++        .arg("-c")
++        .arg(cmd)
++        .output()
++        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
++        .unwrap_or_default()
++}
++fn rss_mb() -> u64 {
++    sh(&format!("ps -o rss= -p {}", std::process::id())).parse::<u64>().unwrap_or(0) / 1024
++}
++fn calls_str(t: &Timer) -> String {
++    t.0.iter().map(|(k, v)| format!("c:{k}={v:.6}/{}", t.1.get(k).map_or(0, |x| x.0))).collect::<Vec<_>>().join(" ")
++}
++fn rows_timer(rows: &[(u64, u64, u32, bool, Timer)]) -> Timer {
++    let mut t = Timer::default();
++    for r in rows {
++        t.add(&r.4);
++    }
++    t
++}
++fn hier_fp(h: &Hier) -> Vec<(u64, u64, i64)> {
++    h.levels.iter().map(|l| (l.live, l.a.nvals(), l.a.sum())).collect()
++}
++fn ones_vec(
++    n: u64,
++    cell: &[u32],
++) -> (V, Vec<i32>) {
++    let wh: Vec<i32> = cell.iter().map(|&c| (c != SEP) as i32).collect();
++    let ids: Vec<u64> = (0..n).filter(|&i| cell[i as usize] != SEP).collect();
++    let x = vec![1i32; ids.len()];
++    let v = V::new(t_i32(), n);
++    ok!(GrB_Vector_build_INT32(v.0, ids.as_ptr(), x.as_ptr(), ids.len() as u64, null()));
++    v.wait();
++    (v, wh)
++}
++/// One phase line: the timed calls (wall, instructions, cycles) and the whole phase (wall, instructions).
++#[allow(clippy::too_many_arguments)]
++fn phase_line(
++    th: i32,
++    run: usize,
++    d: u32,
++    path: &str,
++    t: &Timer,
++    pw: f64,
++    pi: u64,
++    extra: &str,
++) {
++    let (i, c) = t.instr();
++    println!(
++        "PHASE threads={th} run={run} depth={d} path={path} wall={:.6} instr={i} cyc={c} pwall={pw:.6} pinstr={pi} {extra} {}",
++        t.wall(),
++        calls_str(t)
++    );
++}
++
++#[test]
++#[ignore]
++fn m1_reuse() {
++    test_init::ensure_init();
++    if env("M1_JIT").as_deref() == Some("run") {
++        ok!(GrB_Global_set_INT32(GrB_GLOBAL, GxB_JIT_Control::GxB_JIT_RUN as i32, GxB_Option_Field::GxB_JIT_C_CONTROL as _));
++        println!("JIT: RUN");
++    }
++    assert!(ct(), "set M1_CT=1");
++    if opt("chunk") {
++        let v: f64 = env("M1O_CHUNK").map_or(1048576.0, |x| x.parse().unwrap());
++        ok!(GxB_Global_Option_set_FP64(GxB_CHUNK as _, v));
++        println!("GxB_CHUNK {v}");
++    }
++    println!("M1O {:?} M1O_BREAK {:?} M1_BREAK {:?}", env("M1O"), env("M1O_BREAK"), env("M1_BREAK"));
++    let path = env("M1_GRAPH").expect("M1_GRAPH");
++    let t = Instant::now();
++    let s = load(&path);
++    println!("graph {path}: n={} entries={} load={:.2}s", s.n, s.j.len(), t.elapsed().as_secs_f64());
++    let a0 = to_grb(&s);
++    {
++        let (mut rb, mut ob) = (0i32, 0i32);
++        ok!(GrB_Matrix_get_INT32(a0.0, &mut rb, GxB_Option_Field::GxB_ROWINDEX_INTEGER_BITS as _));
++        ok!(GrB_Matrix_get_INT32(a0.0, &mut ob, GxB_Option_Field::GxB_OFFSET_INTEGER_BITS as _));
++        println!("A0 integer bits: rowindex={rb} offset={ob}");
++    }
++    let ops = Ops::new();
++    let threads: Vec<i32> = env("M1_THREADS").unwrap_or("1,4".into()).split(',').map(|x| x.parse().unwrap()).collect();
++    let runs: usize = env("M1_RUNS").map_or(3, |x| x.parse().unwrap());
++    let max_depth: u32 = env("M1_DEPTHS").map_or(14, |x| x.parse().unwrap());
++    let feral_runs: usize = env("M1_FERAL").map_or(3, |x| x.parse().unwrap());
++    let nocheck = env("M1_NOCHECK").is_some();
++    let rulecheck = env("M1_RULECHECK").is_some();
++    let n = s.n as u64;
++
++    // feral: the whole ordering, same process; its order gives the cell keys
++    let mut pos = vec![0u64; s.n];
++    {
++        let cache = env("M1_PERM_CACHE");
++        let mut perm0: Option<Vec<i64>> = cache.as_ref().and_then(|f| std::fs::read(f).ok()).map(|b| b.chunks(8).map(|c| i64::from_le_bytes(c.try_into().unwrap())).collect());
++        if perm0.as_ref().is_some_and(|p| p.len() != s.n) {
++            perm0 = None;
++        }
++        let need = if perm0.is_none() { feral_runs.max(1) } else { feral_runs };
++        for r in 0..need {
++            println!("LOAD feral run={r} {}", sh("uptime"));
++            let (perm, sec, ins) = feral_perm(&s);
++            println!("FERAL run={r} sec={sec:.3} instr={ins}");
++            if let Some(p0) = &perm0 {
++                assert_eq!(p0, &perm, "feral not deterministic");
++            } else {
++                perm0 = Some(perm);
++            }
++            flush();
++        }
++        let p0 = perm0.unwrap();
++        if let Some(f) = &cache {
++            if std::fs::metadata(f).is_err() {
++                let b: Vec<u8> = p0.iter().flat_map(|x| x.to_le_bytes()).collect();
++                std::fs::write(f, b).unwrap();
++            }
++        }
++        for (k, &v) in p0.iter().enumerate() {
++            pos[v as usize] = k as u64;
++        }
++    }
++    let cap_of = |d: u32| ((15 * n / (1u64 << d)) / 1000).max(2) as i32;
++    let stop_of = |d: u32| 100u64 << d;
++    let mut ck = Checks::default();
++
++    // ---- prep pass (untimed): derive real labels, straddler statistics, accounting identity ----
++    set_threads(*threads.iter().max().unwrap());
++    let tp = Instant::now();
++    let ones: Vec<i32> = vec![1; s.n];
++    let mut labels: Vec<Vec<u32>> = vec![vec![0; s.n]];
++    let root_cmaps: Vec<Vec<u32>>;
++    {
++        let mut kept = None;
++        let _ = hierarchy_keep(&a0, None, cap_of(0), stop_of(0), &ops, Some(&mut kept));
++        let h0 = root_hier(kept.unwrap(), n, &mut Timer::default());
++        root_cmaps = h0.levels.iter().map(|l| l.cmap.clone()).collect();
++        println!("ROOT levels={} coarsest={}", h0.levels.len(), h0.levels.last().map_or(n, |l| l.n));
++        let l0 = L0 { a: &a0, n, cell: &labels[0], w: &ones, live: n };
++        let next = derive(&h0, &l0, &pos, 1, &mut ck, &s, 0);
++        labels.push(next);
++        let mut parent = h0;
++        for d in 1..=max_depth {
++            let cells = 1usize << d;
++            let next;
++            {
++                let lab = &labels[d as usize];
++                let wd: Vec<i32> = lab.iter().map(|&c| (c != SEP) as i32).collect();
++                let live = wd.iter().filter(|&&x| x > 0).count() as u64;
++                let ad = split2(&a0, lab, cells as u64, &ops, &mut Timer::default());
++                if ad.nvals() != split_count(&s, lab) {
++                    ck.split_fail += 1;
++                }
++                let l0 = L0 { a: &ad, n, cell: lab, w: &wd, live };
++                let mut st = Vec::new();
++                let hd = build_reuse(Mode::B2, &parent, &l0, cells, stop_of(d), &ops, &mut Timer::default(), Some(&mut st), d);
++                for line in st {
++                    println!("{line}");
++                }
++                accounting(&hd, &l0, &root_cmaps, cells as u64, &mut ck);
++                println!(
++                    "PREP depth={d} live={live} split_nnz={} levels={} coarsest={} rss_mb={}",
++                    ad.nvals(),
++                    hd.levels.len(),
++                    hd.levels.last().map_or(live, |l| l.live),
++                    rss_mb()
++                );
++                next = if d < max_depth { Some(derive(&hd, &l0, &pos, cells, &mut ck, &s, d)) } else { None };
++                parent = hd;
++            }
++            if let Some(nx) = next {
++                labels.push(nx);
++            }
++            flush();
++        }
++    }
++    {
++        let mut lh = 0x55u64;
++        for l in &labels {
++            for &x in l {
++                lh = hmix(lh, x as u64);
++            }
++        }
++        println!("LABELHASH {lh:016x}");
++    }
++    println!("PREP done {:.1}s rss_mb={}", tp.elapsed().as_secs_f64(), rss_mb());
++    println!("CHECKS-PREP {ck:?}");
++    flush();
++
++    // ---- runs: run 0 is the check run (B1, all checks, hashes); runs 1..=runs are timed ----
++    let hash_mode = env("M1_HASH");
++    let mut hashes: BTreeMap<(String, u32), (u64, u64)> = BTreeMap::new();
++    let mut fps: BTreeMap<(&'static str, u32), Vec<(u64, u64, i64)>> = BTreeMap::new();
++    let mut fpc = |ck: &mut Checks, key: (&'static str, u32), fp: Vec<(u64, u64, i64)>| match fps.get(&key) {
++        Some(f) => {
++            ck.fp_compared += 1;
++            if f != &fp {
++                ck.fp_fail += 1;
++            }
++        }
++        None => {
++            fps.insert(key, fp);
++        }
++    };
++    let first_run = if nocheck { 1 } else { 0 };
++    for &th in &threads {
++        set_threads(th);
++        for run in first_run..=runs {
++            let check = run == 0;
++            let hashing = check && hash_mode.is_some();
++            let mut hput = |path: &str, d: u32, hv: (u64, u64)| {
++                if hashing {
++                    println!("HASH threads={th} path={path} depth={d} hash={:016x} items={}", hv.0, hv.1);
++                    let key = (path.to_string(), d);
++                    if let Some(old) = hashes.get(&key) {
++                        if *old != hv {
++                            println!("HASHDIFF threads={th} path={path} depth={d}");
++                            HASHDIFF.fetch_add(1, Relaxed);
++                        }
++                    } else {
++                        hashes.insert(key, hv);
++                    }
++                }
++            };
++            println!("LOAD threads={th} run={run} {}", sh("uptime"));
++            flush();
++            let wall = Instant::now();
++            // depth 0: R, shared by all variants
++            if hashing {
++                hash_begin();
++            }
++            let mut kept = None;
++            let (i0, w0) = (instr(), Instant::now());
++            let (rows, fp, _) = hierarchy_keep(&a0, None, cap_of(0), stop_of(0), &ops, Some(&mut kept));
++            let (pw, pi) = (w0.elapsed().as_secs_f64(), instr().0 - i0.0);
++            if hashing {
++                hput("D0", 0, hash_end());
++            }
++            let r0 = rows_timer(&rows);
++            fpc(&mut ck, ("R", 0), fp);
++            phase_line(th, run, 0, "D0", &r0, pw, pi, &format!("levels={}", rows.len()));
++            let mut troot = Timer::default();
++            let (i0, w0) = (instr(), Instant::now());
++            let h0 = root_hier(kept.unwrap(), n, &mut troot);
++            let (pw, pi) = (w0.elapsed().as_secs_f64(), instr().0 - i0.0);
++            phase_line(th, run, 0, "ROOTMAP", &troot, pw, pi, "");
++            let mut h0 = Some(h0);
++            let (mut pb1, mut pb2, mut pcs): (Option<Hier>, Option<Hier>, Option<Hier>) = (None, None, None);
++            for d in 1..=max_depth {
++                let cells = 1usize << d;
++                let lab = &labels[d as usize];
++                let wd: Vec<i32> = lab.iter().map(|&c| (c != SEP) as i32).collect();
++                let live = wd.iter().filter(|&&x| x > 0).count() as u64;
++                let mut tsplit = Timer::default();
++                let (i0, w0) = (instr(), Instant::now());
++                let ad = split2(&a0, lab, cells as u64, &ops, &mut tsplit);
++                let (pw, pi) = (w0.elapsed().as_secs_f64(), instr().0 - i0.0);
++                phase_line(th, run, d, "SPLIT", &tsplit, pw, pi, "");
++                if check && ad.nvals() != split_count(&s, lab) {
++                    ck.split_fail += 1;
++                }
++                if hashing {
++                    hash_begin();
++                    hash_mat(&ad);
++                    hput("SPLIT", d, hash_end());
++                }
++                let l0 = L0 { a: &ad, n, cell: lab, w: &wd, live };
++                // R
++                if hashing {
++                    hash_begin();
++                }
++                let (i0, w0) = (instr(), Instant::now());
++                let (rows, fp, _) = hierarchy_keep(&ad, Some(ones_vec(n, lab)), cap_of(d), stop_of(d), &ops, None);
++                let (pw, pi) = (w0.elapsed().as_secs_f64(), instr().0 - i0.0);
++                if hashing {
++                    hput("R", d, hash_end());
++                }
++                let rt = rows_timer(&rows);
++                phase_line(th, run, d, "R", &rt, pw, pi, &format!("levels={} coarsened={}", rows.len(), rows.iter().map(|r| r.0).sum::<u64>()));
++                fpc(&mut ck, ("R", d), fp);
++                // B1 (check run only) and B2: never match
++                let mc0 = MATCH_CALLS.load(Relaxed);
++                let hb1 = if check {
++                    let mut tb1 = Timer::default();
++                    let hb1 = build_reuse(Mode::B1, pb1.as_ref().or(h0.as_ref()).unwrap(), &l0, cells, stop_of(d), &ops, &mut tb1, None, d);
++                    Some(hb1)
++                } else {
++                    None
++                };
++                let mut tb2 = Timer::default();
++                if hashing {
++                    hash_begin();
++                }
++                let (i0, w0) = (instr(), Instant::now());
++                let hb2 = build_reuse(Mode::B2, pb2.as_ref().or(h0.as_ref()).unwrap(), &l0, cells, stop_of(d), &ops, &mut tb2, None, d);
++                if brk("rematch") && d >= 3 {
++                    let _ = hierarchy_keep(&ad, None, cap_of(d), stop_of(d), &ops, None);
++                }
++                let lab2 = project_b(&hb2, &l0, &mut tb2);
++                let (pw, pi) = (w0.elapsed().as_secs_f64(), instr().0 - i0.0);
++                if hashing {
++                    if let Some(l) = &lab2 {
++                        hash_vec_i32(l);
++                    }
++                    hput("B2", d, hash_end());
++                }
++                ck.match_calls_b += (MATCH_CALLS.load(Relaxed) - mc0) as u64;
++                phase_line(th, run, d, "B2", &tb2, pw, pi, &format!("levels={} coarsest={}", hb2.levels.len(), hb2.levels.last().map_or(live, |l| l.live)));
++                if let Some(hb1) = &hb1 {
++                    compare(hb1, &hb2, &l0, &mut ck);
++                }
++                fpc(&mut ck, ("B2", d), hier_fp(&hb2));
++                // capstop
++                let mut tcs = Timer::default();
++                if hashing {
++                    hash_begin();
++                }
++                let (i0, w0) = (instr(), Instant::now());
++                let cs = build_capstop(pcs.as_ref().or(h0.as_ref()).unwrap(), &l0, cells, cap_of(d), &ops, &mut tcs, &mut ck, check);
++                let (pw, pi) = (w0.elapsed().as_secs_f64(), instr().0 - i0.0);
++                if hashing {
++                    hput("CS", d, hash_end());
++                }
++                let mut tall = Timer::default();
++                tall.add(&tcs);
++                tall.add(&rows_timer(&cs.fresh_rows));
++                phase_line(
++                    th,
++                    run,
++                    d,
++                    "CS",
++                    &tall,
++                    pw,
++                    pi,
++                    &format!(
++                        "levels={} reused={} fresh={} coarsened={} cells_fresh={} g_n={} reasons={}",
++                        cs.h.levels.len() + cs.fresh_rows.len(),
++                        cs.h.levels.len(),
++                        cs.fresh_rows.len(),
++                        cs.fresh_rows.iter().map(|r| r.0).sum::<u64>(),
++                        cs.cells_fresh,
++                        cs.g_n,
++                        cs.nreason[1..].iter().map(|x| x.to_string()).collect::<Vec<_>>().join("/")
++                    ),
++                );
++                if check && rulecheck {
++                    let capd = cap_of(d) as i64;
++                    let same_cap = rule_replay(&l0, &root_cmaps, cells, &|_, _| capd);
++                    let per_cell = rule_replay(&l0, &root_cmaps, cells, &|_, w| ((15 * w) / 1000).max(2));
++                    let (mut same, mut plim, mut fail, mut pcd) = (0u64, 0u64, 0u64, 0u64);
++                    let mut shown = 0;
++                    for c in 0..cells {
++                        let (a, b) = (cs.stop[c], same_cap[c]);
++                        if a == b {
++                            same += 1;
++                        } else if (a.1 == R_PLIM || a.1 == R_END) && a.0 <= b.0 {
++                            plim += 1;
++                        } else {
++                            fail += 1;
++                            if shown < 5 {
++                                shown += 1;
++                                println!("RULEDIFF depth={d} cell={c} capstop={a:?} rule={b:?}");
++                            }
++                        }
++                        if per_cell[c] != b {
++                            pcd += 1;
++                        }
++                    }
++                    println!("RULE depth={d} cells={cells} same={same} parent_limited={plim} other={fail} percell_cap_differs={pcd}");
++                    ck.rule_cells += cells as u64;
++                    ck.rule_same += same;
++                    ck.rule_plim += plim;
++                    ck.rule_fail += fail;
++                    ck.rule_percell_diff += pcd;
++                }
++                let mut fpcs = hier_fp(&cs.h);
++                fpcs.push((u64::MAX, cs.g_n, 0));
++                fpcs.extend(cs.fresh_fp.iter().copied());
++                fpc(&mut ck, ("CS", d), fpcs);
++                drop(l0);
++                pb1 = hb1;
++                pb2 = Some(hb2);
++                pcs = Some(cs.h);
++                h0 = None;
++                flush();
++            }
++            println!("RUN threads={th} run={run} wall={:.2}s rss_mb={} slow_borrow={}", wall.elapsed().as_secs_f64(), rss_mb(), SLOW_BORROW.load(Relaxed));
++            flush();
++        }
++    }
++    // hashes against a baseline file
++    if let Some(hm) = hash_mode {
++        if let Some(f) = hm.strip_prefix("write:") {
++            let txt: String = hashes.iter().map(|((p, d), (h, c))| format!("{p} {d} {h:016x} {c}\n")).collect();
++            std::fs::write(f, txt).unwrap();
++            println!("HASHES written to {f} ({})", hashes.len());
++        } else if let Some(f) = hm.strip_prefix("check:") {
++            let txt = std::fs::read_to_string(f).unwrap();
++            for line in txt.lines() {
++                let w: Vec<&str> = line.split_whitespace().collect();
++                let key = (w[0].to_string(), w[1].parse::<u32>().unwrap());
++                let want = (u64::from_str_radix(w[2], 16).unwrap(), w[3].parse::<u64>().unwrap());
++                if key.1 > max_depth {
++                    continue;
++                }
++                ck.hash_compared += 1;
++                match hashes.get(&key) {
++                    Some(got) if *got == want => {}
++                    got => {
++                        ck.hash_fail += 1;
++                        println!("HASHMISMATCH path={} depth={} want={:016x} got={:?}", key.0, key.1, want.0, got.map(|g| format!("{:016x}", g.0)));
++                    }
++                }
++            }
++        }
++    }
++    ck.hash_fail += HASHDIFF.load(Relaxed) as u64;
++    println!("CHECKS {ck:?}");
++    flush();
++    assert_eq!(ck.split_fail, 0, "CHECK FAILED: split pattern");
++    assert_eq!(ck.eq_fail, 0, "CHECK FAILED: B1 != B2");
++    assert_eq!(ck.b1_invalid, 0, "CHECK FAILED: B1 level invalid");
++    assert_eq!(ck.w_fail, 0, "CHECK FAILED: host weights != C'^T w");
++    assert_eq!(ck.acct_fail, 0, "CHECK FAILED: accounting identity");
++    assert_eq!(ck.match_calls_b, 0, "CHECK FAILED: B1/B2 ran a matching");
++    assert_eq!(ck.cs_cap_fail, 0, "CHECK FAILED: capstop reused a level over the cap");
++    assert_eq!(ck.cs_w_fail, 0, "CHECK FAILED: capstop weight not conserved");
++    assert_eq!(ck.sep_fail, 0, "CHECK FAILED: separator does not separate");
++    assert_eq!(ck.fp_fail, 0, "CHECK FAILED: hierarchy differs across runs/threads");
++    assert_eq!(ck.hash_fail, 0, "CHECK FAILED: differs from the baseline (hash)");
++    assert_eq!(ck.rule_fail, 0, "CHECK FAILED: capstop stop level differs from the quality harness's rule");
++}
+diff --git a/graph/src/graph/graphblas/mod.rs b/graph/src/graph/graphblas/mod.rs
+index bb78d7766..59b05d053 100644
+--- a/graph/src/graph/graphblas/mod.rs
++++ b/graph/src/graph/graphblas/mod.rs
+@@ -76,6 +76,8 @@ mod block_scaling_bench;
+ mod csr;
+ #[cfg(test)]
+ mod degree_bench;
++#[cfg(all(test, feature = "index-falkordb"))]
++mod m1_coarsen_bench;
+ #[cfg(test)]
+ mod fold_cost_bench;
+ pub mod lagraph_bindings;

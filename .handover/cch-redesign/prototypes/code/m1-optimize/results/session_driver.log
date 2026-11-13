@@ -1,0 +1,13 @@
+SESSION CA baseline Fri Nov 13 05:04:12 IST 2026  5:04  up 14 days, 17:52, 32 users, load averages: 2.99 2.65 2.32
+fin_base exit=0 hash_compared: 57, hash_fail: 0 slow_borrow=0
+SESSION CA final Fri Nov 13 05:07:27 IST 2026  5:07  up 14 days, 17:56, 32 users, load averages: 2.31 2.41 2.27
+fin_opt exit=0 hash_compared: 57, hash_fail: 0 slow_borrow=0
+SESSION PA baseline Fri Nov 13 05:09:17 IST 2026  5:09  up 14 days, 17:58, 32 users, load averages: 2.72 2.43 2.29
+fin_base exit=0 hash_compared: 0, hash_fail: 0 slow_borrow=0
+SESSION PA final Fri Nov 13 05:10:59 IST 2026  5:10  up 14 days, 17:59, 32 users, load averages: 2.51 2.36 2.27
+fin_opt exit=0 hash_compared: 57, hash_fail: 0 slow_borrow=0
+SESSION TX baseline Fri Nov 13 05:11:57 IST 2026  5:11  up 14 days, 18 hrs, 32 users, load averages: 2.41 2.33 2.26
+fin_base exit=0 hash_compared: 0, hash_fail: 0 slow_borrow=0
+SESSION TX final Fri Nov 13 05:14:05 IST 2026  5:14  up 14 days, 18:02, 32 users, load averages: 3.95 2.96 2.52
+fin_opt exit=0 hash_compared: 57, hash_fail: 0 slow_borrow=0
+SESSION done Fri Nov 13 05:15:17 IST 2026

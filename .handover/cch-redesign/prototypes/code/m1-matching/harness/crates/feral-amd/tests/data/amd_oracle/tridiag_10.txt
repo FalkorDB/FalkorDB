@@ -1,0 +1,16 @@
+# feral-amd oracle fixture: tridiag_10
+# generator: SuiteSparse AMD Rust crate (amd = 0.2.2)
+# provenance:
+#   generator: band(n=10, b=1) — banded + diagonal; programmatic, no RNG
+status: OK
+n: 10
+nz: 28
+nz_a_plus_at: 18
+n_dense: 0
+ncmpa: 0
+lnz: 9
+ndiv: 9
+nms_ldl: 9
+nms_lu: 9
+d_max: 2
+perm: 9 8 7 6 5 4 3 2 0 1

@@ -1,0 +1,278 @@
+# threads=1: burble seconds by (depth, path, call); flags = share of that time
+d=0 R     CA                 n=   40 burble_ms=   179.10 timer_ms=   179.30  unjumble=64.0 convert=0.0 transpose=115.1 1thr=115.1
+d=0 R     CAC'               n=   40 burble_ms=   158.21 timer_ms=   158.29  unjumble=30.9 1thr=127.3
+d=0 R     mxv                n=  190 burble_ms=   123.79 timer_ms=   124.31  convert=4.8
+d=0 R     m_unext            n=  118 burble_ms=    74.94 timer_ms=    75.35  generic=74.9 convert=6.4
+d=0 R     offdiag            n=   20 burble_ms=    64.77 timer_ms=    64.85  
+d=0 R     key                n=   20 burble_ms=    61.42 timer_ms=    61.55  generic=61.4
+d=0 R     m_assign           n=  118 burble_ms=    53.30 timer_ms=    53.61  generic=49.0 convert=53.3
+d=0 R     m_extract          n=  118 burble_ms=    49.80 timer_ms=    50.23  
+d=0 R     untimed            n=  498 burble_ms=    49.67 timer_ms=     0.00  generic=21.7 convert=24.6 1thr=0.0
+d=0 R     m_unkey            n=  118 burble_ms=    43.15 timer_ms=    43.56  generic=43.2
+d=0 R     m_eq               n=  118 burble_ms=    32.76 timer_ms=    33.14  convert=2.5
+d=0 R     bnd                n=   20 burble_ms=    27.02 timer_ms=    27.10  
+d=0 R     Cw                 n=   20 burble_ms=    24.44 timer_ms=    24.50  convert=24.4
+d=0 R     c_number_host      n=   60 burble_ms=    15.88 timer_ms=    16.59  convert=4.5 1thr=4.5
+d=0 R     twohop             n=  190 burble_ms=    15.45 timer_ms=    16.07  generic=5.1 convert=6.7 1thr=6.8
+d=0 R     m_full             n=  118 burble_ms=    15.22 timer_ms=    15.59  
+d=0 R     c_extract          n=   20 burble_ms=    14.65 timer_ms=    14.70  generic=14.7 convert=14.7
+d=0 R     c_build            n=   20 burble_ms=    10.71 timer_ms=    10.77  convert=10.7 1thr=10.7
+d=0 R     c_leader           n=   60 burble_ms=     5.27 timer_ms=     5.46  
+d=0 R     idx                n=   40 burble_ms=     4.77 timer_ms=     4.90  
+d=0 R     project            n=   20 burble_ms=     2.59 timer_ms=     2.64  
+d=0 R     cap                n=   10 burble_ms=     0.13 timer_ms=     0.15  
+d=0 R     None               n=    2 burble_ms=     0.03 timer_ms=     0.00  
+d=0 keep  keep               n=   82 burble_ms=    12.16 timer_ms=    17.05  
+d=1 B1    CA                 n=   40 burble_ms=   169.58 timer_ms=   169.75  unjumble=62.7 convert=0.0 transpose=106.9 1thr=106.9
+d=1 B1    CAC'               n=   40 burble_ms=   151.70 timer_ms=   151.94  unjumble=30.3 1thr=121.4
+d=1 B1    offdiag            n=   20 burble_ms=    64.10 timer_ms=    64.26  
+d=1 B1    bnd                n=   20 burble_ms=    27.51 timer_ms=    27.61  
+d=1 B1    c_build            n=   20 burble_ms=    15.09 timer_ms=    19.38  convert=15.1 1thr=15.1
+d=1 B1    project            n=   20 burble_ms=     7.35 timer_ms=    14.48  convert=6.8 1thr=7.4
+d=1 B1    untimed            n=   40 burble_ms=     0.00 timer_ms=     0.00  
+d=1 B2    untimed            n=  309 burble_ms=   124.31 timer_ms=     0.00  convert=75.3
+d=1 B2    mask_mxm           n=   40 burble_ms=    86.85 timer_ms=    86.93  
+d=1 B2    mask_vals          n=   20 burble_ms=    69.05 timer_ms=    69.18  
+d=1 B2    s_merge            n=   20 burble_ms=    36.21 timer_ms=    36.27  
+d=1 B2    bnd                n=   20 burble_ms=    27.35 timer_ms=    27.46  convert=0.0
+d=1 B2    m_build            n=   20 burble_ms=     9.98 timer_ms=    13.32  convert=10.0 1thr=10.0
+d=1 B2    project            n=   20 burble_ms=     8.32 timer_ms=    15.61  convert=7.7 1thr=8.3
+d=1 B2    resize             n=   18 burble_ms=     3.56 timer_ms=     3.62  convert=3.6
+d=1 B2    s_build            n=   67 burble_ms=     2.10 timer_ms=     2.52  1thr=1.7
+d=1 B2    s_extract          n=   20 burble_ms=     0.30 timer_ms=     0.36  generic=0.3 convert=0.0
+d=1 R     CA                 n=   40 burble_ms=   172.15 timer_ms=   172.29  unjumble=63.1 transpose=109.1 1thr=109.1
+d=1 R     CAC'               n=   40 burble_ms=   158.20 timer_ms=   158.34  unjumble=30.1 1thr=128.1
+d=1 R     mxv                n=  195 burble_ms=   121.39 timer_ms=   122.06  convert=3.7
+d=1 R     m_unext            n=  118 burble_ms=    72.60 timer_ms=    72.96  generic=72.6 convert=6.0
+d=1 R     offdiag            n=   20 burble_ms=    64.01 timer_ms=    64.13  
+d=1 R     m_assign           n=  118 burble_ms=    53.31 timer_ms=    53.81  generic=53.3 convert=53.3
+d=1 R     key                n=   20 burble_ms=    51.69 timer_ms=    51.85  generic=51.7
+d=1 R     untimed            n=  500 burble_ms=    50.46 timer_ms=     0.00  generic=22.7 convert=24.2 1thr=0.0
+d=1 R     m_extract          n=  118 burble_ms=    48.27 timer_ms=    48.66  
+d=1 R     compact            n=    1 burble_ms=    44.70 timer_ms=    44.97  convert=44.7 1thr=44.7
+d=1 R     m_unkey            n=  118 burble_ms=    40.52 timer_ms=    40.87  generic=40.5
+d=1 R     m_eq               n=  118 burble_ms=    33.12 timer_ms=    33.47  
+d=1 R     bnd                n=   20 burble_ms=    28.76 timer_ms=    28.86  
+d=1 R     Cw                 n=   20 burble_ms=    24.15 timer_ms=    24.22  convert=24.2
+d=1 R     twohop             n=  190 burble_ms=    16.66 timer_ms=    17.32  generic=6.3 convert=6.7 1thr=6.9
+d=1 R     c_number_host      n=   60 burble_ms=    15.79 timer_ms=    16.51  convert=4.5 1thr=4.5
+d=1 R     c_extract          n=   20 burble_ms=    15.31 timer_ms=    15.36  generic=15.3 convert=15.3
+d=1 R     m_full             n=  118 burble_ms=    15.07 timer_ms=    15.42  
+d=1 R     c_build            n=   20 burble_ms=     9.95 timer_ms=    10.01  convert=10.0 1thr=10.0
+d=1 R     c_leader           n=   60 burble_ms=     5.14 timer_ms=     5.31  
+d=1 R     idx                n=   40 burble_ms=     4.29 timer_ms=     4.40  
+d=1 R     project            n=   20 burble_ms=     2.64 timer_ms=     2.71  
+d=1 R     cap                n=   25 burble_ms=     0.58 timer_ms=     0.71  
+d=1 split split_mxm          n=    2 burble_ms=    42.80 timer_ms=    42.82  
+d=1 split split_buildM       n=    1 burble_ms=     6.70 timer_ms=     6.71  convert=6.7 1thr=6.7
+d=1 split untimed            n=    1 burble_ms=     0.00 timer_ms=     0.00  
+d=13 B1    CA                 n=   26 burble_ms=    95.85 timer_ms=   101.59  unjumble=29.2 convert=0.2 transpose=66.6 1thr=66.4
+d=13 B1    CAC'               n=   26 burble_ms=    86.56 timer_ms=    86.74  unjumble=16.5 1thr=69.8
+d=13 B1    offdiag            n=   14 burble_ms=    40.24 timer_ms=    40.34  
+d=13 B1    bnd                n=   15 burble_ms=    20.14 timer_ms=    20.22  unjumble=0.0 convert=0.1 transpose=0.1 1thr=0.1
+d=13 B1    c_build            n=   16 burble_ms=    10.96 timer_ms=    14.31  convert=10.2 1thr=10.3
+d=13 B1    project            n=   13 burble_ms=     4.08 timer_ms=     9.49  convert=4.1 1thr=4.1
+d=13 B1    untimed            n=   26 burble_ms=     0.00 timer_ms=     0.00  
+d=13 B2    untimed            n=  204 burble_ms=    90.88 timer_ms=     0.00  convert=61.9
+d=13 B2    mask_mxm           n=   26 burble_ms=    84.53 timer_ms=    84.66  
+d=13 B2    mask_vals          n=   14 burble_ms=    42.43 timer_ms=    42.50  
+d=13 B2    s_merge            n=   16 burble_ms=    28.01 timer_ms=    28.12  convert=0.3
+d=13 B2    bnd                n=   15 burble_ms=    19.85 timer_ms=    19.92  unjumble=0.0 convert=0.2 transpose=0.2 1thr=0.1
+d=13 B2    s_build            n=   48 burble_ms=    14.02 timer_ms=    15.63  1thr=9.2
+d=13 B2    m_build            n=   17 burble_ms=     6.95 timer_ms=     8.66  convert=6.1 1thr=6.1
+d=13 B2    project            n=   13 burble_ms=     4.33 timer_ms=     9.78  convert=4.3 1thr=4.3
+d=13 B2    resize             n=   14 burble_ms=     4.23 timer_ms=     4.29  convert=3.5
+d=13 B2    s_extract          n=   13 burble_ms=     1.88 timer_ms=     1.93  generic=1.4 convert=0.1
+d=13 R     CA                 n=    8 burble_ms=    97.81 timer_ms=    97.78  unjumble=30.6 transpose=67.2 1thr=67.2
+d=13 R     CAC'               n=    8 burble_ms=    93.30 timer_ms=    93.41  unjumble=17.7 1thr=75.6
+d=13 R     mxv                n=   40 burble_ms=    61.12 timer_ms=    61.24  
+d=13 R     key                n=    5 burble_ms=    50.14 timer_ms=    50.15  generic=49.9 convert=7.9
+d=13 R     offdiag            n=    4 burble_ms=    47.26 timer_ms=    47.26  
+d=13 R     cap                n=   11 burble_ms=    46.73 timer_ms=    46.77  convert=5.8
+d=13 R     m_unext            n=   22 burble_ms=    41.70 timer_ms=    41.80  generic=41.7 convert=6.0
+d=13 R     compact            n=    1 burble_ms=    36.50 timer_ms=    36.65  convert=36.5 1thr=36.5
+d=13 R     untimed            n=  100 burble_ms=    35.81 timer_ms=     0.00  generic=14.1 convert=19.1 1thr=0.2
+d=13 R     m_assign           n=   22 burble_ms=    29.55 timer_ms=    29.61  generic=29.6 convert=29.6
+d=13 R     m_extract          n=   22 burble_ms=    27.90 timer_ms=    28.00  
+d=13 R     m_unkey            n=   22 burble_ms=    22.27 timer_ms=    22.34  generic=22.3
+d=13 R     bnd                n=    4 burble_ms=    19.22 timer_ms=    19.24  
+d=13 R     m_eq               n=   22 burble_ms=    18.60 timer_ms=    18.70  
+d=13 R     Cw                 n=    4 burble_ms=    15.78 timer_ms=    15.79  convert=15.8
+d=13 R     c_number_host      n=   12 burble_ms=    11.21 timer_ms=    11.64  convert=4.0 1thr=4.0
+d=13 R     c_extract          n=    4 burble_ms=    10.36 timer_ms=    10.37  generic=10.4 convert=10.4
+d=13 R     m_full             n=   22 burble_ms=     8.47 timer_ms=     8.54  
+d=13 R     c_build            n=    4 burble_ms=     7.54 timer_ms=     7.56  convert=7.5 1thr=7.5
+d=13 R     c_leader           n=   12 burble_ms=     3.62 timer_ms=     3.67  
+d=13 R     idx                n=    8 burble_ms=     2.76 timer_ms=     2.79  
+d=13 R     project            n=    4 burble_ms=     1.78 timer_ms=     1.79  
+d=13 R     twohop             n=   19 burble_ms=     0.52 timer_ms=     0.66  generic=0.1 convert=0.0 1thr=0.0
+d=13 split split_mxm          n=    2 burble_ms=    46.40 timer_ms=    46.44  
+d=13 split split_buildM       n=    1 burble_ms=     5.51 timer_ms=     5.53  convert=5.5 1thr=5.5
+d=13 split untimed            n=    1 burble_ms=     0.00 timer_ms=     0.00  
+
+# descriptors
+== d=0 R CA  total 179.10 ms
+     115.07  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: # bnz: 
+      64.02  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+== d=1 R CA  total 172.15 ms
+     109.05  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: # bnz: 
+      63.10  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+== d=1 B1 CA  total 169.58 ms
+     106.91  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: # bnz: 
+      62.67  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+== d=0 R CAC'  total 158.21 ms
+     127.30  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+      30.89  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+       0.02  GrB_mxm C=A*B, saxpy (H = S*H, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+== d=1 R CAC'  total 158.20 ms
+     128.08  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+      30.12  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+== d=1 B1 CAC'  total 151.70 ms
+     121.38  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+      30.30  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+       0.02  GrB_mxm C=A*B, saxpy (H = S*H, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+== d=1 B2 untimed  total 124.31 ms
+      49.02  GrB_Matrix_extractTuples_INT32
+      46.18  GrB_select (sparse to hyper)
+      29.10  GrB_select (iso select) (sparse to hyper)
+       0.01  GrB_select
+       0.00  GrB_Matrix_nvals
+== d=0 R mxv  total 123.79 ms
+      85.96  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B)
+      18.01  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+       8.56  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot F = S'*F)
+       6.05  GrB_mxv C<M>=A'*B, masked_dot_product (dot3) (S{S} = S'*S) nthreads # ntasks # factory
+       4.82  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B) (bitmap to sparse)
+       0.36  GrB_Vector_wait (wait:vector # zombies, # pending) (wait: remove zombies) (wait: no pending; conform and finish)
+== d=1 R mxv  total 121.39 ms
+      85.52  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B)
+      26.02  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+       5.74  GrB_mxv C<M>=A'*B, masked_dot_product (dot3) (S{S} = S'*S) nthreads # ntasks # factory
+       3.71  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B) (bitmap to sparse)
+       0.38  GrB_Vector_wait (wait:vector # zombies, # pending) (wait: remove zombies) (wait: no pending; conform and finish)
+       0.02  GrB_Vector_wait (wait:vector # zombie, # pending) (wait: remove zombies) (wait: no pending; conform and finish)
+== d=13 R CA  total 97.81 ms
+      67.18  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: # bnz: 
+      30.63  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+== d=13 B1 CA  total 95.85 ms
+      66.25  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (S = S*S, anz: # bnz: 
+      29.10  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+       0.20  GrB_mxm (iso transpose) (builder transpose) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (H = H*H, anz: # bnz: #) axbwork # (intensity: #.
+       0.16  GrB_mxm (iso transpose) (bucket transpose) (#-thread bucket transpose) (sparse to hyper) C=A*B', saxpy (transposed B: #-by-#, int32_t, # entries) (H =
+       0.15  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only) (build hyper hash)
+== d=13 R CAC'  total 93.30 ms
+      75.64  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+      17.66  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+== d=13 B2 untimed  total 90.88 ms
+      33.56  GrB_select (sparse to hyper)
+      28.87  GrB_Matrix_extractTuples_INT32
+      28.30  GrB_select (iso select) (sparse to hyper)
+       0.15  GrB_select
+       0.00  GrB_Matrix_nvals
+== d=1 B2 mask_mxm  total 86.85 ms
+      47.34  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = B'*B) nthreads # ntasks #
+      39.49  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish)
+       0.03  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (H{H} = B'*B) nthreads # ntasks #
+== d=13 B1 CAC'  total 86.56 ms
+      67.56  GrB_mxm C=A*B, saxpy (S = S*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+      16.42  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only)
+       1.91  GrB_mxm C=A*B, saxpy (S = H*S, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+       0.34  GrB_mxm C=A*B, saxpy (H = H*H, anz: # bnz: #) (single-threaded Gustavson) (nthreads # coarse: #) (sparse saxpy)
+       0.24  GrB_mxm C=A*B, saxpy (H = H*H, anz: # bnz: #) axbwork # (intensity: #.# workspace/(nnz(A)+nnz(B)): #.#) (nthreads # coarse hash: #) (sparse saxpy)
+       0.10  GrB_Matrix_wait (wait:matrix # zombies, # pending, jumbled) (wait: unjumble only) (build hyper hash)
+== d=13 B2 mask_mxm  total 84.53 ms
+      44.47  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = S'*S) nthreads # ntasks #
+      34.85  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish)
+       4.67  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = H'*H) nthreads # ntasks #
+       0.41  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (H{H} = H'*H) nthreads # ntasks #
+       0.12  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish) (build hyper hash)
+== d=0 R m_unext  total 74.94 ms
+      56.14  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker)
+       8.28  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!F>=F) (generic masker)
+       6.36  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker) (bitmap to sparse)
+       4.16  GrB_apply (shallow-op) (pure shallow) masker:(S:S<!S>=S) (generic masker) (generic masker)
+== d=1 R m_unext  total 72.60 ms
+      62.55  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker)
+       6.00  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker) (bitmap to sparse)
+       4.05  GrB_apply (shallow-op) (pure shallow) masker:(S:S<!S>=S) (generic masker) (generic masker)
+== d=1 B2 mask_vals  total 69.05 ms
+      69.04  GrB_eWiseMult emult:(S<.>=S.*S)
+       0.01  GrB_eWiseMult emult:(S<.>=H.*H) (C aliased with T)
+== d=0 R offdiag  total 64.77 ms
+      64.77  GrB_select
+== d=1 B1 offdiag  total 64.10 ms
+      64.10  GrB_select
+== d=1 R offdiag  total 64.01 ms
+      64.01  GrB_select
+== d=0 R key  total 61.42 ms
+      61.33  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop)
+       0.09  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) masker:(S:H{S}=S) (generic masker)
+== d=13 R mxv  total 61.12 ms
+      41.20  GrB_mxv C<M>=A'*B, masked_dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B{B} = S'*B)
+      14.68  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot B = S'*F)
+       4.98  GrB_mxv C<M>=A'*B, masked_dot_product (dot3) (S{S} = S'*S) nthreads # ntasks # factory
+       0.20  GrB_Vector_wait (wait:vector # zombies, # pending) (wait: remove zombies) (wait: no pending; conform and finish)
+       0.04  GrB_mxv C<M>=A'*B, masked_dot_product (dot3) (S{S} = H'*S) nthreads # ntasks # factory
+       0.02  GrB_mxv C=A'*B, dot_product (dot2) (nthreads: # naslice # nbslice #) (dot F = H'*F) (expand bitmap/full to hyper)
+== d=1 R m_assign  total 53.31 ms
+      52.41  GrB_assign (full to bitmap) (bit2_whole: C<M,bitmap> = A ) (generic assign) (bitmap to full)
+       0.90  GrB_assign (full to bitmap) (bit4_whole: C<M> = A ) (generic assign) (bitmap to full)
+== d=0 R m_assign  total 53.30 ms
+      48.03  GrB_assign (full to bitmap) (bit2_whole: C<M,bitmap> = A ) (generic assign) (bitmap to full)
+       4.31  GrB_assign (full to bitmap) (bit2_whole: C<M,full> = A ) (bitmap to full)
+       0.96  GrB_assign (full to bitmap) (bit4_whole: C<M> = A ) (generic assign) (bitmap to full)
+== d=1 R key  total 51.69 ms
+      33.28  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop)
+      18.00  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) (A iso; C non-iso)
+       0.41  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) masker:(S:H{S}=S) (generic masker)
+== d=1 R untimed  total 50.46 ms
+      24.19  GrB_select (sparse to hyper)
+      14.12  GrB_reduce (generic reduce to scalar, with typecast: plus)
+       8.57  GrB_reduce (A full) (generic reduce to scalar, with typecast: plus)
+       1.73  GrB_Vector_dup (dup)
+       1.21  GrB_Vector_extractTuples_INT32 (A full)
+       0.61  GrB_reduce (A full)
+== d=13 R key  total 50.14 ms
+      18.20  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) masker:(S:H{S}=S) (generic masker)
+      14.60  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) (A iso; C non-iso)
+       9.22  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop)
+       7.92  GrB_apply (shallow-op) (jit: undefined) (generic apply: user-defined idxunop) masker:(S:H{H}=S) (generic masker) (generic masker) (sparse to hyper)
+       0.20  GrB_Matrix_wait (build hyper hash)
+== d=0 R m_extract  total 49.80 ms
+      49.80  GrB_extract (A full)
+== d=0 R untimed  total 49.67 ms
+      24.55  GrB_select (sparse to hyper)
+      13.51  GrB_reduce (generic reduce to scalar, with typecast: plus)
+       8.24  GrB_reduce (A full) (generic reduce to scalar, with typecast: plus)
+       1.46  GrB_Vector_dup (dup)
+       1.21  GrB_Vector_extractTuples_INT32 (A full)
+       0.68  GrB_reduce (A full)
+== d=1 R m_extract  total 48.27 ms
+      48.27  GrB_extract (A full)
+== d=13 R offdiag  total 47.26 ms
+      47.26  GrB_select
+== d=13 R cap  total 46.73 ms
+      22.49  GrB_eWiseMult emult:(S<.>=S.*S)
+       9.50  GrB_select
+       7.30  GrB_mxm C=A*B, colscale (S=S*S)
+       5.79  GrB_select (sparse to hyper)
+       1.26  GrB_mxm C=A*B, rowscale (S=S*S)
+       0.22  GrB_Matrix_wait (build hyper hash)
+== d=13 split split_mxm  total 46.40 ms
+      27.30  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = S'*S) nthreads # ntasks #
+      19.10  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish)
+== d=1 R compact  total 44.70 ms
+      44.70  GrB_extract (iso subref) (iso build, # threads) (hyper to sparse)
+== d=0 R m_unkey  total 43.15 ms
+      43.15  GrB_apply (in-place-op) (jit: undefined) (generic apply: user-defined idxunop)
+== d=1 split split_mxm  total 42.80 ms
+      23.20  GrB_mxm C<M>=A'*B, masked_dot_product (iso dot3) (S{S} = B'*B) nthreads # ntasks #
+      19.60  GrB_Matrix_wait (iso wait:matrix # zombies, # pending) (wait: remove zombies) (iso select) (wait: no pending; conform and finish)
+== d=13 B2 mask_vals  total 42.43 ms
+      42.30  GrB_eWiseMult emult:(S<.>=S.*S)
+       0.09  GrB_eWiseMult emult:(S<.>=H.*H) (C aliased with T)
+       0.04  GrB_Matrix_wait (build hyper hash)
+== d=13 R m_unext  total 41.70 ms
+      33.64  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker)
+       5.99  GrB_apply (shallow-op) (pure shallow) masker:(B:S<!B>=B) (generic masker) (bitmap to sparse)
+       2.07  GrB_apply (shallow-op) (pure shallow) masker:(S:S<!S>=S) (generic masker) (generic masker)
