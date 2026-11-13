@@ -55,6 +55,27 @@ def _unsigned(v):
     return b"\x04" + struct.pack("<Q", v)
 
 
+def _buffer(data):
+    # `VecWriter::write_buffer`: a TYPE_BYTES byte, the length as 8 bytes LE,
+    # then the data.
+    return b"\x00" + struct.pack("<Q", len(data)) + data
+
+
+def _header_values(name=b"g\x00", relationship_count=0, key_count=1):
+    # The graph header one value at a time: name, node/edge/deleted-node/
+    # deleted-edge/label counts, relationship count, one multi-edge flag per
+    # relationship, key count.
+    return ([_buffer(name)]
+            + [_unsigned(0)] * 5
+            + [_unsigned(relationship_count)]
+            + [_unsigned(0)] * relationship_count
+            + [_unsigned(key_count)])
+
+
+def _header(**kwargs):
+    return b"".join(_header_values(**kwargs))
+
+
 T_ARRAY = 1 << 3
 T_STRING = 1 << 11
 T_NULL = 1 << 15
@@ -304,3 +325,70 @@ class testRdbLoad():
                 self.env.assertContains(
                     f"nested up to {MAX_VALUE_NESTING} levels deep", str(e))
         self.env.assertTrue(self.conn.ping())
+
+    # GRAPH.RESTORE takes its payload from the client, so a malformed one
+    # has to come back as an error, never take the server down.
+
+    def assert_restore_refused(self, payload, message=None):
+        try:
+            self.conn.execute_command("GRAPH.RESTORE", "restored", payload)
+            self.env.assertTrue(False)  # should not get here
+        except redis.exceptions.ResponseError as e:
+            if message is not None:
+                self.env.assertContains(message, str(e))
+        self.env.assertEqual(self.conn.exists("restored"), 0)
+        self.env.assertTrue(self.conn.ping())
+
+    def test_restore_refuses_an_empty_payload(self):
+        # used to crash the server: the decoder hit the end of the buffer
+        # and tried to load another chunk with a null IO handle
+        self.assert_restore_refused(b"", "unexpected end of data")
+
+    def test_restore_refuses_a_truncated_header(self):
+        values = _header_values()
+        payload = b"".join(values)
+
+        # a cut between two values runs off the end of the payload, which is
+        # the path the null handle guard covers
+        between = set()
+        offset = 0
+        for value in values:
+            offset += len(value)
+            between.add(offset)
+
+        # a cut inside a value fails the bounds check on that value instead
+        for end in range(1, len(payload) + 1):
+            message = "unexpected end of data" if end in between else None
+            self.assert_restore_refused(payload[:end], message)
+
+    def test_restore_refuses_a_wrong_type_tag(self):
+        self.assert_restore_refused(_unsigned(0), "expected BYTES(0) or BLOB(6) tag")
+
+    def test_restore_refuses_a_huge_relationship_count(self):
+        # the count was used as an allocation size without any check
+        for count in [1 << 40, 1 << 62, (1 << 64) - 1]:
+            payload = _buffer(b"g\x00") + _unsigned(0) * 5 + _unsigned(count)
+            self.assert_restore_refused(payload, "unexpected end of data")
+
+    def test_restore_refuses_huge_schema_counts(self):
+        huge = (1 << 64) - 1
+
+        # attribute count
+        self.assert_restore_refused(_header() + _unsigned(huge),
+                                    "unexpected end of data")
+
+        # node schema count
+        self.assert_restore_refused(_header() + _unsigned(0) + _unsigned(huge),
+                                    "unexpected end of data")
+
+        # relationship schema count
+        self.assert_restore_refused(_header() + _unsigned(0) * 2 + _unsigned(huge),
+                                    "unexpected end of data")
+
+        # payload directory count
+        self.assert_restore_refused(_header() + _unsigned(0) * 3 + _unsigned(huge),
+                                    "unexpected end of data")
+
+    def test_restore_refuses_a_multi_key_payload(self):
+        # RESTORE only accepts single key payloads
+        self.assert_restore_refused(_header(key_count=2), "expected single-key payload")
