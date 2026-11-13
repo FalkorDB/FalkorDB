@@ -223,8 +223,8 @@ Cypher Query String
   ```
   Fix every warning. Where a lint is wrong or the shape is deliberate, put a
   scoped `#[allow(clippy::<lint>, reason = "...")]` on the narrowest item it
-  covers (a bench/test module at most), never a crate-wide allow. Review `--fix` output: its `map_or` rewrites can
-  delete comments inside match arms.
+  covers (a bench/test module at most), never a crate-wide allow. Review
+  `--fix` output: its `map_or` rewrites can delete comments inside match arms.
 
 ## Configuration
 
