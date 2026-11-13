@@ -89,8 +89,9 @@ jobs:
             -t ghcr.io/falkordb/falkordb-build:latest \
             "ghcr.io/falkordb/falkordb-build:${CI_KEY}"
 
-  # Promote the runtime images the MERGE QUEUE built (rc-mg-<sha>) to the
-  # rolling `:edge` channel on every trunk merge — byte-identical retag.
+  # Promote the runtime images the MERGE QUEUE built (rc-mg-<sha>-redis, the
+  # Redis leg's) to the rolling `:edge` channel on every trunk merge —
+  # byte-identical retag.
   #
   # Deliberately NOT the PR's own rc-pr-<N> image, even though same-repo PRs
   # still publish one. That image is built from the PR head; the queue's is
@@ -130,7 +131,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Promote rc-mg-${{ github.sha }} → :edge (${{ matrix.repo }})
+      - name: Promote rc-mg-${{ github.sha }}-redis → :edge (${{ matrix.repo }})
         env:
           CI_KEY: mg-${{ github.sha }}
           REPO:   ${{ matrix.repo }}
@@ -153,7 +154,7 @@ jobs:
             -t "docker.io/falkordb/${REPO}:edge" \
             -t "ghcr.io/falkordb/${REPO}:edge-rs" \
             -t "docker.io/falkordb/${REPO}:edge-rs" \
-            "ghcr.io/falkordb/${REPO}:rc-${CI_KEY}"
+            "ghcr.io/falkordb/${REPO}:rc-${CI_KEY}-redis"
 
   flow-test-matrix:
     runs-on: ubuntu-latest

@@ -1,5 +1,5 @@
 behave
-falkordb
+falkordb>=1.8.2
 # redis-py 8.1.0 added `himport_registry` to ConnectionPool.connection_kwargs,
 # which falkordb-py 1.6.2's async Is_Cluster forwarded to the sync Redis()
 # constructor, which rejects it — every flow test that builds its own pool

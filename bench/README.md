@@ -113,7 +113,7 @@ macOS-only.
 
 Labelling a PR **`benchmark-cov`** measures the PR, its base and the C engine and
 posts one comparison comment. Nothing is compiled: all three modules come from
-prebuilt images (`rc-pr-<N>`, `edge-rs`, `edge-c`), each measured on its own
+prebuilt images (`rc-pr-<N>-valkey`, `edge-rs`, `edge-c`), each measured on its own
 runner in parallel inside one image built from the C engine's. Two readings per
 side — the full query set on allocated bytes, and the `cg=True` subset with exact
 callgrind instruction counts, sharded so it finishes in the same wall-clock as the

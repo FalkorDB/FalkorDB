@@ -143,17 +143,17 @@ pub fn register_graph(
     name: String,
     arc: Arc<RwLock<ThreadedGraph>>,
 ) {
-    // Invariant: every registered name must have been removed from the
-    // registry before being re-inserted. `graph_free` removes entries on
-    // Redis key delete/overwrite/expire, and the RDB multi-key load path
-    // mutates the placeholder Arc in place rather than rebinding the name.
-    // If this assert fires, a caller is leaking the previously-registered
-    // Arc and likely racing index/teardown shutdown.
+    // A name can already be registered here, and that is not a leak. `graph_free`
+    // removes entries on Redis key delete/overwrite/expire, but the server may
+    // run it later than the key left the keyspace: Valkey flushes asynchronously
+    // by default (`lazyfree-lazy-user-flush`), so `DEBUG RELOAD`, `DEBUG LOADAOF`
+    // and a replica's full sync empty the old keyspace on a background thread
+    // and then load the new one, which registers the same name before the old
+    // value's `graph_free` has run. Redis flushes synchronously, which is why
+    // this only showed up on Valkey. The displaced entry is the old graph's
+    // registry clone; `graph_free` removes entries by pointer identity, so the
+    // old value's late `graph_free` cannot take out the new registration.
     let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
-    debug_assert!(
-        displaced.is_none(),
-        "register_graph: name already registered; missing graph_free or placeholder swap"
-    );
     // Drop any displaced graph off the main Redis thread. Index::drop ->
     // RediSearch_DropIndex queues a destroyCallback to RediSearch's GC
     // thread pool when its timer can't be stopped synchronously; that
@@ -198,9 +198,10 @@ pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
 /// Re-key a registry entry when a Redis RENAME moves a graph to a new key.
 ///
 /// `graph_free` only runs for the *overwritten destination* value, so without
-/// this the old name keeps a stale entry: the next `register_graph` under
-/// that name (e.g. a concurrent write query re-creating the key) displaces
-/// it and trips the invariant assert above.
+/// this the old name keeps a stale entry, so the registry would list a graph
+/// no key holds until the next `register_graph` under that name (e.g. a
+/// concurrent write query re-creating the key) displaces it (see
+/// `register_graph`).
 pub fn rename_graph(
     old_name: &str,
     new_name: &str,

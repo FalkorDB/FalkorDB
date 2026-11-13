@@ -24,6 +24,10 @@
 #   create_manifest=true   → builds push to ${repo}:${tag}-${arch}; manifest
 #                            job combines per-arch tags into ${repo}:${tag}.
 #   create_manifest=false  → builds push directly to ${repo}:${tag}; no manifest.
+#
+# `server` picks the server every cell ships (the Dockerfiles' SERVER build
+# arg). CI callers put it in the tag themselves, as the last part before the
+# arch: rc-<ci_key>-<server>, rc-<ci_key>-<server>-<arch>.
 
 name: Build runtime image (flavour, reusable)
 
@@ -35,9 +39,14 @@ on:
         required: true
         type: string
       tag:
-        description: "Image tag (e.g. rc-pr-42, rc-pr-42-asan, 0.1.0)"
+        description: "Image tag (e.g. rc-pr-42-valkey, rc-pr-42-asan-valkey, 0.1.0)"
         required: true
         type: string
+      server:
+        description: "Server the image ships: redis or valkey. Passed as the SERVER build arg."
+        required: false
+        type: string
+        default: "redis"
       commit_sha:
         description: "Commit SHA to check out and build"
         required: true
@@ -132,6 +141,7 @@ jobs:
           build-args: |
             BROWSER_TAG=${{ inputs.browser_tag }}
             BUILD_IMAGE=${{ inputs.build_image }}
+            SERVER=${{ inputs.server }}
           # When create_manifest=true (release), push per-arch tags so the
           # manifest job below can combine them. When false (instrumented),
           # push directly to the bare tag — single-arch images don't need
