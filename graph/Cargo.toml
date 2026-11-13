@@ -29,7 +29,7 @@ prejit_harvest = []
 # Fulltext and Vector indexes are still RediSearch's. The CCH shortest-path index
 # (`index::falkordb::cch`) is part of it, and its nested-dissection ordering is the
 # only user of `feral-metis` below.
-index-falkordb = ["dep:feral-metis"]
+index-falkordb = ["dep:feral-metis", "dep:geo"]
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -69,6 +69,7 @@ thin-vec = "0.2.18"
 thiserror = "2"
 zstd = { version = "0.14.0", default-features = false, features = ["arrays", "legacy", "zdict_builder"] }
 crc32fast = "1.4"
+geo = { version = "0.33", default-features = false, optional = true }
 stacker = "0.1.25"
 
 [build-dependencies]

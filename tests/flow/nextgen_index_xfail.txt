@@ -22,15 +22,12 @@
 # `native index cannot serve ...` message the run emitted, not the test's name.
 #
 # ---------------------------------------------------------------------------
-# Geo predicates on a Range index — `Point`.
-# A point property has no kind in the column yet: the tag kind holds strings, the numeric kinds
-# numbers. The geo kind closes this group, and with it the ledger.
-# ---------------------------------------------------------------------------
-error: a geo predicate on `*`
-test_index_scans:testIndexScanFlow.test13_point_index_scan
-
-# ---------------------------------------------------------------------------
-# What closed the other groups, for the archaeology:
+# THE LEDGER IS EMPTY. Every group has closed.
+#
+# It stays in the tree because the first direction of the check still matters: with no entries,
+# any failure in the index suites is an unrecorded gap or a regression, and the job goes red.
+#
+# What closed each group, for the archaeology:
 #
 #   numeric arrays          -> a separate array tree per column; `value IN n.prop` is a point
 #                              lookup into it (#2453)
@@ -46,6 +43,9 @@ test_index_scans:testIndexScanFlow.test13_point_index_scan
 #                              `test20_index_scan_stopwords` and `test_25_unescaped_string`.
 #                              Unique constraints on strings look their duplicates up in it.
 #   string arrays (4)       -> the tag kind's own array tree, as for numbers
+#   geo (1)                 -> the geo kind: points on a uniform grid, Morton-coded; a radius
+#                              search reads the quadtree cells covering the circle's bounding box,
+#                              a superset the retained `distance()` filter narrows
 #
 # Two shapes reached the index during that work that no column could answer alone, and both are
 # now combined across columns rather than declined: a conjunction of unions
@@ -53,7 +53,8 @@ test_index_scans:testIndexScanFlow.test13_point_index_scan
 # (`p.name IN [..] OR p.age = 33`) unions — materialised, since a doc satisfying both members is
 # one row in Cypher, not two.
 #
-# Not everything unimplemented shows up here. `can_utilize_index(&q) == false` routes to a label scan before the index is
+# Not everything unimplemented shows up here, and an empty ledger does not mean the native index
+# is complete. `can_utilize_index(&q) == false` routes to a label scan before the index is
 # consulted at all, so `IN []`, `IN [NULL]`, List/Map values, temporals and ints above 2^53 still
 # return correct results without the index being asked. A union with a range member
 # (`n.v = 1 OR n.v > 5`) is still declined, and no test in these suites writes one but the probe

@@ -922,6 +922,46 @@ class testEdgeByIndexScanRegressionsFlow(FlowTestsBase):
         finally:
             g.delete()
 
+    def test30_distance_uses_edge_index(self):
+        """
+        `distance(r.v, point) < radius` on an indexed relationship type
+        is served by an Edge By Index Scan, as on a node label (and as
+        in C). The rows must equal a scan's: points inside and outside
+        the radius, a missing value, either argument
+        order and either comparison direction.
+        """
+        g = self.db.select_graph("edge_index_distance")
+        try:
+            g.query("""UNWIND range(0, 99) AS i
+                       CREATE (:A)-[:T {v: point({latitude: 30.0 + (i % 10) / 100.0,
+                                                  longitude: 30.0 + (i / 10) / 100.0}),
+                                        i: i}]->(:B)""")
+            g.query("CREATE (:A)-[:T {i: 100}]->(:B)")
+
+            p = "point({latitude: 30.03, longitude: 30.04})"
+            queries = [
+                f"MATCH ()-[r:T]->() WHERE distance(r.v, {p}) < 3000 RETURN r.i ORDER BY r.i",
+                f"MATCH ()-[r:T]->() WHERE distance({p}, r.v) <= 3000 RETURN r.i ORDER BY r.i",
+                f"MATCH ()-[r:T]->() WHERE 2000 > distance(r.v, {p}) RETURN r.i ORDER BY r.i",
+                f"MATCH ()-[r:T]->() WHERE 2000 >= distance({p}, r.v) RETURN r.i ORDER BY r.i",
+                f"MATCH (a:A)-[r:T]->(b:B) WHERE distance(r.v, {p}) < 1500 RETURN r.i ORDER BY r.i",
+                f"MATCH ()-[r:T]->() WHERE distance(r.v, {p}) < $d RETURN r.i ORDER BY r.i",
+                f"MATCH ()-[r:T]-() WHERE distance(r.v, {p}) < 3000 RETURN r.i ORDER BY r.i",
+            ]
+            params = {"d": 2500}
+            expected = [g.query(q, params).result_set for q in queries]
+            for e in expected:
+                self.env.assertTrue(0 < len(e) < 100)
+
+            create_edge_range_index(g, "T", "v", sync=True)
+
+            for q, want in zip(queries, expected):
+                if "]->(" in q:
+                    self.env.assertContains("Edge By Index Scan", str(g.explain(q, params)))
+                self.env.assertEqual(g.query(q, params).result_set, want)
+        finally:
+            g.delete()
+
     def test24_multi_edge_populate(self):
         """
         Regression for the BatchCursor edge_id tracking:

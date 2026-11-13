@@ -1,7 +1,7 @@
 //! The FalkorDB index (the in-repo replacement for RediSearch).
 //!
 //! [`data_structures`] is the always-compiled substrate (the CoW B⁺-tree). The
-//! index proper — the [`range`] column with its numeric ([`encode`]) and [`tag`] kinds,
+//! index proper — the [`range`] column with its numeric ([`encode`]), [`tag`] and [`geo`] kinds,
 //! and the hooks that turn graph writes into index changes — lives behind the
 //! `index-falkordb` feature, off by default. So does the [`cch`] shortest-path index, whose
 //! state is a field of the same [`FalkorDbIndex`](falkordb_index::FalkorDbIndex).
@@ -16,6 +16,9 @@ pub mod encode;
 
 #[cfg(feature = "index-falkordb")]
 pub mod falkordb_index;
+
+#[cfg(feature = "index-falkordb")]
+pub mod geo;
 
 #[cfg(feature = "index-falkordb")]
 pub mod graph_writes;
@@ -72,8 +75,8 @@ pub fn unsupported_by_native_index(
 fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Value>) -> String {
     use crate::index::IndexQuery as Q;
     match query {
-        // Name the operand's type rather than calling it "non-numeric": numbers and strings both
-        // have a kind, so what is left is a type no kind holds (a point, a list, a map, a
+        // Name the operand's type rather than calling it "non-numeric": numbers, strings and
+        // points all have a kind, so what is left is a type no kind holds (a list, a map, a
         // temporal). At top level a declined `Equal` is necessarily one of those, but the same arm
         // is reached through `And`/`Or`, where the child may be perfectly servable and the
         // *combination* is what is not — reporting the child as unindexable there sends the reader
@@ -171,12 +174,15 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
 }
 
 /// Whether some kind in a Range column holds a value of this type: numbers (and the booleans
-/// that coerce to one) and strings. `NULL`, points, temporals, lists, maps and vectors have no
+/// that coerce to one), strings, and points. `NULL`, temporals, lists, maps and vectors have no
 /// kind — a predicate over one is what a decline names.
 #[cfg(feature = "index-falkordb")]
 fn indexable(value: &crate::runtime::value::Value) -> bool {
     use crate::runtime::value::Value as V;
-    matches!(value, V::Int(_) | V::Float(_) | V::Bool(_) | V::String(_))
+    matches!(
+        value,
+        V::Int(_) | V::Float(_) | V::Bool(_) | V::String(_) | V::Point(_)
+    )
 }
 
 /// The first value in a (possibly nested) union of equalities and `IN` lists whose type no kind

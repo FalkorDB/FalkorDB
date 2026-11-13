@@ -20,28 +20,25 @@ graph/src/planner/optimizer/utilize_index.rs	build_has_labels_filter	71	PROVEN	C
 graph/src/planner/optimizer/utilize_index.rs	alias	101	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
 graph/src/planner/optimizer/utilize_index.rs	all_labels	105	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
 graph/src/planner/optimizer/utilize_index.rs	is_indexed	108	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
-graph/src/planner/optimizer/utilize_index.rs	try_func_scan	118	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
-graph/src/planner/optimizer/utilize_index.rs	match_scan_source	131	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
-graph/src/planner/optimizer/utilize_index.rs	build_scan_ir	135	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
-graph/src/planner/optimizer/utilize_index.rs	with_primary_label	145	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::alias (node)	154	PROVEN	EdgeInline.subject_accessors (nAlias)
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::all_labels (node)	157	PROVEN	Index.findLabel; utilize_sound (single label); IndexCex C5/C6 (multi-label)
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::is_indexed (node)	160	PROVEN	EdgeInline.subject_accessors (nIndexed), Index.findLabel_single
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::try_func_scan (node)	168	PROVEN	EdgeInline.distance_sound, distScan_shapes, distance_keeps_filter
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::match_scan_source (node)	178	PROVEN	EdgeInline.nMatch_spec
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::build_scan_ir (node)	187	PROVEN	EdgeInline.subject_accessors (nBuild)
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::with_primary_label (node)	199	PROVEN	ScanOrder.withPrimary_sound, primary_split
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::alias (edge)	221	PROVEN	EdgeInline.subject_accessors (eAlias)
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::all_labels (edge)	224	PROVEN	EdgeInline.subject_accessors (eLabels), eMatch_spec (exactly one type)
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::is_indexed (edge)	227	PROVEN	EdgeInline.subject_accessors (eIndexed)
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::try_func_scan (edge)	235	PROVEN	EdgeInline.subject_accessors (eFunc = none)
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::match_scan_source (edge)	245	PROVEN	EdgeInline.eMatch_spec
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::build_scan_ir (edge)	274	PROVEN	EdgeInline.edge_utilize_sound (eBuild)
-graph/src/planner/optimizer/utilize_index.rs	IndexSubject::with_primary_label (edge)	286	PROVEN	ScanOrder.withPrimary_sound (same list operation; edge has exactly one type)
+graph/src/planner/optimizer/utilize_index.rs	match_scan_source	119	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
+graph/src/planner/optimizer/utilize_index.rs	build_scan_ir	123	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
+graph/src/planner/optimizer/utilize_index.rs	with_primary_label	133	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::alias (node)	142	PROVEN	EdgeInline.subject_accessors (nAlias)
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::all_labels (node)	145	PROVEN	Index.findLabel; utilize_sound (single label); IndexCex C5/C6 (multi-label)
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::is_indexed (node)	148	PROVEN	EdgeInline.subject_accessors (nIndexed), Index.findLabel_single
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::match_scan_source (node)	156	PROVEN	EdgeInline.nMatch_spec
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::build_scan_ir (node)	165	PROVEN	EdgeInline.subject_accessors (nBuild)
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::with_primary_label (node)	177	PROVEN	ScanOrder.withPrimary_sound, primary_split
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::alias (edge)	199	PROVEN	EdgeInline.subject_accessors (eAlias)
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::all_labels (edge)	202	PROVEN	EdgeInline.subject_accessors (eLabels), eMatch_spec (exactly one type)
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::is_indexed (edge)	205	PROVEN	EdgeInline.subject_accessors (eIndexed)
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::match_scan_source (edge)	213	PROVEN	EdgeInline.eMatch_spec
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::build_scan_ir (edge)	242	PROVEN	EdgeInline.edge_utilize_sound (eBuild)
+graph/src/planner/optimizer/utilize_index.rs	IndexSubject::with_primary_label (edge)	254	PROVEN	ScanOrder.withPrimary_sound (same list operation; edge has exactly one type)
 graph/src/planner/optimizer/utilize_index.rs	build_op_query	315	PROVEN	Index.sel_buildOp, flip_correct
 graph/src/planner/optimizer/utilize_index.rs	extract_attribute_from_subtree	357	PROVEN	Cleanup.extractAttr_some, extractAttr_none, mem_bfs
 graph/src/planner/optimizer/utilize_index.rs	extract_attribute_and_expression_from_filter	376	PROVEN	Index.trySingle cmp arm; trySingle_spec
-graph/src/planner/optimizer/utilize_index.rs	try_distance_index_scan	421	PROVEN	EdgeInline.distance_sound, distScan_shapes
+graph/src/planner/optimizer/utilize_index.rs	try_distance_index_scan	390	PROVEN	EdgeInline.distance_sound, distScan_shapes, distance_keeps_filter, funcScan_subject, funcScan_edge
 graph/src/planner/optimizer/utilize_index.rs	merge_range_queries	481	PROVEN	Index.sel_merge, rangeOK_merge, cu_merge; IndexCex C11 (string trap)
 graph/src/planner/optimizer/utilize_index.rs	subtree_has_property_of	547	PROVEN	Cleanup.hasPropOf_iff
 graph/src/planner/optimizer/utilize_index.rs	subtree_has_any_property	569	PROVEN	Cleanup.hasAnyProp_iff
@@ -70,6 +67,7 @@ graph/src/runtime/runtime.rs	evaluate_id_filter (support, not a target file)	142
 graph/src/index/mod.rs	build_query_node (support, not a target file)	1477	MODELLED	Index.build; sel_eq, sel_range, sel_and2 (RediSearch node semantics as definitions)
 graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query	100	PROVEN	EdgeInline.evalIQE_ok, evalIQE_inList_err, evalIQ_inList
 graph/src/runtime/ops/node_by_index_scan.rs	new	58	PROVEN	EdgeInline.extraLabels_spec, scanRow_eq_sel
-graph/src/runtime/ops/node_by_index_scan.rs	can_utilize_index	253	PROVEN	EdgeInline.canUtilize_empty; Index.cu_inList, cu_merge, canUtilize_inList_eq_or (InList arm, #2383: same terms as the old Or)
-graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	256	PROVEN	EdgeInline.isIndexable_spec
-graph/src/runtime/ops/node_by_index_scan.rs	next	302	PROVEN	EdgeInline.scanRow_eq_sel; Index.utilize_sound
+graph/src/runtime/ops/node_by_index_scan.rs	can_utilize_index	263	PROVEN	EdgeInline.canUtilize_empty; Index.cu_inList, cu_merge, canUtilize_inList_eq_or (InList arm, #2383: same terms as the old Or)
+graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	266	PROVEN	EdgeInline.isIndexable_spec
+graph/src/runtime/ops/node_by_index_scan.rs	next	312	PROVEN	EdgeInline.scanRow_eq_sel; Index.utilize_sound
+graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query/native-in-list	100	NOT COVERED	the index-falkordb IN-list branch (#3743): keeps a point, and keeps the list whole when a member no kind holds is in it; not modelled (the PROVEN theorem covers the default build)

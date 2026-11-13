@@ -1425,6 +1425,64 @@ class testIndexScanFlow():
 
         g.delete()
 
+    def test_45_point_predicates_match_a_scan(self):
+        # Every point predicate the index serves must return what a scan
+        # does: a point range (answered with every point, the filter narrows
+        # it), a zero radius (the centre itself), a point inside an IN list,
+        # and a NULL centre or radius (no rows, not an error).
+        queries = [
+            "MATCH (n:L) WHERE n.loc > point({latitude: 2, longitude: 2}) RETURN n.loc ORDER BY n.loc.latitude",
+            "MATCH (n:L) WHERE distance(n.loc, point({latitude: 1, longitude: 1})) <= 0 RETURN n.loc",
+            "MATCH (n:L) WHERE n.loc IN [1, point({latitude: 5, longitude: 5})] RETURN n.loc ORDER BY toString(n.loc)",
+            "MATCH (n:L) WHERE distance(n.loc, null) < 100 RETURN n.loc",
+            "MATCH (n:L) WHERE distance(n.loc, point({latitude: 1, longitude: 1})) < null RETURN n.loc",
+        ]
+        # Points only: `distance()` over a non-point is a type error, with or
+        # without the index. The `1` in the IN list still has to reach the
+        # index beside the point.
+        create = ("CREATE (:L {loc: point({latitude: 1, longitude: 1})}), "
+                  "(:L {loc: point({latitude: 5, longitude: 5})})")
+
+        truth = self.db.select_graph('point_predicates_scan')
+        truth.query(create)
+        expected = [truth.query(q).result_set for q in queries]
+        truth.delete()
+
+        g = self.db.select_graph('point_predicates_index')
+        g.create_node_range_index('L', 'loc')
+        wait_for_indices_to_sync(g)
+        g.query(create)
+        # Only the native index is held to this: RediSearch still drops a
+        # point from an IN list and misses a point range.
+        try:
+            g.query("MATCH (n:L) WHERE n.loc = 1 OR n.loc > 7 RETURN n")
+            g.delete()
+            return
+        except ResponseError as e:
+            self.env.assertContains("native index cannot serve", str(e))
+        for q, want in zip(queries, expected):
+            self.env.assertContains('Node By Index Scan', str(g.explain(q)), message=q)
+            self.env.assertEqual(g.query(q).result_set, want, message=q)
+        g.delete()
+
+        # An IN list holding a member no kind holds (a date) beside a point must
+        # not lose the date's rows: the list is kept whole and the query scans.
+        q = ("MATCH (n:D) WHERE n.v IN [point({latitude: 5, longitude: 5}), "
+             "date('2020-01-01')] RETURN toString(n.v) ORDER BY toString(n.v)")
+        create = ("CREATE (:D {v: point({latitude: 5, longitude: 5})}), "
+                  "(:D {v: date('2020-01-01')}), (:D {v: 3})")
+        truth = self.db.select_graph('point_date_in_scan')
+        truth.query(create)
+        want = truth.query(q).result_set
+        truth.delete()
+        self.env.assertEqual(len(want), 2)
+        g = self.db.select_graph('point_date_in_index')
+        g.create_node_range_index('D', 'v')
+        wait_for_indices_to_sync(g)
+        g.query(create)
+        self.env.assertEqual(g.query(q).result_set, want, message=q)
+        g.delete()
+
     def test_36_scalar_array_scalar_round_trip(self):
         # A property changing kind — scalar -> array -> scalar — must re-index
         # cleanly each time.

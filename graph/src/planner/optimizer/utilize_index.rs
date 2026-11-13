@@ -112,18 +112,6 @@ trait IndexSubject: Clone {
         ty: &IndexType,
     ) -> bool;
 
-    /// Subject-specific hook for function-based predicates. Node impl
-    /// delegates to `try_distance_index_scan`; edge impl returns `None`
-    /// (no edge-distance path is exercised today).
-    fn try_func_scan(
-        subject: &Self,
-        attr: &Arc<String>,
-        filter: &DynTree<ExprIR<Variable>>,
-        attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
-        constant_node: DynTree<ExprIR<Variable>>,
-        label: Arc<String>,
-    ) -> Scan<Self>;
-
     /// Recognize the IR variant that's a candidate for an index scan
     /// (`NodeByLabelScan` for nodes, `CondTraverse` for edges). Returns
     /// `None` if the variant doesn't match or if `labels` / `types` is
@@ -164,16 +152,6 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
         ty: &IndexType,
     ) -> bool {
         graph.is_indexed(label, attr, ty)
-    }
-    fn try_func_scan(
-        subject: &Self,
-        attr: &Arc<String>,
-        filter: &DynTree<ExprIR<Variable>>,
-        attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
-        constant_node: DynTree<ExprIR<Variable>>,
-        label: Arc<String>,
-    ) -> Scan<Self> {
-        try_distance_index_scan(subject, attr, filter, attr_side, constant_node, label)
     }
     fn match_scan_source(ir: &IR) -> Option<(Self, Self::Metadata)> {
         let IR::NodeByLabelScan { node } = ir else {
@@ -231,16 +209,6 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
         ty: &IndexType,
     ) -> bool {
         graph.is_edge_indexed(label, attr, ty)
-    }
-    fn try_func_scan(
-        _subject: &Self,
-        _attr: &Arc<String>,
-        _filter: &DynTree<ExprIR<Variable>>,
-        _attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
-        _constant_node: DynTree<ExprIR<Variable>>,
-        _label: Arc<String>,
-    ) -> Scan<Self> {
-        None
     }
     fn match_scan_source(ir: &IR) -> Option<(Self, Self::Metadata)> {
         let IR::CondTraverse {
@@ -417,15 +385,16 @@ fn extract_attribute_and_expression_from_filter(
     }
 }
 
-/// Builds an index scan for a distance filter (e.g. `distance(n.loc, point(...)) < 100`).
-fn try_distance_index_scan(
-    node: &Arc<QueryNode<Arc<String>, Variable>>,
+/// Builds an index scan for a distance filter (e.g. `distance(n.loc, point(...)) < 100`),
+/// for a node label or a relationship type alike.
+fn try_distance_index_scan<T: Clone>(
+    subject: &T,
     attr: &Arc<String>,
     filter: &DynTree<ExprIR<Variable>>,
     attribute_side: NodeIdx<Dyn<ExprIR<Variable>>>,
     constant_node: DynTree<ExprIR<Variable>>,
     label: Arc<String>,
-) -> Scan<Arc<QueryNode<Arc<String>, Variable>>> {
+) -> Scan<T> {
     let operand = filter.root().data();
     // distance() must be on the "less than" side of the comparison:
     // distance(...) < x  or  distance(...) <= x  (attribute_side == child(0))
@@ -450,7 +419,7 @@ fn try_distance_index_scan(
         extract_attribute_from_subtree(filter, child_1_idx),
     ) {
         (Some(_), None) => Some((
-            node.clone(),
+            subject.clone(),
             label,
             IndexQuery::Point {
                 key: attr.clone(),
@@ -459,7 +428,7 @@ fn try_distance_index_scan(
             },
         )),
         (None, Some(_)) => Some((
-            node.clone(),
+            subject.clone(),
             label,
             IndexQuery::Point {
                 key: attr.clone(),
@@ -678,7 +647,7 @@ fn try_single_filter_scan<T: IndexSubject>(
     match filter.node(attr_side).data() {
         ExprIR::FuncInvocation(func) if func.name.as_str() == "distance" => {
             let constant_node = filter.node(constant_side).clone_as_tree();
-            T::try_func_scan(subject, &attr, filter, attr_side, constant_node, label)
+            try_distance_index_scan(subject, &attr, filter, attr_side, constant_node, label)
         }
         ExprIR::Property(attr_ref) => {
             let constant_node = filter.node(constant_side).clone_as_tree();
