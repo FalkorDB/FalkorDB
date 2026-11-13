@@ -33,6 +33,10 @@
 //!   variables from the left branch (propagated via Argument) are included
 //!   in the available variable set so that filters can be pushed down into
 //!   sub-plans that receive those variables through Argument leaves.
+//! - **Row-position barriers**: A Filter never moves below `Limit` or `Skip`.
+//!   They keep rows by position, so filtering first would change which rows
+//!   they keep. `Sort` is not a barrier: which rows pass a filter does not
+//!   depend on their order.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -164,6 +168,8 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                         c.data(),
                         IR::Project { .. }
                             | IR::Aggregate { .. }
+                            | IR::Limit(_)
+                            | IR::Skip(_)
                             | IR::Merge { .. }
                             | IR::Argument(_)
                             | IR::IncludePending { .. }
@@ -469,13 +475,9 @@ mod tests {
             .join(" ")
     }
 
-    /// Plans `query` and merges its stacked filters, returning the conjuncts
-    /// of each surviving `Filter`, rendered and sorted.
-    ///
-    /// Only the Graph-free part of the pipeline runs. `push_filters_down` is
-    /// the pass that flattens stacked filters into one `And`, which is where a
-    /// duplicated predicate would become visible.
-    fn filters_after_merge(query: &str) -> Vec<Vec<String>> {
+    /// Plans `query` and runs this pass on it. Only the Graph-free part of the
+    /// pipeline runs.
+    fn plan_and_push_down(query: &str) -> DynTree<IR> {
         // Binding a call resolves it against the process-global registry.
         let _ = crate::runtime::functions::init_functions();
         let mut parser = Parser::new(query);
@@ -484,6 +486,16 @@ mod tests {
         let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
         let mut plan = Planner::new(scope_vars).plan(ir);
         push_filters_down(&mut plan);
+        plan
+    }
+
+    /// Plans `query` and merges its stacked filters, returning the conjuncts
+    /// of each surviving `Filter`, rendered and sorted.
+    ///
+    /// `push_filters_down` is the pass that flattens stacked filters into one
+    /// `And`, which is where a duplicated predicate would become visible.
+    fn filters_after_merge(query: &str) -> Vec<Vec<String>> {
+        let plan = plan_and_push_down(query);
 
         plan.root()
             .indices::<Bfs>()
@@ -530,6 +542,82 @@ mod tests {
                 "= property(p) a 1",
                 "= property(p) a 1",
             ]],
+        );
+    }
+
+    /// The operators of a single-branch plan after this pass, root first.
+    fn spine_after_push_down(query: &str) -> Vec<String> {
+        let plan = plan_and_push_down(query);
+        let mut spine = vec![];
+        let mut idx = plan.root().idx();
+        loop {
+            let node = plan.node(idx);
+            spine.push(node.data().to_string());
+            if node.num_children() == 0 {
+                return spine;
+            }
+            idx = node.child(0).idx();
+        }
+    }
+
+    /// Where `op` sits on `spine`, counted from the root.
+    fn depth_of(
+        spine: &[String],
+        op: &str,
+    ) -> usize {
+        spine
+            .iter()
+            .position(|name| name == op)
+            .unwrap_or_else(|| panic!("no {op} in {spine:?}"))
+    }
+
+    fn assert_filter_above(
+        query: &str,
+        barrier: &str,
+    ) {
+        let spine = spine_after_push_down(query);
+        assert!(
+            depth_of(&spine, "Filter") < depth_of(&spine, barrier),
+            "{query}: {spine:?}"
+        );
+    }
+
+    /// `LIMIT` keeps rows by position, so a filter below it changes which rows
+    /// it keeps (#3694). The last query's `WHERE` belongs to a later `MATCH`:
+    /// it may move down to the earlier `LIMIT`, but not past it.
+    #[test]
+    fn filter_stays_above_limit() {
+        for query in [
+            "MATCH (n) WITH n LIMIT 2 WHERE n.v = 2 RETURN n",
+            "MATCH (n) WITH n ORDER BY n.v LIMIT 2 WHERE n.v = 2 RETURN n",
+            "MATCH (n) WITH n ORDER BY n.v SKIP 1 LIMIT 2 WHERE n.v = 2 RETURN n",
+            "MATCH (n) WITH n.v AS v ORDER BY v LIMIT 2 WHERE v = 2 RETURN v",
+            "MATCH (n) WITH n.v AS v, count(*) AS c ORDER BY v LIMIT 2 WHERE v = 2 RETURN c",
+            "MATCH (n) WITH n LIMIT 2 MATCH (n)-[:R]->(m) WHERE n.v = 3 RETURN m",
+        ] {
+            assert_filter_above(query, "Limit");
+        }
+    }
+
+    /// `SKIP` keeps rows by position too.
+    #[test]
+    fn filter_stays_above_skip() {
+        for query in [
+            "MATCH (n) WITH n SKIP 2 WHERE n.v = 2 RETURN n",
+            "MATCH (n) WITH n ORDER BY n.v SKIP 2 WHERE n.v = 2 RETURN n",
+        ] {
+            assert_filter_above(query, "Skip");
+        }
+    }
+
+    /// Which rows pass a filter does not depend on their order, so with no
+    /// `LIMIT` or `SKIP` to cross the filter still moves below `Sort`.
+    #[test]
+    fn filter_still_moves_below_sort() {
+        let spine = spine_after_push_down("MATCH (n) WITH n ORDER BY n.v WHERE n.v = 2 RETURN n");
+        assert!(
+            depth_of(&spine, "Sort") < depth_of(&spine, "Filter"),
+            "{spine:?}"
         );
     }
 }
