@@ -135,7 +135,7 @@ src/graph_core.rs	profile_mut	1338	PROVEN	GraphCore.profileOutcome/dispatch (adm
 src/graph_core.rs	profile_sync	1439	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
 src/graph_core.rs	finish_write	1506	PROVEN	GraphCore.writeSteps (commit if escalated, else nothing: the version drops with the runtime, #3657): reply_after_commit, unescalated_silent
 src/graph_core.rs	abandon_write	1531	PROVEN	GraphCore.abandonSteps (resync only if version_is_current, nothing to release, #3657): failed_no_commit, stale_run_silent
-src/graph_core.rs	commit_and_replicate	1547	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; replicated key bytes = utf8(lossy(key)): KeyName.bug2653_nonutf8_key_mangled (#2653)
+src/graph_core.rs	commit_and_replicate	1547	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; KeyName.bug2653_nonutf8_key_mangled models the historical lossy path before #3485, not GraphKey's byte-preserving path
 src/graph_core.rs	process_write_queued_query	1625	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit); slot dropped on dequeue: SearchConcurrency Pool.paths_release_once
 src/graph_core.rs	CtxSink::replicate	1774	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
 src/graph_core.rs	graph_free	1787	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
@@ -280,7 +280,7 @@ src/commands/memory.rs	c_schema_name	65	PROVEN	Commands.cSchemaName = cReplyName
 src/commands/memory.rs	memory_report	69	PROVEN	Commands.memTotal/memFields: memTotal_sum
 src/commands/memory.rs	graph_memory	181	PROVEN	Commands.memArgs: memArgs_default, memArgs_samples (SAMPLES 0 accepted, #3053), memArgs_samples_err
 src/commands/profile.rs	graph_profile	18	PROVEN	QueryArgs.profileFront (parse_query_flags, profile.rs:22): four_commands_share, profile_timeout_parsed, profile_timeout_garbage_rejected (#3009 fixed 557f18868), profile_other_args_ignored
-src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51): four_commands_share, rust_c_agree, parse_ok_iff, parse_documented; key/graph-creation part MODELLED in MultiDb.query (#2782 bug2782_same_name_other_db_aborts) and KeyName.rustReplicatedKey (#2653 bug2653_nonutf8_key_mangled refutes ReplicatedKeyIsStored)
+src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51): four_commands_share, rust_c_agree, parse_ok_iff, parse_documented; key/graph-creation part MODELLED in MultiDb.query (#2782 bug2782_same_name_other_db_aborts); KeyName.rustReplicatedKey models the historical lossy path before #3485
 src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two, reply shape only (+ GraphCore.writeSteps; write_version: QuerySession.writeVersion_takes_nothing); rendering of recorded rows: RelLookup.recordDelete/s3449abort, #3449 fixed by #3462 (inspect || snapshot_required): fixed3449_record_snapshot, fixed3449_record_abort
 src/commands/record.rs	graph_record	169	PROVEN	Commands.recordKey: recordKey_creates
 src/commands/restore.rs	graph_restore	12	PROVEN	Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/from_slice_past_end
@@ -297,3 +297,8 @@ src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filte
 src/graph_core.rs	RedisBuildHost::publish	1608	NOT COVERED	online index build (#2355): not modelled yet
 src/graph_core.rs	RedisBuildHost::warn	1617	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/env_snapshot.rs	leak_deep_copy	22	NOT COVERED	Not modelled. Deep-copies a NULL-terminated char** (array and strings) and leaks it; unit-tested in env_snapshot::tests (NULL, empty, order, source freed after copy)
+
+# Binary graph keys (#3485): byte/display separation is not modelled yet.
+src/graph_key.rs	GraphKey::new	14	NOT COVERED	Owns addressed bytes separately from lossy display text; no Lean model yet
+src/graph_key.rs	GraphKey::as_bytes	28	NOT COVERED	Returns the original key bytes; no Lean model yet
+src/graph_key.rs	GraphKey::display_name	32	NOT COVERED	Telemetry display only; no Lean model yet

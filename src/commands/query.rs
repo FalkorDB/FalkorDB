@@ -18,6 +18,7 @@
 //! chooses the target graph, while runtime execution is centralized in
 //! `graph_core`.
 
+use crate::graph_key::GraphKey;
 use crate::{
     commands::query_args::{QueryFlags, parse_query_flags},
     config::CONFIGURATION_CACHE_SIZE,
@@ -70,7 +71,7 @@ pub fn graph_query(
     // named, NUL and all — a `RENAME` can leave a graph sitting at such a key. A graph
     // this query *creates* lands elsewhere, and rebinds `key_name` below.
     let read_key = ctx.open_key(&key_str);
-    let key_name: Arc<str> = Arc::from(key_str.to_string());
+    let key_name = GraphKey::new(&key_str);
 
     if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         let graph = graph.clone();
@@ -111,7 +112,8 @@ pub fn graph_query(
     // from C's name rather than at the addressed one, so that truncated key — which is
     // the name — is the key this graph lives at.
     let name = c_graph_name(&key_str);
-    let key_name: Arc<str> = Arc::from(name.as_str());
+    let create_key_str = c_graph_key(ctx, &key_str);
+    let key_name = GraphKey::new(&create_key_str);
     let graph = Arc::new(RwLock::new(ThreadedGraph::new(
         *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
         &name,
@@ -141,7 +143,7 @@ pub fn graph_query(
     // `GraphContext_SetKey`, and it is why a graph addressed as `a\0b` lands at key
     // `a`, replacing whatever graph was there. `key` is dropped unset, leaving the
     // addressed key absent, exactly as in C.
-    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+    let create_key = ctx.open_key_writable(&create_key_str);
     drop(key);
     create_key.set_value(&GRAPH_TYPE, graph.clone())?;
     register_graph(name, graph);
