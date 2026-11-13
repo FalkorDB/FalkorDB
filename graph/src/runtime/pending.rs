@@ -242,6 +242,11 @@ where
         };
         let mut it = values.iter();
         let key = Graph::build_composite_key(properties, |_| it.next().cloned());
+        if key.is_empty() {
+            // A value the constraint does not enforce (list, point, temporal,
+            // vecf32, NaN): the entity does not participate, like a NULL.
+            continue;
+        }
         if !keys.insert(key) {
             // Two entities written in this commit share a key. That is a
             // violation whatever the index or the rest of the label holds, so
