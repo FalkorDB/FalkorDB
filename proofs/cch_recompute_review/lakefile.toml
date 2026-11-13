@@ -1,0 +1,11 @@
+name = "falkor-cch-recompute-review"
+defaultTargets = ["CchRecomputeReview"]
+
+[[lean_lib]]
+name = "CchRecomputeReview"
+
+# cch_supergraph_review's model of `Topology::from_order` discharges P-rows, P-chordal and P-transpose for
+# today's topology, and its `arc_ids` discharges RD1 (Bridge.lean).
+[[require]]
+name = "falkor-cch-supergraph-review"
+path = "../cch_supergraph_review"

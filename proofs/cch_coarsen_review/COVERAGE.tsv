@@ -1,0 +1,5 @@
+file	function	line	bucket	lean_name_or_reason
+# cch_coarsen_review models the m1-optimize prototype's host passes, which are not in the repo: they live in the
+# patch .handover/cch-redesign/prototypes/code/m1-optimize/m1opt.patch (base 7df8e5887), in
+# graph/src/graph/graphblas/m1_coarsen_bench.rs and m1_reuse_bench.rs. coverage.sh matches rows against this
+# checkout's Rust, so this project lists no rows; the Rust line <-> Lean table is in CchCoarsenReview.lean's header.

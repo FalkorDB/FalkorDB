@@ -1,0 +1,5 @@
+final        | hb2,hsplit,cpack,hcon,pk,book,hkey,hpar,gath,usel,zmatch,npar | exit 0   | compared 13 | failed 0  | 
+hb2_pk_book  | hb2,pk,book                                          | exit 0   | compared 13 | failed 0  | 
+book         | book                                                 | exit 101 | compared 0  | failed 0  | CHECK FAILED: projection lost vertices
+hb2_book     | hb2,book                                             | exit 101 | compared 0  | failed 0  | CHECK FAILED: projection lost vertices
+pk_book      | pk,book                                              | exit 101 | compared 13 | failed 10 | CHECK FAILED: B1 != B2

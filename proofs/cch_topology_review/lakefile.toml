@@ -1,0 +1,19 @@
+name = "falkor-cch-topology-review"
+defaultTargets = ["CchTopologyReview"]
+
+[[lean_lib]]
+name = "CchTopologyReview"
+
+# cow_btree's model is imported, not copied: the Up/Down deltas are `CowBTree`s (03 §2), so their
+# content (`toList`), `insert_batch` (`insertBatch_wf`), range reads (`range_spec`) and snapshot isolation
+# (`snapshot_isolated`, `insertOne_shares_siblings`, `Reachable_wf`) come from proofs/cow_btree.
+[[require]]
+name = "falkor-cow-btree"
+path = "../cow_btree"
+
+# cch_recompute_review's `Topo.Valid` / `Topo.DownOK` (P-rows, P-transpose) are instantiated from this project's
+# invariant (RecomputeBridge.lean). It requires cch_supergraph_review and, through it, cch_redesign_review, whose
+# `fitted_job_only_writers_between`, `builder_publish_bumps_commits` and `commits_monotone` FitBridge.lean uses.
+[[require]]
+name = "falkor-cch-recompute-review"
+path = "../cch_recompute_review"

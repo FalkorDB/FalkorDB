@@ -1,0 +1,11 @@
+name = "falkor-cch-coarsen-review"
+defaultTargets = ["CchCoarsenReview"]
+
+[[lean_lib]]
+name = "CchCoarsenReview"
+
+# graphblas_wrappers' GraphBLAS spec definitions are imported where they fit:
+# `GBWDelta.mxmAny` / `GBWDelta.cnt` (`GrB_mxm` over `ANY_PAIR`) for the split's masked product.
+[[require]]
+name = "falkor-graphblas-wrappers"
+path = "../graphblas_wrappers"

@@ -1,0 +1,24 @@
+BIN md5=7b2155e335d72a6feac296e35eb0e231
+ENV M1O=hb2,hsplit,cpack,hcon,pk,book,hkey,hpar,gath,usel,zmatch,npar M1_THREADS=1 M1_RUNS=0 M1_DEPTHS=3 M1_FERAL=0
+JIT: RUN
+CSRTYPES p=u32 i=i32 x=i32
+CSRTYPES p=u32 i=i32 x=i32
+CSRTYPES p=u32 i=i32 x=i32
+LABELHASH 097d7616e92ed25f
+CHECKS-PREP Checks { split_fail: 0, eq_levels: 0, eq_fail: 0, b1_checked: 0, b1_invalid: 0, w_fail: 0, acct_levels: 65, acct_fail: 0, match_calls_b: 0, cs_cap_checked: 0, cs_cap_fail: 0, cs_w_checked: 0, cs_w_fail: 0, sep_checked: 3, sep_fail: 0, fp_compared: 0, fp_fail: 0, hash_compared: 0, hash_fail: 0, rule_cells: 0, rule_same: 0, rule_plim: 0, rule_fail: 0, rule_percell_diff: 0 }
+HASH threads=1 path=D0 depth=0 hash=52860a81d7dafc4b items=146
+HASH threads=1 path=SPLIT depth=1 hash=bdc8946af51f7533 items=2
+HASH threads=1 path=R depth=1 hash=2a8b52e81c67a86e items=140
+HASH threads=1 path=B2 depth=1 hash=066355df582f194c items=218
+HASH threads=1 path=CS depth=1 hash=fcd687ce65d8beeb items=189
+HASH threads=1 path=SPLIT depth=2 hash=4f82955956173119 items=2
+HASH threads=1 path=R depth=2 hash=233e126145778074 items=134
+HASH threads=1 path=B2 depth=2 hash=3428f851c2c01806 items=200
+HASH threads=1 path=CS depth=2 hash=c421bd2f4237de22 items=189
+HASH threads=1 path=SPLIT depth=3 hash=071aeaeef65fd9c7 items=2
+HASH threads=1 path=R depth=3 hash=de071c55d3f4e6e9 items=128
+HASH threads=1 path=B2 depth=3 hash=c620bfe484f1a2ae items=173
+HASH threads=1 path=CS depth=3 hash=051975031d0711d8 items=171
+CHECKS Checks { split_fail: 0, eq_levels: 65, eq_fail: 0, b1_checked: 65, b1_invalid: 0, w_fail: 0, acct_levels: 65, acct_fail: 0, match_calls_b: 0, cs_cap_checked: 40, cs_cap_fail: 0, cs_w_checked: 3, cs_w_fail: 0, sep_checked: 3, sep_fail: 0, fp_compared: 0, fp_fail: 0, hash_compared: 13, hash_fail: 0, rule_cells: 0, rule_same: 0, rule_plim: 0, rule_fail: 0, rule_percell_diff: 0 }
+test graph::graphblas::m1_coarsen_bench::reuse::m1_reuse ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 854 filtered out; finished in 8.56s

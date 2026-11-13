@@ -100,6 +100,7 @@ theorem inv_init (B : Nat) : Inv B init where
       fun _ => Or.inl (Nat.zero_le _)⟩, ⟨by simp [init], by simp [init], fun u hu => by simp [Entry.upkeep] at hu⟩⟩
   rel := by intro S0 h; simp [init] at h
   wver := by intro x h; simp [init] at h
+  upw := by intro u _ S hS; simp [init] at hS
 
 theorem inv_writer {B : Nat} {σ : Sys} (hI : Inv B σ) {fork : Pub} (hf : fork ∈ σ.cur :: σ.hist)
     (hv : fork.ver = σ.cur.ver) (pre post : List (List Pair × Out)) (b : Bool) :
@@ -107,7 +108,7 @@ theorem inv_writer {B : Nat} {σ : Sys} (hI : Inv B σ) {fork : Pub} (hf : fork 
   obtain ⟨hP, hF, hnx, hT⟩ := writer_core hI hf hv pre post b
   have hx : ∀ x ∈ (segPairs (pre ++ post)).map (fun p => (σ.cur.ver + 1, p)), x.1 = σ.cur.ver + 1 := by
     intro x h; obtain ⟨p, _, rfl⟩ := List.mem_map.1 h; rfl
-  refine ⟨?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_⟩
   · intro S hS
     simp only [writerSys] at hS
     rcases List.mem_cons.1 hS with rfl | hS
@@ -133,9 +134,9 @@ theorem inv_writer {B : Nat} {σ : Sys} (hI : Inv B σ) {fork : Pub} (hf : fork 
       · intro _ _ _ _; exact Ext.refl _ _ _
       · exact (hI.rel S0 hh).chain
     have ticket0 : ∀ u0 u, S0.e.st = .built (some u0) → σ.cur.e.st = .built (some u) → u0.ticket = u.ticket →
-        u0 = u ∧ S0.e.gen = σ.cur.e.gen := by
+        u0 = u ∧ S0.e.gen = σ.cur.e.gen ∧ S0.e.commits = σ.cur.e.commits := by
       rcases List.mem_cons.1 hS0' with rfl | hh
-      · intro u0 u h1 h2 _; rw [h1] at h2; simp at h2; exact ⟨h2, rfl⟩
+      · intro u0 u h1 h2 _; rw [h1] at h2; simp at h2; exact ⟨h2, rfl, rfl⟩
       · exact (hI.rel S0 hh).ticket
     refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> dsimp only
     · exact Or.inl (by omega)
@@ -152,21 +153,37 @@ theorem inv_writer {B : Nat} {σ : Sys} (hI : Inv B σ) {fork : Pub} (hf : fork 
       · have hcb : σ.cur.e.isBuilt = false := hb'.symm.trans hb
         exact (chain0 hb0 hcb (hg.trans hg') (by omega)).trans ((hx' hb).weaken hle)
     · intro u0 u h1 h2 ht
-      rcases hT with ⟨_, hb⟩ | ⟨hg', _, _, _, hu⟩
+      rcases hT with ⟨_, hb⟩ | ⟨hg', hc', _, _, hu⟩
       · simp [Entry.isBuilt, h2] at hb
       · rcases hu u (by simp [Entry.upkeep, h2]) with hcu | hfr
         · have hcu' : σ.cur.e.st = .built (some u) := (upkeep_some _ _).1 hcu
-          obtain ⟨h3, h4⟩ := ticket0 u0 u h1 hcu' ht
-          exact ⟨h3, h4.trans hg'.symm⟩
-        · have := hS0f.ticket u0 (by simp [Entry.upkeep, h1]); omega
+          obtain ⟨h3, h4, h5⟩ := ticket0 u0 u h1 hcu' ht
+          exact ⟨h3, h4.trans hg'.symm, h5.trans hc'.symm⟩
+        · have := hS0f.ticket u0 (by simp [Entry.upkeep, h1]); have := hfr.1; omega
   · intro x hx'
     simp only [writerSys] at hx' ⊢
     rcases List.mem_append.1 hx' with h | h
     · have := hI.wver x h; omega
     · exact Nat.le_of_eq (hx x h)
+  · intro u hu S hS hs
+    dsimp only [writerSys] at hu hS ⊢
+    have hS' : S ∈ σ.cur :: σ.hist := hS
+    have hle : S.ver ≤ σ.cur.ver := by
+      rcases List.mem_cons.1 hS' with rfl | hh
+      · exact Nat.le_refl _
+      · rcases (hI.rel S hh).ver_le with h | ⟨h, _⟩ <;> omega
+    rcases hT with ⟨_, hb⟩ | ⟨hg', hc', _, _, hup⟩
+    · simp [Entry.isBuilt, hu] at hb
+    · rcases hup u (by simp [Entry.upkeep, hu]) with hcu | ⟨_, hsn⟩
+      · have hcu' : σ.cur.e.st = .built (some u) := (upkeep_some _ _).1 hcu
+        rcases List.mem_cons.1 hS' with rfl | hh
+        · exact ⟨hg'.symm, hc'.symm, hcu'⟩
+        · obtain ⟨a, b', c'⟩ := hI.upw u hcu' S hh hs
+          exact ⟨a.trans hg'.symm, b'.trans hc'.symm, c'⟩
+      · omega
 
 theorem inv_other {B : Nat} {σ : Sys} (hI : Inv B σ) : Inv B (otherSys σ) := by
-  refine ⟨?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_⟩
   · intro S hS
     simp only [otherSys] at hS
     rcases List.mem_cons.1 hS with rfl | hS
@@ -177,13 +194,19 @@ theorem inv_other {B : Nat} {σ : Sys} (hI : Inv B σ) : Inv B (otherSys σ) := 
     simp only [otherSys] at hS0 ⊢
     rcases List.mem_cons.1 hS0 with rfl | hh
     · exact ⟨Or.inr ⟨rfl, Nat.lt_succ_self _⟩, fun _ => ⟨rfl, fun _ => rfl⟩, fun _ => ⟨Nat.le_refl _, id, fun _ => rfl⟩,
-        fun _ _ _ _ => Ext.refl _ _ _, fun u0 u h1 h2 _ => by rw [h1] at h2; simp at h2; exact ⟨h2, rfl⟩⟩
+        fun _ _ _ _ => Ext.refl _ _ _, fun u0 u h1 h2 _ => by rw [h1] at h2; simp at h2; exact ⟨h2, rfl, rfl⟩⟩
     · have hx := hI.rel S0 hh
       exact ⟨by rcases hx.ver_le with h | ⟨h1, h2⟩
                 · exact Or.inl h
                 · exact Or.inr ⟨h1, Nat.lt_succ_of_lt h2⟩,
         hx.same_ver, hx.same_gen, hx.chain, hx.ticket⟩
   · intro x hx; exact hI.wver x hx
+  · intro u hu S hS hs
+    have hu' : σ.cur.e.st = .built (some u) := hu
+    have hS' : S ∈ σ.cur :: σ.hist := hS
+    rcases List.mem_cons.1 hS' with rfl | hh
+    · exact ⟨rfl, rfl, hu'⟩
+    · exact hI.upw u hu' S hh hs
 
 /-- A builder publish (batch or job) keeps the data version and bumps the batch counter: what every earlier
     version relates to it. -/
@@ -227,11 +250,14 @@ theorem inv_batch {B : Nat} {σ : Sys} (hI : Inv B σ) {S0 : Pub} (h0 : S0 ∈ �
   split
   · rename_i e he
     obtain ⟨hP, hF, hg, hc, hcb, hu, _⟩ := batch_core hI h0 b adv he
-    refine ⟨?_, rel_builder hI hg hc (fun h => by simp [hcb] at h) hu (fun _ => hcb), hI.wver⟩
-    intro S hS
-    rcases List.mem_cons.1 hS with rfl | hS
-    · exact ⟨hP, hF⟩
-    · exact hI.pub S hS
+    refine ⟨?_, rel_builder hI hg hc (fun h => by simp [hcb] at h) hu (fun _ => hcb), hI.wver, ?_⟩
+    · intro S hS
+      rcases List.mem_cons.1 hS with rfl | hS
+      · exact ⟨hP, hF⟩
+      · exact hI.pub S hS
+    · intro u h2 S _ _
+      have h2' : e.st = .built (some u) := h2
+      simp [Entry.upkeep, h2'] at hu
   · exact hI
 
 theorem inv_job {B : Nat} {σ : Sys} (hI : Inv B σ) {S0 : Pub} (h0 : S0 ∈ σ.cur :: σ.hist) (b : Bool) :
@@ -243,11 +269,14 @@ theorem inv_job {B : Nat} {σ : Sys} (hI : Inv B σ) {S0 : Pub} (h0 : S0 ∈ σ.
     have hu : e.upkeep = none := by simp [Entry.upkeep, hst]
     have heb : e.isBuilt = true := isBuilt_built _ _ hst
     have hrel := rel_builder (B := B) hI hg hc (fun _ => heb) hu (fun h => by simp [heb] at h)
-    refine ⟨?_, fun S0' hS0' => hrel S0' hS0', hI.wver⟩
-    intro S hS
-    rcases List.mem_cons.1 hS with rfl | hS
-    · exact ⟨hP, hF⟩
-    · exact ⟨(hI.pub S hS).1, (hI.pub S hS).2.mono hnx⟩
+    refine ⟨?_, fun S0' hS0' => hrel S0' hS0', hI.wver, ?_⟩
+    · intro S hS
+      rcases List.mem_cons.1 hS with rfl | hS
+      · exact ⟨hP, hF⟩
+      · exact ⟨(hI.pub S hS).1, (hI.pub S hS).2.mono hnx⟩
+    · intro u h2 S _ _
+      have h2' : e.st = .built (some u) := h2
+      rw [hst] at h2'; simp at h2'
   · exact hI
 
 theorem inv_step {B : Nat} {σ σ' : Sys} (hI : Inv B σ) (hs : Step D B σ σ') : Inv B σ' := by

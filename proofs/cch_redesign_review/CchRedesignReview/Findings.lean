@@ -188,7 +188,7 @@ theorem B3_catchup_without_relink_loses_write :
   decide
 
 /-- B4 (a handoff risk, 03 §7 silent on it): the writer's rebase runs only when `overtaken_by_indexer_batches`'s
-    gate sees `batch_published_since` (`versioned.rs:729-747` @08c, `NI.overtakenAny`). A fold or S6 publish
+    gate sees `batch_published_since` (`versioned.rs:729-745` @08c, `NI.overtakenAny`). A fold or S6 publish
     that does not move `batches_published` (`mvcc_graph.rs:310` @08c moves it only through `prepare(_, _, false)`)
     leaves the gate shut, and the writer reverts the job even with D6's `overtaken`. -/
 def jobSysNoBump (b : Bool) (S0 : Pub) (σ : Sys) : Sys :=

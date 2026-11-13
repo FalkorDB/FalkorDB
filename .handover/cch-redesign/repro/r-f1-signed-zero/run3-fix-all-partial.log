@@ -1,0 +1,44 @@
+$ git -C <worktree> log --oneline -1
+31ca1b802 CCH catch-up: a rebase error restarts the build; five overtaken builds fail it
+(with test.patch + fix.patch applied)
+$ cargo test -p graph --features index-falkordb --lib -- cch::partial::tests
+warning: unused import: `atomic_refcell::AtomicRefCell`
+    --> graph/src/effects/v3/emit.rs:1005:9
+     |
+1005 |     use atomic_refcell::AtomicRefCell;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `orx_tree::NodeMut`
+   --> graph/src/runtime/vectorized.rs:308:9
+    |
+308 |     use orx_tree::NodeMut;
+    |         ^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> graph/src/graph/graph/cch_index_tests.rs:755:21
+    |
+755 |                 let mut edges: Vec<(u64, u64, f64)> =
+    |                     ----^^^^^
+    |                     |
+    |                     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: `graph` (lib test) generated 3 warnings (run `cargo fix --lib -p graph --tests` to apply 3 suggestions)
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.14s
+     Running unittests src/lib.rs (/Users/dvirdukhan/Code/worktrees/FalkorDB/r-f1-tmp/target/debug/deps/graph-20d74aa81878f99a)
+
+running 7 tests
+test index::falkordb::cch::partial::tests::lean_r_f1_negative_zero_seed_bit_identical_to_full ... ok
+test index::falkordb::cch::partial::tests::changed_may_repeat_and_include_self_loops ... ok
+test index::falkordb::cch::partial::tests::a_bad_new_weight_is_refused_and_writes_nothing ... ok
+test index::falkordb::cch::partial::tests::seeded_hands_back_past_the_valve_and_on_a_new_adjacency ... ok
+test index::falkordb::cch::partial::tests::a_local_edit_recomputes_a_small_cone ... ok
+test index::falkordb::cch::partial::tests::the_n_over_8_valve_switches_to_a_full_customize ... ok
+test index::falkordb::cch::partial::tests::seeded_equals_full_and_reads_only_the_cone ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 935 filtered out; finished in 0.38s
+
+exit=0

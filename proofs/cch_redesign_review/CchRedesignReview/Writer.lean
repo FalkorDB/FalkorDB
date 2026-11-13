@@ -223,7 +223,7 @@ theorem priv_flushB {B c w O n0 nx nx'} {e : Entry} {up0 : Option Upkeep} (hst :
     dsimp only
     split
     · -- past the bound: upkeep and the retained nodes cleared, own nodes kept (reading R2)
-      simp only [D, if_true]
+      simp only [D, ite_true]
       rw [hown]
       refine ⟨⟨rle, rfl, ⟨_, [], by simp, hM', by simp⟩, ?_, fun s p hsp hs => Or.inl (rold s p hsp hs),
         fun p hp => Or.inl (rown p hp), ?_, fun _ => rold, fun _ => rown, ?_, ?_, ?_⟩, ?_⟩

@@ -1,0 +1,33 @@
+BIN md5=7b2155e335d72a6feac296e35eb0e231
+ENV M1O=pk,book M1_THREADS=1 M1_RUNS=0 M1_DEPTHS=3 M1_FERAL=0
+JIT: RUN
+LABELHASH ecb895ee68be216d
+CHECKS-PREP Checks { split_fail: 0, eq_levels: 0, eq_fail: 0, b1_checked: 0, b1_invalid: 0, w_fail: 0, acct_levels: 65, acct_fail: 0, match_calls_b: 0, cs_cap_checked: 0, cs_cap_fail: 0, cs_w_checked: 0, cs_w_fail: 0, sep_checked: 3, sep_fail: 0, fp_compared: 0, fp_fail: 0, hash_compared: 0, hash_fail: 0, rule_cells: 0, rule_same: 0, rule_plim: 0, rule_fail: 0, rule_percell_diff: 0 }
+HASH threads=1 path=D0 depth=0 hash=52860a81d7dafc4b items=146
+HASH threads=1 path=SPLIT depth=1 hash=bdc8946af51f7533 items=2
+HASH threads=1 path=R depth=1 hash=2a8b52e81c67a86e items=140
+HASH threads=1 path=B2 depth=1 hash=c89f7afe75b02d9f items=218
+HASH threads=1 path=CS depth=1 hash=894ad56c0fbe98ad items=141
+HASH threads=1 path=SPLIT depth=2 hash=9e26ac0786b7817d items=2
+HASH threads=1 path=R depth=2 hash=ab3f09895cc4b863 items=128
+HASH threads=1 path=B2 depth=2 hash=96bdf1b8fe38137d items=200
+HASH threads=1 path=CS depth=2 hash=1296f356d3e6f853 items=141
+HASH threads=1 path=SPLIT depth=3 hash=dbbdee52078c3dd8 items=2
+HASH threads=1 path=R depth=3 hash=6ae682701ef50639 items=110
+HASH threads=1 path=B2 depth=3 hash=2ac00a6131bf1ea0 items=173
+HASH threads=1 path=CS depth=3 hash=80ba4e3f9da39cc2 items=123
+HASHMISMATCH path=B2 depth=1 want=066355df582f194c got=Some("c89f7afe75b02d9f")
+HASHMISMATCH path=B2 depth=2 want=3428f851c2c01806 got=Some("96bdf1b8fe38137d")
+HASHMISMATCH path=B2 depth=3 want=c620bfe484f1a2ae got=Some("2ac00a6131bf1ea0")
+HASHMISMATCH path=CS depth=1 want=fcd687ce65d8beeb got=Some("894ad56c0fbe98ad")
+HASHMISMATCH path=CS depth=2 want=c421bd2f4237de22 got=Some("1296f356d3e6f853")
+HASHMISMATCH path=CS depth=3 want=051975031d0711d8 got=Some("80ba4e3f9da39cc2")
+HASHMISMATCH path=R depth=2 want=233e126145778074 got=Some("ab3f09895cc4b863")
+HASHMISMATCH path=R depth=3 want=de071c55d3f4e6e9 got=Some("6ae682701ef50639")
+HASHMISMATCH path=SPLIT depth=2 want=4f82955956173119 got=Some("9e26ac0786b7817d")
+HASHMISMATCH path=SPLIT depth=3 want=071aeaeef65fd9c7 got=Some("dbbdee52078c3dd8")
+CHECKS Checks { split_fail: 0, eq_levels: 65, eq_fail: 65, b1_checked: 65, b1_invalid: 0, w_fail: 0, acct_levels: 65, acct_fail: 0, match_calls_b: 0, cs_cap_checked: 40, cs_cap_fail: 0, cs_w_checked: 3, cs_w_fail: 0, sep_checked: 3, sep_fail: 0, fp_compared: 0, fp_fail: 0, hash_compared: 13, hash_fail: 10, rule_cells: 0, rule_same: 0, rule_plim: 0, rule_fail: 0, rule_percell_diff: 0 }
+thread 'graph::graphblas::m1_coarsen_bench::reuse::m1_reuse' (82615) panicked at graph/src/graph/graphblas/m1_reuse_bench.rs:2344:5:
+assertion `left == right` failed: CHECK FAILED: B1 != B2
+test graph::graphblas::m1_coarsen_bench::reuse::m1_reuse ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 854 filtered out; finished in 5.74s

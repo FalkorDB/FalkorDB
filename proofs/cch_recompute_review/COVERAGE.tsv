@@ -1,0 +1,8 @@
+file	function	line	bucket	lean_name_or_reason
+# cch_recompute_review checks 03 §6b's scoped recompute (.handover/cch-redesign/design/03-design.md, revision 3.1)
+# against today's full customization. The one origin/main function it models faithfully, `relax`
+# (graph/src/index/falkordb/cch/customize.rs:264), moved here from native_index/COVERAGE.tsv on 2026-11-13 (row below);
+# Bridge.lean discharges its topology premises and RD1 through cch_supergraph_review.
+# `recustomize_seeded` (partial.rs) is stack code (origin/cch/08c-build-catch-up .. cch/10-rdb-v20), not on
+# origin/main: its rows are listed in the header (CchRecomputeReview.lean, "COVERAGE rows"), for when it lands.
+graph/src/index/falkordb/cch/customize.rs	relax	264	PROVEN	CchRecompute.relax: relax_isFull (every arc holds its recomp: IsFull), relax_some, relax_none_of_not_chordal (panics iff not chordal), isFull_up_min/isFull_dn_min/isFull_up_mid (closed form); on today's topology relax_fromOrder/relax_build (no panic, full customization) via bridge (P-rows, P-chordal, P-transpose from cch_supergraph_review fromOrder_spec, topo_chordal; Mirrored from nd.rs's symmetric-simple check, binary_search std contract) and rd1_slots (cch_supergraph_review arc_ids: x_slots_start + i and y_slots_start + cursor are the arc's slot, in range, injective); seed's input contract discharged by customize_build (arcSlot_lt, seedLoop_shape, toMetric_seed: seed's four arrays have arc_count entries, None middles, writes in range, customize.rs:208-237)

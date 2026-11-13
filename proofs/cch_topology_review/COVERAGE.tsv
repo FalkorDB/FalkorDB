@@ -1,0 +1,8 @@
+file	function	line	bucket	lean_name_or_reason
+# cch_topology_review models 03-design.md revision 3.1's topology (.handover/cch-redesign/design/03-design.md §2, §4,
+# §6, §6b MVCC, §7): Up/Down as base + cow_btree delta, rank_of/node_of/free_ranks, arc ids, S2's append, rank
+# allocation, node delete, id reuse and the fold. There is no code for that yet, so this project lists no rows.
+# It also models WeightArr (customize.rs:112-240), which is stack code (origin/cch/12a-chunked-weights, identical at
+# cch/08c-build-catch-up), not origin/main: its rows would be unmatched here, so they are listed under "Rows to move"
+# in CchTopologyReview.lean's header, for when 12a lands. The cow_btree functions the deltas use are covered by
+# proofs/cow_btree, and order.rs (today's fresh ids, arc_slot) by proofs/cch_supergraph_review.

@@ -69,11 +69,12 @@ theorem stale_job_gone (b : Bool) (S0 : Pub) (σ : Sys)
     unfold jobResult
     split
     · rename_i u0 u h1 h2
-      rw [if_neg]
-      rintro ⟨hg, ht⟩
-      rcases hstale with hs | hs
-      · exact hs hg
-      · exact hs u0 u (by simp [Entry.upkeep, h1]) (by simp [Entry.upkeep, h2]) ht
+      have hnf : ¬ (S0.e.gen = σ.cur.e.gen ∧ u0.ticket = u.ticket) := by
+        rintro ⟨hg, ht⟩
+        rcases hstale with hs | hs
+        · exact hs hg
+        · exact hs u0 u (by simp [Entry.upkeep, h1]) (by simp [Entry.upkeep, h2]) ht
+      simp [hnf]
     · rfl
   exact ⟨hn, by simp [jobSys, hn]⟩
 
@@ -88,6 +89,119 @@ theorem job_publish_fitted {b : Bool} {S0 cur : Pub} {nx : Nat} {r : Entry × Na
     · rename_i hf; exact ⟨hf.1, u0, u, h1, h2, hf.2⟩
     · simp at h
   · simp at h
+
+/-- **A fitted job saw only writers since its fork** (03 §6 "Publish under the lock", §7 D6). When a fold or S6
+    job forked at `S0` publishes onto the current version, the fork's entry and the published one have the same
+    generation, the same `indexer_commits` and the same `upkeep`. The generation never falls (`step_gen_mono`),
+    every batch or job publish of this index moves `indexer_commits` by one (`builder_publish_bumps_commits`) and
+    the count never falls within a generation (`commits_monotone`), so between the fork and the publish only
+    writers (and other indexes' batches) ran. Every version published in that window keeps the job's generation,
+    count and `upkeep` (`job_window_frozen`), and a writer that escalates on such a version is never overtaken, so
+    none of them rebased (`upkeep_writer_not_overtaken`). -/
+theorem fitted_job_only_writers_between {B : Nat} {σ : Sys} (h : Reach D B σ) {S0 : Pub}
+    (h0 : S0 ∈ σ.cur :: σ.hist) {b : Bool} {r : Entry × Nat} (he : jobResult b S0 σ.cur σ.next = some r) :
+    S0.e.gen = σ.cur.e.gen ∧ S0.e.commits = σ.cur.e.commits ∧ S0.ver ≤ σ.cur.ver ∧
+      ∃ u, S0.e.st = .built (some u) ∧ σ.cur.e.st = .built (some u) := by
+  obtain ⟨hg, u0, u, h1, h2, ht⟩ := job_publish_fitted he
+  rcases List.mem_cons.1 h0 with rfl | hh
+  · rw [h1] at h2; simp at h2; subst h2; exact ⟨rfl, rfl, Nat.le_refl _, u0, h1, h1⟩
+  · have hx := (reach_inv h).rel S0 hh
+    obtain ⟨hu, _, hc⟩ := hx.ticket u0 u h1 h2 ht
+    subst hu
+    refine ⟨hg, hc, ?_, u0, h1, h2⟩
+    rcases hx.ver_le with h' | ⟨h', _⟩ <;> omega
+
+/-- **The generation never falls** from one published version to the next: a writer keeps it or takes a fresh one
+    (hand-off, S7, `Restart`), a batch or job keeps it, another index's batch leaves the entry alone. -/
+theorem step_gen_mono {B : Nat} {σ σ' : Sys} (h : Reach D B σ) (hs : Step D B σ σ') : σ.cur.e.gen ≤ σ'.cur.e.gen := by
+  have hI := reach_inv h
+  cases hs with
+  | writer fork hf hv pre post b =>
+    obtain ⟨_, _, _, hT⟩ := writer_core hI hf hv pre post b
+    have hg := (hI.pub σ.cur (List.mem_cons_self ..)).2.gen
+    show σ.cur.e.gen ≤ (writerE D B σ.cur fork pre post b σ.next).1.gen
+    rcases hT with ⟨h1, _⟩ | ⟨h1, _⟩ <;> omega
+  | batch S0 h0 b adv =>
+    unfold batchSys
+    split
+    · rename_i e he
+      obtain ⟨_, _, hg, _⟩ := batch_core hI h0 b adv he
+      show σ.cur.e.gen ≤ e.gen; omega
+    · exact Nat.le_refl _
+  | job S0 h0 b =>
+    unfold jobSys
+    split
+    · rename_i e n he
+      obtain ⟨_, _, _, hg, _⟩ := job_core hI h0 b he
+      show σ.cur.e.gen ≤ e.gen; omega
+    · exact Nat.le_refl _
+  | other => exact Nat.le_refl _
+
+/-- **A fitted job's window is frozen.** When a fold or S6 job forked at `S0` publishes onto the current version,
+    every version published at or after the fork's data version has the job's generation, `indexer_commits` and
+    `upkeep`: in the window, only writers that kept the job's `upkeep` ran (`Inv.upw`). -/
+theorem job_window_frozen {B : Nat} {σ : Sys} (h : Reach D B σ) {S0 : Pub} (h0 : S0 ∈ σ.cur :: σ.hist)
+    {b : Bool} {r : Entry × Nat} (he : jobResult b S0 σ.cur σ.next = some r) :
+    ∀ S ∈ σ.hist, S0.ver ≤ S.ver →
+      S.e.gen = σ.cur.e.gen ∧ S.e.commits = σ.cur.e.commits ∧ S.e.st = σ.cur.e.st := by
+  have hI := reach_inv h
+  obtain ⟨_, _, _, u, h1, h2⟩ := fitted_job_only_writers_between h h0 he
+  have hsince : u.since ≤ S0.ver := ((hI.pub S0 h0).1.upSome u h1).1
+  intro S hS hle
+  obtain ⟨a, c, st⟩ := hI.upw u h2 S hS (Nat.le_trans hsince hle)
+  exact ⟨a, c, st.trans h2.symm⟩
+
+/-- **A writer that escalates while `upkeep` is published is not overtaken** (03 §5 rebase table; §6 Built-entry
+    jobs): every fork it can hold at the current data version holds the published entry, so the gate's `overtaken`
+    is false whatever its segments before escalation did, and it does not rebase. With `job_window_frozen`: no
+    writer in a fitted job's window rebased. -/
+theorem upkeep_writer_not_overtaken {B : Nat} {σ : Sys} (h : Reach D B σ) {u : Upkeep}
+    (hu : σ.cur.e.st = .built (some u)) {fork : Pub} (hf : fork ∈ σ.cur :: σ.hist) (hv : fork.ver = σ.cur.ver)
+    (pre : List (List Pair × Out)) :
+    fork.e = σ.cur.e ∧ overtaken D (segs D B (σ.cur.ver + 1) pre fork.e σ.next).1 σ.cur.e = false := by
+  have hI := reach_inv h
+  obtain ⟨hPc, hFc⟩ := hI.pub σ.cur (List.mem_cons_self ..)
+  have hfe : fork.e = σ.cur.e := by
+    rcases List.mem_cons.1 hf with rfl | hh
+    · rfl
+    · have hs : u.since ≤ fork.ver := by rw [hv]; exact (hPc.upSome u hu).1
+      obtain ⟨_, hc, _⟩ := hI.upw u hu fork hh hs
+      exact ((hI.rel fork hh).same_ver hv).2 hc
+  refine ⟨hfe, ?_⟩
+  rw [hfe]
+  have p0 : Priv B σ.cur.ver σ.writes [] σ.next σ.cur.e σ.next := priv_init hPc rfl hFc
+  have t1 := track_segs (B := B) pre (track_refl B σ.cur.ver σ.next σ.cur.e) p0
+  unfold overtaken; simp only [show D.d6 = true from rfl, ite_true]
+  rcases t1 with ⟨hg, _⟩ | ⟨_, hc, _⟩
+  · have : (segs D B (σ.cur.ver + 1) pre σ.cur.e σ.next).1.gen ≠ σ.cur.e.gen := by
+      have := hFc.gen; omega
+    simp [this]
+  · simp [hc]
+
+/-- Every step that keeps the data version either leaves the index's entry as it was (another index's batch, a
+    discarded batch, a `Gone` job) or is a batch or job publish of this index, which keeps the generation and moves
+    `indexer_commits` by one. Only a writer moves the data version. -/
+theorem builder_publish_bumps_commits {B : Nat} {σ σ' : Sys} (h : Reach D B σ) (hs : Step D B σ σ')
+    (hv : σ'.cur.ver = σ.cur.ver) :
+    σ'.cur.e = σ.cur.e ∨ (σ'.cur.e.gen = σ.cur.e.gen ∧ σ'.cur.e.commits = σ.cur.e.commits + 1) := by
+  have hI := reach_inv h
+  cases hs with
+  | writer fork hf hv' pre post b => simp [writerSys] at hv
+  | batch S0 h0 b adv =>
+    unfold batchSys at hv ⊢
+    split
+    · rename_i e he
+      obtain ⟨_, _, hg, hc, _⟩ := batch_core hI h0 b adv he
+      exact Or.inr ⟨hg, hc⟩
+    · exact Or.inl rfl
+  | job S0 h0 b =>
+    unfold jobSys at hv ⊢
+    split
+    · rename_i e n he
+      obtain ⟨_, _, _, hg, hc, _⟩ := job_core hI h0 b he
+      exact Or.inr ⟨hg, hc⟩
+    · exact Or.inl rfl
+  | other => exact Or.inl rfl
 
 /-- **A job that publishes in a reachable state has every write resolved** (S6 replays the retained nodes after
     its fork; a fold keeps the published hierarchy), clears `upkeep` and the log, and counts the publish. -/

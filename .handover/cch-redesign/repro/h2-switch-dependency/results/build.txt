@@ -1,0 +1,2 @@
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.18s
+  Executable unittests src/lib.rs (/Users/dvirdukhan/Code/worktrees/FalkorDB/h2-tmp/target/release/deps/graph-61269eb2032b7016)

@@ -1,0 +1,22 @@
+name = "falkor-cch-supergraph-review"
+defaultTargets = ["CchSupergraphReview"]
+
+[[lean_lib]]
+name = "CchSupergraphReview"
+
+# versioned_matrix's per-pair tensor model is imported, not copied: `VMTensor.PairSt`, `effV` (`eff_get`),
+# `edges` (`get`), `Inv` (tensor.rs's module-doc invariants) and `encoding`.
+[[require]]
+name = "falkor-versioned-matrix"
+path = "../versioned_matrix"
+
+# native_index's `Csr` model (`NI.Cch.Csr`, `rowD`, `isWellFormed_iff`, `isSymmetricSimple_iff`) and the
+# `sort_unstable(); dedup()` model (`NI.sortDedup`, `sortDedup_spec`, `sortDedup_unique`) are imported.
+[[require]]
+name = "falkor-native-index"
+path = "../native_index"
+
+# cch_redesign_review's `no_lost_write` discharges the log-completeness premise of the B' theorem.
+[[require]]
+name = "falkor-cch-redesign-review"
+path = "../cch_redesign_review"

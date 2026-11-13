@@ -24,7 +24,11 @@ or a job may still hold any of them as its fork), given the committed writes `w`
   stays `Built`;
 * `chain`: while `Building` with the same generation and count, the current entry `Ext`ends `S0`'s: only writers
   moved it, by appending nodes after `S0.ver` (or overflowing);
-* `ticket`: a ticket names one `upkeep`.
+* `ticket`: a ticket names one `upkeep`, set within one generation and one batch count: between the version
+  that set it and any later one that still has it, no batch or job of this index published.
+
+`Inv.upw`: while `upkeep = Some u` is published, every version published at or after `u.since` has the same
+generation, count and `upkeep`, so no writer escalating then is overtaken.
 -/
 namespace CchReview
 
@@ -63,12 +67,16 @@ structure XRel (B : Nat) (cur S0 : Pub) : Prop where
   chain : S0.e.isBuilt = false → cur.e.isBuilt = false → S0.e.gen = cur.e.gen → S0.e.commits = cur.e.commits →
     Ext B S0.ver S0.e cur.e
   ticket : ∀ u0 u, S0.e.st = .built (some u0) → cur.e.st = .built (some u) → u0.ticket = u.ticket →
-    u0 = u ∧ S0.e.gen = cur.e.gen
+    u0 = u ∧ S0.e.gen = cur.e.gen ∧ S0.e.commits = cur.e.commits
 
 structure Inv (B : Nat) (σ : Sys) : Prop where
   pub : ∀ S ∈ σ.cur :: σ.hist, PInv B σ.writes S ∧ Fresh σ.next S.e
   rel : ∀ S0 ∈ σ.hist, XRel B σ.cur S0
   wver : ∀ x ∈ σ.writes, x.1 ≤ σ.cur.ver
+  /-- While `upkeep = Some u` is published, every version published at or after `u.since` has the same
+      generation, count and `upkeep`: since the ticket was set, only writers that kept it ran. -/
+  upw : ∀ u, σ.cur.e.st = .built (some u) → ∀ S ∈ σ.hist, u.since ≤ S.ver →
+    S.e.gen = σ.cur.e.gen ∧ S.e.commits = σ.cur.e.commits ∧ S.e.st = .built (some u)
 
 /-! ## Basic lemmas -/
 

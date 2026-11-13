@@ -1,0 +1,26 @@
+file	function	line	bucket	lean_name_or_reason
+# cch_supergraph_review models 03-design.md revision 3.1 (§3 input skeleton, §4 Supergraph, §5 full-seed pass),
+# which has no code yet, and today's elimination game in order.rs @main d6fcd5aac, which it proves line by line.
+# The rows below moved here from native_index/COVERAGE.tsv on 2026-11-13.
+graph/src/index/falkordb/cch/order.rs	Rank::new	51	PROVEN	CchSG.rankNew: rank_spec (stores index + 1; never panics below MAX_NODES; round-trips through index; keeps the order)
+graph/src/index/falkordb/cch/order.rs	Rank::index	60	PROVEN	CchSG.rankIndex: rank_spec (stored - 1)
+graph/src/index/falkordb/cch/order.rs	Debug::fmt	67	PROVEN	CchSG.rankDebug: rankDebug_spec (prints Rank(index), not the stored index + 1)
+graph/src/index/falkordb/cch/order.rs	RankRows::slots	152	PROVEN	CchSG.rowSlots: slice_rowOf, flatten_getElem? (row r is neighbors[offsets[r]..offsets[r+1]])
+graph/src/index/falkordb/cch/order.rs	RankRows::row	159	PROVEN	CchSG.slice/rowSlots: slice_rowOf (the row as built; = gameRow for upward, fromOrder_spec)
+graph/src/index/falkordb/cch/order.rs	Topology::build	180	PROVEN	CchSG.build: build_game (any backend order; nd.rs:48-58's checks modelled as ndChecks, ndChecks_symm), build_spec
+graph/src/index/falkordb/cch/order.rs	Topology::from_order	195	PROVEN	CchSG.fromOrder: fromOrder_spec (up = the elimination game's rows, down = transpose, arc count), fromOrder_errors, fromOrder_accessors, topo_chordal, counts_spec; input mirrored (CchInput.skeleton's contract, cch/mod.rs:168; checked at nd.rs:54 on build's path; asymmetric_misses_arc)
+graph/src/index/falkordb/cch/order.rs	Topology::node_count	214	PROVEN	CchSG.Topo.nodeCount: fromOrder_spec (= skeleton n)
+graph/src/index/falkordb/cch/order.rs	Topology::ranks	219	PROVEN	CchSG.Topo.ranks: fromOrder_accessors (= 0 .. n)
+graph/src/index/falkordb/cch/order.rs	Topology::arc_count	224	PROVEN	CchSG.Topo.arcCount: fromOrder_spec, counts_spec (= the sum of the rows' lengths)
+graph/src/index/falkordb/cch/order.rs	Topology::node_of	229	PROVEN	CchSG.Topo.nodeOf: fromOrder_accessors (inverse of rank_of over 0 .. n)
+graph/src/index/falkordb/cch/order.rs	Topology::rank_of	237	PROVEN	CchSG.Topo.rankOf: fromOrder_accessors (inverse of node_of over 0 .. n)
+graph/src/index/falkordb/cch/order.rs	Topology::up	255	PROVEN	CchSG.Topo.up: fromOrder_spec (= gameRow, the elimination game's upward row), topo_chordal, counts_spec
+graph/src/index/falkordb/cch/order.rs	Topology::up_range	263	PROVEN	CchSG.Topo.upRange: fromOrder_accessors (offsets[r] .. offsets[r+1]), arc_ids
+graph/src/index/falkordb/cch/order.rs	Topology::arc_slot	287	PROVEN	CchSG.arcSlot: arcSlot_spec (offsets[lower] + i where up(lower)[i] = higher), arcSlot_isSome (Some iff an arc, symmetric), arc_ids; binary_search by its std contract (BsIdx, satisfiable: bsIdx_satisfiable)
+graph/src/index/falkordb/cch/order.rs	node_index	317	PROVEN	CchSG.idIndex: idIndex_64 (identity on a 64-bit target)
+graph/src/index/falkordb/cch/order.rs	row_slots	324	PROVEN	CchSG.rowSlots: slice_rowOf, offsOf_getD
+graph/src/index/falkordb/cch/order.rs	invert	333	PROVEN	CchSG.invert/invertLoop: invert_ok_spec (Ok = the inverse permutation; every expect succeeds), invert_ok_of_perm (a permutation is accepted), orderOk_of_invert
+graph/src/index/falkordb/cch/order.rs	chordal_supergraph	381	PROVEN	CchSG.chordalSupergraph: chordalSupergraph_spec, chordalSupergraph_row (= the elimination game: absorb_iff, clique, skeleton_in_up, row_subtree; the while-let never runs out, chain_kids); no index out of range, chordal_in_range; input mirrored (CchInput.skeleton's contract, cch/mod.rs:168; checked at nd.rs:54; asymmetric_misses_arc)
+graph/src/index/falkordb/cch/order.rs	transpose	441	PROVEN	CchSG.transpose/transposeG: transpose_spec (row h = every l with h in up(l), ascending), transposeG_spec, transpose_offsets, transpose_in_range (every count, row read and write in range), down_ids (a value-carrying transpose keeps arc ids, I7)
+graph/src/index/falkordb/cch/mod.rs	id_index	58	PROVEN	CchSG.idIndex: idIndex_64 (identity on a 64-bit target; the expect never fires)
+graph/src/index/falkordb/cch/mod.rs	index_id	66	PROVEN	CchSG.idIndex: idIndex_64 (usize to u64, identity on a 64-bit target)

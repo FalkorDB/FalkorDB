@@ -8,12 +8,13 @@ import CchRedesignReview.Builder
 import CchRedesignReview.Step
 import CchRedesignReview.Main
 import CchRedesignReview.Findings
+import CchRedesignReview.Witness
 
 /-!
 # CCH redesign review: the write log and its rules, proved for every interleaving
 
 **What is reviewed.** `.handover/cch-redesign/design/03-design.md`, revision 3.1. Read in the worktree on branch
-`cch/graphblas-redesign-handoff`, which is based on `origin/main` 8cb999d6d. The parts reviewed are the CCH
+`cch/graphblas-redesign-handoff`, which is based on `origin/main` d6fcd5aac. The parts reviewed are the CCH
 write log and the rules around it: §5 in full; §6 (flush, hand-off, decay, Built-entry jobs, fold job); §6b
 (interleaving, where it runs and the bound, MVCC); §7 (versions, retention, framework changes); Appendices A and B.
 The framework code 03 cites was read at `origin/cch/08c-build-catch-up` 31ca1b802 ("@08c"):
@@ -70,7 +71,10 @@ what makes this abstraction sound.
 | §5 "Readers while Building"; §6b "MVCC" | `serve` |
 | §6b "Interleaving with a batched build" | `Step`, `Reach` (every interleaving) |
 
-## Theorems (all for every reachable state, every bound `B`; Main.lean)
+## Theorems (Main.lean; every bound `B`)
+
+Unless marked *by definition*, each theorem takes `Reach D B σ` and holds in every reachable state. The ones
+marked *by definition* are facts about the step functions alone, with no reachability premise.
 
 * `reach_inv` (Step.lean): `Inv` holds in every reachable state. It is an inductive invariant: `inv_init`,
   `inv_writer`, `inv_batch`, `inv_job`, `inv_other`.
@@ -78,14 +82,21 @@ what makes this abstraction sound.
   a write `(s, p)` is resolved in `S`'s structure at a version `≥ s` or still in `S`'s log, Building and Built.
   `nothing_from_the_future`: `res ≤ ver` and `seq ≤ ver`, so a resolution comes from a fork, flush or replay at or
   after the write.
-* **2. `building_serves_fallback`, `served_is_current`** (§5 Readers, §6b MVCC). Building serves the fallback.
-  What is served has every committed write resolved.
+* **2. `building_serves_fallback`** (*by definition*), **`served_is_current`** (§5 Readers, §6b MVCC). Building
+  serves the fallback. What is served has every committed write resolved.
 * **3. `built_no_upkeep_no_log`, `built_upkeep_log_exact`** (§6/§7 Retention). Without `upkeep` the log is empty.
   With `Some{since}` it is exactly the writers' nodes after `since`: every write after `since` is in a node of
   its seq, every node is a committed write after `since`, and there is no Overflow.
-* **4. `stale_job_gone`, `job_publish_fitted`, `job_publish_sound`** (§6 "Publish under the lock", §7, D6). A job
-  whose generation or ticket does not match publishes nothing and leaves the system unchanged. One that publishes
-  matched, resolves every write, and clears `upkeep` and the log.
+* **4. `stale_job_gone`, `job_publish_fitted`** (both *by definition*), **`job_publish_sound`,
+  `fitted_job_only_writers_between`** (§6 "Publish under the lock", §7, D6). A job whose generation or ticket does
+  not match publishes nothing and leaves the system unchanged. One that publishes matched, resolves every write,
+  and clears `upkeep` and the log. `fitted_job_only_writers_between`: when a job's publish fits, its fork and the
+  published entry have the same generation, the same `indexer_commits` and the same `upkeep`. The generation never
+  falls (`step_gen_mono`) and every batch or job publish of this index moves the count by one
+  (`builder_publish_bumps_commits`), so between the fork and the publish only writers (and other indexes' batches)
+  ran. `job_window_frozen`: every version published in that window keeps the job's generation, count and `upkeep`
+  (the invariant `Inv.upw`). `upkeep_writer_not_overtaken`: a writer that escalates while `upkeep` is published is
+  never overtaken, so no writer in the window rebased. `cch_topology_review`'s fold proof cites these.
 * **5. `building_bound`, `pairs_counter_exact`, `overflow_covers`, `consume_overflow_rescans`,
   `consumed_does_not_come_back`** (§5 Bound). While Building, the log is under `B` or holds an Overflow. The
   counter is exact. An Overflow at `o` stands for every write up to `o`, and its consumer rescans; no pair is lost
@@ -96,9 +107,16 @@ what makes this abstraction sound.
   followed in its generation only by `Built` ones.
 * **Other claims.** `gen_const_within_version`. `commits_monotone`: no batch or job publish is reverted within a
   generation, which is the D6 claim of Appendix B V1.5/V2.4. `relink_exact`: CatchUp's walk "stopping at the first
-  `seq ≤ fork`" is exactly the published nodes after the fork. `fit_discard_is_ni`, `overtaken_pre_d6`,
-  `overtaken_d6`: these tie the fit and `overtaken` to native_index's proven models of `discarded_against` and
-  `overtaken`.
+  `seq ≤ fork`" is exactly the published nodes after the fork. `step_gen_mono`: from one published version to the
+  next the generation never falls. `builder_publish_bumps_commits`: a step that keeps
+  the data version leaves the entry unchanged or moves its count by one. `fit_discard_is_ni`, `overtaken_pre_d6`,
+  `overtaken_d6` (all *by definition*): these tie the fit and `overtaken` to native_index's proven models of
+  `discarded_against` and `overtaken`.
+* **Witnesses** (Witness.lean): the transitions above happen in reachable states. `fold_publish` (count 6 → 7,
+  `upkeep` and the log cleared), `row3_fold` (a writer forked before the fold commits after it: count 7, pair 9
+  resolved at 3), `row2_fits` and `row2_restart` (a writer forked at the Seal's version commits after the adoption:
+  `Built` with pair 4 at 1, or `Restart` under generation 1 with its node logged), `catchup_reachable` (the relink
+  of F3's state) and `adoption_restart_reachable` (B5's state under the design).
 
 ## Readings chosen (where 03 is ambiguous)
 
@@ -114,8 +132,10 @@ what makes this abstraction sound.
   off the lock only), so it forces `Restart`. `B5` shows the alternative loses writes.
 * **R5** (§5 Bound). The writer checks the bound after every change it makes to a Building log: append, hand-off,
   S7, relink and Restart. A check only on append is finding F4.
-* **R6** (§5, `commit.rs:85-103` @08c). Segments may flush on the fork before escalation, and any segment's flush
-  may hand off (N_max or B_gil). The rebase sees the fork's copy after those segments. This makes F2 reachable.
+* **R6** (§5, `commit.rs:85-103` @08c). The first segment flushes on the fork before escalation: at @08c only the
+  first `Commit` segment's `pending.commit` precedes `upgrade_to_write`, which is sticky. Any segment's flush may
+  hand off (N_max or B_gil). The rebase sees the fork's copy after that segment. This makes F2 reachable. The
+  model allows any prefix of the segments before escalation (`pre`), a superset.
 * **R7** (§7, D6). A fold or S6 publish moves `batches_published`, as `prepare(_, _, false)` does
   (`mvcc_graph.rs:310` @08c). The alternative is F5.
 * **R8** (§5 publish rules). For this index, `Swap` is `Same` (the batch's copy). An adopting batch on Same or
@@ -127,6 +147,10 @@ what makes this abstraction sound.
 * **R11**. A writer `Restart` takes the published copy's count (`rebased = theirs.clone()`, `versioned.rs:786`
   @08c) and a new generation. A hand-off is a new entry (count 0) on the base's lineage.
 * **R12**. The bound `B` (`max(1M, arcs/8)`) is a constant.
+* **R13** (§5 rows 2 and 3). The rebase's flush over the own nodes (`flushOwn`) is within budget, or else it is a
+  `Restart`. It never crosses a decay trigger (fold, S6, S7) and never hands off any other way, though the real §6
+  flush can. No safety consequence: a `setUp` there would have `since = v`, so it retains nothing older, and a
+  hand-off or S7 there would be a new generation like `Restart`.
 
 ## Findings (design-level, no code to reproduce; traces in Findings.lean)
 
@@ -151,7 +175,7 @@ what makes this abstraction sound.
   leaves a Building log over the bound with no Overflow (`F4_bound_only_on_append`). Say that the writer checks
   the bound whenever it creates or changes a Building log.
 * **F5 (minor, missing framework change).** §7's D6 list leaves out that a fold or S6 publish must move
-  `batches_published`. `overtaken_by_indexer_batches` gates on `batch_published_since` (`versioned.rs:729-747`
+  `batches_published`. `overtaken_by_indexer_batches` gates on `batch_published_since` (`versioned.rs:729-745`
   @08c). Without the bump, D6's `overtaken` is never asked, and the writer reverts the job
   (`B4_job_publish_must_bump_batches`).
 
@@ -168,7 +192,8 @@ Each loses a write or reverts a publish on a reachable state, and passes under t
 
 * **Abstracted away.** Topology, metric, ranks and rank allocation (I1′, P, I3′), Lemmas A and B, S2, the
   full-seed pass, the fold's bases and deltas (`added_since_fold` with `seq > F`) and S6's input order are all
-  reduced to `res` and `lineage`. Their correctness is M5's, or another proof's.
+  reduced to `res` and `lineage`. `cch_topology_review` covers ranks, I1′, P and the fold's bases and deltas for its
+  own model; that model is not composed with this one. The rest is M5's, or another proof's.
 * **Safety only.** Budgets, decay triggers and phase ends are free choices. Liveness is not modelled: convergence,
   `MAX_REDOS`, D2, and whether a job is ever enqueued (`indexes_to_build_since`, `standing`, tickets in the
   builder's job key). Jobs may fork from any held version at any time, which is a superset.

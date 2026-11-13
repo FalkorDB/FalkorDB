@@ -1,0 +1,43 @@
+$ git -C <worktree> log --oneline -1
+31ca1b802 CCH catch-up: a rebase error restarts the build; five overtaken builds fail it
+(with test.patch + fix.patch applied)
+$ cargo test -p graph --features index-falkordb --lib -- lean_r_f1 --nocapture
+   Compiling graph v0.1.0 (/Users/dvirdukhan/Code/worktrees/FalkorDB/r-f1-tmp/wt/graph)
+warning: unused import: `atomic_refcell::AtomicRefCell`
+    --> graph/src/effects/v3/emit.rs:1005:9
+     |
+1005 |     use atomic_refcell::AtomicRefCell;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `orx_tree::NodeMut`
+   --> graph/src/runtime/vectorized.rs:308:9
+    |
+308 |     use orx_tree::NodeMut;
+    |         ^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> graph/src/graph/graph/cch_index_tests.rs:755:21
+    |
+755 |                 let mut edges: Vec<(u64, u64, f64)> =
+    |                     ----^^^^^
+    |                     |
+    |                     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: `graph` (lib test) generated 3 warnings (run `cargo fix --lib -p graph --tests` to apply 3 suggestions)
+    Finished `test` profile [optimized + debuginfo] target(s) in 18.63s
+     Running unittests src/lib.rs (/Users/dvirdukhan/Code/worktrees/FalkorDB/r-f1-tmp/target/debug/deps/graph-20d74aa81878f99a)
+
+running 1 test
+R-F1 arc 0-1 down: scoped 0x8000000000000000 full 0x8000000000000000
+R-F1 arc 1-2 up:   scoped 0x8000000000000000 full 0x8000000000000000
+R-F1 scoped == full under f64 `==` (snapshot comparison): yes
+R-F1 scoped bit-identical to full: yes
+test index::falkordb::cch::partial::tests::lean_r_f1_negative_zero_seed_bit_identical_to_full ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 941 filtered out; finished in 0.01s
+
+exit=0

@@ -4,7 +4,7 @@
 - the design and its research;
 - the prototype reports and their code;
 - a walkthrough of the design on a 20-node example;
-- a Lean review of the write log.
+- five Lean projects that check the design, and repros of the two bugs they confirmed.
 
 **State in one paragraph.** The redesign replaces today's CchInput CSR copy and feral with four things. Feral is a Rust METIS port; its crates are an MIT clean-room reimplementation by John Kitchin, and FalkorDB/feral is our fork. The replacements are:
 - our own nested dissection on GraphBLAS;
@@ -12,7 +12,7 @@
 - a write log that lets the native index builder build in batches under MVCC;
 - a scoped recompute of the arcs a commit changes.
 
-The design is on paper at revision 3.1 and has been reviewed twice on paper. Prototypes have tested its two riskiest assumptions, the read path and the ordering speed, and a Lean model has checked its write-log rules. Decision D5 (how the ordering meets its time bar) blocks PR 6. No PR of the redesign's plan has been opened.
+The design is on paper at revision 3.1 and has been reviewed twice on paper. Prototypes have tested its two riskiest assumptions, the read path and the ordering speed, and five Lean projects check its write log, supergraph, recompute, topology and the prototype's optimized passes. Decision D5 (how the ordering meets its time bar) blocks PR 6. No PR of the redesign's plan has been opened.
 
 ## Code state
 
@@ -63,7 +63,7 @@ Most of the optimized prototype's work runs as Rust passes over GraphBLAS's own 
 ## Open work, in the order we would do it
 
 1. **Fix 03's text.** These are cheap, and PR 4's spec depends on them.
-   - Fold in the Lean review's five findings, F1–F5 (see Proofs). F1 is a lost write if one sentence is read literally; its fix is one sentence.
+   - Fold in the Lean findings (see Proofs): F1–F5, T2, T3, N1, N2, R-W1, and two wording fixes from the topology proof (P holds "for r < n_r′"; §2's "cleared by a fold" should match §6, which keeps the arcs with seq > F). F1 and T2 break the design if read literally; each fix is one sentence.
    - Merge `00-results.md`'s Change list:
      - the mandatory weight cap;
      - the anchor-grouping 2-hop pass;
@@ -87,8 +87,9 @@ Most of the optimized prototype's work runs as Rust passes over GraphBLAS's own 
      - The O(1) hand-over of Rust buffers to GraphBLAS relies on both sides using one allocator. In the module, GraphBLAS allocates with RedisAlloc, so the arrays must come from it.
      - The Rust passes trust their input, and need debug assertions.
    - The team doc frames D5 as "how the ordering meets its time bar", with four options: (a) more builder threads, (b) reuse, (c) mutual matching in feral, (d) keep feral. 03's own D5 text still says "builder GraphBLAS threads". Align them.
-3. **Start PR 1 (GraphBLAS wrappers) and PR 2 (`ChunkedArr`) alongside D5.** Neither depends on it. PR 3 (base + delta topology, still fed by feral) gates on M2 and M3. The full plan is 03 §9, PRs 1–10.
-4. **The measurements 03 §9 lists that nobody has run:**
+3. **Fix R-F1 on the stack, at `cch/08-maint`** (the first branch with this `partial.rs`): compare `to_bits()`. The test and the fix are in `repro/r-f1-signed-zero/`; both patches apply from `cch/08-maint` through `cch/10-rdb-v20`. Check P-seed too: the full path takes a pair's minimum with GraphBLAS's MIN monoid and the scoped path with `cheapest_edge`'s `<`, so parallel +0.0 and −0.0 edges may give different zeros. That is R-F1's class on the seed side; it is unconfirmed, and `to_bits()` alone may not give bit identity.
+4. **Start PR 1 (GraphBLAS wrappers) and PR 2 (`ChunkedArr`) alongside D5.** Neither depends on it. PR 3 (base + delta topology, still fed by feral) gates on M2 and M3; it must also handle T1 (sort S2's Down batch and the fold's arcs before `insert_batch` or `from_sorted`) and read relax's slots by id after S2 (`B2_positional_id_breaks_after_s2`). The full plan is 03 §9, PRs 1–10.
+5. **The measurements 03 §9 lists that nobody has run:**
    - M1 on the 1.54M-node California, a 9M-edge graph, Linux and 16 threads, with query p99 against `:edge-c`, and memory;
    - M2's p99 against `:edge-c`;
    - M3 to M8.
@@ -118,36 +119,61 @@ for c in checks/c*.py; do python3 "$c"; done   # independent checks; c1–c5 and
 
 ## Proofs
 
-**Today's proofs, at this branch's base.**
-- `bash proofs/lean_ci.sh` passes for `native_index`, `cow_btree` and `versioned_matrix`, and `bash proofs/coverage.sh` reports 0 unmatched rows.
-- In `cch/mod.rs`, 15 of 20 functions are PROVEN. 9 of those are main's stubs, proven to panic, and 3 are `Csr` helpers. The stack's real hooks are not proven.
-- `order.rs`, `customize.rs`, `query.rs` and `nd.rs` have no proof coverage. `input.rs` is a stub on main.
+Five Lean 4 projects check the design before its code exists. Where real code exists they model it line by line: today's `order.rs`, `relax` and `seed`'s allocation, the stack's `partial.rs` (its scoped path), and the prototype patch's kept passes, apart from `book` and `npar`. Each project's root `.lean` header is its full report: the code-line or 03-section table, the theorems, the readings it chose where 03 is ambiguous, its findings and its gaps. `proofs/FINDINGS.md`, section "CCH redesign review (2026-11-13)", lists every finding in one place, including the unconfirmed ones.
 
-**The write log, checked in Lean before any code: `proofs/cch_redesign_review/`.**
-- **What it models.** The log, publish, rebase, hand-off and Built-entry job rules of 03 §5–§7, as steps that may interleave in any order. It reuses `native_index`'s definitions of today's fit and `overtaken`. Ranks, S2 and the metric are reduced to "the version up to which each pair is reflected".
-- **What it proves,** for every reachable state (`reach_inv`):
-  - no logged write is lost (`no_lost_write`);
-  - a Building entry serves only the fallback;
-  - a Built entry keeps its log only while upkeep is set, and then exactly the nodes after `since`;
-  - a stale job publishes nothing;
-  - while Building, the log stays under the bound or carries an Overflow, and a consumed Overflow never comes back;
-  - each row of the writer-rebase table, and the fourth row cannot happen.
-- **Gates and breaks.** The gates pass: `lean_ci.sh cch_redesign_review` ok, coverage 0 unmatched. Each of four deliberate breaks breaks the invariant. Three of them reproduce bugs that the earlier paper reviews found, and the fourth checks reading R4.
-- **The readings it chose,** where 03 is ambiguous: R1–R12, listed in `CchRedesignReview.lean`'s header.
-- **Five findings, design-level.** There is no code to reproduce them yet. The traces are in `Findings.lean`.
-  - **F1, a lost write if read literally.** §6 Retention says that past the bound, the writer "clears upkeep and the log". If that includes the writer's own node, a writer forked before an S6 publish loses its write. This contradicts §5's "a writer always keeps its own nodes". Fix: "clears upkeep and the retained nodes (those older than its own version)".
-  - **F2.** A segment that hands off before its writer escalates takes a new generation, so `overtaken` is false, and its copy can revert a published S6. No write is lost, but S6's work is. Fix: rebase before the first flush, or decide `overtaken` on the fork's original entry.
-  - **F3.** CatchUp's "pairs = remainder plus theirs" double-counts if "theirs" means the published counter, which causes needless Overflows. Say it means the relinked nodes' pairs.
-  - **F4.** If the bound is checked only on append, a hand-off of a large segment leaves a Building log over the bound with no Overflow. Say the bound is checked after every change to a Building log.
-  - **F5, missing from §7.** A fold or S6 publish must also move `batches_published`. The rebase gate checks it (`overtaken_by_indexer_batches`, `versioned.rs:729-747` at `cch/08c-build-catch-up`), and without the bump a writer reverts the job.
-- **What goes stale when the design lands.** `STALE_WHEN_LANDED.md` lists which PROVEN rows change, and in which PR:
-  - the `writer_rebase` and `indexer_catch_up` hooks (PR 4);
-  - `overtaken`, the fit and `indexer_apply` (PR 9);
-  - the `Csr::*` rows, removed in PR 7;
-  - the CCH rows the stack already changes.
+Each project was reviewed by an independent agent, the authors fixed every finding, and the reviewers then verified the fixes. `bash proofs/lean_ci.sh` passes for all five, and `bash proofs/coverage.sh` reports 0 unmatched rows. The reviewers ran `#print axioms` on every headline theorem: each uses only `propext`, `Classical.choice` and `Quot.sound`. A clean checkout of this commit builds all five.
 
-  Each PR updates its rows as it lands.
-- **Not modelled:** liveness (convergence, `MAX_REDOS`, D2), the lock deadline shared across indexes, ranks, Lemmas A and B, and the fold's bases and deltas.
+| Project | What it proves |
+|---|---|
+| `cch_redesign_review` | The write log, publish rules, writer rebase, hand-off and Built-entry jobs (03 §5–§7), over every interleaving. No logged write is lost (`no_lost_write`), a Building entry serves only the fallback, and retention, stale jobs and the bound all hold. `fitted_job_only_writers_between`, `job_window_frozen` and `upkeep_writer_not_overtaken`: a fitted job's window keeps its generation and state, and only writers ran in it, none of them rebasing. Witnesses show the key transitions are reachable: a fold publish, writer rebase rows 2 (within and over budget) and 3, a CatchUp relink, and an adoption Restart. |
+| `cch_supergraph_review` | The masked skeleton read is exactly the live pattern, and B′ = (B ∖ D) ∪ A is exactly the live pattern at V_sg, linked to `no_lost_write`. Today's `chordal_supergraph` is exactly the elimination game, chordal and panic-free. Ids are row-major, and I7 holds. **All 20 functions of `order.rs` are now PROVEN** (they were 0). |
+| `cch_recompute_review` | Today's `relax` computes the triangle minimum with the strict-`<` middle, and is **PROVEN** through a bridge to the supergraph proof. The scoped recompute gives the full customization's weights and middles (`scoped_agrees`), and Lemma A holds. For the stack's `f64` code it gives the `==`-agreement form (`recustomize_seeded_agrees`). |
+| `cch_topology_review` | Base + delta: merged rows strictly ascending (I3′); ids unique, below `arc_capacity` and never reused; I7; I1′ and P under rank allocation, node delete and id reuse. A write in one version leaves every other version's reads unchanged (`WeightArr::set`, the cow_btree delta). A fold changes nothing a reader sees. It feeds the recompute proof at every state of a lineage (`lineage_scoped_agrees`). |
+| `cch_coarsen_review` | Each kept optimized pass of the ordering prototype equals the GraphBLAS formula it replaced, on every valid input: contraction, numbering and Cᵀ, the split, keys and cap, the reuse level, the gather and the threaded assembly. `book` is covered only at the level of the numbering's decisions, and `npar` is not modelled. Rows come out sorted, and matching gives a valid capped pairing. Ids stay under 32 bits up to (depth + 1)·n, given `nparts ≤ n`; values on contracted levels stay at most nnz(A_0); reuse-level values are bounded only relative to their parent. |
+
+Lake dependencies: supergraph requires redesign; recompute requires supergraph; topology requires recompute (and through it the other two) and `cow_btree`; coarsen stands alone, requiring only `graphblas_wrappers`. There is no cycle.
+
+Coverage of today's CCH code after this work: `order.rs` 20/20 PROVEN, `cch/mod.rs` 17/20, `customize.rs` 1/13 (`relax`; `seed`, `customize` and `validate` stay NOT COVERED), `query.rs` 0/8, `nd.rs` 0/3.
+
+**Still open.** These premises are named in the headers and not proved:
+- chordality after S2, that Davis–Hager's closure ends chordal;
+- that writers log every pair whose liveness their commit changes (`Records`), which PR 4 must make true;
+- the composition of the topology and write-log models. Their state types differ, so the step from the write-log model's writers to the topology model's `WLin` is argued. Everything else about a fold's window is proved: the generation stays fixed, only writers change this index's entry, and no writer rebases (`fitted_job_only_writer_steps`, `fitted_window_writer_no_rebase`);
+- P-seed, that the seed function is pure and gives the same bits on both paths (recompute; see Open work item 3);
+- FreshOk's injectivity of π and its held endpoints (topology), and `halloc` in `bprime_rank` (supergraph);
+- `hres` from reachability;
+- Lemma B (S5);
+- the prototype's numbering facts behind `B2Pre`, `BookPre` and the gathered level's `gw > 0` (argued, not proved), the bounds on B2 offsets, `npar`, and the numbering line by line;
+- liveness: convergence and D2.
+
+**Confirmed bugs, with repros in `repro/`:**
+- **R-F1, on the stack (`partial.rs:221-236`, from `cch/08-maint` through `cch/10-rdb-v20`).** The scoped recompute tests "changed" with `f64 !=`, so a seed that only flips the sign of a zero is never written or propagated. The result is `==`-equal to a full customization but not bit-identical. `repro/r-f1-signed-zero/` has a failing test and the `to_bits()` fix, with which all 7 `partial.rs` tests pass.
+- **H2, in the prototype.** `book` works only with `pk` and `hb2` on (`repro/h2-switch-dependency/`); that `npar` has the same dependency is read from the code, not run. This matters if module code keeps any of the old paths.
+
+**Findings in 03's text,** each with a Lean trace unless marked:
+- **F1, a lost write if read literally.** Past the bound, the writer "clears upkeep and the log".
+- **F2.** A segment that hands off before its writer escalates can revert a published S6.
+- **F3, F4.** Wording: the CatchUp pair count, and when the bound is checked.
+- **F5.** A fold or S6 publish must also move `batches_published`.
+- **T2, I1′ broken if read literally.** S6's rank release must also clear `rank_of` and free the rank.
+- **T3, found by reading** (the model's unbounded rows hide it, reading R16). The base is n_r wide and the delta n_r′, so a fold's new base needs a longer `Ap`; 03 is silent.
+- **N1.** The full-seed pass's union equals the live value with no premise, though 03 cites the tensor invariants for it.
+- **N2.** Slabs must be read at or before V_sg; 03 says "any" snapshot.
+- **N3.** `Records` (writers log every pair they change) carries the weight of B′'s exactness: without it, a created edge that is not logged lacks an arc, and a deleted one keeps its arc.
+- **R-W1.** The middle is the first x that attains the minimum, not "the first x to win a strict `<`".
+
+**Notes on existing code,** not on 03:
+- **T1, for PR 3.** S2's Down batch and the fold's arcs must be sorted before `insert_batch` or `from_sorted` (`cow_btree/mod.rs:204-207, 250-253`).
+- **H1, H3, for the module, from the prototype.** A dead-column guard in the contraction pass; vertex weights ≥ 1 for the numbering patch.
+- **N4, on main, unreachable today.** `Topology::from_order` does not check that the skeleton is mirrored; `nd.rs:54` checks it before every call.
+
+**When the design lands.** `cch_redesign_review/STALE_WHEN_LANDED.md` lists the PROVEN rows each PR changes:
+- the 23 rows this work made PROVEN (`order.rs`, `id_index`/`index_id`, `relax`): their lines move on the stack, and PR 3 changes `relax`'s slot reads and the `Topology` accessors;
+- `writer_rebase` and `indexer_catch_up` (PR 4);
+- `overtaken`, the fit and `indexer_apply` (PR 9);
+- `Csr::*` (removed in PR 7).
+
+The `order.rs` model then moves from `cch_supergraph_review` to an owning project, as its header says.
 
 ## Conventions this work followed
 

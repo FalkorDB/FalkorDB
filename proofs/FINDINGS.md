@@ -561,3 +561,40 @@ Confirmed bug found by these reviews (pre-existing on main, not caused by any of
 - GraphBLAS, RediSearch, the Redis module API and QuickJS are hypotheses or axioms at the FFI boundary.
 - `Arc`, concurrency and HashMap iteration order are not modelled. Data races are modelled only for resources listed in `SC.Guarded.guard` (#3483); FFI axioms do not yet state their thread context.
 - Aeneas extraction works only for small pure modules (`narrow_int::width_for` was proven on extracted code); larger modules are blocked by iterators, closures, `dyn`, `roaring` and `smallvec`. The pilot (`proofs/aeneas_pilot`) was removed on 2026-10-17: it added no coverage (`width_for` is PROVEN in id_list and runtime_ds), needed Charon/Aeneas on Lean v4.31, and committed generated Lean. Its last version is in 26cf24871.
+
+## CCH redesign review (2026-11-13)
+
+Five projects check the CCH redesign (`.handover/cch-redesign/design/03-design.md`, revision 3.1) before any of its code exists, plus today's ordering and customization code and the stack's scoped recompute. They live on branch `cch/graphblas-redesign-handoff`.
+- `cch_redesign_review`: the write log, publish, rebase, hand-off and Built-entry job rules; no lost write in any interleaving.
+- `cch_supergraph_review`: the masked skeleton read, B′ = (B ∖ D) ∪ A, and `order.rs` (the elimination game, chordality, arc ids); 22 rows PROVEN.
+- `cch_recompute_review`: `relax` (PROVEN, through bridges to `cch_supergraph_review` and a model of `seed`'s allocation) and the scoped recompute against full customization; Lemma A.
+- `cch_topology_review`: base + delta topology (I3′, ids, I7, I1′, P), MVCC isolation and fold equivalence.
+- `cch_coarsen_review`: the ordering prototype's optimized Rust passes against the GraphBLAS formulas they replaced.
+
+### Confirmed by a repro
+
+| id | where | what | repro |
+| --- | --- | --- | --- |
+| R-F1 | `partial.rs:221-236` from `cch/08-maint` through `cch/10-rdb-v20` (blob 78d239d9c); stack code, not on main | The scoped recompute tests "changed" with `f64 !=`, so a seed that only flips the sign of a zero is neither written nor propagated. The result is `==`-equal to a full customization but not bit-identical, against the "bit-identical" claims at `partial.rs:19-21, :83`. Distances are unaffected. Fix: compare `to_bits()`. | `.handover/cch-redesign/repro/r-f1-signed-zero/`: the test fails at 31ca1b802; with `fix.patch` it and all 7 `partial.rs` tests pass |
+| H2 | the ordering prototype: the bench code is not in the source tree; its patch is `.handover/cch-redesign/prototypes/code/m1-optimize/m1opt.patch` @ 7df8e5887 | The `book` switch only works with `pk` and `hb2` on. `M1O=book` and `hb2,book` panic ("projection lost vertices"). `pk,book` fails the B1 = B2 check, with 10 of 13 hashes differing. No reported number is affected. That `npar` has the same dependency is read from the code (`number_par` leaves the same arrays empty) and is not run. | `.handover/cch-redesign/repro/h2-switch-dependency/` |
+
+### Design-level, in 03's text (no code to reproduce yet; each is a Lean trace unless marked)
+
+- **F1 (major if read literally)**, 03 §6 Retention: "clears upkeep and the log" past the bound would drop the writer's own node and lose its write. Fix: clear only the retained nodes older than the writer's version.
+- **F2**, a segment that hands off before its writer escalates can revert a published S6 (work lost, no write lost).
+- **F3, F4**, CatchUp's pair count and when the bound is checked: wording.
+- **F5**, 03 §7: a fold or S6 publish must also move `batches_published`.
+- **T2 (major if read literally)**, 03 §6: S6's rank release sets only `node_of = None`, which breaks I1′ and lets two nodes share a rank. Fix: also clear `rank_of` and add the rank to `free_ranks`.
+- **T3**, found by reading, not by a trace (the topology model's unbounded rows hide it, reading R16), 03 §6 Fold job: the base is n_r wide, but the delta holds top ranks up to n_r′, so the fold's new base needs an `Ap` of n_r′ + 1 entries. 03 is silent on this.
+- **N1**, 03 §5 "The full-seed pass": the seed union equals the live value with no premise, though 03 cites the tensor invariants for it.
+- **N2**, 03 §5: B′ is live only if every slab is read at or before V_sg; 03 says "any" snapshot.
+- **N3**, 03 §4 step 2: `Records` (writers log every pair whose liveness their commit changes) carries the weight of B′'s exactness. Without it, a created edge that is not logged lacks an arc, and a deleted one keeps its arc.
+- **Topology wording**, 03 §2: P should say "for r < n_r′", and "`added_since_fold` cleared by a fold" should match §6, which keeps the arcs with seq > F.
+- **R-W1**, 03 §6b's "first x to win a strict `<`" is wrong; the middle is the first x that attains the minimum.
+
+### Notes on existing code (not on 03)
+
+- **T1**, for PR 3: S2's Down batch and the fold's arcs must be sorted for `cow_btree`'s `insert_batch` and `from_sorted` asserts (`cow_btree/mod.rs:204-207, 250-253` on main), if PR 3 uses them.
+- **H1, H3**, the prototype's contraction pass needs a dead-column guard, and its renumbering shortcut needs vertex weights ≥ 1.
+- **N4**, Lean-only and unreachable: `Topology::from_order` does not check that the skeleton is mirrored; `nd.rs:54` checks it before every call today.
+- **P-seed, unconfirmed**, stack code: the full path takes a pair's minimum with GraphBLAS's MIN monoid (`CchInput::build`), the scoped path with `weight < best` (`input/pair_weights.rs:29`). With parallel +0.0 and −0.0 edges they may pick different zeros, so the `to_bits()` fix for R-F1 alone may not give bit identity. Not reproduced.

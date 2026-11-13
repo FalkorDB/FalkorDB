@@ -1,7 +1,7 @@
 # COVERAGE rows the CCH redesign makes stale
 
 Design: `.handover/cch-redesign/design/03-design.md`, revision 3.1. PR numbers are 03 §9's.
-Rows: `proofs/*/COVERAGE.tsv` on `origin/main` 8cb999d6d, buckets PROVEN or CONDITIONAL only.
+Rows: `proofs/*/COVERAGE.tsv` on `origin/main` d6fcd5aac, buckets PROVEN or CONDITIONAL only.
 Framework code: read at `origin/cch/08c-build-catch-up` 31ca1b802 ("@08c").
 
 Column "@08c" says whether the CCH stack already makes the row stale before any of 03 lands.
@@ -42,10 +42,20 @@ Where it does, the design changes the code again.
 | `native_index:183`, `:184` CCH `indexer_insert`, `batch_len` | **Unchanged.** Still `unreachable!` at @08c (`cch/mod.rs:578-593`). 03 keeps CCH's catch-up as `Refresh`, so they stay unreachable; only the cited lines move. |
 | `native_index:165`, `:166` CCH `entry`, `entry_mut` | **Unchanged.** |
 | `native_index:144` `Graph::rebase_onto_indexer_batches`, `:149` `MvccGraph::rebase_onto_indexer_batches` | **Code unchanged.** |
-| `native_index:145` `Graph::overtaken_by_indexer_batches` | **Code unchanged, but a new premise.** The gate is `batch_published_since` (`versioned.rs:729-747` @08c). A fold or S6 publish must move `batches_published`, as `MvccGraph::prepare(_, _, false)` does (`mvcc_graph.rs:310` @08c). Otherwise D6's `overtaken` is never asked, and a writer reverts the job (this review: `B4_job_publish_must_bump_batches`). 03 §7 does not list this. |
+| `native_index:145` `Graph::overtaken_by_indexer_batches` | **Code unchanged, but a new premise.** The gate is `batch_published_since` (`versioned.rs:729-745` @08c). A fold or S6 publish must move `batches_published`, as `MvccGraph::prepare(_, _, false)` does (`mvcc_graph.rs:310` @08c). Otherwise D6's `overtaken` is never asked, and a writer reverts the job (this review: `B4_job_publish_must_bump_batches`). 03 §7 does not list this. |
 | `versioned_matrix:129`, `:130` `MvccGraph::is_stale`, `prepare` | **Unchanged, relied on.** `is_stale` is what makes rebase row 4 unreachable (`row4_unreachable`). `prepare` moves `batches_published` (above). |
 | `cow_btree` rows (`CowBTree::new`, `insert`, `remove`, `range`, `contains_key`, `heap_bytes`, `Leaf::insert`, `Leaf::remove`; all PROVEN) | **Refuted: no change.** The delta is an existing `CowBTree` keyed by `(row ≪ 32) \| col`, with the arc id as doc (§2). S5's deletes use the existing `remove` (§6b, `cow_btree/mod.rs:20-23`). These rows back the design's "path-copy, O(log n) per insert" and "≤ 16 B per entry"; they keep holding. |
 | `versioned_matrix` `tensor.rs` rows (`fwd_m`/`fwd_dp`/`fwd_dm` accessors, `fwd_iter` with `shadow_dp_wins`, `set_all_from_slices`/`remove_all` with `addBatch_correct`/`removeBatch_correct`, `flush`) | **Refuted: no change; relied on.** The full-seed pass scores `m⟨¬dm ∧ ¬dp⟩ ∪ dp`. It relies on `dp` shadowing `m` and on `dp ∩ dm = ∅` (`tensor.rs:52-108`, §5 "The full-seed pass"). 03 does not modify `tensor.rs`. |
 | `versioned_matrix` `versioned_matrix.rs` rows | **Refuted: no change.** §2 rejects `VersionedMatrix<u32>` for the topology. |
 | `graphblas_wrappers:1227`, `:1232` `CsrExport::row_count`, `copy_out_csr` | **NOT COVERED, so outside this table.** Deleted with the `CchInput` CSR (PR 7). So are the stack's own rows for the CSR export and `CchInput` (`cch/05-inputs` c42256475). |
 | `online_build.rs` rows (`standing`, `Job::step`, …) | **NOT COVERED, but changed.** `standing` lets a job continue only while its generation is `Building` (`online_build.rs:447-457` @08c). A Built-entry job (D6) needs another rule, keyed by ticket. |
+
+## Rows made PROVEN on 2026-11-13 (`cch_supergraph_review`, `cch_recompute_review`)
+
+These 23 rows cite origin/main d6fcd5aac. The stack moves their lines, and the design changes some of them.
+
+| Row | On the stack (`cch/10-rdb-v20`) | Design |
+| --- | --- | --- |
+| `order.rs` (20 rows): `build` 180, `from_order` 195, `arc_slot` 287, `invert` 333, `chordal_supergraph` 381, `transpose` 441, and the accessors | lines move: `build` 178, `from_order` 193, `arc_slot` 284, `invert` 329, `chordal_supergraph` 377, `transpose` 437; `Topology::down` becomes production code (`order.rs:268-275` at @08c) | PR 3 changes the `Topology` accessors, `up_range` and `arc_slot` (base + delta, ids by `Ax`); PR 6/7 replace `build`/`from_order`'s input (GraphBLAS ND, B′) |
+| `cch/mod.rs` `id_index` 58, `index_id` 66 | move to 69, 77 | unchanged |
+| `customize.rs` `relax` 264 | moves to 491 in a `customize.rs` with +703 lines | PR 3: after S2 the positional `x_slots_start + i` is not the id (`cch_topology_review` `B2_positional_id_breaks_after_s2`); relax must read ids |

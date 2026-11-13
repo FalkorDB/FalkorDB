@@ -128,7 +128,7 @@ theorem priv_rebase {bt : Nat} {e1 ce : Entry} (h : Priv B c w O n0 e1 nx) (hng 
   | building ph1 =>
     cases h2 : ce.st with
     | building ph2 =>
-      simp only [rebase, h1, h2, D, if_true]
+      simp only [rebase, h1, h2, D, ite_true]
       exact priv_relink h2 h hng hcur hcf
     | built up =>
       have hbt : ce.isBuilt = true := isBuilt_built ce up h2

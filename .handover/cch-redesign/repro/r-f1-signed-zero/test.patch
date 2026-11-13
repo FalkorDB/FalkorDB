@@ -1,0 +1,84 @@
+diff --git a/graph/src/index/falkordb/cch/partial.rs b/graph/src/index/falkordb/cch/partial.rs
+index 78d239d9c..c7e5d41d1 100644
+--- a/graph/src/index/falkordb/cch/partial.rs
++++ b/graph/src/index/falkordb/cch/partial.rs
+@@ -678,4 +678,79 @@ mod tests {
+         );
+         assert_eq!(snapshot(&cch.metric), before);
+     }
++
++    /// Lean `cch_recompute_review` finding R-F1. A seed that flips between `+0.0` and `-0.0`
++    /// compares equal under `!=`, so the scoped pass neither writes it (`:225-230`) nor
++    /// propagates it (`:221-222, :241`), while a full customization stores the new sign.
++    /// The result stays `==`-equal, mids included (checked first); the bit-identity check
++    /// after it fails until the change test and the writes compare `to_bits()`.
++    #[test]
++    fn lean_r_f1_negative_zero_seed_bit_identical_to_full() {
++        use crate::graph::graph::NodeId;
++        use std::sync::Arc;
++        crate::graph::graphblas::test_init::ensure_init();
++        // 8 nodes, so one changed arc stays under the n / 8 valve; 3..8 are isolated.
++        let n: u64 = 8;
++        let build = |w_1_to_0: f64| {
++            let mut g = Matrix::<f64>::new(n, n);
++            g.set(1, 0, w_1_to_0); // downward seed of arc (0, 1)
++            g.set(0, 1, 5.0);
++            g.set(0, 2, -0.0); // upward seed of arc (0, 2)
++            g.set(2, 0, 5.0);
++            g
++        };
++        let old = to_input(&build(0.0));
++        let order: Vec<NodeId> = (0..n).map(NodeId::from).collect();
++        let topology = Topology::from_order(&old.skeleton, order).expect("phase 1");
++        let metric = customize(&topology, &old.weights).expect("phase 2");
++        let mut cch = Cch {
++            topology: Arc::new(topology),
++            metric,
++        };
++        let rank = Rank::new;
++        let a01 = cch.topology.arc_slot(rank(0), rank(1)).expect("arc 0-1");
++        let a12 = cch.topology.arc_slot(rank(1), rank(2)).expect("fill arc 1-2");
++        // Before the change: 1 -> 0 -> 2 = +0.0 + -0.0 = +0.0.
++        assert_eq!(cch.metric.upward_weight[a12].to_bits(), 0.0f64.to_bits());
++
++        // The weight 1 -> 0 goes from +0.0 to -0.0.
++        let new = to_input(&build(-0.0));
++        let outcome = seeded(&mut cch, &[(1, 0)], &new.weights).unwrap();
++        assert!(matches!(outcome, Recustomized::Scoped { .. }), "{outcome:?}");
++        let fresh = customize(&cch.topology, &new.weights).expect("full");
++
++        let bits = |w: f64| w.to_bits();
++        eprintln!(
++            "R-F1 arc 0-1 down: scoped {:#018x} full {:#018x}",
++            bits(cch.metric.downward_weight[a01]),
++            bits(fresh.downward_weight[a01]),
++        );
++        eprintln!(
++            "R-F1 arc 1-2 up:   scoped {:#018x} full {:#018x}",
++            bits(cch.metric.upward_weight[a12]),
++            bits(fresh.upward_weight[a12]),
++        );
++
++        // `==`-equal on every arc, mids included: what the repo's tests compare.
++        assert_eq!(snapshot(&cch.metric), full(&cch, &new.weights));
++        eprintln!("R-F1 scoped == full under f64 `==` (snapshot comparison): yes");
++
++        // Bit identity, the claim at `:19-21` and `:83`.
++        let differing: Vec<(usize, &str, u64, u64)> = (0..cch.topology.arc_count())
++            .flat_map(|slot| {
++                [
++                    ("up", cch.metric.upward_weight[slot], fresh.upward_weight[slot]),
++                    ("down", cch.metric.downward_weight[slot], fresh.downward_weight[slot]),
++                ]
++                .into_iter()
++                .filter(|&(_, s, f)| bits(s) != bits(f))
++                .map(move |(dir, s, f)| (slot, dir, bits(s), bits(f)))
++            })
++            .collect();
++        assert!(
++            differing.is_empty(),
++            "scoped is ==-equal to full but not bit-identical: (slot, direction, scoped bits, full bits) {differing:x?}"
++        );
++        eprintln!("R-F1 scoped bit-identical to full: yes");
++    }
+ }

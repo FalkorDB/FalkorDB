@@ -1,0 +1,15 @@
+BIN md5=7b2155e335d72a6feac296e35eb0e231
+ENV M1O=hb2,book M1_THREADS=1 M1_RUNS=0 M1_DEPTHS=3 M1_FERAL=0
+JIT: RUN
+CSRTYPES p=u32 i=i32 x=i32
+CSRTYPES p=u32 i=i32 x=i32
+CSRTYPES p=u32 i=i32 x=i32
+LABELHASH 097d7616e92ed25f
+CHECKS-PREP Checks { split_fail: 0, eq_levels: 0, eq_fail: 0, b1_checked: 0, b1_invalid: 0, w_fail: 0, acct_levels: 65, acct_fail: 0, match_calls_b: 0, cs_cap_checked: 0, cs_cap_fail: 0, cs_w_checked: 0, cs_w_fail: 0, sep_checked: 3, sep_fail: 0, fp_compared: 0, fp_fail: 0, hash_compared: 0, hash_fail: 0, rule_cells: 0, rule_same: 0, rule_plim: 0, rule_fail: 0, rule_percell_diff: 0 }
+HASH threads=1 path=D0 depth=0 hash=52860a81d7dafc4b items=146
+HASH threads=1 path=SPLIT depth=1 hash=bdc8946af51f7533 items=2
+HASH threads=1 path=R depth=1 hash=2a8b52e81c67a86e items=140
+thread 'graph::graphblas::m1_coarsen_bench::reuse::m1_reuse' (82464) panicked at graph/src/graph/graphblas/m1_reuse_bench.rs:1140:9:
+assertion `left == right` failed: CHECK FAILED: projection lost vertices
+test graph::graphblas::m1_coarsen_bench::reuse::m1_reuse ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 854 filtered out; finished in 3.20s

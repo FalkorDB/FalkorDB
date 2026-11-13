@@ -127,13 +127,13 @@ theorem covered_mono {a b : List Node} (h : ∀ n ∈ a, n ∈ b) {s : Nat} {p :
   obtain ⟨n, hn, hh⟩ := hc; exact ⟨n, h n hn, hh⟩
 
 theorem covered_append_left {a : List Node} (b : List Node) {s p} (h : covered a s p) : covered (a ++ b) s p :=
-  covered_mono (fun n hn => List.mem_append_left b hn) h
+  covered_mono (fun _ hn => List.mem_append_left b hn) h
 
 theorem covered_append_right (a : List Node) {b : List Node} {s p} (h : covered b s p) : covered (a ++ b) s p :=
-  covered_mono (fun n hn => List.mem_append_right a hn) h
+  covered_mono (fun _ hn => List.mem_append_right a hn) h
 
 theorem covered_cons (n : Node) {l : List Node} {s p} (h : covered l s p) : covered (n :: l) s p :=
-  covered_mono (fun m hm => List.mem_cons_of_mem n hm) h
+  covered_mono (fun _ hm => List.mem_cons_of_mem n hm) h
 
 /-- An Overflow at `v` covers every write at or before `v`. -/
 theorem covered_ov {l : List Node} {v s : Nat} (p : Pair) (h : ⟨v, .overflow⟩ ∈ l) (hs : s ≤ v) :
@@ -152,7 +152,7 @@ theorem takeWhile_seam {P : Node → Bool} (a b : List Node) (ha : ∀ n ∈ a, 
   induction a with
   | nil => cases b with
     | nil => rfl
-    | cons m b => simp [List.takeWhile, hb m (List.mem_cons_self ..)]
+    | cons m b => simp [hb m (List.mem_cons_self ..)]
   | cons n a ih =>
     simp only [List.cons_append, List.takeWhile, ha n (List.mem_cons_self ..)]
     rw [ih (fun m hm => ha m (List.mem_cons_of_mem n hm))]

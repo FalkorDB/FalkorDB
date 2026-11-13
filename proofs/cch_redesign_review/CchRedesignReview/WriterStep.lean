@@ -14,7 +14,7 @@ namespace CchReview
 def Track (B c n0 : Nat) (ce e : Entry) : Prop :=
   (n0 ≤ e.gen ∧ e.isBuilt = false) ∨
   (e.gen = ce.gen ∧ e.commits = ce.commits ∧ e.isBuilt = ce.isBuilt ∧ (e.isBuilt = false → Ext B c ce e) ∧
-    ∀ u, e.upkeep = some u → ce.upkeep = some u ∨ n0 ≤ u.ticket)
+    ∀ u, e.upkeep = some u → ce.upkeep = some u ∨ (n0 ≤ u.ticket ∧ u.since = c + 1))
 
 theorem track_refl (B c n0 : Nat) (ce : Entry) : Track B c n0 ce ce :=
   Or.inr ⟨rfl, rfl, rfl, fun _ => Ext.refl B c ce, fun u hu => Or.inl hu⟩
@@ -91,7 +91,7 @@ theorem track_seg {B c w O n0 nx} {ce e : Entry} (ht : Track B c n0 ce e) (hp : 
       intro u hu'
       rcases s1 with s1 | s1
       · simp [Entry.upkeep, s1] at hu'
-      · simp [Entry.upkeep, s1] at hu'; subst hu'; exact Or.inr hnx
+      · simp [Entry.upkeep, s1] at hu'; subst hu'; exact Or.inr ⟨hnx, rfl⟩
     | abort =>
       simp only [seg, hst, D, checkIf, ite_true]
       obtain ⟨f1, _, f3, _, _⟩ := checkB_fields B (c + 1) (handoffE (c + 1) ps e nx)

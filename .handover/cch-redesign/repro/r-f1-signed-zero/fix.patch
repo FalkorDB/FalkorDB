@@ -1,0 +1,27 @@
+diff --git a/graph/src/index/falkordb/cch/partial.rs b/graph/src/index/falkordb/cch/partial.rs
+index c7e5d41d1..125ea62c5 100644
+--- a/graph/src/index/falkordb/cch/partial.rs
++++ b/graph/src/index/falkordb/cch/partial.rs
+@@ -218,14 +218,18 @@ impl Cch {
+                 b += 1;
+             }
+ 
+-            let changed_weight =
+-                best_up != metric.upward_weight[slot] || best_dn != metric.downward_weight[slot];
++            // Compared bit for bit, not with `!=`: `+0.0 != -0.0` is false, and a seed that only
++            // flips the sign of a zero must still be written and propagated for the result to be
++            // bit-identical to a full customization (Lean `cch_recompute_review`, R-F1).
++            let up_differs = best_up.to_bits() != metric.upward_weight[slot].to_bits();
++            let dn_differs = best_dn.to_bits() != metric.downward_weight[slot].to_bits();
++            let changed_weight = up_differs || dn_differs;
+             // Written only where they differ: an arc the cone reaches but does not change
+             // leaves its chunk shared with the previous version.
+-            if best_up != metric.upward_weight[slot] {
++            if up_differs {
+                 metric.upward_weight.set(slot, best_up);
+             }
+-            if best_dn != metric.downward_weight[slot] {
++            if dn_differs {
+                 metric.downward_weight.set(slot, best_dn);
+             }
+             if mid_up != metric.upward_middle[slot] {
