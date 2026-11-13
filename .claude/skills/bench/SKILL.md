@@ -1,3 +1,8 @@
+---
+name: bench
+description: Run the bench/ per-query performance, regression and coverage loop against the C module. Use when asked to benchmark queries, check for perf regressions, or compare p99/memory with C.
+---
+
 # Bench loop
 
 Repeatable per-query performance + regression + coverage loop. The harness is a
@@ -12,7 +17,7 @@ uv sync --project bench
 # 1. build the release module
 cargo build --release
 
-# 2. measure all 317 queries -> bench/results/current.csv (~2 min)
+# 2. measure every query -> bench/results/current.csv (~2 min)
 uv run --project bench bench measure
 
 # 3. regression gate vs your baseline; exits 1 on a breach
@@ -25,11 +30,18 @@ uv run --project bench bench coverage
 
 The gate's thresholds live in `bench/src/falkorbench/metrics.py` (`THRESHOLDS`):
 the deterministic counters — instructions, cycles, branches, allocated and
-deallocated bytes — are gated at +10%, the noisy miss counters at +25%. Wall-clock
-is handled separately: it is first divided by the `RETURN 1` control row to cancel
-the per-host speed difference, and only flagged past ±50%, because across two
-machines a raw `ms` ratio is a noise detector rather than a measurement.
-`--threshold X` overrides every metric; `--metrics instr,cycles` narrows the gate.
+deallocated bytes — are gated at +10%, the noisy miss counters at +25%.
+Wall-clock (`ms`) is **not gated** by default (`GATED_BY_DEFAULT`): most queries
+cost 0.02-0.3 ms, and two runs of identical code moved single rows 4x. It is
+still shown, and `--metrics ms` opts into gating on it (at +25%). The CI reporter
+divides it by the `RETURN 1` control row and prints only rows past ±50%, as a
+coarse outlier net. `--threshold X` overrides every metric; `--metrics
+instr,cycles` narrows the gate.
+
+The branch and miss columns are gated too, whenever `pmc_tool` filled them in
+(see below). Its counts are system-wide, so on a busy machine they can fail the
+gate on their own; `--metrics instr,cycles,alloc_bytes,dealloc_bytes` leaves
+them out.
 
 After a confirmed improvement, promote the numbers:
 
@@ -65,9 +77,9 @@ server, pid and query text.
 - `bench measure` starts its own redis-server on :6399 and builds the graph (10k
   Person ring + KNOWS edges, indexes, constraints, UDFs). If a server is already
   up with the graph, pass `--reuse --port <p>`. It refuses to start if the port is
-  busy. `--reuse` does not skip the graph build unless you also pass `--no-setup`
-  — otherwise it would measure an empty database and report numbers that look
-  real.
+  busy. `--reuse` also **skips the graph build** unless you pass `--setup`, so
+  `--reuse` against a fresh server measures an empty database and reports numbers
+  that look real (#3658). Start with `--keep-server`, then `--reuse` after it.
 - Instructions/cycles come from `proc_pid_rusage` on macOS and `perf stat -p` on
   Linux. Neither works on a virtualised host with no PMU, in which case those
   columns are left **empty rather than zero** — a zero would read as a real
@@ -99,7 +111,7 @@ Labelling a PR `benchmark-cov` measures the PR, its base and the C engine and
 posts one comparison comment. Nothing is compiled: all three modules come from
 prebuilt images (`rc-pr-<N>`, `edge-rs` and `edge-c`), each measured on its own
 runner in parallel inside one image built from the C engine's. Two readings per
-side — the full 317-query set on allocated bytes, and a 93-query subset with exact
+side — the full query set on allocated bytes, and the `cg=True` subset with exact
 callgrind instruction counts.
 
 The callgrind table is **PR-vs-base only**. The C engine cannot be measured that
