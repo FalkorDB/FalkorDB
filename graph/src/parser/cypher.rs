@@ -1811,14 +1811,14 @@ impl<'a> Parser<'a> {
             let (min, max) = if optional_match_token!(self.lexer, Star) {
                 let start = if let Token::Integer(i) = self.lexer.current()? {
                     self.lexer.next();
-                    Some(i as u32)
+                    Some(hop_bound(i))
                 } else {
                     None
                 };
                 if optional_match_token!(self.lexer, DotDot) {
                     let end = if let Token::Integer(i) = self.lexer.current()? {
                         self.lexer.next();
-                        Some(i as u32)
+                        Some(hop_bound(i))
                     } else {
                         None
                     };
@@ -3125,22 +3125,22 @@ impl<'a> Parser<'a> {
             let var_len = if optional_match_token!(self.lexer, Star) {
                 let start = if let Token::Integer(i) = self.lexer.current()? {
                     self.lexer.next();
-                    Some(i)
+                    Some(hop_bound(i))
                 } else {
                     None
                 };
                 if optional_match_token!(self.lexer, DotDot) {
                     let end = if let Token::Integer(i) = self.lexer.current()? {
                         self.lexer.next();
-                        Some(i)
+                        Some(hop_bound(i))
                     } else {
                         None
                     };
                     // [*a..b] → min=a (default 1), max=b (default None=infinity)
-                    Some((start.unwrap_or(1) as u32, end.map(|e| e as u32)))
+                    Some((start.unwrap_or(1), end))
                 } else if let Some(exact) = start {
                     // [*N] → exact N hops
-                    Some((exact as u32, Some(exact as u32)))
+                    Some((exact, Some(exact)))
                 } else {
                     // [*] → 1..infinity
                     Some((1, None))
@@ -3616,6 +3616,18 @@ impl<'a> Parser<'a> {
         }
         None
     }
+}
+
+/// Converts a hop bound written in a variable-length pattern (`[*a..b]`) to
+/// the `u32` the engine stores.
+///
+/// A plain `as u32` cast wraps, so `*4294967297` used to run as `*1`. A bound
+/// above `u32::MAX` cannot be met by any path the engine can walk, and the
+/// traversal operators already read `u32::MAX` as "no upper bound", so the
+/// value saturates instead: a minimum that large matches nothing and a maximum
+/// that large is unbounded.
+fn hop_bound(value: i64) -> u32 {
+    u32::try_from(value).unwrap_or(if value < 0 { 0 } else { u32::MAX })
 }
 
 #[cfg(test)]
@@ -4353,5 +4365,58 @@ mod tests {
         ] {
             assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
         }
+    }
+
+    #[test]
+    fn hop_bound_saturates_instead_of_wrapping() {
+        assert_eq!(hop_bound(0), 0);
+        assert_eq!(hop_bound(3), 3);
+        assert_eq!(hop_bound(i64::from(u32::MAX)), u32::MAX);
+        assert_eq!(hop_bound(i64::from(u32::MAX) + 1), u32::MAX);
+        assert_eq!(hop_bound(i64::from(u32::MAX) + 2), u32::MAX);
+        assert_eq!(hop_bound(i64::MAX), u32::MAX);
+        assert_eq!(hop_bound(-1), 0);
+    }
+
+    // #3691: hop bounds above u32::MAX used to wrap, so `*4294967297` ran as
+    // `*1` and `*1..4294967296` failed as max < min.
+    #[test]
+    fn variable_length_hop_bounds_above_u32_do_not_wrap() {
+        with_functions();
+        let max = format!("Some({})", u32::MAX);
+        for (pattern, min_hops, max_hops) in [
+            ("*1..3", "Some(1)", "Some(3)"),
+            ("*4294967297", max.as_str(), max.as_str()),
+            ("*4294967298..", max.as_str(), "None"),
+            ("*..4294967297", "Some(1)", max.as_str()),
+            ("*1..4294967296", "Some(1)", max.as_str()),
+        ] {
+            let query = format!("MATCH (a:N)-[:R{pattern}]->(b:N) RETURN 1");
+            let ir = format!("{:?}", Parser::new(&query).parse().unwrap());
+            assert!(
+                ir.contains(&format!("min_hops: {min_hops}, max_hops: {max_hops}")),
+                "{pattern}: {ir}"
+            );
+        }
+    }
+
+    #[test]
+    fn shortest_path_hop_bounds_above_u32_do_not_wrap() {
+        with_functions();
+        let max = u32::MAX;
+
+        let query = "MATCH (a:N {id:0}), (b:N {id:2}) \
+                     RETURN length(shortestPath((a)-[:R*1..4294967297]->(b)))";
+        let ir = format!("{:?}", Parser::new(query).parse().unwrap());
+        assert!(
+            ir.contains(&format!("min_hops: 1, max_hops: Some({max})")),
+            "{ir}"
+        );
+
+        // A minimum this large is rejected like any other minimum above 1,
+        // instead of wrapping to 1 and being accepted.
+        let query = "MATCH (a:N {id:0}), (b:N {id:2}) \
+                     RETURN shortestPath((a)-[:R*4294967297..]->(b))";
+        assert!(Parser::new(query).parse().is_err());
     }
 }

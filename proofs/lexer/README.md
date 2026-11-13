@@ -89,7 +89,7 @@ Every bug was reproduced against the real Rust (`graph/tests/lean_lexer.rs`, not
 | 8 | `pre2910_unesc_plus_bug` (removed in bbee75955; last held in 17ccc5412) | `'\u+041'` decoded to `A` | Fixed by #2910 (`unesc_plus_rejected`) |
 | 9 | `set_target_unbounded` | `MATCH (n) SET n.a.a…(5000) = 1` builds its target outside `check_depth`; the binder then overflows its stack. C rejects it | **Open** (#2895, PR #2900 not merged) |
 | 10 | `foreach_unbounded` | Nested `FOREACH (x IN [1] \| FOREACH (…))` never goes through `nested`; 100 000 levels abort the process with a stack overflow (C crashes as well) | **Open** (#2895, PR #2900 not merged) |
-| 11 | `hop_truncation_bug` | A hop bound is cast `i as u32`, so `*4294967298` means `*2` | Not filed: C truncates the same way |
+| 11 | `pre3691_hop_truncation_bug` | A hop bound was cast `i as u32`, so `*4294967298` meant `*2` (C truncates the same way) | Fixed for #3691: `hop_bound` saturates (`hopBound_large`, `hopBound_mono`) |
 
 There are no CONDITIONAL rows in this project.
 

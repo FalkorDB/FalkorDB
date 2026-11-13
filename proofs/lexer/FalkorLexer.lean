@@ -45,7 +45,7 @@ fixed behaviour is now a correctness theorem, named in the row:
 | `pre2908_rs_unterminated_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908) an unterminated `/*` was accepted |
 | `foreach_unbounded`         | `FOREACH` nesting bypasses `nested`, so its recursion is unbounded |
 | `set_target_unbounded`      | `SET n.a.a…` / `REMOVE n.a.a…` targets bypass `check_depth` |
-| `hop_truncation_bug`        | `*4294967298` is `*2` (`i as u32`) |
+| `pre3691_hop_truncation_bug` | (fixed by #3691's PR) `*4294967298` was `*2` (`i as u32`) — now `hopBound_large`, `hopBound_mono` |
 | `pre2910_crlf_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910 `dba677942`) `\r` was not whitespace — now `rs_crlf` |
 | `pre2910_zero_exp_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `0e5` lexed as `0` then `e5` — now `lexNum_zero_exp` |
 | `pre2910_min_noncanonical_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `-0x08000000000000000` was rejected — now `min_noncanonical_fixed`, `int_literal_correct` (any spelling) |
@@ -71,7 +71,8 @@ fixed behaviour is now a correctness theorem, named in the row:
 | `str2int`                 | `Lexer::str2number_token`, integer half (lexer.rs:700-737) |
 | `level10`, `litExpr`      | level 10's `2^63` guard (cypher.rs:2570-2584) + level 9 |
 | `evalLit`                 | level 9 of `parse_expr_inner` (cypher.rs:2545-2565) + `parse_literal` (cypher.rs:445-469) |
-| `asU32`                   | `i as u32` in the var-length hop parser (cypher.rs:1804, 1811, 3108, 3111) |
+| `asU32`                   | the `i as u32` the var-length hop parser used before #3691 (historical) |
+| `hopBound`                | `hop_bound` (cypher.rs:3629-3631), used by the var-length hop parser (cypher.rs:1814, 1821, 3128, 3135) |
 | `Frame`, `Op`, `step`     | the `(level, tree, height)` frames of `parse_expr_inner` and `parse_expr_return!` / `parse_operators!` (macro.rs) |
 | `Reach`                   | every frame update of `parse_expr_inner`, each with its `check_depth` |
 | `setTarget`               | the property loop of `parse_set_items` / `parse_remove_items` (cypher.rs:3348-3352, 3444-3448) |
@@ -1380,14 +1381,47 @@ theorem litExpr_other (neg pf : Bool) (v : Int) (hv : v ≠ I64MIN) :
     ∃ t, litExpr neg pf v = .ok t := by
   cases neg <;> cases pf <;> simp [litExpr, level10, level9, hv]
 
-/-- `i as u32` on an `i64` hop count (cypher.rs:1804, 1811, 3108, 3111). -/
+/-- Historical: the `i as u32` the var-length hop parser applied to an `i64`
+hop count before #3691. -/
 def asU32 (i : Int) : Nat := (i % 2 ^ 32).toNat
 
-/-- `*4294967298` is `*2` and `*4294967296` is `*0`; the i64::MIN token of
-`*9223372036854775808` becomes 0. Silent truncation (C FalkorDB truncates the
-same way; openCypher has no such wrap). -/
-theorem hop_truncation_bug :
+/-- Historical (fixed for #3691): `*4294967298` was `*2` and `*4294967296` was
+`*0`; the i64::MIN token of `*9223372036854775808` became 0. Silent truncation
+(C FalkorDB truncates the same way; openCypher has no such wrap). -/
+theorem pre3691_hop_truncation_bug :
     asU32 4294967298 = 2 ∧ asU32 4294967296 = 0 ∧ asU32 I64MIN = 0 := by decide
+
+/-- `u32::MAX`, which the traversal operators read as "no upper bound". -/
+def U32MAX : Nat := 2 ^ 32 - 1
+
+/-- `hop_bound` (cypher.rs:3629-3631): `u32::try_from(value)`, saturating to
+0 below the range and to `u32::MAX` above it. -/
+def hopBound (i : Int) : Nat :=
+  if i < 0 then 0 else if (U32MAX : Int) < i then U32MAX else i.toNat
+
+/-- A bound in range is kept as written. -/
+theorem hopBound_in_range (i : Int) (h0 : 0 ≤ i) (h1 : i ≤ U32MAX) :
+    hopBound i = i.toNat := by
+  unfold hopBound
+  rw [if_neg (by omega), if_neg (by omega)]
+
+/-- Every result fits in a `u32`. -/
+theorem hopBound_le (i : Int) : hopBound i ≤ U32MAX := by
+  unfold hopBound U32MAX
+  split <;> (try split) <;> omega
+
+/-- A bound above `u32::MAX` saturates instead of wrapping: `*4294967298` and
+`*4294967296` are `*4294967295`, which no walk the engine takes can reach,
+and as a maximum it is the traversal's "no upper bound". -/
+theorem hopBound_large :
+    hopBound 4294967298 = U32MAX ∧ hopBound 4294967296 = U32MAX ∧
+      hopBound I64MIN = 0 := by decide
+
+/-- Order is kept, so `*a..b` with `a ≤ b` never becomes a max below its min
+(the wrap turned `*1..4294967296` into `*1..0`, an error). -/
+theorem hopBound_mono (i j : Int) (h : i ≤ j) : hopBound i ≤ hopBound j := by
+  unfold hopBound U32MAX
+  split <;> split <;> (try split) <;> (try split) <;> omega
 
 /-! ## 7. The expression-height bound of `e7daadac8`
 
