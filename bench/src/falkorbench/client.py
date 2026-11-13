@@ -186,6 +186,17 @@ class BenchClient:
         DEBUG RELOAD, GRAPH.CONSTRAINT, GRAPH.UDF, MEMORY MALLOC-STATS."""
         return self.db.execute_command(*args)
 
+    def raw(self, *args: object) -> object:
+        """A raw command whose reply may be binary (e.g. DUMP): returned as
+        bytes rather than decoded as text, which would fail.
+
+        A nil reply is an error: DUMP of an absent key answers nil, and a row
+        measured against it would time a command that serialized nothing."""
+        reply = self.db.execute_command(*args, NEVER_DECODE=True)
+        if reply is None:
+            raise ResponseError(f"nil reply to {args[0]}: the key does not exist")
+        return reply
+
     # --- probes --------------------------------------------------------------
 
     @property
