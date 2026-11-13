@@ -76,6 +76,7 @@ use crate::{
 
 use super::super::IR;
 use super::{collect_expr_variables, collect_subtree_variables};
+use crate::runtime::runtime::GetVariables;
 
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
 ///
@@ -208,13 +209,14 @@ fn collect_filtered_vars(
 /// `include_pending` wraps the scan with `IncludePending`, required inside
 /// MERGE match branches so the scan sees in-flight mutations. `argument`
 /// attaches an `Argument` leaf below the scan, so correlated rows keep
-/// flowing when the scan replaces a bare `Argument` child. `filters` are the
+/// flowing when the scan replaces a bare `Argument` child; it may be a whole
+/// subtree (an `Unwind`, a `Project`) whose rows the scan then runs once per. `filters` are the
 /// `Filter` operators salvaged from the subtree this one replaces — see
 /// [`filters_of`].
 fn make_scan_subtree(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
     include_pending: bool,
-    argument: Option<IR>,
+    argument: Option<DynTree<IR>>,
     filters: Vec<IR>,
 ) -> DynTree<IR> {
     let mut scan = if node.labels.is_empty() {
@@ -224,7 +226,7 @@ fn make_scan_subtree(
     };
     if let Some(arg) = argument {
         let root_idx = scan.root().idx();
-        scan.node_mut(root_idx).push_child(arg);
+        scan.node_mut(root_idx).push_child_tree(arg);
     }
     if include_pending {
         scan = tree!(IR::IncludePending { node: node.clone() }, scan);
@@ -386,6 +388,53 @@ fn swap_relationship(
     Arc::new(swapped)
 }
 
+/// Adds the `(id, scope_id)` of the variables a projection or a known
+/// `Argument` writes, and nothing it merely reads: a copy `(old, new)` writes
+/// `new`, and an aggregation writes its `names` and the `new` of its
+/// projections. The one list [`collect_output_pairs`] and
+/// [`collect_output_aliases`] both start from, so they cannot disagree about
+/// what an operator outputs.
+fn projected_outputs(
+    ir: &IR,
+    out: &mut HashSet<(u32, u32)>,
+) {
+    match ir {
+        IR::Project { exprs, copies } => {
+            out.extend(exprs.iter().map(|(v, _)| (v.id, v.scope_id)));
+            out.extend(copies.iter().map(|(_, new)| (new.id, new.scope_id)));
+        }
+        IR::Aggregate {
+            names, projections, ..
+        } => {
+            out.extend(names.iter().map(|v| (v.id, v.scope_id)));
+            out.extend(projections.iter().map(|(_, new)| (new.id, new.scope_id)));
+        }
+        IR::Argument(Some(vars)) => out.extend(vars.iter().copied()),
+        _ => {}
+    }
+}
+
+/// Adds the `(id, scope_id)` of the variables an IR node outputs through a
+/// projection or a known `Argument`; the scope-aware counterpart of
+/// [`collect_output_aliases`] for the operators `get_variables` does not cover.
+/// A copy's source is listed as well: it is carried, and the pair keeps its
+/// scope, so it cannot be mistaken for a variable of the chain.
+fn collect_output_pairs(
+    ir: &IR,
+    out: &mut HashSet<(u32, u32)>,
+) {
+    projected_outputs(ir, out);
+    match ir {
+        IR::Project { copies, .. } => {
+            out.extend(copies.iter().map(|(old, _)| (old.id, old.scope_id)));
+        }
+        IR::Aggregate { projections, .. } => {
+            out.extend(projections.iter().map(|(old, _)| (old.id, old.scope_id)));
+        }
+        _ => {}
+    }
+}
+
 /// Collects output variable alias IDs from an IR node.
 /// Used to detect which variables a child operator provides.
 fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
@@ -405,30 +454,19 @@ fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
                 aliases.insert(s.id);
             }
         }
-        IR::Project { exprs, copies } => {
-            for (var, _) in exprs {
-                aliases.insert(var.id);
-            }
-            for (var, _) in copies {
-                aliases.insert(var.id);
-            }
-        }
-        IR::Aggregate { names, .. } => {
-            for var in names {
-                aliases.insert(var.id);
-            }
+        // Only the id is kept, and only of what the operator writes: ids are
+        // per-scope, so a copy's source (a variable of the scope before the
+        // projection) must not stand for a variable of the chain. This set
+        // feeds `score_endpoint`'s `bound_vars`, a preference heuristic that
+        // never decides plan validity; the scope-sensitive decision (whether
+        // an `Argument` or a projection is transparent) compares full pairs.
+        IR::Project { .. } | IR::Aggregate { .. } | IR::Argument(Some(_)) => {
+            let mut outputs = HashSet::new();
+            projected_outputs(ir, &mut outputs);
+            aliases.extend(outputs.into_iter().map(|(id, _)| id));
         }
         IR::Unwind { var, .. } => {
             aliases.insert(var.id);
-        }
-        // Argument with known bound vars: the incoming rows bind exactly
-        // these variables. `Argument(None)` stays opaque (conservative).
-        // Only the id is kept: this set feeds `score_endpoint`'s `bound_vars`,
-        // a preference heuristic that never decides plan validity. The
-        // scope-sensitive decision — whether the Argument is transparent —
-        // compares full pairs.
-        IR::Argument(Some(vars)) => {
-            aliases.extend(vars.iter().map(|(id, _)| *id));
         }
         _ => {}
     }
@@ -832,6 +870,59 @@ pub(super) fn select_scan_node(
                 .iter()
                 .all(|(node, _, _)| !vars.contains(&(node.alias.id, node.alias.scope_id)))
         });
+        // The same holds for any other outer-context child (an `Unwind`, a
+        // `Project`, an earlier clause's plan) that provably binds none of the
+        // chain's endpoints or edges: it only supplies rows. Leaving it as the
+        // chain's child makes the bottom traverse enumerate every edge of its
+        // type once per such row, however selective the endpoint is
+        // (`UNWIND $ids AS i MATCH (d:L {id: i})-[r:R]->() ...`), so the scan
+        // goes between the traverse and that child instead, as it does for a
+        // bare `Argument`. The child rides beneath the new scan.
+        //
+        // A chain with no label and no predicate on any endpoint keeps the
+        // edge-driven plan: a scan per row would cost every node, where the
+        // bare traverse costs only the edges of its type.
+        let constrained = candidates
+            .iter()
+            .any(|(node, _, _)| score_endpoint(node, &filtered_vars, &bound_vars, graph).0 > 0);
+        let transparent_child: Option<DynTree<IR>> =
+            if is_leaf || has_planner_scan || arg_transparent || !constrained {
+                None
+            } else {
+                let child = optimized_plan.node(bottom_idx).child(0);
+                let opaque = child
+                    .walk::<Bfs>()
+                    .any(|ir| matches!(ir, IR::Argument(None)));
+                // Everything the child binds or carries, as (id, scope) pairs:
+                // its own variables plus every operator's outputs (a known
+                // `Argument`'s bindings, a `Project`/`Aggregate`'s aliases), so
+                // a wrapped or projected endpoint is never mistaken for a bare
+                // row source. Scope-aware, since a variable the child dropped
+                // can share its id with a chain alias in a later scope.
+                let mut bound_here: HashSet<(u32, u32)> = child
+                    .get_variables()
+                    .iter()
+                    .map(|v| (v.id, v.scope_id))
+                    .collect();
+                for ir in child.walk::<Bfs>() {
+                    collect_output_pairs(ir, &mut bound_here);
+                }
+                let binds_chain =
+                    |alias: &Variable| bound_here.contains(&(alias.id, alias.scope_id));
+                let chain_aliases_bound = chain.iter().any(|&ct_idx| {
+                    matches!(
+                        optimized_plan.node(ct_idx).data(),
+                        IR::CondTraverse { relationship, .. } if binds_chain(&relationship.alias)
+                    )
+                });
+                (!opaque
+                    && !chain_aliases_bound
+                    && !candidates
+                        .iter()
+                        .any(|(node, _, _)| binds_chain(&node.alias)))
+                .then(|| child.clone_as_tree())
+            };
+        let arg_transparent = arg_transparent || transparent_child.is_some();
         let effectively_leaf = effectively_leaf || arg_transparent;
         // Any scan this pass builds inside a MERGE match branch must see
         // in-flight mutations, mirroring the planner's
@@ -843,7 +934,11 @@ pub(super) fn select_scan_node(
         // mutations.
         let in_merge = in_merge_match_branch(optimized_plan, bottom_idx);
         // The Argument leaf to re-attach beneath any scan that replaces it.
-        let make_argument = || IR::Argument(child_argument_vars.clone());
+        let make_argument = || {
+            transparent_child
+                .clone()
+                .unwrap_or_else(|| tree!(IR::Argument(child_argument_vars.clone())))
+        };
 
         // Score each candidate and find the best.
         let best = candidates.iter().max_by(|a, b| {
@@ -953,9 +1048,13 @@ pub(super) fn select_scan_node(
                 preserved_argument = if arg_transparent {
                     Some(make_argument())
                 } else {
-                    argument_leaf_of(optimized_plan, child_idx)
+                    argument_leaf_of(optimized_plan, child_idx).map(|ir| tree!(ir))
                 };
-                salvaged_filters = filters_of(optimized_plan, child_idx);
+                salvaged_filters = if child_is_planner_scan {
+                    filters_of(optimized_plan, child_idx)
+                } else {
+                    vec![]
+                };
                 None // Will create a new scan for best_node instead
             } else {
                 Some(optimized_plan.node_mut(child_idx).clone_as_tree())
@@ -981,6 +1080,26 @@ pub(super) fn select_scan_node(
             b.insert(best_node.alias.id);
             if let Some(child) = &existing_child {
                 b.extend(collect_subtree_variables(&child.root()));
+            }
+            // The outer subtree moved beneath the new scan binds its
+            // variables too (`UNWIND ... AS x` feeding `{id: x}` filters).
+            if let Some(outer) = &preserved_argument {
+                let mut outer_ids = collect_subtree_variables(&outer.root());
+                for ir in outer.root().walk::<Bfs>() {
+                    outer_ids.extend(collect_output_aliases(ir));
+                }
+                if arg_transparent {
+                    // The outer subtree provably binds none of the chain's
+                    // variables, so an id it shares with one is a variable it
+                    // dropped (ids are reused across scopes): not a binding
+                    // the chain's hops may rely on.
+                    for (rel, ..) in &rels {
+                        for alias in [&rel.alias, &rel.from.alias, &rel.to.alias] {
+                            outer_ids.remove(&alias.id);
+                        }
+                    }
+                }
+                b.extend(outer_ids);
             }
             b
         };
@@ -1104,13 +1223,13 @@ pub(super) fn select_scan_node(
                     let arg = if arg_transparent {
                         Some(make_argument())
                     } else if is_scan {
-                        argument_leaf_of(optimized_plan, child_idx)
+                        argument_leaf_of(optimized_plan, child_idx).map(|ir| tree!(ir))
                     } else {
                         None
                     };
                     // Only when the subtree is actually discarded below; if it
                     // is kept, its Filters stay with it.
-                    let salvaged = if is_scan || arg_transparent {
+                    let salvaged = if is_scan {
                         filters_of(optimized_plan, child_idx)
                     } else {
                         vec![]
@@ -1303,14 +1422,14 @@ pub(super) fn select_scan_node(
                         Some(make_argument())
                     } else if has_planner_scan {
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
-                        argument_leaf_of(optimized_plan, child_idx)
+                        argument_leaf_of(optimized_plan, child_idx).map(|ir| tree!(ir))
                     } else {
                         None
                     };
                     // Not a swap: the rebuilt scan is for the same node the
                     // pruned one scanned, so its Filters can go straight back
                     // inside the new subtree — their variable is bound there.
-                    let salvaged_filters = if has_planner_scan || arg_transparent {
+                    let salvaged_filters = if has_planner_scan {
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
                         filters_of(optimized_plan, child_idx)
                     } else {
@@ -1352,4 +1471,64 @@ pub(super) fn select_scan_node(
     }
 
     select_var_len_scan_node(optimized_plan, graph);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::functions::Type;
+
+    fn var(
+        id: u32,
+        scope_id: u32,
+    ) -> Variable {
+        Variable {
+            name: None,
+            id,
+            scope_id,
+            ty: Type::Any,
+        }
+    }
+
+    /// The variables a projection writes are the ones a traverse above it can
+    /// start from. A copy is `(old, new)` and an aggregation carries its copies
+    /// too; both helpers must report the `new` end, whatever the operator.
+    #[test]
+    fn output_aliases_cover_copies_of_projections_and_aggregations() {
+        let (new, old) = (var(7, 1), var(3, 0));
+        let project = IR::Project {
+            exprs: vec![],
+            copies: vec![(old.clone(), new.clone())],
+        };
+        assert!(collect_output_aliases(&project).contains(&new.id));
+        let aggregate = IR::Aggregate {
+            names: vec![var(9, 1)],
+            keys: vec![],
+            aggregations: vec![],
+            projections: vec![(old.clone(), new.clone())],
+        };
+        let aliases = collect_output_aliases(&aggregate);
+        assert!(aliases.contains(&new.id), "copy through an aggregation");
+        assert!(aliases.contains(&9), "aggregate output");
+        // The source of a copy is a variable of the scope before the
+        // projection: carried (a pair keeps its scope), but not an output id.
+        assert!(!collect_output_aliases(&project).contains(&old.id));
+        assert!(!aliases.contains(&old.id));
+        // The two helpers agree on every variant that projects: the id helper
+        // lists what the scoped one does, less the copies' sources.
+        for (ir, source) in [(&project, &old), (&aggregate, &old)] {
+            let mut pairs = HashSet::new();
+            collect_output_pairs(ir, &mut pairs);
+            assert!(
+                pairs.contains(&(source.id, source.scope_id)),
+                "source carried"
+            );
+            let ids: HashSet<u32> = pairs
+                .iter()
+                .filter(|&&p| p != (source.id, source.scope_id))
+                .map(|&(id, _)| id)
+                .collect();
+            assert_eq!(collect_output_aliases(ir), ids);
+        }
+    }
 }
