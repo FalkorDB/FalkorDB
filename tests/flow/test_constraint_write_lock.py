@@ -90,10 +90,16 @@ class ConstraintBehindLongReads():
             loop = asyncio.get_running_loop()
 
             async def inflight():
-                res = await loop.run_in_executor(None, lambda:
-                    self.conn.execute_command(
-                        "GRAPH.INFO", "RunningQueries", "WaitingQueries"))
-                return len(res[1]), len(res[3])  # (running, waiting)
+                def _check():
+                    res = self.conn.execute_command(
+                        "GRAPH.INFO", "RunningQueries", "WaitingQueries")
+                    gid_bytes = GRAPH_ID.encode() if isinstance(GRAPH_ID, str) else GRAPH_ID
+                    graph_running = sum(1 for q in res[1] if len(q) > 3 and (q[3] == GRAPH_ID or q[3] == gid_bytes))
+                    graph_waiting = sum(1 for q in res[3] if len(q) > 3 and (q[3] == GRAPH_ID or q[3] == gid_bytes))
+                    clients = self.conn.client_list()
+                    blocked = sum(1 for c in clients if 'b' in c.get('flags', '') and 'graph.constraint' in c.get('cmd', '').lower())
+                    return graph_running, graph_waiting, blocked
+                return await loop.run_in_executor(None, _check)
 
             async def wait_until(pred, timeout=20.0):
                 deadline = loop.time() + timeout
@@ -110,7 +116,7 @@ class ConstraintBehindLongReads():
             reads = ReadLockHolder(g, self.long_read)
             reads.start()
             # Confirm readers hold the graph READ lock before issuing the commands
-            self.env.assertTrue(await wait_until(lambda r, w: r >= 1))
+            self.env.assertTrue(await wait_until(lambda r, w, b: r >= reads.concurrency))
 
             async def send(client, cmd):
                 t0 = loop.time()
@@ -125,8 +131,8 @@ class ConstraintBehindLongReads():
                 await asyncio.sleep(0.05)  # keep the send order deterministic
 
             if action is not None:
-                # Wait until the commands are waiting behind the in-flight readers
-                self.env.assertTrue(await wait_until(lambda r, w: r + w >= len(cmds) + 1))
+                # Wait until the commands are blocked waiting behind the in-flight readers
+                self.env.assertTrue(await wait_until(lambda r, w, b: r >= reads.concurrency and b >= len(cmds)))
                 await reads.stop()
                 await action(admin)
             results = await asyncio.gather(*cmd_tasks)

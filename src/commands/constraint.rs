@@ -357,7 +357,12 @@ fn attempt_settle(
                     },
                     &SchemaBaseline::of(&g),
                 ) {
-                    Ok(()) => buf.replicate(&CtxSink(ctx), key),
+                    Ok(()) => {
+                        let current_key_bytes = crate::graph_core::registered_graph_name(graph)
+                            .map(String::into_bytes)
+                            .unwrap_or_else(|| key.to_vec());
+                        buf.replicate(&CtxSink(ctx), &current_key_bytes);
+                    }
                     // Swallowing this left the replica's constraint UNDER
                     // CONSTRUCTION permanently: the master has settled it, the
                     // announcement that would carry that never went out, and
@@ -490,6 +495,15 @@ pub fn graph_constraint(
         ));
     }
 
+    let slot = if !must_run_inline(ctx) {
+        let Some(slot) = admit(ctx) else {
+            return Ok(RedisValue::NoReply);
+        };
+        Some(slot)
+    } else {
+        None
+    };
+
     // Open or create graph
     let key = ctx.open_key_writable(&key_str);
     let graph = if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
@@ -515,26 +529,13 @@ pub fn graph_constraint(
     };
 
     let is_replayed = ctx.get_flags().contains(ContextFlags::REPLICATED);
-    let key_bytes: Vec<u8> = key_str.as_slice().to_vec();
 
-    if !must_run_inline(ctx) {
-        let Some(slot) = admit(ctx) else {
-            return Ok(RedisValue::NoReply);
-        };
+    if let Some(slot) = slot {
         let bc = unsafe { BlockedClient::new(ctx.ctx) };
         graph::threadpool::spawn(
             move || {
                 drop(slot);
-                execute_constraint_async(
-                    bc,
-                    graph,
-                    is_create,
-                    ct,
-                    entity_type,
-                    label,
-                    properties,
-                    key_bytes,
-                );
+                execute_constraint_async(bc, graph, is_create, ct, entity_type, label, properties);
             },
             None,
         );
@@ -697,7 +698,6 @@ fn announce_constraint(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn execute_constraint_async(
     bc: BlockedClient,
     graph: Arc<RwLock<ThreadedGraph>>,
@@ -706,7 +706,6 @@ fn execute_constraint_async(
     entity_type: EntityType,
     label: Arc<String>,
     properties: Vec<Arc<String>>,
-    key_bytes: Vec<u8>,
 ) {
     let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
     let ctx = Context::new(ts_ctx);
@@ -771,10 +770,24 @@ fn execute_constraint_async(
                 }
             };
 
+        // A Redis RENAME may have moved the graph while we were waiting for the write
+        // lock. Resolve the current key name from the registry so announcements and
+        // background validation replicate under the graph's live key.
+        let current_key_bytes = match crate::graph_core::registered_graph_name(&graph) {
+            Some(name) => name.into_bytes(),
+            None => {
+                let cerr = ffi::sanitise_error(WriteAbort::GraphUnregistered.to_string());
+                unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+                drop(bc);
+                unsafe { ffi::free_thread_safe_context(ts_ctx) };
+                return;
+            }
+        };
+
         if needs_background_validation {
             spawn_constraint_validation(
                 graph.clone(),
-                key_bytes.clone(),
+                current_key_bytes.clone(),
                 ct,
                 entity_type,
                 Arc::clone(&label),
@@ -792,7 +805,7 @@ fn execute_constraint_async(
             entity_type,
             &label,
             &properties,
-            &key_bytes,
+            &current_key_bytes,
             needs_background_validation,
         );
 

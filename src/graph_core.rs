@@ -188,11 +188,21 @@ pub fn register_graph(
 /// re-keys the registry without updating `Graph::name()`, so an O(1) by-name lookup
 /// would wrongly abort after a `RENAME`.
 pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
+    registered_graph_name(arc).is_some()
+}
+
+/// Resolve the current registered key name for a graph.
+///
+/// In the presence of `RENAME`, the registry entry is updated to the new key name
+/// while the underlying `Arc<RwLock<ThreadedGraph>>` pointer remains identical.
+#[must_use]
+pub fn registered_graph_name(arc: &Arc<RwLock<ThreadedGraph>>) -> Option<String> {
     let target = arc.data_ptr() as usize;
     GRAPH_REGISTRY
         .lock()
-        .values()
-        .any(|registered| registered.data_ptr() as usize == target)
+        .iter()
+        .find(|(_, registered)| registered.data_ptr() as usize == target)
+        .map(|(name, _)| name.clone())
 }
 
 /// Re-key a registry entry when a Redis RENAME moves a graph to a new key.

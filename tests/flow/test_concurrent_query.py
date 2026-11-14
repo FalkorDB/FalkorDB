@@ -534,6 +534,10 @@ class testConcurrentQueryFlow(FlowTestsBase):
                     await asyncio.sleep(0.02)
                 return False
 
+            # start probe sampling before launching contending operations so latency
+            # sampling covers the entire contention window
+            await probe.start()
+
             # start the long read and wait until it holds the READ lock
             read_task = asyncio.create_task(g.ro_query(long_read))
             self.env.assertTrue(await wait_until(lambda r, w: r >= 1))
@@ -542,9 +546,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
             write_task = asyncio.create_task(g.query(write))
             self.env.assertTrue(await wait_until(lambda r, w: r + w >= 2))
 
-            # probe responsiveness while the writer is waiting: PINGs should
-            # return promptly because the writer keeps yielding the GIL
-            await probe.start()
+            # allow writer to wait and retry under lock contention
             await asyncio.sleep(0.5)
 
             # the read completes and the write lands
