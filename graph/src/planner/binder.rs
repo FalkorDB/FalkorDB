@@ -887,7 +887,7 @@ impl Binder {
                 // that may have its own import WITH. Create binders with imported env.
                 let mut bound_branches = Vec::with_capacity(branches.len());
                 let mut first_columns: Option<Vec<String>> = None;
-                let mut combined_binder_env: Option<HashMap<Arc<String>, Variable>> = None;
+                let mut last_binder_env: Option<HashMap<Arc<String>, Variable>> = None;
                 for branch in branches {
                     let (has_import, imported) = match &branch {
                         QueryIR::Query { clauses, .. } => {
@@ -964,25 +964,12 @@ impl Binder {
                     let mut branch_scope_vars = binder.scope_vars();
                     merge_scope_vars(&mut branch_scope_vars, binder.retired_scope_vars.clone());
                     merge_scope_vars(&mut self.retired_scope_vars, branch_scope_vars);
-                    // Combine branch environments across all UNION branches
-                    let branch_env = binder.current_env().clone();
-                    if let Some(ref mut comb) = combined_binder_env {
-                        for (k, v) in comb.iter_mut() {
-                            if let Some(branch_var) = branch_env.get(k) {
-                                if v.ty != branch_var.ty {
-                                    v.ty = Type::Any;
-                                }
-                            } else {
-                                v.ty = Type::Any;
-                            }
-                        }
-                    } else {
-                        combined_binder_env = Some(branch_env);
-                    }
+                    // Capture the binder's final env (RETURN-projected vars)
+                    last_binder_env = Some(binder.current_env().clone());
                     bound_branches.push(bound);
                 }
-                // Set current env to the combined returned columns across all branches
-                if let Some(env) = combined_binder_env {
+                // Set current env to the returned columns from the last branch
+                if let Some(env) = last_binder_env {
                     *self.current_env_mut() = env;
                 } else {
                     *self.current_env_mut() = HashMap::new();
