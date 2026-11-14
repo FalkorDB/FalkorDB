@@ -38,6 +38,11 @@ use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+fn is_parser_anon_var(name: &str) -> bool {
+    name.strip_prefix("_anon_")
+        .is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()))
+}
+
 /// The binder performs semantic analysis on parsed Cypher queries.
 ///
 /// It resolves variable references, manages scope, and converts the raw AST
@@ -377,8 +382,42 @@ impl Binder {
                 // Also validate that already-bound variables don't get new labels
                 // in MERGE.  E.g. CREATE (a:Foo) MERGE (a)-[:R]->(a:Bar)
                 // is illegal because `a` is already bound as :Foo.
+                for path in pattern.paths() {
+                    if self.current_env().contains_key(&path.var) {
+                        return Err(format!(
+                            "Variable `{}` can't be redeclared in a MERGE clause",
+                            path.var
+                        ));
+                    }
+                }
+
+                // Collect node aliases participating in relationships or named paths.
+                // Single-node paths such as `MERGE p = (a)` over bound endpoints
+                // are explicitly supported and tested in `test40_merge_path_over_bound_endpoints_keeps_every_match`.
+                let mut endpoint_aliases = HashSet::new();
+                for rel in pattern.relationships() {
+                    endpoint_aliases.insert(rel.from.alias.clone());
+                    endpoint_aliases.insert(rel.to.alias.clone());
+                }
+                let mut path_node_aliases = HashSet::new();
+                for path in pattern.paths() {
+                    for var in &path.vars {
+                        path_node_aliases.insert(var.clone());
+                    }
+                }
+
                 for node in pattern.nodes() {
                     self.bind_expr(&node.attrs)?;
+                    if !endpoint_aliases.contains(&node.alias)
+                        && !path_node_aliases.contains(&node.alias)
+                        && !is_parser_anon_var(&node.alias)
+                        && self.current_env().contains_key(&node.alias)
+                    {
+                        return Err(format!(
+                            "Variable `{}` can't be redeclared in a MERGE clause",
+                            node.alias
+                        ));
+                    }
                     if let Some(existing) = self.current_env().get(&node.alias) {
                         let key = (existing.scope_id, existing.id);
                         if let Some(existing_labels) = self.node_labels.get(&key) {
