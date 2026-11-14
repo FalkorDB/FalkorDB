@@ -7,6 +7,7 @@
 #pragma once
 
 #include "thpool.h"
+#include <stdbool.h>
 #include <sys/types.h>
 
 #define THPOOL_QUEUE_FULL -2
@@ -29,6 +30,11 @@ uint ThreadPool_ThreadCount(void);
 // 0         redis-main
 // 1..N + 1  workers
 int ThreadPool_GetThreadID(void);
+
+// returns true if the calling thread is the Redis main thread
+// note: ThreadPool_GetThreadID can't be used for this, it returns 0 for any
+// thread not in the pool (e.g. the cron thread), not just the main thread
+bool ThreadPool_AmIMainThread(void);
 
 // adds a task
 int ThreadPool_AddWork

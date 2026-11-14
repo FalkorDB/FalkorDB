@@ -131,6 +131,16 @@ void Index_Populate
 	GraphContext *gc  // graph holding entities to index
 );
 
+// populates index without acquiring RediSearch's global write lock
+// only valid when the caller guarantees exclusive single-writer access to the
+// index's spec and that nothing else can touch it concurrently, e.g. parallel
+// population of disjoint, not-yet-registered indices during RDB decode
+void Index_PopulateUnsafe
+(
+	Index idx,        // index to populate
+	GraphContext *gc  // graph holding entities to index
+);
+
 // adds field to index
 int Index_AddField
 (
@@ -153,8 +163,24 @@ void Index_IndexNode
 	const Node *n  // node to index
 );
 
+// index node without acquiring RediSearch's global write lock
+// see Index_PopulateUnsafe for the required caller guarantees
+void Index_IndexNodeUnsafe
+(
+	Index idx,     // index to populate
+	const Node *n  // node to index
+);
+
 // index edge
 void Index_IndexEdge
+(
+	Index idx,     // index to populate
+	const Edge *e  // edge to index
+);
+
+// index edge without acquiring RediSearch's global write lock
+// see Index_PopulateUnsafe for the required caller guarantees
+void Index_IndexEdgeUnsafe
 (
 	Index idx,     // index to populate
 	const Edge *e  // edge to index
