@@ -238,7 +238,6 @@ class testReduce():
             "WITH [1,2,3] as l RETURN reduce(x = 0, n in l | min(n))",
             "WITH [1,2,3] as l RETURN reduce(x = 0, n in l | min(n))",
             "WITH [1,2,3] as l RETURN reduce(x = min(l), n in l | n)",
-            "WITH [1,2,3] as l RETURN reduce(x = 0, n in min(l) | n)"
         ]
 
         for query in queries:
@@ -249,3 +248,23 @@ class testReduce():
                 # Expecting an error.
                 self.env.assertContains("Invalid use of aggregating function 'min'", str(e))
                 pass
+
+    def test_inline_collect_in_reduce(self):
+        # #3803: inline collect() fed into reduce()
+        self.graph.query("CREATE (:Node {id: 1, v: 1}), (:Node {id: 2, v: 2}), (:Node {id: 3, v: 3})")
+
+        # Minimal inline form
+        res = self.graph.query("MATCH (n:Node) RETURN reduce(s = 0, x IN collect(n.v) | s + x) AS total")
+        self.env.assertEqual(res.result_set, [[6]])
+
+        # Ordered/limited pipeline
+        res = self.graph.query(
+            "MATCH (n:Node) WITH n.v AS v ORDER BY v DESC LIMIT 2 "
+            "RETURN v, reduce(s = 0, x IN collect(v) | s + x) AS total"
+        )
+        self.env.assertEqual(res.result_set, [[3, 3], [2, 2]])
+
+        # Empty collection
+        res = self.graph.query("MATCH (n:NonExistent) RETURN reduce(s = 0, x IN collect(n.v) | s + x) AS total")
+        self.env.assertEqual(res.result_set, [[0]])
+
