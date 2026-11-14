@@ -38,6 +38,11 @@ use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+fn is_parser_anon_var(name: &str) -> bool {
+    name.strip_prefix("_anon_")
+        .is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()))
+}
+
 /// The binder performs semantic analysis on parsed Cypher queries.
 ///
 /// It resolves variable references, manages scope, and converts the raw AST
@@ -386,6 +391,9 @@ impl Binder {
                     }
                 }
 
+                // Collect node aliases participating in relationships or named paths.
+                // Single-node paths such as `MERGE p = (a)` over bound endpoints
+                // are explicitly supported and tested in `test40_merge_path_over_bound_endpoints_keeps_every_match`.
                 let mut endpoint_aliases = HashSet::new();
                 for rel in pattern.relationships() {
                     endpoint_aliases.insert(rel.from.alias.clone());
@@ -402,7 +410,7 @@ impl Binder {
                     self.bind_expr(&node.attrs)?;
                     if !endpoint_aliases.contains(&node.alias)
                         && !path_node_aliases.contains(&node.alias)
-                        && !node.alias.starts_with("_anon")
+                        && !is_parser_anon_var(&node.alias)
                         && self.current_env().contains_key(&node.alias)
                     {
                         return Err(format!(

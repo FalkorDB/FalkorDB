@@ -1014,10 +1014,12 @@ class testGraphMergeFlow():
     def test44_merge_already_bound_node(self):
         g = self.db.select_graph("merge_bound_node")
         g.query("CREATE (:A)")
-        try:
-            g.query("MATCH (a) MERGE (a)")
-            self.env.assertTrue(False)
-        except Exception as e:
-            self.env.assertContains("can't be redeclared in a MERGE clause", str(e))
+        for query in ["MATCH (a) MERGE (a)", "MATCH (_anonPerson) MERGE (_anonPerson)"]:
+            try:
+                g.query(query)
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("can't be redeclared in a MERGE clause", str(e))
         g.delete()
+
 
