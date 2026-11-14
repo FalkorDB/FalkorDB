@@ -2527,7 +2527,7 @@ impl Binder {
         match actual {
             Type::Union(types) => types
                 .iter()
-                .any(|t| Self::is_arg_type_compatible(t, expected)),
+                .all(|t| Self::is_arg_type_compatible(t, expected)),
             _ => actual.is_compatible_with(expected),
         }
     }
