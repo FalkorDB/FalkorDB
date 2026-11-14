@@ -280,7 +280,6 @@ Feature: Merge1 - Merge node
       | -nodes      | 2 |
       | -properties | 2 |
 
-  @skip
   Scenario: [15] Fail when merge a node that is already bound
     Given any graph
     When executing query:
