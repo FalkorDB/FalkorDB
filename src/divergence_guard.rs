@@ -20,8 +20,8 @@
 // `log_warning` is the most severe level Redis offers a module: `RedisLogLevel`
 // is Debug | Notice | Verbose | Warning, and the binding maps `log::Level::Error`
 // onto Warning. Redis prints it with `#`, which is what an operator greps for.
+use crate::log::warning as log_warning;
 use graph::effects::EffectsPayload;
-use redis_module::logging::log_warning;
 use redis_module::{Context, ContextFlags};
 use std::time::Duration;
 

@@ -4,11 +4,11 @@
 //! named `telemetry{graph_name}`. The GRAPH.INFO command reads the global
 //! query registry to report currently running and waiting queries.
 
+use crate::log::warning as log_warning;
 use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
 use parking_lot::{Mutex, RwLock};
 use redis_module::key::KeyFlags;
-use redis_module::logging::log_warning;
 use redis_module::{Context, ContextFlags, RedisString, RedisValue, raw};
 use std::os::raw::{c_char, c_int};
 use std::ptr;
