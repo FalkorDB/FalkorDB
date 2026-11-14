@@ -175,3 +175,11 @@ class testBoundVariables(FlowTestsBase):
         # List concatenation infers list when combined with string or other types
         res = self.graph.query("WITH [1] + 'a' AS l RETURN size(l)")
         self.env.assertEqual(res.result_set, [[2]])
+
+        # Exported variable-length relationship from CALL subquery retains relationship property access
+        plan = str(self.graph.explain("CALL { MATCH ()-[r:R*1..2]->() RETURN r AS rs } WITH rs WHERE rs.prop = 1 RETURN count(*)"))
+        self.env.assertContains("Filter", plan)
+
+        # CALL UNION branches with differing output types degrade to Any
+        res = self.graph.query("CALL { MATCH (n:A) RETURN n AS x UNION ALL UNWIND [] AS ignored RETURN 1 AS x } MATCH (x) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[1]])
