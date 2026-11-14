@@ -2373,13 +2373,76 @@ impl Binder {
                     Type::Any
                 }
             }
-            ExprIR::Add
-            | ExprIR::Sub
-            | ExprIR::Mul
-            | ExprIR::Div
-            | ExprIR::Modulo
-            | ExprIR::Pow
-            | ExprIR::Negate => Type::Float,
+            ExprIR::Negate => {
+                if node.num_children() > 0 {
+                    let child_ty = Self::infer_node_type(&node.child(0));
+                    match child_ty {
+                        Type::Int => Type::Int,
+                        Type::Float => Type::Float,
+                        _ => Type::Any,
+                    }
+                } else {
+                    Type::Any
+                }
+            }
+            ExprIR::Add => {
+                if node.num_children() >= 2 {
+                    let left_ty = Self::infer_node_type(&node.child(0));
+                    let right_ty = Self::infer_node_type(&node.child(1));
+                    if left_ty == Type::String || right_ty == Type::String {
+                        Type::String
+                    } else if matches!(left_ty, Type::List(_)) || matches!(right_ty, Type::List(_))
+                    {
+                        Type::List(Box::new(Type::Any))
+                    } else if left_ty == Type::Int && right_ty == Type::Int {
+                        Type::Int
+                    } else if (left_ty == Type::Float
+                        && (right_ty == Type::Int || right_ty == Type::Float))
+                        || (right_ty == Type::Float
+                            && (left_ty == Type::Int || left_ty == Type::Float))
+                    {
+                        Type::Float
+                    } else {
+                        Type::Any
+                    }
+                } else {
+                    Type::Any
+                }
+            }
+            ExprIR::Sub | ExprIR::Mul | ExprIR::Modulo => {
+                if node.num_children() >= 2 {
+                    let left_ty = Self::infer_node_type(&node.child(0));
+                    let right_ty = Self::infer_node_type(&node.child(1));
+                    if left_ty == Type::Int && right_ty == Type::Int {
+                        Type::Int
+                    } else if (left_ty == Type::Float
+                        && (right_ty == Type::Int || right_ty == Type::Float))
+                        || (right_ty == Type::Float
+                            && (left_ty == Type::Int || left_ty == Type::Float))
+                    {
+                        Type::Float
+                    } else {
+                        Type::Any
+                    }
+                } else {
+                    Type::Any
+                }
+            }
+            ExprIR::Div | ExprIR::Pow => {
+                if node.num_children() >= 2 {
+                    let left_ty = Self::infer_node_type(&node.child(0));
+                    let right_ty = Self::infer_node_type(&node.child(1));
+                    if (left_ty == Type::Int || left_ty == Type::Float)
+                        && (right_ty == Type::Int || right_ty == Type::Float)
+                    {
+                        Type::Float
+                    } else {
+                        Type::Any
+                    }
+                } else {
+                    Type::Any
+                }
+            }
             ExprIR::Distinct | ExprIR::Paren => {
                 if node.num_children() > 0 {
                     Self::infer_node_type(&node.child(0))
@@ -2397,6 +2460,7 @@ impl Binder {
     ) -> Result<(), String> {
         let is_valid = match (&existing.ty, ty) {
             (Type::Any, _) | (_, Type::Any) => true,
+            (Type::Null, _) | (_, Type::Null) => true,
             (Type::Node, Type::Node) => true,
             (Type::Relationship, Type::Relationship) => true,
             (Type::Path, Type::Path) => true,
@@ -2516,6 +2580,9 @@ impl Binder {
         match node.data() {
             // Variables – check the resolved type
             ExprIR::Variable(var) => var.ty.can_return_entity(),
+
+            // Literal Null is valid for no-op delete
+            ExprIR::Constant(Value::Null) => true,
 
             // Function calls – check the return type
             ExprIR::FuncInvocation(func) => func.ret_type.can_return_entity(),

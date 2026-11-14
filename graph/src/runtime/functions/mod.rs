@@ -578,7 +578,7 @@ impl Type {
     #[must_use]
     pub fn can_return_entity(&self) -> bool {
         match self {
-            Self::Node | Self::Relationship | Self::Path | Self::Any => true,
+            Self::Node | Self::Relationship | Self::Path | Self::Any | Self::Null => true,
             Self::Union(types) => types.iter().any(Self::can_return_entity),
             Self::Optional(inner) => inner.can_return_entity(),
             _ => false,
@@ -597,6 +597,8 @@ impl Type {
             (Self::Any | Self::Null, _) | (_, Self::Any) => true,
             // Same concrete type.
             _ if self == expected => true,
+            // Source union: all source variants must be compatible with expected.
+            (Self::Union(types), _) => types.iter().all(|t| t.is_compatible_with(expected)),
             // Union: compatible if any variant matches.
             (_, Self::Union(types)) => types.iter().any(|t| self.is_compatible_with(t)),
             // Optional: compatible with inner type.

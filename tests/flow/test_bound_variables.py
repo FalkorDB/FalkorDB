@@ -149,3 +149,21 @@ class testBoundVariables(FlowTestsBase):
         # Variable-length relationship projection carries exemption for per-edge property access
         plan = str(self.graph.explain("MATCH ()-[r:R*1..2]->() WITH r AS s WHERE s.prop = 1 RETURN count(*)"))
         self.env.assertContains("Filter", plan)
+
+        # Null-bound entity inputs continue through binding
+        res = self.graph.query("WITH NULL AS a MATCH (a) RETURN a")
+        self.env.assertEqual(res.result_set, [[None]])
+
+        res = self.graph.query("WITH NULL AS a MATCH (a)-[e]->(b) RETURN a, e, b")
+        self.env.assertEqual(len(res.result_set), 0)
+
+        # Projected NULL values remain valid for DELETE
+        self.graph.query("WITH NULL AS n DELETE n")
+
+        # Arithmetic inference returns integer for integer addition, compatible with range()
+        res = self.graph.query("WITH 1 + 1 AS x RETURN range(0, x)")
+        self.env.assertEqual(res.result_set, [[[0, 1, 2]]])
+
+        # Function argument validation accepts source unions (e.g. startNode returning Union(Node, Null) into id())
+        res = self.graph.query("MATCH ()-[r]->() WITH startNode(r) AS n RETURN id(n)")
+        self.env.assertEqual(len(res.result_set), 1)
