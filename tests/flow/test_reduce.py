@@ -257,7 +257,14 @@ class testReduce():
         res = self.graph.query("MATCH (n:Node) RETURN reduce(s = 0, x IN collect(n.v) | s + x) AS total")
         self.env.assertEqual(res.result_set, [[6]])
 
-        # Ordered/limited pipeline
+        # Ordered/limited pipeline across whole limited list
+        res = self.graph.query(
+            "MATCH (n:Node) WITH n.v AS v ORDER BY v DESC LIMIT 2 "
+            "RETURN reduce(s = 0, x IN collect(v) | s + x) AS total"
+        )
+        self.env.assertEqual(res.result_set, [[5]])
+
+        # Ordered/limited pipeline grouped by v
         res = self.graph.query(
             "MATCH (n:Node) WITH n.v AS v ORDER BY v DESC LIMIT 2 "
             "RETURN v, reduce(s = 0, x IN collect(v) | s + x) AS total"
