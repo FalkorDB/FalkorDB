@@ -2068,7 +2068,7 @@ impl Binder {
                             for (i, expected_ty) in arg_types.iter().enumerate() {
                                 if let Some(child) = children.get(i)
                                     && let ExprIR::Variable(var) = child.root().data()
-                                    && !var.ty.is_compatible_with(expected_ty)
+                                    && !Self::is_arg_type_compatible(&var.ty, expected_ty)
                                 {
                                     return Err(format!(
                                         "Type mismatch: expected {expected_ty} but was {}",
@@ -2489,6 +2489,18 @@ impl Binder {
         Ok(())
     }
 
+    fn is_arg_type_compatible(
+        actual: &Type,
+        expected: &Type,
+    ) -> bool {
+        match actual {
+            Type::Union(types) => types
+                .iter()
+                .all(|t| Self::is_arg_type_compatible(t, expected)),
+            _ => actual.is_compatible_with(expected),
+        }
+    }
+
     /// Walks an expression tree and validates that every AND/OR/XOR/NOT node
     /// has operands that can return boolean.  Produces a "Type mismatch"
     /// error for non-filter contexts (e.g. RETURN expressions).
@@ -2590,8 +2602,8 @@ impl Binder {
     #[allow(clippy::needless_pass_by_value)]
     fn expr_may_return_entity(node: DynNode<ExprIR<Variable>>) -> bool {
         match node.data() {
-            // Variables – check the resolved type
-            ExprIR::Variable(var) => var.ty.can_return_entity(),
+            // Variables – check the resolved type (Null is valid for no-op delete)
+            ExprIR::Variable(var) => var.ty.can_return_entity() || var.ty == Type::Null,
 
             // Literal Null is valid for no-op delete
             ExprIR::Constant(Value::Null) => true,
