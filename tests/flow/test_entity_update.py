@@ -585,6 +585,27 @@ class testEntityUpdate():
             except ResponseError as e:
                 self.env.assertContains("Type mismatch: expected Node or Relationship", str(e))
 
+    def test_fail_set_for_non_entity(self):
+        self.graph.delete()
+        queries_with_expected = [
+            ("WITH 1 AS one SET one = 2 RETURN one", "Type mismatch: expected Node or Relationship but was Integer"),
+            ("WITH 1 AS one SET one = 2", "Type mismatch: expected Node or Relationship but was Integer"),
+            ("WITH 1 AS one SET one.prop = 2", "Type mismatch: expected Node or Relationship but was Integer"),
+            ("WITH 'hello' AS s SET s = 1", "Type mismatch: expected Node or Relationship but was String"),
+            ("WITH {a: 1} AS m SET m = {b: 2}", "Type mismatch: expected Node or Relationship but was Map"),
+            ("WITH [1, 2] AS l SET l = 1", "Type mismatch: expected Node or Relationship but was List"),
+        ]
+        for query, expected_err in queries_with_expected:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains(expected_err, str(e))
+
+        # Control: SET on null entity is ignored without error
+        res = self.graph.query("OPTIONAL MATCH (n:DoesNotExist) SET n.prop = 42 RETURN n")
+        self.env.assertEqual(res.result_set, [[None]])
+
     def test_36_mix_add_and_remove_node_properties(self):
         self.graph.delete()
         self.graph.query("CREATE ({v:1})")
