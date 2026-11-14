@@ -167,3 +167,11 @@ class testBoundVariables(FlowTestsBase):
         # Function argument validation accepts source unions (e.g. startNode returning Union(Node, Null) into id())
         res = self.graph.query("MATCH ()-[r]->() WITH startNode(r) AS n RETURN id(n)")
         self.env.assertEqual(len(res.result_set), 1)
+
+        # CASE returning entity or NULL remains valid for entity binding
+        res = self.graph.query("MATCH (a:A) WITH CASE WHEN true THEN a ELSE NULL END AS x MATCH (x) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[1]])
+
+        # List concatenation infers list when combined with string or other types
+        res = self.graph.query("WITH [1] + 'a' AS l RETURN size(l)")
+        self.env.assertEqual(res.result_set, [[2]])

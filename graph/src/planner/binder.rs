@@ -2342,12 +2342,10 @@ impl Binder {
                         let ty = Self::infer_node_type(&list_node.child(i));
                         if ty == Type::Any {
                             has_any = true;
-                        } else if ty != Type::Null {
-                            if let Type::Union(inner) = ty {
-                                branch_types.extend(inner);
-                            } else {
-                                branch_types.push(ty);
-                            }
+                        } else if let Type::Union(inner) = ty {
+                            branch_types.extend(inner);
+                        } else {
+                            branch_types.push(ty);
                         }
                     }
                 }
@@ -2356,12 +2354,10 @@ impl Binder {
                     let ty = Self::infer_node_type(&node.child(else_idx));
                     if ty == Type::Any {
                         has_any = true;
-                    } else if ty != Type::Null {
-                        if let Type::Union(inner) = ty {
-                            branch_types.extend(inner);
-                        } else {
-                            branch_types.push(ty);
-                        }
+                    } else if let Type::Union(inner) = ty {
+                        branch_types.extend(inner);
+                    } else {
+                        branch_types.push(ty);
                     }
                 }
                 if has_any || branch_types.is_empty() {
@@ -2401,11 +2397,10 @@ impl Binder {
                 if node.num_children() >= 2 {
                     let left_ty = Self::infer_node_type(&node.child(0));
                     let right_ty = Self::infer_node_type(&node.child(1));
-                    if left_ty == Type::String || right_ty == Type::String {
-                        Type::String
-                    } else if matches!(left_ty, Type::List(_)) || matches!(right_ty, Type::List(_))
-                    {
+                    if matches!(left_ty, Type::List(_)) || matches!(right_ty, Type::List(_)) {
                         Type::List(Box::new(Type::Any))
+                    } else if left_ty == Type::String || right_ty == Type::String {
+                        Type::String
                     } else if left_ty == Type::Int && right_ty == Type::Int {
                         Type::Int
                     } else if (left_ty == Type::Float
@@ -2476,8 +2471,18 @@ impl Binder {
             (Type::Node, Type::Node) => true,
             (Type::Relationship, Type::Relationship) => true,
             (Type::Path, Type::Path) => true,
-            (Type::Union(types), target) => types.iter().any(|t| t == target || t == &Type::Any),
-            (target, Type::Union(types)) => types.iter().any(|t| t == target || t == &Type::Any),
+            (Type::Union(types), target) => {
+                types.iter().any(|t| t == target || t == &Type::Any)
+                    && types
+                        .iter()
+                        .all(|t| t == target || t == &Type::Any || t == &Type::Null)
+            }
+            (target, Type::Union(types)) => {
+                types.iter().any(|t| t == target || t == &Type::Any)
+                    && types
+                        .iter()
+                        .all(|t| t == target || t == &Type::Any || t == &Type::Null)
+            }
             _ => false,
         };
         if !is_valid {
@@ -2496,7 +2501,7 @@ impl Binder {
         match actual {
             Type::Union(types) => types
                 .iter()
-                .all(|t| Self::is_arg_type_compatible(t, expected)),
+                .any(|t| Self::is_arg_type_compatible(t, expected)),
             _ => actual.is_compatible_with(expected),
         }
     }
