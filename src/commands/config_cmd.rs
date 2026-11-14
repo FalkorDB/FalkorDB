@@ -42,7 +42,8 @@ use crate::config::{
     CONFIGURATION_TEMP_FOLDER, CONFIGURATION_VKEY_MAX_ENTITY_COUNT, DELTA_MAX_PENDING_CHANGES,
     EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP,
     MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT,
-    TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+    TIMEOUT_DEFAULT, TIMEOUT_MAX, WRITE_LOCK_POLL_INTERVAL, get_thread_count,
+    normalize_node_creation_buffer,
 };
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
@@ -102,6 +103,9 @@ fn config_get_one(
         "TEMP_FOLDER" => RedisValue::BulkString((*CONFIGURATION_TEMP_FOLDER.lock(ctx)).clone()),
         "JS_HEAP_SIZE" => RedisValue::Integer(*CONFIGURATION_JS_HEAP_SIZE.lock(ctx)),
         "JS_STACK_SIZE" => RedisValue::Integer(*CONFIGURATION_JS_STACK_SIZE.lock(ctx)),
+        "WRITE_LOCK_POLL_INTERVAL" => {
+            RedisValue::Integer(WRITE_LOCK_POLL_INTERVAL.load(Ordering::Relaxed))
+        }
         _ => return Err(UNKNOWN_FIELD.to_string()),
     };
     Ok(RedisValue::Array(vec![
@@ -123,7 +127,8 @@ pub(crate) fn validate_config_set(
         | "QUERY_MEM_CAPACITY"
         | "DELTA_MAX_PENDING_CHANGES"
         | "EFFECTS_COMPRESSION"
-        | "EFFECTS_THRESHOLD" => {
+        | "EFFECTS_THRESHOLD"
+        | "WRITE_LOCK_POLL_INTERVAL" => {
             let v: i64 = value
                 .parse()
                 .map_err(|_| format!("Failed to set config value {name} to {value}"))?;
@@ -295,6 +300,9 @@ pub(crate) fn apply_config_set(
             *CONFIGURATION_JS_STACK_SIZE.lock(ctx) = val.as_i64();
             graph::udf::js_context::JS_STACK_SIZE
                 .store(val.as_i64(), std::sync::atomic::Ordering::Relaxed);
+        }
+        "WRITE_LOCK_POLL_INTERVAL" => {
+            WRITE_LOCK_POLL_INTERVAL.store(val.as_i64(), Ordering::Relaxed);
         }
         _ => {}
     }

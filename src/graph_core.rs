@@ -188,11 +188,21 @@ pub fn register_graph(
 /// re-keys the registry without updating `Graph::name()`, so an O(1) by-name lookup
 /// would wrongly abort after a `RENAME`.
 pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
+    registered_graph_name(arc).is_some()
+}
+
+/// Resolve the current registered key name for a graph.
+///
+/// In the presence of `RENAME`, the registry entry is updated to the new key name
+/// while the underlying `Arc<RwLock<ThreadedGraph>>` pointer remains identical.
+#[must_use]
+pub fn registered_graph_name(arc: &Arc<RwLock<ThreadedGraph>>) -> Option<String> {
     let target = arc.data_ptr() as usize;
     GRAPH_REGISTRY
         .lock()
-        .values()
-        .any(|registered| registered.data_ptr() as usize == target)
+        .iter()
+        .find(|(_, registered)| registered.data_ptr() as usize == target)
+        .map(|(name, _)| name.clone())
 }
 
 /// Re-key a registry entry when a Redis RENAME moves a graph to a new key.
@@ -992,7 +1002,7 @@ pub(crate) fn reply_invalid_graph_version(
 /// wording) and return `None` when `MAX_QUEUED_QUERIES` queries are already
 /// queued — in the thread pool or in any graph's write queue. Runs on the Redis
 /// main thread and never waits: rejecting is how a full queue is reported.
-fn admit(ctx: &Context) -> Option<QueueSlot> {
+pub(crate) fn admit(ctx: &Context) -> Option<QueueSlot> {
     let slot = QueueSlot::try_acquire(MAX_QUEUED_QUERIES.load(Ordering::Relaxed));
     if slot.is_none() {
         let cerr = ffi::sanitise_error("Max pending queries exceeded");
@@ -1793,6 +1803,7 @@ pub unsafe extern "C" fn graph_free(value: *mut c_void) {
         // registry entry whose clone shares this inner allocation is removed.
         let boxed = Box::from_raw(value.cast::<Arc<RwLock<ThreadedGraph>>>());
         let data_ptr = boxed.data_ptr() as usize;
+        crate::query_session::remove_writer_gate(data_ptr);
         let removed: Vec<Arc<RwLock<ThreadedGraph>>> = {
             let mut reg = GRAPH_REGISTRY.lock();
             #[allow(clippy::needless_collect)]
