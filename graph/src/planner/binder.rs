@@ -32,7 +32,7 @@ use crate::parser::ast::{
 };
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
-use crate::runtime::value::{Value, ValueTypeOf};
+use crate::runtime::value::{Value, ValueGetType, ValueTypeOf};
 use crate::tree;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
@@ -1130,7 +1130,7 @@ impl Binder {
                         "Error: Multiple result columns with the same name are not supported.",
                     ));
                 }
-                let bound_var = self.project_name(&name, Type::Any);
+                let bound_var = self.project_name(&name, Self::infer_expr_type(&expr));
                 if let ExprIR::Variable(var_name) = expr.root().data() {
                     self.parent_to_child_scope
                         .insert(var_name.name.as_ref().unwrap().clone(), bound_var.clone());
@@ -1157,7 +1157,7 @@ impl Binder {
                         "Error: Multiple result columns with the same name are not supported.",
                     ));
                 }
-                let bound_var = self.project_name(&name, Type::Any);
+                let bound_var = self.project_name(&name, Self::infer_expr_type(&expr));
                 if let ExprIR::Variable(var_name) = expr.root().data() {
                     self.parent_to_child_scope
                         .insert(var_name.name.as_ref().unwrap().clone(), bound_var.clone());
@@ -1342,7 +1342,7 @@ impl Binder {
         let mut named_path_names: std::collections::HashSet<Arc<String>> =
             std::collections::HashSet::new();
         for raw_path in graph.paths() {
-            self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
+            self.define_name_in_scope(raw_path.var.clone(), Type::Path, false)?;
             named_path_names.insert(raw_path.var.clone());
         }
 
@@ -2273,16 +2273,70 @@ impl Binder {
         }
     }
 
+    fn infer_expr_type(expr: &QueryExpr<Variable>) -> Type {
+        Self::infer_node_type(&expr.root())
+    }
+
+    fn infer_node_type(node: &DynNode<ExprIR<Variable>>) -> Type {
+        match node.data() {
+            ExprIR::Constant(val) => val.get_type(),
+            ExprIR::Variable(var) => var.ty.clone(),
+            ExprIR::Map | ExprIR::MapProjection => Type::Map,
+            ExprIR::List | ExprIR::ListComprehension(_) | ExprIR::PatternComprehension(_) => {
+                Type::List(Box::new(Type::Any))
+            }
+            ExprIR::ShortestPath(_) => Type::Path,
+            ExprIR::FuncInvocation(func) => func.ret_type.clone(),
+            ExprIR::Length => Type::Int,
+            ExprIR::Eq
+            | ExprIR::Neq
+            | ExprIR::Lt
+            | ExprIR::Gt
+            | ExprIR::Le
+            | ExprIR::Ge
+            | ExprIR::And
+            | ExprIR::Or
+            | ExprIR::Xor
+            | ExprIR::Not
+            | ExprIR::In
+            | ExprIR::IsNode
+            | ExprIR::IsRelationship
+            | ExprIR::Quantifier { .. } => Type::Bool,
+            ExprIR::CompiledRegex(r) if r.kind == crate::parser::ast::RegexFnKind::Matches => {
+                Type::Bool
+            }
+            ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Modulo
+            | ExprIR::Pow
+            | ExprIR::Negate => Type::Float,
+            ExprIR::Distinct | ExprIR::Paren => {
+                if node.num_children() > 0 {
+                    Self::infer_node_type(&node.child(0))
+                } else {
+                    Type::Any
+                }
+            }
+            _ => Type::Any,
+        }
+    }
+
     fn ensure_type(
         existing: &Variable,
         ty: &Type,
     ) -> Result<(), String> {
-        if (ty == &Type::Relationship && (existing.ty == Type::Node || existing.ty == Type::Path))
-            || (ty == &Type::Node
-                && (existing.ty == Type::Relationship || existing.ty == Type::Path))
-            || (ty == &Type::Path
-                && (existing.ty == Type::Node || existing.ty == Type::Relationship))
-        {
+        let is_valid = match (&existing.ty, ty) {
+            (Type::Any, _) | (_, Type::Any) => true,
+            (Type::Node, Type::Node) => true,
+            (Type::Relationship, Type::Relationship) => true,
+            (Type::Path, Type::Path) => true,
+            (Type::Union(types), target) => types.iter().any(|t| t == target || t == &Type::Any),
+            (target, Type::Union(types)) => types.iter().any(|t| t == target || t == &Type::Any),
+            _ => false,
+        };
+        if !is_valid {
             return Err(format!(
                 "The alias '{}' was specified for both a node and a relationship.",
                 existing.as_str()

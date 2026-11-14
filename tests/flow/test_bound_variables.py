@@ -103,3 +103,33 @@ class testBoundVariables(FlowTestsBase):
 
         # make sure no nodes were returned
         self.env.assertEqual(len(res.result_set), 0)
+
+    def test07_rebind_non_entity_variable_conflicts(self):
+        self.graph.delete()
+        self.graph.query("CREATE (:A)-[:R]->(:B)")
+
+        def expect_err(query, expected_msg):
+            try:
+                self.graph.query(query)
+                assert False, f"Expected error '{expected_msg}' but query succeeded: {query}"
+            except ResponseError as e:
+                self.env.assertContains(expected_msg, str(e))
+
+        # Path variable bound to non-entity (map, integer, string)
+        expect_err("WITH {x: 1} AS p MATCH p = ()-[]-() RETURN p", "Variable `p` already declared")
+        expect_err("WITH 1 AS p MATCH p = ()-[]-() RETURN p", "Variable `p` already declared")
+        expect_err("WITH 'str' AS p MATCH p = ()-[]-() RETURN p", "Variable `p` already declared")
+
+        # Relationship variable bound to non-entity (map, integer, list)
+        expect_err("WITH {x: 1} AS r MATCH ()-[r]-() RETURN r", "The alias 'r' was specified for both a node and a relationship.")
+        expect_err("WITH 100 AS r MATCH ()-[r]-() RETURN r", "The alias 'r' was specified for both a node and a relationship.")
+        expect_err("WITH [1, 2] AS r MATCH ()-[r]-() RETURN r", "The alias 'r' was specified for both a node and a relationship.")
+
+        # Node variable bound to non-entity (map, integer, list)
+        expect_err("WITH {x: 1} AS n MATCH (n) RETURN n", "The alias 'n' was specified for both a node and a relationship.")
+        expect_err("WITH 42 AS n MATCH (n) RETURN n", "The alias 'n' was specified for both a node and a relationship.")
+        expect_err("WITH [1, 2] AS n MATCH (n) RETURN n", "The alias 'n' was specified for both a node and a relationship.")
+
+        # Legitimate entity reuse succeeds
+        res = self.graph.query("MATCH (a:A)-[r:R]->(b:B) WITH a, r, b MATCH (a)-[r]->(b) RETURN a, r, b")
+        self.env.assertEqual(len(res.result_set), 1)
