@@ -531,9 +531,9 @@ pub fn graph_constraint(
     };
 
     let is_replayed = ctx.get_flags().contains(ContextFlags::REPLICATED);
-    let key_bytes: Vec<u8> = key_str.as_slice().to_vec();
 
     if let Some(slot) = slot {
+        let key_bytes = key_str.as_slice().to_vec();
         let bc = unsafe { BlockedClient::new(ctx.ctx) };
         graph::threadpool::spawn(
             move || {
