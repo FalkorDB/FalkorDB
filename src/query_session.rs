@@ -25,6 +25,7 @@ use graph::graph::{graph::Graph, mvcc_graph::CommitError};
 use graph::locks::WriteEscalation;
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use redis_module::{Context, ContextFlags, raw};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{cell::Cell, cell::RefCell, marker::PhantomData, ptr::NonNull, sync::Arc};
 
 /// Which lock(s) a query holds.
@@ -165,6 +166,8 @@ impl QuerySession {
         graph: &Arc<RwLock<ThreadedGraph>>,
         facts: WriteFacts,
     ) -> Self {
+        let gate = writer_gate_for(graph);
+        gate.wait_open();
         Self {
             graph: Arc::clone(graph),
             mode: RefCell::new(Some(Mode::Reader(RwLock::read_arc(graph)))),
@@ -344,7 +347,7 @@ impl QuerySession {
         &self,
         fork: Option<&mut Graph>,
     ) -> Result<(), WriteAbort> {
-        if self.escalate() {
+        if self.escalate()? {
             // The key could have been deleted in the window where we held no
             // per-graph lock, so re-verify the graph is still reachable before
             // mutating it — as C does by re-opening the key under WRITE. The locks
@@ -367,23 +370,58 @@ impl QuerySession {
     /// Release the read lock, take the GIL, take the write lock — in that order.
     /// `false` if this query was already a writer, so there was nothing to do.
     ///
-    /// Separate from [`Self::upgrade_to_write`] so the `mode` borrow ends here, by
-    /// scope, instead of spanning that method's call out to the graph registry.
-    fn escalate(&self) -> bool {
+    /// Waits for the write lock in `WRITE_LOCK_POLL_INTERVAL` slices, releasing
+    /// the GIL between slices so other commands (such as PING) keep being served.
+    fn escalate(&self) -> Result<bool, WriteAbort> {
         let mut mode = self.mode.borrow_mut();
         if matches!(*mode, Some(Mode::Writer { .. })) {
-            return false;
+            return Ok(false);
         }
         // Drop the read lock FIRST: holding it across the GIL acquire below is the
         // #726 inversion, and this assignment is what guarantees we never do.
         *mode = None;
 
-        // GIL, then the write lock — the order every inline main-thread command
-        // already has.
-        let gil = Gil::acquire();
-        let guard = RwLock::write_arc(&self.graph);
-        *mode = Some(Mode::Writer { guard, _gil: gil });
-        true
+        let poll_interval = crate::config::WRITE_LOCK_POLL_INTERVAL.load(Ordering::Relaxed);
+        let on_main_thread = graph::thread_id::is_main_thread();
+
+        if on_main_thread || poll_interval <= 0 {
+            // Legacy / inline mode: single blocking acquire holding the GIL.
+            let gil = Gil::acquire();
+            let guard = RwLock::write_arc(&self.graph);
+            *mode = Some(Mode::Writer { guard, _gil: gil });
+            return Ok(true);
+        }
+
+        let gate = writer_gate_for(&self.graph);
+        let mut gate_guard: Option<WriterGateGuard> = None;
+        let mut slices = 0;
+        const GATE_THRESHOLD: usize = 2;
+        const YIELD_DURATION: std::time::Duration = std::time::Duration::from_millis(1);
+        let slice_timeout = std::time::Duration::from_millis(poll_interval as u64);
+
+        loop {
+            let gil = Gil::acquire();
+
+            if !crate::graph_core::graph_is_registered(&self.graph) {
+                return Err(WriteAbort::GraphUnregistered);
+            }
+            reauthorize_write(self.facts)?;
+
+            if let Some(guard) = RwLock::try_write_arc_for(&self.graph, slice_timeout) {
+                *mode = Some(Mode::Writer { guard, _gil: gil });
+                drop(gate_guard);
+                return Ok(true);
+            }
+
+            drop(gil);
+
+            slices += 1;
+            if gate_guard.is_none() && slices >= GATE_THRESHOLD {
+                gate_guard = Some(WriterGateGuard::new(&gate));
+            }
+
+            std::thread::sleep(YIELD_DURATION);
+        }
     }
 }
 
@@ -567,4 +605,96 @@ unsafe fn release_gil(ctx: *mut raw::RedisModuleCtx) {
             free(ctx);
         }
     }
+}
+
+/// A per-graph writer gate that prevents reader queries from starving writers waiting
+/// for the graph write lock.
+///
+/// Mirrors C's writer gate (`GraphContext_WriterGateEnter` / `GraphContext_WriterGateLeave`).
+/// When a writer is pushed back by in-flight reads (`GATE_THRESHOLD = 2` slices), it engages
+/// the gate. New readers park at the gate instead of acquiring the read lock, allowing in-flight
+/// readers to drain and the writer to acquire the write lock without being continuously starved
+/// by incoming readers during its 1ms GIL yield hand-offs.
+pub struct WriterGate {
+    waiters: AtomicU32,
+    lock: parking_lot::Mutex<()>,
+    cond: parking_lot::Condvar,
+}
+
+impl Default for WriterGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WriterGate {
+    pub fn new() -> Self {
+        Self {
+            waiters: AtomicU32::new(0),
+            lock: parking_lot::Mutex::new(()),
+            cond: parking_lot::Condvar::new(),
+        }
+    }
+
+    #[inline]
+    pub fn is_engaged(&self) -> bool {
+        self.waiters.load(Ordering::Acquire) > 0
+    }
+
+    pub fn enter(&self) {
+        let _g = self.lock.lock();
+        self.waiters.fetch_add(1, Ordering::Release);
+    }
+
+    pub fn leave(&self) {
+        let _g = self.lock.lock();
+        let prev = self.waiters.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(prev > 0);
+        if prev == 1 {
+            self.cond.notify_all();
+        }
+    }
+
+    pub fn wait_open(&self) {
+        if !self.is_engaged() {
+            return;
+        }
+        let mut guard = self.lock.lock();
+        while self.is_engaged() {
+            self.cond.wait(&mut guard);
+        }
+    }
+}
+
+/// RAII guard that leaves the writer gate when dropped.
+struct WriterGateGuard<'a>(&'a WriterGate);
+
+impl<'a> WriterGateGuard<'a> {
+    fn new(gate: &'a WriterGate) -> Self {
+        gate.enter();
+        Self(gate)
+    }
+}
+
+impl Drop for WriterGateGuard<'_> {
+    fn drop(&mut self) {
+        self.0.leave();
+    }
+}
+
+static WRITER_GATES: std::sync::LazyLock<
+    parking_lot::Mutex<std::collections::HashMap<usize, Arc<WriterGate>>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+
+pub fn writer_gate_for(graph: &Arc<RwLock<ThreadedGraph>>) -> Arc<WriterGate> {
+    let key = graph.data_ptr() as usize;
+    let mut gates = WRITER_GATES.lock();
+    gates
+        .entry(key)
+        .or_insert_with(|| Arc::new(WriterGate::new()))
+        .clone()
+}
+
+pub fn remove_writer_gate(data_ptr: usize) {
+    WRITER_GATES.lock().remove(&data_ptr);
 }

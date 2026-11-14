@@ -1,7 +1,10 @@
+use crate::dispatch::must_run_inline;
 use crate::query_session::{QuerySession, WriteAbort, WriteFacts};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{CtxSink, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
+    graph_core::{
+        BlockedClient, CtxSink, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph,
+    },
     redis_type::GRAPH_TYPE,
 };
 use graph::effects::EffectsBuffer;
@@ -10,7 +13,7 @@ use graph::entity_type::EntityType;
 use graph::graph::constraint::{ConstraintStatus, ConstraintType};
 use graph::identifier_limits::validate_identifier_len;
 use parking_lot::RwLock;
-use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue};
+use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -509,16 +512,32 @@ pub fn graph_constraint(
         g
     };
 
+    let is_replayed = ctx.get_flags().contains(ContextFlags::REPLICATED);
+    let key_bytes: Vec<u8> = key_str.as_slice().to_vec();
+
+    if !must_run_inline(ctx) {
+        let bc = unsafe { BlockedClient::new(ctx.ctx) };
+        graph::threadpool::spawn(
+            move || {
+                execute_constraint_async(
+                    bc,
+                    graph,
+                    is_create,
+                    ct,
+                    entity_type,
+                    label,
+                    properties,
+                    key_bytes,
+                    is_replayed,
+                );
+            },
+            None,
+        );
+        return Ok(RedisValue::NoReply);
+    }
+
     let tg = graph.write();
     let mut fork = tg.graph.fork();
-
-    // Not for replication: nothing propagates `GRAPH.CONSTRAINT` any more, so
-    // this can only be set while replaying an AOF written by a build that did.
-    // Such a file holds the command **twice** per create — the old verbatim pair,
-    // where the second copy was the activation signal — so both the announce
-    // suppression below and the `Constraint already exists` arm at the bottom
-    // exist to load one without erroring.
-    let is_replayed = ctx.get_flags().contains(ContextFlags::REPLICATED);
 
     // Captured before the registration below, because the announcement is a
     // diff against it: an entry interned after this point is new, and travels
@@ -670,5 +689,174 @@ pub fn graph_constraint(
             Ok(RedisValue::SimpleStringStatic("OK"))
         }
         Err(e) => Err(redis_module::RedisError::String(e)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_constraint_async(
+    bc: BlockedClient,
+    graph: Arc<RwLock<ThreadedGraph>>,
+    is_create: bool,
+    ct: ConstraintType,
+    entity_type: EntityType,
+    label: Arc<String>,
+    properties: Vec<Arc<String>>,
+    key_bytes: Vec<u8>,
+    is_replayed: bool,
+) {
+    let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
+    let ctx = Context::new(ts_ctx);
+
+    let facts = WriteFacts {
+        replicates: !is_replayed,
+        originated_here: !is_replayed,
+    };
+
+    'attempt: loop {
+        let session = QuerySession::begin_with(&graph, facts);
+        let mut fork = session.write_version();
+        let baseline = SchemaBaseline::of(&fork);
+
+        let precheck_result = if is_create {
+            match fork.create_constraint(ct, entity_type, &label, &properties) {
+                Ok(needs_background_validation) => {
+                    register_constraint_schema(&mut fork, entity_type, &label, &properties);
+                    Ok(needs_background_validation)
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            fork.drop_constraint(&ct, &entity_type, &label, &properties)
+                .map(|()| false)
+        };
+
+        let needs_background_validation = match precheck_result {
+            Ok(nbv) => nbv,
+            Err(e) if is_replayed && e == "Constraint already exists" => {
+                raw::reply_with_simple_string(ctx.ctx, c"OK".as_ptr());
+                drop(bc);
+                unsafe { ffi::free_thread_safe_context(ts_ctx) };
+                return;
+            }
+            Err(e) => {
+                let cerr = ffi::sanitise_error(e);
+                unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+                drop(bc);
+                unsafe { ffi::free_thread_safe_context(ts_ctx) };
+                return;
+            }
+        };
+
+        match session.upgrade_to_write(Some(&mut fork)) {
+            Ok(()) => {}
+            Err(WriteAbort::Stale) => {
+                continue 'attempt;
+            }
+            Err(e) => {
+                let cerr = ffi::sanitise_error(e.to_string());
+                unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+                drop(bc);
+                unsafe { ffi::free_thread_safe_context(ts_ctx) };
+                return;
+            }
+        }
+
+        let mutated =
+            match session.with_graph_mut(|tg| tg.graph.commit(fork).map_err(WriteAbort::from)) {
+                Some(Ok(m)) => m,
+                Some(Err(WriteAbort::Stale)) => {
+                    continue 'attempt;
+                }
+                Some(Err(e)) => {
+                    let cerr = ffi::sanitise_error(e.to_string());
+                    unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+                    drop(bc);
+                    unsafe { ffi::free_thread_safe_context(ts_ctx) };
+                    return;
+                }
+                None => {
+                    let cerr = ffi::sanitise_error("Failed to commit constraint".to_string());
+                    unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+                    drop(bc);
+                    unsafe { ffi::free_thread_safe_context(ts_ctx) };
+                    return;
+                }
+            };
+
+        if needs_background_validation {
+            std::thread::spawn({
+                let graph = graph.clone();
+                let label = Arc::clone(&label);
+                let properties = properties.clone();
+                let key = key_bytes.clone();
+                let was_replicated = is_replayed;
+                move || {
+                    settle_constraint(
+                        &graph,
+                        &[Settling {
+                            ct,
+                            entity_type,
+                            label,
+                            properties,
+                        }],
+                        &key,
+                        was_replicated,
+                    );
+                }
+            });
+        }
+
+        if !is_replayed {
+            let status = if !is_create {
+                Some(None)
+            } else if needs_background_validation {
+                Some(Some(ConstraintStatus::UnderConstruction))
+            } else {
+                find_status(&mutated, ct, entity_type, &label, &properties).map(Some)
+            };
+            if let Some(status) = status {
+                let mut buf = EffectsBuffer::new();
+                match buf.build_constraint(
+                    &mutated,
+                    is_create,
+                    &AnnouncedConstraint {
+                        ct,
+                        entity_type,
+                        status,
+                        label: &label,
+                        properties: &properties,
+                    },
+                    &baseline,
+                ) {
+                    Ok(()) => {
+                        buf.replicate(&CtxSink(&ctx), &key_bytes);
+                    }
+                    Err(e) => redis_module::logging::log_warning(format!(
+                        "constraint {} on {entity_type:?} '{label}' was applied but could \
+                         not be announced ({e}); it will not reach replicas or the AOF",
+                        if is_create { "CREATE" } else { "DROP" },
+                    )),
+                }
+            } else {
+                redis_module::logging::log_warning(format!(
+                    "constraint CREATE on {entity_type:?} '{label}' was applied but its \
+                     status could not be read back, so it was not announced; it will not \
+                     reach replicas or the AOF. Recover with GRAPH.CONSTRAINT DROP on \
+                     graph '{}' followed by CREATE.",
+                    String::from_utf8_lossy(&key_bytes),
+                ));
+            }
+        }
+
+        session.release_locks();
+
+        if is_create {
+            raw::reply_with_simple_string(ctx.ctx, c"PENDING".as_ptr());
+        } else {
+            raw::reply_with_simple_string(ctx.ctx, c"OK".as_ptr());
+        }
+        drop(bc);
+        unsafe { ffi::free_thread_safe_context(ts_ctx) };
+        return;
     }
 }

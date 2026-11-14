@@ -122,6 +122,9 @@ pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(MAX_INFO_QUERIES_CAP);
 /// in C, but not yet read: this engine always frees off-thread (see
 /// `graph_core::graph_free`), so it defaults to 1 — C's default, and what happens.
 pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(1);
+/// Milliseconds a writer waits for the graph write lock before yielding the GIL and retrying.
+/// 0 or negative restores legacy single blocking acquire without slicing or GIL yielding.
+pub static WRITE_LOCK_POLL_INTERVAL: AtomicI64 = AtomicI64::new(5);
 
 // ── Read-only runtime configs ──
 
@@ -173,6 +176,7 @@ pub const CONFIG_NAMES: &[&str] = &[
     "TEMP_FOLDER",
     "JS_HEAP_SIZE",
     "JS_STACK_SIZE",
+    "WRITE_LOCK_POLL_INTERVAL",
 ];
 
 // ── Module load arguments ──

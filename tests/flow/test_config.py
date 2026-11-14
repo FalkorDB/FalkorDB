@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 24 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 25 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -52,7 +52,8 @@ class testConfig(FlowTestsBase):
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
                 ("TEMP_FOLDER", "/tmp"),
                 ("JS_HEAP_SIZE", 256 * 1024 * 1024),
-                ("JS_STACK_SIZE", 1024 * 1024)
+                ("JS_STACK_SIZE", 1024 * 1024),
+                ("WRITE_LOCK_POLL_INTERVAL", 5)
         ]
 
         for i, config in enumerate(response):
@@ -388,6 +389,37 @@ class testConfig(FlowTestsBase):
 
         # restore defaults for the tests that follow
         self.db.config_set("DELAY_INDEXING", "no")
+
+    def test15_set_get_write_lock_poll_interval(self):
+        config_name = "WRITE_LOCK_POLL_INTERVAL"
+
+        # default value
+        self.env.assertEqual(self.db.config_get(config_name), 5)
+
+        # update at run-time
+        self.env.assertEqual(self.db.config_set(config_name, 25), "OK")
+        self.env.assertEqual(self.db.config_get(config_name), 25)
+
+        # 0 is valid: restores legacy behavior (single blocking acquire,
+        # no slicing / GIL yielding / retry)
+        self.env.assertEqual(self.db.config_set(config_name, 0), "OK")
+        self.env.assertEqual(self.db.config_get(config_name), 0)
+
+        # negatives are rejected and the previous value is preserved
+        try:
+            self.db.config_set(config_name, -1)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            assert(("Failed to set config value %s to -1" % config_name) in str(e))
+        self.env.assertEqual(self.db.config_get(config_name), 0)
+
+        # settable as a module load argument
+        # flush first for a clean shutdown under memcheck
+        self.redis_con.flushall()
+        self.env.stop()
+        self.env, self.db = Env(moduleArgs='WRITE_LOCK_POLL_INTERVAL 15')
+        self.redis_con = self.env.getConnection()
+        self.env.assertEqual(self.db.config_get(config_name), 15)
 
     def test13_set_get_max_info_queries(self):
         """MAX_INFO_QUERIES is settable at run-time, and clamped to its cap"""

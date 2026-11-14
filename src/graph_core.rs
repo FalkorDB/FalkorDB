@@ -1793,6 +1793,7 @@ pub unsafe extern "C" fn graph_free(value: *mut c_void) {
         // registry entry whose clone shares this inner allocation is removed.
         let boxed = Box::from_raw(value.cast::<Arc<RwLock<ThreadedGraph>>>());
         let data_ptr = boxed.data_ptr() as usize;
+        crate::query_session::remove_writer_gate(data_ptr);
         let removed: Vec<Arc<RwLock<ThreadedGraph>>> = {
             let mut reg = GRAPH_REGISTRY.lock();
             #[allow(clippy::needless_collect)]
