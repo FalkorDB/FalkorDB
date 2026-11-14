@@ -32,7 +32,7 @@ use crate::parser::ast::{
 };
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
-use crate::runtime::value::{Value, ValueTypeOf};
+use crate::runtime::value::{Value, ValueGetType, ValueTypeOf};
 use crate::tree;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
@@ -779,9 +779,18 @@ impl Binder {
                 }
                 // Allocate a fresh outer-scope ID for this returned variable
                 let outer_var = self.project_name(name, inner_var.ty.clone());
+                if self
+                    .varlen_rel_var_ids
+                    .contains(&(inner_var.scope_id, inner_var.id))
+                {
+                    self.varlen_rel_var_ids
+                        .insert((outer_var.scope_id, outer_var.id));
+                }
                 remap.push((inner_var.clone(), outer_var));
             }
         }
+        self.varlen_rel_var_ids
+            .retain(|(scope_id, _)| (*scope_id as usize) < saved_env_stack_len);
 
         Ok(QueryIR::CallSubquery {
             body: Box::new(bound_body),
@@ -879,6 +888,7 @@ impl Binder {
                 let mut bound_branches = Vec::with_capacity(branches.len());
                 let mut first_columns: Option<Vec<String>> = None;
                 let mut last_binder_env: Option<HashMap<Arc<String>, Variable>> = None;
+                let mut branch_output_types: HashMap<Arc<String>, Vec<Type>> = HashMap::new();
                 for branch in branches {
                     let (has_import, imported) = match &branch {
                         QueryIR::Query { clauses, .. } => {
@@ -905,7 +915,7 @@ impl Binder {
                         parent_to_child_scope: HashMap::new(),
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
-                        varlen_rel_var_ids: std::collections::HashSet::new(),
+                        varlen_rel_var_ids: self.varlen_rel_var_ids.clone(),
                         retired_scope_vars: vec![],
                     };
 
@@ -955,12 +965,26 @@ impl Binder {
                     let mut branch_scope_vars = binder.scope_vars();
                     merge_scope_vars(&mut branch_scope_vars, binder.retired_scope_vars.clone());
                     merge_scope_vars(&mut self.retired_scope_vars, branch_scope_vars);
+                    for (name, var) in binder.current_env() {
+                        branch_output_types
+                            .entry(name.clone())
+                            .or_default()
+                            .push(var.ty.clone());
+                    }
                     // Capture the binder's final env (RETURN-projected vars)
                     last_binder_env = Some(binder.current_env().clone());
                     bound_branches.push(bound);
                 }
-                // Set current env to the returned columns from the last branch
-                if let Some(env) = last_binder_env {
+                // Set current env to the returned columns, merging types across branches
+                // while preserving the output variable identity needed for remapping
+                if let Some(mut env) = last_binder_env {
+                    for (name, var) in env.iter_mut() {
+                        if let Some(types) = branch_output_types.get(name) {
+                            if !types.windows(2).all(|w| w[0] == w[1]) {
+                                var.ty = Type::Any;
+                            }
+                        }
+                    }
                     *self.current_env_mut() = env;
                 } else {
                     *self.current_env_mut() = HashMap::new();
@@ -988,6 +1012,13 @@ impl Binder {
         let mut projections = Vec::with_capacity(imported.len());
         for (name, outer_var) in imported {
             let inner_var = self.project_name(name, outer_var.ty.clone());
+            if self
+                .varlen_rel_var_ids
+                .contains(&(outer_var.scope_id, outer_var.id))
+            {
+                self.varlen_rel_var_ids
+                    .insert((inner_var.scope_id, inner_var.id));
+            }
             // Carry forward node_labels for Node-typed imports
             if outer_var.ty == Type::Node
                 && let Some(labels) = self
@@ -1114,6 +1145,10 @@ impl Binder {
                     self.node_labels
                         .insert((bound_var.scope_id, bound_var.id), labels);
                 }
+                if self.varlen_rel_var_ids.contains(&(var.scope_id, var.id)) {
+                    self.varlen_rel_var_ids
+                        .insert((bound_var.scope_id, bound_var.id));
+                }
                 let expr = Arc::new(DynTree::new(ExprIR::Variable(var.clone())));
                 projected.push((bound_var, expr));
             }
@@ -1130,7 +1165,7 @@ impl Binder {
                         "Error: Multiple result columns with the same name are not supported.",
                     ));
                 }
-                let bound_var = self.project_name(&name, Type::Any);
+                let bound_var = self.project_name(&name, Self::infer_expr_type(&expr));
                 if let ExprIR::Variable(var_name) = expr.root().data() {
                     self.parent_to_child_scope
                         .insert(var_name.name.as_ref().unwrap().clone(), bound_var.clone());
@@ -1143,6 +1178,13 @@ impl Binder {
                     {
                         self.node_labels
                             .insert((bound_var.scope_id, bound_var.id), labels);
+                    }
+                    if self
+                        .varlen_rel_var_ids
+                        .contains(&(var_name.scope_id, var_name.id))
+                    {
+                        self.varlen_rel_var_ids
+                            .insert((bound_var.scope_id, bound_var.id));
                     }
                 }
                 projected.push((bound_var, expr));
@@ -1157,7 +1199,7 @@ impl Binder {
                         "Error: Multiple result columns with the same name are not supported.",
                     ));
                 }
-                let bound_var = self.project_name(&name, Type::Any);
+                let bound_var = self.project_name(&name, Self::infer_expr_type(&expr));
                 if let ExprIR::Variable(var_name) = expr.root().data() {
                     self.parent_to_child_scope
                         .insert(var_name.name.as_ref().unwrap().clone(), bound_var.clone());
@@ -1170,6 +1212,13 @@ impl Binder {
                     {
                         self.node_labels
                             .insert((bound_var.scope_id, bound_var.id), labels);
+                    }
+                    if self
+                        .varlen_rel_var_ids
+                        .contains(&(var_name.scope_id, var_name.id))
+                    {
+                        self.varlen_rel_var_ids
+                            .insert((bound_var.scope_id, bound_var.id));
                     }
                 }
                 projected.push((bound_var, expr));
@@ -1342,7 +1391,7 @@ impl Binder {
         let mut named_path_names: std::collections::HashSet<Arc<String>> =
             std::collections::HashSet::new();
         for raw_path in graph.paths() {
-            self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
+            self.define_name_in_scope(raw_path.var.clone(), Type::Path, false)?;
             named_path_names.insert(raw_path.var.clone());
         }
 
@@ -2043,7 +2092,7 @@ impl Binder {
                             for (i, expected_ty) in arg_types.iter().enumerate() {
                                 if let Some(child) = children.get(i)
                                     && let ExprIR::Variable(var) = child.root().data()
-                                    && !var.ty.is_compatible_with(expected_ty)
+                                    && !Self::is_arg_type_compatible(&var.ty, expected_ty)
                                 {
                                     return Err(format!(
                                         "Type mismatch: expected {expected_ty} but was {}",
@@ -2246,6 +2295,10 @@ impl Binder {
                     scope_id: current_scope_id,
                     ty: var.ty.clone(),
                 };
+                if self.varlen_rel_var_ids.contains(&(var.scope_id, var.id)) {
+                    self.varlen_rel_var_ids
+                        .insert((copied_var.scope_id, copied_var.id));
+                }
                 self.current_env_mut()
                     .insert(name.clone(), copied_var.clone());
                 self.copy_from_parent
@@ -2273,22 +2326,212 @@ impl Binder {
         }
     }
 
+    fn infer_expr_type(expr: &QueryExpr<Variable>) -> Type {
+        Self::infer_node_type(&expr.root())
+    }
+
+    fn infer_node_type(node: &DynNode<ExprIR<Variable>>) -> Type {
+        match node.data() {
+            ExprIR::Constant(val) => val.get_type(),
+            ExprIR::Variable(var) => var.ty.clone(),
+            ExprIR::Map | ExprIR::MapProjection => Type::Map,
+            ExprIR::List | ExprIR::ListComprehension(_) | ExprIR::PatternComprehension(_) => {
+                Type::List(Box::new(Type::Any))
+            }
+            ExprIR::ShortestPath(_) => Type::Path,
+            ExprIR::FuncInvocation(func) => func.ret_type.clone(),
+            ExprIR::Length => Type::Int,
+            ExprIR::Eq
+            | ExprIR::Neq
+            | ExprIR::Lt
+            | ExprIR::Gt
+            | ExprIR::Le
+            | ExprIR::Ge
+            | ExprIR::And
+            | ExprIR::Or
+            | ExprIR::Xor
+            | ExprIR::Not
+            | ExprIR::In
+            | ExprIR::IsNode
+            | ExprIR::IsRelationship
+            | ExprIR::Quantifier { .. } => Type::Bool,
+            ExprIR::CompiledRegex(r) => match r.kind {
+                crate::parser::ast::RegexFnKind::Matches => Type::Bool,
+                crate::parser::ast::RegexFnKind::MatchList => Type::List(Box::new(Type::String)),
+                crate::parser::ast::RegexFnKind::Replace => Type::String,
+            },
+            ExprIR::Case { has_subject } => {
+                let when_then_list_idx = if *has_subject { 1 } else { 0 };
+                let mut branch_types = Vec::new();
+                let mut has_any = false;
+                if node.num_children() > when_then_list_idx {
+                    let list_node = node.child(when_then_list_idx);
+                    for i in (1..list_node.num_children()).step_by(2) {
+                        let ty = Self::infer_node_type(&list_node.child(i));
+                        if ty == Type::Any {
+                            has_any = true;
+                        } else if let Type::Union(inner) = ty {
+                            branch_types.extend(inner);
+                        } else {
+                            branch_types.push(ty);
+                        }
+                    }
+                }
+                let else_idx = when_then_list_idx + 1;
+                if node.num_children() > else_idx {
+                    let ty = Self::infer_node_type(&node.child(else_idx));
+                    if ty == Type::Any {
+                        has_any = true;
+                    } else if let Type::Union(inner) = ty {
+                        branch_types.extend(inner);
+                    } else {
+                        branch_types.push(ty);
+                    }
+                }
+                if has_any || branch_types.is_empty() {
+                    Type::Any
+                } else if branch_types.windows(2).all(|w| w[0] == w[1]) {
+                    branch_types.into_iter().next().unwrap()
+                } else {
+                    Type::Union(branch_types.into())
+                }
+            }
+            ExprIR::Reduce(_) => {
+                if node.num_children() > 2 {
+                    let init_ty = Self::infer_node_type(&node.child(0));
+                    let body_ty = Self::infer_node_type(&node.child(2));
+                    if init_ty == body_ty && init_ty != Type::Any {
+                        init_ty
+                    } else {
+                        Type::Any
+                    }
+                } else {
+                    Type::Any
+                }
+            }
+            ExprIR::Negate => {
+                if node.num_children() > 0 {
+                    let child_ty = Self::infer_node_type(&node.child(0));
+                    match child_ty {
+                        Type::Int => Type::Int,
+                        Type::Float => Type::Float,
+                        _ => Type::Any,
+                    }
+                } else {
+                    Type::Any
+                }
+            }
+            ExprIR::Add => {
+                if node.num_children() >= 2 {
+                    let left_ty = Self::infer_node_type(&node.child(0));
+                    let right_ty = Self::infer_node_type(&node.child(1));
+                    if matches!(left_ty, Type::List(_)) || matches!(right_ty, Type::List(_)) {
+                        Type::List(Box::new(Type::Any))
+                    } else if left_ty == Type::String || right_ty == Type::String {
+                        Type::String
+                    } else if left_ty == Type::Int && right_ty == Type::Int {
+                        Type::Int
+                    } else if (left_ty == Type::Float
+                        && (right_ty == Type::Int || right_ty == Type::Float))
+                        || (right_ty == Type::Float
+                            && (left_ty == Type::Int || left_ty == Type::Float))
+                    {
+                        Type::Float
+                    } else {
+                        Type::Any
+                    }
+                } else {
+                    Type::Any
+                }
+            }
+            ExprIR::Sub | ExprIR::Mul | ExprIR::Modulo => {
+                if node.num_children() >= 2 {
+                    let left_ty = Self::infer_node_type(&node.child(0));
+                    let right_ty = Self::infer_node_type(&node.child(1));
+                    if left_ty == Type::Int && right_ty == Type::Int {
+                        Type::Int
+                    } else if (left_ty == Type::Float
+                        && (right_ty == Type::Int || right_ty == Type::Float))
+                        || (right_ty == Type::Float
+                            && (left_ty == Type::Int || left_ty == Type::Float))
+                    {
+                        Type::Float
+                    } else {
+                        Type::Any
+                    }
+                } else {
+                    Type::Any
+                }
+            }
+            ExprIR::Div | ExprIR::Pow => {
+                if node.num_children() >= 2 {
+                    let left_ty = Self::infer_node_type(&node.child(0));
+                    let right_ty = Self::infer_node_type(&node.child(1));
+                    if (left_ty == Type::Int || left_ty == Type::Float)
+                        && (right_ty == Type::Int || right_ty == Type::Float)
+                    {
+                        Type::Float
+                    } else {
+                        Type::Any
+                    }
+                } else {
+                    Type::Any
+                }
+            }
+            ExprIR::Distinct | ExprIR::Paren => {
+                if node.num_children() > 0 {
+                    Self::infer_node_type(&node.child(0))
+                } else {
+                    Type::Any
+                }
+            }
+            _ => Type::Any,
+        }
+    }
+
     fn ensure_type(
         existing: &Variable,
         ty: &Type,
     ) -> Result<(), String> {
-        if (ty == &Type::Relationship && (existing.ty == Type::Node || existing.ty == Type::Path))
-            || (ty == &Type::Node
-                && (existing.ty == Type::Relationship || existing.ty == Type::Path))
-            || (ty == &Type::Path
-                && (existing.ty == Type::Node || existing.ty == Type::Relationship))
-        {
+        let is_valid = match (&existing.ty, ty) {
+            (Type::Any, _) | (_, Type::Any) => true,
+            (Type::Null, _) | (_, Type::Null) => true,
+            (Type::Node, Type::Node) => true,
+            (Type::Relationship, Type::Relationship) => true,
+            (Type::Path, Type::Path) => true,
+            (Type::Union(types), target) => {
+                types.iter().any(|t| t == target || t == &Type::Any)
+                    && types
+                        .iter()
+                        .all(|t| t == target || t == &Type::Any || t == &Type::Null)
+            }
+            (target, Type::Union(types)) => {
+                types.iter().any(|t| t == target || t == &Type::Any)
+                    && types
+                        .iter()
+                        .all(|t| t == target || t == &Type::Any || t == &Type::Null)
+            }
+            _ => false,
+        };
+        if !is_valid {
             return Err(format!(
                 "The alias '{}' was specified for both a node and a relationship.",
                 existing.as_str()
             ));
         }
         Ok(())
+    }
+
+    fn is_arg_type_compatible(
+        actual: &Type,
+        expected: &Type,
+    ) -> bool {
+        match actual {
+            Type::Union(types) => types
+                .iter()
+                .all(|t| Self::is_arg_type_compatible(t, expected)),
+            _ => actual.is_compatible_with(expected),
+        }
     }
 
     /// Walks an expression tree and validates that every AND/OR/XOR/NOT node
@@ -2392,8 +2635,11 @@ impl Binder {
     #[allow(clippy::needless_pass_by_value)]
     fn expr_may_return_entity(node: DynNode<ExprIR<Variable>>) -> bool {
         match node.data() {
-            // Variables – check the resolved type
-            ExprIR::Variable(var) => var.ty.can_return_entity(),
+            // Variables – check the resolved type (Null is valid for no-op delete)
+            ExprIR::Variable(var) => var.ty.can_return_entity() || var.ty == Type::Null,
+
+            // Literal Null is valid for no-op delete
+            ExprIR::Constant(Value::Null) => true,
 
             // Function calls – check the return type
             ExprIR::FuncInvocation(func) => func.ret_type.can_return_entity(),
