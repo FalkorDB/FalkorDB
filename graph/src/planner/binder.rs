@@ -912,7 +912,7 @@ impl Binder {
                         parent_to_child_scope: HashMap::new(),
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
-                        varlen_rel_var_ids: std::collections::HashSet::new(),
+                        varlen_rel_var_ids: self.varlen_rel_var_ids.clone(),
                         retired_scope_vars: vec![],
                     };
 
@@ -2367,7 +2367,9 @@ impl Binder {
                 }
             }
             ExprIR::Reduce(_) => {
-                if node.num_children() > 0 {
+                if node.num_children() > 2 {
+                    Self::infer_node_type(&node.child(2))
+                } else if node.num_children() > 0 {
                     Self::infer_node_type(&node.child(0))
                 } else {
                     Type::Any
