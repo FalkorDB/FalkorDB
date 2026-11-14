@@ -779,6 +779,13 @@ impl Binder {
                 }
                 // Allocate a fresh outer-scope ID for this returned variable
                 let outer_var = self.project_name(name, inner_var.ty.clone());
+                if self
+                    .varlen_rel_var_ids
+                    .contains(&(inner_var.scope_id, inner_var.id))
+                {
+                    self.varlen_rel_var_ids
+                        .insert((outer_var.scope_id, outer_var.id));
+                }
                 remap.push((inner_var.clone(), outer_var));
             }
         }
@@ -988,6 +995,13 @@ impl Binder {
         let mut projections = Vec::with_capacity(imported.len());
         for (name, outer_var) in imported {
             let inner_var = self.project_name(name, outer_var.ty.clone());
+            if self
+                .varlen_rel_var_ids
+                .contains(&(outer_var.scope_id, outer_var.id))
+            {
+                self.varlen_rel_var_ids
+                    .insert((inner_var.scope_id, inner_var.id));
+            }
             // Carry forward node_labels for Node-typed imports
             if outer_var.ty == Type::Node
                 && let Some(labels) = self
@@ -1114,6 +1128,10 @@ impl Binder {
                     self.node_labels
                         .insert((bound_var.scope_id, bound_var.id), labels);
                 }
+                if self.varlen_rel_var_ids.contains(&(var.scope_id, var.id)) {
+                    self.varlen_rel_var_ids
+                        .insert((bound_var.scope_id, bound_var.id));
+                }
                 let expr = Arc::new(DynTree::new(ExprIR::Variable(var.clone())));
                 projected.push((bound_var, expr));
             }
@@ -1144,6 +1162,13 @@ impl Binder {
                         self.node_labels
                             .insert((bound_var.scope_id, bound_var.id), labels);
                     }
+                    if self
+                        .varlen_rel_var_ids
+                        .contains(&(var_name.scope_id, var_name.id))
+                    {
+                        self.varlen_rel_var_ids
+                            .insert((bound_var.scope_id, bound_var.id));
+                    }
                 }
                 projected.push((bound_var, expr));
             }
@@ -1170,6 +1195,13 @@ impl Binder {
                     {
                         self.node_labels
                             .insert((bound_var.scope_id, bound_var.id), labels);
+                    }
+                    if self
+                        .varlen_rel_var_ids
+                        .contains(&(var_name.scope_id, var_name.id))
+                    {
+                        self.varlen_rel_var_ids
+                            .insert((bound_var.scope_id, bound_var.id));
                     }
                 }
                 projected.push((bound_var, expr));
@@ -2302,8 +2334,44 @@ impl Binder {
             | ExprIR::IsNode
             | ExprIR::IsRelationship
             | ExprIR::Quantifier { .. } => Type::Bool,
-            ExprIR::CompiledRegex(r) if r.kind == crate::parser::ast::RegexFnKind::Matches => {
-                Type::Bool
+            ExprIR::CompiledRegex(r) => match r.kind {
+                crate::parser::ast::RegexFnKind::Matches => Type::Bool,
+                crate::parser::ast::RegexFnKind::MatchList => Type::List(Box::new(Type::String)),
+                crate::parser::ast::RegexFnKind::Replace => Type::String,
+            },
+            ExprIR::Case { has_subject } => {
+                let when_then_list_idx = if *has_subject { 1 } else { 0 };
+                let mut branch_types = Vec::new();
+                if node.num_children() > when_then_list_idx {
+                    let list_node = node.child(when_then_list_idx);
+                    for i in (1..list_node.num_children()).step_by(2) {
+                        let ty = Self::infer_node_type(&list_node.child(i));
+                        if ty != Type::Any && ty != Type::Null {
+                            branch_types.push(ty);
+                        }
+                    }
+                }
+                let else_idx = when_then_list_idx + 1;
+                if node.num_children() > else_idx {
+                    let ty = Self::infer_node_type(&node.child(else_idx));
+                    if ty != Type::Any && ty != Type::Null {
+                        branch_types.push(ty);
+                    }
+                }
+                if branch_types.is_empty() {
+                    Type::Any
+                } else if branch_types.windows(2).all(|w| w[0] == w[1]) {
+                    branch_types.into_iter().next().unwrap()
+                } else {
+                    Type::Union(branch_types.into())
+                }
+            }
+            ExprIR::Reduce(_) => {
+                if node.num_children() > 0 {
+                    Self::infer_node_type(&node.child(0))
+                } else {
+                    Type::Any
+                }
             }
             ExprIR::Add
             | ExprIR::Sub

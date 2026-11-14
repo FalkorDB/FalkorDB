@@ -115,21 +115,37 @@ class testBoundVariables(FlowTestsBase):
             except ResponseError as e:
                 self.env.assertContains(expected_msg, str(e))
 
-        # Path variable bound to non-entity (map, integer, string)
+        # Path variable bound to non-entity (map, integer, string, boolean, arithmetic, function, case)
         expect_err("WITH {x: 1} AS p MATCH p = ()-[]-() RETURN p", "Variable `p` already declared")
         expect_err("WITH 1 AS p MATCH p = ()-[]-() RETURN p", "Variable `p` already declared")
         expect_err("WITH 'str' AS p MATCH p = ()-[]-() RETURN p", "Variable `p` already declared")
+        expect_err("WITH true AS p MATCH p = ()-[]-() RETURN p", "Variable `p` already declared")
+        expect_err("WITH 1 + 2 AS p MATCH p = ()-[]-() RETURN p", "Variable `p` already declared")
+        expect_err("WITH size([]) AS p MATCH p = ()-[]-() RETURN p", "Variable `p` already declared")
+        expect_err("WITH CASE WHEN true THEN 1 ELSE 2 END AS p MATCH p = ()-[]-() RETURN p", "Variable `p` already declared")
 
-        # Relationship variable bound to non-entity (map, integer, list)
+        # Relationship variable bound to non-entity (map, integer, list, boolean, arithmetic, case)
         expect_err("WITH {x: 1} AS r MATCH ()-[r]-() RETURN r", "The alias 'r' was specified for both a node and a relationship.")
         expect_err("WITH 100 AS r MATCH ()-[r]-() RETURN r", "The alias 'r' was specified for both a node and a relationship.")
         expect_err("WITH [1, 2] AS r MATCH ()-[r]-() RETURN r", "The alias 'r' was specified for both a node and a relationship.")
+        expect_err("WITH true AS r MATCH ()-[r]-() RETURN r", "The alias 'r' was specified for both a node and a relationship.")
+        expect_err("WITH 1 + 2 AS r MATCH ()-[r]-() RETURN r", "The alias 'r' was specified for both a node and a relationship.")
+        expect_err("WITH size([]) AS r MATCH ()-[r]-() RETURN r", "The alias 'r' was specified for both a node and a relationship.")
+        expect_err("WITH CASE WHEN true THEN 1 ELSE 2 END AS r MATCH ()-[r]-() RETURN r", "The alias 'r' was specified for both a node and a relationship.")
 
-        # Node variable bound to non-entity (map, integer, list)
+        # Node variable bound to non-entity (map, integer, list, boolean, arithmetic, case)
         expect_err("WITH {x: 1} AS n MATCH (n) RETURN n", "The alias 'n' was specified for both a node and a relationship.")
         expect_err("WITH 42 AS n MATCH (n) RETURN n", "The alias 'n' was specified for both a node and a relationship.")
         expect_err("WITH [1, 2] AS n MATCH (n) RETURN n", "The alias 'n' was specified for both a node and a relationship.")
+        expect_err("WITH true AS n MATCH (n) RETURN n", "The alias 'n' was specified for both a node and a relationship.")
+        expect_err("WITH 1 + 2 AS n MATCH (n) RETURN n", "The alias 'n' was specified for both a node and a relationship.")
+        expect_err("WITH size([]) AS n MATCH (n) RETURN n", "The alias 'n' was specified for both a node and a relationship.")
+        expect_err("WITH CASE WHEN true THEN 1 ELSE 2 END AS n MATCH (n) RETURN n", "The alias 'n' was specified for both a node and a relationship.")
 
         # Legitimate entity reuse succeeds
         res = self.graph.query("MATCH (a:A)-[r:R]->(b:B) WITH a, r, b MATCH (a)-[r]->(b) RETURN a, r, b")
         self.env.assertEqual(len(res.result_set), 1)
+
+        # Variable-length relationship projection carries exemption for per-edge property access
+        plan = str(self.graph.explain("MATCH ()-[r:R*1..2]->() WITH r AS s WHERE s.prop = 1 RETURN count(*)"))
+        self.env.assertContains("Filter", plan)
