@@ -179,3 +179,7 @@ class testBoundVariables(FlowTestsBase):
         # Exported variable-length relationship from CALL subquery retains relationship property access
         plan = str(self.graph.explain("CALL { MATCH ()-[r:R*1..2]->() RETURN r AS rs } WITH rs WHERE rs.prop = 1 RETURN count(*)"))
         self.env.assertContains("Filter", plan)
+
+        # CALL UNION branches with differing output types degrade to Any
+        res = self.graph.query("CALL { MATCH (n:A) RETURN n AS x UNION ALL UNWIND [] AS ignored RETURN 1 AS x } MATCH (x) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[1]])

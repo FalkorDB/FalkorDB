@@ -888,6 +888,7 @@ impl Binder {
                 let mut bound_branches = Vec::with_capacity(branches.len());
                 let mut first_columns: Option<Vec<String>> = None;
                 let mut last_binder_env: Option<HashMap<Arc<String>, Variable>> = None;
+                let mut branch_output_types: HashMap<Arc<String>, Vec<Type>> = HashMap::new();
                 for branch in branches {
                     let (has_import, imported) = match &branch {
                         QueryIR::Query { clauses, .. } => {
@@ -964,12 +965,26 @@ impl Binder {
                     let mut branch_scope_vars = binder.scope_vars();
                     merge_scope_vars(&mut branch_scope_vars, binder.retired_scope_vars.clone());
                     merge_scope_vars(&mut self.retired_scope_vars, branch_scope_vars);
+                    for (name, var) in binder.current_env() {
+                        branch_output_types
+                            .entry(name.clone())
+                            .or_default()
+                            .push(var.ty.clone());
+                    }
                     // Capture the binder's final env (RETURN-projected vars)
                     last_binder_env = Some(binder.current_env().clone());
                     bound_branches.push(bound);
                 }
-                // Set current env to the returned columns from the last branch
-                if let Some(env) = last_binder_env {
+                // Set current env to the returned columns, merging types across branches
+                // while preserving the output variable identity needed for remapping
+                if let Some(mut env) = last_binder_env {
+                    for (name, var) in env.iter_mut() {
+                        if let Some(types) = branch_output_types.get(name) {
+                            if !types.windows(2).all(|w| w[0] == w[1]) {
+                                var.ty = Type::Any;
+                            }
+                        }
+                    }
                     *self.current_env_mut() = env;
                 } else {
                     *self.current_env_mut() = HashMap::new();
