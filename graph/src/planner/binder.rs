@@ -779,13 +779,6 @@ impl Binder {
                 }
                 // Allocate a fresh outer-scope ID for this returned variable
                 let outer_var = self.project_name(name, inner_var.ty.clone());
-                if self
-                    .varlen_rel_var_ids
-                    .contains(&(inner_var.scope_id, inner_var.id))
-                {
-                    self.varlen_rel_var_ids
-                        .insert((outer_var.scope_id, outer_var.id));
-                }
                 remap.push((inner_var.clone(), outer_var));
             }
         }
@@ -2342,23 +2335,36 @@ impl Binder {
             ExprIR::Case { has_subject } => {
                 let when_then_list_idx = if *has_subject { 1 } else { 0 };
                 let mut branch_types = Vec::new();
+                let mut has_any = false;
                 if node.num_children() > when_then_list_idx {
                     let list_node = node.child(when_then_list_idx);
                     for i in (1..list_node.num_children()).step_by(2) {
                         let ty = Self::infer_node_type(&list_node.child(i));
-                        if ty != Type::Any && ty != Type::Null {
-                            branch_types.push(ty);
+                        if ty == Type::Any {
+                            has_any = true;
+                        } else if ty != Type::Null {
+                            if let Type::Union(inner) = ty {
+                                branch_types.extend(inner);
+                            } else {
+                                branch_types.push(ty);
+                            }
                         }
                     }
                 }
                 let else_idx = when_then_list_idx + 1;
                 if node.num_children() > else_idx {
                     let ty = Self::infer_node_type(&node.child(else_idx));
-                    if ty != Type::Any && ty != Type::Null {
-                        branch_types.push(ty);
+                    if ty == Type::Any {
+                        has_any = true;
+                    } else if ty != Type::Null {
+                        if let Type::Union(inner) = ty {
+                            branch_types.extend(inner);
+                        } else {
+                            branch_types.push(ty);
+                        }
                     }
                 }
-                if branch_types.is_empty() {
+                if has_any || branch_types.is_empty() {
                     Type::Any
                 } else if branch_types.windows(2).all(|w| w[0] == w[1]) {
                     branch_types.into_iter().next().unwrap()
@@ -2368,9 +2374,13 @@ impl Binder {
             }
             ExprIR::Reduce(_) => {
                 if node.num_children() > 2 {
-                    Self::infer_node_type(&node.child(2))
-                } else if node.num_children() > 0 {
-                    Self::infer_node_type(&node.child(0))
+                    let init_ty = Self::infer_node_type(&node.child(0));
+                    let body_ty = Self::infer_node_type(&node.child(2));
+                    if init_ty == body_ty && init_ty != Type::Any {
+                        init_ty
+                    } else {
+                        Type::Any
+                    }
                 } else {
                     Type::Any
                 }
