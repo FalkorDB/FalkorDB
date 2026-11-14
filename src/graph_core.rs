@@ -992,7 +992,7 @@ pub(crate) fn reply_invalid_graph_version(
 /// wording) and return `None` when `MAX_QUEUED_QUERIES` queries are already
 /// queued — in the thread pool or in any graph's write queue. Runs on the Redis
 /// main thread and never waits: rejecting is how a full queue is reported.
-fn admit(ctx: &Context) -> Option<QueueSlot> {
+pub(crate) fn admit(ctx: &Context) -> Option<QueueSlot> {
     let slot = QueueSlot::try_acquire(MAX_QUEUED_QUERIES.load(Ordering::Relaxed));
     if slot.is_none() {
         let cerr = ffi::sanitise_error("Max pending queries exceeded");

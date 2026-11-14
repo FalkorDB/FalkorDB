@@ -79,22 +79,38 @@ class ConstraintBehindLongReads():
     # returns (replies, latencies, worst_ping)
     def _behind_long_reads(self, cmds, action=None, probe=False):
         async def run():
-            pool = BlockingConnectionPool(max_connections=64, timeout=None,
+            host = getattr(self.env, "host", "localhost")
+            pool = BlockingConnectionPool(host=host, max_connections=64, timeout=None,
                     socket_timeout=120, port=self.port, decode_responses=True)
             g = AsyncFalkorDB(connection_pool=pool).select_graph(GRAPH_ID)
             # one client per command, plus one to run `action`
-            clients = [AsyncRedis(port=self.port, decode_responses=True,
+            clients = [AsyncRedis(host=host, port=self.port, decode_responses=True,
                                   socket_timeout=120) for _ in cmds + [None]]
             admin = clients.pop()
             loop = asyncio.get_running_loop()
 
-            ping = PingProbe(self.port) if probe else None
+            async def inflight():
+                res = await loop.run_in_executor(None, lambda:
+                    self.conn.execute_command(
+                        "GRAPH.INFO", "RunningQueries", "WaitingQueries"))
+                return len(res[1]), len(res[3])  # (running, waiting)
+
+            async def wait_until(pred, timeout=20.0):
+                deadline = loop.time() + timeout
+                while loop.time() < deadline:
+                    if pred(*(await inflight())):
+                        return True
+                    await asyncio.sleep(0.02)
+                return False
+
+            ping = PingProbe(self.port, host=host) if probe else None
             if ping:
                 await ping.start()
 
             reads = ReadLockHolder(g, self.long_read)
             reads.start()
-            await asyncio.sleep(0.5)  # the reads hold the read lock
+            # Confirm readers hold the graph READ lock before issuing the commands
+            self.env.assertTrue(await wait_until(lambda r, w: r >= 1))
 
             async def send(client, cmd):
                 t0 = loop.time()
@@ -109,7 +125,8 @@ class ConstraintBehindLongReads():
                 await asyncio.sleep(0.05)  # keep the send order deterministic
 
             if action is not None:
-                await asyncio.sleep(0.5)  # the commands are waiting
+                # Wait until the commands are waiting behind the in-flight readers
+                self.env.assertTrue(await wait_until(lambda r, w: r + w >= len(cmds) + 1))
                 await reads.stop()
                 await action(admin)
             results = await asyncio.gather(*cmd_tasks)
@@ -221,12 +238,9 @@ class testConstraintWriteLockStateChanges(ConstraintBehindLongReads):
 
     def setUp(self):
         self.conn.flushall()
-        try:
-            self.conn.config_set("appendonly", "no")
-            self.conn.config_set("appendonly", "yes")
-            self._wait_for_aof_rewrite()
-        except Exception:
-            pass
+        self.conn.config_set("appendonly", "no")
+        self.conn.config_set("appendonly", "yes")
+        self._wait_for_aof_rewrite()
         self.conn.delete(GRAPH_ID)
 
     def tearDown(self):

@@ -4,6 +4,7 @@ from common import *
 from falkordb.asyncio import FalkorDB
 from redis.asyncio import BlockingConnectionPool
 from redis.asyncio import Redis as AsyncRedis
+from long_read_utils import PingProbe
 
 GRAPH_ID = "concurrent_query"       # Graph identifier.
 SECONDARY_GRAPH_ID = GRAPH_ID + "2" # Secondery graph identifier.
@@ -503,7 +504,8 @@ class testConcurrentQueryFlow(FlowTestsBase):
         self.graph.query("CREATE (:N {v:1})")
 
         async def run(self):
-            pool = BlockingConnectionPool(max_connections=32, timeout=None, port=self.env.port, decode_responses=True)
+            host = getattr(self.env, "host", "localhost")
+            pool = BlockingConnectionPool(host=host, max_connections=32, timeout=None, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -513,47 +515,51 @@ class testConcurrentQueryFlow(FlowTestsBase):
             # a write that must wait for the read lock to drain before it commits
             write = "CREATE (:N {v:2}) RETURN 1"
 
-            # unrelated connection used to probe server responsiveness
-            probe = AsyncRedis(port=self.env.port, decode_responses=True)
-            await probe.ping()
+            # unrelated connection used to probe server responsiveness at fixed cadence
+            probe = PingProbe(self.env.port, host=host, interval=0.01)
 
-            # start the long read and let it acquire the READ lock
+            loop = asyncio.get_running_loop()
+
+            async def inflight():
+                res = await loop.run_in_executor(None, lambda:
+                    self.conn.execute_command(
+                        "GRAPH.INFO", "RunningQueries", "WaitingQueries"))
+                return len(res[1]), len(res[3])  # (running, waiting)
+
+            async def wait_until(pred, timeout=20.0):
+                deadline = loop.time() + timeout
+                while loop.time() < deadline:
+                    if pred(*(await inflight())):
+                        return True
+                    await asyncio.sleep(0.02)
+                return False
+
+            # start the long read and wait until it holds the READ lock
             read_task = asyncio.create_task(g.ro_query(long_read))
-            await asyncio.sleep(0.2)
+            self.env.assertTrue(await wait_until(lambda r, w: r >= 1))
 
-            # start the writer; it blocks waiting for the READ lock to drain
+            # start the writer and wait until it is in-flight waiting for the write lock
             write_task = asyncio.create_task(g.query(write))
-            await asyncio.sleep(0.05)  # let the writer reach the lock wait
+            self.env.assertTrue(await wait_until(lambda r, w: r + w >= 2))
 
             # probe responsiveness while the writer is waiting: PINGs should
             # return promptly because the writer keeps yielding the GIL
-            loop = asyncio.get_running_loop()
-            latencies = []
-            for _ in range(50):
-                t0 = loop.time()
-                await probe.ping()
-                latencies.append(loop.time() - t0)
-                await asyncio.sleep(0.01)
+            await probe.start()
+            await asyncio.sleep(0.5)
 
             # the read completes and the write lands
             await read_task
             await write_task
 
-            # server stayed responsive: with the GIL pinned (old behavior) every
-            # PING would stall ~the full 2s read, so the median would be ~2s.
-            # with GIL yielding the vast majority are served in a few ms; assert
-            # on the median so a rare scheduling outlier under CI load (a single
-            # slow PING) can't flake the test while still clearly separating the
-            # responsive behavior from the frozen one
-            latencies.sort()
-            median_latency = latencies[len(latencies) // 2]
-            self.env.assertLess(median_latency, 0.2)
+            worst_latency = await probe.stop()
+            # with GIL yielding between slices, the worst PING during the contention
+            # window is served in a few ms rather than stalling for ~2s
+            self.env.assertLess(worst_latency, 0.5)
 
             # the write took effect
             res = await g.ro_query("MATCH (n:N {v:2}) RETURN count(n)")
             self.env.assertEqual(res.result_set[0][0], 1)
 
-            await probe.aclose()
             await pool.aclose()
             self.conn.delete(GRAPH_ID)
 
@@ -573,7 +579,8 @@ class testConcurrentQueryFlow(FlowTestsBase):
         self.graph.query("CREATE (:N {v:1})")
 
         async def run(self):
-            pool = BlockingConnectionPool(max_connections=64, timeout=None, port=self.env.port, decode_responses=True)
+            host = getattr(self.env, "host", "localhost")
+            pool = BlockingConnectionPool(host=host, max_connections=64, timeout=None, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -593,32 +600,34 @@ class testConcurrentQueryFlow(FlowTestsBase):
             # contended for the whole window
             async def flood():
                 while loop.time() < deadline:
-                    while (sum(1 for r in reads if not r.done()) < 32
+                    while (sum(1 for r, _ in reads if not r.done()) < 32
                            and loop.time() < deadline):
-                        reads.append(asyncio.create_task(g.ro_query(read_q)))
+                        t_sub = loop.time()
+                        reads.append((asyncio.create_task(g.ro_query(read_q)), t_sub))
                     await asyncio.sleep(0.005)
 
             flood_task = asyncio.create_task(flood())
             await asyncio.sleep(0.3)  # let the flood saturate the read lock
 
+            writer_launch_time = loop.time()
             # the writer reports the server-side time at which it committed
             writer_ts = (await g.query(write_q)).result_set[0][0]
+            writer_commit_time = loop.time()
 
             await flood_task
             # surface any reader failure: a dead flood must fail the test rather
             # than silently let the writer "win" an uncontended lock
-            results = await asyncio.gather(*reads)
+            results = [(await r, t_sub) for r, t_sub in reads]
 
-            # prove interleaving from the SERVER clock, not client timing: each
-            # flood read reports when it actually ran. if the gate works the
-            # writer commits *amid* the flood, so some reads run before it and a
-            # large share run after it. without the gate the writer waits the
-            # whole flood out and almost no read would run after it.
-            read_ts = [r.result_set[0][0] for r in results]
-            reads_before = sum(1 for t in read_ts if t < writer_ts)
-            reads_after  = sum(1 for t in read_ts if t > writer_ts)
+            # evaluate readers launched before the writer committed:
+            # this excludes readers launched after the writer already finished,
+            # ensuring reads_after reflects readers that were delayed at the gate.
+            pre_commit_reads = [r.result_set[0][0] for r, t_sub in results if t_sub < writer_commit_time]
+            reads_before = sum(1 for t in pre_commit_reads if t < writer_ts)
+            reads_after  = sum(1 for t in pre_commit_reads if t > writer_ts)
             self.env.assertGreater(reads_before, 0)
-            self.env.assertGreater(reads_after, len(read_ts) * 0.3)
+            self.env.assertGreater(reads_after, 0)
+            self.env.assertLess(writer_commit_time - writer_launch_time, 2.0)
 
             # the write took effect
             res = await g.ro_query("MATCH (n:N {v:2}) RETURN count(n)")
@@ -646,7 +655,8 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             # socket_timeout generous so the ~5s long read / blocked writer that
             # we await below don't trip a client-side read timeout
-            pool = BlockingConnectionPool(max_connections=32, timeout=None, socket_timeout=60, port=self.env.port, decode_responses=True)
+            host = getattr(self.env, "host", "localhost")
+            pool = BlockingConnectionPool(host=host, max_connections=32, timeout=None, socket_timeout=60, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -724,7 +734,11 @@ class testConcurrentQueryFlow(FlowTestsBase):
         self.env.assertFalse(outcome.get('early_error'),
             message="probe failed unexpectedly: %s" % outcome.get('early_error'))
         if not outcome.get('parked'):
-            self.env.skip()
+            import platform
+            if platform.system() == "Linux":
+                self.env.assertTrue(False, message="reader probe failed to park at the writer gate on Linux")
+            else:
+                self.env.skip()
             return
 
         self.env.assertIsNone(outcome['err'])

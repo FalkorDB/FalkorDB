@@ -3,7 +3,8 @@ use crate::query_session::{QuerySession, WriteAbort, WriteFacts};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{
-        BlockedClient, CtxSink, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph,
+        BlockedClient, CtxSink, ThreadedGraph, admit, c_graph_key, c_graph_name, ffi,
+        register_graph,
     },
     redis_type::GRAPH_TYPE,
 };
@@ -11,6 +12,7 @@ use graph::effects::EffectsBuffer;
 use graph::effects::announce::{AnnouncedConstraint, SchemaBaseline};
 use graph::entity_type::EntityType;
 use graph::graph::constraint::{ConstraintStatus, ConstraintType};
+use graph::graph::graph::Graph;
 use graph::identifier_limits::validate_identifier_len;
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
@@ -516,9 +518,13 @@ pub fn graph_constraint(
     let key_bytes: Vec<u8> = key_str.as_slice().to_vec();
 
     if !must_run_inline(ctx) {
+        let Some(slot) = admit(ctx) else {
+            return Ok(RedisValue::NoReply);
+        };
         let bc = unsafe { BlockedClient::new(ctx.ctx) };
         graph::threadpool::spawn(
             move || {
+                drop(slot);
                 execute_constraint_async(
                     bc,
                     graph,
@@ -528,7 +534,6 @@ pub fn graph_constraint(
                     label,
                     properties,
                     key_bytes,
-                    is_replayed,
                 );
             },
             None,
@@ -546,135 +551,38 @@ pub fn graph_constraint(
     // entries that need announcing.
     let baseline = SchemaBaseline::of(&fork);
 
-    let result: Result<bool, String> = {
-        let g = &mut fork;
-        if is_create {
-            match g.create_constraint(ct, entity_type, &label, &properties) {
-                Ok(needs_background_validation) => {
-                    register_constraint_schema(g, entity_type, &label, &properties);
-                    Ok(needs_background_validation)
-                }
-                Err(e) => Err(e),
-            }
-        } else {
-            g.drop_constraint(&ct, &entity_type, &label, &properties)
-                .map(|()| false)
-        }
-    };
+    let result =
+        apply_constraint_to_fork(&mut fork, is_create, ct, entity_type, &label, &properties);
 
     match result {
         Ok(needs_background_validation) => {
             let mutated = tg.graph.commit(fork).map_err(WriteAbort::from)?;
 
-            // Spawn background validation for large datasets on a dedicated
-            // OS thread (not the query threadpool). Validation can take
-            // seconds for large datasets, and we don't want it to occupy a
-            // query worker — that would block unrelated reads queued behind
-            // it on the shared MPMC dispatch.
-            //
-            // Two-phase under different locks: the long-running validation
-            // runs under a *read* lock on the outer `RwLock<ThreadedGraph>`,
-            // so concurrent `db.constraints()` queries continue to see the
-            // constraint in UNDER CONSTRUCTION state. The outer write lock is
-            // taken only briefly at the end to commit the status update.
             if needs_background_validation {
-                std::thread::spawn({
-                    let graph = graph.clone();
-                    let label = Arc::clone(&label);
-                    let properties = properties.clone();
-                    // The command's own key bytes, not a lossy render of them.
-                    let key = key_str.as_slice().to_vec();
-                    let was_replicated = is_replayed;
-                    move || {
-                        settle_constraint(
-                            &graph,
-                            &[Settling {
-                                ct,
-                                entity_type,
-                                label,
-                                properties,
-                            }],
-                            &key,
-                            was_replicated,
-                        );
-                    }
-                });
+                spawn_constraint_validation(
+                    graph.clone(),
+                    key_str.as_slice().to_vec(),
+                    ct,
+                    entity_type,
+                    Arc::clone(&label),
+                    properties.clone(),
+                    is_replayed,
+                );
             }
 
             if !is_replayed {
-                // Announce the outcome, not the command. The replica installs
-                // the status this node reached rather than validating on its
-                // own — it would scan at a different time against different
-                // interleavings and could legitimately disagree.
-                //
-                // Under v3 that is one GRAPH.EFFECT. A second one follows from
-                // the validation thread below when there is validation to wait
-                // for, carrying the final status; the apply side upserts, so it
-                // converges on this one instead of duplicating it.
-                //
-                // A drop carries no status. A create carries the one this node
-                // reached: still building if the caller spawned validation,
-                // otherwise whatever `create_constraint` decided inline — read
-                // back rather than assumed, and present because the graph write
-                // lock has been held since it was created.
-                // Not `expect`. The status is an invariant — the graph write
-                // lock has been held since `create_constraint` stored the
-                // constraint, so it is there — but the write has already
-                // committed by this point, and a panic would take the server
-                // down over a bookkeeping surprise rather than lose an
-                // announcement. That is the same trade the `Err` arm below
-                // makes, so this makes it the same way: say so, and skip the
-                // announcement rather than the process.
-                let status = if !is_create {
-                    Some(None)
-                } else if needs_background_validation {
-                    Some(Some(ConstraintStatus::UnderConstruction))
-                } else {
-                    find_status(&mutated, ct, entity_type, &label, &properties).map(Some)
-                };
-                let Some(status) = status else {
-                    redis_module::logging::log_warning(format!(
-                        "constraint CREATE on {entity_type:?} '{label}' was applied but its \
-                         status could not be read back, so it was not announced; it will not \
-                         reach replicas or the AOF. Recover with GRAPH.CONSTRAINT DROP on \
-                         graph '{}' followed by CREATE.",
-                        String::from_utf8_lossy(key_str.as_slice()),
-                    ));
-                    return if is_create {
-                        Ok(RedisValue::SimpleStringStatic("PENDING"))
-                    } else {
-                        Ok(RedisValue::SimpleStringStatic("OK"))
-                    };
-                };
-                let mut buf = EffectsBuffer::new();
-                match buf.build_constraint(
+                announce_constraint(
+                    ctx,
                     &mutated,
-                    is_create,
-                    &AnnouncedConstraint {
-                        ct,
-                        entity_type,
-                        status,
-                        label: &label,
-                        properties: &properties,
-                    },
                     &baseline,
-                ) {
-                    Ok(()) => {
-                        buf.replicate(&CtxSink(ctx), key_str.as_slice());
-                    }
-                    // The write has already committed, so there is nothing to
-                    // undo and an error reply would be a lie — the constraint
-                    // does exist here. What is lost is the announcement, which
-                    // means it exists *only* here, on every replica and in the
-                    // AOF. Same shape as `graph_core`'s "modified but produced
-                    // no effects payload", and loud for the same reason: it is
-                    // divergence that nothing else will report.
-                    Err(e) => redis_module::logging::log_warning(format!(
-                        "constraint {} on {entity_type:?} '{label}' was applied but could \
-                         not be announced ({e}); it will not reach replicas or the AOF",
-                        if is_create { "CREATE" } else { "DROP" },
-                    )),
-                }
+                    is_create,
+                    ct,
+                    entity_type,
+                    &label,
+                    &properties,
+                    key_str.as_slice(),
+                    needs_background_validation,
+                );
             }
             if is_create {
                 Ok(RedisValue::SimpleStringStatic("PENDING"))
@@ -692,6 +600,103 @@ pub fn graph_constraint(
     }
 }
 
+fn apply_constraint_to_fork(
+    fork: &mut Graph,
+    is_create: bool,
+    ct: ConstraintType,
+    entity_type: EntityType,
+    label: &Arc<String>,
+    properties: &[Arc<String>],
+) -> Result<bool, String> {
+    if is_create {
+        let needs_background_validation =
+            fork.create_constraint(ct, entity_type, label, properties)?;
+        register_constraint_schema(fork, entity_type, label, properties);
+        Ok(needs_background_validation)
+    } else {
+        fork.drop_constraint(&ct, &entity_type, label, properties)
+            .map(|()| false)
+    }
+}
+
+fn spawn_constraint_validation(
+    graph: Arc<RwLock<ThreadedGraph>>,
+    key: Vec<u8>,
+    ct: ConstraintType,
+    entity_type: EntityType,
+    label: Arc<String>,
+    properties: Vec<Arc<String>>,
+    was_replicated: bool,
+) {
+    std::thread::spawn(move || {
+        settle_constraint(
+            &graph,
+            &[Settling {
+                ct,
+                entity_type,
+                label,
+                properties,
+            }],
+            &key,
+            was_replicated,
+        );
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn announce_constraint(
+    ctx: &Context,
+    mutated: &Arc<Graph>,
+    baseline: &SchemaBaseline,
+    is_create: bool,
+    ct: ConstraintType,
+    entity_type: EntityType,
+    label: &Arc<String>,
+    properties: &[Arc<String>],
+    key: &[u8],
+    needs_background_validation: bool,
+) {
+    let status = if !is_create {
+        Some(None)
+    } else if needs_background_validation {
+        Some(Some(ConstraintStatus::UnderConstruction))
+    } else {
+        find_status(mutated, ct, entity_type, label, properties).map(Some)
+    };
+    let Some(status) = status else {
+        redis_module::logging::log_warning(format!(
+            "constraint CREATE on {entity_type:?} '{label}' was applied but its \
+             status could not be read back, so it was not announced; it will not \
+             reach replicas or the AOF. Recover with GRAPH.CONSTRAINT DROP on \
+             graph '{}' followed by CREATE.",
+            String::from_utf8_lossy(key),
+        ));
+        return;
+    };
+    let mut buf = EffectsBuffer::new();
+    match buf.build_constraint(
+        mutated,
+        is_create,
+        &AnnouncedConstraint {
+            ct,
+            entity_type,
+            status,
+            label,
+            properties,
+        },
+        baseline,
+    ) {
+        Ok(()) => {
+            buf.replicate(&CtxSink(ctx), key);
+        }
+        Err(e) => redis_module::logging::log_warning(format!(
+            "constraint {} on {entity_type:?} '{label}' was applied but could \
+             not be announced ({e}); it will not reach replicas or the AOF",
+            if is_create { "CREATE" } else { "DROP" },
+        )),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_constraint_async(
     bc: BlockedClient,
@@ -702,14 +707,13 @@ fn execute_constraint_async(
     label: Arc<String>,
     properties: Vec<Arc<String>>,
     key_bytes: Vec<u8>,
-    is_replayed: bool,
 ) {
     let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
     let ctx = Context::new(ts_ctx);
 
     let facts = WriteFacts {
-        replicates: !is_replayed,
-        originated_here: !is_replayed,
+        replicates: true,
+        originated_here: true,
     };
 
     'attempt: loop {
@@ -717,27 +721,11 @@ fn execute_constraint_async(
         let mut fork = session.write_version();
         let baseline = SchemaBaseline::of(&fork);
 
-        let precheck_result = if is_create {
-            match fork.create_constraint(ct, entity_type, &label, &properties) {
-                Ok(needs_background_validation) => {
-                    register_constraint_schema(&mut fork, entity_type, &label, &properties);
-                    Ok(needs_background_validation)
-                }
-                Err(e) => Err(e),
-            }
-        } else {
-            fork.drop_constraint(&ct, &entity_type, &label, &properties)
-                .map(|()| false)
-        };
+        let precheck_result =
+            apply_constraint_to_fork(&mut fork, is_create, ct, entity_type, &label, &properties);
 
         let needs_background_validation = match precheck_result {
             Ok(nbv) => nbv,
-            Err(e) if is_replayed && e == "Constraint already exists" => {
-                raw::reply_with_simple_string(ctx.ctx, c"OK".as_ptr());
-                drop(bc);
-                unsafe { ffi::free_thread_safe_context(ts_ctx) };
-                return;
-            }
             Err(e) => {
                 let cerr = ffi::sanitise_error(e);
                 unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
@@ -784,69 +772,29 @@ fn execute_constraint_async(
             };
 
         if needs_background_validation {
-            std::thread::spawn({
-                let graph = graph.clone();
-                let label = Arc::clone(&label);
-                let properties = properties.clone();
-                let key = key_bytes.clone();
-                let was_replicated = is_replayed;
-                move || {
-                    settle_constraint(
-                        &graph,
-                        &[Settling {
-                            ct,
-                            entity_type,
-                            label,
-                            properties,
-                        }],
-                        &key,
-                        was_replicated,
-                    );
-                }
-            });
+            spawn_constraint_validation(
+                graph.clone(),
+                key_bytes.clone(),
+                ct,
+                entity_type,
+                Arc::clone(&label),
+                properties.clone(),
+                false,
+            );
         }
 
-        if !is_replayed {
-            let status = if !is_create {
-                Some(None)
-            } else if needs_background_validation {
-                Some(Some(ConstraintStatus::UnderConstruction))
-            } else {
-                find_status(&mutated, ct, entity_type, &label, &properties).map(Some)
-            };
-            if let Some(status) = status {
-                let mut buf = EffectsBuffer::new();
-                match buf.build_constraint(
-                    &mutated,
-                    is_create,
-                    &AnnouncedConstraint {
-                        ct,
-                        entity_type,
-                        status,
-                        label: &label,
-                        properties: &properties,
-                    },
-                    &baseline,
-                ) {
-                    Ok(()) => {
-                        buf.replicate(&CtxSink(&ctx), &key_bytes);
-                    }
-                    Err(e) => redis_module::logging::log_warning(format!(
-                        "constraint {} on {entity_type:?} '{label}' was applied but could \
-                         not be announced ({e}); it will not reach replicas or the AOF",
-                        if is_create { "CREATE" } else { "DROP" },
-                    )),
-                }
-            } else {
-                redis_module::logging::log_warning(format!(
-                    "constraint CREATE on {entity_type:?} '{label}' was applied but its \
-                     status could not be read back, so it was not announced; it will not \
-                     reach replicas or the AOF. Recover with GRAPH.CONSTRAINT DROP on \
-                     graph '{}' followed by CREATE.",
-                    String::from_utf8_lossy(&key_bytes),
-                ));
-            }
-        }
+        announce_constraint(
+            &ctx,
+            &mutated,
+            &baseline,
+            is_create,
+            ct,
+            entity_type,
+            &label,
+            &properties,
+            &key_bytes,
+            needs_background_validation,
+        );
 
         session.release_locks();
 

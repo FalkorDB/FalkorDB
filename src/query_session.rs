@@ -166,8 +166,11 @@ impl QuerySession {
         graph: &Arc<RwLock<ThreadedGraph>>,
         facts: WriteFacts,
     ) -> Self {
-        let gate = writer_gate_for(graph);
-        gate.wait_open();
+        if !graph::thread_id::is_main_thread()
+            && let Some(gate) = writer_gate_if_exists(graph)
+        {
+            gate.wait_open();
+        }
         Self {
             graph: Arc::clone(graph),
             mode: RefCell::new(Some(Mode::Reader(RwLock::read_arc(graph)))),
@@ -400,6 +403,10 @@ impl QuerySession {
         let slice_timeout = std::time::Duration::from_millis(poll_interval as u64);
 
         loop {
+            // Lock hierarchy: Acquire GIL before graph write lock to prevent ABBA deadlocks
+            // against the Redis main thread. Each write-lock attempt is bounded by slice_timeout
+            // (default 5ms), after which the GIL is released and the thread sleeps for 1ms off-CPU
+            // to allow Redis to process incoming commands and PINGs.
             let gil = Gil::acquire();
 
             if !crate::graph_core::graph_is_registered(&self.graph) {
@@ -683,12 +690,23 @@ impl Drop for WriterGateGuard<'_> {
 }
 
 static WRITER_GATES: std::sync::LazyLock<
-    parking_lot::Mutex<std::collections::HashMap<usize, Arc<WriterGate>>>,
-> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+    parking_lot::RwLock<std::collections::HashMap<usize, Arc<WriterGate>>>,
+> = std::sync::LazyLock::new(|| parking_lot::RwLock::new(std::collections::HashMap::new()));
+
+pub fn writer_gate_if_exists(graph: &Arc<RwLock<ThreadedGraph>>) -> Option<Arc<WriterGate>> {
+    let key = graph.data_ptr() as usize;
+    WRITER_GATES.read().get(&key).cloned()
+}
 
 pub fn writer_gate_for(graph: &Arc<RwLock<ThreadedGraph>>) -> Arc<WriterGate> {
     let key = graph.data_ptr() as usize;
-    let mut gates = WRITER_GATES.lock();
+    {
+        let gates = WRITER_GATES.read();
+        if let Some(gate) = gates.get(&key) {
+            return Arc::clone(gate);
+        }
+    }
+    let mut gates = WRITER_GATES.write();
     gates
         .entry(key)
         .or_insert_with(|| Arc::new(WriterGate::new()))
@@ -696,5 +714,5 @@ pub fn writer_gate_for(graph: &Arc<RwLock<ThreadedGraph>>) -> Arc<WriterGate> {
 }
 
 pub fn remove_writer_gate(data_ptr: usize) {
-    WRITER_GATES.lock().remove(&data_ptr);
+    WRITER_GATES.write().remove(&data_ptr);
 }

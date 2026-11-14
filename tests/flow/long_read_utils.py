@@ -74,8 +74,8 @@ class PingProbe():
     # own task, so a server freeze lands in a recorded sample (sampling inline
     # with other blocking calls can let a freeze stall those instead). a failed
     # PING (the server died) records inf, so a crash can't pass as responsive
-    def __init__(self, port, interval=0.01):
-        self.conn      = AsyncRedis(port=port, decode_responses=True)
+    def __init__(self, port, host="localhost", interval=0.01):
+        self.conn      = AsyncRedis(host=host, port=port, decode_responses=True)
         self.interval  = interval
         self.latencies = []
         self._stop     = False

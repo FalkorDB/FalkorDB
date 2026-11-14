@@ -123,7 +123,7 @@ pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(MAX_INFO_QUERIES_CAP);
 /// `graph_core::graph_free`), so it defaults to 1 — C's default, and what happens.
 pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(1);
 /// Milliseconds a writer waits for the graph write lock before yielding the GIL and retrying.
-/// 0 or negative restores legacy single blocking acquire without slicing or GIL yielding.
+/// 0 disables slicing and restores legacy single blocking acquire without GIL yielding.
 pub static WRITE_LOCK_POLL_INTERVAL: AtomicI64 = AtomicI64::new(5);
 
 // ── Read-only runtime configs ──
