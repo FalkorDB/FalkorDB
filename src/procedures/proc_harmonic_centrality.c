@@ -285,11 +285,17 @@ ProcedureResult Proc_CentralityInvoke
 	GrB_Vector reachable_nodes = NULL;   // reachable[i] is the estimated reachable count
 
 	LAGraph_Graph G = NULL ;
-	bool sym        = false ;  // matrix is directed
-	bool compact    = true ;
 
-	GrB_OK (Build_Matrix (&A, &nodes, g, lbls, arr_len (lbls), rels,
-			arr_len(rels), sym, compact)) ;
+	PGTM_config conf = DEFAULT_PGTM_CONFIG;
+	conf.g         = g;
+	conf.lbls      = lbls;
+	conf.n_lbls    = arr_len(lbls);
+	conf.rels      = rels;
+	conf.n_rels    = arr_len(rels);
+	conf.direction = GRAPH_EDGE_DIR_OUTGOING;  // matrix is directed
+	conf.compact   = false;
+
+	GrB_OK (project_graph_to_matrix (&A, &nodes, conf)) ;
 
 	ASSERT (A     != NULL) ;
 	ASSERT (nodes != NULL) ;
