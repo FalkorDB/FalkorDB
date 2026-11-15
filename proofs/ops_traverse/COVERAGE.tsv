@@ -83,3 +83,4 @@ graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_qu
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	267	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
 graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	270	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	PROVEN	IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7), scans_stream
+graph/src/runtime/ops/cond_traverse.rs	clear_bidir_dedup	374	NOT COVERED	(#2957): not modelled yet
