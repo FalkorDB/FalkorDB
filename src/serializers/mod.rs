@@ -354,8 +354,7 @@ fn encode_schema_index_block(
     let stopwords: Vec<&str> = infos
         .first()
         .and_then(|info| info.stopwords.as_ref())
-        .map(|sw| sw.iter().map(|s| s.as_str()).collect())
-        .unwrap_or_default();
+        .map_or_default(|sw| sw.iter().map(|s| s.as_str()).collect());
     w.write_unsigned(stopwords.len() as u64);
     for sw in &stopwords {
         w.write_buffer(&null_terminated(sw));

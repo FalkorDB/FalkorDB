@@ -138,8 +138,8 @@ def _multi_write(r):
     # Before the #726 fix this DEADLOCKED against the pool write loop (query_sync
     # holds the GIL and waits for L1; the write loop holds L1 and waits for the
     # GIL). It also used to fail with "another write is in progress" when it ran
-    # while a queued write was still matching (#3093): the MVCC write slot is now
-    # claimed only under the write lock, which this write holds, so it must succeed.
+    # while a queued write was still matching (#3093): forking an MVCC version
+    # takes nothing, so a matching write cannot refuse this one; it must succeed.
     p = r.pipeline(transaction=True)
     p.execute_command("GRAPH.QUERY", "test", "CREATE (:Node {id: -2})")
     p.execute()
