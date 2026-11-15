@@ -1376,7 +1376,14 @@ class testConstraintReplication():
         deadline = time.time() + 30
         while time.time() < deadline:
             self.source.execute_command("WAIT", 1, 0)
-            cs = list_constraints(replica_g)
+            try:
+                cs = list_constraints(replica_g)
+            except ResponseError as e:
+                # The replica can answer before it has applied the effect that
+                # creates the graph; keep polling until the deadline.
+                if "empty key" not in str(e):
+                    raise
+                cs = []
             if len(cs) == 6 and all(c.status == 'OPERATIONAL' for c in cs):
                 break
             time.sleep(0.25)
