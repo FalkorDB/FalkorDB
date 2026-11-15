@@ -886,6 +886,8 @@ class testIndexCreationFlow():
                         graph.query(q)
                         self.env.assertTrue(False, message=q)
                     except ResponseError:
+                        # The statement is refused by design: only what the
+                        # refusal leaves behind is measured.
                         pass
             run(100)  # warm up
             before = conn.info('memory')['used_memory']
