@@ -7,6 +7,19 @@ members = [
 # so it must not inherit this workspace's RUSTFLAGS/target (e.g. an ASAN build).
 exclude = ["native-deps"]
 
+# The clippy lints CI enforces (with `-D warnings`). Here, rather than in CI's
+# command line, so a plain `cargo clippy` (and rust-analyzer) checks the same set.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+doc_markdown = "allow"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
+
 [package]
 name = "falkordb-rs"
 version = "99.99.99"
@@ -18,6 +31,9 @@ readme = "README.md"
 keywords = ["graph", "database"]
 categories = ["database"]
 
+[lints]
+workspace = true
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 name = "falkordb"
@@ -26,13 +42,14 @@ name = "falkordb"
 
 [dependencies]
 thiserror = "2"
-atomic_refcell = "0.1.14"
 crossfire = "3.1.19"
 graph = { path = "graph", version = "0.1.0" }
 lazy_static = "1.5.0"
 libc = "0.2"
-parking_lot = { version = "0.12.5", features = ["arc_lock"] }
-redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "fix/resp-string-bytes" }
+parking_lot = { version = "0.13.0", features = ["arc_lock"] }
+# valkey-io/valkeymodule-rs#254 (UTF-8 in RESP simple strings and errors), merged
+# 2026-11-03; no crates.io release includes it yet (0.1.15 predates it).
+valkey-module = { git = "https://github.com/valkey-io/valkeymodule-rs", rev = "e4df023371ad4a5f532ef88407847f2bde287482", features = ["use-redismodule-api"] }
 # Pinned exactly, not caret-matched. Two engines have to serialize the same
 # ids to the same bytes (#2698), and roaring's output is not stable across
 # releases by contract: `optimize()` is path-dependent, and the container
@@ -44,9 +61,6 @@ rustc-hash = "2"
 ryu = "1.0.23"
 thin-vec = "0.2.18"
 orx-tree = "2.2.0"
-
-[build-dependencies]
-redis-module-macros = { git = "https://github.com/AviAvni/redismodule-rs", branch = "fix/resp-string-bytes" }
 
 [profile.dev]
 opt-level = 2

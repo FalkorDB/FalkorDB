@@ -151,6 +151,13 @@ impl<'a> ExpandIntoOp<'a> {
                 ));
             }
         };
+        // A node deleted earlier in this commit segment matches nothing: its
+        // edges are only dropped at commit (`DETACH DELETE` defers them), so
+        // without this check e.g. `DETACH DELETE a MERGE (a)-[:R]->(b)` would
+        // match an edge that is about to disappear.
+        if pending.is_node_deleted(src) || pending.is_node_deleted(dst) {
+            return Ok(None);
+        }
 
         if synthetic_label {
             let has_all_labels = rp
@@ -263,7 +270,7 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
             // queued in the emitter borrows the graph. The borrows drop at the end
             // of the block, before the refill arm pulls the next child batch.
             let result = {
-                let g = runtime.g.borrow();
+                let g = runtime.graph();
                 let pending = runtime.pending.borrow();
                 let mut iters_ref = self.edge_type_indices.borrow_mut();
                 self.emitter.emit_lazy(|batch, row_idx| {

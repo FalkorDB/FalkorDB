@@ -6,7 +6,8 @@
 # tolerates it already, and we don't want to relax the local dev link.
 #
 # NOTE: `RUSTFLAGS` / `CARGO_TARGET_*_RUSTFLAGS` env vars REPLACE (not merge)
-# these config flags, so build steps that set them must repeat this flag:
+# these config flags -- this one and the musl `-crt-static` below -- so build
+# steps that set them must repeat the ones that apply to their target:
 # the coverage steps (`-C instrument-coverage`), the `cargo fuzz` steps, and
 # build/runtime/Dockerfile.asan all set `-Clink-arg=-Wl,--allow-multiple-definition`
 # explicitly for the same reason.
@@ -19,3 +20,11 @@ rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition"]
 # ld64. So the CI jobs that run doctests (`cargo test -p graph` in the `test`
 # and `coverage` jobs) set RUSTDOCFLAGS explicitly; a local Linux doctest run
 # (`cargo test -p graph`) needs the same env.
+
+# musl (the Alpine image). Rust's musl targets link the C runtime statically by
+# default, which drops the `cdylib` crate type with only a warning -- so no
+# libfalkordb.so -- and makes every build script a static executable, which
+# cannot dlopen the libclang that bindgen needs. Cargo joins the flags of every
+# matching `[target.<cfg>]` table, so the Linux flag above still applies.
+[target.'cfg(all(target_os = "linux", target_env = "musl"))']
+rustflags = ["-C", "target-feature=-crt-static"]
