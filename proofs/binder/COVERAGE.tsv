@@ -43,3 +43,5 @@ graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2680	PROVEN
 graph/src/planner/binder.rs	sorted_scope_vars	2701	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
 graph/src/planner/binder.rs	merge_scope_vars	2709	PROVEN	mergeSV_ge, mergeSV_covers
 graph/src/planner/mod.rs	Planner::fresh_var	838	PROVEN	mint_fresh_iff (planner mints len, len+1, ...)
+graph/src/planner/binder.rs	removed_node_labels	105	NOT COVERED	(#3450): not modelled yet
+graph/src/planner/binder.rs	Binder::carry_node_labels	1020	NOT COVERED	(#3450): not modelled yet
