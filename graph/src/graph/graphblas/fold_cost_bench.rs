@@ -36,6 +36,11 @@
 //! Run with:
 //!   cargo test --release -p graph fold_cost -- --ignored --nocapture
 
+#![allow(
+    clippy::suboptimal_flops,
+    reason = "timing sums; `mul_add` buys nothing here"
+)]
+
 use std::time::Instant;
 
 use super::matrix::{Dup, Matrix};
@@ -498,10 +503,11 @@ fn grow_resize_burble_path() {
     use super::tensor::Tensor;
     use super::versioned_matrix::VersionedMatrix;
 
-    ensure_init();
     const N: u64 = 20_000;
     const DIM: u64 = 65_536;
     const GROWN: u64 = 114_688;
+
+    ensure_init();
 
     // A label-matrix-shaped bool layer, assembled, deltas empty: the shape the
     // grow path's common branch handles.

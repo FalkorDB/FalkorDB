@@ -93,7 +93,7 @@ impl<'a> Iterator for CommitOp<'a> {
             // Publishing index documents *is* a mutation of shared, non-MVCC state,
             // so become a writer first — sticky for the rest of the query, and
             // idempotent, so nested Commits after the first are free.
-            if let Err(e) = self.runtime.write_escalation().upgrade_to_write() {
+            if let Err(e) = self.runtime.upgrade_to_write() {
                 return Some(Err(e));
             }
             // Publish index documents now, so an operator above us can scan what an

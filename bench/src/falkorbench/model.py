@@ -54,6 +54,11 @@ class Query(NamedTuple):
             :Person / :KNOWS ring / 5,000 :Tmp, and does not drain a pool
             faster than it is refilled. Running dry does not fail loudly — it
             quietly measures a no-op — hence the explicit opt-in.
+    drains  each run deletes what it reads from a finite pool: its prerequisite's
+            rows or the setup's. `measure` runs a row a counted number of times,
+            which the pools are sized for. `profile` repeats one query for as long
+            as it samples, so it would empty the pool and then profile a query
+            that deletes nothing; it refuses these rows.
     """
 
     name: str
@@ -62,6 +67,7 @@ class Query(NamedTuple):
     reps: int | None = None
     cg: bool = False
     needs: tuple[str, ...] = ()
+    drains: bool = False
 
     @property
     def command(self) -> str:
