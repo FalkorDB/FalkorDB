@@ -76,3 +76,6 @@ src/serializers/decoder/mod.rs	load_graph_from_reader	431	PROVEN	Persist.loadFro
 graph/src/runtime/runtime.rs	publish	584	NOT COVERED	new with the plain-Graph fork, not modelled yet: moves the runtime's fork into MvccGraph::commit and reads the Arc it published from then on
 graph/src/runtime/runtime.rs	QueryGraph::from	119	NOT COVERED	enum constructor
 graph/src/runtime/runtime.rs	QueryGraph::from	125	NOT COVERED	enum constructor
+graph/src/runtime/runtime.rs	DynNode::first_id_where	437	NOT COVERED	(#3008): not modelled yet
+graph/src/runtime/runtime.rs	DynNode::first_id_ge	451	NOT COVERED	(#3008): not modelled yet
+graph/src/runtime/runtime.rs	DynNode::last_id_le	459	NOT COVERED	(#3008): not modelled yet
