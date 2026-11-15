@@ -1547,6 +1547,7 @@ impl<'a> ExprEval<'a> {
             };
             match sink {
                 LoopSink::Collect(acc) => {
+                    Self::check_predicate_result(&pass)?;
                     if matches!(pass, Value::Bool(true)) {
                         acc.push(match projection {
                             Some(p) => self.eval_node(p, Some(&*row), agg_group_key)?,
@@ -1555,6 +1556,7 @@ impl<'a> ExprEval<'a> {
                     }
                 }
                 LoopSink::Tally(n) => {
+                    Self::check_predicate_result(&pass)?;
                     if matches!(pass, Value::Bool(true)) {
                         if let Some(p) = projection {
                             self.eval_node(p, Some(&*row), agg_group_key)?;
@@ -1576,6 +1578,17 @@ impl<'a> ExprEval<'a> {
             }
         }
         Ok(())
+    }
+
+    /// A comprehension's predicate must give a boolean or null.
+    fn check_predicate_result(pass: &Value) -> Result<(), String> {
+        match pass {
+            Value::Bool(_) | Value::Null => Ok(()),
+            value => Err(format!(
+                "Type mismatch: expected Boolean but was {}",
+                value.name()
+            )),
+        }
     }
 
     /// The columnar half of [`list_loop_chunk`](Self::list_loop_chunk): one
@@ -1603,6 +1616,16 @@ impl<'a> ExprEval<'a> {
             Some(p) => Some(ve.eval(p, &batch, &all)?),
             None => None,
         };
+        // A predicate that is neither a boolean nor null is a type error, as
+        // in the per-element path. (Bools columns hold only booleans.)
+        if let Some(column) = tested
+            .as_ref()
+            .filter(|column| !matches!(column, ExprColumn::Bools(..)))
+        {
+            for i in 0..len {
+                Self::check_predicate_result(&column.get(i))?;
+            }
+        }
         match sink {
             LoopSink::Count(counts) => {
                 let mut local = [0usize; 3];

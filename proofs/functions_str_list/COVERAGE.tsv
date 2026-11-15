@@ -64,7 +64,7 @@ graph/src/runtime/eval.rs	eval_compound/Reduce	540	PROVEN	reduce_nil, reduce_app
 graph/src/runtime/eval.rs	eval_iter_expr	1237	MODELLED	comprehensionRust literal/range arms (since #2954 only these sources reach it from a comprehension; fallback arm was bug F, pre2954_comprehensionRust); range arm = rangeLazy/rangeIter (rangeLazy_eq_range)
 graph/src/runtime/eval.rs	eval_compiled_regex	1313	MODELLED	isMatchRust, spliceLit/spliceRepl_callSite (BUG C; E fixed #3604)
 graph/src/runtime/eval.rs	check_string_or_null	1320	NOT COVERED	type check only
-graph/src/runtime/eval.rs	eval_quantifier	2144	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
+graph/src/runtime/eval.rs	eval_quantifier	2167	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
 graph/src/runtime/eval.rs	list_contains	1771	PROVEN	contains_false_iff
 graph/src/runtime/eval.rs	get_elements	1785	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
 graph/src/runtime/value.rs	Contains::contains	1877	PROVEN	contains_false_iff

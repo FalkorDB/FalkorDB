@@ -56,7 +56,7 @@ graph/src/runtime/eval.rs	check_string_or_null	1320	PROVEN	EvalMore.checkStringO
 graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1374	PROVEN	BFS.evalShortestPath: shortestPath_args, shortestPath_self, buildPath_length
 graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1459	PROVEN	BFS.search/level/scan/chain/bfsNodes: bfs_sound (meets ⇒ no expect-panic, src→dst walk over followed edges), search_sound, level_inv, scan_inv, chain_sound, chain_total
 graph/src/runtime/eval.rs	ExprEval::eval_map_projection	1588	PROVEN	EvalMore.evalMapProjection/projItems: mapProjection_null_other, mapProjection_prop, omInsert_lookup; Eval.evalNode mapProj arm / projLoop (items evaluated in order, runtime check first)
-graph/src/runtime/eval.rs	eval_quantifier	2144	NOT COVERED	list quantifiers; lists out of scope
+graph/src/runtime/eval.rs	eval_quantifier	2167	NOT COVERED	list quantifiers; lists out of scope
 graph/src/runtime/eval.rs	all_equals	1724	PROVEN	EvalArms.allEquals (lazy iterator, prev = first element): allEquals_two, allEquals_stops; evalCmp Eq: vec_cmp_generic, evalCmp_eq_shape, int_float_eq_not_transitive; = columnar compare_values Eq (columnar CoreOps.allEq_rowCmp)
 graph/src/runtime/eval.rs	all_not_equals	1747	PROVEN	EvalArms.allNotEquals: allNotEquals_two; evalCmp Neq (#2917): vec_cmp_generic, neq_eq_not_eq; = columnar compare_values Neq (columnar CoreOps.allNeq_rowCmp)
 graph/src/runtime/eval.rs	list_contains	1771	PROVEN	Eval.listContains (List / Null / type error): in_spec; Contains::contains: contains_is_kleene_any, null_in
@@ -104,3 +104,4 @@ graph/src/runtime/eval.rs	eval_list_comprehension	1400	NOT COVERED	(#3432): not 
 graph/src/runtime/eval.rs	list_loop_chunk	1491	NOT COVERED	(#3432): not modelled yet
 graph/src/runtime/eval.rs	list_loop_columnar	1585	NOT COVERED	(#3432): not modelled yet
 graph/src/runtime/value.rs	get_type	1371	NOT COVERED	(#3432): not modelled yet
+graph/src/runtime/eval.rs	check_predicate_result	1584	NOT COVERED	(#3432): not modelled yet
