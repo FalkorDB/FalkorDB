@@ -2090,6 +2090,14 @@ mod tests {
             after > before,
             "surplus cache not counted: {before} -> {after}"
         );
+
+        assert!(t.derived.surplus_t.get().is_none());
+        assert!(t.parallel_edge_surplus_t_cached().is_some());
+        let after_t = t.memory_usage();
+        assert!(
+            after_t > after,
+            "transposed surplus cache not counted: {after} -> {after_t}"
+        );
     }
 
     /// The bulk loader puts a pair's duplicate edges in ONE batch, which takes
