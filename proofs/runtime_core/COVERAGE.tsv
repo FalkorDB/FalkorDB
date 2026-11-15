@@ -84,10 +84,10 @@ graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Emitter.next_non
 graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter.initCeiling_pos, initCeiling_cases
 graph/src/runtime/ops/batched_result_emitter.rs	seed	577	PROVEN	Emitter.seed, remaining_seed, drive_flatten
 graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	MODELLED	should_expand/gather vs Batch::new(0) abstracted to (row,item) pairs
-graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter.drain_spec, drain_nonempty, drain_empty
+graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	NOT COVERED	(#3106): body changed, not re-proven yet
 graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	MODELLED	output = packed (row,item) pairs; gather not modelled
 graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter.refill_none, refill_some
-graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	NOT COVERED	(#3106): body changed, not re-proven yet
 graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	Emitter.reset_remaining
 graph/src/runtime/ops/batched_result_emitter.rs	batch	759	NOT COVERED	trivial accessor
 graph/src/runtime/ops/batched_result_emitter.rs	new	773	MODELLED	Emitter.initCeiling via with_binding

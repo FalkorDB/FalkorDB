@@ -149,11 +149,11 @@ graph/src/runtime/ops/batched_result_emitter.rs	many	469	PROVEN	Gather.RowIter.m
 graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Gather.rowIterNext/drainIt: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter withBinding_le_batch (#2973: clamp form replaces the guarded arm); miscompiled_differs (#2922)
 graph/src/runtime/ops/batched_result_emitter.rs	seed	577	MODELLED	Emitter seedRows
-graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
-graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter drain_spec, drain_conserve
+graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	NOT COVERED	(#3106): body changed, not re-proven yet
+graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	NOT COVERED	(#3106): body changed, not re-proven yet
 graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	PROVEN	Emitter batch_rows_active (gather never panics), finishLen_eq
 graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter packRows_spec, stream_rows_active
-graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter emitLazy_spec, emitAll_spec, grow_bounds
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	NOT COVERED	(#3106): body changed, not re-proven yet
 graph/src/runtime/ops/batched_result_emitter.rs	reset	750	MODELLED	state cleared
 graph/src/runtime/ops/batched_result_emitter.rs	batch	759	PROVEN	Gather.emBatch: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Gather.emNew/emWithBinding: emNew_spec
