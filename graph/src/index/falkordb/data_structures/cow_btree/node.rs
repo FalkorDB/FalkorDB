@@ -209,7 +209,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     /// Whether this branch dropped below its minimum fan-out, so a parent must merge it. The one
     /// definition of the branch threshold — [`Node::is_underfull`] and [`Node::remove_one`] both
     /// report through here rather than restating `BRANCH_MAX / 2`.
-    fn is_underfull(&self) -> bool {
+    const fn is_underfull(&self) -> bool {
         self.children.len() < BRANCH_MAX / 2
     }
 
@@ -498,9 +498,9 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     pub(super) fn remove_batch(
         &self,
         batch: &[(u64, u64)],
-    ) -> Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
+    ) -> Self {
         match self {
-            Node::Leaf(leaf) => {
+            Self::Leaf(leaf) => {
                 // Subtract the sorted `batch` from this sorted page — a linear merge-walk — and rebuild
                 // just this one leaf. Iterate the page's pairs directly; no full `to_pairs` copy.
                 let mut survivors = Vec::with_capacity(leaf.count());
@@ -514,9 +514,9 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                     }
                     survivors.push(pair);
                 }
-                Node::Leaf(Leaf::from_pairs(&survivors))
+                Self::Leaf(Leaf::from_pairs(&survivors))
             }
-            Node::Branch(branch) => {
+            Self::Branch(branch) => {
                 // Hand each child the slice of `batch` that routes into it (one linear sweep against the
                 // separators, as in `apply_batch`), recursing only into touched children — others share
                 // by `Arc`. Separators need no rewrite: removal only raises a child's min and lowers its
@@ -548,11 +548,11 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                 // its separator). If every child emptied, the whole subtree collapses to one leaf.
                 strip_empty(&mut children, &mut seps);
                 if children.is_empty() {
-                    return Node::Leaf(Leaf::from_pairs(&[]));
+                    return Self::Leaf(Leaf::from_pairs(&[]));
                 }
                 // Merge any child that merely under-filled back to minimum.
                 merge_underfull(&mut children, &mut seps);
-                Node::Branch(Arc::new(Branch { seps, children }))
+                Self::Branch(Arc::new(Branch { seps, children }))
             }
         }
     }
@@ -561,8 +561,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     /// [`merge_underfull`]). A no-op for a leaf, and for a branch whose children are all min-full,
     /// so a repair only recurses down the seam where an under-full node was carried in.
     fn merge_underfull_below(&mut self) {
-        if let Node::Branch(branch_arc) = self
-            && branch_arc.children.iter().any(Node::is_underfull)
+        if let Self::Branch(branch_arc) = self
+            && branch_arc.children.iter().any(Self::is_underfull)
         {
             // Every node passed here is one `combine` just built (`Arc::new`), so it is not shared
             // and `make_mut` mutates in place; unlike `make_private` it still clones if that ever
@@ -575,15 +575,15 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     /// Whether this node dropped below its minimum fill (so a parent must merge it).
     fn is_underfull(&self) -> bool {
         match self {
-            Node::Leaf(leaf) => leaf.count() < LEAF_MAX / 2,
-            Node::Branch(branch) => branch.is_underfull(),
+            Self::Leaf(leaf) => leaf.count() < LEAF_MAX / 2,
+            Self::Branch(branch) => branch.is_underfull(),
         }
     }
 
     /// Whether this node holds nothing. After a batch removal only ever an all-emptied leaf — an
     /// emptied branch is returned as an empty leaf, never a childless branch.
     fn is_empty_node(&self) -> bool {
-        matches!(self, Node::Leaf(leaf) if leaf.count() == 0)
+        matches!(self, Self::Leaf(leaf) if leaf.count() == 0)
     }
 }
 

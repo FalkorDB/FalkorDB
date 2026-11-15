@@ -1,13 +1,13 @@
 //! `native-deps prejit`: regenerate `build/graphblas/PreJIT/`.
 //!
-//! GraphBLAS compiles a kernel the first time a query needs an operation shape,
-//! and PreJIT bakes those kernels into the archive so production never compiles
-//! at runtime. Which kernels exist depends on what FalkorDB executes, not on
-//! GraphBLAS's inputs, so they are committed sources rather than a cache entry,
-//! and regenerating them means running FalkorDB:
+//! `GraphBLAS` compiles a kernel the first time a query needs an operation shape,
+//! and `PreJIT` bakes those kernels into the archive so production never compiles
+//! at runtime. Which kernels exist depends on what `FalkorDB` executes, not on
+//! `GraphBLAS`'s inputs, so they are committed sources rather than a cache entry,
+//! and regenerating them means running `FalkorDB`:
 //!
 //! 1. clear the vendored kernels and the JIT cache;
-//! 2. build in harvest mode -- GraphBLAS without PreJIT, FalkorDB with the
+//! 2. build in harvest mode -- `GraphBLAS` without `PreJIT`, `FalkorDB` with the
 //!    runtime JIT on (`--features prejit_harvest`);
 //! 3. run the workload: every suite, plus the benchmark queries, whose shapes
 //!    no functional suite issues;
@@ -232,9 +232,7 @@ fn workload_env(root: &Path) -> BTreeMap<String, String> {
     if cfg!(target_os = "linux") {
         // rustdoc ignores the `[target.'cfg(linux)']` rustflags, so the doctests
         // need the duplicate-symbol allowance passed this way.
-        let flags = env_opt("RUSTDOCFLAGS")
-            .map(|f| format!("{f} "))
-            .unwrap_or_default();
+        let flags = env_opt("RUSTDOCFLAGS").map_or_default(|f| format!("{f} "));
         env.insert(
             "RUSTDOCFLAGS".into(),
             format!("{flags}-C link-arg=-Wl,--allow-multiple-definition"),
