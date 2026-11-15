@@ -283,7 +283,9 @@ pub fn classify_column(values: Vec<Value>) -> (Column, NullBitmap) {
 }
 
 /// Classifies a `Vec<Value>` for the comparison kernels, keeping every lane
-/// exact: an all-`Int` (or null) column becomes [`Column::Ints`], an all-`Float`
+/// exact.
+///
+/// An all-`Int` (or null) column becomes [`Column::Ints`], an all-`Float`
 /// one becomes [`Column::Floats`], and anything else — including a *mixed*
 /// int/float column — stays [`Column::Values`].
 ///

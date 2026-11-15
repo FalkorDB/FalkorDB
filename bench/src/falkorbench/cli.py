@@ -96,10 +96,10 @@ def measure(module, port, out, reps, once, keep_server, reuse, setup, c_compat, 
     queries = _select(names)
     out_path = Path(out) if out else RESULTS / "current.csv"
     module_path = client_mod.find_module(module, REPO_ROOT)
-    # --reuse means "do not start a server". It must NOT silently also mean "do
-    # not build the graph", or the harness measures an empty database and reports
-    # numbers that look real. CI reuses a server from a published image and so
-    # needs setup; default to building unless explicitly told not to.
+    # --reuse means "do not start a server", and by default also "do not build
+    # the graph": the server is assumed to hold it already (from --keep-server).
+    # Against a fresh server that measures an empty database and reports numbers
+    # that look real, so pass --setup there (#3658).
     do_setup = (not reuse) if setup is None else setup
 
     server = client_mod.Server(port=port)
