@@ -39,8 +39,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Prefix of the env key that reserves an aggregate's ORDER BY slot. A NUL
-/// cannot appear in an identifier, so no query can name (and so replace) it.
-const AGG_SLOT_PREFIX: &str = "\u{0}agg_placeholder_";
+/// cannot appear in an identifier, so no query can name (and so replace) it;
+/// the leading `_` keeps `*` expansion from projecting it.
+const AGG_SLOT_PREFIX: &str = "_\u{0}agg_placeholder_";
 
 /// The binder performs semantic analysis on parsed Cypher queries.
 ///
@@ -2746,6 +2747,24 @@ fn is_alias_rewritable(
     has_variable
 }
 
+/// Whether two constants are the same value. An `Int` and a `Float` match
+/// only when the float is that exact integer: `Value`'s own equality rounds the
+/// integer to `f64`, which would conflate neighbours past 2^53.
+fn constants_equal(
+    a: &Value,
+    b: &Value,
+) -> bool {
+    match (a, b) {
+        (Value::Int(i), Value::Float(f)) | (Value::Float(f), Value::Int(i)) => {
+            f.fract() == 0.0
+                && *f >= -9_223_372_036_854_775_808.0
+                && *f < 9_223_372_036_854_775_808.0
+                && *f as i64 == *i
+        }
+        _ => a == b,
+    }
+}
+
 /// Compare two raw (pre-bind) expression trees structurally, ignoring the
 /// placeholder the parser appends to aggregate functions.
 fn raw_exprs_structurally_equal(
@@ -2802,7 +2821,7 @@ fn raw_exprs_structurally_equal(
             // Constants match when they are equal values, as in C
             // (`SIValue_Compare`): `3` matches `3.0`, `null` matches only
             // `null`, and values of unrelated types never match.
-            (ExprIR::Constant(va), ExprIR::Constant(vb)) => va == vb,
+            (ExprIR::Constant(va), ExprIR::Constant(vb)) => constants_equal(va, vb),
             (ExprIR::Property(pa), ExprIR::Property(pb)) => pa == pb,
             (ExprIR::Parameter(pa), ExprIR::Parameter(pb)) => pa == pb,
             _ => std::mem::discriminant(a) == std::mem::discriminant(b),
@@ -3017,5 +3036,28 @@ mod tests {
         for (parenthesised, plain) in different {
             assert_ne!(bound(parenthesised), bound(plain), "{parenthesised}");
         }
+    }
+
+    /// Mixed `Int`/`Float` constants are equal only when the float is exactly
+    /// that integer, so ids past 2^53 are not conflated.
+    #[test]
+    fn constants_equal_compares_mixed_numbers_exactly() {
+        use super::constants_equal;
+        use crate::runtime::value::Value;
+
+        assert!(constants_equal(&Value::Int(3), &Value::Float(3.0)));
+        assert!(constants_equal(&Value::Float(3.0), &Value::Int(3)));
+        assert!(!constants_equal(&Value::Int(4), &Value::Float(3.0)));
+        assert!(!constants_equal(&Value::Int(3), &Value::Float(3.5)));
+        assert!(!constants_equal(
+            &Value::Int(9_007_199_254_740_993),
+            &Value::Float(9_007_199_254_740_992.0)
+        ));
+        assert!(constants_equal(
+            &Value::Int(9_007_199_254_740_992),
+            &Value::Float(9_007_199_254_740_992.0)
+        ));
+        assert!(!constants_equal(&Value::Int(1), &Value::Float(f64::NAN)));
+        assert!(!constants_equal(&Value::Null, &Value::Int(0)));
     }
 }

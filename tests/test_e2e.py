@@ -2050,6 +2050,10 @@ def test_alias_spelled_like_an_aggregate_slot_key_is_ordinary():
     res = query("UNWIND [1, 2] AS x WITH x AS __agg_placeholder_1 "
                 "RETURN __agg_placeholder_1, count(*) AS c ORDER BY c, __agg_placeholder_1")
     assert res.result_set == [[1, 1], [2, 1]]
+    # and the slot is not a column of `*`
+    res = query("WITH 5 AS a RETURN *, count(*) AS c")
+    assert [h[1] for h in res.header] == ["a", "c"]
+    assert res.result_set == [[5, 1]]
 
 
 def test_order_by_expression_with_a_different_constant_is_not_the_projection():

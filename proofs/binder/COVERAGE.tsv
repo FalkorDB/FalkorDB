@@ -45,3 +45,4 @@ graph/src/planner/mod.rs	Planner::fresh_var	838	PROVEN	mint_fresh_iff (planner m
 graph/src/planner/binder.rs	replace_projected_subtrees	2617	NOT COVERED	(#2925): not modelled yet
 graph/src/planner/binder.rs	replace_projected_subtrees_rec	2629	NOT COVERED	(#2925): not modelled yet
 graph/src/planner/binder.rs	is_alias_rewritable	2685	NOT COVERED	(#2925): not modelled yet
+graph/src/planner/binder.rs	constants_equal	2753	NOT COVERED	(#2925): not modelled yet
