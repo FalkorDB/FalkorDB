@@ -2019,6 +2019,9 @@ class test_udf_javascript():
                 try:
                     self.graph.query(q)
                 except ResponseError:
+                    # A forged object is refused (or is just a Map the query
+                    # rejects); whichever error it is, what the test pins is
+                    # the graph check below.
                     pass
 
         # the server is alive and the graph is unchanged
