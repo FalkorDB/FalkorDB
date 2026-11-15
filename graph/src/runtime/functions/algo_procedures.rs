@@ -1274,11 +1274,23 @@ fn register_bfs(funcs: &mut Functions) {
                 clippy::option_if_let_else,
                 reason = "owned_adj is initialised in the else arm to outlive the borrow"
             )]
-            let (a_raw, nvals, n) = if let Some(m) = clean {
-                (m.inner(), m.nvals(), m.nrows())
+            let (a_raw, nvals, n, source_has_out) = if let Some(m) = clean {
+                let src = u64::from(source_id);
+                (
+                    m.inner(),
+                    m.nvals(),
+                    m.nrows(),
+                    m.iter(src, src).next().is_some(),
+                )
             } else {
                 owned_adj = g.build_adjacency_matrix(&rel_types);
-                (owned_adj.inner(), owned_adj.nvals(), owned_adj.nrows())
+                let src = u64::from(source_id);
+                (
+                    owned_adj.inner(),
+                    owned_adj.nvals(),
+                    owned_adj.nrows(),
+                    owned_adj.iter(src, src).next().is_some(),
+                )
             };
 
             // Whether the visited set will be a fair share of the graph: then
@@ -1288,9 +1300,12 @@ fn register_bfs(funcs: &mut Functions) {
             // reaching n/64; an unbounded BFS is assumed to.
             // A traversal reaches at most nvals + 1 nodes, so it only
             // qualifies when nvals + 1 >= n/64 (an empty relationship never
-            // does): otherwise the sparse path avoids the O(n) bitmap.
+            // does): otherwise the sparse path avoids the O(n) bitmap. A source
+            // with no outgoing edge reaches nothing, however many edges the
+            // rest of the graph has.
             let many_expected = nvals as f64 + 1.0 >= n as f64 / 64.0
                 && nvals > 0
+                && source_has_out
                 && (max_depth < 0 || {
                     let avg_degree = nvals as f64 / n.max(1) as f64;
                     avg_degree.powi(max_depth.min(64) as i32) >= n as f64 / 64.0
