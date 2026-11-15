@@ -1108,6 +1108,10 @@ fn register_betweenness(funcs: &mut Functions) {
 /// is why LAGraph, which insists they match, cannot be handed the tensor's
 /// UINT64 forward and BOOL backward bases directly. Returns the INT64 level
 /// vector (bitmap), the source at level 0.
+#[allow(
+    clippy::many_single_char_names,
+    reason = "the names of Beamer et al. and the GraphBLAS matrices and vectors"
+)]
 unsafe fn bfs_levels_push_pull(
     a: crate::graph::graphblas::GrB_Matrix,
     at: crate::graph::graphblas::GrB_Matrix,
@@ -1208,7 +1212,7 @@ unsafe fn bfs_levels_push_pull(
         if nq == 0 {
             break;
         }
-        edges_unexplored -= nq as f64 * avg_degree;
+        edges_unexplored = (nq as f64).mul_add(-avg_degree, edges_unexplored);
         let info = GrB_Vector_assign_INT64(v, q, null_mut(), k, GrB_ALL, n, GrB_DESC_S);
         if let Err(e) = check(info, "level assign") {
             return fail(v, q, e);
@@ -1266,6 +1270,10 @@ fn register_bfs(funcs: &mut Functions) {
                 _ => None,
             };
             let owned_adj;
+            #[allow(
+                clippy::option_if_let_else,
+                reason = "owned_adj is initialised in the else arm to outlive the borrow"
+            )]
             let (a_raw, nvals, n) = if let Some(m) = clean {
                 (m.inner(), m.nvals(), m.nrows())
             } else {
