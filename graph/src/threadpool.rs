@@ -28,10 +28,21 @@
 //!
 //! The pool is stored in a global `OnceCell` and must be initialized once
 //! via [`init_thread_pool`] before any calls to [`spawn`].
+//!
+//! ## Other instances
+//!
+//! [`ThreadPool`] is also a type of its own, for work that must not take a
+//! query thread. An instance can name its workers ([`ThreadPool::named`]),
+//! and can stop without waiting forever for a job that blocks
+//! ([`ThreadPool::shutdown_within`]).
 
-use std::thread::{self, JoinHandle};
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
+};
 
-use crossfire::{MRx, MTx, mpmc::Array};
+use crossfire::{MRx, MTx, mpmc::List};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
@@ -40,26 +51,52 @@ use parking_lot::Mutex;
 type Job = Option<Box<dyn FnOnce() + Send + 'static>>;
 
 /// A pool of worker threads for executing jobs.
-struct ThreadPool {
+pub struct ThreadPool {
     /// Interior mutability only: the pool lives in a `&'static OnceCell`,
     /// so reaching the workers via `&self` from `shutdown` needs a lock
     /// to call `drain(..).join()`. Never touched by `spawn` — the hot
     /// path is lock-free.
     workers: Mutex<Vec<JoinHandle<()>>>,
-    sender: MTx<Array<Job>>,
+    sender: MTx<List<Job>>,
     size: usize,
 }
 
 unsafe impl Sync for ThreadPool {}
 
 impl ThreadPool {
+    #[must_use]
     pub fn new(size: usize) -> Self {
+        Self::with_names(size, None)
+    }
+
+    /// [`Self::new`], its workers named `{name}-0`, `{name}-1`, ….
+    #[must_use]
+    pub fn named(
+        size: usize,
+        name: &str,
+    ) -> Self {
+        Self::with_names(size, Some(name))
+    }
+
+    fn with_names(
+        size: usize,
+        name: Option<&str>,
+    ) -> Self {
         let mut workers = Vec::with_capacity(size);
-        let (sender, receiver): (MTx<Array<Job>>, MRx<Array<Job>>) =
-            crossfire::mpmc::bounded_blocking(1024);
-        for _ in 0..size {
+        // Unlimited channel, bounded by admission: `spawn` runs on the Redis
+        // main thread, which holds the GIL, so a send that could wait on a full
+        // channel deadlocks against every running worker waiting for that same
+        // GIL to escalate its write. Queries are counted instead by a
+        // [`QueueSlot`], taken before dispatch, which is what bounds this queue.
+        let (sender, receiver): (MTx<List<Job>>, MRx<List<Job>>) =
+            crossfire::mpmc::unbounded_blocking();
+        for i in 0..size {
             let rx = receiver.clone();
-            let worker = thread::spawn(move || {
+            let mut builder = thread::Builder::new();
+            if let Some(name) = name {
+                builder = builder.name(format!("{name}-{i}"));
+            }
+            let worker = builder.spawn(move || {
                 while let Ok(job) = rx.recv() {
                     match job {
                         Some(j) => {
@@ -77,7 +114,7 @@ impl ThreadPool {
                     }
                 }
             });
-            workers.push(worker);
+            workers.push(worker.expect("spawn a pool worker"));
         }
         Self {
             workers: Mutex::new(workers),
@@ -102,10 +139,6 @@ impl ThreadPool {
             eprintln!("thread pool: dropping job, no workers available to dispatch to");
         }
     }
-    pub fn pending_count(&self) -> usize {
-        crossfire::BlockingTxTrait::len(&self.sender)
-    }
-
     /// Drain queued work, signal every worker to exit, and join them.
     ///
     /// Joining matters under sanitizers: pthread TLS destructors only fire
@@ -121,6 +154,33 @@ impl ThreadPool {
             let _ = worker.join();
         }
     }
+
+    /// [`Self::shutdown`], waiting at most `timeout` for the workers: one still running a job by
+    /// then is left behind, to exit when its job returns. For jobs that may block on what the
+    /// caller holds. Whether every worker exited in time.
+    ///
+    /// A worker left behind is kept, not detached, so a later call waits for it again and reports
+    /// it until it has exited.
+    pub fn shutdown_within(
+        &self,
+        timeout: Duration,
+    ) -> bool {
+        for _ in 0..self.size {
+            let _ = self.sender.send(None);
+        }
+        let deadline = Instant::now() + timeout;
+        let mut workers = self.workers.lock();
+        while Instant::now() < deadline && !workers.iter().all(JoinHandle::is_finished) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        let (exited, running): (Vec<_>, Vec<_>) =
+            workers.drain(..).partition(JoinHandle::is_finished);
+        for worker in exited {
+            let _ = worker.join();
+        }
+        *workers = running;
+        workers.is_empty()
+    }
 }
 
 static GLOBAL_THREAD_POOL: OnceCell<ThreadPool> = OnceCell::new();
@@ -135,14 +195,6 @@ pub fn spawn<F>(
         .get()
         .expect("Thread pool not initialized")
         .spawn(job, idx);
-}
-
-/// Get the total number of pending jobs across all worker channels.
-pub fn pending_count() -> usize {
-    GLOBAL_THREAD_POOL
-        .get()
-        .expect("Thread pool not initialized")
-        .pending_count()
 }
 
 /// Initialize the global thread pool with a specific size.
@@ -161,5 +213,137 @@ pub fn init_thread_pool(size: usize) -> Result<(), ()> {
 pub fn shutdown() {
     if let Some(pool) = GLOBAL_THREAD_POOL.get() {
         pool.shutdown();
+    }
+}
+
+/// Queries admitted but not yet picked up for execution — waiting in the pool
+/// queue, or (for a write) anywhere until the graph's write drainer dequeues it.
+static QUEUED_QUERIES: AtomicU64 = AtomicU64::new(0);
+
+/// One admitted, still-queued query's share of [`QUEUED_QUERIES`].
+///
+/// Taken on the Redis main thread before the query is dispatched, carried with
+/// it (inside the pool job, then inside the graph's write message), and dropped
+/// once a worker or the write drainer starts executing it. Dropping is the only
+/// release, so every path that discards a queued query — a failed send, a pool
+/// shutting down, a graph freed with writes still queued, a panicking job —
+/// gives its slot back exactly once.
+#[must_use]
+pub struct QueueSlot {
+    counter: &'static AtomicU64,
+}
+
+impl QueueSlot {
+    /// Admit one more query unless `max` are already queued. Never waits.
+    ///
+    /// `max` is `MAX_QUEUED_QUERIES` as configured, so the count is a `u64` too
+    /// and the two compare without a conversion.
+    #[must_use]
+    pub fn try_acquire(max: u64) -> Option<Self> {
+        Self::try_acquire_in(&QUEUED_QUERIES, max)
+    }
+
+    fn try_acquire_in(
+        counter: &'static AtomicU64,
+        max: u64,
+    ) -> Option<Self> {
+        let mut n = counter.load(Ordering::Acquire);
+        while n < max {
+            match counter.compare_exchange_weak(n, n + 1, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return Some(Self { counter }),
+                Err(seen) => n = seen,
+            }
+        }
+        None
+    }
+}
+
+impl Drop for QueueSlot {
+    fn drop(&mut self) {
+        let prev = self.counter.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(prev > 0, "queued-query counter released below zero");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::mpsc;
+
+    /// A bounded shutdown returns on time with a worker blocked in a job, and reports it. It keeps
+    /// the worker: a repeat call reports it again while its job runs, and joins it once the job
+    /// returns.
+    #[test]
+    fn shutdown_within_leaves_a_blocked_job_behind() {
+        let pool = Arc::new(ThreadPool::new(1));
+        let (release, blocked) = mpsc::channel::<()>();
+        let (started, has_started) = mpsc::channel();
+        pool.spawn(
+            move || {
+                started.send(()).unwrap();
+                let _ = blocked.recv();
+            },
+            None,
+        );
+        has_started.recv().unwrap();
+        let (done, shutdown) = mpsc::channel();
+        let stopping = Arc::clone(&pool);
+        thread::spawn(move || {
+            done.send(stopping.shutdown_within(Duration::from_millis(50)))
+                .unwrap();
+        });
+        let exited = shutdown.recv_timeout(Duration::from_secs(2));
+        let again = pool.shutdown_within(Duration::from_millis(20));
+        drop(release);
+        assert_eq!(
+            exited,
+            Ok(false),
+            "returned in time, the blocked worker left behind"
+        );
+        assert!(!again, "a repeat call still reports the blocked worker");
+        assert!(
+            pool.shutdown_within(Duration::from_secs(2)),
+            "joined once its job returned"
+        );
+    }
+
+    /// A named pool's workers carry the name, numbered from 0.
+    #[test]
+    fn named_workers_carry_the_name() {
+        let pool = ThreadPool::named(1, "named-pool");
+        let (tx, rx) = mpsc::channel();
+        pool.spawn(
+            move || {
+                tx.send(thread::current().name().map(str::to_owned))
+                    .unwrap();
+            },
+            None,
+        );
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(2)),
+            Ok(Some("named-pool-0".to_owned()))
+        );
+        assert!(pool.shutdown_within(Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn queue_slot_bounds_and_releases() {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let slots: Vec<_> = (0..3)
+            .map(|_| QueueSlot::try_acquire_in(&COUNTER, 3).expect("under the limit"))
+            .collect();
+        assert_eq!(COUNTER.load(Ordering::Acquire), 3);
+        assert!(QueueSlot::try_acquire_in(&COUNTER, 3).is_none());
+        // A rejected admission takes nothing.
+        assert_eq!(COUNTER.load(Ordering::Acquire), 3);
+        // Lowering the limit below the queued count rejects; raising admits.
+        assert!(QueueSlot::try_acquire_in(&COUNTER, 1).is_none());
+        let extra = QueueSlot::try_acquire_in(&COUNTER, 4).expect("raised limit");
+        drop(extra);
+        drop(slots);
+        assert_eq!(COUNTER.load(Ordering::Acquire), 0);
+        assert!(QueueSlot::try_acquire_in(&COUNTER, 1).is_some());
+        assert_eq!(COUNTER.load(Ordering::Acquire), 0);
     }
 }

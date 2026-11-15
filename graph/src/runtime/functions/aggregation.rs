@@ -120,8 +120,10 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.iter().cloned();
             match (iter.next(), iter.next()) {
                 (Some(a), Some(b)) => {
+                    // A comparison against NaN decides nothing, as in C.
                     if let (ord, cmp) = b.compare_value(&a) &&
-                    (ord == Ordering::Less || cmp == DisjointOrNull::ComparedNull) {
+                    ((ord == Ordering::Less && cmp != DisjointOrNull::NaN)
+                        || cmp == DisjointOrNull::ComparedNull) {
                         return Ok(a);
                     }
                     Ok(b)
@@ -141,8 +143,10 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.iter().cloned();
             match (iter.next(), iter.next()) {
                 (Some(a), Some(b)) => {
+                    // A comparison against NaN decides nothing, as in C.
                     if let (ord, cmp) = b.compare_value(&a) &&
-                    (ord == Ordering::Greater || cmp == DisjointOrNull::ComparedNull) {
+                    ((ord == Ordering::Greater && cmp != DisjointOrNull::NaN)
+                        || cmp == DisjointOrNull::ComparedNull) {
                         return Ok(a);
                     }
                     Ok(b)
@@ -250,7 +254,10 @@ pub fn register(funcs: &mut Functions) {
                 unreachable!("Second element of state must be a List")
             };
 
-            *stored_percentile = percentile;
+            // The first row's percentile is the aggregate's, as in C.
+            if collected_values.is_empty() {
+                *stored_percentile = percentile;
+            }
             Arc::make_mut(collected_values).push(Value::Float(val.get_numeric()));
 
             Ok(Value::List(state))
@@ -408,7 +415,9 @@ fn sum_batch(
 }
 
 /// Bulk `max` aggregator. Walks all inputs once; keeps the max via
-/// `compare_value`, ignoring null/disjoint comparisons.
+/// `compare_value`, ignoring null and NaN comparisons. As in C, a NaN neither
+/// replaces the current max nor is replaced, so it survives only as the first
+/// non-null input.
 fn max_batch(
     _: &Runtime,
     inputs: &[Value],
@@ -425,7 +434,9 @@ fn max_batch(
             continue;
         }
         let (ord, cmp) = val.compare_value(&best);
-        if ord == Ordering::Greater && cmp != DisjointOrNull::ComparedNull {
+        if ord == Ordering::Greater
+            && !matches!(cmp, DisjointOrNull::ComparedNull | DisjointOrNull::NaN)
+        {
             best = val.clone();
         }
     }
@@ -500,7 +511,9 @@ fn min_batch(
             continue;
         }
         let (ord, cmp) = val.compare_value(&best);
-        if ord == Ordering::Less && cmp != DisjointOrNull::ComparedNull {
+        if ord == Ordering::Less
+            && !matches!(cmp, DisjointOrNull::ComparedNull | DisjointOrNull::NaN)
+        {
             best = val.clone();
         }
     }
@@ -521,9 +534,8 @@ fn percentile_batch(
     _num_rows: usize,
     acc: Value,
 ) -> Result<Value, String> {
-    let mut state = match acc {
-        Value::List(l) => l,
-        _ => unreachable!("percentile accumulator must be a List"),
+    let Value::List(mut state) = acc else {
+        unreachable!("percentile accumulator must be a List")
     };
     if matches!(inputs[0], Value::Null) {
         return Ok(Value::List(state));
@@ -536,7 +548,10 @@ fn percentile_batch(
     let Value::List(values) = &mut rest[0] else {
         unreachable!("second element of percentile state must be a List");
     };
-    *stored_percentile = inputs[1].get_numeric();
+    // The first row's percentile is the aggregate's, as in C.
+    if values.is_empty() {
+        *stored_percentile = inputs[1].get_numeric();
+    }
     Arc::make_mut(values).push(Value::Float(inputs[0].get_numeric()));
     Ok(Value::List(state))
 }

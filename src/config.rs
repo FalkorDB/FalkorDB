@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! +-------------------------------+    +----------------------------+
-//! | RedisGILGuard configs         |    | Atomic configs             |
+//! | ValkeyGILGuard configs        |    | Atomic configs             |
 //! | (set at module load)          |    | (changeable at runtime)    |
 //! |-------------------------------|    |----------------------------|
 //! | CACHE_SIZE                    |    | TIMEOUT / TIMEOUT_DEFAULT  |
@@ -24,9 +24,9 @@
 //! ```
 //!
 //! - **GIL-guarded configs** are declared via `lazy_static` and wrapped in
-//!   `RedisGILGuard`, ensuring safe access from the Redis main thread.
+//!   `ValkeyGILGuard`, ensuring safe access from the Redis main thread.
 //!   Most are immutable after module load (flagged `IMMUTABLE` in the
-//!   `redis_module!` macro); the ones C also lets change at run-time are
+//!   `valkey_module!` macro); the ones C also lets change at run-time are
 //!   flagged `DEFAULT` and accepted by `GRAPH.CONFIG SET`.
 //!
 //! - **Atomic configs** use `AtomicI64` / `AtomicU64` / `AtomicBool` for
@@ -37,38 +37,52 @@
 //! `CONFIG_NAMES` provides the ordered list of all configuration keys,
 //! used by `GRAPH.CONFIG GET *` to enumerate settings.
 
+use crate::commands::config_cmd::{
+    ConfigValue, UNKNOWN_FIELD, apply_config_set, check_timeout_constraints, validate_config_set,
+};
 use lazy_static::lazy_static;
-use redis_module::RedisGILGuard;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64};
+use std::fs::{self, File};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use valkey_module::{Context, ValkeyGILGuard};
 
 // ── Redis module-level configurations (set via moduleArgs) ──
 
 lazy_static! {
-    pub static ref CONFIGURATION_IMPORT_FOLDER: RedisGILGuard<String> =
-        RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
-    pub static ref CONFIGURATION_CACHE_SIZE: RedisGILGuard<i64> = RedisGILGuard::new(25.into());
-    pub static ref CONFIGURATION_THREAD_COUNT: RedisGILGuard<i64> = RedisGILGuard::new(0.into());
+    pub static ref CONFIGURATION_IMPORT_FOLDER: ValkeyGILGuard<String> =
+        ValkeyGILGuard::new("/var/lib/FalkorDB/import/".into());
+    pub static ref CONFIGURATION_CACHE_SIZE: ValkeyGILGuard<i64> = ValkeyGILGuard::new(25.into());
+    pub static ref CONFIGURATION_THREAD_COUNT: ValkeyGILGuard<i64> = ValkeyGILGuard::new(0.into());
     /// Number of RediSearch background worker threads (e.g. TIERED vector-index
     /// HNSW migration jobs). 0 = disabled: tiered inserts stay in the flat
     /// buffer (KNN still correct), no async migration.
-    pub static ref CONFIGURATION_INDEX_WORKER_THREADS: RedisGILGuard<i64> =
-        RedisGILGuard::new(0.into());
-    pub static ref CONFIGURATION_NODE_CREATION_BUFFER: RedisGILGuard<i64> =
-        RedisGILGuard::new(graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64);
-    pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =
-        RedisGILGuard::new(100_000.into());
-    pub static ref CONFIGURATION_DELAY_INDEXING: RedisGILGuard<bool> = RedisGILGuard::new(false);
-    pub static ref CONFIGURATION_TEMP_FOLDER: RedisGILGuard<String> =
-        RedisGILGuard::new("/tmp".into());
-    pub static ref CONFIGURATION_JS_HEAP_SIZE: RedisGILGuard<i64> =
-        RedisGILGuard::new(256 * 1024 * 1024_i64);
-    pub static ref CONFIGURATION_JS_STACK_SIZE: RedisGILGuard<i64> =
-        RedisGILGuard::new(1024 * 1024_i64);
+    pub static ref CONFIGURATION_INDEX_WORKER_THREADS: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(0.into());
+    /// Workers in the native index's background build pool (feature `index-falkordb`), which runs
+    /// the indexer batches of every index `CREATE INDEX` leaves `Building`. Load-time only. Not
+    /// listed by `GRAPH.CONFIG`, whose list mirrors the C engine's.
+    pub static ref CONFIGURATION_INDEX_BUILD_THREAD_COUNT: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(1.into());
+    pub static ref CONFIGURATION_NODE_CREATION_BUFFER: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64);
+    pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(100_000.into());
+    pub static ref CONFIGURATION_DELAY_INDEXING: ValkeyGILGuard<bool> = ValkeyGILGuard::new(false);
+    pub static ref CONFIGURATION_TEMP_FOLDER: ValkeyGILGuard<String> =
+        ValkeyGILGuard::new("/tmp".into());
+    pub static ref CONFIGURATION_JS_HEAP_SIZE: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(256 * 1024 * 1024_i64);
+    pub static ref CONFIGURATION_JS_STACK_SIZE: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(1024 * 1024_i64);
 }
 
 // ── Runtime-configurable atomics ──
 
-pub static MAX_QUEUED_QUERIES: AtomicU64 = AtomicU64::new(u32::MAX as u64);
+/// Queries that may wait at once — in the thread pool plus every graph's write
+/// queue — before new ones get "Max pending queries exceeded". Deliberately
+/// finite, unlike C's unlimited default, so a stalled graph cannot queue
+/// without bound.
+pub static MAX_QUEUED_QUERIES: AtomicU64 = AtomicU64::new(10_000);
 pub static TIMEOUT: AtomicI64 = AtomicI64::new(0);
 pub static TIMEOUT_DEFAULT: AtomicI64 = AtomicI64::new(0);
 pub static TIMEOUT_MAX: AtomicI64 = AtomicI64::new(0);
@@ -118,7 +132,7 @@ pub static BOLT_PORT: AtomicI64 = AtomicI64::new(65535);
 /// clamped rather than rejected, matching C's `Config_cmd_info_max_queries_set`.
 pub const MAX_INFO_QUERIES_CAP: i64 = 1000;
 
-pub fn get_thread_count(ctx: &redis_module::Context) -> i64 {
+pub fn get_thread_count(ctx: &Context) -> i64 {
     let val = *CONFIGURATION_THREAD_COUNT.lock(ctx);
     if val > 0 {
         val
@@ -160,3 +174,192 @@ pub const CONFIG_NAMES: &[&str] = &[
     "JS_HEAP_SIZE",
     "JS_STACK_SIZE",
 ];
+
+// ── Module load arguments ──
+
+/// Configs C has that this engine accepts and stores but does not act on yet.
+/// Setting one at load time logs that the value is accepted and ignored.
+const IGNORED_CONFIGS: &[&str] = &[
+    "ASYNC_DELETE",
+    "DELAY_INDEXING",
+    "DELTA_MAX_PENDING_CHANGES",
+    "EFFECTS_THRESHOLD",
+];
+
+/// A validated module load argument, ready to apply.
+enum LoadArg {
+    CacheSize(i64),
+    ThreadCount(i64),
+    OmpThreadCount(i64),
+    NodeCreationBuffer(i64),
+    IndexWorkerThreads(i64),
+    IndexBuildThreadCount(i64),
+    ImportFolder(String),
+    TempFolder(String),
+    /// Not validated at load time (yet); accepted and unused, as before.
+    BoltPort,
+    /// A config `GRAPH.CONFIG SET` also accepts, applied through its setter;
+    /// the raw value is kept for the log line.
+    Runtime {
+        name: String,
+        value: String,
+        parsed: ConfigValue,
+    },
+}
+
+/// C's `TEMP_FOLDER` checks, with its error texts.
+fn validate_temp_folder(path: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    if !p.exists() {
+        return Err("TEMP_FOLDER path does not exist".to_string());
+    }
+    if !p.is_dir() {
+        return Err("TEMP_FOLDER path is not a directory".to_string());
+    }
+    let probe = p.join(".falkordb_temp_test");
+    if File::create(&probe).is_err() {
+        return Err("No write access to TEMP_FOLDER path".to_string());
+    }
+    let _ = fs::remove_file(&probe);
+    Ok(())
+}
+
+/// Validate one load-only config (one `GRAPH.CONFIG SET` refuses) with C's
+/// load-time rules. Returns `None` when `name` is not a load-only config.
+fn validate_load_only(
+    name: &str,
+    value: &str,
+) -> Option<Result<LoadArg, String>> {
+    // C's `_Config_ParsePositiveInteger` / `_Config_ParseNonNegativeInteger`:
+    // a decimal `long long` (so `-0` is 0 and 2^63 is out of range), then a sign
+    // check.
+    let int = value.parse::<i64>().ok();
+    let positive = int.filter(|v| v.is_positive());
+    let non_negative = int.filter(|v| !v.is_negative());
+    let checked = match name {
+        "CACHE_SIZE" => positive.map(LoadArg::CacheSize),
+        "THREAD_COUNT" => positive.map(LoadArg::ThreadCount),
+        "OMP_THREAD_COUNT" => positive.map(LoadArg::OmpThreadCount),
+        "NODE_CREATION_BUFFER" => non_negative.map(LoadArg::NodeCreationBuffer),
+        "INDEX_WORKER_THREADS" => non_negative.map(LoadArg::IndexWorkerThreads),
+        // This engine's own: the native index's build pool, 1 to 1024 workers as registered.
+        "INDEX_BUILD_THREAD_COUNT" => positive
+            .filter(|&v| v <= 1024)
+            .map(LoadArg::IndexBuildThreadCount),
+        "IMPORT_FOLDER" => Some(LoadArg::ImportFolder(value.to_string())),
+        "TEMP_FOLDER" => {
+            return Some(
+                validate_temp_folder(value).map(|()| LoadArg::TempFolder(value.to_string())),
+            );
+        }
+        "BOLT_PORT" => Some(LoadArg::BoltPort),
+        _ => return None,
+    };
+    Some(checked.ok_or_else(|| format!("Failed to set config value {name} to {value}")))
+}
+
+/// Apply one validated load argument.
+fn apply_load_arg(
+    ctx: &Context,
+    arg: LoadArg,
+) {
+    match arg {
+        LoadArg::CacheSize(v) => *CONFIGURATION_CACHE_SIZE.lock(ctx) = v,
+        LoadArg::ThreadCount(v) => *CONFIGURATION_THREAD_COUNT.lock(ctx) = v,
+        LoadArg::OmpThreadCount(v) => OMP_THREAD_COUNT.store(v, Ordering::Relaxed),
+        LoadArg::NodeCreationBuffer(v) => *CONFIGURATION_NODE_CREATION_BUFFER.lock(ctx) = v,
+        LoadArg::IndexWorkerThreads(v) => *CONFIGURATION_INDEX_WORKER_THREADS.lock(ctx) = v,
+        LoadArg::IndexBuildThreadCount(v) => *CONFIGURATION_INDEX_BUILD_THREAD_COUNT.lock(ctx) = v,
+        LoadArg::ImportFolder(v) => *CONFIGURATION_IMPORT_FOLDER.lock(ctx) = v,
+        LoadArg::TempFolder(v) => *CONFIGURATION_TEMP_FOLDER.lock(ctx) = v,
+        LoadArg::BoltPort => {}
+        LoadArg::Runtime {
+            name,
+            value,
+            parsed,
+        } => {
+            apply_config_set(ctx, &name, &parsed);
+            if IGNORED_CONFIGS.contains(&name.as_str()) {
+                ctx.log_warning(&format!(
+                    "FalkorDB: configuration field '{name}' is deprecated and has no effect in \
+                     this version; the value '{value}' is accepted and ignored"
+                ));
+            }
+        }
+    }
+}
+
+/// Apply the module's load arguments (`--loadmodule falkordb.so NAME VALUE ...`)
+/// the way C's `Config_Init` does: names are case-insensitive, every value is
+/// validated, and an odd argument count, an unknown name or an invalid value
+/// refuses the load. Run-time configs go through the same validation and
+/// setter as `GRAPH.CONFIG SET`; load-only configs get C's load-time rules.
+///
+/// Every pair is validated before any is applied, so a refused load leaves no
+/// partial configuration behind. The pairs are still checked in order, each
+/// against the timeouts the pairs before it set, so the first failure and its
+/// message are the ones C's one-pair-at-a-time `Config_Init` reports.
+///
+/// Runs in `graph_init`, after Redis has applied any `graph.*` lines from
+/// redis.conf, so a module argument wins over the same `graph.*` config.
+///
+/// Returns the message to log on failure.
+pub fn apply_module_args(
+    ctx: &Context,
+    args: &[String],
+) -> Result<(), String> {
+    if args.len() % 2 == 1 {
+        return Err(format!(
+            "FalkorDB received {} arguments, all configurations should be key-value pairs",
+            args.len()
+        ));
+    }
+
+    let mut timeout_default = TIMEOUT_DEFAULT.load(Ordering::Relaxed);
+    let mut timeout_max = TIMEOUT_MAX.load(Ordering::Relaxed);
+    let mut old_timeout_specified = false;
+    let mut new_timeout_specified = false;
+    let mut validated = Vec::with_capacity(args.len() / 2);
+    for [field, value] in args.as_chunks::<2>().0 {
+        let name = field.to_ascii_uppercase();
+        let failed = |err: String| format!("Failed setting field '{field}' with error: {err}");
+
+        if let Some(arg) = validate_load_only(&name, value) {
+            validated.push(arg.map_err(failed)?);
+            continue;
+        }
+        let parsed = validate_config_set(&name, value).map_err(|err| {
+            if err == UNKNOWN_FIELD {
+                format!("Encountered unknown configuration field '{field}'")
+            } else {
+                failed(err)
+            }
+        })?;
+        let pair = [(name.as_str(), parsed)];
+        check_timeout_constraints(&mut timeout_default, &mut timeout_max, &pair).map_err(failed)?;
+        let [(_, parsed)] = pair;
+        match name.as_str() {
+            "TIMEOUT" => old_timeout_specified = true,
+            "TIMEOUT_DEFAULT" | "TIMEOUT_MAX" => new_timeout_specified = true,
+            _ => {}
+        }
+        validated.push(LoadArg::Runtime {
+            name,
+            value: value.clone(),
+            parsed,
+        });
+    }
+
+    if old_timeout_specified && new_timeout_specified {
+        return Err(
+            "The TIMEOUT configuration parameter should be removed when specifying \
+             TIMEOUT_DEFAULT and/or TIMEOUT_MAX"
+                .to_string(),
+        );
+    }
+
+    for arg in validated {
+        apply_load_arg(ctx, arg);
+    }
+    Ok(())
+}

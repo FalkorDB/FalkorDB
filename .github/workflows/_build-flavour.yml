@@ -24,6 +24,10 @@
 #   create_manifest=true   → builds push to ${repo}:${tag}-${arch}; manifest
 #                            job combines per-arch tags into ${repo}:${tag}.
 #   create_manifest=false  → builds push directly to ${repo}:${tag}; no manifest.
+#
+# `server` picks the server every cell ships (the Dockerfiles' SERVER build
+# arg). CI callers put it in the tag themselves, as the last part before the
+# arch: rc-<ci_key>-<server>, rc-<ci_key>-<server>-<arch>.
 
 name: Build runtime image (flavour, reusable)
 
@@ -35,9 +39,14 @@ on:
         required: true
         type: string
       tag:
-        description: "Image tag (e.g. rc-pr-42, rc-pr-42-asan, 0.1.0)"
+        description: "Image tag (e.g. rc-pr-42-valkey, rc-pr-42-asan-valkey, 0.1.0)"
         required: true
         type: string
+      server:
+        description: "Server the image ships: redis or valkey. Passed as the SERVER build arg."
+        required: false
+        type: string
+        default: "redis"
       commit_sha:
         description: "Commit SHA to check out and build"
         required: true
@@ -108,13 +117,13 @@ jobs:
 
       - name: Login to Docker Hub
         if: ${{ inputs.push_to_dockerhub }}
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -132,6 +141,7 @@ jobs:
           build-args: |
             BROWSER_TAG=${{ inputs.browser_tag }}
             BUILD_IMAGE=${{ inputs.build_image }}
+            SERVER=${{ inputs.server }}
           # When create_manifest=true (release), push per-arch tags so the
           # manifest job below can combine them. When false (instrumented),
           # push directly to the bare tag — single-arch images don't need
@@ -150,15 +160,23 @@ jobs:
           # Never serve the stages that ship OS packages from that cache. A
           # cached RUN is keyed on its command text and parent layer, not on
           # what the Debian archive holds, so a hit skips `apt-get upgrade` and
-          # ships packages as old as the cache entry. `full` is FROM `server`
-          # and reruns with it anyway; it is named so that does not depend on
-          # it. The compile stages stay cached: redis-server and falkordb.so
-          # link libssl/libcrypto/libz dynamically, so the versions that ship
-          # come from these stages. A name with no stage behind it is ignored
-          # (Dockerfile.asan has no `full`). `pull` re-resolves the base image
-          # tags rather than reusing a copy the builder already holds.
+          # ships packages as old as the cache entry. That RUN is in
+          # `server-base`, which the `server-redis`/`server-valkey` stage under
+          # `server` is FROM. `server-redis`/`server-valkey`, `server` and
+          # `full` rerun after `server-base` anyway; they are named so that
+          # does not depend on it. Dockerfile.asan has no `server-base` and
+          # installs in `server` itself; the `server-env-*` stage it is FROM
+          # sets only ENV, so that one stays cached. The compile stages stay
+          # cached too: the server binary and falkordb.so link
+          # libssl/libcrypto/libz dynamically, so the versions that ship come
+          # from the stages named here. A name with no stage behind it is ignored
+          # (Dockerfile.asan has only `server`). `pull` re-resolves the base
+          # image tags rather than reusing a copy the builder already holds.
           pull: true
           no-cache-filters: |
+            server-base
+            server-redis
+            server-valkey
             server
             full
 
@@ -177,13 +195,13 @@ jobs:
 
       - name: Login to Docker Hub
         if: ${{ inputs.push_to_dockerhub }}
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

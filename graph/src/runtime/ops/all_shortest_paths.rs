@@ -126,7 +126,7 @@ impl<'a> AllShortestPathsOp<'a> {
         let max_hops = rp.max_hops.unwrap_or(u32::MAX);
         let min_hops = rp.min_hops.unwrap_or(1);
         let bidirectional = rp.bidirectional;
-        let g = runtime.g.borrow();
+        let g = runtime.graph();
 
         // BFS phase: find shortest distance and collect predecessors
         // predecessor map: node -> list of (prev_node, edge_id, edge_src, edge_dst)
@@ -280,13 +280,11 @@ impl<'a> AllShortestPathsOp<'a> {
             move || {
                 while let Some((node, edges)) = stack.pop() {
                     if node == src && !edges.is_empty() {
+                        // Built dst→src; flip to src→dst — cycles too, or a
+                        // directed cycle is walked against its arrows. A
+                        // reversed pattern keeps the dst→src order.
                         let mut path = edges;
-                        if !is_cycle {
-                            // Built dst→src; reverse in place to src→dst. (Cycles
-                            // keep the DFS predecessor-chain order.)
-                            path.reverse();
-                        }
-                        if reverse {
+                        if !reverse {
                             path.reverse();
                         }
                         return Some(Value::List(Arc::new(path)));
