@@ -1159,8 +1159,7 @@ pub fn flush_udfs() {
 pub fn get_udf_functions() -> Vec<Arc<GraphFn>> {
     UDF_FUNCTIONS
         .get()
-        .map(|reg| reg.read().values().cloned().collect())
-        .unwrap_or_default()
+        .map_or_default(|reg| reg.read().values().cloned().collect())
 }
 
 pub fn get_functions() -> &'static Functions {
