@@ -61,7 +61,7 @@ pub struct Binder {
     /// property access like `r.prop` is allowed (per-edge predicate)
     /// whereas it is rejected on named-path Path variables.
     varlen_rel_var_ids: std::collections::HashSet<(u32, u32)>,
-    /// Named relationships that a MATCH pattern bound, as (scope_id, id). A
+    /// Named relationships that a MATCH pattern bound, as (id, scope_id). A
     /// later MATCH must not name one again (as C rejects): the repeat would
     /// not join on the bound edge but bind a second, unrelated one.
     match_rel_vars: std::collections::HashSet<(u32, u32)>,
@@ -347,7 +347,7 @@ impl Binder {
                 };
                 for rel in pattern.relationships() {
                     if let Some(var) = self.current_env().get(&rel.alias)
-                        && self.match_rel_vars.contains(&(var.scope_id, var.id))
+                        && self.match_rel_vars.contains(&(var.id, var.scope_id))
                     {
                         return Err(format!(
                             "Cannot use the same relationship variable '{}' for multiple patterns.",
@@ -368,7 +368,7 @@ impl Binder {
                         .is_some_and(|n| n.starts_with("_anon"))
                     {
                         self.match_rel_vars
-                            .insert((rel.alias.scope_id, rel.alias.id));
+                            .insert((rel.alias.id, rel.alias.scope_id));
                     }
                 }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
@@ -766,7 +766,7 @@ impl Binder {
         // Likewise the relationships the body's MATCH clauses bound: a later
         // scope with the same id must not see them as already matched.
         self.match_rel_vars
-            .retain(|&(scope_id, _)| !inner_scope_ids.contains(&scope_id));
+            .retain(|&(_, scope_id)| !inner_scope_ids.contains(&scope_id));
 
         // 3. Capture subquery output, restore outer scope
         let subquery_env = self.current_env().clone();

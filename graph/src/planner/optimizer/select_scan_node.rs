@@ -1375,6 +1375,11 @@ pub(super) fn select_scan_node(
                         for filter in filters_above.into_iter().rev() {
                             wrapped = tree!(filter, wrapped);
                         }
+                        debug_assert_eq!(
+                            optimized_plan.node(ct_idx).num_children(),
+                            0,
+                            "the old child was pruned above"
+                        );
                         let root = wrapped.root();
                         *optimized_plan.node_mut(ct_idx).data_mut() = root.data().clone();
                         for child in root.children() {
