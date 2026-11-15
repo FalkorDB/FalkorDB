@@ -53,10 +53,10 @@ use thin_vec::ThinVec;
 ///
 /// Uses ahash's seeded [`RandomState`] rather than a fixed/unseeded hasher:
 /// the grouping keys are client-controlled, so an unseeded hasher (e.g.
-/// `FxHash`) would let a caller craft keys that all collide, degrading grouping
-/// to O(n^2) (algorithmic-complexity `DoS`). This mirrors the seeded hasher the
+/// FxHash) would let a caller craft keys that all collide, degrading grouping
+/// to O(n^2) (algorithmic-complexity DoS). This mirrors the seeded hasher the
 /// value-hash-join operator uses for the same reason, while staying far faster
-/// than the std default `SipHash`.
+/// than the std default SipHash.
 ///
 /// The value is `(key row, accumulators, group id)`. The id is the group's
 /// insertion index, unique within one map: it keys the group's DISTINCT state

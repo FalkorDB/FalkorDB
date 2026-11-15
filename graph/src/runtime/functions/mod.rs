@@ -890,7 +890,7 @@ impl GraphFn {
 
     /// Execute a procedure and return its native columnar batch output.
     /// `yields` is a bitmask over the procedure's schema output positions;
-    /// bit N set means output column N was `YIELDed` and must be produced.
+    /// bit N set means output column N was YIELDed and must be produced.
     pub fn call_procedure_batch(
         &self,
         rt: &Runtime,
@@ -1159,7 +1159,8 @@ pub fn flush_udfs() {
 pub fn get_udf_functions() -> Vec<Arc<GraphFn>> {
     UDF_FUNCTIONS
         .get()
-        .map_or_default(|reg| reg.read().values().cloned().collect())
+        .map(|reg| reg.read().values().cloned().collect())
+        .unwrap_or_default()
 }
 
 pub fn get_functions() -> &'static Functions {

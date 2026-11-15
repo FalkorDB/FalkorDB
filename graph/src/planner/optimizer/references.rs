@@ -20,7 +20,7 @@ use crate::parser::ast::{ExprIR, QueryExpr, QueryGraph, SetItem, Variable};
 use super::super::IR;
 
 /// Check if any expression in an IR node references a variable with the
-/// given (id, `scope_id`) pair.
+/// given (id, scope_id) pair.
 ///
 /// The match is exhaustive on purpose — no `_` arm. Several passes decide
 /// whether an optimization is safe by asking this, and every one of them acts
@@ -232,56 +232,6 @@ pub(super) fn index_query_references_variable(
     false
 }
 
-/// Whether a CREATE/MERGE pattern's inline attributes reference the variable.
-fn query_graph_references_variable(
-    pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
-    var_id: u32,
-    scope_id: u32,
-) -> bool {
-    pattern
-        .nodes()
-        .iter()
-        .any(|n| expr_references_variable(&n.attrs, var_id, scope_id))
-        || pattern
-            .relationships()
-            .iter()
-            .any(|r| expr_references_variable(&r.attrs, var_id, scope_id))
-}
-
-fn set_items_reference_variable(
-    items: &[SetItem<Arc<String>, Variable>],
-    var_id: u32,
-    scope_id: u32,
-) -> bool {
-    items.iter().any(|item| match item {
-        SetItem::Attribute { target, value, .. } => {
-            expr_references_variable(target, var_id, scope_id)
-                || expr_references_variable(value, var_id, scope_id)
-        }
-        SetItem::Label { var, .. } => var.id == var_id && var.scope_id == scope_id,
-    })
-}
-
-/// Whether an expression names the variable anywhere in it.
-pub(super) fn expr_references_variable(
-    expr: &DynTree<ExprIR<Variable>>,
-    var_id: u32,
-    scope_id: u32,
-) -> bool {
-    subtree_references_variable(&expr.root(), var_id, scope_id)
-}
-
-/// The same question for one subtree of an expression — `utilize_node_by_id`
-/// asks it of a single operand of a comparison.
-pub(super) fn subtree_references_variable(
-    node: &DynNode<ExprIR<Variable>>,
-    var_id: u32,
-    scope_id: u32,
-) -> bool {
-    node.walk::<Bfs>()
-        .any(|e| matches!(e, ExprIR::Variable(v) if v.id == var_id && v.scope_id == scope_id))
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -331,4 +281,54 @@ mod tests {
         );
         assert!(!index_query_references_variable(&deep, 9, 0));
     }
+}
+
+/// Whether a CREATE/MERGE pattern's inline attributes reference the variable.
+fn query_graph_references_variable(
+    pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    pattern
+        .nodes()
+        .iter()
+        .any(|n| expr_references_variable(&n.attrs, var_id, scope_id))
+        || pattern
+            .relationships()
+            .iter()
+            .any(|r| expr_references_variable(&r.attrs, var_id, scope_id))
+}
+
+fn set_items_reference_variable(
+    items: &[SetItem<Arc<String>, Variable>],
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    items.iter().any(|item| match item {
+        SetItem::Attribute { target, value, .. } => {
+            expr_references_variable(target, var_id, scope_id)
+                || expr_references_variable(value, var_id, scope_id)
+        }
+        SetItem::Label { var, .. } => var.id == var_id && var.scope_id == scope_id,
+    })
+}
+
+/// Whether an expression names the variable anywhere in it.
+pub(super) fn expr_references_variable(
+    expr: &DynTree<ExprIR<Variable>>,
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    subtree_references_variable(&expr.root(), var_id, scope_id)
+}
+
+/// The same question for one subtree of an expression — `utilize_node_by_id`
+/// asks it of a single operand of a comparison.
+pub(super) fn subtree_references_variable(
+    node: &DynNode<ExprIR<Variable>>,
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    node.walk::<Bfs>()
+        .any(|e| matches!(e, ExprIR::Variable(v) if v.id == var_id && v.scope_id == scope_id))
 }

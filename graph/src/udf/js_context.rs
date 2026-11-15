@@ -1,6 +1,6 @@
 //! # JS Execution Context Management
 //!
-//! This module manages thread-local `QuickJS` runtimes and provides the bridge
+//! This module manages thread-local QuickJS runtimes and provides the bridge
 //! between the Rust query evaluator and JavaScript UDF execution.
 //!
 //! ## Thread-Local Context Lifecycle
@@ -36,13 +36,13 @@
 //!
 //! ## Script Validation
 //!
-//! [`validate_script`] runs user code in a disposable `QuickJS` context to
+//! [`validate_script`] runs user code in a disposable QuickJS context to
 //! check for syntax/runtime errors and collect the list of function names
 //! registered via `falkor.register()`, without affecting the main context.
 //!
 //! ## Configuration
 //!
-//! Three atomic statics control `QuickJS` resource limits:
+//! Three atomic statics control QuickJS resource limits:
 //! - `JS_HEAP_SIZE`  -- maximum heap memory (default 256 MiB)
 //! - `JS_STACK_SIZE` -- maximum native stack (default 1 MiB)
 //! - `JS_TIMEOUT_MS` -- per-call execution timeout (0 = unlimited)
@@ -65,8 +65,8 @@ use crate::udf::js_classes::with_graph;
 use crate::udf::js_globals;
 use crate::udf::type_convert;
 
-/// Extract a human-readable error message from a `CaughtError`.
-/// If `include_name` is true, prefix with error type (e.g., "`SyntaxError`: ...").
+/// Extract a human-readable error message from a CaughtError.
+/// If `include_name` is true, prefix with error type (e.g., "SyntaxError: ...").
 fn caught_error_message(
     err: &CaughtError<'_>,
     include_name: bool,
@@ -123,7 +123,7 @@ pub const JS_VALIDATE_CAP_MS: u64 = 10_000;
 /// `JS_TIMEOUT_MS == 0` is the operator's "unlimited" opt-in; in that case
 /// we still bound the deadline by `JS_TIMEOUT_ABSOLUTE_CAP_MS` so a runaway
 /// script cannot hold a worker forever. Returns the effective timeout in
-/// milliseconds; both the `QuickJS` interrupt handler in `call_udf_bridge`
+/// milliseconds; both the QuickJS interrupt handler in `call_udf_bridge`
 /// and the BFS deadline in `js_classes` should derive from this value so
 /// the cap cannot be bypassed.
 #[must_use]
@@ -141,7 +141,7 @@ struct ThreadJsState {
     context: Context,
     /// Cached function references: "lib.func" -> persistent JS function
     functions: HashMap<String, Persistent<Function<'static>>>,
-    /// Version of the `UdfRepo` when this context was last rebuilt.
+    /// Version of the UdfRepo when this context was last rebuilt.
     version: u64,
 }
 
@@ -277,7 +277,7 @@ fn rebuild_context(
 }
 
 /// Call a UDF by its qualified name (e.g., "mylib.myfunc").
-/// This is called from the eval path when a UDF `GraphFn` is invoked.
+/// This is called from the eval path when a UDF GraphFn is invoked.
 pub fn call_udf_bridge(
     name: &str,
     rt: &Runtime,

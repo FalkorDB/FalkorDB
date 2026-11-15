@@ -37,9 +37,9 @@ pub enum LoadedKey {
 /// so the key whose name matches is the graph's own and the rest are its
 /// virtual keys — see [`DecodeState::meta_keys`](super::DecodeState::meta_keys).
 ///
-/// Returns [`LoadedKey::Graph`] for single-key graphs (`key_count` == 1), or
+/// Returns [`LoadedKey::Graph`] for single-key graphs (key_count == 1), or
 /// [`LoadedKey::Partial`] when the key data has been accumulated into
-/// `DECODE_STATE` for multi-key graphs (`key_count` > 1).
+/// `DECODE_STATE` for multi-key graphs (key_count > 1).
 #[allow(clippy::too_many_lines)]
 pub fn rdb_load_graph(
     rdb: *mut RedisModuleIO,
@@ -376,8 +376,8 @@ fn rebuild_indexes(
                         let mut topts = field.options().cloned();
                         if text_meta_pending && field.ty == graph::index::IndexType::Fulltext {
                             let topts = topts.get_or_insert_with(Default::default);
-                            topts.language.clone_from(&info.language);
-                            topts.stopwords.clone_from(&info.stopwords);
+                            topts.language = info.language.clone();
+                            topts.stopwords = info.stopwords.clone();
                             text_meta_pending = false;
                         }
                         topts.map(graph::index::indexer::IndexOptions::Text)

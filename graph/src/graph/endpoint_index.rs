@@ -114,7 +114,7 @@ impl Endpoint for u32 {
 
 impl Endpoint for u64 {
     const EMPTY: Self = Self::MAX;
-    const CEILING: Self = Self::MAX;
+    const CEILING: u64 = Self::MAX;
     fn get(self) -> u64 {
         self
     }
@@ -180,11 +180,11 @@ fn empty_page<T: Endpoint>(slots: usize) -> Page<T> {
 }
 
 impl<T: Endpoint> Paged<T> {
-    const fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.len
     }
 
-    const fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.len == 0
     }
 
@@ -210,7 +210,7 @@ impl<T: Endpoint> Paged<T> {
     /// to be kept in step with it: `(U24, U24)` is 6 bytes only because `U24` is
     /// `[u8; 3]` and so alignment 1, and a field type that gained alignment
     /// would otherwise make `GRAPH.MEMORY` drift silently.
-    const fn used_bytes(&self) -> usize {
+    fn used_bytes(&self) -> usize {
         self.len * size_of::<(T, T)>()
     }
 
@@ -680,12 +680,15 @@ impl EndpointIndex {
     /// derived from the slots or from the page count.
     #[cfg(test)]
     fn w16_page_ids(&self) -> Vec<usize> {
-        self.w16.as_ref().map_or_default(|t| {
-            t.pages
-                .iter()
-                .map(|p| Arc::as_ptr(p).cast::<()>() as usize)
-                .collect()
-        })
+        self.w16
+            .as_ref()
+            .map(|t| {
+                t.pages
+                    .iter()
+                    .map(|p| Arc::as_ptr(p).cast::<()>() as usize)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Tombstone `edge_id`'s slot. Vectors never shrink, as before.
@@ -1203,9 +1206,9 @@ mod cow_bench {
     /// larger than L2.
     ///
     /// Run with:
-    ///   cargo test --release -p graph `get_cost` -- --ignored --nocapture
+    ///   cargo test --release -p graph get_cost -- --ignored --nocapture
     #[test]
-    #[ignore = "benchmark: run by hand with --ignored --nocapture"]
+    #[ignore]
     fn get_cost_of_paging() {
         use std::time::Instant;
 
@@ -1249,10 +1252,7 @@ mod cow_bench {
         std::hint::black_box(acc2);
 
         let per = |i: Option<u64>, n: u64| {
-            i.map_or_else(
-                || "n/a".to_string(),
-                |v| format!("{:.2}", v as f64 / n as f64),
-            )
+            i.map_or("n/a".to_string(), |v| format!("{:.2}", v as f64 / n as f64))
         };
         println!(
             "  sequential {edges} gets   {} instr/get   {:.1} ns/get",
@@ -1275,9 +1275,9 @@ mod cow_bench {
     /// or only the tier the write lands in.
     ///
     /// Run with:
-    ///   cargo test --release -p graph `cow_cost` -- --ignored --nocapture
+    ///   cargo test --release -p graph cow_cost -- --ignored --nocapture
     #[test]
-    #[ignore = "benchmark: run by hand with --ignored --nocapture"]
+    #[ignore]
     fn cow_cost_of_a_version() {
         // A graph grown across the u16 boundary: most edges are history in the
         // narrow tier, and a write appends to the wide one.

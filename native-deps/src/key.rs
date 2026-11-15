@@ -4,7 +4,6 @@
 //! the `.stamp`, so diffing two stamps names the input that moved.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 
 use crate::dep::Dep;
 use crate::err;
@@ -33,10 +32,7 @@ impl Manifest {
 
     #[must_use]
     pub fn render(&self) -> String {
-        self.0.iter().fold(String::new(), |mut out, (k, v)| {
-            let _ = writeln!(out, "{k}={v}");
-            out
-        })
+        self.0.iter().map(|(k, v)| format!("{k}={v}\n")).collect()
     }
 
     /// The first 16 hex characters (64 bits) of the manifest's SHA-256.
@@ -47,8 +43,8 @@ impl Manifest {
 }
 
 impl Ctx<'_> {
-    /// The manifest for `dep`. `LAGraph` needs `graphblas_key`: it links the
-    /// archive of that exact `GraphBLAS` build.
+    /// The manifest for `dep`. LAGraph needs `graphblas_key`: it links the
+    /// archive of that exact GraphBLAS build.
     pub fn manifest(
         &self,
         dep: Dep,

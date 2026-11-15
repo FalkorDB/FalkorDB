@@ -1,6 +1,6 @@
-//! The `FalkorDB` index (the in-repo replacement for `RediSearch`).
+//! The FalkorDB index (the in-repo replacement for RediSearch).
 //!
-//! [`data_structures`] is the always-compiled substrate (the `CoW` B⁺-tree). The
+//! [`data_structures`] is the always-compiled substrate (the CoW B⁺-tree). The
 //! index proper — the numeric key [`encode`]r, the tree-backed index, and the
 //! hooks that turn graph writes into index changes — lives behind the
 //! `index-falkordb` feature, off by default. So does the [`cch`] shortest-path index, whose
@@ -40,7 +40,7 @@ pub mod versioned;
 
 /// The error a scan raises when the native index cannot serve a predicate.
 ///
-/// Under `index-falkordb` the native index is the only index — there is no `RediSearch` to fall
+/// Under `index-falkordb` the native index is the only index — there is no RediSearch to fall
 /// through to — so an unsupported predicate has to surface. It is deliberately an error and not
 /// an empty result: a silent zero-row answer is indistinguishable from "nothing matched", which
 /// would let an unimplemented kind masquerade as correct behaviour in every test that asserts a

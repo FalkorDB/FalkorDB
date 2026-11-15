@@ -26,7 +26,6 @@ use crate::{bail, err};
 
 pub const STAMP_NAME: &str = ".stamp";
 /// Touched whenever an entry is resolved, so `prune` can tell what is in use.
-///
 /// Not the stamp itself: graph/build.rs watches the stamp, and touching it on
 /// every resolve would rerun the build script -- and recompile `graph` -- on
 /// every `cargo build`.
@@ -60,12 +59,14 @@ impl Cache {
             );
         };
 
-        let prebuilt = env_opt("FALKORDB_NATIVE_DEPS_PREBUILT").map_or_default(|v| {
-            v.split(':')
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from)
-                .collect()
-        });
+        let prebuilt = env_opt("FALKORDB_NATIVE_DEPS_PREBUILT")
+            .map(|v| {
+                v.split(':')
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Ok(Self { root, prebuilt })
     }
@@ -157,8 +158,8 @@ impl Stamp {
                 continue;
             };
             match k.trim() {
-                "key" => v.trim().clone_into(&mut key),
-                "dep" => v.trim().clone_into(&mut dep),
+                "key" => key = v.trim().to_owned(),
+                "dep" => dep = v.trim().to_owned(),
                 "built_at" => built_at = v.trim().parse().unwrap_or(0),
                 _ => {}
             }
@@ -192,7 +193,7 @@ impl BuildLock {
     ///
     /// Callers must re-check the cache afterwards: the process we waited on has
     /// most likely just published the very entry we wanted.
-    pub fn acquire(path: &Path) -> Result<Self> {
+    pub fn acquire(path: PathBuf) -> Result<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -200,7 +201,7 @@ impl BuildLock {
             .create(true)
             .truncate(false)
             .write(true)
-            .open(path)
+            .open(&path)
             .map_err(|e| err!("cannot open lock {}: {e}", path.display()))?;
         match file.try_lock() {
             Ok(()) => {}
@@ -234,7 +235,7 @@ mod tests {
         let tmp = TempDir::new("lock");
         let path = tmp.0.join("x.lock");
         assert!(!is_locked(&path), "no file, no holder");
-        let lock = BuildLock::acquire(&path).unwrap();
+        let lock = BuildLock::acquire(path.clone()).unwrap();
         assert!(is_locked(&path));
         drop(lock);
         // Other tests in this process fork `git` concurrently, and a child

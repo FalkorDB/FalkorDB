@@ -8,7 +8,7 @@
 //! ## How It Works
 //!
 //! When `MvccGraph::fork()` creates a new graph version, every matrix is
-//! wrapped in a `Cow` with `dup = true`. The underlying `GraphBLAS` handle
+//! wrapped in a `Cow` with `dup = true`. The underlying GraphBLAS handle
 //! is shared (cheap clone of the handle pointer). Only when a write
 //! operation calls `deref_mut()` does the matrix get physically duplicated
 //! via the `Dup` trait.
@@ -166,7 +166,6 @@ mod tests {
             self.0.get()
         }
 
-        #[allow(clippy::needless_pass_by_ref_mut)] // writes go through `DerefMut`, as above
         fn set(
             &mut self,
             v: i32,

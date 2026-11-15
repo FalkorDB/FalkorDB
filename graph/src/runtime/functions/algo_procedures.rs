@@ -1,4 +1,4 @@
-//! Graph algorithm procedures backed by `LAGraph` / `GraphBLAS`.
+//! Graph algorithm procedures backed by LAGraph / GraphBLAS.
 //!
 //! Each procedure is exposed as a Cypher `CALL` statement and returns
 //! a result set of `Map` rows.  The general execution flow is:
@@ -52,7 +52,7 @@
 //!
 //! ## Compact adjacency matrix
 //!
-//! `LAGraph` operates on dense 0..n-1 indexed matrices, but the graph
+//! LAGraph operates on dense 0..n-1 indexed matrices, but the graph
 //! may have gaps in its node ID space (deleted nodes).  `build_compact_adj`
 //! creates a compacted boolean `GrB_Matrix` and two-way mappings
 //! (`id_to_compact` / `compact_to_id`) so results can be translated
@@ -92,9 +92,9 @@ use thin_vec::{ThinVec, thin_vec};
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/// `LAGraph` message buffer type. Element type is `c_char` (not `i8`) because
+/// LAGraph message buffer type. Element type is `c_char` (not `i8`) because
 /// `char` signedness is platform-dependent — signed on amd64, **unsigned on
-/// arm64 Linux**. The `LAGraph` FFI expects `*mut c_char`, so the buffer must
+/// arm64 Linux**. The LAGraph FFI expects `*mut c_char`, so the buffer must
 /// match or the call site fails to compile on arm64.
 type LagMsg = [std::os::raw::c_char; 256];
 
@@ -108,7 +108,7 @@ fn msg_to_string(msg: &LagMsg) -> String {
         .into_owned()
 }
 
-/// Context for the user-defined `GraphBLAS` weight operator used by `algo.MSF`.
+/// Context for the user-defined GraphBLAS weight operator used by `algo.MSF`.
 ///
 /// Holds a borrowed pointer to just the relationship [`AttributeStore`] — the
 /// only graph state the operator reads — rather than the whole graph. The
@@ -116,7 +116,7 @@ fn msg_to_string(msg: &LagMsg) -> String {
 /// read-locked and never mutated during it, and the operator is freed before the
 /// lock releases. Also carries the resolved attribute index and objective sign.
 ///
-/// `#[repr(C)]` plain-old-data so `GraphBLAS` can memcpy it as the thunk operand
+/// `#[repr(C)]` plain-old-data so GraphBLAS can memcpy it as the thunk operand
 /// and hand a pointer to it to every invocation of [`msf_scored_edge_index_op`].
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -134,7 +134,7 @@ struct MsfWeightCtx {
 /// selected by the min-reduce).
 ///
 /// # Panic safety
-/// Called from `GraphBLAS` OpenMP worker threads (the global panic hook aborts
+/// Called from GraphBLAS OpenMP worker threads (the global panic hook aborts
 /// the process), so it must not panic: only a read-only attribute-store lookup
 /// that takes a per-shard read lock and clones a `Value` (never panics). The
 /// attribute-store pointer stays valid because the caller holds the store
@@ -165,14 +165,14 @@ unsafe fn msf_score(
     if ctx.maximize { -raw } else { raw }
 }
 
-/// User-defined `GraphBLAS` **index-unary** operator for the multi-edge
+/// User-defined GraphBLAS **index-unary** operator for the multi-edge
 /// matrix `me[compound_key(src,dst)][edge_id]`, where the column index `j` *is*
 /// the edge id (the `bool` value carries no information). Emits the full
 /// `{score, edge}` pair so the subsequent monoid row-reduction resolves each
-/// pair to its minimum-score edge entirely inside `GraphBLAS`.
+/// pair to its minimum-score edge entirely inside GraphBLAS.
 ///
 /// # Panic safety
-/// Runs on `GraphBLAS` worker threads; see [`msf_score`].
+/// Runs on GraphBLAS worker threads; see [`msf_score`].
 unsafe extern "C" fn msf_scored_edge_index_op(
     z: *mut std::os::raw::c_void,
     _x: *const std::os::raw::c_void,
@@ -190,13 +190,13 @@ unsafe extern "C" fn msf_scored_edge_index_op(
     };
 }
 
-/// User-defined `GraphBLAS` **index-unary** operator for the inline UINT64
+/// User-defined GraphBLAS **index-unary** operator for the inline UINT64
 /// forward matrix `m`, where the matrix *value* `x` is the edge id (unlike
 /// `me`, where the column index is). Writes the full `{score, edge}` pair so
 /// one apply produces everything the min-by-score build needs.
 ///
 /// # Panic safety
-/// Runs on `GraphBLAS` worker threads; see [`msf_score`].
+/// Runs on GraphBLAS worker threads; see [`msf_score`].
 unsafe extern "C" fn msf_scored_edge_value_op(
     z: *mut std::os::raw::c_void,
     x: *const std::os::raw::c_void,
@@ -228,12 +228,12 @@ struct ScoredEdge {
     edge: u64,
 }
 
-/// User-defined `GraphBLAS` **binary** operator combining two [`ScoredEdge`] by
+/// User-defined GraphBLAS **binary** operator combining two [`ScoredEdge`] by
 /// keeping the smaller score (ties keep the first operand). Used as the `dup`
 /// when building and symmetrizing `rel_adj`.
 ///
 /// # Panic safety
-/// Runs on `GraphBLAS` worker threads (the panic hook aborts the process), so it
+/// Runs on GraphBLAS worker threads (the panic hook aborts the process), so it
 /// does only null-guarded plain-old-data reads and never unwinds.
 unsafe extern "C" fn msf_keep_min_score(
     z: *mut std::os::raw::c_void,
@@ -255,13 +255,13 @@ unsafe extern "C" fn msf_keep_min_score(
     };
 }
 
-/// User-defined `GraphBLAS` **unary** operator projecting an [`ScoredEdge`] to its
+/// User-defined GraphBLAS **unary** operator projecting an [`ScoredEdge`] to its
 /// `score` (FP64). Applied to the finished `rel_adj` to derive the plain-weight
 /// `weighted_adj` Boruvka needs, so the score is stored once (in `rel_adj`) rather
 /// than built into a second matrix from a parallel array.
 ///
 /// # Panic safety
-/// Runs on `GraphBLAS` worker threads (the panic hook aborts the process); does
+/// Runs on GraphBLAS worker threads (the panic hook aborts the process); does
 /// only null-guarded plain-old-data reads and never unwinds.
 unsafe extern "C" fn msf_score_of(
     z: *mut std::os::raw::c_void,
@@ -360,7 +360,7 @@ fn parse_config(args: &[Value]) -> Result<OrderMap<Arc<String>, Value>, String> 
 /// `borrowed` says who owns the matrix handle afterwards, and it decides one
 /// thing only: what happens to `adj` if `LAGraph_New` fails.
 ///
-/// * `borrowed = false` — `LAGraph` takes the handle. The caller must not free
+/// * `borrowed = false` — LAGraph takes the handle. The caller must not free
 ///   it, and must tear the graph down with
 ///   [`delete_lagraph_graph_maybe_borrowed`] passing `false`. On failure
 ///   `LAGraph_New` has not taken the handle, so this frees it rather than leak
@@ -393,13 +393,13 @@ unsafe fn create_lagraph_graph(
     Ok(g)
 }
 
-/// Free an `LAGraph_Graph`.
+/// Free an LAGraph_Graph.
 unsafe fn delete_lagraph_graph(g: &mut LAGraph_Graph) {
     let mut msg = new_msg();
     lagraph_bindings::LAGraph_Delete(g, msg.as_mut_ptr());
 }
 
-/// Free an `LAGraph_Graph` whose adjacency matrix is borrowed: detach `G->A`
+/// Free an LAGraph_Graph whose adjacency matrix is borrowed: detach `G->A`
 /// first so `LAGraph_Delete` does not free the caller-owned handle.
 unsafe fn delete_lagraph_graph_borrowed(g: &mut LAGraph_Graph) {
     if let Some(graph) = g.as_mut() {
@@ -411,7 +411,7 @@ unsafe fn delete_lagraph_graph_borrowed(g: &mut LAGraph_Graph) {
 /// Free an `LAGraph_Graph` whose adjacency matrix may be borrowed.
 ///
 /// The procedures below take one of two paths: the unfiltered path lends
-/// `LAGraph` the matrix it just built and keeps the `Matrix` wrapper that frees
+/// LAGraph the matrix it just built and keeps the `Matrix` wrapper that frees
 /// it, while the compact path hands over a raw matrix nothing else owns. This
 /// picks the matching teardown so the handle is freed exactly once.
 unsafe fn delete_lagraph_graph_maybe_borrowed(
@@ -425,7 +425,7 @@ unsafe fn delete_lagraph_graph_maybe_borrowed(
     }
 }
 
-/// Extract `GrB_Vector` entries as (index, f64) pairs.
+/// Extract GrB_Vector entries as (index, f64) pairs.
 unsafe fn extract_vector_f64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64, f64)> {
     use crate::graph::graphblas::{GrB_Index, GrB_Vector_extractTuples_FP64, GrB_Vector_nvals};
     let mut nvals: GrB_Index = 0;
@@ -442,8 +442,8 @@ unsafe fn extract_vector_f64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64
     indices.into_iter().zip(values).collect()
 }
 
-/// Map a node-valued `LAGraph` result (a component or community representative)
-/// from the compact index space back to the original node id. `LAGraph` reports
+/// Map a node-valued LAGraph result (a component or community representative)
+/// from the compact index space back to the original node id. LAGraph reports
 /// these as vertex indices of the matrix it ran on, so on the `nodeLabels`
 /// path they are compact indices, like the vector's own indices.
 fn compact_to_original(
@@ -453,7 +453,7 @@ fn compact_to_original(
     compact_to_id.map_or(idx, |m| m[idx as usize] as i64)
 }
 
-/// Extract `GrB_Vector` entries as (index, i64) pairs.
+/// Extract GrB_Vector entries as (index, i64) pairs.
 unsafe fn extract_vector_i64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64, i64)> {
     use crate::graph::graphblas::{GrB_Index, GrB_Vector_extractTuples_INT64, GrB_Vector_nvals};
     let mut nvals: GrB_Index = 0;
@@ -470,7 +470,7 @@ unsafe fn extract_vector_i64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64
     indices.into_iter().zip(values).collect()
 }
 
-/// Build a node Value with a given `NodeId`.
+/// Build a node Value with a given NodeId.
 const fn node_value(id: NodeId) -> Value {
     Value::Node(id)
 }
@@ -518,7 +518,7 @@ fn collect_node_ids(
     result
 }
 
-/// Build a `HashSet` of all active node IDs (regardless of label).
+/// Build a HashSet of all active node IDs (regardless of label).
 fn active_node_set(g: &Graph) -> FxHashSet<u64> {
     use crate::runtime::orderset::OrderSet;
     let empty: OrderSet<Arc<String>> = OrderSet::default();
@@ -529,13 +529,13 @@ fn active_node_set(g: &Graph) -> FxHashSet<u64> {
 /// **iso** matrix — one value shared by the whole pattern.
 ///
 /// `GxB_Matrix_build_Scalar` rather than `GrB_Matrix_build_BOOL` over a
-/// `vec![true; n]`, because since `GraphBLAS` 10.5.0 the two are no longer
+/// `vec![true; n]`, because since GraphBLAS 10.5.0 the two are no longer
 /// equivalent: `GrB_Matrix_build_*` "always build a non-iso matrix"
 /// (`Source/builder/GB_build.c`), the post-iso check that used to notice an
 /// all-identical value array having been dropped, while `GxB_Matrix_build_Scalar`
 /// is documented in that same file as always iso. Non-iso costs a byte per
 /// entry — measured at 37,108 against 33,020 bytes for a 4,096-entry pattern —
-/// and takes `LAGraph` off the iso fast paths its algorithms select on. The
+/// and takes LAGraph off the iso fast paths its algorithms select on. The
 /// scalar form also needs no values array at all, which was the only reason to
 /// materialize one.
 ///
@@ -575,9 +575,9 @@ unsafe fn build_bool_pattern(
 }
 
 /// Build compact adjacency directly from relationship tensors.
-/// Avoids materializing the full `node_cap` × `node_cap` matrix.
-/// Returns (`compact_matrix_handle`, `id_to_compact`, `compact_to_id`, n).
-/// The caller owns the returned `GrB_Matrix` and must free it.
+/// Avoids materializing the full node_cap × node_cap matrix.
+/// Returns (compact_matrix_handle, id_to_compact, compact_to_id, n).
+/// The caller owns the returned GrB_Matrix and must free it.
 unsafe fn build_compact_adj_from_tensors(
     g: &crate::graph::graph::Graph,
     rel_types: &[Arc<String>],
@@ -642,8 +642,8 @@ unsafe fn build_compact_adj_from_tensors(
 }
 
 /// Build compact symmetric adjacency directly from relationship tensors (avoids materialization).
-/// Returns (`compact_matrix_handle`, `id_to_compact`, `compact_to_id`, n).
-/// The caller owns the returned `GrB_Matrix` and must free it.
+/// Returns (compact_matrix_handle, id_to_compact, compact_to_id, n).
+/// The caller owns the returned GrB_Matrix and must free it.
 unsafe fn build_compact_adj_symmetric_from_tensors(
     g: &crate::graph::graph::Graph,
     rel_types: &[Arc<String>],
@@ -1976,7 +1976,7 @@ fn register_msf(funcs: &mut Functions) {
 
 // ── algo.SPpaths / algo.SSpaths ─────────────────────────────────────────
 
-/// Configuration for `SPpaths` and `SSpaths` algorithms.
+/// Configuration for SPpaths and SSpaths algorithms.
 struct PathAlgoConfig {
     source: NodeId,
     target: Option<NodeId>,
@@ -2210,7 +2210,7 @@ fn far_endpoint(
 /// pokec-small (max out-degree 426, max both-direction degree 797) it was a
 /// wash on memory and ~1.6x slower overall: DFS depth here is small, so the
 /// tuples cost tens of KB, while each `next()` re-enters a `flat_map`/`chain`
-/// stack over freshly attached `GraphBLAS` iterators. Collecting once per node
+/// stack over freshly attached GraphBLAS iterators. Collecting once per node
 /// visit pays that setup a single time and turns the inner step into a
 /// `Vec::pop`.
 fn node_successors(

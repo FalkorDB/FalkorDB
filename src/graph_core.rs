@@ -87,7 +87,10 @@ use crate::query_session::hold_gil;
 /// conversions that used to abort the process (#2490).
 #[must_use]
 pub fn up_to_nul(s: &str) -> &str {
-    s.find('\0').map_or(s, |end| &s[..end])
+    match s.find('\0') {
+        Some(end) => &s[..end],
+        None => s,
+    }
 }
 
 /// The graph name the C engine would see for `key`: [`up_to_nul`] of its bytes.
@@ -130,7 +133,7 @@ pub fn c_graph_key(
 }
 
 /// Global registry of all live graph instances.
-/// Used by the `pthread_atfork` prepare handler to sync all `GraphBLAS` matrices
+/// Used by the pthread_atfork prepare handler to sync all GraphBLAS matrices
 /// before fork, preventing deadlocks in the BGSAVE child process.
 pub static GRAPH_REGISTRY: std::sync::LazyLock<
     parking_lot::Mutex<HashMap<String, Arc<RwLock<ThreadedGraph>>>>,
@@ -772,9 +775,8 @@ impl From<String> for WriteAttempt {
     }
 }
 
-/// One run of [`execute_query_write`]. Takes the session by value: it is dropped,
-/// and its locks with it, when this attempt returns.
-#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
+/// One run of [`execute_query_write`].
+#[allow(clippy::too_many_arguments)]
 fn try_query_write(
     session: QuerySession,
     ctx: &Context,
@@ -930,12 +932,12 @@ impl Drop for BlockedClient {
 /// Compute the effective timeout in milliseconds for a query.
 ///
 /// Rules:
-/// - Per-query timeout cannot exceed `TIMEOUT_MAX` (if set).
-/// - Once `TIMEOUT_DEFAULT` or `TIMEOUT_MAX` is set, every timeout — the per-query one
+/// - Per-query timeout cannot exceed TIMEOUT_MAX (if set).
+/// - Once TIMEOUT_DEFAULT or TIMEOUT_MAX is set, every timeout — the per-query one
 ///   included — applies to reads and writes alike; a write that runs out of time
 ///   is rolled back. Under the deprecated TIMEOUT alone, only reads time out.
 ///   This is C's `timeout_rw` (`_read_flags`, `cmd_dispatcher.c`).
-/// - Falls back to `TIMEOUT_DEFAULT`, then `TIMEOUT_MAX`, then deprecated TIMEOUT.
+/// - Falls back to TIMEOUT_DEFAULT, then TIMEOUT_MAX, then deprecated TIMEOUT.
 /// - Returns None for unlimited.
 fn compute_effective_timeout(
     per_query_timeout: Option<i64>,
@@ -976,7 +978,7 @@ fn compute_effective_timeout(
 
 /// Replies `[error, current_version]` for a client-supplied version that does
 /// not match the graph's current schema version.
-pub fn reply_invalid_graph_version(
+pub(crate) fn reply_invalid_graph_version(
     ctx: &Context,
     current_version: i64,
 ) {
@@ -1502,7 +1504,7 @@ fn profile_sync(
 /// publish it identically. Both carried a copy of this, and of
 /// [`abandon_write`] below, which is how the effects decision came to be made
 /// in two places.
-pub fn finish_write(
+pub(crate) fn finish_write(
     session: &QuerySession,
     ctx: &Context,
     key_name: &Arc<str>,
@@ -1527,7 +1529,7 @@ pub fn finish_write(
 /// A session whose version was never found current (still matching, or its
 /// fork went stale) published no document, so there is nothing to resync. The
 /// version itself goes with the runtime; there is nothing else to release.
-pub fn abandon_write(
+pub(crate) fn abandon_write(
     session: &QuerySession,
     runtime: &Runtime,
 ) {
@@ -1636,21 +1638,22 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // BGSAVE interleave between messages.
         let msg = {
             let g = graph.read();
-            if let Ok(msg) = g.receiver.try_recv() {
-                msg
-            } else {
-                g.write_loop.store(false, Ordering::Release);
-                if g.receiver.is_empty() {
-                    return;
+            match g.receiver.try_recv() {
+                Ok(msg) => msg,
+                Err(_) => {
+                    g.write_loop.store(false, Ordering::Release);
+                    if g.receiver.is_empty() {
+                        return;
+                    }
+                    if g.write_loop
+                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+                        .is_err()
+                    {
+                        return;
+                    }
+                    // A producer raced an enqueue after we saw empty; keep draining.
+                    continue;
                 }
-                if g.write_loop
-                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-                    .is_err()
-                {
-                    return;
-                }
-                // A producer raced an enqueue after we saw empty; keep draining.
-                continue;
             }
         };
         let WriteMessage {
@@ -1766,7 +1769,7 @@ const EFFECT_COMMAND: &str = "GRAPH.EFFECT";
 /// `pub(crate)` because the constraint command sends payloads of its own, from
 /// outside any query. They are still payloads, so they still go out through the
 /// format.
-pub struct CtxSink<'a>(pub(crate) &'a Context);
+pub(crate) struct CtxSink<'a>(pub(crate) &'a Context);
 
 impl ReplicationSink for CtxSink<'_> {
     fn replicate(

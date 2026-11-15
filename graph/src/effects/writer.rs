@@ -177,6 +177,6 @@ impl EffectWrite for Vec<u8> {
         &mut self,
         n: usize,
     ) {
-        Self::reserve(self, n);
+        Vec::reserve(self, n);
     }
 }

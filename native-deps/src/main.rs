@@ -2,8 +2,8 @@
 //!
 //! `cargo build` needs none of this -- `graph/build.rs` calls
 //! [`native_deps::ensure`] itself. This exists for the Docker dep stages, which
-//! build the deps in a layer that holds no `FalkorDB` workspace (so an apt or pip
-//! change cannot invalidate a `GraphBLAS` build), and for maintenance.
+//! build the deps in a layer that holds no FalkorDB workspace (so an apt or pip
+//! change cannot invalidate a GraphBLAS build), and for maintenance.
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -76,7 +76,7 @@ fn run() -> Result<()> {
 fn cmd_prune(args: &[String]) -> Result<()> {
     let request = Request::from_env()?;
     let mut opts = Options {
-        keep_for: Duration::from_hours(336),
+        keep_for: Duration::from_secs(14 * 24 * 3600),
         keep_keys: current_entries(&request)?,
         worktree: None,
         dry_run: false,
@@ -127,7 +127,6 @@ fn cmd_prune(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::cast_precision_loss)] // a size shown to one decimal
 fn mib(bytes: u64) -> String {
     format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
 }

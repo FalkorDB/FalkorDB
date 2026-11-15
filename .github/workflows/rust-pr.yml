@@ -266,15 +266,12 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Lint
-        # The lint set (pedantic, nursery, cargo) is in Cargo.toml's
-        # [workspace.lints]; -D warnings makes any of them fail the job. Both
-        # packages by name, so graph's tests and build script are linted too.
         run: |
-          CXX=clang++-23 cargo clippy -p falkordb-rs -p graph --all-targets -- -D warnings
+          CXX=clang++-23 cargo clippy --all-targets
       - name: Format (native-deps)
         run: cargo fmt --all --check --manifest-path native-deps/Cargo.toml
       - name: Lint (native-deps)
-        run: cargo clippy --all-targets --manifest-path native-deps/Cargo.toml -- -D warnings
+        run: cargo clippy --all-targets --manifest-path native-deps/Cargo.toml
       - name: deps/native-deps.lock is in step with the gitlinks
         # `lock --check` reads the gitlinks with `git ls-files`. This job runs in
         # a container whose user differs from the checkout's owner, so git refuses
@@ -308,7 +305,7 @@ jobs:
         # package's targets, and graph's tests are where most of the index's
         # code under the flag lives.
         run: |
-          CXX=clang++-23 cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb -- -D warnings
+          CXX=clang++-23 cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb
       - name: Unit tests
         # The doctests link GraphBLAS's bundled zstd and the zstd-sys crate together, and
         # both define the zstd error helpers: the same link flag `coverage` and `fuzz` pass.

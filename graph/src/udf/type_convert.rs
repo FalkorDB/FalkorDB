@@ -1,7 +1,7 @@
 //! # Rust <-> JavaScript Type Conversion
 //!
-//! This module provides bidirectional conversion between `FalkorDB`'s Rust
-//! [`Value`](crate::runtime::value::Value) type and `QuickJS` JavaScript values.
+//! This module provides bidirectional conversion between FalkorDB's Rust
+//! [`Value`](crate::runtime::value::Value) type and QuickJS JavaScript values.
 //! It is used whenever arguments are passed into a UDF and when the UDF result
 //! is returned back to the Cypher runtime.
 //!
@@ -51,7 +51,7 @@ use crate::runtime::value::{Point, Value};
 /// The deepest a value may nest when it crosses into or out of a UDF: `[]` and
 /// `{}` are depth 1, `[[]]` is depth 2.
 ///
-/// Both conversions recurse once per level, and each level holds `QuickJS`
+/// Both conversions recurse once per level, and each level holds QuickJS
 /// handles and an `rquickjs` frame, so a level here costs far more stack than
 /// it does anywhere else in the engine. A UDF can build an arbitrarily deep
 /// array or object in a loop (or one that contains itself), so without a bound
@@ -87,7 +87,7 @@ pub fn udf_nesting_error() -> String {
     format!("UDF value nesting exceeds the maximum depth of {MAX_UDF_VALUE_NESTING}")
 }
 
-/// Convert a `FalkorDB` Value to a JavaScript value.
+/// Convert a FalkorDB Value to a JavaScript value.
 ///
 /// `runtime`, when present, resolves relationship endpoints/type/attributes
 /// through the deleted→pending→graph fallback so relationships created or
@@ -247,7 +247,7 @@ fn value_to_js_level<'js>(
     }
 }
 
-/// Convert a JavaScript value back to a `FalkorDB` Value.
+/// Convert a JavaScript value back to a FalkorDB Value.
 pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
     js_to_value_at(val, 0)
 }

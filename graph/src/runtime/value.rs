@@ -7,7 +7,7 @@
 //! - Temporal: Datetime, Date, Time, Duration
 //! - Collections: List, Map
 //! - Graph entities: Node, Relationship, Path
-//! - Special: Point (geographic), `VecF32` (vector embeddings)
+//! - Special: Point (geographic), VecF32 (vector embeddings)
 //!
 //! ## Type Coercion
 //!
@@ -208,7 +208,7 @@ pub enum Value {
     VecF32(Arc<ThinVec<f32>>),
     /// Geographic point (latitude, longitude)
     Point(Point),
-    /// `DateTime` as Unix timestamp in seconds
+    /// DateTime as Unix timestamp in seconds
     Datetime(i64),
     /// Date as Unix timestamp in seconds (midnight UTC)
     Date(i64),
@@ -1956,7 +1956,7 @@ fn sort_cmp_f32(
 /// The bits [`Value::hash`] uses for an `f32` component: one value for every
 /// NaN, as [`sort_cmp_f32`] treats them as equal.
 #[inline]
-const fn f32_hash_bits(f: f32) -> u32 {
+fn f32_hash_bits(f: f32) -> u32 {
     if f.is_nan() {
         f32::NAN.to_bits()
     } else {
@@ -2027,7 +2027,7 @@ fn compare_vecf32(
         let (blocks_a, rest_a) = a.as_chunks::<16>();
         let (blocks_b, rest_b) = b.as_chunks::<16>();
         for (x, y) in blocks_a.iter().zip(blocks_b) {
-            if x.iter().zip(y).fold(false, |diff, (p, q)| diff || (p != q)) {
+            if x.iter().zip(y).fold(false, |diff, (p, q)| diff | (p != q)) {
                 return first_difference(x, y);
             }
         }
@@ -2592,14 +2592,10 @@ mod sort_cmp_tests {
             Value::VecF32(Arc::new([1.0, f32::NAN].into_iter().collect())),
             Value::VecF32(Arc::new([1.0, -f32::NAN].into_iter().collect())),
             Value::VecF32(Arc::new([1.0, 2.0].into_iter().collect())),
-            Value::VecF32(Arc::new(std::iter::once(-0.0).collect())),
-            Value::VecF32(Arc::new(std::iter::once(0.0).collect())),
-            list(vec![Value::VecF32(Arc::new(
-                std::iter::once(-0.0).collect(),
-            ))]),
-            list(vec![Value::VecF32(Arc::new(
-                std::iter::once(0.0).collect(),
-            ))]),
+            Value::VecF32(Arc::new([-0.0].into_iter().collect())),
+            Value::VecF32(Arc::new([0.0].into_iter().collect())),
+            list(vec![Value::VecF32(Arc::new([-0.0].into_iter().collect()))]),
+            list(vec![Value::VecF32(Arc::new([0.0].into_iter().collect()))]),
             point(-0.0, 0.0),
             point(0.0, 0.0),
             point(f32::NAN, 1.0),
@@ -2637,7 +2633,7 @@ mod sort_cmp_tests {
                 }
             }
         }
-        let vec = |f: f32| Value::VecF32(Arc::new(std::iter::once(f).collect()));
+        let vec = |f: f32| Value::VecF32(Arc::new([f].into_iter().collect()));
         assert_eq!(vec(f32::NAN).sort_cmp(&vec(-f32::NAN)), Ordering::Equal);
         assert_ne!(vec(-0.0).sort_cmp(&vec(0.0)), Ordering::Equal);
         assert_ne!(point(-0.0, 0.0).sort_cmp(&point(0.0, 0.0)), Ordering::Equal);

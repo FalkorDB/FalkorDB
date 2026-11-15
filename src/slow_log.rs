@@ -214,7 +214,7 @@ impl SlowLog {
 }
 
 /// Current time as integer UNIX seconds, returned as f64 for
-/// `reply_with_double`. Matches C `FalkorDB` slowlog timestamp granularity.
+/// `reply_with_double`. Matches C FalkorDB slowlog timestamp granularity.
 fn unix_now() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

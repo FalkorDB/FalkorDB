@@ -315,7 +315,7 @@ impl Runtime<'_> {
     }
 
     /// Bulk delete committed relationships — avoids per-edge iterator creation
-    /// for type lookups and reduces `RefCell` borrow overhead.
+    /// for type lookups and reduces RefCell borrow overhead.
     fn delete_relationships_bulk(
         &self,
         rels: &[RelationshipId],

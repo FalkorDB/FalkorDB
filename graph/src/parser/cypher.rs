@@ -1,4 +1,4 @@
-//! Cypher query parser for `FalkorDB`.
+//! Cypher query parser for FalkorDB.
 //!
 //! This module implements a hand-written recursive descent parser for the
 //! Cypher query language. It converts Cypher query strings into an Abstract
@@ -129,7 +129,7 @@ const TOO_DEEP: &str = "Query nesting exceeds the maximum depth of";
 /// the parser rejects one found there (#2308).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
 enum ForbiddenPatternComprehension {
-    /// A pattern's inline property map; worded as `FalkorDB` C words it, and
+    /// A pattern's inline property map; worded as FalkorDB C words it, and
     /// also the rejection for any other map the parser cannot accept there.
     #[error("Encountered unhandled type in inlined properties.")]
     InlineProperties,
@@ -260,8 +260,8 @@ impl<'a> Parser<'a> {
     /// stages can walk rather than by what this one can.
     ///
     /// Looser than [`Self::MAX_NESTING`] for that reason, and deliberately so:
-    /// `(((1)))` collapses to `1` and `test_parentheses` pins 10000 of them,
-    /// while `test_nested_list` pins 100 genuinely nested lists.
+    /// `(((1)))` collapses to `1` and test_parentheses pins 10000 of them,
+    /// while test_nested_list pins 100 genuinely nested lists.
     ///
     /// 256 sits above the 100 that test pins and well below the shallowest
     /// depth that overflowed a worker stack before this cap existed (1024,
@@ -2984,7 +2984,7 @@ impl<'a> Parser<'a> {
 
     /// Parses a pattern comprehension after the opening `[`.
     ///
-    /// Grammar: `[` (`path_var` `=`)? `relationship_pattern` (`WHERE` cond)? `|` expr `]`
+    /// Grammar: `[` (path_var `=`)? relationship_pattern (`WHERE` cond)? `|` expr `]`
     ///
     /// Collects the graph pattern into a `PatternComprehension` node
     /// for execution by the runtime.
@@ -4209,8 +4209,6 @@ mod tests {
     // Malformed literals are parse errors, named by the parameter that failed.
     #[test]
     fn malformed_params_name_the_parameter() {
-        // Malformed Cypher literals, not format strings.
-        #[allow(clippy::literal_string_with_formatting_args)]
         for value in ["[1,2", "{`a`:1", "{1:2}", "[1,]", "[,]", "{`a`}"] {
             let err = param_of(value).unwrap_err();
             assert!(

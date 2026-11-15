@@ -21,20 +21,20 @@
 //! ```
 //!
 //! The equality conjunct's left-hand side must reference variables produced
-//! exclusively by one `CartesianProduct` child, and the right-hand side must
+//! exclusively by one CartesianProduct child, and the right-hand side must
 //! reference variables produced exclusively by a different child.
 //!
 //! **AND filter with extra conjuncts:**
 //!
 //! When the filter is an AND, exactly one equality conjunct is consumed for
 //! the hash join; the remaining conjuncts stay as a reduced Filter above the
-//! new `ValueHashJoin`.
+//! new ValueHashJoin.
 //!
-//! **Multi-child `CartesianProduct`:**
+//! **Multi-child CartesianProduct:**
 //!
-//! If the `CartesianProduct` has more than two children, the two children
-//! involved in the join are pulled out into a `ValueHashJoin` and the rest
-//! remain as `CartesianProduct` children:
+//! If the CartesianProduct has more than two children, the two children
+//! involved in the join are pulled out into a ValueHashJoin and the rest
+//! remain as CartesianProduct children:
 //!
 //! ```text
 //! Before:                     After:
@@ -69,14 +69,14 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// only variables from the other.
 ///
 /// Uses a recursive tree-rebuild approach to cleanly restructure multi-child
-/// `CartesianProduct` nodes.
+/// CartesianProduct nodes.
 pub(super) fn replace_cartesian_with_hash_join(optimized_plan: &mut DynTree<IR>) {
     let new_plan = rebuild_with_hash_joins(&optimized_plan.root());
     *optimized_plan = new_plan;
 }
 
-/// Recursively rebuilds the plan tree, converting Filter -> `CartesianProduct`
-/// patterns into `ValueHashJoin` where applicable.
+/// Recursively rebuilds the plan tree, converting Filter -> CartesianProduct
+/// patterns into ValueHashJoin where applicable.
 fn rebuild_with_hash_joins(node: &DynNode<IR>) -> DynTree<IR> {
     if let IR::Filter(filter) = node.data()
         && let Some(child) = node.get_child(0)
@@ -97,7 +97,7 @@ fn rebuild_with_hash_joins(node: &DynNode<IR>) -> DynTree<IR> {
 }
 
 /// Attempts to find one equality conjunct in the filter that can be converted
-/// to a `ValueHashJoin`. Returns the rebuilt subtree if successful.
+/// to a ValueHashJoin. Returns the rebuilt subtree if successful.
 fn try_hash_join_rewrite(
     filter: &QueryExpr<Variable>,
     cp_node: &DynNode<IR>,
@@ -142,13 +142,25 @@ fn try_hash_join_rewrite(
                 if lhs_vars.iter().all(|v| l_vars.contains(v))
                     && rhs_vars.iter().all(|v| r_vars.contains(v))
                 {
-                    found = Some((ci, li, ri, Arc::new(lhs_tree), Arc::new(rhs_tree)));
+                    found = Some((
+                        ci,
+                        li,
+                        ri,
+                        Arc::new(lhs_tree.clone()),
+                        Arc::new(rhs_tree.clone()),
+                    ));
                     break 'outer;
                 }
                 if rhs_vars.iter().all(|v| l_vars.contains(v))
                     && lhs_vars.iter().all(|v| r_vars.contains(v))
                 {
-                    found = Some((ci, li, ri, Arc::new(rhs_tree), Arc::new(lhs_tree)));
+                    found = Some((
+                        ci,
+                        li,
+                        ri,
+                        Arc::new(rhs_tree.clone()),
+                        Arc::new(lhs_tree.clone()),
+                    ));
                     break 'outer;
                 }
             }

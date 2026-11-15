@@ -63,7 +63,7 @@ enum TraversalMatrix {
     /// its forward layers are consumed.
     U64(Tensor),
     /// Several relationship types, kept apart: `F * (A1 + A2)` is computed as
-    /// `F*A1 + F*A2`, the distribution C `FalkorDB`'s algebraic-expression
+    /// `F*A1 + F*A2`, the distribution C FalkorDB's algebraic-expression
     /// optimizer applies. The union `A1 + A2` used to be materialized per
     /// execution — a copy of the whole first matrix sized to node capacity —
     /// even when `F` held one row; the per-type products are only as large as
@@ -150,7 +150,6 @@ struct CtState {
     chain_dst_label_ids: Vec<Vec<LabelId>>,
 }
 
-#[allow(clippy::struct_excessive_bools)] // independent traversal options, not a state machine
 pub struct CondTraverseOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
@@ -200,7 +199,7 @@ pub struct CondTraverseOp<'a> {
     /// Number of records produced so far (tracked when `record_cap` is set).
     produced: usize,
     /// Persistent forward-matrix iterator. Reused across `expand_row` calls
-    /// via `seek` so we pay the `GxB_Iterator` allocation only once per
+    /// via `seek` so we pay the GxB_Iterator allocation only once per
     /// operator (not per input row).
     ///
     /// Lazily initialized on first `expand_row`: matrices/labels referenced
@@ -209,7 +208,7 @@ pub struct CondTraverseOp<'a> {
     state: std::cell::RefCell<Option<CtState>>,
     /// For bidirectional anonymous-edge CTs, tracks (source, dest) pairs
     /// already emitted to deduplicate rows that reach the same pair via
-    /// different intermediate nodes — matching C `FalkorDB`'s matrix-multiply
+    /// different intermediate nodes — matching C FalkorDB's matrix-multiply
     /// semantics.
     bidir_dedup: Option<std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
     /// When the child is also an anonymous bidir CT, stores the child's
@@ -217,7 +216,7 @@ pub struct CondTraverseOp<'a> {
     /// intermediate node).  When None, dedup uses this CT's own from-alias.
     dedup_source_alias: Option<Variable>,
     /// Structural eligibility for the batched F·A path. Computed once at
-    /// construction. Variants like `emit_relationship`, bidir, sibling-edge
+    /// construction. Variants like emit_relationship, bidir, sibling-edge
     /// uniqueness, and non-empty inline attribute predicates fall back to
     /// the per-row `expand_row` path.
     batched_eligible: bool,
@@ -333,7 +332,7 @@ fn empty_edge_iter() -> Iter {
 /// Build an `Iter` over the TRANSPOSED (dst → src) pair matrix, for
 /// expansions where only the destination is bound. Tensors maintain their
 /// transpose (`mt`) incrementally, so the single-type case is free; the
-/// untyped case pays one O(E) `GraphBLAS` transpose — amortized over the whole
+/// untyped case pays one O(E) GraphBLAS transpose — amortized over the whole
 /// operator, unlike the per-row full scan this replaces.
 fn build_transposed_iter(
     g: &crate::graph::graph::Graph,
@@ -363,7 +362,6 @@ fn build_transposed_union_iter(
 
 impl<'a> CondTraverseOp<'a> {
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::fn_params_excessive_bools)] // one flag per traversal option, as in the struct
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
@@ -583,11 +581,11 @@ impl<'a> CondTraverseOp<'a> {
         }
     }
 
-    /// Batched F·A traversal — mirrors C `FalkorDB`'s `_traverse` in
+    /// Batched F·A traversal — mirrors C FalkorDB's `_traverse` in
     /// `op_conditional_traverse.c`. For an input slice of envs:
-    /// 1. build sparse F[i, `src_id`] = true (one bulk FFI call),
+    /// 1. build sparse F[i, src_id] = true (one bulk FFI call),
     /// 2. compute M = F * A in one mxm,
-    /// 3. extract tuples (`row_i`, `dest_id`) and emit one row per pair.
+    /// 3. extract tuples (row_i, dest_id) and emit one row per pair.
     ///
     /// Eligibility was checked structurally at op construction
     /// (`self.batched_eligible`); callers must not invoke this for ineligible
@@ -911,7 +909,7 @@ impl<'a> CondTraverseOp<'a> {
         batch: &Batch<'a>,
         row_idx: usize,
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
-    ) {
+    ) -> Result<(), String> {
         let env = BatchRow::new(batch, row_idx);
 
         let from_id = env.value_at(rp.from.alias.id).and_then(|v| match v {
@@ -919,14 +917,14 @@ impl<'a> CondTraverseOp<'a> {
             _ => None,
         });
         if from_id.is_none() && batch.is_bound_at(rp.from.alias.id, row_idx) {
-            return;
+            return Ok(());
         }
         let to_id = env.value_at(rp.to.alias.id).and_then(|v| match v {
             Value::Node(id) => Some(id),
             _ => None,
         });
         if to_id.is_none() && batch.is_bound_at(rp.to.alias.id, row_idx) {
-            return;
+            return Ok(());
         }
 
         let g = runtime.graph();
@@ -946,7 +944,7 @@ impl<'a> CondTraverseOp<'a> {
         }
         let state = state_ref.as_mut().unwrap();
         if state.no_match {
-            return;
+            return Ok(());
         }
         let g = runtime.graph();
 
@@ -1110,6 +1108,8 @@ impl<'a> CondTraverseOp<'a> {
         }
 
         drop(g);
+
+        Ok(())
     }
 
     /// `expand_row`'s expansion for a multi-type pattern: the single-type
@@ -1429,7 +1429,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     batch,
                     row_idx,
                     &mut expanded,
-                );
+                )?;
                 if expanded.is_empty() {
                     // Optional traverse: remember the unexpanded row so it can
                     // be null-padded once the seeded batch is exhausted.

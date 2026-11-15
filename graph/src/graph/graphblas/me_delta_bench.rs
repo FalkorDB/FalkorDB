@@ -27,7 +27,7 @@
 //! which is an API change and a separate piece of work.
 //!
 //! Run with:
-//!   cargo test --release -p graph `me_delta` -- --ignored --nocapture --test-threads=1
+//!   cargo test --release -p graph me_delta -- --ignored --nocapture --test-threads=1
 
 use super::instr::read_instr;
 use super::tensor::Tensor;
@@ -80,7 +80,7 @@ fn committed_multi() -> Tensor {
 /// **The repro.** One pending identifier in `me.dp`, on a pair no probe reads,
 /// and every multi-edge read gets dearer.
 #[test]
-#[ignore = "benchmark: run by hand with --ignored --nocapture"]
+#[ignore]
 fn me_delta_step() {
     ensure_init();
     let mut t = committed_multi();
@@ -136,7 +136,7 @@ fn me_delta_step() {
 /// the delta at all" test removes both, but reusing an attached iterator removes
 /// only the attach.
 #[test]
-#[ignore = "benchmark: run by hand with --ignored --nocapture"]
+#[ignore]
 fn me_delta_attach_vs_seek() {
     ensure_init();
     println!("\n=== where a non-empty me.dp spends its instructions ===");

@@ -84,7 +84,7 @@ pub trait Decode<const VERSION: u64>: Sized {
     }
 }
 
-/// Index field type bitmask matching C `FalkorDB` `index_field.h`.
+/// Index field type bitmask matching C FalkorDB index_field.h.
 pub mod index_field_type {
     pub const INDEX_FLD_FULLTEXT: u64 = 0x01;
     pub const INDEX_FLD_NUMERIC: u64 = 0x02;
@@ -93,7 +93,7 @@ pub mod index_field_type {
     pub const INDEX_FLD_VECTOR: u64 = 0x10;
 }
 
-/// `SIValue` type tags for binary serialization (matching C `FalkorDB` format).
+/// SIValue type tags for binary serialization (matching C FalkorDB format).
 ///
 /// C's `SIType` is a **bitmask**, not an ordinal: each type is a distinct bit,
 /// which is why these are shifts rather than 0..12. Rust's own v2 effects codec
@@ -329,7 +329,7 @@ mod tests {
         }
         let mut past = Collect(Vec::new());
         bitmap.encode_with_range(&mut past, 5, bitmap.len());
-        assert_eq!(past.0, [] as [u8; 0]);
+        assert!(past.0.is_empty());
     }
 
     /// `count * 8` used to wrap for a payload count of `2^61`, match an empty

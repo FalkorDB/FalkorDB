@@ -1,6 +1,6 @@
 //! Redis module initialization and startup wiring.
 //!
-//! Handles `RediSearch` bootstrap, `GraphBLAS` allocator setup, Redis event
+//! Handles RediSearch bootstrap, GraphBLAS allocator setup, Redis event
 //! subscription, and function registry initialization.
 //!
 //! ## Startup sequence
@@ -55,7 +55,7 @@ use redis_module::{
 };
 use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc};
 
-/// Redis event ID for `FlushDB` event (database flush/clear).
+/// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_FlushDB: RedisModuleEvent = RedisModuleEvent { id: 2, dataver: 1 };
 
@@ -77,7 +77,7 @@ const REDISMODULE_SUBEVENT_LOADING_FAILED: u64 = 4;
 static RedisModuleEvent_ReplicationRoleChanged: RedisModuleEvent =
     RedisModuleEvent { id: 0, dataver: 1 };
 
-/// Redis event ID for replica attach/detach (`REDISMODULE_EVENT_REPLICA_CHANGE`).
+/// Redis event ID for replica attach/detach (REDISMODULE_EVENT_REPLICA_CHANGE).
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_ReplicaChange: RedisModuleEvent = RedisModuleEvent { id: 6, dataver: 1 };
 
@@ -110,8 +110,8 @@ unsafe extern "C" {
 ///    it isn't the original parent.
 /// 2. Force GraphBLAS/OpenMP to single-threaded; the parent's OMP thread
 ///    pool handles are shared parent state and invalid in the child.
-///    Safe (and required) for every fork path — BGSAVE *and* `RediSearch`
-///    `ForkGC`.
+///    Safe (and required) for every fork path — BGSAVE *and* RediSearch
+///    ForkGC.
 /// 3. Only on the main-thread fork (BGSAVE): validate every graph is
 ///    fully synced. If `pre_fork_prepare` failed to materialize any
 ///    matrix (e.g. a writer slipped in after the registry walk), abort
@@ -524,8 +524,8 @@ const unsafe extern "C" fn on_flush(
 
 /// Shutdown event handler — runs only under `RS_GLOBAL_DTORS` (sanitizer
 /// or valgrind). Mirrors the C implementation's `_ShutdownEventHandler`:
-/// join worker threads (so their TLS destructors fire), finalize `LAGraph`,
-/// then free `RediSearch` module-level state. Skipped in normal production
+/// join worker threads (so their TLS destructors fire), finalize LAGraph,
+/// then free RediSearch module-level state. Skipped in normal production
 /// runs to avoid spending time on cleanup the kernel will do for us.
 unsafe extern "C" fn on_shutdown(
     _ctx: *mut RedisModuleCtx,

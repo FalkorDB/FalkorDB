@@ -24,7 +24,7 @@ fn label_set(labels: &[u64]) -> OrderSet<LabelId> {
     labels.iter().map(|&l| LabelId(l as usize)).collect()
 }
 
-pub trait StagePending {
+pub(crate) trait StagePending {
     /// Stage a created node, with its labels and attributes.
     fn stage_created_node(
         &mut self,

@@ -3,7 +3,7 @@
 //! Labels, relationship types, property keys, aliases, procedure and
 //! function names, UDF library names — anything a query or command can
 //! introduce as an identifier — are capped at [`MAX_IDENTIFIER_LEN`].
-//! Mirrors `src/util/identifier_limits.h` in `FalkorDB` C so both engines
+//! Mirrors `src/util/identifier_limits.h` in FalkorDB C so both engines
 //! reject the same inputs with the same message.
 
 /// Maximum length, in bytes, of an identifier.

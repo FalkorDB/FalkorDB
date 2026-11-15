@@ -1,17 +1,17 @@
 //! Test fixtures for CCH (#3207), on top of the graph test kit ([`crate::testkit`], re-exported
 //! here, so `cch::testkit::{grid, dijkstra, ...}` keeps working).
 //!
-//! Written from the [`CchInput`] contract and the C reference on `FalkorDB`'s
+//! Written from the [`CchInput`] contract and the C reference on FalkorDB's
 //! `master` branch (`src/algorithms/cch.c`, `tests/flow/test_cch.py`) -- never
 //! from any Rust CCH implementation:
-//! - [`to_input`], the `CchInput` a weight matrix stands for, built with `cch.c`'s `GraphBLAS`
+//! - [`to_input`], the `CchInput` a weight matrix stands for, built with `cch.c`'s GraphBLAS
 //!   calls, and [`assert_input_invariants`], the contract any `CchInput` must meet;
 //! - [`lower_rank_distances`], the exact customization oracle, and [`valley`], the graph of C's
 //!   `test01_create_query_drop`;
 //! - [`EditGraph`], [`Edit`] and [`random_edit_batch`], the weight and structure edits the
 //!   maintenance tests replay, over a graph that keeps every parallel edge of a pair.
 
-pub use crate::testkit::*;
+pub(crate) use crate::testkit::*;
 
 use super::{CchInput, Csr, WeightCsr};
 use crate::graph::graphblas::matrix::{Descriptor, Dup, Matrix};
@@ -22,7 +22,7 @@ use std::collections::HashSet;
 
 /// [`CchInput`] as its contract defines it, for the weight matrix `g`: a symmetric,
 /// self-loop-free skeleton for Phase 1, and directed weights, one per entry of `g`. Built with
-/// the `GraphBLAS` calls `cch.c` makes, not through `CchInput::build`, which is the code under
+/// the GraphBLAS calls `cch.c` makes, not through `CchInput::build`, which is the code under
 /// test: the diagonal goes (`GrB_select` with `GrB_OFFDIAG`; a self-loop carries no
 /// shortest-path information, and `test14_parallel_selfloop_unreachable` treats one as a no-op),
 /// and the skeleton is the pattern of `W + Wᵀ`.
@@ -31,7 +31,7 @@ use std::collections::HashSet;
 /// `InvalidWeight` path build a deliberately invalid `CchInput` through this function.
 /// (The oracles, [`dijkstra`] and [`lower_rank_distances`], do reject them.)
 #[must_use]
-pub fn to_input(g: &Matrix<f64>) -> CchInput {
+pub(crate) fn to_input(g: &Matrix<f64>) -> CchInput {
     let n = node_count(g);
     let mut w = g.dup();
     w.drop_diagonal();
@@ -72,7 +72,7 @@ fn csr(
 /// `g`'s pattern with its `k`-th entry (row by row, as [`entries`] lists them) weighing
 /// `f(k, w)`, `w` its weight in `g`.
 #[must_use]
-pub fn reweight(
+pub(crate) fn reweight(
     g: &Matrix<f64>,
     mut f: impl FnMut(usize, f64) -> f64,
 ) -> Matrix<f64> {
@@ -405,7 +405,7 @@ pub(super) fn apply_edit(
                 .pairs
                 .get_mut(&(u, v))
                 .unwrap_or_else(|| panic!("SetWeight on missing edge ({u}, {v})"));
-            ws.fill(w);
+            ws.iter_mut().for_each(|x| *x = w);
         }
         Edit::RemoveCheapest { u, v } => {
             let ws = g
@@ -532,8 +532,6 @@ fn draw_edit(
             let n = g.n as u64;
             let start = next_node(rng, g.n * g.n);
             for k in 0..n * n {
-                // Wraps around all n*n cells from a random start.
-                #[allow(clippy::suspicious_operation_groupings)]
                 let idx = (start + k) % (n * n);
                 let (u, v) = (idx / n, idx % n);
                 if u != v && reach[u as usize][v as usize].is_finite() == want_reachable {
@@ -1057,9 +1055,9 @@ mod maintenance_tests {
                         );
                         parallel += usize::from(g.cheapest(u, v).is_some());
                         if was_reachable {
-                            conn += 1;
+                            conn += 1
                         } else {
-                            unconn += 1;
+                            unconn += 1
                         }
                     }
                     Edit::AddNode => node += 1,

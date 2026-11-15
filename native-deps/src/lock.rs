@@ -5,7 +5,6 @@
 //! and to gate on (`native-deps lock --check`).
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -140,11 +139,10 @@ impl LockFile {
     pub fn render(&self) -> String {
         let mut out = String::from(HEADER);
         for e in &self.entries {
-            let _ = write!(
-                out,
+            out.push_str(&format!(
                 "\n[{}]\npath = {}\nurl = {}\nrev = {}\npin = {}\n",
                 e.name, e.path, e.url, e.rev, e.pin
-            );
+            ));
         }
         out
     }
@@ -183,13 +181,12 @@ pub fn write(root: &Path) -> Result<String> {
     let lock = LockFile::parse(&generated, &path)?;
     let mut out = format!("wrote {}", path.display());
     for e in &lock.entries {
-        let _ = write!(
-            out,
+        out.push_str(&format!(
             "\n  {} {} ({})",
             e.name,
             &e.rev[..e.rev.len().min(12)],
             e.pin
-        );
+        ));
     }
     Ok(out)
 }
@@ -235,7 +232,7 @@ fn summarize(text: &str) -> String {
     for line in text.lines() {
         let line = line.trim();
         if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            name.clone_into(&mut section);
+            section = name.to_owned();
         } else if let Some((key, rev)) = line.split_once('=')
             && key.trim() == "rev"
         {

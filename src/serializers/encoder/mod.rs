@@ -188,7 +188,7 @@ pub fn build_multi_key_payloads(
     keys
 }
 
-/// Build the list of (state, `entity_count`) payloads for a single-key encode.
+/// Build the list of (state, entity_count) payloads for a single-key encode.
 fn build_payloads(graph: &Graph) -> Vec<PayloadEntry> {
     let mut payloads = Vec::new();
 

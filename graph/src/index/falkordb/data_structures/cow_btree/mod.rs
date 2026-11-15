@@ -56,7 +56,7 @@ use node::{Branch, Node, Split, build_root};
 /// Byte width of the `u64` key field.
 const FIELD: usize = std::mem::size_of::<u64>();
 
-/// Little-endian `DOC_BYTES` bytes of `doc` for the [`AosLeaf`] layout. The `AoS`
+/// Little-endian `DOC_BYTES` bytes of `doc` for the [`AosLeaf`] layout. The AoS
 /// entry is `key:8 + doc:DOC_BYTES`, so a tree built with `DOC_BYTES = 4` stores
 /// 12 B/entry (docs — node/edge ids — are u32-ranged) while `DOC_BYTES = 8`
 /// keeps the full-width 16 B/entry. Panics if `doc` does not fit the configured
@@ -124,7 +124,7 @@ fn read_width(
 /// `1 < BRANCH_MAX / 2`. At `3` a single-child branch is never repaired and its lone child drains into an
 /// empty non-root leaf.
 ///
-/// The `DOC_BYTES` const generic is the byte width of the doc field in an `AoS` leaf entry (default 8). It
+/// The `DOC_BYTES` const generic is the byte width of the doc field in an AoS leaf entry (default 8). It
 /// must be 1, 2, 4 or 8 — the widths [`read_width`] loads (see [`is_read_width`]).
 ///
 /// Both default to 256, which keeps behaviour identical to the original fixed bounds; the assert in
@@ -333,7 +333,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     /// have any.
     #[cfg(test)]
     #[must_use]
-    pub const fn root_is_branch(&self) -> bool {
+    pub fn root_is_branch(&self) -> bool {
         matches!(self.root, Node::Branch(_))
     }
 

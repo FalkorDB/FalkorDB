@@ -492,8 +492,6 @@ pub fn register(funcs: &mut Functions) {
             let mut picks: Vec<(bool, usize)> = Vec::with_capacity(n + m);
             let (mut i, mut j) = (0usize, 0usize);
             while i < n || j < m {
-                // `i` and `j` index different lists: a two-way merge.
-                #[allow(clippy::suspicious_operation_groupings)]
                 let take_udf = i >= n
                     || (j < m && udfs[j].name < BUILTIN_ENTRIES[i].name);
                 if take_udf {

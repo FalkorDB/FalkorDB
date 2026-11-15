@@ -1,4 +1,4 @@
-//! Safe Rust wrapper around `GraphBLAS` sparse vectors.
+//! Safe Rust wrapper around GraphBLAS sparse vectors.
 //!
 //! This module provides [`Vector<T>`], which wraps `GrB_Vector` from the
 //! SuiteSparse:GraphBLAS C library. Three element types are implemented:
@@ -64,10 +64,10 @@ use super::{
 };
 use super::{GrB_FP64, GrB_Vector_extractTuples_FP64, GrB_Vector_nvals};
 
-/// A sparse vector backed by `GraphBLAS`.
+/// A sparse vector backed by GraphBLAS.
 ///
 /// Generic over element type T: `bool`, `u64` and (with `index-falkordb`) `f64`.
-/// The vector automatically frees its `GraphBLAS` resources on drop.
+/// The vector automatically frees its GraphBLAS resources on drop.
 pub struct Vector<T> {
     v: GrB_Vector,
     phantom: PhantomData<T>,
@@ -708,7 +708,7 @@ mod decode_tests {
 
     /// Minimal in-memory [`Reader`] that replays scripted values in call order.
     /// It drives `Vector::<bool>::decode`'s input-validation paths without a live
-    /// `GraphBLAS` context: every rejection path returns before any FFI call.
+    /// GraphBLAS context: every rejection path returns before any FFI call.
     #[derive(Default)]
     struct MockReader {
         buffers: VecDeque<Vec<u8>>,

@@ -91,7 +91,7 @@ use super::{Cch, CchError, CchInput, WeightCsr, index_id};
 
 /// The four per-arc arrays a customization produces, indexed by arc id. Each is written
 /// once, by the customization that builds it, and never grows, so they are boxed slices.
-pub struct Metric {
+pub(crate) struct Metric {
     pub(crate) upward_weight: Box<[f64]>,
     pub(crate) downward_weight: Box<[f64]>,
     pub(crate) upward_middle: Box<[Option<Rank>]>,
@@ -184,7 +184,7 @@ impl WeightCsr {
 /// [`CchError::NeedsRebuild`] if `weights` come from a later graph (more nodes, or an edge
 /// between two nodes the hierarchy has no arc for, which only a rebuild can add), and
 /// [`CchError::Internal`] if `weights` is malformed (a bug). See [`validate`].
-pub fn customize(
+pub(crate) fn customize(
     topology: &Topology,
     weights: &WeightCsr,
 ) -> Result<Metric, CchError> {
@@ -441,9 +441,9 @@ mod tests {
         v: u64,
     ) -> f64 {
         let csr = &input.weights.csr;
-        let mut row =
-            csr.row_offsets[u as usize] as usize..csr.row_offsets[u as usize + 1] as usize;
-        row.find(|&k| csr.neighbors[k] == v)
+        let row = csr.row_offsets[u as usize] as usize..csr.row_offsets[u as usize + 1] as usize;
+        row.clone()
+            .find(|&k| csr.neighbors[k] == v)
             .map_or(f64::INFINITY, |k| input.weights.values[k])
     }
 
@@ -967,7 +967,7 @@ mod tests {
     #[test]
     fn recustomizing_equals_a_fresh_build_with_the_new_metric() {
         let base = random_sparse(30, 90, 9, 17);
-        let rescaled = reweight(&base, |i, w| f64::mul_add(w, 2.0, (i % 3) as f64));
+        let rescaled = reweight(&base, |i, w| w * 2.0 + (i % 3) as f64);
 
         let first = to_input(&base);
         let second = to_input(&rescaled);

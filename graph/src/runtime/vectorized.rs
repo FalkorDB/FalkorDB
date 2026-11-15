@@ -42,7 +42,7 @@
 //! that `RETURN p <> 'x'` called `true`.
 //!
 //! The primitive kernels are written as tight indexed loops to enable
-//! LLVM auto-vectorization on all target platforms (`x86_64` SSE/AVX, ARM NEON).
+//! LLVM auto-vectorization on all target platforms (x86_64 SSE/AVX, ARM NEON).
 
 use std::cmp::Ordering;
 
@@ -305,6 +305,7 @@ mod tests {
     use crate::runtime::eval::{ExprEval, NO_ROW};
     use crate::runtime::ordermap::OrderMap;
     use crate::runtime::value::Point;
+    use orx_tree::NodeMut;
 
     #[test]
     fn test_cmp_op_flip() {

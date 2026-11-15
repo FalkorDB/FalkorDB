@@ -10,9 +10,9 @@
 //!     a < b   (as numbers)   <=>   encode(a) < encode(b)   (as u64)
 //! ```
 //!
-//! Every value is coerced to `f64` first, matching the `RediSearch` NUMERIC field
+//! Every value is coerced to `f64` first, matching the RediSearch NUMERIC field
 //! this replaces, so a mixed Int/Float column shares a single order. That
-//! coercion inherits `RediSearch`'s precision limit for integer magnitudes
+//! coercion inherits RediSearch's precision limit for integer magnitudes
 //! `>= 2^53`; it is documented here and a wider key is a future refinement.
 
 use crate::runtime::value::Value;
@@ -45,7 +45,7 @@ pub fn encode_numeric(value: &Value) -> Option<u64> {
 /// A numeric column keeps **scalar** values and the elements of **list** values apart. One tree
 /// for both would give a node with `v = [1, 2]` the key for `1`, so `WHERE n.v = 1`, which is false
 /// in Cypher, would match it, and `Equal` has no post-filter to catch that (its plan is a bare
-/// `Node By Index Scan`). `RediSearch` keeps the same separation with its `numeric:arr` sub-field;
+/// `Node By Index Scan`). RediSearch keeps the same separation with its `numeric:arr` sub-field;
 /// this is the native equivalent. It lives here because the encoder is what decides it: see
 /// [`for_each_stored_key`].
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -114,7 +114,7 @@ pub fn encode_f64(x: f64) -> u64 {
 /// round-trip: it was normalized to `+0.0` on encode.
 #[cfg(test)]
 #[must_use]
-const fn decode_f64(key: u64) -> f64 {
+fn decode_f64(key: u64) -> f64 {
     let bits = if key & SIGN != 0 { key & !SIGN } else { !key };
     f64::from_bits(bits)
 }
@@ -173,14 +173,14 @@ mod tests {
         assert!(neg5 < neg4 && neg4 < three);
     }
 
-    /// Bool coerces like its f64 equivalent, as the `RediSearch` NUMERIC field stores it.
+    /// Bool coerces like its f64 equivalent, as the RediSearch NUMERIC field stores it.
     #[test]
     fn bool_parity() {
         assert_eq!(encode_numeric(&Value::Bool(true)), Some(encode_f64(1.0)));
         assert_eq!(encode_numeric(&Value::Bool(false)), Some(encode_f64(0.0)));
     }
 
-    /// Temporals are not encoded at all — the `RediSearch` path skips them too. See
+    /// Temporals are not encoded at all — the RediSearch path skips them too. See
     /// `temporal_values_are_not_returned_by_a_numeric_range` in `numeric.rs` for the wrong rows
     /// encoding them produced.
     #[test]
@@ -308,7 +308,7 @@ mod tests {
     /// arm, so the pair falls to `self.order().cmp(&b.order())` with `DisjointOrNull::Disjoint` —
     /// different types never compare equal.
     ///
-    /// That is **not** this index's invention. The `RediSearch` path does the same thing: bools go
+    /// That is **not** this index's invention. The RediSearch path does the same thing: bools go
     /// into the NUMERIC field as `f64::from(b)` on write (`index/mod.rs`, `DocumentAddFieldNumber`)
     /// and are queried as a numeric node with the same bounds. Measured on `MATCH (n:F) WHERE
     /// n.flag = 1` over one `flag: true` node and one `flag: 1` node, with an index on `F.flag`:
@@ -316,7 +316,7 @@ mod tests {
     /// | engine | unindexed | indexed |
     /// |---|---|---|
     /// | C (`:edge-c`) | `int_one` | both |
-    /// | Rust + `RediSearch` | `int_one` | both |
+    /// | Rust + RediSearch | `int_one` | both |
     /// | Rust + native index | — | both |
     ///
     /// Every engine is correct without an index and wrong with one, because `Node By Index Scan`

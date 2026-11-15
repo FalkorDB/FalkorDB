@@ -9,7 +9,7 @@
 //! Each write function only reads the graph. It works out which entries come out and which go
 //! in, and returns them as [`IndexChanges`]; it keeps no state. The graph's write method that
 //! called it stages them for its unit of work, whose owner applies them once, where it publishes
-//! `RediSearch`'s documents (see [`pending_writes`](super::pending_writes)), so the index changes
+//! RediSearch's documents (see [`pending_writes`](super::pending_writes)), so the index changes
 //! once per unit of work and not once per write call.
 //!
 //! The graph calls each function **before** it changes anything itself, so the old values,
@@ -76,7 +76,7 @@ pub fn node_attrs_set(
     changes
 }
 
-/// The replica's `CREATE_NODE` and `UPDATE_NODE`: node `ids[i]` takes
+/// The replica's CREATE_NODE and UPDATE_NODE: node `ids[i]` takes
 /// `rows[i * attr_ids.len() + j]` for attribute `attr_ids[j]`, under the labels in `label_ids`.
 /// As in [`node_attrs_set`], called before the overwrite.
 ///
@@ -265,7 +265,7 @@ pub fn edge_attrs_set(
     edge_attrs_set_with(g, attrs, None)
 }
 
-/// [`edge_attrs_set`] for edges all of type `type_id`: the replica's `UPDATE_EDGE`, where one
+/// [`edge_attrs_set`] for edges all of type `type_id`: the replica's UPDATE_EDGE, where one
 /// record is one type. Taking the type saves a type-matrix scan per edge.
 pub fn edge_attrs_set_of_type(
     g: &Graph,
@@ -388,7 +388,7 @@ pub fn edges_deleted(
 /// planner does not use it ([`Graph::is_indexed`]), and `db.indexes()` reports the index under
 /// construction. Only a Range index has native columns; any other type does nothing.
 ///
-/// The column is never built through the `RediSearch` populate, which reaches the graph through the
+/// The column is never built through the RediSearch populate, which reaches the graph through the
 /// `Indexer`'s back-pointer. This index is part of the graph version, and keeping that reference
 /// out is the point.
 pub fn create_index(

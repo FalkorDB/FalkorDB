@@ -84,20 +84,20 @@ fn eq(
     }
 }
 
-/// `Graph::new` builds `GraphBLAS` matrices, which need `GraphBLAS` initialized
+/// `Graph::new` builds GraphBLAS matrices, which need GraphBLAS initialized
 /// first (done at Redis module-load in production, never from a bare unit
 /// test).
 ///
 /// This MUST go through the crate-wide guard rather than its own `Once`:
-/// `GraphBLAS` may be initialized exactly once per process, so a second `Once`
+/// GraphBLAS may be initialized exactly once per process, so a second `Once`
 /// gets `GrB_INVALID_VALUE`, and when the loser is
 /// `graphblas::test_init::ensure_init` its `unwrap` panics inside `call_once`,
-/// poisoning that `Once` for every later `GraphBLAS` test.
+/// poisoning that `Once` for every later GraphBLAS test.
 fn ensure_graphblas() {
     crate::graph::graphblas::test_init::ensure_init();
 }
 
-/// Folded-roots MVCC: `new_version` forks the `FalkorDB` index copy-on-write,
+/// Folded-roots MVCC: `new_version` forks the FalkorDB index copy-on-write,
 /// so mutating the writer's version leaves the committed version — the
 /// snapshot a reader may still hold — untouched, riding one version bump.
 #[test]
@@ -140,7 +140,7 @@ fn new_version_isolates_the_falkordb_index() {
 /// the planner does not use it, and a read that reaches it is told to scan. Once indexer batches
 /// have built it from real graph state (three `:Person {age}` nodes), it is `Ready`, the planner
 /// uses it, and a range scan returns the right ids in `(value, id)` order. Drives the native half
-/// of `Graph::create_index` directly, bypassing the `RediSearch` FFI (uninitialised in a unit test).
+/// of `Graph::create_index` directly, bypassing the RediSearch FFI (uninitialised in a unit test).
 #[test]
 fn create_index_leaves_the_node_column_to_its_batches() {
     ensure_graphblas();
@@ -322,11 +322,9 @@ fn create_index_leaves_the_edge_column_to_its_batches() {
     assert_eq!(
         g.falkordb_index
             .query_column(EntityType::Relationship, &ty, &eq(&attr, 2))
-            .map(|answer| {
-                let Ok(rows) = answer else {
-                    panic!("a Ready column answered with a ScanFilter")
-                };
-                rows.collect::<Vec<u64>>()
+            .map(|answer| match answer {
+                Ok(rows) => rows.collect::<Vec<u64>>(),
+                Err(_) => panic!("a Ready column answered with a ScanFilter"),
             }),
         Some(vec![eids[1]]),
         "a Ready column serves reads"
@@ -672,7 +670,7 @@ fn create_index_on(
 }
 
 /// DROP INDEX on `(:Person, attr)`, the native half: what `Graph::drop_index` does to this index
-/// once `RediSearch` has confirmed the drop.
+/// once RediSearch has confirmed the drop.
 fn drop_index_on(
     g: &mut Graph,
     label: &Arc<String>,
@@ -732,9 +730,7 @@ fn contents(
         .iter()
         .map(|&v| (v, idx.array_contains(&Value::Int(v)).collect()))
         .collect();
-    for (_, ids) in &mut in_lists {
-        ids.sort_unstable();
-    }
+    in_lists.iter_mut().for_each(|(_, ids)| ids.sort_unstable());
     (
         per_value,
         idx.range(None, None, true, true).collect(),
@@ -1487,7 +1483,7 @@ fn indexing_a_second_attribute_leaves_the_first_build_alone() {
 // A replica applies effects through its own `Graph` entry points, not the query path's. Each
 // test drives one of them the way `effects::v3::apply` does and checks the replica's column.
 
-/// `CREATE_NODE` then `UPDATE_NODE`, as the replica applies them: labels through
+/// CREATE_NODE then UPDATE_NODE, as the replica applies them: labels through
 /// `set_node_labels_product`, values through `set_nodes_attributes_rows_of_labels`. The update
 /// must remove the old value as well as add the new one.
 #[test]
@@ -1536,7 +1532,7 @@ fn replica_node_rows_maintain_the_index() {
     assert_eq!(range_scan(&g, &label, &attr, 9, 9), vec![ids[0]]);
 }
 
-/// `SET_LABELS` on a node that already has attributes, as the replica applies it.
+/// SET_LABELS on a node that already has attributes, as the replica applies it.
 #[test]
 fn replica_set_labels_indexes_existing_attrs() {
     let (mut g, label, attr, id) = unlabeled_graph_with_index();
@@ -1551,7 +1547,7 @@ fn replica_set_labels_indexes_existing_attrs() {
     assert_eq!(range_scan(&g, &label, &attr, 4, 6), vec![id]);
 }
 
-/// `UPDATE_EDGE`, as the replica applies it: one record is one type, through
+/// UPDATE_EDGE, as the replica applies it: one record is one type, through
 /// `set_relationships_attributes_of_type`.
 #[test]
 fn replica_edge_update_of_type_maintains_the_index() {
@@ -2536,7 +2532,7 @@ fn of_two_indexer_batches_on_one_column_only_the_first_publishes() {
 #[test]
 fn a_fork_made_before_an_indexer_batch_commit_is_not_stale() {
     let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
-    let id = IndexId::Column(EntityType::Node, (label, attr));
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let fork = mvcc.fork();
     let (prepared, batch) = prepare(&mvcc, &id, 2);
     assert_eq!(
@@ -2958,7 +2954,7 @@ fn delete_node_with_edges(
     id: u64,
 ) {
     delete_node(g, id);
-    let del: RoaringTreemap = std::iter::once(id).collect();
+    let del: RoaringTreemap = [id].into_iter().collect();
     applied!(g, |w| g.delete_implicit_edges(
         &del,
         &RoaringTreemap::new(),
@@ -3003,8 +2999,7 @@ fn set_edge_attr(
 ) {
     g.open_id_batches().expect("a consistent space");
     let aid = g.get_or_create_rel_attr_id(attr);
-    let set: FxHashMap<u64, Vec<(u16, Value)>> =
-        std::iter::once((eid, vec![(aid, value)])).collect();
+    let set: FxHashMap<u64, Vec<(u16, Value)>> = [(eid, vec![(aid, value)])].into_iter().collect();
     applied!(g, |d| g.set_relationships_attributes(&set, &mut d)).expect("set");
 }
 
@@ -3180,7 +3175,8 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
     let random_write = |g: &mut Graph, op: u32, rng: &mut StdRng| {
         let mut people: Vec<u64> = g
             .get_label_matrix(&label)
-            .map_or_default(|m| m.iter(0, u64::MAX).map(|(n, _)| n).collect());
+            .map(|m| m.iter(0, u64::MAX).map(|(n, _)| n).collect())
+            .unwrap_or_default();
         let attr = if rng.random_bool(0.5) { &v } else { &w };
         if rng.random_bool(0.5)
             && let Some(BuildState::Building {
@@ -3202,7 +3198,8 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
         }
         let edges: Vec<u64> = g
             .get_relationship_matrix(&ty)
-            .map_or_default(|t| t.iter(0, u64::MAX, false).map(|(_, _, e)| e).collect());
+            .map(|t| t.iter(0, u64::MAX, false).map(|(_, _, e)| e).collect())
+            .unwrap_or_default();
         let value = rng.random_range(0..VALUES);
         let new_value = if rng.random_bool(0.25) {
             ints(&[value, value / 2, value])
@@ -3462,13 +3459,11 @@ impl BuildHost for HostRef {
             return;
         };
         host.local.publish(&mut || {
-            let before = host.before_publish.lock().take();
-            if let Some(before) = before {
+            if let Some(before) = host.before_publish.lock().take() {
                 before(&host.mvcc);
             }
             f();
-            let after = host.after_publish.lock().take();
-            if let Some(after) = after {
+            if let Some(after) = host.after_publish.lock().take() {
                 after(&host.mvcc);
             }
         });
@@ -3607,7 +3602,7 @@ fn a_step_that_meets_another_batch_on_its_index_publishes_nothing() {
     let host = TestHost::new(mvcc);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let mut job = job_on(&host, &id, Sizing::fixed(1));
-    let other = id;
+    let other = id.clone();
     host.before_publish(move |mvcc| {
         let (prepared, batch) = prepare(mvcc, &other, 1);
         assert_eq!(
@@ -3748,11 +3743,11 @@ fn a_batch_frees_what_it_did_not_publish_after_the_hosts_lock() {
         }
     }));
     host.before_publish({
-        let (label, attr) = (label, attr);
+        let (label, attr) = (label.clone(), attr.clone());
         move |mvcc| {
             commit_write(mvcc, |g| {
                 g.falkordb_index
-                    .drop_column(EntityType::Node, &label, &attr);
+                    .drop_column(EntityType::Node, &label, &attr)
             });
         }
     });
@@ -3913,7 +3908,7 @@ fn a_stopped_builder_runs_nothing() {
 }
 
 /// A stop waits a bounded time for the pool's workers and says whether they all exited: the Redis
-/// module tears `GraphBLAS` down only then, as a worker left behind may still read or free a graph
+/// module tears GraphBLAS down only then, as a worker left behind may still read or free a graph
 /// version. A batch held inside its read past the stop's wait leaves its worker behind; once it
 /// lets go, it publishes nothing, being stopped, and its worker exits.
 #[test]
@@ -4186,7 +4181,7 @@ fn plans_index_scan(plan: &Plan) -> bool {
 }
 
 /// The planner reads readiness from the version's own column. A version without the column, or
-/// with it `Building`, plans no index scan; once the column is `Ready`, it does. `RediSearch`'s
+/// with it `Building`, plans no index scan; once the column is `Ready`, it does. RediSearch's
 /// readiness lives in its index map, which every version shares, so it cannot say this: a version
 /// committed before CREATE INDEX would see the index operational and plan a lookup its column
 /// cannot answer.
@@ -4300,8 +4295,8 @@ fn a_building_columns_progress_counts_what_its_batches_have_read() {
     let (mut g, label, v, ty, w) = scan_fixture();
     let progress = |g: &Graph| {
         (
-            native_build_progress(g, EntityType::Node, &label, &v),
-            native_build_progress(g, EntityType::Relationship, &ty, &w),
+            native_build_progress(&g, EntityType::Node, &label, &v),
+            native_build_progress(&g, EntityType::Relationship, &ty, &w),
         )
     };
     let mut seen = vec![progress(&g)];
@@ -4392,8 +4387,8 @@ fn a_labels_progress_is_its_slowest_building_column_out_of_its_nodes() {
     assert_eq!(info(&g), (0, 0, 0), "both Ready: nothing added");
 }
 
-/// A label whose Range column builds while `RediSearch` populates another of its fields (a fulltext
-/// or vector one) shows the slower of the two builds, and both pending. Once `RediSearch` has nothing
+/// A label whose Range column builds while RediSearch populates another of its fields (a fulltext
+/// or vector one) shows the slower of the two builds, and both pending. Once RediSearch has nothing
 /// pending, what it last reported no longer counts.
 #[test]
 fn a_labels_progress_is_the_slower_of_its_column_and_redisearch() {

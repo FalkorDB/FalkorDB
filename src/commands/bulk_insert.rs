@@ -543,7 +543,7 @@ fn process_edge_token(
 /// Process bulk insert on a background thread (no yield needed — main thread handles PING).
 ///
 /// `docs` collects the index documents for the whole insert; the caller publishes them once, on
-/// the success path only. `RediSearch` is not versioned, so anything published into it cannot be
+/// the success path only. RediSearch is not versioned, so anything published into it cannot be
 /// undone by dropping the MVCC fork, which a later failing token does — a batch that published as it
 /// went and failed midway would leave documents behind for entities that were never committed
 /// (and whose ids may be handed to different entities later). Bulk only ever adds, so it fills
@@ -593,7 +593,6 @@ fn bulk_insert_sync(
 
 /// Process bulk insert synchronously with periodic yield for PING handling. `docs` as in
 /// [`bulk_insert_sync`].
-#[allow(clippy::too_many_arguments)]
 fn bulk_insert_sync_yield(
     g: &mut Graph,
     tokens: &[&[u8]],
@@ -819,20 +818,21 @@ pub fn graph_bulk_insert(
     }
 
     // Every argument checks out, so it is safe to put a graph in the keyspace.
-    let graph = if let Some(g) = existing {
-        g
-    } else {
-        // Created under C's name and stored at the key rebuilt from it, not at
-        // the key the command addressed — see `c_graph_key`.
-        let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
-        let name = c_graph_name(&key_str);
-        let g = Arc::new(RwLock::new(ThreadedGraph::new(
-            *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-            &name,
-        )));
-        key.set_value(&GRAPH_TYPE, g.clone())?;
-        register_graph(name, g.clone());
-        g
+    let graph = match existing {
+        Some(g) => g,
+        None => {
+            // Created under C's name and stored at the key rebuilt from it, not at
+            // the key the command addressed — see `c_graph_key`.
+            let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+            let name = c_graph_name(&key_str);
+            let g = Arc::new(RwLock::new(ThreadedGraph::new(
+                *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+                &name,
+            )));
+            key.set_value(&GRAPH_TYPE, g.clone())?;
+            register_graph(name, g.clone());
+            g
+        }
     };
 
     // Run inline on this thread; `inline` is decided above, before the arguments were

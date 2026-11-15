@@ -26,11 +26,11 @@ pub enum LeafFormat {
     Compact,
 }
 
-/// Compact is chosen only when it saves at least this many bytes **per entry** vs the `AoS` form's 16. At 8
+/// Compact is chosen only when it saves at least this many bytes **per entry** vs the AoS form's 16. At 8
 /// (half an entry) it captures the large wins — low-cardinality / narrow data compacts to ~5 B/entry (a
-/// ~3× memory cut) — while leaving near-incompressible data as `AoS`. Reads are format-independent (the
+/// ~3× memory cut) — while leaving near-incompressible data as AoS. Reads are format-independent (the
 /// cursor caches the layout and dispatches widths to fixed loads), so this is purely a *build-cost vs size*
-/// trade: a swept micro-benchmark showed compact's build is ~2.5× `AoS` on a big win but ~5× on a marginal
+/// trade: a swept micro-benchmark showed compact's build is ~2.5× AoS on a big win but ~5× on a marginal
 /// one, so this floor keeps the cheap-to-build big wins and skips the expensive-to-build marginal ones.
 const COMPACT_MIN_SAVING_BPE: usize = 8;
 
@@ -39,7 +39,7 @@ const COMPACT_MIN_SAVING_BPE: usize = 8;
 /// Thin wrapper: the choice is shared with the effects codec, which narrows ids
 /// the same way — see [`crate::narrow_int::width_for`]. Only the return type
 /// differs, because a page offset is a `usize` here and a wire field there.
-const fn pow2_bytes_for(x: u64) -> usize {
+fn pow2_bytes_for(x: u64) -> usize {
     crate::narrow_int::width_for(x) as usize
 }
 
@@ -141,7 +141,7 @@ fn merge_walk(
 /// - [`CompactIndexedLeaf`] — compact **with** a dedup index (`distinct_count < entry_count`): a distinct
 ///   value column plus a 1-byte-per-entry index into it, then docs. Chosen when de-duplicating pays.
 ///
-/// Compact (either flavour) is chosen per leaf only when it saves ≥ 8 B/entry (half an `AoS` entry).
+/// Compact (either flavour) is chosen per leaf only when it saves ≥ 8 B/entry (half an AoS entry).
 ///
 /// Either way the blob *is* the leaf's serialized form: cloning is an `Arc::clone` and re-adopting bytes
 /// is [`Leaf::from_parts`] — a copy, never a (de)serialization. These newtypes are the one place that knows
@@ -244,12 +244,12 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Leaf<LEAF_MAX, DOC_BYTES> {
     ///
     /// The choice is a closed-form size comparison; the widths are always one of {1, 2, 4, 8}, so the only
     /// free variables are `count` and the data:
-    /// - `AoS`:                `count·(FIELD + DOC_BYTES)`
+    /// - AoS:                `count·(FIELD + DOC_BYTES)`
     /// - compact, no-dedup:  `BODY_OFFSET + count·value_width + count·doc_width`
     /// - compact, dedup:     `BODY_OFFSET + distinct·value_width + count (index) + count·doc_width`
     ///
-    /// Compact is used only when it saves at least [`COMPACT_MIN_SAVING_BPE`] bytes/entry, so `AoS` — simpler
-    /// and cheaper to build — keeps the near-incompressible cases. An empty slice yields an empty `AoS` leaf;
+    /// Compact is used only when it saves at least [`COMPACT_MIN_SAVING_BPE`] bytes/entry, so AoS — simpler
+    /// and cheaper to build — keeps the near-incompressible cases. An empty slice yields an empty AoS leaf;
     /// re-selecting on every rebuild is what migrates a leaf's format as its data changes.
     ///
     /// `value_width` comes from the value range, which is O(1): entries are sorted by `(key, doc)`, so the
@@ -427,7 +427,7 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Leaf<LEAF_MAX, DOC_BYTES> {
 
     /// Remove one `(key, doc)`: the replacement leaf plus whether it underflowed (`< LEAF_MAX / 2`), or `None`
     /// if the tuple is absent. An [`AosLeaf`] is **spliced directly** (the 16-byte tuple is cut out); a
-    /// [`CompactLeaf`] is rebuilt via [`Leaf::from_pairs`]. Re-compacting an `AoS` leaf happens at its next
+    /// [`CompactLeaf`] is rebuilt via [`Leaf::from_pairs`]. Re-compacting an AoS leaf happens at its next
     /// merge (which rebuilds through [`Leaf::from_pairs`]).
     pub(super) fn remove(
         &self,

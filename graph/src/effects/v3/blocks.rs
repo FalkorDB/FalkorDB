@@ -141,14 +141,14 @@ impl EffectDecode<3> for AttrIds {
 /// record *gates* rather than sizes, on a `field_type` the writer cannot derive
 /// from the block and the reader has to be given.
 ///
-/// `T_NULL` in a slot means "remove this attribute": `FalkorDB` never stores a null
+/// `T_NULL` in a slot means "remove this attribute": FalkorDB never stores a null
 /// property, so `SET n.x = NULL` is a removal and this is how it replicates.
 /// Shapes are therefore exact — see `emit::gather_rows` for why no row is padded.
 ///
 /// Rows stay row-major. Grouping values by attribute instead saves zero bytes
 /// uncompressed and changes sign with the data once compressed, which does not
 /// justify a second layout two engines must match byte-for-byte.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AttrValues<S = Vec<Value>>(pub S);
 
 impl<S: AsRef<[Value]>> EffectEncode<3> for AttrValues<S> {

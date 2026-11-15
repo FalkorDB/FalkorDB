@@ -109,7 +109,7 @@ trait IndexSubject: Clone {
         graph: &Graph,
         label: &Arc<String>,
         attr: &Arc<String>,
-        ty: IndexType,
+        ty: &IndexType,
     ) -> bool;
 
     /// Subject-specific hook for function-based predicates. Node impl
@@ -161,9 +161,9 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
         graph: &Graph,
         label: &Arc<String>,
         attr: &Arc<String>,
-        ty: IndexType,
+        ty: &IndexType,
     ) -> bool {
-        graph.is_indexed(label, attr, &ty)
+        graph.is_indexed(label, attr, ty)
     }
     fn try_func_scan(
         subject: &Self,
@@ -228,9 +228,9 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
         graph: &Graph,
         label: &Arc<String>,
         attr: &Arc<String>,
-        ty: IndexType,
+        ty: &IndexType,
     ) -> bool {
-        graph.is_edge_indexed(label, attr, &ty)
+        graph.is_edge_indexed(label, attr, ty)
     }
     fn try_func_scan(
         _subject: &Self,
@@ -597,8 +597,8 @@ fn list_has_nested_list(
 /// Tries to convert an `IN` filter into an index scan against `subject`.
 ///
 /// Handles two patterns:
-/// 1. `property IN [list]` — converts to `InList` index query
-/// 2. `value IN property` — converts to `ArrayContains` index query
+/// 1. `property IN [list]` — converts to InList index query
+/// 2. `value IN property` — converts to ArrayContains index query
 fn try_in_filter_scan<T: IndexSubject>(
     subject: &T,
     filter: &DynTree<ExprIR<Variable>>,
@@ -626,7 +626,7 @@ fn try_in_filter_scan<T: IndexSubject>(
     let attr = extract_attribute_from_subtree(filter, attr_side)?;
     let label = subject
         .all_labels()
-        .find(|l| T::is_indexed(graph, l, &attr, IndexType::Range))?
+        .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
         .clone();
 
     let query = if is_property_in_list {
@@ -673,7 +673,7 @@ fn try_single_filter_scan<T: IndexSubject>(
         extract_attribute_and_expression_from_filter(filter, Some(subject.alias()))?;
     let label = subject
         .all_labels()
-        .find(|l| T::is_indexed(graph, l, &attr, IndexType::Range))?
+        .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
         .clone();
     match filter.node(attr_side).data() {
         ExprIR::FuncInvocation(func) if func.name.as_str() == "distance" => {
@@ -890,7 +890,7 @@ fn is_non_indexable_subexpr(
 /// Drives a local rewrite to a fixed point: walks the plan in BFS
 /// order and applies `try_rewrite` at each index; when a rewrite
 /// succeeds (returns `true`), restart the walk against the new plan
-/// because the `NodeIdx` list may be invalidated by structural changes
+/// because the NodeIdx list may be invalidated by structural changes
 /// (orx-tree's Auto memory policy). Stop once a full pass produces no
 /// change.
 fn rewrite_until_stable<F>(
@@ -937,13 +937,11 @@ fn governing_filter(
     idx: NodeIdx<Dyn<IR>>,
 ) -> Option<(NodeIdx<Dyn<IR>>, QueryExpr<Variable>, bool)> {
     let mut node = plan.node(idx).parent()?;
-    let over_pending =
-        if matches!(node.data(), IR::IncludePending { .. }) && node.num_children() == 1 {
-            node = node.parent()?;
-            true
-        } else {
-            false
-        };
+    let mut over_pending = false;
+    if matches!(node.data(), IR::IncludePending { .. }) && node.num_children() == 1 {
+        node = node.parent()?;
+        over_pending = true;
+    }
     let IR::Filter(filter) = node.data() else {
         return None;
     };
@@ -1128,7 +1126,7 @@ fn add_to_labels_filter(
 /// up the plan after edge-index rewrites.
 ///
 /// Four passes, each driven to a fixed point independently to avoid
-/// `NodeIdx` invalidation under orx-tree's Auto memory policy:
+/// NodeIdx invalidation under orx-tree's Auto memory policy:
 ///
 /// 1. Push property filters into `NodeByIndexScan`.
 /// 2. Push property filters into `EdgeByIndexScan`.

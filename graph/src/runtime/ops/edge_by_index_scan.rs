@@ -69,7 +69,7 @@ pub struct EdgeByIndexScanOp<'a> {
     /// Lazily-populated cache of all edges of `relationship_pattern.types[0]`
     /// for the non-indexable-runtime-value fallback. Materialized once
     /// on the first fallback and shared across subsequent input rows
-    /// so we don't pay `O(|E_type`|) per row when the index can't serve
+    /// so we don't pay O(|E_type|) per row when the index can't serve
     /// the query (e.g. value is a list or date). The cache is
     /// dropped when the op is dropped.
     all_edges_cache: std::cell::RefCell<Option<Arc<Vec<(NodeId, NodeId, RelationshipId)>>>>,
@@ -307,7 +307,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
                 Value::Float(_) | Value::String(_) | Value::Bool(_) => true,
                 _ => false,
             },
-            IndexQuery::Point { .. } => true,
+            _ => true,
         }
     }
 }

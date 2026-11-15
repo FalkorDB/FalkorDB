@@ -1,6 +1,5 @@
 //! Telling a pinned dep checkout from a locally changed one.
 
-use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -17,8 +16,8 @@ impl Ctx<'_> {
     ///
     /// The cache key names the *pinned* commit, so a build from anything else
     /// must not be published under it: every worktree on that pin would link
-    /// it. A local change is a real workflow (`FalkorDB` carries its own
-    /// `RediSearch` branch), so the caller builds it into a per-worktree entry
+    /// it. A local change is a real workflow (FalkorDB carries its own
+    /// RediSearch branch), so the caller builds it into a per-worktree entry
     /// instead of refusing.
     pub fn local_changes(
         &self,
@@ -51,7 +50,7 @@ impl Ctx<'_> {
         for file in git(&dir, &["ls-files", "--others", "--exclude-standard"])?.lines() {
             let contents = hash_file(&dir.join(file))
                 .map_err(|e| err!("cannot read {}/{file}: {e}", dir.display()))?;
-            let _ = writeln!(diff, "untracked {file} {contents}");
+            diff.push_str(&format!("untracked {file} {contents}\n"));
         }
         let pinned = &self.lock.get(name)?.rev;
         let mut reasons = Vec::new();

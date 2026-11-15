@@ -141,7 +141,7 @@ use super::{
     },
 };
 
-/// Maximum `GraphBLAS` index value (2^60 - 1).
+/// Maximum GraphBLAS index value (2^60 - 1).
 #[allow(non_upper_case_globals)]
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 
@@ -155,7 +155,7 @@ pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 const ME_DIM: u64 = GrB_INDEX_MAX + 1;
 
 /// Column count `me` is created with: the widest declaration for which
-/// `GraphBLAS` still stores column indices in 32 bits rather than 64.
+/// GraphBLAS still stores column indices in 32 bits rather than 64.
 ///
 /// Columns are edge ids, and the column-index array holds one entry per stored
 /// id — the largest array in the structure. Measured on 200k ids: 6.44 B/id
@@ -173,7 +173,7 @@ const ME_NARROW_NCOLS: u64 = 1 << 31;
 /// Bits of each node id carried in the compound row key. Everything above them
 /// selects a *block* instead (see [`compound_key`]).
 ///
-/// Two halves must fit one `GraphBLAS` index, so `2 * BLOCK_SHIFT <= 60`; 30 is
+/// Two halves must fit one GraphBLAS index, so `2 * BLOCK_SHIFT <= 60`; 30 is
 /// the maximum, and therefore the fewest blocks. This is not a limit on node
 /// ids — it is where one block's key space ends and the next begins.
 pub const BLOCK_SHIFT: u32 = 30;
@@ -221,7 +221,7 @@ pub const ME_BLOCK_0: MeBlock = (0, 0);
 /// `promotion_survives_node_ids_past_the_old_key_width`.
 #[inline]
 #[must_use]
-pub const fn compound_key(
+pub fn compound_key(
     src: u64,
     dst: u64,
 ) -> (MeBlock, u64) {
@@ -240,7 +240,7 @@ pub const fn compound_key(
 /// for `row < ME_DIM`, which holds for any key it produced.
 #[inline]
 #[must_use]
-pub const fn compound_key_inverse(
+pub fn compound_key_inverse(
     block: MeBlock,
     row: u64,
 ) -> (u64, u64) {
@@ -281,7 +281,7 @@ pub struct Tensor {
     /// incoming edges, avoiding a redundant copy of every id.
     mt: VersionedMatrix<bool>,
     /// Multi-edge id storage, one matrix per live block, keyed within a block by
-    /// the row half of `compound_key(src, dst)` → `edge_id` (BOOL). Holds *all*
+    /// the row half of `compound_key(src, dst)` → edge_id (BOOL). Holds *all*
     /// ids of pairs with more than one edge; empty otherwise.
     ///
     /// [`ME_BLOCK_0`] is always entry 0, and a second entry appears only if a
@@ -319,7 +319,7 @@ enum PairPlan {
     Absent,
 }
 
-/// Shallow clone sharing the underlying `GraphBLAS` handles (no data copy),
+/// Shallow clone sharing the underlying GraphBLAS handles (no data copy),
 /// same semantics as `VersionedMatrix`'s `Clone`. Use [`Tensor::dup`] to
 /// create a new MVCC version instead.
 impl Clone for Tensor {
@@ -381,16 +381,17 @@ impl Tensor {
         &mut self,
         block: MeBlock,
     ) -> &mut VersionedMatrix<bool> {
-        let at = if let Some(at) = self.me.iter().position(|(b, _)| *b == block) {
-            at
-        } else {
-            // A new block is created at whatever width the tensor already
-            // has, so one that has widened does not go on creating narrow
-            // blocks behind it and re-widening them one at a time.
-            let ncols = self.me[0].1.ncols();
-            self.me
-                .push((block, VersionedMatrix::<bool>::new(ME_DIM, ncols)));
-            self.me.len() - 1
+        let at = match self.me.iter().position(|(b, _)| *b == block) {
+            Some(at) => at,
+            None => {
+                // A new block is created at whatever width the tensor already
+                // has, so one that has widened does not go on creating narrow
+                // blocks behind it and re-widening them one at a time.
+                let ncols = self.me[0].1.ncols();
+                self.me
+                    .push((block, VersionedMatrix::<bool>::new(ME_DIM, ncols)));
+                self.me.len() - 1
+            }
         };
         &mut self.me[at].1
     }
@@ -413,12 +414,12 @@ impl Tensor {
         }
     }
 
-    /// Wait pending `GraphBLAS` work on the forward delta layers. The committed
+    /// Wait pending GraphBLAS work on the forward delta layers. The committed
     /// base `m` never holds real pending work: it is only mutated by `flush`
-    /// (which waits) and `resize` (`GrB_Matrix_resize` waits internally), so it
+    /// (which waits) and `resize` (GrB_Matrix_resize waits internally), so it
     /// is never waited here (same invariant as `VersionedMatrix::wait`). Note
     /// `GxB_WILL_WAIT` can still report true on `m` after a grow-resize — the
-    /// hyper hash was freed — but `GraphBLAS` rebuilds it on demand.
+    /// hyper hash was freed — but GraphBLAS rebuilds it on demand.
     pub(crate) fn wait_fwd(&self) {
         // nvals only changes through ops that mark the matrix pending, so the
         // flag can only be stale when there is pending work — skip the nvals
@@ -458,7 +459,7 @@ impl Tensor {
     /// Edge ids for the `(src, dest)` pair, in ascending edge-id order.
     /// Single-edge pairs answer straight from the inline value — no heap
     /// allocation; multi-edge pairs (inline value == [`MULTI_EDGE`]) read
-    /// their id row from `me`, which `GraphBLAS` already yields in ascending
+    /// their id row from `me`, which GraphBLAS already yields in ascending
     /// column order. Returns an owned iterator (borrows nothing).
     #[must_use]
     pub fn get(
@@ -489,7 +490,7 @@ impl Tensor {
     /// former inline one included) go to `me`.
     ///
     /// Split into a read phase and a write phase so per-edge `dp` lookups
-    /// never observe pending `GraphBLAS` work (which would force a wait per
+    /// never observe pending GraphBLAS work (which would force a wait per
     /// element and make bulk insertion quadratic). `me` is written during the
     /// read phase — it is never read here, so its pending work is harmless.
     /// Pairs appearing more than once *within this batch* are caught by the
@@ -539,9 +540,7 @@ impl Tensor {
             match batch.entry((s, d)) {
                 Entry::Occupied(mut e) => {
                     let idx = *e.get();
-                    if idx == usize::MAX {
-                        self.me_block_mut(block).set(key, id, true);
-                    } else {
+                    if idx != usize::MAX {
                         // Second edge of a pair new in this batch: promote the
                         // pending inline slot in place.
                         let me = self.me_block_mut(block);
@@ -549,6 +548,8 @@ impl Tensor {
                         me.set(key, id, true);
                         m_ids[idx] = MULTI_EDGE;
                         e.insert(usize::MAX);
+                    } else {
+                        self.me_block_mut(block).set(key, id, true);
                     }
                 }
                 Entry::Vacant(e) => {
@@ -705,7 +706,8 @@ impl Tensor {
                     Some(MULTI_EDGE) => {
                         let ids: Vec<u64> = self
                             .me_block(block)
-                            .map_or_default(|me| me.iter(key, key).map(|(_, id)| id).collect());
+                            .map(|me| me.iter(key, key).map(|(_, id)| id).collect())
+                            .unwrap_or_default();
                         debug_assert!(
                             ids.windows(2).all(|w| w[0] < w[1]),
                             "`me` row ({src}, {dst}) not ascending; the search below needs it"
@@ -1206,7 +1208,7 @@ impl Tensor {
     }
 
     /// Every `me` matrix with the block it holds, so a caller doing its own
-    /// `GraphBLAS` work over the multi-edge ids can cover all of them and map row
+    /// GraphBLAS work over the multi-edge ids can cover all of them and map row
     /// keys back to pairs with [`compound_key_inverse`].
     pub fn edge_versioned_all(&self) -> impl Iterator<Item = (MeBlock, &VersionedMatrix<bool>)> {
         self.me.iter().map(|(b, me)| (*b, me))
@@ -1455,7 +1457,7 @@ impl Tensor {
         }
     }
 
-    /// Returns true if every internal matrix has no pending `GraphBLAS`
+    /// Returns true if every internal matrix has no pending GraphBLAS
     /// operations queued.
     #[must_use]
     pub fn is_synced(&self) -> bool {
@@ -1480,7 +1482,7 @@ impl Tensor {
     }
 }
 
-/// MSB flag used by C `FalkorDB` to indicate multi-edge entries in the
+/// MSB flag used by C FalkorDB to indicate multi-edge entries in the
 /// UINT64 forward matrix.
 const MSB_MASK: u64 = 1u64 << 63;
 
@@ -1522,7 +1524,8 @@ impl Encode<19> for Tensor {
                     let (block, key) = compound_key(src, dst);
                     let ids: Vec<u64> = self
                         .me_block(block)
-                        .map_or_default(|me| me.iter(key, key).map(|(_, id)| id).collect());
+                        .map(|me| me.iter(key, key).map(|(_, id)| id).collect())
+                        .unwrap_or_default();
                     f_vals.push(ids.len() as u64 | MSB_MASK);
                     multi.push((src, dst, ids));
                 } else {
@@ -1667,11 +1670,12 @@ impl Decode<19> for Tensor {
                     // form says nothing about how they are blocked and needs no
                     // version bump for this change: re-keying happens here.
                     let (block, key) = compound_key(src, dst);
-                    let at = if let Some(at) = me.iter().position(|(b, _)| *b == block) {
-                        at
-                    } else {
-                        me.push((block, VersionedMatrix::<bool>::new(ME_DIM, me_ncols)));
-                        me.len() - 1
+                    let at = match me.iter().position(|(b, _)| *b == block) {
+                        Some(at) => at,
+                        None => {
+                            me.push((block, VersionedMatrix::<bool>::new(ME_DIM, me_ncols)));
+                            me.len() - 1
+                        }
                     };
                     // Streamed rather than collected: the ids are only needed
                     // one at a time, and the width check they used to be
@@ -1713,9 +1717,8 @@ impl Decode<19> for Tensor {
 }
 
 /// Owned edge-id iterator for one `(src, dest)` pair (see [`Tensor::get`]).
-///
 /// The common single-edge case is allocation-free; multi-edge pairs stream
-/// their `me` row live (the inner iterator keeps the underlying `GraphBLAS`
+/// their `me` row live (the inner iterator keeps the underlying GraphBLAS
 /// matrix alive via its own `Arc`, so no borrow of the tensor is held).
 pub enum EdgeIds {
     Inline(std::option::IntoIter<u64>),
@@ -1780,7 +1783,7 @@ impl<'a> Iter<'a> {
         }
     }
 
-    /// Re-seek to a new row range, reusing the underlying `GraphBLAS` iterators
+    /// Re-seek to a new row range, reusing the underlying GraphBLAS iterators
     /// instead of allocating a fresh pair.
     ///
     /// The mirror of [`versioned_matrix::Iter::seek`], for callers that scan
@@ -2117,7 +2120,7 @@ mod tests {
     /// grew node capacity to 114,688 and killed the server via
     /// `Pending::commit` -> `delete_implicit_edges` -> `Tensor::iter`.
     ///
-    /// The growth must be large enough to change `GraphBLAS`'s internal
+    /// The growth must be large enough to change GraphBLAS's internal
     /// representation: growing 10,001 -> 10,501 leaves nothing pending and the
     /// bug hides.
     #[test]
@@ -2248,7 +2251,7 @@ mod tests {
     /// One batch that demotes many multi-edge pairs must leave every survivor
     /// inline and every pair still there. Regression test for the read-after-
     /// write in the per-edge slow path (issue #2429): each demotion wrote `me`
-    /// and `dp` and the next edge read them straight back, so `GraphBLAS` had to
+    /// and `dp` and the next edge read them straight back, so GraphBLAS had to
     /// materialize the tuples just queued — 95x C per demoted pair, growing
     /// with the batch. Buffering those writes has to replay the same state
     /// machine the old loop got for free by re-reading its own writes.
@@ -2432,7 +2435,7 @@ mod tests {
 
     /// **The bug this replaced.** `me` is `GrB_INDEX_MAX` square and the key
     /// was `(src << 32) | dst`, so `src = 2^28` put the row out of the matrix's
-    /// range. `Matrix::set` checks the `GraphBLAS` status under `debug_assert!`
+    /// range. `Matrix::set` checks the GraphBLAS status under `debug_assert!`
     /// only, so a release build dropped the write and left the pair tagged
     /// `MULTI_EDGE` over an empty `me` row: `get` returned nothing and
     /// `edge_count` disagreed with both the inserts and the reads. The guard
@@ -2788,7 +2791,7 @@ mod tests {
         assert!(err.contains("delta-plus is 8x8"), "unexpected error: {err}");
     }
 
-    /// `me` is created with a narrow column space so `GraphBLAS` stores its
+    /// `me` is created with a narrow column space so GraphBLAS stores its
     /// column indices — one per stored edge id, the largest array here — in 32
     /// bits. An id past that width has to widen it rather than be dropped, and
     /// the ids already stored have to survive the widening.

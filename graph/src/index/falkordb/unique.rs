@@ -48,7 +48,7 @@ impl ReadOnce {
     /// earlier member had the same lookups.
     pub(crate) fn candidates(
         &self,
-        lookups: &[EqualCandidates<'_>],
+        lookups: Vec<EqualCandidates<'_>>,
     ) -> impl Iterator<Item = u64> + use<> {
         let mut ids: Vec<_> = lookups.iter().map(EqualCandidates::id).collect();
         ids.sort_unstable();
@@ -68,7 +68,7 @@ impl ReadOnce {
 /// most `lookups.len()` times as many entities as it returns. Each lookup's
 /// rows own their tree snapshot, so the result borrows nothing (`use<>`).
 pub(crate) fn fewest_candidates(
-    lookups: &[EqualCandidates<'_>]
+    lookups: Vec<EqualCandidates<'_>>
 ) -> impl Iterator<Item = u64> + use<> {
     let mut rows: Vec<_> = lookups.iter().map(EqualCandidates::rows).collect();
     if rows.len() == 1 {

@@ -28,13 +28,13 @@
 //!
 //! Caveat on absolute numbers: taken on macOS, and `w` is cache-bound, so
 //! expect different values in CI. Re-measure in the toolchain image before
-//! re-tuning. Note the numbers above were taken *with* the vendored `PreJIT`
+//! re-tuning. Note the numbers above were taken *with* the vendored PreJIT
 //! kernels compiled in (`GRAPHBLAS_PREFIX` pointed at a local
-//! native-deps `GraphBLAS` build) — vendoring them did not move the fold's shape, so
+//! native-deps GraphBLAS build) — vendoring them did not move the fold's shape, so
 //! the sub-linearity is a property of eWiseAdd, not of kernel fallback.
 //!
 //! Run with:
-//!   cargo test --release -p graph `fold_cost` -- --ignored --nocapture
+//!   cargo test --release -p graph fold_cost -- --ignored --nocapture
 
 use std::time::Instant;
 
@@ -54,7 +54,7 @@ use super::test_init::ensure_init;
 ///
 /// Deliberately the *smallest* power of two that clears the largest sample,
 /// not something roomier: `CAP` sets the density of every matrix under test
-/// (`nvals / CAP`), and density is what `GraphBLAS` keys its sparse/hypersparse
+/// (`nvals / CAP`), and density is what GraphBLAS keys its sparse/hypersparse
 /// format choice on. Raising it to `2_097_152` halved the density and moved
 /// `fold_cost_fold_vs_base` by up to 1.9x at the top end while the
 /// capacity-only floor below stayed flat — i.e. it changed what was being
@@ -139,13 +139,13 @@ fn fold_cost_dup_vs_nvals() {
             let p = pending(n);
             let t = Instant::now();
             let d = p.dup();
-            dup_pending_total = t.elapsed().as_secs_f64().mul_add(1e6, dup_pending_total);
+            dup_pending_total += t.elapsed().as_secs_f64() * 1e6;
             std::hint::black_box(&d);
 
             let p2 = pending(n);
             let t = Instant::now();
             p2.wait();
-            wait_total = t.elapsed().as_secs_f64().mul_add(1e6, wait_total);
+            wait_total += t.elapsed().as_secs_f64() * 1e6;
         }
 
         println!(
@@ -193,7 +193,7 @@ fn fold_cost_fold_vs_base() {
                 let mut new_m = Matrix::<bool>::new(CAP, CAP);
                 new_m.element_wise_add(None, Some(&base), Some(&delta), None);
                 new_m.wait();
-                total = t.elapsed().as_secs_f64().mul_add(1e6, total);
+                total += t.elapsed().as_secs_f64() * 1e6;
                 std::hint::black_box(&new_m);
             }
             let us = total / f64::from(reps);
@@ -238,7 +238,7 @@ fn fold_cost_empty_matrix_floor() {
             let mut new_m = Matrix::<bool>::new(cap, cap);
             new_m.element_wise_add(None, Some(&base), Some(&delta), None);
             new_m.wait();
-            total = t.elapsed().as_secs_f64().mul_add(1e6, total);
+            total += t.elapsed().as_secs_f64() * 1e6;
             std::hint::black_box(&new_m);
         }
         println!("{:>12}  {:>10.2}  {:>10.2}", cap, dup_us, total / 20.0);
@@ -267,7 +267,7 @@ fn fold_cost_write_cycle() {
 
                 let t0 = Instant::now();
                 let mut v = base_delta.dup();
-                dup_us = t0.elapsed().as_secs_f64().mul_add(1e6, dup_us);
+                dup_us += t0.elapsed().as_secs_f64() * 1e6;
 
                 let t1 = Instant::now();
                 for k in 0..t {
@@ -275,11 +275,11 @@ fn fold_cost_write_cycle() {
                     let row = (d + k + u64::from(r) * 1_000) % CAP;
                     v.set(row, (row * 13 + 1) % CAP, true);
                 }
-                set_us = t1.elapsed().as_secs_f64().mul_add(1e6, set_us);
+                set_us += t1.elapsed().as_secs_f64() * 1e6;
 
                 let t2 = Instant::now();
                 v.wait();
-                wait_us = t2.elapsed().as_secs_f64().mul_add(1e6, wait_us);
+                wait_us += t2.elapsed().as_secs_f64() * 1e6;
                 std::hint::black_box(&v);
             }
             let r = f64::from(reps);
@@ -445,7 +445,7 @@ fn grow_cost_post_grow_usage() {
                 for (_, _, v) in g.iter(0, u64::MAX) {
                     seen += v;
                 }
-                iter_us = t.elapsed().as_secs_f64().mul_add(1e6, iter_us);
+                iter_us += t.elapsed().as_secs_f64() * 1e6;
                 std::hint::black_box(seen);
 
                 // Point lookups: what a hypersparse layer needs the hyper hash
@@ -455,14 +455,14 @@ fn grow_cost_post_grow_usage() {
                 for k in (0..probe_rows.len()).step_by(probe_rows.len() / 1_000 + 1) {
                     hits += u32::from(g.contains(probe_rows[k], probe_cols[k]));
                 }
-                probe_us = t.elapsed().as_secs_f64().mul_add(1e6, probe_us);
+                probe_us += t.elapsed().as_secs_f64() * 1e6;
                 std::hint::black_box(hits);
 
                 // One more mutation, materialized: the next transaction.
                 let t = Instant::now();
                 g.set(nrows - 1, ncols - 1, 7);
                 g.wait();
-                set_us = t.elapsed().as_secs_f64().mul_add(1e6, set_us);
+                set_us += t.elapsed().as_secs_f64() * 1e6;
 
                 mem = g.memory_usage();
             }
@@ -482,7 +482,7 @@ fn grow_cost_post_grow_usage() {
 
 /// Which `GB_resize` path does the engine's capacity grow actually take?
 ///
-/// `GraphBLAS` 10.5.0 added a fast path — no `GrB_wait` when the storage is
+/// GraphBLAS 10.5.0 added a fast path — no `GrB_wait` when the storage is
 /// sparse or hypersparse and neither dimension shrinks — and burbles which one
 /// it took. Since `Matrix::grown` is `dup` + `GrB_Matrix_resize`, this drives
 /// the real grow paths with burble on so the answer is observed rather than

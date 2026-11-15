@@ -58,21 +58,8 @@ cargo build --release  # release build -> target/release/libfalkordb.{so,dylib}
 
 ```bash
 cargo fmt --all -- --check
-CXX=clang++ cargo clippy -p falkordb-rs -p graph --all-targets -- -D warnings
-CXX=clang++ cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb -- -D warnings
-cargo clippy --all-targets --manifest-path native-deps/Cargo.toml -- -D warnings
+CXX=clang++ cargo clippy --all-targets
 ```
-
-- The lint set is strict: pedantic, nursery and cargo, from `[workspace.lints]`
-  in `Cargo.toml` (and `[lints]` in `native-deps/Cargo.toml`), so a plain
-  `cargo clippy` shows the same warnings CI fails on. A lint a crate does not
-  follow is allowed in its `lib.rs` with the reason, or locally on the item.
-- Name both packages: with none, clippy lints only the root package's targets,
-  not graph's tests or build script. The `index-falkordb` run lints the native
-  index, which the default build does not compile.
-- In `native-deps`, `src/recipes/`, `src/toolchain.rs` and `src/util.rs` feed
-  the dependency cache key: a style edit there rebuilds all three native deps
-  everywhere. Allow their lints on the `mod` line in `src/lib.rs` instead.
 
 - `CXX=clang++` is required for clippy (and any build invoking the GraphBLAS
   FFI bindings under `graph/src/graph/graphblas/`, whose bindgen output is
@@ -81,12 +68,13 @@ cargo clippy --all-targets --manifest-path native-deps/Cargo.toml -- -D warnings
   layout). Run `cargo fmt --all` (no `--check`) to auto-fix.
 - Run format + build + clippy together, in that order, for a full check —
   fail fast on formatting before spending time on a full compile.
-- To auto-fix clippy warnings, see the `lint` skill.
+- For a stricter, opt-in clippy pass (pedantic/nursery/cargo lints, plus an
+  auto-fix mode) see the `lint` skill.
 
 ## Notes
 
 - CI (`.github/workflows/rust-pr.yml`) runs the same `cargo fmt --all --check`
-  and the clippy commands above (pinned to a specific
+  and `CXX=clang++ cargo clippy --all-targets` (pinned to a specific
   `clang++` version in CI containers; any reasonably recent local `clang++`
   works).
 - Cross-platform release *artifacts* (Linux `.so`, macOS `.dylib`) and

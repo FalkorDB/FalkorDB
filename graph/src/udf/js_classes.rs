@@ -1,6 +1,6 @@
 //! # JS Class Bindings for Graph Types
 //!
-//! This module creates JavaScript object representations of `FalkorDB` graph
+//! This module creates JavaScript object representations of FalkorDB graph
 //! entities (Node, Edge, Path) so that UDF functions can inspect and traverse
 //! the graph from within JavaScript code.
 //!
@@ -99,7 +99,7 @@ fn with_current_graph<R>(f: impl FnOnce(&Graph) -> Result<R, String>) -> Result<
 }
 
 /// Collect edges from a node in a given direction, a self-loop once.
-/// Returns vec of (`rel_id`, `src_id`, `dst_id`) as u64.
+/// Returns vec of (rel_id, src_id, dst_id) as u64.
 fn collect_edges(
     g: &Graph,
     node_id: u64,
@@ -111,7 +111,7 @@ fn collect_edges(
         .collect()
 }
 
-/// Create a JS Node object with id, labels, attributes properties and `getNeighbors()` method.
+/// Create a JS Node object with id, labels, attributes properties and getNeighbors() method.
 ///
 /// Labels and attributes are read through the runtime when one is given, so a
 /// node created, updated or deleted earlier in the same query looks the same
@@ -161,21 +161,22 @@ pub fn create_js_node<'js>(
     // global at call time), so user JS clobbering globals can't break
     // already-materialized nodes.
     let globals = ctx.globals();
-    let method: Function = if let Ok(f) = globals.get("__falkor_getNeighborsMethod") {
-        f
-    } else {
-        let helper = Function::new(ctx.clone(), js_get_neighbors_entry)
-            .map_err(|e| format!("JS function error: {e}"))?;
-        let factory: Function = ctx
-            .eval("(h) => function(config) { return h(this.__falkor_node_id, config); }")
-            .map_err(|e| format!("JS eval error: {e}"))?;
-        let f: Function = factory
-            .call((helper,))
-            .map_err(|e| format!("JS call error: {e}"))?;
-        globals
-            .set("__falkor_getNeighborsMethod", f.clone())
-            .map_err(|e| format!("JS set error: {e}"))?;
-        f
+    let method: Function = match globals.get("__falkor_getNeighborsMethod") {
+        Ok(f) => f,
+        Err(_) => {
+            let helper = Function::new(ctx.clone(), js_get_neighbors_entry)
+                .map_err(|e| format!("JS function error: {e}"))?;
+            let factory: Function = ctx
+                .eval("(h) => function(config) { return h(this.__falkor_node_id, config); }")
+                .map_err(|e| format!("JS eval error: {e}"))?;
+            let f: Function = factory
+                .call((helper,))
+                .map_err(|e| format!("JS call error: {e}"))?;
+            globals
+                .set("__falkor_getNeighborsMethod", f.clone())
+                .map_err(|e| format!("JS set error: {e}"))?;
+            f
+        }
     };
     obj.prop("getNeighbors", Property::from(method))
         .map_err(|e| format!("Failed to set getNeighbors: {e}"))?;
@@ -359,7 +360,7 @@ pub fn create_js_path<'js>(
     Ok(obj.into_value())
 }
 
-/// Entry point for getNeighbors from JS. Takes (`node_id`, config?) as arguments.
+/// Entry point for getNeighbors from JS. Takes (node_id, config?) as arguments.
 /// This is a standalone function (no closure captures) so rquickjs lifetime inference works.
 #[allow(clippy::needless_pass_by_value)]
 fn js_get_neighbors_entry<'js>(
@@ -510,8 +511,8 @@ fn js_get_neighbors<'js>(
     })
 }
 
-fn throw_js_error(
-    ctx: &Ctx<'_>,
+fn throw_js_error<'js>(
+    ctx: &Ctx<'js>,
     e: &str,
 ) -> rquickjs::Error {
     match rquickjs::String::from_str(ctx.clone(), e) {
@@ -593,7 +594,8 @@ fn js_iterate_nodes_impl<'js>(
             match &label {
                 Some(l) => graph
                     .get_label_matrix(l)
-                    .map_or_default(|m| m.iter(0, u64::MAX).map(|(id, _)| id).collect()),
+                    .map(|m| m.iter(0, u64::MAX).map(|(id, _)| id).collect())
+                    .unwrap_or_default(),
                 None => {
                     if graph.node_count() == 0 {
                         Vec::new()
@@ -647,7 +649,8 @@ fn js_iterate_edges_impl<'js>(
             match &rel_type {
                 Some(t) => graph
                     .get_relationship_matrix(&Arc::new(t.clone()))
-                    .map_or_default(|tensor| tensor.iter(0, u64::MAX, false).collect()),
+                    .map(|tensor| tensor.iter(0, u64::MAX, false).collect())
+                    .unwrap_or_default(),
                 None => graph
                     .relationship_matrices_iter()
                     .flat_map(|tensor| tensor.iter(0, u64::MAX, false).collect::<Vec<_>>())

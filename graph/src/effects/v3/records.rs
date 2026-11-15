@@ -8,8 +8,6 @@ use crate::index::text_index_options::TextIndexOptions;
 use crate::index::vector_index_options::VectorIndexOptions;
 use crate::runtime::value::Value;
 
-// The parent's items in use differ with `index-falkordb`, so no fixed list fits both builds.
-#[allow(clippy::wildcard_imports)]
 use super::*;
 
 // ── records ──
@@ -216,9 +214,6 @@ impl EffectDecodeSized<3> for IndexFieldOptions {
     /// The statement's `field_type`, which says whether a vector block follows.
     type Size = u32;
 
-    // `take_opt` needs a closure over any `Reader` lifetime; the method path
-    // (`Reader::string`) that `redundant_closure_for_method_calls` suggests does not infer as one.
-    #[allow(clippy::redundant_closure_for_method_calls)]
     fn decode_sized(
         r: &mut Reader<'_>,
         field_type: Self::Size,
@@ -537,7 +532,7 @@ pub enum Record {
     },
     /// `7 SET_LABELS` — attach these labels to these nodes.
     ///
-    /// Named for the opcode rather than "`AddLabels`", because
+    /// Named for the opcode rather than "AddLabels", because
     /// [`Record::AddLabel`] is a different record entirely — that one registers
     /// a label in the schema dictionary, this one puts labels on nodes that
     /// exist. One letter apart for two unrelated operations is the confusion
@@ -929,10 +924,10 @@ impl EffectEncode<3> for Record {
             // Carries its id, which v2 did not: the replica used to infer one
             // from append order, so a dictionary of a different length assigned
             // a different id and every later record referenced the wrong entry.
-            Self::AddLabel { id, name } | Self::AddRelType { id, name } => {
+            Record::AddLabel { id, name } | Record::AddRelType { id, name } => {
                 write_header(buf, Opcode::AddSchema, None)?;
                 buf.u32(schema_tag(match self {
-                    Self::AddLabel { .. } => EntityType::Node,
+                    Record::AddLabel { .. } => EntityType::Node,
                     _ => EntityType::Relationship,
                 }));
                 buf.schema_id(*id);
@@ -940,7 +935,7 @@ impl EffectEncode<3> for Record {
             }
 
             // `10 ADD_ATTRIBUTE` — `AttributeID · name`. Same reason as above.
-            Self::AddAttribute { id, name } => {
+            Record::AddAttribute { id, name } => {
                 write_header(buf, Opcode::AddAttribute, None)?;
                 buf.u16(*id);
                 buf.string(name);
@@ -950,7 +945,7 @@ impl EffectEncode<3> for Record {
             //
             // `rows` is `ids.len() × attr_ids.len()` values in row-major order;
             // row *k* belongs to the k-th id in `ids`, as written.
-            Self::CreateNode {
+            Record::CreateNode {
                 ids,
                 labels,
                 attr_ids,
@@ -970,7 +965,7 @@ impl EffectEncode<3> for Record {
             // Endpoints repeat — many edges share a source — and each must stay
             // positionally aligned with its edge id, which is why nothing here
             // may be re-sorted into a set.
-            Self::CreateEdge {
+            Record::CreateEdge {
                 ids,
                 relation_id,
                 src,
@@ -1007,7 +1002,7 @@ impl EffectEncode<3> for Record {
             //
             // A property being removed is `T_NULL` in its slot — the tag's only
             // meaning here.
-            Self::UpdateNode {
+            Record::UpdateNode {
                 ids,
                 labels,
                 attr_ids,
@@ -1021,7 +1016,7 @@ impl EffectEncode<3> for Record {
                 AttrValues(rows.as_slice()).encode(buf)?;
             }
 
-            Self::UpdateEdge {
+            Record::UpdateEdge {
                 ids,
                 relation_id,
                 attr_ids,
@@ -1042,8 +1037,8 @@ impl EffectEncode<3> for Record {
             // The labels, and all their nodes — not one `(node, label)` pair per
             // node. v2 shipped a serialized GraphBLAS vector here, which is an
             // internal representation two engines cannot agree on.
-            Self::SetLabels { ids, labels } | Self::RemoveLabels { ids, labels } => {
-                let opcode = if matches!(self, Self::SetLabels { .. }) {
+            Record::SetLabels { ids, labels } | Record::RemoveLabels { ids, labels } => {
+                let opcode = if matches!(self, Record::SetLabels { .. }) {
                     Opcode::SetLabels
                 } else {
                     Opcode::RemoveLabels
@@ -1059,7 +1054,7 @@ impl EffectEncode<3> for Record {
             // deleted — not the ones the query's pattern named. `MATCH (n:A)
             // DELETE n` over an `(:A:B)` node must clear `:B`'s indexes too, and
             // the pattern cannot say so.
-            Self::DeleteNode { ids, labels } => {
+            Record::DeleteNode { ids, labels } => {
                 write_header(buf, Opcode::DeleteNode, Some(ids.count()))?;
                 LabelSet(labels.as_slice()).encode(buf)?;
                 ids.encode(buf)?;
@@ -1070,7 +1065,7 @@ impl EffectEncode<3> for Record {
             // C needs the endpoints to locate the edge in its adjacency
             // matrices, and unlike an update they cannot be recovered
             // afterwards: the edge is gone by the time effects are built.
-            Self::DeleteEdge {
+            Record::DeleteEdge {
                 ids,
                 relation_id,
                 src,
@@ -1091,7 +1086,7 @@ impl EffectEncode<3> for Record {
             // Only a create carries `OPTIONS`: v2 could not encode the map at
             // all and forced the whole statement to replicate as a verbatim
             // query.
-            Self::CreateIndex {
+            Record::CreateIndex {
                 schema_type,
                 schemas,
                 field_type,
@@ -1122,7 +1117,7 @@ impl EffectEncode<3> for Record {
 
             // A drop mirrors the create and stops before the options — zero
             // bytes, not an empty block. There is no field for one to write.
-            Self::DropIndex {
+            Record::DropIndex {
                 schema_type,
                 schemas,
                 field_type,
@@ -1137,7 +1132,7 @@ impl EffectEncode<3> for Record {
             }
 
             // `13 CREATE_CONSTRAINT` / `14 DROP_CONSTRAINT`.
-            Self::CreateConstraint {
+            Record::CreateConstraint {
                 constraint_type,
                 entity_type,
                 status,
@@ -1165,7 +1160,7 @@ impl EffectEncode<3> for Record {
             // A drop mirrors the create **without** the status: the apply path
             // calls `drop_constraint` and never reads one, and there is no
             // field here to write.
-            Self::DropConstraint {
+            Record::DropConstraint {
                 constraint_type,
                 entity_type,
                 label_id,
@@ -1478,7 +1473,7 @@ mod tests {
             ids: ids.clone(),
             labels: vec![7],
             attr_ids: vec![0],
-            rows,
+            rows: rows.to_vec(),
         }
         .encode(&mut buf)
         .unwrap();
@@ -1515,10 +1510,10 @@ mod tests {
         let dst = IdList::from([9_u64, 9, 9, 9]);
         let mut buf = new_buffer();
         Record::CreateEdge {
-            ids,
+            ids: ids.clone(),
             relation_id: 2,
-            src,
-            dst,
+            src: src.clone(),
+            dst: dst.clone(),
             attr_ids: vec![0],
             rows: vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)],
         }
@@ -1811,10 +1806,10 @@ mod tests {
             let ids: IdList = (0..per).map(|j| (j * shapes + s) as u64).collect();
             let rows: Vec<Value> = (0..per).map(|j| Value::Int(j as i64)).collect();
             Record::CreateNode {
-                ids,
+                ids: ids.clone(),
                 labels: vec![7],
                 attr_ids: vec![s as u16],
-                rows,
+                rows: rows.to_vec(),
             }
             .encode(&mut buf)
             .unwrap();
@@ -1861,7 +1856,7 @@ mod tests {
             ids: even,
             labels: vec![7],
             attr_ids: vec![0],
-            rows: half.clone(),
+            rows: half.to_vec(),
         }
         .encode(&mut alt)
         .unwrap();
@@ -2866,7 +2861,7 @@ mod tests {
             props,
             &vec![AttrRef {
                 id: 2,
-                name: "since".to_owned()
+                name: "since".to_owned().to_string()
             }]
         );
     }
@@ -2971,10 +2966,10 @@ mod tests {
         let rows: Vec<Value> = (0..10_000).map(|i| Value::Int(i as i64)).collect();
         let mut buf = new_buffer();
         Record::CreateNode {
-            ids,
+            ids: ids.clone(),
             labels: vec![7],
             attr_ids: vec![0],
-            rows,
+            rows: rows.to_vec(),
         }
         .encode(&mut buf)
         .unwrap();
@@ -3071,10 +3066,10 @@ mod tests {
         let rows: Vec<Value> = (0..2_000).map(|i| Value::Int(i as i64)).collect();
         let mut buf = new_buffer();
         Record::CreateNode {
-            ids,
+            ids: ids.clone(),
             labels: vec![7],
             attr_ids: vec![0],
-            rows,
+            rows: rows.to_vec(),
         }
         .encode(&mut buf)
         .unwrap();
@@ -3107,10 +3102,10 @@ mod tests {
         let rows: Vec<Value> = (0..2_000).map(|i| Value::Int(i as i64)).collect();
         let mut buf = new_buffer();
         Record::CreateNode {
-            ids,
+            ids: ids.clone(),
             labels: vec![7],
             attr_ids: vec![0],
-            rows,
+            rows: rows.to_vec(),
         }
         .encode(&mut buf)
         .unwrap();
@@ -3141,7 +3136,7 @@ mod tests {
             ids: IdList::from(ids.as_slice()),
             labels: vec![7],
             attr_ids: vec![0],
-            rows,
+            rows: rows.to_vec(),
         }
         .encode(&mut buf)
         .unwrap();
@@ -3159,10 +3154,10 @@ mod tests {
         let rows: Vec<Value> = (0..2_000).map(|i| Value::Int(i as i64)).collect();
         let mut buf = new_buffer();
         Record::CreateNode {
-            ids,
+            ids: ids.clone(),
             labels: vec![7],
             attr_ids: vec![0],
-            rows,
+            rows: rows.to_vec(),
         }
         .encode(&mut buf)
         .unwrap();

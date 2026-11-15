@@ -20,7 +20,7 @@ use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
 
-/// RDB encoding version. Matches C `FalkorDB` v19 format (buffered IO with type tags).
+/// RDB encoding version. Matches C FalkorDB v19 format (buffered IO with type tags).
 #[allow(dead_code)]
 pub const ENCODING_VERSION: u64 = 19;
 
@@ -29,9 +29,9 @@ pub static VKEY_STATE: std::sync::LazyLock<Mutex<VirtualKeyState>> =
     std::sync::LazyLock::new(|| Mutex::new(VirtualKeyState::new()));
 
 pub struct VirtualKeyState {
-    /// `vkey_name` → (`graph_name`, `key_index`, payloads for that key)
+    /// vkey_name → (graph_name, key_index, payloads for that key)
     pub vkey_map: HashMap<String, (String, usize, Vec<PayloadEntry>)>,
-    /// `graph_name` → list of virtual key names
+    /// graph_name → list of virtual key names
     pub graph_vkeys: HashMap<String, Vec<String>>,
 }
 
@@ -60,8 +60,8 @@ pub struct DecodeState {
     /// for multi-key graphs. Used to replace the placeholder's inner graph
     /// with the finalized graph once all keys are loaded.
     pub placeholders: HashMap<String, Arc<RwLock<ThreadedGraph>>>,
-    /// Finalized graphs ready to be picked up by `graph_rdb_load` or
-    /// the `finalize_pending_graphs` callback.
+    /// Finalized graphs ready to be picked up by graph_rdb_load or
+    /// the finalize_pending_graphs callback.
     pub finalized: HashMap<String, Graph>,
     /// Redis keys this load has identified as virtual keys: every key of a
     /// multi-key graph other than the one the graph itself is stored under.
@@ -354,7 +354,8 @@ fn encode_schema_index_block(
     let stopwords: Vec<&str> = infos
         .first()
         .and_then(|info| info.stopwords.as_ref())
-        .map_or_default(|sw| sw.iter().map(|s| s.as_str()).collect());
+        .map(|sw| sw.iter().map(|s| s.as_str()).collect())
+        .unwrap_or_default();
     w.write_unsigned(stopwords.len() as u64);
     for sw in &stopwords {
         w.write_buffer(&null_terminated(sw));
