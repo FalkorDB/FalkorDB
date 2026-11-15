@@ -29,7 +29,7 @@ graph/src/planner/optimizer/push_filters_down.rs	rebuild_node	385	PROVEN	Sequenc
 graph/src/planner/optimizer/reduce_bound_edge.rs	reduce_bound_edge	30	PROVEN	References2.ancestorsRead refsNew (ancestor walk), ancestors_le_outside; main_misses_call_sibling (#2896 sibling case, still open); References.refsNew_complete
 graph/src/planner/optimizer/reduce_count.rs	reduce_count	54	PROVEN	Passes.reduce_count_correct, reduce_count_stale
 graph/src/planner/optimizer/reduce_count.rs	extract_count_variable	193	PROVEN	Helpers.countVar_spec (count(var) -> var.id, scope dropped)
-graph/src/planner/optimizer/reduce_expand_into.rs	reduce_expand_into	19	PROVEN	References2.ancestorsRead refsNew vs readOutside_iff, main_misses_call_sibling (still open); References.refsNew_misses_sibling_edges (W2-traverse-1, still open)
+graph/src/planner/optimizer/reduce_expand_into.rs	reduce_expand_into	19	NOT COVERED	(#3047): body changed, not re-proven yet
 graph/src/planner/optimizer/reduce_var_len_path.rs	reduce_var_len_path	27	PROVEN	References2.ancestorsRead refsNew (same oracle and walk); References.refsNew_complete (CVLT edge attrs/edge_filter/path_var seen); UNWIND r loss fixed by #2390
 graph/src/planner/optimizer/reorder_labels.rs	reorder_labels	16	PROVEN	Passes.reorder_perm, reorder_preserves
 graph/src/planner/optimizer/replace_cartesian_with_hash_join.rs	replace_cartesian_with_hash_join	73	PROVEN	Passes.vhj_correct, hash_join_drops_row

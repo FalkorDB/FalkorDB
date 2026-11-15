@@ -52,7 +52,7 @@ graph/src/runtime/runtime.rs	get_node_outdegree	1979	PROVEN	Accessors.degree_exa
 graph/src/runtime/runtime.rs	get_node_outdegree_by_type	1996	PROVEN	Accessors.degree_exact (endp = src)
 graph/src/runtime/runtime.rs	map_to_index_options	2021	PROVEN	Misc.vectorOptions/fulltextUnknown/phonetic: vector_requires_dimension, vector_requires_similarity, vector_similarity_lowered (#3094), vector_negative_refused, natOpt_ok, fulltextUnknown_none_iff, phonetic_codes (other fulltext keys are direct type matches)
 graph/src/runtime/ops/mod.rs	drain_pending	127	PROVEN	Misc.drainPending_spec
-graph/src/runtime/ops/mod.rs	edge_already_used	155	PROVEN	Misc.edgeAlreadyUsed_iff
+graph/src/runtime/ops/mod.rs	edge_already_used	155	NOT COVERED	(#3047): body changed, not re-proven yet
 graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	60	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
 graph/src/runtime/ops/batched_result_emitter.rs	push_into	67	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
 graph/src/runtime/ops/batched_result_emitter.rs	finish	75	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
