@@ -2012,7 +2012,7 @@ impl Planner {
             if let Some(lead) = leading_walk {
                 let mut ordered = Vec::with_capacity(sorted_rels.len());
                 let mut bound: HashSet<(u32, u32)> = HashSet::new();
-                let mut rest: Vec<_> = sorted_rels.into_iter().collect();
+                let mut rest = sorted_rels;
                 let first = rest
                     .iter()
                     .position(|r| (r.alias.scope_id, r.alias.id) == lead)

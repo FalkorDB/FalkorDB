@@ -685,7 +685,7 @@ class testTraversalConstruction():
         plan = str(g.explain(q))
         # the fixed hop binds `c` before the second walk starts from it, and
         # the component is scanned from `a` rather than from the anchored `d`
-        self.env.assertTrue(plan.index("-[_anon_2:T*1..2]->(d)") < plan.index("Conditional Traverse | (b)->(c)"), message=plan)
+        self.env.assertLess(plan.index("-[_anon_2:T*1..2]->(d)"), plan.index("Conditional Traverse | (b)->(c)"), message=plan)
         self.env.assertContains("Node By Label Scan | (a:A)", plan)
         self.env.assertNotContains("(d:D)", plan)
         self.env.assertEqual(g.query(q).result_set, [[1]])
