@@ -3,21 +3,22 @@ graph/src/runtime/ops/aggregate.rs	eq	99	PROVEN	gkEq (veq = sort_cmp == Equal si
 graph/src/runtime/ops/aggregate.rs	hash	115	PROVEN	gkHash: gkHash_consistent with hc discharged on main: Discharge.hc_main, Discharge.gk_hash_consistent_main (from proofs/value_order Main.main_hash_consistent)
 graph/src/runtime/ops/aggregate.rs	subtree_has_aggregate	181	PROVEN	hasAgg: hasAgg_spec, hasAgg_iff
 graph/src/runtime/ops/aggregate.rs	implicit_keys	202	NOT COVERED	(#3571): the implicit grouping keys of aggregation items (openCypher); not modelled yet
-graph/src/runtime/ops/aggregate.rs	variables	205	NOT COVERED	(#3571): helper nested in implicit_keys; not modelled yet
-graph/src/runtime/ops/aggregate.rs	walk	218	NOT COVERED	(#3571): helper nested in implicit_keys; not modelled yet
-graph/src/runtime/ops/aggregate.rs	args_for	315	PROVEN	argsFor: argsFor_spec
-graph/src/runtime/ops/aggregate.rs	fold	336	PROVEN	rowDriver_eq_batch (fold = batch_fn on a 1-slice)
-graph/src/runtime/ops/aggregate.rs	new	393	NOT COVERED	(#3571): it now computes the implicit grouping keys (implicit_keys), so the theorems for it (AggSt.new: aggNew_spec, foldlM_setZero) describe the pre-PR body; not re-checked
-graph/src/runtime/ops/aggregate.rs	analyze	429	NOT COVERED	(#3571): it now refuses the vectorized path when there are implicit grouping keys, so the theorems for it (analyze/analyzeKey: analyze_spec, analyze_lengths, analyzeKey_spec) describe the pre-PR body; not re-checked
-graph/src/runtime/ops/aggregate.rs	analyze_agg_tree	502	PROVEN	analyzeAgg/aggBody: analyzeAgg_shape, aggBody_fields, singleArg_computed, multiArg_computed, distinctInput_computed, countStar_no_input, multi_extra, constsOf_spec
-graph/src/runtime/ops/aggregate.rs	consume_input_vectorized	629	PROVEN	batchDriver_eq_join, vectorized_eq_rowwise, *_hom; group id = insertion index (#2977): GroupId.insert_new_id, gid_inj, distinct_by_group_id_exact (fixed by #2977 c652e505e)
-graph/src/runtime/ops/aggregate.rs	extract_key_columns	903	PROVEN	extractKeys/keyCol: extractKeys_spec, extractKeys_err
-graph/src/runtime/ops/aggregate.rs	extract_agg_input_columns	952	PROVEN	extractAggs/aggCol: extractAggs_spec
-graph/src/runtime/ops/aggregate.rs	consume_input_per_row	993	NOT COVERED	(#3571): the keyless default group is now pre-inserted only without implicit grouping keys, so the theorems for it (groupAll_spec, keyless_one_row; group id from the map entry (#2977): GroupId.gid_inj, distinct_by_group_id_exact (groups) describe the pre-PR body; not re-checked
-graph/src/runtime/ops/aggregate.rs	consume_batch_per_row	1040	NOT COVERED	(#3571): it now adds the implicit grouping keys to the group key and stores the variables they read in each new group, so the theorems for it (groupAll_spec, rowDriver_eq_batch; group id from the map entry (#2977): GroupId.gid_inj, distinct_by_group_id_exact (gro) describe the pre-PR body; not re-checked
-graph/src/runtime/ops/aggregate.rs	run_agg_expr	1132	PROVEN	rowDriver_eq_batch; DISTINCT branch keyed (node, group id) since #2977: GroupId.distinct_by_group_id_exact, fixed2977_collision_example; distinct_fold_clear_overcounts (BUG #2779, apply.rs:283)
-graph/src/runtime/ops/aggregate.rs	set_agg_expr_zero	1233	PROVEN	setZero: setZero_eq, setZero_spec
-graph/src/runtime/ops/aggregate.rs	next	1262	NOT COVERED	(#3333): the accumulator unbinding was removed from the body, so aggNext_*/finishGroup_*/fixed3522_null_key_bound describe the pre-PR model and are stale; not modelled yet. Open-bug theorems bug3375_output_overwrites_next_acc, bug3375_avg_panics, bug3333_alias_binds_next_var describe the pre-PR model and are not re-checked against the new code
+graph/src/runtime/ops/aggregate.rs	binds	207	NOT COVERED	(#3571): helper nested in implicit_keys; not modelled yet
+graph/src/runtime/ops/aggregate.rs	variables	216	NOT COVERED	(#3571): helper nested in implicit_keys; not modelled yet
+graph/src/runtime/ops/aggregate.rs	walk	237	NOT COVERED	(#3571): helper nested in implicit_keys; not modelled yet
+graph/src/runtime/ops/aggregate.rs	args_for	324	PROVEN	argsFor: argsFor_spec
+graph/src/runtime/ops/aggregate.rs	fold	345	PROVEN	rowDriver_eq_batch (fold = batch_fn on a 1-slice)
+graph/src/runtime/ops/aggregate.rs	new	402	NOT COVERED	(#3571): it now computes the implicit grouping keys (implicit_keys), so the theorems for it (AggSt.new: aggNew_spec, foldlM_setZero) describe the pre-PR body; not re-checked
+graph/src/runtime/ops/aggregate.rs	analyze	438	NOT COVERED	(#3571): it now refuses the vectorized path when there are implicit grouping keys, so the theorems for it (analyze/analyzeKey: analyze_spec, analyze_lengths, analyzeKey_spec) describe the pre-PR body; not re-checked
+graph/src/runtime/ops/aggregate.rs	analyze_agg_tree	511	PROVEN	analyzeAgg/aggBody: analyzeAgg_shape, aggBody_fields, singleArg_computed, multiArg_computed, distinctInput_computed, countStar_no_input, multi_extra, constsOf_spec
+graph/src/runtime/ops/aggregate.rs	consume_input_vectorized	638	PROVEN	batchDriver_eq_join, vectorized_eq_rowwise, *_hom; group id = insertion index (#2977): GroupId.insert_new_id, gid_inj, distinct_by_group_id_exact (fixed by #2977 c652e505e)
+graph/src/runtime/ops/aggregate.rs	extract_key_columns	912	PROVEN	extractKeys/keyCol: extractKeys_spec, extractKeys_err
+graph/src/runtime/ops/aggregate.rs	extract_agg_input_columns	961	PROVEN	extractAggs/aggCol: extractAggs_spec
+graph/src/runtime/ops/aggregate.rs	consume_input_per_row	1002	NOT COVERED	(#3571): the keyless default group is now pre-inserted only without implicit grouping keys, so the theorems for it (groupAll_spec, keyless_one_row; group id from the map entry (#2977): GroupId.gid_inj, distinct_by_group_id_exact (groups) describe the pre-PR body; not re-checked
+graph/src/runtime/ops/aggregate.rs	consume_batch_per_row	1049	NOT COVERED	(#3571): it now adds the implicit grouping keys to the group key and stores the variables they read in each new group, so the theorems for it (groupAll_spec, rowDriver_eq_batch; group id from the map entry (#2977): GroupId.gid_inj, distinct_by_group_id_exact (gro) describe the pre-PR body; not re-checked
+graph/src/runtime/ops/aggregate.rs	run_agg_expr	1141	PROVEN	rowDriver_eq_batch; DISTINCT branch keyed (node, group id) since #2977: GroupId.distinct_by_group_id_exact, fixed2977_collision_example; distinct_fold_clear_overcounts (BUG #2779, apply.rs:283)
+graph/src/runtime/ops/aggregate.rs	set_agg_expr_zero	1242	PROVEN	setZero: setZero_eq, setZero_spec
+graph/src/runtime/ops/aggregate.rs	next	1271	NOT COVERED	(#3333): the accumulator unbinding was removed from the body, so aggNext_*/finishGroup_*/fixed3522_null_key_bound describe the pre-PR model and are stale; not modelled yet. Open-bug theorems bug3375_output_overwrites_next_acc, bug3375_avg_panics, bug3333_alias_binds_next_var describe the pre-PR model and are not re-checked against the new code
 graph/src/runtime/ops/distinct.rs	new	42	PROVEN	DistinctSt.new: distinct_new_spec
 graph/src/runtime/ops/distinct.rs	next	62	PROVEN	dedup_injective (correct iff hash injective); dedup_collision_drops (known #2780)
 graph/src/runtime/ops/sort.rs	cmp_key	76	PROVEN	SortCmp.cmpKey (cv = Value::sort_cmp, #2912): cmpKey_spec, cmpKey_lawful with Lawful discharged: Discharge.cmpKey_lawful_main, Discharge.cmpKey_trans_main (from proofs/value_order Main.scMain_total, copied under VO/)

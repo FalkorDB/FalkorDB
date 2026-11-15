@@ -151,16 +151,20 @@ This project depends on [`../value_order`](../value_order) (a Lake path dependen
 
 ## Coverage
 
-`COVERAGE.tsv` has 155 rows:
+`COVERAGE.tsv` has 158 rows:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 84 |
+| PROVEN | 78 |
 | CONDITIONAL | 1 |
 | MODELLED | 13 |
-| NOT COVERED | 57 |
+| NOT COVERED | 66 |
 
-All operator files (`aggregate.rs`, `sort.rs`, `limit.rs`, `skip.rs`, `distinct.rs`, `project.rs`, `unwind.rs`, `load_csv.rs`, `filter.rs`, `include_pending.rs`, `procedure_call.rs`, `commit.rs`) are fully PROVEN, with one caveat: `AggregateOp::next` is proven against the per-group model (`drain_all`, `finishGroup_outputs`) but refutes `AggRowSpec` under the binder's slot ids until the open slot-reuse bugs (#3375, #3333, #3368, #3369) are fixed (`SlotReuse.lean`). The rest:
+All operator files (`aggregate.rs`, `sort.rs`, `limit.rs`, `skip.rs`, `distinct.rs`, `project.rs`, `unwind.rs`, `load_csv.rs`, `filter.rs`, `include_pending.rs`, `procedure_call.rs`, `commit.rs`) are fully PROVEN, except in `aggregate.rs`:
+
+- **NOT COVERED, `aggregate.rs` (9 rows):** `AggregateOp::next` lost its accumulator unbinding (#3333), so its theorems describe the earlier body. `new`, `analyze`, `consume_input_per_row` and `consume_batch_per_row` changed for the implicit grouping keys of mixed aggregation items (#3571), and `implicit_keys` with its helpers `binds`, `variables` and `walk` is new; none of these is modelled yet.
+
+The rest:
 
 - **NOT COVERED, `batch.rs` (47 rows):** the model treats a batch as its list of active rows, so the typed columns, builders, `concat` and `gather` are abstracted away. `compare_at` and `compare_rows_at` are proven in `value_order` and `columnar` instead.
 - **MODELLED, `batch.rs` (11 rows):** accessors such as `active_indices`, `value_at` and the row iterators are what "a batch is its active rows" stands for; the `agrees_*` Rust tests exercise them.

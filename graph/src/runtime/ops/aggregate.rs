@@ -202,17 +202,36 @@ fn subtree_has_aggregate(node: &DynNode<'_, ExprIR<Variable>>) -> bool {
 fn implicit_keys(
     agg: &[(Variable, QueryExpr<Variable>)]
 ) -> (Vec<(usize, NodeIdx<Dyn<ExprIR<Variable>>>)>, Vec<Variable>) {
+    /// The variables `node` binds for its children: a list comprehension's or
+    /// quantifier's element, `reduce`'s accumulator and element.
+    fn binds(node: &DynNode<'_, ExprIR<Variable>>) -> Vec<Variable> {
+        match node.data() {
+            ExprIR::Quantifier { var, .. } | ExprIR::ListComprehension(var) => vec![var.clone()],
+            ExprIR::Reduce(reduce) => vec![reduce.accumulator.clone(), reduce.iterator.clone()],
+            _ => Vec::new(),
+        }
+    }
+    /// The variables `node` reads from the row: those bound inside it
+    /// (`v` in `[v IN [1] | v]`) are left out.
     fn variables(
         node: &DynNode<'_, ExprIR<Variable>>,
+        local: &[Variable],
         out: &mut Vec<Variable>,
     ) {
         if let ExprIR::Variable(var) = node.data()
+            && !local.contains(var)
             && !out.contains(var)
         {
             out.push(var.clone());
         }
+        let bound = binds(node);
+        let inner = if bound.is_empty() {
+            local.to_vec()
+        } else {
+            [local, &bound].concat()
+        };
         for child in node.children() {
-            variables(&child, out);
+            variables(&child, &inner, out);
         }
     }
     fn walk(
@@ -229,7 +248,7 @@ fn implicit_keys(
             }
         } else {
             let mut read = Vec::new();
-            variables(node, &mut read);
+            variables(node, &[], &mut read);
             if read.is_empty() {
                 return; // a constant: the same in every group
             }
@@ -247,17 +266,7 @@ fn implicit_keys(
                 return;
             }
         }
-        let mut inner = bound.to_vec();
-        match node.data() {
-            ExprIR::Quantifier { var, .. } | ExprIR::ListComprehension(var) => {
-                inner.push(var.clone());
-            }
-            ExprIR::Reduce(reduce) => {
-                inner.push(reduce.accumulator.clone());
-                inner.push(reduce.iterator.clone());
-            }
-            _ => {}
-        }
+        let inner = [bound, &binds(node)].concat();
         let is_map = matches!(node.data(), ExprIR::Map | ExprIR::MapProjection);
         for child in node.children() {
             // A map entry is a key constant whose one child is the value; the

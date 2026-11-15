@@ -1505,6 +1505,17 @@ def test_aggregation_item_implicit_grouping_keys():
     assert res.result_set == []
     res = query("UNWIND [] AS x RETURN 1 + count(*)")
     assert res.result_set == [[1]]
+    # A term that reads only its own comprehension variable is a constant too.
+    res = query("UNWIND [] AS x RETURN size([v IN [1] | v]) + count(*) AS n")
+    assert res.result_set == [[1]]
+    # Writes before the aggregation are committed before any group forms, so
+    # a group's implicit key and its item read the same property value.
+    query("CREATE (:IK {v: 1}), (:IK {v: 1}), (:IK {v: 2})", write=True)
+    res = query(
+        "MATCH (n:IK) SET n.v = n.v * 10 WITH n.v + count(*) AS c RETURN c ORDER BY c",
+        write=True,
+    )
+    assert res.result_set == [[12], [21]]
 
 
 def test_pipelined_match_after_aggregating_with():
