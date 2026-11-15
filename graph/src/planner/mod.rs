@@ -3358,7 +3358,7 @@ impl Planner {
                     if all_visited || (any_visited && Self::joins_components(&match_plan)) {
                         let mut inner = match_plan;
                         let argument_vars = if all_visited { None } else { Some(bound) };
-                        Self::add_argument_to_leaves(&mut inner, argument_vars);
+                        Self::add_argument_to_leaves(&mut inner, argument_vars.as_deref());
                         tree!(IR::Apply, inner)
                     } else {
                         match_plan
