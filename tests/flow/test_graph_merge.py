@@ -623,6 +623,17 @@ class testGraphMergeFlow():
             # Expecting an error.
             assert("can't be redeclared in a MERGE clause" in str(e))
 
+    def test31b_relationship_alias_redeclared(self):
+        # a relationship variable repeated inside one MERGE pattern must be
+        # rejected, not silently merged into a single edge
+        for query in ["MERGE (a)-[r:R]->(b)-[r:R]->(c)",
+                      "MERGE p=(a)-[r:R]->(b)-[r:R]->(c) RETURN p"]:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("The bound variable 'r' can't be redeclared in a MERGE clause", str(e))
+
     def test32_reset_op(self):
         # MERGE operation register a reset function validate that it works as expected
         res = self.graph.query("CREATE (a:A), (b:B)")
@@ -913,6 +924,69 @@ class testGraphMergeFlow():
             actual = self.graph.query("""MATCH (a:A)-[r:R]->(b:B)
                                          RETURN count(r)""")
             self.env.assertEqual(actual.result_set, [[1]])
+
+    def test43_merge_sees_labels_set_earlier_in_the_query(self):
+        # #3453: MERGE's node scan pairs the committed graph with this query's
+        # pending label changes. Each node it should see must come back exactly
+        # once, and a deleted one not at all.
+        g = self.db.select_graph("merge_pending_labels")
+
+        # A node given a label and then deleted is not a match: MERGE creates.
+        g.query("CREATE (:A)")
+        res = g.query("MATCH (n:A) SET n:B DELETE n MERGE (m:B) RETURN id(m) <> id(n)")
+        self.env.assertEqual(res.result_set, [[True]])
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(g.query("MATCH (n) RETURN labels(n)").result_set, [[["B"]]])
+
+        # Re-setting a label the node already has does not match it twice.
+        g.delete()
+        g.query("CREATE (:A)")
+        res = g.query("""MATCH (n:A) SET n:A
+                         MERGE (m:A) ON MATCH SET m.hits = coalesce(m.hits, 0) + 1
+                         RETURN m.hits""")
+        self.env.assertEqual(res.result_set, [[1]])
+        self.env.assertEqual(res.nodes_created, 0)
+
+        # A node whose pattern labels are split between committed (A) and
+        # staged (B) matches.
+        g.delete()
+        g.query("CREATE (:A)")
+        res = g.query("MATCH (n:A) SET n:B MERGE (m:A:B) RETURN id(m) = id(n)")
+        self.env.assertEqual(res.result_set, [[True]])
+        self.env.assertEqual(res.nodes_created, 0)
+        self.env.assertEqual(g.query("MATCH (n) RETURN count(n)").result_set, [[1]])
+
+        # A label removed earlier in the query is not matched, even if another
+        # pattern label was staged.
+        g.delete()
+        g.query("CREATE (:A)")
+        res = g.query("MATCH (n:A) SET n:B REMOVE n:A MERGE (m:A:B) RETURN id(m) = id(n)")
+        self.env.assertEqual(res.result_set, [[False]])
+        self.env.assertEqual(res.nodes_created, 1)
+
+        # With an index on the pattern label, a node that gains a pattern label
+        # is returned once, not by both the index scan and the pending
+        # candidates.
+        g.delete()
+        create_node_range_index(g, "A", "v", sync=True)
+        g.query("CREATE (:A {v: 1})")
+        q = "MATCH (n:A) SET n:B MERGE (m:A:B {v: 1}) RETURN id(m) = id(n)"
+        self.env.assertContains("Node By Index Scan", str(g.explain(q)))
+        res = g.query(q)
+        self.env.assertEqual(res.result_set, [[True]])
+        self.env.assertEqual(res.nodes_created, 0)
+
+        # Re-setting labels a node already has leaves it on the indexed path:
+        # one match per correlated row, not a candidate-by-row product.
+        g.delete()
+        create_node_range_index(g, "A", "v", sync=True)
+        g.query("UNWIND range(1, 5) AS i CREATE (:A:B {v: i})")
+        q = "MATCH (n:A:B) SET n:B MERGE (m:A:B {v: n.v}) RETURN count(*)"
+        self.env.assertContains("Node By Index Scan", str(g.explain(q)))
+        res = g.query(q)
+        self.env.assertEqual(res.result_set, [[5]])
+        self.env.assertEqual(res.nodes_created, 0)
+        g.delete()
 
     def test40_merge_path_over_bound_endpoints_keeps_every_match(self):
         # With every node bound and no named relationship, MERGE kept only the
