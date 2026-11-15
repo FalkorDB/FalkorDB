@@ -169,9 +169,6 @@ pub(super) fn ir_references_variable(
             expr_references_variable(file_path, var_id, scope_id, traverser)
                 || expr_references_variable(delimiter, var_id, scope_id, traverser)
         }
-        IR::Skip(expr) | IR::Limit(expr) => {
-            expr_references_variable(expr, var_id, scope_id, traverser)
-        }
         // Constructor patterns: `CREATE (n {p: x})` reads `x`.
         IR::Create(pattern) => {
             query_graph_references_variable(pattern, var_id, scope_id, traverser)
