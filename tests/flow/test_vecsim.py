@@ -1,3 +1,4 @@
+import time
 from common import *
 from index_utils import *
 
@@ -376,7 +377,12 @@ class testVecsim():
 
         def check_refused_until_operational(label, name, q):
             refused = 0
+            deadline = time.time() + 120
             while constructing(label):
+                self.env.assertLess(time.time(), deadline,
+                                    message=f"{name}: index still under construction after 120s")
+                if time.time() >= deadline:
+                    return
                 try:
                     g.ro_query(q)
                 except Exception as e:
