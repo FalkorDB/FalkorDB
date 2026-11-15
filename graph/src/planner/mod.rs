@@ -813,11 +813,10 @@ fn optimizer_depth_bound(plan: &DynTree<IR>) -> usize {
     let mut below = vec![0usize; extra.len()];
     for i in (0..extra.len()).rev() {
         let depth = extra[i] + if leaf[i] { 0 } else { 1 + below[i] };
-        if parent[i] != usize::MAX {
-            below[parent[i]] = below[parent[i]].max(depth);
-        } else {
+        if parent[i] == usize::MAX {
             return depth;
         }
+        below[parent[i]] = below[parent[i]].max(depth);
     }
     0
 }
