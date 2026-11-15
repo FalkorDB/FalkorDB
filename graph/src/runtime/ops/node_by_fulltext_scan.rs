@@ -84,7 +84,7 @@ impl<'a> Iterator for NodeByFulltextScanOp<'a> {
                     None,
                 )?
                 else {
-                    // A non-string label or query matches nothing: this row yields no rows.
+                    // A non-string label matches nothing: this row yields no rows.
                     return Ok(None);
                 };
                 let Value::String(query_str) = ExprEval::from_runtime(self.runtime).eval(
@@ -94,6 +94,7 @@ impl<'a> Iterator for NodeByFulltextScanOp<'a> {
                     None,
                 )?
                 else {
+                    // Likewise a non-string query.
                     return Ok(None);
                 };
                 let g = self.runtime.graph();

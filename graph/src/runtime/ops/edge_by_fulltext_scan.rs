@@ -89,7 +89,7 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                     None,
                 )?
                 else {
-                    // A non-string relationship type or query matches nothing: this row yields no rows.
+                    // A non-string relationship type matches nothing: this row yields no rows.
                     return Ok(None);
                 };
                 let Value::String(query_str) = ExprEval::from_runtime(self.runtime).eval(
@@ -99,6 +99,7 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                     None,
                 )?
                 else {
+                    // Likewise a non-string query.
                     return Ok(None);
                 };
                 let g = self.runtime.graph();
