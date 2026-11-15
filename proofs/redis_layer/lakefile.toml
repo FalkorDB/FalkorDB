@@ -1,0 +1,5 @@
+name = "redis-layer"
+defaultTargets = ["RedisLayer"]
+
+[[lean_lib]]
+name = "RedisLayer"
