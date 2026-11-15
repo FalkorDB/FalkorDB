@@ -158,6 +158,19 @@ class testTemporalDate(FlowTestsBase):
         self.env.assertEqual(dayOfQuarter, 21)
         self.env.assertEqual(ordinalDay, 295)
 
+    # years outside 0..9999 keep all their digits and their sign
+    def test_date_to_string_extended_years(self):
+        q = """RETURN toString(date({year: 12345})),
+                      toString(date('2020-01-01') + duration({years: 10000})),
+                      toString(date({year: -5})),
+                      toString(date({year: 5})),
+                      toString(localdatetime('2020-01-01T10:20:30') + duration({years: 300000})),
+                      toString(localdatetime({year: -5, month: 3, day: 4, hour: 5}))"""
+        actual = self.graph.query(q).result_set[0]
+        self.env.assertEqual(actual, ['12345-01-01', '12020-01-01', '-0005-01-01',
+                                      '0005-01-01', '302020-01-01T10:20:30',
+                                      '-0005-03-04T05:00:00'])
+
     def test_date_to_from_string(self):
         test_cases = [
             ({'year': 1984},                                   '1984-01-01'),
@@ -536,6 +549,27 @@ class testTemporalDuration(FlowTestsBase):
                 self.env.assertFalse(True)
             except ResponseError as e:
                 self.env.assertIn("overflow", str(e))
+
+    def test_duration_trailing_number_is_error(self):
+        # a number with no unit is not a duration: an error (it used to be
+        # dropped silently: duration('P1Y5') was P1Y; C returns null)
+        for s in ['P5', 'P-', 'P1Y5', 'P1M2', 'PT4H5', 'PT1M5', 'PT-', 'P1Y-', 'P1Y5T1H', 'PT1.5']:
+            try:
+                self.graph.query("RETURN duration($s)", {'s': s})
+                self.env.assertFalse(True)
+            except ResponseError as e:
+                self.env.assertIn("has no unit", str(e))
+
+        # a bad component or an overflow is still an error with a trailing number
+        for s in ['P5T5Q', 'P1Y5T5Q', 'PT5Q5', 'PT9223372036854775807H5']:
+            try:
+                self.graph.query("RETURN duration($s)", {'s': s})
+                self.env.assertFalse(True)
+            except ResponseError:
+                pass
+
+        res = self.graph.query("RETURN toString(duration('P1Y5M')), toString(duration('PT4H5M'))")
+        self.env.assertEqual(res.result_set[0], ['P1Y5M', 'PT4H5M'])
 
     def test_month_end_duration_arithmetic(self):
         result = self.graph.query(
