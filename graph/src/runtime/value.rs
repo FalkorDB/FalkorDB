@@ -1998,6 +1998,10 @@ fn sort_cmp_int_float(
 /// then the first element where `x != y` decides by `x > y`. So a NaN element
 /// never compares equal (not even to NaN) and orders `Less` in both
 /// directions.
+#[allow(
+    clippy::needless_bitwise_bool,
+    reason = "`|`, not `||`: the block compare must stay branch-free to vectorize"
+)]
 fn compare_vecf32(
     a: &[f32],
     b: &[f32],
@@ -2025,7 +2029,7 @@ fn compare_vecf32(
         let (blocks_a, rest_a) = a.as_chunks::<16>();
         let (blocks_b, rest_b) = b.as_chunks::<16>();
         for (x, y) in blocks_a.iter().zip(blocks_b) {
-            if x.iter().zip(y).fold(false, |diff, (p, q)| diff || (p != q)) {
+            if x.iter().zip(y).fold(false, |diff, (p, q)| diff | (p != q)) {
                 return first_difference(x, y);
             }
         }

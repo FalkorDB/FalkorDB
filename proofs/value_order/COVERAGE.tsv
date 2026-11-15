@@ -55,14 +55,14 @@ graph/src/runtime/value.rs	Contains::contains	1870	PROVEN	Glue.Contains class / 
 graph/src/runtime/value.rs	Contains::contains	1877	NOT COVERED	IN-list membership; not modelled here
 graph/src/runtime/value.rs	PartialOrd::partial_cmp	1902	NOT COVERED	thin wrapper over compare_value (null -> None); wrapper itself not modelled
 graph/src/runtime/value.rs	compare_floats	1915	PROVEN	cmpF: nan_breaks_antisymmetry; extended F (NaN payload, -0.0, fractions, ±inf) via fpcmp
-graph/src/runtime/value.rs	compare_vecf32	2001	MODELLED	cmpVec (length, then first_difference): vec_zero_eq_but_hash_differs; proven in value_math (chunked_eq_firstDiff)
-graph/src/runtime/value.rs	first_difference	2005	MODELLED	firstDifference: vec_zero_eq_but_hash_differs; proven in value_math
-graph/src/runtime/value.rs	ValuesDeduper::with_capacity	2043	PROVEN	Glue.withCapacity/checkAndInsert: withCapacity_first_then_seen, withCapacity_seen_iff
-graph/src/runtime/value.rs	ValuesDeduper::is_seen	2053	PROVEN	sliceHash: fx_row_collision (bug: distinct lists collide), fx_collision_general
-graph/src/runtime/value.rs	ValuesDeduper::has_hash	2064	NOT COVERED	hash-set membership not modelled (only the hash stream is)
-graph/src/runtime/value.rs	ValuesDeduper::check_and_insert_hash	2071	NOT COVERED	hash-set membership not modelled (only the hash stream is)
-graph/src/runtime/value.rs	Encode::encode	2083	NOT COVERED	serialisation; outside the order model
-graph/src/runtime/value.rs	Decode::decode	2169	NOT COVERED	serialisation; outside the order model
+graph/src/runtime/value.rs	compare_vecf32	2005	MODELLED	cmpVec (length, then first_difference): vec_zero_eq_but_hash_differs; proven in value_math (chunked_eq_firstDiff)
+graph/src/runtime/value.rs	first_difference	2009	MODELLED	firstDifference: vec_zero_eq_but_hash_differs; proven in value_math
+graph/src/runtime/value.rs	ValuesDeduper::with_capacity	2047	PROVEN	Glue.withCapacity/checkAndInsert: withCapacity_first_then_seen, withCapacity_seen_iff
+graph/src/runtime/value.rs	ValuesDeduper::is_seen	2057	PROVEN	sliceHash: fx_row_collision (bug: distinct lists collide), fx_collision_general
+graph/src/runtime/value.rs	ValuesDeduper::has_hash	2068	NOT COVERED	hash-set membership not modelled (only the hash stream is)
+graph/src/runtime/value.rs	ValuesDeduper::check_and_insert_hash	2075	NOT COVERED	hash-set membership not modelled (only the hash stream is)
+graph/src/runtime/value.rs	Encode::encode	2087	NOT COVERED	serialisation; outside the order model
+graph/src/runtime/value.rs	Decode::decode	2173	NOT COVERED	serialisation; outside the order model
 graph/src/runtime/ops/sort.rs	OrderedKey::cmp_key	76	PROVEN	Main.cmpKey (sort_cmp, DESC = swap; #2912 b033aecc6): Main.cmpKey_total (total preorder either direction)
 graph/src/runtime/batch.rs	Column::compare_at	401	PROVEN	Main.compareAt (Ints cmpI, Floats sort_cmp_f64, Values/ids sort_cmp): Main.compareAt_eq_scMain (every lane = sort_cmp on get), Main.scMain_total
 graph/src/runtime/ops/distinct.rs	DistinctOp::next	62	PROVEN	rowHash: fx_row_collision, fx_collision_general (bug: second colliding row dropped); set insert not modelled

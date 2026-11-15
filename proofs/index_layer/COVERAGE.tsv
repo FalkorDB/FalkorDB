@@ -135,8 +135,8 @@ graph/src/index/indexer.rs	write_lock	872	PROVEN	Meta.Ixr.misc
 graph/src/index/indexer.rs	cancel	876	PROVEN	Meta.Ixr.misc
 graph/src/index/indexer.rs	is_cancelled	884	PROVEN	Meta.Ixr.misc
 graph/src/index/indexer.rs	recreate_index	894	PROVEN	Meta.Ixr.recreate_spec
-graph/src/index/indexer.rs	set_graph	916	PROVEN	Meta.Ixr.misc
-graph/src/index/indexer.rs	get_graph	924	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	set_graph	910	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	get_graph	918	PROVEN	Meta.Ixr.misc
 graph/src/index/redisearch/mod.rs	RediSearch_GetCApiVersion	167	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_CreateIndexOptions	226	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_FreeIndexOptions	231	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
@@ -279,5 +279,5 @@ graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	splic
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	splice_remove	240	PROVEN	Leaf.ciRemove_spec
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	merge	283	PROVEN	Leaf.ciMerge_spec, slotOf_spec
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	block_copy_merge	370	PROVEN	Leaf.ciBcm_spec, bcmL_eq_merge, bcmL_spec
-graph/src/runtime/pending.rs	resync_published_indexes	1790	MODELLED	edge arm keyed by (src, dst, id): EdgeResync.resyncEdgeKeys/resyncEdges; property RollbackRestoresEdgeIndex refuted by bug2781_rollback_not_restored / bug2781_orphan_edge_doc (OPEN); fix shape resyncEdgesFixed_restores (node arm and full spec: proofs/pending_commit PD.resync_spec)
-graph/src/graph/graph.rs	commit_edge_index_locked	3956	MODELLED	re-add key re-resolved from the committed tensor, missing ids skipped: EdgeResync.resyncEdgeKeys (.1); PROVEN in proofs/graph_queries Index.commitEdgeDocs_mem
+graph/src/runtime/pending.rs	resync_published_indexes	1792	MODELLED	edge arm keyed by (src, dst, id): EdgeResync.resyncEdgeKeys/resyncEdges; property RollbackRestoresEdgeIndex refuted by bug2781_rollback_not_restored / bug2781_orphan_edge_doc (OPEN); fix shape resyncEdgesFixed_restores (node arm and full spec: proofs/pending_commit PD.resync_spec)
+graph/src/graph/graph.rs	commit_edge_index_locked	3966	MODELLED	re-add key re-resolved from the committed tensor, missing ids skipped: EdgeResync.resyncEdgeKeys (.1); PROVEN in proofs/graph_queries Index.commitEdgeDocs_mem

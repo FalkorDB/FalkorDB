@@ -164,6 +164,6 @@ graph/src/runtime/runtime.rs	materialize_node_property_values	1681	PROVEN	Runtim
 graph/src/runtime/runtime.rs	materialize_relationship_property	1729	PROVEN	RuntimeReads.matRelCol: matRelCol_eq
 graph/src/runtime/runtime.rs	materialize_relationship_property_values	1741	PROVEN	RuntimeReads.matRel: matRel_eq (= get_relationship_attribute per id; its by-name fallback resolves through the same attribute id)
 # eval.rs eval_batch (EvalBatch): expr_semantics BatchLaws discharged for the real batch and runtime.
-graph/src/runtime/eval.rs	ExprEval::eval_batch	1155	PROVEN	EvalBatch.laws/evalBatch_sound (expr_semantics evalBatch_eq_perRow with BatchLaws proved)
-graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1171	PROVEN	EvalBatch.laws/evalBatch_sound
+graph/src/runtime/eval.rs	ExprEval::eval_batch	1161	PROVEN	EvalBatch.laws/evalBatch_sound (expr_semantics evalBatch_eq_perRow with BatchLaws proved)
+graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1177	PROVEN	EvalBatch.laws/evalBatch_sound
 graph/src/runtime/row.rs	push_slot	224	PROVEN	Row pushSlot / pushSlots_spec (appends one slot, bound bit as given; #3059); proofs/runtime_ds pushSlot: getById_pushSlot, isBound_pushSlot

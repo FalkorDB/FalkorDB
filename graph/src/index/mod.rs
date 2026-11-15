@@ -714,6 +714,10 @@ impl Document {
         self.id
     }
 
+    #[allow(
+        clippy::match_same_arms,
+        reason = "temporal values and vectors are skipped for different reasons, each commented"
+    )]
     pub fn set(
         &mut self,
         field: &Field,
@@ -801,11 +805,7 @@ impl Document {
                 // temporal value: the scan ops refuse them (`can_utilize_index`), so
                 // a temporal predicate is answered by a label scan and its
                 // retained filter.
-                Value::Datetime(_)
-                | Value::Date(_)
-                | Value::Time(_)
-                | Value::Duration(_)
-                | Value::VecF32(_) => {}
+                Value::Datetime(_) | Value::Date(_) | Value::Time(_) | Value::Duration(_) => {}
                 Value::List(items) => {
                     // Index array elements in separate fields for contains queries.
                     // Numeric elements go to "range:{attr}:numeric:arr",
@@ -856,7 +856,7 @@ impl Document {
                         self.string_arr_values.extend(string_cstrs);
                     }
                 }
-                // Only for vector fields
+                Value::VecF32(_) => {} // Only for vector fields
                 Value::Point(p) => {
                     RediSearch_DocumentAddFieldGeo(
                         self.rs_doc,

@@ -15,8 +15,8 @@ the check commands.
 ## Auto-fix
 
 ```bash
-CXX=clang++ cargo clippy --fix --allow-dirty --workspace --all-targets
-CXX=clang++ cargo clippy --fix --allow-dirty -p falkordb-rs -p graph --all-targets --features index-falkordb
+CXX=${CXX:-clang++} cargo clippy --fix --allow-dirty --workspace --all-targets
+CXX=${CXX:-clang++} cargo clippy --fix --allow-dirty -p falkordb-rs -p graph --all-targets --features index-falkordb
 cargo clippy --fix --allow-dirty --all-targets --manifest-path native-deps/Cargo.toml
 cargo fmt --all
 cargo fmt --all --manifest-path native-deps/Cargo.toml

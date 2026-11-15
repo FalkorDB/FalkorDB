@@ -248,10 +248,10 @@ pub fn settle_constraint(
                 }
                 std::thread::sleep(BACKOFF);
             }
-            // The graph is gone, or this node is no longer a master. Neither
-            // resolves by waiting: on a demoted node the constraint is the new
-            // master's to finish, and `enforce_pending_constraints_after_promotion`
-            // is what picks it up.
+            // Settled; or the graph is gone, or this node is no longer a master.
+            // Neither of the last two resolves by waiting: on a demoted node the
+            // constraint is the new master's to finish, and
+            // `enforce_pending_constraints_after_promotion` is what picks it up.
             Ok(()) | Err(WriteAbort::GraphUnregistered | WriteAbort::NotAMaster) => break,
             // The version failed its own validation, so it was never published.
             // Permanent: retrying re-runs the same arithmetic on the same graph.

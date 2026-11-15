@@ -61,11 +61,11 @@ graph/src/runtime/eval.rs	eval_compound/In	540	PROVEN	contains_false_iff, contai
 graph/src/runtime/eval.rs	eval_compound/Quantifier	540	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec (arm at eval.rs:1003)
 graph/src/runtime/eval.rs	eval_compound/ListComprehension	540	MODELLED	comprehensionRust/CSrc (#2954; the model covers source dispatch only, with no WHERE and an identity projection, not the per-element predicate/projection evaluation): comprehension_eq_spec, comprehension_null, comprehension_scalar_err, comprehension_literal_range_unchanged; Entity.comprehensionSourceCheck_err (arm at eval.rs:1042-1085); bug F fixed
 graph/src/runtime/eval.rs	eval_compound/Reduce	540	PROVEN	reduce_nil, reduce_append (arm at eval.rs:1086)
-graph/src/runtime/eval.rs	eval_iter_expr	1231	MODELLED	comprehensionRust literal/range arms (since #2954 only these sources reach it from a comprehension; fallback arm was bug F, pre2954_comprehensionRust); range arm = rangeLazy/rangeIter (rangeLazy_eq_range)
-graph/src/runtime/eval.rs	eval_compiled_regex	1307	MODELLED	isMatchRust, spliceLit/spliceRepl_callSite (BUG C; E fixed #3604)
-graph/src/runtime/eval.rs	check_string_or_null	1314	NOT COVERED	type check only
-graph/src/runtime/eval.rs	eval_quantifier	1669	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
-graph/src/runtime/eval.rs	list_contains	1765	PROVEN	contains_false_iff
-graph/src/runtime/eval.rs	get_elements	1779	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
+graph/src/runtime/eval.rs	eval_iter_expr	1237	MODELLED	comprehensionRust literal/range arms (since #2954 only these sources reach it from a comprehension; fallback arm was bug F, pre2954_comprehensionRust); range arm = rangeLazy/rangeIter (rangeLazy_eq_range)
+graph/src/runtime/eval.rs	eval_compiled_regex	1313	MODELLED	isMatchRust, spliceLit/spliceRepl_callSite (BUG C; E fixed #3604)
+graph/src/runtime/eval.rs	check_string_or_null	1320	NOT COVERED	type check only
+graph/src/runtime/eval.rs	eval_quantifier	1675	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
+graph/src/runtime/eval.rs	list_contains	1771	PROVEN	contains_false_iff
+graph/src/runtime/eval.rs	get_elements	1785	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
 graph/src/runtime/value.rs	Contains::contains	1877	PROVEN	contains_false_iff
 graph/src/runtime/value.rs	add_slow (String/List arms)	967	PROVEN	str_concat_size, size_concat (String/List arms of add_slow)

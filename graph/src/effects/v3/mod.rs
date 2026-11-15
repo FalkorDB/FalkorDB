@@ -334,8 +334,7 @@ fn field_type_bits(field_type: u32) -> impl Iterator<Item = u32> {
         if rest == 0 {
             return None;
         }
-        // Lowest set bit, then clear it. `wrapping_neg` because `-rest` on the
-        // sign bit would overflow in debug.
+        // Lowest set bit, then clear it.
         let lowest = rest.isolate_lowest_one();
         rest &= rest - 1;
         Some(lowest)

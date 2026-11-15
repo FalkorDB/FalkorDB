@@ -104,12 +104,12 @@ graph/src/effects/v3/mod.rs	entity_from_tag	238	PROVEN	RecArms.entityFromTag: ta
 graph/src/effects/v3/mod.rs	update_opcode	248	PROVEN	ModRs.updateOpcode: updateOpcode_batchable
 graph/src/effects/v3/mod.rs	IndexFieldBit::index_type	290	PROVEN	RecArms.bitKind: bitKind_spec
 graph/src/effects/v3/mod.rs	field_type_bits	331	PROVEN	RecArms.setBits: setBits_spec
-graph/src/effects/v3/mod.rs	index_type_of	363	PROVEN	RecArms.indexTypeOf: indexTypeOf_mixed, #guards; used by bFieldType.rt
-graph/src/effects/v3/mod.rs	constraint_tag	400	PROVEN	RecArms.ctypeTag: tags_roundtrip
-graph/src/effects/v3/mod.rs	constraint_status_tag	416	PROVEN	RecArms.statusTag: tags_roundtrip
-graph/src/effects/v3/mod.rs	constraint_status_from_tag	425	PROVEN	RecArms.statusFromTag: tags_roundtrip, statusFromTag_err
-graph/src/effects/v3/mod.rs	constraint_from_tag	435	PROVEN	RecArms.ctypeFromTag: tags_roundtrip
-graph/src/effects/v3/mod.rs	new_buffer	475	PROVEN	Payload.newBuffer: ebNew_eq, openPayload_plain
+graph/src/effects/v3/mod.rs	index_type_of	362	PROVEN	RecArms.indexTypeOf: indexTypeOf_mixed, #guards; used by bFieldType.rt
+graph/src/effects/v3/mod.rs	constraint_tag	399	PROVEN	RecArms.ctypeTag: tags_roundtrip
+graph/src/effects/v3/mod.rs	constraint_status_tag	415	PROVEN	RecArms.statusTag: tags_roundtrip
+graph/src/effects/v3/mod.rs	constraint_status_from_tag	424	PROVEN	RecArms.statusFromTag: tags_roundtrip, statusFromTag_err
+graph/src/effects/v3/mod.rs	constraint_from_tag	434	PROVEN	RecArms.ctypeFromTag: tags_roundtrip
+graph/src/effects/v3/mod.rs	new_buffer	474	PROVEN	Payload.newBuffer: ebNew_eq, openPayload_plain
 graph/src/effects/mod.rs	ReplicationSink::replicate	65	AXIOMATISED	trait implemented in src/ by RedisModule_Replicate (Redis FFI); format.rs replicate proven up to the sink (fmtReplicate_transparent)
 graph/src/effects/mod.rs	EffectsFormat::new_buffer	102	PROVEN	trait decl; sole impl format.rs: fmtIsEmpty_iff
 graph/src/effects/mod.rs	EffectsFormat::is_empty	109	PROVEN	trait decl; sole impl: fmtIsEmpty_iff
