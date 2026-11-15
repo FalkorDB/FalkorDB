@@ -75,21 +75,21 @@ fi
 # The gate scripts come from the PR's base, not the PR: copy them over the
 # PR's own (left unstaged, so the checks above only saw the patch).
 cp "$GATE_DIR/lean_ci.sh" "$GATE_DIR/coverage.sh" proofs/
-lean=skipped; cov=pass; ok=pass
-if [[ -s ../out/proofs.patch ]]; then
-  lean=pass; proofs/lean_ci.sh > ../out/lean_ci.log 2>&1 || { lean=fail; ok=fail; }
-  # lake builds a project's default targets and what they import, so a file no
-  # target imports is never checked. Each added or changed .lean file must have
-  # a fresh .olean (this runner restores no cache).
-  unbuilt=""
-  for p in $(git diff --cached --name-only --no-renames --diff-filter=AM -- 'proofs/*.lean'); do
-    proj=$(cut -d/ -f1-2 <<< "$p"); mod=${p#"$proj"/}
-    [[ -f "$proj/.lake/build/lib/lean/${mod%.lean}.olean" ]] || unbuilt+="- \`$p\`"$'\n'
-  done
-  if [[ -n "$unbuilt" ]]; then
-    lean=fail; ok=fail
-    { echo; echo "Not built by any target of its project (import it from the project's root module):"; printf '%s' "$unbuilt"; } >> ../out/checks.md.tmp
-  fi
+cov=pass; ok=pass
+# Built even for an empty patch: the proofs are the PR head's, which the PR may
+# itself have edited, so "no proof change was needed" is only a pass if they build.
+lean=pass; proofs/lean_ci.sh > ../out/lean_ci.log 2>&1 || { lean=fail; ok=fail; }
+# lake builds a project's default targets and what they import, so a file no
+# target imports is never checked. Each added or changed .lean file must have
+# a fresh .olean (this runner restores no cache).
+unbuilt=""
+for p in $(git diff --cached --name-only --no-renames --diff-filter=AM -- 'proofs/*.lean'); do
+  proj=$(cut -d/ -f1-2 <<< "$p"); mod=${p#"$proj"/}
+  [[ -f "$proj/.lake/build/lib/lean/${mod%.lean}.olean" ]] || unbuilt+="- \`$p\`"$'\n'
+done
+if [[ -n "$unbuilt" ]]; then
+  lean=fail; ok=fail
+  { echo; echo "Not built by any target of its project (import it from the project's root module):"; printf '%s' "$unbuilt"; } >> ../out/checks.md.tmp
 fi
 COVERAGE_RUST_ROOT="$GITHUB_WORKSPACE/code" bash proofs/coverage.sh --unmatched > ../out/coverage.log 2>&1 || cov=fail
 # coverage.sh exits 0 with findings; the counts decide (as in lean-proofs.yml).

@@ -64,14 +64,22 @@ NEXT_RE = re.compile(r'\n(?=[ \t]*(?:@\[[^\n]*\][ \t\n]*)?(?:(?:private|protecte
                      r'(?:theorem|lemma|def|abbrev|instance|example|structure|inductive|class|opaque|axiom|'
                      r'namespace|section|end|mutual|open|variable|set_option|attribute|#)\b)')
 
+BINDER_RE = re.compile(r"(?:let|have|letI|haveI)(?![\w'!?])")
+
 def statement(src, k):
     """Text from k to the first := outside brackets and strings.
 
     A theorem proved by equation clauses (`| pat => proof`, no `:=`) ends at its
     first clause instead: the line-leading `|` at the least indentation before
-    the next command (a `match` in the statement has its arms indented deeper).
+    the next command or the first `:=` (a `match` in the statement has its arms
+    indented deeper).
+
+    A `let`/`have` in the statement (`theorem t : let m := v; P m := proof`)
+    owns the next `:=`, so the proof separator is the one after them. A binder
+    with no `:=` of its own makes the statement run on to the next command,
+    proof included: a proof edit is then held, never passed unseen.
     """
-    depth, i, in_str = 0, k, False
+    depth, i, in_str, binders = 0, k, False, 0
     while i < len(src):
         c = src[i]
         if in_str:
@@ -87,16 +95,24 @@ def statement(src, k):
             depth += 1
         elif c in ')]}':
             depth -= 1
-        elif depth == 0 and src.startswith(':=', i):
-            break
+        elif (m := BINDER_RE.match(src, i)) and (i == 0 or not re.match(r"[\w.'!?]", src[i - 1])):
+            binders += 1; i = m.end(); continue
+        elif src.startswith(':=', i):
+            if binders:
+                binders -= 1; i += 2; continue
+            if depth == 0:
+                break
         i += 1
     nxt = NEXT_RE.search(src, k)
-    if nxt and nxt.start() < i:
-        bars = [m for m in re.finditer(r'\n([ \t]*)\|', src[k:nxt.start()])]
-        if bars:
-            i = k + min(bars, key=lambda m: (len(m.group(1)), m.start())).start()
-        else:
-            i = nxt.start()
+    stop = nxt.start() if nxt and nxt.start() < i else None
+    bars = list(re.finditer(r'\n([ \t]*)\|', src[k:stop if stop is not None else i]))
+    # Bars before the `:=` are clauses too when nothing above them opens a
+    # match (`match .. with`, `fun |`, `function`): the `:=` was then inside a
+    # clause's proof (`obtain ⟨a, b⟩ := h`, a `calc` step), not the separator.
+    if bars and (stop is not None or not re.search(r'\bwith\b|\bfun\s*\||\bfunction\b', src[k:k + bars[0].start()])):
+        i = k + min(bars, key=lambda m: (len(m.group(1)), m.start())).start()
+    elif stop is not None:
+        i = stop
     # Collapse whitespace outside string literals only.
     parts = re.split(r'("(?:\\.|[^"\\])*")', src[k:i])
     return ''.join(p if p.startswith('"') else ' '.join(p.split()) + ' ' for p in parts).strip()
@@ -223,12 +239,15 @@ with open(added_path, 'w') as out:
 RANK = {b: i for i, b in enumerate(['PROVEN', 'CONDITIONAL', 'AXIOMATISED', 'MODELLED', 'NOT COVERED', 'TEST-ONLY'])}
 
 def worst(text):
+    # Read rows as coverage.sh does: a header anywhere (or none), '#' comments,
+    # buckets in any case. Skipping only the first line would let a row put
+    # above the header count in coverage.sh yet go unseen here.
     out = {}
-    for line in text.splitlines()[1:]:
+    for line in text.splitlines():
         cols = line.split('\t')
-        if len(cols) < 4:
+        if len(cols) < 4 or cols[0].strip().lower() == 'file' or not cols[0].strip() or line.startswith('#'):
             continue
-        key, rank = (cols[0], cols[1]), RANK.get(cols[3].strip(), len(RANK))
+        key, rank = (cols[0], cols[1]), RANK.get(cols[3].strip().upper(), len(RANK))
         out[key] = max(out.get(key, rank), rank)
     return out
 
@@ -240,7 +259,8 @@ def bare(key):
     name = key[1].strip().split('/')[0].split('::')[-1].split('.')[-1].split('(')[0].strip()
     return (key[0].strip().lstrip('./'), name)
 
-for f in git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=MD', '--', 'proofs/*/COVERAGE.tsv').split():
+# A: an added COVERAGE.tsv starts from no rows, so its claims are held too.
+for f in git('diff', '--cached', '--name-only', '--no-renames', '--diff-filter=AMD', '--', 'proofs/*/COVERAGE.tsv').split():
     old, new = worst(git('show', f'{base}:{f}')), worst(git('show', f':{f}'))
     names = {v: k for k, v in RANK.items()}
     for key, rank in old.items():
