@@ -102,11 +102,11 @@ enum ProjectionKind {
 /// The labels of a bound `REMOVE n:L1:L2` item, or `None` for a property
 /// removal.
 #[must_use]
-pub fn removed_node_labels(item: &QueryExpr<Variable>) -> Option<Vec<Arc<String>>> {
+pub(crate) fn removed_node_labels(item: &QueryExpr<Variable>) -> Option<Vec<Arc<String>>> {
     let root = item.root();
     match root.data() {
         ExprIR::FuncInvocation(func) if func.name == "hasLabels" => Some(
-            root.child(1)
+            root.get_child(1)?
                 .children()
                 .filter_map(|c| match c.data() {
                     ExprIR::Constant(Value::String(label)) => Some(label.clone()),
