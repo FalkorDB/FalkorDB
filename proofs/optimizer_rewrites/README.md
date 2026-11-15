@@ -150,15 +150,15 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 80 function rows:
+`COVERAGE.tsv` has 85 function rows:
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 38 |
-| NOT COVERED | 42 |
+| NOT COVERED | 47 |
 
-- **PROVEN:** every production function in the optimizer files this project owns.
-- **NOT COVERED:** all test or benchmark code. 16 rows are `#[cfg(test)]` plan-shape unit tests in `reduce_bound_edge.rs` and `reduce_var_len_path.rs`. 26 rows are the GraphBLAS `*_bench.rs` harnesses, listed here only so `bash proofs/coverage.sh` can exclude them.
+- **PROVEN:** every production function in the optimizer files this project owns, except the five planner helpers below.
+- **NOT COVERED:** all test or benchmark code. 16 rows are `#[cfg(test)]` plan-shape unit tests in `reduce_bound_edge.rs` and `reduce_var_len_path.rs`. 26 rows are the GraphBLAS `*_bench.rs` harnesses, listed here only so `bash proofs/coverage.sh` can exclude them. The other 5 rows are production helpers added by the var-length anchor change (#2558) and not modelled yet: `collect_expr_scoped_variables`, `collect_single_variable_conjuncts`, `walk`, `endpoint_scan_score`, `walk_scans_to_endpoint`.
 
 ## What the model does not cover
 
