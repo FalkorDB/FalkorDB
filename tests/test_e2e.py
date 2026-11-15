@@ -1863,7 +1863,6 @@ def test_deep_expression_nesting_is_rejected():
     assert query("RETURN 1").result_set == [[1]]
 
 
-
 def test_long_clause_chains_run():
     # Every clause stacks an operator on the previous clause's, and the
     # optimizer and runtime recurse once per operator: 2000 chained UNWINDs,
@@ -1886,6 +1885,21 @@ def test_long_clause_chains_run():
         "Query nesting exceeds the maximum depth of 10000",
     )
     assert query("RETURN 1").result_set == [[1]]
+
+
+def test_deep_clause_nesting_is_rejected():
+    # SET/REMOVE property chains and nested FOREACH were built outside the
+    # expression parser's depth guard, so a few kilobytes of either overflowed
+    # the stack and took the server down. They must come back as errors.
+    n = 5000
+    for q in [
+        f"MATCH (n) SET n{'.a' * n} = 1",
+        f"MATCH (n) REMOVE n{'.a' * n}",
+        f"{'FOREACH (x IN [1] | ' * n}CREATE (){')' * n}",
+    ]:
+        query_exception(q, "Query nesting exceeds")
+        assert query("RETURN 1").result_set == [[1]]
+
 
 def test_index():
     res = query(
