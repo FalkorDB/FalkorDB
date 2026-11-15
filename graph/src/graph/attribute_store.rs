@@ -121,9 +121,11 @@ use rustc_hash::FxHashMap;
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
 use crate::runtime::value::Value;
 
-/// Highest `u16`, reserved as "no attribute" — C's `ATTRIBUTE_ID_NONE`
-/// (`USHRT_MAX`, `src/graph/entities/attribute_set.h`). Never a valid id, so an id
-/// this large in an RDB is malformed rather than merely out of our range.
+/// Highest `u16`, reserved as "no attribute".
+///
+/// C's `ATTRIBUTE_ID_NONE` (`USHRT_MAX`, `src/graph/entities/attribute_set.h`).
+/// Never a valid id, so an id this large in an RDB is malformed rather than
+/// merely out of our range.
 pub const ATTRIBUTE_ID_NONE: u16 = u16::MAX;
 
 /// How many distinct attribute names a graph can hold, given that
@@ -1376,17 +1378,33 @@ impl AttributeStore {
 
     /// Import pre-resolved attribute data directly.
     /// Skips name resolution and OrderMap construction; used by bulk insert.
+    ///
+    /// The ids come straight from a client-supplied header, so they are brought to
+    /// the span invariant here — unique and real — as the RDB decoder does with its
+    /// `attr_limit` check: a column the dictionary refused to mint
+    /// ([`ATTRIBUTE_ID_NONE`]) is dropped, and of a repeated id the first column is
+    /// kept (the sort is stable). Otherwise a header naming more attributes than the
+    /// id space holds builds a span longer than `Slot::len` (a `u16`) can count:
+    /// 65,536 entries stored `len = 0` and the entity silently lost every property
+    /// (#2539).
     pub fn import_attrs_resolved(
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
     ) -> usize {
         let mut nset = 0;
         for (entity_id, mut entries) in data.drain(..) {
+            entries.sort_by_key(|(idx, _)| *idx);
+            entries.dedup_by_key(|(idx, _)| *idx);
+            if entries
+                .last()
+                .is_some_and(|(idx, _)| *idx == ATTRIBUTE_ID_NONE)
+            {
+                entries.pop();
+            }
             if entries.is_empty() {
                 continue;
             }
             nset += entries.len();
-            entries.sort_by_key(|(idx, _)| *idx);
             self.data.set_span(entity_id, &mut entries);
         }
         nset
@@ -1414,15 +1432,27 @@ impl AttributeStore {
         count: u64,
         offset: u64,
     ) {
-        let mut skipped = 0u64;
-        let mut encoded = 0u64;
+        if count == 0 {
+            return;
+        }
+        // Seek straight to the `offset`-th live id. Walking from id 0 and skipping
+        // `offset` live ids one by one made a multi-key save quadratic: each of the
+        // ~N / VKEY_MAX_ENTITY_COUNT virtual keys re-walked every id before its
+        // slice, which for a 117M-edge graph was ~90% of a 90 s SAVE.
+        let Some(start) = nth_live_id(deleted, max_id, offset) else {
+            return;
+        };
 
-        for id in 0..=max_id {
-            if deleted.contains(id) {
-                continue;
-            }
-            if skipped < offset {
-                skipped += 1;
+        // Deleted ids are visited in order alongside the id walk, rather than
+        // probed with `contains` for every id.
+        let mut deleted_iter = deleted.iter();
+        deleted_iter.advance_to(start);
+        let mut next_deleted = deleted_iter.next();
+
+        let mut encoded = 0u64;
+        for id in start..=max_id {
+            if next_deleted == Some(id) {
+                next_deleted = deleted_iter.next();
                 continue;
             }
 
@@ -1444,6 +1474,35 @@ impl AttributeStore {
             }
         }
     }
+}
+
+/// The `n`-th (0-based) id in `0..=max_id` that is not in `deleted`, or `None`
+/// when there are not that many.
+///
+/// The number of live ids in `0..=x` is `x + 1 - deleted.rank(x)`, which is
+/// monotone in `x`, so the answer is the smallest `x` where it exceeds `n` —
+/// found by binary search in `O(log max_id)` rank queries.
+fn nth_live_id(
+    deleted: &RoaringTreemap,
+    max_id: u64,
+    n: u64,
+) -> Option<u64> {
+    // `rank(x) <= x + 1`, so this neither underflows nor overflows in u128.
+    let live_through = |x: u64| u128::from(x) + 1 - u128::from(deleted.rank(x));
+    let n128 = u128::from(n);
+    if live_through(max_id) <= n128 {
+        return None;
+    }
+    let (mut lo, mut hi) = (n, max_id);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if live_through(mid) > n128 {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    Some(lo)
 }
 
 impl Decode<19> for AttributeStore {
@@ -1676,7 +1735,7 @@ mod tests {
         let store = store_with(&[(1, &pairs)]);
         assert_eq!(store.entity_memory_usage(1), 4 * 12);
         assert_eq!(store.entity_memory_usage(2), 0);
-        assert!(store.data.block(0).unwrap().heap.is_empty());
+        assert_eq!(store.data.block(0).unwrap().heap, [] as [Value; 0]);
     }
 
     #[test]
@@ -1714,7 +1773,7 @@ mod tests {
         // The old string's heap slot must be recycled, not leaked.
         let block = store.data.block(0).unwrap();
         assert_eq!(block.heap.len(), 1);
-        assert!(block.heap_free.is_empty());
+        assert_eq!(block.heap_free, [] as [u32; 0]);
     }
 
     #[test]
@@ -1958,7 +2017,7 @@ mod tests {
         ops: Vec<Op>,
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug, PartialEq)]
     enum Op {
         Unsigned(u64),
         Signed(i64),
@@ -2099,6 +2158,37 @@ mod tests {
     }
 
     #[test]
+    fn resolved_import_never_overflows_the_slot_length() {
+        // A bulk header with more names than the id space: every id is minted,
+        // then the dictionary refuses the rest (ATTRIBUTE_ID_NONE), which used to
+        // make 65,536 entries and store `len = 0` — every property lost.
+        for extra in [1usize, 2, 70] {
+            let mut entries: Vec<(u16, Value)> = (0..MAX_ATTRIBUTES)
+                .map(|i| (i as u16, Value::Int(i as i64)))
+                .collect();
+            entries.extend((0..extra).map(|i| (ATTRIBUTE_ID_NONE, Value::Int(-(i as i64)))));
+            let mut store = AttributeStore::default();
+            let nset = store.import_attrs_resolved(&mut vec![(3, entries)]);
+            assert_eq!(nset, MAX_ATTRIBUTES, "extra = {extra}");
+            assert_eq!(store.get_all_attrs_by_id(3).count(), MAX_ATTRIBUTES);
+            assert_eq!(store.get_attr_by_idx(3, 0), Some(Value::Int(0)));
+            assert_eq!(
+                store.get_attr_by_idx(3, (MAX_ATTRIBUTES - 1) as u16),
+                Some(Value::Int((MAX_ATTRIBUTES - 1) as i64))
+            );
+        }
+
+        // a repeated id keeps its first value and is stored once
+        let mut store = AttributeStore::default();
+        let entries = vec![(0, Value::Int(1)), (1, Value::Int(2)), (0, Value::Int(3))];
+        assert_eq!(store.import_attrs_resolved(&mut vec![(0, entries)]), 2);
+        assert_eq!(
+            store.get_all_attrs_by_id(0).collect::<Vec<_>>(),
+            vec![(0, Value::Int(1)), (1, Value::Int(2))]
+        );
+    }
+
+    #[test]
     fn minting_stops_at_the_id_space_rather_than_wrapping() {
         // Fill the dictionary to capacity, then ask for one more name.
         let mut dict = AttrNameMap::default();
@@ -2172,5 +2262,65 @@ mod tests {
             1,
             "only the in-range attribute should have been stored"
         );
+    }
+
+    /// A store split across virtual keys is encoded one `(count, offset)` slice
+    /// at a time. However the live ids are sliced — deleted ids at the start, in
+    /// runs, at the end, slices wider than what is left — the slices must
+    /// concatenate to exactly the walk over every live id in order.
+    #[test]
+    fn encode_slices_concatenate_to_the_full_walk() {
+        let max_id = 60u64;
+        let deleted: RoaringTreemap = [0u64, 1, 7, 8, 9, 23, 40, 59, 60].into_iter().collect();
+        let mut store = AttributeStore::default();
+        // Every third id has an attribute, so spans and empty entities interleave.
+        let mut data: Vec<(u64, Vec<(u16, Value)>)> = (0..=max_id)
+            .filter(|id| id % 3 == 0 && !deleted.contains(*id))
+            .map(|id| (id, vec![(0, Value::Int(id as i64))]))
+            .collect();
+        store.import_attrs_resolved(&mut data);
+
+        let mut expected = Recorder::default();
+        let live: Vec<u64> = (0..=max_id).filter(|id| !deleted.contains(*id)).collect();
+        for &id in &live {
+            expected.write_unsigned(id);
+            if id % 3 == 0 {
+                expected.write_unsigned(1);
+                expected.write_unsigned(0);
+                Value::Int(id as i64).encode(&mut expected);
+            } else {
+                expected.write_unsigned(0);
+            }
+        }
+
+        let total = live.len() as u64;
+        for slice in [1u64, 2, 5, 13, total, total + 7] {
+            let mut got = Recorder::default();
+            let mut offset = 0;
+            while offset < total {
+                let count = slice.min(total - offset);
+                store.encode_with_range(&mut got, &deleted, max_id, count, offset);
+                offset += count;
+            }
+            assert_eq!(got.ops, expected.ops, "slices of {slice} disagree");
+        }
+
+        // An offset past the last live id writes nothing.
+        let mut past = Recorder::default();
+        store.encode_with_range(&mut past, &deleted, max_id, 5, total);
+        assert_eq!(past.ops, [] as [Op; 0]);
+    }
+
+    #[test]
+    fn nth_live_id_skips_deleted_ids() {
+        let deleted: RoaringTreemap = [0u64, 1, 4, 9, 10].into_iter().collect();
+        let live: Vec<u64> = (0..=10).filter(|id| !deleted.contains(*id)).collect();
+        for (n, &id) in live.iter().enumerate() {
+            assert_eq!(nth_live_id(&deleted, 10, n as u64), Some(id));
+        }
+        assert_eq!(nth_live_id(&deleted, 10, live.len() as u64), None);
+        assert_eq!(nth_live_id(&RoaringTreemap::new(), 0, 0), Some(0));
+        let all: RoaringTreemap = (0u64..=5).collect();
+        assert_eq!(nth_live_id(&all, 5, 0), None);
     }
 }
