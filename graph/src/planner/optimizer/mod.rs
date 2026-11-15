@@ -170,7 +170,7 @@ pub(crate) fn endpoint_scan_score(
 /// `to` end only when it strictly outscores `from`, a tie keeps the pattern's
 /// own direction. The planner asks the same question to decide whether a walk
 /// can lead its component, so both read this one rule.
-pub(crate) fn walk_scans_to_endpoint(
+pub(crate) const fn walk_scans_to_endpoint(
     from_score: u32,
     to_score: u32,
 ) -> bool {
