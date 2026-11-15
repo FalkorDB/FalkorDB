@@ -217,6 +217,21 @@ impl Row {
         }
     }
 
+    /// Appends one slot after the last one, holding `value` with the bound
+    /// bit set to `bound`. An unbound `Null` slot reads back as in scope but
+    /// unbound.
+    #[inline]
+    pub fn push_slot(
+        &mut self,
+        value: Value,
+        bound: bool,
+    ) {
+        if bound {
+            self.bound.set(self.values.len());
+        }
+        self.values.push(value);
+    }
+
     /// Clears the bound bit for variable id `id`, leaving the stored value
     /// intact, for value-present-but-unbound columnar slots.
     pub fn unbind_by_id(
