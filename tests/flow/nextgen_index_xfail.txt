@@ -46,7 +46,6 @@ test_index_scans:testIndexScanFlow.test_28_array_index
 test_index_scans:testIndexScanFlow.test_30_update_array_index
 test_index_scans:testIndexScanFlow.test_31_remove_array_index
 test_index_scans:testIndexScanFlow.test_32_multiple_array_indexed_entities
-test_index_scans:testIndexScanFlow.test_47_bool_is_not_a_number_in_the_index
 
 # ---------------------------------------------------------------------------
 # String and text predicates on a Range index — tags, stopwords, escaping, mixed-type columns.
@@ -143,3 +142,13 @@ test_index_scans:testIndexScanFlow.test13_point_index_scan
 # ---------------------------------------------------------------------------
 error: a union of 2 members on `*` with a member that is not an equality or IN list
 test_index_scans:testIndexScanFlow.test_46_range_does_not_return_points_or_serve_a_bool_valued_operand
+
+# ---------------------------------------------------------------------------
+# Bool is not a number — `n.v = 1` also returned the node holding `true`. The native index keys a
+# Bool as 1/0, so an equality or range on a number returns the Bools too (#2963); the test pins
+# that an index scan returns what a label scan does. No error: wrong rows, which the assertions
+# below name.
+# ---------------------------------------------------------------------------
+assertion: [['bool'], ['int']] == [['int']]
+assertion: [['bool'], ['false'], ['int'], ['zero']] == [['int'], ['zero']]
+test_index_scans:testIndexScanFlow.test_47_bool_is_not_a_number_in_the_index
