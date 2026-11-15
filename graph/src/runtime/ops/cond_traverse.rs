@@ -1152,10 +1152,10 @@ impl<'a> CondTraverseOp<'a> {
         };
         let mut w = 0;
         for r in 0..rev.len() {
-            let seen = match &sorted_copy {
-                Some(v) => v.binary_search(&key(&rev[r])).is_ok(),
-                None => fwd.binary_search_by_key(&key(&rev[r]), key).is_ok(),
-            };
+            let seen = sorted_copy.as_ref().map_or_else(
+                || fwd.binary_search_by_key(&key(&rev[r]), key).is_ok(),
+                |v| v.binary_search(&key(&rev[r])).is_ok(),
+            );
             if !seen {
                 rev.swap(w, r);
                 w += 1;
