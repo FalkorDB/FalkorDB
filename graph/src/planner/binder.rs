@@ -785,6 +785,12 @@ impl Binder {
                     if restored.contains(&v.id) {
                         continue;
                     }
+                    if v.name.is_none() {
+                        // A nameless variable keeps its slot without a key a
+                        // query could spell.
+                        self.current_env_mut().push_unnamed(v);
+                        continue;
+                    }
                     let key = Arc::new(format!("_foreach_{}_{}", scope_id, v.id));
                     self.current_env_mut().insert(key, v);
                 }
