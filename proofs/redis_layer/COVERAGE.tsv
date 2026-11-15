@@ -274,8 +274,8 @@ src/commands/explain.rs	explain	36	PROVEN	Commands.explainLine: explainLine_inde
 src/commands/explain.rs	graph_explain	60	PROVEN	Commands.explainCmd/explainCmdA: explain_missing, explain_inline, explain_flags_first, explain_flags_ok; QueryArgs.explainFront (parse_query_flags, explain.rs:65): four_commands_share
 src/commands/info.rs	graph_info	22	PROVEN	Commands.infoSections: info_all, info_unknown_only, info_case
 src/commands/info.rs	format_avg	88	PROVEN	Commands.formatAvg: formatAvg_int
-src/commands/list.rs	c_reply_name	47	PROVEN	Commands.cReplyName: cReplyName_nonul
-src/commands/list.rs	graph_list	60	PROVEN	Commands.scanLoop: scanLoop_nonul
+src/commands/list.rs	c_reply_name	48	PROVEN	Commands.cReplyName: cReplyName_nonul
+src/commands/list.rs	graph_list	67	PROVEN	Commands.scanLoop: scanLoop_nonul
 src/commands/memory.rs	c_schema_name	69	PROVEN	Commands.cSchemaName = cReplyName: cReplyName_nonul
 src/commands/memory.rs	memory_report	73	PROVEN	Commands.memTotal/memFields: memTotal_sum
 src/commands/memory.rs	graph_memory	185	PROVEN	Commands.memArgs: memArgs_default, memArgs_samples (SAMPLES 0 accepted, #3053), memArgs_samples_err
@@ -297,3 +297,4 @@ src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filte
 src/graph_core.rs	RedisBuildHost::publish	1603	NOT COVERED	online index build (#2355): not modelled yet
 src/graph_core.rs	RedisBuildHost::warn	1612	NOT COVERED	online index build (#2355): not modelled yet
 graph/src/env_snapshot.rs	leak_deep_copy	22	NOT COVERED	Not modelled. Deep-copies a NULL-terminated char** (array and strings) and leaks it; unit-tested in env_snapshot::tests (NULL, empty, order, source freed after copy)
+src/commands/list.rs	reply_bytes	59	PROVEN	Commands.replyBytes: replyBytes_str, replyBytes_nonstr (CallReply string bytes = FFI input)

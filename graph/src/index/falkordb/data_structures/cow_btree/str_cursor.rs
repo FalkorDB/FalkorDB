@@ -277,9 +277,12 @@ impl<const BRANCH_MAX: usize> PageTree<StrLeaf, BRANCH_MAX> {
     ) -> StrRange<BRANCH_MAX> {
         self.range(&Bound::Included(key.clone()), Bound::Included(key.clone()))
     }
+}
 
-    /// Every tuple, in order. For tests.
-    #[cfg(test)]
+/// The string tree's test helpers: every tuple, and the pages' shape.
+#[cfg(test)]
+impl<const BRANCH_MAX: usize> PageTree<StrLeaf, BRANCH_MAX> {
+    /// Every tuple, in order.
     #[must_use]
     pub fn tuples(&self) -> Vec<(Vec<u8>, u64)> {
         fn walk<const B: usize>(
@@ -297,8 +300,7 @@ impl<const BRANCH_MAX: usize> PageTree<StrLeaf, BRANCH_MAX> {
     }
 
     /// Every page's size in tuples and bytes, and the tree's height. Asserts every page sits at
-    /// one depth. For tests.
-    #[cfg(test)]
+    /// one depth.
     #[must_use]
     pub fn shape(&self) -> (Vec<(usize, usize)>, usize) {
         fn walk<const B: usize>(
@@ -515,6 +517,43 @@ mod tests {
         }
         assert_eq!(grown.tuples(), tree.tuples());
         assert_eq!(grown.point(&long).collect::<Vec<_>>(), vec![2]);
+    }
+
+    /// Removing from a short-key page that neighbours an oversized-string page must finish: the pair
+    /// cannot be merged, so the rebalance has to leave it as it is rather than retry it.
+    #[test]
+    fn removing_beside_an_oversized_page_terminates() {
+        let long = Arc::new("z".repeat(5000));
+        let tuples = vec![
+            (Arc::new("a".to_string()), 0),
+            (Arc::new("b".to_string()), 1),
+            (long.clone(), 2),
+        ];
+        let mut tree = StrTree::<8>::from_sorted(&tuples);
+        tree.remove_batch(&[(Arc::new("a".to_string()), 0)]);
+        assert_eq!(tree.tuples().len(), 2);
+        assert_eq!(tree.point(&long).collect::<Vec<_>>(), vec![2]);
+        // The single-tuple path too.
+        let mut tree = StrTree::<8>::from_sorted(&tuples);
+        assert!(tree.remove(Arc::new("a".to_string()), 0));
+        assert_eq!(tree.tuples().len(), 2);
+        // And with the oversized page emptied last.
+        assert!(tree.remove(Arc::new("b".to_string()), 1));
+        assert_eq!(tree.point(&long).collect::<Vec<_>>(), vec![2]);
+    }
+
+    /// A batch that repeats a tuple stores it once: a point lookup yields each doc once.
+    #[test]
+    fn a_repeated_tuple_in_a_batch_is_stored_once() {
+        let k = Arc::new("dup".to_string());
+        let mut tree = StrTree::<8>::default();
+        tree.insert_batch(&[(k.clone(), 1), (k.clone(), 1), (k.clone(), 2)]);
+        assert_eq!(tree.point(&k).collect::<Vec<_>>(), vec![1, 2]);
+        let page = StrTree::<8>::from_sorted(&[(Arc::new("a".to_string()), 5)]);
+        let mut tree = page;
+        let other = Arc::new("b".to_string());
+        tree.insert_batch(&[(other.clone(), 7), (other.clone(), 7)]);
+        assert_eq!(tree.point(&other).collect::<Vec<_>>(), vec![7]);
     }
 
     /// Each string is stored once per page, so a repeated string costs about a doc per entity.

@@ -148,13 +148,23 @@ fn merge_underfull<P: Page, const BRANCH_MAX: usize>(
         if children[i].is_underfull() {
             let len = children.len();
             let left = if (i + 1) < len { i } else { i - 1 };
+            let before = (children[left].fill(), children[left + 1].fill());
             let _ = combine_with_sibling(children, seps, i);
             // A merge leaves one node at `left`; a borrow leaves two, at `left` and `left + 1`.
             let produced = if children.len() < len { 1 } else { 2 };
             for child in &mut children[left..left + produced] {
                 child.merge_underfull_below();
             }
-            i = left;
+            // A borrow that leaves both nodes as they were (a neighbour that is a single oversized
+            // page cannot give or take) would be retried forever: move on to the next child.
+            i = if produced == 2
+                && before == (children[left].fill(), children[left + 1].fill())
+                && children[left].is_underfull()
+            {
+                left + 1
+            } else {
+                left
+            };
         } else {
             i += 1;
         }
@@ -511,6 +521,14 @@ impl<P: Page, const BRANCH_MAX: usize> Node<P, BRANCH_MAX> {
         match self {
             Self::Leaf(leaf) => leaf.is_underfull(),
             Self::Branch(branch) => branch.is_underfull(),
+        }
+    }
+
+    /// How full this node is: a leaf's tuples, a branch's children.
+    fn fill(&self) -> usize {
+        match self {
+            Self::Leaf(leaf) => leaf.count(),
+            Self::Branch(branch) => branch.children.len(),
         }
     }
 

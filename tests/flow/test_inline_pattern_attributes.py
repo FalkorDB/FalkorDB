@@ -243,8 +243,8 @@ class testInlinePatternAttributes(FlowTestsBase):
     # Verified by ablation: with the endpoint filter deliberately emitted twice,
     # this plan is byte-identical, because `utilize_index` folds
     # `And(a.p = 1, a.p = 1)` back into a single index query. What actually
-    # prevents it is `debug_assert_no_pattern_attrs`: with the attrs stripped there is
-    # nothing left for a downstream pass to re-derive a second copy from.
+    # prevents it is that the pattern's attrs are stripped once the filter is emitted:
+    # nothing is left for a downstream pass to re-derive a second copy from.
     def test14_inline_attr_is_served_by_the_index(self):
         g = self.db.select_graph(GRAPH_ID + "_once")
         g.query("CREATE (a:L {p: 1})-[:R]->(b:L {p: 2})")

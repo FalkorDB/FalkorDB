@@ -54,10 +54,11 @@ impl Routed {
             EntityType::Node => g.get_labels(),
             EntityType::Relationship => g.get_types(),
         };
+        let indexed = g.falkordb_index.labels_with_columns(entity);
         Self(
             names
                 .iter()
-                .map(|name| g.falkordb_index.has_label_columns(entity, name))
+                .map(|name| indexed.contains(name.as_str()))
                 .collect(),
         )
     }

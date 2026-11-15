@@ -2731,6 +2731,10 @@ fn check_rules(
         let Some(state) = g.falkordb_index.column_state(EntityType::Node, label, attr) else {
             panic!("{what}: no column on {attr}");
         };
+        let column = g
+            .falkordb_index
+            .column(EntityType::Node, label, attr)
+            .expect("a column");
         let mut expected = BTreeSet::new();
         for (&id, (person, v, w)) in &model {
             let below = match state.next() {
@@ -2739,18 +2743,12 @@ fn check_rules(
                 Some(_) => unreachable!("a node column"),
             };
             if let (true, true, Some(value)) = (*person, below, if i == 0 { v } else { w }) {
-                for_each_stored_key(value, |kind, key| {
-                    expected.insert((kind, ColumnKey::Encoded(key), id));
+                column.for_each_stored_key(value, |kind, key| {
+                    expected.insert((kind, key, id));
                 });
             }
         }
-        let held: BTreeSet<(KeyKind, ColumnKey, u64)> = g
-            .falkordb_index
-            .column(EntityType::Node, label, attr)
-            .expect("a numeric column")
-            .tuples()
-            .into_iter()
-            .collect();
+        let held: BTreeSet<(KeyKind, ColumnKey, u64)> = column.tuples().into_iter().collect();
         assert_eq!(held, expected, "{what}: {attr} ({state:?})");
     }
 }

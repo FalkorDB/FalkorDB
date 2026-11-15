@@ -9,7 +9,7 @@
 //! back at the graph for background population; that cycle is exactly what this
 //! avoids. The write path mutates a version's own copy instead.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use roaring::RoaringTreemap;
@@ -647,16 +647,18 @@ impl FalkorDbIndex {
         !self.columns(entity).is_empty()
     }
 
-    /// Whether `label` (a label for nodes, a type for relationships) has any column.
+    /// The labels (for nodes) or types (for relationships) that have any column, in one pass over
+    /// the columns: what the write path routes by, so a hook costs the columns once, not once per
+    /// label.
     #[must_use]
-    pub fn has_label_columns(
+    pub fn labels_with_columns(
         &self,
         entity: EntityType,
-        label: &str,
-    ) -> bool {
+    ) -> HashSet<&str> {
         self.columns(entity)
             .keys()
-            .any(|(l, _)| l.as_str() == label)
+            .map(|(label, _)| label.as_str())
+            .collect()
     }
 
     /// Number of index columns (node + edge).
