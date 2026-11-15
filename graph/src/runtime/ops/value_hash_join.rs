@@ -787,4 +787,17 @@ mod tests {
         let entries: usize = table.values().map(Vec::len).sum();
         assert_eq!(entries, 3);
     }
+
+    /// `Int(i64::MAX)` rounds to `2^63` as an `f64`, which is out of `i64`
+    /// range: it still has to hash with the `Float` it is `=` to.
+    #[test]
+    fn int_max_hashes_with_the_float_it_equals() {
+        let float = Value::Float(i64::MAX as f64);
+        assert!(keys_match(&Value::Int(i64::MAX), &float));
+        assert_eq!(hash_value(&Value::Int(i64::MAX)), hash_value(&float));
+        assert_eq!(
+            hash_value(&Value::Int(i64::MIN)),
+            hash_value(&Value::Float(i64::MIN as f64))
+        );
+    }
 }
