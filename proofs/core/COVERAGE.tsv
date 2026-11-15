@@ -1,0 +1,4 @@
+# proofs/core (FalkorCore) holds shared foundations (Value V F, float model F, i64, orderings).
+# It models no Rust fn on its own: every value.rs row stays with the project that proves it
+# (value_order, value_math, expr_semantics, ...), which imports FalkorCore.
+file	function	line	bucket	lean_name_or_reason
