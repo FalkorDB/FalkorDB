@@ -38,6 +38,10 @@ use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+/// Prefix of the env key that reserves an aggregate's ORDER BY slot. A NUL
+/// cannot appear in an identifier, so no query can name (and so replace) it.
+const AGG_SLOT_PREFIX: &str = "\u{0}agg_placeholder_";
+
 /// The binder performs semantic analysis on parsed Cypher queries.
 ///
 /// It resolves variable references, manages scope, and converts the raw AST
@@ -756,7 +760,7 @@ impl Binder {
             for name in subquery_env.keys() {
                 // Filter out internal slot reservations
                 if name.starts_with("_slot_")
-                    || name.starts_with("__agg_placeholder_")
+                    || name.starts_with(AGG_SLOT_PREFIX)
                     || name.starts_with("_quant_")
                     || name.starts_with("_lc_")
                     || name.starts_with("_reduce_")
@@ -770,7 +774,7 @@ impl Binder {
             for (name, inner_var) in &subquery_env {
                 // Skip internal slot reservations
                 if name.starts_with("_slot_")
-                    || name.starts_with("__agg_placeholder_")
+                    || name.starts_with(AGG_SLOT_PREFIX)
                     || name.starts_with("_quant_")
                     || name.starts_with("_lc_")
                     || name.starts_with("_reduce_")
@@ -1762,7 +1766,7 @@ impl Binder {
                 let var = self.fresh_var(None, Type::Any, scope_id);
                 // Insert with a unique key so each placeholder occupies its own
                 // slot in the env (keeping env.len() == next available ID).
-                let key = Arc::new(format!("__agg_placeholder_{}", var.id));
+                let key = Arc::new(format!("{AGG_SLOT_PREFIX}{}", var.id));
                 self.env_stack[scope_id as usize].insert(key, var.clone());
                 Ok(tree!(ExprIR::Variable(var)))
             }
@@ -2795,10 +2799,10 @@ fn raw_exprs_structurally_equal(
         match (a, b) {
             (ExprIR::Variable(va), ExprIR::Variable(vb)) => va == vb,
             (ExprIR::FuncInvocation(fa), ExprIR::FuncInvocation(fb)) => fa.name == fb.name,
-            (ExprIR::Constant(Value::String(sa)), ExprIR::Constant(Value::String(sb))) => sa == sb,
-            (ExprIR::Constant(Value::Int(ia)), ExprIR::Constant(Value::Int(ib))) => ia == ib,
-            (ExprIR::Constant(Value::Float(fa)), ExprIR::Constant(Value::Float(fb))) => fa == fb,
-            (ExprIR::Constant(Value::Bool(ba)), ExprIR::Constant(Value::Bool(bb))) => ba == bb,
+            // Constants match when they are equal values, as in C
+            // (`SIValue_Compare`): `3` matches `3.0`, `null` matches only
+            // `null`, and values of unrelated types never match.
+            (ExprIR::Constant(va), ExprIR::Constant(vb)) => va == vb,
             (ExprIR::Property(pa), ExprIR::Property(pb)) => pa == pb,
             (ExprIR::Parameter(pa), ExprIR::Parameter(pb)) => pa == pb,
             _ => std::mem::discriminant(a) == std::mem::discriminant(b),
