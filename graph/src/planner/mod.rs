@@ -730,7 +730,8 @@ const INSTRUMENTED_FRAMES: bool = cfg!(debug_assertions);
 /// `CALL {}`, `MERGE` per clause) take about 7 KiB of stack each through the
 /// optimizer and the runtime in a release build, so 128 of them fit a 2 MiB
 /// pool worker with room to spare; with instrumented frames (about 19 KiB)
-/// only 32 do. Nearly every query is far below it.
+/// roughly 108 would fit, and the threshold is held at 32 as a deliberate
+/// safety margin. Nearly every query is far below it.
 const SHALLOW_PLAN: usize = if INSTRUMENTED_FRAMES { 32 } else { 128 };
 
 /// Stack [`with_plan_stack`] reserves per plan level: about twice the
