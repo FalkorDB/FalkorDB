@@ -9,10 +9,8 @@
 //! ```text
 //! graphblas/
 //!   mod.rs                  <-- Auto-generated FFI bindings (GrB_* / GxB_* symbols)
-//!   matrix.rs               <-- Safe wrapper around GrB_Matrix
-//!   csr.rs                  <-- Row-major CSR export of a matrix
-//!   scalar.rs               <-- Safe wrapper around GrB_Scalar
-//!   vector.rs               <-- Safe wrapper around GrB_Vector
+//!   matrix.rs               <-- Safe wrapper around GrB_Matrix (boolean sparse matrix)
+//!   vector.rs               <-- Safe wrapper around GrB_Vector (boolean sparse vector)
 //!   tensor.rs               <-- 3D sparse structure for multi-edge storage
 //!   versioned_matrix.rs     <-- Copy-on-write matrix with MVCC delta tracking
 //!   lagraph_bindings.rs     <-- Auto-generated LAGraph FFI bindings
@@ -72,8 +70,6 @@
 
 #[cfg(test)]
 mod block_scaling_bench;
-#[cfg(feature = "index-falkordb")]
-mod csr;
 #[cfg(test)]
 mod degree_bench;
 #[cfg(test)]
@@ -83,8 +79,6 @@ pub mod lagraphx_bindings;
 pub mod matrix;
 #[cfg(test)]
 mod me_delta_bench;
-#[cfg(feature = "index-falkordb")]
-pub(crate) mod scalar;
 pub mod serialization;
 pub mod tensor;
 pub mod vector;
@@ -134,16 +128,6 @@ pub(crate) mod instr {
     pub fn read_instr() -> Option<u64> {
         None
     }
-}
-
-/// A GraphBLAS count (`GrB_Index`, or a byte size) as a length.
-///
-/// # Panics
-/// If it does not fit a `usize`, which only a target narrower than 64 bits
-/// allows: GraphBLAS counts what this process holds in memory.
-#[cfg(any(test, feature = "index-falkordb"))]
-pub(crate) fn length(count: u64) -> usize {
-    usize::try_from(count).expect("a GraphBLAS count fits a usize")
 }
 
 /// Process-wide GraphBLAS initialization for unit tests. `GrB_init` may only
