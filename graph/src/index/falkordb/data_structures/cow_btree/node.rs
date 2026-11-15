@@ -156,14 +156,14 @@ fn merge_underfull<P: Page, const BRANCH_MAX: usize>(
                 child.merge_underfull_below();
             }
             // A borrow that leaves both nodes as they were (a neighbour that is a single oversized
-            // page cannot give or take) would be retried forever: move on to the next child.
-            i = if produced == 2
-                && before == (children[left].fill(), children[left + 1].fill())
-                && children[left].is_underfull()
-            {
-                left + 1
-            } else {
-                left
+            // page cannot give or take) would be retried forever: move past the pair, whichever
+            // of the two was the underfull one.
+            let unchanged =
+                produced == 2 && before == (children[left].fill(), children[left + 1].fill());
+            i = match (unchanged, i == left) {
+                (false, _) => left,
+                (true, true) => left + 1,
+                (true, false) => left + 2,
             };
         } else {
             i += 1;

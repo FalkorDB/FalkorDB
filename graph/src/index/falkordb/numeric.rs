@@ -54,8 +54,9 @@ pub enum DocIter {
     /// An already-materialised doc set — an intersection, which cannot be produced lazily from
     /// value-ordered streams. Distinct by construction.
     Set(std::collections::hash_set::IntoIter<u64>),
-    /// Several streams chained, each doc yielded once — a union across columns, where a doc may
-    /// satisfy several members.
+    /// Several streams chained: a union across columns, where a doc may satisfy several members
+    /// and is yielded once (a set of the docs yielded so far is kept), or the kinds of one
+    /// column, whose streams share no doc and keep nothing ([`DistinctIter::disjoint`]).
     Distinct(DistinctIter),
     /// A tag tree's key ranges, one cursor after another ([`StrRanges`]). Boxed: inline it is the
     /// largest variant, and the size it adds to every `DocIter` measurably slows numeric scans.
@@ -80,8 +81,9 @@ impl Iterator for DocIter {
 /// Doc streams read one after another, each doc yielded once.
 ///
 /// **Lazy**: a stream is read only once the ones before it are exhausted, so a `LIMIT` stops the
-/// union early. The set holds the docs yielded so far, which is what deduplication needs — a doc
-/// matching several members is one row in Cypher — and nothing it has not yielded.
+/// union early. Unless the streams are known to be disjoint ([`DistinctIter::disjoint`]), a set
+/// holds the docs yielded so far, which is what deduplication needs — a doc matching several
+/// members is one row in Cypher — and nothing it has not yielded.
 pub struct DistinctIter {
     streams: std::vec::IntoIter<DocIter>,
     current: Option<Box<DocIter>>,
