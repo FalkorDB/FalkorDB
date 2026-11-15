@@ -79,11 +79,20 @@ if grep -q '^REJECT$' ../out/checks.md; then
   sed '$d' ../out/checks.md > ../out/gates.md
   verdict rejected; exit 0
 fi
+# Read the checks' verdict before anything is written into the PR's tree:
+# copying through a PR-made symlink could otherwise overwrite this report.
+tags=$(tail -n 1 ../out/checks.md)
 # The gate scripts come from the PR's base, not the PR: copy them over the
-# PR's own (left unstaged, so the checks above only saw the patch).
+# PR's own (left unstaged, so the checks above only saw the patch). `proofs`
+# must be a real directory, and each destination is removed first, so a
+# symlink the PR put there is replaced rather than written through.
+if [[ -L proofs || ! -d proofs ]]; then
+  echo "Patch dropped: proofs/ in the PR head is not a plain directory." > ../out/gates.md
+  verdict rejected; exit 0
+fi
+rm -f proofs/lean_ci.sh proofs/coverage.sh
 cp "$GATE_DIR/lean_ci.sh" "$GATE_DIR/coverage.sh" proofs/
 cov=pass; ok=pass
-tags=$(tail -n 1 ../out/checks.md)
 if [[ "$tags" == *UNBUILT* ]]; then
   # Never a pass: nothing was built, so nothing says the proofs hold.
   lean=skipped; ok=held
