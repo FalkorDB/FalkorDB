@@ -276,9 +276,10 @@ fn in_merge_match_branch(
 /// the shape `plan_query` stitches under a traversal), the variables of every
 /// operator down to the first one that starts a new environment. Passes
 /// through the variable-preserving wrappers (filter, limit, skip, sort,
-/// distinct, commit), through `UNWIND` (it keeps its input's variables and adds
-/// one), and into every branch of a `CartesianProduct` / `ValueHashJoin`; a
-/// vector scan binds its node and score like a fulltext one.
+/// distinct, commit), through `UNWIND` and a procedure `CALL` (each keeps its
+/// input's variables and adds its own), and into every branch of a
+/// `CartesianProduct` / `ValueHashJoin`; a vector scan binds its node and score
+/// like a fulltext one.
 fn outer_child_bound_vars(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
@@ -312,7 +313,8 @@ fn outer_child_bound_vars(
                 | IR::NodeByLabelAndIdScan { .. }
                 | IR::NodeByIdSeek { .. }
                 | IR::NodeByFulltextScan { .. }
-                | IR::Unwind { .. }) => {
+                | IR::Unwind { .. }
+                | IR::ProcedureCall { .. }) => {
                     vars.extend(collect_output_aliases(data));
                     if node.num_children() != 1 {
                         break;
@@ -656,7 +658,9 @@ fn select_var_len_scan_node(
         // MATCH (a)-[:R*1..2]->(b:B {id: 1})`).
         let mut wrapper = optimized_plan.node(child_idx);
         while wrapper.idx() != scan_idx {
-            if matches!(wrapper.data(), IR::Filter(_)) {
+            // Not a single-child spine: cannot prove this is a planner scan
+            // wrapper chain, so leave the walk alone.
+            if matches!(wrapper.data(), IR::Filter(_)) || wrapper.num_children() != 1 {
                 break;
             }
             wrapper = wrapper.child(0);
