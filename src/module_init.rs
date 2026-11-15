@@ -723,6 +723,22 @@ unsafe fn relocate_graph_at_key(
     }
 }
 
+/// Whether a registered graph of database `db` has the (lossy) name `name`.
+///
+/// A key name is arbitrary bytes and the registry renders it lossily, so two graphs
+/// (`b"g\xff"` and `g\u{fffd}`) can share a name and with it a telemetry stream name.
+/// A stream cannot be told to belong to the graph that moved rather than to the one
+/// that stayed, so cleanup leaves it.
+fn name_is_shared(
+    db: i32,
+    name: &str,
+) -> bool {
+    GRAPH_REGISTRY
+        .lock()
+        .values()
+        .any(|e| e.db == db && e.name == name)
+}
+
 /// `SWAPDB`: graphs follow their database.
 unsafe extern "C" fn on_swapdb(
     _ctx: *mut RedisModuleCtx,
@@ -788,8 +804,10 @@ unsafe extern "C" fn on_keyspace_event(
             // `telemetry::stream_name` truncates to it. Only a graph has one: the event
             // reaches every key that is renamed, and `telemetry{k}` of a plain key `k`
             // is nobody's history.
-            if let Some((_, old_name)) = unsafe { relocate_graph_at_key(ctx, key, &key_name) } {
-                telemetry::delete_stream(&Context::new(ctx), &old_name);
+            if let Some((db, old_name)) = unsafe { relocate_graph_at_key(ctx, key, &key_name) }
+                && !name_is_shared(db, &old_name)
+            {
+                telemetry::delete_stream_if_stream(&Context::new(ctx), &old_name);
             }
         }
         "move_to" => {
@@ -804,7 +822,7 @@ unsafe extern "C" fn on_keyspace_event(
             {
                 let context = Context::new(ctx);
                 let dst_db = selected_db(&context);
-                if src_db != dst_db {
+                if src_db != dst_db && !name_is_shared(src_db, &src_name) {
                     unsafe { telemetry::delete_stream_in_db(&context, src_db, &src_name) };
                 }
             }

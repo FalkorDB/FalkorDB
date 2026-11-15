@@ -210,6 +210,38 @@ class testMultiDb():
         self.env.assertEqual(con.get("telemetry{k}"), b"keep")
         self.assert_alive()
 
+    def test09a_move_of_a_graph_leaves_a_non_stream_value_at_its_stream_name(self):
+        # The cleanup after a move deletes the graph's telemetry stream, not whatever
+        # else holds the name: a string at telemetry{ns} is nobody's history.
+        con = self.con(0)
+        self.query(0, "ns", "CREATE (:T)")
+        stream = "telemetry{ns}"
+        deadline = time.time() + 10
+        while not con.exists(stream) and time.time() < deadline:
+            time.sleep(0.05)
+        con.delete(stream)
+        con.set(stream, "keep")
+        self.env.assertEqual(con.move("ns", 1), True)
+        self.env.assertEqual(con.get(stream), b"keep")
+        self.assert_alive()
+
+    def test09b_move_of_a_graph_with_a_lossy_twin_leaves_the_twins_stream(self):
+        # Two graphs whose key names render to the same lossy name share a telemetry
+        # stream name. Moving the binary-keyed one must not delete the stream of the
+        # graph that stayed.
+        con = self.con(0)
+        graph_key, twin_key = "t\ufffd".encode(), b"t\xfe"
+        con.execute_command("GRAPH.QUERY", graph_key, "CREATE (:T)")
+        con.execute_command("GRAPH.QUERY", twin_key, "CREATE (:T)")
+        stream = "telemetry{t\ufffd}".encode()
+        deadline = time.time() + 10
+        while not con.exists(stream) and time.time() < deadline:
+            time.sleep(0.05)
+        self.env.assertEqual(con.exists(stream), 1)
+        self.env.assertEqual(con.move(twin_key, 1), True)
+        self.env.assertEqual(con.exists(stream), 1)
+        self.assert_alive()
+
     def test09_move_of_a_key_with_a_lossy_twin_name_leaves_the_graph_stream(self):
         # Key names are bytes, the module's records render them lossily: the
         # plain key b"g\xff" reads "g\ufffd", which is also the (valid UTF-8) name

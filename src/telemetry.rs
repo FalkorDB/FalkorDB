@@ -345,7 +345,29 @@ pub fn delete_stream(
     let _ = ctx.call("DEL", args.iter().collect::<Vec<_>>().as_slice());
 }
 
-/// [`delete_stream`] in database `db`, leaving `ctx`'s selected database as it was.
+/// [`delete_stream`], but only when the key holds a stream.
+///
+/// For relocation cleanup, which runs on a name the graph's history is only presumed to
+/// live at: another value of the same name (`SET telemetry{g} keep`) is not that history.
+pub fn delete_stream_if_stream(
+    ctx: &Context,
+    graph_name: &str,
+) {
+    let key = stream_name(graph_name);
+    let args = [ValkeyString::create_from_slice(
+        ctx.get_raw(),
+        key.as_bytes(),
+    )];
+    let is_stream = matches!(
+        ctx.call("TYPE", args.iter().collect::<Vec<_>>().as_slice()),
+        Ok(ValkeyValue::SimpleString(t)) if t == "stream"
+    );
+    if is_stream {
+        let _ = ctx.call("DEL", args.iter().collect::<Vec<_>>().as_slice());
+    }
+}
+
+/// [`delete_stream_if_stream`] in database `db`, leaving `ctx`'s selected database as it was.
 ///
 /// # Safety
 /// `ctx` must be a live module context.
@@ -357,7 +379,7 @@ pub unsafe fn delete_stream_in_db(
     unsafe {
         let orig = raw::RedisModule_GetSelectedDb.unwrap()(ctx.get_raw());
         if raw::RedisModule_SelectDb.unwrap()(ctx.get_raw(), db) == raw::REDISMODULE_OK as i32 {
-            delete_stream(ctx, graph_name);
+            delete_stream_if_stream(ctx, graph_name);
             raw::RedisModule_SelectDb.unwrap()(ctx.get_raw(), orig);
         }
     }

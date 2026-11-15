@@ -311,3 +311,5 @@ src/redis_type.rs	in_db	83	NOT COVERED	#2782 (registry keyed by graph identity a
 src/redis_type.rs	for_each_db	100	NOT COVERED	#2782 (registry keyed by graph identity and database): new, not modelled; the Redis-layer models key the registry by name
 src/redis_type.rs	create_graph_virtual_keys	514	NOT COVERED	#2782 (registry keyed by graph identity and database): new, not modelled; the Redis-layer models key the registry by name
 src/telemetry.rs	delete_stream_in_db	352	NOT COVERED	#2782 (registry keyed by graph identity and database): new, not modelled; the Redis-layer models key the registry by name
+src/module_init.rs	name_is_shared	732	NOT COVERED	(#2782): not modelled yet
+src/telemetry.rs	delete_stream_if_stream	352	NOT COVERED	(#2782): not modelled yet
