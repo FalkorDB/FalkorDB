@@ -1,13 +1,38 @@
 #!/bin/sh
 
-# redis-server runs as the unprivileged `falkordb` user (uid 999, created in the
+# The image ships one server, named by FALKORDB_SERVER (set in the Dockerfile):
+# redis or valkey. Its arguments come from its own variable, REDIS_ARGS or
+# VALKEY_ARGS, or from the other one when its own is unset, empty or only
+# whitespace, so one setting works on either image. The two are never joined.
+# Options only the other server understands (e.g. Redis-only configs in
+# REDIS_ARGS on a valkey image) are passed through and make the server refuse
+# to start: set the variable that matches the image.
+SERVER="${FALKORDB_SERVER:-redis}"
+case "$SERVER" in
+    redis) own_args="${REDIS_ARGS:-}" other_args="${VALKEY_ARGS:-}" ;;
+    valkey) own_args="${VALKEY_ARGS:-}" other_args="${REDIS_ARGS:-}" ;;
+    *)
+        echo "Error: FALKORDB_SERVER must be redis or valkey, not '$SERVER'." >&2
+        exit 1
+        ;;
+esac
+if ! command -v "${SERVER}-server" >/dev/null 2>&1; then
+    echo "Error: ${SERVER}-server is not in this image; FALKORDB_SERVER is set by the image and should not be overridden." >&2
+    exit 1
+fi
+case "$own_args" in
+    *[![:space:]]*) SERVER_ARGS="$own_args" ;;
+    *) SERVER_ARGS="$other_args" ;;
+esac
+
+# The server runs as the unprivileged `falkordb` user (uid 999, created in the
 # Dockerfile), as in the official redis image. The container itself still
 # starts as root: the browser entrypoint needs root to switch to nextjs, and a
 # data volume written by an older image is owned by root and has to be handed
 # over first. Root is kept when the container was started with --user, when
 # SKIP_DROP_PRIVS is set, when it lacks CAP_SETUID/CAP_SETGID (e.g.
 # --cap-drop ALL) and so could not switch users anyway, or when the files
-# redis-server writes could not be handed to falkordb. SKIP_FIX_PERMS skips
+# the server writes could not be handed to falkordb. SKIP_FIX_PERMS skips
 # the ownership fix-up. Both names are the official image's.
 FALKORDB_USER=falkordb
 
@@ -58,11 +83,71 @@ fix_tls_perms() {
 }
 
 # Called when a fix-up above failed: falkordb could not use those files, so
-# redis-server stays root, as it ran before this image dropped privileges.
+# the server stays root, as it ran before this image dropped privileges.
 keep_root() {
-    echo "Notice: running redis-server as root. Set SKIP_FIX_PERMS=1 to run it as $FALKORDB_USER regardless."
+    echo "Notice: running ${SERVER}-server as root. Set SKIP_FIX_PERMS=1 to run it as $FALKORDB_USER regardless."
     drop_privs=""
 }
+
+# The Redis data check, on Valkey images only. Valkey cannot load the save
+# files Redis 7.4 and later write: an RDB headed REDIS0 with version 12 or
+# higher is refused unless rdb-version-check is relaxed (valkey rdb.c,
+# rdbIsVersionAccepted). Redis 7.4 writes version 12, Redis 8.10 version 15.
+# The server is always started with --dir "$FALKORDB_DATA_PATH", and it takes
+# only plain file names for dbfilename, appendfilename and appenddirname, so it
+# can load only the top-level files of that directory and the *.base.rdb in
+# its AOF directory (the rest of an AOF is commands, which Valkey replays
+# whichever server wrote them). Check the header of each, and stop with the
+# migration steps when Redis wrote one. The migration is
+# docs/valkey-migration.md.
+
+# The files go to the shell as arguments (find -exec), not as lines, so a name
+# with a newline is checked whole. A glob would skip dot-prefixed names
+# (--dbfilename ..x, --appendfilename .aof, whose base is .aof.1.base.rdb).
+# A file's version is read from a header of REDIS0 and three digits
+# (`REDIS0015`); Valkey 9 heads its own files VALKEY.
+# shellcheck disable=SC2016
+CHECK_RDB_VERSION='
+for f; do
+    m=$(head -c 9 "$f" 2>/dev/null) || continue
+    case "$m" in
+        # 1NNN - 1000 rather than NNN: a leading 0 would read as octal.
+        REDIS0[0-9][0-9][0-9])
+            v=$(( 1${m#REDIS0} - 1000 ))
+            [ "$v" -ge 12 ] && printf "  %s (Redis RDB version %s)\n" "$f" "$v"
+            ;;
+    esac
+done
+exit 0'
+
+valkey_preflight() {
+    redis_files=$(
+        find -L "${FALKORDB_DATA_PATH}" -maxdepth 1 -type f \
+            -exec sh -c "$CHECK_RDB_VERSION" sh {} + 2>/dev/null
+        find -L "${FALKORDB_DATA_PATH}" -mindepth 2 -maxdepth 2 -type f -name '*.base.rdb' \
+            -exec sh -c "$CHECK_RDB_VERSION" sh {} + 2>/dev/null
+    )
+    [ -z "$redis_files" ] && return 0
+    cat >&2 <<EOF
+Error: this image runs Valkey, and ${FALKORDB_DATA_PATH} holds save files
+written by Redis 7.4 or later, which Valkey refuses to load:
+${redis_files}
+To keep this data, run a Redis image of FalkorDB (a tag ending in -redis) on
+this volume, or migrate the data to Valkey by starting this image with
+FALKORDB_REDIS_MIGRATION=1. Back up the volume first.
+See https://github.com/FalkorDB/FalkorDB/blob/main/docs/valkey-migration.md
+EOF
+    exit 1
+}
+
+if [ "$SERVER" = "valkey" ]; then
+    if [ "${FALKORDB_REDIS_MIGRATION:-0}" = "1" ]; then
+        SERVER_ARGS="${SERVER_ARGS} --rdb-version-check relaxed"
+        echo "Notice: FALKORDB_REDIS_MIGRATION=1: starting with --rdb-version-check relaxed. Save the data in Valkey's format (SAVE, and with AOF on, BGREWRITEAOF), then restart without it."
+    else
+        valkey_preflight
+    fi
+fi
 
 if [ "${BROWSER:-1}" -eq "1" ]; then
     if [ -d "${FALKORDB_BROWSER_PATH}" ]; then
@@ -93,7 +178,7 @@ if [ "${TLS:-0}" -eq "1" ]; then
     fi
 fi
 
-# Files redis writes (RDB, AOF) are private to it, as in the official image.
+# Files the server writes (RDB, AOF) are private to it, as in the official image.
 if [ "$(umask)" = "0022" ]; then
     umask 0077
 fi
@@ -107,7 +192,7 @@ fi
 
 if [ "${TLS:-0}" -eq "1" ]; then
     # shellcheck disable=SC2086
-    exec "$@" redis-server ${REDIS_ARGS} --protected-mode no \
+    exec "$@" "${SERVER}-server" ${SERVER_ARGS} --protected-mode no \
         --tls-port 6379 --port 0 \
         --tls-cert-file ${FALKORDB_TLS_PATH}/redis.crt \
         --tls-key-file ${FALKORDB_TLS_PATH}/redis.key \
@@ -117,7 +202,7 @@ if [ "${TLS:-0}" -eq "1" ]; then
         --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" ${FALKORDB_ARGS}
 else
     # shellcheck disable=SC2086
-    exec "$@" redis-server ${REDIS_ARGS} --protected-mode no \
+    exec "$@" "${SERVER}-server" ${SERVER_ARGS} --protected-mode no \
         --dir "${FALKORDB_DATA_PATH}" \
         --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" ${FALKORDB_ARGS}
 fi
