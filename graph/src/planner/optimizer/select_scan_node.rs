@@ -980,10 +980,10 @@ pub(super) fn select_scan_node(
         // no such scan, so only what the child binds counts: seeding
         // `best_node` anyway would place a filter on it before the hop that
         // binds it.
-        let initial_bound: HashSet<u32> = match &existing_child {
-            Some(child) => collect_subtree_variables(&child.root()),
-            None => HashSet::from([best_node.alias.id]),
-        };
+        let initial_bound: HashSet<u32> = existing_child.as_ref().map_or_else(
+            || HashSet::from([best_node.alias.id]),
+            |child| collect_subtree_variables(&child.root()),
+        );
         let mut bound = initial_bound.clone();
         // Hops still to be placed, in pattern order. Each round removes the
         // one it picks, so what is left is both the candidate set and the
