@@ -980,15 +980,9 @@ pub(super) fn select_scan_node(
         // no such scan, so only what the child binds counts: seeding
         // `best_node` anyway would place a filter on it before the hop that
         // binds it.
-        // An `Argument` leaf binds the outer row's variables too, though the
-        // subtree walk does not see them.
         let initial_bound: HashSet<u32> = existing_child.as_ref().map_or_else(
             || HashSet::from([best_node.alias.id]),
-            |child| {
-                let mut bound = collect_subtree_variables(&child.root());
-                bound.extend(child_argument_vars.iter().flatten().map(|(id, _scope)| *id));
-                bound
-            },
+            |child| collect_subtree_variables(&child.root()),
         );
         let mut bound = initial_bound.clone();
         // Hops still to be placed, in pattern order. Each round removes the
