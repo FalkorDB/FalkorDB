@@ -1,7 +1,7 @@
 //! Buffered IO layer for RDB serialization (v19 format).
 //!
 //! Wraps `*mut RedisModuleIO` with a 256KB buffer and prefixes every
-//! value with a 1-byte type tag, matching the C FalkorDB `SerializerIOv2`.
+//! value with a 1-byte type tag, matching the C `FalkorDB` `SerializerIOv2`.
 //!
 //! Type tags:
 //! - 0 (BYTES):   `[tag:u8][len:u64][data:len bytes]`
@@ -9,7 +9,7 @@
 //! - 2 (DOUBLE):  `[tag:u8][value:8 bytes]`
 //! - 3 (SIGNED):  `[tag:u8][value:8 bytes]`
 //! - 4 (UNSIGNED):`[tag:u8][value:8 bytes]`
-//! - 5 (LONG_DOUBLE): not used in Rust
+//! - 5 (`LONG_DOUBLE)`: not used in Rust
 //! - 6 (BLOB):    sentinel, next Redis chunk is standalone blob data
 
 use graph::graph::graphblas::serialization::Reader;
@@ -290,7 +290,7 @@ impl BufferedReader {
         Ok(f32::from_le_bytes(self.read_array()?))
     }
 
-    /// Read a byte buffer. Handles both inline (TYPE_BYTES) and blob (TYPE_BLOB).
+    /// Read a byte buffer. Handles both inline (`TYPE_BYTES`) and blob (`TYPE_BLOB`).
     pub fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
         self.ensure_available()?;
         let tag = self.buf[self.pos];
@@ -567,7 +567,7 @@ impl PipeReader {
 /// Writer that appends type-tagged values to a `Vec<u8>`.
 ///
 /// Same tag format as `BufferedWriter` but no chunking and no BLOB sentinel
-/// (always inlines buffers as TYPE_BYTES). Readable by `BufferedReader::from_vec()`.
+/// (always inlines buffers as `TYPE_BYTES`). Readable by `BufferedReader::from_vec()`.
 pub struct VecWriter {
     buf: Vec<u8>,
 }

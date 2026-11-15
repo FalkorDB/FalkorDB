@@ -1,4 +1,4 @@
-//! Global FalkorDB configuration values.
+//! Global `FalkorDB` configuration values.
 //!
 //! Configuration is split into two tiers based on mutability and access
 //! requirements:

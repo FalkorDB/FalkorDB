@@ -205,6 +205,8 @@ pub fn settle_constraint(
 
     loop {
         attempts += 1;
+        // Success and a permanent abort both `break`, for the reasons each arm gives.
+        #[allow(clippy::match_same_arms)]
         match attempt_settle(graph, &ctx, announce, key, was_replicated) {
             Ok(()) => break,
             // Transient: the window closes on its own. Nothing is held here —

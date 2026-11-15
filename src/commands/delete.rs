@@ -21,7 +21,7 @@
 //! ```
 //!
 //! The actual graph teardown (dropping the `ThreadedGraph`, stopping its
-//! write-serialization thread, and freeing GraphBLAS matrices) happens
+//! write-serialization thread, and freeing `GraphBLAS` matrices) happens
 //! when Redis removes the key and the custom type's `free` callback fires.
 
 use crate::{

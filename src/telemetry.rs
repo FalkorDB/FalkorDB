@@ -758,7 +758,7 @@ fn resolve_current_names(
 ///
 /// Built *before* the GIL is taken and kept until after it is released, so every graph
 /// the flush touches is already held here: nothing done under the GIL can be the last
-/// release of one, and no `ThreadedGraph` destructor — matrices, RediSearch indexes —
+/// release of one, and no `ThreadedGraph` destructor — matrices, `RediSearch` indexes —
 /// can run on this thread while it holds the GIL.
 ///
 /// Entries are grouped by `Weak::as_ptr`, a pointer read, and only one upgrade is done
@@ -796,7 +796,7 @@ fn hold_batch_graphs(deferred: &[PendingEntry]) -> Vec<BatchGraph> {
 /// last holder.
 ///
 /// `register_graph`, `rename_graph` and `graph_free` all hand teardown to a background
-/// thread rather than run it inline, because `Index::drop` reaches RediSearch and takes
+/// thread rather than run it inline, because `Index::drop` reaches `RediSearch` and takes
 /// the GIL. The flusher is a latency-critical thread for the same reason they are: the
 /// next batch waits behind whatever runs here.
 fn release_batch_graphs(graphs: Vec<BatchGraph>) {
@@ -1041,7 +1041,8 @@ pub fn shutdown_flusher_thread() {
         let _ = h.join();
     }
     // Only after the join: the flusher's template borrows these.
-    if let Some(names) = FIELD_NAME_STRINGS.lock().take() {
+    let names = FIELD_NAME_STRINGS.lock().take();
+    if let Some(names) = names {
         for name in names.0 {
             free_detached_string(name);
         }

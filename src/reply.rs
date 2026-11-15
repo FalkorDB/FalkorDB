@@ -45,7 +45,7 @@ fn write_f(
 }
 
 /// Build a Cypher-style string representation of a value, matching the C
-/// FalkorDB `SIValue_ToString` output used for verbose list/map/path/vector.
+/// `FalkorDB` `SIValue_ToString` output used for verbose list/map/path/vector.
 fn format_value_to_string(
     v: &Value,
     out: &mut String,
@@ -119,7 +119,7 @@ fn reply_with_str(
 
 /// Format a double using C's `%.*g` (`precision` significant digits, shortest
 /// of %e/%f with trailing zeros stripped). Calls libc snprintf for exact parity
-/// with FalkorDB C output.
+/// with `FalkorDB` C output.
 pub fn format_g(
     d: f64,
     precision: i32,

@@ -12,16 +12,16 @@
 //! ## Configuration categories
 //!
 //! Runtime-settable (via SET):
-//!   TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, RESULTSET_SIZE,
-//!   MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, DELTA_MAX_PENDING_CHANGES,
-//!   VKEY_MAX_ENTITY_COUNT, JS_HEAP_SIZE, JS_STACK_SIZE,
-//!   CMD_INFO, MAX_INFO_QUERIES, ASYNC_DELETE, DELAY_INDEXING
+//!   TIMEOUT, `TIMEOUT_DEFAULT`, `TIMEOUT_MAX`, `RESULTSET_SIZE`,
+//!   `MAX_QUEUED_QUERIES`, `QUERY_MEM_CAPACITY`, `DELTA_MAX_PENDING_CHANGES`,
+//!   `VKEY_MAX_ENTITY_COUNT`, `JS_HEAP_SIZE`, `JS_STACK_SIZE`,
+//!   `CMD_INFO`, `MAX_INFO_QUERIES`, `ASYNC_DELETE`, `DELAY_INDEXING`
 //!
 //! Read-only (SET returns an error):
-//!   THREAD_COUNT, INDEX_WORKER_THREADS, OMP_THREAD_COUNT, CACHE_SIZE,
-//!   NODE_CREATION_BUFFER, BOLT_PORT, IMPORT_FOLDER, TEMP_FOLDER
+//!   `THREAD_COUNT`, `INDEX_WORKER_THREADS`, `OMP_THREAD_COUNT`, `CACHE_SIZE`,
+//!   `NODE_CREATION_BUFFER`, `BOLT_PORT`, `IMPORT_FOLDER`, `TEMP_FOLDER`
 //!
-//! ASYNC_DELETE and DELAY_INDEXING are settable, as they are in C, but nothing in
+//! `ASYNC_DELETE` and `DELAY_INDEXING` are settable, as they are in C, but nothing in
 //! this engine reads either one yet: graph teardown is always off-thread (see
 //! `graph_core::graph_free`, which cannot free inline — `Index::drop` takes the GIL,
 //! which the main thread already holds while the free callback runs), and the
@@ -31,7 +31,7 @@
 //! ## Multi-SET semantics
 //! When multiple name-value pairs are provided in a single SET, all pairs are
 //! validated first. If any validation fails, no values are applied (atomic
-//! all-or-nothing). If JS_HEAP_SIZE or JS_STACK_SIZE are changed, the UDF
+//! all-or-nothing). If `JS_HEAP_SIZE` or `JS_STACK_SIZE` are changed, the UDF
 //! repository version is bumped once after all values are applied so
 //! concurrent queries do not see a partial configuration update.
 
@@ -48,7 +48,7 @@ use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
 
 /// C's reply for a name it does not know, in GET and SET alike.
-pub(crate) const UNKNOWN_FIELD: &str = "Unknown configuration field";
+pub const UNKNOWN_FIELD: &str = "Unknown configuration field";
 
 /// Smallest `JS_HEAP_SIZE` / `JS_STACK_SIZE` C accepts: 1MB.
 const JS_MIN_SIZE: i64 = 1_048_576;
@@ -111,7 +111,7 @@ fn config_get_one(
 }
 
 /// Validate and parse a config SET request. Returns the parsed value or error.
-pub(crate) fn validate_config_set(
+pub fn validate_config_set(
     name: &str,
     value: &str,
 ) -> Result<ConfigValue, String> {
@@ -214,10 +214,10 @@ fn validate_timeout_cross_constraints(validated: &[(&str, ConfigValue)]) -> Resu
 /// would leave behind.
 ///
 /// Rules:
-/// - Cannot set deprecated TIMEOUT when TIMEOUT_DEFAULT or TIMEOUT_MAX are active
-/// - TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX (when TIMEOUT_MAX > 0)
-/// - TIMEOUT_MAX cannot be lower than TIMEOUT_DEFAULT (when TIMEOUT_DEFAULT > 0)
-pub(crate) fn check_timeout_constraints(
+/// - Cannot set deprecated TIMEOUT when `TIMEOUT_DEFAULT` or `TIMEOUT_MAX` are active
+/// - `TIMEOUT_DEFAULT` cannot exceed `TIMEOUT_MAX` (when `TIMEOUT_MAX` > 0)
+/// - `TIMEOUT_MAX` cannot be lower than `TIMEOUT_DEFAULT` (when `TIMEOUT_DEFAULT` > 0)
+pub fn check_timeout_constraints(
     timeout_default: &mut i64,
     timeout_max: &mut i64,
     validated: &[(&str, ConfigValue)],
@@ -252,13 +252,13 @@ pub(crate) fn check_timeout_constraints(
     Ok(())
 }
 
-pub(crate) enum ConfigValue {
+pub enum ConfigValue {
     Int(i64),
     Uint(u64),
 }
 
 /// Apply a validated config value.
-pub(crate) fn apply_config_set(
+pub fn apply_config_set(
     ctx: &Context,
     name: &str,
     val: &ConfigValue,

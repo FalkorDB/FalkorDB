@@ -1,6 +1,6 @@
-//! # FalkorDB Redis Module
+//! # `FalkorDB` Redis Module
 //!
-//! This crate is the Redis-facing integration layer for FalkorDB. It registers
+//! This crate is the Redis-facing integration layer for `FalkorDB`. It registers
 //! Redis commands, initializes runtime dependencies, and delegates query work to
 //! the `graph` crate through focused internal modules.
 //!
@@ -22,7 +22,7 @@
 //! - `graph_core`: query execution/concurrency primitives.
 //! - `reply`: compact + verbose output formatting.
 //! - `redis_type`: native Redis value type (`graphdata`).
-//! - `module_init`: startup wiring (RediSearch, GraphBLAS, functions).
+//! - `module_init`: startup wiring (`RediSearch`, `GraphBLAS`, functions).
 //! - `config`: runtime configuration state.
 
 #![allow(clippy::cast_possible_wrap)]

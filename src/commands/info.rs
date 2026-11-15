@@ -18,7 +18,8 @@ use crate::telemetry;
 use graph::runtime::string_pool;
 use redis_module::{Context, RedisResult, RedisString, RedisValue};
 
-#[allow(clippy::needless_pass_by_value)]
+// A command handler: its signature is the one the command table takes.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
 pub fn graph_info(
     _ctx: &Context,
     args: Vec<RedisString>,

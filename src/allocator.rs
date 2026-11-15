@@ -101,7 +101,7 @@ pub fn disable_tracking() {
 /// Returns the current thread's allocation statistics.
 ///
 /// # Returns
-/// A tuple of (bytes_allocated, bytes_deallocated) since last reset.
+/// A tuple of (`bytes_allocated`, `bytes_deallocated`) since last reset.
 /// Net memory usage = allocated - deallocated.
 pub fn current_thread_usage() -> (usize, usize) {
     (
