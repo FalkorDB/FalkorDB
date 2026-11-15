@@ -3062,7 +3062,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A new number for an unnamed pattern entity.
-    fn next_unnamed(&mut self) -> Alias {
+    const fn next_unnamed(&mut self) -> Alias {
         let id = self.anon_counter;
         self.anon_counter += 1;
         Alias::Anon(id)
@@ -3070,10 +3070,8 @@ impl<'a> Parser<'a> {
 
     /// The identifier at the cursor, or a fresh unnamed alias if there is none.
     fn parse_alias_or_unnamed(&mut self) -> Alias {
-        match self.try_parse_ident() {
-            Some(name) => Alias::Named(name),
-            None => self.next_unnamed(),
-        }
+        self.try_parse_ident()
+            .map_or_else(|| self.next_unnamed(), Alias::Named)
     }
 
     fn parse_node_pattern(&mut self) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
