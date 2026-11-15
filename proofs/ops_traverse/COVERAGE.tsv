@@ -82,4 +82,11 @@ graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	80	PROVEN	Ind
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	118	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	267	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
 graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	270	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	587	PROVEN	IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7), scans_stream
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	587	NOT COVERED	(#3376): the hit cache (collect_hits, HitCache::lookup) rewrote the body; not modelled yet
+graph/src/runtime/ops/edge_by_index_scan.rs	Bucket::next	69	NOT COVERED	(#3376): not modelled yet
+graph/src/runtime/ops/edge_by_index_scan.rs	expr_is_row_invariant	78	NOT COVERED	(#3376): not modelled yet
+graph/src/runtime/ops/edge_by_index_scan.rs	query_is_row_invariant	87	NOT COVERED	(#3376): not modelled yet
+graph/src/runtime/ops/edge_by_index_scan.rs	scan_type	105	NOT COVERED	(#3376): not modelled yet
+graph/src/runtime/ops/edge_by_index_scan.rs	indexed_edges	145	NOT COVERED	(#3376): not modelled yet
+graph/src/runtime/ops/edge_by_index_scan.rs	collect_hits	195	NOT COVERED	(#3376): not modelled yet
+graph/src/runtime/ops/edge_by_index_scan.rs	HitCache::lookup	243	NOT COVERED	(#3376): not modelled yet
