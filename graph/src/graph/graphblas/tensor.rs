@@ -2596,6 +2596,35 @@ mod tests {
         assert_eq!(back.multi_pairs(), t.multi_pairs());
     }
 
+    /// The edge ids of a multi-edge pair are the blob's indices, which nothing
+    /// else checks: with the header's bounds installed, an id at or past
+    /// `edge_bound` is refused and one just under it loads.
+    #[test]
+    fn decode_rejects_an_edge_id_past_the_edge_bound() {
+        ensure_init();
+        let mut t = Tensor::new(64, 64);
+        t.set_all_from_slices(&[1, 1, 1], &[2, 2, 2], &[0, 1, 2]);
+        let mut t = t.dup();
+        t.flush();
+        t.wait();
+
+        let decode_with = |edge_bound: u64| {
+            let mut tape = Tape::default();
+            t.encode(&mut tape);
+            let _guard = DecodeLimits {
+                node_bound: 64,
+                edge_bound,
+            }
+            .scope();
+            Tensor::decode(&mut tape)
+        };
+        assert!(decode_with(3).is_ok(), "ids 0..=2 fit an edge bound of 3");
+        let err = decode_with(2)
+            .err()
+            .expect("edge id 2 is out of range for a bound of 2");
+        assert!(err.contains("out of range"), "unexpected error: {err}");
+    }
+
     /// A tensor section entry for a pair the forward matrix does not mark as
     /// multi-edge used to decode into an `me` row, after which `edge_count`
     /// (and so the next save) panicked and iteration yielded a phantom edge.

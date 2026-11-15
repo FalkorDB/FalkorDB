@@ -532,6 +532,10 @@ fn index_width(c: &Component) -> Result<usize, String> {
 }
 
 /// Entry `k` of an index array of `w`-byte entries.
+#[allow(
+    clippy::inline_always,
+    reason = "read per entry in the structure check; the width match must fold into the loop"
+)]
 #[inline(always)]
 fn index_at(
     bytes: &[u8],
@@ -697,6 +701,10 @@ fn check_rows<P: Index, I: Index>(
 }
 
 impl<T> Decode<19> for Matrix<T> {
+    #[allow(
+        clippy::many_single_char_names,
+        reason = "x, h, p, i, b are the names of the five GraphBLAS container arrays"
+    )]
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let container_bytes = r.read_buffer()?;
 
@@ -2497,6 +2505,10 @@ mod tests {
     /// A hypersparse matrix keeps a list of the rows that have entries; a list
     /// out of order or out of range is as unsound as bad indices.
     #[test]
+    #[allow(
+        clippy::many_single_char_names,
+        reason = "short names for the blob arrays being corrupted"
+    )]
     fn decode_checks_a_hypersparse_matrix() {
         ensure_init();
         let mut m = Matrix::<u64>::new(1 << 40, 1 << 40);

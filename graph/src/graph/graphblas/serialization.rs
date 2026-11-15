@@ -188,10 +188,12 @@ pub fn check_count_fits(
     Ok(())
 }
 
-/// Bounds the payload's own header puts on everything else in it: no entity id,
-/// matrix dimension or per-entity count may exceed what the header declares.
-/// Set for the duration of one decode by [`DecodeLimits::scope`] and read by the
-/// GraphBLAS decoders, which sit below the `Reader` trait and so have no header.
+/// Bounds the payload's own header puts on everything else in it.
+///
+/// No entity id, matrix dimension or per-entity count may exceed what the
+/// header declares. Set for the duration of one decode by
+/// [`DecodeLimits::scope`] and read by the GraphBLAS decoders, which sit below
+/// the `Reader` trait and so have no header.
 #[derive(Clone, Copy, Debug)]
 pub struct DecodeLimits {
     /// One past the highest node id (live plus deleted).

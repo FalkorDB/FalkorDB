@@ -154,13 +154,18 @@ class testRestoreCorrupt():
         self.conn.flushall()
         g = self.db.select_graph("src")
         g.query("CREATE (:V {v: vecf32([1.0, 2.0])})")
-        for opt in ("efRuntime:1048577", "M:1048577", "efConstruction:1048577"):
-            with self.env.assertResponseError():
-                g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
-                        "OPTIONS {dimension:2, similarityFunction:'cosine', %s}" % opt)
-        with self.env.assertResponseError():
-            g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
-                    "OPTIONS {dimension:16777217, similarityFunction:'cosine'}")
+        refused = [
+            ("dimension:2, similarityFunction:'cosine', %s" % opt, "must be at most 1048576")
+            for opt in ("efRuntime:1048577", "M:1048577", "efConstruction:1048577")
+        ]
+        refused.append(("dimension:16777217, similarityFunction:'cosine'",
+                        "dimension must be at most 16777216"))
+        for options, message in refused:
+            try:
+                g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) OPTIONS {%s}" % options)
+                self.env.assertTrue(False, message="accepted: " + options)
+            except redis.ResponseError as e:
+                self.env.assertContains(message, str(e))
         # at the limit it is accepted and round-trips
         g.query("CREATE VECTOR INDEX FOR (n:V) ON (n.v) "
                 "OPTIONS {dimension:0, similarityFunction:'cosine', efRuntime:1048576}")

@@ -1,4 +1,6 @@
-/// Most dimensions a vector index may declare. Index creation refuses more, and a
+/// Most dimensions a vector index may declare.
+///
+/// Index creation refuses more, and a
 /// persisted index declaring more is refused on load (the dimension sizes the
 /// vector library's storage, so it cannot be taken from a payload unchecked).
 pub const MAX_VECTOR_DIMENSION: u64 = 1 << 24;

@@ -781,9 +781,9 @@ fn install_graph(
         // never be replied to.
         placeholder_tg.graph = mvcc;
     } else {
-        eprintln!(
+        log_warning(format!(
             "FalkorDB: WARNING - no placeholder pointer for graph '{graph_name}', graph data will be lost"
-        );
+        ));
     }
 }
 

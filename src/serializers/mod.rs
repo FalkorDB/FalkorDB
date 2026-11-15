@@ -972,7 +972,7 @@ mod tests {
         let load = |bytes: &[u8]| decode_index_field(&mut BufferedReader::from_slice(bytes));
         let over = MAX_VECTOR_GRAPH_PARAM as u64 + 1;
         assert!(load(&encode(4, MAX_VECTOR_GRAPH_PARAM as u64)).is_ok());
-        assert!(load(&encode(4, over)).is_err());
+        assert!(load(&encode(4, over)).is_err_and(|e| e.contains(&format!("EF_RUNTIME {over}"))));
         assert!(load(&encode(0, over)).is_ok());
         assert!(load(&encode(MAX_VECTOR_DIMENSION + 1, 10)).is_err());
     }

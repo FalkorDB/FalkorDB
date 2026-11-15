@@ -33,39 +33,39 @@ src/serializers/buffered_io.rs	BufferedReader::read_buffer	189	PROVEN	readW .buf
 src/serializers/buffered_io.rs	BufferedReader::new	195	PROVEN	listSrc false: rdb_roundtrip, rdb_roundtrip_256k
 src/serializers/buffered_io.rs	BufferedReader::from_slice	203	PROVEN	listSrc true: vec_roundtrip; from_slice_past_end (reads past the end call LoadStringBuffer(NULL), root cause of #2537)
 src/serializers/buffered_io.rs	BufferedReader::load_chunk	212	PROVEN	listSrc.load: rdb_roundtrip (writer chunks are non-empty: G_bound)
-src/serializers/buffered_io.rs	BufferedReader::ensure_available	221	PROVEN	BufferedIO.ensure: ensure_cons, load_head
-src/serializers/buffered_io.rs	BufferedReader::read_tag	229	PROVEN	BufferedIO.readTag: readW_inline
-src/serializers/buffered_io.rs	BufferedReader::read_bytes	246	PROVEN	BufferedIO.readBytes: readW_inline
+src/serializers/buffered_io.rs	BufferedReader::ensure_available	240	PROVEN	BufferedIO.ensure: ensure_cons, load_head
+src/serializers/buffered_io.rs	BufferedReader::read_tag	248	PROVEN	BufferedIO.readTag: readW_inline
+src/serializers/buffered_io.rs	BufferedReader::read_bytes	265	PROVEN	BufferedIO.readBytes: readW_inline
 src/serializers/buffered_io.rs	BufferedReader::read_array	266	PROVEN	readBytes N + try_into: readW_inline
-src/serializers/buffered_io.rs	BufferedReader::read_unsigned	272	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
-src/serializers/buffered_io.rs	BufferedReader::read_signed	277	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
-src/serializers/buffered_io.rs	BufferedReader::read_double	282	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
+src/serializers/buffered_io.rs	BufferedReader::read_unsigned	291	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
+src/serializers/buffered_io.rs	BufferedReader::read_signed	296	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
+src/serializers/buffered_io.rs	BufferedReader::read_double	301	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
 src/serializers/buffered_io.rs	BufferedReader::read_float	288	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
-src/serializers/buffered_io.rs	BufferedReader::read_buffer	294	PROVEN	readW .buf (inline + blob): readW_inline, readW_blob, rdb_roundtrip
-src/serializers/buffered_io.rs	PipeWriter::new	350	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
-src/serializers/buffered_io.rs	PipeWriter::flush	357	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
-src/serializers/buffered_io.rs	PipeWriter::accommodate	366	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
-src/serializers/buffered_io.rs	PipeWriter::finish	376	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
-src/serializers/buffered_io.rs	PipeWriter::write_unsigned	386	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
-src/serializers/buffered_io.rs	PipeWriter::write_signed	395	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
-src/serializers/buffered_io.rs	PipeWriter::write_double	404	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
-src/serializers/buffered_io.rs	PipeWriter::write_buffer	413	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
-src/serializers/buffered_io.rs	PipeReader::read_unsigned	444	PROVEN	readW over pipeSrc: pipe_roundtrip
-src/serializers/buffered_io.rs	PipeReader::read_signed	450	PROVEN	readW over pipeSrc: pipe_roundtrip
-src/serializers/buffered_io.rs	PipeReader::read_double	456	PROVEN	readW over pipeSrc: pipe_roundtrip
-src/serializers/buffered_io.rs	PipeReader::read_buffer	462	PROVEN	readW over pipeSrc: pipe_roundtrip
-src/serializers/buffered_io.rs	PipeReader::new	488	PROVEN	readW over pipeSrc: pipe_roundtrip
-src/serializers/buffered_io.rs	PipeReader::load_chunk	498	PROVEN	pipeLoad: pipeLoad_frame, pipeLoad_end (zero length = end of stream)
-src/serializers/buffered_io.rs	PipeReader::ensure_available	515	PROVEN	readW over pipeSrc: pipe_roundtrip
-src/serializers/buffered_io.rs	PipeReader::read_tag	522	PROVEN	readW over pipeSrc: pipe_roundtrip
-src/serializers/buffered_io.rs	PipeReader::read_bytes	538	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	BufferedReader::read_buffer	313	PROVEN	readW .buf (inline + blob): readW_inline, readW_blob, rdb_roundtrip
+src/serializers/buffered_io.rs	PipeWriter::new	369	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::flush	376	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::accommodate	385	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::finish	395	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::write_unsigned	405	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::write_signed	414	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::write_double	423	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::write_buffer	432	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeReader::read_unsigned	463	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::read_signed	469	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::read_double	475	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::read_buffer	481	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::new	507	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::load_chunk	517	PROVEN	pipeLoad: pipeLoad_frame, pipeLoad_end (zero length = end of stream)
+src/serializers/buffered_io.rs	PipeReader::ensure_available	534	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::read_tag	541	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::read_bytes	557	PROVEN	readW over pipeSrc: pipe_roundtrip
 src/serializers/buffered_io.rs	PipeReader::close	555	AXIOMATISED	drops the OwnedFd (close(2)); no logic
-src/serializers/buffered_io.rs	VecWriter::new	576	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
+src/serializers/buffered_io.rs	VecWriter::new	599	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
 src/serializers/buffered_io.rs	VecWriter::into_vec	581	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
-src/serializers/buffered_io.rs	VecWriter::write_unsigned	587	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
-src/serializers/buffered_io.rs	VecWriter::write_signed	595	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
-src/serializers/buffered_io.rs	VecWriter::write_double	603	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
-src/serializers/buffered_io.rs	VecWriter::write_buffer	611	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
+src/serializers/buffered_io.rs	VecWriter::write_unsigned	610	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
+src/serializers/buffered_io.rs	VecWriter::write_signed	618	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
+src/serializers/buffered_io.rs	VecWriter::write_double	626	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
+src/serializers/buffered_io.rs	VecWriter::write_buffer	634	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
 src/serializers/buffered_io.rs	write_all_fd	626	AXIOMATISED	std File::write_all/read_exact on the pipe fd (OS I/O); pipeLoad models a short read as Err
 src/serializers/buffered_io.rs	read_all_fd	641	AXIOMATISED	std File::write_all/read_exact on the pipe fd (OS I/O); pipeLoad models a short read as Err
 src/serializers/mod.rs	VirtualKeyState::new	39	PROVEN	Serial.VKS.new: VKS.clear_eq_new
@@ -75,16 +75,16 @@ src/serializers/mod.rs	DecodeState::clear	111	PROVEN	Serial.DS.clear: DS.clear_e
 src/serializers/mod.rs	Header::encode	136	PROVEN	Serial.encH: decH_encH
 src/serializers/mod.rs	Header::null_terminated	140	PROVEN	Serial.nullTerm: strip_nullTerm
 src/serializers/mod.rs	Header::decode	165	PROVEN	Serial.decH: decH_encH, decH_flag_nonzero
-src/serializers/mod.rs	Header::from_graph	213	PROVEN	Serial.fromGraph: fromGraph_inv (flag count = rc)
-src/serializers/mod.rs	null_terminated	245	PROVEN	Serial.nullTerm: strip_nullTerm
+src/serializers/mod.rs	Header::from_graph	228	PROVEN	Serial.fromGraph: fromGraph_inv (flag count = rc)
+src/serializers/mod.rs	null_terminated	260	PROVEN	Serial.nullTerm: strip_nullTerm
 src/serializers/mod.rs	strip_null_terminator	253	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
-src/serializers/mod.rs	Schema::encode	262	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
+src/serializers/mod.rs	Schema::encode	277	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
 src/serializers/mod.rs	encode_schema_index_block	338	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff)
 src/serializers/mod.rs	encode_constraint_block	444	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
-src/serializers/mod.rs	Schema::decode	472	PROVEN	Serial.decSchema: decSchema_encSchema
+src/serializers/mod.rs	Schema::decode	487	PROVEN	Serial.decSchema: decSchema_encSchema
 src/serializers/mod.rs	decode_schema_entry	534	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
 src/serializers/mod.rs	decode_index_field	636	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
-src/serializers/mod.rs	Schema::from_graph	726	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
+src/serializers/mod.rs	Schema::from_graph	764	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
 src/reply.rs	write_f	36	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c
 src/reply.rs	format_value_to_string	49	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
 src/reply.rs	reply_with_str	113	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
