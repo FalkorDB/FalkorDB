@@ -58,3 +58,4 @@ graph/src/planner/binder.rs	Binder::define_alias_in_scope	2258	NOT COVERED	(#330
 graph/src/planner/binder.rs	Binder::lookup_alias	2283	NOT COVERED	(#3302): not modelled yet
 graph/src/planner/binder.rs	Binder::resolve_alias	2295	NOT COVERED	(#3302): not modelled yet
 graph/src/planner/binder.rs	denotes	2822	NOT COVERED	(#3302): not modelled yet
+graph/src/planner/binder.rs	Binder::resolve_bound_name	2363	NOT COVERED	(#1334): not modelled yet
