@@ -28,7 +28,6 @@ use std::{cell::RefCell, sync::Arc};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
 use crate::graph::graph::{DeletedEdge, DeletedNodeLabel};
@@ -76,7 +75,7 @@ const INVALID_PROPERTY_MSG: &str =
 
 /// Whether a non-list value is a valid property: a primitive, or NULL when
 /// `allow_null`. Lists are checked by [`validate_list_property`].
-fn is_valid_property(
+const fn is_valid_property(
     value: &Value,
     allow_null: bool,
 ) -> bool {
@@ -498,9 +497,8 @@ impl IndexDocs {
         &mut self,
         g: &mut Graph,
     ) {
-        // This is the query's own private version, which nothing else can borrow, so
-        // graph-then-indexer is safe here — see `Pending::resync_published_indexes`
-        // for the published version, where the order has to be the other way round.
+        // Each call takes its own indexer lock. `Pending::resync_published_indexes`
+        // holds both across its writes instead.
         g.commit_index(&mut self.node_adds, &mut self.node_removes);
         g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
     }
@@ -752,6 +750,7 @@ impl Pending {
     /// `set_labels` and `remove_labels` are disjoint per node (see
     /// [`Self::stage_node_labels`]), so at most one of the two branches below can
     /// match and the order they are consulted in carries no meaning.
+    #[must_use]
     pub fn node_has_label(
         &self,
         id: NodeId,
@@ -1624,7 +1623,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        read_once.candidates(candidates).map(NodeId::from)
+                        read_once.candidates(&candidates).map(NodeId::from)
                     },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
@@ -1682,10 +1681,10 @@ impl Pending {
             // would materialize the delta's pending tuples on every commit.
             // An edge's type never changes, so created under a different
             // type means not a member.
-            match self.created_rel_types.get(&edge_id.into()) {
-                Some(created_type) => created_type.as_str() == type_name.as_str(),
-                None => g.edge_has_type(edge_id.into(), type_name),
-            }
+            self.created_rel_types.get(&edge_id.into()).map_or_else(
+                || g.edge_has_type(edge_id.into(), type_name),
+                |created_type| created_type.as_str() == type_name.as_str(),
+            )
         });
 
         match constraint.ct {
@@ -1719,7 +1718,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        read_once.candidates(candidates).map(RelationshipId::from)
+                        read_once.candidates(&candidates).map(RelationshipId::from)
                     },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
@@ -1785,10 +1784,14 @@ impl Pending {
     /// edge's document key comes from there, since committed state no longer has the
     /// edge at all.
     ///
+    /// `committed` is only read: RediSearch's documents live behind the
+    /// indexer, which every version shares, so rewriting them changes no version, and
+    /// a reader of `committed` is never disturbed.
+    ///
     /// Writer mode only, and before the write lock is released.
     pub fn resync_published_indexes(
         &mut self,
-        committed: &AtomicRefCell<Graph>,
+        committed: &Graph,
         private: &Graph,
     ) {
         let (nodes, edges) = std::mem::take(&mut self.published).ids_by_slot();
@@ -1801,7 +1804,7 @@ impl Pending {
         let mut edge_adds: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
         let mut edge_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>> = FxHashMap::default();
         {
-            let g = committed.borrow();
+            let g = committed;
             for (slot, ids) in &nodes {
                 for id in ids {
                     if g.node_has_label_id(NodeId::from(id), LabelId(*slot as usize)) {
@@ -1827,15 +1830,14 @@ impl Pending {
             }
         }
 
-        // Indexer locks *before* the graph borrow — the order `populate_index_batch`
-        // uses, and the only one that keeps this mutable borrow of the published
-        // version from colliding with a populate batch reading it (`AtomicRefCell`
-        // reports that collision by panicking). Concurrent *readers* are excluded
-        // instead by the write lock this query holds.
-        let (node_lock, edge_lock) = committed.borrow().index_locks();
+        // Indexer locks before the graph borrow, the order `populate_index_batch` uses;
+        // they keep its batches out of RediSearch while both kinds are rewritten.
+        // Concurrent readers are kept out of RediSearch by the write lock this query
+        // holds.
+        let (node_lock, edge_lock) = committed.index_locks();
         let node_guard = node_lock.lock();
         let edge_guard = edge_lock.lock();
-        let mut g = committed.borrow_mut();
+        let g = committed;
         g.commit_index_locked(&node_guard, &mut node_adds, &mut node_removes);
         g.commit_edge_index_locked(&edge_guard, &mut edge_adds, &mut edge_removes);
     }
@@ -1990,15 +1992,12 @@ mod label_effect_tests {
     /// A graph whose only labels are `names`, and a `Pending` that has already
     /// taken its schema baseline — so the emitter announces no schema, and the
     /// label records are the whole of what it produces.
-    fn fixture(names: &[&str]) -> (AtomicRefCell<Graph>, Vec<LabelId>, Pending) {
+    fn fixture(names: &[&str]) -> (Graph, Vec<LabelId>, Pending) {
         ensure_init();
-        let g = AtomicRefCell::new(Graph::new(16, 16, 1, 0, "label_effects"));
-        let labels: Vec<LabelId> = {
-            let mut graph = g.borrow_mut();
-            names.iter().map(|n| graph.get_label_id_mut(n)).collect()
-        };
+        let mut g = Graph::new(16, 16, 1, 0, "label_effects");
+        let labels: Vec<LabelId> = names.iter().map(|n| g.get_label_id_mut(n)).collect();
         let mut pending = Pending::new();
-        pending.set_schema_baseline(&g.borrow());
+        pending.set_schema_baseline(&g);
         (g, labels, pending)
     }
 
@@ -2010,10 +2009,10 @@ mod label_effect_tests {
     /// tightly, which is the half that matters here.
     fn records(
         pending: &Pending,
-        g: &AtomicRefCell<Graph>,
+        g: &Graph,
     ) -> Vec<Record> {
         let mut out = Vec::new();
-        for_each_record(pending, &g.borrow(), |r| out.push(r));
+        for_each_record(pending, g, |r| out.push(r));
         out
     }
 
@@ -2023,7 +2022,7 @@ mod label_effect_tests {
         add: bool,
         labels: &[LabelId],
     ) -> Record {
-        let ids: IdList = [NODE].into_iter().collect();
+        let ids: IdList = std::iter::once(NODE).collect();
         let mut shape: Vec<u32> = labels.iter().map(|l| usize::from(*l) as u32).collect();
         shape.sort_unstable();
         shape.dedup();
@@ -2043,7 +2042,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
 
         assert_eq!(records(&pending, &g), vec![labelled(true, &[l])]);
     }
@@ -2074,7 +2073,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
         pending.remove_node_labels(NODE.into(), &[l]);
 
         assert!(
@@ -2098,7 +2097,7 @@ mod label_effect_tests {
         let l = labels[0];
 
         pending.remove_node_labels(NODE.into(), &[l]);
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
 
         assert!(
             !pending.remove_labels.contains_key(&NODE),
@@ -2284,7 +2283,7 @@ mod native_unique_tests {
     fn a_numeric_duplicate_is_found_by_the_native_lookup() {
         let mut g = graph();
         g.falkordb_index
-            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
         let ids = nodes(
             &mut g,
             &[
@@ -2314,7 +2313,7 @@ mod native_unique_tests {
     fn a_string_duplicate_on_a_numeric_column_is_found_by_the_scan() {
         let mut g = graph();
         g.falkordb_index
-            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
         let ids = nodes(
             &mut g,
             &[
@@ -2367,7 +2366,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["s", "n"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         let ids = nodes(
             &mut g,
@@ -2401,7 +2400,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["tenant", "id"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         // 50 nodes of one tenant, then a duplicate of node 3's key.
         let rows: Vec<[(&str, Value); 2]> = (0..50)
@@ -2422,7 +2421,7 @@ mod native_unique_tests {
                 values,
             )
             .expect("both columns answer");
-            fewest_candidates(lookups).count()
+            fewest_candidates(&lookups).count()
         };
         let (tenant, three, absent) = (Value::Int(7), Value::Int(3), Value::Int(99));
         assert_eq!(
@@ -2457,7 +2456,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["tenant", "id"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         // 50 nodes of tenant 7, a duplicate of the key of node 3, and one node of tenant 8.
         let rows: Vec<[(&str, Value); 2]> = (0..50)
@@ -2482,17 +2481,17 @@ mod native_unique_tests {
         };
         let once = ReadOnce::default();
         assert_eq!(
-            once.candidates(lookups(7, "u1")).count(),
+            once.candidates(&lookups(7, "u1")).count(),
             51,
             "the first member reads the tenant"
         );
         assert_eq!(
-            once.candidates(lookups(7, "u2")).count(),
+            once.candidates(&lookups(7, "u2")).count(),
             0,
             "a member with the same lookups reads nothing more"
         );
         assert_eq!(
-            once.candidates(lookups(8, "u9")).count(),
+            once.candidates(&lookups(8, "u9")).count(),
             1,
             "another tenant is another lookup"
         );
@@ -2504,13 +2503,50 @@ mod native_unique_tests {
         );
     }
 
+    /// While one of a composite key's columns is `Building`, as the background builder leaves a
+    /// new one, the key reads its other column: a building column has not seen every entity, so it
+    /// cannot rule a duplicate out, but a `Ready` one can. Here `tenant`'s column is created after
+    /// the nodes and never built, so it holds none of them.
+    #[test]
+    fn a_composite_key_with_a_building_column_reads_its_ready_one() {
+        let mut g = graph();
+        g.falkordb_index
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
+        let ids = nodes(
+            &mut g,
+            &[
+                &[("tenant", Value::Int(7)), ("id", Value::Int(1))],
+                &[("tenant", Value::Int(7)), ("id", Value::Int(2))],
+                &[("tenant", Value::Int(7)), ("id", Value::Int(1))],
+            ],
+        );
+        g.falkordb_index
+            .create_building(EntityType::Node, &arc("U"), &arc("tenant"));
+        let lookups = native_unique_query(
+            &g.falkordb_index,
+            EntityType::Node,
+            &arc("U"),
+            &[arc("tenant"), arc("id")],
+            &[Value::Int(7), Value::Int(1)],
+        )
+        .expect("id's column answers");
+        assert_eq!(lookups.len(), 1, "the Building column declines");
+        assert_eq!(
+            fewest_candidates(&lookups).count(),
+            2,
+            "the two holding id 1"
+        );
+        assert!(check_nodes(&g, &["tenant", "id"], ids[2]).is_err());
+        assert_eq!(check_nodes(&g, &["tenant", "id"], ids[1]), Ok(()));
+    }
+
     /// The same lookup for an edge constraint, where a column's ids are `edge_id`s.
     #[test]
     fn an_edge_duplicate_is_found_by_the_native_lookup() {
         let mut g = graph();
         let ty = arc("R");
         g.falkordb_index
-            .create_numeric(EntityType::Relationship, &ty, &arc("id"));
+            .create_column(EntityType::Relationship, &ty, &arc("id"));
         let ends = g
             .node_id_space()
             .reserve(2, &RoaringTreemap::new())

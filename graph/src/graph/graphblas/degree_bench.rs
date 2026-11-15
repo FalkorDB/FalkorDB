@@ -52,6 +52,10 @@ fn per_op<F: FnMut()>(
 }
 
 /// `PAIRS` pairs on the diagonal, `k` edges each, committed.
+#[allow(
+    clippy::many_single_char_names,
+    reason = "src/dst/id columns and loop indices, as in the matrix math"
+)]
 fn built(k: u64) -> Tensor {
     let mut t = Tensor::new(PAIRS + 1, PAIRS + 1);
     let (mut s, mut d, mut i) = (Vec::new(), Vec::new(), Vec::new());
@@ -70,7 +74,7 @@ fn built(k: u64) -> Tensor {
 }
 
 #[test]
-#[ignore]
+#[ignore = "benchmark; run with --ignored"]
 fn degree_decomposition() {
     ensure_init();
     for k in [1u64, 2] {
