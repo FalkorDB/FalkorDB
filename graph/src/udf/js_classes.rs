@@ -161,22 +161,21 @@ pub fn create_js_node<'js>(
     // global at call time), so user JS clobbering globals can't break
     // already-materialized nodes.
     let globals = ctx.globals();
-    let method: Function = match globals.get("__falkor_getNeighborsMethod") {
-        Ok(f) => f,
-        Err(_) => {
-            let helper = Function::new(ctx.clone(), js_get_neighbors_entry)
-                .map_err(|e| format!("JS function error: {e}"))?;
-            let factory: Function = ctx
-                .eval("(h) => function(config) { return h(this.__falkor_node_id, config); }")
-                .map_err(|e| format!("JS eval error: {e}"))?;
-            let f: Function = factory
-                .call((helper,))
-                .map_err(|e| format!("JS call error: {e}"))?;
-            globals
-                .set("__falkor_getNeighborsMethod", f.clone())
-                .map_err(|e| format!("JS set error: {e}"))?;
-            f
-        }
+    let method: Function = if let Ok(f) = globals.get("__falkor_getNeighborsMethod") {
+        f
+    } else {
+        let helper = Function::new(ctx.clone(), js_get_neighbors_entry)
+            .map_err(|e| format!("JS function error: {e}"))?;
+        let factory: Function = ctx
+            .eval("(h) => function(config) { return h(this.__falkor_node_id, config); }")
+            .map_err(|e| format!("JS eval error: {e}"))?;
+        let f: Function = factory
+            .call((helper,))
+            .map_err(|e| format!("JS call error: {e}"))?;
+        globals
+            .set("__falkor_getNeighborsMethod", f.clone())
+            .map_err(|e| format!("JS set error: {e}"))?;
+        f
     };
     obj.prop("getNeighbors", Property::from(method))
         .map_err(|e| format!("Failed to set getNeighbors: {e}"))?;
@@ -511,14 +510,12 @@ fn js_get_neighbors<'js>(
     })
 }
 
-fn throw_js_error<'js>(
-    ctx: &Ctx<'js>,
+fn throw_js_error(
+    ctx: &Ctx<'_>,
     e: &str,
 ) -> rquickjs::Error {
-    match rquickjs::String::from_str(ctx.clone(), e) {
-        Ok(s) => ctx.throw(s.into_value()),
-        Err(_) => rquickjs::Error::Exception,
-    }
+    rquickjs::String::from_str(ctx.clone(), e)
+        .map_or(rquickjs::Error::Exception, |s| ctx.throw(s.into_value()))
 }
 
 /// graph.getNodeById(id) - retrieve a node by its internal ID, or null.
@@ -591,12 +588,8 @@ fn js_iterate_nodes_impl<'js>(
 
     with_current_graph(|graph| {
         let ids: Vec<u64> = {
-            match &label {
-                Some(l) => graph
-                    .get_label_matrix(l)
-                    .map(|m| m.iter(0, u64::MAX).map(|(id, _)| id).collect())
-                    .unwrap_or_default(),
-                None => {
+            label.as_ref().map_or_else(
+                || {
                     if graph.node_count() == 0 {
                         Vec::new()
                     } else {
@@ -604,8 +597,13 @@ fn js_iterate_nodes_impl<'js>(
                             .filter(|id| !graph.is_node_deleted(NodeId::from(*id)))
                             .collect()
                     }
-                }
-            }
+                },
+                |l| {
+                    graph
+                        .get_label_matrix(l)
+                        .map_or_default(|m| m.iter(0, u64::MAX).map(|(id, _)| id).collect())
+                },
+            )
         };
 
         let arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
@@ -646,16 +644,19 @@ fn js_iterate_edges_impl<'js>(
     with_current_graph(|graph| {
         // (src, dst, edge_id) triples
         let edges: Vec<(u64, u64, u64)> = {
-            match &rel_type {
-                Some(t) => graph
-                    .get_relationship_matrix(&Arc::new(t.clone()))
-                    .map(|tensor| tensor.iter(0, u64::MAX, false).collect())
-                    .unwrap_or_default(),
-                None => graph
-                    .relationship_matrices_iter()
-                    .flat_map(|tensor| tensor.iter(0, u64::MAX, false).collect::<Vec<_>>())
-                    .collect(),
-            }
+            rel_type.as_ref().map_or_else(
+                || {
+                    graph
+                        .relationship_matrices_iter()
+                        .flat_map(|tensor| tensor.iter(0, u64::MAX, false).collect::<Vec<_>>())
+                        .collect()
+                },
+                |t| {
+                    graph
+                        .get_relationship_matrix(&Arc::new(t.clone()))
+                        .map_or_default(|tensor| tensor.iter(0, u64::MAX, false).collect())
+                },
+            )
         };
 
         let arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;

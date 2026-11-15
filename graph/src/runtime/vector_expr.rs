@@ -224,12 +224,9 @@ impl<'a> VectorEval<'a> {
                 .map(|v| ExprColumn::Scalar(v.clone()))
                 .ok_or_else(|| format!("Parameter {name} not found")),
             ExprIR::Variable(var) => Ok(self.eval_variable(var, batch, rows)),
-            ExprIR::Property(attr) if node.num_children() == 1 => {
-                match self.eval_property(attr, &node.child(0), batch, rows) {
-                    Some(vector) => Ok(vector),
-                    None => self.eval_per_row(node, batch, rows),
-                }
-            }
+            ExprIR::Property(attr) if node.num_children() == 1 => self
+                .eval_property(attr, &node.child(0), batch, rows)
+                .map_or_else(|| self.eval_per_row(node, batch, rows), Ok),
             ExprIR::And => self.eval_and_or(node, batch, rows, false),
             ExprIR::Or => self.eval_and_or(node, batch, rows, true),
             ExprIR::Not if node.num_children() == 1 => {
@@ -502,6 +499,10 @@ impl<'a> VectorEval<'a> {
             let mut claimed = Vec::new();
             let mut still_unclaimed = Vec::with_capacity(unclaimed.len());
             for (offset, &pos) in unclaimed.iter().enumerate() {
+                #[allow(
+                    clippy::option_if_let_else,
+                    reason = "each arm carries its own null-semantics note"
+                )]
                 let matched = match &subject {
                     // Value form: the arm matches when it compares equal to the
                     // subject on the same terms as `=`, so a `null` on either

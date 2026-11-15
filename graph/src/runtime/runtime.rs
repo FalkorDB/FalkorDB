@@ -419,8 +419,9 @@ impl ReturnNames for DynNode<'_, IR> {
                 }
                 child.get_return_names()
             }
-            IR::Skip(_) | IR::Limit(_) | IR::Distinct => self.child(0).get_return_names(),
-            IR::Union | IR::NestedPlans => self.child(0).get_return_names(),
+            IR::Skip(_) | IR::Limit(_) | IR::Distinct | IR::Union | IR::NestedPlans => {
+                self.child(0).get_return_names()
+            }
             IR::Aggregate { names, .. } => names.clone(),
             _ => vec![],
         }
@@ -544,13 +545,15 @@ impl<'a> Runtime<'a> {
     /// query's fork is borrowed per access, since it is also borrowed mutably.
     #[must_use]
     pub fn graph(&self) -> GraphRef<'_> {
-        match self.published.get() {
-            Some(g) => GraphRef::Published(g),
-            None => GraphRef::Fork(Ref::map(self.fork.borrow(), |fork| {
-                fork.as_ref()
-                    .expect("a write query's fork was refused at commit")
-            })),
-        }
+        self.published.get().map_or_else(
+            || {
+                GraphRef::Fork(Ref::map(self.fork.borrow(), |fork| {
+                    fork.as_ref()
+                        .expect("a write query's fork was refused at commit")
+                }))
+            },
+            |g| GraphRef::Published(g),
+        )
     }
 
     /// The graph this write query mutates, borrowed exclusively.
@@ -785,7 +788,7 @@ impl<'a> Runtime<'a> {
                     Vec::new()
                 }
             }
-            _ => node.get_child(0).map(|c| vec![c.idx()]).unwrap_or_default(),
+            _ => node.get_child(0).map_or_default(|c| vec![c.idx()]),
         }
     }
 
@@ -1409,8 +1412,8 @@ impl<'a> Runtime<'a> {
                 self,
                 label,
                 attrs,
-                index_type,
-                entity_type,
+                *index_type,
+                *entity_type,
                 options.as_ref(),
             ),
             IR::DropIndex {
@@ -1418,7 +1421,7 @@ impl<'a> Runtime<'a> {
                 attrs,
                 index_type,
                 entity_type,
-            } => super::index_ddl::drop_index(self, label, attrs, index_type, entity_type),
+            } => super::index_ddl::drop_index(self, label, attrs, *index_type, *entity_type),
         }
     }
 

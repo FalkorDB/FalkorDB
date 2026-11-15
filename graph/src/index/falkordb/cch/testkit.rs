@@ -11,7 +11,7 @@
 //! - [`EditGraph`], [`Edit`] and [`random_edit_batch`], the weight and structure edits the
 //!   maintenance tests replay, over a graph that keeps every parallel edge of a pair.
 
-pub(crate) use crate::testkit::*;
+pub use crate::testkit::*;
 
 use super::{CchInput, Csr, WeightCsr};
 use crate::graph::graphblas::matrix::{Descriptor, Dup, Matrix};
@@ -31,7 +31,7 @@ use std::collections::HashSet;
 /// `InvalidWeight` path build a deliberately invalid `CchInput` through this function.
 /// (The oracles, [`dijkstra`] and [`lower_rank_distances`], do reject them.)
 #[must_use]
-pub(crate) fn to_input(g: &Matrix<f64>) -> CchInput {
+pub fn to_input(g: &Matrix<f64>) -> CchInput {
     let n = node_count(g);
     let mut w = g.dup();
     w.drop_diagonal();
@@ -72,7 +72,7 @@ fn csr(
 /// `g`'s pattern with its `k`-th entry (row by row, as [`entries`] lists them) weighing
 /// `f(k, w)`, `w` its weight in `g`.
 #[must_use]
-pub(crate) fn reweight(
+pub fn reweight(
     g: &Matrix<f64>,
     mut f: impl FnMut(usize, f64) -> f64,
 ) -> Matrix<f64> {
@@ -405,7 +405,7 @@ pub(super) fn apply_edit(
                 .pairs
                 .get_mut(&(u, v))
                 .unwrap_or_else(|| panic!("SetWeight on missing edge ({u}, {v})"));
-            ws.iter_mut().for_each(|x| *x = w);
+            ws.fill(w);
         }
         Edit::RemoveCheapest { u, v } => {
             let ws = g
@@ -477,6 +477,10 @@ impl EditKind {
     ];
 }
 
+#[allow(
+    clippy::many_single_char_names,
+    reason = "graph-edit names: g, u, v, w, n"
+)]
 fn draw_edit(
     g: &EditGraph,
     kind: EditKind,
@@ -532,6 +536,10 @@ fn draw_edit(
             let n = g.n as u64;
             let start = next_node(rng, g.n * g.n);
             for k in 0..n * n {
+                #[allow(
+                    clippy::suspicious_operation_groupings,
+                    reason = "wraps around all n*n cells from a random start"
+                )]
                 let idx = (start + k) % (n * n);
                 let (u, v) = (idx / n, idx % n);
                 if u != v && reach[u as usize][v as usize].is_finite() == want_reachable {
@@ -567,6 +575,10 @@ mod self_tests {
     /// every simple path): for each `(a, b)`, DFS every simple `a -> b` walk
     /// (no repeated node, so it terminates) whose non-endpoint nodes all
     /// satisfy the rank bound, and take the cheapest.
+    #[allow(
+        clippy::items_after_statements,
+        reason = "the search state and step sit beside the loop that runs them"
+    )]
     fn lower_rank_distances_brute_force(
         g: &Matrix<f64>,
         perm: &[u64],
@@ -1055,9 +1067,9 @@ mod maintenance_tests {
                         );
                         parallel += usize::from(g.cheapest(u, v).is_some());
                         if was_reachable {
-                            conn += 1
+                            conn += 1;
                         } else {
-                            unconn += 1
+                            unconn += 1;
                         }
                     }
                     Edit::AddNode => node += 1,
@@ -1103,7 +1115,7 @@ mod maintenance_tests {
             assert_eq!(entries(&g.oracle()), [(0, 1, w)]);
             apply_edit(&mut g, &edit);
         }
-        assert!(entries(&g.oracle()).is_empty());
+        assert_eq!(entries(&g.oracle()), [] as [(u64, u64, f64); 0]);
         assert_eq!(g.oracle().nrows(), 2);
 
         let mut g = EditGraph::of(&weights(2, &[(0, 1, 5.0)]));

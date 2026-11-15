@@ -534,9 +534,8 @@ fn percentile_batch(
     _num_rows: usize,
     acc: Value,
 ) -> Result<Value, String> {
-    let mut state = match acc {
-        Value::List(l) => l,
-        _ => unreachable!("percentile accumulator must be a List"),
+    let Value::List(mut state) = acc else {
+        unreachable!("percentile accumulator must be a List")
     };
     if matches!(inputs[0], Value::Null) {
         return Ok(Value::List(state));

@@ -454,11 +454,12 @@ impl VersionedIndex for CchIndex {
     }
 }
 
-/// What a unit of work's writes touched that the graph's CCH indexes might care about. The
-/// graph's write methods stage it in the unit's
-/// [`IndexDocs::cch`](crate::index::index_docs::IndexDocs::cch), next to the native index's
-/// staged tuples, and the owner of the unit flushes it into rebuilt indexes once the unit's
-/// writes are in (#3214).
+/// What a unit of work's writes touched that the graph's CCH indexes might care about.
+///
+/// The graph's write methods stage it in the unit's
+/// [`IndexDocs::cch`](crate::index::index_docs::IndexDocs::cch), next to the native index's staged
+/// tuples, and the owner of the unit flushes it into rebuilt indexes once the unit's writes are in
+/// (#3214).
 ///
 /// Empty for every graph with no CCH index, so the maintenance hook costs one
 /// `is_empty()` check on the existing write path.
@@ -507,7 +508,7 @@ mod tests {
             neighbors: vec![1, 2, 0],
         };
         assert_eq!(csr.row(0), &[1, 2]);
-        assert!(csr.row(1).is_empty());
+        assert_eq!(csr.row(1), []);
         assert_eq!(csr.row(2), &[0]);
         assert!(std::panic::catch_unwind(|| csr.row(3).len()).is_err());
     }

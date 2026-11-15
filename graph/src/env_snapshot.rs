@@ -61,14 +61,14 @@ mod tests {
     #[test]
     fn null_source_is_empty() {
         let copy = unsafe { leak_deep_copy(std::ptr::null()) };
-        assert!(unsafe { read(copy) }.is_empty());
+        assert_eq!(unsafe { read(copy) }, [] as [String; 0]);
     }
 
     #[test]
     fn empty_source_is_empty() {
         let src = [std::ptr::null_mut::<c_char>()];
         let copy = unsafe { leak_deep_copy(src.as_ptr()) };
-        assert!(unsafe { read(copy) }.is_empty());
+        assert_eq!(unsafe { read(copy) }, [] as [String; 0]);
     }
 
     #[test]

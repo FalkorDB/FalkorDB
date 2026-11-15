@@ -46,7 +46,7 @@ pub struct IndexChanges {
 impl IndexChanges {
     /// No changes yet, for one entity kind. Allocates nothing.
     #[must_use]
-    pub fn new(entity: EntityType) -> Self {
+    pub const fn new(entity: EntityType) -> Self {
         Self {
             entity,
             changes: Vec::new(),
@@ -55,7 +55,7 @@ impl IndexChanges {
 
     /// Whether the write changes nothing in the index.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.changes.is_empty()
     }
 
@@ -295,8 +295,8 @@ mod tests {
             vec![(1, 7)],
             "the scalar tuple comes out"
         );
-        assert!(removes[KeyKind::Array].is_empty());
-        assert!(adds[KeyKind::Scalar].is_empty());
+        assert_eq!(removes[KeyKind::Array], [] as [(u64, u64); 0]);
+        assert_eq!(adds[KeyKind::Scalar], [] as [(u64, u64); 0]);
         assert_eq!(
             adds[KeyKind::Array],
             vec![(1, 7), (2, 7)],

@@ -209,7 +209,6 @@ pub fn settle_constraint(
     loop {
         attempts += 1;
         match attempt_settle(graph, &ctx, announce, key, was_replicated) {
-            Ok(()) => break,
             // Transient: the window closes on its own. Nothing is held here —
             // `attempt_settle` has dropped its session, and with it the GIL and
             // the write lock — so sleeping is safe. A pause or failover ends, and
@@ -249,11 +248,11 @@ pub fn settle_constraint(
                 }
                 std::thread::sleep(BACKOFF);
             }
-            // The graph is gone, or this node is no longer a master. Neither
-            // resolves by waiting: on a demoted node the constraint is the new
-            // master's to finish, and `enforce_pending_constraints_after_promotion`
-            // is what picks it up.
-            Err(WriteAbort::GraphUnregistered | WriteAbort::NotAMaster) => break,
+            // Settled; or the graph is gone, or this node is no longer a master.
+            // Neither of the last two resolves by waiting: on a demoted node the
+            // constraint is the new master's to finish, and
+            // `enforce_pending_constraints_after_promotion` is what picks it up.
+            Ok(()) | Err(WriteAbort::GraphUnregistered | WriteAbort::NotAMaster) => break,
             // The version failed its own validation, so it was never published.
             // Permanent: retrying re-runs the same arithmetic on the same graph.
             // Logged loudly because the constraint is left unenforced and the id
