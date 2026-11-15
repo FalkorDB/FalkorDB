@@ -44,7 +44,7 @@ jobs:
       file_changed: ${{ steps.check.outputs.changed }}
       # One key for every per-run tag: `pr-<N>` on a pull request (byte-identical
       # to what this workflow produced before) and `mg-<sha>` in the queue. The
-      # runtime images are `rc-<ci_key>`, the toolchain is `<ci_key>`.
+      # runtime images are `rc-<ci_key>-<server>`, the toolchain is `<ci_key>`.
       ci_key: ${{ steps.key.outputs.ci_key }}
       # Resolved once, read everywhere. This expression used to be repeated at
       # eleven call sites; a missed one fails closed in the ugliest way — a PR
@@ -244,6 +244,7 @@ jobs:
       # The image vehicle only in the queue, and only from a branch that can
       # push. A fork pull request runs the artifact vehicle and nothing else.
       use_image: ${{ github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository }}
+      redis_leg: ${{ github.event_name == 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci-both-servers') }}
     secrets: inherit
 
   lint:
@@ -265,12 +266,15 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Lint
+        # The lint set (pedantic, nursery, cargo) is Cargo.toml's
+        # [workspace.lints]; -D warnings fails the job on any of them.
+        # --workspace, so graph's tests and build script are linted too.
         run: |
-          CXX=clang++-23 cargo clippy --all-targets
+          CXX=clang++-23 cargo clippy --workspace --all-targets -- -D warnings
       - name: Format (native-deps)
         run: cargo fmt --all --check --manifest-path native-deps/Cargo.toml
       - name: Lint (native-deps)
-        run: cargo clippy --all-targets --manifest-path native-deps/Cargo.toml
+        run: cargo clippy --all-targets --manifest-path native-deps/Cargo.toml -- -D warnings
       - name: deps/native-deps.lock is in step with the gitlinks
         # `lock --check` reads the gitlinks with `git ls-files`. This job runs in
         # a container whose user differs from the checkout's owner, so git refuses
@@ -304,7 +308,7 @@ jobs:
         # package's targets, and graph's tests are where most of the index's
         # code under the flag lives.
         run: |
-          CXX=clang++-23 cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb
+          CXX=clang++-23 cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb -- -D warnings
       - name: Unit tests
         # The doctests link GraphBLAS's bundled zstd and the zstd-sys crate together, and
         # both define the zstd error helpers: the same link flag `coverage` and `fuzz` pass.
@@ -463,6 +467,9 @@ jobs:
   # It must also keep reporting on BOTH events — a required check that the
   # merge_group run never reports fails the merge on a status that never
   # arrives. Hence `if: !cancelled()`.
+  #
+  # Both servers are covered through ci-pipeline: its image-valkey and
+  # image-redis legs fail it.
   ci-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5

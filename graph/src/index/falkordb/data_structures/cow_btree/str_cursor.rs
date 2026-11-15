@@ -41,7 +41,7 @@ pub struct StrRange<const BRANCH_MAX: usize = 256> {
 impl<const BRANCH_MAX: usize> StrRange<BRANCH_MAX> {
     fn new(
         root: &Node<StrLeaf, BRANCH_MAX>,
-        lo: Bound<Arc<String>>,
+        lo: &Bound<Arc<String>>,
         hi: Bound<Arc<String>>,
     ) -> Self {
         let mut it = Self {
@@ -60,7 +60,7 @@ impl<const BRANCH_MAX: usize> StrRange<BRANCH_MAX> {
                     break;
                 }
                 Node::Branch(branch) => {
-                    let c = match &lo {
+                    let c = match lo {
                         Bound::Included(k) => branch.child_index(k, 0),
                         Bound::Excluded(k) => branch.child_index(k, u64::MAX),
                         Bound::Unbounded => 0,
@@ -71,7 +71,7 @@ impl<const BRANCH_MAX: usize> StrRange<BRANCH_MAX> {
                 }
             }
         }
-        let before_lo = |key: &[u8]| match &lo {
+        let before_lo = |key: &[u8]| match lo {
             Bound::Included(k) => key < k.as_bytes(),
             Bound::Excluded(k) => key <= k.as_bytes(),
             Bound::Unbounded => false,
@@ -252,7 +252,7 @@ impl<const BRANCH_MAX: usize> Iterator for StrRanges<BRANCH_MAX> {
                 return Some(d);
             }
             let (lo, hi) = self.ranges.next()?;
-            self.current = Some(self.tree.range(lo, hi));
+            self.current = Some(self.tree.range(&lo, hi));
         }
     }
 }
@@ -263,7 +263,7 @@ impl<const BRANCH_MAX: usize> PageTree<StrLeaf, BRANCH_MAX> {
     #[must_use]
     pub fn range(
         &self,
-        lo: Bound<Arc<String>>,
+        lo: &Bound<Arc<String>>,
         hi: Bound<Arc<String>>,
     ) -> StrRange<BRANCH_MAX> {
         StrRange::new(&self.root, lo, hi)
@@ -275,7 +275,7 @@ impl<const BRANCH_MAX: usize> PageTree<StrLeaf, BRANCH_MAX> {
         &self,
         key: &Arc<String>,
     ) -> StrRange<BRANCH_MAX> {
-        self.range(Bound::Included(key.clone()), Bound::Included(key.clone()))
+        self.range(&Bound::Included(key.clone()), Bound::Included(key.clone()))
     }
 
     /// Every tuple, in order. For tests.
@@ -456,7 +456,7 @@ mod tests {
                 let lo = bound(&mut rng, k);
                 let k = key(rng.random_range(0..5000));
                 let hi = bound(&mut rng, k);
-                let got: Vec<u64> = tree.range(lo.clone(), hi.clone()).collect();
+                let got: Vec<u64> = tree.range(&lo, hi.clone()).collect();
                 assert_eq!(got, model_range(&model, &lo, &hi), "round {round}");
             }
             let k = key(rng.random_range(0..5000));

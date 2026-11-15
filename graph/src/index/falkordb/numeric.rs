@@ -1,6 +1,8 @@
-//! The numeric kind of a Range column: CoW B⁺-trees of `(key, entity_id)` tuples, where `key` is
-//! the [`encode_numeric`] image of the indexed value — one tree for scalar values and one for the
-//! elements of list values ([`KeyKind`]).
+//! The numeric kind of a Range column.
+//!
+//! CoW B⁺-trees of `(key, entity_id)` tuples, where `key` is the [`encode_numeric`] image of the
+//! indexed value — one tree for scalar values and one for the elements of list values
+//! ([`KeyKind`]).
 //!
 //! The trees are private. The column ([`RangeIndex`](super::range::RangeIndex)) reaches them only
 //! through [`RangeKind`], the contract it holds every kind to. MVCC is intrinsic: a query
@@ -287,8 +289,9 @@ impl Iterator for UnionIter {
     }
 }
 
-/// The cursor chain behind a set of key windows: [`UnionIter`] with a window per member rather than
-/// a key, and for the same reasons one cursor at a time over a pinned snapshot. Windows are
+/// The cursor chain behind a set of key windows.
+///
+/// [`UnionIter`] with a window per member rather than a key, and for the same reasons one cursor at a time over a pinned snapshot. Windows are
 /// disjoint, so a doc stored under one key is reached once.
 pub struct WindowIter {
     tree: Tree,
@@ -430,8 +433,10 @@ impl EncodedTuples {
 }
 
 /// The numeric kind of one `(label, attribute)` column: entity ids keyed by the order-preserving
-/// encoding of their value, so `n.x <predicate> v` is a tree range scan. Non-numeric and `NaN`
-/// values are not indexed (parity with the RediSearch NUMERIC field it replaces).
+/// encoding of their value, so `n.x <predicate> v` is a tree range scan.
+///
+/// Non-numeric and `NaN` values are not indexed (parity with the RediSearch NUMERIC field it
+/// replaces).
 ///
 /// `Clone` is `O(1)` — the underlying `CowBTree` clone is a root-`Arc` bump — so
 /// a graph version can fork its index snapshot cheaply (see
@@ -706,6 +711,7 @@ mod tests {
     use super::super::range::RangeIndex;
     use super::*;
     use crate::index::IndexQuery;
+    use std::iter::once;
 
     /// A union across columns reads its streams one after another and yields each doc once,
     /// holding only what it has yielded: `LIMIT 1` reads one row of the first stream.
@@ -791,7 +797,7 @@ mod tests {
         assert_eq!(rows(&idx, &eq(Value::Int(10))), vec![1, 2]); // doc-ascending
         assert_eq!(rows(&idx, &eq(Value::Int(20))), vec![3]);
         assert_eq!(rows(&idx, &eq(Value::Float(10.0))), vec![1, 2]); // 10 == 10.0
-        assert!(rows(&idx, &eq(Value::Int(99))).is_empty());
+        assert_eq!(rows(&idx, &eq(Value::Int(99))), [] as [u64; 0]);
     }
 
     #[test]
@@ -823,9 +829,12 @@ mod tests {
         let idx = sample();
         let i = |x| Some(Value::Int(x));
         // min > max
-        assert!(rows(&idx, &range(i(20), i(10), true, true)).is_empty());
+        assert_eq!(rows(&idx, &range(i(20), i(10), true, true)), [] as [u64; 0]);
         // (10, 10) — exclusive both sides of one value
-        assert!(rows(&idx, &range(i(10), i(10), false, false)).is_empty());
+        assert_eq!(
+            rows(&idx, &range(i(10), i(10), false, false)),
+            [] as [u64; 0]
+        );
     }
 
     #[test]
@@ -834,7 +843,7 @@ mod tests {
         idx.remove(&Value::Int(10), 1);
         assert_eq!(rows(&idx, &eq(Value::Int(10))), vec![2]);
         idx.remove(&Value::Int(10), 2);
-        assert!(rows(&idx, &eq(Value::Int(10))).is_empty());
+        assert_eq!(rows(&idx, &eq(Value::Int(10))), [] as [u64; 0]);
         // the rest are untouched
         assert_eq!(rows(&idx, &eq(Value::Int(20))), vec![3]);
     }
@@ -890,7 +899,7 @@ mod tests {
         // A bound of a type no kind holds is declined, not answered "no rows".
         assert!(
             idx.query(&range(
-                Some(Value::List(Arc::new([Value::Int(1)].into_iter().collect()))),
+                Some(Value::List(Arc::new(once(Value::Int(1)).collect()))),
                 None,
                 true,
                 true
@@ -929,7 +938,7 @@ mod tests {
         };
         assert_eq!(ids(idx.query(&eq).unwrap()), vec![3]);
         let rg = IndexQuery::Range {
-            key: key.clone(),
+            key,
             min: Some(Value::Int(10)),
             max: None,
             include_min: true,
@@ -1047,7 +1056,7 @@ mod tests {
                 &attr,
                 [
                     Value::Int(10),
-                    Value::List(Arc::new([Value::Int(1)].into_iter().collect()))
+                    Value::List(Arc::new(once(Value::Int(1)).collect()))
                 ]
             ))
             .is_none(),
@@ -1100,7 +1109,7 @@ mod tests {
                     &attr,
                     [
                         Value::Int(20),
-                        Value::List(Arc::new([Value::Int(1)].into_iter().collect()))
+                        Value::List(Arc::new(once(Value::Int(1)).collect()))
                     ]
                 ),
             ]))
@@ -1297,7 +1306,10 @@ mod tests {
             ids(idx.query(&contains(&attr, 2)).expect("servable")),
             vec![7]
         );
-        assert!(ids(idx.query(&contains(&attr, 3)).expect("servable")).is_empty());
+        assert_eq!(
+            ids(idx.query(&contains(&attr, 3)).expect("servable")),
+            [] as [u64; 0]
+        );
         assert_eq!(idx.numeric().array_tree.len(), 2);
 
         // Removing the same value takes every element with it, duplicates included.
@@ -1377,7 +1389,7 @@ mod tests {
 
         // And out again, per kind.
         idx.remove_encoded(&mut more);
-        assert!(ids(idx.query(&eq(2)).expect("servable")).is_empty());
+        assert_eq!(ids(idx.query(&eq(2)).expect("servable")), [] as [u64; 0]);
         assert_eq!(
             ids(idx.query(&contains(&attr, 2)).expect("servable")),
             vec![20]
@@ -1401,7 +1413,7 @@ mod tests {
         let mut idx = RangeIndex::new();
         idx.add(&Value::Int(1), 1);
         assert_eq!(ids(idx.query(&eq(1)).unwrap()), vec![1]);
-        assert!(ids(idx.query(&contains(&attr, 1)).unwrap()).is_empty());
+        assert_eq!(ids(idx.query(&contains(&attr, 1)).unwrap()), [] as [u64; 0]);
 
         // scalar 1 -> array [1]: the SAME key crosses into the other tree.
         idx.remove(&Value::Int(1), 1);
@@ -1416,7 +1428,7 @@ mod tests {
         idx.remove(&ints(&[1]), 1);
         idx.add(&Value::Int(1), 1);
         assert_eq!(ids(idx.query(&eq(1)).unwrap()), vec![1]);
-        assert!(ids(idx.query(&contains(&attr, 1)).unwrap()).is_empty());
+        assert_eq!(ids(idx.query(&contains(&attr, 1)).unwrap()), [] as [u64; 0]);
 
         // Removing whatever it currently is leaves nothing on either side.
         idx.remove(&Value::Int(1), 1);
@@ -1506,18 +1518,18 @@ mod tests {
         assert_eq!(got(IndexQuery::And(vec![eq(5), eq(5)])), vec![5]);
         // `= null` holds for nothing, so a conjunction with it is answered with no rows, as
         // `= null` alone is, rather than declined.
-        assert!(
+        assert_eq!(
             got(IndexQuery::And(vec![
                 IndexQuery::Equal {
                     key: attr.clone(),
                     value: Value::Null,
                 },
                 range(Some(1), None, true, true),
-            ]))
-            .is_empty()
+            ])),
+            [] as [u64; 0]
         );
         // Likewise a range with a null bound, as that range alone is.
-        assert!(
+        assert_eq!(
             got(IndexQuery::And(vec![
                 IndexQuery::Range {
                     key: attr.clone(),
@@ -1527,28 +1539,31 @@ mod tests {
                     include_max: true,
                 },
                 range(Some(1), None, true, true),
-            ]))
-            .is_empty()
+            ])),
+            [] as [u64; 0]
         );
         // An equality outside the range yields nothing — answerable, and the answer is no rows.
-        assert!(
+        assert_eq!(
             got(IndexQuery::And(vec![
                 eq(1),
                 range(Some(8), None, true, true)
-            ]))
-            .is_empty()
+            ])),
+            [] as [u64; 0]
         );
         // Contradictory bounds likewise.
-        assert!(
+        assert_eq!(
             got(IndexQuery::And(vec![
                 range(Some(9), None, true, true),
                 range(None, Some(2), true, true),
-            ]))
-            .is_empty()
+            ])),
+            [] as [u64; 0]
         );
         // A scalar conjunct and a list conjunct: no value is both, so no rows — answered, not
         // declined.
-        assert!(got(IndexQuery::And(vec![eq(1), contains(&attr, 1)])).is_empty());
+        assert_eq!(
+            got(IndexQuery::And(vec![eq(1), contains(&attr, 1)])),
+            [] as [u64; 0]
+        );
         // Nesting is flattened — it still constrains one column.
         assert_eq!(
             got(IndexQuery::And(vec![
@@ -1578,7 +1593,7 @@ mod tests {
                 eq("a", 1),
                 IndexQuery::Equal {
                     key: Arc::new("a".to_string()),
-                    value: Value::List(Arc::new([Value::Int(1)].into_iter().collect())),
+                    value: Value::List(Arc::new(once(Value::Int(1)).collect())),
                 },
             ]))
             .is_none(),

@@ -9,8 +9,8 @@ readme = "../README.md"
 keywords = ["graph", "database"]
 categories = ["data-structures", "database"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
+[lints]
+workspace = true
 
 [features]
 # See root Cargo.toml feature of the same name. Pass-through so the runtime

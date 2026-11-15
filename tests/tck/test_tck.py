@@ -28,11 +28,6 @@ def test_tck():
                 tck_include = "|".join(line.strip() for line in file if line.strip())
     if tck_include:
         cmd = [tck_features, '--format=progress', '--tags=-crash', '--tags=-skip', "--no-capture", "--stop", "--include", tck_include]
-    # TCK_JUNIT_DIR: write Behave's per-scenario JUnit reports there, so CI
-    # can count scenarios (tests/count_results.py) rather than this one test.
-    tck_junit_dir = os.getenv("TCK_JUNIT_DIR", "")
-    if tck_junit_dir:
-        cmd += ["--junit", "--junit-directory", tck_junit_dir]
     res = behave_main(cmd)
     res = 'pass' if res == 0 else 'fail'
     assert res == 'pass'

@@ -217,6 +217,10 @@ impl<P: Page, const BRANCH_MAX: usize> PageTree<P, BRANCH_MAX> {
     /// Insert a single `(key, doc)`. Idempotent: inserting an existing tuple is a no-op. Returns
     /// `true` iff the tuple was newly inserted (so callers can maintain an exact live count).
     #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the key type is generic; by value keeps the call shape of the numeric tree's `u64` keys"
+    )]
     pub fn insert(
         &mut self,
         key: P::Key,
@@ -257,6 +261,10 @@ impl<P: Page, const BRANCH_MAX: usize> PageTree<P, BRANCH_MAX> {
     /// Remove a single `(key, doc)`; merges underflowing pages so the tree stays compact. A missing
     /// tuple is a no-op. Returns `true` iff a tuple was actually removed (for exact-count callers).
     #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the key type is generic; by value keeps the call shape of the numeric tree's `u64` keys"
+    )]
     pub fn remove(
         &mut self,
         key: P::Key,
@@ -385,7 +393,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     /// have any.
     #[cfg(test)]
     #[must_use]
-    pub fn root_is_branch(&self) -> bool {
+    pub const fn root_is_branch(&self) -> bool {
         matches!(self.root, Node::Branch(_))
     }
 

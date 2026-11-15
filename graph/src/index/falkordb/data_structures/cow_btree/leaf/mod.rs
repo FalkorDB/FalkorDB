@@ -40,7 +40,7 @@ const COMPACT_MIN_SAVING_BPE: usize = 8;
 /// Thin wrapper: the choice is shared with the effects codec, which narrows ids
 /// the same way — see [`crate::narrow_int::width_for`]. Only the return type
 /// differs, because a page offset is a `usize` here and a wire field there.
-fn pow2_bytes_for(x: u64) -> usize {
+const fn pow2_bytes_for(x: u64) -> usize {
     crate::narrow_int::width_for(x) as usize
 }
 
@@ -129,7 +129,9 @@ fn merge_walk(
     }
 }
 
-/// A leaf page, one of three in-RAM encodings — each variant owns its own **tag-free** `Arc<[u8]>` page and
+/// A leaf page, one of three in-RAM encodings.
+///
+/// Each variant owns its own **tag-free** `Arc<[u8]>` page and
 /// reads it directly (the compact scalar fields are cheap byte loads, read from the buffer where needed
 /// rather than cached in a parsed header). The format is carried out of band (this enum's discriminant in
 /// RAM, see [`LeafFormat`]):
@@ -522,7 +524,7 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Page for Leaf<LEAF_MAX, DOC_
     }
 
     fn count(&self) -> usize {
-        Leaf::count(self)
+        Self::count(self)
     }
 
     fn min(&self) -> Tuple<u64> {
@@ -530,7 +532,7 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Page for Leaf<LEAF_MAX, DOC_
     }
 
     fn is_underfull(&self) -> bool {
-        Leaf::count(self) < LEAF_MAX / 2
+        Self::count(self) < LEAF_MAX / 2
     }
 
     fn insert(
@@ -538,7 +540,7 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Page for Leaf<LEAF_MAX, DOC_
         key: &u64,
         doc: u64,
     ) -> Option<PageInsert<Self>> {
-        Some(match Leaf::insert(self, *key, doc)? {
+        Some(match Self::insert(self, *key, doc)? {
             LeafInsert::Fit(leaf) => PageInsert::Fit(leaf),
             LeafInsert::Split { left, sep, right } => PageInsert::Split {
                 left,
@@ -552,14 +554,14 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Page for Leaf<LEAF_MAX, DOC_
         key: &u64,
         doc: u64,
     ) -> Option<(Self, bool)> {
-        Leaf::remove(self, *key, doc)
+        Self::remove(self, *key, doc)
     }
 
     fn merge_batch(
         &self,
         batch: &[Tuple<u64>],
     ) -> Vec<Self> {
-        Leaf::merge_batch(self, batch)
+        Self::merge_batch(self, batch)
     }
 
     /// Subtract the sorted `batch` from this sorted page — a linear merge-walk — and rebuild just
@@ -568,7 +570,7 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Page for Leaf<LEAF_MAX, DOC_
         &self,
         batch: &[Tuple<u64>],
     ) -> Self {
-        let mut survivors = Vec::with_capacity(Leaf::count(self));
+        let mut survivors = Vec::with_capacity(Self::count(self));
         let mut bi = 0usize;
         for pair in self.iter() {
             while bi < batch.len() && batch[bi] < pair {

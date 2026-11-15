@@ -188,6 +188,10 @@ impl RangeKind for GeoIndex {
         docs_in(&self.tree, keys)
     }
 
+    #[allow(
+        clippy::uninhabited_references,
+        reason = "`Infallible` has no value, so a reference to it is never created; the match proves it"
+    )]
     fn lists_holding(
         &self,
         element: &Infallible,
@@ -202,6 +206,10 @@ impl RangeKind for GeoIndex {
         Self::key_of(value).is_some_and(|key| keys.contains(key))
     }
 
+    #[allow(
+        clippy::uninhabited_references,
+        reason = "`Infallible` has no value, so a reference to it is never created; the match proves it"
+    )]
     fn is_list_holding(
         element: &Infallible,
         _value: &Value,
@@ -210,8 +218,9 @@ impl RangeKind for GeoIndex {
     }
 }
 
-/// The Morton intervals a search for points within `radius_m` metres of `centre` reads: disjoint and
-/// sorted, a **superset** of the disk: every point in a quadtree cell that overlaps the circle's
+/// The Morton intervals a search for points within `radius_m` metres of `centre` reads.
+///
+/// Disjoint and sorted, a **superset** of the disk: every point in a quadtree cell that overlaps the circle's
 /// bounding box. The caller's retained filter rechecks the true distance.
 ///
 /// A zero radius is a real search: `distance(n.loc, p) <= 0` holds for a point at `p`, so the cover
@@ -312,7 +321,7 @@ fn bounding_rect(
     {
         return None;
     }
-    let radius_m = radius_m * (1.0 + RADIUS_SLACK_REL) + RADIUS_SLACK_M;
+    let radius_m = radius_m.mul_add(1.0 + RADIUS_SLACK_REL, RADIUS_SLACK_M);
     let lat = f64::from(centre.latitude);
     let lon = f64::from(centre.longitude);
     let origin = GeoPoint::new(lon, lat);
@@ -601,8 +610,8 @@ mod tests {
 
         for i in 0..40 {
             for j in 0..40 {
-                let lat = 51.5 + (f64::from(i) - 20.0) * 0.002;
-                let lon = -0.12 + (f64::from(j) - 20.0) * 0.002;
+                let lat = (f64::from(i) - 20.0).mul_add(0.002, 51.5);
+                let lon = (f64::from(j) - 20.0).mul_add(0.002, -0.12);
                 let (elat, elon) = (
                     quantise(lat, LAT_LO, LAT_SPAN),
                     quantise(lon, LON_LO, LON_SPAN),
@@ -660,8 +669,8 @@ mod tests {
         for i in -10..=10 {
             for j in -10..=10 {
                 let pt = Point::new(
-                    centre.latitude + i as f32 * 0.01,
-                    centre.longitude + j as f32 * 0.01,
+                    (i as f32).mul_add(0.01, centre.latitude),
+                    (j as f32).mul_add(0.01, centre.longitude),
                 );
                 if pt.distance(&centre) <= 1_000.0 {
                     expected.push(id);
@@ -700,9 +709,9 @@ mod tests {
             vec![1],
             "`distance(n.loc, p) <= 0` holds for a point at p"
         );
-        assert!(within(&idx, &Point::new(0.0, 0.0), 0.0).is_empty());
-        assert!(within(&idx, &london, -1.0).is_empty());
-        assert!(within(&idx, &london, f64::NAN).is_empty());
+        assert_eq!(within(&idx, &Point::new(0.0, 0.0), 0.0), [] as [u64; 0]);
+        assert_eq!(within(&idx, &london, -1.0), [] as [u64; 0]);
+        assert_eq!(within(&idx, &london, f64::NAN), [] as [u64; 0]);
         assert_eq!(
             within(&idx, &london, f64::INFINITY),
             vec![1, 2],
@@ -783,7 +792,7 @@ mod tests {
         idx.add(&p(1.0, 2.000_000_01), 3); // ~1 mm east: the SAME cell as id 1
         assert_eq!(point(&idx, &p(1.0, 2.0)), vec![1, 3]);
         assert_eq!(point(&idx, &p(1.0, 2.000_1)), vec![2]);
-        assert!(point(&idx, &p(2.0, 1.0)).is_empty());
+        assert_eq!(point(&idx, &p(2.0, 1.0)), [] as [u64; 0]);
     }
 
     #[test]
@@ -799,7 +808,7 @@ mod tests {
 
         let mut idx = inc;
         idx.remove(&p(1.0, 2.0), 1);
-        assert!(point(&idx, &p(1.0, 2.0)).is_empty());
+        assert_eq!(point(&idx, &p(1.0, 2.0)), [] as [u64; 0]);
         idx.remove(&p(3.0, 4.0), 2);
         assert_eq!(
             idx.tuples().iter().filter(|t| t.0 == KeyKind::Geo).count(),

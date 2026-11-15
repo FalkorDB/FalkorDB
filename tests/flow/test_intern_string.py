@@ -19,20 +19,26 @@ def random_string(length=10):
     return ''.join(random.choices(chars, k=length))
 
 def assertStringPoolStats(conn, count, avg):
-    # sleep for a short period of time to allow the DB main thread
-    # to catch up with the string-pool stats recent changes
-    time.sleep(0.01)
-    stats = conn.execute_command("GRAPH.INFO", "ObjectPool")
+    # The stats can lag the write that changed them: the DB main thread may not
+    # have caught up yet, and on a replica `WAIT` returns once the write is
+    # acknowledged, not once it is applied. Poll until they match or time out.
+    deadline = time.time() + 5
+    while True:
+        stats = conn.execute_command("GRAPH.INFO", "ObjectPool")
 
-    # GRAPH.INFO ObjectPool
-    # 1) "Object Pool"
-    # 2) 1) 1) "Unique Objects in Pool"
-    # 2) (integer) 1
-    # 2) 1) "Average References per Object"
-    # 2) "2"
+        # GRAPH.INFO ObjectPool
+        # 1) "Object Pool"
+        # 2) 1) 1) "Unique Objects in Pool"
+        # 2) (integer) 1
+        # 2) 1) "Average References per Object"
+        # 2) "2"
 
-    objs_in_pool   = int(stats[1][0][1])
-    avg_ref_count = float(stats[1][1][1])
+        objs_in_pool   = int(stats[1][0][1])
+        avg_ref_count = float(stats[1][1][1])
+
+        if (avg_ref_count == avg and objs_in_pool == count) or time.time() >= deadline:
+            break
+        time.sleep(0.01)
 
     assert avg_ref_count == avg, f"expected avg={avg}, got {avg_ref_count}"
     assert objs_in_pool == count, f"expected count={count}, got {objs_in_pool}"
@@ -440,9 +446,9 @@ class testInternStringReplication():
         self.source_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
         self.replica_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
 
-        # clear DB, and wait for the replica's initial sync to complete
+        # clear DB
         self.conn.flushall()
-        wait_for_replica(self.source_con, self.replica_con)
+        self.source_con.execute_command("WAIT", "1", "0")
 
     def tearDown(self):
         # clear DB
@@ -458,7 +464,8 @@ class testInternStringReplication():
 
         res = self.graph.query(q, p)
 
-        wait_for_replica(self.source_con, self.replica_con)
+        # the WAIT command forces master slave sync to complete
+        self.source_con.execute_command("WAIT", "1", "0")
 
         return res
 

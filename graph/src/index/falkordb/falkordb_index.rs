@@ -1,8 +1,8 @@
-//! Folded-roots MVCC holder: the FalkorDB index state that lives
-//! on [`Graph`](crate::graph::Graph) as its own copy-on-write field, so
-//! `Graph::new_version()` forks it in `O(1)` per column and the committed-version
-//! `Arc<Graph>` swap publishes graph + index together — one atomic
-//! step, no torn read.
+//! Folded-roots MVCC holder.
+//!
+//! The FalkorDB index state that lives on [`Graph`](crate::graph::Graph) as its own copy-on-write
+//! field, so `Graph::new_version()` forks it in `O(1)` per column and the committed-version
+//! `Arc<Graph>` swap publishes graph + index together — one atomic step, no torn read.
 //!
 //! Deliberately **pure data — no reference back to `Graph`**. The RediSearch
 //! `Indexer` holds an `Arc<ArcSwapOption<Graph>>` pointing
@@ -435,9 +435,11 @@ impl VersionedIndex for IndexColumn {
 }
 
 /// How to answer a query by scanning while its columns are still building: keep the entities the
-/// columns will answer the query with once they are built. Built from the selections those columns
-/// would look up, the scan keeps exactly what they will answer. It is the only check the scanned
-/// rows get: the planner removes a predicate it hands to an index scan.
+/// columns will answer the query with once they are built.
+///
+/// Built from the selections those columns would look up, the scan keeps exactly what they will
+/// answer. It is the only check the scanned rows get: the planner removes a predicate it hands to
+/// an index scan.
 ///
 /// `A` names an attribute: as the query names it, or as a scan has resolved it
 /// ([`Self::resolve`]), so a scan looks each name up once rather than once per entity.
@@ -666,7 +668,7 @@ impl FalkorDbIndex {
 
     /// The column map for `entity` — node labels and relationship types keep
     /// separate keyspaces (a label and a type may share a name).
-    fn columns(
+    const fn columns(
         &self,
         entity: EntityType,
     ) -> &HashMap<IndexKey, IndexEntry<IndexColumn>> {
@@ -676,7 +678,7 @@ impl FalkorDbIndex {
         }
     }
 
-    fn columns_mut(
+    const fn columns_mut(
         &mut self,
         entity: EntityType,
     ) -> &mut HashMap<IndexKey, IndexEntry<IndexColumn>> {
@@ -905,7 +907,7 @@ impl FalkorDbIndex {
 
     /// Whether an indexer batch was published between `older`, an earlier version, and this
     /// published one.
-    pub(crate) fn batch_published_since(
+    pub(crate) const fn batch_published_since(
         &self,
         older: &Self,
     ) -> bool {
@@ -1245,6 +1247,10 @@ impl FalkorDbIndex {
     ///
     /// # Errors
     /// [`CchError::NotFound`] if no entry over `def` is held.
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "`&mut self` for the API it will have; the stub mutates nothing yet"
+    )]
     pub(crate) fn drop_cch(
         &mut self,
         _def: &CchIndexDef,
@@ -1260,6 +1266,7 @@ mod tests {
     use super::super::versioned::IndexerBatch;
     use super::*;
     use crate::entity_type::EntityType::{Node, Relationship};
+    use std::iter::once;
 
     fn arc(s: &str) -> Arc<String> {
         Arc::new(s.to_string())
@@ -1374,7 +1381,7 @@ mod tests {
             list: Value::List(Arc::new(
                 [
                     Value::Int(10),
-                    Value::List(Arc::new([Value::Int(1)].into_iter().collect())),
+                    Value::List(Arc::new(once(Value::Int(1)).collect())),
                 ]
                 .into_iter()
                 .collect(),
@@ -1415,7 +1422,7 @@ mod tests {
             vec![1],
             "a write below the cursor is applied"
         );
-        assert!(holds(&idx, 25).is_empty());
+        assert_eq!(holds(&idx, 25), [] as [u64; 0]);
         assert!(holds(&idx, 45).is_empty(), "a write at the cursor is not");
         assert!(
             holds(&idx, 50).is_empty(),
@@ -1447,7 +1454,7 @@ mod tests {
             name: (Node, (label.clone(), arc("gone"))),
             ..batch(vec![(key(99), 9)], None)
         }));
-        assert!(hits(&idx, 99).is_empty());
+        assert_eq!(hits(&idx, 99), [] as [u64; 0]);
         assert_eq!(all(&idx), vec![0, 1, 2, 3, 5]);
     }
 
@@ -1756,7 +1763,7 @@ mod tests {
         // A value no kind holds is declined.
         let list_eq = IndexQuery::Equal {
             key: key.clone(),
-            value: Value::List(Arc::new([Value::Int(1)].into_iter().collect())),
+            value: Value::List(Arc::new(once(Value::Int(1)).collect())),
         };
         assert!(idx.query_column(Node, &label, &list_eq).is_none());
         // A conjunction on ONE attribute is served — it folds to a single window.
@@ -1777,7 +1784,7 @@ mod tests {
                 &label,
                 &IndexQuery::And(vec![
                     IndexQuery::Equal {
-                        key: key.clone(),
+                        key,
                         value: Value::Int(30),
                     },
                     IndexQuery::Equal {
@@ -1828,14 +1835,12 @@ mod tests {
         };
         // Union order is unspecified, so compare sorted ids.
         let served = |entity, q: &IndexQuery<Value>| -> Option<Vec<u64>> {
-            match idx.query_column(entity, &label, q)? {
-                Ok(it) => {
-                    let mut ids: Vec<u64> = it.collect();
-                    ids.sort_unstable();
-                    Some(ids)
-                }
-                Err(_) => panic!("column is still Building"),
-            }
+            let Ok(it) = idx.query_column(entity, &label, q)? else {
+                panic!("column is still Building")
+            };
+            let mut ids: Vec<u64> = it.collect();
+            ids.sort_unstable();
+            Some(ids)
         };
 
         assert_eq!(
@@ -1878,7 +1883,7 @@ mod tests {
                     &attr,
                     vec![
                         Value::Int(30),
-                        Value::List(Arc::new([Value::Int(1)].into_iter().collect()))
+                        Value::List(Arc::new(once(Value::Int(1)).collect()))
                     ]
                 )
             ),
@@ -1958,11 +1963,7 @@ mod tests {
             "the tag kind holds every string, so it can say none holds this one"
         );
         assert!(
-            candidates(
-                &idx,
-                &Value::List(Arc::new([Value::Int(1)].into_iter().collect()))
-            )
-            .is_none(),
+            candidates(&idx, &Value::List(Arc::new(once(Value::Int(1)).collect()))).is_none(),
             "no kind indexes a list as a scalar, so it cannot say none holds one"
         );
         assert!(
@@ -2199,7 +2200,10 @@ mod tests {
             vec![7]
         );
         // An empty intersection is an answer, not a decline.
-        assert!(got(IndexQuery::And(vec![eq(&a, 0), eq(&b, 7)])).is_empty());
+        assert_eq!(
+            got(IndexQuery::And(vec![eq(&a, 0), eq(&b, 7)])),
+            [] as [u64; 0]
+        );
 
         // A missing column cannot be intersected — decline rather than answer from a subset,
         // which would return rows the conjunction excludes.

@@ -11,7 +11,7 @@ pub enum Dep {
 }
 
 impl Dep {
-    /// Build order matters: LAGraph links against the GraphBLAS archive.
+    /// Build order matters: `LAGraph` links against the `GraphBLAS` archive.
     pub const ALL: [Self; 3] = [Self::GraphBlas, Self::LaGraph, Self::RediSearch];
 
     /// The short name used for lock-file sections, cache directories and CLI
