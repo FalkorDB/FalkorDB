@@ -876,26 +876,35 @@ class testIndexCreationFlow():
         # options block it allocated: ~56 bytes per statement leaked before.
         conn = self.env.getConnection()
         graph = self.db.select_graph("failed_fulltext_create_leak")
-        graph.query("CREATE (:L {s:'a'})")
-        n = 10000
-        for q in ["CREATE FULLTEXT INDEX FOR (n:L) ON (n.s) OPTIONS {language:'klingon'}",
-                  "CREATE FULLTEXT INDEX FOR (n:L) ON (n.s) OPTIONS {stopwords:['a\\u0000b']}"]:
-            def run(times):
-                for _ in range(times):
-                    try:
-                        graph.query(q)
-                        self.env.assertTrue(False, message=q)
-                    except ResponseError:
-                        # The statement is refused by design: only what the
-                        # refusal leaves behind is measured.
-                        pass
-            run(100)  # warm up
-            before = conn.info('memory')['used_memory']
-            run(n)
-            grown = conn.info('memory')['used_memory'] - before
-            # the leak alone was ~560 KB here; allow for allocator noise
-            self.env.assertLess(grown, 200_000, message=q)
-        graph.delete()
+        try:
+            graph.query("CREATE (:L {s:'a'})")
+            n = 10000
+            cases = [
+                ("CREATE FULLTEXT INDEX FOR (n:L) ON (n.s) OPTIONS {language:'klingon'}",
+                 "Language is not supported"),
+                ("CREATE FULLTEXT INDEX FOR (n:L) ON (n.s) OPTIONS {stopwords:['a\\u0000b']}",
+                 "nul byte"),
+            ]
+            for q, expected in cases:
+                def run(times):
+                    for _ in range(times):
+                        try:
+                            graph.query(q)
+                            self.env.assertTrue(False, message=q)
+                        except ResponseError as e:
+                            # Refused by design; only what the refusal leaves
+                            # behind is measured, and it must be this refusal.
+                            if expected not in str(e):
+                                self.env.assertTrue(False, message=f"{q}: {e}")
+                                return
+                run(100)  # warm up
+                before = conn.info('memory')['used_memory']
+                run(n)
+                grown = conn.info('memory')['used_memory'] - before
+                # the leak alone was ~560 KB here; allow for allocator noise
+                self.env.assertLess(grown, 200_000, message=q)
+        finally:
+            graph.delete()
 
     def test19_index_options_validation(self):
         # index OPTIONS are validated like C: a vector index needs a dimension
