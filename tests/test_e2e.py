@@ -2053,7 +2053,7 @@ def test_variable_named_like_an_anonymous_entity():
     assert res.result_set == [[2]]
     res = query("MATCH (`@anon_1`:A), (:B), (`@anon_0`:B) RETURN count(*)")
     assert res.result_set == [[4]]
-    res = query("MATCH (_anon_0:B)-[_anon_1]->(_anon_2) RETURN count(*)")
+    res = query("MATCH (_anon_0:B)-[_anon_1]->(_anon_2) RETURN count(_anon_1)")
     assert res.result_set == [[1]]
     res = query("MATCH (`@anon_0`:B)-[`@anon_1`]->(`@anon_2`) RETURN count(*)")
     assert res.result_set == [[1]]
